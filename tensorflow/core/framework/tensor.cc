@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -71,6 +239,9 @@ namespace tensorflow {
 REGISTER_UNARY_VARIANT_DECODE_FUNCTION(Tensor, "tensorflow::Tensor");
 
 bool TensorBuffer::GetAllocatedBytes(size_t* out_bytes) const {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_0(mht_0_v, 242, "", "./tensorflow/core/framework/tensor.cc", "TensorBuffer::GetAllocatedBytes");
+
   AllocationDescription allocation_description;
   FillAllocationDescription(&allocation_description);
   if (allocation_description.allocated_bytes() > 0) {
@@ -87,11 +258,20 @@ namespace {
 class BufferBase : public TensorBuffer {
  public:
   explicit BufferBase(Allocator* alloc, void* data_ptr)
-      : TensorBuffer(data_ptr), alloc_(alloc) {}
+      : TensorBuffer(data_ptr), alloc_(alloc) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_1(mht_1_v, 262, "", "./tensorflow/core/framework/tensor.cc", "BufferBase");
+}
 
-  TensorBuffer* root_buffer() override { return this; }
+  TensorBuffer* root_buffer() override {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_2(mht_2_v, 267, "", "./tensorflow/core/framework/tensor.cc", "root_buffer");
+ return this; }
 
   bool GetAllocatedBytes(size_t* out_bytes) const override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_3(mht_3_v, 272, "", "./tensorflow/core/framework/tensor.cc", "GetAllocatedBytes");
+
     if (alloc_->TracksAllocationSizes()) {
       *out_bytes = alloc_->AllocatedSize(data());
       return *out_bytes > 0;
@@ -101,6 +281,9 @@ class BufferBase : public TensorBuffer {
   }
 
   void FillAllocationDescription(AllocationDescription* proto) const override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_4(mht_4_v, 284, "", "./tensorflow/core/framework/tensor.cc", "FillAllocationDescription");
+
     void* data_ptr = data();
     int64_t rb = size();
     proto->set_requested_bytes(rb);
@@ -121,11 +304,17 @@ class BufferBase : public TensorBuffer {
 
   // Returns the type of the underlying memory.
   AllocatorMemoryType GetMemoryType() const override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_5(mht_5_v, 307, "", "./tensorflow/core/framework/tensor.cc", "GetMemoryType");
+
     return alloc_->GetMemoryType();
   }
 
  protected:
   void RecordDeallocation() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_6(mht_6_v, 315, "", "./tensorflow/core/framework/tensor.cc", "RecordDeallocation");
+
     LogMemory::RecordTensorDeallocation(alloc_->AllocationId(data()),
                                         alloc_->Name());
   }
@@ -140,7 +329,10 @@ class Buffer : public BufferBase {
   Buffer(Allocator* a, int64_t n);
   Buffer(Allocator* a, int64_t n, const AllocationAttributes& allocation_attr);
 
-  size_t size() const override { return sizeof(T) * elem_; }
+  size_t size() const override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_7(mht_7_v, 333, "", "./tensorflow/core/framework/tensor.cc", "size");
+ return sizeof(T) * elem_; }
 
  private:
   int64_t elem_;
@@ -151,10 +343,16 @@ class Buffer : public BufferBase {
 };
 
 void LogUnexpectedSize(int64_t actual, int64_t expected) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_8(mht_8_v, 346, "", "./tensorflow/core/framework/tensor.cc", "LogUnexpectedSize");
+
   LOG(ERROR) << "Input size was " << actual << " and expected " << expected;
 }
 
 bool MemoryLoggingEnabled() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_9(mht_9_v, 353, "", "./tensorflow/core/framework/tensor.cc", "MemoryLoggingEnabled");
+
   static bool memory_logging_enabled = LogMemory::IsEnabled();
   return memory_logging_enabled;
 }
@@ -169,6 +367,9 @@ struct Helper {
   // Encoder of simple type T to a string.  We do a copy.
   template <typename Destination>
   static void Encode(TensorBuffer* in, int64_t n, Destination* out) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_10(mht_10_v, 370, "", "./tensorflow/core/framework/tensor.cc", "Encode");
+
     DCHECK_EQ(in->size(), sizeof(T) * n);
     port::AssignRefCounted(StringPiece(in->base<const char>(), in->size()), in,
                            out);
@@ -178,6 +379,9 @@ struct Helper {
   // tensor buffer.
   template <typename Source>
   static TensorBuffer* Decode(Allocator* a, const Source& in, int64_t n) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_11(mht_11_v, 382, "", "./tensorflow/core/framework/tensor.cc", "Decode");
+
     if (in.size() != sizeof(T) * n) {
       LogUnexpectedSize(in.size(), sizeof(T) * n);
       return nullptr;
@@ -194,6 +398,9 @@ struct Helper {
 
   // Memory usage.
   static int64_t TotalBytes(TensorBuffer* in, int64_t n) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_12(mht_12_v, 401, "", "./tensorflow/core/framework/tensor.cc", "TotalBytes");
+
     DCHECK_EQ(in->size(), sizeof(T) * n);
     return in->size();
   }
@@ -210,6 +417,9 @@ struct Helper<tstring> {
   // "out", which is usually the TensorProto::tensor_content.
   template <typename Destination>
   static void Encode(TensorBuffer* in, int64_t n, Destination* out) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_13(mht_13_v, 420, "", "./tensorflow/core/framework/tensor.cc", "Encode");
+
     port::EncodeStringList(in->base<const tstring>(), n, out);
   }
 
@@ -218,6 +428,9 @@ struct Helper<tstring> {
   // usually the TensorProto::tensor_content.
   template <typename Source>
   static TensorBuffer* Decode(Allocator* a, const Source& in, int64_t n) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_14(mht_14_v, 431, "", "./tensorflow/core/framework/tensor.cc", "Decode");
+
     Buffer<tstring>* buf = new Buffer<tstring>(a, n);
     tstring* strings = buf->template base<tstring>();
     if (strings == nullptr || !port::DecodeStringList(in, strings, n)) {
@@ -230,6 +443,9 @@ struct Helper<tstring> {
   // Returns the estimated memory usage of "n" elements of type T
   // stored in buffer "in".
   static int64_t TotalBytes(TensorBuffer* in, int n) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_15(mht_15_v, 446, "", "./tensorflow/core/framework/tensor.cc", "TotalBytes");
+
     int64_t tot = in->size();
     DCHECK_EQ(tot, sizeof(tstring) * n);
     const tstring* p = in->base<const tstring>();
@@ -247,6 +463,9 @@ struct Helper<ResourceHandle> {
   // "out", which is usually the TensorProto::tensor_content.
   template <typename Destination>
   static void Encode(TensorBuffer* in, int64_t n, Destination* out) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_16(mht_16_v, 466, "", "./tensorflow/core/framework/tensor.cc", "Encode");
+
     EncodeResourceHandleList(in->base<const ResourceHandle>(), n,
                              port::NewStringListEncoder(out));
   }
@@ -256,6 +475,9 @@ struct Helper<ResourceHandle> {
   // usually the TensorProto::tensor_content.
   template <typename Source>
   static TensorBuffer* Decode(Allocator* a, const Source& in, int64_t n) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_17(mht_17_v, 478, "", "./tensorflow/core/framework/tensor.cc", "Decode");
+
     auto* buf = new Buffer<ResourceHandle>(a, n);
     ResourceHandle* ps = buf->template base<ResourceHandle>();
     if (ps == nullptr ||
@@ -269,6 +491,9 @@ struct Helper<ResourceHandle> {
   // Returns the estimated memory usage of "n" elements of type T
   // stored in buffer "in".
   static int64_t TotalBytes(TensorBuffer* in, int n) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_18(mht_18_v, 494, "", "./tensorflow/core/framework/tensor.cc", "TotalBytes");
+
     return n * sizeof(ResourceHandle);
   }
 };
@@ -279,6 +504,9 @@ struct Helper<Variant> {
   // "out", which is usually the TensorProto::tensor_content.
   template <typename Destination>
   static void Encode(TensorBuffer* in, int64_t n, Destination* out) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_19(mht_19_v, 507, "", "./tensorflow/core/framework/tensor.cc", "Encode");
+
     EncodeVariantList(in->base<const Variant>(), n,
                       port::NewStringListEncoder(out));
   }
@@ -288,6 +516,9 @@ struct Helper<Variant> {
   // usually the TensorProto::tensor_content.
   template <typename Source>
   static TensorBuffer* Decode(Allocator* a, const Source& in, int64_t n) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_20(mht_20_v, 519, "", "./tensorflow/core/framework/tensor.cc", "Decode");
+
     auto* buf = new Buffer<Variant>(a, n);
     Variant* ps = buf->template base<Variant>();
     if (ps == nullptr ||
@@ -301,6 +532,9 @@ struct Helper<Variant> {
   // Returns the estimated memory usage of "n" elements of type T
   // stored in buffer "in".
   static int64_t TotalBytes(TensorBuffer* in, int n) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_21(mht_21_v, 535, "", "./tensorflow/core/framework/tensor.cc", "TotalBytes");
+
     return n * sizeof(Variant);
   }
 };
@@ -347,12 +581,21 @@ template <>
 struct ProtoHelper<int64_t> {
   static protobuf::RepeatedField<int64_t>::const_iterator Begin(
       const TensorProto& proto) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_22(mht_22_v, 584, "", "./tensorflow/core/framework/tensor.cc", "Begin");
+
     return proto.int64_val().begin();
   }
   static size_t NumElements(const TensorProto& proto) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_23(mht_23_v, 590, "", "./tensorflow/core/framework/tensor.cc", "NumElements");
+
     return proto.int64_val().size();
   }
   static void Fill(const int64_t* data, size_t n, TensorProto* proto) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_24(mht_24_v, 596, "", "./tensorflow/core/framework/tensor.cc", "Fill");
+
     protobuf::RepeatedField<protobuf_int64> copy(data, data + n);
     proto->mutable_int64_val()->Swap(&copy);
   }
@@ -362,12 +605,21 @@ template <>
 struct ProtoHelper<uint64> {
   static protobuf::RepeatedField<uint64_t>::const_iterator Begin(
       const TensorProto& proto) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_25(mht_25_v, 608, "", "./tensorflow/core/framework/tensor.cc", "Begin");
+
     return proto.uint64_val().begin();
   }
   static size_t NumElements(const TensorProto& proto) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_26(mht_26_v, 614, "", "./tensorflow/core/framework/tensor.cc", "NumElements");
+
     return proto.uint64_val().size();
   }
   static void Fill(const uint64* data, size_t n, TensorProto* proto) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_27(mht_27_v, 620, "", "./tensorflow/core/framework/tensor.cc", "Fill");
+
     protobuf::RepeatedField<protobuf_uint64> copy(data, data + n);
     proto->mutable_uint64_val()->Swap(&copy);
   }
@@ -377,12 +629,21 @@ template <>
 struct ProtoHelper<ResourceHandle> {
   static protobuf::RepeatedPtrField<ResourceHandleProto>::const_iterator Begin(
       const TensorProto& proto) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_28(mht_28_v, 632, "", "./tensorflow/core/framework/tensor.cc", "Begin");
+
     return proto.resource_handle_val().begin();
   }
   static size_t NumElements(const TensorProto& proto) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_29(mht_29_v, 638, "", "./tensorflow/core/framework/tensor.cc", "NumElements");
+
     return proto.resource_handle_val().size();
   }
   static void Fill(const ResourceHandle* data, size_t n, TensorProto* proto) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_30(mht_30_v, 644, "", "./tensorflow/core/framework/tensor.cc", "Fill");
+
     auto* handles = proto->mutable_resource_handle_val();
     handles->Clear();
     for (size_t i = 0; i < n; i++) {
@@ -395,12 +656,21 @@ template <>
 struct ProtoHelper<Variant> {
   static protobuf::RepeatedPtrField<VariantTensorDataProto>::const_iterator
   Begin(const TensorProto& proto) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_31(mht_31_v, 659, "", "./tensorflow/core/framework/tensor.cc", "Begin");
+
     return proto.variant_val().begin();
   }
   static size_t NumElements(const TensorProto& proto) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_32(mht_32_v, 665, "", "./tensorflow/core/framework/tensor.cc", "NumElements");
+
     return proto.variant_val().size();
   }
   static void Fill(const Variant* data, size_t n, TensorProto* proto) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_33(mht_33_v, 671, "", "./tensorflow/core/framework/tensor.cc", "Fill");
+
     auto* variant_values = proto->mutable_variant_val();
     variant_values->Clear();
     for (size_t i = 0; i < n; ++i) {
@@ -415,12 +685,21 @@ template <>
 struct ProtoHelper<complex64> {
   typedef Helper<float>::RepeatedFieldType FieldType;
   static const complex64* Begin(const TensorProto& proto) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_34(mht_34_v, 688, "", "./tensorflow/core/framework/tensor.cc", "Begin");
+
     return reinterpret_cast<const complex64*>(proto.scomplex_val().data());
   }
   static size_t NumElements(const TensorProto& proto) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_35(mht_35_v, 694, "", "./tensorflow/core/framework/tensor.cc", "NumElements");
+
     return proto.scomplex_val().size() / 2;
   }
   static void Fill(const complex64* data, size_t n, TensorProto* proto) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_36(mht_36_v, 700, "", "./tensorflow/core/framework/tensor.cc", "Fill");
+
     const float* p = reinterpret_cast<const float*>(data);
     FieldType copy(p, p + n * 2);
     proto->mutable_scomplex_val()->Swap(&copy);
@@ -431,12 +710,21 @@ template <>
 struct ProtoHelper<complex128> {
   typedef Helper<double>::RepeatedFieldType FieldType;
   static const complex128* Begin(const TensorProto& proto) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_37(mht_37_v, 713, "", "./tensorflow/core/framework/tensor.cc", "Begin");
+
     return reinterpret_cast<const complex128*>(proto.dcomplex_val().data());
   }
   static size_t NumElements(const TensorProto& proto) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_38(mht_38_v, 719, "", "./tensorflow/core/framework/tensor.cc", "NumElements");
+
     return proto.dcomplex_val().size() / 2;
   }
   static void Fill(const complex128* data, size_t n, TensorProto* proto) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_39(mht_39_v, 725, "", "./tensorflow/core/framework/tensor.cc", "Fill");
+
     const double* p = reinterpret_cast<const double*>(data);
     FieldType copy(p, p + n * 2);
     proto->mutable_dcomplex_val()->Swap(&copy);
@@ -447,12 +735,21 @@ template <>
 struct ProtoHelper<qint32> {
   typedef Helper<int32>::RepeatedFieldType FieldType;
   static const qint32* Begin(const TensorProto& proto) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_40(mht_40_v, 738, "", "./tensorflow/core/framework/tensor.cc", "Begin");
+
     return reinterpret_cast<const qint32*>(proto.int_val().data());
   }
   static size_t NumElements(const TensorProto& proto) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_41(mht_41_v, 744, "", "./tensorflow/core/framework/tensor.cc", "NumElements");
+
     return proto.int_val().size();
   }
   static void Fill(const qint32* data, size_t n, TensorProto* proto) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_42(mht_42_v, 750, "", "./tensorflow/core/framework/tensor.cc", "Fill");
+
     const int32* p = reinterpret_cast<const int32*>(data);
     FieldType copy(p, p + n);
     proto->mutable_int_val()->Swap(&copy);
@@ -462,6 +759,9 @@ struct ProtoHelper<qint32> {
 template <>
 struct ProtoHelper<bfloat16> {
   static void Fill(const bfloat16* data, size_t n, TensorProto* proto) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_43(mht_43_v, 762, "", "./tensorflow/core/framework/tensor.cc", "Fill");
+
     proto->mutable_half_val()->Reserve(n);
     for (size_t i = 0; i < n; ++i) {
       proto->mutable_half_val()->AddAlreadyReserved(
@@ -473,6 +773,9 @@ struct ProtoHelper<bfloat16> {
 template <>
 struct ProtoHelper<Eigen::half> {
   static void Fill(const Eigen::half* data, size_t n, TensorProto* proto) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_44(mht_44_v, 776, "", "./tensorflow/core/framework/tensor.cc", "Fill");
+
     proto->mutable_half_val()->Reserve(n);
     for (size_t i = 0; i < n; ++i) {
       proto->mutable_half_val()->AddAlreadyReserved(
@@ -484,16 +787,25 @@ struct ProtoHelper<Eigen::half> {
 template <typename T>
 Buffer<T>::Buffer(Allocator* a, int64_t n)
     : BufferBase(a, TypedAllocator::Allocate<T>(a, n, AllocationAttributes())),
-      elem_(n) {}
+      elem_(n) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_45(mht_45_v, 791, "", "./tensorflow/core/framework/tensor.cc", "Buffer<T>::Buffer");
+}
 
 template <typename T>
 Buffer<T>::Buffer(Allocator* a, int64_t n,
                   const AllocationAttributes& allocation_attr)
     : BufferBase(a, TypedAllocator::Allocate<T>(a, n, allocation_attr)),
-      elem_(n) {}
+      elem_(n) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_46(mht_46_v, 800, "", "./tensorflow/core/framework/tensor.cc", "Buffer<T>::Buffer");
+}
 
 template <typename T>
 Buffer<T>::~Buffer() {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_47(mht_47_v, 806, "", "./tensorflow/core/framework/tensor.cc", "Buffer<T>::~Buffer");
+
   if (data()) {
     if (MemoryLoggingEnabled()) {
       RecordDeallocation();
@@ -514,6 +826,9 @@ Buffer<T>::~Buffer() {
 // in the compact binary representation.
 template <typename T>
 TensorBuffer* FromProtoField(Allocator* a, const TensorProto& in, int64_t n) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_48(mht_48_v, 829, "", "./tensorflow/core/framework/tensor.cc", "FromProtoField");
+
   CHECK_GT(n, 0);
   Buffer<T>* buf = new Buffer<T>(a, n);
   T* data = buf->template base<T>();
@@ -550,6 +865,9 @@ TensorBuffer* FromProtoField(Allocator* a, const TensorProto& in, int64_t n) {
 template <>
 TensorBuffer* FromProtoField<ResourceHandle>(Allocator* a,
                                              const TensorProto& in, int64_t n) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_49(mht_49_v, 868, "", "./tensorflow/core/framework/tensor.cc", "FromProtoField<ResourceHandle>");
+
   CHECK_GT(n, 0);
   Buffer<ResourceHandle>* buf = new Buffer<ResourceHandle>(a, n);
   ResourceHandle* data = buf->template base<ResourceHandle>();
@@ -587,6 +905,9 @@ TensorBuffer* FromProtoField<ResourceHandle>(Allocator* a,
 template <>
 TensorBuffer* FromProtoField<Variant>(Allocator* a, const TensorProto& in,
                                       int64_t n) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_50(mht_50_v, 908, "", "./tensorflow/core/framework/tensor.cc", "FromProtoField<Variant>");
+
   CHECK_GT(n, 0);
   Buffer<Variant>* buf = new Buffer<Variant>(a, n);
   Variant* data = buf->template base<Variant>();
@@ -627,6 +948,9 @@ TensorBuffer* FromProtoField<Variant>(Allocator* a, const TensorProto& in,
 template <>
 TensorBuffer* FromProtoField<Eigen::half>(Allocator* a, const TensorProto& in,
                                           int64_t n) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_51(mht_51_v, 951, "", "./tensorflow/core/framework/tensor.cc", "FromProtoField<Eigen::half>");
+
   CHECK_GT(n, 0);
   Buffer<Eigen::half>* buf = new Buffer<Eigen::half>(a, n);
   uint16* data = buf->template base<uint16>();
@@ -651,6 +975,9 @@ TensorBuffer* FromProtoField<Eigen::half>(Allocator* a, const TensorProto& in,
 template <>
 TensorBuffer* FromProtoField<bfloat16>(Allocator* a, const TensorProto& in,
                                        int64_t n) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_52(mht_52_v, 978, "", "./tensorflow/core/framework/tensor.cc", "FromProtoField<bfloat16>");
+
   CHECK_GT(n, 0);
   Buffer<bfloat16>* buf = new Buffer<bfloat16>(a, n);
   uint16* data = buf->template base<uint16>();
@@ -676,6 +1003,9 @@ TensorBuffer* FromProtoField<bfloat16>(Allocator* a, const TensorProto& in,
 // "out" corresponding to type T.
 template <typename T>
 void ToProtoField(const TensorBuffer& in, int64_t n, TensorProto* out) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_53(mht_53_v, 1006, "", "./tensorflow/core/framework/tensor.cc", "ToProtoField");
+
   const T* data = in.base<const T>();
   // NOTE: T may not the same as
   // ProtoHelper<T>::FieldType::value_type.  E.g., T==int16,
@@ -685,21 +1015,36 @@ void ToProtoField(const TensorBuffer& in, int64_t n, TensorProto* out) {
 }
 
 void RefIfNonNull(core::RefCounted* buf) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_54(mht_54_v, 1018, "", "./tensorflow/core/framework/tensor.cc", "RefIfNonNull");
+
   if (buf) buf->Ref();
 }
 
 void UnrefIfNonNull(core::RefCounted* buf) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_55(mht_55_v, 1025, "", "./tensorflow/core/framework/tensor.cc", "UnrefIfNonNull");
+
   if (buf) buf->Unref();
 }
 
 }  // end namespace
 
-Tensor::Tensor() : Tensor(DT_FLOAT) {}
+Tensor::Tensor() : Tensor(DT_FLOAT) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_56(mht_56_v, 1034, "", "./tensorflow/core/framework/tensor.cc", "Tensor::Tensor");
+}
 
-Tensor::Tensor(DataType type) : shape_(type), buf_(nullptr) {}
+Tensor::Tensor(DataType type) : shape_(type), buf_(nullptr) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_57(mht_57_v, 1039, "", "./tensorflow/core/framework/tensor.cc", "Tensor::Tensor");
+}
 
 Tensor::Tensor(DataType type, const TensorShape& shape, TensorBuffer* buf)
     : shape_(shape), buf_(buf) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_58(mht_58_v, 1045, "", "./tensorflow/core/framework/tensor.cc", "Tensor::Tensor");
+
   set_dtype(type);
   RefIfNonNull(buf);
 }
@@ -707,21 +1052,33 @@ Tensor::Tensor(DataType type, const TensorShape& shape, TensorBuffer* buf)
 Tensor::Tensor(DataType type, TensorShape shape,
                core::RefCountPtr<TensorBuffer> buf)
     : shape_(std::move(shape)), buf_(buf.release()) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_59(mht_59_v, 1055, "", "./tensorflow/core/framework/tensor.cc", "Tensor::Tensor");
+
   set_dtype(type);
 }
 
 bool Tensor::IsInitialized() const {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_60(mht_60_v, 1062, "", "./tensorflow/core/framework/tensor.cc", "Tensor::IsInitialized");
+
   return (buf_ != nullptr && buf_->data() != nullptr) ||
          shape_.num_elements() == 0;
 }
 
 void Tensor::CheckType(DataType expected_dtype) const {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_61(mht_61_v, 1070, "", "./tensorflow/core/framework/tensor.cc", "Tensor::CheckType");
+
   CHECK_EQ(dtype(), expected_dtype)
       << " " << DataTypeString(expected_dtype) << " expected, got "
       << DataTypeString(dtype());
 }
 
 void Tensor::CheckTypeAndIsAligned(DataType expected_dtype) const {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_62(mht_62_v, 1079, "", "./tensorflow/core/framework/tensor.cc", "Tensor::CheckTypeAndIsAligned");
+
   CHECK_EQ(dtype(), expected_dtype)
       << " " << DataTypeString(expected_dtype) << " expected, got "
       << DataTypeString(dtype());
@@ -729,14 +1086,23 @@ void Tensor::CheckTypeAndIsAligned(DataType expected_dtype) const {
 }
 
 void Tensor::CheckIsAlignedAndSingleElement() const {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_63(mht_63_v, 1089, "", "./tensorflow/core/framework/tensor.cc", "Tensor::CheckIsAlignedAndSingleElement");
+
   CHECK(IsAligned()) << "Aligned and single element";
   CHECK_EQ(1, NumElements()) << "Must have a one element tensor";
 }
 
-Tensor::~Tensor() { UnrefIfNonNull(buf_); }
+Tensor::~Tensor() {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_64(mht_64_v, 1097, "", "./tensorflow/core/framework/tensor.cc", "Tensor::~Tensor");
+ UnrefIfNonNull(buf_); }
 
 Status Tensor::BitcastFrom(const Tensor& other, DataType dtype,
                            const TensorShape& shape) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_65(mht_65_v, 1103, "", "./tensorflow/core/framework/tensor.cc", "Tensor::BitcastFrom");
+
   int in_size = DataTypeSize(other.dtype());
   int out_size = DataTypeSize(dtype);
   if (in_size == 0) {
@@ -764,6 +1130,9 @@ Status Tensor::BitcastFrom(const Tensor& other, DataType dtype,
 // For the latter case, we have to make sure that the refcount is
 // one both for the SubBuffer _and_ the underlying TensorBuffer.
 bool Tensor::RefCountIsOne() const {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_66(mht_66_v, 1133, "", "./tensorflow/core/framework/tensor.cc", "Tensor::RefCountIsOne");
+
   return buf_ != nullptr && buf_->RefCountIsOne() &&
          buf_->root_buffer()->RefCountIsOne() && buf_->OwnsMemory();
 }
@@ -830,6 +1199,9 @@ Tensor::Tensor(Allocator* a, DataType type, const TensorShape& shape)
 Tensor::Tensor(Allocator* a, DataType type, const TensorShape& shape,
                const AllocationAttributes& allocation_attr)
     : shape_(shape), buf_(nullptr) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_67(mht_67_v, 1202, "", "./tensorflow/core/framework/tensor.cc", "Tensor::Tensor");
+
   set_dtype(type);
   CHECK_NOTNULL(a);
   if (shape_.num_elements() > 0 || a->AllocatesOpaqueHandle()) {
@@ -844,6 +1216,9 @@ Tensor::Tensor(Allocator* a, DataType type, const TensorShape& shape,
 
 Status Tensor::BuildTensor(DataType type, const TensorShape& shape,
                            Tensor* out_tensor) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_68(mht_68_v, 1219, "", "./tensorflow/core/framework/tensor.cc", "Tensor::BuildTensor");
+
   // Avoid crashes due to invalid or unsupported types.
   CASES_WITH_DEFAULT(
       type, {}, return errors::InvalidArgument("Type not set"),
@@ -861,16 +1236,25 @@ Status Tensor::BuildTensor(DataType type, const TensorShape& shape,
 // to specify an allocator, for purposes of accounting, etc. However, the
 // default allocator is widely used throughout the codebase and in client code.
 static Allocator* get_default_cpu_allocator() {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_69(mht_69_v, 1239, "", "./tensorflow/core/framework/tensor.cc", "get_default_cpu_allocator");
+
   static Allocator* default_cpu_allocator =
       cpu_allocator(port::kNUMANoAffinity);
   return default_cpu_allocator;
 }
 
 Tensor::Tensor(DataType type, const TensorShape& shape)
-    : Tensor(get_default_cpu_allocator(), type, shape) {}
+    : Tensor(get_default_cpu_allocator(), type, shape) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_70(mht_70_v, 1249, "", "./tensorflow/core/framework/tensor.cc", "Tensor::Tensor");
+}
 
 bool Tensor::HostScalarTensorBufferBase::GetAllocatedBytes(
     size_t* out_bytes) const {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_71(mht_71_v, 1255, "", "./tensorflow/core/framework/tensor.cc", "Tensor::HostScalarTensorBufferBase::GetAllocatedBytes");
+
   // `this->FillAllocationDescription()` never sets allocated bytes information,
   // so we can short-circuit the construction of an `AllocationDescription`.
   return false;
@@ -878,6 +1262,9 @@ bool Tensor::HostScalarTensorBufferBase::GetAllocatedBytes(
 
 void Tensor::HostScalarTensorBufferBase::FillAllocationDescription(
     AllocationDescription* proto) const {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_72(mht_72_v, 1265, "", "./tensorflow/core/framework/tensor.cc", "Tensor::HostScalarTensorBufferBase::FillAllocationDescription");
+
   proto->set_requested_bytes(size());
   proto->set_allocator_name("HostScalarTensorBuffer");
   proto->set_ptr(reinterpret_cast<uintptr_t>(data()));
@@ -891,6 +1278,9 @@ class SubBuffer : public TensorBuffer {
       : TensorBuffer(buf->base<T>() + delta),
         root_(buf->root_buffer()),
         elem_(n) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_73(mht_73_v, 1281, "", "./tensorflow/core/framework/tensor.cc", "SubBuffer");
+
     // Sanity check. The caller should ensure the sub buffer is valid.
     CHECK_LE(root_->base<T>(), this->base<T>());
     T* root_limit = root_->base<T>() + root_->size() / sizeof(T);
@@ -901,12 +1291,24 @@ class SubBuffer : public TensorBuffer {
     root_->Ref();
   }
 
-  size_t size() const override { return sizeof(T) * elem_; }
-  TensorBuffer* root_buffer() override { return root_; }
+  size_t size() const override {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_74(mht_74_v, 1295, "", "./tensorflow/core/framework/tensor.cc", "size");
+ return sizeof(T) * elem_; }
+  TensorBuffer* root_buffer() override {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_75(mht_75_v, 1299, "", "./tensorflow/core/framework/tensor.cc", "root_buffer");
+ return root_; }
   bool GetAllocatedBytes(size_t* out_bytes) const override {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_76(mht_76_v, 1303, "", "./tensorflow/core/framework/tensor.cc", "GetAllocatedBytes");
+
     return root_->GetAllocatedBytes(out_bytes);
   }
   void FillAllocationDescription(AllocationDescription* proto) const override {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_77(mht_77_v, 1309, "", "./tensorflow/core/framework/tensor.cc", "FillAllocationDescription");
+
     root_->FillAllocationDescription(proto);
   }
 
@@ -914,12 +1316,18 @@ class SubBuffer : public TensorBuffer {
   TensorBuffer* root_;
   int64_t elem_;
 
-  ~SubBuffer() override { root_->Unref(); }
+  ~SubBuffer() override {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_78(mht_78_v, 1320, "", "./tensorflow/core/framework/tensor.cc", "~SubBuffer");
+ root_->Unref(); }
 
   TF_DISALLOW_COPY_AND_ASSIGN(SubBuffer);
 };
 
 Tensor Tensor::Slice(int64_t start, int64_t limit) const {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_79(mht_79_v, 1328, "", "./tensorflow/core/framework/tensor.cc", "Tensor::Slice");
+
   CHECK_GE(dims(), 1);
   CHECK_LE(0, start);
   CHECK_LE(start, limit);
@@ -947,6 +1355,9 @@ Tensor Tensor::Slice(int64_t start, int64_t limit) const {
 }
 
 Tensor Tensor::SubSlice(int64_t index) const {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_80(mht_80_v, 1358, "", "./tensorflow/core/framework/tensor.cc", "Tensor::SubSlice");
+
   CHECK_GE(dims(), 1);  // Crash ok.
   CHECK_LE(0, index);   // Crash ok.
   int64_t dim0_size = shape_.dim_size(0);
@@ -969,10 +1380,16 @@ Tensor Tensor::SubSlice(int64_t index) const {
 }
 
 bool Tensor::FromProto(const TensorProto& proto) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_81(mht_81_v, 1383, "", "./tensorflow/core/framework/tensor.cc", "Tensor::FromProto");
+
   return FromProto(get_default_cpu_allocator(), proto);
 }
 
 bool Tensor::FromProto(Allocator* a, const TensorProto& proto) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_82(mht_82_v, 1390, "", "./tensorflow/core/framework/tensor.cc", "Tensor::FromProto");
+
   CHECK_NOTNULL(a);
   TensorBuffer* p = nullptr;
   if (!TensorShape::IsValid(proto.tensor_shape())) return false;
@@ -1014,6 +1431,9 @@ bool Tensor::FromProto(Allocator* a, const TensorProto& proto) {
 }
 
 void Tensor::AsProtoField(TensorProto* proto) const {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_83(mht_83_v, 1434, "", "./tensorflow/core/framework/tensor.cc", "Tensor::AsProtoField");
+
   proto->Clear();
   shape_.AsProto(proto->mutable_tensor_shape());
   proto->set_dtype(dtype());
@@ -1023,6 +1443,9 @@ void Tensor::AsProtoField(TensorProto* proto) const {
 }
 
 void Tensor::AsProtoTensorContent(TensorProto* proto) const {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_84(mht_84_v, 1446, "", "./tensorflow/core/framework/tensor.cc", "Tensor::AsProtoTensorContent");
+
   proto->Clear();
   proto->set_dtype(dtype());
   shape_.AsProto(proto->mutable_tensor_shape());
@@ -1033,6 +1456,9 @@ void Tensor::AsProtoTensorContent(TensorProto* proto) const {
 }
 
 size_t Tensor::TotalBytes() const {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_85(mht_85_v, 1459, "", "./tensorflow/core/framework/tensor.cc", "Tensor::TotalBytes");
+
   if (shape_.num_elements() == 0) return 0;
   CHECK(buf_) << "null buf_ with non-zero shape size " << shape_.num_elements();
   CASES(dtype(), return Helper<T>::TotalBytes(buf_, shape_.num_elements()));
@@ -1040,6 +1466,9 @@ size_t Tensor::TotalBytes() const {
 }
 
 size_t Tensor::AllocatedBytes() const {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_86(mht_86_v, 1469, "", "./tensorflow/core/framework/tensor.cc", "Tensor::AllocatedBytes");
+
   if (buf_) {
     size_t ret;
     if (buf_->GetAllocatedBytes(&ret)) {
@@ -1050,6 +1479,9 @@ size_t Tensor::AllocatedBytes() const {
 }
 
 bool Tensor::CanUseDMA() const {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_87(mht_87_v, 1482, "", "./tensorflow/core/framework/tensor.cc", "Tensor::CanUseDMA");
+
   CASES(dtype(), return is_simple_type<T>::value);
   return false;  // Makes compiler happy.
 }
@@ -1067,9 +1499,16 @@ namespace {
 // accessing an 'internal' namespace.
 inline const strings::AlphaNum& PrintOneElement(const strings::AlphaNum& a,
                                                 bool print_v2) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_88(mht_88_v, 1502, "", "./tensorflow/core/framework/tensor.cc", "PrintOneElement");
+
   return a;
 }
 inline string PrintOneElement(const tstring& a, bool print_v2) {
+   std::vector<std::string> mht_89_v;
+   mht_89_v.push_back("a: \"" + (std::string)a + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_89(mht_89_v, 1509, "", "./tensorflow/core/framework/tensor.cc", "PrintOneElement");
+
   if (print_v2) {
     return "\"" + absl::Utf8SafeCEscape(a) + "\"";
   } else {
@@ -1077,10 +1516,16 @@ inline string PrintOneElement(const tstring& a, bool print_v2) {
   }
 }
 inline float PrintOneElement(const Eigen::half& h, bool print_v2) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_90(mht_90_v, 1519, "", "./tensorflow/core/framework/tensor.cc", "PrintOneElement");
+
   return static_cast<float>(h);
 }
 
 inline float PrintOneElement(bfloat16 f, bool print_v2) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_91(mht_91_v, 1526, "", "./tensorflow/core/framework/tensor.cc", "PrintOneElement");
+
   return static_cast<float>(f);
 }
 
@@ -1089,6 +1534,9 @@ template <typename T>
 void PrintOneDim(int dim_index, const gtl::InlinedVector<int64, 4>& shape,
                  int64_t limit, int shape_size, const T* data,
                  int64_t* data_index, string* result) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_92(mht_92_v, 1537, "", "./tensorflow/core/framework/tensor.cc", "PrintOneDim");
+
   if (*data_index >= limit) return;
   int64_t element_count = shape[dim_index];
   // We have reached the right-most dimension of the tensor.
@@ -1125,6 +1573,9 @@ void PrintOneDim(int dim_index, const gtl::InlinedVector<int64, 4>& shape,
 
 // Appends the spacing between elements for a given dim onto a result string
 void PrintDimSpacing(int dim_index, int num_dims, string* result) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_93(mht_93_v, 1576, "", "./tensorflow/core/framework/tensor.cc", "PrintDimSpacing");
+
   if (dim_index == num_dims - 1) {
     strings::StrAppend(result, " ");
     return;
@@ -1142,6 +1593,9 @@ template <typename T>
 void PrintOneDimV2(int dim_index, const gtl::InlinedVector<int64, 4>& shape,
                    int64_t num_elts_at_ends, int num_dims, const T* data,
                    int64_t data_index, string* result) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_94(mht_94_v, 1596, "", "./tensorflow/core/framework/tensor.cc", "PrintOneDimV2");
+
   // We have recursed beyond all the dimensions into a single element
   // of the tensor.
   if (dim_index == num_dims) {
@@ -1186,6 +1640,10 @@ template <typename T>
 string SummarizeArray(int64_t limit, int64_t num_elts,
                       const TensorShape& tensor_shape, const char* data,
                       const bool print_v2) {
+   std::vector<std::string> mht_95_v;
+   mht_95_v.push_back("data: \"" + (data == nullptr ? std::string("nullptr") : std::string((char*)data)) + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_95(mht_95_v, 1644, "", "./tensorflow/core/framework/tensor.cc", "SummarizeArray");
+
   string ret;
   const T* array = reinterpret_cast<const T*>(data);
 
@@ -1214,6 +1672,9 @@ string SummarizeArray(int64_t limit, int64_t num_elts,
 }  // namespace
 
 string Tensor::SummarizeValue(int64_t max_entries, bool print_v2) const {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_96(mht_96_v, 1675, "", "./tensorflow/core/framework/tensor.cc", "Tensor::SummarizeValue");
+
   const int64_t num_elts = NumElements();
   if (max_entries < 0) {
     max_entries = num_elts;
@@ -1309,32 +1770,50 @@ string Tensor::SummarizeValue(int64_t max_entries, bool print_v2) const {
 }
 
 StringPiece Tensor::tensor_data() const {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_97(mht_97_v, 1773, "", "./tensorflow/core/framework/tensor.cc", "Tensor::tensor_data");
+
   if (buf_ == nullptr) return StringPiece();  // Don't die for empty tensors
   return StringPiece(static_cast<char*>(buf_->data()), TotalBytes());
 }
 
 void* Tensor::data() const {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_98(mht_98_v, 1781, "", "./tensorflow/core/framework/tensor.cc", "Tensor::data");
+
   if (buf_ == nullptr) return nullptr;  // Don't die for empty tensors
   return static_cast<void*>(buf_->data());
 }
 
 bool Tensor::SharesBufferWith(const Tensor& b) const {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_99(mht_99_v, 1789, "", "./tensorflow/core/framework/tensor.cc", "Tensor::SharesBufferWith");
+
   return buf_ != nullptr && b.buf_ != nullptr &&
          buf_->root_buffer() == b.buf_->root_buffer();
 }
 
 string Tensor::DebugString(int num_values) const {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_100(mht_100_v, 1797, "", "./tensorflow/core/framework/tensor.cc", "Tensor::DebugString");
+
   return strings::StrCat("Tensor<type: ", DataTypeString(dtype()),
                          " shape: ", shape().DebugString(),
                          " values: ", SummarizeValue(num_values), ">");
 }
 
 string Tensor::DeviceSafeDebugString() const {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_101(mht_101_v, 1806, "", "./tensorflow/core/framework/tensor.cc", "Tensor::DeviceSafeDebugString");
+
   return strings::StrCat("Tensor<type: ", DataTypeString(dtype()),
                          " shape: ", shape().DebugString(), ">");
 }
 
 void Tensor::FillDescription(TensorDescription* description) const {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensorDTcc mht_102(mht_102_v, 1814, "", "./tensorflow/core/framework/tensor.cc", "Tensor::FillDescription");
+
   description->set_dtype(dtype());
   shape().AsProto(description->mutable_shape());
   if (buf_ != nullptr && buf_->data() != nullptr) {

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -74,6 +242,9 @@ namespace gpu {
 PLUGIN_REGISTRY_DEFINE_PLUGIN_ID(kMIOpenPlugin);
 
 string ToString(miopenStatus_t status) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_0(mht_0_v, 245, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "ToString");
+
   switch (status) {
     case miopenStatusSuccess:
       return "miopenStatusSuccess";
@@ -98,6 +269,9 @@ string ToString(miopenStatus_t status) {
 }
 
 string ToString(miopenConvFwdAlgorithm_t algorithm) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_1(mht_1_v, 272, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "ToString");
+
   string s;
   switch (algorithm) {
     case miopenConvolutionFwdAlgoGEMM:
@@ -120,6 +294,9 @@ string ToString(miopenConvFwdAlgorithm_t algorithm) {
 }
 
 string ToString(miopenConvBwdWeightsAlgorithm_t algorithm) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_2(mht_2_v, 297, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "ToString");
+
   string s;
   switch (algorithm) {
     case miopenConvolutionBwdWeightsAlgoGEMM:
@@ -139,6 +316,9 @@ string ToString(miopenConvBwdWeightsAlgorithm_t algorithm) {
 }
 
 string ToString(miopenConvBwdDataAlgorithm_t algorithm) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_3(mht_3_v, 319, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "ToString");
+
   string s;
   switch (algorithm) {
     case miopenConvolutionBwdDataAlgoGEMM:
@@ -164,6 +344,9 @@ string ToString(miopenConvBwdDataAlgorithm_t algorithm) {
 }
 
 string ToString(miopenConvAlgorithm_t algorithm) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_4(mht_4_v, 347, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "ToString");
+
   string s;
   switch (algorithm) {
     case miopenConvolutionAlgoGEMM:
@@ -194,11 +377,17 @@ class MIOpenHandle {
   // using handle.
   MIOpenHandle(gpu::ScopedActivateExecutorContext context,
                std::unique_ptr<absl::MutexLock> lock, miopenHandle_t handle)
-      : context_(std::move(context)), lock_(std::move(lock)), handle_(handle) {}
+      : context_(std::move(context)), lock_(std::move(lock)), handle_(handle) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_5(mht_5_v, 381, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenHandle");
+}
 
   // Returns MIOpen handle. To be passed directly to MIOpen APIs, don't keep
   // a copy.
-  miopenHandle_t handle() const { return handle_; }
+  miopenHandle_t handle() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_6(mht_6_v, 388, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "handle");
+ return handle_; }
 
  private:
   gpu::ScopedActivateExecutorContext context_;
@@ -380,6 +569,9 @@ namespace {
 const int kMaxMIOpenTensorSize = 5;
 
 uint64_t GetHashValue(miopenTensorDescriptor_t tensor_desc) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_7(mht_7_v, 572, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "GetHashValue");
+
   miopenDataType_t datatype = miopenFloat;
   int dims[kMaxMIOpenTensorSize] = {0};
   int strides[kMaxMIOpenTensorSize] = {0};
@@ -397,6 +589,9 @@ uint64_t GetHashValue(miopenTensorDescriptor_t tensor_desc) {
 }
 
 uint64_t GetHashValue(miopenConvolutionDescriptor_t conv_desc) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_8(mht_8_v, 592, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "GetHashValue");
+
   miopenConvolutionMode_t c_mode = miopenConvolution;
   int nd = 0;
   wrap::miopenGetConvolutionNdDescriptor(conv_desc, 0, &nd, nullptr, nullptr,
@@ -411,6 +606,9 @@ uint64_t GetHashValue(miopenConvolutionDescriptor_t conv_desc) {
 
   uint64_t hash_value = tensorflow::hash<int>()(c_mode);
   auto hash64Combine = [&hash_value](int element) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_9(mht_9_v, 609, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "lambda");
+
     tensorflow::Hash64Combine(hash_value, tensorflow::hash<int>()(element));
   };
   std::for_each(pad.begin(), pad.end(), hash64Combine);
@@ -435,6 +633,9 @@ class CachedFusionPlans {
                            miopenFusionPlanDescriptor_t* fusion_plan,
                            miopenFusionDirection_t fusion_direction,
                            miopenTensorDescriptor_t input_descriptor) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_10(mht_10_v, 636, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "FindOrCreate");
+
     absl::MutexLock lock{&cached_plans_mutex};
 
     bool found_cached_plan = false;
@@ -459,6 +660,9 @@ class CachedFusionPlans {
 
   // Need to figure out the right place to call this routine
   static void Clear() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_11(mht_11_v, 663, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "Clear");
+
     absl::MutexLock lock{&cached_plans_mutex};
 
     for (auto it : cached_plans) {
@@ -476,12 +680,18 @@ class CachedFusionPlans {
 
   // Is the Fusion plan corresponding to this hash unsupported
   static bool IsUnsupportedFusionPlan(uint64_t hash) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_12(mht_12_v, 683, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "IsUnsupportedFusionPlan");
+
     absl::MutexLock lock{&cached_plans_mutex};
     return unsupported_plans.count(hash) > 0;
   }
 
   // Mark the given hash value as corresponding to an unsupported fusion plan
   static void MarkFusionPlanUnsupported(uint64_t hash) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_13(mht_13_v, 692, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MarkFusionPlanUnsupported");
+
     absl::MutexLock lock{&cached_plans_mutex};
     unsupported_plans.insert(hash);
   }
@@ -506,6 +716,9 @@ std::set<uint64_t> CachedFusionPlans::unsupported_plans;
 
 dnn::ProfileResult GetProfileResultFromConvSolution(
     miopenConvSolution_t solution) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_14(mht_14_v, 719, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "GetProfileResultFromConvSolution");
+
   dnn::ProfileResult profile_result;
   profile_result.set_algorithm(
       {solution.solution_id, false, solution.workspace_size});
@@ -516,6 +729,9 @@ dnn::ProfileResult GetProfileResultFromConvSolution(
 
 dnn::ProfileResult GetProfileResultFromConvAlgoPerf(
     dnn::ConvolutionKind kind, miopenConvAlgoPerf_t algorithm) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_15(mht_15_v, 732, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "GetProfileResultFromConvAlgoPerf");
+
   int64_t algo_id;
   switch (kind) {
     case dnn::ConvolutionKind::FORWARD:
@@ -548,9 +764,15 @@ dnn::ProfileResult GetProfileResultFromConvAlgoPerf(
 class MIOpenAccess {
  public:
   // Takes ownership of the handle.
-  explicit MIOpenAccess(miopenHandle_t handle) : handle_(handle) {}
+  explicit MIOpenAccess(miopenHandle_t handle) : handle_(handle) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_16(mht_16_v, 768, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenAccess");
+}
 
   ~MIOpenAccess() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_17(mht_17_v, 773, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "~MIOpenAccess");
+
     absl::MutexLock lock(&mutex_);
     wrap::miopenDestroy(handle_);
   }
@@ -570,6 +792,9 @@ class MIOpenAccess {
   // therefore a bad idea (performance wise) to call any MIOpen APIs that
   // enqueue work in the stream.
   MIOpenHandle GetHandle(GpuExecutor* executor, Stream* stream) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_18(mht_18_v, 795, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "GetHandle");
+
     auto lock = absl::make_unique<absl::MutexLock>(&mutex_);
     mutex_.AssertHeld();
     gpu::ScopedActivateExecutorContext context(executor);
@@ -588,6 +813,9 @@ class MIOpenAccess {
 };
 
 MIOpenSupport::MIOpenSupport(GpuExecutor* parent) : parent_(parent) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_19(mht_19_v, 816, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::MIOpenSupport");
+
   // by default, the Get*Algorithm API will return the list of all applicable
   // algorithms
   return_best_algo_only_ = false;
@@ -609,6 +837,9 @@ MIOpenSupport::MIOpenSupport(GpuExecutor* parent) : parent_(parent) {
 }
 
 port::Status MIOpenSupport::Init() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_20(mht_20_v, 840, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::Init");
+
   ScopedActivateExecutorContext context(parent_);
   miopenHandle_t miopen_handle = nullptr;
   auto status = wrap::miopenCreateWithStream(
@@ -639,6 +870,9 @@ port::Status MIOpenSupport::Init() {
 
 port::StatusOr<perftools::gputools::dnn::VersionInfo>
 MIOpenSupport::GetVersion() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_21(mht_21_v, 873, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::GetVersion");
+
   // ROCM TODO: retrieve MIOpen version with its API
   return perftools::gputools::dnn::VersionInfo(1, 3, 0);
 }
@@ -649,6 +883,9 @@ class ScopedTensorDescriptor {
   ScopedTensorDescriptor(const BatchDescriptor& batch_descriptor,
                          miopenDataType_t elem_type)
       : handle_(nullptr) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_22(mht_22_v, 886, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "ScopedTensorDescriptor");
+
     auto status = wrap::miopenCreateTensorDescriptor(&handle_);
     if (status != miopenStatusSuccess) {
       LOG(FATAL) << "could not create miopen tensor descriptor: "
@@ -690,6 +927,9 @@ class ScopedTensorDescriptor {
   }
 
   ~ScopedTensorDescriptor() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_23(mht_23_v, 930, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "~ScopedTensorDescriptor");
+
     auto status = wrap::miopenDestroyTensorDescriptor(handle_);
     if (status != miopenStatusSuccess) {
       LOG(ERROR) << "could not destroy miopen tensor descriptor: "
@@ -697,7 +937,10 @@ class ScopedTensorDescriptor {
     }
   }
 
-  miopenTensorDescriptor_t handle() const { return handle_; }
+  miopenTensorDescriptor_t handle() const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_24(mht_24_v, 941, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "handle");
+ return handle_; }
 
  private:
   miopenTensorDescriptor_t handle_;  // Owned.
@@ -712,6 +955,9 @@ class ScopedFilterDescriptor {
   ScopedFilterDescriptor(const FilterDescriptor& filter_descriptor,
                          miopenDataType_t elem_type)
       : handle_(nullptr) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_25(mht_25_v, 958, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "ScopedFilterDescriptor");
+
     auto status = wrap::miopenCreateTensorDescriptor(&handle_);
     if (status != miopenStatusSuccess) {
       LOG(FATAL) << "could not create miopen filter descriptor: "
@@ -786,6 +1032,9 @@ class ScopedFilterDescriptor {
   }
 
   ~ScopedFilterDescriptor() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_26(mht_26_v, 1035, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "~ScopedFilterDescriptor");
+
     auto status = wrap::miopenDestroyTensorDescriptor(handle_);
     if (status != miopenStatusSuccess) {
       LOG(ERROR) << "could not destroy miopen filter descriptor: "
@@ -793,7 +1042,10 @@ class ScopedFilterDescriptor {
     }
   }
 
-  miopenTensorDescriptor_t handle() const { return handle_; }
+  miopenTensorDescriptor_t handle() const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_27(mht_27_v, 1046, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "handle");
+ return handle_; }
 
  private:
   // miopen filter descriptor this object creates. Owned.
@@ -810,6 +1062,9 @@ class ScopedConvolutionDescriptor {
       const ConvolutionDescriptor& convolution_descriptor,
       miopenDataType_t data_type)
       : handle_(nullptr) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_28(mht_28_v, 1065, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "ScopedConvolutionDescriptor");
+
     auto status = wrap::miopenCreateConvolutionDescriptor(&handle_);
     if (status != miopenStatusSuccess) {
       LOG(FATAL) << "could not create miopen convolution descriptor: "
@@ -853,6 +1108,9 @@ class ScopedConvolutionDescriptor {
     }
   }
   ~ScopedConvolutionDescriptor() {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_29(mht_29_v, 1111, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "~ScopedConvolutionDescriptor");
+
     auto status = wrap::miopenDestroyConvolutionDescriptor(handle_);
     if (status != miopenStatusSuccess) {
       LOG(ERROR) << "could not destroy miopen convolution descriptor: "
@@ -860,7 +1118,10 @@ class ScopedConvolutionDescriptor {
     }
   }
 
-  miopenConvolutionDescriptor_t handle() const { return handle_; }
+  miopenConvolutionDescriptor_t handle() const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_30(mht_30_v, 1122, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "handle");
+ return handle_; }
 
  private:
   miopenConvolutionDescriptor_t handle_;  // Owned.
@@ -874,6 +1135,9 @@ class ScopedPoolingDescriptor {
  public:
   ScopedPoolingDescriptor(const PoolingDescriptor& pooling_descriptor)
       : handle_(nullptr) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_31(mht_31_v, 1138, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "ScopedPoolingDescriptor");
+
     auto status = wrap::miopenCreatePoolingDescriptor(&handle_);
     if (status != miopenStatusSuccess) {
       LOG(FATAL) << "could not create miopen pooling descriptor: "
@@ -914,6 +1178,9 @@ class ScopedPoolingDescriptor {
     }
   }
   ~ScopedPoolingDescriptor() {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_32(mht_32_v, 1181, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "~ScopedPoolingDescriptor");
+
     auto status = wrap::miopenDestroyPoolingDescriptor(handle_);
     if (status != miopenStatusSuccess) {
       LOG(ERROR) << "could not destroy miopen pooling descriptor: "
@@ -921,7 +1188,10 @@ class ScopedPoolingDescriptor {
     }
   }
 
-  miopenPoolingDescriptor_t handle() const { return handle_; }
+  miopenPoolingDescriptor_t handle() const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_33(mht_33_v, 1192, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "handle");
+ return handle_; }
 
  private:
   miopenPoolingDescriptor_t handle_;  // Owned.
@@ -934,6 +1204,9 @@ class ScopedNormalizeDescriptor {
  public:
   ScopedNormalizeDescriptor(const NormalizeDescriptor& normalize_descriptor)
       : handle_(nullptr) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_34(mht_34_v, 1207, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "ScopedNormalizeDescriptor");
+
     auto status = wrap::miopenCreateLRNDescriptor(&handle_);
     if (status != miopenStatusSuccess) {
       LOG(FATAL) << "could not create miopen LRN descriptor: "
@@ -968,6 +1241,9 @@ class ScopedNormalizeDescriptor {
   }
 
   ~ScopedNormalizeDescriptor() {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_35(mht_35_v, 1244, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "~ScopedNormalizeDescriptor");
+
     auto status = wrap::miopenDestroyLRNDescriptor(handle_);
     if (status != miopenStatusSuccess) {
       LOG(ERROR) << "could not destroy miopen LRN descriptor: "
@@ -975,7 +1251,10 @@ class ScopedNormalizeDescriptor {
     }
   }
 
-  miopenLRNDescriptor_t handle() const { return handle_; }
+  miopenLRNDescriptor_t handle() const {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_36(mht_36_v, 1255, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "handle");
+ return handle_; }
 
  private:
   miopenLRNDescriptor_t handle_;  // Owned.
@@ -993,6 +1272,9 @@ class ScopedActivationDescriptor {
         alpha_(0.0),
         beta_(0.0),
         gamma_(0.0) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_37(mht_37_v, 1275, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "ScopedActivationDescriptor");
+
     auto status = wrap::miopenCreateActivationDescriptor(&handle_);
     if (status != miopenStatusSuccess) {
       LOG(FATAL) << "call to miopenCreateActivationDescriptor failed: "
@@ -1037,6 +1319,9 @@ class ScopedActivationDescriptor {
   }
 
   ~ScopedActivationDescriptor() {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_38(mht_38_v, 1322, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "~ScopedActivationDescriptor");
+
     auto status = wrap::miopenDestroyActivationDescriptor(handle_);
     if (status != miopenStatusSuccess) {
       LOG(FATAL) << "call to miopenDestroyActivationDescriptor failed: "
@@ -1044,9 +1329,15 @@ class ScopedActivationDescriptor {
     }
   }
 
-  miopenActivationDescriptor_t handle() const { return handle_; }
+  miopenActivationDescriptor_t handle() const {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_39(mht_39_v, 1333, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "handle");
+ return handle_; }
 
   uint64_t GetHashValue() {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_40(mht_40_v, 1338, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "GetHashValue");
+
     uint64_t hash_value = tensorflow::hash<int>()(miopen_activation_mode_);
     hash_value = tensorflow::Hash64Combine(hash_value,
                                            tensorflow::hash<double>()(alpha_));
@@ -1085,6 +1376,9 @@ class ScopedFusionPlanBase {
         fusion_plan_(nullptr),
         fusion_args_(nullptr),
         fusion_plan_compiled_(false) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_41(mht_41_v, 1379, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "ScopedFusionPlanBase");
+
     auto status = wrap::miopenCreateOperatorArgs(&fusion_args_);
     if (status != miopenStatusSuccess) {
       LOG(FATAL) << "call to miopenCreateOperatorArgs failed: "
@@ -1093,6 +1387,9 @@ class ScopedFusionPlanBase {
   }
 
   virtual ~ScopedFusionPlanBase() {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_42(mht_42_v, 1390, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "~ScopedFusionPlanBase");
+
     auto status = wrap::miopenDestroyOperatorArgs(fusion_args_);
     if (status != miopenStatusSuccess) {
       LOG(FATAL) << "call to miopenDestroyoperatorArgs failed: "
@@ -1104,6 +1401,9 @@ class ScopedFusionPlanBase {
                          const void* input_data,
                          miopenTensorDescriptor_t output_descriptor,
                          void* output_data) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_43(mht_43_v, 1404, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "Execute");
+
     auto status = wrap::miopenExecuteFusionPlan(
         miopen_handle_, fusion_plan_, input_descriptor, input_data,
         output_descriptor, output_data, fusion_args_);
@@ -1115,11 +1415,17 @@ class ScopedFusionPlanBase {
     return status;
   }
 
-  bool CompilationSucceeded() { return fusion_plan_compiled_; }
+  bool CompilationSucceeded() {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_44(mht_44_v, 1419, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "CompilationSucceeded");
+ return fusion_plan_compiled_; }
 
  protected:
   miopenStatus_t SetConvolutionArgs(const int op_idx, const float* alpha,
                                     const float* beta, const void* data) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_45(mht_45_v, 1426, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "SetConvolutionArgs");
+
     miopenFusionOpDescriptor_t conv_op;
     auto status = wrap::miopenFusionPlanGetOp(fusion_plan_, op_idx, &conv_op);
     if (status != miopenStatusSuccess) {
@@ -1138,6 +1444,9 @@ class ScopedFusionPlanBase {
 
   miopenStatus_t SetBiasArgs(const int op_idx, const float* alpha,
                              const float* beta, const void* data) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_46(mht_46_v, 1447, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "SetBiasArgs");
+
     miopenFusionOpDescriptor_t bias_op;
     auto status = wrap::miopenFusionPlanGetOp(fusion_plan_, op_idx, &bias_op);
     if (status != miopenStatusSuccess) {
@@ -1159,6 +1468,9 @@ class ScopedFusionPlanBase {
                                            const void* offset, const void* mean,
                                            const void* variance,
                                            double epsilon) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_47(mht_47_v, 1471, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "SetBatchNormInferenceArgs");
+
     miopenFusionOpDescriptor_t batchnorm_op;
     auto status =
         wrap::miopenFusionPlanGetOp(fusion_plan_, op_idx, &batchnorm_op);
@@ -1182,6 +1494,9 @@ class ScopedFusionPlanBase {
       const void* scale, const void* offset, void* running_mean,
       void* running_variance, void* saved_mean, void* saved_inv_variance,
       double epsilon, double exponential_average_factor) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_48(mht_48_v, 1497, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "SetBatchNormForwardArgs");
+
     miopenFusionOpDescriptor_t batchnorm_op;
     auto status =
         wrap::miopenFusionPlanGetOp(fusion_plan_, op_idx, &batchnorm_op);
@@ -1207,6 +1522,9 @@ class ScopedFusionPlanBase {
                                           void* scale_grad, void* offset_grad,
                                           const void* saved_mean,
                                           const void* saved_inv_variance) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_49(mht_49_v, 1525, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "SetBatchNormBackwardArgs");
+
     miopenFusionOpDescriptor_t batchnorm_op;
     auto status =
         wrap::miopenFusionPlanGetOp(fusion_plan_, op_idx, &batchnorm_op);
@@ -1229,6 +1547,9 @@ class ScopedFusionPlanBase {
                                           const float* beta, double activ_alpha,
                                           double activ_beta,
                                           double activ_gamma) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_50(mht_50_v, 1550, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "SetActivationForwardArgs");
+
     miopenFusionOpDescriptor_t actv_op;
     auto status = wrap::miopenFusionPlanGetOp(fusion_plan_, op_idx, &actv_op);
     if (status != miopenStatusSuccess) {
@@ -1251,6 +1572,9 @@ class ScopedFusionPlanBase {
                                            double activ_alpha,
                                            double activ_beta,
                                            double activ_gamma) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_51(mht_51_v, 1575, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "SetActivationBackwardArgs");
+
     miopenFusionOpDescriptor_t actv_op;
     auto status = wrap::miopenFusionPlanGetOp(fusion_plan_, op_idx, &actv_op);
     if (status != miopenStatusSuccess) {
@@ -1287,6 +1611,9 @@ class ScopedFusionPlanConvolutionBiasActivation : public ScopedFusionPlanBase {
       ScopedActivationDescriptor& activation_descriptor)
       : ScopedFusionPlanBase(miopen_handle, miopenVerticalFusion,
                              input_descriptor) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_52(mht_52_v, 1614, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "ScopedFusionPlanConvolutionBiasActivation");
+
     uint64_t hash = GetFusionOpHashValue(
         miopen_handle, input_descriptor, filter_descriptor, conv_descriptor,
         bias_descriptor, activation_descriptor);
@@ -1336,6 +1663,9 @@ class ScopedFusionPlanConvolutionBiasActivation : public ScopedFusionPlanBase {
   }
 
   miopenStatus_t SetConvolutionArgs(const void* filter_data) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_53(mht_53_v, 1666, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "SetConvolutionArgs");
+
     float alpha = 1.0;
     float beta = 0.0;
     return ScopedFusionPlanBase::SetConvolutionArgs(k_conv_op_idx, &alpha,
@@ -1343,6 +1673,9 @@ class ScopedFusionPlanConvolutionBiasActivation : public ScopedFusionPlanBase {
   }
 
   miopenStatus_t SetBiasArgs(const void* bias_data) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_54(mht_54_v, 1676, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "SetBiasArgs");
+
     float alpha = 1.0;
     float beta = 0.0;
     return ScopedFusionPlanBase::SetBiasArgs(k_bias_op_idx, &alpha, &beta,
@@ -1351,6 +1684,9 @@ class ScopedFusionPlanConvolutionBiasActivation : public ScopedFusionPlanBase {
 
   miopenStatus_t SetActivationForwardArgs(
       ScopedActivationDescriptor& activation_descriptor) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_55(mht_55_v, 1687, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "SetActivationForwardArgs");
+
     float alpha = 1.0;
     float beta = 0.0;
 
@@ -1365,6 +1701,9 @@ class ScopedFusionPlanConvolutionBiasActivation : public ScopedFusionPlanBase {
       miopenConvolutionDescriptor_t conv_descriptor,
       miopenTensorDescriptor_t bias_descriptor,
       ScopedActivationDescriptor& activation_descriptor) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_56(mht_56_v, 1704, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "GetFusionOpHashValue");
+
     uint64_t hash_value = tensorflow::Hash64("ConvolutionBiasActivation");
 
     hash_value = tensorflow::Hash64Combine(
@@ -1401,6 +1740,9 @@ class ScopedFusionPlanBatchNormActivationInference
       ScopedActivationDescriptor& activation_descriptor)
       : ScopedFusionPlanBase(miopen_handle, miopenVerticalFusion,
                              input_descriptor) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_57(mht_57_v, 1743, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "ScopedFusionPlanBatchNormActivationInference");
+
     uint64_t hash = GetFusionOpHashValue(miopen_handle, input_descriptor,
                                          scale_offset_mean_variance_descriptor,
                                          activation_descriptor);
@@ -1448,6 +1790,9 @@ class ScopedFusionPlanBatchNormActivationInference
                                            const void* offset, const void* mean,
                                            const void* variance,
                                            double epsilon) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_58(mht_58_v, 1793, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "SetBatchNormInferenceArgs");
+
     float alpha = 1.0;
     float beta = 0.0;
     return ScopedFusionPlanBase::SetBatchNormInferenceArgs(
@@ -1457,6 +1802,9 @@ class ScopedFusionPlanBatchNormActivationInference
 
   miopenStatus_t SetActivationForwardArgs(
       ScopedActivationDescriptor& activation_descriptor) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_59(mht_59_v, 1805, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "SetActivationForwardArgs");
+
     float alpha = 1.0;
     float beta = 0.0;
 
@@ -1469,6 +1817,9 @@ class ScopedFusionPlanBatchNormActivationInference
       miopenHandle_t miopen_handle, miopenTensorDescriptor_t input_descriptor,
       miopenTensorDescriptor_t scale_offset_mean_variance_descriptor,
       ScopedActivationDescriptor& activation_descriptor) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_60(mht_60_v, 1820, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "GetFusionOpHashValue");
+
     uint64_t hash_value = tensorflow::Hash64("BatchNormActivationInference");
 
     hash_value = tensorflow::Hash64Combine(
@@ -1501,6 +1852,9 @@ class ScopedFusionPlanBatchNormActivationForward : public ScopedFusionPlanBase {
       ScopedActivationDescriptor& activation_descriptor)
       : ScopedFusionPlanBase(miopen_handle, miopenVerticalFusion,
                              input_descriptor) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_61(mht_61_v, 1855, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "ScopedFusionPlanBatchNormActivationForward");
+
     uint64_t hash = GetFusionOpHashValue(miopen_handle, input_descriptor,
                                          scale_offset_mean_variance_descriptor,
                                          activation_descriptor);
@@ -1548,6 +1902,9 @@ class ScopedFusionPlanBatchNormActivationForward : public ScopedFusionPlanBase {
                                          void* batch_mean, void* batch_var,
                                          void* saved_mean, void* saved_var,
                                          double epsilon) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_62(mht_62_v, 1905, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "SetBatchNormForwardArgs");
+
     float alpha = 1.0;
     float beta = 0.0;
     return ScopedFusionPlanBase::SetBatchNormForwardArgs(
@@ -1557,6 +1914,9 @@ class ScopedFusionPlanBatchNormActivationForward : public ScopedFusionPlanBase {
 
   miopenStatus_t SetActivationForwardArgs(
       ScopedActivationDescriptor& activation_descriptor) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_63(mht_63_v, 1917, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "SetActivationForwardArgs");
+
     float alpha = 1.0;
     float beta = 0.0;
 
@@ -1569,6 +1929,9 @@ class ScopedFusionPlanBatchNormActivationForward : public ScopedFusionPlanBase {
       miopenHandle_t miopen_handle, miopenTensorDescriptor_t input_descriptor,
       miopenTensorDescriptor_t scale_offset_mean_variance_descriptor,
       ScopedActivationDescriptor& activation_descriptor) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_64(mht_64_v, 1932, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "GetFusionOpHashValue");
+
     uint64_t hash_value = tensorflow::Hash64("BatchNormActivationForward");
 
     hash_value = tensorflow::Hash64Combine(
@@ -1602,6 +1965,9 @@ class ScopedFusionPlanBatchNormActivationBackward
       ScopedActivationDescriptor& activation_descriptor)
       : ScopedFusionPlanBase(miopen_handle, miopenVerticalFusion,
                              input_descriptor) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_65(mht_65_v, 1968, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "ScopedFusionPlanBatchNormActivationBackward");
+
     uint64_t hash = GetFusionOpHashValue(miopen_handle, input_descriptor,
                                          scale_offset_mean_variance_descriptor,
                                          activation_descriptor);
@@ -1649,6 +2015,9 @@ class ScopedFusionPlanBatchNormActivationBackward
                                           const void* saved_mean,
                                           const void* saved_var,
                                           void* scale_grad, void* offset_grad) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_66(mht_66_v, 2018, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "SetBatchNormBackwardArgs");
+
     float alpha = 1.0;
     float beta = 0.0;
 
@@ -1659,6 +2028,9 @@ class ScopedFusionPlanBatchNormActivationBackward
 
   miopenStatus_t SetActivationBackwardArgs(
       ScopedActivationDescriptor& activation_descriptor, const void* y) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_67(mht_67_v, 2031, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "SetActivationBackwardArgs");
+
     float alpha = 1.0;
     float beta = 0.0;
 
@@ -1671,6 +2043,9 @@ class ScopedFusionPlanBatchNormActivationBackward
       miopenHandle_t miopen_handle, miopenTensorDescriptor_t input_descriptor,
       miopenTensorDescriptor_t scale_offset_mean_variance_descriptor,
       ScopedActivationDescriptor& activation_descriptor) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_68(mht_68_v, 2046, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "GetFusionOpHashValue");
+
     uint64_t hash_value = tensorflow::Hash64("BatchNormActivationBackward");
 
     hash_value = tensorflow::Hash64Combine(
@@ -1698,6 +2073,9 @@ namespace {
 miopenDataType_t ToMIOpenDataType(
     dnn::DataType data_type,
     dnn::DataLayout data_layout = dnn::DataLayout::kBatchDepthYX) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_69(mht_69_v, 2076, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "ToMIOpenDataType");
+
   switch (data_type) {
     case dnn::DataType::kFloat:
       return miopenFloat;
@@ -1710,6 +2088,9 @@ miopenDataType_t ToMIOpenDataType(
 }
 
 miopenRNNInputMode_t ToMIOpenRnnInputMode(dnn::RnnInputMode input_mode) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_70(mht_70_v, 2091, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "ToMIOpenRnnInputMode");
+
   switch (input_mode) {
     case dnn::RnnInputMode::kRnnLinearSkip:
       return miopenRNNlinear;
@@ -1722,6 +2103,9 @@ miopenRNNInputMode_t ToMIOpenRnnInputMode(dnn::RnnInputMode input_mode) {
 
 miopenRNNDirectionMode_t ToMIOpenRnnDirectionMode(
     dnn::RnnDirectionMode direction_mode) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_71(mht_71_v, 2106, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "ToMIOpenRnnDirectionMode");
+
   switch (direction_mode) {
     case dnn::RnnDirectionMode::kRnnUnidirectional:
       return miopenRNNunidirection;
@@ -1734,6 +2118,9 @@ miopenRNNDirectionMode_t ToMIOpenRnnDirectionMode(
 }
 
 miopenRNNMode_t ToMIOpenRnnMode(dnn::RnnMode rnn_mode) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_72(mht_72_v, 2121, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "ToMIOpenRnnMode");
+
   switch (rnn_mode) {
     case dnn::RnnMode::kRnnRelu:
       return miopenRNNRELU;
@@ -1766,11 +2153,20 @@ class MixinBase<void> {};
 template <typename Base>
 class MIOpenDescriptorCommon : public MixinBase<Base> {
  public:
-  bool ok() const { return status_.ok(); }
-  port::Status Status() const { return status_; }
+  bool ok() const {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_73(mht_73_v, 2157, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "ok");
+ return status_.ok(); }
+  port::Status Status() const {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_74(mht_74_v, 2161, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "Status");
+ return status_; }
 
  protected:
-  void SetFailure(const port::Status& status) { status_.Update(status); }
+  void SetFailure(const port::Status& status) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_75(mht_75_v, 2167, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "SetFailure");
+ status_.Update(status); }
   port::Status status_;
 };
 
@@ -1781,19 +2177,34 @@ class MIOpenRnnParamsDescriptor : public MIOpenDescriptorCommon<void> {
   MIOpenRnnParamsDescriptor(miopenHandle_t miopen_handle,
                             const MIOpenRnnDescriptor& rnn_desc);
   ~MIOpenRnnParamsDescriptor() {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_76(mht_76_v, 2180, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "~MIOpenRnnParamsDescriptor");
+
     auto status = wrap::miopenDestroyTensorDescriptor(handle_);
     RETURN_IF_MIOPEN_ERROR(status, "Failed to destroy RNN tensor descriptor");
   }
   miopenTensorDescriptor_t handle() const {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_77(mht_77_v, 2187, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "handle");
+
     if (!ok()) return nullptr;
     return handle_;
   }
-  int64_t params_size_in_bytes() const { return params_size_in_bytes_; }
+  int64_t params_size_in_bytes() const {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_78(mht_78_v, 2194, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "params_size_in_bytes");
+ return params_size_in_bytes_; }
   ParamsRegions params_weights() const {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_79(mht_79_v, 2198, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "params_weights");
+
     if (!ok()) return ParamsRegions();
     return weights_;
   }
   ParamsRegions params_biases() const {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_80(mht_80_v, 2205, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "params_biases");
+
     if (!ok()) return ParamsRegions();
     return biases_;
   }
@@ -1826,6 +2237,9 @@ class MIOpenRnnDescriptor : public MIOpenDescriptorCommon<dnn::RnnDescriptor> {
         direction_mode_(direction_mode),
         rnn_mode_(rnn_mode),
         data_type_(data_type) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_81(mht_81_v, 2240, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenRnnDescriptor");
+
     // Create the RNN handle
     auto status = wrap::miopenCreateRNNDescriptor(&rnn_desc_);
     RETURN_IF_MIOPEN_ERROR(status, "Unable to create RNN descriptor");
@@ -1845,34 +2259,73 @@ class MIOpenRnnDescriptor : public MIOpenDescriptorCommon<dnn::RnnDescriptor> {
     }
   }
   ~MIOpenRnnDescriptor() override {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_82(mht_82_v, 2262, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "~MIOpenRnnDescriptor");
+
     if (rnn_desc_) {
       auto status = wrap::miopenDestroyRNNDescriptor(rnn_desc_);
       RETURN_IF_MIOPEN_ERROR(status, "Unable to destroy RNN descriptor");
     }
   }
   miopenRNNDescriptor_t handle() const {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_83(mht_83_v, 2271, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "handle");
+
     if (!ok()) return nullptr;
     return rnn_desc_;
   }
-  int num_layers() const { return num_layers_; }
-  int hidden_size() const { return hidden_size_; }
-  int input_size() const { return input_size_; }
-  miopenRNNInputMode_t input_mode() const { return input_mode_; }
-  miopenRNNDirectionMode_t direction_mode() const { return direction_mode_; }
-  miopenRNNMode_t rnn_mode() const { return rnn_mode_; }
-  miopenDataType_t data_type() const { return data_type_; }
+  int num_layers() const {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_84(mht_84_v, 2278, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "num_layers");
+ return num_layers_; }
+  int hidden_size() const {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_85(mht_85_v, 2282, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "hidden_size");
+ return hidden_size_; }
+  int input_size() const {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_86(mht_86_v, 2286, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "input_size");
+ return input_size_; }
+  miopenRNNInputMode_t input_mode() const {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_87(mht_87_v, 2290, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "input_mode");
+ return input_mode_; }
+  miopenRNNDirectionMode_t direction_mode() const {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_88(mht_88_v, 2294, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "direction_mode");
+ return direction_mode_; }
+  miopenRNNMode_t rnn_mode() const {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_89(mht_89_v, 2298, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "rnn_mode");
+ return rnn_mode_; }
+  miopenDataType_t data_type() const {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_90(mht_90_v, 2302, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "data_type");
+ return data_type_; }
   int64_t ParamsSizeInBytes() const override {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_91(mht_91_v, 2306, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "ParamsSizeInBytes");
+
     return miopen_params_desc_->params_size_in_bytes();
   }
   miopenTensorDescriptor_t params_handle() const {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_92(mht_92_v, 2312, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "params_handle");
+
     if (!miopen_params_desc_) return nullptr;
     return miopen_params_desc_->handle();
   }
   ParamsRegions ParamsWeightRegions() const override {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_93(mht_93_v, 2319, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "ParamsWeightRegions");
+
     if (!ok()) return ParamsRegions();
     return miopen_params_desc_->params_weights();
   }
   ParamsRegions ParamsBiasRegions() const override {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_94(mht_94_v, 2326, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "ParamsBiasRegions");
+
     if (!ok()) return ParamsRegions();
     return miopen_params_desc_->params_biases();
   }
@@ -1896,6 +2349,9 @@ class MIOpenRnnDescriptor : public MIOpenDescriptorCommon<dnn::RnnDescriptor> {
 // Get ID of the internal parameter tensor.
 //
 int MIOpenRnnParamsDescriptor::GetRegionCountPerLayer() const {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_95(mht_95_v, 2352, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenRnnParamsDescriptor::GetRegionCountPerLayer");
+
   auto rnn_mode = rnn_desc_->rnn_mode();
   switch (rnn_mode) {
     case miopenRNNRELU:
@@ -1919,6 +2375,9 @@ class MIOpenRnnSequenceTensorDescriptor
         batch_size_(batch_size),
         data_size_(data_size),
         data_type_(data_type) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_96(mht_96_v, 2378, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenRnnSequenceTensorDescriptor");
+
     miopenTensorDescriptor_t handle = nullptr;
     if (seq_length <= 0) {
       string error_msg =
@@ -1939,6 +2398,9 @@ class MIOpenRnnSequenceTensorDescriptor
   }
 
   ~MIOpenRnnSequenceTensorDescriptor() override {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_97(mht_97_v, 2401, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "~MIOpenRnnSequenceTensorDescriptor");
+
     // Only the first one needs to be destroyed. All others are the same.
     auto status = wrap::miopenDestroyTensorDescriptor(handles_[0]);
     RETURN_IF_MIOPEN_ERROR(status,
@@ -1946,14 +2408,26 @@ class MIOpenRnnSequenceTensorDescriptor
   }
 
   const miopenTensorDescriptor_t* handles() const {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_98(mht_98_v, 2411, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "handles");
+
     if (!ok()) return nullptr;
     CHECK(!handles_.empty()) << "handles cannot be empty";
     return handles_.data();
   }
 
-  int seq_length() const { return seq_length_; }
-  int batch_size() const { return batch_size_; }
-  int data_size() const { return data_size_; }
+  int seq_length() const {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_99(mht_99_v, 2420, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "seq_length");
+ return seq_length_; }
+  int batch_size() const {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_100(mht_100_v, 2424, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "batch_size");
+ return batch_size_; }
+  int data_size() const {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_101(mht_101_v, 2428, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "data_size");
+ return data_size_; }
 
  private:
   int seq_length_;
@@ -1975,6 +2449,9 @@ class MIOpenRnnStateTensorDescriptor
         batch_size_(batch_size),
         data_size_(data_size),
         data_type_(data_type) {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_102(mht_102_v, 2452, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenRnnStateTensorDescriptor");
+
     auto status = wrap::miopenCreateTensorDescriptor(&handle_);
     RETURN_IF_MIOPEN_ERROR(status, "Failed to create tensor descriptor");
     std::array<int, 3> dims = {{num_layers, batch_size, data_size}};
@@ -1985,6 +2462,9 @@ class MIOpenRnnStateTensorDescriptor
   }
 
   ~MIOpenRnnStateTensorDescriptor() override {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_103(mht_103_v, 2465, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "~MIOpenRnnStateTensorDescriptor");
+
     if (!handle_) {
       auto status = wrap::miopenDestroyTensorDescriptor(handle_);
       RETURN_IF_MIOPEN_ERROR(status, "Unable to destroy RNN state tensor");
@@ -1992,12 +2472,24 @@ class MIOpenRnnStateTensorDescriptor
   }
 
   miopenTensorDescriptor_t handle() const {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_104(mht_104_v, 2475, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "handle");
+
     if (!ok()) return nullptr;
     return handle_;
   }
-  int num_layers() const { return num_layers_; }
-  int batch_size() const { return batch_size_; }
-  int data_size() const { return data_size_; }
+  int num_layers() const {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_105(mht_105_v, 2482, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "num_layers");
+ return num_layers_; }
+  int batch_size() const {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_106(mht_106_v, 2486, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "batch_size");
+ return batch_size_; }
+  int data_size() const {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_107(mht_107_v, 2490, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "data_size");
+ return data_size_; }
 
  private:
   miopenTensorDescriptor_t handle_;
@@ -2035,6 +2527,9 @@ bool ExtractAndCheckRnnForward(
     const DeviceMemory<T>& output_h_data,
     const MIOpenRnnStateTensorDescriptor& output_c_desc,
     const DeviceMemory<T>& output_c_data, RnnModelDims* model_dims) {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_108(mht_108_v, 2530, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "ExtractAndCheckRnnForward");
+
   // extract model parameters
   model_dims->num_layers = rnn_desc.num_layers();
   model_dims->batch_size = input_desc.batch_size();
@@ -2084,6 +2579,9 @@ bool ExtractAndCheckRnnForward(
 bool CheckRNNParameterSize(
     miopenHandle_t miopen_handle, const MIOpenRnnDescriptor& rnn_desc,
     const MIOpenRnnSequenceTensorDescriptor& input_desc) {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_109(mht_109_v, 2582, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "CheckRNNParameterSize");
+
   size_t params_size_in_bytes = 0;
   auto status = wrap::miopenGetRNNParamsSize(
       miopen_handle /*handle*/, rnn_desc.handle() /*rnnDesc*/,
@@ -2102,6 +2600,9 @@ bool CreateRnnWorkspace(Stream* stream, miopenHandle_t miopen_handle,
                         const MIOpenRnnSequenceTensorDescriptor& input_desc,
                         ScratchAllocator* workspace_allocator,
                         DeviceMemory<uint8>* workspace) {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_110(mht_110_v, 2603, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "CreateRnnWorkspace");
+
   // Query the workspace size.
   size_t workspace_size_in_bytes = 0;
   auto status = wrap::miopenGetRNNWorkspaceSize(
@@ -2147,6 +2648,9 @@ bool MIOpenSupport::DoRnnForwardImpl(
     DeviceMemory<T>* output_c_data, bool is_training,
     ScratchAllocator* reserve_space_allocator,
     ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_111(mht_111_v, 2651, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoRnnForwardImpl");
+
   // extract model parameters
   RnnModelDims model_dims;
   bool res = ExtractAndCheckRnnForward(
@@ -2269,6 +2773,9 @@ bool MIOpenSupport::DoRnnBackwardImpl(
     DeviceMemory<T>* params_backprop_data,
     DeviceMemory<uint8>* reserve_space_data,
     ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_112(mht_112_v, 2776, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoRnnBackwardImpl");
+
   // extract model parameters
   RnnModelDims model_dims;
   bool res = ExtractAndCheckRnnForward(
@@ -2367,6 +2874,9 @@ bool MIOpenSupport::DoRnnBackwardImpl(
 MIOpenRnnParamsDescriptor::MIOpenRnnParamsDescriptor(
     miopenHandle_t miopen_handle, const MIOpenRnnDescriptor& rnn_desc)
     : handle_(nullptr), rnn_desc_(&rnn_desc), params_size_in_bytes_(0) {
+   std::vector<std::string> mht_113_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_113(mht_113_v, 2877, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenRnnParamsDescriptor::MIOpenRnnParamsDescriptor");
+
   miopenTensorDescriptor_t input_desc = nullptr;
   {
     // Query the params size.
@@ -2408,6 +2918,9 @@ MIOpenRnnParamsDescriptor::MIOpenRnnParamsDescriptor(
 class MIOpenCTCLossDescriptor {
  public:
   explicit MIOpenCTCLossDescriptor(miopenDataType_t data_type) {
+   std::vector<std::string> mht_114_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_114(mht_114_v, 2921, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenCTCLossDescriptor");
+
     auto status = wrap::miopenCreateCTCLossDescriptor(&handle_);
     if (status != miopenStatusSuccess) {
       LOG(FATAL) << "call to miopenCreateCTCLossDescriptor failed: "
@@ -2424,6 +2937,9 @@ class MIOpenCTCLossDescriptor {
   }
 
   ~MIOpenCTCLossDescriptor() {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_115(mht_115_v, 2940, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "~MIOpenCTCLossDescriptor");
+
     auto status = wrap::miopenDestroyCTCLossDescriptor(handle_);
     if (status != miopenStatusSuccess) {
       LOG(FATAL) << "call to miopenDestroyCTCLossDescriptor failed: "
@@ -2431,7 +2947,10 @@ class MIOpenCTCLossDescriptor {
     }
   }
 
-  miopenCTCLossDescriptor_t handle() const { return handle_; }
+  miopenCTCLossDescriptor_t handle() const {
+   std::vector<std::string> mht_116_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_116(mht_116_v, 2951, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "handle");
+ return handle_; }
 
  private:
   miopenCTCLossDescriptor_t handle_;  // Owned
@@ -2448,6 +2967,9 @@ port::Status MIOpenSupport::DoPrepareForCtcLoss(
     absl::Span<const int> input_lengths_data,
     ScratchAllocator* scratch_allocator, DeviceMemory<uint8>* scratch_memory,
     int* ctc_loss_algo_id) {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_117(mht_117_v, 2970, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoPrepareForCtcLoss");
+
   auto miopen = miopen_->GetHandle(parent_, stream);
 
   MIOpenCTCLossDescriptor miopen_ctc_loss_desc(ToMIOpenDataType(element_type));
@@ -2511,6 +3033,9 @@ port::Status MIOpenSupport::DoCtcLossImpl(
     const MIOpenRnnStateTensorDescriptor& grads_desc,
     DeviceMemoryBase grads_data, const MIOpenCTCLossDescriptor& ctc_loss_desc,
     DeviceMemory<uint8> scratch_memory, int ctc_loss_algo_id) {
+   std::vector<std::string> mht_118_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_118(mht_118_v, 3036, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoCtcLossImpl");
+
   auto miopen = miopen_->GetHandle(parent_, stream);
 
   int kNumTimestamps = probs_desc.num_layers();
@@ -2542,6 +3067,9 @@ port::Status MIOpenSupport::DoCtcLoss(
     const dnn::RnnStateTensorDescriptor& grads_desc,
     DeviceMemoryBase grads_data, DeviceMemory<uint8> scratch_memory,
     int ctc_loss_algo_id) {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_119(mht_119_v, 3070, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoCtcLoss");
+
   // Current MIOPen CTC Loss only supports the float datatype
   if (element_type != dnn::DataType::kFloat) {
     return port::Status(port::error::INVALID_ARGUMENT,
@@ -2571,6 +3099,9 @@ MIOpenSupport::createRnnDescriptor(
     dnn::DataType data_type, const dnn::AlgorithmConfig& algorithm_config,
     float dropout, uint64_t seed, ScratchAllocator* state_allocator,
     bool use_padded_io) {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_120(mht_120_v, 3102, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::createRnnDescriptor");
+
   // ROCM TODO: batch_size is used in dynamic persistent RNN algorithm and is
   // not supported by MIOpen now.
   if (use_padded_io) {
@@ -2602,6 +3133,9 @@ port::StatusOr<std::unique_ptr<dnn::RnnSequenceTensorDescriptor>>
 MIOpenSupport::createRnnSequenceTensorDescriptor(int seq_length, int batch_size,
                                                  int data_size,
                                                  dnn::DataType data_type) {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_121(mht_121_v, 3136, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::createRnnSequenceTensorDescriptor");
+
   std::unique_ptr<MIOpenRnnSequenceTensorDescriptor> seq_desc(
       new MIOpenRnnSequenceTensorDescriptor(seq_length, batch_size, data_size,
                                             ToMIOpenDataType(data_type)));
@@ -2616,6 +3150,9 @@ port::StatusOr<std::unique_ptr<dnn::RnnStateTensorDescriptor>>
 MIOpenSupport::createRnnStateTensorDescriptor(int num_layer, int batch_size,
                                               int data_size,
                                               dnn::DataType data_type) {
+   std::vector<std::string> mht_122_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_122(mht_122_v, 3153, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::createRnnStateTensorDescriptor");
+
   std::unique_ptr<MIOpenRnnStateTensorDescriptor> state_desc(
       new MIOpenRnnStateTensorDescriptor(num_layer, batch_size, data_size,
                                          ToMIOpenDataType(data_type)));
@@ -2645,6 +3182,9 @@ bool MIOpenSupport::DoRnnForward(
     ScratchAllocator* reserve_space_allocator,
     ScratchAllocator* workspace_allocator,
     dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_123_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_123(mht_123_v, 3185, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoRnnForward");
+
   // ROCM TODO: output_profile_result is ignore for now
 
   const MIOpenRnnDescriptor& miopen_rnn_desc =
@@ -2688,6 +3228,9 @@ bool MIOpenSupport::DoRnnForward(
     ScratchAllocator* reserve_space_allocator,
     ScratchAllocator* workspace_allocator,
     dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_124_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_124(mht_124_v, 3231, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoRnnForward");
+
   // ROCM TODO: output_profile_result is ignore for now
 
   const MIOpenRnnDescriptor& miopen_rnn_desc =
@@ -2732,6 +3275,9 @@ bool MIOpenSupport::DoRnnForward(
     ScratchAllocator* reserve_space_allocator,
     ScratchAllocator* workspace_allocator,
     dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_125_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_125(mht_125_v, 3278, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoRnnForward");
+
   LOG(ERROR) << "miopen does not support double type RNN fwd yet";
   return false;
 }
@@ -2762,6 +3308,9 @@ bool MIOpenSupport::DoRnnBackward(
     DeviceMemory<uint8>* reserve_space_data,
     ScratchAllocator* workspace_allocator,
     dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_126_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_126(mht_126_v, 3311, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoRnnBackward");
+
   // ROCM TODO: output_profile_result is ignore for now
 
   const MIOpenRnnDescriptor& miopen_rnn_desc =
@@ -2814,6 +3363,9 @@ bool MIOpenSupport::DoRnnBackward(
     DeviceMemory<uint8>* reserve_space_data,
     ScratchAllocator* workspace_allocator,
     dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_127_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_127(mht_127_v, 3366, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoRnnBackward");
+
   // ROCM TODO: output_profile_result is ignore for now
 
   const MIOpenRnnDescriptor& miopen_rnn_desc =
@@ -2867,6 +3419,9 @@ bool MIOpenSupport::DoRnnBackward(
     DeviceMemory<uint8>* reserve_space_data,
     ScratchAllocator* workspace_allocator,
     dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_128_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_128(mht_128_v, 3422, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoRnnBackward");
+
   LOG(ERROR) << "miopen does not support half type RNN bwd yet";
   return false;
 }
@@ -2874,13 +3429,19 @@ bool MIOpenSupport::DoRnnBackward(
 // This is the context required to use the TF scratch allocator:
 struct MIOpenAllocatorContext {
   MIOpenAllocatorContext(ScratchAllocator* scratch_allocator, Stream* stream)
-      : scratch_allocator_(scratch_allocator), stream_(stream) {}
+      : scratch_allocator_(scratch_allocator), stream_(stream) {
+   std::vector<std::string> mht_129_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_129(mht_129_v, 3433, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenAllocatorContext");
+}
 
   ScratchAllocator* scratch_allocator_;
   Stream* stream_;
 };
 
 void* MIOpenAllocatorCallback(void* ctx, size_t size_in_bytes) {
+   std::vector<std::string> mht_130_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_130(mht_130_v, 3442, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenAllocatorCallback");
+
   auto* mac = static_cast<MIOpenAllocatorContext*>(ctx);
   auto allocated = mac->scratch_allocator_->AllocateBytes(size_in_bytes);
 
@@ -2894,6 +3455,9 @@ void* MIOpenAllocatorCallback(void* ctx, size_t size_in_bytes) {
 }
 
 void MIOpenDeallocatorCallback(void* ctx, void* mem) {
+   std::vector<std::string> mht_131_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_131(mht_131_v, 3458, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenDeallocatorCallback");
+
   // Don't need deallocator since the TensorFlow heap will automatically
   // reclaim the memory
 }
@@ -2908,6 +3472,9 @@ port::Status MIOpenSupport::DoPrepareForConvolution(
     const dnn::AlgorithmConfig& algorithm_config,
     ScratchAllocator* scratch_allocator, dnn::AlgorithmDesc* algorithm_desc,
     DeviceMemory<uint8>* scratch_memory) {
+   std::vector<std::string> mht_132_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_132(mht_132_v, 3475, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoPrepareForConvolution");
+
   absl::optional<dnn::AlgorithmDesc> input_algo_desc =
       algorithm_config.algorithm();
 
@@ -2964,13 +3531,22 @@ class RocmConvRunner : public dnn::ConvRunner {
         input_desc_{input_descriptor, ToMIOpenDataType(input_type)},
         output_desc_{output_descriptor, ToMIOpenDataType(input_type)},
         filter_desc_{filter_descriptor, ToMIOpenDataType(input_type)},
-        conv_desc_{conv_descriptor, ToMIOpenDataType(input_type)} {}
+        conv_desc_{conv_descriptor, ToMIOpenDataType(input_type)} {
+   std::vector<std::string> mht_133_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_133(mht_133_v, 3535, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "RocmConvRunner");
+}
 
   std::string ToString() const override {
+   std::vector<std::string> mht_134_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_134(mht_134_v, 3540, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "ToString");
+
     return dnn::AlgorithmDesc{algo_id_, false, workspace_size_}.ToString();
   }
 
-  size_t GetWorkspaceSize() const override { return workspace_size_; }
+  size_t GetWorkspaceSize() const override {
+   std::vector<std::string> mht_135_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_135(mht_135_v, 3547, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "GetWorkspaceSize");
+ return workspace_size_; }
 
   port::StatusOr<AlgorithmDesc> ToAlgorithmDesc() const override {
     return {{algo_id_, false, workspace_size_}};
@@ -3116,6 +3692,9 @@ port::Status MIOpenSupport::DoConvolve(
     const dnn::ConvolutionDescriptor& convolution_descriptor,
     dnn::AlgorithmDesc algorithm_desc, DeviceMemory<uint8> scratch_memory,
     dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_136_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_136(mht_136_v, 3695, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoConvolve");
+
   SE_ASSIGN_OR_RETURN(
       auto runner,
       ConvolveRunnerFromDesc(stream, algorithm_desc, kind, element_type,
@@ -3130,6 +3709,9 @@ bool MIOpenSupport::GetConvolveAlgorithms(
     // ROCM TODO: refactor cc_major / cc_minor
     CudaComputeCapability cuda_compute_capability,
     std::vector<dnn::AlgorithmDesc>* out_algorithms) {
+   std::vector<std::string> mht_137_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_137(mht_137_v, 3712, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::GetConvolveAlgorithms");
+
   out_algorithms->assign({
       // clang-format off
       dnn::AlgorithmDesc(miopenConvolutionFwdAlgoGEMM, false),
@@ -3151,6 +3733,9 @@ port::Status MIOpenSupport::GetConvolveRunners(
     const dnn::ConvolutionDescriptor& convolution_descriptor, bool use_fallback,
     ScratchAllocator* scratch_allocator,
     std::vector<std::unique_ptr<const dnn::ConvRunner>>* out_runners) {
+   std::vector<std::string> mht_138_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_138(mht_138_v, 3736, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::GetConvolveRunners");
+
   if (input_type != output_type) {
     return port::UnimplementedError(
         absl::StrFormat("MIOpen backend does not support different input and "
@@ -3188,6 +3773,9 @@ MIOpenSupport::ConvolveRunnerFromDesc(
     const dnn::FilterDescriptor& filter_descriptor,
     const dnn::BatchDescriptor& output_descriptor,
     const dnn::ConvolutionDescriptor& convolution_descriptor) {
+   std::vector<std::string> mht_139_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_139(mht_139_v, 3776, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::ConvolveRunnerFromDesc");
+
   if (input_type != output_type) {
     return port::UnimplementedError(
         absl::StrFormat("MIOpen backend does not support different input and "
@@ -3216,6 +3804,9 @@ bool MIOpenSupport::GetMIOpenConvolveAlgorithms(
     const dnn::ConvolutionDescriptor& convolution_descriptor,
     ScratchAllocator* scratch_allocator,
     std::vector<dnn::ProfileResult>* out_algorithms) {
+   std::vector<std::string> mht_140_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_140(mht_140_v, 3807, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::GetMIOpenConvolveAlgorithms");
+
   return use_immediate_mode_
              ? GetMIOpenConvolveAlgorithmsImmediateMode(
                    kind, element_type, stream, input_descriptor, input_data,
@@ -3238,6 +3829,9 @@ bool MIOpenSupport::GetMIOpenConvolveAlgorithmsImmediateMode(
     const dnn::ConvolutionDescriptor& convolution_descriptor,
     ScratchAllocator* scratch_allocator,
     std::vector<dnn::ProfileResult>* out_algorithms) {
+   std::vector<std::string> mht_141_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_141(mht_141_v, 3832, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::GetMIOpenConvolveAlgorithmsImmediateMode");
+
   auto miopen = miopen_->GetHandle(parent_, stream);
 
   ScopedTensorDescriptor input_nd{input_descriptor,
@@ -3447,6 +4041,9 @@ bool MIOpenSupport::GetMIOpenConvolveAlgorithmsFindMode(
     const dnn::ConvolutionDescriptor& convolution_descriptor,
     ScratchAllocator* scratch_allocator,
     std::vector<dnn::ProfileResult>* out_algorithms) {
+   std::vector<std::string> mht_142_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_142(mht_142_v, 4044, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::GetMIOpenConvolveAlgorithmsFindMode");
+
   auto miopen = miopen_->GetHandle(parent_, stream);
 
   ScopedTensorDescriptor input_nd{input_descriptor,
@@ -3599,6 +4196,9 @@ bool MIOpenSupport::GetMIOpenConvolveAlgorithmsFindMode(
 
 bool MIOpenSupport::GetRnnAlgorithms(
     std::vector<dnn::AlgorithmDesc>* out_algorithms) {
+   std::vector<std::string> mht_143_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_143(mht_143_v, 4199, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::GetRnnAlgorithms");
+
   // ROCM TODO: implement this with proper MIOpen API
   return true;
 }
@@ -3607,6 +4207,9 @@ bool MIOpenSupport::GetConvolveBackwardDataAlgorithms(
     // ROCM TODO: refactor cc_major / cc_minor
     CudaComputeCapability cuda_compute_capability,
     std::vector<dnn::AlgorithmDesc>* out_algorithms) {
+   std::vector<std::string> mht_144_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_144(mht_144_v, 4210, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::GetConvolveBackwardDataAlgorithms");
+
   out_algorithms->assign({
       // clang-format off
       dnn::AlgorithmDesc(miopenConvolutionBwdDataAlgoGEMM, false),
@@ -3622,6 +4225,9 @@ bool MIOpenSupport::GetConvolveBackwardFilterAlgorithms(
     // ROCM TODO: refactor cc_major / cc_minor
     CudaComputeCapability cuda_compute_capability,
     std::vector<dnn::AlgorithmDesc>* out_algorithms) {
+   std::vector<std::string> mht_145_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_145(mht_145_v, 4228, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::GetConvolveBackwardFilterAlgorithms");
+
   out_algorithms->assign({
       // clang-format off
       dnn::AlgorithmDesc(miopenConvolutionBwdWeightsAlgoGEMM, false),
@@ -3645,6 +4251,9 @@ bool MIOpenSupport::DoBatchNormalizationForward(
     DeviceMemory<float>* saved_mean, DeviceMemory<float>* saved_inv_var,
     bool is_training, ScratchAllocator* reserve_space_allocator,
     ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_146_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_146(mht_146_v, 4254, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoBatchNormalizationForward");
+
   return DoBatchNormalizationForwardImpl<Eigen::half, float>(
       stream, dnn::DataType::kHalf, dnn::DataType::kFloat, x, scale, offset,
       estimated_mean, estimated_variance, side_input, x_desc, scale_offset_desc,
@@ -3665,6 +4274,9 @@ bool MIOpenSupport::DoBatchNormalizationForward(
     DeviceMemory<float>* saved_mean, DeviceMemory<float>* saved_inv_var,
     bool is_training, ScratchAllocator* reserve_space_allocator,
     ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_147_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_147(mht_147_v, 4277, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoBatchNormalizationForward");
+
   return DoBatchNormalizationForwardImpl<float, float>(
       stream, dnn::DataType::kFloat, dnn::DataType::kFloat, x, scale, offset,
       estimated_mean, estimated_variance, side_input, x_desc, scale_offset_desc,
@@ -3733,6 +4345,9 @@ bool MIOpenSupport::DoBatchNormalizationBackward(
     DeviceMemory<Eigen::half>* side_input_backprop,
     DeviceMemory<uint8>* reserve_space_data,
     ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_148_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_148(mht_148_v, 4348, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoBatchNormalizationBackward");
+
   return DoBatchNormalizationBackwardImpl<Eigen::half, float>(
       stream, miopenHalf, miopenFloat, y_backprop, x, scale, mean, inv_var,
       x_desc, scale_offset_desc, epsilon, x_backprop, scale_backprop,
@@ -3751,6 +4366,9 @@ bool MIOpenSupport::DoBatchNormalizationBackward(
     DeviceMemory<float>* side_input_backprop,
     DeviceMemory<uint8>* reserve_space_data,
     ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_149_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_149(mht_149_v, 4369, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoBatchNormalizationBackward");
+
   return DoBatchNormalizationBackwardImpl<float, float>(
       stream, miopenFloat, miopenFloat, y_backprop, x, scale, mean, variance,
       x_desc, scale_offset_desc, epsilon, x_backprop, scale_backprop,
@@ -3805,6 +4423,9 @@ port::Status MIOpenSupport::DoFusedConvolve(
     ScratchAllocator* scratch_allocator,
     const dnn::AlgorithmConfig& algorithm_config,
     dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_150_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_150(mht_150_v, 4426, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoFusedConvolve");
+
   return port::UnimplementedError("fused convolve not implemented yet");
 }
 
@@ -3815,6 +4436,9 @@ bool MIOpenSupport::DoTransformTensor(Stream* stream,
                                       const dnn::BatchDescriptor& output_desc,
                                       dnn::DataType output_type, float scale,
                                       DeviceMemoryBase* output_data) {
+   std::vector<std::string> mht_151_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_151(mht_151_v, 4439, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoTransformTensor");
+
   // ROCM TODO implement this operation
   LOG(ERROR) << "transform tensor not implemented yet";
   return false;
@@ -3826,6 +4450,9 @@ bool MIOpenSupport::DoMatMul(Stream* stream,
                              const dnn::BatchDescriptor& input_dimensions,
                              const dnn::BatchDescriptor& output_dimensions,
                              DeviceMemory<float>* output_data) {
+   std::vector<std::string> mht_152_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_152(mht_152_v, 4453, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoMatMul");
+
   if (input_dimensions.count() != output_dimensions.count()) {
     LOG(ERROR) << "MatMul input and output dimensions are not compatible.";
     return false;
@@ -3940,6 +4567,9 @@ bool MIOpenSupport::DoMatMul(Stream* stream,
           output_data->ElementCount() - output_offset);
     }
     const auto toPtrs = [](std::vector<DeviceMemory<float>>& v) {
+   std::vector<std::string> mht_153_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_153(mht_153_v, 4570, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "lambda");
+
       std::vector<DeviceMemory<float>*> ptrs;
       ptrs.reserve(v.size());
       for (auto& mem : v) {
@@ -3962,6 +4592,9 @@ bool MIOpenSupport::DoBiasAdd(Stream* stream,
                               const DeviceMemory<float>& biases,
                               const dnn::BatchDescriptor& dimensions,
                               DeviceMemory<float>* output_data) {
+   std::vector<std::string> mht_154_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_154(mht_154_v, 4595, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoBiasAdd");
+
   ScopedTensorDescriptor input_descriptor{dimensions, miopenFloat};
 
   BatchDescriptor bias_dimensions;
@@ -4008,6 +4641,9 @@ bool MIOpenSupport::DoActivate(Stream* stream,
                                const DeviceMemory<float>& input_data,
                                DeviceMemory<float>* output_data,
                                uint64_t options) {
+   std::vector<std::string> mht_155_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_155(mht_155_v, 4644, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoActivate");
+
   LOG(ERROR) << "miopen does not support activation yet";
   return false;
 }
@@ -4018,6 +4654,9 @@ bool MIOpenSupport::DoPoolForward(
     const DeviceMemory<double>& input_data,
     const dnn::BatchDescriptor& output_dimensions,
     DeviceMemory<double>* output_data, ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_156_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_156(mht_156_v, 4657, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoPoolForward");
+
   LOG(ERROR) << "miopen does not support pooling for double type yet";
   return false;
 }
@@ -4026,6 +4665,9 @@ bool PoolingWorkspaceDescriptor::IsSame(
     const dnn::BatchDescriptor& input_dimensions,
     const dnn::BatchDescriptor& output_dimensions,
     const dnn::PoolingDescriptor& pooling_dimensions, int _type) {
+   std::vector<std::string> mht_157_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_157(mht_157_v, 4668, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "PoolingWorkspaceDescriptor::IsSame");
+
   return dtype == _type &&
          input_dims ==
              input_dimensions.full_dims(dnn::DataLayout::kBatchDepthYX) &&
@@ -4042,6 +4684,9 @@ bool PoolingWorkspaceCache::find(
     const dnn::BatchDescriptor& output_dimensions,
     const dnn::PoolingDescriptor& pooling_dimensions, int _type,
     PoolingWorkspaceDescriptor*& pdesc) {
+   std::vector<std::string> mht_158_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_158(mht_158_v, 4687, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "PoolingWorkspaceCache::find");
+
   pdesc = 0;
   auto it = cache.find(p);
   if (it == cache.end()) {
@@ -4061,6 +4706,9 @@ void PoolingWorkspaceCache::insert(
     const dnn::PoolingDescriptor& pooling_dimensions, int _type,
     std::unique_ptr<TemporaryDeviceMemory<uint8>>& workspace, size_t wsp_size,
     hipStream_t hip_stream) {
+   std::vector<std::string> mht_159_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_159(mht_159_v, 4709, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "PoolingWorkspaceCache::insert");
+
   PoolingWorkspaceDescriptor* desc = 0;
   auto it = cache.find(p);
   if (it != cache.end()) {
@@ -4087,6 +4735,9 @@ void PoolingWorkspaceCache::insert(
 }
 
 void PoolingWorkspaceCache::trim(hipStream_t hip_stream) {
+   std::vector<std::string> mht_160_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_160(mht_160_v, 4738, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "PoolingWorkspaceCache::trim");
+
   if (memory_used < memory_budget && cache.size() < trim_size) return;
   bool must_sync = true;
   while (true) {
@@ -4112,6 +4763,9 @@ bool MIOpenSupport::DoPoolForward(
     const DeviceMemory<float>& input_data,
     const dnn::BatchDescriptor& output_dimensions,
     DeviceMemory<float>* output_data, ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_161_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_161(mht_161_v, 4766, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoPoolForward");
+
   auto miopen = miopen_->GetHandle(parent_, stream);
   // Alpha is the scaling factor for input.
   float alpha = 1.0;
@@ -4179,6 +4833,9 @@ bool MIOpenSupport::DoPoolForward(
     const dnn::BatchDescriptor& output_dimensions,
     DeviceMemory<Eigen::half>* output_data,
     ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_162_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_162(mht_162_v, 4836, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoPoolForward");
+
   auto miopen = miopen_->GetHandle(parent_, stream);
 
   // Alpha is the scaling factor for input.
@@ -4210,6 +4867,9 @@ bool MIOpenSupport::DoPoolBackwardImpl(
     const dnn::BatchDescriptor& output_dimensions,
     const DeviceMemory<T>& output_data, const DeviceMemory<T>& input_diff_data,
     DeviceMemory<T>* output_diff_data, ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_163_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_163(mht_163_v, 4870, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoPoolBackwardImpl");
+
   auto miopen = miopen_->GetHandle(parent_, stream);
   if (m_pooling_cache_allowed) m_pooling_cache_enabled = true;
   // Alpha is the scaling factor for input.
@@ -4323,6 +4983,9 @@ bool MIOpenSupport::DoPoolBackward(
     const DeviceMemory<double>& input_diff_data,
     DeviceMemory<double>* output_diff_data,
     ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_164_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_164(mht_164_v, 4986, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoPoolBackward");
+
   LOG(ERROR) << "miopen does not support backward pooling on double type yet";
   return false;
 }
@@ -4336,6 +4999,9 @@ bool MIOpenSupport::DoPoolBackward(
     const DeviceMemory<float>& input_diff_data,
     DeviceMemory<float>* output_diff_data,
     ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_165_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_165(mht_165_v, 5002, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoPoolBackward");
+
   return DoPoolBackwardImpl(stream, pooling_dimensions, input_dimensions,
                             input_data, output_dimensions, output_data,
                             input_diff_data, output_diff_data,
@@ -4351,6 +5017,9 @@ bool MIOpenSupport::DoPoolBackward(
     const DeviceMemory<Eigen::half>& input_diff_data,
     DeviceMemory<Eigen::half>* output_diff_data,
     ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_166_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_166(mht_166_v, 5020, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoPoolBackward");
+
   return DoPoolBackwardImpl(stream, pooling_dimensions, input_dimensions,
                             input_data, output_dimensions, output_data,
                             input_diff_data, output_diff_data,
@@ -4361,6 +5030,9 @@ bool MIOpenSupport::DoNormalizeWithDimensions(
     Stream* stream, const dnn::NormalizeDescriptor& normalize_descriptor,
     const dnn::BatchDescriptor& dimensions,
     const DeviceMemory<float>& input_data, DeviceMemory<float>* output_data) {
+   std::vector<std::string> mht_167_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_167(mht_167_v, 5033, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoNormalizeWithDimensions");
+
   // Check for unsupported modes.
   if (normalize_descriptor.wrap_around()) {
     LOG(ERROR) << "MIOpen LRN does not support wrap-around mode";
@@ -4400,6 +5072,9 @@ bool MIOpenSupport::DoNormalizeBackwardWithDimensions(
     const DeviceMemory<float>& normalized_variable_gradient,
     DeviceMemory<float>* raw_variable_gradient,
     ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_168_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_168(mht_168_v, 5075, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoNormalizeBackwardWithDimensions");
+
   // Check for unsupported modes.
   if (normalize_descriptor.wrap_around()) {
     LOG(ERROR) << "MIOpen LRN does not support wrap-around mode";
@@ -4496,6 +5171,9 @@ bool MIOpenSupport::DoDepthConcatenate(
     Stream* stream, port::ArraySlice<dnn::BatchDescriptor> input_dimensions,
     port::ArraySlice<const DeviceMemory<float>*> input_data,
     DeviceMemory<float>* output_data) {
+   std::vector<std::string> mht_169_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_169(mht_169_v, 5174, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoDepthConcatenate");
+
   CHECK_EQ(input_dimensions.size(), input_data.size());
 
   for (const auto& dimensions : input_dimensions) {
@@ -4516,6 +5194,9 @@ bool MIOpenSupport::DoDepthConcatenate(
   const int64_t area = output_dimensions.width() * output_dimensions.height();
   const auto index = [area](int64_t batch, int64_t depth, int64_t yx,
                             int64_t max_depth) {
+   std::vector<std::string> mht_170_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_170(mht_170_v, 5197, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "lambda");
+
     return (batch * max_depth + depth) * area + yx;
   };
 
@@ -4556,6 +5237,9 @@ bool MIOpenSupport::DoElementwiseOperate(
     port::ArraySlice<const DeviceMemory<float>*> input_data,
     const dnn::BatchDescriptor& output_dimensions,
     DeviceMemory<float>* output_data) {
+   std::vector<std::string> mht_171_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_171(mht_171_v, 5240, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoElementwiseOperate");
+
   LOG(FATAL) << "not yet implemented";  // TODO(leary)
   return false;
 }
@@ -4566,6 +5250,9 @@ bool MIOpenSupport::DoXYPad(Stream* stream,
                             int64_t left_pad, int64_t right_pad,
                             int64_t top_pad, int64_t bottom_pad,
                             DeviceMemory<float>* output_data) {
+   std::vector<std::string> mht_172_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_172(mht_172_v, 5253, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoXYPad");
+
   LOG(FATAL) << "not yet implemented";  // TODO(leary)
   return false;
 }
@@ -4576,6 +5263,9 @@ bool MIOpenSupport::DoXYSlice(Stream* stream,
                               int64_t left_trim, int64_t right_trim,
                               int64_t top_trim, int64_t bottom_trim,
                               DeviceMemory<float>* output_data) {
+   std::vector<std::string> mht_173_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_173(mht_173_v, 5266, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoXYSlice");
+
   LOG(FATAL) << "not yet implemented";  // TODO(leary)
   return false;
 }
@@ -4583,6 +5273,9 @@ bool MIOpenSupport::DoXYSlice(Stream* stream,
 bool MIOpenSupport::DoMemcpyD2HQuantized(
     Stream* stream, const DeviceMemory<float>& gpu_unquantized_src,
     dnn::QuantizedActivationMode mode, void* host_dst, int64_t size) {
+   std::vector<std::string> mht_174_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_174(mht_174_v, 5276, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoMemcpyD2HQuantized");
+
   LOG(ERROR) << "quantized memcpy not supported by MIOpen";
   return false;
 }
@@ -4591,6 +5284,9 @@ bool MIOpenSupport::DoMemcpyH2DQuantized(
     Stream* stream, const void* host_src, int64_t size,
     dnn::QuantizedActivationMode mode,
     DeviceMemory<float>* gpu_unquantized_dst) {
+   std::vector<std::string> mht_175_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_175(mht_175_v, 5287, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoMemcpyH2DQuantized");
+
   LOG(ERROR) << "quantized memcpy not supported by MIOpen";
   return false;
 }
@@ -4600,6 +5296,9 @@ bool MIOpenSupport::DeriveOutputBatchDescriptor(
     const FilterDescriptor& filter_descriptor,
     const dnn::ConvolutionDescriptor& convolution_descriptor,
     dnn::BatchDescriptor* output_batch_descriptor) {
+   std::vector<std::string> mht_176_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_176(mht_176_v, 5299, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DeriveOutputBatchDescriptor");
+
   ScopedTensorDescriptor input_nd{batch_descriptor, miopenFloat};
   ScopedFilterDescriptor filter{filter_descriptor, miopenFloat};
   ScopedConvolutionDescriptor conv{convolution_descriptor, miopenFloat};
@@ -4639,6 +5338,9 @@ bool MIOpenSupport::DoFusedConvolutionBiasActivationImpl(
     const DeviceMemory<T>& bias_data, dnn::ActivationMode activation_mode,
     const dnn::BatchDescriptor& output_descriptor, DeviceMemory<T>* output_data,
     dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_177_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_177(mht_177_v, 5341, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoFusedConvolutionBiasActivationImpl");
+
   auto miopen = miopen_->GetHandle(parent_, stream);
 
   ScopedTensorDescriptor conv_input_nd{
@@ -4728,6 +5430,9 @@ bool MIOpenSupport::DoFusedConvolutionBiasActivation(
     const dnn::BatchDescriptor& output_descriptor,
     DeviceMemory<float>* output_data,
     dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_178_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_178(mht_178_v, 5433, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoFusedConvolutionBiasActivation");
+
   return DoFusedConvolutionBiasActivationImpl<float>(
       stream, miopenFloat, conv_input_descriptor, conv_input_data,
       filter_descriptor, filter_data, convolution_descriptor, bias_descriptor,
@@ -4822,6 +5527,9 @@ bool MIOpenSupport::DoFusedBatchNormActivationInference(
     const DeviceMemory<float>& variance_data, double epsilon,
     dnn::ActivationMode activation_mode, DeviceMemory<float>* y_data,
     dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_179_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_179(mht_179_v, 5530, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoFusedBatchNormActivationInference");
+
   return DoFusedBatchNormActivationInferenceImpl<float, float>(
       stream, miopenFloat, x_descriptor, x_data,
       scale_offset_mean_variance_descriptor, scale_data, offset_data, mean_data,
@@ -4838,6 +5546,9 @@ bool MIOpenSupport::DoFusedBatchNormActivationInference(
     const DeviceMemory<float>& variance_data, double epsilon,
     dnn::ActivationMode activation_mode, DeviceMemory<Eigen::half>* y_data,
     dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_180_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_180(mht_180_v, 5549, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoFusedBatchNormActivationInference");
+
   return DoFusedBatchNormActivationInferenceImpl<Eigen::half, float>(
       stream, miopenHalf, x_descriptor, x_data,
       scale_offset_mean_variance_descriptor, scale_data, offset_data, mean_data,
@@ -4934,6 +5645,9 @@ bool MIOpenSupport::DoFusedBatchNormActivationForward(
     DeviceMemory<float>* batch_mean_data, DeviceMemory<float>* batch_var_data,
     DeviceMemory<float>* saved_mean_data, DeviceMemory<float>* saved_var_data,
     dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_181_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_181(mht_181_v, 5648, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoFusedBatchNormActivationForward");
+
   return DoFusedBatchNormActivationForwardImpl<float, float>(
       stream, miopenFloat, x_descriptor, x_data,
       scale_offset_mean_variance_descriptor, scale_data, offset_data, epsilon,
@@ -4951,6 +5665,9 @@ bool MIOpenSupport::DoFusedBatchNormActivationForward(
     DeviceMemory<float>* batch_mean_data, DeviceMemory<float>* batch_var_data,
     DeviceMemory<float>* saved_mean_data, DeviceMemory<float>* saved_var_data,
     dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_182_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_182(mht_182_v, 5668, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoFusedBatchNormActivationForward");
+
   return DoFusedBatchNormActivationForwardImpl<Eigen::half, float>(
       stream, miopenHalf, x_descriptor, x_data,
       scale_offset_mean_variance_descriptor, scale_data, offset_data, epsilon,
@@ -5056,6 +5773,9 @@ bool MIOpenSupport::DoFusedBatchNormActivationBackward(
     DeviceMemory<float>* scale_backprop_data,
     DeviceMemory<float>* offset_backprop_data,
     dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_183_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_183(mht_183_v, 5776, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoFusedBatchNormActivationBackward");
+
   return DoFusedBatchNormActivationBackwardImpl<float, float>(
       stream, miopenFloat, y_act_backprop_descriptor, y_act_backprop_data,
       y_act_data, activation_mode, x_bn_data,
@@ -5079,6 +5799,9 @@ bool MIOpenSupport::DoFusedBatchNormActivationBackward(
     DeviceMemory<float>* scale_backprop_data,
     DeviceMemory<float>* offset_backprop_data,
     dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_184_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_184(mht_184_v, 5802, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "MIOpenSupport::DoFusedBatchNormActivationBackward");
+
   return DoFusedBatchNormActivationBackwardImpl<Eigen::half, float>(
       stream, miopenHalf, y_act_backprop_descriptor, y_act_backprop_data,
       y_act_data, activation_mode, x_bn_data,
@@ -5090,6 +5813,9 @@ bool MIOpenSupport::DoFusedBatchNormActivationBackward(
 }  // namespace gpu
 
 void initialize_miopen() {
+   std::vector<std::string> mht_185_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_dnnDTcc mht_185(mht_185_v, 5816, "", "./tensorflow/stream_executor/rocm/rocm_dnn.cc", "initialize_miopen");
+
   auto miopenAlreadyRegistered = PluginRegistry::Instance()->HasFactory(
       rocm::kROCmPlatformId, PluginKind::kDnn, gpu::kMIOpenPlugin);
 

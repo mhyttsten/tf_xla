@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -87,9 +255,15 @@ StatusOr<std::vector<std::vector<xla::XlaOp>>> GetTensorListDynamicDims(
 
 class TensorListLengthOp : public XlaOpKernel {
  public:
-  explicit TensorListLengthOp(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {}
+  explicit TensorListLengthOp(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc mht_0(mht_0_v, 259, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_ops.cc", "TensorListLengthOp");
+}
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc mht_1(mht_1_v, 264, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_ops.cc", "Compile");
+
     int64_t leading_dim;
     xla::XlaOp leading_dim_size;
     bool leading_dim_is_dynamic;
@@ -111,6 +285,9 @@ REGISTER_XLA_OP(Name("TensorListLength").IsMetadataOp(), TensorListLengthOp);
 Status TryGetElementShapeFromInput(XlaOpKernelContext* ctx, xla::XlaOp input,
                                    xla::PrimitiveType dtype, bool* got_shape,
                                    xla::Shape* shape) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc mht_2(mht_2_v, 288, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_ops.cc", "TryGetElementShapeFromInput");
+
   auto is_compile_time_constant_or = input.builder()->IsConstant(input);
   TF_RETURN_IF_ERROR(is_compile_time_constant_or.status());
 
@@ -135,6 +312,9 @@ Status TryGetElementShapeFromInput(XlaOpKernelContext* ctx, xla::XlaOp input,
 class TensorListReserveOp : public XlaOpKernel {
  public:
   explicit TensorListReserveOp(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc mht_3(mht_3_v, 315, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_ops.cc", "TensorListReserveOp");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("element_dtype", &dtype_));
     // Only non-nested TensorList is supported for now.
     OP_REQUIRES(
@@ -144,6 +324,9 @@ class TensorListReserveOp : public XlaOpKernel {
   }
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc mht_4(mht_4_v, 327, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_ops.cc", "Compile");
+
     int64_t num_elements;
     OP_REQUIRES_OK(ctx,
                    ctx->ConstantInputAsIntScalar(
@@ -212,10 +395,16 @@ REGISTER_XLA_OP(Name("TensorListReserve")
 class EmptyTensorListOp : public XlaOpKernel {
  public:
   explicit EmptyTensorListOp(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc mht_5(mht_5_v, 398, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_ops.cc", "EmptyTensorListOp");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("element_dtype", &dtype_));
   }
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc mht_6(mht_6_v, 405, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_ops.cc", "Compile");
+
     int64_t max_num_elements;
     OP_REQUIRES_OK(
         ctx, ctx->ConstantInputAsIntScalar(
@@ -288,10 +477,16 @@ class TensorListElementShapeOp : public XlaOpKernel {
  public:
   explicit TensorListElementShapeOp(OpKernelConstruction* ctx)
       : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc mht_7(mht_7_v, 480, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_ops.cc", "TensorListElementShapeOp");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("shape_type", &shape_type_));
   }
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc mht_8(mht_8_v, 487, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_ops.cc", "Compile");
+
     // Check that the TensorList is initialized.
     bool is_initialized;
     OP_REQUIRES_OK(ctx,
@@ -346,10 +541,16 @@ REGISTER_XLA_OP(Name("TensorListElementShape").IsMetadataOp(),
 class TensorListGetItemOp : public XlaOpKernel {
  public:
   explicit TensorListGetItemOp(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc mht_9(mht_9_v, 544, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_ops.cc", "TensorListGetItemOp");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("element_dtype", &dtype_));
   }
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc mht_10(mht_10_v, 551, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_ops.cc", "Compile");
+
     // Check that the TensorList is initialized.
     bool is_initialized;
     OP_REQUIRES_OK(ctx,
@@ -384,10 +585,16 @@ REGISTER_XLA_OP(Name("TensorListGetItem"), TensorListGetItemOp);
 class TensorListGatherOp : public XlaOpKernel {
  public:
   explicit TensorListGatherOp(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc mht_11(mht_11_v, 588, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_ops.cc", "TensorListGatherOp");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("element_dtype", &dtype_));
   }
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc mht_12(mht_12_v, 595, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_ops.cc", "Compile");
+
     // Check that the TensorList is initialized.
     bool is_initialized;
     OP_REQUIRES_OK(ctx,
@@ -436,9 +643,15 @@ REGISTER_XLA_OP(Name("TensorListGather"), TensorListGatherOp);
 
 class TensorListStackOp : public XlaOpKernel {
  public:
-  explicit TensorListStackOp(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {}
+  explicit TensorListStackOp(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc mht_13(mht_13_v, 647, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_ops.cc", "TensorListStackOp");
+}
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc mht_14(mht_14_v, 652, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_ops.cc", "Compile");
+
     // Check that the TensorList is initialized.
     bool is_initialized;
     OP_REQUIRES_OK(ctx,
@@ -466,9 +679,15 @@ REGISTER_XLA_OP(Name("TensorListStack"), TensorListStackOp);
 
 class TensorListConcatOp : public XlaOpKernel {
  public:
-  explicit TensorListConcatOp(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {}
+  explicit TensorListConcatOp(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc mht_15(mht_15_v, 683, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_ops.cc", "TensorListConcatOp");
+}
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc mht_16(mht_16_v, 688, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_ops.cc", "Compile");
+
     xla::XlaOp input = ctx->Input(0);
 
     // Check that the TensorList is initialized.
@@ -522,6 +741,9 @@ REGISTER_XLA_OP(Name("TensorListConcatV2"), TensorListConcatOp);
 class TensorListSplitOp : public XlaOpKernel {
  public:
   explicit TensorListSplitOp(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc mht_17(mht_17_v, 744, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_ops.cc", "TensorListSplitOp");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("element_dtype", &dtype_));
     // Only non-nested TensorList is supported for now.
     OP_REQUIRES(
@@ -531,6 +753,9 @@ class TensorListSplitOp : public XlaOpKernel {
   }
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc mht_18(mht_18_v, 756, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_ops.cc", "Compile");
+
     xla::XlaOp input_tensor = ctx->Input(0);
 
     xla::XlaBuilder* b = input_tensor.builder();
@@ -581,9 +806,15 @@ REGISTER_XLA_OP(Name("TensorListSplit")
 class TensorListFromTensorOp : public XlaOpKernel {
  public:
   explicit TensorListFromTensorOp(OpKernelConstruction* ctx)
-      : XlaOpKernel(ctx) {}
+      : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc mht_19(mht_19_v, 810, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_ops.cc", "TensorListFromTensorOp");
+}
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc mht_20(mht_20_v, 815, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_ops.cc", "Compile");
+
     const TensorShape& tensor_shape = ctx->InputShape(0);
     int num_elements = tensor_shape.dim_size(0);
     const xla::XlaOp tensor = ctx->Input(0);
@@ -604,9 +835,15 @@ REGISTER_XLA_OP(
 
 class TensorListSetItemOp : public XlaOpKernel {
  public:
-  explicit TensorListSetItemOp(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {}
+  explicit TensorListSetItemOp(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc mht_21(mht_21_v, 839, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_ops.cc", "TensorListSetItemOp");
+}
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc mht_22(mht_22_v, 844, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_ops.cc", "Compile");
+
     xla::XlaOp list = ctx->Input(0);
     xla::XlaOp index = ctx->Input(1);
     xla::XlaOp element = ctx->Input(2);
@@ -637,9 +874,15 @@ REGISTER_XLA_OP(Name("TensorListSetItem"), TensorListSetItemOp);
 
 class TensorListPushBackOp : public XlaOpKernel {
  public:
-  explicit TensorListPushBackOp(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {}
+  explicit TensorListPushBackOp(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc mht_23(mht_23_v, 878, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_ops.cc", "TensorListPushBackOp");
+}
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc mht_24(mht_24_v, 883, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_ops.cc", "Compile");
+
     xla::XlaOp list = ctx->Input(0);
     xla::XlaOp element = ctx->Input(1);
     bool element_is_tensor_list = IsTensorListInput(ctx, 1);
@@ -665,9 +908,15 @@ REGISTER_XLA_OP(Name("TensorListPushBack").AllowVariantTypes(),
 
 class TensorListPopBackOp : public XlaOpKernel {
  public:
-  explicit TensorListPopBackOp(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {}
+  explicit TensorListPopBackOp(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc mht_25(mht_25_v, 912, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_ops.cc", "TensorListPopBackOp");
+}
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_opsDTcc mht_26(mht_26_v, 917, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_ops.cc", "Compile");
+
     // Check that the TensorList is initialized.
     bool is_initialized;
     OP_REQUIRES_OK(ctx,

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -98,6 +266,9 @@ enum class TrtTestMode {
 };
 
 string DebugString(const TrtTestMode mode) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_0(mht_0_v, 269, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "DebugString");
+
   switch (mode) {
     case TrtTestMode::kImplicitBatch:
       return "kImplicitBatch";
@@ -128,6 +299,9 @@ constexpr std::array<TrtTestMode, 3> ValidTrtModes = {
 
 bool TrtShapedWeightsEquals(const TRT_ShapedWeights& lhs,
                             const TRT_ShapedWeights& rhs) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_1(mht_1_v, 302, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "TrtShapedWeightsEquals");
+
   return lhs.Shape() == rhs.Shape() && lhs.TrtDType() == rhs.TrtDType() &&
          lhs.GetPointer<int8>() == rhs.GetPointer<int8>();
 }
@@ -136,6 +310,9 @@ template <typename T>
 void ValidateWeights(const TRT_ShapedWeights& weights,
                      const std::vector<int>& expected_dims,
                      const std::vector<T>& expected_value) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_2(mht_2_v, 313, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "ValidateWeights");
+
   EXPECT_EQ(weights.Shape(), DimsAdapter(expected_dims));
   ASSERT_EQ(expected_value.size(), weights.count()) << weights.DebugString();
   const T* actual_values = weights.GetPointer<T>();
@@ -151,6 +328,9 @@ void ValidateWeights(const TRT_ShapedWeights& weights,
 // shared resources between engine builds when using TRT shared library. This
 // greatly speeds up unit tests and is safe to do.
 void PreventUnloadBuilderResources() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_3(mht_3_v, 331, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "PreventUnloadBuilderResources");
+
 #if IS_TRT_VERSION_GE(8, 2, 0, 0)
   static thread_local absl::once_flag once;
   static TrtUniquePtrType<nvinfer1::IBuilder> hold_builder = nullptr;
@@ -296,10 +476,16 @@ TEST(TRT_TensorOrWeights_Test, Basic) {
 
 class ValidatorTest : public ::testing::Test {
  public:
-  ValidatorTest() { PreventUnloadBuilderResources(); }
+  ValidatorTest() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_4(mht_4_v, 480, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "ValidatorTest");
+ PreventUnloadBuilderResources(); }
   Status ConvertToTensorOrWeights(const Scope& scope, const Node* node,
                                   int output_port,
                                   TRT_TensorOrWeights* tensor_or_weights) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_5(mht_5_v, 486, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "ConvertToTensorOrWeights");
+
     grappler::GrapplerItem item;
     TF_EXPECT_OK(scope.ToGraphDef(&item.graph));
     grappler::GraphProperties graph_properties(item);
@@ -330,6 +516,9 @@ TEST_F(ValidatorTest, ConvertToTensorOrWeights) {
   // Helper method to run ConvertToTensorOrWeights() with predefined parameters.
   auto convert_to_tensor_or_weights = [this](const std::vector<int64_t>& dims,
                                              TRT_TensorOrWeights* output) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_6(mht_6_v, 519, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "lambda");
+
     Scope s = Scope::NewRootScope();
     const auto attrs = ops::Placeholder::Shape(PartialTensorShape{dims});
     auto feed = ops::Placeholder(s.WithOpName("feed"), DT_FLOAT, attrs);
@@ -502,11 +691,17 @@ TEST(TrtNodeValidator, IsTensorRTCandidate) {
 class ConverterTest : public ::testing::Test {
  public:
   ConverterTest() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_7(mht_7_v, 694, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "ConverterTest");
+
     PreventUnloadBuilderResources();
     Reset();
   }
 
   void Reset() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_8(mht_8_v, 702, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "Reset");
+
     GetOpConverterRegistry()->Clear("MyOp");
     GetOpConverterRegistry()->Clear("DummyOp");
     converter_ =
@@ -523,28 +718,48 @@ class ConverterTest : public ::testing::Test {
   // testing principle.
   // Below we expose private methods of Converter for testing.
   Status MaybeUpdateBatchSize(int batch_size) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_9(mht_9_v, 721, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "MaybeUpdateBatchSize");
+
     return converter_->MaybeUpdateBatchSize(batch_size);
   }
 
   Status AddTensorOrWeights(const string& name, TRT_TensorOrWeights input) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_10(mht_10_v, 729, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "AddTensorOrWeights");
+
     return converter_->AddTensorOrWeights(name, input);
   }
 
   Status GetTensorOrWeights(const string& name, TRT_TensorOrWeights* output) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_11(mht_11_v, 737, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "GetTensorOrWeights");
+
     return converter_->GetTensorOrWeights(name, output);
   }
 
   Status GetInputs(const NodeDef& node_def,
                    std::vector<TRT_TensorOrWeights>* inputs) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_12(mht_12_v, 745, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "GetInputs");
+
     return converter_->GetInputs(node_def, inputs);
   }
 
   Status GetWeightRange(const TRT_ShapedWeights& weights, float* out_min,
                         float* out_max) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_13(mht_13_v, 753, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "GetWeightRange");
+
     return converter_->GetWeightRange(weights, out_min, out_max);
   }
 
-  int batch_size() const { return converter_->batch_size_; }
+  int batch_size() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_14(mht_14_v, 760, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "batch_size");
+ return converter_->batch_size_; }
 
   std::unordered_map<ITensorProxyPtr*, float>& quantization_ranges_proxy() {
     return converter_->quantization_ranges_proxy_;
@@ -720,6 +935,9 @@ void TestPrepareTensorForShape(
     Converter* converter, TrtWeightStore* weight_store,
     error::Code expected_code = error::OK,
     const char* expected_error_msg_substr = nullptr) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_15(mht_15_v, 938, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "TestPrepareTensorForShape");
+
   TRT_TensorOrWeights input;
   if (input_is_tensor) {
     input = TRT_TensorOrWeights(converter->network()->addInput(
@@ -838,6 +1056,9 @@ TEST_F(ConverterTest, AddAndGetTensorOrWeights) {
 
 template <typename T>
 void TestGetWeightRange(ConverterTest* test, TrtWeightStore* weight_store) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_16(mht_16_v, 1059, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "TestGetWeightRange");
+
   nvinfer1::DataType trt_type;
   TF_ASSERT_OK(TfTypeToTrtType(DataTypeToEnum<T>::v(), &trt_type));
   TRT_ShapedWeights weights =
@@ -907,8 +1128,14 @@ TEST_F(ConverterTest, GetTrtBroadcastShape) {
                                const char* expected_error_msg_substr = "",
                                const int operand_1_batch_size = -1,
                                const int operand_2_batch_size = -1) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_17(mht_17_v, 1131, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "lambda");
+
     auto create_tensor_or_weights = [](const std::vector<int>& shape,
                                        bool is_tensor, int batch_size = -1) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_18(mht_18_v, 1136, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "lambda");
+
       if (is_tensor) {
         return TRT_TensorOrWeights(nvinfer1::DataType::kFLOAT,
                                    CreateDims(shape), batch_size);
@@ -1019,6 +1246,9 @@ TEST_F(ConverterTest, CreateConstantLayer) {
 class ConvertGraphDefToEngineTest : public ::testing::Test {
  public:
   Status RunConvertGraphDefToEngine(Scope* s) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_19(mht_19_v, 1249, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "RunConvertGraphDefToEngine");
+
     GraphDef gdef;
     TF_EXPECT_OK(s->ToGraphDef(&gdef));
     std::vector<PartialTensorShape> input_shapes;
@@ -1075,6 +1305,9 @@ TEST_F(ConvertGraphDefToEngineTest, IdentityGraph) {
 // to create optimization profiles.
 Status GetShapeFromDataVec(DataVec input_data,
                            std::vector<TensorShape>* shape_vec) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_20(mht_20_v, 1308, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "GetShapeFromDataVec");
+
   shape_vec->reserve(input_data.size());
   std::transform(input_data.begin(), input_data.end(),
                  std::back_inserter(*shape_vec),
@@ -1116,6 +1349,9 @@ class OpConverterTest : public ::testing::Test {
   OpConverterTest()
       : tensor_buffer_allocator_(new GpuManagedAllocator()),
         scope_(Scope::NewRootScope()) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_21(mht_21_v, 1352, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "OpConverterTest");
+
     PreventUnloadBuilderResources();
     QCHECK_EQ(0, cudaStreamCreate(&stream_));
     Reset();
@@ -1126,11 +1362,18 @@ class OpConverterTest : public ::testing::Test {
   }
 
   Status GetTensorOrWeights(const string& name, TRT_TensorOrWeights* output) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_22(mht_22_v, 1366, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "GetTensorOrWeights");
+
     return converter_->GetTensorOrWeights(name, output);
   }
 
   void Reset(TrtPrecisionMode precision_mode_to_test = TrtPrecisionMode::FP32,
              TrtTestMode trt_mode = TrtTestMode::kImplicitBatch) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_23(mht_23_v, 1374, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "Reset");
+
     // Destroy existing TRT objects in a proper order.
     converter_.reset(nullptr);
     engine_.reset(nullptr);
@@ -1150,7 +1393,10 @@ class OpConverterTest : public ::testing::Test {
 
   // Constructs a flat tensor with 'vals' in Unified Memory.
   template <typename T>
-  Tensor AsTensor(gtl::ArraySlice<T> vals) {  // non-absl ok
+  Tensor AsTensor(gtl::ArraySlice<T> vals) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_24(mht_24_v, 1397, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "AsTensor");
+  // non-absl ok
     Tensor ret(tensor_buffer_allocator_.get(), DataTypeToEnum<T>::value,
                {static_cast<int64_t>(vals.size())});
     std::copy_n(vals.data(), vals.size(), ret.flat<T>().data());
@@ -1161,6 +1407,9 @@ class OpConverterTest : public ::testing::Test {
   template <typename T>
   Tensor AsTensor(gtl::ArraySlice<T> vals,  // non-absl ok
                   const TensorShape& shape) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_25(mht_25_v, 1410, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "AsTensor");
+
     Tensor ret(tensor_buffer_allocator_.get(), DataTypeToEnum<T>::value,
                {static_cast<int64_t>(vals.size())});
     CHECK(ret.CopyFrom(AsTensor(vals), shape));
@@ -1186,6 +1435,9 @@ class OpConverterTest : public ::testing::Test {
   template <typename T>
   Tensor AsTensor(const std::vector<T>& vals,
                   const std::vector<int>& input_dims, DataType tf_type) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_26(mht_26_v, 1438, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "AsTensor");
+
     Tensor ret(tensor_buffer_allocator_.get(), tf_type,
                {static_cast<int64_t>(vals.size())});
     if (tf_type == DT_FLOAT) {
@@ -1211,6 +1463,9 @@ class OpConverterTest : public ::testing::Test {
   template <typename T>
   Tensor AsTensor(const std::vector<int>& vals,
                   const std::vector<int>& input_dims, DataType tf_type) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_27(mht_27_v, 1466, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "AsTensor");
+
     const auto& conv_vals = CastVector<int, T>(vals);
     return AsTensor(conv_vals, input_dims, tf_type);
   }
@@ -1218,6 +1473,9 @@ class OpConverterTest : public ::testing::Test {
   // Constructs a flat tensor in Unified Memory.
   template <typename T>
   Tensor ConstructTensor(int data_size, const T& value = T()) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_28(mht_28_v, 1476, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "ConstructTensor");
+
     std::vector<T> values(data_size, value);
     return AsTensor<T>(values);
   }
@@ -1225,11 +1483,17 @@ class OpConverterTest : public ::testing::Test {
   // Constructs a flat tensor in Unified Memory.
   template <typename T>
   Tensor ConstructTensor(int data_size, const T& value, DataType tf_type) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_29(mht_29_v, 1486, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "ConstructTensor");
+
     std::vector<T> values(data_size, value);
     return AsTensor<T>(values, {data_size}, tf_type);
   }
 
   void CheckDataTypeMatches(const DataVec& datas) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_30(mht_30_v, 1494, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "CheckDataTypeMatches");
+
     if (VLOG_IS_ON(2)) {
       int nbBindings = engine_->getNbBindings();
       VLOG(2) << "Number of engine bindings: " << nbBindings;
@@ -1253,6 +1517,9 @@ class OpConverterTest : public ::testing::Test {
 
   Status BuildAndRun(const DataVec& input_data, DataVec* output_data,
                      const int batch_size = 1) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_31(mht_31_v, 1520, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "BuildAndRun");
+
     // Mark the output tensor as TRT engine output.
     std::vector<Converter::EngineOutputInfo> output_info;
     for (const auto& data : *output_data) {
@@ -1326,6 +1593,10 @@ class OpConverterTest : public ::testing::Test {
       const string& name, const std::vector<int32>& dims,
       nvinfer1::DataType trt_type = nvinfer1::DataType::kFLOAT,
       Status add_input_status = Status::OK()) {
+   std::vector<std::string> mht_32_v;
+   mht_32_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_32(mht_32_v, 1597, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "AddTestTensorWithTFDims");
+
     DataType tf_type;
     TF_ASSERT_OK(TrtTypeToTfType(trt_type, &tf_type));
     ops::Placeholder::Attrs attrs;
@@ -1361,6 +1632,10 @@ class OpConverterTest : public ::testing::Test {
   void AddTestTensor(
       const string& name, const std::vector<int32>& dims, int batch_size = 1,
       nvinfer1::DataType trt_dtype = nvinfer1::DataType::kFLOAT) {
+   std::vector<std::string> mht_33_v;
+   mht_33_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_33(mht_33_v, 1636, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "AddTestTensor");
+
     DimsAdapter adap(dims);
     std::vector<int32_t> dims_vec;
     TF_CHECK_OK(adap.Prepend(batch_size).Vector(&dims_vec));
@@ -1374,6 +1649,10 @@ class OpConverterTest : public ::testing::Test {
   template <typename T>
   void AddTestWeights(const string& name, const std::vector<int>& dims,
                       const std::vector<T>& values) {
+   std::vector<std::string> mht_34_v;
+   mht_34_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_34(mht_34_v, 1653, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "AddTestWeights");
+
     // Add weights for validation.
     const auto tf_type = DataTypeToEnum<T>::v();
     const Tensor t = AsTensor<T>(values, dims, tf_type);
@@ -1446,6 +1725,9 @@ class OpConverterTest : public ::testing::Test {
 
   // Test validation in validation-only mode.
   Status RunValidation(const Node* node) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_35(mht_35_v, 1728, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "RunValidation");
+
     grappler::GrapplerItem item;
     TF_EXPECT_OK(scope_.ToGraphDef(&item.graph));
     grappler::GraphProperties graph_properties(item);
@@ -1461,6 +1743,9 @@ class OpConverterTest : public ::testing::Test {
 
   void RunConversion(const Node* node, error::Code expected_code = error::OK,
                      const std::string& expected_msg_substr = "") {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_36(mht_36_v, 1746, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "RunConversion");
+
     EXPECT_THAT(converter_->ConvertNode(node->def()),
                 StatusIs(expected_code, HasSubstr(expected_msg_substr)));
     if (expected_code == error::OK) {
@@ -1474,6 +1759,9 @@ class OpConverterTest : public ::testing::Test {
                                   error::Code expected_code = error::OK,
                                   const std::string& expected_msg_substr = "",
                                   bool should_run_conversion = true) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_37(mht_37_v, 1762, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "RunValidationAndConversion");
+
     // Add the node to the graph.
     // TODO(laigd): we should accept a function that adds the node using
     // `scope_`, so individual test case can reuse the scope object and we don't
@@ -1505,6 +1793,10 @@ class OpConverterTest : public ::testing::Test {
       const NodeDef& node_def, const Status& status,
       const std::string& output_name,
       const std::vector<std::vector<int>>& exp_out_dims) {
+   std::vector<std::string> mht_38_v;
+   mht_38_v.push_back("output_name: \"" + output_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_38(mht_38_v, 1797, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "RunValidationAndConversion");
+
     RunValidationAndConversion(node_def, status.code(), status.error_message(),
                                true);
 
@@ -1547,6 +1839,11 @@ class OpConverterTest : public ::testing::Test {
   template <typename T>
   void AdjustVectorByDims(std::vector<T>& values, size_t num_elements,
                           const string& name, const char* callingFunc) {
+   std::vector<std::string> mht_39_v;
+   mht_39_v.push_back("name: \"" + name + "\"");
+   mht_39_v.push_back("callingFunc: \"" + (callingFunc == nullptr ? std::string("nullptr") : std::string((char*)callingFunc)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_39(mht_39_v, 1844, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "AdjustVectorByDims");
+
     const auto old_size = values.size();
     if (num_elements > old_size) {
       // Expending vector with 0's.
@@ -1606,6 +1903,9 @@ struct TestParamBase {
 };
 
 std::ostream& operator<<(std::ostream& os, const TestParamBase& p) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_40(mht_40_v, 1906, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "operator<<");
+
   os << "input_dims" << PrintToString(p.input_dims);
   if (!p.partial_input_dims.empty()) {
     os << ", partial_input_dims" << PrintToString(p.partial_input_dims);
@@ -1626,6 +1926,11 @@ const std::string get_debug_string_for_vector(const std::vector<T>& vector,
                                               absl::string_view pComment,
                                               absl::string_view name,
                                               absl::string_view type = "") {
+   std::vector<std::string> mht_41_v;
+   mht_41_v.push_back("pComment: \"" + std::string(pComment.data(), pComment.size()) + "\"");
+   mht_41_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_41(mht_41_v, 1931, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "get_debug_string_for_vector");
+
   const std::string t1 = absl::StrCat(pComment, name, " Dims(nbDims=");
   const std::string t2 = absl::StrJoin(vector, ",");
   const std::string t3 = type != "" ? absl::StrCat(") of type ", type) : ")";
@@ -1649,6 +1954,9 @@ class ParameterizedOpConverterTestBase
       : trt_mode_(std::get<0>(GetParam())),
         tf_type_(std::get<1>(GetParam())),
         converter_precision_(std::get<2>(GetParam())) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_42(mht_42_v, 1957, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "ParameterizedOpConverterTestBase");
+
     LOG(INFO) << "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%";
     LOG(INFO) << "tf_type_: " << DebugString(tf_type_);
     LOG(INFO) << "trt_mode_: " << DebugString(trt_mode_);
@@ -1657,19 +1965,34 @@ class ParameterizedOpConverterTestBase
   }
 
   void Reset() {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_43(mht_43_v, 1968, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "Reset");
+
     OpConverterTest::Reset(converter_precision_, trt_mode_);
     input_data_.clear();
   }
 
   void Reset(TrtPrecisionMode precision) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_44(mht_44_v, 1976, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "Reset");
+
     OpConverterTest::Reset(precision, trt_mode_);
     input_data_.clear();
   }
 
   // Getters of protected attributes
-  DataType get_tf_type() { return tf_type_; }
-  TrtTestMode get_trt_mode() { return trt_mode_; }
-  TrtPrecisionMode get_converter_precision() { return converter_precision_; }
+  DataType get_tf_type() {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_45(mht_45_v, 1985, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "get_tf_type");
+ return tf_type_; }
+  TrtTestMode get_trt_mode() {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_46(mht_46_v, 1989, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "get_trt_mode");
+ return trt_mode_; }
+  TrtPrecisionMode get_converter_precision() {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_47(mht_47_v, 1993, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "get_converter_precision");
+ return converter_precision_; }
 
   // Adds an input ITensor for TRT network. Also creates the corresponding TF
   // tensor, and stores it in the list of inputs (input_data_).
@@ -1858,6 +2181,9 @@ class OpConverter_BinaryTest : public ParameterizedOpConverterTestBase {
                std::pair<std::function<NodeDef(DataType)>, std::vector<T>>>&
           op_test_info,
       DataType tf_type) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_48(mht_48_v, 2184, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "RunTests");
+
     // Test combinations of tensor vs weight inputs (except when both inputs are
     // weights).
     bool expectedToFailTested = false;
@@ -1902,6 +2228,10 @@ class OpConverter_BinaryTest : public ParameterizedOpConverterTestBase {
   }
 
   void runExpectedToFailTest(const std::string& op_name) {
+   std::vector<std::string> mht_49_v;
+   mht_49_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_49(mht_49_v, 2232, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "runExpectedToFailTest");
+
     Reset();
     AttrValue dtype;
     dtype.set_type(tf_type_);
@@ -1973,6 +2303,9 @@ INSTANTIATE_TEST_CASE_P(
 
 template <typename T>
 void CopyTensorElements(const Tensor& tensor, protobuf::RepeatedField<T>* out) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_50(mht_50_v, 2306, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "CopyTensorElements");
+
   out->Clear();
   if (tensor.NumElements() == 0) return;
 
@@ -2005,6 +2338,9 @@ void TestConvertConst(OpConverterTest* test) {
                             const Tensor& tensor, const bool as_tensor_content,
                             const std::vector<int>& expected_dims,
                             const std::vector<OutputCType>& expected_value) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_51(mht_51_v, 2341, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "lambda");
+
     test->Reset();
 
     TensorProto* tensor_attr =
@@ -2116,6 +2452,10 @@ TEST_F(OpConverterTest, ConvertConst) {
 template <typename T>
 NodeDef CreateFusedBatchNormOp(DataType tf_type, std::string data_format,
                                bool is_training, float epsilon) {
+   std::vector<std::string> mht_52_v;
+   mht_52_v.push_back("data_format: \"" + data_format + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_52(mht_52_v, 2456, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "CreateFusedBatchNormOp");
+
   Scope s = Scope::NewRootScope();
   auto x = ops::Placeholder(s.WithOpName("x"), tf_type);
   auto scale = ops::Placeholder(s.WithOpName("scale"), tf_type);
@@ -2641,7 +2981,10 @@ TEST_P(OpConverter_FP32_Test, ConvertShape) {
     TestParamBase{{1, 2, 3}, {}, {3}, {1}, conversion_status},
   };
 
-  auto input_is_weight = [](const TestParamBase p) { return !p.param.empty(); };
+  auto input_is_weight = [](const TestParamBase p) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_53(mht_53_v, 2985, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "lambda");
+ return !p.param.empty(); };
   for (auto p : test_params) {
     SCOPED_TRACE(p);
     Reset();
@@ -2687,6 +3030,9 @@ void TestMatMulHelper(
     ParameterizedOpConverterTestBase* test,
     const std::function<NodeDef(DataType, bool, bool)>& get_matmul,
     const std::vector<MatMulTestParams>& params) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_54(mht_54_v, 3033, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "TestMatMulHelper");
+
   {
     // Unsupported data type.
     test->Reset();
@@ -2806,6 +3152,9 @@ void TestMatMulHelper(
 
 template <typename LayerType>
 void CheckAddedLayers(OpConverterTest* test, bool expect_found) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_55(mht_55_v, 3155, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "CheckAddedLayers");
+
   bool layer_found = false;
   for (int i = 0; i < test->converter_->network()->getNbLayers(); i++) {
     nvinfer1::ILayer* layer = test->converter_->network()->getLayer(i);
@@ -2886,6 +3235,9 @@ TEST_P(OpConverter_FP32_Test, ConvertBatchMatMul) {
   params.reserve(params_2d.size() * 3 + 1);
 
   auto insert_ones = [](std::vector<int> v, int n) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_56(mht_56_v, 3238, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "lambda");
+
     std::vector<int> ones(n, 1);
     ones.insert(ones.end(), v.begin(), v.end());
     return ones;
@@ -3260,6 +3612,9 @@ TEST_P(OpConverter_FP32_FP16_Test, ConvertBiasAdd) {
 
 template <typename OpType>
 NodeDef GetBinaryOpNodeDef(DataType dtype) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_57(mht_57_v, 3615, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "GetBinaryOpNodeDef");
+
   Scope s = Scope::NewRootScope();
   auto input_l = ops::Placeholder(s.WithOpName("input1"), dtype);
   auto input_r = ops::Placeholder(s.WithOpName("input2"), dtype);
@@ -3289,6 +3644,9 @@ TEST_P(OpConverter_FP32_FP16_BinaryTest, ConvertBinary) {
 }
 
 NodeDef GetAddNNodeDef(const std::vector<string>& input_names, DataType dtype) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_58(mht_58_v, 3647, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "GetAddNNodeDef");
+
   Scope s = Scope::NewRootScope();
   OutputList inputs;
   for (const string& name : input_names) {
@@ -3307,6 +3665,9 @@ struct AddNTestParams {
 };
 
 void TestAddN(ParameterizedOpConverterTestBase* test, AddNTestParams& p) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_59(mht_59_v, 3668, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "TestAddN");
+
   // All inputs are tensors.
   test->Reset();
   const NodeDef node_def = GetAddNNodeDef(p.input_names, test->get_tf_type());
@@ -4036,6 +4397,9 @@ NodeDef CreateUnaryOp(DataType tf_type) {
 constexpr float kLeakyReluAlpha = 0.2f;
 template <>
 NodeDef CreateUnaryOp<ops::internal::LeakyRelu>(DataType tf_type) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_60(mht_60_v, 4400, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "CreateUnaryOp<ops::internal::LeakyRelu>");
+
   Scope s = Scope::NewRootScope();
   auto input = ops::Placeholder(s.WithOpName("input"), tf_type);
   return ops::internal::LeakyRelu(
@@ -4405,6 +4769,9 @@ TEST_P(OpConverter_FP32_FP16_INT32_Test, ConvertStridedSlice) {
   };
 
   auto get_mask = [](const std::vector<int>& mask) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_61(mht_61_v, 4772, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "lambda");
+
     int result = 0;
     for (int i = 0; i < mask.size(); i++) {
       if (mask[i]) result += (1 << i);
@@ -5774,6 +6141,9 @@ struct Conv3DTestParams {
 };
 
 void TestConv3D(ParameterizedOpConverterTestBase* test, Conv3DTestParams& p) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_62(mht_62_v, 6144, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "TestConv3D");
+
   test->Reset();
   NodeDef node_def = GetConv3DNodeDef(p.strides, p.padding, p.data_format,
                                       p.dilations, p.is_conv3d_backprop);
@@ -6100,6 +6470,11 @@ template <typename T>
 NodeDef CreatePoolOp(DataType tf_type, std::vector<int> ksize,
                      std::vector<int> strides, string padding,
                      string data_format) {
+   std::vector<std::string> mht_63_v;
+   mht_63_v.push_back("padding: \"" + padding + "\"");
+   mht_63_v.push_back("data_format: \"" + data_format + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_63(mht_63_v, 6475, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "CreatePoolOp");
+
   Scope s = Scope::NewRootScope();
   auto input = ops::Placeholder(s.WithOpName("input"), tf_type);
   typename T::Attrs attrs;
@@ -6310,6 +6685,11 @@ struct DataFormatVecPermuteTestParams {
 
 NodeDef GetDataFormatVecPermuteNodeDef(string dst_format, string src_format,
                                        std::vector<int>& x_shape) {
+   std::vector<std::string> mht_64_v;
+   mht_64_v.push_back("dst_format: \"" + dst_format + "\"");
+   mht_64_v.push_back("src_format: \"" + src_format + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_64(mht_64_v, 6690, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "GetDataFormatVecPermuteNodeDef");
+
   Scope s = Scope::NewRootScope();
   PartialTensorShape tensor_shape;
   auto x = ops::Placeholder(s.WithOpName("x"), DT_INT32);
@@ -6783,6 +7163,9 @@ TEST_P(OpConverter_FP32_FP16_INT32_Test, ConvertGather) {
 
 template <typename OpType>
 NodeDef CreateReduceOp(DataType tf_type, bool keep_dims) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_65(mht_65_v, 7166, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "CreateReduceOp");
+
   Scope s = Scope::NewRootScope();
   auto input = ops::Placeholder(s.WithOpName("input"), tf_type);
   auto axis = ops::Placeholder(s.WithOpName("axis"), DT_INT32);
@@ -6835,16 +7218,31 @@ TEST_P(OpConverter_FP32_FP16_INT32_Test, ConvertReduce) {
     float init_val;
   };
   std::vector<ReduceTestDescriptor> op_test_info{
-      {"Sum", CreateReduceOp<ops::Sum>, [](float x, float y) { return x + y; },
+      {"Sum", CreateReduceOp<ops::Sum>, [](float x, float y) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_66(mht_66_v, 7222, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "lambda");
+ return x + y; },
        0},
       {"Prod", CreateReduceOp<ops::Prod>,
-       [](float x, float y) { return x * y; }, 1},
+       [](float x, float y) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_67(mht_67_v, 7228, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "lambda");
+ return x * y; }, 1},
       {"Mean", CreateReduceOp<ops::Mean>,
-       [](float x, float y) { return x + y; }, 0},
+       [](float x, float y) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_68(mht_68_v, 7233, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "lambda");
+ return x + y; }, 0},
       {"Min", CreateReduceOp<ops::Min>,
-       [](float x, float y) { return y < x ? y : x; }, 1000},
+       [](float x, float y) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_69(mht_69_v, 7238, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "lambda");
+ return y < x ? y : x; }, 1000},
       {"Max", CreateReduceOp<ops::Max>,
-       [](float x, float y) { return x < y ? y : x; }, -1000}};
+       [](float x, float y) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_70(mht_70_v, 7243, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "lambda");
+ return x < y ? y : x; }, -1000}};
 
   std::vector<float> input_values{1, 2, 3, 4, 5, 6};
   struct TestParams {
@@ -6932,6 +7330,9 @@ TEST_P(OpConverter_FP32_FP16_INT32_Test, ConvertReduce) {
 }
 
 NodeDef CreateCastOp(DataType tf_type) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_71(mht_71_v, 7333, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "CreateCastOp");
+
   Scope s = Scope::NewRootScope();
   auto input = ops::Placeholder(s.WithOpName("input"), DT_HALF);
   return ops::Cast(s.WithOpName("my_unary"), input, DT_FLOAT)
@@ -7227,6 +7628,9 @@ auto get_split_nodedef = [](DataType dtype, int num_split) -> NodeDef {
 
 template <DataType dtype>
 void TestConvertSplit(OpConverterTest* test) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_72(mht_72_v, 7631, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "TestConvertSplit");
+
   typedef typename EnumToDataType<dtype>::Type CType;
 
   struct TestParams {
@@ -7409,6 +7813,9 @@ struct UnpackTestParams {
 
 void TestConvertUnpack(ParameterizedOpConverterTestBase* test,
                        UnpackTestParams& p) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_73(mht_73_v, 7816, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "TestConvertUnpack");
+
   test->Reset();
   NodeDef node_def = get_unpack_nodedef(test->get_tf_type(), p.num, p.axis);
   // Create inputs.
@@ -7561,6 +7968,9 @@ TEST_P(OpConverter_FP32_FP16_INT32_Test, ConvertUnpack) {
 
 // Get the NodeDef for Pack.
 NodeDef GetPackNodeDef(DataType dtype, int num_inputs, int axis) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_74(mht_74_v, 7971, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "GetPackNodeDef");
+
   Scope s = Scope::NewRootScope();
   std::vector<Input> values;
   values.reserve(num_inputs);
@@ -7740,6 +8150,9 @@ TEST_P(OpConverter_FP32_FP16_INT32_Test, ConvertPack) {
 // Get the NodeDef for ArgMin or ArgMax.
 template <typename OpType>
 NodeDef GetArgMinMaxNodeDef(DataType input_dtype, DataType output_dtype) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_75(mht_75_v, 8153, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "GetArgMinMaxNodeDef");
+
   Scope s = Scope::NewRootScope();
   auto input = ops::Placeholder(s.WithOpName("input"), input_dtype);
   auto dimension = ops::Placeholder(s.WithOpName("dimension"), DT_INT32);
@@ -7761,6 +8174,9 @@ struct ArgMinMaxTestParams {
 template <typename OpType>
 void TestConvertArgMinMax(ParameterizedOpConverterTestBase* test,
                           DataType _tf_type, ArgMinMaxTestParams& p) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_76(mht_76_v, 8177, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "TestConvertArgMinMax");
+
   test->Reset();
 
   NodeDef node_def = GetArgMinMaxNodeDef<OpType>(_tf_type,
@@ -7908,6 +8324,10 @@ TEST_P(OpConverter_FP32_FP16_Test, ConvertArgMinMax) {
 template <typename OpType>
 NodeDef GetDepthSpaceShuffleNodeDef(DataType dtype, int block_size,
                                     string data_format) {
+   std::vector<std::string> mht_77_v;
+   mht_77_v.push_back("data_format: \"" + data_format + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_77(mht_77_v, 8328, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "GetDepthSpaceShuffleNodeDef");
+
   Scope s = Scope::NewRootScope();
   auto input = ops::Placeholder(s.WithOpName("input"), dtype);
   auto attrs = OpType::DataFormat(data_format);
@@ -7928,6 +8348,9 @@ template <typename OpType>
 void TestConvertDepthSpaceShuffle(
     ParameterizedOpConverterTestBase* test,
     const std::vector<DepthSpaceShuffleTestParams>& params) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_78(mht_78_v, 8351, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "TestConvertDepthSpaceShuffle");
+
   Status status = Status::OK();
 
   {
@@ -8207,6 +8630,9 @@ TEST_P(OpConverter_FP32_FP16_Test, ConvertClipByValue) {
 
 // Get the NodeDef for SquaredDifference.
 NodeDef GetSquaredDifferenceNodeDef(DataType dtype) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_79(mht_79_v, 8633, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "GetSquaredDifferenceNodeDef");
+
   Scope s = Scope::NewRootScope();
   auto x = ops::Placeholder(s.WithOpName("x"), dtype);
   auto y = ops::Placeholder(s.WithOpName("y"), dtype);
@@ -8283,6 +8709,9 @@ TEST_P(OpConverter_FP32_FP16_Test, ConvertSquaredDifference) {
 
 template <typename OpType>
 NodeDef MakeResizeNodeDef(DataType dtype, bool align_corners) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_80(mht_80_v, 8712, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "MakeResizeNodeDef");
+
   Scope s = Scope::NewRootScope();
   auto input = ops::Placeholder(s.WithOpName("input"), dtype);
   auto size = ops::Placeholder(s.WithOpName("size"), DT_INT32);
@@ -8306,6 +8735,9 @@ struct ResizeTestParams {
 template <typename OpType>
 void TestConvertResize(ParameterizedOpConverterTestBase* test,
                        ResizeTestParams& p) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_81(mht_81_v, 8738, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "TestConvertResize");
+
   test->Reset();
   // Create resize node.
   NodeDef node_def =
@@ -8409,6 +8841,10 @@ TEST_P(OpConverter_FP32_FP16_Test, ConvertResize) {
 }
 
 NodeDef MakePadNodeDef(std::string name, DataType dtype) {
+   std::vector<std::string> mht_82_v;
+   mht_82_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_nodes_testDTcc mht_82(mht_82_v, 8845, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_nodes_test.cc", "MakePadNodeDef");
+
   Scope s = Scope::NewRootScope();
   auto input = ops::Placeholder(s.WithOpName("input"), dtype);
   auto padding = ops::Placeholder(s.WithOpName("padding"), DT_INT32);

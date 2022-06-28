@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -88,12 +256,18 @@ REGISTER_KERNEL_BUILDER(Name("_VarHandlesOp").Device(DEVICE_CPU),
                         ResourceHandlesOp<Var>);
 
 ReadVariableOp::ReadVariableOp(OpKernelConstruction* c) : OpKernel(c) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_0(mht_0_v, 259, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "ReadVariableOp::ReadVariableOp");
+
   OP_REQUIRES_OK(c, c->GetAttr("dtype", &dtype_));
 }
 
 namespace {
 
 Status CopyVariable(int output_idx, OpKernelContext* ctx, const Tensor* t) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_1(mht_1_v, 268, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "CopyVariable");
+
   Tensor* output;
   Notification n;
   Status status;
@@ -134,6 +308,9 @@ Status CopyVariable(int output_idx, OpKernelContext* ctx, const Tensor* t) {
 }  // namespace
 
 void ReadVariableOp::Compute(OpKernelContext* ctx) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_2(mht_2_v, 311, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "ReadVariableOp::Compute");
+
   core::RefCountPtr<Var> variable;
   const ResourceHandle& handle = HandleFromInput(ctx, 0);
   const auto status = LookupResource(ctx, handle, &variable);
@@ -163,6 +340,9 @@ void ReadVariableOp::Compute(OpKernelContext* ctx) {
 }
 
 ReadVariablesOp::ReadVariablesOp(OpKernelConstruction* c) : OpKernel(c) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_3(mht_3_v, 343, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "ReadVariablesOp::ReadVariablesOp");
+
   int n;
   OP_REQUIRES_OK(c, c->GetAttr("N", &n));
   OP_REQUIRES_OK(c, c->GetAttr("dtypes", &dtypes_));
@@ -173,6 +353,9 @@ ReadVariablesOp::ReadVariablesOp(OpKernelConstruction* c) : OpKernel(c) {
 }
 
 void ReadVariablesOp::Compute(OpKernelContext* ctx) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_4(mht_4_v, 356, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "ReadVariablesOp::Compute");
+
   std::vector<core::RefCountPtr<Var>> variables(dtypes_.size());
   std::vector<const ResourceHandle*> handles(dtypes_.size());
   for (size_t i = 0; i < dtypes_.size(); ++i) {
@@ -227,6 +410,9 @@ REGISTER_KERNEL_BUILDER(
     ReadVariablesOp);
 
 VarHandleOp::VarHandleOp(OpKernelConstruction* context) : OpKernel(context) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_5(mht_5_v, 413, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "VarHandleOp::VarHandleOp");
+
   OP_REQUIRES_OK(context, context->GetAttr("container", &container_));
   OP_REQUIRES_OK(context, context->GetAttr("shared_name", &name_));
 
@@ -248,6 +434,9 @@ VarHandleOp::VarHandleOp(OpKernelConstruction* context) : OpKernel(context) {
 }
 
 void VarHandleOp::Compute(OpKernelContext* ctx) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_6(mht_6_v, 437, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "VarHandleOp::Compute");
+
   if (is_anonymous_) {
     Var* resource = new Var(dtype_and_shape_.dtype);
     ResourceMgr* mgr = ctx->resource_manager();
@@ -340,11 +529,17 @@ REGISTER_KERNEL_BUILDER(Name("VariableShape")
 
 DestroyResourceOp::DestroyResourceOp(OpKernelConstruction* ctx)
     : OpKernel(ctx) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_7(mht_7_v, 532, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "DestroyResourceOp::DestroyResourceOp");
+
   OP_REQUIRES_OK(ctx,
                  ctx->GetAttr("ignore_lookup_error", &ignore_lookup_error_));
 }
 
 void DestroyResourceOp::Compute(OpKernelContext* ctx) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_8(mht_8_v, 540, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "DestroyResourceOp::Compute");
+
   const ResourceHandle& p = HandleFromInput(ctx, 0);
   Status status = DeleteResource(ctx, p);
   if (ignore_lookup_error_ && errors::IsNotFound(status)) {
@@ -363,6 +558,9 @@ template <typename Device, typename T>
 class AssignVariableOp : public OpKernel {
  public:
   explicit AssignVariableOp(OpKernelConstruction* c) : OpKernel(c) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_9(mht_9_v, 561, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "AssignVariableOp");
+
     OP_REQUIRES_OK(c, c->GetAttr("dtype", &dtype_));
     if (!c->GetAttr("_grappler_relax_allocator_constraints",
                     &relax_constraints_)
@@ -375,6 +573,9 @@ class AssignVariableOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_10(mht_10_v, 576, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "Compute");
+
     OP_REQUIRES(context, dtype_ == context->input(1).dtype(),
                 errors::InvalidArgument(
                     "Variable and value dtypes don't match; respectively, ",
@@ -451,6 +652,9 @@ template <typename Device>
 class AssignVariableOp<Device, Variant> : public OpKernel {
  public:
   explicit AssignVariableOp(OpKernelConstruction* c) : OpKernel(c) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_11(mht_11_v, 655, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "AssignVariableOp");
+
     OP_REQUIRES_OK(c, c->GetAttr("dtype", &dtype_));
     OP_REQUIRES(c, dtype_ == DT_VARIANT,
                 errors::Internal("Variant kernel called with dtype: ",
@@ -458,6 +662,9 @@ class AssignVariableOp<Device, Variant> : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_12(mht_12_v, 665, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "Compute");
+
     const Tensor& value = context->input(1);
     core::RefCountPtr<Var> variable;
     OP_REQUIRES_OK(context, LookupOrCreateResource<Var>(
@@ -554,9 +761,15 @@ REGISTER_KERNEL_BUILDER(Name("AssignVariableOp")
 template <typename Device, typename T, DenseUpdateType Op>
 class AssignUpdateVariableOp : public OpKernel {
  public:
-  explicit AssignUpdateVariableOp(OpKernelConstruction* c) : OpKernel(c) {}
+  explicit AssignUpdateVariableOp(OpKernelConstruction* c) : OpKernel(c) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_13(mht_13_v, 765, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "AssignUpdateVariableOp");
+}
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_14(mht_14_v, 770, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "Compute");
+
     core::RefCountPtr<Var> variable;
     OP_REQUIRES_OK(context, LookupResource(context, HandleFromInput(context, 0),
                                            &variable));
@@ -613,9 +826,15 @@ TF_CALL_int64(REGISTER_GPU_KERNELS);
 
 class VarIsInitializedOp : public OpKernel {
  public:
-  explicit VarIsInitializedOp(OpKernelConstruction* c) : OpKernel(c) {}
+  explicit VarIsInitializedOp(OpKernelConstruction* c) : OpKernel(c) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_15(mht_15_v, 830, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "VarIsInitializedOp");
+}
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_16(mht_16_v, 835, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "Compute");
+
     Tensor* output = nullptr;
     OP_REQUIRES_OK(context,
                    context->allocate_output(0, TensorShape({}), &output));
@@ -644,10 +863,16 @@ template <typename Device, typename T, typename Index>
 class ResourceGatherOp : public OpKernel {
  public:
   explicit ResourceGatherOp(OpKernelConstruction* c) : OpKernel(c) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_17(mht_17_v, 866, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "ResourceGatherOp");
+
     OP_REQUIRES_OK(c, c->GetAttr("batch_dims", &batch_dims_));
   }
 
   void Compute(OpKernelContext* c) override {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_18(mht_18_v, 873, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "Compute");
+
     core::RefCountPtr<Var> v;
     OP_REQUIRES_OK(c, LookupResource(c, HandleFromInput(c, 0), &v));
     OP_REQUIRES_OK(c, EnsureSparseVariableAccess<Device, T>(c, v.get()));
@@ -747,6 +972,9 @@ class ResourceGatherOp : public OpKernel {
   // [0, 1, 2, 4, 5, 6]
   void AddBatchOffsets(OpKernelContext* ctx, Tensor* indices,
                        const Tensor& params) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_19(mht_19_v, 975, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "AddBatchOffsets");
+
     int64_t batch_size = 1;  // The size of all batch dimensions.
     for (int idx = 0; idx < batch_dims_; ++idx) {
       batch_size *= params.dim_size(idx);
@@ -823,9 +1051,15 @@ REGISTER_KERNEL_BUILDER(Name("ResourceGather")
 template <typename Device, typename T, typename Index>
 class ResourceGatherNdOp : public OpKernel {
  public:
-  explicit ResourceGatherNdOp(OpKernelConstruction* c) : OpKernel(c) {}
+  explicit ResourceGatherNdOp(OpKernelConstruction* c) : OpKernel(c) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_20(mht_20_v, 1055, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "ResourceGatherNdOp");
+}
 
   void Compute(OpKernelContext* c) override {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_21(mht_21_v, 1060, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "Compute");
+
     core::RefCountPtr<Var> v;
     OP_REQUIRES_OK(c, LookupResource(c, HandleFromInput(c, 0), &v));
     OP_REQUIRES_OK(c, EnsureSparseVariableAccess<Device, T>(c, v.get()));
@@ -879,16 +1113,25 @@ namespace {
 
 template <typename Device>
 bool isCPUDevice() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_22(mht_22_v, 1116, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "isCPUDevice");
+
   return false;
 }
 
 template <>
 bool isCPUDevice<CPUDevice>() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_23(mht_23_v, 1124, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "isCPUDevice<CPUDevice>");
+
   return true;
 }
 
 template <typename T>
 bool ValidateInput(const Tensor& updates) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_24(mht_24_v, 1132, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "ValidateInput");
+
   const auto updates_flat = updates.flat<T>();
   for (int i = 0; i < updates.NumElements(); ++i) {
     if (updates_flat(i) == T{}) return false;
@@ -898,6 +1141,9 @@ bool ValidateInput(const Tensor& updates) {
 
 template <>
 bool ValidateInput<Variant>(const Tensor& updates) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_25(mht_25_v, 1144, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "ValidateInput<Variant>");
+
   return true;
 }
 
@@ -934,6 +1180,9 @@ Status CopyTensorToHost(OpKernelContext* c, const Tensor& device_tensor,
 template <typename T, typename Index, scatter_op::UpdateOp Op>
 Status DoScatterOnCpu(OpKernelContext* c, Tensor* params, const Tensor& indices,
                       const Tensor& updates, Index num_indices) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_26(mht_26_v, 1183, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "DoScatterOnCpu");
+
   auto stream = c->op_device_context()->stream();
 
   Tensor host_indices;
@@ -968,6 +1217,9 @@ Status DoScatterOnCpu(OpKernelContext* c, Tensor* params, const Tensor& indices,
 template <typename Device, typename T, typename Index, scatter_op::UpdateOp op>
 Status DoScatter(OpKernelContext* c, Tensor* params, const Tensor& indices,
                  const Tensor& updates, Index num_indices) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_27(mht_27_v, 1220, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "DoScatter");
+
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   if (std::is_same<Device, GPUDevice>::value &&
       tensorflow::OpDeterminismRequired()) {
@@ -1002,6 +1254,9 @@ template <typename Device, typename T, typename Index, scatter_op::UpdateOp op>
 class ResourceScatterUpdateOp : public OpKernel {
  public:
   explicit ResourceScatterUpdateOp(OpKernelConstruction* c) : OpKernel(c) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_28(mht_28_v, 1257, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "ResourceScatterUpdateOp");
+
     // We use the same kernel for many operations.
     // Each operation has a different set of attributes defined in its nodes.
     Status s = c->GetAttr("use_locking", &use_exclusive_lock_);
@@ -1011,6 +1266,9 @@ class ResourceScatterUpdateOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* c) override {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_29(mht_29_v, 1269, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "Compute");
+
     core::RefCountPtr<Var> v;
     OP_REQUIRES_OK(c, LookupResource(c, HandleFromInput(c, 0), &v));
     OP_REQUIRES_OK(c, EnsureSparseVariableAccess<Device, T>(c, v.get()));
@@ -1031,6 +1289,9 @@ class ResourceScatterUpdateOp : public OpKernel {
   bool use_exclusive_lock_;
 
   void DoCompute(OpKernelContext* c) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSresource_variable_opsDTcc mht_30(mht_30_v, 1292, "", "./tensorflow/core/kernels/resource_variable_ops.cc", "DoCompute");
+
     core::RefCountPtr<Var> v;
     OP_REQUIRES_OK(c, LookupResource(c, HandleFromInput(c, 0), &v));
     Tensor* params = v->tensor();

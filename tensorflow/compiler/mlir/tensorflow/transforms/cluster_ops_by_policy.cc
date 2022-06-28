@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,10 +205,16 @@ namespace TFDevice {
 // -------------------------------------------------------------------------- //
 
 ValueConstraint Merge(ValueConstraint a, ValueConstraint b) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc mht_0(mht_0_v, 208, "", "./tensorflow/compiler/mlir/tensorflow/transforms/cluster_ops_by_policy.cc", "Merge");
+
   return a > b ? a : b;
 }
 
 LogicalResult IsStaticallyResolved(Value value, ValueConstraint constraint) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc mht_1(mht_1_v, 215, "", "./tensorflow/compiler/mlir/tensorflow/transforms/cluster_ops_by_policy.cc", "IsStaticallyResolved");
+
   // Resolve constraints inferred from the tensor type.
   if (auto tensor = value.getType().dyn_cast<TensorType>()) {
     if (constraint == ValueConstraint::kRank && tensor.hasRank())
@@ -53,6 +227,9 @@ LogicalResult IsStaticallyResolved(Value value, ValueConstraint constraint) {
 }
 
 raw_ostream &operator<<(raw_ostream &os, const ValueConstraint &constraint) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc mht_2(mht_2_v, 230, "", "./tensorflow/compiler/mlir/tensorflow/transforms/cluster_ops_by_policy.cc", "operator<<");
+
   auto str = [](ValueConstraint constraint) -> StringRef {
     switch (constraint) {
       case ValueConstraint::kRank:
@@ -76,6 +253,9 @@ raw_ostream &operator<<(raw_ostream &os, const ValueConstraint &constraint) {
 
 void ValuesConstraintSet::Insert(ValueRange values,
                                  ValueConstraint constraint) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc mht_3(mht_3_v, 256, "", "./tensorflow/compiler/mlir/tensorflow/transforms/cluster_ops_by_policy.cc", "ValuesConstraintSet::Insert");
+
   for (Value value : values) Insert(value, constraint);
 }
 
@@ -94,27 +274,42 @@ std::pair<ValueConstraint, bool> ValuesConstraintSet::Insert(
 
 void ValuesConstraintSet::Walk(
     llvm::function_ref<void(Value, ValueConstraint)> walk) const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc mht_4(mht_4_v, 277, "", "./tensorflow/compiler/mlir/tensorflow/transforms/cluster_ops_by_policy.cc", "ValuesConstraintSet::Walk");
+
   for (auto &kv : constraints_) walk(kv.getFirst(), kv.getSecond());
 }
 
 Optional<ValueConstraint> ValuesConstraintSet::GetConstraint(
     Value value) const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc mht_5(mht_5_v, 285, "", "./tensorflow/compiler/mlir/tensorflow/transforms/cluster_ops_by_policy.cc", "ValuesConstraintSet::GetConstraint");
+
   auto it = constraints_.find(value);
   if (it == constraints_.end()) return None;
   return it->getSecond();
 }
 
 bool ValuesConstraintSet::HasConstraint(Value value) const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc mht_6(mht_6_v, 294, "", "./tensorflow/compiler/mlir/tensorflow/transforms/cluster_ops_by_policy.cc", "ValuesConstraintSet::HasConstraint");
+
   return GetConstraint(value).hasValue();
 }
 
 void ValuesConstraintSet::MergeAll(const ValuesConstraintSet &other) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc mht_7(mht_7_v, 301, "", "./tensorflow/compiler/mlir/tensorflow/transforms/cluster_ops_by_policy.cc", "ValuesConstraintSet::MergeAll");
+
   other.Walk([this](Value value, ValueConstraint constraint) {
     Insert(value, constraint);
   });
 }
 
 ValuesConstraintSet &ValuesConstraintSet::Resolve() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc mht_8(mht_8_v, 310, "", "./tensorflow/compiler/mlir/tensorflow/transforms/cluster_ops_by_policy.cc", "ValuesConstraintSet::Resolve");
+
   llvm::SmallDenseSet<Value, 4> resolved;
   Walk([&](Value value, ValueConstraint constraint) {
     if (succeeded(IsStaticallyResolved(value, constraint)))
@@ -125,13 +320,22 @@ ValuesConstraintSet &ValuesConstraintSet::Resolve() {
 }
 
 ValuesConstraintSet &ValuesConstraintSet::Reset() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc mht_9(mht_9_v, 323, "", "./tensorflow/compiler/mlir/tensorflow/transforms/cluster_ops_by_policy.cc", "ValuesConstraintSet::Reset");
+
   constraints_.clear();
   return *this;
 }
 
-size_t ValuesConstraintSet::Size() const { return constraints_.size(); }
+size_t ValuesConstraintSet::Size() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc mht_10(mht_10_v, 331, "", "./tensorflow/compiler/mlir/tensorflow/transforms/cluster_ops_by_policy.cc", "ValuesConstraintSet::Size");
+ return constraints_.size(); }
 
-bool ValuesConstraintSet::Empty() const { return constraints_.empty(); }
+bool ValuesConstraintSet::Empty() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc mht_11(mht_11_v, 336, "", "./tensorflow/compiler/mlir/tensorflow/transforms/cluster_ops_by_policy.cc", "ValuesConstraintSet::Empty");
+ return constraints_.empty(); }
 
 // -------------------------------------------------------------------------- //
 // Discovering clusters of operations based on the policy.
@@ -238,16 +442,25 @@ struct ClusteringState {
 }  // namespace
 
 bool ClusteringState::IsMember(Operation *op) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc mht_12(mht_12_v, 445, "", "./tensorflow/compiler/mlir/tensorflow/transforms/cluster_ops_by_policy.cc", "ClusteringState::IsMember");
+
   return member_ids.find(op) != member_ids.end();
 }
 
 unsigned ClusteringState::FindRoot(unsigned id) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc mht_13(mht_13_v, 452, "", "./tensorflow/compiler/mlir/tensorflow/transforms/cluster_ops_by_policy.cc", "ClusteringState::FindRoot");
+
   if (members[id].root == id) return id;
   return members[id].root = FindRoot(members[id].root);
 }
 
 LogicalResult ClusteringState::VerifyDominanceProperty(
     unsigned src_root, unsigned dst_root, Operation *insertion_point) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc mht_14(mht_14_v, 461, "", "./tensorflow/compiler/mlir/tensorflow/transforms/cluster_ops_by_policy.cc", "ClusteringState::VerifyDominanceProperty");
+
   // TODO(ezhulenev): Optimize this linear scan with a map lookup.
   for (auto &member : members) {
     unsigned root = FindRoot(member.root);
@@ -286,6 +499,9 @@ LogicalResult ClusteringState::VerifyDominanceProperty(
 
 LogicalResult ClusteringState::VerifyValueConstraints(
     unsigned src_root, unsigned dst_root, const ClusteringPolicySet &policies) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc mht_15(mht_15_v, 502, "", "./tensorflow/compiler/mlir/tensorflow/transforms/cluster_ops_by_policy.cc", "ClusteringState::VerifyValueConstraints");
+
   // Propagate constraints only through operations in the `src_root` cluster.
   auto filter = [&](Operation *op) -> bool {
     auto it = member_ids.find(op);
@@ -318,6 +534,9 @@ LogicalResult ClusteringState::VerifyValueConstraints(
 
 LogicalResult ClusteringState::Union(unsigned a, unsigned b,
                                      const ClusteringPolicySet &policies) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc mht_16(mht_16_v, 537, "", "./tensorflow/compiler/mlir/tensorflow/transforms/cluster_ops_by_policy.cc", "ClusteringState::Union");
+
   unsigned a_root = FindRoot(a);
   unsigned b_root = FindRoot(b);
 
@@ -337,6 +556,9 @@ LogicalResult ClusteringState::Union(unsigned a, unsigned b,
 
   // Print operations in the `root` cluster to debug stream.
   auto debug_clustered_ops = [&](unsigned root) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc mht_17(mht_17_v, 559, "", "./tensorflow/compiler/mlir/tensorflow/transforms/cluster_ops_by_policy.cc", "lambda");
+
     for (Member &member : members)
       if (FindRoot(member.root) == root) {
         if (auto *op = member.source.dyn_cast<Operation *>()) {
@@ -408,6 +630,9 @@ static Optional<ValuesConstraintSet> CanBeClustered(
 static ClusteringState InitializeClusteringState(
     Block *block, const ClusteringPolicySet &policies,
     const std::function<bool(Operation *op)> &filter) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc mht_18(mht_18_v, 633, "", "./tensorflow/compiler/mlir/tensorflow/transforms/cluster_ops_by_policy.cc", "InitializeClusteringState");
+
   ClusteringState state;
 
   // Create members for all block arguments.
@@ -467,6 +692,9 @@ static llvm::SmallVector<Operation *> GetClusteringCandidates(
 // pair of members into a new cluster.
 static bool RunClusteringPass(ClusteringState &state,
                               const ClusteringPolicySet &policies) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc mht_19(mht_19_v, 695, "", "./tensorflow/compiler/mlir/tensorflow/transforms/cluster_ops_by_policy.cc", "RunClusteringPass");
+
   bool clustered = false;
 
   for (auto &tuple : llvm::enumerate(state.members)) {
@@ -537,6 +765,9 @@ llvm::SmallVector<Cluster> FindClustersInTheBlock(
 // -------------------------------------------------------------------------- //
 
 tf_device::ClusterOp CreateClusterOp(Cluster &cluster, StringAttr policy) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc mht_20(mht_20_v, 768, "", "./tensorflow/compiler/mlir/tensorflow/transforms/cluster_ops_by_policy.cc", "CreateClusterOp");
+
   // Find all the values that are used outside of the cluster. These values
   // will be returned from the created cluster operation.
   llvm::DenseSet<Operation *> in_cluster;
@@ -605,6 +836,9 @@ mlir::LogicalResult PropagateValuesConstraints(
     llvm::ArrayRef<Operation *> root, std::function<bool(Operation *)> filter,
     const ClusteringPolicySet &policies, ValuesConstraintSet &constraints,
     bool resolve, bool emit_remarks) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc mht_21(mht_21_v, 839, "", "./tensorflow/compiler/mlir/tensorflow/transforms/cluster_ops_by_policy.cc", "PropagateValuesConstraints");
+
   // A set of constraints for operation results.
   llvm::DenseMap<Operation *, ValuesConstraintSet> op_results_constraints;
   assert(filter && "filter predicate must be defined");
@@ -683,6 +917,9 @@ mlir::LogicalResult PropagateValuesConstraints(
 mlir::LogicalResult PropagateValuesConstraints(
     mlir::Region &region, const ClusteringPolicySet &policies,
     ValuesConstraintSet &constraints, bool resolve, bool emit_remarks) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc mht_22(mht_22_v, 920, "", "./tensorflow/compiler/mlir/tensorflow/transforms/cluster_ops_by_policy.cc", "PropagateValuesConstraints");
+
   // Propagate constraints for all operations in the region.
   llvm::SmallVector<Operation *> worklist;
   region.walk([&](Operation *op) { worklist.emplace_back(op); });
@@ -697,6 +934,9 @@ mlir::LogicalResult PropagateValuesConstraints(
 }
 
 void EmitValueConstraintsRemarks(const ValuesConstraintSet &constraints) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc mht_23(mht_23_v, 937, "", "./tensorflow/compiler/mlir/tensorflow/transforms/cluster_ops_by_policy.cc", "EmitValueConstraintsRemarks");
+
   constraints.Walk([](Value value, ValueConstraint constraint) {
     for (OpOperand &operand : value.getUses())
       operand.getOwner()->emitRemark(
@@ -707,6 +947,9 @@ void EmitValueConstraintsRemarks(const ValuesConstraintSet &constraints) {
 
 void EmitInputsConstraintsRemarks(FuncOp func,
                                   const ValuesConstraintSet &constraints) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc mht_24(mht_24_v, 950, "", "./tensorflow/compiler/mlir/tensorflow/transforms/cluster_ops_by_policy.cc", "EmitInputsConstraintsRemarks");
+
   constraints.Walk([&](Value value, ValueConstraint constraint) {
     if (auto arg = value.dyn_cast<BlockArgument>())
       if (arg.getOwner() == &func.getBody().front())
@@ -717,6 +960,9 @@ void EmitInputsConstraintsRemarks(FuncOp func,
 
 LogicalResult InferFunctionBodyValuesConstraints(
     FuncOp func, ValuesConstraintSet &constraints) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPScluster_ops_by_policyDTcc mht_25(mht_25_v, 963, "", "./tensorflow/compiler/mlir/tensorflow/transforms/cluster_ops_by_policy.cc", "InferFunctionBodyValuesConstraints");
+
   for (unsigned i = 0; i < func.getNumResults(); ++i) {
     auto str = func.getResultAttrOfType<StringAttr>(i, "tf.constraint");
     if (!str) continue;

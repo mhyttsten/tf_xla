@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_COMPILER_XLA_PYTHON_SHARDED_DEVICE_ARRAY_H_
 #define TENSORFLOW_COMPILER_XLA_PYTHON_SHARDED_DEVICE_ARRAY_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSsharded_device_arrayDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSsharded_device_arrayDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSsharded_device_arrayDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <utility>
 #include <vector>
@@ -57,6 +225,9 @@ struct NoSharding {
 
 template <typename H>
 H AbslHashValue(H h, const NoSharding& key) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSsharded_device_arrayDTh mht_0(mht_0_v, 228, "", "./tensorflow/compiler/xla/python/sharded_device_array.h", "AbslHashValue");
+
   return h;
 }
 
@@ -70,7 +241,10 @@ H AbslHashValue(H h, const NoSharding& key) {
 // excluded) for k in {0, ... p-1}.
 struct Chunked {
  public:
-  explicit Chunked(std::vector<int> chunks_) : chunks(std::move(chunks_)) {}
+  explicit Chunked(std::vector<int> chunks_) : chunks(std::move(chunks_)) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSsharded_device_arrayDTh mht_1(mht_1_v, 245, "", "./tensorflow/compiler/xla/python/sharded_device_array.h", "Chunked");
+}
   // The number of chunks per axis.
   std::vector<int> chunks;
 
@@ -80,6 +254,9 @@ struct Chunked {
 
 template <typename H>
 H AbslHashValue(H h, const Chunked& key) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSsharded_device_arrayDTh mht_2(mht_2_v, 257, "", "./tensorflow/compiler/xla/python/sharded_device_array.h", "AbslHashValue");
+
   h = H::combine(std::move(h), key.chunks);
   return h;
 }
@@ -90,7 +267,10 @@ H AbslHashValue(H h, const Chunked& key) {
 // [], when using `Unstacked(N)`.
 struct Unstacked {
  public:
-  explicit Unstacked(int sz) : size(sz) {}
+  explicit Unstacked(int sz) : size(sz) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSsharded_device_arrayDTh mht_3(mht_3_v, 271, "", "./tensorflow/compiler/xla/python/sharded_device_array.h", "Unstacked");
+}
   int size;
 
   bool operator==(const Unstacked& other) const { return size == other.size; }
@@ -99,6 +279,9 @@ struct Unstacked {
 
 template <typename H>
 H AbslHashValue(H h, const Unstacked& key) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSsharded_device_arrayDTh mht_4(mht_4_v, 282, "", "./tensorflow/compiler/xla/python/sharded_device_array.h", "AbslHashValue");
+
   h = H::combine(std::move(h), key.size);
   return h;
 }
@@ -123,6 +306,9 @@ struct ShardedAxis {
 
 template <typename H>
 H AbslHashValue(H h, const ShardedAxis& key) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSsharded_device_arrayDTh mht_5(mht_5_v, 309, "", "./tensorflow/compiler/xla/python/sharded_device_array.h", "AbslHashValue");
+
   h = H::combine(std::move(h), key.axis);
   return h;
 }
@@ -139,6 +325,9 @@ struct Replicated {
 
 template <typename H>
 H AbslHashValue(H h, const Replicated& key) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSsharded_device_arrayDTh mht_6(mht_6_v, 328, "", "./tensorflow/compiler/xla/python/sharded_device_array.h", "AbslHashValue");
+
   h = H::combine(std::move(h), key.replicas);
   return h;
 }
@@ -175,15 +364,27 @@ class ShardingSpec {
   ShardingSpec(std::vector<AvalDimSharding> sharding,
                std::vector<MeshDimAssignment> mesh_mapping)
       : sharding_(std::move(sharding)),
-        mesh_mapping_(std::move(mesh_mapping)) {}
+        mesh_mapping_(std::move(mesh_mapping)) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSsharded_device_arrayDTh mht_7(mht_7_v, 368, "", "./tensorflow/compiler/xla/python/sharded_device_array.h", "ShardingSpec");
+}
   ShardingSpec(pybind11::iterable py_sharding,
                pybind11::iterable py_mesh_mapping)
       : sharding_(xla::IterableToVector<AvalDimSharding>(py_sharding)),
         mesh_mapping_(
-            xla::IterableToVector<MeshDimAssignment>(py_mesh_mapping)) {}
+            xla::IterableToVector<MeshDimAssignment>(py_mesh_mapping)) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSsharded_device_arrayDTh mht_8(mht_8_v, 376, "", "./tensorflow/compiler/xla/python/sharded_device_array.h", "ShardingSpec");
+}
 
-  const std::vector<AvalDimSharding>& GetSharding() const { return sharding_; }
+  const std::vector<AvalDimSharding>& GetSharding() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSsharded_device_arrayDTh mht_9(mht_9_v, 381, "", "./tensorflow/compiler/xla/python/sharded_device_array.h", "GetSharding");
+ return sharding_; }
   const std::vector<MeshDimAssignment>& GetMeshMapping() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSsharded_device_arrayDTh mht_10(mht_10_v, 385, "", "./tensorflow/compiler/xla/python/sharded_device_array.h", "GetMeshMapping");
+
     return mesh_mapping_;
   }
 
@@ -211,6 +412,9 @@ class ShardingSpec {
 
 template <typename H>
 H AbslHashValue(H h, const ShardingSpec& key) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSsharded_device_arrayDTh mht_11(mht_11_v, 415, "", "./tensorflow/compiler/xla/python/sharded_device_array.h", "AbslHashValue");
+
   h = H::combine(std::move(h), key.sharding_);
   h = H::combine(std::move(h), key.mesh_mapping_);
   return h;
@@ -240,25 +444,46 @@ class ShardedDeviceArray {
   // Delete all the underlying buffers (freeing memory on device).
   // The Numpy value on the host, if it exists, will also be deleted.
   void Delete();
-  const ShardingSpec& GetShardingSpec() const { return sharding_spec_; }
+  const ShardingSpec& GetShardingSpec() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSsharded_device_arrayDTh mht_12(mht_12_v, 448, "", "./tensorflow/compiler/xla/python/sharded_device_array.h", "GetShardingSpec");
+ return sharding_spec_; }
   // Returns an error status iff the object has been deleted.
   xla::StatusOr<absl::Span<xla::PjRtBuffer* const>> GetPjRtBuffers();
 
-  bool is_deleted() const { return is_deleted_; }
-  bool weak_type() const { return weak_type_; }
+  bool is_deleted() const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSsharded_device_arrayDTh mht_13(mht_13_v, 455, "", "./tensorflow/compiler/xla/python/sharded_device_array.h", "is_deleted");
+ return is_deleted_; }
+  bool weak_type() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSsharded_device_arrayDTh mht_14(mht_14_v, 459, "", "./tensorflow/compiler/xla/python/sharded_device_array.h", "weak_type");
+ return weak_type_; }
   absl::optional<pybind11::list> device_buffers() const {
     return device_buffers_;
   }
-  pybind11::object aval() const { return aval_; }
-  pybind11::object indices() const { return indices_; }
+  pybind11::object aval() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSsharded_device_arrayDTh mht_15(mht_15_v, 466, "", "./tensorflow/compiler/xla/python/sharded_device_array.h", "aval");
+ return aval_; }
+  pybind11::object indices() const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSsharded_device_arrayDTh mht_16(mht_16_v, 470, "", "./tensorflow/compiler/xla/python/sharded_device_array.h", "indices");
+ return indices_; }
 
   absl::optional<pybind11::object> npy_value() const { return npy_value_; }
-  void set_npy_value(pybind11::object npy_value) { npy_value_ = npy_value; }
+  void set_npy_value(pybind11::object npy_value) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSsharded_device_arrayDTh mht_17(mht_17_v, 476, "", "./tensorflow/compiler/xla/python/sharded_device_array.h", "set_npy_value");
+ npy_value_ = npy_value; }
 
   absl::optional<pybind11::object> one_replica_buffer_indices() const {
     return one_replica_buffer_indices_;
   }
   void set_one_replica_buffer_indices(pybind11::object obj) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSsharded_device_arrayDTh mht_18(mht_18_v, 484, "", "./tensorflow/compiler/xla/python/sharded_device_array.h", "set_one_replica_buffer_indices");
+
     one_replica_buffer_indices_ = obj;
   }
 
@@ -271,6 +496,9 @@ class ShardedDeviceArray {
                     pybind11::object, ShardedDeviceArray::IsShardedDeviceArray);
     pyobject() = default;
     ShardedDeviceArray* sda() const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSsharded_device_arrayDTh mht_19(mht_19_v, 499, "", "./tensorflow/compiler/xla/python/sharded_device_array.h", "sda");
+
       return ShardedDeviceArray::AsShardedDeviceArrayUnchecked(*this);
     }
   };
@@ -296,8 +524,14 @@ class ShardedDeviceArray {
                      bool weak_type);
 
   static xla::Status RegisterTypes(pybind11::module& m);
-  static PyObject* base_type() { return base_type_; }
-  static PyObject* type() { return type_; }
+  static PyObject* base_type() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSsharded_device_arrayDTh mht_20(mht_20_v, 528, "", "./tensorflow/compiler/xla/python/sharded_device_array.h", "base_type");
+ return base_type_; }
+  static PyObject* type() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSsharded_device_arrayDTh mht_21(mht_21_v, 532, "", "./tensorflow/compiler/xla/python/sharded_device_array.h", "type");
+ return type_; }
 
  private:
   // Buffers are expected to be xla::PyBuffer objects, but as there are
@@ -311,7 +545,10 @@ class ShardedDeviceArray {
         sharding_spec_(std::move(sharding_spec)),
         indices_(std::move(indices)),
         device_buffers_(std::move(device_buffers)),
-        weak_type_(weak_type) {}
+        weak_type_(weak_type) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSsharded_device_arrayDTh mht_22(mht_22_v, 549, "", "./tensorflow/compiler/xla/python/sharded_device_array.h", "ShardedDeviceArray");
+}
   static PyObject* base_type_;
   static PyObject* type_;
 

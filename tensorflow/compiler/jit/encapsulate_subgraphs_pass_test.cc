@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -48,6 +216,10 @@ const char* const kXlaHostTransferSequencerAttr =
 Status AddGraphDefToFunctionLibrary(const GraphDefBuilder& graphdef_builder,
                                     const string& name_suffix,
                                     FunctionDefLibrary* library) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("name_suffix: \"" + name_suffix + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_0(mht_0_v, 220, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "AddGraphDefToFunctionLibrary");
+
   GraphDef graphdef;
   TF_RETURN_IF_ERROR(graphdef_builder.ToGraphDef(&graphdef));
   std::unique_ptr<Graph> graph =
@@ -107,6 +279,10 @@ bool EqualProtoMap(const ::tensorflow::protobuf::Map<Tkey, Tvalue>& a,
 
 bool EqualFunctionNodeDef(const NodeDef& a, const NodeDef& b,
                           const string& diff_preamble, string* diff) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("diff_preamble: \"" + diff_preamble + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_1(mht_1_v, 283, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "EqualFunctionNodeDef");
+
   if (a.op() != b.op()) {
     if (diff) {
       *diff = absl::StrCat(diff_preamble, " mismatch for node ", a.name(),
@@ -166,8 +342,15 @@ bool EqualFunctionNodeDef(const NodeDef& a, const NodeDef& b,
   }
   return EqualProtoMap<string, AttrValue>(
       a.attr(), b.attr(), [](const string& s) { return s; },
-      [](const AttrValue& v) { return v.DebugString(); },
+      [](const AttrValue& v) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_2(mht_2_v, 346, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "lambda");
+ return v.DebugString(); },
       [](const string& key, const AttrValue& av, const AttrValue& bv) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_3(mht_3_v, 351, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "lambda");
+
         if (key == "ancestors") {
           // The ancestors are added from a set so the order is unpredictable;
           // just compare set equality not list equality.
@@ -185,6 +368,9 @@ bool EqualFunctionNodeDef(const NodeDef& a, const NodeDef& b,
 
 bool EqualFunctionDef(const FunctionDef& a, const FunctionDef& b,
                       string* diff) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_4(mht_4_v, 371, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "EqualFunctionDef");
+
   if (a.signature().DebugString() != b.signature().DebugString()) {
     if (diff) {
       *diff =
@@ -196,8 +382,15 @@ bool EqualFunctionDef(const FunctionDef& a, const FunctionDef& b,
   }
   if (!EqualProtoMap<string, AttrValue>(
           a.attr(), b.attr(), [](const string& s) { return s; },
-          [](const AttrValue& v) { return v.DebugString(); },
+          [](const AttrValue& v) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_5(mht_5_v, 386, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "lambda");
+ return v.DebugString(); },
           [](const string& key, const AttrValue& av, const AttrValue& bv) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_6(mht_6_v, 391, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "lambda");
+
             return av.DebugString() == bv.DebugString();
           },
           absl::StrCat("attr mismatch for function ", a.signature().name()),
@@ -206,8 +399,18 @@ bool EqualFunctionDef(const FunctionDef& a, const FunctionDef& b,
   }
   if (!EqualProtoMap<string, string>(
           a.ret(), b.ret(), [](const string& s) { return s; },
-          [](const string& s) { return s; },
+          [](const string& s) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("s: \"" + s + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_7(mht_7_v, 404, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "lambda");
+ return s; },
           [](const string& key, const string& av, const string& bv) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("key: \"" + key + "\"");
+   mht_8_v.push_back("av: \"" + av + "\"");
+   mht_8_v.push_back("bv: \"" + bv + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_8(mht_8_v, 411, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "lambda");
+
             return av == bv;
           },
           absl::StrCat("ret mismatch for function ", a.signature().name()),
@@ -258,6 +461,9 @@ bool EqualFunctionDef(const FunctionDef& a, const FunctionDef& b,
 
 bool EqualFunctionDefLibrary(const FunctionDefLibrary& expected,
                              const FunctionDefLibrary& actual, string* diff) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_9(mht_9_v, 464, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "EqualFunctionDefLibrary");
+
   std::unordered_map<string, const FunctionDef*> actual_index;
   for (const FunctionDef& function : actual.function()) {
     actual_index[function.signature().name()] = &function;
@@ -344,6 +550,10 @@ REGISTER_OP("AddNLikeTest")
 
 Node* Sequencer(const GraphDefBuilder::Options& opts,
                 const string& call_node_name) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("call_node_name: \"" + call_node_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_10(mht_10_v, 554, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "Sequencer");
+
   if (opts.HaveError()) return nullptr;
   NodeBuilder node_builder(opts.GetNameForOp("NoOp"), "NoOp",
                            opts.op_registry());
@@ -352,15 +562,24 @@ Node* Sequencer(const GraphDefBuilder::Options& opts,
 }
 
 Node* Input(const GraphDefBuilder::Options& opts) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_11(mht_11_v, 565, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "Input");
+
   return ops::SourceOp("InputTest", opts);
 }
 
 Node* InputShaped(const GraphDefBuilder::Options& opts) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_12(mht_12_v, 572, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "InputShaped");
+
   return ops::SourceOp("InputTestShaped", opts);
 }
 
 Node* KnownShapeBase(DataType dtype, absl::Span<const int> shape,
                      const GraphDefBuilder::Options& opts) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_13(mht_13_v, 580, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "KnownShapeBase");
+
   if (opts.HaveError()) return nullptr;
   NodeBuilder node_builder(opts.GetNameForOp("Const"), "Const",
                            opts.op_registry());
@@ -376,15 +595,25 @@ Node* KnownShapeBase(DataType dtype, absl::Span<const int> shape,
 
 Node* KnownShape(absl::Span<const int> shape,
                  const GraphDefBuilder::Options& opts) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_14(mht_14_v, 598, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "KnownShape");
+
   return KnownShapeBase(DT_FLOAT, shape, opts);
 }
 
 Node* KeyPlaceholderShape(const GraphDefBuilder::Options& opts) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_15(mht_15_v, 605, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "KeyPlaceholderShape");
+
   return KnownShapeBase(DT_STRING, {2}, opts);
 }
 
 Node* KeyPlaceholder(const string& call_node,
                      const GraphDefBuilder::Options& opts) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("call_node: \"" + call_node + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_16(mht_16_v, 614, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "KeyPlaceholder");
+
   if (opts.HaveError()) return nullptr;
   NodeBuilder node_builder(absl::StrCat(call_node, "_key_placeholder"),
                            "Placeholder", opts.op_registry());
@@ -400,6 +629,12 @@ Node* RecvAtHost(ops::NodeOut key_input, const string& cluster,
                  const string& new_func_name, const string& oc_cluster,
                  absl::Span<const DataType> dtypes,
                  const GraphDefBuilder::Options& opts) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("cluster: \"" + cluster + "\"");
+   mht_17_v.push_back("new_func_name: \"" + new_func_name + "\"");
+   mht_17_v.push_back("oc_cluster: \"" + oc_cluster + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_17(mht_17_v, 635, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "RecvAtHost");
+
   if (opts.HaveError()) return nullptr;
   string key = absl::StrCat("host_compute_channel_", cluster, "_",
                             new_func_name, "_", oc_cluster);
@@ -420,6 +655,12 @@ Node* SendFromHost(ops::NodeOut key_input, const string& cluster,
                    const string& new_func_name, const string& oc_cluster,
                    const std::vector<ops::NodeOut>& inputs,
                    const GraphDefBuilder::Options& opts) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("cluster: \"" + cluster + "\"");
+   mht_18_v.push_back("new_func_name: \"" + new_func_name + "\"");
+   mht_18_v.push_back("oc_cluster: \"" + oc_cluster + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_18(mht_18_v, 661, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "SendFromHost");
+
   if (opts.HaveError()) return nullptr;
   string key = absl::StrCat("host_compute_channel_", cluster, "_",
                             new_func_name, "_", oc_cluster);
@@ -442,21 +683,33 @@ Node* SendFromHost(ops::NodeOut key_input, const string& cluster,
 }
 
 Node* Unary(ops::NodeOut a, const GraphDefBuilder::Options& opts) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_19(mht_19_v, 686, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "Unary");
+
   return ops::UnaryOp("UnaryTest", std::move(a), opts);
 }
 
 Node* Binary(ops::NodeOut a, ops::NodeOut b,
              const GraphDefBuilder::Options& opts) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_20(mht_20_v, 694, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "Binary");
+
   return ops::BinaryOp("BinaryTest", std::move(a), std::move(b), opts);
 }
 
 Node* BinaryUnknownShape(ops::NodeOut a, ops::NodeOut b,
                          const GraphDefBuilder::Options& opts) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_21(mht_21_v, 702, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "BinaryUnknownShape");
+
   return ops::BinaryOp("BinaryTest2", std::move(a), std::move(b), opts);
 }
 
 Node* AddNLike(const std::vector<ops::NodeOut>& inputs,
                const GraphDefBuilder::Options& opts) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_22(mht_22_v, 710, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "AddNLike");
+
   if (opts.HaveError()) return nullptr;
   NodeBuilder node_builder(opts.GetNameForOp("AddN"), "AddNLikeTest",
                            opts.op_registry());
@@ -465,11 +718,17 @@ Node* AddNLike(const std::vector<ops::NodeOut>& inputs,
 }
 
 Node* ArgOp(int index, DataType type, const GraphDefBuilder::Options& opts) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_23(mht_23_v, 721, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "ArgOp");
+
   return ops::SourceOp("_Arg",
                        opts.WithAttr("T", type).WithAttr("index", index));
 }
 
 Node* RetOp(int index, ops::NodeOut a, const GraphDefBuilder::Options& opts) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_24(mht_24_v, 729, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "RetOp");
+
   if (opts.HaveError()) return nullptr;
   NodeBuilder node_builder(opts.GetNameForOp("Retval"), "_Retval",
                            opts.op_registry());
@@ -479,6 +738,9 @@ Node* RetOp(int index, ops::NodeOut a, const GraphDefBuilder::Options& opts) {
 
 Status Encapsulate(GraphDef* graphdef, FunctionDefLibrary* library,
                    const std::vector<string>& encapsulated_functions) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_25(mht_25_v, 741, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "Encapsulate");
+
   Status s;
   // Convert the GraphDef to a Graph
   std::unique_ptr<FunctionLibraryDefinition> lib_def(
@@ -551,6 +813,9 @@ Status Encapsulate(GraphDef* graphdef, FunctionDefLibrary* library,
 }
 
 Status Encapsulate(GraphDef* graphdef, FunctionDefLibrary* library) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_26(mht_26_v, 816, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "Encapsulate");
+
   std::vector<string> encapsulated_functions;
   return Encapsulate(graphdef, library, encapsulated_functions);
 }
@@ -754,6 +1019,10 @@ TEST(EncapsulateSubgraphsTest, InputDeduplication) {
 }
 
 const Node* FindNodeByName(const Graph& graph, const string& name) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_27(mht_27_v, 1023, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "FindNodeByName");
+
   for (const Node* node : graph.nodes()) {
     if (node->name() == name) return node;
   }
@@ -761,6 +1030,9 @@ const Node* FindNodeByName(const Graph& graph, const string& name) {
 }
 
 bool HasGuaranteeConstAttr(const Node& n) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_28(mht_28_v, 1033, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "HasGuaranteeConstAttr");
+
   bool is_guaranteed_constant = false;
   if (!GetNodeAttr(n.attrs(), "_is_guaranteed_constant",
                    &is_guaranteed_constant)
@@ -2686,6 +2958,9 @@ TEST(EncapsulateSubgraphsTest, OutsideCompilationShapeInference) {
 }
 
 void CreateSubgraphTouchingRefVar(const Scope& s) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_29(mht_29_v, 2961, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "CreateSubgraphTouchingRefVar");
+
   Output variable =
       ops::Variable(s.WithOpName("variable"), PartialTensorShape{}, DT_FLOAT);
   Output read = ops::Identity(s.WithOpName("read_ref_var"), variable);
@@ -2721,6 +2996,9 @@ TEST(EncapsulateSubgraphsTest, RefVariablesMarked) {
 }
 
 void CreateSubgraphNotTouchingRefVar(const Scope& s) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_pass_testDTcc mht_30(mht_30_v, 2999, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass_test.cc", "CreateSubgraphNotTouchingRefVar");
+
   Output constant =
       ops::Const(s.WithOpName("constant_normal"), Input::Initializer(0.0));
   Output neg = ops::Negate(s.WithOpName("negate_normal"), constant);

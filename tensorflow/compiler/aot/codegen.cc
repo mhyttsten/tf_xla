@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSaotPScodegenDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSaotPScodegenDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSaotPScodegenDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -43,13 +211,24 @@ namespace {
 using BufferInfo = xla::cpu_function_runtime::BufferInfo;
 
 bool IsAlpha(char c) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("c: '" + std::string(1, c) + "'");
+   MHTracer_DTPStensorflowPScompilerPSaotPScodegenDTcc mht_0(mht_0_v, 215, "", "./tensorflow/compiler/aot/codegen.cc", "IsAlpha");
+
   return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
 }
 
-bool IsAlphaNum(char c) { return IsAlpha(c) || (c >= '0' && c <= '9'); }
+bool IsAlphaNum(char c) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("c: '" + std::string(1, c) + "'");
+   MHTracer_DTPStensorflowPScompilerPSaotPScodegenDTcc mht_1(mht_1_v, 223, "", "./tensorflow/compiler/aot/codegen.cc", "IsAlphaNum");
+ return IsAlpha(c) || (c >= '0' && c <= '9'); }
 
 // Convert an XLA type into a C++ type.
 Status XLATypeToCpp(xla::PrimitiveType type, string* str) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSaotPScodegenDTcc mht_2(mht_2_v, 229, "", "./tensorflow/compiler/aot/codegen.cc", "XLATypeToCpp");
+
   switch (type) {
     case xla::PRED:
       *str = "bool";
@@ -93,8 +272,14 @@ Status XLATypeToCpp(xla::PrimitiveType type, string* str) {
 
 // Returns the sum of the size of each buffer in `buffer_infos`.
 size_t TotalBufferBytes(const std::vector<BufferInfo>& buffer_infos) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSaotPScodegenDTcc mht_3(mht_3_v, 275, "", "./tensorflow/compiler/aot/codegen.cc", "TotalBufferBytes");
+
   return std::accumulate(buffer_infos.begin(), buffer_infos.end(), size_t{0},
                          [](size_t size, const BufferInfo& buffer_info) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSaotPScodegenDTcc mht_4(mht_4_v, 280, "", "./tensorflow/compiler/aot/codegen.cc", "lambda");
+
                            return size + buffer_info.size();
                          });
 }
@@ -127,6 +312,9 @@ std::vector<BufferInfo> ExtractTempBufferInfos(
 // are used to generate methods for args and results.
 Status AddRewritesForShape(int i, const xla::Shape& shape,
                            std::vector<std::pair<string, string>>* rewrites) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSaotPScodegenDTcc mht_5(mht_5_v, 315, "", "./tensorflow/compiler/aot/codegen.cc", "AddRewritesForShape");
+
   string type;
   TF_RETURN_IF_ERROR(XLATypeToCpp(shape.element_type(), &type));
   std::vector<string> dim_vars;
@@ -163,6 +351,11 @@ Status AddRewritesForShape(int i, const xla::Shape& shape,
 // text-templating mechanism.
 string RewriteWithName(const string& name, string code,
                        const std::vector<std::pair<string, string>>& rewrites) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("name: \"" + name + "\"");
+   mht_6_v.push_back("code: \"" + code + "\"");
+   MHTracer_DTPStensorflowPScompilerPSaotPScodegenDTcc mht_6(mht_6_v, 356, "", "./tensorflow/compiler/aot/codegen.cc", "RewriteWithName");
+
   absl::StrReplaceAll(rewrites, &code);
   absl::StrReplaceAll({{"{{NAME}}", name}}, &code);
   return code;
@@ -172,6 +365,9 @@ string RewriteWithName(const string& name, string code,
 Status GenArgMethods(const tf2xla::Config& config,
                      const xla::ProgramShapeProto& ps,
                      const CompileResult& compile_result, string* methods) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSaotPScodegenDTcc mht_7(mht_7_v, 368, "", "./tensorflow/compiler/aot/codegen.cc", "GenArgMethods");
+
   const int num_args = ps.parameters_size();
   // feed_size() + variable_size() is the maximum number of args as an
   // implementation may not create an argument for an unused variable.
@@ -220,6 +416,9 @@ Status GenArgMethods(const tf2xla::Config& config,
 // Generate methods for results (outputs).
 Status GenResultMethods(const tf2xla::Config& config,
                         const xla::ProgramShapeProto& ps, string* methods) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSaotPScodegenDTcc mht_8(mht_8_v, 419, "", "./tensorflow/compiler/aot/codegen.cc", "GenResultMethods");
+
   if (ps.result().element_type() != xla::TUPLE) {
     // The XlaCompiler we use to build the xla computation always generates a
     // tuple result, and we rely on this to simplify code generation.
@@ -274,6 +473,9 @@ Status GenResultMethods(const tf2xla::Config& config,
 // Generate methods for variables.
 Status GenVariableMethods(const tf2xla::Config& config,
                           const xla::ProgramShapeProto& ps, string* methods) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSaotPScodegenDTcc mht_9(mht_9_v, 476, "", "./tensorflow/compiler/aot/codegen.cc", "GenVariableMethods");
+
   const int num_args = ps.parameters_size();
   for (int i = config.feed_size(); i < num_args; ++i) {
     std::vector<std::pair<string, string>> rewrites;
@@ -317,6 +519,9 @@ Status GenVariableMethods(const tf2xla::Config& config,
 // string literal in the array, with nullptr terminating the array.
 template <typename T>
 string GenNameToIndexCode(const T& entries, bool generate) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSaotPScodegenDTcc mht_10(mht_10_v, 522, "", "./tensorflow/compiler/aot/codegen.cc", "GenNameToIndexCode");
+
   // No need for a static array if we're not supposed to generate the data.
   if (!generate) {
     return "{\n    return nullptr;\n  }";
@@ -348,6 +553,9 @@ string GenNameToIndexCode(const T& entries, bool generate) {
 }
 
 Status ValidateFeedFetchCppNames(const tf2xla::Config& config) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSaotPScodegenDTcc mht_11(mht_11_v, 556, "", "./tensorflow/compiler/aot/codegen.cc", "ValidateFeedFetchCppNames");
+
   for (const tf2xla::Feed& feed : config.feed()) {
     if (!feed.name().empty()) {
       TF_RETURN_IF_ERROR(ValidateCppIdent(feed.name(), "feed name"));
@@ -393,6 +601,9 @@ std::vector<string> BufferInfosToCppExpression(
 Status GenerateHeader(const CodegenOpts& opts, const tf2xla::Config& config,
                       const CompileResult& compile_result,
                       const MetadataResult& metadata_result, string* header) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSaotPScodegenDTcc mht_12(mht_12_v, 604, "", "./tensorflow/compiler/aot/codegen.cc", "GenerateHeader");
+
   TF_RETURN_IF_ERROR(ValidateConfig(config));
   TF_RETURN_IF_ERROR(ValidateFeedFetchCppNames(config));
   const int64_t result_index = compile_result.aot->result_buffer_index();
@@ -733,6 +944,10 @@ class {{CLASS}} final : public tensorflow::XlaCompiledCpuFunction {
 
 static string CreateUniqueIdentifier(const CodegenOpts& opts,
                                      absl::string_view suffix) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("suffix: \"" + std::string(suffix.data(), suffix.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSaotPScodegenDTcc mht_13(mht_13_v, 948, "", "./tensorflow/compiler/aot/codegen.cc", "CreateUniqueIdentifier");
+
   string result = "__tfcompile";
   for (const string& n : opts.namespaces) {
     absl::StrAppend(&result, "_", n);
@@ -745,6 +960,9 @@ static string CreateUniqueIdentifier(const CodegenOpts& opts,
 Status GenerateMetadata(const CodegenOpts& opts,
                         const CompileResult& compile_result,
                         MetadataResult* metadata_result) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSaotPScodegenDTcc mht_14(mht_14_v, 963, "", "./tensorflow/compiler/aot/codegen.cc", "GenerateMetadata");
+
   std::unique_ptr<xla::ProgramShapeProto> program_shape;
 
   if (opts.gen_program_shape) {
@@ -790,6 +1008,10 @@ Status GenerateMetadata(const CodegenOpts& opts,
 
 Status ParseCppClass(const string& cpp_class, string* class_name,
                      std::vector<string>* namespaces) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("cpp_class: \"" + cpp_class + "\"");
+   MHTracer_DTPStensorflowPScompilerPSaotPScodegenDTcc mht_15(mht_15_v, 1012, "", "./tensorflow/compiler/aot/codegen.cc", "ParseCppClass");
+
   class_name->clear();
   namespaces->clear();
   if (cpp_class.empty()) {
@@ -815,6 +1037,11 @@ Status ParseCppClass(const string& cpp_class, string* class_name,
 }
 
 Status ValidateCppIdent(absl::string_view ident, absl::string_view msg) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("ident: \"" + std::string(ident.data(), ident.size()) + "\"");
+   mht_16_v.push_back("msg: \"" + std::string(msg.data(), msg.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSaotPScodegenDTcc mht_16(mht_16_v, 1042, "", "./tensorflow/compiler/aot/codegen.cc", "ValidateCppIdent");
+
   if (ident.empty()) {
     return errors::InvalidArgument("empty identifier: ", msg);
   }

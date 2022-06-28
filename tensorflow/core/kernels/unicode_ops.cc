@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSunicode_opsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSunicode_opsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSunicode_opsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -55,6 +223,9 @@ namespace {
 
 void Encode(const UnicodeEncoding encoding, const icu::UnicodeString& in,
             tstring* out) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSunicode_opsDTcc mht_0(mht_0_v, 226, "", "./tensorflow/core/kernels/unicode_ops.cc", "Encode");
+
   if (encoding == UnicodeEncoding::UTF8) {
     out->clear();
     in.toUTF8String(*out);
@@ -92,6 +263,10 @@ void unicode_error_callback(const void* context, UConverterToUnicodeArgs* args,
                             const char* codeUnits, int32_t length,
                             UConverterCallbackReason reason,
                             UErrorCode* pErrorCode) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("codeUnits: \"" + (codeUnits == nullptr ? std::string("nullptr") : std::string((char*)codeUnits)) + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSunicode_opsDTcc mht_1(mht_1_v, 267, "", "./tensorflow/core/kernels/unicode_ops.cc", "unicode_error_callback");
+
   // Careful: this depends on setting up the context settings when the
   // callback is registered.
   bool* format_error = const_cast<bool*>(static_cast<const bool*>(context));
@@ -121,6 +296,10 @@ void unicode_error_callback(const void* context, UConverterToUnicodeArgs* args,
 //                    bool fatal_format_error)
 void IterateUnicodeString(const string& str, UConverter* converter,
                           std::function<void(UChar32, int, bool)> callback) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("str: \"" + str + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSunicode_opsDTcc mht_2(mht_2_v, 300, "", "./tensorflow/core/kernels/unicode_ops.cc", "IterateUnicodeString");
+
   const char* source = str.data();
   const char* limit = str.data() + str.length();
   UErrorCode status = U_ZERO_ERROR;
@@ -159,15 +338,25 @@ void IterateUnicodeString(const string& str, UConverter* converter,
 // create a specialized fast code path for UTF8.
 class WrappedConverter {
  public:
-  WrappedConverter() {}
+  WrappedConverter() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSunicode_opsDTcc mht_3(mht_3_v, 342, "", "./tensorflow/core/kernels/unicode_ops.cc", "WrappedConverter");
+}
 
   ~WrappedConverter() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSunicode_opsDTcc mht_4(mht_4_v, 347, "", "./tensorflow/core/kernels/unicode_ops.cc", "~WrappedConverter");
+
     if (converter_) {
       ucnv_close(converter_);
     }
   }
 
   void init(const string& name) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSunicode_opsDTcc mht_5(mht_5_v, 357, "", "./tensorflow/core/kernels/unicode_ops.cc", "init");
+
     if (converter_ && name == name_) {
       // Note: this reset is not typically needed, but if not done, then in some
       // cases the cached converter will maintain state of input endianness
@@ -206,6 +395,9 @@ struct ErrorOptions {
 };
 
 Status GetErrorOptions(OpKernelConstruction* ctx, ErrorOptions* out) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSunicode_opsDTcc mht_6(mht_6_v, 398, "", "./tensorflow/core/kernels/unicode_ops.cc", "GetErrorOptions");
+
   *out = ErrorOptions();
 
   string error_policy;
@@ -243,6 +435,9 @@ Status GetErrorOptions(OpKernelConstruction* ctx, ErrorOptions* out) {
 
 inline bool ShouldHandleFormatError(const ErrorOptions& error_options,
                                     UChar32 ch, bool format_error) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSunicode_opsDTcc mht_7(mht_7_v, 438, "", "./tensorflow/core/kernels/unicode_ops.cc", "ShouldHandleFormatError");
+
   return ((error_options.replace_control_chars && ch <= 0x1F) || format_error);
 }
 
@@ -251,6 +446,9 @@ inline bool ShouldHandleFormatError(const ErrorOptions& error_options,
 class UnicodeTranscodeOp : public OpKernel {
  public:
   explicit UnicodeTranscodeOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSunicode_opsDTcc mht_8(mht_8_v, 449, "", "./tensorflow/core/kernels/unicode_ops.cc", "UnicodeTranscodeOp");
+
     OP_REQUIRES_OK(ctx, GetErrorOptions(ctx, &error_options_));
 
     string output_encoding;
@@ -272,6 +470,9 @@ class UnicodeTranscodeOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSunicode_opsDTcc mht_9(mht_9_v, 473, "", "./tensorflow/core/kernels/unicode_ops.cc", "Compute");
+
     const Tensor* input_tensor;
     OP_REQUIRES_OK(ctx, ctx->input("input", &input_tensor));
 
@@ -318,6 +519,9 @@ class UnicodeTranscodeOp : public OpKernel {
   // out-of-range inputs.
   void TranslateCodepoints(icu::UnicodeString* s, bool* found_any_format_error,
                            UChar32 ch, int src_bytes, bool format_error) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSunicode_opsDTcc mht_10(mht_10_v, 522, "", "./tensorflow/core/kernels/unicode_ops.cc", "TranslateCodepoints");
+
     if (ShouldHandleFormatError(error_options_, ch, format_error)) {
       *found_any_format_error = true;
       if (error_options_.elide_replacement) {
@@ -334,6 +538,9 @@ class UnicodeTranscodeOp : public OpKernel {
   // config to handle them.
   void Transcode(tstring* s, UConverter* input_encoder,
                  bool* found_any_format_error) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSunicode_opsDTcc mht_11(mht_11_v, 541, "", "./tensorflow/core/kernels/unicode_ops.cc", "Transcode");
+
     icu::UnicodeString source;
     IterateUnicodeString(
         *s, input_encoder,
@@ -357,6 +564,9 @@ class UnicodeDecodeBaseOp : public OpKernel {
  public:
   explicit UnicodeDecodeBaseOp(OpKernelConstruction* ctx, bool generate_offsets)
       : OpKernel(ctx), generate_offsets_(generate_offsets) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSunicode_opsDTcc mht_12(mht_12_v, 567, "", "./tensorflow/core/kernels/unicode_ops.cc", "UnicodeDecodeBaseOp");
+
     OP_REQUIRES_OK(ctx, GetErrorOptions(ctx, &error_options_));
     OP_REQUIRES_OK(ctx, ctx->GetAttr("input_encoding", &input_encoding_));
     // Make a temporary UConverter to ensure it will create without error
@@ -375,6 +585,9 @@ class UnicodeDecodeBaseOp : public OpKernel {
               std::vector<SPLITS_TYPE>* offset_values, int* current_offset,
               SPLITS_TYPE* next_row_split, UChar32 char_value, int char_length,
               bool found_any_format_error) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSunicode_opsDTcc mht_13(mht_13_v, 588, "", "./tensorflow/core/kernels/unicode_ops.cc", "Decode");
+
     if (error_options_.error_on_malformatting && found_any_format_error) {
       ctx->CtxFailure(
           errors::InvalidArgument("Invalid formatting on input string"));
@@ -402,6 +615,9 @@ class UnicodeDecodeBaseOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSunicode_opsDTcc mht_14(mht_14_v, 618, "", "./tensorflow/core/kernels/unicode_ops.cc", "Compute");
+
     const Tensor* input_tensor;
     OP_REQUIRES_OK(ctx, ctx->input("input", &input_tensor));
 
@@ -481,14 +697,20 @@ template <typename SPLITS_TYPE>
 class UnicodeDecodeOp : public UnicodeDecodeBaseOp<SPLITS_TYPE> {
  public:
   explicit UnicodeDecodeOp(OpKernelConstruction* ctx)
-      : UnicodeDecodeBaseOp<SPLITS_TYPE>(ctx, false) {}
+      : UnicodeDecodeBaseOp<SPLITS_TYPE>(ctx, false) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSunicode_opsDTcc mht_15(mht_15_v, 701, "", "./tensorflow/core/kernels/unicode_ops.cc", "UnicodeDecodeOp");
+}
 };
 
 template <typename SPLITS_TYPE>
 class UnicodeDecodeWithOffsetsOp : public UnicodeDecodeBaseOp<SPLITS_TYPE> {
  public:
   explicit UnicodeDecodeWithOffsetsOp(OpKernelConstruction* ctx)
-      : UnicodeDecodeBaseOp<SPLITS_TYPE>(ctx, true) {}
+      : UnicodeDecodeBaseOp<SPLITS_TYPE>(ctx, true) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSunicode_opsDTcc mht_16(mht_16_v, 711, "", "./tensorflow/core/kernels/unicode_ops.cc", "UnicodeDecodeWithOffsetsOp");
+}
 };
 
 REGISTER_KERNEL_BUILDER(
@@ -510,6 +732,9 @@ template <typename SPLITS_TYPE>
 class UnicodeEncodeOp : public OpKernel {
  public:
   explicit UnicodeEncodeOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSunicode_opsDTcc mht_17(mht_17_v, 735, "", "./tensorflow/core/kernels/unicode_ops.cc", "UnicodeEncodeOp");
+
     string encoding_tmp;
     OP_REQUIRES_OK(ctx, ctx->GetAttr("output_encoding", &encoding_tmp));
     OP_REQUIRES_OK(ctx, ParseUnicodeEncoding(encoding_tmp, &encoding_));
@@ -527,6 +752,9 @@ class UnicodeEncodeOp : public OpKernel {
    * and ends from the provided code points.
    */
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSunicode_opsDTcc mht_18(mht_18_v, 755, "", "./tensorflow/core/kernels/unicode_ops.cc", "Compute");
+
     // Get inputs
     const Tensor& input_tensor = context->input(0);
     const auto input_tensor_flat = input_tensor.flat<int32>();

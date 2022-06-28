@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_UTIL_MKL_UTIL_H_
 #define TENSORFLOW_CORE_UTIL_MKL_UTIL_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 #ifdef INTEL_MKL
 
 #include <list>
@@ -132,6 +300,9 @@ static const int kSmallBatchSize = 32;
 inline void execute_primitives(
     std::vector<dnnl::primitive>& primitives, std::shared_ptr<stream> stream,
     std::vector<std::unordered_map<int, memory>>& net_args) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_0(mht_0_v, 303, "", "./tensorflow/core/util/mkl_util.h", "execute_primitives");
+
   DCHECK_EQ(primitives.size(), net_args.size());
   for (size_t i = 0; i < primitives.size(); ++i) {
     primitives.at(i).execute(*stream, net_args.at(i));
@@ -186,6 +357,9 @@ Status CreateBlockedMemDescHelper(const memory::dims& dim,
 
 inline std::ostream& operator<<(std::ostream& os,
                                 const memory::format_tag& tag) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_1(mht_1_v, 360, "", "./tensorflow/core/util/mkl_util.h", "operator<<");
+
   if (tag == memory::format_tag::undef) {
     os << "undef";
   } else if (tag == memory::format_tag::any) {
@@ -197,6 +371,9 @@ inline std::ostream& operator<<(std::ostream& os,
 }
 
 inline void operator<<(std::ostream& os, const MklTensorFormat& format) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_2(mht_2_v, 374, "", "./tensorflow/core/util/mkl_util.h", "operator<<");
+
   if (format == MklTensorFormat::FORMAT_NHWC) {
     os << "FORMAT_NHWC";
   } else if (format == MklTensorFormat::FORMAT_NCHW) {
@@ -220,6 +397,9 @@ inline void operator<<(std::ostream& os, const MklTensorFormat& format) {
 
 template <typename T>
 inline bool array_cmp(const T* a1, const T* a2, size_t size) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_3(mht_3_v, 400, "", "./tensorflow/core/util/mkl_util.h", "array_cmp");
+
   for (size_t i = 0; i < size; ++i)
     if (a1[i] != a2[i]) return false;
   return true;
@@ -227,6 +407,9 @@ inline bool array_cmp(const T* a1, const T* a2, size_t size) {
 
 inline dnnl::stream* CreateStream(MklDnnThreadPool* eigen_tp,
                                   const engine& engine) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_4(mht_4_v, 410, "", "./tensorflow/core/util/mkl_util.h", "CreateStream");
+
 #ifndef ENABLE_ONEDNN_OPENMP
   if (eigen_tp != nullptr) {
     stream* tp_stream =
@@ -265,6 +448,9 @@ class MklDnnShape {
 
  public:
   MklDnnShape() : data_{} {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_5(mht_5_v, 451, "", "./tensorflow/core/util/mkl_util.h", "MklDnnShape");
+
     for (size_t i = 0; i < sizeof(data_.sizes_) / sizeof(data_.sizes_[0]);
          ++i) {
       data_.sizes_[i] = -1;
@@ -274,7 +460,10 @@ class MklDnnShape {
     }
   }
 
-  ~MklDnnShape() {}
+  ~MklDnnShape() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_6(mht_6_v, 464, "", "./tensorflow/core/util/mkl_util.h", "~MklDnnShape");
+}
   TF_DISALLOW_COPY_AND_ASSIGN(MklDnnShape);  // Cannot copy
 
   /// Equality function for MklDnnShape objects
@@ -308,15 +497,28 @@ class MklDnnShape {
     return this->GetTfShape() == input_shape;
   }
 
-  inline const bool IsMklTensor() const { return data_.is_mkl_tensor_; }
+  inline const bool IsMklTensor() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_7(mht_7_v, 501, "", "./tensorflow/core/util/mkl_util.h", "IsMklTensor");
+ return data_.is_mkl_tensor_; }
   inline void SetMklTensor(bool is_mkl_tensor) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_8(mht_8_v, 505, "", "./tensorflow/core/util/mkl_util.h", "SetMklTensor");
+
     data_.is_mkl_tensor_ = is_mkl_tensor;
   }
 
   inline void SetDimensions(const size_t dimension) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_9(mht_9_v, 512, "", "./tensorflow/core/util/mkl_util.h", "SetDimensions");
+
     data_.dimension_ = dimension;
   }
   inline size_t GetDimension(char dimension) const {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("dimension: '" + std::string(1, dimension) + "'");
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_10(mht_10_v, 519, "", "./tensorflow/core/util/mkl_util.h", "GetDimension");
+
     int index = GetMklDnnTensorDimIndex(dimension);
     CHECK(index >= 0 && index < this->GetDimension())
         << "Invalid index from the dimension: " << index << ", " << dimension;
@@ -324,6 +526,10 @@ class MklDnnShape {
   }
 
   inline size_t GetDimension3D(char dimension) const {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("dimension: '" + std::string(1, dimension) + "'");
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_11(mht_11_v, 530, "", "./tensorflow/core/util/mkl_util.h", "GetDimension3D");
+
     int index = GetMklDnnTensor3DDimIndex(dimension);
     CHECK(index >= 0 && index < this->GetDimension())
         << "Invalid index from the dimension: " << index << ", " << dimension;
@@ -331,6 +537,10 @@ class MklDnnShape {
   }
 
   inline int32 GetMklDnnTensorDimIndex(char dimension) const {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("dimension: '" + std::string(1, dimension) + "'");
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_12(mht_12_v, 541, "", "./tensorflow/core/util/mkl_util.h", "GetMklDnnTensorDimIndex");
+
     switch (dimension) {
       case 'N':
         return MklDnnDims::Dim_N;
@@ -347,6 +557,10 @@ class MklDnnShape {
   }
 
   inline int32 GetMklDnnTensor3DDimIndex(char dimension) const {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("dimension: '" + std::string(1, dimension) + "'");
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_13(mht_13_v, 561, "", "./tensorflow/core/util/mkl_util.h", "GetMklDnnTensor3DDimIndex");
+
     switch (dimension) {
       case 'N':
         return MklDnnDims3D::Dim3d_N;
@@ -364,14 +578,23 @@ class MklDnnShape {
     }
   }
 
-  inline size_t GetDimension() const { return data_.dimension_; }
+  inline size_t GetDimension() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_14(mht_14_v, 582, "", "./tensorflow/core/util/mkl_util.h", "GetDimension");
+ return data_.dimension_; }
   inline const int* GetSizes() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_15(mht_15_v, 586, "", "./tensorflow/core/util/mkl_util.h", "GetSizes");
+
     return reinterpret_cast<const int*>(&data_.sizes_[0]);
   }
 
   // Returns an dnnl::memory::dims object that contains the sizes of this
   // MklDnnShape object.
   inline memory::dims GetSizesAsMklDnnDims() const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_16(mht_16_v, 595, "", "./tensorflow/core/util/mkl_util.h", "GetSizesAsMklDnnDims");
+
     memory::dims retVal;
     if (data_.is_mkl_tensor_) {
       size_t dimensions = sizeof(data_.sizes_) / sizeof(data_.sizes_[0]);
@@ -386,6 +609,9 @@ class MklDnnShape {
   }
 
   inline int64 DimSize(int index) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_17(mht_17_v, 612, "", "./tensorflow/core/util/mkl_util.h", "DimSize");
+
     CHECK_LT(index, sizeof(data_.sizes_) / sizeof(data_.sizes_[0]));
     return data_.sizes_[index];
   }
@@ -393,6 +619,9 @@ class MklDnnShape {
   /// Return TensorShape that describes the Tensorflow shape of the tensor
   /// represented by this MklShape.
   inline TensorShape GetTfShape() const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_18(mht_18_v, 622, "", "./tensorflow/core/util/mkl_util.h", "GetTfShape");
+
     CHECK_EQ(data_.is_mkl_tensor_, true);
 
     std::vector<int32> shape(data_.dimension_, -1);
@@ -417,19 +646,34 @@ class MklDnnShape {
     return ts;
   }
 
-  inline void SetElemType(memory::data_type dt) { data_.T_ = dt; }
-  inline const memory::data_type GetElemType() { return data_.T_; }
+  inline void SetElemType(memory::data_type dt) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_19(mht_19_v, 650, "", "./tensorflow/core/util/mkl_util.h", "SetElemType");
+ data_.T_ = dt; }
+  inline const memory::data_type GetElemType() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_20(mht_20_v, 654, "", "./tensorflow/core/util/mkl_util.h", "GetElemType");
+ return data_.T_; }
 
   inline void SetMklLayout(memory::desc* md) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_21(mht_21_v, 659, "", "./tensorflow/core/util/mkl_util.h", "SetMklLayout");
+
     CHECK_NOTNULL(md);
     data_.mkl_md_ = md->data;
   }
 
   inline const memory::desc GetMklLayout() const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_22(mht_22_v, 667, "", "./tensorflow/core/util/mkl_util.h", "GetMklLayout");
+
     return memory::desc(data_.mkl_md_);
   }
 
   inline MklTensorFormat GetTfDataFormat() const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_23(mht_23_v, 674, "", "./tensorflow/core/util/mkl_util.h", "GetTfDataFormat");
+
     return data_.tf_data_format_;
   }
 
@@ -438,6 +682,9 @@ class MklDnnShape {
   /// also be Blocked format.
   inline void SetTfLayout(size_t dims, const memory::dims& sizes,
                           MklTensorFormat format) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_24(mht_24_v, 685, "", "./tensorflow/core/util/mkl_util.h", "SetTfLayout");
+
     DCHECK_EQ(dims, sizes.size())
         << "SetTfLayout: Number of dimensions does not"
            "match with dimension array";
@@ -457,6 +704,9 @@ class MklDnnShape {
   }
 
   inline const memory::desc GetTfLayout() const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_25(mht_25_v, 707, "", "./tensorflow/core/util/mkl_util.h", "GetTfLayout");
+
     memory::dims dims;
     for (size_t ii = 0; ii < data_.dimension_; ++ii) {
       dims.push_back(data_.sizes_[ii]);
@@ -477,6 +727,9 @@ class MklDnnShape {
   }
 
   inline const memory::desc GetCurLayout() const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_26(mht_26_v, 730, "", "./tensorflow/core/util/mkl_util.h", "GetCurLayout");
+
     return IsMklTensor() ? GetMklLayout() : GetTfLayout();
   }
 
@@ -484,6 +737,9 @@ class MklDnnShape {
   // when an operator that does not get data_format attribute gets all inputs
   // in Tensorflow format, it will produce output in Tensorflow format.
   inline void SetTfDimOrder(const size_t dimension, const dnnl_dims_t map) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_27(mht_27_v, 740, "", "./tensorflow/core/util/mkl_util.h", "SetTfDimOrder");
+
     CHECK(dimension == data_.dimension_);
     for (size_t ii = 0; ii < dimension; ii++) {
       data_.map_[ii] = map[ii];
@@ -491,6 +747,9 @@ class MklDnnShape {
   }
 
   inline void SetTfDimOrder(const size_t dimension, TensorFormat data_format) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_28(mht_28_v, 750, "", "./tensorflow/core/util/mkl_util.h", "SetTfDimOrder");
+
     if (dimension == 5) {
       CHECK(dimension == data_.dimension_);
       data_.map_[GetTensorDimIndex<3>(data_format, '0')] =
@@ -514,42 +773,69 @@ class MklDnnShape {
   }
 
   inline void SetTfDimOrder(const size_t dimension, MklTensorFormat format) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_29(mht_29_v, 776, "", "./tensorflow/core/util/mkl_util.h", "SetTfDimOrder");
+
     TensorFormat data_format = MklDnnDataFormatToTFDataFormat(format);
     SetTfDimOrder(dimension, data_format);
   }
 
-  inline const dnnl_dim_t* GetTfToMklDimMap() const { return &data_.map_[0]; }
-  inline size_t TfDimIdx(int index) const { return data_.map_[index]; }
+  inline const dnnl_dim_t* GetTfToMklDimMap() const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_30(mht_30_v, 784, "", "./tensorflow/core/util/mkl_util.h", "GetTfToMklDimMap");
+ return &data_.map_[0]; }
+  inline size_t TfDimIdx(int index) const {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_31(mht_31_v, 788, "", "./tensorflow/core/util/mkl_util.h", "TfDimIdx");
+ return data_.map_[index]; }
   inline int64 TfDimSize(int index) const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_32(mht_32_v, 792, "", "./tensorflow/core/util/mkl_util.h", "TfDimSize");
+
     return data_.sizes_[TfDimIdx(index)];
   }
 
   /// Query TF-MKL dimension ordering map and check if Tensorflow dimension 'd'
   /// corresponds to MKL's Channel dimension.
   inline bool IsMklChannelDim(int d) const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_33(mht_33_v, 801, "", "./tensorflow/core/util/mkl_util.h", "IsMklChannelDim");
+
     return TfDimIdx(d) == MklDnnDims::Dim_C;
   }
 
   /// Query TF-MKL dimension ordering map and check if Tensorflow dimension 'd'
   /// corresponds to MKL's Batch dimension.
   inline bool IsMklBatchDim(int d) const {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_34(mht_34_v, 810, "", "./tensorflow/core/util/mkl_util.h", "IsMklBatchDim");
+
     return TfDimIdx(d) == MklDnnDims::Dim_N;
   }
 
   /// Query TF-MKL dimension ordering map and check if Tensorflow dimension 'd'
   /// corresponds to MKL's Width dimension.
   inline bool IsMklWidthDim(int d) const {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_35(mht_35_v, 819, "", "./tensorflow/core/util/mkl_util.h", "IsMklWidthDim");
+
     return TfDimIdx(d) == MklDnnDims::Dim_W;
   }
   /// Query TF-MKL dimension ordering map and check if Tensorflow dimension 'd'
   /// corresponds to MKL's Height dimension.
   inline bool IsMklHeightDim(int d) const {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_36(mht_36_v, 827, "", "./tensorflow/core/util/mkl_util.h", "IsMklHeightDim");
+
     return TfDimIdx(d) == MklDnnDims::Dim_H;
   }
 
   /// Check if the TF-MKL dimension ordering map specifies if the input
   /// tensor is in NCHW format.
   inline bool IsTensorInNCHWFormat() const {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_37(mht_37_v, 836, "", "./tensorflow/core/util/mkl_util.h", "IsTensorInNCHWFormat");
+
     TensorFormat data_format = FORMAT_NCHW;
     return (IsMklBatchDim(GetTensorDimIndex<2>(data_format, 'N')) &&
             IsMklChannelDim(GetTensorDimIndex<2>(data_format, 'C')) &&
@@ -560,6 +846,9 @@ class MklDnnShape {
   /// Check if the TF-MKL dimension ordering map specifies if the input
   /// tensor is in NHWC format.
   inline bool IsTensorInNHWCFormat() const {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_38(mht_38_v, 849, "", "./tensorflow/core/util/mkl_util.h", "IsTensorInNHWCFormat");
+
     TensorFormat data_format = FORMAT_NHWC;
     return (IsMklBatchDim(GetTensorDimIndex<2>(data_format, 'N')) &&
             IsMklChannelDim(GetTensorDimIndex<2>(data_format, 'C')) &&
@@ -574,15 +863,26 @@ class MklDnnShape {
 
   /// Size of buffer to hold the serialized object, the size is computed by
   /// following above mentioned order
-  inline size_t GetSerializeBufferSize() const { return sizeof(MklShapeData); }
+  inline size_t GetSerializeBufferSize() const {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_39(mht_39_v, 867, "", "./tensorflow/core/util/mkl_util.h", "GetSerializeBufferSize");
+ return sizeof(MklShapeData); }
 
   void SerializeMklDnnShape(unsigned char* buf, size_t buf_size) const {
+   std::vector<std::string> mht_40_v;
+   mht_40_v.push_back("buf: \"" + (buf == nullptr ? std::string("nullptr") : std::string((char*)buf)) + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_40(mht_40_v, 873, "", "./tensorflow/core/util/mkl_util.h", "SerializeMklDnnShape");
+
     CHECK(buf_size >= GetSerializeBufferSize())
         << "Buffer size is too small to SerializeMklDnnShape";
     *reinterpret_cast<MklShapeData*>(buf) = data_;
   }
 
   void DeSerializeMklDnnShape(const unsigned char* buf, size_t buf_size) {
+   std::vector<std::string> mht_41_v;
+   mht_41_v.push_back("buf: \"" + (buf == nullptr ? std::string("nullptr") : std::string((char*)buf)) + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_41(mht_41_v, 883, "", "./tensorflow/core/util/mkl_util.h", "DeSerializeMklDnnShape");
+
     // Make sure buffer holds at least is_mkl_tensor_.
     CHECK(buf_size >= sizeof(data_.is_mkl_tensor_))
         << "Buffer size is too small in DeSerializeMklDnnShape";
@@ -607,6 +907,9 @@ inline void ExecutePrimitive(const std::vector<primitive>& net,
                              const std::vector<MemoryArgsMap>* net_args,
                              const engine& cpu_engine,
                              OpKernelContext* context = nullptr) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_42(mht_42_v, 910, "", "./tensorflow/core/util/mkl_util.h", "ExecutePrimitive");
+
   DCHECK(net_args);
   DCHECK_EQ(net.size(), net_args->size());
   std::unique_ptr<stream> cpu_stream;
@@ -627,6 +930,9 @@ inline Status ConvertMklToTF(OpKernelContext* context,
                              const Tensor& input_mkl_tensor,
                              const MklDnnShape& input_mkl_shape,
                              Tensor* output_tf_tensor) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_43(mht_43_v, 933, "", "./tensorflow/core/util/mkl_util.h", "ConvertMklToTF");
+
   try {
     if (!input_mkl_shape.IsMklTensor()) {
       // Return input as is since it is already a TF tensor
@@ -679,6 +985,9 @@ inline Status ConvertMklToTF(OpKernelContext* context,
 // Get the MKL shape from the second string tensor
 inline void GetMklShape(OpKernelContext* ctext, int n, MklDnnShape* mklshape,
                         bool eager_mode) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_44(mht_44_v, 988, "", "./tensorflow/core/util/mkl_util.h", "GetMklShape");
+
   if (!eager_mode) {
     mklshape->DeSerializeMklDnnShape(
         ctext->input(GetTensorMetaDataIndex(n, ctext->num_inputs()))
@@ -694,16 +1003,25 @@ inline void GetMklShape(OpKernelContext* ctext, int n, MklDnnShape* mklshape,
 }
 
 inline void GetMklShape(OpKernelContext* ctext, int n, MklDnnShape* mklshape) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_45(mht_45_v, 1006, "", "./tensorflow/core/util/mkl_util.h", "GetMklShape");
+
   GetMklShape(ctext, n, mklshape, false);
 }
 
 // Gets the actual input
 inline const Tensor& MklGetInput(OpKernelContext* ctext, int n) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_46(mht_46_v, 1014, "", "./tensorflow/core/util/mkl_util.h", "MklGetInput");
+
   return ctext->input(GetTensorDataIndex(n, ctext->num_inputs()));
 }
 
 inline void GetMklInputList(OpKernelContext* ctext, StringPiece name,
                             OpInputList* input_tensors) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_47(mht_47_v, 1022, "", "./tensorflow/core/util/mkl_util.h", "GetMklInputList");
+
   CHECK_NOTNULL(input_tensors);
   TF_CHECK_OK(ctext->input_list(name, input_tensors));
 }
@@ -711,6 +1029,9 @@ inline void GetMklInputList(OpKernelContext* ctext, StringPiece name,
 inline void GetMklShapeList(OpKernelContext* ctext, StringPiece name,
                             MklDnnShapeList* mkl_shapes,
                             bool native_format = false) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_48(mht_48_v, 1032, "", "./tensorflow/core/util/mkl_util.h", "GetMklShapeList");
+
   if (!native_format) {
     OpInputList input_mkl_tensors;
     GetMklInputList(ctext, strings::StrCat("mkl_", name), &input_mkl_tensors);
@@ -732,6 +1053,9 @@ inline void GetMklShapeList(OpKernelContext* ctext, StringPiece name,
 /// MklShape.
 inline TensorShape GetTfShape(OpKernelContext* context, size_t input_idx,
                               bool eager_mode = false) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_49(mht_49_v, 1056, "", "./tensorflow/core/util/mkl_util.h", "GetTfShape");
+
   // Sanity check.
   CHECK_NOTNULL(context);
   CHECK_LT(input_idx, context->num_inputs());
@@ -750,6 +1074,9 @@ inline TensorShape GetTfShape(OpKernelContext* context, size_t input_idx,
 // the MKL shape serialized
 inline void AllocateOutputSetMklShape(OpKernelContext* ctext, int n,
                                       const MklDnnShape& mkl_shape) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_50(mht_50_v, 1077, "", "./tensorflow/core/util/mkl_util.h", "AllocateOutputSetMklShape");
+
   Tensor* second_tensor = nullptr;
   TensorShape second_shape;
   second_shape.AddDim(mkl_shape.GetSerializeBufferSize());
@@ -768,6 +1095,9 @@ inline void AllocateOutputSetMklShape(OpKernelContext* ctext, int n,
                                       const TensorShape& tf_shape,
                                       const MklDnnShape& mkl_shape,
                                       bool eager_mode = false) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_51(mht_51_v, 1098, "", "./tensorflow/core/util/mkl_util.h", "AllocateOutputSetMklShape");
+
   OP_REQUIRES_OK(
       ctext, ctext->allocate_output(GetTensorDataIndex(n, ctext->num_outputs()),
                                     tf_shape, output));
@@ -788,6 +1118,9 @@ inline void AllocateOutputSetMklShape(OpKernelContext* ctext, int n,
 template <typename T>
 inline void AllocTmpBuffer(OpKernelContext* context, Tensor* tensor_out,
                            const memory::desc& pd, void** buf_out) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_52(mht_52_v, 1121, "", "./tensorflow/core/util/mkl_util.h", "AllocTmpBuffer");
+
   TensorShape tf_shape;
 
   tf_shape.AddDim(pd.get_size() / sizeof(T) + 1);
@@ -799,6 +1132,9 @@ inline void AllocTmpBuffer(OpKernelContext* context, Tensor* tensor_out,
 template <typename T>
 inline void AllocTmpBuffer(OpKernelContext* context, Tensor* tensor_out,
                            TensorShape tf_shape) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_53(mht_53_v, 1135, "", "./tensorflow/core/util/mkl_util.h", "AllocTmpBuffer");
+
   OP_REQUIRES_OK(context, context->allocate_temp(DataTypeToEnum<T>::v(),
                                                  tf_shape, tensor_out));
 }
@@ -810,6 +1146,9 @@ struct UserScratchPad {
   //      spad_md.get_size() will return 0. It is fine to return
   //      nullptr in this case
   inline void AllocateSPTensor(MklPrim* mkl_prim, OpKernelContext* context) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_54(mht_54_v, 1149, "", "./tensorflow/core/util/mkl_util.h", "AllocateSPTensor");
+
     allocated_ = false;
     auto spad_md = mkl_prim->GetScratchPadDesc();
     size_t spad_size = spad_md.get_size();
@@ -822,6 +1161,9 @@ struct UserScratchPad {
     allocated_ = true;
   }
   inline void* Get() {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_55(mht_55_v, 1164, "", "./tensorflow/core/util/mkl_util.h", "Get");
+
     if (allocated_) {
       return static_cast<void*>(scratch_pad_.flat<T>().data());
     } else {
@@ -836,6 +1178,9 @@ struct UserScratchPad {
 
 inline void GetStridesFromSizes(MklTensorFormat data_format, size_t* strides,
                                 const size_t* sizes) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_56(mht_56_v, 1181, "", "./tensorflow/core/util/mkl_util.h", "GetStridesFromSizes");
+
   DCHECK_NE(data_format, MklTensorFormat::FORMAT_INVALID);
   // MKL requires strides in NCHW
   if (data_format == MklTensorFormat::FORMAT_NHWC) {
@@ -853,6 +1198,9 @@ inline void GetStridesFromSizes(MklTensorFormat data_format, size_t* strides,
 
 inline void CopyMklTensorInToOut(OpKernelContext* context, int idx_in,
                                  int idx_out) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_57(mht_57_v, 1201, "", "./tensorflow/core/util/mkl_util.h", "CopyMklTensorInToOut");
+
   int num_inputs = context->num_inputs();
   int num_outputs = context->num_outputs();
   int idx_data_in = GetTensorDataIndex(idx_in, num_inputs);
@@ -875,6 +1223,9 @@ inline void CopyMklTensorInToOut(OpKernelContext* context, int idx_in,
 inline void CopyTfTensorInToOutWithShape(OpKernelContext* context, int idx_in,
                                          int idx_out,
                                          const TensorShape& shape) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_58(mht_58_v, 1226, "", "./tensorflow/core/util/mkl_util.h", "CopyTfTensorInToOutWithShape");
+
   int num_inputs = context->num_inputs();
   int num_outputs = context->num_outputs();
   int idx_data_in = GetTensorDataIndex(idx_in, num_inputs);
@@ -892,6 +1243,9 @@ inline void CopyTfTensorInToOutWithShape(OpKernelContext* context, int idx_in,
 
 inline void ForwardTfTensorInToOut(OpKernelContext* context, int idx_in,
                                    int idx_out) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_59(mht_59_v, 1246, "", "./tensorflow/core/util/mkl_util.h", "ForwardTfTensorInToOut");
+
   int num_inputs = context->num_inputs();
   int num_outputs = context->num_outputs();
   int idx_data_in = GetTensorDataIndex(idx_in, num_inputs);
@@ -909,6 +1263,9 @@ inline void ForwardTfTensorInToOut(OpKernelContext* context, int idx_in,
 
 inline void ForwardMklTensorInToOut(OpKernelContext* context, int idx_in,
                                     int idx_out) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_60(mht_60_v, 1266, "", "./tensorflow/core/util/mkl_util.h", "ForwardMklTensorInToOut");
+
   int num_inputs = context->num_inputs();
   int num_outputs = context->num_outputs();
   int idx_data_in = GetTensorDataIndex(idx_in, num_inputs);
@@ -928,6 +1285,9 @@ inline void ForwardMklTensorInToOut(OpKernelContext* context, int idx_in,
 // Set a dummy oneDNN shape (called when the output is in TF format)
 inline void SetDummyMklDnnShapeOutput(OpKernelContext* context,
                                       uint32 idx_data_out) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_61(mht_61_v, 1288, "", "./tensorflow/core/util/mkl_util.h", "SetDummyMklDnnShapeOutput");
+
   MklDnnShape mkl_shape_output;
   mkl_shape_output.SetMklTensor(false);
   AllocateOutputSetMklShape(context, idx_data_out, mkl_shape_output);
@@ -941,6 +1301,9 @@ inline bool ForwardMklTensorInToOutWithMklShape(OpKernelContext* context,
                                                 Tensor** output,
                                                 const MklDnnShape& mkl_shape,
                                                 bool always_forward = true) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_62(mht_62_v, 1304, "", "./tensorflow/core/util/mkl_util.h", "ForwardMklTensorInToOutWithMklShape");
+
   int num_inputs = context->num_inputs();
   int num_outputs = context->num_outputs();
   int idx_data_in = GetTensorDataIndex(idx_in, num_inputs);
@@ -970,6 +1333,9 @@ inline bool ForwardMklTensorInToOutWithMklShape(OpKernelContext* context,
 inline void ForwardMklMetaDataInToOut(OpKernelContext* context,
                                       uint32 idx_data_in,
                                       uint32_t idx_data_out) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_63(mht_63_v, 1336, "", "./tensorflow/core/util/mkl_util.h", "ForwardMklMetaDataInToOut");
+
   uint32 idx_meta_in =
       GetTensorMetaDataIndex(idx_data_in, context->num_inputs());
   uint32 idx_meta_out =
@@ -986,6 +1352,9 @@ inline void ForwardMklMetaDataInToOut(OpKernelContext* context,
 //          Common utility functions used by MKL unit tests
 
 inline Tensor GetMklMetaTensor() {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_64(mht_64_v, 1355, "", "./tensorflow/core/util/mkl_util.h", "GetMklMetaTensor");
+
   MklDnnShape non_mkl_shape;
   non_mkl_shape.SetMklTensor(false);
 
@@ -1010,30 +1379,48 @@ static memory::data_type MklDnnType();
 /// type if needed.
 template <>
 memory::data_type MklDnnType<float>() {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_65(mht_65_v, 1382, "", "./tensorflow/core/util/mkl_util.h", "MklDnnType<float>");
+
   return memory::data_type::f32;
 }
 
 template <>
 memory::data_type MklDnnType<quint8>() {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_66(mht_66_v, 1390, "", "./tensorflow/core/util/mkl_util.h", "MklDnnType<quint8>");
+
   return memory::data_type::u8;
 }
 
 template <>
 memory::data_type MklDnnType<uint8>() {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_67(mht_67_v, 1398, "", "./tensorflow/core/util/mkl_util.h", "MklDnnType<uint8>");
+
   return memory::data_type::u8;
 }
 
 template <>
 memory::data_type MklDnnType<qint8>() {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_68(mht_68_v, 1406, "", "./tensorflow/core/util/mkl_util.h", "MklDnnType<qint8>");
+
   return memory::data_type::s8;
 }
 
 template <>
 memory::data_type MklDnnType<qint32>() {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_69(mht_69_v, 1414, "", "./tensorflow/core/util/mkl_util.h", "MklDnnType<qint32>");
+
   return memory::data_type::s32;
 }
 template <>
 memory::data_type MklDnnType<bfloat16>() {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_70(mht_70_v, 1421, "", "./tensorflow/core/util/mkl_util.h", "MklDnnType<bfloat16>");
+
   return memory::data_type::bf16;
 }
 
@@ -1044,6 +1431,9 @@ memory::data_type MklDnnType<bfloat16>() {
 //          Fails with an error if invalid data format.
 inline memory::format_tag MklTensorFormatToMklDnnDataFormat(
     MklTensorFormat format) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_71(mht_71_v, 1434, "", "./tensorflow/core/util/mkl_util.h", "MklTensorFormatToMklDnnDataFormat");
+
   if (format == MklTensorFormat::FORMAT_NHWC) return memory::format_tag::nhwc;
   if (format == MklTensorFormat::FORMAT_NCHW) return memory::format_tag::nchw;
   if (format == MklTensorFormat::FORMAT_NDHWC) return memory::format_tag::ndhwc;
@@ -1059,6 +1449,9 @@ inline memory::format_tag MklTensorFormatToMklDnnDataFormat(
 /// @return: oneDNN 3D data format corresponding to TensorFlow data format;
 ///          Fails with an error if invalid data format.
 inline MklTensorFormat TFDataFormatToMklDnn3DDataFormat(TensorFormat format) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_72(mht_72_v, 1452, "", "./tensorflow/core/util/mkl_util.h", "TFDataFormatToMklDnn3DDataFormat");
+
   if (format == FORMAT_NHWC) return MklTensorFormat::FORMAT_NDHWC;
   if (format == FORMAT_NCHW) return MklTensorFormat::FORMAT_NCDHW;
   TF_CHECK_OK(Status(error::Code::INVALID_ARGUMENT, "Unsupported data format"));
@@ -1071,6 +1464,9 @@ inline MklTensorFormat TFDataFormatToMklDnn3DDataFormat(TensorFormat format) {
 /// @return: oneDNN data format corresponding to TensorFlow data format;
 ///          Fails with an error if invalid data format.
 inline MklTensorFormat TFDataFormatToMklDnnDataFormat(TensorFormat format) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_73(mht_73_v, 1467, "", "./tensorflow/core/util/mkl_util.h", "TFDataFormatToMklDnnDataFormat");
+
   if (format == FORMAT_NHWC) return MklTensorFormat::FORMAT_NHWC;
   if (format == FORMAT_NCHW) return MklTensorFormat::FORMAT_NCHW;
   TF_CHECK_OK(Status(error::Code::INVALID_ARGUMENT, "Unsupported data format"));
@@ -1083,6 +1479,9 @@ inline MklTensorFormat TFDataFormatToMklDnnDataFormat(TensorFormat format) {
 /// @return: Tensorflow data format corresponding to oneDNN data format;
 ///          Fails with an error if invalid data format.
 inline TensorFormat MklDnnDataFormatToTFDataFormat(MklTensorFormat format) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_74(mht_74_v, 1482, "", "./tensorflow/core/util/mkl_util.h", "MklDnnDataFormatToTFDataFormat");
+
   if (format == MklTensorFormat::FORMAT_NHWC ||
       format == MklTensorFormat::FORMAT_NDHWC)
     return FORMAT_NHWC;
@@ -1105,6 +1504,9 @@ inline TensorFormat MklDnnDataFormatToTFDataFormat(MklTensorFormat format) {
 /// @input TensorShape object in shape
 /// @return memory::dims corresponding to TensorShape
 inline memory::dims TFShapeToMklDnnDims(const TensorShape& shape) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_75(mht_75_v, 1507, "", "./tensorflow/core/util/mkl_util.h", "TFShapeToMklDnnDims");
+
   memory::dims dims(shape.dims());
   for (int d = 0; d < shape.dims(); ++d) {
     dims[d] = shape.dim_size(d);
@@ -1123,6 +1525,9 @@ inline memory::dims TFShapeToMklDnnDims(const TensorShape& shape) {
 /// @return memory::dims in oneDNN required NCHW format
 inline memory::dims TFShapeToMklDnnDimsInNCHW(const TensorShape& shape,
                                               TensorFormat format) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_76(mht_76_v, 1528, "", "./tensorflow/core/util/mkl_util.h", "TFShapeToMklDnnDimsInNCHW");
+
   // Check validity of format.
   DCHECK_NE(TFDataFormatToMklDnnDataFormat(format),
             MklTensorFormat::FORMAT_INVALID);
@@ -1138,6 +1543,9 @@ inline memory::dims TFShapeToMklDnnDimsInNCHW(const TensorShape& shape,
 
 inline memory::dims TFShapeToMklDnnDimsInNCDHW(const TensorShape& shape,
                                                TensorFormat format) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_77(mht_77_v, 1546, "", "./tensorflow/core/util/mkl_util.h", "TFShapeToMklDnnDimsInNCDHW");
+
   // Validate format.
   DCHECK_NE(TFDataFormatToMklDnn3DDataFormat(format),
             MklTensorFormat::FORMAT_INVALID);
@@ -1156,6 +1564,9 @@ inline memory::dims TFShapeToMklDnnDimsInNCDHW(const TensorShape& shape,
 /// Input parameters are self-explanatory.
 inline memory::dims MklDnnDimsInNCHW(const memory::dims& in_dims,
                                      TensorFormat format) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_78(mht_78_v, 1567, "", "./tensorflow/core/util/mkl_util.h", "MklDnnDimsInNCHW");
+
   // Validate format.
   DCHECK_NE(TFDataFormatToMklDnnDataFormat(format),
             MklTensorFormat::FORMAT_INVALID);
@@ -1173,6 +1584,9 @@ inline memory::dims MklDnnDimsInNCHW(const memory::dims& in_dims,
 /// Input parameters are self-explanatory.
 inline memory::dims MklDnnDimsInNCDHW(const memory::dims& in_dims,
                                       TensorFormat format) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_79(mht_79_v, 1587, "", "./tensorflow/core/util/mkl_util.h", "MklDnnDimsInNCDHW");
+
   // Validate format.
   DCHECK_NE(TFDataFormatToMklDnnDataFormat(format),
             MklTensorFormat::FORMAT_INVALID);
@@ -1195,6 +1609,9 @@ inline memory::dims MklDnnDimsInNCDHW(const memory::dims& in_dims,
 /// @input oneDNN memory::dims object
 /// @output TensorShape corresponding to memory::dims
 inline TensorShape MklDnnDimsToTFShape(const memory::dims& dims) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_80(mht_80_v, 1612, "", "./tensorflow/core/util/mkl_util.h", "MklDnnDimsToTFShape");
+
   std::vector<int32> shape(dims.size(), -1);
   for (int d = 0; d < dims.size(); d++) {
     shape[d] = dims[d];
@@ -1214,6 +1631,9 @@ inline TensorShape MklDnnDimsToTFShape(const memory::dims& dims) {
 /// @input Tensorflow shape in memory::dims type
 /// @return memory::dims containing strides for the tensor.
 inline memory::dims CalculateTFStrides(const memory::dims& dims_tf_order) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_81(mht_81_v, 1634, "", "./tensorflow/core/util/mkl_util.h", "CalculateTFStrides");
+
   CHECK_GT(dims_tf_order.size(), 0);
   memory::dims strides(dims_tf_order.size());
   int last_dim_idx = dims_tf_order.size() - 1;
@@ -1238,6 +1658,9 @@ inline Status CreateBlockedMemDescHelper(const memory::dims& dim,
                                          const memory::dims& strides,
                                          memory::data_type dtype,
                                          dnnl_memory_desc_t* blocked_md) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_82(mht_82_v, 1661, "", "./tensorflow/core/util/mkl_util.h", "CreateBlockedMemDescHelper");
+
   DCHECK_EQ(dim.size(), strides.size());
   const int kNumDims = dim.size();
   dnnl_dim_t* input_dims = new dnnl_dim_t[kNumDims];
@@ -1267,6 +1690,9 @@ inline void CreateAndExecuteReorder(const ReorderPd& reorder_desc,
                                     const memory& src_mem,
                                     const memory& dst_mem, const engine& engine,
                                     OpKernelContext* ctx = nullptr) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_83(mht_83_v, 1693, "", "./tensorflow/core/util/mkl_util.h", "CreateAndExecuteReorder");
+
   std::vector<primitive> net;
   net.push_back(dnnl::reorder(reorder_desc));
   std::vector<MemoryArgsMap> net_args;
@@ -1307,7 +1733,10 @@ class MklDnnData {
         op_md_(nullptr),
         bIs3D(false),
         allocated_buffer_(nullptr),
-        cpu_engine_(e) {}
+        cpu_engine_(e) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_84(mht_84_v, 1737, "", "./tensorflow/core/util/mkl_util.h", "MklDnnData");
+}
 
   // MklDnnData does not use any smart pointers,
   // hence default operator= will result in memory leak if user_memory was
@@ -1318,6 +1747,9 @@ class MklDnnData {
   MklDnnData& operator=(const MklDnnData&) = delete;
 
   ~MklDnnData() {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_85(mht_85_v, 1750, "", "./tensorflow/core/util/mkl_util.h", "~MklDnnData");
+
     if (allocated_buffer_ != nullptr) {
       cpu_allocator()->DeallocateRaw(allocated_buffer_);
     }
@@ -1328,13 +1760,22 @@ class MklDnnData {
   }
 
   inline void* GetTensorBuffer(const Tensor* tensor) const {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_86(mht_86_v, 1763, "", "./tensorflow/core/util/mkl_util.h", "GetTensorBuffer");
+
     CHECK_NOTNULL(tensor);
     return const_cast<void*>(
         static_cast<const void*>(tensor->flat<T>().data()));
   }
 
-  void SetIs3DData(bool bIs3D_) { bIs3D = bIs3D_; }
-  bool GetIs3D() { return bIs3D; }
+  void SetIs3DData(bool bIs3D_) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_87(mht_87_v, 1772, "", "./tensorflow/core/util/mkl_util.h", "SetIs3DData");
+ bIs3D = bIs3D_; }
+  bool GetIs3D() {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_88(mht_88_v, 1776, "", "./tensorflow/core/util/mkl_util.h", "GetIs3D");
+ return bIs3D; }
 
   /// Set user memory primitive using specified dimensions, memory format tag
   /// and data_buffer. Function automatically uses element data type by using
@@ -1346,12 +1787,18 @@ class MklDnnData {
   /// pointed by data_buffer.
   inline void SetUsrMem(const memory::dims& dim, memory::format_tag fm,
                         void* data_buffer = nullptr) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_89(mht_89_v, 1790, "", "./tensorflow/core/util/mkl_util.h", "SetUsrMem");
+
     auto md = memory::desc(dim, MklDnnType<T>(), fm);
     SetUsrMem(md, data_buffer);
   }
 
   inline void SetUsrMem(const memory::dims& dim, memory::format_tag fm,
                         const Tensor* tensor) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_90(mht_90_v, 1799, "", "./tensorflow/core/util/mkl_util.h", "SetUsrMem");
+
     DCHECK(tensor);
     SetUsrMem(dim, fm, GetTensorBuffer(tensor));
   }
@@ -1366,6 +1813,9 @@ class MklDnnData {
   ///          for given dimensions and strides.
   static inline memory::desc CreateBlockedMemDesc(const memory::dims& dim,
                                                   const memory::dims& strides) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_91(mht_91_v, 1816, "", "./tensorflow/core/util/mkl_util.h", "CreateBlockedMemDesc");
+
     dnnl_memory_desc_t blocked_md;
     TF_CHECK_OK(
         CreateBlockedMemDescHelper(dim, strides, MklDnnType<T>(), &blocked_md));
@@ -1380,6 +1830,9 @@ class MklDnnData {
   /// can create memory for 6D tensor.
   inline void SetUsrMem(const memory::dims& dim, const memory::dims& strides,
                         void* data_buffer = nullptr) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_92(mht_92_v, 1833, "", "./tensorflow/core/util/mkl_util.h", "SetUsrMem");
+
     CHECK_EQ(dim.size(), strides.size());
     auto blocked_md = MklDnnData<T>::CreateBlockedMemDesc(dim, strides);
     SetUsrMem(blocked_md, data_buffer);
@@ -1387,12 +1840,18 @@ class MklDnnData {
 
   inline void SetUsrMem(const memory::dims& dim, const memory::dims& strides,
                         const Tensor* tensor) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_93(mht_93_v, 1843, "", "./tensorflow/core/util/mkl_util.h", "SetUsrMem");
+
     CHECK_NOTNULL(tensor);
     SetUsrMem(dim, strides, GetTensorBuffer(tensor));
   }
 
   /// A version of SetUsrMem with memory descriptor and tensor
   inline void SetUsrMem(const memory::desc& md, const Tensor* tensor) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_94(mht_94_v, 1852, "", "./tensorflow/core/util/mkl_util.h", "SetUsrMem");
+
     CHECK_NOTNULL(tensor);
     SetUsrMem(md, GetTensorBuffer(tensor));
   }
@@ -1402,6 +1861,9 @@ class MklDnnData {
   /// function is more generic than the one above, but the function above is
   /// sufficient in most cases.
   inline void SetUsrMem(const memory::desc& pd, void* data_buffer = nullptr) {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_95(mht_95_v, 1864, "", "./tensorflow/core/util/mkl_util.h", "SetUsrMem");
+
     DCHECK(cpu_engine_);
     if (user_memory_) delete user_memory_;
     // TODO(intel-tf): can we remove dynamic memory allocation?
@@ -1413,16 +1875,25 @@ class MklDnnData {
   }
 
   /// Get function for user memory primitive.
-  inline const memory* GetUsrMem() const { return user_memory_; }
+  inline const memory* GetUsrMem() const {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_96(mht_96_v, 1879, "", "./tensorflow/core/util/mkl_util.h", "GetUsrMem");
+ return user_memory_; }
 
   /// Get function for descriptor of user memory.
   inline memory::desc GetUsrMemDesc() const {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_97(mht_97_v, 1885, "", "./tensorflow/core/util/mkl_util.h", "GetUsrMemDesc");
+
     DCHECK(user_memory_);
     return user_memory_->get_desc();
   }
 
   /// Get function for data buffer of user memory primitive.
   inline void* GetUsrMemDataHandle() const {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_98(mht_98_v, 1894, "", "./tensorflow/core/util/mkl_util.h", "GetUsrMemDataHandle");
+
     CHECK_NOTNULL(user_memory_);
     return user_memory_->get_data_handle();
   }
@@ -1430,6 +1901,9 @@ class MklDnnData {
   /// Set function for data buffer of user memory primitive.
   inline void SetUsrMemDataHandle(void* data_buffer,
                                   std::shared_ptr<stream> t_stream = nullptr) {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_99(mht_99_v, 1904, "", "./tensorflow/core/util/mkl_util.h", "SetUsrMemDataHandle");
+
     CHECK_NOTNULL(user_memory_);
     CHECK_NOTNULL(data_buffer);
 #ifndef ENABLE_ONEDNN_OPENMP
@@ -1442,16 +1916,25 @@ class MklDnnData {
   /// Set function for data buffer of user memory primitive.
   inline void SetUsrMemDataHandle(const Tensor* tensor,
                                   std::shared_ptr<stream> t_stream = nullptr) {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_100(mht_100_v, 1919, "", "./tensorflow/core/util/mkl_util.h", "SetUsrMemDataHandle");
+
     SetUsrMemDataHandle(GetTensorBuffer(tensor), t_stream);
   }
 
   /// allocate function for data buffer
   inline void AllocateBuffer(size_t size) {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_101(mht_101_v, 1927, "", "./tensorflow/core/util/mkl_util.h", "AllocateBuffer");
+
     const int64 kMemoryAlignment = 64;  // For AVX512 memory alignment.
     allocated_buffer_ = cpu_allocator()->AllocateRaw(kMemoryAlignment, size);
   }
 
-  inline void* GetAllocatedBuffer() { return allocated_buffer_; }
+  inline void* GetAllocatedBuffer() {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_102(mht_102_v, 1935, "", "./tensorflow/core/util/mkl_util.h", "GetAllocatedBuffer");
+ return allocated_buffer_; }
 
   /// Get the memory primitive for input and output of an op. If inputs
   /// to an op require reorders, then this function returns memory primitive
@@ -1462,6 +1945,9 @@ class MklDnnData {
   /// required for I and F (say I_r is reorder primitive for I; F_r is reorder
   /// primitive for F), then we need I_r and F_r to perform Conv2D.
   inline const memory& GetOpMem() const {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_103(mht_103_v, 1948, "", "./tensorflow/core/util/mkl_util.h", "GetOpMem");
+
     return reorder_memory_ ? *reorder_memory_ : *user_memory_;
   }
 
@@ -1470,12 +1956,18 @@ class MklDnnData {
   /// but memory::format_tag would be dnnl::any because we want oneDNN to
   /// choose the best layout/format for given input dimensions.
   inline void SetOpMemDesc(const memory::dims& dim, memory::format_tag fm) {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_104(mht_104_v, 1959, "", "./tensorflow/core/util/mkl_util.h", "SetOpMemDesc");
+
     // TODO(intel-tf): can we remove dynamic memory allocation?
     op_md_ = new memory::desc(dim, MklDnnType<T>(), fm);
   }
 
   /// Get function for memory descriptor for an operation
-  inline const memory::desc& GetOpMemDesc() const { return *op_md_; }
+  inline const memory::desc& GetOpMemDesc() const {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_105(mht_105_v, 1968, "", "./tensorflow/core/util/mkl_util.h", "GetOpMemDesc");
+ return *op_md_; }
 
   /// Predicate that checks if we need to reorder user's memory into memory
   /// pointed by op_md.
@@ -1483,6 +1975,9 @@ class MklDnnData {
   /// @input: op_md - memory descriptor of the given input of an operation.
   /// @return: true in case reorder of input is needed; false, otherwise.
   inline bool IsReorderNeeded(const memory::desc& op_pd) const {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_106(mht_106_v, 1978, "", "./tensorflow/core/util/mkl_util.h", "IsReorderNeeded");
+
     DCHECK(user_memory_);
     return op_pd != user_memory_->get_desc();
   }
@@ -1490,6 +1985,9 @@ class MklDnnData {
   /// Function to create a reorder from memory pointed by from to memory pointed
   /// by to. Returns created primitive.
   inline primitive CreateReorder(const memory* from, const memory* to) const {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_107(mht_107_v, 1988, "", "./tensorflow/core/util/mkl_util.h", "CreateReorder");
+
     CHECK_NOTNULL(from);
     CHECK_NOTNULL(to);
     return reorder(*from, *to);
@@ -1516,6 +2014,9 @@ class MklDnnData {
                                   std::vector<primitive>& net,
                                   std::vector<MemoryArgsMap>& net_args,
                                   const engine& engine) {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_108(mht_108_v, 2017, "", "./tensorflow/core/util/mkl_util.h", "CheckReorderToOpMem");
+
     DCHECK(user_memory_);
     DCHECK_EQ(net.size(), net_args.size());
     if (IsReorderNeeded(op_md)) {
@@ -1532,6 +2033,9 @@ class MklDnnData {
   inline bool CheckReorderToOpMem(const memory::desc& op_md,
                                   const engine& engine,
                                   OpKernelContext* context = nullptr) {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_109(mht_109_v, 2036, "", "./tensorflow/core/util/mkl_util.h", "CheckReorderToOpMem");
+
     DCHECK(user_memory_);
     if (IsReorderNeeded(op_md)) {
       // TODO(intel-tf): can we remove dynamic memory allocation?
@@ -1577,6 +2081,9 @@ class MklDnnData {
                                   std::vector<primitive>& net,
                                   std::vector<MemoryArgsMap>& net_args,
                                   const engine& engine) {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_110(mht_110_v, 2084, "", "./tensorflow/core/util/mkl_util.h", "CheckReorderToOpMem");
+
     DCHECK(reorder_data_handle);
     DCHECK(user_memory_);
     if (IsReorderNeeded(op_md)) {
@@ -1598,6 +2105,9 @@ class MklDnnData {
                                   void* reorder_data_handle,
                                   const engine& engine,
                                   OpKernelContext* context = nullptr) {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_111(mht_111_v, 2108, "", "./tensorflow/core/util/mkl_util.h", "CheckReorderToOpMem");
+
     DCHECK(reorder_data_handle);
     DCHECK(user_memory_);
     if (IsReorderNeeded(op_md)) {
@@ -1644,6 +2154,9 @@ class MklDnnData {
                                   std::vector<primitive>& net,
                                   std::vector<MemoryArgsMap>& net_args,
                                   const engine& engine) {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_112(mht_112_v, 2157, "", "./tensorflow/core/util/mkl_util.h", "CheckReorderToOpMem");
+
     DCHECK(reorder_tensor);
     return CheckReorderToOpMem(op_md, GetTensorBuffer(reorder_tensor), net,
                                net_args, engine);
@@ -1655,6 +2168,9 @@ class MklDnnData {
   inline bool CheckReorderToOpMem(const memory::desc& op_pd,
                                   Tensor* reorder_tensor,
                                   OpKernelContext* ctx = nullptr) {
+   std::vector<std::string> mht_113_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_113(mht_113_v, 2171, "", "./tensorflow/core/util/mkl_util.h", "CheckReorderToOpMem");
+
     DCHECK(reorder_tensor);
     return CheckReorderToOpMem(op_pd, GetTensorBuffer(reorder_tensor),
                                *cpu_engine_, ctx);
@@ -1674,6 +2190,9 @@ class MklDnnData {
   ///          given output of an operation
   /// @return: true in case reorder of output is needed; false, otherwise.
   inline bool PrepareReorderToUserMemIfReq(const memory::desc& op_pd) {
+   std::vector<std::string> mht_114_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_114(mht_114_v, 2193, "", "./tensorflow/core/util/mkl_util.h", "PrepareReorderToUserMemIfReq");
+
     DCHECK(user_memory_);
     if (IsReorderNeeded(op_pd)) {
       // TODO(intel-tf): can we remove dynamic memory allocation?
@@ -1695,6 +2214,9 @@ class MklDnnData {
   ///                    <argument-type, dnnl::memory>.
   inline void InsertReorderToUserMem(std::vector<primitive>& net,
                                      std::vector<MemoryArgsMap>& net_args) {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_115(mht_115_v, 2217, "", "./tensorflow/core/util/mkl_util.h", "InsertReorderToUserMem");
+
     DCHECK(user_memory_);
     DCHECK(reorder_memory_);
     net.push_back(CreateReorder(reorder_memory_, user_memory_));
@@ -1706,6 +2228,9 @@ class MklDnnData {
   ///     compared with InsertReorderToUserMem(net, net_args), will remove
   ///     slow path in the future
   inline void InsertReorderToUserMem(OpKernelContext* ctx = nullptr) {
+   std::vector<std::string> mht_116_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_116(mht_116_v, 2231, "", "./tensorflow/core/util/mkl_util.h", "InsertReorderToUserMem");
+
     DCHECK(user_memory_);
     DCHECK(reorder_memory_);
     DCHECK(cpu_engine_);
@@ -1732,13 +2257,25 @@ class MklDnnData {
 /// Base class for operations with reuse of primitives
 class MklPrimitive {
  public:
-  virtual ~MklPrimitive() {}
-  MklPrimitive() {}
-  MklPrimitive(const engine& cpu_engine) { cpu_engine_ = cpu_engine; }
+  virtual ~MklPrimitive() {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_117(mht_117_v, 2261, "", "./tensorflow/core/util/mkl_util.h", "~MklPrimitive");
+}
+  MklPrimitive() {
+   std::vector<std::string> mht_118_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_118(mht_118_v, 2265, "", "./tensorflow/core/util/mkl_util.h", "MklPrimitive");
+}
+  MklPrimitive(const engine& cpu_engine) {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_119(mht_119_v, 2269, "", "./tensorflow/core/util/mkl_util.h", "MklPrimitive");
+ cpu_engine_ = cpu_engine; }
   // Dummy data which MKL DNN never operates on
   unsigned char* DummyData = nullptr;
   engine cpu_engine_ = engine(engine::kind::cpu, 0);
-  const engine& GetEngine() { return cpu_engine_; }
+  const engine& GetEngine() {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_120(mht_120_v, 2276, "", "./tensorflow/core/util/mkl_util.h", "GetEngine");
+ return cpu_engine_; }
 };
 
 const dnnl::memory::dims NONE_DIMS = {};
@@ -1763,11 +2300,18 @@ template <typename T>
 class LRUCache {
  public:
   explicit LRUCache(size_t capacity) {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_121(mht_121_v, 2303, "", "./tensorflow/core/util/mkl_util.h", "LRUCache");
+
     capacity_ = capacity;
     Clear();
   }
 
   T* GetOp(const string& key) {
+   std::vector<std::string> mht_122_v;
+   mht_122_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_122(mht_122_v, 2312, "", "./tensorflow/core/util/mkl_util.h", "GetOp");
+
 #ifdef DNNL_AARCH64_USE_ACL
     mutex_lock lock(lru_mu_);
 #endif
@@ -1784,6 +2328,10 @@ class LRUCache {
   }
 
   void SetOp(const string& key, T* op) {
+   std::vector<std::string> mht_123_v;
+   mht_123_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_123(mht_123_v, 2332, "", "./tensorflow/core/util/mkl_util.h", "SetOp");
+
 #ifdef DNNL_AARCH64_USE_ACL
     mutex_lock lock(lru_mu_);
 #endif
@@ -1801,6 +2349,9 @@ class LRUCache {
   }
 
   void Clear() {
+   std::vector<std::string> mht_124_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_124(mht_124_v, 2352, "", "./tensorflow/core/util/mkl_util.h", "Clear");
+
     if (lru_list_.empty()) return;
 
     // Clean up the cache
@@ -1815,11 +2366,19 @@ class LRUCache {
   }
 
   void Allocate(const string& key) {
+   std::vector<std::string> mht_125_v;
+   mht_125_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_125(mht_125_v, 2370, "", "./tensorflow/core/util/mkl_util.h", "Allocate");
+
     mutex_lock lock(in_flight_mu_);
     in_flight_.insert(key);
   }
 
   void FinishedAllocation(const string& key) {
+   std::vector<std::string> mht_126_v;
+   mht_126_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_126(mht_126_v, 2379, "", "./tensorflow/core/util/mkl_util.h", "FinishedAllocation");
+
     mutex_lock lock(in_flight_mu_);
     in_flight_.erase(key);
   }
@@ -1835,6 +2394,9 @@ class LRUCache {
 
     // Constructor
     Entry(T* op, std::list<string>::iterator it) {
+   std::vector<std::string> mht_127_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_127(mht_127_v, 2397, "", "./tensorflow/core/util/mkl_util.h", "Entry");
+
       this->op = op;
       this->lru_iterator = it;
     }
@@ -1848,6 +2410,9 @@ class LRUCache {
 
     // Destructor
     ~Entry() {
+   std::vector<std::string> mht_128_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_128(mht_128_v, 2413, "", "./tensorflow/core/util/mkl_util.h", "~Entry");
+
       if (op != nullptr) delete op;
     }
   };
@@ -1855,6 +2420,9 @@ class LRUCache {
   // Remove the least recently accessed entry from LRU list, which
   // is the tail of lru_list_. Update cache_ correspondingly.
   bool Delete() {
+   std::vector<std::string> mht_129_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_129(mht_129_v, 2423, "", "./tensorflow/core/util/mkl_util.h", "Delete");
+
     if (lru_list_.empty()) return false;
     string key = lru_list_.back();
     lru_list_.pop_back();
@@ -1886,11 +2454,21 @@ class LRUCache {
 template <typename T>
 class MklPrimitiveFactory {
  public:
-  MklPrimitiveFactory() {}
+  MklPrimitiveFactory() {
+   std::vector<std::string> mht_130_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_130(mht_130_v, 2458, "", "./tensorflow/core/util/mkl_util.h", "MklPrimitiveFactory");
+}
 
-  ~MklPrimitiveFactory() {}
+  ~MklPrimitiveFactory() {
+   std::vector<std::string> mht_131_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_131(mht_131_v, 2463, "", "./tensorflow/core/util/mkl_util.h", "~MklPrimitiveFactory");
+}
 
   MklPrimitive* GetOp(const string& key) {
+   std::vector<std::string> mht_132_v;
+   mht_132_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_132(mht_132_v, 2469, "", "./tensorflow/core/util/mkl_util.h", "GetOp");
+
 #ifndef DNNL_AARCH64_USE_ACL
     auto& lru_cache = MklPrimitiveFactory<T>::GetLRUCache();
     return lru_cache.GetOp(key);
@@ -1927,6 +2505,10 @@ class MklPrimitiveFactory {
   }
 
   void SetOp(const string& key, MklPrimitive* op) {
+   std::vector<std::string> mht_133_v;
+   mht_133_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_133(mht_133_v, 2509, "", "./tensorflow/core/util/mkl_util.h", "SetOp");
+
 #ifndef DNNL_AARCH64_USE_ACL
     auto& lru_cache = MklPrimitiveFactory<T>::GetLRUCache();
     lru_cache.SetOp(key, op);
@@ -1946,6 +2528,9 @@ class MklPrimitiveFactory {
   /// For those legacy device(w/o AVX512 and AVX2),
   /// MKL-DNN GEMM will be used.
   static inline bool IsLegacyPlatform() {
+   std::vector<std::string> mht_134_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_134(mht_134_v, 2531, "", "./tensorflow/core/util/mkl_util.h", "IsLegacyPlatform");
+
     static const bool is_legacy_platform =
         (!port::TestCPUFeature(port::CPUFeature::AVX512F) &&
          !port::TestCPUFeature(port::CPUFeature::AVX2));
@@ -1954,6 +2539,9 @@ class MklPrimitiveFactory {
 
   /// Function to check whether primitive memory optimization is enabled
   static inline bool IsPrimitiveMemOptEnabled() {
+   std::vector<std::string> mht_135_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_135(mht_135_v, 2542, "", "./tensorflow/core/util/mkl_util.h", "IsPrimitiveMemOptEnabled");
+
     static const bool is_primitive_mem_opt_enabled = [] {
       bool value = true;
       TF_CHECK_OK(
@@ -1972,6 +2560,9 @@ class MklPrimitiveFactory {
 
  private:
   static inline LRUCache<MklPrimitive>& GetLRUCache() {
+   std::vector<std::string> mht_136_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_136(mht_136_v, 2563, "", "./tensorflow/core/util/mkl_util.h", "GetLRUCache");
+
     static const int kCapacity = 1024;  // cache capacity
 #ifndef DNNL_AARCH64_USE_ACL
     static thread_local LRUCache<MklPrimitive> lru_cache_(kCapacity);
@@ -1990,13 +2581,26 @@ class MklPrimitiveFactory {
 // utility class for creating keys of MKL primitive pool.
 class FactoryKeyCreator {
  public:
-  FactoryKeyCreator() { key_.reserve(kMaxKeyLength); }
+  FactoryKeyCreator() {
+   std::vector<std::string> mht_137_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_137(mht_137_v, 2585, "", "./tensorflow/core/util/mkl_util.h", "FactoryKeyCreator");
+ key_.reserve(kMaxKeyLength); }
 
-  ~FactoryKeyCreator() {}
+  ~FactoryKeyCreator() {
+   std::vector<std::string> mht_138_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_138(mht_138_v, 2590, "", "./tensorflow/core/util/mkl_util.h", "~FactoryKeyCreator");
+}
 
-  void AddAsKey(const string& str) { Append(str); }
+  void AddAsKey(const string& str) {
+   std::vector<std::string> mht_139_v;
+   mht_139_v.push_back("str: \"" + str + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_139(mht_139_v, 2596, "", "./tensorflow/core/util/mkl_util.h", "AddAsKey");
+ Append(str); }
 
   void AddAsKey(const dnnl::memory::dims& dims) {
+   std::vector<std::string> mht_140_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_140(mht_140_v, 2601, "", "./tensorflow/core/util/mkl_util.h", "AddAsKey");
+
     for (unsigned int i = 0; i < dims.size(); i++) {
       AddAsKey<int>(dims[i]);
     }
@@ -2004,23 +2608,35 @@ class FactoryKeyCreator {
 
   template <typename T>
   void AddAsKey(const T data) {
+   std::vector<std::string> mht_141_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_141(mht_141_v, 2611, "", "./tensorflow/core/util/mkl_util.h", "AddAsKey");
+
     auto buffer = reinterpret_cast<const char*>(&data);
     Append(StringPiece(buffer, sizeof(T)));
   }
 
   // generalisation to handle pointers
   void AddAsKey(const void* data) {
+   std::vector<std::string> mht_142_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_142(mht_142_v, 2620, "", "./tensorflow/core/util/mkl_util.h", "AddAsKey");
+
     auto buffer = reinterpret_cast<const char*>(&data);
     Append(StringPiece(buffer, sizeof(data)));
   }
 
-  string GetKey() { return key_; }
+  string GetKey() {
+   std::vector<std::string> mht_143_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_143(mht_143_v, 2628, "", "./tensorflow/core/util/mkl_util.h", "GetKey");
+ return key_; }
 
  private:
   string key_;
   const char delimiter = 'x';
   const int kMaxKeyLength = 256;
   void Append(StringPiece s) {
+   std::vector<std::string> mht_144_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_144(mht_144_v, 2637, "", "./tensorflow/core/util/mkl_util.h", "Append");
+
     key_.append(string(s));
     key_.append(1, delimiter);
   }
@@ -2030,13 +2646,22 @@ class MklReorderPrimitive : public MklPrimitive {
  public:
   explicit MklReorderPrimitive(const memory* from, const memory* to)
       : MklPrimitive(engine(engine::kind::cpu, 0)) {
+   std::vector<std::string> mht_145_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_145(mht_145_v, 2649, "", "./tensorflow/core/util/mkl_util.h", "MklReorderPrimitive");
+
     Setup(from, to);
   }
-  ~MklReorderPrimitive() {}
+  ~MklReorderPrimitive() {
+   std::vector<std::string> mht_146_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_146(mht_146_v, 2655, "", "./tensorflow/core/util/mkl_util.h", "~MklReorderPrimitive");
+}
 
   std::shared_ptr<primitive> GetPrimitive() { return context_.reorder_prim; }
 
   void SetMemory(const memory* from, const memory* to) {
+   std::vector<std::string> mht_147_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_147(mht_147_v, 2662, "", "./tensorflow/core/util/mkl_util.h", "SetMemory");
+
     context_.src_mem->set_data_handle(from->get_data_handle());
     context_.dst_mem->set_data_handle(to->get_data_handle());
   }
@@ -2049,12 +2674,18 @@ class MklReorderPrimitive : public MklPrimitive {
     std::shared_ptr<dnnl::memory> dst_mem;
     std::shared_ptr<primitive> reorder_prim;
     ReorderContext()
-        : src_mem(nullptr), dst_mem(nullptr), reorder_prim(nullptr) {}
+        : src_mem(nullptr), dst_mem(nullptr), reorder_prim(nullptr) {
+   std::vector<std::string> mht_148_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_148(mht_148_v, 2678, "", "./tensorflow/core/util/mkl_util.h", "ReorderContext");
+}
   } context_;
 
   std::shared_ptr<dnnl::stream> stream_;
 
   void Setup(const memory* from, const memory* to) {
+   std::vector<std::string> mht_149_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_149(mht_149_v, 2686, "", "./tensorflow/core/util/mkl_util.h", "Setup");
+
     context_.src_mem.reset(
         new memory(from->get_desc(), cpu_engine_, DummyData));
     context_.dst_mem.reset(new memory(to->get_desc(), cpu_engine_, DummyData));
@@ -2068,6 +2699,9 @@ template <typename T>
 class MklReorderPrimitiveFactory : public MklPrimitiveFactory<T> {
  public:
   static MklReorderPrimitive* Get(const memory* from, const memory* to) {
+   std::vector<std::string> mht_150_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_150(mht_150_v, 2702, "", "./tensorflow/core/util/mkl_util.h", "Get");
+
     auto reorderPrim = static_cast<MklReorderPrimitive*>(
         MklReorderPrimitiveFactory<T>::GetInstance().GetReorder(from, to));
     if (reorderPrim == nullptr) {
@@ -2080,11 +2714,17 @@ class MklReorderPrimitiveFactory : public MklPrimitiveFactory<T> {
   }
 
   static MklReorderPrimitiveFactory& GetInstance() {
+   std::vector<std::string> mht_151_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_151(mht_151_v, 2717, "", "./tensorflow/core/util/mkl_util.h", "GetInstance");
+
     static MklReorderPrimitiveFactory instance_;
     return instance_;
   }
 
   static string CreateKey(const memory* from, const memory* to) {
+   std::vector<std::string> mht_152_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_152(mht_152_v, 2725, "", "./tensorflow/core/util/mkl_util.h", "CreateKey");
+
     string prefix = "reorder";
     FactoryKeyCreator key_creator;
     auto const& from_desc = from->get_desc().data;
@@ -2138,15 +2778,27 @@ class MklReorderPrimitiveFactory : public MklPrimitiveFactory<T> {
   }
 
  private:
-  MklReorderPrimitiveFactory() {}
-  ~MklReorderPrimitiveFactory() {}
+  MklReorderPrimitiveFactory() {
+   std::vector<std::string> mht_153_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_153(mht_153_v, 2782, "", "./tensorflow/core/util/mkl_util.h", "MklReorderPrimitiveFactory");
+}
+  ~MklReorderPrimitiveFactory() {
+   std::vector<std::string> mht_154_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_154(mht_154_v, 2786, "", "./tensorflow/core/util/mkl_util.h", "~MklReorderPrimitiveFactory");
+}
 
   MklPrimitive* GetReorder(const memory* from, const memory* to) {
+   std::vector<std::string> mht_155_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_155(mht_155_v, 2791, "", "./tensorflow/core/util/mkl_util.h", "GetReorder");
+
     string key = CreateKey(from, to);
     return this->GetOp(key);
   }
 
   void SetReorder(const memory* from, const memory* to, MklPrimitive* op) {
+   std::vector<std::string> mht_156_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_156(mht_156_v, 2799, "", "./tensorflow/core/util/mkl_util.h", "SetReorder");
+
     string key = CreateKey(from, to);
     this->SetOp(key, op);
   }
@@ -2159,6 +2811,9 @@ class MklReorderPrimitiveFactory : public MklPrimitiveFactory<T> {
 template <typename T>
 inline MklReorderPrimitive* FindOrCreateReorder(const memory* from,
                                                 const memory* to) {
+   std::vector<std::string> mht_157_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_157(mht_157_v, 2814, "", "./tensorflow/core/util/mkl_util.h", "FindOrCreateReorder");
+
   CHECK_NOTNULL(from);
   CHECK_NOTNULL(to);
   MklReorderPrimitive* reorder_prim =
@@ -2170,6 +2825,9 @@ inline MklReorderPrimitive* FindOrCreateReorder(const memory* from,
 // for purpose of temporarily disabling primitive reuse
 inline bool IsConv1x1StrideNot1(memory::dims filter_dims,
                                 memory::dims strides) {
+   std::vector<std::string> mht_158_v;
+   MHTracer_DTPStensorflowPScorePSutilPSmkl_utilDTh mht_158(mht_158_v, 2828, "", "./tensorflow/core/util/mkl_util.h", "IsConv1x1StrideNot1");
+
   if (filter_dims.size() != 4 || strides.size() != 2) return false;
 
   return ((filter_dims[2] == 1) && (filter_dims[3] == 1) &&

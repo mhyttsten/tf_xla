@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_graphDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_graphDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_graphDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -73,6 +241,9 @@ namespace {
 
 Status BuildNodeMap(const Graph& graph,
                     std::unordered_map<string, Node*>* node_map) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_graphDTcc mht_0(mht_0_v, 244, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_graph.cc", "BuildNodeMap");
+
   for (auto* node : graph.op_nodes()) {
     if (!node_map->insert({node->name(), node}).second) {
       return errors::AlreadyExists("Node name is not unique in graph: " +
@@ -84,6 +255,9 @@ Status BuildNodeMap(const Graph& graph,
 
 EngineInfo::EngineType GetEngineType(
     const TRTOptimizationPass::ConversionParams& params) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_graphDTcc mht_1(mht_1_v, 258, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_graph.cc", "GetEngineType");
+
   return (params.is_dynamic_op || params.use_calibration)
              ? EngineInfo::EngineType::TRTDynamic
              : EngineInfo::EngineType::TRTStatic;
@@ -93,6 +267,9 @@ EngineInfo::EngineType GetEngineType(
 // engine, to allow unknown size for dimensions rather than dimension 0.
 bool AllowDynamicNonBatchDimension(
     const TRTOptimizationPass::ConversionParams& params) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_graphDTcc mht_2(mht_2_v, 270, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_graph.cc", "AllowDynamicNonBatchDimension");
+
   return !params.use_implicit_batch ||
          GetEngineType(params) == EngineInfo::EngineType::TRTDynamic;
 }
@@ -125,6 +302,9 @@ std::pair<TfDeviceId, PlatformDeviceId> GetFirstValidDeviceId() {
 
 // Returns false for const nodes (we intend to drop control edges from those).
 bool ShallKeepControlEdgeFrom(const Node* input_node) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_graphDTcc mht_3(mht_3_v, 305, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_graph.cc", "ShallKeepControlEdgeFrom");
+
   if (!input_node) {
     LOG(ERROR) << "Node pointer is null, this should not happen";
     return false;
@@ -138,6 +318,9 @@ Status GetEngineInfo(const Graph* g,
                      const Segment& segment,
                      const std::vector<Node*>& reverse_topo_order,
                      EngineInfo* info) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_graphDTcc mht_4(mht_4_v, 321, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_graph.cc", "GetEngineInfo");
+
   std::vector<const Node*> subgraph_nodes;  // Topologically sorted nodes.
   std::set<const Node*> added_const_nodes;  // Used to prevent double insertion.
 
@@ -294,6 +477,10 @@ void UpdateToEngineNode(const std::vector<EngineInfo>& infos,
                         const std::vector<Node*>& engine_nodes,
                         const bool is_input_edge, const string& node_name,
                         Node** node, int* port) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_graphDTcc mht_5(mht_5_v, 481, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_graph.cc", "UpdateToEngineNode");
+
   for (size_t t = 0; t < infos.size(); ++t) {
     if (t == my_engine_id) {
       continue;
@@ -322,6 +509,9 @@ tensorflow::TensorShapeProto ComputeTRTNodeIOShape(
     std::vector<PartialTensorShape>& partial_tensorshape_vect,
     std::vector<tensorflow::TensorShapeProto>& shape_proto_vect,
     const PartialTensorShape& conn_shape, int port_number) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_graphDTcc mht_6(mht_6_v, 512, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_graph.cc", "ComputeTRTNodeIOShape");
+
   tensorflow::TensorShapeProto tmp_shape_proto;
   conn_shape.AsProto(&tmp_shape_proto);
 
@@ -350,6 +540,9 @@ Status CreateTRTNode(const TRTOptimizationPass::ConversionParams& params,
                      int default_max_batch_size, Graph* graph,
                      std::vector<Node*>* engine_nodes,
                      grappler::Cluster* cluster) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_graphDTcc mht_7(mht_7_v, 543, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_graph.cc", "CreateTRTNode");
+
   const auto& info = infos.at(pos);
   std::vector<tensorflow::TensorShapeProto> input_shape_protos;
   std::vector<tensorflow::TensorShapeProto> output_shape_protos;
@@ -569,6 +762,9 @@ Status CreateTRTNode(const TRTOptimizationPass::ConversionParams& params,
 }
 
 int64 GetNextGraphSequenceNumber() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_graphDTcc mht_8(mht_8_v, 765, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_graph.cc", "GetNextGraphSequenceNumber");
+
   static std::atomic<int64_t> graph_sequence_num;
   return graph_sequence_num++;
 }
@@ -580,6 +776,9 @@ constexpr char kCastInputTypeAttrName[] = "SrcT";
 //   node = cast(castToFp16, fp32)
 //
 Status MaybeRewriteCastToFp32(GraphDef* graph_def, NodeDef* node_def) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_graphDTcc mht_9(mht_9_v, 779, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_graph.cc", "MaybeRewriteCastToFp32");
+
   if (node_def->op() != "Cast") {
     return Status::OK();
   }
@@ -622,6 +821,10 @@ Status MaybeRewriteCastToFp32(GraphDef* graph_def, NodeDef* node_def) {
 
 Status RegisterGraphToFunctionLibrary(const GraphDef& segment_graph_def,
                                       Graph* graph, const string& engine_name) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("engine_name: \"" + engine_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_graphDTcc mht_10(mht_10_v, 825, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_graph.cc", "RegisterGraphToFunctionLibrary");
+
   Graph segment_graph(graph->flib_def());
   TF_RETURN_IF_ERROR(ConvertGraphDefToGraph(GraphConstructorOptions(),
                                             segment_graph_def, &segment_graph));
@@ -694,6 +897,9 @@ Status CreateStaticEngine(const TRTOptimizationPass::ConversionParams& params,
                           const std::vector<PartialTensorShape>& input_shapes,
                           TrtShapeOptimizationProfile* profile,
                           string* segment_string, grappler::Cluster* cluster) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_graphDTcc mht_11(mht_11_v, 900, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_graph.cc", "CreateStaticEngine");
+
   std::pair<int, Allocator*> device_allocator =
       GetDeviceAndAllocator(cluster, info);
   int cuda_device_id = 0;
@@ -732,6 +938,9 @@ Status ConvertGraph(const TRTOptimizationPass::ConversionParams& params,
                     grappler::GrapplerItem& grappler_item,
                     const std::vector<string>& input_output_names,
                     grappler::Cluster* cluster, GraphDef* output) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSconvert_graphDTcc mht_12(mht_12_v, 941, "", "./tensorflow/compiler/tf2tensorrt/convert/convert_graph.cc", "ConvertGraph");
+
   // Sanity checks.
   TRT_ENSURE(output != nullptr)
   if (params.precision_mode != TrtPrecisionMode::INT8 &&

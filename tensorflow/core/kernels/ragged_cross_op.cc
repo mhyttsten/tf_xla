@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,26 +219,43 @@ class FeatureReader {
   virtual void ReadValue(int64_t batch, int64_t n, uint64* out) const = 0;
   virtual void ReadValue(int64_t batch, int64_t n, tstring* out) const = 0;
 
-  virtual ~FeatureReader() {}
+  virtual ~FeatureReader() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_0(mht_0_v, 223, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "~FeatureReader");
+}
 };
 
 using FeatureReaders = std::vector<std::unique_ptr<FeatureReader>>;
 
 // Copies a feature value `src` to a tstring `dst`, using a view if appropriate.
 void CopyToString(const tstring& src, tstring* dst) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("src: \"" + (std::string)src + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_1(mht_1_v, 233, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "CopyToString");
+
   if (src.type() == tstring::SMALL) {
     *dst = src;  // string buffer fits in the tstring object (under ~24 bytes)
   } else {
     dst->assign_as_view(src);
   }
 }
-void CopyToString(int64_t src, tstring* dst) { *dst = std::to_string(src); }
+void CopyToString(int64_t src, tstring* dst) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_2(mht_2_v, 243, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "CopyToString");
+ *dst = std::to_string(src); }
 
 // Copies a feature value `src` to an int64 fingerprint `dst`.
 void CopyToFingerprint(const tstring& feature, uint64* dst) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("feature: \"" + (std::string)feature + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_3(mht_3_v, 250, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "CopyToFingerprint");
+
   *dst = Fingerprint64(feature);
 }
-void CopyToFingerprint(int64_t feature, uint64* dst) { *dst = feature; }
+void CopyToFingerprint(int64_t feature, uint64* dst) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_4(mht_4_v, 256, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "CopyToFingerprint");
+ *dst = feature; }
 
 // A FeatureReader that is backed by a ragged tensor.
 template <typename ValuesType, typename SplitsType>
@@ -78,17 +263,29 @@ class RaggedFeatureReader : public FeatureReader {
  public:
   RaggedFeatureReader(const Tensor& values, const Tensor& row_splits)
       : values_(values.flat<ValuesType>()),
-        row_splits_(row_splits.flat<SplitsType>()) {}
+        row_splits_(row_splits.flat<SplitsType>()) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_5(mht_5_v, 267, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "RaggedFeatureReader");
+}
 
   int64_t FeatureCount(int64_t batch) const override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_6(mht_6_v, 272, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "FeatureCount");
+
     return row_splits_(batch + 1) - row_splits_(batch);
   }
 
   void ReadValue(int64_t batch, int64_t n, uint64* out) const override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_7(mht_7_v, 279, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "ReadValue");
+
     CopyToFingerprint(values_(row_splits_(batch) + n), out);
   }
 
   void ReadValue(int64_t batch, int64_t n, tstring* out) const override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_8(mht_8_v, 286, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "ReadValue");
+
     CopyToString(values_(row_splits_(batch) + n), out);
   }
 
@@ -103,15 +300,27 @@ class DenseFeatureReader : public FeatureReader {
  public:
   explicit DenseFeatureReader(const Tensor& tensor)
       : values_(tensor.matrix<ValuesType>()),
-        feature_count_(tensor.dim_size(1)) {}
+        feature_count_(tensor.dim_size(1)) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_9(mht_9_v, 304, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "DenseFeatureReader");
+}
 
-  int64_t FeatureCount(int64_t batch) const override { return feature_count_; }
+  int64_t FeatureCount(int64_t batch) const override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_10(mht_10_v, 309, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "FeatureCount");
+ return feature_count_; }
 
   void ReadValue(int64_t batch, int64_t n, uint64* out) const override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_11(mht_11_v, 314, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "ReadValue");
+
     CopyToFingerprint(values_(batch, n), out);
   }
 
   void ReadValue(int64_t batch, int64_t n, tstring* out) const override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_12(mht_12_v, 321, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "ReadValue");
+
     CopyToString(values_(batch, n), out);
   }
 
@@ -127,6 +336,9 @@ class SparseFeatureReader : public FeatureReader {
   SparseFeatureReader(const Tensor& indices_t, const Tensor& values_t,
                       int64_t batch_size)
       : values_(values_t.flat<ValuesType>()) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_13(mht_13_v, 339, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "SparseFeatureReader");
+
     row_splits_.reserve(batch_size + 1);
     row_splits_.push_back(0);
     auto indices = indices_t.matrix<int64_t>();
@@ -139,14 +351,23 @@ class SparseFeatureReader : public FeatureReader {
   }
 
   int64_t FeatureCount(int64_t batch) const override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_14(mht_14_v, 354, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "FeatureCount");
+
     return row_splits_[batch + 1] - row_splits_[batch];
   }
 
   void ReadValue(int64_t batch, int64_t n, uint64* out) const override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_15(mht_15_v, 361, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "ReadValue");
+
     CopyToFingerprint(values_(row_splits_[batch] + n), out);
   }
 
   void ReadValue(int64_t batch, int64_t n, tstring* out) const override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_16(mht_16_v, 368, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "ReadValue");
+
     CopyToString(values_(row_splits_[batch] + n), out);
   }
 
@@ -166,7 +387,10 @@ class SparseFeatureReader : public FeatureReader {
 class OutputWriter {
  public:
   virtual void WriteOutputSlice(int64_t begin, int64_t end) = 0;
-  virtual ~OutputWriter() {}
+  virtual ~OutputWriter() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_17(mht_17_v, 391, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "~OutputWriter");
+}
 };
 
 template <typename ValuesType, typename SplitsType>
@@ -182,11 +406,17 @@ class OutputWriterImpl : public OutputWriter {
         num_buckets_(num_buckets),
         hash_key_(hash_key),
         splits_out_(splits_out->flat<SplitsType>()),
-        values_out_(values_out->flat<ValuesType>()) {}
+        values_out_(values_out->flat<ValuesType>()) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_18(mht_18_v, 410, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "OutputWriterImpl");
+}
 
   // Reads features from the specified slice of batch indices, computes
   // feature crosses for each one, and writes them to values_out_.
   void WriteOutputSlice(int64_t begin, int64_t end) override {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_19(mht_19_v, 417, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "WriteOutputSlice");
+
     std::vector<int> combination(features_.size(), 0);
     for (int64_t b = begin; b < end; ++b) {
       auto row_start = splits_out_(b);
@@ -204,6 +434,9 @@ class OutputWriterImpl : public OutputWriter {
   // and writes it to *out.
   void WriteCombination(int64_t batch_index,
                         const std::vector<int>& combination, tstring* out) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_20(mht_20_v, 437, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "WriteCombination");
+
     static const auto k_feature_separator = "_X_";
     gtl::InlinedVector<tstring, 6> cross_vec(features_.size());
     for (int i = 0; i < combination.size(); ++i) {
@@ -216,6 +449,9 @@ class OutputWriterImpl : public OutputWriter {
   // fingerprint, and writes it to *out.
   void WriteCombination(int64_t batch_index,
                         const std::vector<int>& combination, int64_t* out) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_21(mht_21_v, 452, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "WriteCombination");
+
     // Do the fingerprint concatenation on uint64.
     uint64 hashed_output = hash_key_;
     for (size_t i = 0; i < combination.size(); ++i) {
@@ -235,6 +471,9 @@ class OutputWriterImpl : public OutputWriter {
   // Updates `combination` to the next combination of input features.
   void NextCombination(int64_t batch_index,
                        std::vector<int>* combination) const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_22(mht_22_v, 474, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "NextCombination");
+
     bool carry = true;
     for (int i = combination->size() - 1; i >= 0; i--) {
       if (carry) {
@@ -290,6 +529,9 @@ template <typename SplitsType>
 class RaggedCrossOp : public OpKernel {
  public:
   explicit RaggedCrossOp(OpKernelConstruction* context) : OpKernel(context) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_23(mht_23_v, 532, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "RaggedCrossOp");
+
     OP_REQUIRES_OK(context, context->GetAttr("num_buckets", &num_buckets_));
     // Read signed_hash_key_ as int64 since uint64 attributes are not
     // supported by REGISTER_OP.
@@ -323,6 +565,9 @@ class RaggedCrossOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_24(mht_24_v, 568, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "Compute");
+
     OpInputList ragged_values_list;
     OpInputList ragged_splits_list;
     OpInputList sparse_indices_list;
@@ -363,6 +608,9 @@ class RaggedCrossOp : public OpKernel {
         features, num_buckets_, hash_key_, row_splits_out, values_out);
 
     auto do_work = [&output_writer](int64_t begin, int64_t end) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_25(mht_25_v, 611, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "lambda");
+
       output_writer->WriteOutputSlice(begin, end);
     };
 
@@ -381,6 +629,9 @@ class RaggedCrossOp : public OpKernel {
                        const OpInputList& sparse_values_list,
                        const OpInputList& sparse_shape_list,
                        const OpInputList& dense_list) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_26(mht_26_v, 632, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "ValidateInput");
+
     const auto num_ragged = ragged_values_list.size();
     const auto num_sparse = sparse_indices_list.size();
 
@@ -443,6 +694,9 @@ class RaggedCrossOp : public OpKernel {
   int64_t CalculateBatchSize(const OpInputList& ragged_splits_list,
                              const OpInputList& sparse_shape_list,
                              const OpInputList& dense_list) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_27(mht_27_v, 697, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "CalculateBatchSize");
+
     if (ragged_splits_list.size() > 0) {
       return ragged_splits_list[0].NumElements() - 1;
     } else if (dense_list.size() > 0) {
@@ -461,6 +715,9 @@ class RaggedCrossOp : public OpKernel {
                              const OpInputList& sparse_values_list,
                              const OpInputList& dense_list, int64_t batch_size,
                              FeatureReaders* features) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_28(mht_28_v, 718, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "BuildFeatureReaders");
+
     features->reserve(input_order_.size());
 
     int next_ragged = 0;
@@ -521,6 +778,9 @@ class RaggedCrossOp : public OpKernel {
   static Status BuildRaggedFeatureReader(const Tensor& values,
                                          const Tensor& splits,
                                          FeatureReaders* features) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_29(mht_29_v, 781, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "BuildRaggedFeatureReader");
+
     if (values.dtype() != DT_INT64 && values.dtype() != DT_STRING) {
       return errors::InvalidArgument("Unexpected dtype for input ",
                                      (features->size() + 1), ": ",
@@ -554,6 +814,9 @@ class RaggedCrossOp : public OpKernel {
   // Builds a DenseFaggedReatureReader.
   static Status BuildDenseFeatureReader(const Tensor& values,
                                         FeatureReaders* features) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_30(mht_30_v, 817, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "BuildDenseFeatureReader");
+
     if (values.dtype() == DT_INT64) {
       features->emplace_back(new DenseFeatureReader<int64_t>(values));
     } else if (values.dtype() == DT_STRING) {
@@ -571,6 +834,9 @@ class RaggedCrossOp : public OpKernel {
                                          const Tensor& values,
                                          int64_t batch_size,
                                          FeatureReaders* features) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_31(mht_31_v, 837, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "BuildSparseFeatureReader");
+
     if (values.dtype() == DT_INT64) {
       features->emplace_back(
           new SparseFeatureReader<int64_t>(indices, values, batch_size));
@@ -589,6 +855,9 @@ class RaggedCrossOp : public OpKernel {
   Status BuildOutputTensors(const FeatureReaders& features, int64_t batch_size,
                             OpKernelContext* context, Tensor** values_out,
                             Tensor** row_splits_out) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_32(mht_32_v, 858, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "BuildOutputTensors");
+
     // Allocate and populate the row_splits output tensor.
     TF_RETURN_IF_ERROR(context->allocate_output(
         1, TensorShape({batch_size + 1}), row_splits_out));
@@ -610,6 +879,9 @@ class RaggedCrossOp : public OpKernel {
   // Returns number of crosses for a given batch_index
   int64_t CrossCountByBatchIndex(const FeatureReaders& features,
                                  int batch_index) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_cross_opDTcc mht_33(mht_33_v, 882, "", "./tensorflow/core/kernels/ragged_cross_op.cc", "CrossCountByBatchIndex");
+
     int64_t cross_count = 1;
     for (int i = 0; i < features.size(); ++i) {
       const auto feature_count = features[i]->FeatureCount(batch_index);

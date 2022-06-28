@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -80,16 +248,25 @@ constexpr int64_t kAnnotationPrintInterval = 5;
 }  // namespace
 
 std::string ShapeIndex::ToString() const {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_0(mht_0_v, 251, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeIndex::ToString");
+
   return StrCat("{", absl::StrJoin(*this, ","), "}");
 }
 
 std::ostream& operator<<(std::ostream& out, const ShapeIndex& shape_index) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_1(mht_1_v, 258, "", "./tensorflow/compiler/xla/shape_util.cc", "operator<<");
+
   out << shape_index.ToString();
   return out;
 }
 
 /* static */ bool ShapeUtil::IsArrayPrimitiveType(
     PrimitiveType primitive_type) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_2(mht_2_v, 267, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::IsArrayPrimitiveType");
+
   return primitive_util::IsArrayType(primitive_type);
 }
 
@@ -126,6 +303,9 @@ StatusOr<Shape> MakeShapeWithLayoutInternal(
 }  // namespace
 
 /* static */ bool ShapeUtil::Equal(const Shape& lhs, const Shape& rhs) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_3(mht_3_v, 306, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::Equal");
+
   bool equal = Shape::Equal()(lhs, rhs);
 
   if (!equal && VLOG_IS_ON(3)) {
@@ -138,6 +318,9 @@ StatusOr<Shape> MakeShapeWithLayoutInternal(
 
 /* static */ bool ShapeUtil::EqualIgnoringElementType(const Shape& lhs,
                                                       const Shape& rhs) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_4(mht_4_v, 321, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::EqualIgnoringElementType");
+
   bool equal = Shape::Equal().IgnoreElementType()(lhs, rhs);
   if (!equal && VLOG_IS_ON(3)) {
     VLOG(3) << "ShapeUtil::EqualIgnoringElementType differ: lhs = "
@@ -149,6 +332,9 @@ StatusOr<Shape> MakeShapeWithLayoutInternal(
 
 /* static */ bool ShapeUtil::EqualIgnoringFpPrecision(const Shape& lhs,
                                                       const Shape& rhs) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_5(mht_5_v, 335, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::EqualIgnoringFpPrecision");
+
   bool equal = Shape::Equal().IgnoreFpPrecision()(lhs, rhs);
   if (!equal && VLOG_IS_ON(3)) {
     VLOG(3) << "ShapeUtil::EqualIgnoringFpPrecision differ: lhs = "
@@ -160,6 +346,9 @@ StatusOr<Shape> MakeShapeWithLayoutInternal(
 
 /* static */ bool ShapeUtil::EqualStructure(const Shape& lhs,
                                             const Shape& rhs) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_6(mht_6_v, 349, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::EqualStructure");
+
   bool equal = true;
   ForEachSubshape(lhs, [&](const Shape& /*subshape*/, const ShapeIndex& index) {
     equal &= IndexIsValid(rhs, index);
@@ -172,6 +361,9 @@ StatusOr<Shape> MakeShapeWithLayoutInternal(
 }
 
 /* static */ int64_t ShapeUtil::TrueRank(const Shape& shape) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_7(mht_7_v, 364, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::TrueRank");
+
   int64_t accum = 0;
   for (int64_t dimension : shape.dimensions()) {
     // We do not count zero dimensions.
@@ -185,6 +377,9 @@ StatusOr<Shape> MakeShapeWithLayoutInternal(
 /* static */ bool ShapeUtil::FillNewShape(PrimitiveType element_type,
                                           absl::Span<const int64_t> dimensions,
                                           Shape* shape) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_8(mht_8_v, 380, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::FillNewShape");
+
   const int eint = static_cast<int>(element_type);
   int64_t dense_shape_size = ((eint >= 0 && eint < PrimitiveType_ARRAYSIZE)
                                   ? primitive_byte_size[eint]
@@ -220,6 +415,9 @@ StatusOr<Shape> MakeShapeWithLayoutInternal(
 
 /* static */ ProgramShape ShapeUtil::MakeProgramShape(
     std::initializer_list<Shape> parameters, Shape result) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_9(mht_9_v, 418, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::MakeProgramShape");
+
   ProgramShape program_shape;
   for (const Shape& shape : parameters) {
     *program_shape.add_parameters() = shape;
@@ -230,24 +428,36 @@ StatusOr<Shape> MakeShapeWithLayoutInternal(
 
 /* static */ Shape ShapeUtil::MakeShape(PrimitiveType element_type,
                                         absl::Span<const int64_t> dimensions) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_10(mht_10_v, 431, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::MakeShape");
+
   Shape shape;
   CHECK(FillNewShape(element_type, dimensions, &shape));
   return shape;
 }
 
 /* static */ Shape ShapeUtil::MakeScalarShape(PrimitiveType element_type) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_11(mht_11_v, 440, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::MakeScalarShape");
+
   return MakeShape(element_type, {});
 }
 
 /* static */ Shape ShapeUtil::MakeShape(
     PrimitiveType element_type, absl::Span<const int64_t> dimensions,
     const std::vector<bool>& dynamic_dimensions) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_12(mht_12_v, 449, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::MakeShape");
+
   return MakeValidatedShape(element_type, dimensions, dynamic_dimensions)
       .ValueOrDie();
 }
 
 /* static */ Shape ShapeUtil::MakeShapeWithStaticDimensions(
     const Shape& shape) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_13(mht_13_v, 458, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::MakeShapeWithStaticDimensions");
+
   Shape output = shape;
   output.clear_dynamic_dimensions();
   return output;
@@ -255,6 +465,9 @@ StatusOr<Shape> MakeShapeWithLayoutInternal(
 
 /* static */ StatusOr<Shape> ShapeUtil::MakeValidatedShape(
     PrimitiveType element_type, absl::Span<const int64_t> dimensions) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_14(mht_14_v, 468, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::MakeValidatedShape");
+
   Shape shape;
   if (!FillNewShape(element_type, dimensions, &shape)) {
     return InvalidArgument("invalid shape type=%d, dims=[%s]",
@@ -267,6 +480,9 @@ StatusOr<Shape> MakeShapeWithLayoutInternal(
 /* static */ StatusOr<Shape> ShapeUtil::MakeValidatedShape(
     PrimitiveType element_type, absl::Span<const int64_t> dimensions,
     const std::vector<bool>& dynamic_dimensions) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_15(mht_15_v, 483, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::MakeValidatedShape");
+
   if (dynamic_dimensions.size() != dimensions.size()) {
     return InvalidArgument(
         "dynamic dimensions size %d did not match number of dimensions %d",
@@ -289,6 +505,9 @@ StatusOr<Shape> MakeShapeWithLayoutInternal(
     PrimitiveType element_type, absl::Span<const int64_t> dimensions,
     absl::Span<const int64_t> minor_to_major, absl::Span<const Tile> tiles,
     int64_t element_size_in_bits, int64_t memory_space) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_16(mht_16_v, 508, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::MakeShapeWithLayout");
+
   auto ret =
       MakeShapeWithLayoutInternal(element_type, dimensions, minor_to_major,
                                   tiles, element_size_in_bits, memory_space);
@@ -297,6 +516,9 @@ StatusOr<Shape> MakeShapeWithLayoutInternal(
 }
 
 /* static */ Shape ShapeUtil::MoveDimToMajor(const Shape& shape, int64_t dim) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_17(mht_17_v, 519, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::MoveDimToMajor");
+
   if (shape.IsTuple()) {
     std::vector<Shape> result_shapes;
     result_shapes.reserve(shape.tuple_shapes_size());
@@ -324,6 +546,9 @@ StatusOr<Shape> MakeShapeWithLayoutInternal(
 
 /* static */ Shape ShapeUtil::MakeShapeWithDescendingLayout(
     PrimitiveType element_type, absl::Span<const int64_t> dimensions) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_18(mht_18_v, 549, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::MakeShapeWithDescendingLayout");
+
   std::vector<int64_t> layout(dimensions.size());
   std::iota(layout.rbegin(), layout.rend(), static_cast<int64_t>(0));
   return MakeShapeWithLayout(element_type, dimensions, layout);
@@ -332,6 +557,9 @@ StatusOr<Shape> MakeShapeWithLayoutInternal(
 /* static */ Shape
 ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
     const Shape& shape) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_19(mht_19_v, 560, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout");
+
   std::vector<int64_t> dims(shape.dimensions_size());
   for (int i = 0; i < shape.dimensions_size(); ++i) {
     dims[i] = shape.dimensions(LayoutUtil::Major(shape.layout(), i));
@@ -352,6 +580,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 /* static */ Status ShapeUtil::PopulateShape(
     PrimitiveType element_type, absl::Span<const int64_t> dimensions,
     Shape* shape) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_20(mht_20_v, 583, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::PopulateShape");
+
   shape->Clear();
   shape->set_element_type(element_type);
   for (int64_t dimension : dimensions) {
@@ -362,12 +593,18 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 }
 
 /* static */ Shape ShapeUtil::MakeStaticShape(const Shape& original) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_21(mht_21_v, 596, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::MakeStaticShape");
+
   Shape result = original;
   result.clear_dynamic_dimensions();
   return result;
 }
 
 /* static */ Shape ShapeUtil::MakeTupleShape(absl::Span<const Shape> shapes) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_22(mht_22_v, 605, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::MakeTupleShape");
+
   Shape result;
   result.set_element_type(TUPLE);
   result.mutable_tuple_shapes()->reserve(shapes.size());
@@ -380,6 +617,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 
 /* static */ Shape ShapeUtil::MakeMaybeTupleShape(
     absl::Span<const Shape> shapes) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_23(mht_23_v, 620, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::MakeMaybeTupleShape");
+
   if (shapes.size() == 1) {
     return shapes[0];
   }
@@ -387,6 +627,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 }
 
 /* static */ Shape ShapeUtil::MakeOpaqueShape() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_24(mht_24_v, 630, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::MakeOpaqueShape");
+
   Shape result;
   result.set_element_type(OPAQUE_TYPE);
   TF_DCHECK_OK(ValidateShapeWithOptionalLayout(result));
@@ -394,6 +637,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 }
 
 /* static */ Shape ShapeUtil::MakeTokenShape() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_25(mht_25_v, 640, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::MakeTokenShape");
+
   Shape result;
   result.set_element_type(TOKEN);
   TF_DCHECK_OK(ValidateShapeWithOptionalLayout(result));
@@ -402,12 +648,18 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 
 /* static */ void ShapeUtil::AppendShapeToTuple(const Shape& shape,
                                                 Shape* tuple_shape) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_26(mht_26_v, 651, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::AppendShapeToTuple");
+
   TF_DCHECK_OK(ValidateShapeWithOptionalLayout(shape));
   *tuple_shape->add_tuple_shapes() = shape;
 }
 
 /* static */ void ShapeUtil::UpdateTupleShape(const Shape& shape, int64_t index,
                                               Shape* tuple_shape) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_27(mht_27_v, 660, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::UpdateTupleShape");
+
   CHECK(index < tuple_shape->tuple_shapes_size());
   *tuple_shape->mutable_tuple_shapes(index) = shape;
 }
@@ -416,6 +668,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
                                                     ShapeIndexView index,
                                                     int64_t dim,
                                                     bool is_dynamic) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_28(mht_28_v, 671, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::UpdateDynamicDimension");
+
   if (index.empty()) {
     CHECK(!shape->IsTuple());
     shape->set_dynamic_dimension(dim, is_dynamic);
@@ -427,6 +682,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 }
 
 /* static */ void ShapeUtil::AppendMajorDimension(int bound, Shape* shape) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_29(mht_29_v, 685, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::AppendMajorDimension");
+
   CHECK(LayoutUtil::IsDenseArray(*shape));
   shape->mutable_layout()->add_minor_to_major(shape->rank());
   shape->add_dimensions(bound);
@@ -434,6 +692,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 }
 
 /* static */ void ShapeUtil::AppendMinorDimension(int bound, Shape* shape) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_30(mht_30_v, 695, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::AppendMinorDimension");
+
   CHECK(LayoutUtil::IsDenseArray(*shape));
 
   // Bump up all values in the layout by one.
@@ -450,6 +711,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 
 /* static */ void ShapeUtil::CopyDynamicDimensions(Shape* to,
                                                    const Shape& from) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_31(mht_31_v, 714, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::CopyDynamicDimensions");
+
   CHECK_EQ(to->rank(), from.rank());
   for (int64_t i = 0; i < from.rank(); ++i) {
     to->set_dynamic_dimension(i, from.is_dynamic_dimension(i));
@@ -458,15 +722,24 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 }
 
 /* static */ bool ShapeUtil::ElementIsIntegral(const Shape& shape) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_32(mht_32_v, 725, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ElementIsIntegral");
+
   return primitive_util::IsIntegralType(shape.element_type());
 }
 
 /* static */ bool ShapeUtil::ElementIsIntegralWithBits(const Shape& shape,
                                                        int32_t bits) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_33(mht_33_v, 733, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ElementIsIntegralWithBits");
+
   return ElementIsIntegral(shape) && ElementHasBitWidth(shape, bits);
 }
 
 /* static */ bool ShapeUtil::ElementHasBitWidth(const Shape& shape, int bits) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_34(mht_34_v, 740, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ElementHasBitWidth");
+
   if (!shape.IsArray()) {
     return false;
   }
@@ -474,6 +747,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 }
 
 /* static */ bool ShapeUtil::ElementIsSigned(const Shape& shape) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_35(mht_35_v, 750, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ElementIsSigned");
+
   switch (shape.element_type()) {
     case S8:
     case S16:
@@ -503,30 +779,48 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 }
 
 /* static */ bool ShapeUtil::ElementIsComplex(const Shape& shape) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_36(mht_36_v, 782, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ElementIsComplex");
+
   return primitive_util::IsComplexType(shape.element_type());
 }
 
 /* static */ bool ShapeUtil::ElementIsFloating(const Shape& shape) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_37(mht_37_v, 789, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ElementIsFloating");
+
   return primitive_util::IsFloatingPointType(shape.element_type());
 }
 
 /* static */ bool ShapeUtil::IsNestedTuple(const Shape& shape) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_38(mht_38_v, 796, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::IsNestedTuple");
+
   return shape.IsTuple() &&
          absl::c_any_of(shape.tuple_shapes(),
                         [](const Shape& s) { return s.IsTuple(); });
 }
 
 /* static */ bool ShapeUtil::IsEmptyTuple(const Shape& shape) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_39(mht_39_v, 805, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::IsEmptyTuple");
+
   return shape.IsTuple() && TupleElementCount(shape) == 0;
 }
 
 /* static */ int64_t ShapeUtil::TupleElementCount(const Shape& shape) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_40(mht_40_v, 812, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::TupleElementCount");
+
   CHECK(shape.IsTuple()) << HumanString(shape);
   return shape.tuple_shapes_size();
 }
 
 /* static */ const Shape& ShapeUtil::GetTupleElementShape(const Shape& shape,
                                                           int64_t index) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_41(mht_41_v, 821, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::GetTupleElementShape");
+
   CHECK(shape.IsTuple());
   CHECK_GT(TupleElementCount(shape), index);
   TF_DCHECK_OK(ValidateShapeWithOptionalLayout(shape.tuple_shapes(index)));
@@ -534,6 +828,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 }
 
 /* static */ int64_t ShapeUtil::SubshapeCount(const Shape& shape) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_42(mht_42_v, 831, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::SubshapeCount");
+
   int64_t n = 0;
   ForEachSubshape(shape, [&](const Shape& literal_subshape,
                              const ShapeIndex& index) { ++n; });
@@ -542,6 +839,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 
 /* static */ Shape ShapeUtil::SliceTuple(const Shape& tuple, int64_t start,
                                          int64_t limit) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_43(mht_43_v, 842, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::SliceTuple");
+
   TF_DCHECK_OK(ValidateShapeWithOptionalLayout(tuple));
   CHECK(tuple.IsTuple());
   CHECK_LE(start, TupleElementCount(tuple));
@@ -555,12 +855,18 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 // Returns the shape of a real or imaginary component.
 /* static */ Shape ShapeUtil::ComplexComponentShape(
     const Shape& complex_shape) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_44(mht_44_v, 858, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ComplexComponentShape");
+
   CHECK(ElementIsComplex(complex_shape)) << HumanString(complex_shape);
   return ChangeElementType(complex_shape, primitive_util::ComplexComponentType(
                                               complex_shape.element_type()));
 }
 
 /* static */ int64_t ShapeUtil::ElementsIn(const Shape& shape) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_45(mht_45_v, 867, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ElementsIn");
+
   DCHECK(shape.IsArray()) << ShapeUtil::HumanString(shape);
   DCHECK_EQ(shape.dimensions_size(), shape.rank());
   if (shape.dimensions().size() == 1) {
@@ -572,6 +878,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 }
 
 /* static */ int64_t ShapeUtil::ElementsInRecursive(const Shape& shape) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_46(mht_46_v, 881, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ElementsInRecursive");
+
   CHECK(shape.IsArray() || shape.IsTuple());
   if (shape.IsArray()) {
     return ElementsIn(shape);
@@ -585,6 +894,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 
 /* static */ bool ShapeUtil::HasPrimitiveType(const Shape& shape,
                                               PrimitiveType primitive_type) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_47(mht_47_v, 897, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::HasPrimitiveType");
+
   if (shape.element_type() == primitive_type) {
     return true;
   }
@@ -597,15 +909,24 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 }
 
 /* static */ bool ShapeUtil::IsZeroElementArray(const Shape& shape) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_48(mht_48_v, 912, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::IsZeroElementArray");
+
   return shape.IsArray() && ElementsIn(shape) == 0;
 }
 
 /* static */ bool ShapeUtil::IsScalarWithElementType(
     const Shape& shape, PrimitiveType element_type) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_49(mht_49_v, 920, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::IsScalarWithElementType");
+
   return IsScalar(shape) && shape.element_type() == element_type;
 }
 
 /* static */ std::string ShapeUtil::HumanString(const Shape& shape) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_50(mht_50_v, 927, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::HumanString");
+
   if (shape.IsTuple()) {
     std::string text = "(";
     const auto& tuple_shapes = shape.tuple_shapes();
@@ -638,6 +959,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 }
 
 /* static */ std::string ShapeUtil::HumanStringWithLayout(const Shape& shape) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_51(mht_51_v, 962, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::HumanStringWithLayout");
+
   if (shape.IsTuple()) {
     std::string text = "(";
     const auto& tuple_shapes = shape.tuple_shapes();
@@ -669,6 +993,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 
 /* static */ std::string ShapeUtil::HumanString(
     const ProgramShape& program_shape) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_52(mht_52_v, 996, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::HumanString");
+
   std::vector<std::string> parameters;
   const auto& shape_parameters = program_shape.parameters();
   parameters.reserve(shape_parameters.size());
@@ -685,23 +1012,35 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 
 /* static */ bool ShapeUtil::SameDimensions(const Shape& lhs,
                                             const Shape& rhs) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_53(mht_53_v, 1015, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::SameDimensions");
+
   CHECK(lhs.IsArray());
   CHECK(rhs.IsArray());
   return absl::c_equal(lhs.dimensions(), rhs.dimensions());
 }
 
 /* static */ bool ShapeUtil::SameRank(const Shape& lhs, const Shape& rhs) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_54(mht_54_v, 1024, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::SameRank");
+
   CHECK(lhs.IsArray());
   CHECK(rhs.IsArray());
   return lhs.rank() == rhs.rank();
 }
 
 /* static */ bool ShapeUtil::Compatible(const Shape& lhs, const Shape& rhs) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_55(mht_55_v, 1033, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::Compatible");
+
   return Shape::Equal().IgnoreDynamicDimension().IgnoreLayout()(lhs, rhs);
 }
 
 /* static */ bool ShapeUtil::CompatibleIgnoringElementType(const Shape& lhs,
                                                            const Shape& rhs) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_56(mht_56_v, 1041, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::CompatibleIgnoringElementType");
+
   return Shape::Equal()
       .IgnoreDynamicDimension()
       .IgnoreElementType()
@@ -710,6 +1049,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 
 /* static */ bool ShapeUtil::CompatibleKind(const Shape& lhs,
                                             const Shape& rhs) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_57(mht_57_v, 1052, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::CompatibleKind");
+
   return Shape::Equal()
       .IgnoreElementType()
       .IgnoreLayout()
@@ -719,6 +1061,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 
 /* static */ bool ShapeUtil::CompatibleIgnoringFpPrecision(const Shape& lhs,
                                                            const Shape& rhs) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_58(mht_58_v, 1064, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::CompatibleIgnoringFpPrecision");
+
   return Shape::Equal()
       .IgnoreDynamicDimension()
       .IgnoreFpPrecision()
@@ -727,11 +1072,17 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 
 /* static */ int64_t ShapeUtil::GetDimension(const Shape& shape,
                                              int64_t dimension_number) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_59(mht_59_v, 1075, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::GetDimension");
+
   return shape.dimensions(GetDimensionNumber(shape, dimension_number));
 }
 
 /* static */ int64_t ShapeUtil::GetDimensionNumber(const Shape& shape,
                                                    int64_t dimension_number) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_60(mht_60_v, 1083, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::GetDimensionNumber");
+
   if (dimension_number < 0) {
     dimension_number += shape.rank();
   }
@@ -741,6 +1092,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 
 /* static */ int64_t ShapeUtil::ByteSizeOfPrimitiveType(
     PrimitiveType primitive_type) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_61(mht_61_v, 1095, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ByteSizeOfPrimitiveType");
+
   switch (primitive_type) {
     case PRED:
       return sizeof(int8_t);
@@ -786,6 +1140,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 
 /* static */ int64_t ShapeUtil::ByteSizeOf(const Shape& shape,
                                            int64_t pointer_size) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_62(mht_62_v, 1143, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ByteSizeOf");
+
   TF_DCHECK_OK(ValidateShape(shape));
   if (shape.element_type() == TUPLE) {
     return ByteSizeOfTupleIndexTable(shape, pointer_size);
@@ -803,6 +1160,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 
 /* static */ int64_t ShapeUtil::ByteSizeOfTupleIndexTable(
     const Shape& shape, int64_t pointer_size) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_63(mht_63_v, 1163, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ByteSizeOfTupleIndexTable");
+
   TF_DCHECK_OK(ValidateShape(shape));
   CHECK_EQ(TUPLE, shape.element_type());
   CHECK_GT(pointer_size, 0);
@@ -810,6 +1170,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 }
 
 /* static */ int64_t ShapeUtil::ByteSizeOfElements(const Shape& shape) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_64(mht_64_v, 1173, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ByteSizeOfElements");
+
   TF_DCHECK_OK(ValidateShape(shape));
   CHECK(shape.IsArray());
   int64_t allocated_element_count;
@@ -822,6 +1185,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 
 /* static */ Status ShapeUtil::ValidateShapeWithOptionalLayoutInternal(
     const Shape& shape) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_65(mht_65_v, 1188, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ValidateShapeWithOptionalLayoutInternal");
+
   if (shape.element_type() == PRIMITIVE_TYPE_INVALID ||
       !PrimitiveType_IsValid(shape.element_type())) {
     return InvalidArgument("shape has invalid element type: %s",
@@ -874,6 +1240,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 }
 
 /* static */ Status ShapeUtil::ValidateShapeSize(const Shape& shape) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_66(mht_66_v, 1243, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ValidateShapeSize");
+
   VLOG(3) << "Validating shape size: " << ShapeUtil::HumanString(shape);
 
   if (!shape.IsArray()) {
@@ -881,6 +1250,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
   }
 
   int64_t shape_size = [&]() {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_67(mht_67_v, 1253, "", "./tensorflow/compiler/xla/shape_util.cc", "lambda");
+
     int64_t dense_shape_size = 1;
     if (shape.dimensions().empty()) {
       return dense_shape_size;
@@ -909,6 +1281,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 
 /* static */ Status ShapeUtil::ValidateShapeWithOptionalLayout(
     const Shape& shape) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_68(mht_68_v, 1284, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ValidateShapeWithOptionalLayout");
+
   TF_RETURN_IF_ERROR(ValidateShapeWithOptionalLayoutInternal(shape));
 
   return LayoutUtil::ValidateLayoutInShape(shape,
@@ -916,6 +1291,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 }
 
 /* static */ Status ShapeUtil::ValidateShape(const Shape& shape) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_69(mht_69_v, 1294, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ValidateShape");
+
   TF_RETURN_IF_ERROR(ValidateShapeWithOptionalLayoutInternal(shape));
 
   return LayoutUtil::ValidateLayoutInShape(shape);
@@ -923,6 +1301,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 
 /* static */ Shape ShapeUtil::ChangeElementType(const Shape& original,
                                                 PrimitiveType type) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_70(mht_70_v, 1304, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ChangeElementType");
+
   if (original.IsTuple()) {
     std::vector<Shape> new_operands;
     new_operands.reserve(original.tuple_shapes_size());
@@ -939,6 +1320,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 
 /* static */ bool ShapeUtil::IndexIsValid(const Shape& shape,
                                           ShapeIndexView index) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_71(mht_71_v, 1323, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::IndexIsValid");
+
   const Shape* subshape = &shape;
   for (auto i : index) {
     if (!subshape->IsTuple() || i >= subshape->tuple_shapes_size() || i < 0) {
@@ -951,6 +1335,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 
 /* static */ const Shape& ShapeUtil::GetSubshape(const Shape& shape,
                                                  ShapeIndexView index) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_72(mht_72_v, 1338, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::GetSubshape");
+
   const Shape* return_shape = &shape;
   for (auto i : index) {
     CHECK(return_shape->IsTuple())
@@ -962,6 +1349,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 
 /* static */ StatusOr<const Shape*> ShapeUtil::TryGetSubshape(
     const Shape& shape, ShapeIndexView index) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_73(mht_73_v, 1352, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::TryGetSubshape");
+
   const Shape* return_shape = &shape;
   for (auto i : index) {
     if (!return_shape->IsTuple() || i < 0 ||
@@ -977,6 +1367,9 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 
 /* static */ Shape* ShapeUtil::GetMutableSubshape(Shape* shape,
                                                   ShapeIndexView index) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_74(mht_74_v, 1370, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::GetMutableSubshape");
+
   Shape* return_shape = shape;
   for (auto i : index) {
     CHECK(return_shape->IsTuple());
@@ -987,10 +1380,16 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 
 /* static */
 bool ShapeUtil::IsLeafIndex(const Shape& shape, const ShapeIndex& index) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_75(mht_75_v, 1383, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::IsLeafIndex");
+
   return !GetSubshape(shape, index).IsTuple();
 }
 
 /* static */ int64_t ShapeUtil::GetLeafCount(const Shape& shape) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_76(mht_76_v, 1390, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::GetLeafCount");
+
   if (!shape.IsTuple()) {
     return 1;
   }
@@ -1003,6 +1402,9 @@ bool ShapeUtil::IsLeafIndex(const Shape& shape, const ShapeIndex& index) {
 
 /* static */ std::vector<ShapeUtil::IndexedShape> ShapeUtil::GetLeafShapes(
     const Shape& shape) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_77(mht_77_v, 1405, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::GetLeafShapes");
+
   std::vector<IndexedShape> leaves;
   ForEachSubshape(shape, [&](const Shape& sub_shape, const ShapeIndex& index) {
     if (IsLeafIndex(shape, index)) {
@@ -1013,11 +1415,17 @@ bool ShapeUtil::IsLeafIndex(const Shape& shape, const ShapeIndex& index) {
 }
 
 /* static */ bool ShapeUtil::HasDegenerateDimensions(const Shape& shape) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_78(mht_78_v, 1418, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::HasDegenerateDimensions");
+
   CHECK(shape.IsArray());
   return absl::c_linear_search(shape.dimensions(), 1);
 }
 
 /* static */ Shape ShapeUtil::DropDegenerateDimensions(const Shape& shape) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_79(mht_79_v, 1426, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::DropDegenerateDimensions");
+
   return FilterDimensions(
       [&](int64_t dim) -> bool { return shape.dimensions()[dim] != 1; }, shape);
 }
@@ -1029,6 +1437,9 @@ namespace {
 Status ForEachSubshapeHelper(const Shape& shape,
                              const ShapeUtil::StatusVisitorFunction& func,
                              ShapeIndex* index) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_80(mht_80_v, 1440, "", "./tensorflow/compiler/xla/shape_util.cc", "ForEachSubshapeHelper");
+
   TF_RETURN_IF_ERROR(func(shape, *index));
   if (shape.IsTuple()) {
     for (int64_t i = 0; i < ShapeUtil::TupleElementCount(shape); ++i) {
@@ -1046,6 +1457,9 @@ Status ForEachSubshapeHelper(const Shape& shape,
 Status ForEachMutableSubshapeHelper(
     Shape* shape, const ShapeUtil::MutatingStatusVisitorFunction& func,
     ShapeIndex* index) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_81(mht_81_v, 1460, "", "./tensorflow/compiler/xla/shape_util.cc", "ForEachMutableSubshapeHelper");
+
   TF_RETURN_IF_ERROR(func(shape, *index));
   if (shape->IsTuple()) {
     for (int64_t i = 0; i < ShapeUtil::TupleElementCount(*shape); ++i) {
@@ -1062,6 +1476,9 @@ Status ForEachMutableSubshapeHelper(
 
 /* static */ void ShapeUtil::ForEachSubshape(const Shape& shape,
                                              const VisitorFunction& func) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_82(mht_82_v, 1479, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ForEachSubshape");
+
   ShapeIndex index;
   ForEachSubshapeHelper(
       shape,
@@ -1075,6 +1492,9 @@ Status ForEachMutableSubshapeHelper(
 
 /* static */ void ShapeUtil::ForEachMutableSubshape(
     Shape* shape, const MutatingVisitorFunction& func) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_83(mht_83_v, 1495, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ForEachMutableSubshape");
+
   ShapeIndex index;
   ForEachMutableSubshapeHelper(
       shape,
@@ -1088,18 +1508,27 @@ Status ForEachMutableSubshapeHelper(
 
 /* static */ Status ShapeUtil::ForEachSubshapeWithStatus(
     const Shape& shape, const StatusVisitorFunction& func) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_84(mht_84_v, 1511, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ForEachSubshapeWithStatus");
+
   ShapeIndex index;
   return ForEachSubshapeHelper(shape, func, &index);
 }
 
 /* static */ Status ShapeUtil::ForEachMutableSubshapeWithStatus(
     Shape* shape, const MutatingStatusVisitorFunction& func) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_85(mht_85_v, 1520, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ForEachMutableSubshapeWithStatus");
+
   ShapeIndex index;
   return ForEachMutableSubshapeHelper(shape, func, &index);
 }
 
 /* static */ Shape ShapeUtil::PermuteDimensions(
     absl::Span<const int64_t> permutation, const Shape& shape) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_86(mht_86_v, 1529, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::PermuteDimensions");
+
   Shape new_shape = shape;
   new_shape.clear_dimensions();
   for (auto dim : Permute(shape.dimensions(), permutation)) {
@@ -1161,6 +1590,9 @@ Status ForEachMutableSubshapeHelper(
 /* static */ std::tuple<bool, std::vector<int64_t>, std::vector<int64_t>>
 ShapeUtil::InsertedOrDeleted1SizedDimensions(const Shape& shape_pre,
                                              const Shape& shape_post) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_87(mht_87_v, 1593, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::InsertedOrDeleted1SizedDimensions");
+
   CHECK(shape_pre.IsArray());
   CHECK(shape_post.IsArray());
 
@@ -1177,6 +1609,9 @@ ShapeUtil::InsertedOrDeleted1SizedDimensions(const Shape& shape_pre,
       [&shape_pre, &shape_post, &deleted_indices, &inserted_indices](
           std::pair<int64_t, int64_t> prior_unmodified_dim_pair,
           std::pair<int64_t, int64_t> unmodified_dim_pair) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_88(mht_88_v, 1612, "", "./tensorflow/compiler/xla/shape_util.cc", "lambda");
+
         for (int64_t modified_input_dim = prior_unmodified_dim_pair.first + 1;
              modified_input_dim < unmodified_dim_pair.first;
              ++modified_input_dim) {
@@ -1246,6 +1681,9 @@ ShapeUtil::DimensionsUnmodifiedByReshape(const Shape& input_shape,
 ShapeUtil::ReshapeLeavesDimensionsUnmodified(
     const Shape& from_shape, const Shape& to_shape,
     absl::Span<const int64_t> input_dim_indices) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_89(mht_89_v, 1684, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ReshapeLeavesDimensionsUnmodified");
+
   CHECK(std::is_sorted(input_dim_indices.begin(), input_dim_indices.end()));
 
   std::vector<int64_t> output_dim_indices;
@@ -1271,6 +1709,9 @@ ShapeUtil::ReshapeLeavesDimensionsUnmodified(
 /* static */ bool ShapeUtil::TransposeIsBitcast(
     const Shape& input_shape, const Shape& output_shape,
     absl::Span<const int64_t> dimension_mapping) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_90(mht_90_v, 1712, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::TransposeIsBitcast");
+
   CHECK(LayoutUtil::HasLayout(input_shape) &&
         LayoutUtil::HasLayout(output_shape));
 
@@ -1300,6 +1741,9 @@ ShapeUtil::ReshapeLeavesDimensionsUnmodified(
 
 /* static */ bool ShapeUtil::ReshapeIsBitcast(const Shape& input_shape,
                                               const Shape& output_shape) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_91(mht_91_v, 1744, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ReshapeIsBitcast");
+
   CHECK(input_shape.IsArray());
   CHECK(output_shape.IsArray());
   CHECK(LayoutUtil::HasLayout(input_shape));
@@ -1422,6 +1866,9 @@ ShapeUtil::ReshapeLeavesDimensionsUnmodified(
   // check the other way.
   auto check_input_unit_indices = [](const Shape& input_shape,
                                      const Shape& output_shape) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_92(mht_92_v, 1869, "", "./tensorflow/compiler/xla/shape_util.cc", "lambda");
+
     // input_shape_dim0_major/output_shape_dim0_major has the same "dimensions"
     // as input_shape/output_shape and the dimension-0-major layout. These two
     // shapes are used for conversion between logical linear indices and
@@ -1462,6 +1909,9 @@ ShapeUtil::ReshapeLeavesDimensionsUnmodified(
 
 /* static */ absl::optional<Shape> ShapeUtil::AlignLayouts(
     const Shape& input_shape, const Shape& output_shape) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_93(mht_93_v, 1912, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::AlignLayouts");
+
   CHECK(input_shape.IsArray());
   CHECK(output_shape.IsArray());
   // Removing trivial dimensions from the shape simplifies the alignment
@@ -1550,6 +2000,9 @@ ShapeUtil::ReshapeLeavesDimensionsUnmodified(
 
 /* static */ Shape ShapeUtil::DeleteDimension(int64_t dim_to_delete,
                                               Shape shape) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_94(mht_94_v, 2003, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::DeleteDimension");
+
   CHECK(shape.IsArray());
   shape.DeleteDimension(dim_to_delete);
   return shape;
@@ -1557,6 +2010,9 @@ ShapeUtil::ReshapeLeavesDimensionsUnmodified(
 
 /* static */ bool ShapeUtil::DynamicArrayShapeIsCompatible(
     const xla::Shape& dynamic_shape, const xla::Shape& bounded_shape) {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_95(mht_95_v, 2013, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::DynamicArrayShapeIsCompatible");
+
   if (dynamic_shape.rank() != bounded_shape.rank()) {
     return false;
   }
@@ -1570,6 +2026,9 @@ ShapeUtil::ReshapeLeavesDimensionsUnmodified(
 
 /* static */ bool ShapeUtil::DynamicShapeIsCompatible(
     const xla::Shape& dynamic_shape, const xla::Shape& bounded_shape) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_96(mht_96_v, 2029, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::DynamicShapeIsCompatible");
+
   bool compatible = true;
   xla::ShapeUtil::ForEachSubshape(dynamic_shape, [&](const Shape& sub_shape,
                                                      const ShapeIndex& index) {
@@ -1600,6 +2059,9 @@ ShapeUtil::ReshapeLeavesDimensionsUnmodified(
 
 /* static */ Shape ShapeUtil::FilterDimensions(
     const std::function<bool(int64_t)>& p, Shape shape) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_97(mht_97_v, 2062, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::FilterDimensions");
+
   CHECK(shape.IsArray());
   std::vector<int64_t> dims_to_delete;
   for (int64_t i = shape.dimensions().size() - 1; i >= 0; --i) {
@@ -1630,6 +2092,9 @@ static std::vector<size_t> ConsecutiveSegments(absl::Span<const int64_t> xs) {
 // given indices `segs`.
 static Shape MergeDimensions(absl::Span<const size_t> segs,
                              const Shape& shape) {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_98(mht_98_v, 2095, "", "./tensorflow/compiler/xla/shape_util.cc", "MergeDimensions");
+
   std::vector<int64_t> dimensions;
   const auto size = segs.size();
   dimensions.reserve(size);
@@ -1646,6 +2111,9 @@ static Shape MergeDimensions(absl::Span<const size_t> segs,
 
 /*static*/ absl::optional<std::vector<int64_t>> ShapeUtil::FindTranspose021(
     const Shape& a, const Shape& b) {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_99(mht_99_v, 2114, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::FindTranspose021");
+
   if (!CompatibleIgnoringElementType(a, b)) {
     return absl::nullopt;
   }
@@ -1682,6 +2150,9 @@ static Shape MergeDimensions(absl::Span<const size_t> segs,
 }
 
 Shape ShapeUtil::DeviceShapeToHostShape(Shape s) {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_100(mht_100_v, 2153, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::DeviceShapeToHostShape");
+
   ForEachMutableSubshape(&s, [](Shape* subshape, const ShapeIndex& index) {
     if (subshape->IsArray()) {
       subshape->mutable_layout()->clear_tiles();
@@ -1693,11 +2164,17 @@ Shape ShapeUtil::DeviceShapeToHostShape(Shape s) {
 
 /*static*/ bool ShapeUtil::ElementCanUpcast(const Shape& from,
                                             const Shape& to) {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_101(mht_101_v, 2167, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ElementCanUpcast");
+
   return HigherPrecisionElementType(from, to) == to.element_type();
 }
 
 /*static*/
 Status ShapeUtil::ByteStrides(const Shape& shape, absl::Span<int64_t> strides) {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_102(mht_102_v, 2175, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ByteStrides");
+
   TF_RET_CHECK(shape.IsArray());
   TF_RET_CHECK(shape.has_layout());
   TF_RET_CHECK(shape.dimensions_size() == strides.size());
@@ -1711,6 +2188,9 @@ Status ShapeUtil::ByteStrides(const Shape& shape, absl::Span<int64_t> strides) {
 }
 
 /*static*/ int64_t ShapeUtil::ArraySize(const Shape& shape) {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_103(mht_103_v, 2191, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ArraySize");
+
   CHECK(shape.IsArray());
   CHECK(!shape.layout().tiles().empty());
 
@@ -1743,6 +2223,9 @@ Status ShapeUtil::ByteStrides(const Shape& shape, absl::Span<int64_t> strides) {
 }
 
 /*static*/ int64_t ShapeUtil::ArrayDataSize(const Shape& shape) {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_104(mht_104_v, 2226, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::ArrayDataSize");
+
   CHECK(shape.IsArray());
   absl::InlinedVector<int64_t, 4> indices;
   for (int64_t dim : shape.dimensions()) {

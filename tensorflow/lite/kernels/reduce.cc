@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -56,6 +224,9 @@ struct OpData {
 
 struct OpContext {
   OpContext(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_0(mht_0_v, 227, "", "./tensorflow/lite/kernels/reduce.cc", "OpContext");
+
     params = reinterpret_cast<TfLiteReducerParams*>(node->builtin_data);
     input = GetInput(context, node, 0);
     axis = GetInput(context, node, 1);
@@ -68,6 +239,10 @@ struct OpContext {
 };
 
 void* Init(TfLiteContext* context, const char* buffer, size_t length) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_1(mht_1_v, 243, "", "./tensorflow/lite/kernels/reduce.cc", "Init");
+
   // Creates two temp tensors to store index and axis for internal
   // implementation only.
   auto* op_data = new OpData();
@@ -76,12 +251,18 @@ void* Init(TfLiteContext* context, const char* buffer, size_t length) {
 }
 
 void Free(TfLiteContext* context, void* buffer) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_2(mht_2_v, 254, "", "./tensorflow/lite/kernels/reduce.cc", "Free");
+
   delete reinterpret_cast<OpData*>(buffer);
 }
 
 // Resizes the temp tensor that stores resolved axis.
 TfLiteStatus ResizeTempAxis(TfLiteContext* context, OpContext* op_context,
                             TfLiteTensor* resolved_axis) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_3(mht_3_v, 263, "", "./tensorflow/lite/kernels/reduce.cc", "ResizeTempAxis");
+
   TfLiteIntArray* axis_size = TfLiteIntArrayCreate(1);
   axis_size->data[0] = static_cast<int>(NumElements(op_context->axis));
   return context->ResizeTensor(context, resolved_axis, axis_size);
@@ -90,6 +271,9 @@ TfLiteStatus ResizeTempAxis(TfLiteContext* context, OpContext* op_context,
 // Resizes the temp tensor that stores temp sum of reduced elements.
 TfLiteStatus ResizeTempAccum(TfLiteContext* context, OpContext* op_context,
                              TfLiteTensor* temp_accum) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_4(mht_4_v, 274, "", "./tensorflow/lite/kernels/reduce.cc", "ResizeTempAccum");
+
   TfLiteIntArray* size = TfLiteIntArrayCreate(1);
   size->data[0] = static_cast<int>(NumElements(op_context->output));
   return context->ResizeTensor(context, temp_accum, size);
@@ -97,6 +281,9 @@ TfLiteStatus ResizeTempAccum(TfLiteContext* context, OpContext* op_context,
 
 // Resizes output array based on the input size and resolved axis.
 TfLiteStatus ResizeOutputTensor(TfLiteContext* context, OpContext* op_context) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_5(mht_5_v, 284, "", "./tensorflow/lite/kernels/reduce.cc", "ResizeOutputTensor");
+
   size_t num_axis = NumElements(op_context->axis);
   const TfLiteIntArray* input_dims = op_context->input->dims;
   int input_num_dims = NumDimensions(op_context->input);
@@ -166,6 +353,9 @@ TfLiteStatus ResizeOutputTensor(TfLiteContext* context, OpContext* op_context) {
 // Initializes temp tensors to store index and resolved axis.
 TfLiteStatus InitializeTemporaries(TfLiteContext* context, TfLiteNode* node,
                                    OpContext* op_context) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_6(mht_6_v, 356, "", "./tensorflow/lite/kernels/reduce.cc", "InitializeTemporaries");
+
   // Creates a temp index to iterate through input data.
   OpData* op_data = reinterpret_cast<OpData*>(node->user_data);
   TfLiteIntArrayFree(node->temporaries);
@@ -218,6 +408,9 @@ TfLiteStatus InitializeTemporaries(TfLiteContext* context, TfLiteNode* node,
 }
 
 TfLiteStatus PrepareSimple(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_7(mht_7_v, 411, "", "./tensorflow/lite/kernels/reduce.cc", "PrepareSimple");
+
   TF_LITE_ENSURE_EQ(context, NumInputs(node), 2);
   TF_LITE_ENSURE_EQ(context, NumOutputs(node), 1);
 
@@ -247,6 +440,9 @@ TfLiteStatus PrepareSimple(TfLiteContext* context, TfLiteNode* node) {
 }
 
 TfLiteStatus PrepareAllOrAny(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_8(mht_8_v, 443, "", "./tensorflow/lite/kernels/reduce.cc", "PrepareAllOrAny");
+
   TF_LITE_ENSURE_EQ(context, NumInputs(node), 2);
   const TfLiteTensor* input;
   TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, 0, &input));
@@ -255,6 +451,9 @@ TfLiteStatus PrepareAllOrAny(TfLiteContext* context, TfLiteNode* node) {
 }
 
 TfLiteStatus PrepareMeanOrSum(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_9(mht_9_v, 454, "", "./tensorflow/lite/kernels/reduce.cc", "PrepareMeanOrSum");
+
   TF_LITE_ENSURE_OK(context, PrepareSimple(context, node));
   OpData* data = reinterpret_cast<OpData*>(node->user_data);
 
@@ -289,6 +488,9 @@ TfLiteStatus PrepareMeanOrSum(TfLiteContext* context, TfLiteNode* node) {
 
 double GetQuantProdScaling(double input_scale, double output_scale,
                            int reduced_axis_size) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_10(mht_10_v, 491, "", "./tensorflow/lite/kernels/reduce.cc", "GetQuantProdScaling");
+
   // The scaling after taking the product of all the quantized values should
   // be (input_scale**reduced_axis_size)/output_scale but to avoid overflowing
   // the accumulator we instead scale each multiplication by
@@ -297,6 +499,9 @@ double GetQuantProdScaling(double input_scale, double output_scale,
 }
 
 TfLiteStatus PrepareProd(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_11(mht_11_v, 502, "", "./tensorflow/lite/kernels/reduce.cc", "PrepareProd");
+
   TF_LITE_ENSURE_OK(context, PrepareSimple(context, node));
 
   OpContext op_context(context, node);
@@ -337,6 +542,9 @@ TfLiteStatus PrepareProd(TfLiteContext* context, TfLiteNode* node) {
 
 void ResolveAxis(const int* axis_data, int axis_count,
                  tflite::MeanParams* op_params) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_12(mht_12_v, 545, "", "./tensorflow/lite/kernels/reduce.cc", "ResolveAxis");
+
   int i = 0;
   for (; i < axis_count; ++i) {
     op_params->axis[i] = static_cast<int16>(axis_data[i]);
@@ -352,6 +560,9 @@ TfLiteStatus EvalMeanReferenceOps(TfLiteContext* context,
                                   OpData* data, TfLiteTensor* temp_index,
                                   TfLiteTensor* resolved_axis,
                                   TfLiteTensor* temp_sum) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_13(mht_13_v, 563, "", "./tensorflow/lite/kernels/reduce.cc", "EvalMeanReferenceOps");
+
   tflite::MeanParams op_params;
   op_params.axis_count = num_axis;
   ResolveAxis(GetTensorData<int>(op_context.axis), num_axis, &op_params);
@@ -412,6 +623,9 @@ TfLiteStatus EvalMeanReferenceOps(TfLiteContext* context,
 
 template <typename T>
 void InitializeMeanOutputTyped(TfLiteTensor* output) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_14(mht_14_v, 626, "", "./tensorflow/lite/kernels/reduce.cc", "InitializeMeanOutputTyped");
+
   RuntimeShape output_shape = GetTensorShape(output);
   const size_t flat_size = output_shape.FlatSize();
   T* output_data = GetTensorData<T>(output);
@@ -422,6 +636,9 @@ void InitializeMeanOutputTyped(TfLiteTensor* output) {
 }
 
 TfLiteStatus InitializeMeanOutput(TfLiteTensor* output) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_15(mht_15_v, 639, "", "./tensorflow/lite/kernels/reduce.cc", "InitializeMeanOutput");
+
   switch (output->type) {
     case kTfLiteFloat32:
       InitializeMeanOutputTyped<float>(output);
@@ -449,6 +666,9 @@ TfLiteStatus InitializeMeanOutput(TfLiteTensor* output) {
 
 template <KernelType kernel_type>
 TfLiteStatus EvalMean(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_16(mht_16_v, 669, "", "./tensorflow/lite/kernels/reduce.cc", "EvalMean");
+
   OpContext op_context(context, node);
   OpData* data = reinterpret_cast<OpData*>(node->user_data);
 
@@ -614,6 +834,9 @@ struct EvalData {
 
 // Returns true if 'axis' holds all dims [0 ... N-1] where N is num_dims.
 bool IsReduceAllDims(const TfLiteTensor* axis, int num_axis, int num_dims) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_17(mht_17_v, 837, "", "./tensorflow/lite/kernels/reduce.cc", "IsReduceAllDims");
+
   int dims_mask = 0;
   for (int i = 0; i < num_axis; ++i) {
     dims_mask |= 1 << (axis->data.i32[i]);
@@ -626,8 +849,14 @@ bool IsReduceAllDims(const TfLiteTensor* axis, int num_axis, int num_dims) {
 template <typename T>
 struct ReduceWorkerTask : cpu_backend_threadpool::Task {
   ReduceWorkerTask(EvalData<T>* eval_data, int start, int end)
-      : eval_data(eval_data), start(start), end(end) {}
+      : eval_data(eval_data), start(start), end(end) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_18(mht_18_v, 853, "", "./tensorflow/lite/kernels/reduce.cc", "ReduceWorkerTask");
+}
   void Run() override {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_19(mht_19_v, 857, "", "./tensorflow/lite/kernels/reduce.cc", "Run");
+
     auto* input_data = eval_data->input_data;
     T& output = eval_data->output;
     auto& reducer = eval_data->reduce_func;
@@ -649,6 +878,9 @@ void ReduceAllDims(const T* input_data, const int* input_dims,
                    const int input_num_dims, T* output_data, T init_value,
                    T reducer(const T current, const T in),
                    TfLiteContext* context) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_20(mht_20_v, 881, "", "./tensorflow/lite/kernels/reduce.cc", "ReduceAllDims");
+
   EvalData<T> eval_data;
   eval_data.reduce_func = reducer;
   eval_data.input_data = input_data;
@@ -699,6 +931,9 @@ template <typename T>
 TfLiteStatus EvalLogic(TfLiteContext* context, TfLiteNode* node,
                        OpContext* op_context, T init_value,
                        T reducer(const T current, const T in)) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_21(mht_21_v, 934, "", "./tensorflow/lite/kernels/reduce.cc", "EvalLogic");
+
   int64_t num_axis = NumElements(op_context->axis);
   TfLiteTensor* temp_index;
   TF_LITE_ENSURE_OK(context,
@@ -758,6 +993,9 @@ enum ReduceType {
 template <typename T>
 TfLiteStatus EvalType(TfLiteContext* context, TfLiteNode* node,
                       OpContext* op_context, ReduceType reduce_type) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_22(mht_22_v, 996, "", "./tensorflow/lite/kernels/reduce.cc", "EvalType");
+
   switch (reduce_type) {
     case kSum:
       return EvalLogic<T>(
@@ -792,6 +1030,9 @@ TfLiteStatus EvalType(TfLiteContext* context, TfLiteNode* node,
 template <>
 TfLiteStatus EvalType<bool>(TfLiteContext* context, TfLiteNode* node,
                             OpContext* op_context, ReduceType reduce_type) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_23(mht_23_v, 1033, "", "./tensorflow/lite/kernels/reduce.cc", "EvalType<bool>");
+
   switch (reduce_type) {
     case kAny:
       return EvalLogic<bool>(context, node, op_context, false,
@@ -844,6 +1085,9 @@ TfLiteStatus EvalGeneric(TfLiteContext* context, TfLiteNode* node) {
 }
 
 TfLiteStatus EvalSum(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_24(mht_24_v, 1088, "", "./tensorflow/lite/kernels/reduce.cc", "EvalSum");
+
   OpContext op_context(context, node);
   ruy::profiler::ScopeLabel label("Sum");
   const auto& input = op_context.input;
@@ -919,6 +1163,9 @@ TfLiteStatus EvalSum(TfLiteContext* context, TfLiteNode* node) {
 template <typename T>
 TfLiteStatus EvalQuantizedProd(TfLiteContext* context, TfLiteNode* node,
                                OpContext* op_context) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_25(mht_25_v, 1166, "", "./tensorflow/lite/kernels/reduce.cc", "EvalQuantizedProd");
+
   OpData* data = reinterpret_cast<OpData*>(node->user_data);
 
   const int64_t num_axis = NumElements(op_context->axis);
@@ -973,6 +1220,9 @@ TfLiteStatus EvalQuantizedProd(TfLiteContext* context, TfLiteNode* node,
 }
 
 TfLiteStatus EvalProd(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_26(mht_26_v, 1223, "", "./tensorflow/lite/kernels/reduce.cc", "EvalProd");
+
   OpContext op_context(context, node);
   // As we need to support both quantized and non-quantized int8/int16 inputs,
   // we separate the evaluation between EvalQuantizedProd for quantized
@@ -996,6 +1246,9 @@ TfLiteStatus EvalProd(TfLiteContext* context, TfLiteNode* node) {
 }  // namespace reduce
 
 TfLiteRegistration* Register_MEAN_OPT() {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_27(mht_27_v, 1249, "", "./tensorflow/lite/kernels/reduce.cc", "Register_MEAN_OPT");
+
   static TfLiteRegistration r = {reduce::Init, reduce::Free,
                                  reduce::PrepareMeanOrSum,
                                  reduce::EvalMean<reduce::kGenericOptimized>};
@@ -1003,6 +1256,9 @@ TfLiteRegistration* Register_MEAN_OPT() {
 }
 
 TfLiteRegistration* Register_MEAN_REF() {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_28(mht_28_v, 1259, "", "./tensorflow/lite/kernels/reduce.cc", "Register_MEAN_REF");
+
   static TfLiteRegistration r = {reduce::Init, reduce::Free,
                                  reduce::PrepareMeanOrSum,
                                  reduce::EvalMean<reduce::kReference>};
@@ -1010,18 +1266,27 @@ TfLiteRegistration* Register_MEAN_REF() {
 }
 
 TfLiteRegistration* Register_SUM_REF() {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_29(mht_29_v, 1269, "", "./tensorflow/lite/kernels/reduce.cc", "Register_SUM_REF");
+
   static TfLiteRegistration r = {reduce::Init, reduce::Free,
                                  reduce::PrepareMeanOrSum, reduce::EvalSum};
   return &r;
 }
 
 TfLiteRegistration* Register_REDUCE_PROD_REF() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_30(mht_30_v, 1278, "", "./tensorflow/lite/kernels/reduce.cc", "Register_REDUCE_PROD_REF");
+
   static TfLiteRegistration r = {reduce::Init, reduce::Free,
                                  reduce::PrepareProd, reduce::EvalProd};
   return &r;
 }
 
 TfLiteRegistration* Register_REDUCE_MAX_REF() {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_31(mht_31_v, 1287, "", "./tensorflow/lite/kernels/reduce.cc", "Register_REDUCE_MAX_REF");
+
   static TfLiteRegistration r = {
       reduce::Init, reduce::Free, reduce::PrepareSimple,
       reduce::EvalGeneric<reduce::kReference, reduce::kMax>};
@@ -1029,6 +1294,9 @@ TfLiteRegistration* Register_REDUCE_MAX_REF() {
 }
 
 TfLiteRegistration* Register_REDUCE_MIN_REF() {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_32(mht_32_v, 1297, "", "./tensorflow/lite/kernels/reduce.cc", "Register_REDUCE_MIN_REF");
+
   static TfLiteRegistration r = {
       reduce::Init, reduce::Free, reduce::PrepareSimple,
       reduce::EvalGeneric<reduce::kReference, reduce::kMin>};
@@ -1036,6 +1304,9 @@ TfLiteRegistration* Register_REDUCE_MIN_REF() {
 }
 
 TfLiteRegistration* Register_REDUCE_ANY_REF() {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_33(mht_33_v, 1307, "", "./tensorflow/lite/kernels/reduce.cc", "Register_REDUCE_ANY_REF");
+
   static TfLiteRegistration r = {
       reduce::Init, reduce::Free, reduce::PrepareAllOrAny,
       reduce::EvalGeneric<reduce::kReference, reduce::kAny>};
@@ -1043,6 +1314,9 @@ TfLiteRegistration* Register_REDUCE_ANY_REF() {
 }
 
 TfLiteRegistration* Register_REDUCE_ALL_REF() {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_34(mht_34_v, 1317, "", "./tensorflow/lite/kernels/reduce.cc", "Register_REDUCE_ALL_REF");
+
   static TfLiteRegistration r = {
       reduce::Init, reduce::Free, reduce::PrepareAllOrAny,
       reduce::EvalGeneric<reduce::kReference, reduce::kAll>};
@@ -1050,6 +1324,9 @@ TfLiteRegistration* Register_REDUCE_ALL_REF() {
 }
 
 TfLiteRegistration* Register_MEAN() {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_35(mht_35_v, 1327, "", "./tensorflow/lite/kernels/reduce.cc", "Register_MEAN");
+
 #ifdef USE_NEON
   return Register_MEAN_OPT();
 #else
@@ -1057,14 +1334,32 @@ TfLiteRegistration* Register_MEAN() {
 #endif
 }
 
-TfLiteRegistration* Register_SUM() { return Register_SUM_REF(); }
+TfLiteRegistration* Register_SUM() {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_36(mht_36_v, 1338, "", "./tensorflow/lite/kernels/reduce.cc", "Register_SUM");
+ return Register_SUM_REF(); }
 TfLiteRegistration* Register_REDUCE_PROD() {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_37(mht_37_v, 1342, "", "./tensorflow/lite/kernels/reduce.cc", "Register_REDUCE_PROD");
+
   return Register_REDUCE_PROD_REF();
 }
-TfLiteRegistration* Register_REDUCE_MAX() { return Register_REDUCE_MAX_REF(); }
-TfLiteRegistration* Register_REDUCE_MIN() { return Register_REDUCE_MIN_REF(); }
-TfLiteRegistration* Register_REDUCE_ANY() { return Register_REDUCE_ANY_REF(); }
-TfLiteRegistration* Register_REDUCE_ALL() { return Register_REDUCE_ALL_REF(); }
+TfLiteRegistration* Register_REDUCE_MAX() {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_38(mht_38_v, 1348, "", "./tensorflow/lite/kernels/reduce.cc", "Register_REDUCE_MAX");
+ return Register_REDUCE_MAX_REF(); }
+TfLiteRegistration* Register_REDUCE_MIN() {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_39(mht_39_v, 1352, "", "./tensorflow/lite/kernels/reduce.cc", "Register_REDUCE_MIN");
+ return Register_REDUCE_MIN_REF(); }
+TfLiteRegistration* Register_REDUCE_ANY() {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_40(mht_40_v, 1356, "", "./tensorflow/lite/kernels/reduce.cc", "Register_REDUCE_ANY");
+ return Register_REDUCE_ANY_REF(); }
+TfLiteRegistration* Register_REDUCE_ALL() {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSreduceDTcc mht_41(mht_41_v, 1360, "", "./tensorflow/lite/kernels/reduce.cc", "Register_REDUCE_ALL");
+ return Register_REDUCE_ALL_REF(); }
 
 }  // namespace builtin
 }  // namespace ops

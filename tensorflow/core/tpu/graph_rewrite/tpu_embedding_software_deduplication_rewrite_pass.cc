@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePStpu_embedding_software_deduplication_rewrite_passDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePStpu_embedding_software_deduplication_rewrite_passDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePStpu_embedding_software_deduplication_rewrite_passDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2022 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,6 +209,11 @@ xla::Status CheckNumInputsOrOutputs(
     const int32 num_input_or_outputs, const std::string& attribute_name,
     const std::string& node_name,
     const tpu::TPUEmbeddingConfiguration& tpu_embedding_config) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("attribute_name: \"" + attribute_name + "\"");
+   mht_0_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePStpu_embedding_software_deduplication_rewrite_passDTcc mht_0(mht_0_v, 214, "", "./tensorflow/core/tpu/graph_rewrite/tpu_embedding_software_deduplication_rewrite_pass.cc", "CheckNumInputsOrOutputs");
+
   if (tpu_embedding_config.feature_descriptor_size() == 0 &&
       num_input_or_outputs != tpu_embedding_config.table_descriptor_size()) {
     return errors::InvalidArgument(absl::StrFormat(
@@ -263,6 +436,9 @@ struct SendRecvNodesMapKey {
 
   template <typename H>
   friend H AbslHashValue(H h, const SendRecvNodesMapKey& s) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePStpu_embedding_software_deduplication_rewrite_passDTcc mht_1(mht_1_v, 439, "", "./tensorflow/core/tpu/graph_rewrite/tpu_embedding_software_deduplication_rewrite_pass.cc", "AbslHashValue");
+
     return H::combine(std::move(h), s.tpu_replicate_attr,
                       s.requested_device);
   }
@@ -318,6 +494,10 @@ Status ValidateAndGetTPUEmbeddingConfiguration(
     const Node* activations_node, const Node* gradients_node,
     absl::string_view tpu_replicate_attr,
     std::string* tpu_embedding_config_str) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("tpu_replicate_attr: \"" + std::string(tpu_replicate_attr.data(), tpu_replicate_attr.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePStpu_embedding_software_deduplication_rewrite_passDTcc mht_2(mht_2_v, 498, "", "./tensorflow/core/tpu/graph_rewrite/tpu_embedding_software_deduplication_rewrite_pass.cc", "ValidateAndGetTPUEmbeddingConfiguration");
+
   if (activations_node != nullptr && gradients_node != nullptr) {
     std::string activations_config_str;
     std::string gradients_config_str;
@@ -381,6 +561,12 @@ Status AddRecvDeduplicationDataNode(const Node* old_activations_node,
                                     absl::string_view tpu_embedding_config_str,
                                     Node** deduplication_data_node,
                                     Graph* graph) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("requested_device: \"" + requested_device + "\"");
+   mht_3_v.push_back("tpu_replicate_attr: \"" + std::string(tpu_replicate_attr.data(), tpu_replicate_attr.size()) + "\"");
+   mht_3_v.push_back("tpu_embedding_config_str: \"" + std::string(tpu_embedding_config_str.data(), tpu_embedding_config_str.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePStpu_embedding_software_deduplication_rewrite_passDTcc mht_3(mht_3_v, 567, "", "./tensorflow/core/tpu/graph_rewrite/tpu_embedding_software_deduplication_rewrite_pass.cc", "AddRecvDeduplicationDataNode");
+
   // Note that control inputs added later while constructing the Node are copied
   // over automatically to the NodeDef, so we don't need to specify any control
   // inputs here.
@@ -430,6 +616,11 @@ Status ReplaceRecvActivationsNodeAndAddDeduplicationInputs(
     absl::string_view tpu_replicate_attr,
     absl::string_view tpu_embedding_config_str, Node* old_activations_node,
     Node* deduplication_data_node, Graph* graph) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("tpu_replicate_attr: \"" + std::string(tpu_replicate_attr.data(), tpu_replicate_attr.size()) + "\"");
+   mht_4_v.push_back("tpu_embedding_config_str: \"" + std::string(tpu_embedding_config_str.data(), tpu_embedding_config_str.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePStpu_embedding_software_deduplication_rewrite_passDTcc mht_4(mht_4_v, 621, "", "./tensorflow/core/tpu/graph_rewrite/tpu_embedding_software_deduplication_rewrite_pass.cc", "ReplaceRecvActivationsNodeAndAddDeduplicationInputs");
+
   VLOG(1) << "Removing old RecvTPUEmbeddingActivations node: "
           << old_activations_node->DebugString();
   VLOG(1) << "Old RecvTPUEmbeddingActivations node def: "
@@ -472,6 +663,11 @@ Status ReplaceSendGradientsNodeAndAddDeduplicationInputs(
     absl::string_view tpu_replicate_attr,
     absl::string_view tpu_embedding_config_str, Node* old_gradients_node,
     Node* deduplication_data_node, Graph* graph) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("tpu_replicate_attr: \"" + std::string(tpu_replicate_attr.data(), tpu_replicate_attr.size()) + "\"");
+   mht_5_v.push_back("tpu_embedding_config_str: \"" + std::string(tpu_embedding_config_str.data(), tpu_embedding_config_str.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePStpu_embedding_software_deduplication_rewrite_passDTcc mht_5(mht_5_v, 668, "", "./tensorflow/core/tpu/graph_rewrite/tpu_embedding_software_deduplication_rewrite_pass.cc", "ReplaceSendGradientsNodeAndAddDeduplicationInputs");
+
   VLOG(1) << "Removing old SendTPUEmbeddingGradients node: "
           << old_gradients_node->DebugString();
   VLOG(1) << "Old SendTPUEmbeddingGradients node def: "
@@ -512,6 +708,11 @@ Status ReplaceSendGradientsNodeAndAddDeduplicationInputs(
 Status RewriteGraphForTpuReplicateAttrAndDevice(
     absl::string_view tpu_replicate_attr, const std::string& requested_device,
     Node* old_activations_node, Node* old_gradients_node, Graph* graph) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("tpu_replicate_attr: \"" + std::string(tpu_replicate_attr.data(), tpu_replicate_attr.size()) + "\"");
+   mht_6_v.push_back("requested_device: \"" + requested_device + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePStpu_embedding_software_deduplication_rewrite_passDTcc mht_6(mht_6_v, 713, "", "./tensorflow/core/tpu/graph_rewrite/tpu_embedding_software_deduplication_rewrite_pass.cc", "RewriteGraphForTpuReplicateAttrAndDevice");
+
   VLOG(1) << "Rewriting graph for _tpu_replicate attribute: "
           << tpu_replicate_attr << ", activations node: "
           << ((old_activations_node) ? old_activations_node->DebugString()
@@ -548,6 +749,9 @@ Status RewriteGraphForTpuReplicateAttrAndDevice(
 // SendTPUEmbeddingGradients of the graph before they are rewritten.
 Status InsertActivationsNodeIntoMap(Node* activations_node,
                                     SendRecvNodesMap* send_recv_nodes_map) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePStpu_embedding_software_deduplication_rewrite_passDTcc mht_7(mht_7_v, 752, "", "./tensorflow/core/tpu/graph_rewrite/tpu_embedding_software_deduplication_rewrite_pass.cc", "InsertActivationsNodeIntoMap");
+
   std::string tpu_replicate_attr;
   TF_RETURN_IF_ERROR(GetNodeAttr(activations_node->def(), "_tpu_replicate",
                                  &tpu_replicate_attr));
@@ -588,6 +792,9 @@ Status InsertActivationsNodeIntoMap(Node* activations_node,
 // SendTPUEmbeddingGradients of the graph before they are rewritten.
 Status InsertGradientsNodeIntoMap(Node* gradients_node,
                                   SendRecvNodesMap* send_recv_nodes_map) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePStpu_embedding_software_deduplication_rewrite_passDTcc mht_8(mht_8_v, 795, "", "./tensorflow/core/tpu/graph_rewrite/tpu_embedding_software_deduplication_rewrite_pass.cc", "InsertGradientsNodeIntoMap");
+
   std::string tpu_replicate_attr;
   TF_RETURN_IF_ERROR(GetNodeAttr(gradients_node->def(), "_tpu_replicate",
                                  &tpu_replicate_attr));
@@ -627,6 +834,9 @@ Status InsertGradientsNodeIntoMap(Node* gradients_node,
 // graph using their _tpu_replicate attribute and requested device.
 Status GroupSendRecvNodesByTpuReplicateAttrAndDevice(
     const Graph* graph, SendRecvNodesMap* send_recv_nodes_map) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePStpu_embedding_software_deduplication_rewrite_passDTcc mht_9(mht_9_v, 837, "", "./tensorflow/core/tpu/graph_rewrite/tpu_embedding_software_deduplication_rewrite_pass.cc", "GroupSendRecvNodesByTpuReplicateAttrAndDevice");
+
   VLOG(1) << "Grouping nodes by _tpu_replicate attribute";
   for (Node* node : graph->nodes()) {
     if (node->IsOp()) {
@@ -645,6 +855,9 @@ Status GroupSendRecvNodesByTpuReplicateAttrAndDevice(
 // Rewrites the graph in the specified GraphOptimizationPassOptions object for
 // software deduplication.
 Status RewriteGraph(Graph* graph) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePStpu_embedding_software_deduplication_rewrite_passDTcc mht_10(mht_10_v, 858, "", "./tensorflow/core/tpu/graph_rewrite/tpu_embedding_software_deduplication_rewrite_pass.cc", "RewriteGraph");
+
   SendRecvNodesMap send_recv_nodes_map;
   TF_RETURN_IF_ERROR(GroupSendRecvNodesByTpuReplicateAttrAndDevice(
       graph, &send_recv_nodes_map));
@@ -756,6 +969,9 @@ xla::StatusOr<RewriterConfig> ComputeRewriterConfigForNodeDef(
 // control inputs of both configs as well.
 Status MergeRewriterConfigs(const RewriterConfig& rewriter_config,
                             RewriterConfig* final_rewriter_config) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePStpu_embedding_software_deduplication_rewrite_passDTcc mht_11(mht_11_v, 972, "", "./tensorflow/core/tpu/graph_rewrite/tpu_embedding_software_deduplication_rewrite_pass.cc", "MergeRewriterConfigs");
+
   if (final_rewriter_config->activations_node_def_name.empty() &&
       final_rewriter_config->gradients_node_def_name.empty()) {
     final_rewriter_config->device_name = rewriter_config.device_name;
@@ -845,6 +1061,9 @@ xla::StatusOr<RewriterConfigsByDevice> ComputeRewriterConfigsByDevice(
 // embedding operations.
 bool RewriterConfigsByDeviceHasEmbeddingOperations(
     const RewriterConfigsByDevice& rewriter_configs_by_device) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePStpu_embedding_software_deduplication_rewrite_passDTcc mht_12(mht_12_v, 1064, "", "./tensorflow/core/tpu/graph_rewrite/tpu_embedding_software_deduplication_rewrite_pass.cc", "RewriterConfigsByDeviceHasEmbeddingOperations");
+
   // Determine if there are any embedding operations in this function, and
   // skip it if there are none.
   bool any_embedding_operations = false;
@@ -864,6 +1083,9 @@ bool RewriterConfigsByDeviceHasEmbeddingOperations(
 // Rewrites the function defs in the specified GraphOptimizationPassOptions
 // object for software deduplication.
 Status RewriteFunctionDefs(FunctionLibraryDefinition* flib_def) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePStpu_embedding_software_deduplication_rewrite_passDTcc mht_13(mht_13_v, 1086, "", "./tensorflow/core/tpu/graph_rewrite/tpu_embedding_software_deduplication_rewrite_pass.cc", "RewriteFunctionDefs");
+
   for (const std::string& fname : flib_def->ListFunctionNames()) {
     // The function def cannot be modified. Hence, make a copy, modify the copy
     // and then replace the original function def using the copy.
@@ -946,6 +1168,9 @@ Status RewriteFunctionDefs(FunctionLibraryDefinition* flib_def) {
 
 Status TPUEmbeddingSoftwareDeduplicationRewritePass::Run(
     const GraphOptimizationPassOptions& options) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePStpu_embedding_software_deduplication_rewrite_passDTcc mht_14(mht_14_v, 1171, "", "./tensorflow/core/tpu/graph_rewrite/tpu_embedding_software_deduplication_rewrite_pass.cc", "TPUEmbeddingSoftwareDeduplicationRewritePass::Run");
+
   TF_RETURN_IF_ERROR(RewriteGraph(options.graph->get()));
   TF_RETURN_IF_ERROR(RewriteFunctionDefs(options.flib_def));
   return Status::OK();

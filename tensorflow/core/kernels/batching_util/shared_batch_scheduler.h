@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_KERNELS_BATCHING_UTIL_SHARED_BATCH_SCHEDULER_H_
 #define TENSORFLOW_CORE_KERNELS_BATCHING_UTIL_SHARED_BATCH_SCHEDULER_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <stddef.h>
 
@@ -337,12 +505,18 @@ class Queue {
   size_t SchedulingCapacity() const;
 
   // Returns the maximum allowed size of tasks submitted to the queue.
-  size_t max_task_size() const { return options_.input_batch_size_limit; }
+  size_t max_task_size() const {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_0(mht_0_v, 509, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "max_task_size");
+ return options_.input_batch_size_limit; }
 
   // Returns the maximum allowed size of tasks to be executed.
   // Returned value would be less than or equal to the maximum allowed input
   // size that's provided by caller of batch scheduler.
-  size_t max_execution_batch_size() const { return max_execution_batch_size_; }
+  size_t max_execution_batch_size() const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_1(mht_1_v, 517, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "max_execution_batch_size");
+ return max_execution_batch_size_; }
 
   // Called by a thread that is ready to process a batch, to request one from
   // this queue. Either returns a batch that is ready to be processed, or
@@ -370,6 +544,9 @@ class Queue {
   // Computes the max_execution_batch_size of the queue based on queue options.
   static size_t GetMaxExecutionBatchSize(
       const typename SharedBatchScheduler<TaskType>::QueueOptions& options) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_2(mht_2_v, 547, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "GetMaxExecutionBatchSize");
+
     // If `enable_large_batch_splitting`, returns `max_execution_batch_size`
     // configured by user options directly; returns `input_batch_size_limit`
     // otherwise.
@@ -500,7 +677,10 @@ class QueueHandle : public BatchScheduler<TaskType> {
   size_t NumEnqueuedTasks() const override;
   size_t SchedulingCapacity() const override;
 
-  size_t max_task_size() const override { return queue_->max_task_size(); }
+  size_t max_task_size() const override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_3(mht_3_v, 681, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "max_task_size");
+ return queue_->max_task_size(); }
 
  private:
   // The scheduler that owns 'queue_'.
@@ -519,6 +699,9 @@ template <typename TaskType>
 Status SharedBatchScheduler<TaskType>::Create(
     const Options& options,
     std::shared_ptr<SharedBatchScheduler<TaskType>>* scheduler) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_4(mht_4_v, 702, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "SharedBatchScheduler<TaskType>::Create");
+
   if (options.num_batch_threads < 1) {
     return errors::InvalidArgument("num_batch_threads must be positive; was ",
                                    options.num_batch_threads);
@@ -529,6 +712,9 @@ Status SharedBatchScheduler<TaskType>::Create(
 
 template <typename TaskType>
 SharedBatchScheduler<TaskType>::~SharedBatchScheduler() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_5(mht_5_v, 715, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "SharedBatchScheduler<TaskType>::~SharedBatchScheduler");
+
   // Wait until the batch threads finish clearing out and deleting the closed
   // queues.
   for (;;) {
@@ -552,6 +738,9 @@ Status SharedBatchScheduler<TaskType>::AddQueue(
     std::function<void(std::unique_ptr<Batch<TaskType>>)>
         process_batch_callback,
     std::unique_ptr<BatchScheduler<TaskType>>* queue) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_6(mht_6_v, 741, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "SharedBatchScheduler<TaskType>::AddQueue");
+
   QueueOptions rewrite_options = options;
   if ((!rewrite_options.enable_large_batch_splitting) &&
       rewrite_options.max_enqueued_batches == 0) {
@@ -573,6 +762,9 @@ Status SharedBatchScheduler<TaskType>::AddQueueAfterRewritingOptions(
     std::function<void(std::unique_ptr<Batch<TaskType>>)>
         process_batch_callback,
     std::unique_ptr<BatchScheduler<TaskType>>* queue) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_7(mht_7_v, 765, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "SharedBatchScheduler<TaskType>::AddQueueAfterRewritingOptions");
+
   if (options.input_batch_size_limit == 0) {
     return errors::InvalidArgument(
         "input_batch_size_limit must be positive; was ",
@@ -638,6 +830,9 @@ Status SharedBatchScheduler<TaskType>::AddQueueAfterRewritingOptions(
 template <typename TaskType>
 SharedBatchScheduler<TaskType>::SharedBatchScheduler(const Options& options)
     : options_(options), next_queue_to_schedule_(queues_.end()) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_8(mht_8_v, 833, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "SharedBatchScheduler<TaskType>::SharedBatchScheduler");
+
   // Kick off the batch threads.
   PeriodicFunction::Options periodic_fn_options;
   periodic_fn_options.thread_name_prefix =
@@ -653,6 +848,9 @@ SharedBatchScheduler<TaskType>::SharedBatchScheduler(const Options& options)
 template <typename TaskType>
 bool SharedBatchScheduler<TaskType>::BatchExists(
     const BatchUniquePtr& batch_to_process) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_9(mht_9_v, 851, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "SharedBatchScheduler<TaskType>::BatchExists");
+
   if (absl::holds_alternative<BatchTaskUniqueptr>(batch_to_process)) {
     return absl::get<BatchTaskUniqueptr>(batch_to_process) == nullptr;
   }
@@ -663,6 +861,9 @@ template <typename TaskType>
 void SharedBatchScheduler<TaskType>::GetNextWorkItem_Locked(
     internal::Queue<TaskType>** queue_for_batch_out,
     BatchUniquePtr* batch_to_process_out) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_10(mht_10_v, 864, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "SharedBatchScheduler<TaskType>::GetNextWorkItem_Locked");
+
   BatchUniquePtr batch_to_process;
   internal::Queue<TaskType>* queue_for_batch = nullptr;
   const int num_queues = queues_.size();
@@ -704,6 +905,9 @@ void SharedBatchScheduler<TaskType>::GetNextWorkItem_Locked(
 
 template <typename TaskType>
 void SharedBatchScheduler<TaskType>::ThreadLogic() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_11(mht_11_v, 908, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "SharedBatchScheduler<TaskType>::ThreadLogic");
+
   // A batch to process next (or nullptr if no work to do).
   BatchUniquePtr batch_to_process;
   // The queue with which 'batch_to_process' is associated.
@@ -764,6 +968,9 @@ Queue<TaskType>::Queue(
       max_execution_batch_size_(GetMaxExecutionBatchSize(options_)),
       process_batch_callback_(process_batch_callback),
       schedulable_batch_callback_(schedulable_batch_callback) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_12(mht_12_v, 971, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "Queue<TaskType>::Queue");
+
   // Set the higher 32 bits of traceme_context_id_counter_ to be the creation
   // time of the queue. This prevents the batches in different queues to have
   // the same traceme_context_id_counter_.
@@ -779,6 +986,9 @@ Queue<TaskType>::Queue(
 
 template <typename TaskType>
 Queue<TaskType>::~Queue() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_13(mht_13_v, 989, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "Queue<TaskType>::~Queue");
+
   mutex_lock l(mu_);
   DCHECK(IsEmptyInternal());
 
@@ -792,6 +1002,9 @@ Queue<TaskType>::~Queue() {
 
 template <typename TaskType>
 Status Queue<TaskType>::Schedule(std::unique_ptr<TaskType>* task) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_14(mht_14_v, 1005, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "Queue<TaskType>::Schedule");
+
   if ((*task)->size() > options_.input_batch_size_limit) {
     return errors::InvalidArgument("Task size ", (*task)->size(),
                                    " is larger than maximum input batch size ",
@@ -805,6 +1018,9 @@ Status Queue<TaskType>::Schedule(std::unique_ptr<TaskType>* task) {
 
 template <typename TaskType>
 Status Queue<TaskType>::ScheduleWithLazySplit(std::unique_ptr<TaskType>* task) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_15(mht_15_v, 1021, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "Queue<TaskType>::ScheduleWithLazySplit");
+
   profiler::TraceMe trace_me([task] {
     return profiler::TraceMeEncode(
         "ScheduleWithLazySplit",
@@ -876,6 +1092,9 @@ Status Queue<TaskType>::ScheduleWithLazySplit(std::unique_ptr<TaskType>* task) {
 template <typename TaskType>
 Status Queue<TaskType>::ScheduleWithoutOrEagerSplit(
     std::unique_ptr<TaskType>* task) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_16(mht_16_v, 1095, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "Queue<TaskType>::ScheduleWithoutOrEagerSplit");
+
   const bool large_batch_splitting = options_.enable_large_batch_splitting;
   profiler::TraceMe trace_me([task, large_batch_splitting] {
     return profiler::TraceMeEncode(
@@ -949,6 +1168,9 @@ Status Queue<TaskType>::ScheduleWithoutOrEagerSplit(
 
 template <typename TaskType>
 size_t Queue<TaskType>::NumEnqueuedTasks() const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_17(mht_17_v, 1171, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "Queue<TaskType>::NumEnqueuedTasks");
+
   size_t num_enqueued_tasks = 0;
   mutex_lock l(mu_);
   if (options_.enable_lazy_split) {
@@ -966,12 +1188,18 @@ size_t Queue<TaskType>::NumEnqueuedTasks() const {
 
 template <typename TaskType>
 size_t Queue<TaskType>::SchedulingCapacity() const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_18(mht_18_v, 1191, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "Queue<TaskType>::SchedulingCapacity");
+
   mutex_lock l(mu_);
   return SchedulingCapacityInternal();
 }
 
 template <typename TaskType>
 size_t Queue<TaskType>::SchedulingCapacityInternal() const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_19(mht_19_v, 1200, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "Queue<TaskType>::SchedulingCapacityInternal");
+
   const int64 num_new_batches_schedulable =
       static_cast<int64_t>(options_.max_enqueued_batches) -
       this->num_enqueued_batches();
@@ -986,6 +1214,9 @@ size_t Queue<TaskType>::SchedulingCapacityInternal() const {
 
 template <typename TaskType>
 bool Queue<TaskType>::BatchTaskExceedQueueCapacity(TaskType* task) const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_20(mht_20_v, 1217, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "Queue<TaskType>::BatchTaskExceedQueueCapacity");
+
   // Queue creation requires that `enable_large_batch_splitting` is true
   // when `enable_lazy_split` is true, so this covers both eager split and
   // lazy split.
@@ -1014,6 +1245,9 @@ bool Queue<TaskType>::BatchTaskExceedQueueCapacity(TaskType* task) const {
 template <typename TaskType>
 std::unique_ptr<Batch<TaskType>>
 Queue<TaskType>::ScheduleBatchWithEagerSplit() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_21(mht_21_v, 1248, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "Queue<TaskType>::ScheduleBatchWithEagerSplit");
+
   // The batch to schedule, which we may populate below. (If left as nullptr,
   // that means we are electing not to schedule a batch at this time.)
   std::unique_ptr<Batch<TaskType>> batch_to_schedule;
@@ -1042,6 +1276,9 @@ Queue<TaskType>::ScheduleBatchWithEagerSplit() {
 template <typename TaskType>
 typename SharedBatchScheduler<TaskType>::BatchUniquePtr
 Queue<TaskType>::ScheduleBatch() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_22(mht_22_v, 1279, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "Queue<TaskType>::ScheduleBatch");
+
   if (!options_.enable_lazy_split) {
     return ScheduleBatchWithEagerSplit();
   }
@@ -1073,6 +1310,9 @@ Queue<TaskType>::ScheduleBatch() {
 
 template <typename TaskType>
 void Queue<TaskType>::ProcessBatch(std::unique_ptr<Batch<TaskType>> batch) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_23(mht_23_v, 1313, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "Queue<TaskType>::ProcessBatch");
+
   profiler::TraceMeConsumer trace_me(
       [&] {
         return profiler::TraceMeEncode(
@@ -1094,12 +1334,18 @@ void Queue<TaskType>::ProcessBatch(std::unique_ptr<Batch<TaskType>> batch) {
 
 template <typename TaskType>
 bool Queue<TaskType>::IsEmpty() const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_24(mht_24_v, 1337, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "Queue<TaskType>::IsEmpty");
+
   mutex_lock l(mu_);
   return IsEmptyInternal();
 }
 
 template <typename TaskType>
 void Queue<TaskType>::CloseAndWaitUntilEmpty() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_25(mht_25_v, 1346, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "Queue<TaskType>::CloseAndWaitUntilEmpty");
+
   Notification empty;
   {
     mutex_lock l(mu_);
@@ -1116,6 +1362,9 @@ void Queue<TaskType>::CloseAndWaitUntilEmpty() {
 
 template <typename TaskType>
 bool Queue<TaskType>::IsEmptyInternal() const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_26(mht_26_v, 1365, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "Queue<TaskType>::IsEmptyInternal");
+
   if (options_.enable_lazy_split) {
     return num_batches_being_processed_ == 0 &&
            task_handle_batches_.size() == 1 &&
@@ -1127,6 +1376,9 @@ bool Queue<TaskType>::IsEmptyInternal() const {
 
 template <typename TaskType>
 void Queue<TaskType>::StartNewBatch() {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_27(mht_27_v, 1379, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "Queue<TaskType>::StartNewBatch");
+
   if (options_.enable_lazy_split) {
     task_handle_batches_.back()->Close();
     task_handle_batches_.emplace_back(new Batch<BatchInputTaskHandle<TaskType>>(
@@ -1141,6 +1393,9 @@ template <typename TaskType>
 Status Queue<TaskType>::SplitInputBatchIntoSubtasks(
     std::unique_ptr<TaskType>* input_task,
     std::vector<std::unique_ptr<TaskType>>* output_tasks) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_28(mht_28_v, 1396, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "Queue<TaskType>::SplitInputBatchIntoSubtasks");
+
   const int open_batch_remaining_slot =
       max_execution_batch_size() - this->tail_batch_task_size();
   return options_.split_input_task_func(
@@ -1150,6 +1405,9 @@ Status Queue<TaskType>::SplitInputBatchIntoSubtasks(
 
 template <typename TaskType>
 bool Queue<TaskType>::IsOpenBatchSchedulableAfterEagerSplit() const {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_29(mht_29_v, 1408, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "Queue<TaskType>::IsOpenBatchSchedulableAfterEagerSplit");
+
   Batch<TaskType>* open_batch = batches_.back().get();
   if (open_batch->empty()) {
     return false;
@@ -1161,6 +1419,9 @@ bool Queue<TaskType>::IsOpenBatchSchedulableAfterEagerSplit() const {
 
 template <typename TaskType>
 bool Queue<TaskType>::IsOpenBatchSchedulable() const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_30(mht_30_v, 1422, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "Queue<TaskType>::IsOpenBatchSchedulable");
+
   if (!options_.enable_lazy_split) {
     return IsOpenBatchSchedulableAfterEagerSplit();
   }
@@ -1176,6 +1437,9 @@ bool Queue<TaskType>::IsOpenBatchSchedulable() const {
 
 template <typename TaskType>
 size_t Queue<TaskType>::tail_batch_task_size() const {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_31(mht_31_v, 1440, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "Queue<TaskType>::tail_batch_task_size");
+
   if (options_.enable_lazy_split) {
     return task_handle_batches_.back()->size();
   }
@@ -1185,6 +1449,9 @@ size_t Queue<TaskType>::tail_batch_task_size() const {
 
 template <typename TaskType>
 int64 Queue<TaskType>::num_enqueued_batches() const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_32(mht_32_v, 1452, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "Queue<TaskType>::num_enqueued_batches");
+
   if (options_.enable_lazy_split) {
     return task_handle_batches_.size();
   }
@@ -1195,25 +1462,40 @@ template <typename TaskType>
 QueueHandle<TaskType>::QueueHandle(
     std::shared_ptr<SharedBatchScheduler<TaskType>> scheduler,
     Queue<TaskType>* queue)
-    : scheduler_(scheduler), queue_(queue) {}
+    : scheduler_(scheduler), queue_(queue) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_33(mht_33_v, 1466, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "QueueHandle<TaskType>::QueueHandle");
+}
 
 template <typename TaskType>
 QueueHandle<TaskType>::~QueueHandle() {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_34(mht_34_v, 1472, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "QueueHandle<TaskType>::~QueueHandle");
+
   queue_->CloseAndWaitUntilEmpty();
 }
 
 template <typename TaskType>
 Status QueueHandle<TaskType>::Schedule(std::unique_ptr<TaskType>* task) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_35(mht_35_v, 1480, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "QueueHandle<TaskType>::Schedule");
+
   return queue_->Schedule(task);
 }
 
 template <typename TaskType>
 size_t QueueHandle<TaskType>::NumEnqueuedTasks() const {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_36(mht_36_v, 1488, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "QueueHandle<TaskType>::NumEnqueuedTasks");
+
   return queue_->NumEnqueuedTasks();
 }
 
 template <typename TaskType>
 size_t QueueHandle<TaskType>::SchedulingCapacity() const {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSshared_batch_schedulerDTh mht_37(mht_37_v, 1496, "", "./tensorflow/core/kernels/batching_util/shared_batch_scheduler.h", "QueueHandle<TaskType>::SchedulingCapacity");
+
   return queue_->SchedulingCapacity();
 }
 

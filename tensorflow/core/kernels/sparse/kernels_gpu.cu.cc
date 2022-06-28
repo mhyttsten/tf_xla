@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSkernels_gpuDTcuDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSkernels_gpuDTcuDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSkernels_gpuDTcuDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,7 +206,10 @@ namespace functor {
 namespace {
 struct StridedDataReader {
   StridedDataReader(const int64* begin, int stride)
-      : begin_(begin), stride_(stride) {}
+      : begin_(begin), stride_(stride) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSkernels_gpuDTcuDTcc mht_0(mht_0_v, 210, "", "./tensorflow/core/kernels/sparse/kernels_gpu.cu.cc", "StridedDataReader");
+}
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE int operator()(int idx) const {
     return static_cast<int>(ldg(begin_ + idx * stride_));
@@ -136,6 +307,9 @@ template <int stride>
 __global__ void SparseTensorToCOOMatrixKernel(const int64* indices,
                                               int* coo_rows_out,
                                               int* coo_cols_out, int size) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSkernels_gpuDTcuDTcc mht_1(mht_1_v, 310, "", "./tensorflow/core/kernels/sparse/kernels_gpu.cu.cc", "SparseTensorToCOOMatrixKernel");
+
   const int offset = (stride == 3) ? 1 : 0;
   GPU_1D_KERNEL_LOOP(i, size) {
     coo_rows_out[i] = static_cast<int>(ldg(indices + i * stride + offset));
@@ -169,6 +343,9 @@ void SparseTensorToCOOSparseMatrix<GPUDevice>::operator()(
 __global__ void COOMatrixToSparseTensorKernel2D(const int* coo_rows,
                                                 const int* coo_cols,
                                                 int64* indices_out, int size) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSkernels_gpuDTcuDTcc mht_2(mht_2_v, 346, "", "./tensorflow/core/kernels/sparse/kernels_gpu.cu.cc", "COOMatrixToSparseTensorKernel2D");
+
   GPU_1D_KERNEL_LOOP(i, size) {
     indices_out[i * 2] = static_cast<int64_t>(ldg(coo_rows + i));
     indices_out[i * 2 + 1] = static_cast<int64_t>(ldg(coo_cols + i));
@@ -176,6 +353,9 @@ __global__ void COOMatrixToSparseTensorKernel2D(const int* coo_rows,
 }
 
 __device__ inline int BinarySearchRange(int* range, int n, int x) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSkernels_gpuDTcuDTcc mht_3(mht_3_v, 356, "", "./tensorflow/core/kernels/sparse/kernels_gpu.cu.cc", "BinarySearchRange");
+
   int left = 0;
   int right = n - 1;
   while (left < right) {
@@ -194,6 +374,9 @@ __global__ void COOMatrixToSparseTensorKernel3D(
     const int* coo_rows, const int* coo_cols, int64* indices_out,
     GpuDeviceArrayStruct<int> batch_ptr_s, const int batch_size,
     const int size) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSkernels_gpuDTcuDTcc mht_4(mht_4_v, 377, "", "./tensorflow/core/kernels/sparse/kernels_gpu.cu.cc", "COOMatrixToSparseTensorKernel3D");
+
   // Step 1: access the batch ptrs and copy to shared memory.
   const int* batch_ptr = GetGpuDeviceArrayOnDevice(&batch_ptr_s);
   extern __shared__ int local_batch_ptr[];
@@ -260,6 +443,9 @@ __global__ void CSRSparseMatrixBatchMulVecKernel3D(
     const T* a_values, const T* b_batch_values, T* c_values,
     GpuDeviceArrayStruct<int> batch_ptr_s, const int batch_size,
     const int total_nnz) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSkernels_gpuDTcuDTcc mht_5(mht_5_v, 446, "", "./tensorflow/core/kernels/sparse/kernels_gpu.cu.cc", "CSRSparseMatrixBatchMulVecKernel3D");
+
   // Step 1: Access the batch ptrs and copy to shared memory.
   //         Also copy the per-batch multipliers into shared memory.
   const int* batch_ptr = GetGpuDeviceArrayOnDevice(&batch_ptr_s);
@@ -285,6 +471,9 @@ Status CSRSparseMatrixBatchMulVecImpl(OpKernelContext* ctx,
                                       const CSRSparseMatrix& a,
                                       typename TTypes<T>::ConstFlat b,
                                       CSRSparseMatrix* c) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSkernels_gpuDTcuDTcc mht_6(mht_6_v, 474, "", "./tensorflow/core/kernels/sparse/kernels_gpu.cu.cc", "CSRSparseMatrixBatchMulVecImpl");
+
   DCHECK_EQ(a.dims(), 3);
   const int total_nnz = a.total_nnz();
   Tensor c_values_t;
@@ -370,6 +559,9 @@ template <typename T>
 __global__ void CSRSparseMatrixSoftmaxKernel2D(const int rows,
                                                const int* row_ptr,
                                                const T* logits, T* softmax) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSkernels_gpuDTcuDTcc mht_7(mht_7_v, 562, "", "./tensorflow/core/kernels/sparse/kernels_gpu.cu.cc", "CSRSparseMatrixSoftmaxKernel2D");
+
   // TODO(ebrevdo): consider something like a merge-path based
   // algorithm to distribute the work in case the row sizes are
   // uneven:
@@ -382,6 +574,9 @@ __global__ void CSRSparseMatrixSoftmaxKernel2D(const int rows,
 
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void CopyFromGpuDeviceArrayToLocal(
     GpuDeviceArrayStruct<int> cuda_ptr_s, int* local_ptr, int length) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSkernels_gpuDTcuDTcc mht_8(mht_8_v, 577, "", "./tensorflow/core/kernels/sparse/kernels_gpu.cu.cc", "CopyFromGpuDeviceArrayToLocal");
+
 #if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)
   const int* cuda_ptr = GetGpuDeviceArrayOnDevice(&cuda_ptr_s);
   for (int i = threadIdx.x; i < length; i += blockDim.x) {
@@ -395,6 +590,9 @@ template <typename T>
 __global__ void CSRSparseMatrixSoftmaxKernel3D(
     const int size, const int rows, GpuDeviceArrayStruct<int> batch_ptr_s,
     const int* row_ptr, const T* logits, T* softmax) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSkernels_gpuDTcuDTcc mht_9(mht_9_v, 593, "", "./tensorflow/core/kernels/sparse/kernels_gpu.cu.cc", "CSRSparseMatrixSoftmaxKernel3D");
+
   // TODO(ebrevdo): consider something like a merge-path based
   // algorithm to distribute the work in case the row sizes are
   // uneven:
@@ -419,6 +617,9 @@ template <typename T>
 Status CSRSparseMatrixSoftmaxGPUImpl(OpKernelContext* ctx,
                                      const CSRSparseMatrix& logits,
                                      typename TTypes<T>::Vec softmax_values) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSkernels_gpuDTcuDTcc mht_10(mht_10_v, 620, "", "./tensorflow/core/kernels/sparse/kernels_gpu.cu.cc", "CSRSparseMatrixSoftmaxGPUImpl");
+
   auto host_dense_shape = logits.dense_shape().vec<int64_t>();
   auto host_batch_ptr = logits.batch_pointers().vec<int32>();
   auto row_ptr = logits.row_pointers().vec<int32>();
@@ -546,6 +747,9 @@ __global__ void CSRSparseMatrixSoftmaxGradKernel2D(
     const int rows, const int* softmax_row_ptr, const int* softmax_col_ind,
     const T* softmax, const int* grad_softmax_row_ptr,
     const int* grad_softmax_col_ind, const T* grad_softmax, T* gradient) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSkernels_gpuDTcuDTcc mht_11(mht_11_v, 750, "", "./tensorflow/core/kernels/sparse/kernels_gpu.cu.cc", "CSRSparseMatrixSoftmaxGradKernel2D");
+
   // TODO(ebrevdo): consider something like a merge-path based
   // algorithm to distribute the work in case the row sizes are
   // uneven:
@@ -567,6 +771,9 @@ __global__ void CSRSparseMatrixSoftmaxGradKernel3D(
     const int* softmax_row_ptr, const int* softmax_col_ind, const T* softmax,
     const int* grad_softmax_row_ptr, const int* grad_softmax_col_ind,
     const T* grad_softmax, T* gradient) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSkernels_gpuDTcuDTcc mht_12(mht_12_v, 774, "", "./tensorflow/core/kernels/sparse/kernels_gpu.cu.cc", "CSRSparseMatrixSoftmaxGradKernel3D");
+
   // TODO(ebrevdo): consider something like a merge-path based
   // algorithm to distribute the work in case the row sizes are
   // uneven:
@@ -608,6 +815,9 @@ Status CSRSparseMatrixSoftmaxGradGPUImpl(
     OpKernelContext* ctx, const CSRSparseMatrix& softmax,
     const CSRSparseMatrix& grad_softmax,
     typename TTypes<T>::Vec gradient_values) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSkernels_gpuDTcuDTcc mht_13(mht_13_v, 818, "", "./tensorflow/core/kernels/sparse/kernels_gpu.cu.cc", "CSRSparseMatrixSoftmaxGradGPUImpl");
+
   auto host_dense_shape = softmax.dense_shape().vec<int64_t>();
   auto softmax_host_batch_ptr = softmax.batch_pointers().vec<int32>();
   auto softmax_row_ptr = softmax.row_pointers().vec<int32>();

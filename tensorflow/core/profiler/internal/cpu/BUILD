@@ -84,10 +84,15 @@ cc_library(
     deps = [
         "@com_google_absl//absl/container:flat_hash_map",
         "//tensorflow/core:lib",
-    ] + if_static([
         ":traceme_recorder_impl",
-    ]),
+        ]
 )
+# This is what is causing problem
+#    ] + if_static([
+#        ":traceme_recorder_impl",
+#    ]),
+
+
 
 cc_library(
     name = "traceme_recorder_impl",
@@ -126,14 +131,18 @@ cc_library(
     name = "annotation_stack",
     hdrs = ["annotation_stack.h"],
     copts = tf_profiler_copts(),
-    visibility = ["//tensorflow/core/profiler:internal"],
+    visibility = ["//visibility:public"],
+#    visibility = ["//tensorflow/core/profiler:internal"],
     deps = [
         "@com_google_absl//absl/strings",
         "//tensorflow/core:lib",
-    ] + if_static([
         ":annotation_stack_impl",
-    ]),
+    ]
 )
+#    ] + if_static([
+#        ":annotation_stack_impl",
+#    ]),
+#)
 
 cc_library(
     name = "annotation_stack_impl",

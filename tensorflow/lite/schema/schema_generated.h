@@ -17,6 +17,174 @@ limitations under the License.
 
 #ifndef FLATBUFFERS_GENERATED_SCHEMA_TFLITE_H_
 #define FLATBUFFERS_GENERATED_SCHEMA_TFLITE_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include "flatbuffers/flatbuffers.h"
 
@@ -467,6 +635,9 @@ inline const TensorType (&EnumValuesTensorType())[17] {
 }
 
 inline const char * const *EnumNamesTensorType() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_0(mht_0_v, 638, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNamesTensorType");
+
   static const char * const names[18] = {
     "FLOAT32",
     "FLOAT16",
@@ -491,6 +662,9 @@ inline const char * const *EnumNamesTensorType() {
 }
 
 inline const char *EnumNameTensorType(TensorType e) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1(mht_1_v, 665, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNameTensorType");
+
   if (flatbuffers::IsOutRange(e, TensorType_FLOAT32, TensorType_UINT16)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesTensorType()[index];
@@ -512,6 +686,9 @@ inline const QuantizationDetails (&EnumValuesQuantizationDetails())[2] {
 }
 
 inline const char * const *EnumNamesQuantizationDetails() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_2(mht_2_v, 689, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNamesQuantizationDetails");
+
   static const char * const names[3] = {
     "NONE",
     "CustomQuantization",
@@ -521,6 +698,9 @@ inline const char * const *EnumNamesQuantizationDetails() {
 }
 
 inline const char *EnumNameQuantizationDetails(QuantizationDetails e) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_3(mht_3_v, 701, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNameQuantizationDetails");
+
   if (flatbuffers::IsOutRange(e, QuantizationDetails_NONE, QuantizationDetails_CustomQuantization)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesQuantizationDetails()[index];
@@ -538,7 +718,10 @@ struct QuantizationDetailsUnion {
   QuantizationDetails type;
   void *value;
 
-  QuantizationDetailsUnion() : type(QuantizationDetails_NONE), value(nullptr) {}
+  QuantizationDetailsUnion() : type(QuantizationDetails_NONE), value(nullptr) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_4(mht_4_v, 722, "", "./tensorflow/lite/schema/schema_generated.h", "QuantizationDetailsUnion");
+}
   QuantizationDetailsUnion(QuantizationDetailsUnion&& u) FLATBUFFERS_NOEXCEPT :
     type(QuantizationDetails_NONE), value(nullptr)
     { std::swap(type, u.type); std::swap(value, u.value); }
@@ -547,7 +730,10 @@ struct QuantizationDetailsUnion {
     { QuantizationDetailsUnion t(u); std::swap(type, t.type); std::swap(value, t.value); return *this; }
   QuantizationDetailsUnion &operator=(QuantizationDetailsUnion &&u) FLATBUFFERS_NOEXCEPT
     { std::swap(type, u.type); std::swap(value, u.value); return *this; }
-  ~QuantizationDetailsUnion() { Reset(); }
+  ~QuantizationDetailsUnion() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_5(mht_5_v, 734, "", "./tensorflow/lite/schema/schema_generated.h", "~QuantizationDetailsUnion");
+ Reset(); }
 
   void Reset();
 
@@ -567,10 +753,16 @@ struct QuantizationDetailsUnion {
   flatbuffers::Offset<void> Pack(flatbuffers::FlatBufferBuilder &_fbb, const flatbuffers::rehasher_function_t *_rehasher = nullptr) const;
 
   tflite::CustomQuantizationT *AsCustomQuantization() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_6(mht_6_v, 756, "", "./tensorflow/lite/schema/schema_generated.h", "AsCustomQuantization");
+
     return type == QuantizationDetails_CustomQuantization ?
       reinterpret_cast<tflite::CustomQuantizationT *>(value) : nullptr;
   }
   const tflite::CustomQuantizationT *AsCustomQuantization() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_7(mht_7_v, 763, "", "./tensorflow/lite/schema/schema_generated.h", "AsCustomQuantization");
+
     return type == QuantizationDetails_CustomQuantization ?
       reinterpret_cast<const tflite::CustomQuantizationT *>(value) : nullptr;
   }
@@ -595,6 +787,9 @@ inline const DimensionType (&EnumValuesDimensionType())[2] {
 }
 
 inline const char * const *EnumNamesDimensionType() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_8(mht_8_v, 790, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNamesDimensionType");
+
   static const char * const names[3] = {
     "DENSE",
     "SPARSE_CSR",
@@ -604,6 +799,9 @@ inline const char * const *EnumNamesDimensionType() {
 }
 
 inline const char *EnumNameDimensionType(DimensionType e) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_9(mht_9_v, 802, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNameDimensionType");
+
   if (flatbuffers::IsOutRange(e, DimensionType_DENSE, DimensionType_SPARSE_CSR)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesDimensionType()[index];
@@ -629,6 +827,9 @@ inline const SparseIndexVector (&EnumValuesSparseIndexVector())[4] {
 }
 
 inline const char * const *EnumNamesSparseIndexVector() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_10(mht_10_v, 830, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNamesSparseIndexVector");
+
   static const char * const names[5] = {
     "NONE",
     "Int32Vector",
@@ -640,6 +841,9 @@ inline const char * const *EnumNamesSparseIndexVector() {
 }
 
 inline const char *EnumNameSparseIndexVector(SparseIndexVector e) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_11(mht_11_v, 844, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNameSparseIndexVector");
+
   if (flatbuffers::IsOutRange(e, SparseIndexVector_NONE, SparseIndexVector_Uint8Vector)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesSparseIndexVector()[index];
@@ -665,7 +869,10 @@ struct SparseIndexVectorUnion {
   SparseIndexVector type;
   void *value;
 
-  SparseIndexVectorUnion() : type(SparseIndexVector_NONE), value(nullptr) {}
+  SparseIndexVectorUnion() : type(SparseIndexVector_NONE), value(nullptr) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_12(mht_12_v, 873, "", "./tensorflow/lite/schema/schema_generated.h", "SparseIndexVectorUnion");
+}
   SparseIndexVectorUnion(SparseIndexVectorUnion&& u) FLATBUFFERS_NOEXCEPT :
     type(SparseIndexVector_NONE), value(nullptr)
     { std::swap(type, u.type); std::swap(value, u.value); }
@@ -674,7 +881,10 @@ struct SparseIndexVectorUnion {
     { SparseIndexVectorUnion t(u); std::swap(type, t.type); std::swap(value, t.value); return *this; }
   SparseIndexVectorUnion &operator=(SparseIndexVectorUnion &&u) FLATBUFFERS_NOEXCEPT
     { std::swap(type, u.type); std::swap(value, u.value); return *this; }
-  ~SparseIndexVectorUnion() { Reset(); }
+  ~SparseIndexVectorUnion() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_13(mht_13_v, 885, "", "./tensorflow/lite/schema/schema_generated.h", "~SparseIndexVectorUnion");
+ Reset(); }
 
   void Reset();
 
@@ -694,26 +904,44 @@ struct SparseIndexVectorUnion {
   flatbuffers::Offset<void> Pack(flatbuffers::FlatBufferBuilder &_fbb, const flatbuffers::rehasher_function_t *_rehasher = nullptr) const;
 
   tflite::Int32VectorT *AsInt32Vector() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_14(mht_14_v, 907, "", "./tensorflow/lite/schema/schema_generated.h", "AsInt32Vector");
+
     return type == SparseIndexVector_Int32Vector ?
       reinterpret_cast<tflite::Int32VectorT *>(value) : nullptr;
   }
   const tflite::Int32VectorT *AsInt32Vector() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_15(mht_15_v, 914, "", "./tensorflow/lite/schema/schema_generated.h", "AsInt32Vector");
+
     return type == SparseIndexVector_Int32Vector ?
       reinterpret_cast<const tflite::Int32VectorT *>(value) : nullptr;
   }
   tflite::Uint16VectorT *AsUint16Vector() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_16(mht_16_v, 921, "", "./tensorflow/lite/schema/schema_generated.h", "AsUint16Vector");
+
     return type == SparseIndexVector_Uint16Vector ?
       reinterpret_cast<tflite::Uint16VectorT *>(value) : nullptr;
   }
   const tflite::Uint16VectorT *AsUint16Vector() const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_17(mht_17_v, 928, "", "./tensorflow/lite/schema/schema_generated.h", "AsUint16Vector");
+
     return type == SparseIndexVector_Uint16Vector ?
       reinterpret_cast<const tflite::Uint16VectorT *>(value) : nullptr;
   }
   tflite::Uint8VectorT *AsUint8Vector() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_18(mht_18_v, 935, "", "./tensorflow/lite/schema/schema_generated.h", "AsUint8Vector");
+
     return type == SparseIndexVector_Uint8Vector ?
       reinterpret_cast<tflite::Uint8VectorT *>(value) : nullptr;
   }
   const tflite::Uint8VectorT *AsUint8Vector() const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_19(mht_19_v, 942, "", "./tensorflow/lite/schema/schema_generated.h", "AsUint8Vector");
+
     return type == SparseIndexVector_Uint8Vector ?
       reinterpret_cast<const tflite::Uint8VectorT *>(value) : nullptr;
   }
@@ -1038,6 +1266,9 @@ inline const BuiltinOperator (&EnumValuesBuiltinOperator())[152] {
 }
 
 inline const char * const *EnumNamesBuiltinOperator() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_20(mht_20_v, 1269, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNamesBuiltinOperator");
+
   static const char * const names[153] = {
     "ADD",
     "AVERAGE_POOL_2D",
@@ -1197,6 +1428,9 @@ inline const char * const *EnumNamesBuiltinOperator() {
 }
 
 inline const char *EnumNameBuiltinOperator(BuiltinOperator e) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_21(mht_21_v, 1431, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNameBuiltinOperator");
+
   if (flatbuffers::IsOutRange(e, BuiltinOperator_ADD, BuiltinOperator_DYNAMIC_UPDATE_SLICE)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesBuiltinOperator()[index];
@@ -1450,6 +1684,9 @@ inline const BuiltinOptions (&EnumValuesBuiltinOptions())[118] {
 }
 
 inline const char * const *EnumNamesBuiltinOptions() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_22(mht_22_v, 1687, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNamesBuiltinOptions");
+
   static const char * const names[119] = {
     "NONE",
     "Conv2DOptions",
@@ -1575,6 +1812,9 @@ inline const char * const *EnumNamesBuiltinOptions() {
 }
 
 inline const char *EnumNameBuiltinOptions(BuiltinOptions e) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_23(mht_23_v, 1815, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNameBuiltinOptions");
+
   if (flatbuffers::IsOutRange(e, BuiltinOptions_NONE, BuiltinOptions_DynamicUpdateSliceOptions)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesBuiltinOptions()[index];
@@ -2056,7 +2296,10 @@ struct BuiltinOptionsUnion {
   BuiltinOptions type;
   void *value;
 
-  BuiltinOptionsUnion() : type(BuiltinOptions_NONE), value(nullptr) {}
+  BuiltinOptionsUnion() : type(BuiltinOptions_NONE), value(nullptr) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_24(mht_24_v, 2300, "", "./tensorflow/lite/schema/schema_generated.h", "BuiltinOptionsUnion");
+}
   BuiltinOptionsUnion(BuiltinOptionsUnion&& u) FLATBUFFERS_NOEXCEPT :
     type(BuiltinOptions_NONE), value(nullptr)
     { std::swap(type, u.type); std::swap(value, u.value); }
@@ -2065,7 +2308,10 @@ struct BuiltinOptionsUnion {
     { BuiltinOptionsUnion t(u); std::swap(type, t.type); std::swap(value, t.value); return *this; }
   BuiltinOptionsUnion &operator=(BuiltinOptionsUnion &&u) FLATBUFFERS_NOEXCEPT
     { std::swap(type, u.type); std::swap(value, u.value); return *this; }
-  ~BuiltinOptionsUnion() { Reset(); }
+  ~BuiltinOptionsUnion() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_25(mht_25_v, 2312, "", "./tensorflow/lite/schema/schema_generated.h", "~BuiltinOptionsUnion");
+ Reset(); }
 
   void Reset();
 
@@ -2085,938 +2331,1640 @@ struct BuiltinOptionsUnion {
   flatbuffers::Offset<void> Pack(flatbuffers::FlatBufferBuilder &_fbb, const flatbuffers::rehasher_function_t *_rehasher = nullptr) const;
 
   tflite::Conv2DOptionsT *AsConv2DOptions() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_26(mht_26_v, 2334, "", "./tensorflow/lite/schema/schema_generated.h", "AsConv2DOptions");
+
     return type == BuiltinOptions_Conv2DOptions ?
       reinterpret_cast<tflite::Conv2DOptionsT *>(value) : nullptr;
   }
   const tflite::Conv2DOptionsT *AsConv2DOptions() const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_27(mht_27_v, 2341, "", "./tensorflow/lite/schema/schema_generated.h", "AsConv2DOptions");
+
     return type == BuiltinOptions_Conv2DOptions ?
       reinterpret_cast<const tflite::Conv2DOptionsT *>(value) : nullptr;
   }
   tflite::DepthwiseConv2DOptionsT *AsDepthwiseConv2DOptions() {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_28(mht_28_v, 2348, "", "./tensorflow/lite/schema/schema_generated.h", "AsDepthwiseConv2DOptions");
+
     return type == BuiltinOptions_DepthwiseConv2DOptions ?
       reinterpret_cast<tflite::DepthwiseConv2DOptionsT *>(value) : nullptr;
   }
   const tflite::DepthwiseConv2DOptionsT *AsDepthwiseConv2DOptions() const {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_29(mht_29_v, 2355, "", "./tensorflow/lite/schema/schema_generated.h", "AsDepthwiseConv2DOptions");
+
     return type == BuiltinOptions_DepthwiseConv2DOptions ?
       reinterpret_cast<const tflite::DepthwiseConv2DOptionsT *>(value) : nullptr;
   }
   tflite::ConcatEmbeddingsOptionsT *AsConcatEmbeddingsOptions() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_30(mht_30_v, 2362, "", "./tensorflow/lite/schema/schema_generated.h", "AsConcatEmbeddingsOptions");
+
     return type == BuiltinOptions_ConcatEmbeddingsOptions ?
       reinterpret_cast<tflite::ConcatEmbeddingsOptionsT *>(value) : nullptr;
   }
   const tflite::ConcatEmbeddingsOptionsT *AsConcatEmbeddingsOptions() const {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_31(mht_31_v, 2369, "", "./tensorflow/lite/schema/schema_generated.h", "AsConcatEmbeddingsOptions");
+
     return type == BuiltinOptions_ConcatEmbeddingsOptions ?
       reinterpret_cast<const tflite::ConcatEmbeddingsOptionsT *>(value) : nullptr;
   }
   tflite::LSHProjectionOptionsT *AsLSHProjectionOptions() {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_32(mht_32_v, 2376, "", "./tensorflow/lite/schema/schema_generated.h", "AsLSHProjectionOptions");
+
     return type == BuiltinOptions_LSHProjectionOptions ?
       reinterpret_cast<tflite::LSHProjectionOptionsT *>(value) : nullptr;
   }
   const tflite::LSHProjectionOptionsT *AsLSHProjectionOptions() const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_33(mht_33_v, 2383, "", "./tensorflow/lite/schema/schema_generated.h", "AsLSHProjectionOptions");
+
     return type == BuiltinOptions_LSHProjectionOptions ?
       reinterpret_cast<const tflite::LSHProjectionOptionsT *>(value) : nullptr;
   }
   tflite::Pool2DOptionsT *AsPool2DOptions() {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_34(mht_34_v, 2390, "", "./tensorflow/lite/schema/schema_generated.h", "AsPool2DOptions");
+
     return type == BuiltinOptions_Pool2DOptions ?
       reinterpret_cast<tflite::Pool2DOptionsT *>(value) : nullptr;
   }
   const tflite::Pool2DOptionsT *AsPool2DOptions() const {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_35(mht_35_v, 2397, "", "./tensorflow/lite/schema/schema_generated.h", "AsPool2DOptions");
+
     return type == BuiltinOptions_Pool2DOptions ?
       reinterpret_cast<const tflite::Pool2DOptionsT *>(value) : nullptr;
   }
   tflite::SVDFOptionsT *AsSVDFOptions() {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_36(mht_36_v, 2404, "", "./tensorflow/lite/schema/schema_generated.h", "AsSVDFOptions");
+
     return type == BuiltinOptions_SVDFOptions ?
       reinterpret_cast<tflite::SVDFOptionsT *>(value) : nullptr;
   }
   const tflite::SVDFOptionsT *AsSVDFOptions() const {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_37(mht_37_v, 2411, "", "./tensorflow/lite/schema/schema_generated.h", "AsSVDFOptions");
+
     return type == BuiltinOptions_SVDFOptions ?
       reinterpret_cast<const tflite::SVDFOptionsT *>(value) : nullptr;
   }
   tflite::RNNOptionsT *AsRNNOptions() {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_38(mht_38_v, 2418, "", "./tensorflow/lite/schema/schema_generated.h", "AsRNNOptions");
+
     return type == BuiltinOptions_RNNOptions ?
       reinterpret_cast<tflite::RNNOptionsT *>(value) : nullptr;
   }
   const tflite::RNNOptionsT *AsRNNOptions() const {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_39(mht_39_v, 2425, "", "./tensorflow/lite/schema/schema_generated.h", "AsRNNOptions");
+
     return type == BuiltinOptions_RNNOptions ?
       reinterpret_cast<const tflite::RNNOptionsT *>(value) : nullptr;
   }
   tflite::FullyConnectedOptionsT *AsFullyConnectedOptions() {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_40(mht_40_v, 2432, "", "./tensorflow/lite/schema/schema_generated.h", "AsFullyConnectedOptions");
+
     return type == BuiltinOptions_FullyConnectedOptions ?
       reinterpret_cast<tflite::FullyConnectedOptionsT *>(value) : nullptr;
   }
   const tflite::FullyConnectedOptionsT *AsFullyConnectedOptions() const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_41(mht_41_v, 2439, "", "./tensorflow/lite/schema/schema_generated.h", "AsFullyConnectedOptions");
+
     return type == BuiltinOptions_FullyConnectedOptions ?
       reinterpret_cast<const tflite::FullyConnectedOptionsT *>(value) : nullptr;
   }
   tflite::SoftmaxOptionsT *AsSoftmaxOptions() {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_42(mht_42_v, 2446, "", "./tensorflow/lite/schema/schema_generated.h", "AsSoftmaxOptions");
+
     return type == BuiltinOptions_SoftmaxOptions ?
       reinterpret_cast<tflite::SoftmaxOptionsT *>(value) : nullptr;
   }
   const tflite::SoftmaxOptionsT *AsSoftmaxOptions() const {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_43(mht_43_v, 2453, "", "./tensorflow/lite/schema/schema_generated.h", "AsSoftmaxOptions");
+
     return type == BuiltinOptions_SoftmaxOptions ?
       reinterpret_cast<const tflite::SoftmaxOptionsT *>(value) : nullptr;
   }
   tflite::ConcatenationOptionsT *AsConcatenationOptions() {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_44(mht_44_v, 2460, "", "./tensorflow/lite/schema/schema_generated.h", "AsConcatenationOptions");
+
     return type == BuiltinOptions_ConcatenationOptions ?
       reinterpret_cast<tflite::ConcatenationOptionsT *>(value) : nullptr;
   }
   const tflite::ConcatenationOptionsT *AsConcatenationOptions() const {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_45(mht_45_v, 2467, "", "./tensorflow/lite/schema/schema_generated.h", "AsConcatenationOptions");
+
     return type == BuiltinOptions_ConcatenationOptions ?
       reinterpret_cast<const tflite::ConcatenationOptionsT *>(value) : nullptr;
   }
   tflite::AddOptionsT *AsAddOptions() {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_46(mht_46_v, 2474, "", "./tensorflow/lite/schema/schema_generated.h", "AsAddOptions");
+
     return type == BuiltinOptions_AddOptions ?
       reinterpret_cast<tflite::AddOptionsT *>(value) : nullptr;
   }
   const tflite::AddOptionsT *AsAddOptions() const {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_47(mht_47_v, 2481, "", "./tensorflow/lite/schema/schema_generated.h", "AsAddOptions");
+
     return type == BuiltinOptions_AddOptions ?
       reinterpret_cast<const tflite::AddOptionsT *>(value) : nullptr;
   }
   tflite::L2NormOptionsT *AsL2NormOptions() {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_48(mht_48_v, 2488, "", "./tensorflow/lite/schema/schema_generated.h", "AsL2NormOptions");
+
     return type == BuiltinOptions_L2NormOptions ?
       reinterpret_cast<tflite::L2NormOptionsT *>(value) : nullptr;
   }
   const tflite::L2NormOptionsT *AsL2NormOptions() const {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_49(mht_49_v, 2495, "", "./tensorflow/lite/schema/schema_generated.h", "AsL2NormOptions");
+
     return type == BuiltinOptions_L2NormOptions ?
       reinterpret_cast<const tflite::L2NormOptionsT *>(value) : nullptr;
   }
   tflite::LocalResponseNormalizationOptionsT *AsLocalResponseNormalizationOptions() {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_50(mht_50_v, 2502, "", "./tensorflow/lite/schema/schema_generated.h", "AsLocalResponseNormalizationOptions");
+
     return type == BuiltinOptions_LocalResponseNormalizationOptions ?
       reinterpret_cast<tflite::LocalResponseNormalizationOptionsT *>(value) : nullptr;
   }
   const tflite::LocalResponseNormalizationOptionsT *AsLocalResponseNormalizationOptions() const {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_51(mht_51_v, 2509, "", "./tensorflow/lite/schema/schema_generated.h", "AsLocalResponseNormalizationOptions");
+
     return type == BuiltinOptions_LocalResponseNormalizationOptions ?
       reinterpret_cast<const tflite::LocalResponseNormalizationOptionsT *>(value) : nullptr;
   }
   tflite::LSTMOptionsT *AsLSTMOptions() {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_52(mht_52_v, 2516, "", "./tensorflow/lite/schema/schema_generated.h", "AsLSTMOptions");
+
     return type == BuiltinOptions_LSTMOptions ?
       reinterpret_cast<tflite::LSTMOptionsT *>(value) : nullptr;
   }
   const tflite::LSTMOptionsT *AsLSTMOptions() const {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_53(mht_53_v, 2523, "", "./tensorflow/lite/schema/schema_generated.h", "AsLSTMOptions");
+
     return type == BuiltinOptions_LSTMOptions ?
       reinterpret_cast<const tflite::LSTMOptionsT *>(value) : nullptr;
   }
   tflite::ResizeBilinearOptionsT *AsResizeBilinearOptions() {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_54(mht_54_v, 2530, "", "./tensorflow/lite/schema/schema_generated.h", "AsResizeBilinearOptions");
+
     return type == BuiltinOptions_ResizeBilinearOptions ?
       reinterpret_cast<tflite::ResizeBilinearOptionsT *>(value) : nullptr;
   }
   const tflite::ResizeBilinearOptionsT *AsResizeBilinearOptions() const {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_55(mht_55_v, 2537, "", "./tensorflow/lite/schema/schema_generated.h", "AsResizeBilinearOptions");
+
     return type == BuiltinOptions_ResizeBilinearOptions ?
       reinterpret_cast<const tflite::ResizeBilinearOptionsT *>(value) : nullptr;
   }
   tflite::CallOptionsT *AsCallOptions() {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_56(mht_56_v, 2544, "", "./tensorflow/lite/schema/schema_generated.h", "AsCallOptions");
+
     return type == BuiltinOptions_CallOptions ?
       reinterpret_cast<tflite::CallOptionsT *>(value) : nullptr;
   }
   const tflite::CallOptionsT *AsCallOptions() const {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_57(mht_57_v, 2551, "", "./tensorflow/lite/schema/schema_generated.h", "AsCallOptions");
+
     return type == BuiltinOptions_CallOptions ?
       reinterpret_cast<const tflite::CallOptionsT *>(value) : nullptr;
   }
   tflite::ReshapeOptionsT *AsReshapeOptions() {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_58(mht_58_v, 2558, "", "./tensorflow/lite/schema/schema_generated.h", "AsReshapeOptions");
+
     return type == BuiltinOptions_ReshapeOptions ?
       reinterpret_cast<tflite::ReshapeOptionsT *>(value) : nullptr;
   }
   const tflite::ReshapeOptionsT *AsReshapeOptions() const {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_59(mht_59_v, 2565, "", "./tensorflow/lite/schema/schema_generated.h", "AsReshapeOptions");
+
     return type == BuiltinOptions_ReshapeOptions ?
       reinterpret_cast<const tflite::ReshapeOptionsT *>(value) : nullptr;
   }
   tflite::SkipGramOptionsT *AsSkipGramOptions() {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_60(mht_60_v, 2572, "", "./tensorflow/lite/schema/schema_generated.h", "AsSkipGramOptions");
+
     return type == BuiltinOptions_SkipGramOptions ?
       reinterpret_cast<tflite::SkipGramOptionsT *>(value) : nullptr;
   }
   const tflite::SkipGramOptionsT *AsSkipGramOptions() const {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_61(mht_61_v, 2579, "", "./tensorflow/lite/schema/schema_generated.h", "AsSkipGramOptions");
+
     return type == BuiltinOptions_SkipGramOptions ?
       reinterpret_cast<const tflite::SkipGramOptionsT *>(value) : nullptr;
   }
   tflite::SpaceToDepthOptionsT *AsSpaceToDepthOptions() {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_62(mht_62_v, 2586, "", "./tensorflow/lite/schema/schema_generated.h", "AsSpaceToDepthOptions");
+
     return type == BuiltinOptions_SpaceToDepthOptions ?
       reinterpret_cast<tflite::SpaceToDepthOptionsT *>(value) : nullptr;
   }
   const tflite::SpaceToDepthOptionsT *AsSpaceToDepthOptions() const {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_63(mht_63_v, 2593, "", "./tensorflow/lite/schema/schema_generated.h", "AsSpaceToDepthOptions");
+
     return type == BuiltinOptions_SpaceToDepthOptions ?
       reinterpret_cast<const tflite::SpaceToDepthOptionsT *>(value) : nullptr;
   }
   tflite::EmbeddingLookupSparseOptionsT *AsEmbeddingLookupSparseOptions() {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_64(mht_64_v, 2600, "", "./tensorflow/lite/schema/schema_generated.h", "AsEmbeddingLookupSparseOptions");
+
     return type == BuiltinOptions_EmbeddingLookupSparseOptions ?
       reinterpret_cast<tflite::EmbeddingLookupSparseOptionsT *>(value) : nullptr;
   }
   const tflite::EmbeddingLookupSparseOptionsT *AsEmbeddingLookupSparseOptions() const {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_65(mht_65_v, 2607, "", "./tensorflow/lite/schema/schema_generated.h", "AsEmbeddingLookupSparseOptions");
+
     return type == BuiltinOptions_EmbeddingLookupSparseOptions ?
       reinterpret_cast<const tflite::EmbeddingLookupSparseOptionsT *>(value) : nullptr;
   }
   tflite::MulOptionsT *AsMulOptions() {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_66(mht_66_v, 2614, "", "./tensorflow/lite/schema/schema_generated.h", "AsMulOptions");
+
     return type == BuiltinOptions_MulOptions ?
       reinterpret_cast<tflite::MulOptionsT *>(value) : nullptr;
   }
   const tflite::MulOptionsT *AsMulOptions() const {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_67(mht_67_v, 2621, "", "./tensorflow/lite/schema/schema_generated.h", "AsMulOptions");
+
     return type == BuiltinOptions_MulOptions ?
       reinterpret_cast<const tflite::MulOptionsT *>(value) : nullptr;
   }
   tflite::PadOptionsT *AsPadOptions() {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_68(mht_68_v, 2628, "", "./tensorflow/lite/schema/schema_generated.h", "AsPadOptions");
+
     return type == BuiltinOptions_PadOptions ?
       reinterpret_cast<tflite::PadOptionsT *>(value) : nullptr;
   }
   const tflite::PadOptionsT *AsPadOptions() const {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_69(mht_69_v, 2635, "", "./tensorflow/lite/schema/schema_generated.h", "AsPadOptions");
+
     return type == BuiltinOptions_PadOptions ?
       reinterpret_cast<const tflite::PadOptionsT *>(value) : nullptr;
   }
   tflite::GatherOptionsT *AsGatherOptions() {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_70(mht_70_v, 2642, "", "./tensorflow/lite/schema/schema_generated.h", "AsGatherOptions");
+
     return type == BuiltinOptions_GatherOptions ?
       reinterpret_cast<tflite::GatherOptionsT *>(value) : nullptr;
   }
   const tflite::GatherOptionsT *AsGatherOptions() const {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_71(mht_71_v, 2649, "", "./tensorflow/lite/schema/schema_generated.h", "AsGatherOptions");
+
     return type == BuiltinOptions_GatherOptions ?
       reinterpret_cast<const tflite::GatherOptionsT *>(value) : nullptr;
   }
   tflite::BatchToSpaceNDOptionsT *AsBatchToSpaceNDOptions() {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_72(mht_72_v, 2656, "", "./tensorflow/lite/schema/schema_generated.h", "AsBatchToSpaceNDOptions");
+
     return type == BuiltinOptions_BatchToSpaceNDOptions ?
       reinterpret_cast<tflite::BatchToSpaceNDOptionsT *>(value) : nullptr;
   }
   const tflite::BatchToSpaceNDOptionsT *AsBatchToSpaceNDOptions() const {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_73(mht_73_v, 2663, "", "./tensorflow/lite/schema/schema_generated.h", "AsBatchToSpaceNDOptions");
+
     return type == BuiltinOptions_BatchToSpaceNDOptions ?
       reinterpret_cast<const tflite::BatchToSpaceNDOptionsT *>(value) : nullptr;
   }
   tflite::SpaceToBatchNDOptionsT *AsSpaceToBatchNDOptions() {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_74(mht_74_v, 2670, "", "./tensorflow/lite/schema/schema_generated.h", "AsSpaceToBatchNDOptions");
+
     return type == BuiltinOptions_SpaceToBatchNDOptions ?
       reinterpret_cast<tflite::SpaceToBatchNDOptionsT *>(value) : nullptr;
   }
   const tflite::SpaceToBatchNDOptionsT *AsSpaceToBatchNDOptions() const {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_75(mht_75_v, 2677, "", "./tensorflow/lite/schema/schema_generated.h", "AsSpaceToBatchNDOptions");
+
     return type == BuiltinOptions_SpaceToBatchNDOptions ?
       reinterpret_cast<const tflite::SpaceToBatchNDOptionsT *>(value) : nullptr;
   }
   tflite::TransposeOptionsT *AsTransposeOptions() {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_76(mht_76_v, 2684, "", "./tensorflow/lite/schema/schema_generated.h", "AsTransposeOptions");
+
     return type == BuiltinOptions_TransposeOptions ?
       reinterpret_cast<tflite::TransposeOptionsT *>(value) : nullptr;
   }
   const tflite::TransposeOptionsT *AsTransposeOptions() const {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_77(mht_77_v, 2691, "", "./tensorflow/lite/schema/schema_generated.h", "AsTransposeOptions");
+
     return type == BuiltinOptions_TransposeOptions ?
       reinterpret_cast<const tflite::TransposeOptionsT *>(value) : nullptr;
   }
   tflite::ReducerOptionsT *AsReducerOptions() {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_78(mht_78_v, 2698, "", "./tensorflow/lite/schema/schema_generated.h", "AsReducerOptions");
+
     return type == BuiltinOptions_ReducerOptions ?
       reinterpret_cast<tflite::ReducerOptionsT *>(value) : nullptr;
   }
   const tflite::ReducerOptionsT *AsReducerOptions() const {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_79(mht_79_v, 2705, "", "./tensorflow/lite/schema/schema_generated.h", "AsReducerOptions");
+
     return type == BuiltinOptions_ReducerOptions ?
       reinterpret_cast<const tflite::ReducerOptionsT *>(value) : nullptr;
   }
   tflite::SubOptionsT *AsSubOptions() {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_80(mht_80_v, 2712, "", "./tensorflow/lite/schema/schema_generated.h", "AsSubOptions");
+
     return type == BuiltinOptions_SubOptions ?
       reinterpret_cast<tflite::SubOptionsT *>(value) : nullptr;
   }
   const tflite::SubOptionsT *AsSubOptions() const {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_81(mht_81_v, 2719, "", "./tensorflow/lite/schema/schema_generated.h", "AsSubOptions");
+
     return type == BuiltinOptions_SubOptions ?
       reinterpret_cast<const tflite::SubOptionsT *>(value) : nullptr;
   }
   tflite::DivOptionsT *AsDivOptions() {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_82(mht_82_v, 2726, "", "./tensorflow/lite/schema/schema_generated.h", "AsDivOptions");
+
     return type == BuiltinOptions_DivOptions ?
       reinterpret_cast<tflite::DivOptionsT *>(value) : nullptr;
   }
   const tflite::DivOptionsT *AsDivOptions() const {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_83(mht_83_v, 2733, "", "./tensorflow/lite/schema/schema_generated.h", "AsDivOptions");
+
     return type == BuiltinOptions_DivOptions ?
       reinterpret_cast<const tflite::DivOptionsT *>(value) : nullptr;
   }
   tflite::SqueezeOptionsT *AsSqueezeOptions() {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_84(mht_84_v, 2740, "", "./tensorflow/lite/schema/schema_generated.h", "AsSqueezeOptions");
+
     return type == BuiltinOptions_SqueezeOptions ?
       reinterpret_cast<tflite::SqueezeOptionsT *>(value) : nullptr;
   }
   const tflite::SqueezeOptionsT *AsSqueezeOptions() const {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_85(mht_85_v, 2747, "", "./tensorflow/lite/schema/schema_generated.h", "AsSqueezeOptions");
+
     return type == BuiltinOptions_SqueezeOptions ?
       reinterpret_cast<const tflite::SqueezeOptionsT *>(value) : nullptr;
   }
   tflite::SequenceRNNOptionsT *AsSequenceRNNOptions() {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_86(mht_86_v, 2754, "", "./tensorflow/lite/schema/schema_generated.h", "AsSequenceRNNOptions");
+
     return type == BuiltinOptions_SequenceRNNOptions ?
       reinterpret_cast<tflite::SequenceRNNOptionsT *>(value) : nullptr;
   }
   const tflite::SequenceRNNOptionsT *AsSequenceRNNOptions() const {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_87(mht_87_v, 2761, "", "./tensorflow/lite/schema/schema_generated.h", "AsSequenceRNNOptions");
+
     return type == BuiltinOptions_SequenceRNNOptions ?
       reinterpret_cast<const tflite::SequenceRNNOptionsT *>(value) : nullptr;
   }
   tflite::StridedSliceOptionsT *AsStridedSliceOptions() {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_88(mht_88_v, 2768, "", "./tensorflow/lite/schema/schema_generated.h", "AsStridedSliceOptions");
+
     return type == BuiltinOptions_StridedSliceOptions ?
       reinterpret_cast<tflite::StridedSliceOptionsT *>(value) : nullptr;
   }
   const tflite::StridedSliceOptionsT *AsStridedSliceOptions() const {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_89(mht_89_v, 2775, "", "./tensorflow/lite/schema/schema_generated.h", "AsStridedSliceOptions");
+
     return type == BuiltinOptions_StridedSliceOptions ?
       reinterpret_cast<const tflite::StridedSliceOptionsT *>(value) : nullptr;
   }
   tflite::ExpOptionsT *AsExpOptions() {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_90(mht_90_v, 2782, "", "./tensorflow/lite/schema/schema_generated.h", "AsExpOptions");
+
     return type == BuiltinOptions_ExpOptions ?
       reinterpret_cast<tflite::ExpOptionsT *>(value) : nullptr;
   }
   const tflite::ExpOptionsT *AsExpOptions() const {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_91(mht_91_v, 2789, "", "./tensorflow/lite/schema/schema_generated.h", "AsExpOptions");
+
     return type == BuiltinOptions_ExpOptions ?
       reinterpret_cast<const tflite::ExpOptionsT *>(value) : nullptr;
   }
   tflite::TopKV2OptionsT *AsTopKV2Options() {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_92(mht_92_v, 2796, "", "./tensorflow/lite/schema/schema_generated.h", "AsTopKV2Options");
+
     return type == BuiltinOptions_TopKV2Options ?
       reinterpret_cast<tflite::TopKV2OptionsT *>(value) : nullptr;
   }
   const tflite::TopKV2OptionsT *AsTopKV2Options() const {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_93(mht_93_v, 2803, "", "./tensorflow/lite/schema/schema_generated.h", "AsTopKV2Options");
+
     return type == BuiltinOptions_TopKV2Options ?
       reinterpret_cast<const tflite::TopKV2OptionsT *>(value) : nullptr;
   }
   tflite::SplitOptionsT *AsSplitOptions() {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_94(mht_94_v, 2810, "", "./tensorflow/lite/schema/schema_generated.h", "AsSplitOptions");
+
     return type == BuiltinOptions_SplitOptions ?
       reinterpret_cast<tflite::SplitOptionsT *>(value) : nullptr;
   }
   const tflite::SplitOptionsT *AsSplitOptions() const {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_95(mht_95_v, 2817, "", "./tensorflow/lite/schema/schema_generated.h", "AsSplitOptions");
+
     return type == BuiltinOptions_SplitOptions ?
       reinterpret_cast<const tflite::SplitOptionsT *>(value) : nullptr;
   }
   tflite::LogSoftmaxOptionsT *AsLogSoftmaxOptions() {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_96(mht_96_v, 2824, "", "./tensorflow/lite/schema/schema_generated.h", "AsLogSoftmaxOptions");
+
     return type == BuiltinOptions_LogSoftmaxOptions ?
       reinterpret_cast<tflite::LogSoftmaxOptionsT *>(value) : nullptr;
   }
   const tflite::LogSoftmaxOptionsT *AsLogSoftmaxOptions() const {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_97(mht_97_v, 2831, "", "./tensorflow/lite/schema/schema_generated.h", "AsLogSoftmaxOptions");
+
     return type == BuiltinOptions_LogSoftmaxOptions ?
       reinterpret_cast<const tflite::LogSoftmaxOptionsT *>(value) : nullptr;
   }
   tflite::CastOptionsT *AsCastOptions() {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_98(mht_98_v, 2838, "", "./tensorflow/lite/schema/schema_generated.h", "AsCastOptions");
+
     return type == BuiltinOptions_CastOptions ?
       reinterpret_cast<tflite::CastOptionsT *>(value) : nullptr;
   }
   const tflite::CastOptionsT *AsCastOptions() const {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_99(mht_99_v, 2845, "", "./tensorflow/lite/schema/schema_generated.h", "AsCastOptions");
+
     return type == BuiltinOptions_CastOptions ?
       reinterpret_cast<const tflite::CastOptionsT *>(value) : nullptr;
   }
   tflite::DequantizeOptionsT *AsDequantizeOptions() {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_100(mht_100_v, 2852, "", "./tensorflow/lite/schema/schema_generated.h", "AsDequantizeOptions");
+
     return type == BuiltinOptions_DequantizeOptions ?
       reinterpret_cast<tflite::DequantizeOptionsT *>(value) : nullptr;
   }
   const tflite::DequantizeOptionsT *AsDequantizeOptions() const {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_101(mht_101_v, 2859, "", "./tensorflow/lite/schema/schema_generated.h", "AsDequantizeOptions");
+
     return type == BuiltinOptions_DequantizeOptions ?
       reinterpret_cast<const tflite::DequantizeOptionsT *>(value) : nullptr;
   }
   tflite::MaximumMinimumOptionsT *AsMaximumMinimumOptions() {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_102(mht_102_v, 2866, "", "./tensorflow/lite/schema/schema_generated.h", "AsMaximumMinimumOptions");
+
     return type == BuiltinOptions_MaximumMinimumOptions ?
       reinterpret_cast<tflite::MaximumMinimumOptionsT *>(value) : nullptr;
   }
   const tflite::MaximumMinimumOptionsT *AsMaximumMinimumOptions() const {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_103(mht_103_v, 2873, "", "./tensorflow/lite/schema/schema_generated.h", "AsMaximumMinimumOptions");
+
     return type == BuiltinOptions_MaximumMinimumOptions ?
       reinterpret_cast<const tflite::MaximumMinimumOptionsT *>(value) : nullptr;
   }
   tflite::ArgMaxOptionsT *AsArgMaxOptions() {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_104(mht_104_v, 2880, "", "./tensorflow/lite/schema/schema_generated.h", "AsArgMaxOptions");
+
     return type == BuiltinOptions_ArgMaxOptions ?
       reinterpret_cast<tflite::ArgMaxOptionsT *>(value) : nullptr;
   }
   const tflite::ArgMaxOptionsT *AsArgMaxOptions() const {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_105(mht_105_v, 2887, "", "./tensorflow/lite/schema/schema_generated.h", "AsArgMaxOptions");
+
     return type == BuiltinOptions_ArgMaxOptions ?
       reinterpret_cast<const tflite::ArgMaxOptionsT *>(value) : nullptr;
   }
   tflite::LessOptionsT *AsLessOptions() {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_106(mht_106_v, 2894, "", "./tensorflow/lite/schema/schema_generated.h", "AsLessOptions");
+
     return type == BuiltinOptions_LessOptions ?
       reinterpret_cast<tflite::LessOptionsT *>(value) : nullptr;
   }
   const tflite::LessOptionsT *AsLessOptions() const {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_107(mht_107_v, 2901, "", "./tensorflow/lite/schema/schema_generated.h", "AsLessOptions");
+
     return type == BuiltinOptions_LessOptions ?
       reinterpret_cast<const tflite::LessOptionsT *>(value) : nullptr;
   }
   tflite::NegOptionsT *AsNegOptions() {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_108(mht_108_v, 2908, "", "./tensorflow/lite/schema/schema_generated.h", "AsNegOptions");
+
     return type == BuiltinOptions_NegOptions ?
       reinterpret_cast<tflite::NegOptionsT *>(value) : nullptr;
   }
   const tflite::NegOptionsT *AsNegOptions() const {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_109(mht_109_v, 2915, "", "./tensorflow/lite/schema/schema_generated.h", "AsNegOptions");
+
     return type == BuiltinOptions_NegOptions ?
       reinterpret_cast<const tflite::NegOptionsT *>(value) : nullptr;
   }
   tflite::PadV2OptionsT *AsPadV2Options() {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_110(mht_110_v, 2922, "", "./tensorflow/lite/schema/schema_generated.h", "AsPadV2Options");
+
     return type == BuiltinOptions_PadV2Options ?
       reinterpret_cast<tflite::PadV2OptionsT *>(value) : nullptr;
   }
   const tflite::PadV2OptionsT *AsPadV2Options() const {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_111(mht_111_v, 2929, "", "./tensorflow/lite/schema/schema_generated.h", "AsPadV2Options");
+
     return type == BuiltinOptions_PadV2Options ?
       reinterpret_cast<const tflite::PadV2OptionsT *>(value) : nullptr;
   }
   tflite::GreaterOptionsT *AsGreaterOptions() {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_112(mht_112_v, 2936, "", "./tensorflow/lite/schema/schema_generated.h", "AsGreaterOptions");
+
     return type == BuiltinOptions_GreaterOptions ?
       reinterpret_cast<tflite::GreaterOptionsT *>(value) : nullptr;
   }
   const tflite::GreaterOptionsT *AsGreaterOptions() const {
+   std::vector<std::string> mht_113_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_113(mht_113_v, 2943, "", "./tensorflow/lite/schema/schema_generated.h", "AsGreaterOptions");
+
     return type == BuiltinOptions_GreaterOptions ?
       reinterpret_cast<const tflite::GreaterOptionsT *>(value) : nullptr;
   }
   tflite::GreaterEqualOptionsT *AsGreaterEqualOptions() {
+   std::vector<std::string> mht_114_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_114(mht_114_v, 2950, "", "./tensorflow/lite/schema/schema_generated.h", "AsGreaterEqualOptions");
+
     return type == BuiltinOptions_GreaterEqualOptions ?
       reinterpret_cast<tflite::GreaterEqualOptionsT *>(value) : nullptr;
   }
   const tflite::GreaterEqualOptionsT *AsGreaterEqualOptions() const {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_115(mht_115_v, 2957, "", "./tensorflow/lite/schema/schema_generated.h", "AsGreaterEqualOptions");
+
     return type == BuiltinOptions_GreaterEqualOptions ?
       reinterpret_cast<const tflite::GreaterEqualOptionsT *>(value) : nullptr;
   }
   tflite::LessEqualOptionsT *AsLessEqualOptions() {
+   std::vector<std::string> mht_116_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_116(mht_116_v, 2964, "", "./tensorflow/lite/schema/schema_generated.h", "AsLessEqualOptions");
+
     return type == BuiltinOptions_LessEqualOptions ?
       reinterpret_cast<tflite::LessEqualOptionsT *>(value) : nullptr;
   }
   const tflite::LessEqualOptionsT *AsLessEqualOptions() const {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_117(mht_117_v, 2971, "", "./tensorflow/lite/schema/schema_generated.h", "AsLessEqualOptions");
+
     return type == BuiltinOptions_LessEqualOptions ?
       reinterpret_cast<const tflite::LessEqualOptionsT *>(value) : nullptr;
   }
   tflite::SelectOptionsT *AsSelectOptions() {
+   std::vector<std::string> mht_118_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_118(mht_118_v, 2978, "", "./tensorflow/lite/schema/schema_generated.h", "AsSelectOptions");
+
     return type == BuiltinOptions_SelectOptions ?
       reinterpret_cast<tflite::SelectOptionsT *>(value) : nullptr;
   }
   const tflite::SelectOptionsT *AsSelectOptions() const {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_119(mht_119_v, 2985, "", "./tensorflow/lite/schema/schema_generated.h", "AsSelectOptions");
+
     return type == BuiltinOptions_SelectOptions ?
       reinterpret_cast<const tflite::SelectOptionsT *>(value) : nullptr;
   }
   tflite::SliceOptionsT *AsSliceOptions() {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_120(mht_120_v, 2992, "", "./tensorflow/lite/schema/schema_generated.h", "AsSliceOptions");
+
     return type == BuiltinOptions_SliceOptions ?
       reinterpret_cast<tflite::SliceOptionsT *>(value) : nullptr;
   }
   const tflite::SliceOptionsT *AsSliceOptions() const {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_121(mht_121_v, 2999, "", "./tensorflow/lite/schema/schema_generated.h", "AsSliceOptions");
+
     return type == BuiltinOptions_SliceOptions ?
       reinterpret_cast<const tflite::SliceOptionsT *>(value) : nullptr;
   }
   tflite::TransposeConvOptionsT *AsTransposeConvOptions() {
+   std::vector<std::string> mht_122_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_122(mht_122_v, 3006, "", "./tensorflow/lite/schema/schema_generated.h", "AsTransposeConvOptions");
+
     return type == BuiltinOptions_TransposeConvOptions ?
       reinterpret_cast<tflite::TransposeConvOptionsT *>(value) : nullptr;
   }
   const tflite::TransposeConvOptionsT *AsTransposeConvOptions() const {
+   std::vector<std::string> mht_123_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_123(mht_123_v, 3013, "", "./tensorflow/lite/schema/schema_generated.h", "AsTransposeConvOptions");
+
     return type == BuiltinOptions_TransposeConvOptions ?
       reinterpret_cast<const tflite::TransposeConvOptionsT *>(value) : nullptr;
   }
   tflite::SparseToDenseOptionsT *AsSparseToDenseOptions() {
+   std::vector<std::string> mht_124_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_124(mht_124_v, 3020, "", "./tensorflow/lite/schema/schema_generated.h", "AsSparseToDenseOptions");
+
     return type == BuiltinOptions_SparseToDenseOptions ?
       reinterpret_cast<tflite::SparseToDenseOptionsT *>(value) : nullptr;
   }
   const tflite::SparseToDenseOptionsT *AsSparseToDenseOptions() const {
+   std::vector<std::string> mht_125_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_125(mht_125_v, 3027, "", "./tensorflow/lite/schema/schema_generated.h", "AsSparseToDenseOptions");
+
     return type == BuiltinOptions_SparseToDenseOptions ?
       reinterpret_cast<const tflite::SparseToDenseOptionsT *>(value) : nullptr;
   }
   tflite::TileOptionsT *AsTileOptions() {
+   std::vector<std::string> mht_126_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_126(mht_126_v, 3034, "", "./tensorflow/lite/schema/schema_generated.h", "AsTileOptions");
+
     return type == BuiltinOptions_TileOptions ?
       reinterpret_cast<tflite::TileOptionsT *>(value) : nullptr;
   }
   const tflite::TileOptionsT *AsTileOptions() const {
+   std::vector<std::string> mht_127_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_127(mht_127_v, 3041, "", "./tensorflow/lite/schema/schema_generated.h", "AsTileOptions");
+
     return type == BuiltinOptions_TileOptions ?
       reinterpret_cast<const tflite::TileOptionsT *>(value) : nullptr;
   }
   tflite::ExpandDimsOptionsT *AsExpandDimsOptions() {
+   std::vector<std::string> mht_128_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_128(mht_128_v, 3048, "", "./tensorflow/lite/schema/schema_generated.h", "AsExpandDimsOptions");
+
     return type == BuiltinOptions_ExpandDimsOptions ?
       reinterpret_cast<tflite::ExpandDimsOptionsT *>(value) : nullptr;
   }
   const tflite::ExpandDimsOptionsT *AsExpandDimsOptions() const {
+   std::vector<std::string> mht_129_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_129(mht_129_v, 3055, "", "./tensorflow/lite/schema/schema_generated.h", "AsExpandDimsOptions");
+
     return type == BuiltinOptions_ExpandDimsOptions ?
       reinterpret_cast<const tflite::ExpandDimsOptionsT *>(value) : nullptr;
   }
   tflite::EqualOptionsT *AsEqualOptions() {
+   std::vector<std::string> mht_130_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_130(mht_130_v, 3062, "", "./tensorflow/lite/schema/schema_generated.h", "AsEqualOptions");
+
     return type == BuiltinOptions_EqualOptions ?
       reinterpret_cast<tflite::EqualOptionsT *>(value) : nullptr;
   }
   const tflite::EqualOptionsT *AsEqualOptions() const {
+   std::vector<std::string> mht_131_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_131(mht_131_v, 3069, "", "./tensorflow/lite/schema/schema_generated.h", "AsEqualOptions");
+
     return type == BuiltinOptions_EqualOptions ?
       reinterpret_cast<const tflite::EqualOptionsT *>(value) : nullptr;
   }
   tflite::NotEqualOptionsT *AsNotEqualOptions() {
+   std::vector<std::string> mht_132_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_132(mht_132_v, 3076, "", "./tensorflow/lite/schema/schema_generated.h", "AsNotEqualOptions");
+
     return type == BuiltinOptions_NotEqualOptions ?
       reinterpret_cast<tflite::NotEqualOptionsT *>(value) : nullptr;
   }
   const tflite::NotEqualOptionsT *AsNotEqualOptions() const {
+   std::vector<std::string> mht_133_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_133(mht_133_v, 3083, "", "./tensorflow/lite/schema/schema_generated.h", "AsNotEqualOptions");
+
     return type == BuiltinOptions_NotEqualOptions ?
       reinterpret_cast<const tflite::NotEqualOptionsT *>(value) : nullptr;
   }
   tflite::ShapeOptionsT *AsShapeOptions() {
+   std::vector<std::string> mht_134_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_134(mht_134_v, 3090, "", "./tensorflow/lite/schema/schema_generated.h", "AsShapeOptions");
+
     return type == BuiltinOptions_ShapeOptions ?
       reinterpret_cast<tflite::ShapeOptionsT *>(value) : nullptr;
   }
   const tflite::ShapeOptionsT *AsShapeOptions() const {
+   std::vector<std::string> mht_135_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_135(mht_135_v, 3097, "", "./tensorflow/lite/schema/schema_generated.h", "AsShapeOptions");
+
     return type == BuiltinOptions_ShapeOptions ?
       reinterpret_cast<const tflite::ShapeOptionsT *>(value) : nullptr;
   }
   tflite::PowOptionsT *AsPowOptions() {
+   std::vector<std::string> mht_136_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_136(mht_136_v, 3104, "", "./tensorflow/lite/schema/schema_generated.h", "AsPowOptions");
+
     return type == BuiltinOptions_PowOptions ?
       reinterpret_cast<tflite::PowOptionsT *>(value) : nullptr;
   }
   const tflite::PowOptionsT *AsPowOptions() const {
+   std::vector<std::string> mht_137_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_137(mht_137_v, 3111, "", "./tensorflow/lite/schema/schema_generated.h", "AsPowOptions");
+
     return type == BuiltinOptions_PowOptions ?
       reinterpret_cast<const tflite::PowOptionsT *>(value) : nullptr;
   }
   tflite::ArgMinOptionsT *AsArgMinOptions() {
+   std::vector<std::string> mht_138_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_138(mht_138_v, 3118, "", "./tensorflow/lite/schema/schema_generated.h", "AsArgMinOptions");
+
     return type == BuiltinOptions_ArgMinOptions ?
       reinterpret_cast<tflite::ArgMinOptionsT *>(value) : nullptr;
   }
   const tflite::ArgMinOptionsT *AsArgMinOptions() const {
+   std::vector<std::string> mht_139_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_139(mht_139_v, 3125, "", "./tensorflow/lite/schema/schema_generated.h", "AsArgMinOptions");
+
     return type == BuiltinOptions_ArgMinOptions ?
       reinterpret_cast<const tflite::ArgMinOptionsT *>(value) : nullptr;
   }
   tflite::FakeQuantOptionsT *AsFakeQuantOptions() {
+   std::vector<std::string> mht_140_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_140(mht_140_v, 3132, "", "./tensorflow/lite/schema/schema_generated.h", "AsFakeQuantOptions");
+
     return type == BuiltinOptions_FakeQuantOptions ?
       reinterpret_cast<tflite::FakeQuantOptionsT *>(value) : nullptr;
   }
   const tflite::FakeQuantOptionsT *AsFakeQuantOptions() const {
+   std::vector<std::string> mht_141_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_141(mht_141_v, 3139, "", "./tensorflow/lite/schema/schema_generated.h", "AsFakeQuantOptions");
+
     return type == BuiltinOptions_FakeQuantOptions ?
       reinterpret_cast<const tflite::FakeQuantOptionsT *>(value) : nullptr;
   }
   tflite::PackOptionsT *AsPackOptions() {
+   std::vector<std::string> mht_142_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_142(mht_142_v, 3146, "", "./tensorflow/lite/schema/schema_generated.h", "AsPackOptions");
+
     return type == BuiltinOptions_PackOptions ?
       reinterpret_cast<tflite::PackOptionsT *>(value) : nullptr;
   }
   const tflite::PackOptionsT *AsPackOptions() const {
+   std::vector<std::string> mht_143_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_143(mht_143_v, 3153, "", "./tensorflow/lite/schema/schema_generated.h", "AsPackOptions");
+
     return type == BuiltinOptions_PackOptions ?
       reinterpret_cast<const tflite::PackOptionsT *>(value) : nullptr;
   }
   tflite::LogicalOrOptionsT *AsLogicalOrOptions() {
+   std::vector<std::string> mht_144_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_144(mht_144_v, 3160, "", "./tensorflow/lite/schema/schema_generated.h", "AsLogicalOrOptions");
+
     return type == BuiltinOptions_LogicalOrOptions ?
       reinterpret_cast<tflite::LogicalOrOptionsT *>(value) : nullptr;
   }
   const tflite::LogicalOrOptionsT *AsLogicalOrOptions() const {
+   std::vector<std::string> mht_145_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_145(mht_145_v, 3167, "", "./tensorflow/lite/schema/schema_generated.h", "AsLogicalOrOptions");
+
     return type == BuiltinOptions_LogicalOrOptions ?
       reinterpret_cast<const tflite::LogicalOrOptionsT *>(value) : nullptr;
   }
   tflite::OneHotOptionsT *AsOneHotOptions() {
+   std::vector<std::string> mht_146_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_146(mht_146_v, 3174, "", "./tensorflow/lite/schema/schema_generated.h", "AsOneHotOptions");
+
     return type == BuiltinOptions_OneHotOptions ?
       reinterpret_cast<tflite::OneHotOptionsT *>(value) : nullptr;
   }
   const tflite::OneHotOptionsT *AsOneHotOptions() const {
+   std::vector<std::string> mht_147_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_147(mht_147_v, 3181, "", "./tensorflow/lite/schema/schema_generated.h", "AsOneHotOptions");
+
     return type == BuiltinOptions_OneHotOptions ?
       reinterpret_cast<const tflite::OneHotOptionsT *>(value) : nullptr;
   }
   tflite::LogicalAndOptionsT *AsLogicalAndOptions() {
+   std::vector<std::string> mht_148_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_148(mht_148_v, 3188, "", "./tensorflow/lite/schema/schema_generated.h", "AsLogicalAndOptions");
+
     return type == BuiltinOptions_LogicalAndOptions ?
       reinterpret_cast<tflite::LogicalAndOptionsT *>(value) : nullptr;
   }
   const tflite::LogicalAndOptionsT *AsLogicalAndOptions() const {
+   std::vector<std::string> mht_149_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_149(mht_149_v, 3195, "", "./tensorflow/lite/schema/schema_generated.h", "AsLogicalAndOptions");
+
     return type == BuiltinOptions_LogicalAndOptions ?
       reinterpret_cast<const tflite::LogicalAndOptionsT *>(value) : nullptr;
   }
   tflite::LogicalNotOptionsT *AsLogicalNotOptions() {
+   std::vector<std::string> mht_150_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_150(mht_150_v, 3202, "", "./tensorflow/lite/schema/schema_generated.h", "AsLogicalNotOptions");
+
     return type == BuiltinOptions_LogicalNotOptions ?
       reinterpret_cast<tflite::LogicalNotOptionsT *>(value) : nullptr;
   }
   const tflite::LogicalNotOptionsT *AsLogicalNotOptions() const {
+   std::vector<std::string> mht_151_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_151(mht_151_v, 3209, "", "./tensorflow/lite/schema/schema_generated.h", "AsLogicalNotOptions");
+
     return type == BuiltinOptions_LogicalNotOptions ?
       reinterpret_cast<const tflite::LogicalNotOptionsT *>(value) : nullptr;
   }
   tflite::UnpackOptionsT *AsUnpackOptions() {
+   std::vector<std::string> mht_152_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_152(mht_152_v, 3216, "", "./tensorflow/lite/schema/schema_generated.h", "AsUnpackOptions");
+
     return type == BuiltinOptions_UnpackOptions ?
       reinterpret_cast<tflite::UnpackOptionsT *>(value) : nullptr;
   }
   const tflite::UnpackOptionsT *AsUnpackOptions() const {
+   std::vector<std::string> mht_153_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_153(mht_153_v, 3223, "", "./tensorflow/lite/schema/schema_generated.h", "AsUnpackOptions");
+
     return type == BuiltinOptions_UnpackOptions ?
       reinterpret_cast<const tflite::UnpackOptionsT *>(value) : nullptr;
   }
   tflite::FloorDivOptionsT *AsFloorDivOptions() {
+   std::vector<std::string> mht_154_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_154(mht_154_v, 3230, "", "./tensorflow/lite/schema/schema_generated.h", "AsFloorDivOptions");
+
     return type == BuiltinOptions_FloorDivOptions ?
       reinterpret_cast<tflite::FloorDivOptionsT *>(value) : nullptr;
   }
   const tflite::FloorDivOptionsT *AsFloorDivOptions() const {
+   std::vector<std::string> mht_155_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_155(mht_155_v, 3237, "", "./tensorflow/lite/schema/schema_generated.h", "AsFloorDivOptions");
+
     return type == BuiltinOptions_FloorDivOptions ?
       reinterpret_cast<const tflite::FloorDivOptionsT *>(value) : nullptr;
   }
   tflite::SquareOptionsT *AsSquareOptions() {
+   std::vector<std::string> mht_156_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_156(mht_156_v, 3244, "", "./tensorflow/lite/schema/schema_generated.h", "AsSquareOptions");
+
     return type == BuiltinOptions_SquareOptions ?
       reinterpret_cast<tflite::SquareOptionsT *>(value) : nullptr;
   }
   const tflite::SquareOptionsT *AsSquareOptions() const {
+   std::vector<std::string> mht_157_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_157(mht_157_v, 3251, "", "./tensorflow/lite/schema/schema_generated.h", "AsSquareOptions");
+
     return type == BuiltinOptions_SquareOptions ?
       reinterpret_cast<const tflite::SquareOptionsT *>(value) : nullptr;
   }
   tflite::ZerosLikeOptionsT *AsZerosLikeOptions() {
+   std::vector<std::string> mht_158_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_158(mht_158_v, 3258, "", "./tensorflow/lite/schema/schema_generated.h", "AsZerosLikeOptions");
+
     return type == BuiltinOptions_ZerosLikeOptions ?
       reinterpret_cast<tflite::ZerosLikeOptionsT *>(value) : nullptr;
   }
   const tflite::ZerosLikeOptionsT *AsZerosLikeOptions() const {
+   std::vector<std::string> mht_159_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_159(mht_159_v, 3265, "", "./tensorflow/lite/schema/schema_generated.h", "AsZerosLikeOptions");
+
     return type == BuiltinOptions_ZerosLikeOptions ?
       reinterpret_cast<const tflite::ZerosLikeOptionsT *>(value) : nullptr;
   }
   tflite::FillOptionsT *AsFillOptions() {
+   std::vector<std::string> mht_160_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_160(mht_160_v, 3272, "", "./tensorflow/lite/schema/schema_generated.h", "AsFillOptions");
+
     return type == BuiltinOptions_FillOptions ?
       reinterpret_cast<tflite::FillOptionsT *>(value) : nullptr;
   }
   const tflite::FillOptionsT *AsFillOptions() const {
+   std::vector<std::string> mht_161_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_161(mht_161_v, 3279, "", "./tensorflow/lite/schema/schema_generated.h", "AsFillOptions");
+
     return type == BuiltinOptions_FillOptions ?
       reinterpret_cast<const tflite::FillOptionsT *>(value) : nullptr;
   }
   tflite::BidirectionalSequenceLSTMOptionsT *AsBidirectionalSequenceLSTMOptions() {
+   std::vector<std::string> mht_162_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_162(mht_162_v, 3286, "", "./tensorflow/lite/schema/schema_generated.h", "AsBidirectionalSequenceLSTMOptions");
+
     return type == BuiltinOptions_BidirectionalSequenceLSTMOptions ?
       reinterpret_cast<tflite::BidirectionalSequenceLSTMOptionsT *>(value) : nullptr;
   }
   const tflite::BidirectionalSequenceLSTMOptionsT *AsBidirectionalSequenceLSTMOptions() const {
+   std::vector<std::string> mht_163_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_163(mht_163_v, 3293, "", "./tensorflow/lite/schema/schema_generated.h", "AsBidirectionalSequenceLSTMOptions");
+
     return type == BuiltinOptions_BidirectionalSequenceLSTMOptions ?
       reinterpret_cast<const tflite::BidirectionalSequenceLSTMOptionsT *>(value) : nullptr;
   }
   tflite::BidirectionalSequenceRNNOptionsT *AsBidirectionalSequenceRNNOptions() {
+   std::vector<std::string> mht_164_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_164(mht_164_v, 3300, "", "./tensorflow/lite/schema/schema_generated.h", "AsBidirectionalSequenceRNNOptions");
+
     return type == BuiltinOptions_BidirectionalSequenceRNNOptions ?
       reinterpret_cast<tflite::BidirectionalSequenceRNNOptionsT *>(value) : nullptr;
   }
   const tflite::BidirectionalSequenceRNNOptionsT *AsBidirectionalSequenceRNNOptions() const {
+   std::vector<std::string> mht_165_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_165(mht_165_v, 3307, "", "./tensorflow/lite/schema/schema_generated.h", "AsBidirectionalSequenceRNNOptions");
+
     return type == BuiltinOptions_BidirectionalSequenceRNNOptions ?
       reinterpret_cast<const tflite::BidirectionalSequenceRNNOptionsT *>(value) : nullptr;
   }
   tflite::UnidirectionalSequenceLSTMOptionsT *AsUnidirectionalSequenceLSTMOptions() {
+   std::vector<std::string> mht_166_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_166(mht_166_v, 3314, "", "./tensorflow/lite/schema/schema_generated.h", "AsUnidirectionalSequenceLSTMOptions");
+
     return type == BuiltinOptions_UnidirectionalSequenceLSTMOptions ?
       reinterpret_cast<tflite::UnidirectionalSequenceLSTMOptionsT *>(value) : nullptr;
   }
   const tflite::UnidirectionalSequenceLSTMOptionsT *AsUnidirectionalSequenceLSTMOptions() const {
+   std::vector<std::string> mht_167_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_167(mht_167_v, 3321, "", "./tensorflow/lite/schema/schema_generated.h", "AsUnidirectionalSequenceLSTMOptions");
+
     return type == BuiltinOptions_UnidirectionalSequenceLSTMOptions ?
       reinterpret_cast<const tflite::UnidirectionalSequenceLSTMOptionsT *>(value) : nullptr;
   }
   tflite::FloorModOptionsT *AsFloorModOptions() {
+   std::vector<std::string> mht_168_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_168(mht_168_v, 3328, "", "./tensorflow/lite/schema/schema_generated.h", "AsFloorModOptions");
+
     return type == BuiltinOptions_FloorModOptions ?
       reinterpret_cast<tflite::FloorModOptionsT *>(value) : nullptr;
   }
   const tflite::FloorModOptionsT *AsFloorModOptions() const {
+   std::vector<std::string> mht_169_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_169(mht_169_v, 3335, "", "./tensorflow/lite/schema/schema_generated.h", "AsFloorModOptions");
+
     return type == BuiltinOptions_FloorModOptions ?
       reinterpret_cast<const tflite::FloorModOptionsT *>(value) : nullptr;
   }
   tflite::RangeOptionsT *AsRangeOptions() {
+   std::vector<std::string> mht_170_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_170(mht_170_v, 3342, "", "./tensorflow/lite/schema/schema_generated.h", "AsRangeOptions");
+
     return type == BuiltinOptions_RangeOptions ?
       reinterpret_cast<tflite::RangeOptionsT *>(value) : nullptr;
   }
   const tflite::RangeOptionsT *AsRangeOptions() const {
+   std::vector<std::string> mht_171_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_171(mht_171_v, 3349, "", "./tensorflow/lite/schema/schema_generated.h", "AsRangeOptions");
+
     return type == BuiltinOptions_RangeOptions ?
       reinterpret_cast<const tflite::RangeOptionsT *>(value) : nullptr;
   }
   tflite::ResizeNearestNeighborOptionsT *AsResizeNearestNeighborOptions() {
+   std::vector<std::string> mht_172_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_172(mht_172_v, 3356, "", "./tensorflow/lite/schema/schema_generated.h", "AsResizeNearestNeighborOptions");
+
     return type == BuiltinOptions_ResizeNearestNeighborOptions ?
       reinterpret_cast<tflite::ResizeNearestNeighborOptionsT *>(value) : nullptr;
   }
   const tflite::ResizeNearestNeighborOptionsT *AsResizeNearestNeighborOptions() const {
+   std::vector<std::string> mht_173_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_173(mht_173_v, 3363, "", "./tensorflow/lite/schema/schema_generated.h", "AsResizeNearestNeighborOptions");
+
     return type == BuiltinOptions_ResizeNearestNeighborOptions ?
       reinterpret_cast<const tflite::ResizeNearestNeighborOptionsT *>(value) : nullptr;
   }
   tflite::LeakyReluOptionsT *AsLeakyReluOptions() {
+   std::vector<std::string> mht_174_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_174(mht_174_v, 3370, "", "./tensorflow/lite/schema/schema_generated.h", "AsLeakyReluOptions");
+
     return type == BuiltinOptions_LeakyReluOptions ?
       reinterpret_cast<tflite::LeakyReluOptionsT *>(value) : nullptr;
   }
   const tflite::LeakyReluOptionsT *AsLeakyReluOptions() const {
+   std::vector<std::string> mht_175_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_175(mht_175_v, 3377, "", "./tensorflow/lite/schema/schema_generated.h", "AsLeakyReluOptions");
+
     return type == BuiltinOptions_LeakyReluOptions ?
       reinterpret_cast<const tflite::LeakyReluOptionsT *>(value) : nullptr;
   }
   tflite::SquaredDifferenceOptionsT *AsSquaredDifferenceOptions() {
+   std::vector<std::string> mht_176_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_176(mht_176_v, 3384, "", "./tensorflow/lite/schema/schema_generated.h", "AsSquaredDifferenceOptions");
+
     return type == BuiltinOptions_SquaredDifferenceOptions ?
       reinterpret_cast<tflite::SquaredDifferenceOptionsT *>(value) : nullptr;
   }
   const tflite::SquaredDifferenceOptionsT *AsSquaredDifferenceOptions() const {
+   std::vector<std::string> mht_177_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_177(mht_177_v, 3391, "", "./tensorflow/lite/schema/schema_generated.h", "AsSquaredDifferenceOptions");
+
     return type == BuiltinOptions_SquaredDifferenceOptions ?
       reinterpret_cast<const tflite::SquaredDifferenceOptionsT *>(value) : nullptr;
   }
   tflite::MirrorPadOptionsT *AsMirrorPadOptions() {
+   std::vector<std::string> mht_178_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_178(mht_178_v, 3398, "", "./tensorflow/lite/schema/schema_generated.h", "AsMirrorPadOptions");
+
     return type == BuiltinOptions_MirrorPadOptions ?
       reinterpret_cast<tflite::MirrorPadOptionsT *>(value) : nullptr;
   }
   const tflite::MirrorPadOptionsT *AsMirrorPadOptions() const {
+   std::vector<std::string> mht_179_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_179(mht_179_v, 3405, "", "./tensorflow/lite/schema/schema_generated.h", "AsMirrorPadOptions");
+
     return type == BuiltinOptions_MirrorPadOptions ?
       reinterpret_cast<const tflite::MirrorPadOptionsT *>(value) : nullptr;
   }
   tflite::AbsOptionsT *AsAbsOptions() {
+   std::vector<std::string> mht_180_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_180(mht_180_v, 3412, "", "./tensorflow/lite/schema/schema_generated.h", "AsAbsOptions");
+
     return type == BuiltinOptions_AbsOptions ?
       reinterpret_cast<tflite::AbsOptionsT *>(value) : nullptr;
   }
   const tflite::AbsOptionsT *AsAbsOptions() const {
+   std::vector<std::string> mht_181_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_181(mht_181_v, 3419, "", "./tensorflow/lite/schema/schema_generated.h", "AsAbsOptions");
+
     return type == BuiltinOptions_AbsOptions ?
       reinterpret_cast<const tflite::AbsOptionsT *>(value) : nullptr;
   }
   tflite::SplitVOptionsT *AsSplitVOptions() {
+   std::vector<std::string> mht_182_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_182(mht_182_v, 3426, "", "./tensorflow/lite/schema/schema_generated.h", "AsSplitVOptions");
+
     return type == BuiltinOptions_SplitVOptions ?
       reinterpret_cast<tflite::SplitVOptionsT *>(value) : nullptr;
   }
   const tflite::SplitVOptionsT *AsSplitVOptions() const {
+   std::vector<std::string> mht_183_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_183(mht_183_v, 3433, "", "./tensorflow/lite/schema/schema_generated.h", "AsSplitVOptions");
+
     return type == BuiltinOptions_SplitVOptions ?
       reinterpret_cast<const tflite::SplitVOptionsT *>(value) : nullptr;
   }
   tflite::UniqueOptionsT *AsUniqueOptions() {
+   std::vector<std::string> mht_184_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_184(mht_184_v, 3440, "", "./tensorflow/lite/schema/schema_generated.h", "AsUniqueOptions");
+
     return type == BuiltinOptions_UniqueOptions ?
       reinterpret_cast<tflite::UniqueOptionsT *>(value) : nullptr;
   }
   const tflite::UniqueOptionsT *AsUniqueOptions() const {
+   std::vector<std::string> mht_185_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_185(mht_185_v, 3447, "", "./tensorflow/lite/schema/schema_generated.h", "AsUniqueOptions");
+
     return type == BuiltinOptions_UniqueOptions ?
       reinterpret_cast<const tflite::UniqueOptionsT *>(value) : nullptr;
   }
   tflite::ReverseV2OptionsT *AsReverseV2Options() {
+   std::vector<std::string> mht_186_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_186(mht_186_v, 3454, "", "./tensorflow/lite/schema/schema_generated.h", "AsReverseV2Options");
+
     return type == BuiltinOptions_ReverseV2Options ?
       reinterpret_cast<tflite::ReverseV2OptionsT *>(value) : nullptr;
   }
   const tflite::ReverseV2OptionsT *AsReverseV2Options() const {
+   std::vector<std::string> mht_187_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_187(mht_187_v, 3461, "", "./tensorflow/lite/schema/schema_generated.h", "AsReverseV2Options");
+
     return type == BuiltinOptions_ReverseV2Options ?
       reinterpret_cast<const tflite::ReverseV2OptionsT *>(value) : nullptr;
   }
   tflite::AddNOptionsT *AsAddNOptions() {
+   std::vector<std::string> mht_188_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_188(mht_188_v, 3468, "", "./tensorflow/lite/schema/schema_generated.h", "AsAddNOptions");
+
     return type == BuiltinOptions_AddNOptions ?
       reinterpret_cast<tflite::AddNOptionsT *>(value) : nullptr;
   }
   const tflite::AddNOptionsT *AsAddNOptions() const {
+   std::vector<std::string> mht_189_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_189(mht_189_v, 3475, "", "./tensorflow/lite/schema/schema_generated.h", "AsAddNOptions");
+
     return type == BuiltinOptions_AddNOptions ?
       reinterpret_cast<const tflite::AddNOptionsT *>(value) : nullptr;
   }
   tflite::GatherNdOptionsT *AsGatherNdOptions() {
+   std::vector<std::string> mht_190_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_190(mht_190_v, 3482, "", "./tensorflow/lite/schema/schema_generated.h", "AsGatherNdOptions");
+
     return type == BuiltinOptions_GatherNdOptions ?
       reinterpret_cast<tflite::GatherNdOptionsT *>(value) : nullptr;
   }
   const tflite::GatherNdOptionsT *AsGatherNdOptions() const {
+   std::vector<std::string> mht_191_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_191(mht_191_v, 3489, "", "./tensorflow/lite/schema/schema_generated.h", "AsGatherNdOptions");
+
     return type == BuiltinOptions_GatherNdOptions ?
       reinterpret_cast<const tflite::GatherNdOptionsT *>(value) : nullptr;
   }
   tflite::CosOptionsT *AsCosOptions() {
+   std::vector<std::string> mht_192_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_192(mht_192_v, 3496, "", "./tensorflow/lite/schema/schema_generated.h", "AsCosOptions");
+
     return type == BuiltinOptions_CosOptions ?
       reinterpret_cast<tflite::CosOptionsT *>(value) : nullptr;
   }
   const tflite::CosOptionsT *AsCosOptions() const {
+   std::vector<std::string> mht_193_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_193(mht_193_v, 3503, "", "./tensorflow/lite/schema/schema_generated.h", "AsCosOptions");
+
     return type == BuiltinOptions_CosOptions ?
       reinterpret_cast<const tflite::CosOptionsT *>(value) : nullptr;
   }
   tflite::WhereOptionsT *AsWhereOptions() {
+   std::vector<std::string> mht_194_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_194(mht_194_v, 3510, "", "./tensorflow/lite/schema/schema_generated.h", "AsWhereOptions");
+
     return type == BuiltinOptions_WhereOptions ?
       reinterpret_cast<tflite::WhereOptionsT *>(value) : nullptr;
   }
   const tflite::WhereOptionsT *AsWhereOptions() const {
+   std::vector<std::string> mht_195_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_195(mht_195_v, 3517, "", "./tensorflow/lite/schema/schema_generated.h", "AsWhereOptions");
+
     return type == BuiltinOptions_WhereOptions ?
       reinterpret_cast<const tflite::WhereOptionsT *>(value) : nullptr;
   }
   tflite::RankOptionsT *AsRankOptions() {
+   std::vector<std::string> mht_196_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_196(mht_196_v, 3524, "", "./tensorflow/lite/schema/schema_generated.h", "AsRankOptions");
+
     return type == BuiltinOptions_RankOptions ?
       reinterpret_cast<tflite::RankOptionsT *>(value) : nullptr;
   }
   const tflite::RankOptionsT *AsRankOptions() const {
+   std::vector<std::string> mht_197_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_197(mht_197_v, 3531, "", "./tensorflow/lite/schema/schema_generated.h", "AsRankOptions");
+
     return type == BuiltinOptions_RankOptions ?
       reinterpret_cast<const tflite::RankOptionsT *>(value) : nullptr;
   }
   tflite::ReverseSequenceOptionsT *AsReverseSequenceOptions() {
+   std::vector<std::string> mht_198_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_198(mht_198_v, 3538, "", "./tensorflow/lite/schema/schema_generated.h", "AsReverseSequenceOptions");
+
     return type == BuiltinOptions_ReverseSequenceOptions ?
       reinterpret_cast<tflite::ReverseSequenceOptionsT *>(value) : nullptr;
   }
   const tflite::ReverseSequenceOptionsT *AsReverseSequenceOptions() const {
+   std::vector<std::string> mht_199_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_199(mht_199_v, 3545, "", "./tensorflow/lite/schema/schema_generated.h", "AsReverseSequenceOptions");
+
     return type == BuiltinOptions_ReverseSequenceOptions ?
       reinterpret_cast<const tflite::ReverseSequenceOptionsT *>(value) : nullptr;
   }
   tflite::MatrixDiagOptionsT *AsMatrixDiagOptions() {
+   std::vector<std::string> mht_200_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_200(mht_200_v, 3552, "", "./tensorflow/lite/schema/schema_generated.h", "AsMatrixDiagOptions");
+
     return type == BuiltinOptions_MatrixDiagOptions ?
       reinterpret_cast<tflite::MatrixDiagOptionsT *>(value) : nullptr;
   }
   const tflite::MatrixDiagOptionsT *AsMatrixDiagOptions() const {
+   std::vector<std::string> mht_201_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_201(mht_201_v, 3559, "", "./tensorflow/lite/schema/schema_generated.h", "AsMatrixDiagOptions");
+
     return type == BuiltinOptions_MatrixDiagOptions ?
       reinterpret_cast<const tflite::MatrixDiagOptionsT *>(value) : nullptr;
   }
   tflite::QuantizeOptionsT *AsQuantizeOptions() {
+   std::vector<std::string> mht_202_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_202(mht_202_v, 3566, "", "./tensorflow/lite/schema/schema_generated.h", "AsQuantizeOptions");
+
     return type == BuiltinOptions_QuantizeOptions ?
       reinterpret_cast<tflite::QuantizeOptionsT *>(value) : nullptr;
   }
   const tflite::QuantizeOptionsT *AsQuantizeOptions() const {
+   std::vector<std::string> mht_203_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_203(mht_203_v, 3573, "", "./tensorflow/lite/schema/schema_generated.h", "AsQuantizeOptions");
+
     return type == BuiltinOptions_QuantizeOptions ?
       reinterpret_cast<const tflite::QuantizeOptionsT *>(value) : nullptr;
   }
   tflite::MatrixSetDiagOptionsT *AsMatrixSetDiagOptions() {
+   std::vector<std::string> mht_204_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_204(mht_204_v, 3580, "", "./tensorflow/lite/schema/schema_generated.h", "AsMatrixSetDiagOptions");
+
     return type == BuiltinOptions_MatrixSetDiagOptions ?
       reinterpret_cast<tflite::MatrixSetDiagOptionsT *>(value) : nullptr;
   }
   const tflite::MatrixSetDiagOptionsT *AsMatrixSetDiagOptions() const {
+   std::vector<std::string> mht_205_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_205(mht_205_v, 3587, "", "./tensorflow/lite/schema/schema_generated.h", "AsMatrixSetDiagOptions");
+
     return type == BuiltinOptions_MatrixSetDiagOptions ?
       reinterpret_cast<const tflite::MatrixSetDiagOptionsT *>(value) : nullptr;
   }
   tflite::HardSwishOptionsT *AsHardSwishOptions() {
+   std::vector<std::string> mht_206_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_206(mht_206_v, 3594, "", "./tensorflow/lite/schema/schema_generated.h", "AsHardSwishOptions");
+
     return type == BuiltinOptions_HardSwishOptions ?
       reinterpret_cast<tflite::HardSwishOptionsT *>(value) : nullptr;
   }
   const tflite::HardSwishOptionsT *AsHardSwishOptions() const {
+   std::vector<std::string> mht_207_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_207(mht_207_v, 3601, "", "./tensorflow/lite/schema/schema_generated.h", "AsHardSwishOptions");
+
     return type == BuiltinOptions_HardSwishOptions ?
       reinterpret_cast<const tflite::HardSwishOptionsT *>(value) : nullptr;
   }
   tflite::IfOptionsT *AsIfOptions() {
+   std::vector<std::string> mht_208_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_208(mht_208_v, 3608, "", "./tensorflow/lite/schema/schema_generated.h", "AsIfOptions");
+
     return type == BuiltinOptions_IfOptions ?
       reinterpret_cast<tflite::IfOptionsT *>(value) : nullptr;
   }
   const tflite::IfOptionsT *AsIfOptions() const {
+   std::vector<std::string> mht_209_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_209(mht_209_v, 3615, "", "./tensorflow/lite/schema/schema_generated.h", "AsIfOptions");
+
     return type == BuiltinOptions_IfOptions ?
       reinterpret_cast<const tflite::IfOptionsT *>(value) : nullptr;
   }
   tflite::WhileOptionsT *AsWhileOptions() {
+   std::vector<std::string> mht_210_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_210(mht_210_v, 3622, "", "./tensorflow/lite/schema/schema_generated.h", "AsWhileOptions");
+
     return type == BuiltinOptions_WhileOptions ?
       reinterpret_cast<tflite::WhileOptionsT *>(value) : nullptr;
   }
   const tflite::WhileOptionsT *AsWhileOptions() const {
+   std::vector<std::string> mht_211_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_211(mht_211_v, 3629, "", "./tensorflow/lite/schema/schema_generated.h", "AsWhileOptions");
+
     return type == BuiltinOptions_WhileOptions ?
       reinterpret_cast<const tflite::WhileOptionsT *>(value) : nullptr;
   }
   tflite::DepthToSpaceOptionsT *AsDepthToSpaceOptions() {
+   std::vector<std::string> mht_212_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_212(mht_212_v, 3636, "", "./tensorflow/lite/schema/schema_generated.h", "AsDepthToSpaceOptions");
+
     return type == BuiltinOptions_DepthToSpaceOptions ?
       reinterpret_cast<tflite::DepthToSpaceOptionsT *>(value) : nullptr;
   }
   const tflite::DepthToSpaceOptionsT *AsDepthToSpaceOptions() const {
+   std::vector<std::string> mht_213_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_213(mht_213_v, 3643, "", "./tensorflow/lite/schema/schema_generated.h", "AsDepthToSpaceOptions");
+
     return type == BuiltinOptions_DepthToSpaceOptions ?
       reinterpret_cast<const tflite::DepthToSpaceOptionsT *>(value) : nullptr;
   }
   tflite::NonMaxSuppressionV4OptionsT *AsNonMaxSuppressionV4Options() {
+   std::vector<std::string> mht_214_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_214(mht_214_v, 3650, "", "./tensorflow/lite/schema/schema_generated.h", "AsNonMaxSuppressionV4Options");
+
     return type == BuiltinOptions_NonMaxSuppressionV4Options ?
       reinterpret_cast<tflite::NonMaxSuppressionV4OptionsT *>(value) : nullptr;
   }
   const tflite::NonMaxSuppressionV4OptionsT *AsNonMaxSuppressionV4Options() const {
+   std::vector<std::string> mht_215_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_215(mht_215_v, 3657, "", "./tensorflow/lite/schema/schema_generated.h", "AsNonMaxSuppressionV4Options");
+
     return type == BuiltinOptions_NonMaxSuppressionV4Options ?
       reinterpret_cast<const tflite::NonMaxSuppressionV4OptionsT *>(value) : nullptr;
   }
   tflite::NonMaxSuppressionV5OptionsT *AsNonMaxSuppressionV5Options() {
+   std::vector<std::string> mht_216_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_216(mht_216_v, 3664, "", "./tensorflow/lite/schema/schema_generated.h", "AsNonMaxSuppressionV5Options");
+
     return type == BuiltinOptions_NonMaxSuppressionV5Options ?
       reinterpret_cast<tflite::NonMaxSuppressionV5OptionsT *>(value) : nullptr;
   }
   const tflite::NonMaxSuppressionV5OptionsT *AsNonMaxSuppressionV5Options() const {
+   std::vector<std::string> mht_217_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_217(mht_217_v, 3671, "", "./tensorflow/lite/schema/schema_generated.h", "AsNonMaxSuppressionV5Options");
+
     return type == BuiltinOptions_NonMaxSuppressionV5Options ?
       reinterpret_cast<const tflite::NonMaxSuppressionV5OptionsT *>(value) : nullptr;
   }
   tflite::ScatterNdOptionsT *AsScatterNdOptions() {
+   std::vector<std::string> mht_218_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_218(mht_218_v, 3678, "", "./tensorflow/lite/schema/schema_generated.h", "AsScatterNdOptions");
+
     return type == BuiltinOptions_ScatterNdOptions ?
       reinterpret_cast<tflite::ScatterNdOptionsT *>(value) : nullptr;
   }
   const tflite::ScatterNdOptionsT *AsScatterNdOptions() const {
+   std::vector<std::string> mht_219_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_219(mht_219_v, 3685, "", "./tensorflow/lite/schema/schema_generated.h", "AsScatterNdOptions");
+
     return type == BuiltinOptions_ScatterNdOptions ?
       reinterpret_cast<const tflite::ScatterNdOptionsT *>(value) : nullptr;
   }
   tflite::SelectV2OptionsT *AsSelectV2Options() {
+   std::vector<std::string> mht_220_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_220(mht_220_v, 3692, "", "./tensorflow/lite/schema/schema_generated.h", "AsSelectV2Options");
+
     return type == BuiltinOptions_SelectV2Options ?
       reinterpret_cast<tflite::SelectV2OptionsT *>(value) : nullptr;
   }
   const tflite::SelectV2OptionsT *AsSelectV2Options() const {
+   std::vector<std::string> mht_221_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_221(mht_221_v, 3699, "", "./tensorflow/lite/schema/schema_generated.h", "AsSelectV2Options");
+
     return type == BuiltinOptions_SelectV2Options ?
       reinterpret_cast<const tflite::SelectV2OptionsT *>(value) : nullptr;
   }
   tflite::DensifyOptionsT *AsDensifyOptions() {
+   std::vector<std::string> mht_222_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_222(mht_222_v, 3706, "", "./tensorflow/lite/schema/schema_generated.h", "AsDensifyOptions");
+
     return type == BuiltinOptions_DensifyOptions ?
       reinterpret_cast<tflite::DensifyOptionsT *>(value) : nullptr;
   }
   const tflite::DensifyOptionsT *AsDensifyOptions() const {
+   std::vector<std::string> mht_223_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_223(mht_223_v, 3713, "", "./tensorflow/lite/schema/schema_generated.h", "AsDensifyOptions");
+
     return type == BuiltinOptions_DensifyOptions ?
       reinterpret_cast<const tflite::DensifyOptionsT *>(value) : nullptr;
   }
   tflite::SegmentSumOptionsT *AsSegmentSumOptions() {
+   std::vector<std::string> mht_224_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_224(mht_224_v, 3720, "", "./tensorflow/lite/schema/schema_generated.h", "AsSegmentSumOptions");
+
     return type == BuiltinOptions_SegmentSumOptions ?
       reinterpret_cast<tflite::SegmentSumOptionsT *>(value) : nullptr;
   }
   const tflite::SegmentSumOptionsT *AsSegmentSumOptions() const {
+   std::vector<std::string> mht_225_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_225(mht_225_v, 3727, "", "./tensorflow/lite/schema/schema_generated.h", "AsSegmentSumOptions");
+
     return type == BuiltinOptions_SegmentSumOptions ?
       reinterpret_cast<const tflite::SegmentSumOptionsT *>(value) : nullptr;
   }
   tflite::BatchMatMulOptionsT *AsBatchMatMulOptions() {
+   std::vector<std::string> mht_226_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_226(mht_226_v, 3734, "", "./tensorflow/lite/schema/schema_generated.h", "AsBatchMatMulOptions");
+
     return type == BuiltinOptions_BatchMatMulOptions ?
       reinterpret_cast<tflite::BatchMatMulOptionsT *>(value) : nullptr;
   }
   const tflite::BatchMatMulOptionsT *AsBatchMatMulOptions() const {
+   std::vector<std::string> mht_227_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_227(mht_227_v, 3741, "", "./tensorflow/lite/schema/schema_generated.h", "AsBatchMatMulOptions");
+
     return type == BuiltinOptions_BatchMatMulOptions ?
       reinterpret_cast<const tflite::BatchMatMulOptionsT *>(value) : nullptr;
   }
   tflite::CumsumOptionsT *AsCumsumOptions() {
+   std::vector<std::string> mht_228_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_228(mht_228_v, 3748, "", "./tensorflow/lite/schema/schema_generated.h", "AsCumsumOptions");
+
     return type == BuiltinOptions_CumsumOptions ?
       reinterpret_cast<tflite::CumsumOptionsT *>(value) : nullptr;
   }
   const tflite::CumsumOptionsT *AsCumsumOptions() const {
+   std::vector<std::string> mht_229_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_229(mht_229_v, 3755, "", "./tensorflow/lite/schema/schema_generated.h", "AsCumsumOptions");
+
     return type == BuiltinOptions_CumsumOptions ?
       reinterpret_cast<const tflite::CumsumOptionsT *>(value) : nullptr;
   }
   tflite::CallOnceOptionsT *AsCallOnceOptions() {
+   std::vector<std::string> mht_230_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_230(mht_230_v, 3762, "", "./tensorflow/lite/schema/schema_generated.h", "AsCallOnceOptions");
+
     return type == BuiltinOptions_CallOnceOptions ?
       reinterpret_cast<tflite::CallOnceOptionsT *>(value) : nullptr;
   }
   const tflite::CallOnceOptionsT *AsCallOnceOptions() const {
+   std::vector<std::string> mht_231_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_231(mht_231_v, 3769, "", "./tensorflow/lite/schema/schema_generated.h", "AsCallOnceOptions");
+
     return type == BuiltinOptions_CallOnceOptions ?
       reinterpret_cast<const tflite::CallOnceOptionsT *>(value) : nullptr;
   }
   tflite::BroadcastToOptionsT *AsBroadcastToOptions() {
+   std::vector<std::string> mht_232_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_232(mht_232_v, 3776, "", "./tensorflow/lite/schema/schema_generated.h", "AsBroadcastToOptions");
+
     return type == BuiltinOptions_BroadcastToOptions ?
       reinterpret_cast<tflite::BroadcastToOptionsT *>(value) : nullptr;
   }
   const tflite::BroadcastToOptionsT *AsBroadcastToOptions() const {
+   std::vector<std::string> mht_233_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_233(mht_233_v, 3783, "", "./tensorflow/lite/schema/schema_generated.h", "AsBroadcastToOptions");
+
     return type == BuiltinOptions_BroadcastToOptions ?
       reinterpret_cast<const tflite::BroadcastToOptionsT *>(value) : nullptr;
   }
   tflite::Rfft2dOptionsT *AsRfft2dOptions() {
+   std::vector<std::string> mht_234_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_234(mht_234_v, 3790, "", "./tensorflow/lite/schema/schema_generated.h", "AsRfft2dOptions");
+
     return type == BuiltinOptions_Rfft2dOptions ?
       reinterpret_cast<tflite::Rfft2dOptionsT *>(value) : nullptr;
   }
   const tflite::Rfft2dOptionsT *AsRfft2dOptions() const {
+   std::vector<std::string> mht_235_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_235(mht_235_v, 3797, "", "./tensorflow/lite/schema/schema_generated.h", "AsRfft2dOptions");
+
     return type == BuiltinOptions_Rfft2dOptions ?
       reinterpret_cast<const tflite::Rfft2dOptionsT *>(value) : nullptr;
   }
   tflite::Conv3DOptionsT *AsConv3DOptions() {
+   std::vector<std::string> mht_236_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_236(mht_236_v, 3804, "", "./tensorflow/lite/schema/schema_generated.h", "AsConv3DOptions");
+
     return type == BuiltinOptions_Conv3DOptions ?
       reinterpret_cast<tflite::Conv3DOptionsT *>(value) : nullptr;
   }
   const tflite::Conv3DOptionsT *AsConv3DOptions() const {
+   std::vector<std::string> mht_237_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_237(mht_237_v, 3811, "", "./tensorflow/lite/schema/schema_generated.h", "AsConv3DOptions");
+
     return type == BuiltinOptions_Conv3DOptions ?
       reinterpret_cast<const tflite::Conv3DOptionsT *>(value) : nullptr;
   }
   tflite::HashtableOptionsT *AsHashtableOptions() {
+   std::vector<std::string> mht_238_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_238(mht_238_v, 3818, "", "./tensorflow/lite/schema/schema_generated.h", "AsHashtableOptions");
+
     return type == BuiltinOptions_HashtableOptions ?
       reinterpret_cast<tflite::HashtableOptionsT *>(value) : nullptr;
   }
   const tflite::HashtableOptionsT *AsHashtableOptions() const {
+   std::vector<std::string> mht_239_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_239(mht_239_v, 3825, "", "./tensorflow/lite/schema/schema_generated.h", "AsHashtableOptions");
+
     return type == BuiltinOptions_HashtableOptions ?
       reinterpret_cast<const tflite::HashtableOptionsT *>(value) : nullptr;
   }
   tflite::HashtableFindOptionsT *AsHashtableFindOptions() {
+   std::vector<std::string> mht_240_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_240(mht_240_v, 3832, "", "./tensorflow/lite/schema/schema_generated.h", "AsHashtableFindOptions");
+
     return type == BuiltinOptions_HashtableFindOptions ?
       reinterpret_cast<tflite::HashtableFindOptionsT *>(value) : nullptr;
   }
   const tflite::HashtableFindOptionsT *AsHashtableFindOptions() const {
+   std::vector<std::string> mht_241_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_241(mht_241_v, 3839, "", "./tensorflow/lite/schema/schema_generated.h", "AsHashtableFindOptions");
+
     return type == BuiltinOptions_HashtableFindOptions ?
       reinterpret_cast<const tflite::HashtableFindOptionsT *>(value) : nullptr;
   }
   tflite::HashtableImportOptionsT *AsHashtableImportOptions() {
+   std::vector<std::string> mht_242_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_242(mht_242_v, 3846, "", "./tensorflow/lite/schema/schema_generated.h", "AsHashtableImportOptions");
+
     return type == BuiltinOptions_HashtableImportOptions ?
       reinterpret_cast<tflite::HashtableImportOptionsT *>(value) : nullptr;
   }
   const tflite::HashtableImportOptionsT *AsHashtableImportOptions() const {
+   std::vector<std::string> mht_243_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_243(mht_243_v, 3853, "", "./tensorflow/lite/schema/schema_generated.h", "AsHashtableImportOptions");
+
     return type == BuiltinOptions_HashtableImportOptions ?
       reinterpret_cast<const tflite::HashtableImportOptionsT *>(value) : nullptr;
   }
   tflite::HashtableSizeOptionsT *AsHashtableSizeOptions() {
+   std::vector<std::string> mht_244_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_244(mht_244_v, 3860, "", "./tensorflow/lite/schema/schema_generated.h", "AsHashtableSizeOptions");
+
     return type == BuiltinOptions_HashtableSizeOptions ?
       reinterpret_cast<tflite::HashtableSizeOptionsT *>(value) : nullptr;
   }
   const tflite::HashtableSizeOptionsT *AsHashtableSizeOptions() const {
+   std::vector<std::string> mht_245_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_245(mht_245_v, 3867, "", "./tensorflow/lite/schema/schema_generated.h", "AsHashtableSizeOptions");
+
     return type == BuiltinOptions_HashtableSizeOptions ?
       reinterpret_cast<const tflite::HashtableSizeOptionsT *>(value) : nullptr;
   }
   tflite::VarHandleOptionsT *AsVarHandleOptions() {
+   std::vector<std::string> mht_246_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_246(mht_246_v, 3874, "", "./tensorflow/lite/schema/schema_generated.h", "AsVarHandleOptions");
+
     return type == BuiltinOptions_VarHandleOptions ?
       reinterpret_cast<tflite::VarHandleOptionsT *>(value) : nullptr;
   }
   const tflite::VarHandleOptionsT *AsVarHandleOptions() const {
+   std::vector<std::string> mht_247_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_247(mht_247_v, 3881, "", "./tensorflow/lite/schema/schema_generated.h", "AsVarHandleOptions");
+
     return type == BuiltinOptions_VarHandleOptions ?
       reinterpret_cast<const tflite::VarHandleOptionsT *>(value) : nullptr;
   }
   tflite::ReadVariableOptionsT *AsReadVariableOptions() {
+   std::vector<std::string> mht_248_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_248(mht_248_v, 3888, "", "./tensorflow/lite/schema/schema_generated.h", "AsReadVariableOptions");
+
     return type == BuiltinOptions_ReadVariableOptions ?
       reinterpret_cast<tflite::ReadVariableOptionsT *>(value) : nullptr;
   }
   const tflite::ReadVariableOptionsT *AsReadVariableOptions() const {
+   std::vector<std::string> mht_249_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_249(mht_249_v, 3895, "", "./tensorflow/lite/schema/schema_generated.h", "AsReadVariableOptions");
+
     return type == BuiltinOptions_ReadVariableOptions ?
       reinterpret_cast<const tflite::ReadVariableOptionsT *>(value) : nullptr;
   }
   tflite::AssignVariableOptionsT *AsAssignVariableOptions() {
+   std::vector<std::string> mht_250_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_250(mht_250_v, 3902, "", "./tensorflow/lite/schema/schema_generated.h", "AsAssignVariableOptions");
+
     return type == BuiltinOptions_AssignVariableOptions ?
       reinterpret_cast<tflite::AssignVariableOptionsT *>(value) : nullptr;
   }
   const tflite::AssignVariableOptionsT *AsAssignVariableOptions() const {
+   std::vector<std::string> mht_251_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_251(mht_251_v, 3909, "", "./tensorflow/lite/schema/schema_generated.h", "AsAssignVariableOptions");
+
     return type == BuiltinOptions_AssignVariableOptions ?
       reinterpret_cast<const tflite::AssignVariableOptionsT *>(value) : nullptr;
   }
   tflite::RandomOptionsT *AsRandomOptions() {
+   std::vector<std::string> mht_252_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_252(mht_252_v, 3916, "", "./tensorflow/lite/schema/schema_generated.h", "AsRandomOptions");
+
     return type == BuiltinOptions_RandomOptions ?
       reinterpret_cast<tflite::RandomOptionsT *>(value) : nullptr;
   }
   const tflite::RandomOptionsT *AsRandomOptions() const {
+   std::vector<std::string> mht_253_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_253(mht_253_v, 3923, "", "./tensorflow/lite/schema/schema_generated.h", "AsRandomOptions");
+
     return type == BuiltinOptions_RandomOptions ?
       reinterpret_cast<const tflite::RandomOptionsT *>(value) : nullptr;
   }
   tflite::BucketizeOptionsT *AsBucketizeOptions() {
+   std::vector<std::string> mht_254_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_254(mht_254_v, 3930, "", "./tensorflow/lite/schema/schema_generated.h", "AsBucketizeOptions");
+
     return type == BuiltinOptions_BucketizeOptions ?
       reinterpret_cast<tflite::BucketizeOptionsT *>(value) : nullptr;
   }
   const tflite::BucketizeOptionsT *AsBucketizeOptions() const {
+   std::vector<std::string> mht_255_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_255(mht_255_v, 3937, "", "./tensorflow/lite/schema/schema_generated.h", "AsBucketizeOptions");
+
     return type == BuiltinOptions_BucketizeOptions ?
       reinterpret_cast<const tflite::BucketizeOptionsT *>(value) : nullptr;
   }
   tflite::GeluOptionsT *AsGeluOptions() {
+   std::vector<std::string> mht_256_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_256(mht_256_v, 3944, "", "./tensorflow/lite/schema/schema_generated.h", "AsGeluOptions");
+
     return type == BuiltinOptions_GeluOptions ?
       reinterpret_cast<tflite::GeluOptionsT *>(value) : nullptr;
   }
   const tflite::GeluOptionsT *AsGeluOptions() const {
+   std::vector<std::string> mht_257_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_257(mht_257_v, 3951, "", "./tensorflow/lite/schema/schema_generated.h", "AsGeluOptions");
+
     return type == BuiltinOptions_GeluOptions ?
       reinterpret_cast<const tflite::GeluOptionsT *>(value) : nullptr;
   }
   tflite::DynamicUpdateSliceOptionsT *AsDynamicUpdateSliceOptions() {
+   std::vector<std::string> mht_258_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_258(mht_258_v, 3958, "", "./tensorflow/lite/schema/schema_generated.h", "AsDynamicUpdateSliceOptions");
+
     return type == BuiltinOptions_DynamicUpdateSliceOptions ?
       reinterpret_cast<tflite::DynamicUpdateSliceOptionsT *>(value) : nullptr;
   }
   const tflite::DynamicUpdateSliceOptionsT *AsDynamicUpdateSliceOptions() const {
+   std::vector<std::string> mht_259_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_259(mht_259_v, 3965, "", "./tensorflow/lite/schema/schema_generated.h", "AsDynamicUpdateSliceOptions");
+
     return type == BuiltinOptions_DynamicUpdateSliceOptions ?
       reinterpret_cast<const tflite::DynamicUpdateSliceOptionsT *>(value) : nullptr;
   }
@@ -3041,6 +3989,9 @@ inline const Padding (&EnumValuesPadding())[2] {
 }
 
 inline const char * const *EnumNamesPadding() {
+   std::vector<std::string> mht_260_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_260(mht_260_v, 3992, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNamesPadding");
+
   static const char * const names[3] = {
     "SAME",
     "VALID",
@@ -3050,6 +4001,9 @@ inline const char * const *EnumNamesPadding() {
 }
 
 inline const char *EnumNamePadding(Padding e) {
+   std::vector<std::string> mht_261_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_261(mht_261_v, 4004, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNamePadding");
+
   if (flatbuffers::IsOutRange(e, Padding_SAME, Padding_VALID)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesPadding()[index];
@@ -3079,6 +4033,9 @@ inline const ActivationFunctionType (&EnumValuesActivationFunctionType())[6] {
 }
 
 inline const char * const *EnumNamesActivationFunctionType() {
+   std::vector<std::string> mht_262_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_262(mht_262_v, 4036, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNamesActivationFunctionType");
+
   static const char * const names[7] = {
     "NONE",
     "RELU",
@@ -3092,6 +4049,9 @@ inline const char * const *EnumNamesActivationFunctionType() {
 }
 
 inline const char *EnumNameActivationFunctionType(ActivationFunctionType e) {
+   std::vector<std::string> mht_263_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_263(mht_263_v, 4052, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNameActivationFunctionType");
+
   if (flatbuffers::IsOutRange(e, ActivationFunctionType_NONE, ActivationFunctionType_SIGN_BIT)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesActivationFunctionType()[index];
@@ -3115,6 +4075,9 @@ inline const LSHProjectionType (&EnumValuesLSHProjectionType())[3] {
 }
 
 inline const char * const *EnumNamesLSHProjectionType() {
+   std::vector<std::string> mht_264_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_264(mht_264_v, 4078, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNamesLSHProjectionType");
+
   static const char * const names[4] = {
     "UNKNOWN",
     "SPARSE",
@@ -3125,6 +4088,9 @@ inline const char * const *EnumNamesLSHProjectionType() {
 }
 
 inline const char *EnumNameLSHProjectionType(LSHProjectionType e) {
+   std::vector<std::string> mht_265_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_265(mht_265_v, 4091, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNameLSHProjectionType");
+
   if (flatbuffers::IsOutRange(e, LSHProjectionType_UNKNOWN, LSHProjectionType_DENSE)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesLSHProjectionType()[index];
@@ -3146,6 +4112,9 @@ inline const FullyConnectedOptionsWeightsFormat (&EnumValuesFullyConnectedOption
 }
 
 inline const char * const *EnumNamesFullyConnectedOptionsWeightsFormat() {
+   std::vector<std::string> mht_266_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_266(mht_266_v, 4115, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNamesFullyConnectedOptionsWeightsFormat");
+
   static const char * const names[3] = {
     "DEFAULT",
     "SHUFFLED4x16INT8",
@@ -3155,6 +4124,9 @@ inline const char * const *EnumNamesFullyConnectedOptionsWeightsFormat() {
 }
 
 inline const char *EnumNameFullyConnectedOptionsWeightsFormat(FullyConnectedOptionsWeightsFormat e) {
+   std::vector<std::string> mht_267_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_267(mht_267_v, 4127, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNameFullyConnectedOptionsWeightsFormat");
+
   if (flatbuffers::IsOutRange(e, FullyConnectedOptionsWeightsFormat_DEFAULT, FullyConnectedOptionsWeightsFormat_SHUFFLED4x16INT8)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesFullyConnectedOptionsWeightsFormat()[index];
@@ -3176,6 +4148,9 @@ inline const LSTMKernelType (&EnumValuesLSTMKernelType())[2] {
 }
 
 inline const char * const *EnumNamesLSTMKernelType() {
+   std::vector<std::string> mht_268_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_268(mht_268_v, 4151, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNamesLSTMKernelType");
+
   static const char * const names[3] = {
     "FULL",
     "BASIC",
@@ -3185,6 +4160,9 @@ inline const char * const *EnumNamesLSTMKernelType() {
 }
 
 inline const char *EnumNameLSTMKernelType(LSTMKernelType e) {
+   std::vector<std::string> mht_269_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_269(mht_269_v, 4163, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNameLSTMKernelType");
+
   if (flatbuffers::IsOutRange(e, LSTMKernelType_FULL, LSTMKernelType_BASIC)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesLSTMKernelType()[index];
@@ -3208,6 +4186,9 @@ inline const CombinerType (&EnumValuesCombinerType())[3] {
 }
 
 inline const char * const *EnumNamesCombinerType() {
+   std::vector<std::string> mht_270_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_270(mht_270_v, 4189, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNamesCombinerType");
+
   static const char * const names[4] = {
     "SUM",
     "MEAN",
@@ -3218,6 +4199,9 @@ inline const char * const *EnumNamesCombinerType() {
 }
 
 inline const char *EnumNameCombinerType(CombinerType e) {
+   std::vector<std::string> mht_271_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_271(mht_271_v, 4202, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNameCombinerType");
+
   if (flatbuffers::IsOutRange(e, CombinerType_SUM, CombinerType_SQRTN)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesCombinerType()[index];
@@ -3239,6 +4223,9 @@ inline const MirrorPadMode (&EnumValuesMirrorPadMode())[2] {
 }
 
 inline const char * const *EnumNamesMirrorPadMode() {
+   std::vector<std::string> mht_272_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_272(mht_272_v, 4226, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNamesMirrorPadMode");
+
   static const char * const names[3] = {
     "REFLECT",
     "SYMMETRIC",
@@ -3248,6 +4235,9 @@ inline const char * const *EnumNamesMirrorPadMode() {
 }
 
 inline const char *EnumNameMirrorPadMode(MirrorPadMode e) {
+   std::vector<std::string> mht_273_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_273(mht_273_v, 4238, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNameMirrorPadMode");
+
   if (flatbuffers::IsOutRange(e, MirrorPadMode_REFLECT, MirrorPadMode_SYMMETRIC)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesMirrorPadMode()[index];
@@ -3267,6 +4257,9 @@ inline const CustomOptionsFormat (&EnumValuesCustomOptionsFormat())[1] {
 }
 
 inline const char * const *EnumNamesCustomOptionsFormat() {
+   std::vector<std::string> mht_274_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_274(mht_274_v, 4260, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNamesCustomOptionsFormat");
+
   static const char * const names[2] = {
     "FLEXBUFFERS",
     nullptr
@@ -3275,6 +4268,9 @@ inline const char * const *EnumNamesCustomOptionsFormat() {
 }
 
 inline const char *EnumNameCustomOptionsFormat(CustomOptionsFormat e) {
+   std::vector<std::string> mht_275_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_275(mht_275_v, 4271, "", "./tensorflow/lite/schema/schema_generated.h", "EnumNameCustomOptionsFormat");
+
   if (flatbuffers::IsOutRange(e, CustomOptionsFormat_FLEXBUFFERS, CustomOptionsFormat_FLEXBUFFERS)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesCustomOptionsFormat()[index];
@@ -3284,6 +4280,9 @@ struct CustomQuantizationT : public flatbuffers::NativeTable {
   typedef CustomQuantization TableType;
   std::vector<uint8_t> custom;
   CustomQuantizationT() {
+   std::vector<std::string> mht_276_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_276(mht_276_v, 4283, "", "./tensorflow/lite/schema/schema_generated.h", "CustomQuantizationT");
+
   }
 };
 
@@ -3293,9 +4292,15 @@ struct CustomQuantization FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_CUSTOM = 4
   };
   const flatbuffers::Vector<uint8_t> *custom() const {
+   std::vector<std::string> mht_277_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_277(mht_277_v, 4295, "", "./tensorflow/lite/schema/schema_generated.h", "custom");
+
     return GetPointer<const flatbuffers::Vector<uint8_t> *>(VT_CUSTOM);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_278_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_278(mht_278_v, 4301, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_CUSTOM) &&
            verifier.VerifyVector(custom()) &&
@@ -3310,10 +4315,16 @@ struct CustomQuantizationBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_custom(flatbuffers::Offset<flatbuffers::Vector<uint8_t>> custom) {
+   std::vector<std::string> mht_279_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_279(mht_279_v, 4318, "", "./tensorflow/lite/schema/schema_generated.h", "add_custom");
+
     fbb_.AddOffset(CustomQuantization::VT_CUSTOM, custom);
   }
   explicit CustomQuantizationBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_280_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_280(mht_280_v, 4325, "", "./tensorflow/lite/schema/schema_generated.h", "CustomQuantizationBuilder");
+
     start_ = fbb_.StartTable();
   }
   CustomQuantizationBuilder &operator=(const CustomQuantizationBuilder &);
@@ -3354,6 +4365,9 @@ struct QuantizationParametersT : public flatbuffers::NativeTable {
   int32_t quantized_dimension;
   QuantizationParametersT()
       : quantized_dimension(0) {
+   std::vector<std::string> mht_281_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_281(mht_281_v, 4368, "", "./tensorflow/lite/schema/schema_generated.h", "QuantizationParametersT");
+
   }
 };
 
@@ -3369,31 +4383,58 @@ struct QuantizationParameters FLATBUFFERS_FINAL_CLASS : private flatbuffers::Tab
     VT_QUANTIZED_DIMENSION = 16
   };
   const flatbuffers::Vector<float> *min() const {
+   std::vector<std::string> mht_282_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_282(mht_282_v, 4386, "", "./tensorflow/lite/schema/schema_generated.h", "min");
+
     return GetPointer<const flatbuffers::Vector<float> *>(VT_MIN);
   }
   const flatbuffers::Vector<float> *max() const {
+   std::vector<std::string> mht_283_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_283(mht_283_v, 4392, "", "./tensorflow/lite/schema/schema_generated.h", "max");
+
     return GetPointer<const flatbuffers::Vector<float> *>(VT_MAX);
   }
   const flatbuffers::Vector<float> *scale() const {
+   std::vector<std::string> mht_284_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_284(mht_284_v, 4398, "", "./tensorflow/lite/schema/schema_generated.h", "scale");
+
     return GetPointer<const flatbuffers::Vector<float> *>(VT_SCALE);
   }
   const flatbuffers::Vector<int64_t> *zero_point() const {
+   std::vector<std::string> mht_285_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_285(mht_285_v, 4404, "", "./tensorflow/lite/schema/schema_generated.h", "zero_point");
+
     return GetPointer<const flatbuffers::Vector<int64_t> *>(VT_ZERO_POINT);
   }
   tflite::QuantizationDetails details_type() const {
+   std::vector<std::string> mht_286_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_286(mht_286_v, 4410, "", "./tensorflow/lite/schema/schema_generated.h", "details_type");
+
     return static_cast<tflite::QuantizationDetails>(GetField<uint8_t>(VT_DETAILS_TYPE, 0));
   }
   const void *details() const {
+   std::vector<std::string> mht_287_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_287(mht_287_v, 4416, "", "./tensorflow/lite/schema/schema_generated.h", "details");
+
     return GetPointer<const void *>(VT_DETAILS);
   }
   template<typename T> const T *details_as() const;
   const tflite::CustomQuantization *details_as_CustomQuantization() const {
+   std::vector<std::string> mht_288_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_288(mht_288_v, 4423, "", "./tensorflow/lite/schema/schema_generated.h", "details_as_CustomQuantization");
+
     return details_type() == tflite::QuantizationDetails_CustomQuantization ? static_cast<const tflite::CustomQuantization *>(details()) : nullptr;
   }
   int32_t quantized_dimension() const {
+   std::vector<std::string> mht_289_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_289(mht_289_v, 4429, "", "./tensorflow/lite/schema/schema_generated.h", "quantized_dimension");
+
     return GetField<int32_t>(VT_QUANTIZED_DIMENSION, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_290_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_290(mht_290_v, 4435, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_MIN) &&
            verifier.VerifyVector(min()) &&
@@ -3415,6 +4456,9 @@ struct QuantizationParameters FLATBUFFERS_FINAL_CLASS : private flatbuffers::Tab
 };
 
 template<> inline const tflite::CustomQuantization *QuantizationParameters::details_as<tflite::CustomQuantization>() const {
+   std::vector<std::string> mht_291_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_291(mht_291_v, 4459, "", "./tensorflow/lite/schema/schema_generated.h", "QuantizationParameters::details_as<tflite::CustomQuantization>");
+
   return details_as_CustomQuantization();
 }
 
@@ -3422,28 +4466,52 @@ struct QuantizationParametersBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_min(flatbuffers::Offset<flatbuffers::Vector<float>> min) {
+   std::vector<std::string> mht_292_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_292(mht_292_v, 4469, "", "./tensorflow/lite/schema/schema_generated.h", "add_min");
+
     fbb_.AddOffset(QuantizationParameters::VT_MIN, min);
   }
   void add_max(flatbuffers::Offset<flatbuffers::Vector<float>> max) {
+   std::vector<std::string> mht_293_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_293(mht_293_v, 4475, "", "./tensorflow/lite/schema/schema_generated.h", "add_max");
+
     fbb_.AddOffset(QuantizationParameters::VT_MAX, max);
   }
   void add_scale(flatbuffers::Offset<flatbuffers::Vector<float>> scale) {
+   std::vector<std::string> mht_294_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_294(mht_294_v, 4481, "", "./tensorflow/lite/schema/schema_generated.h", "add_scale");
+
     fbb_.AddOffset(QuantizationParameters::VT_SCALE, scale);
   }
   void add_zero_point(flatbuffers::Offset<flatbuffers::Vector<int64_t>> zero_point) {
+   std::vector<std::string> mht_295_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_295(mht_295_v, 4487, "", "./tensorflow/lite/schema/schema_generated.h", "add_zero_point");
+
     fbb_.AddOffset(QuantizationParameters::VT_ZERO_POINT, zero_point);
   }
   void add_details_type(tflite::QuantizationDetails details_type) {
+   std::vector<std::string> mht_296_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_296(mht_296_v, 4493, "", "./tensorflow/lite/schema/schema_generated.h", "add_details_type");
+
     fbb_.AddElement<uint8_t>(QuantizationParameters::VT_DETAILS_TYPE, static_cast<uint8_t>(details_type), 0);
   }
   void add_details(flatbuffers::Offset<void> details) {
+   std::vector<std::string> mht_297_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_297(mht_297_v, 4499, "", "./tensorflow/lite/schema/schema_generated.h", "add_details");
+
     fbb_.AddOffset(QuantizationParameters::VT_DETAILS, details);
   }
   void add_quantized_dimension(int32_t quantized_dimension) {
+   std::vector<std::string> mht_298_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_298(mht_298_v, 4505, "", "./tensorflow/lite/schema/schema_generated.h", "add_quantized_dimension");
+
     fbb_.AddElement<int32_t>(QuantizationParameters::VT_QUANTIZED_DIMENSION, quantized_dimension, 0);
   }
   explicit QuantizationParametersBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_299_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_299(mht_299_v, 4512, "", "./tensorflow/lite/schema/schema_generated.h", "QuantizationParametersBuilder");
+
     start_ = fbb_.StartTable();
   }
   QuantizationParametersBuilder &operator=(const QuantizationParametersBuilder &);
@@ -3504,6 +4572,9 @@ struct Int32VectorT : public flatbuffers::NativeTable {
   typedef Int32Vector TableType;
   std::vector<int32_t> values;
   Int32VectorT() {
+   std::vector<std::string> mht_300_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_300(mht_300_v, 4575, "", "./tensorflow/lite/schema/schema_generated.h", "Int32VectorT");
+
   }
 };
 
@@ -3513,9 +4584,15 @@ struct Int32Vector FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_VALUES = 4
   };
   const flatbuffers::Vector<int32_t> *values() const {
+   std::vector<std::string> mht_301_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_301(mht_301_v, 4587, "", "./tensorflow/lite/schema/schema_generated.h", "values");
+
     return GetPointer<const flatbuffers::Vector<int32_t> *>(VT_VALUES);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_302_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_302(mht_302_v, 4593, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_VALUES) &&
            verifier.VerifyVector(values()) &&
@@ -3530,10 +4607,16 @@ struct Int32VectorBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_values(flatbuffers::Offset<flatbuffers::Vector<int32_t>> values) {
+   std::vector<std::string> mht_303_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_303(mht_303_v, 4610, "", "./tensorflow/lite/schema/schema_generated.h", "add_values");
+
     fbb_.AddOffset(Int32Vector::VT_VALUES, values);
   }
   explicit Int32VectorBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_304_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_304(mht_304_v, 4617, "", "./tensorflow/lite/schema/schema_generated.h", "Int32VectorBuilder");
+
     start_ = fbb_.StartTable();
   }
   Int32VectorBuilder &operator=(const Int32VectorBuilder &);
@@ -3567,6 +4650,9 @@ struct Uint16VectorT : public flatbuffers::NativeTable {
   typedef Uint16Vector TableType;
   std::vector<uint16_t> values;
   Uint16VectorT() {
+   std::vector<std::string> mht_305_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_305(mht_305_v, 4653, "", "./tensorflow/lite/schema/schema_generated.h", "Uint16VectorT");
+
   }
 };
 
@@ -3576,9 +4662,15 @@ struct Uint16Vector FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_VALUES = 4
   };
   const flatbuffers::Vector<uint16_t> *values() const {
+   std::vector<std::string> mht_306_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_306(mht_306_v, 4665, "", "./tensorflow/lite/schema/schema_generated.h", "values");
+
     return GetPointer<const flatbuffers::Vector<uint16_t> *>(VT_VALUES);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_307_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_307(mht_307_v, 4671, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_VALUES) &&
            verifier.VerifyVector(values()) &&
@@ -3593,10 +4685,16 @@ struct Uint16VectorBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_values(flatbuffers::Offset<flatbuffers::Vector<uint16_t>> values) {
+   std::vector<std::string> mht_308_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_308(mht_308_v, 4688, "", "./tensorflow/lite/schema/schema_generated.h", "add_values");
+
     fbb_.AddOffset(Uint16Vector::VT_VALUES, values);
   }
   explicit Uint16VectorBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_309_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_309(mht_309_v, 4695, "", "./tensorflow/lite/schema/schema_generated.h", "Uint16VectorBuilder");
+
     start_ = fbb_.StartTable();
   }
   Uint16VectorBuilder &operator=(const Uint16VectorBuilder &);
@@ -3631,6 +4729,9 @@ struct Uint8VectorT : public flatbuffers::NativeTable {
   typedef Uint8Vector TableType;
   std::vector<uint8_t> values;
   Uint8VectorT() {
+   std::vector<std::string> mht_310_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_310(mht_310_v, 4732, "", "./tensorflow/lite/schema/schema_generated.h", "Uint8VectorT");
+
   }
 };
 
@@ -3640,9 +4741,15 @@ struct Uint8Vector FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_VALUES = 4
   };
   const flatbuffers::Vector<uint8_t> *values() const {
+   std::vector<std::string> mht_311_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_311(mht_311_v, 4744, "", "./tensorflow/lite/schema/schema_generated.h", "values");
+
     return GetPointer<const flatbuffers::Vector<uint8_t> *>(VT_VALUES);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_312_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_312(mht_312_v, 4750, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_VALUES) &&
            verifier.VerifyVector(values()) &&
@@ -3657,10 +4764,16 @@ struct Uint8VectorBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_values(flatbuffers::Offset<flatbuffers::Vector<uint8_t>> values) {
+   std::vector<std::string> mht_313_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_313(mht_313_v, 4767, "", "./tensorflow/lite/schema/schema_generated.h", "add_values");
+
     fbb_.AddOffset(Uint8Vector::VT_VALUES, values);
   }
   explicit Uint8VectorBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_314_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_314(mht_314_v, 4774, "", "./tensorflow/lite/schema/schema_generated.h", "Uint8VectorBuilder");
+
     start_ = fbb_.StartTable();
   }
   Uint8VectorBuilder &operator=(const Uint8VectorBuilder &);
@@ -3700,6 +4813,9 @@ struct DimensionMetadataT : public flatbuffers::NativeTable {
   DimensionMetadataT()
       : format(tflite::DimensionType_DENSE),
         dense_size(0) {
+   std::vector<std::string> mht_315_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_315(mht_315_v, 4816, "", "./tensorflow/lite/schema/schema_generated.h", "DimensionMetadataT");
+
   }
 };
 
@@ -3714,44 +4830,83 @@ struct DimensionMetadata FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_ARRAY_INDICES = 14
   };
   tflite::DimensionType format() const {
+   std::vector<std::string> mht_316_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_316(mht_316_v, 4833, "", "./tensorflow/lite/schema/schema_generated.h", "format");
+
     return static_cast<tflite::DimensionType>(GetField<int8_t>(VT_FORMAT, 0));
   }
   int32_t dense_size() const {
+   std::vector<std::string> mht_317_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_317(mht_317_v, 4839, "", "./tensorflow/lite/schema/schema_generated.h", "dense_size");
+
     return GetField<int32_t>(VT_DENSE_SIZE, 0);
   }
   tflite::SparseIndexVector array_segments_type() const {
+   std::vector<std::string> mht_318_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_318(mht_318_v, 4845, "", "./tensorflow/lite/schema/schema_generated.h", "array_segments_type");
+
     return static_cast<tflite::SparseIndexVector>(GetField<uint8_t>(VT_ARRAY_SEGMENTS_TYPE, 0));
   }
   const void *array_segments() const {
+   std::vector<std::string> mht_319_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_319(mht_319_v, 4851, "", "./tensorflow/lite/schema/schema_generated.h", "array_segments");
+
     return GetPointer<const void *>(VT_ARRAY_SEGMENTS);
   }
   template<typename T> const T *array_segments_as() const;
   const tflite::Int32Vector *array_segments_as_Int32Vector() const {
+   std::vector<std::string> mht_320_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_320(mht_320_v, 4858, "", "./tensorflow/lite/schema/schema_generated.h", "array_segments_as_Int32Vector");
+
     return array_segments_type() == tflite::SparseIndexVector_Int32Vector ? static_cast<const tflite::Int32Vector *>(array_segments()) : nullptr;
   }
   const tflite::Uint16Vector *array_segments_as_Uint16Vector() const {
+   std::vector<std::string> mht_321_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_321(mht_321_v, 4864, "", "./tensorflow/lite/schema/schema_generated.h", "array_segments_as_Uint16Vector");
+
     return array_segments_type() == tflite::SparseIndexVector_Uint16Vector ? static_cast<const tflite::Uint16Vector *>(array_segments()) : nullptr;
   }
   const tflite::Uint8Vector *array_segments_as_Uint8Vector() const {
+   std::vector<std::string> mht_322_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_322(mht_322_v, 4870, "", "./tensorflow/lite/schema/schema_generated.h", "array_segments_as_Uint8Vector");
+
     return array_segments_type() == tflite::SparseIndexVector_Uint8Vector ? static_cast<const tflite::Uint8Vector *>(array_segments()) : nullptr;
   }
   tflite::SparseIndexVector array_indices_type() const {
+   std::vector<std::string> mht_323_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_323(mht_323_v, 4876, "", "./tensorflow/lite/schema/schema_generated.h", "array_indices_type");
+
     return static_cast<tflite::SparseIndexVector>(GetField<uint8_t>(VT_ARRAY_INDICES_TYPE, 0));
   }
   const void *array_indices() const {
+   std::vector<std::string> mht_324_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_324(mht_324_v, 4882, "", "./tensorflow/lite/schema/schema_generated.h", "array_indices");
+
     return GetPointer<const void *>(VT_ARRAY_INDICES);
   }
   template<typename T> const T *array_indices_as() const;
   const tflite::Int32Vector *array_indices_as_Int32Vector() const {
+   std::vector<std::string> mht_325_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_325(mht_325_v, 4889, "", "./tensorflow/lite/schema/schema_generated.h", "array_indices_as_Int32Vector");
+
     return array_indices_type() == tflite::SparseIndexVector_Int32Vector ? static_cast<const tflite::Int32Vector *>(array_indices()) : nullptr;
   }
   const tflite::Uint16Vector *array_indices_as_Uint16Vector() const {
+   std::vector<std::string> mht_326_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_326(mht_326_v, 4895, "", "./tensorflow/lite/schema/schema_generated.h", "array_indices_as_Uint16Vector");
+
     return array_indices_type() == tflite::SparseIndexVector_Uint16Vector ? static_cast<const tflite::Uint16Vector *>(array_indices()) : nullptr;
   }
   const tflite::Uint8Vector *array_indices_as_Uint8Vector() const {
+   std::vector<std::string> mht_327_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_327(mht_327_v, 4901, "", "./tensorflow/lite/schema/schema_generated.h", "array_indices_as_Uint8Vector");
+
     return array_indices_type() == tflite::SparseIndexVector_Uint8Vector ? static_cast<const tflite::Uint8Vector *>(array_indices()) : nullptr;
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_328_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_328(mht_328_v, 4907, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_FORMAT) &&
            VerifyField<int32_t>(verifier, VT_DENSE_SIZE) &&
@@ -3769,26 +4924,44 @@ struct DimensionMetadata FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
 };
 
 template<> inline const tflite::Int32Vector *DimensionMetadata::array_segments_as<tflite::Int32Vector>() const {
+   std::vector<std::string> mht_329_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_329(mht_329_v, 4927, "", "./tensorflow/lite/schema/schema_generated.h", "DimensionMetadata::array_segments_as<tflite::Int32Vector>");
+
   return array_segments_as_Int32Vector();
 }
 
 template<> inline const tflite::Uint16Vector *DimensionMetadata::array_segments_as<tflite::Uint16Vector>() const {
+   std::vector<std::string> mht_330_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_330(mht_330_v, 4934, "", "./tensorflow/lite/schema/schema_generated.h", "DimensionMetadata::array_segments_as<tflite::Uint16Vector>");
+
   return array_segments_as_Uint16Vector();
 }
 
 template<> inline const tflite::Uint8Vector *DimensionMetadata::array_segments_as<tflite::Uint8Vector>() const {
+   std::vector<std::string> mht_331_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_331(mht_331_v, 4941, "", "./tensorflow/lite/schema/schema_generated.h", "DimensionMetadata::array_segments_as<tflite::Uint8Vector>");
+
   return array_segments_as_Uint8Vector();
 }
 
 template<> inline const tflite::Int32Vector *DimensionMetadata::array_indices_as<tflite::Int32Vector>() const {
+   std::vector<std::string> mht_332_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_332(mht_332_v, 4948, "", "./tensorflow/lite/schema/schema_generated.h", "DimensionMetadata::array_indices_as<tflite::Int32Vector>");
+
   return array_indices_as_Int32Vector();
 }
 
 template<> inline const tflite::Uint16Vector *DimensionMetadata::array_indices_as<tflite::Uint16Vector>() const {
+   std::vector<std::string> mht_333_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_333(mht_333_v, 4955, "", "./tensorflow/lite/schema/schema_generated.h", "DimensionMetadata::array_indices_as<tflite::Uint16Vector>");
+
   return array_indices_as_Uint16Vector();
 }
 
 template<> inline const tflite::Uint8Vector *DimensionMetadata::array_indices_as<tflite::Uint8Vector>() const {
+   std::vector<std::string> mht_334_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_334(mht_334_v, 4962, "", "./tensorflow/lite/schema/schema_generated.h", "DimensionMetadata::array_indices_as<tflite::Uint8Vector>");
+
   return array_indices_as_Uint8Vector();
 }
 
@@ -3796,25 +4969,46 @@ struct DimensionMetadataBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_format(tflite::DimensionType format) {
+   std::vector<std::string> mht_335_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_335(mht_335_v, 4972, "", "./tensorflow/lite/schema/schema_generated.h", "add_format");
+
     fbb_.AddElement<int8_t>(DimensionMetadata::VT_FORMAT, static_cast<int8_t>(format), 0);
   }
   void add_dense_size(int32_t dense_size) {
+   std::vector<std::string> mht_336_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_336(mht_336_v, 4978, "", "./tensorflow/lite/schema/schema_generated.h", "add_dense_size");
+
     fbb_.AddElement<int32_t>(DimensionMetadata::VT_DENSE_SIZE, dense_size, 0);
   }
   void add_array_segments_type(tflite::SparseIndexVector array_segments_type) {
+   std::vector<std::string> mht_337_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_337(mht_337_v, 4984, "", "./tensorflow/lite/schema/schema_generated.h", "add_array_segments_type");
+
     fbb_.AddElement<uint8_t>(DimensionMetadata::VT_ARRAY_SEGMENTS_TYPE, static_cast<uint8_t>(array_segments_type), 0);
   }
   void add_array_segments(flatbuffers::Offset<void> array_segments) {
+   std::vector<std::string> mht_338_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_338(mht_338_v, 4990, "", "./tensorflow/lite/schema/schema_generated.h", "add_array_segments");
+
     fbb_.AddOffset(DimensionMetadata::VT_ARRAY_SEGMENTS, array_segments);
   }
   void add_array_indices_type(tflite::SparseIndexVector array_indices_type) {
+   std::vector<std::string> mht_339_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_339(mht_339_v, 4996, "", "./tensorflow/lite/schema/schema_generated.h", "add_array_indices_type");
+
     fbb_.AddElement<uint8_t>(DimensionMetadata::VT_ARRAY_INDICES_TYPE, static_cast<uint8_t>(array_indices_type), 0);
   }
   void add_array_indices(flatbuffers::Offset<void> array_indices) {
+   std::vector<std::string> mht_340_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_340(mht_340_v, 5002, "", "./tensorflow/lite/schema/schema_generated.h", "add_array_indices");
+
     fbb_.AddOffset(DimensionMetadata::VT_ARRAY_INDICES, array_indices);
   }
   explicit DimensionMetadataBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_341_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_341(mht_341_v, 5009, "", "./tensorflow/lite/schema/schema_generated.h", "DimensionMetadataBuilder");
+
     start_ = fbb_.StartTable();
   }
   DimensionMetadataBuilder &operator=(const DimensionMetadataBuilder &);
@@ -3851,6 +5045,9 @@ struct SparsityParametersT : public flatbuffers::NativeTable {
   std::vector<int32_t> block_map;
   std::vector<std::unique_ptr<tflite::DimensionMetadataT>> dim_metadata;
   SparsityParametersT() {
+   std::vector<std::string> mht_342_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_342(mht_342_v, 5048, "", "./tensorflow/lite/schema/schema_generated.h", "SparsityParametersT");
+
   }
 };
 
@@ -3862,15 +5059,27 @@ struct SparsityParameters FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_DIM_METADATA = 8
   };
   const flatbuffers::Vector<int32_t> *traversal_order() const {
+   std::vector<std::string> mht_343_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_343(mht_343_v, 5062, "", "./tensorflow/lite/schema/schema_generated.h", "traversal_order");
+
     return GetPointer<const flatbuffers::Vector<int32_t> *>(VT_TRAVERSAL_ORDER);
   }
   const flatbuffers::Vector<int32_t> *block_map() const {
+   std::vector<std::string> mht_344_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_344(mht_344_v, 5068, "", "./tensorflow/lite/schema/schema_generated.h", "block_map");
+
     return GetPointer<const flatbuffers::Vector<int32_t> *>(VT_BLOCK_MAP);
   }
   const flatbuffers::Vector<flatbuffers::Offset<tflite::DimensionMetadata>> *dim_metadata() const {
+   std::vector<std::string> mht_345_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_345(mht_345_v, 5074, "", "./tensorflow/lite/schema/schema_generated.h", "dim_metadata");
+
     return GetPointer<const flatbuffers::Vector<flatbuffers::Offset<tflite::DimensionMetadata>> *>(VT_DIM_METADATA);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_346_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_346(mht_346_v, 5080, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_TRAVERSAL_ORDER) &&
            verifier.VerifyVector(traversal_order()) &&
@@ -3890,16 +5099,28 @@ struct SparsityParametersBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_traversal_order(flatbuffers::Offset<flatbuffers::Vector<int32_t>> traversal_order) {
+   std::vector<std::string> mht_347_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_347(mht_347_v, 5102, "", "./tensorflow/lite/schema/schema_generated.h", "add_traversal_order");
+
     fbb_.AddOffset(SparsityParameters::VT_TRAVERSAL_ORDER, traversal_order);
   }
   void add_block_map(flatbuffers::Offset<flatbuffers::Vector<int32_t>> block_map) {
+   std::vector<std::string> mht_348_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_348(mht_348_v, 5108, "", "./tensorflow/lite/schema/schema_generated.h", "add_block_map");
+
     fbb_.AddOffset(SparsityParameters::VT_BLOCK_MAP, block_map);
   }
   void add_dim_metadata(flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<tflite::DimensionMetadata>>> dim_metadata) {
+   std::vector<std::string> mht_349_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_349(mht_349_v, 5114, "", "./tensorflow/lite/schema/schema_generated.h", "add_dim_metadata");
+
     fbb_.AddOffset(SparsityParameters::VT_DIM_METADATA, dim_metadata);
   }
   explicit SparsityParametersBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_350_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_350(mht_350_v, 5121, "", "./tensorflow/lite/schema/schema_generated.h", "SparsityParametersBuilder");
+
     start_ = fbb_.StartTable();
   }
   SparsityParametersBuilder &operator=(const SparsityParametersBuilder &);
@@ -3953,6 +5174,9 @@ struct TensorT : public flatbuffers::NativeTable {
       : type(tflite::TensorType_FLOAT32),
         buffer(0),
         is_variable(false) {
+   std::vector<std::string> mht_351_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_351(mht_351_v, 5177, "", "./tensorflow/lite/schema/schema_generated.h", "TensorT");
+
   }
 };
 
@@ -3969,30 +5193,57 @@ struct Tensor FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_SHAPE_SIGNATURE = 18
   };
   const flatbuffers::Vector<int32_t> *shape() const {
+   std::vector<std::string> mht_352_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_352(mht_352_v, 5196, "", "./tensorflow/lite/schema/schema_generated.h", "shape");
+
     return GetPointer<const flatbuffers::Vector<int32_t> *>(VT_SHAPE);
   }
   tflite::TensorType type() const {
+   std::vector<std::string> mht_353_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_353(mht_353_v, 5202, "", "./tensorflow/lite/schema/schema_generated.h", "type");
+
     return static_cast<tflite::TensorType>(GetField<int8_t>(VT_TYPE, 0));
   }
   uint32_t buffer() const {
+   std::vector<std::string> mht_354_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_354(mht_354_v, 5208, "", "./tensorflow/lite/schema/schema_generated.h", "buffer");
+
     return GetField<uint32_t>(VT_BUFFER, 0);
   }
   const flatbuffers::String *name() const {
+   std::vector<std::string> mht_355_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_355(mht_355_v, 5214, "", "./tensorflow/lite/schema/schema_generated.h", "name");
+
     return GetPointer<const flatbuffers::String *>(VT_NAME);
   }
   const tflite::QuantizationParameters *quantization() const {
+   std::vector<std::string> mht_356_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_356(mht_356_v, 5220, "", "./tensorflow/lite/schema/schema_generated.h", "quantization");
+
     return GetPointer<const tflite::QuantizationParameters *>(VT_QUANTIZATION);
   }
   bool is_variable() const {
+   std::vector<std::string> mht_357_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_357(mht_357_v, 5226, "", "./tensorflow/lite/schema/schema_generated.h", "is_variable");
+
     return GetField<uint8_t>(VT_IS_VARIABLE, 0) != 0;
   }
   const tflite::SparsityParameters *sparsity() const {
+   std::vector<std::string> mht_358_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_358(mht_358_v, 5232, "", "./tensorflow/lite/schema/schema_generated.h", "sparsity");
+
     return GetPointer<const tflite::SparsityParameters *>(VT_SPARSITY);
   }
   const flatbuffers::Vector<int32_t> *shape_signature() const {
+   std::vector<std::string> mht_359_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_359(mht_359_v, 5238, "", "./tensorflow/lite/schema/schema_generated.h", "shape_signature");
+
     return GetPointer<const flatbuffers::Vector<int32_t> *>(VT_SHAPE_SIGNATURE);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_360_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_360(mht_360_v, 5244, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_SHAPE) &&
            verifier.VerifyVector(shape()) &&
@@ -4018,31 +5269,58 @@ struct TensorBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_shape(flatbuffers::Offset<flatbuffers::Vector<int32_t>> shape) {
+   std::vector<std::string> mht_361_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_361(mht_361_v, 5272, "", "./tensorflow/lite/schema/schema_generated.h", "add_shape");
+
     fbb_.AddOffset(Tensor::VT_SHAPE, shape);
   }
   void add_type(tflite::TensorType type) {
+   std::vector<std::string> mht_362_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_362(mht_362_v, 5278, "", "./tensorflow/lite/schema/schema_generated.h", "add_type");
+
     fbb_.AddElement<int8_t>(Tensor::VT_TYPE, static_cast<int8_t>(type), 0);
   }
   void add_buffer(uint32_t buffer) {
+   std::vector<std::string> mht_363_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_363(mht_363_v, 5284, "", "./tensorflow/lite/schema/schema_generated.h", "add_buffer");
+
     fbb_.AddElement<uint32_t>(Tensor::VT_BUFFER, buffer, 0);
   }
   void add_name(flatbuffers::Offset<flatbuffers::String> name) {
+   std::vector<std::string> mht_364_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_364(mht_364_v, 5290, "", "./tensorflow/lite/schema/schema_generated.h", "add_name");
+
     fbb_.AddOffset(Tensor::VT_NAME, name);
   }
   void add_quantization(flatbuffers::Offset<tflite::QuantizationParameters> quantization) {
+   std::vector<std::string> mht_365_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_365(mht_365_v, 5296, "", "./tensorflow/lite/schema/schema_generated.h", "add_quantization");
+
     fbb_.AddOffset(Tensor::VT_QUANTIZATION, quantization);
   }
   void add_is_variable(bool is_variable) {
+   std::vector<std::string> mht_366_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_366(mht_366_v, 5302, "", "./tensorflow/lite/schema/schema_generated.h", "add_is_variable");
+
     fbb_.AddElement<uint8_t>(Tensor::VT_IS_VARIABLE, static_cast<uint8_t>(is_variable), 0);
   }
   void add_sparsity(flatbuffers::Offset<tflite::SparsityParameters> sparsity) {
+   std::vector<std::string> mht_367_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_367(mht_367_v, 5308, "", "./tensorflow/lite/schema/schema_generated.h", "add_sparsity");
+
     fbb_.AddOffset(Tensor::VT_SPARSITY, sparsity);
   }
   void add_shape_signature(flatbuffers::Offset<flatbuffers::Vector<int32_t>> shape_signature) {
+   std::vector<std::string> mht_368_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_368(mht_368_v, 5314, "", "./tensorflow/lite/schema/schema_generated.h", "add_shape_signature");
+
     fbb_.AddOffset(Tensor::VT_SHAPE_SIGNATURE, shape_signature);
   }
   explicit TensorBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_369_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_369(mht_369_v, 5321, "", "./tensorflow/lite/schema/schema_generated.h", "TensorBuilder");
+
     start_ = fbb_.StartTable();
   }
   TensorBuilder &operator=(const TensorBuilder &);
@@ -4117,6 +5395,9 @@ struct Conv2DOptionsT : public flatbuffers::NativeTable {
         fused_activation_function(tflite::ActivationFunctionType_NONE),
         dilation_w_factor(1),
         dilation_h_factor(1) {
+   std::vector<std::string> mht_370_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_370(mht_370_v, 5398, "", "./tensorflow/lite/schema/schema_generated.h", "Conv2DOptionsT");
+
   }
 };
 
@@ -4131,24 +5412,45 @@ struct Conv2DOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_DILATION_H_FACTOR = 14
   };
   tflite::Padding padding() const {
+   std::vector<std::string> mht_371_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_371(mht_371_v, 5415, "", "./tensorflow/lite/schema/schema_generated.h", "padding");
+
     return static_cast<tflite::Padding>(GetField<int8_t>(VT_PADDING, 0));
   }
   int32_t stride_w() const {
+   std::vector<std::string> mht_372_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_372(mht_372_v, 5421, "", "./tensorflow/lite/schema/schema_generated.h", "stride_w");
+
     return GetField<int32_t>(VT_STRIDE_W, 0);
   }
   int32_t stride_h() const {
+   std::vector<std::string> mht_373_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_373(mht_373_v, 5427, "", "./tensorflow/lite/schema/schema_generated.h", "stride_h");
+
     return GetField<int32_t>(VT_STRIDE_H, 0);
   }
   tflite::ActivationFunctionType fused_activation_function() const {
+   std::vector<std::string> mht_374_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_374(mht_374_v, 5433, "", "./tensorflow/lite/schema/schema_generated.h", "fused_activation_function");
+
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
   int32_t dilation_w_factor() const {
+   std::vector<std::string> mht_375_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_375(mht_375_v, 5439, "", "./tensorflow/lite/schema/schema_generated.h", "dilation_w_factor");
+
     return GetField<int32_t>(VT_DILATION_W_FACTOR, 1);
   }
   int32_t dilation_h_factor() const {
+   std::vector<std::string> mht_376_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_376(mht_376_v, 5445, "", "./tensorflow/lite/schema/schema_generated.h", "dilation_h_factor");
+
     return GetField<int32_t>(VT_DILATION_H_FACTOR, 1);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_377_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_377(mht_377_v, 5451, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_PADDING) &&
            VerifyField<int32_t>(verifier, VT_STRIDE_W) &&
@@ -4167,25 +5469,46 @@ struct Conv2DOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_padding(tflite::Padding padding) {
+   std::vector<std::string> mht_378_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_378(mht_378_v, 5472, "", "./tensorflow/lite/schema/schema_generated.h", "add_padding");
+
     fbb_.AddElement<int8_t>(Conv2DOptions::VT_PADDING, static_cast<int8_t>(padding), 0);
   }
   void add_stride_w(int32_t stride_w) {
+   std::vector<std::string> mht_379_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_379(mht_379_v, 5478, "", "./tensorflow/lite/schema/schema_generated.h", "add_stride_w");
+
     fbb_.AddElement<int32_t>(Conv2DOptions::VT_STRIDE_W, stride_w, 0);
   }
   void add_stride_h(int32_t stride_h) {
+   std::vector<std::string> mht_380_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_380(mht_380_v, 5484, "", "./tensorflow/lite/schema/schema_generated.h", "add_stride_h");
+
     fbb_.AddElement<int32_t>(Conv2DOptions::VT_STRIDE_H, stride_h, 0);
   }
   void add_fused_activation_function(tflite::ActivationFunctionType fused_activation_function) {
+   std::vector<std::string> mht_381_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_381(mht_381_v, 5490, "", "./tensorflow/lite/schema/schema_generated.h", "add_fused_activation_function");
+
     fbb_.AddElement<int8_t>(Conv2DOptions::VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(fused_activation_function), 0);
   }
   void add_dilation_w_factor(int32_t dilation_w_factor) {
+   std::vector<std::string> mht_382_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_382(mht_382_v, 5496, "", "./tensorflow/lite/schema/schema_generated.h", "add_dilation_w_factor");
+
     fbb_.AddElement<int32_t>(Conv2DOptions::VT_DILATION_W_FACTOR, dilation_w_factor, 1);
   }
   void add_dilation_h_factor(int32_t dilation_h_factor) {
+   std::vector<std::string> mht_383_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_383(mht_383_v, 5502, "", "./tensorflow/lite/schema/schema_generated.h", "add_dilation_h_factor");
+
     fbb_.AddElement<int32_t>(Conv2DOptions::VT_DILATION_H_FACTOR, dilation_h_factor, 1);
   }
   explicit Conv2DOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_384_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_384(mht_384_v, 5509, "", "./tensorflow/lite/schema/schema_generated.h", "Conv2DOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   Conv2DOptionsBuilder &operator=(const Conv2DOptionsBuilder &);
@@ -4235,6 +5558,9 @@ struct Conv3DOptionsT : public flatbuffers::NativeTable {
         dilation_d_factor(1),
         dilation_w_factor(1),
         dilation_h_factor(1) {
+   std::vector<std::string> mht_385_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_385(mht_385_v, 5561, "", "./tensorflow/lite/schema/schema_generated.h", "Conv3DOptionsT");
+
   }
 };
 
@@ -4251,30 +5577,57 @@ struct Conv3DOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_DILATION_H_FACTOR = 18
   };
   tflite::Padding padding() const {
+   std::vector<std::string> mht_386_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_386(mht_386_v, 5580, "", "./tensorflow/lite/schema/schema_generated.h", "padding");
+
     return static_cast<tflite::Padding>(GetField<int8_t>(VT_PADDING, 0));
   }
   int32_t stride_d() const {
+   std::vector<std::string> mht_387_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_387(mht_387_v, 5586, "", "./tensorflow/lite/schema/schema_generated.h", "stride_d");
+
     return GetField<int32_t>(VT_STRIDE_D, 0);
   }
   int32_t stride_w() const {
+   std::vector<std::string> mht_388_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_388(mht_388_v, 5592, "", "./tensorflow/lite/schema/schema_generated.h", "stride_w");
+
     return GetField<int32_t>(VT_STRIDE_W, 0);
   }
   int32_t stride_h() const {
+   std::vector<std::string> mht_389_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_389(mht_389_v, 5598, "", "./tensorflow/lite/schema/schema_generated.h", "stride_h");
+
     return GetField<int32_t>(VT_STRIDE_H, 0);
   }
   tflite::ActivationFunctionType fused_activation_function() const {
+   std::vector<std::string> mht_390_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_390(mht_390_v, 5604, "", "./tensorflow/lite/schema/schema_generated.h", "fused_activation_function");
+
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
   int32_t dilation_d_factor() const {
+   std::vector<std::string> mht_391_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_391(mht_391_v, 5610, "", "./tensorflow/lite/schema/schema_generated.h", "dilation_d_factor");
+
     return GetField<int32_t>(VT_DILATION_D_FACTOR, 1);
   }
   int32_t dilation_w_factor() const {
+   std::vector<std::string> mht_392_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_392(mht_392_v, 5616, "", "./tensorflow/lite/schema/schema_generated.h", "dilation_w_factor");
+
     return GetField<int32_t>(VT_DILATION_W_FACTOR, 1);
   }
   int32_t dilation_h_factor() const {
+   std::vector<std::string> mht_393_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_393(mht_393_v, 5622, "", "./tensorflow/lite/schema/schema_generated.h", "dilation_h_factor");
+
     return GetField<int32_t>(VT_DILATION_H_FACTOR, 1);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_394_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_394(mht_394_v, 5628, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_PADDING) &&
            VerifyField<int32_t>(verifier, VT_STRIDE_D) &&
@@ -4295,31 +5648,58 @@ struct Conv3DOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_padding(tflite::Padding padding) {
+   std::vector<std::string> mht_395_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_395(mht_395_v, 5651, "", "./tensorflow/lite/schema/schema_generated.h", "add_padding");
+
     fbb_.AddElement<int8_t>(Conv3DOptions::VT_PADDING, static_cast<int8_t>(padding), 0);
   }
   void add_stride_d(int32_t stride_d) {
+   std::vector<std::string> mht_396_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_396(mht_396_v, 5657, "", "./tensorflow/lite/schema/schema_generated.h", "add_stride_d");
+
     fbb_.AddElement<int32_t>(Conv3DOptions::VT_STRIDE_D, stride_d, 0);
   }
   void add_stride_w(int32_t stride_w) {
+   std::vector<std::string> mht_397_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_397(mht_397_v, 5663, "", "./tensorflow/lite/schema/schema_generated.h", "add_stride_w");
+
     fbb_.AddElement<int32_t>(Conv3DOptions::VT_STRIDE_W, stride_w, 0);
   }
   void add_stride_h(int32_t stride_h) {
+   std::vector<std::string> mht_398_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_398(mht_398_v, 5669, "", "./tensorflow/lite/schema/schema_generated.h", "add_stride_h");
+
     fbb_.AddElement<int32_t>(Conv3DOptions::VT_STRIDE_H, stride_h, 0);
   }
   void add_fused_activation_function(tflite::ActivationFunctionType fused_activation_function) {
+   std::vector<std::string> mht_399_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_399(mht_399_v, 5675, "", "./tensorflow/lite/schema/schema_generated.h", "add_fused_activation_function");
+
     fbb_.AddElement<int8_t>(Conv3DOptions::VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(fused_activation_function), 0);
   }
   void add_dilation_d_factor(int32_t dilation_d_factor) {
+   std::vector<std::string> mht_400_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_400(mht_400_v, 5681, "", "./tensorflow/lite/schema/schema_generated.h", "add_dilation_d_factor");
+
     fbb_.AddElement<int32_t>(Conv3DOptions::VT_DILATION_D_FACTOR, dilation_d_factor, 1);
   }
   void add_dilation_w_factor(int32_t dilation_w_factor) {
+   std::vector<std::string> mht_401_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_401(mht_401_v, 5687, "", "./tensorflow/lite/schema/schema_generated.h", "add_dilation_w_factor");
+
     fbb_.AddElement<int32_t>(Conv3DOptions::VT_DILATION_W_FACTOR, dilation_w_factor, 1);
   }
   void add_dilation_h_factor(int32_t dilation_h_factor) {
+   std::vector<std::string> mht_402_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_402(mht_402_v, 5693, "", "./tensorflow/lite/schema/schema_generated.h", "add_dilation_h_factor");
+
     fbb_.AddElement<int32_t>(Conv3DOptions::VT_DILATION_H_FACTOR, dilation_h_factor, 1);
   }
   explicit Conv3DOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_403_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_403(mht_403_v, 5700, "", "./tensorflow/lite/schema/schema_generated.h", "Conv3DOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   Conv3DOptionsBuilder &operator=(const Conv3DOptionsBuilder &);
@@ -4369,6 +5749,9 @@ struct Pool2DOptionsT : public flatbuffers::NativeTable {
         filter_width(0),
         filter_height(0),
         fused_activation_function(tflite::ActivationFunctionType_NONE) {
+   std::vector<std::string> mht_404_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_404(mht_404_v, 5752, "", "./tensorflow/lite/schema/schema_generated.h", "Pool2DOptionsT");
+
   }
 };
 
@@ -4383,24 +5766,45 @@ struct Pool2DOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_FUSED_ACTIVATION_FUNCTION = 14
   };
   tflite::Padding padding() const {
+   std::vector<std::string> mht_405_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_405(mht_405_v, 5769, "", "./tensorflow/lite/schema/schema_generated.h", "padding");
+
     return static_cast<tflite::Padding>(GetField<int8_t>(VT_PADDING, 0));
   }
   int32_t stride_w() const {
+   std::vector<std::string> mht_406_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_406(mht_406_v, 5775, "", "./tensorflow/lite/schema/schema_generated.h", "stride_w");
+
     return GetField<int32_t>(VT_STRIDE_W, 0);
   }
   int32_t stride_h() const {
+   std::vector<std::string> mht_407_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_407(mht_407_v, 5781, "", "./tensorflow/lite/schema/schema_generated.h", "stride_h");
+
     return GetField<int32_t>(VT_STRIDE_H, 0);
   }
   int32_t filter_width() const {
+   std::vector<std::string> mht_408_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_408(mht_408_v, 5787, "", "./tensorflow/lite/schema/schema_generated.h", "filter_width");
+
     return GetField<int32_t>(VT_FILTER_WIDTH, 0);
   }
   int32_t filter_height() const {
+   std::vector<std::string> mht_409_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_409(mht_409_v, 5793, "", "./tensorflow/lite/schema/schema_generated.h", "filter_height");
+
     return GetField<int32_t>(VT_FILTER_HEIGHT, 0);
   }
   tflite::ActivationFunctionType fused_activation_function() const {
+   std::vector<std::string> mht_410_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_410(mht_410_v, 5799, "", "./tensorflow/lite/schema/schema_generated.h", "fused_activation_function");
+
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_411_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_411(mht_411_v, 5805, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_PADDING) &&
            VerifyField<int32_t>(verifier, VT_STRIDE_W) &&
@@ -4419,25 +5823,46 @@ struct Pool2DOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_padding(tflite::Padding padding) {
+   std::vector<std::string> mht_412_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_412(mht_412_v, 5826, "", "./tensorflow/lite/schema/schema_generated.h", "add_padding");
+
     fbb_.AddElement<int8_t>(Pool2DOptions::VT_PADDING, static_cast<int8_t>(padding), 0);
   }
   void add_stride_w(int32_t stride_w) {
+   std::vector<std::string> mht_413_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_413(mht_413_v, 5832, "", "./tensorflow/lite/schema/schema_generated.h", "add_stride_w");
+
     fbb_.AddElement<int32_t>(Pool2DOptions::VT_STRIDE_W, stride_w, 0);
   }
   void add_stride_h(int32_t stride_h) {
+   std::vector<std::string> mht_414_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_414(mht_414_v, 5838, "", "./tensorflow/lite/schema/schema_generated.h", "add_stride_h");
+
     fbb_.AddElement<int32_t>(Pool2DOptions::VT_STRIDE_H, stride_h, 0);
   }
   void add_filter_width(int32_t filter_width) {
+   std::vector<std::string> mht_415_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_415(mht_415_v, 5844, "", "./tensorflow/lite/schema/schema_generated.h", "add_filter_width");
+
     fbb_.AddElement<int32_t>(Pool2DOptions::VT_FILTER_WIDTH, filter_width, 0);
   }
   void add_filter_height(int32_t filter_height) {
+   std::vector<std::string> mht_416_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_416(mht_416_v, 5850, "", "./tensorflow/lite/schema/schema_generated.h", "add_filter_height");
+
     fbb_.AddElement<int32_t>(Pool2DOptions::VT_FILTER_HEIGHT, filter_height, 0);
   }
   void add_fused_activation_function(tflite::ActivationFunctionType fused_activation_function) {
+   std::vector<std::string> mht_417_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_417(mht_417_v, 5856, "", "./tensorflow/lite/schema/schema_generated.h", "add_fused_activation_function");
+
     fbb_.AddElement<int8_t>(Pool2DOptions::VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(fused_activation_function), 0);
   }
   explicit Pool2DOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_418_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_418(mht_418_v, 5863, "", "./tensorflow/lite/schema/schema_generated.h", "Pool2DOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   Pool2DOptionsBuilder &operator=(const Pool2DOptionsBuilder &);
@@ -4485,6 +5910,9 @@ struct DepthwiseConv2DOptionsT : public flatbuffers::NativeTable {
         fused_activation_function(tflite::ActivationFunctionType_NONE),
         dilation_w_factor(1),
         dilation_h_factor(1) {
+   std::vector<std::string> mht_419_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_419(mht_419_v, 5913, "", "./tensorflow/lite/schema/schema_generated.h", "DepthwiseConv2DOptionsT");
+
   }
 };
 
@@ -4500,27 +5928,51 @@ struct DepthwiseConv2DOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Tab
     VT_DILATION_H_FACTOR = 16
   };
   tflite::Padding padding() const {
+   std::vector<std::string> mht_420_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_420(mht_420_v, 5931, "", "./tensorflow/lite/schema/schema_generated.h", "padding");
+
     return static_cast<tflite::Padding>(GetField<int8_t>(VT_PADDING, 0));
   }
   int32_t stride_w() const {
+   std::vector<std::string> mht_421_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_421(mht_421_v, 5937, "", "./tensorflow/lite/schema/schema_generated.h", "stride_w");
+
     return GetField<int32_t>(VT_STRIDE_W, 0);
   }
   int32_t stride_h() const {
+   std::vector<std::string> mht_422_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_422(mht_422_v, 5943, "", "./tensorflow/lite/schema/schema_generated.h", "stride_h");
+
     return GetField<int32_t>(VT_STRIDE_H, 0);
   }
   int32_t depth_multiplier() const {
+   std::vector<std::string> mht_423_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_423(mht_423_v, 5949, "", "./tensorflow/lite/schema/schema_generated.h", "depth_multiplier");
+
     return GetField<int32_t>(VT_DEPTH_MULTIPLIER, 0);
   }
   tflite::ActivationFunctionType fused_activation_function() const {
+   std::vector<std::string> mht_424_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_424(mht_424_v, 5955, "", "./tensorflow/lite/schema/schema_generated.h", "fused_activation_function");
+
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
   int32_t dilation_w_factor() const {
+   std::vector<std::string> mht_425_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_425(mht_425_v, 5961, "", "./tensorflow/lite/schema/schema_generated.h", "dilation_w_factor");
+
     return GetField<int32_t>(VT_DILATION_W_FACTOR, 1);
   }
   int32_t dilation_h_factor() const {
+   std::vector<std::string> mht_426_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_426(mht_426_v, 5967, "", "./tensorflow/lite/schema/schema_generated.h", "dilation_h_factor");
+
     return GetField<int32_t>(VT_DILATION_H_FACTOR, 1);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_427_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_427(mht_427_v, 5973, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_PADDING) &&
            VerifyField<int32_t>(verifier, VT_STRIDE_W) &&
@@ -4540,28 +5992,52 @@ struct DepthwiseConv2DOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_padding(tflite::Padding padding) {
+   std::vector<std::string> mht_428_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_428(mht_428_v, 5995, "", "./tensorflow/lite/schema/schema_generated.h", "add_padding");
+
     fbb_.AddElement<int8_t>(DepthwiseConv2DOptions::VT_PADDING, static_cast<int8_t>(padding), 0);
   }
   void add_stride_w(int32_t stride_w) {
+   std::vector<std::string> mht_429_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_429(mht_429_v, 6001, "", "./tensorflow/lite/schema/schema_generated.h", "add_stride_w");
+
     fbb_.AddElement<int32_t>(DepthwiseConv2DOptions::VT_STRIDE_W, stride_w, 0);
   }
   void add_stride_h(int32_t stride_h) {
+   std::vector<std::string> mht_430_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_430(mht_430_v, 6007, "", "./tensorflow/lite/schema/schema_generated.h", "add_stride_h");
+
     fbb_.AddElement<int32_t>(DepthwiseConv2DOptions::VT_STRIDE_H, stride_h, 0);
   }
   void add_depth_multiplier(int32_t depth_multiplier) {
+   std::vector<std::string> mht_431_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_431(mht_431_v, 6013, "", "./tensorflow/lite/schema/schema_generated.h", "add_depth_multiplier");
+
     fbb_.AddElement<int32_t>(DepthwiseConv2DOptions::VT_DEPTH_MULTIPLIER, depth_multiplier, 0);
   }
   void add_fused_activation_function(tflite::ActivationFunctionType fused_activation_function) {
+   std::vector<std::string> mht_432_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_432(mht_432_v, 6019, "", "./tensorflow/lite/schema/schema_generated.h", "add_fused_activation_function");
+
     fbb_.AddElement<int8_t>(DepthwiseConv2DOptions::VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(fused_activation_function), 0);
   }
   void add_dilation_w_factor(int32_t dilation_w_factor) {
+   std::vector<std::string> mht_433_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_433(mht_433_v, 6025, "", "./tensorflow/lite/schema/schema_generated.h", "add_dilation_w_factor");
+
     fbb_.AddElement<int32_t>(DepthwiseConv2DOptions::VT_DILATION_W_FACTOR, dilation_w_factor, 1);
   }
   void add_dilation_h_factor(int32_t dilation_h_factor) {
+   std::vector<std::string> mht_434_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_434(mht_434_v, 6031, "", "./tensorflow/lite/schema/schema_generated.h", "add_dilation_h_factor");
+
     fbb_.AddElement<int32_t>(DepthwiseConv2DOptions::VT_DILATION_H_FACTOR, dilation_h_factor, 1);
   }
   explicit DepthwiseConv2DOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_435_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_435(mht_435_v, 6038, "", "./tensorflow/lite/schema/schema_generated.h", "DepthwiseConv2DOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   DepthwiseConv2DOptionsBuilder &operator=(const DepthwiseConv2DOptionsBuilder &);
@@ -4601,6 +6077,9 @@ struct ConcatEmbeddingsOptionsT : public flatbuffers::NativeTable {
   std::vector<int32_t> embedding_dim_per_channel;
   ConcatEmbeddingsOptionsT()
       : num_channels(0) {
+   std::vector<std::string> mht_436_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_436(mht_436_v, 6080, "", "./tensorflow/lite/schema/schema_generated.h", "ConcatEmbeddingsOptionsT");
+
   }
 };
 
@@ -4612,15 +6091,27 @@ struct ConcatEmbeddingsOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Ta
     VT_EMBEDDING_DIM_PER_CHANNEL = 8
   };
   int32_t num_channels() const {
+   std::vector<std::string> mht_437_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_437(mht_437_v, 6094, "", "./tensorflow/lite/schema/schema_generated.h", "num_channels");
+
     return GetField<int32_t>(VT_NUM_CHANNELS, 0);
   }
   const flatbuffers::Vector<int32_t> *num_columns_per_channel() const {
+   std::vector<std::string> mht_438_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_438(mht_438_v, 6100, "", "./tensorflow/lite/schema/schema_generated.h", "num_columns_per_channel");
+
     return GetPointer<const flatbuffers::Vector<int32_t> *>(VT_NUM_COLUMNS_PER_CHANNEL);
   }
   const flatbuffers::Vector<int32_t> *embedding_dim_per_channel() const {
+   std::vector<std::string> mht_439_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_439(mht_439_v, 6106, "", "./tensorflow/lite/schema/schema_generated.h", "embedding_dim_per_channel");
+
     return GetPointer<const flatbuffers::Vector<int32_t> *>(VT_EMBEDDING_DIM_PER_CHANNEL);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_440_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_440(mht_440_v, 6112, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_NUM_CHANNELS) &&
            VerifyOffset(verifier, VT_NUM_COLUMNS_PER_CHANNEL) &&
@@ -4638,16 +6129,28 @@ struct ConcatEmbeddingsOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_num_channels(int32_t num_channels) {
+   std::vector<std::string> mht_441_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_441(mht_441_v, 6132, "", "./tensorflow/lite/schema/schema_generated.h", "add_num_channels");
+
     fbb_.AddElement<int32_t>(ConcatEmbeddingsOptions::VT_NUM_CHANNELS, num_channels, 0);
   }
   void add_num_columns_per_channel(flatbuffers::Offset<flatbuffers::Vector<int32_t>> num_columns_per_channel) {
+   std::vector<std::string> mht_442_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_442(mht_442_v, 6138, "", "./tensorflow/lite/schema/schema_generated.h", "add_num_columns_per_channel");
+
     fbb_.AddOffset(ConcatEmbeddingsOptions::VT_NUM_COLUMNS_PER_CHANNEL, num_columns_per_channel);
   }
   void add_embedding_dim_per_channel(flatbuffers::Offset<flatbuffers::Vector<int32_t>> embedding_dim_per_channel) {
+   std::vector<std::string> mht_443_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_443(mht_443_v, 6144, "", "./tensorflow/lite/schema/schema_generated.h", "add_embedding_dim_per_channel");
+
     fbb_.AddOffset(ConcatEmbeddingsOptions::VT_EMBEDDING_DIM_PER_CHANNEL, embedding_dim_per_channel);
   }
   explicit ConcatEmbeddingsOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_444_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_444(mht_444_v, 6151, "", "./tensorflow/lite/schema/schema_generated.h", "ConcatEmbeddingsOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   ConcatEmbeddingsOptionsBuilder &operator=(const ConcatEmbeddingsOptionsBuilder &);
@@ -4691,6 +6194,9 @@ struct LSHProjectionOptionsT : public flatbuffers::NativeTable {
   tflite::LSHProjectionType type;
   LSHProjectionOptionsT()
       : type(tflite::LSHProjectionType_UNKNOWN) {
+   std::vector<std::string> mht_445_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_445(mht_445_v, 6197, "", "./tensorflow/lite/schema/schema_generated.h", "LSHProjectionOptionsT");
+
   }
 };
 
@@ -4700,9 +6206,15 @@ struct LSHProjectionOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table
     VT_TYPE = 4
   };
   tflite::LSHProjectionType type() const {
+   std::vector<std::string> mht_446_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_446(mht_446_v, 6209, "", "./tensorflow/lite/schema/schema_generated.h", "type");
+
     return static_cast<tflite::LSHProjectionType>(GetField<int8_t>(VT_TYPE, 0));
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_447_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_447(mht_447_v, 6215, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_TYPE) &&
            verifier.EndTable();
@@ -4716,10 +6228,16 @@ struct LSHProjectionOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_type(tflite::LSHProjectionType type) {
+   std::vector<std::string> mht_448_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_448(mht_448_v, 6231, "", "./tensorflow/lite/schema/schema_generated.h", "add_type");
+
     fbb_.AddElement<int8_t>(LSHProjectionOptions::VT_TYPE, static_cast<int8_t>(type), 0);
   }
   explicit LSHProjectionOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_449_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_449(mht_449_v, 6238, "", "./tensorflow/lite/schema/schema_generated.h", "LSHProjectionOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   LSHProjectionOptionsBuilder &operator=(const LSHProjectionOptionsBuilder &);
@@ -4749,6 +6267,9 @@ struct SVDFOptionsT : public flatbuffers::NativeTable {
       : rank(0),
         fused_activation_function(tflite::ActivationFunctionType_NONE),
         asymmetric_quantize_inputs(false) {
+   std::vector<std::string> mht_450_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_450(mht_450_v, 6270, "", "./tensorflow/lite/schema/schema_generated.h", "SVDFOptionsT");
+
   }
 };
 
@@ -4760,15 +6281,27 @@ struct SVDFOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_ASYMMETRIC_QUANTIZE_INPUTS = 8
   };
   int32_t rank() const {
+   std::vector<std::string> mht_451_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_451(mht_451_v, 6284, "", "./tensorflow/lite/schema/schema_generated.h", "rank");
+
     return GetField<int32_t>(VT_RANK, 0);
   }
   tflite::ActivationFunctionType fused_activation_function() const {
+   std::vector<std::string> mht_452_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_452(mht_452_v, 6290, "", "./tensorflow/lite/schema/schema_generated.h", "fused_activation_function");
+
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
   bool asymmetric_quantize_inputs() const {
+   std::vector<std::string> mht_453_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_453(mht_453_v, 6296, "", "./tensorflow/lite/schema/schema_generated.h", "asymmetric_quantize_inputs");
+
     return GetField<uint8_t>(VT_ASYMMETRIC_QUANTIZE_INPUTS, 0) != 0;
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_454_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_454(mht_454_v, 6302, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_RANK) &&
            VerifyField<int8_t>(verifier, VT_FUSED_ACTIVATION_FUNCTION) &&
@@ -4784,16 +6317,28 @@ struct SVDFOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_rank(int32_t rank) {
+   std::vector<std::string> mht_455_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_455(mht_455_v, 6320, "", "./tensorflow/lite/schema/schema_generated.h", "add_rank");
+
     fbb_.AddElement<int32_t>(SVDFOptions::VT_RANK, rank, 0);
   }
   void add_fused_activation_function(tflite::ActivationFunctionType fused_activation_function) {
+   std::vector<std::string> mht_456_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_456(mht_456_v, 6326, "", "./tensorflow/lite/schema/schema_generated.h", "add_fused_activation_function");
+
     fbb_.AddElement<int8_t>(SVDFOptions::VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(fused_activation_function), 0);
   }
   void add_asymmetric_quantize_inputs(bool asymmetric_quantize_inputs) {
+   std::vector<std::string> mht_457_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_457(mht_457_v, 6332, "", "./tensorflow/lite/schema/schema_generated.h", "add_asymmetric_quantize_inputs");
+
     fbb_.AddElement<uint8_t>(SVDFOptions::VT_ASYMMETRIC_QUANTIZE_INPUTS, static_cast<uint8_t>(asymmetric_quantize_inputs), 0);
   }
   explicit SVDFOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_458_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_458(mht_458_v, 6339, "", "./tensorflow/lite/schema/schema_generated.h", "SVDFOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   SVDFOptionsBuilder &operator=(const SVDFOptionsBuilder &);
@@ -4825,6 +6370,9 @@ struct RNNOptionsT : public flatbuffers::NativeTable {
   RNNOptionsT()
       : fused_activation_function(tflite::ActivationFunctionType_NONE),
         asymmetric_quantize_inputs(false) {
+   std::vector<std::string> mht_459_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_459(mht_459_v, 6373, "", "./tensorflow/lite/schema/schema_generated.h", "RNNOptionsT");
+
   }
 };
 
@@ -4835,12 +6383,21 @@ struct RNNOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_ASYMMETRIC_QUANTIZE_INPUTS = 6
   };
   tflite::ActivationFunctionType fused_activation_function() const {
+   std::vector<std::string> mht_460_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_460(mht_460_v, 6386, "", "./tensorflow/lite/schema/schema_generated.h", "fused_activation_function");
+
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
   bool asymmetric_quantize_inputs() const {
+   std::vector<std::string> mht_461_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_461(mht_461_v, 6392, "", "./tensorflow/lite/schema/schema_generated.h", "asymmetric_quantize_inputs");
+
     return GetField<uint8_t>(VT_ASYMMETRIC_QUANTIZE_INPUTS, 0) != 0;
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_462_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_462(mht_462_v, 6398, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_FUSED_ACTIVATION_FUNCTION) &&
            VerifyField<uint8_t>(verifier, VT_ASYMMETRIC_QUANTIZE_INPUTS) &&
@@ -4855,13 +6412,22 @@ struct RNNOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_fused_activation_function(tflite::ActivationFunctionType fused_activation_function) {
+   std::vector<std::string> mht_463_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_463(mht_463_v, 6415, "", "./tensorflow/lite/schema/schema_generated.h", "add_fused_activation_function");
+
     fbb_.AddElement<int8_t>(RNNOptions::VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(fused_activation_function), 0);
   }
   void add_asymmetric_quantize_inputs(bool asymmetric_quantize_inputs) {
+   std::vector<std::string> mht_464_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_464(mht_464_v, 6421, "", "./tensorflow/lite/schema/schema_generated.h", "add_asymmetric_quantize_inputs");
+
     fbb_.AddElement<uint8_t>(RNNOptions::VT_ASYMMETRIC_QUANTIZE_INPUTS, static_cast<uint8_t>(asymmetric_quantize_inputs), 0);
   }
   explicit RNNOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_465_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_465(mht_465_v, 6428, "", "./tensorflow/lite/schema/schema_generated.h", "RNNOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   RNNOptionsBuilder &operator=(const RNNOptionsBuilder &);
@@ -4893,6 +6459,9 @@ struct SequenceRNNOptionsT : public flatbuffers::NativeTable {
       : time_major(false),
         fused_activation_function(tflite::ActivationFunctionType_NONE),
         asymmetric_quantize_inputs(false) {
+   std::vector<std::string> mht_466_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_466(mht_466_v, 6462, "", "./tensorflow/lite/schema/schema_generated.h", "SequenceRNNOptionsT");
+
   }
 };
 
@@ -4904,15 +6473,27 @@ struct SequenceRNNOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_ASYMMETRIC_QUANTIZE_INPUTS = 8
   };
   bool time_major() const {
+   std::vector<std::string> mht_467_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_467(mht_467_v, 6476, "", "./tensorflow/lite/schema/schema_generated.h", "time_major");
+
     return GetField<uint8_t>(VT_TIME_MAJOR, 0) != 0;
   }
   tflite::ActivationFunctionType fused_activation_function() const {
+   std::vector<std::string> mht_468_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_468(mht_468_v, 6482, "", "./tensorflow/lite/schema/schema_generated.h", "fused_activation_function");
+
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
   bool asymmetric_quantize_inputs() const {
+   std::vector<std::string> mht_469_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_469(mht_469_v, 6488, "", "./tensorflow/lite/schema/schema_generated.h", "asymmetric_quantize_inputs");
+
     return GetField<uint8_t>(VT_ASYMMETRIC_QUANTIZE_INPUTS, 0) != 0;
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_470_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_470(mht_470_v, 6494, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<uint8_t>(verifier, VT_TIME_MAJOR) &&
            VerifyField<int8_t>(verifier, VT_FUSED_ACTIVATION_FUNCTION) &&
@@ -4928,16 +6509,28 @@ struct SequenceRNNOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_time_major(bool time_major) {
+   std::vector<std::string> mht_471_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_471(mht_471_v, 6512, "", "./tensorflow/lite/schema/schema_generated.h", "add_time_major");
+
     fbb_.AddElement<uint8_t>(SequenceRNNOptions::VT_TIME_MAJOR, static_cast<uint8_t>(time_major), 0);
   }
   void add_fused_activation_function(tflite::ActivationFunctionType fused_activation_function) {
+   std::vector<std::string> mht_472_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_472(mht_472_v, 6518, "", "./tensorflow/lite/schema/schema_generated.h", "add_fused_activation_function");
+
     fbb_.AddElement<int8_t>(SequenceRNNOptions::VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(fused_activation_function), 0);
   }
   void add_asymmetric_quantize_inputs(bool asymmetric_quantize_inputs) {
+   std::vector<std::string> mht_473_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_473(mht_473_v, 6524, "", "./tensorflow/lite/schema/schema_generated.h", "add_asymmetric_quantize_inputs");
+
     fbb_.AddElement<uint8_t>(SequenceRNNOptions::VT_ASYMMETRIC_QUANTIZE_INPUTS, static_cast<uint8_t>(asymmetric_quantize_inputs), 0);
   }
   explicit SequenceRNNOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_474_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_474(mht_474_v, 6531, "", "./tensorflow/lite/schema/schema_generated.h", "SequenceRNNOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   SequenceRNNOptionsBuilder &operator=(const SequenceRNNOptionsBuilder &);
@@ -4973,6 +6566,9 @@ struct BidirectionalSequenceRNNOptionsT : public flatbuffers::NativeTable {
         fused_activation_function(tflite::ActivationFunctionType_NONE),
         merge_outputs(false),
         asymmetric_quantize_inputs(false) {
+   std::vector<std::string> mht_475_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_475(mht_475_v, 6569, "", "./tensorflow/lite/schema/schema_generated.h", "BidirectionalSequenceRNNOptionsT");
+
   }
 };
 
@@ -4985,18 +6581,33 @@ struct BidirectionalSequenceRNNOptions FLATBUFFERS_FINAL_CLASS : private flatbuf
     VT_ASYMMETRIC_QUANTIZE_INPUTS = 10
   };
   bool time_major() const {
+   std::vector<std::string> mht_476_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_476(mht_476_v, 6584, "", "./tensorflow/lite/schema/schema_generated.h", "time_major");
+
     return GetField<uint8_t>(VT_TIME_MAJOR, 0) != 0;
   }
   tflite::ActivationFunctionType fused_activation_function() const {
+   std::vector<std::string> mht_477_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_477(mht_477_v, 6590, "", "./tensorflow/lite/schema/schema_generated.h", "fused_activation_function");
+
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
   bool merge_outputs() const {
+   std::vector<std::string> mht_478_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_478(mht_478_v, 6596, "", "./tensorflow/lite/schema/schema_generated.h", "merge_outputs");
+
     return GetField<uint8_t>(VT_MERGE_OUTPUTS, 0) != 0;
   }
   bool asymmetric_quantize_inputs() const {
+   std::vector<std::string> mht_479_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_479(mht_479_v, 6602, "", "./tensorflow/lite/schema/schema_generated.h", "asymmetric_quantize_inputs");
+
     return GetField<uint8_t>(VT_ASYMMETRIC_QUANTIZE_INPUTS, 0) != 0;
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_480_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_480(mht_480_v, 6608, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<uint8_t>(verifier, VT_TIME_MAJOR) &&
            VerifyField<int8_t>(verifier, VT_FUSED_ACTIVATION_FUNCTION) &&
@@ -5013,19 +6624,34 @@ struct BidirectionalSequenceRNNOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_time_major(bool time_major) {
+   std::vector<std::string> mht_481_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_481(mht_481_v, 6627, "", "./tensorflow/lite/schema/schema_generated.h", "add_time_major");
+
     fbb_.AddElement<uint8_t>(BidirectionalSequenceRNNOptions::VT_TIME_MAJOR, static_cast<uint8_t>(time_major), 0);
   }
   void add_fused_activation_function(tflite::ActivationFunctionType fused_activation_function) {
+   std::vector<std::string> mht_482_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_482(mht_482_v, 6633, "", "./tensorflow/lite/schema/schema_generated.h", "add_fused_activation_function");
+
     fbb_.AddElement<int8_t>(BidirectionalSequenceRNNOptions::VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(fused_activation_function), 0);
   }
   void add_merge_outputs(bool merge_outputs) {
+   std::vector<std::string> mht_483_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_483(mht_483_v, 6639, "", "./tensorflow/lite/schema/schema_generated.h", "add_merge_outputs");
+
     fbb_.AddElement<uint8_t>(BidirectionalSequenceRNNOptions::VT_MERGE_OUTPUTS, static_cast<uint8_t>(merge_outputs), 0);
   }
   void add_asymmetric_quantize_inputs(bool asymmetric_quantize_inputs) {
+   std::vector<std::string> mht_484_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_484(mht_484_v, 6645, "", "./tensorflow/lite/schema/schema_generated.h", "add_asymmetric_quantize_inputs");
+
     fbb_.AddElement<uint8_t>(BidirectionalSequenceRNNOptions::VT_ASYMMETRIC_QUANTIZE_INPUTS, static_cast<uint8_t>(asymmetric_quantize_inputs), 0);
   }
   explicit BidirectionalSequenceRNNOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_485_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_485(mht_485_v, 6652, "", "./tensorflow/lite/schema/schema_generated.h", "BidirectionalSequenceRNNOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   BidirectionalSequenceRNNOptionsBuilder &operator=(const BidirectionalSequenceRNNOptionsBuilder &);
@@ -5063,6 +6689,9 @@ struct FullyConnectedOptionsT : public flatbuffers::NativeTable {
         weights_format(tflite::FullyConnectedOptionsWeightsFormat_DEFAULT),
         keep_num_dims(false),
         asymmetric_quantize_inputs(false) {
+   std::vector<std::string> mht_486_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_486(mht_486_v, 6692, "", "./tensorflow/lite/schema/schema_generated.h", "FullyConnectedOptionsT");
+
   }
 };
 
@@ -5075,18 +6704,33 @@ struct FullyConnectedOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Tabl
     VT_ASYMMETRIC_QUANTIZE_INPUTS = 10
   };
   tflite::ActivationFunctionType fused_activation_function() const {
+   std::vector<std::string> mht_487_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_487(mht_487_v, 6707, "", "./tensorflow/lite/schema/schema_generated.h", "fused_activation_function");
+
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
   tflite::FullyConnectedOptionsWeightsFormat weights_format() const {
+   std::vector<std::string> mht_488_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_488(mht_488_v, 6713, "", "./tensorflow/lite/schema/schema_generated.h", "weights_format");
+
     return static_cast<tflite::FullyConnectedOptionsWeightsFormat>(GetField<int8_t>(VT_WEIGHTS_FORMAT, 0));
   }
   bool keep_num_dims() const {
+   std::vector<std::string> mht_489_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_489(mht_489_v, 6719, "", "./tensorflow/lite/schema/schema_generated.h", "keep_num_dims");
+
     return GetField<uint8_t>(VT_KEEP_NUM_DIMS, 0) != 0;
   }
   bool asymmetric_quantize_inputs() const {
+   std::vector<std::string> mht_490_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_490(mht_490_v, 6725, "", "./tensorflow/lite/schema/schema_generated.h", "asymmetric_quantize_inputs");
+
     return GetField<uint8_t>(VT_ASYMMETRIC_QUANTIZE_INPUTS, 0) != 0;
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_491_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_491(mht_491_v, 6731, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_FUSED_ACTIVATION_FUNCTION) &&
            VerifyField<int8_t>(verifier, VT_WEIGHTS_FORMAT) &&
@@ -5103,19 +6747,34 @@ struct FullyConnectedOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_fused_activation_function(tflite::ActivationFunctionType fused_activation_function) {
+   std::vector<std::string> mht_492_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_492(mht_492_v, 6750, "", "./tensorflow/lite/schema/schema_generated.h", "add_fused_activation_function");
+
     fbb_.AddElement<int8_t>(FullyConnectedOptions::VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(fused_activation_function), 0);
   }
   void add_weights_format(tflite::FullyConnectedOptionsWeightsFormat weights_format) {
+   std::vector<std::string> mht_493_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_493(mht_493_v, 6756, "", "./tensorflow/lite/schema/schema_generated.h", "add_weights_format");
+
     fbb_.AddElement<int8_t>(FullyConnectedOptions::VT_WEIGHTS_FORMAT, static_cast<int8_t>(weights_format), 0);
   }
   void add_keep_num_dims(bool keep_num_dims) {
+   std::vector<std::string> mht_494_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_494(mht_494_v, 6762, "", "./tensorflow/lite/schema/schema_generated.h", "add_keep_num_dims");
+
     fbb_.AddElement<uint8_t>(FullyConnectedOptions::VT_KEEP_NUM_DIMS, static_cast<uint8_t>(keep_num_dims), 0);
   }
   void add_asymmetric_quantize_inputs(bool asymmetric_quantize_inputs) {
+   std::vector<std::string> mht_495_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_495(mht_495_v, 6768, "", "./tensorflow/lite/schema/schema_generated.h", "add_asymmetric_quantize_inputs");
+
     fbb_.AddElement<uint8_t>(FullyConnectedOptions::VT_ASYMMETRIC_QUANTIZE_INPUTS, static_cast<uint8_t>(asymmetric_quantize_inputs), 0);
   }
   explicit FullyConnectedOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_496_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_496(mht_496_v, 6775, "", "./tensorflow/lite/schema/schema_generated.h", "FullyConnectedOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   FullyConnectedOptionsBuilder &operator=(const FullyConnectedOptionsBuilder &);
@@ -5147,6 +6806,9 @@ struct SoftmaxOptionsT : public flatbuffers::NativeTable {
   float beta;
   SoftmaxOptionsT()
       : beta(0.0f) {
+   std::vector<std::string> mht_497_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_497(mht_497_v, 6809, "", "./tensorflow/lite/schema/schema_generated.h", "SoftmaxOptionsT");
+
   }
 };
 
@@ -5156,9 +6818,15 @@ struct SoftmaxOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_BETA = 4
   };
   float beta() const {
+   std::vector<std::string> mht_498_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_498(mht_498_v, 6821, "", "./tensorflow/lite/schema/schema_generated.h", "beta");
+
     return GetField<float>(VT_BETA, 0.0f);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_499_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_499(mht_499_v, 6827, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<float>(verifier, VT_BETA) &&
            verifier.EndTable();
@@ -5172,10 +6840,16 @@ struct SoftmaxOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_beta(float beta) {
+   std::vector<std::string> mht_500_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_500(mht_500_v, 6843, "", "./tensorflow/lite/schema/schema_generated.h", "add_beta");
+
     fbb_.AddElement<float>(SoftmaxOptions::VT_BETA, beta, 0.0f);
   }
   explicit SoftmaxOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_501_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_501(mht_501_v, 6850, "", "./tensorflow/lite/schema/schema_generated.h", "SoftmaxOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   SoftmaxOptionsBuilder &operator=(const SoftmaxOptionsBuilder &);
@@ -5203,6 +6877,9 @@ struct ConcatenationOptionsT : public flatbuffers::NativeTable {
   ConcatenationOptionsT()
       : axis(0),
         fused_activation_function(tflite::ActivationFunctionType_NONE) {
+   std::vector<std::string> mht_502_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_502(mht_502_v, 6880, "", "./tensorflow/lite/schema/schema_generated.h", "ConcatenationOptionsT");
+
   }
 };
 
@@ -5213,12 +6890,21 @@ struct ConcatenationOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table
     VT_FUSED_ACTIVATION_FUNCTION = 6
   };
   int32_t axis() const {
+   std::vector<std::string> mht_503_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_503(mht_503_v, 6893, "", "./tensorflow/lite/schema/schema_generated.h", "axis");
+
     return GetField<int32_t>(VT_AXIS, 0);
   }
   tflite::ActivationFunctionType fused_activation_function() const {
+   std::vector<std::string> mht_504_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_504(mht_504_v, 6899, "", "./tensorflow/lite/schema/schema_generated.h", "fused_activation_function");
+
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_505_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_505(mht_505_v, 6905, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_AXIS) &&
            VerifyField<int8_t>(verifier, VT_FUSED_ACTIVATION_FUNCTION) &&
@@ -5233,13 +6919,22 @@ struct ConcatenationOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_axis(int32_t axis) {
+   std::vector<std::string> mht_506_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_506(mht_506_v, 6922, "", "./tensorflow/lite/schema/schema_generated.h", "add_axis");
+
     fbb_.AddElement<int32_t>(ConcatenationOptions::VT_AXIS, axis, 0);
   }
   void add_fused_activation_function(tflite::ActivationFunctionType fused_activation_function) {
+   std::vector<std::string> mht_507_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_507(mht_507_v, 6928, "", "./tensorflow/lite/schema/schema_generated.h", "add_fused_activation_function");
+
     fbb_.AddElement<int8_t>(ConcatenationOptions::VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(fused_activation_function), 0);
   }
   explicit ConcatenationOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_508_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_508(mht_508_v, 6935, "", "./tensorflow/lite/schema/schema_generated.h", "ConcatenationOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   ConcatenationOptionsBuilder &operator=(const ConcatenationOptionsBuilder &);
@@ -5269,6 +6964,9 @@ struct AddOptionsT : public flatbuffers::NativeTable {
   AddOptionsT()
       : fused_activation_function(tflite::ActivationFunctionType_NONE),
         pot_scale_int16(true) {
+   std::vector<std::string> mht_509_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_509(mht_509_v, 6967, "", "./tensorflow/lite/schema/schema_generated.h", "AddOptionsT");
+
   }
 };
 
@@ -5279,12 +6977,21 @@ struct AddOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_POT_SCALE_INT16 = 6
   };
   tflite::ActivationFunctionType fused_activation_function() const {
+   std::vector<std::string> mht_510_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_510(mht_510_v, 6980, "", "./tensorflow/lite/schema/schema_generated.h", "fused_activation_function");
+
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
   bool pot_scale_int16() const {
+   std::vector<std::string> mht_511_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_511(mht_511_v, 6986, "", "./tensorflow/lite/schema/schema_generated.h", "pot_scale_int16");
+
     return GetField<uint8_t>(VT_POT_SCALE_INT16, 1) != 0;
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_512_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_512(mht_512_v, 6992, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_FUSED_ACTIVATION_FUNCTION) &&
            VerifyField<uint8_t>(verifier, VT_POT_SCALE_INT16) &&
@@ -5299,13 +7006,22 @@ struct AddOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_fused_activation_function(tflite::ActivationFunctionType fused_activation_function) {
+   std::vector<std::string> mht_513_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_513(mht_513_v, 7009, "", "./tensorflow/lite/schema/schema_generated.h", "add_fused_activation_function");
+
     fbb_.AddElement<int8_t>(AddOptions::VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(fused_activation_function), 0);
   }
   void add_pot_scale_int16(bool pot_scale_int16) {
+   std::vector<std::string> mht_514_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_514(mht_514_v, 7015, "", "./tensorflow/lite/schema/schema_generated.h", "add_pot_scale_int16");
+
     fbb_.AddElement<uint8_t>(AddOptions::VT_POT_SCALE_INT16, static_cast<uint8_t>(pot_scale_int16), 1);
   }
   explicit AddOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_515_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_515(mht_515_v, 7022, "", "./tensorflow/lite/schema/schema_generated.h", "AddOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   AddOptionsBuilder &operator=(const AddOptionsBuilder &);
@@ -5333,6 +7049,9 @@ struct MulOptionsT : public flatbuffers::NativeTable {
   tflite::ActivationFunctionType fused_activation_function;
   MulOptionsT()
       : fused_activation_function(tflite::ActivationFunctionType_NONE) {
+   std::vector<std::string> mht_516_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_516(mht_516_v, 7052, "", "./tensorflow/lite/schema/schema_generated.h", "MulOptionsT");
+
   }
 };
 
@@ -5342,9 +7061,15 @@ struct MulOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_FUSED_ACTIVATION_FUNCTION = 4
   };
   tflite::ActivationFunctionType fused_activation_function() const {
+   std::vector<std::string> mht_517_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_517(mht_517_v, 7064, "", "./tensorflow/lite/schema/schema_generated.h", "fused_activation_function");
+
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_518_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_518(mht_518_v, 7070, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_FUSED_ACTIVATION_FUNCTION) &&
            verifier.EndTable();
@@ -5358,10 +7083,16 @@ struct MulOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_fused_activation_function(tflite::ActivationFunctionType fused_activation_function) {
+   std::vector<std::string> mht_519_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_519(mht_519_v, 7086, "", "./tensorflow/lite/schema/schema_generated.h", "add_fused_activation_function");
+
     fbb_.AddElement<int8_t>(MulOptions::VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(fused_activation_function), 0);
   }
   explicit MulOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_520_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_520(mht_520_v, 7093, "", "./tensorflow/lite/schema/schema_generated.h", "MulOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   MulOptionsBuilder &operator=(const MulOptionsBuilder &);
@@ -5387,6 +7118,9 @@ struct L2NormOptionsT : public flatbuffers::NativeTable {
   tflite::ActivationFunctionType fused_activation_function;
   L2NormOptionsT()
       : fused_activation_function(tflite::ActivationFunctionType_NONE) {
+   std::vector<std::string> mht_521_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_521(mht_521_v, 7121, "", "./tensorflow/lite/schema/schema_generated.h", "L2NormOptionsT");
+
   }
 };
 
@@ -5396,9 +7130,15 @@ struct L2NormOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_FUSED_ACTIVATION_FUNCTION = 4
   };
   tflite::ActivationFunctionType fused_activation_function() const {
+   std::vector<std::string> mht_522_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_522(mht_522_v, 7133, "", "./tensorflow/lite/schema/schema_generated.h", "fused_activation_function");
+
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_523_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_523(mht_523_v, 7139, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_FUSED_ACTIVATION_FUNCTION) &&
            verifier.EndTable();
@@ -5412,10 +7152,16 @@ struct L2NormOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_fused_activation_function(tflite::ActivationFunctionType fused_activation_function) {
+   std::vector<std::string> mht_524_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_524(mht_524_v, 7155, "", "./tensorflow/lite/schema/schema_generated.h", "add_fused_activation_function");
+
     fbb_.AddElement<int8_t>(L2NormOptions::VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(fused_activation_function), 0);
   }
   explicit L2NormOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_525_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_525(mht_525_v, 7162, "", "./tensorflow/lite/schema/schema_generated.h", "L2NormOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   L2NormOptionsBuilder &operator=(const L2NormOptionsBuilder &);
@@ -5447,6 +7193,9 @@ struct LocalResponseNormalizationOptionsT : public flatbuffers::NativeTable {
         bias(0.0f),
         alpha(0.0f),
         beta(0.0f) {
+   std::vector<std::string> mht_526_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_526(mht_526_v, 7196, "", "./tensorflow/lite/schema/schema_generated.h", "LocalResponseNormalizationOptionsT");
+
   }
 };
 
@@ -5459,18 +7208,33 @@ struct LocalResponseNormalizationOptions FLATBUFFERS_FINAL_CLASS : private flatb
     VT_BETA = 10
   };
   int32_t radius() const {
+   std::vector<std::string> mht_527_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_527(mht_527_v, 7211, "", "./tensorflow/lite/schema/schema_generated.h", "radius");
+
     return GetField<int32_t>(VT_RADIUS, 0);
   }
   float bias() const {
+   std::vector<std::string> mht_528_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_528(mht_528_v, 7217, "", "./tensorflow/lite/schema/schema_generated.h", "bias");
+
     return GetField<float>(VT_BIAS, 0.0f);
   }
   float alpha() const {
+   std::vector<std::string> mht_529_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_529(mht_529_v, 7223, "", "./tensorflow/lite/schema/schema_generated.h", "alpha");
+
     return GetField<float>(VT_ALPHA, 0.0f);
   }
   float beta() const {
+   std::vector<std::string> mht_530_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_530(mht_530_v, 7229, "", "./tensorflow/lite/schema/schema_generated.h", "beta");
+
     return GetField<float>(VT_BETA, 0.0f);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_531_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_531(mht_531_v, 7235, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_RADIUS) &&
            VerifyField<float>(verifier, VT_BIAS) &&
@@ -5487,19 +7251,34 @@ struct LocalResponseNormalizationOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_radius(int32_t radius) {
+   std::vector<std::string> mht_532_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_532(mht_532_v, 7254, "", "./tensorflow/lite/schema/schema_generated.h", "add_radius");
+
     fbb_.AddElement<int32_t>(LocalResponseNormalizationOptions::VT_RADIUS, radius, 0);
   }
   void add_bias(float bias) {
+   std::vector<std::string> mht_533_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_533(mht_533_v, 7260, "", "./tensorflow/lite/schema/schema_generated.h", "add_bias");
+
     fbb_.AddElement<float>(LocalResponseNormalizationOptions::VT_BIAS, bias, 0.0f);
   }
   void add_alpha(float alpha) {
+   std::vector<std::string> mht_534_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_534(mht_534_v, 7266, "", "./tensorflow/lite/schema/schema_generated.h", "add_alpha");
+
     fbb_.AddElement<float>(LocalResponseNormalizationOptions::VT_ALPHA, alpha, 0.0f);
   }
   void add_beta(float beta) {
+   std::vector<std::string> mht_535_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_535(mht_535_v, 7272, "", "./tensorflow/lite/schema/schema_generated.h", "add_beta");
+
     fbb_.AddElement<float>(LocalResponseNormalizationOptions::VT_BETA, beta, 0.0f);
   }
   explicit LocalResponseNormalizationOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_536_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_536(mht_536_v, 7279, "", "./tensorflow/lite/schema/schema_generated.h", "LocalResponseNormalizationOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   LocalResponseNormalizationOptionsBuilder &operator=(const LocalResponseNormalizationOptionsBuilder &);
@@ -5539,6 +7318,9 @@ struct LSTMOptionsT : public flatbuffers::NativeTable {
         proj_clip(0.0f),
         kernel_type(tflite::LSTMKernelType_FULL),
         asymmetric_quantize_inputs(false) {
+   std::vector<std::string> mht_537_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_537(mht_537_v, 7321, "", "./tensorflow/lite/schema/schema_generated.h", "LSTMOptionsT");
+
   }
 };
 
@@ -5552,21 +7334,39 @@ struct LSTMOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_ASYMMETRIC_QUANTIZE_INPUTS = 12
   };
   tflite::ActivationFunctionType fused_activation_function() const {
+   std::vector<std::string> mht_538_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_538(mht_538_v, 7337, "", "./tensorflow/lite/schema/schema_generated.h", "fused_activation_function");
+
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
   float cell_clip() const {
+   std::vector<std::string> mht_539_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_539(mht_539_v, 7343, "", "./tensorflow/lite/schema/schema_generated.h", "cell_clip");
+
     return GetField<float>(VT_CELL_CLIP, 0.0f);
   }
   float proj_clip() const {
+   std::vector<std::string> mht_540_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_540(mht_540_v, 7349, "", "./tensorflow/lite/schema/schema_generated.h", "proj_clip");
+
     return GetField<float>(VT_PROJ_CLIP, 0.0f);
   }
   tflite::LSTMKernelType kernel_type() const {
+   std::vector<std::string> mht_541_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_541(mht_541_v, 7355, "", "./tensorflow/lite/schema/schema_generated.h", "kernel_type");
+
     return static_cast<tflite::LSTMKernelType>(GetField<int8_t>(VT_KERNEL_TYPE, 0));
   }
   bool asymmetric_quantize_inputs() const {
+   std::vector<std::string> mht_542_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_542(mht_542_v, 7361, "", "./tensorflow/lite/schema/schema_generated.h", "asymmetric_quantize_inputs");
+
     return GetField<uint8_t>(VT_ASYMMETRIC_QUANTIZE_INPUTS, 0) != 0;
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_543_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_543(mht_543_v, 7367, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_FUSED_ACTIVATION_FUNCTION) &&
            VerifyField<float>(verifier, VT_CELL_CLIP) &&
@@ -5584,22 +7384,40 @@ struct LSTMOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_fused_activation_function(tflite::ActivationFunctionType fused_activation_function) {
+   std::vector<std::string> mht_544_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_544(mht_544_v, 7387, "", "./tensorflow/lite/schema/schema_generated.h", "add_fused_activation_function");
+
     fbb_.AddElement<int8_t>(LSTMOptions::VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(fused_activation_function), 0);
   }
   void add_cell_clip(float cell_clip) {
+   std::vector<std::string> mht_545_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_545(mht_545_v, 7393, "", "./tensorflow/lite/schema/schema_generated.h", "add_cell_clip");
+
     fbb_.AddElement<float>(LSTMOptions::VT_CELL_CLIP, cell_clip, 0.0f);
   }
   void add_proj_clip(float proj_clip) {
+   std::vector<std::string> mht_546_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_546(mht_546_v, 7399, "", "./tensorflow/lite/schema/schema_generated.h", "add_proj_clip");
+
     fbb_.AddElement<float>(LSTMOptions::VT_PROJ_CLIP, proj_clip, 0.0f);
   }
   void add_kernel_type(tflite::LSTMKernelType kernel_type) {
+   std::vector<std::string> mht_547_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_547(mht_547_v, 7405, "", "./tensorflow/lite/schema/schema_generated.h", "add_kernel_type");
+
     fbb_.AddElement<int8_t>(LSTMOptions::VT_KERNEL_TYPE, static_cast<int8_t>(kernel_type), 0);
   }
   void add_asymmetric_quantize_inputs(bool asymmetric_quantize_inputs) {
+   std::vector<std::string> mht_548_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_548(mht_548_v, 7411, "", "./tensorflow/lite/schema/schema_generated.h", "add_asymmetric_quantize_inputs");
+
     fbb_.AddElement<uint8_t>(LSTMOptions::VT_ASYMMETRIC_QUANTIZE_INPUTS, static_cast<uint8_t>(asymmetric_quantize_inputs), 0);
   }
   explicit LSTMOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_549_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_549(mht_549_v, 7418, "", "./tensorflow/lite/schema/schema_generated.h", "LSTMOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   LSTMOptionsBuilder &operator=(const LSTMOptionsBuilder &);
@@ -5641,6 +7459,9 @@ struct UnidirectionalSequenceLSTMOptionsT : public flatbuffers::NativeTable {
         proj_clip(0.0f),
         time_major(false),
         asymmetric_quantize_inputs(false) {
+   std::vector<std::string> mht_550_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_550(mht_550_v, 7462, "", "./tensorflow/lite/schema/schema_generated.h", "UnidirectionalSequenceLSTMOptionsT");
+
   }
 };
 
@@ -5654,21 +7475,39 @@ struct UnidirectionalSequenceLSTMOptions FLATBUFFERS_FINAL_CLASS : private flatb
     VT_ASYMMETRIC_QUANTIZE_INPUTS = 12
   };
   tflite::ActivationFunctionType fused_activation_function() const {
+   std::vector<std::string> mht_551_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_551(mht_551_v, 7478, "", "./tensorflow/lite/schema/schema_generated.h", "fused_activation_function");
+
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
   float cell_clip() const {
+   std::vector<std::string> mht_552_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_552(mht_552_v, 7484, "", "./tensorflow/lite/schema/schema_generated.h", "cell_clip");
+
     return GetField<float>(VT_CELL_CLIP, 0.0f);
   }
   float proj_clip() const {
+   std::vector<std::string> mht_553_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_553(mht_553_v, 7490, "", "./tensorflow/lite/schema/schema_generated.h", "proj_clip");
+
     return GetField<float>(VT_PROJ_CLIP, 0.0f);
   }
   bool time_major() const {
+   std::vector<std::string> mht_554_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_554(mht_554_v, 7496, "", "./tensorflow/lite/schema/schema_generated.h", "time_major");
+
     return GetField<uint8_t>(VT_TIME_MAJOR, 0) != 0;
   }
   bool asymmetric_quantize_inputs() const {
+   std::vector<std::string> mht_555_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_555(mht_555_v, 7502, "", "./tensorflow/lite/schema/schema_generated.h", "asymmetric_quantize_inputs");
+
     return GetField<uint8_t>(VT_ASYMMETRIC_QUANTIZE_INPUTS, 0) != 0;
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_556_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_556(mht_556_v, 7508, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_FUSED_ACTIVATION_FUNCTION) &&
            VerifyField<float>(verifier, VT_CELL_CLIP) &&
@@ -5686,22 +7525,40 @@ struct UnidirectionalSequenceLSTMOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_fused_activation_function(tflite::ActivationFunctionType fused_activation_function) {
+   std::vector<std::string> mht_557_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_557(mht_557_v, 7528, "", "./tensorflow/lite/schema/schema_generated.h", "add_fused_activation_function");
+
     fbb_.AddElement<int8_t>(UnidirectionalSequenceLSTMOptions::VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(fused_activation_function), 0);
   }
   void add_cell_clip(float cell_clip) {
+   std::vector<std::string> mht_558_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_558(mht_558_v, 7534, "", "./tensorflow/lite/schema/schema_generated.h", "add_cell_clip");
+
     fbb_.AddElement<float>(UnidirectionalSequenceLSTMOptions::VT_CELL_CLIP, cell_clip, 0.0f);
   }
   void add_proj_clip(float proj_clip) {
+   std::vector<std::string> mht_559_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_559(mht_559_v, 7540, "", "./tensorflow/lite/schema/schema_generated.h", "add_proj_clip");
+
     fbb_.AddElement<float>(UnidirectionalSequenceLSTMOptions::VT_PROJ_CLIP, proj_clip, 0.0f);
   }
   void add_time_major(bool time_major) {
+   std::vector<std::string> mht_560_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_560(mht_560_v, 7546, "", "./tensorflow/lite/schema/schema_generated.h", "add_time_major");
+
     fbb_.AddElement<uint8_t>(UnidirectionalSequenceLSTMOptions::VT_TIME_MAJOR, static_cast<uint8_t>(time_major), 0);
   }
   void add_asymmetric_quantize_inputs(bool asymmetric_quantize_inputs) {
+   std::vector<std::string> mht_561_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_561(mht_561_v, 7552, "", "./tensorflow/lite/schema/schema_generated.h", "add_asymmetric_quantize_inputs");
+
     fbb_.AddElement<uint8_t>(UnidirectionalSequenceLSTMOptions::VT_ASYMMETRIC_QUANTIZE_INPUTS, static_cast<uint8_t>(asymmetric_quantize_inputs), 0);
   }
   explicit UnidirectionalSequenceLSTMOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_562_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_562(mht_562_v, 7559, "", "./tensorflow/lite/schema/schema_generated.h", "UnidirectionalSequenceLSTMOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   UnidirectionalSequenceLSTMOptionsBuilder &operator=(const UnidirectionalSequenceLSTMOptionsBuilder &);
@@ -5745,6 +7602,9 @@ struct BidirectionalSequenceLSTMOptionsT : public flatbuffers::NativeTable {
         merge_outputs(false),
         time_major(true),
         asymmetric_quantize_inputs(false) {
+   std::vector<std::string> mht_563_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_563(mht_563_v, 7605, "", "./tensorflow/lite/schema/schema_generated.h", "BidirectionalSequenceLSTMOptionsT");
+
   }
 };
 
@@ -5759,24 +7619,45 @@ struct BidirectionalSequenceLSTMOptions FLATBUFFERS_FINAL_CLASS : private flatbu
     VT_ASYMMETRIC_QUANTIZE_INPUTS = 14
   };
   tflite::ActivationFunctionType fused_activation_function() const {
+   std::vector<std::string> mht_564_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_564(mht_564_v, 7622, "", "./tensorflow/lite/schema/schema_generated.h", "fused_activation_function");
+
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
   float cell_clip() const {
+   std::vector<std::string> mht_565_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_565(mht_565_v, 7628, "", "./tensorflow/lite/schema/schema_generated.h", "cell_clip");
+
     return GetField<float>(VT_CELL_CLIP, 0.0f);
   }
   float proj_clip() const {
+   std::vector<std::string> mht_566_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_566(mht_566_v, 7634, "", "./tensorflow/lite/schema/schema_generated.h", "proj_clip");
+
     return GetField<float>(VT_PROJ_CLIP, 0.0f);
   }
   bool merge_outputs() const {
+   std::vector<std::string> mht_567_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_567(mht_567_v, 7640, "", "./tensorflow/lite/schema/schema_generated.h", "merge_outputs");
+
     return GetField<uint8_t>(VT_MERGE_OUTPUTS, 0) != 0;
   }
   bool time_major() const {
+   std::vector<std::string> mht_568_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_568(mht_568_v, 7646, "", "./tensorflow/lite/schema/schema_generated.h", "time_major");
+
     return GetField<uint8_t>(VT_TIME_MAJOR, 1) != 0;
   }
   bool asymmetric_quantize_inputs() const {
+   std::vector<std::string> mht_569_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_569(mht_569_v, 7652, "", "./tensorflow/lite/schema/schema_generated.h", "asymmetric_quantize_inputs");
+
     return GetField<uint8_t>(VT_ASYMMETRIC_QUANTIZE_INPUTS, 0) != 0;
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_570_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_570(mht_570_v, 7658, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_FUSED_ACTIVATION_FUNCTION) &&
            VerifyField<float>(verifier, VT_CELL_CLIP) &&
@@ -5795,25 +7676,46 @@ struct BidirectionalSequenceLSTMOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_fused_activation_function(tflite::ActivationFunctionType fused_activation_function) {
+   std::vector<std::string> mht_571_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_571(mht_571_v, 7679, "", "./tensorflow/lite/schema/schema_generated.h", "add_fused_activation_function");
+
     fbb_.AddElement<int8_t>(BidirectionalSequenceLSTMOptions::VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(fused_activation_function), 0);
   }
   void add_cell_clip(float cell_clip) {
+   std::vector<std::string> mht_572_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_572(mht_572_v, 7685, "", "./tensorflow/lite/schema/schema_generated.h", "add_cell_clip");
+
     fbb_.AddElement<float>(BidirectionalSequenceLSTMOptions::VT_CELL_CLIP, cell_clip, 0.0f);
   }
   void add_proj_clip(float proj_clip) {
+   std::vector<std::string> mht_573_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_573(mht_573_v, 7691, "", "./tensorflow/lite/schema/schema_generated.h", "add_proj_clip");
+
     fbb_.AddElement<float>(BidirectionalSequenceLSTMOptions::VT_PROJ_CLIP, proj_clip, 0.0f);
   }
   void add_merge_outputs(bool merge_outputs) {
+   std::vector<std::string> mht_574_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_574(mht_574_v, 7697, "", "./tensorflow/lite/schema/schema_generated.h", "add_merge_outputs");
+
     fbb_.AddElement<uint8_t>(BidirectionalSequenceLSTMOptions::VT_MERGE_OUTPUTS, static_cast<uint8_t>(merge_outputs), 0);
   }
   void add_time_major(bool time_major) {
+   std::vector<std::string> mht_575_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_575(mht_575_v, 7703, "", "./tensorflow/lite/schema/schema_generated.h", "add_time_major");
+
     fbb_.AddElement<uint8_t>(BidirectionalSequenceLSTMOptions::VT_TIME_MAJOR, static_cast<uint8_t>(time_major), 1);
   }
   void add_asymmetric_quantize_inputs(bool asymmetric_quantize_inputs) {
+   std::vector<std::string> mht_576_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_576(mht_576_v, 7709, "", "./tensorflow/lite/schema/schema_generated.h", "add_asymmetric_quantize_inputs");
+
     fbb_.AddElement<uint8_t>(BidirectionalSequenceLSTMOptions::VT_ASYMMETRIC_QUANTIZE_INPUTS, static_cast<uint8_t>(asymmetric_quantize_inputs), 0);
   }
   explicit BidirectionalSequenceLSTMOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_577_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_577(mht_577_v, 7716, "", "./tensorflow/lite/schema/schema_generated.h", "BidirectionalSequenceLSTMOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   BidirectionalSequenceLSTMOptionsBuilder &operator=(const BidirectionalSequenceLSTMOptionsBuilder &);
@@ -5851,6 +7753,9 @@ struct ResizeBilinearOptionsT : public flatbuffers::NativeTable {
   ResizeBilinearOptionsT()
       : align_corners(false),
         half_pixel_centers(false) {
+   std::vector<std::string> mht_578_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_578(mht_578_v, 7756, "", "./tensorflow/lite/schema/schema_generated.h", "ResizeBilinearOptionsT");
+
   }
 };
 
@@ -5861,12 +7766,21 @@ struct ResizeBilinearOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Tabl
     VT_HALF_PIXEL_CENTERS = 10
   };
   bool align_corners() const {
+   std::vector<std::string> mht_579_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_579(mht_579_v, 7769, "", "./tensorflow/lite/schema/schema_generated.h", "align_corners");
+
     return GetField<uint8_t>(VT_ALIGN_CORNERS, 0) != 0;
   }
   bool half_pixel_centers() const {
+   std::vector<std::string> mht_580_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_580(mht_580_v, 7775, "", "./tensorflow/lite/schema/schema_generated.h", "half_pixel_centers");
+
     return GetField<uint8_t>(VT_HALF_PIXEL_CENTERS, 0) != 0;
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_581_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_581(mht_581_v, 7781, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<uint8_t>(verifier, VT_ALIGN_CORNERS) &&
            VerifyField<uint8_t>(verifier, VT_HALF_PIXEL_CENTERS) &&
@@ -5881,13 +7795,22 @@ struct ResizeBilinearOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_align_corners(bool align_corners) {
+   std::vector<std::string> mht_582_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_582(mht_582_v, 7798, "", "./tensorflow/lite/schema/schema_generated.h", "add_align_corners");
+
     fbb_.AddElement<uint8_t>(ResizeBilinearOptions::VT_ALIGN_CORNERS, static_cast<uint8_t>(align_corners), 0);
   }
   void add_half_pixel_centers(bool half_pixel_centers) {
+   std::vector<std::string> mht_583_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_583(mht_583_v, 7804, "", "./tensorflow/lite/schema/schema_generated.h", "add_half_pixel_centers");
+
     fbb_.AddElement<uint8_t>(ResizeBilinearOptions::VT_HALF_PIXEL_CENTERS, static_cast<uint8_t>(half_pixel_centers), 0);
   }
   explicit ResizeBilinearOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_584_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_584(mht_584_v, 7811, "", "./tensorflow/lite/schema/schema_generated.h", "ResizeBilinearOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   ResizeBilinearOptionsBuilder &operator=(const ResizeBilinearOptionsBuilder &);
@@ -5917,6 +7840,9 @@ struct ResizeNearestNeighborOptionsT : public flatbuffers::NativeTable {
   ResizeNearestNeighborOptionsT()
       : align_corners(false),
         half_pixel_centers(false) {
+   std::vector<std::string> mht_585_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_585(mht_585_v, 7843, "", "./tensorflow/lite/schema/schema_generated.h", "ResizeNearestNeighborOptionsT");
+
   }
 };
 
@@ -5927,12 +7853,21 @@ struct ResizeNearestNeighborOptions FLATBUFFERS_FINAL_CLASS : private flatbuffer
     VT_HALF_PIXEL_CENTERS = 6
   };
   bool align_corners() const {
+   std::vector<std::string> mht_586_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_586(mht_586_v, 7856, "", "./tensorflow/lite/schema/schema_generated.h", "align_corners");
+
     return GetField<uint8_t>(VT_ALIGN_CORNERS, 0) != 0;
   }
   bool half_pixel_centers() const {
+   std::vector<std::string> mht_587_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_587(mht_587_v, 7862, "", "./tensorflow/lite/schema/schema_generated.h", "half_pixel_centers");
+
     return GetField<uint8_t>(VT_HALF_PIXEL_CENTERS, 0) != 0;
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_588_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_588(mht_588_v, 7868, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<uint8_t>(verifier, VT_ALIGN_CORNERS) &&
            VerifyField<uint8_t>(verifier, VT_HALF_PIXEL_CENTERS) &&
@@ -5947,13 +7882,22 @@ struct ResizeNearestNeighborOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_align_corners(bool align_corners) {
+   std::vector<std::string> mht_589_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_589(mht_589_v, 7885, "", "./tensorflow/lite/schema/schema_generated.h", "add_align_corners");
+
     fbb_.AddElement<uint8_t>(ResizeNearestNeighborOptions::VT_ALIGN_CORNERS, static_cast<uint8_t>(align_corners), 0);
   }
   void add_half_pixel_centers(bool half_pixel_centers) {
+   std::vector<std::string> mht_590_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_590(mht_590_v, 7891, "", "./tensorflow/lite/schema/schema_generated.h", "add_half_pixel_centers");
+
     fbb_.AddElement<uint8_t>(ResizeNearestNeighborOptions::VT_HALF_PIXEL_CENTERS, static_cast<uint8_t>(half_pixel_centers), 0);
   }
   explicit ResizeNearestNeighborOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_591_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_591(mht_591_v, 7898, "", "./tensorflow/lite/schema/schema_generated.h", "ResizeNearestNeighborOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   ResizeNearestNeighborOptionsBuilder &operator=(const ResizeNearestNeighborOptionsBuilder &);
@@ -5981,6 +7925,9 @@ struct CallOptionsT : public flatbuffers::NativeTable {
   uint32_t subgraph;
   CallOptionsT()
       : subgraph(0) {
+   std::vector<std::string> mht_592_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_592(mht_592_v, 7928, "", "./tensorflow/lite/schema/schema_generated.h", "CallOptionsT");
+
   }
 };
 
@@ -5990,9 +7937,15 @@ struct CallOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_SUBGRAPH = 4
   };
   uint32_t subgraph() const {
+   std::vector<std::string> mht_593_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_593(mht_593_v, 7940, "", "./tensorflow/lite/schema/schema_generated.h", "subgraph");
+
     return GetField<uint32_t>(VT_SUBGRAPH, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_594_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_594(mht_594_v, 7946, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<uint32_t>(verifier, VT_SUBGRAPH) &&
            verifier.EndTable();
@@ -6006,10 +7959,16 @@ struct CallOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_subgraph(uint32_t subgraph) {
+   std::vector<std::string> mht_595_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_595(mht_595_v, 7962, "", "./tensorflow/lite/schema/schema_generated.h", "add_subgraph");
+
     fbb_.AddElement<uint32_t>(CallOptions::VT_SUBGRAPH, subgraph, 0);
   }
   explicit CallOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_596_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_596(mht_596_v, 7969, "", "./tensorflow/lite/schema/schema_generated.h", "CallOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   CallOptionsBuilder &operator=(const CallOptionsBuilder &);
@@ -6033,12 +7992,18 @@ flatbuffers::Offset<CallOptions> CreateCallOptions(flatbuffers::FlatBufferBuilde
 struct PadOptionsT : public flatbuffers::NativeTable {
   typedef PadOptions TableType;
   PadOptionsT() {
+   std::vector<std::string> mht_597_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_597(mht_597_v, 7995, "", "./tensorflow/lite/schema/schema_generated.h", "PadOptionsT");
+
   }
 };
 
 struct PadOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef PadOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_598_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_598(mht_598_v, 8004, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -6052,6 +8017,9 @@ struct PadOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit PadOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_599_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_599(mht_599_v, 8020, "", "./tensorflow/lite/schema/schema_generated.h", "PadOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   PadOptionsBuilder &operator=(const PadOptionsBuilder &);
@@ -6073,12 +8041,18 @@ flatbuffers::Offset<PadOptions> CreatePadOptions(flatbuffers::FlatBufferBuilder 
 struct PadV2OptionsT : public flatbuffers::NativeTable {
   typedef PadV2Options TableType;
   PadV2OptionsT() {
+   std::vector<std::string> mht_600_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_600(mht_600_v, 8044, "", "./tensorflow/lite/schema/schema_generated.h", "PadV2OptionsT");
+
   }
 };
 
 struct PadV2Options FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef PadV2OptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_601_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_601(mht_601_v, 8053, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -6092,6 +8066,9 @@ struct PadV2OptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit PadV2OptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_602_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_602(mht_602_v, 8069, "", "./tensorflow/lite/schema/schema_generated.h", "PadV2OptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   PadV2OptionsBuilder &operator=(const PadV2OptionsBuilder &);
@@ -6114,6 +8091,9 @@ struct ReshapeOptionsT : public flatbuffers::NativeTable {
   typedef ReshapeOptions TableType;
   std::vector<int32_t> new_shape;
   ReshapeOptionsT() {
+   std::vector<std::string> mht_603_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_603(mht_603_v, 8094, "", "./tensorflow/lite/schema/schema_generated.h", "ReshapeOptionsT");
+
   }
 };
 
@@ -6123,9 +8103,15 @@ struct ReshapeOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_NEW_SHAPE = 4
   };
   const flatbuffers::Vector<int32_t> *new_shape() const {
+   std::vector<std::string> mht_604_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_604(mht_604_v, 8106, "", "./tensorflow/lite/schema/schema_generated.h", "new_shape");
+
     return GetPointer<const flatbuffers::Vector<int32_t> *>(VT_NEW_SHAPE);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_605_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_605(mht_605_v, 8112, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_NEW_SHAPE) &&
            verifier.VerifyVector(new_shape()) &&
@@ -6140,10 +8126,16 @@ struct ReshapeOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_new_shape(flatbuffers::Offset<flatbuffers::Vector<int32_t>> new_shape) {
+   std::vector<std::string> mht_606_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_606(mht_606_v, 8129, "", "./tensorflow/lite/schema/schema_generated.h", "add_new_shape");
+
     fbb_.AddOffset(ReshapeOptions::VT_NEW_SHAPE, new_shape);
   }
   explicit ReshapeOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_607_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_607(mht_607_v, 8136, "", "./tensorflow/lite/schema/schema_generated.h", "ReshapeOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   ReshapeOptionsBuilder &operator=(const ReshapeOptionsBuilder &);
@@ -6176,12 +8168,18 @@ flatbuffers::Offset<ReshapeOptions> CreateReshapeOptions(flatbuffers::FlatBuffer
 struct SpaceToBatchNDOptionsT : public flatbuffers::NativeTable {
   typedef SpaceToBatchNDOptions TableType;
   SpaceToBatchNDOptionsT() {
+   std::vector<std::string> mht_608_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_608(mht_608_v, 8171, "", "./tensorflow/lite/schema/schema_generated.h", "SpaceToBatchNDOptionsT");
+
   }
 };
 
 struct SpaceToBatchNDOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef SpaceToBatchNDOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_609_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_609(mht_609_v, 8180, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -6195,6 +8193,9 @@ struct SpaceToBatchNDOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit SpaceToBatchNDOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_610_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_610(mht_610_v, 8196, "", "./tensorflow/lite/schema/schema_generated.h", "SpaceToBatchNDOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   SpaceToBatchNDOptionsBuilder &operator=(const SpaceToBatchNDOptionsBuilder &);
@@ -6216,12 +8217,18 @@ flatbuffers::Offset<SpaceToBatchNDOptions> CreateSpaceToBatchNDOptions(flatbuffe
 struct BatchToSpaceNDOptionsT : public flatbuffers::NativeTable {
   typedef BatchToSpaceNDOptions TableType;
   BatchToSpaceNDOptionsT() {
+   std::vector<std::string> mht_611_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_611(mht_611_v, 8220, "", "./tensorflow/lite/schema/schema_generated.h", "BatchToSpaceNDOptionsT");
+
   }
 };
 
 struct BatchToSpaceNDOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef BatchToSpaceNDOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_612_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_612(mht_612_v, 8229, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -6235,6 +8242,9 @@ struct BatchToSpaceNDOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit BatchToSpaceNDOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_613_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_613(mht_613_v, 8245, "", "./tensorflow/lite/schema/schema_generated.h", "BatchToSpaceNDOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   BatchToSpaceNDOptionsBuilder &operator=(const BatchToSpaceNDOptionsBuilder &);
@@ -6262,6 +8272,9 @@ struct SkipGramOptionsT : public flatbuffers::NativeTable {
       : ngram_size(0),
         max_skip_size(0),
         include_all_ngrams(false) {
+   std::vector<std::string> mht_614_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_614(mht_614_v, 8275, "", "./tensorflow/lite/schema/schema_generated.h", "SkipGramOptionsT");
+
   }
 };
 
@@ -6273,15 +8286,27 @@ struct SkipGramOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_INCLUDE_ALL_NGRAMS = 8
   };
   int32_t ngram_size() const {
+   std::vector<std::string> mht_615_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_615(mht_615_v, 8289, "", "./tensorflow/lite/schema/schema_generated.h", "ngram_size");
+
     return GetField<int32_t>(VT_NGRAM_SIZE, 0);
   }
   int32_t max_skip_size() const {
+   std::vector<std::string> mht_616_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_616(mht_616_v, 8295, "", "./tensorflow/lite/schema/schema_generated.h", "max_skip_size");
+
     return GetField<int32_t>(VT_MAX_SKIP_SIZE, 0);
   }
   bool include_all_ngrams() const {
+   std::vector<std::string> mht_617_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_617(mht_617_v, 8301, "", "./tensorflow/lite/schema/schema_generated.h", "include_all_ngrams");
+
     return GetField<uint8_t>(VT_INCLUDE_ALL_NGRAMS, 0) != 0;
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_618_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_618(mht_618_v, 8307, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_NGRAM_SIZE) &&
            VerifyField<int32_t>(verifier, VT_MAX_SKIP_SIZE) &&
@@ -6297,16 +8322,28 @@ struct SkipGramOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_ngram_size(int32_t ngram_size) {
+   std::vector<std::string> mht_619_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_619(mht_619_v, 8325, "", "./tensorflow/lite/schema/schema_generated.h", "add_ngram_size");
+
     fbb_.AddElement<int32_t>(SkipGramOptions::VT_NGRAM_SIZE, ngram_size, 0);
   }
   void add_max_skip_size(int32_t max_skip_size) {
+   std::vector<std::string> mht_620_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_620(mht_620_v, 8331, "", "./tensorflow/lite/schema/schema_generated.h", "add_max_skip_size");
+
     fbb_.AddElement<int32_t>(SkipGramOptions::VT_MAX_SKIP_SIZE, max_skip_size, 0);
   }
   void add_include_all_ngrams(bool include_all_ngrams) {
+   std::vector<std::string> mht_621_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_621(mht_621_v, 8337, "", "./tensorflow/lite/schema/schema_generated.h", "add_include_all_ngrams");
+
     fbb_.AddElement<uint8_t>(SkipGramOptions::VT_INCLUDE_ALL_NGRAMS, static_cast<uint8_t>(include_all_ngrams), 0);
   }
   explicit SkipGramOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_622_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_622(mht_622_v, 8344, "", "./tensorflow/lite/schema/schema_generated.h", "SkipGramOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   SkipGramOptionsBuilder &operator=(const SkipGramOptionsBuilder &);
@@ -6336,6 +8373,9 @@ struct SpaceToDepthOptionsT : public flatbuffers::NativeTable {
   int32_t block_size;
   SpaceToDepthOptionsT()
       : block_size(0) {
+   std::vector<std::string> mht_623_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_623(mht_623_v, 8376, "", "./tensorflow/lite/schema/schema_generated.h", "SpaceToDepthOptionsT");
+
   }
 };
 
@@ -6345,9 +8385,15 @@ struct SpaceToDepthOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table 
     VT_BLOCK_SIZE = 4
   };
   int32_t block_size() const {
+   std::vector<std::string> mht_624_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_624(mht_624_v, 8388, "", "./tensorflow/lite/schema/schema_generated.h", "block_size");
+
     return GetField<int32_t>(VT_BLOCK_SIZE, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_625_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_625(mht_625_v, 8394, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_BLOCK_SIZE) &&
            verifier.EndTable();
@@ -6361,10 +8407,16 @@ struct SpaceToDepthOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_block_size(int32_t block_size) {
+   std::vector<std::string> mht_626_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_626(mht_626_v, 8410, "", "./tensorflow/lite/schema/schema_generated.h", "add_block_size");
+
     fbb_.AddElement<int32_t>(SpaceToDepthOptions::VT_BLOCK_SIZE, block_size, 0);
   }
   explicit SpaceToDepthOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_627_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_627(mht_627_v, 8417, "", "./tensorflow/lite/schema/schema_generated.h", "SpaceToDepthOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   SpaceToDepthOptionsBuilder &operator=(const SpaceToDepthOptionsBuilder &);
@@ -6390,6 +8442,9 @@ struct DepthToSpaceOptionsT : public flatbuffers::NativeTable {
   int32_t block_size;
   DepthToSpaceOptionsT()
       : block_size(0) {
+   std::vector<std::string> mht_628_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_628(mht_628_v, 8445, "", "./tensorflow/lite/schema/schema_generated.h", "DepthToSpaceOptionsT");
+
   }
 };
 
@@ -6399,9 +8454,15 @@ struct DepthToSpaceOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table 
     VT_BLOCK_SIZE = 4
   };
   int32_t block_size() const {
+   std::vector<std::string> mht_629_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_629(mht_629_v, 8457, "", "./tensorflow/lite/schema/schema_generated.h", "block_size");
+
     return GetField<int32_t>(VT_BLOCK_SIZE, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_630_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_630(mht_630_v, 8463, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_BLOCK_SIZE) &&
            verifier.EndTable();
@@ -6415,10 +8476,16 @@ struct DepthToSpaceOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_block_size(int32_t block_size) {
+   std::vector<std::string> mht_631_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_631(mht_631_v, 8479, "", "./tensorflow/lite/schema/schema_generated.h", "add_block_size");
+
     fbb_.AddElement<int32_t>(DepthToSpaceOptions::VT_BLOCK_SIZE, block_size, 0);
   }
   explicit DepthToSpaceOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_632_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_632(mht_632_v, 8486, "", "./tensorflow/lite/schema/schema_generated.h", "DepthToSpaceOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   DepthToSpaceOptionsBuilder &operator=(const DepthToSpaceOptionsBuilder &);
@@ -6446,6 +8513,9 @@ struct SubOptionsT : public flatbuffers::NativeTable {
   SubOptionsT()
       : fused_activation_function(tflite::ActivationFunctionType_NONE),
         pot_scale_int16(true) {
+   std::vector<std::string> mht_633_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_633(mht_633_v, 8516, "", "./tensorflow/lite/schema/schema_generated.h", "SubOptionsT");
+
   }
 };
 
@@ -6456,12 +8526,21 @@ struct SubOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_POT_SCALE_INT16 = 6
   };
   tflite::ActivationFunctionType fused_activation_function() const {
+   std::vector<std::string> mht_634_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_634(mht_634_v, 8529, "", "./tensorflow/lite/schema/schema_generated.h", "fused_activation_function");
+
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
   bool pot_scale_int16() const {
+   std::vector<std::string> mht_635_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_635(mht_635_v, 8535, "", "./tensorflow/lite/schema/schema_generated.h", "pot_scale_int16");
+
     return GetField<uint8_t>(VT_POT_SCALE_INT16, 1) != 0;
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_636_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_636(mht_636_v, 8541, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_FUSED_ACTIVATION_FUNCTION) &&
            VerifyField<uint8_t>(verifier, VT_POT_SCALE_INT16) &&
@@ -6476,13 +8555,22 @@ struct SubOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_fused_activation_function(tflite::ActivationFunctionType fused_activation_function) {
+   std::vector<std::string> mht_637_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_637(mht_637_v, 8558, "", "./tensorflow/lite/schema/schema_generated.h", "add_fused_activation_function");
+
     fbb_.AddElement<int8_t>(SubOptions::VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(fused_activation_function), 0);
   }
   void add_pot_scale_int16(bool pot_scale_int16) {
+   std::vector<std::string> mht_638_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_638(mht_638_v, 8564, "", "./tensorflow/lite/schema/schema_generated.h", "add_pot_scale_int16");
+
     fbb_.AddElement<uint8_t>(SubOptions::VT_POT_SCALE_INT16, static_cast<uint8_t>(pot_scale_int16), 1);
   }
   explicit SubOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_639_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_639(mht_639_v, 8571, "", "./tensorflow/lite/schema/schema_generated.h", "SubOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   SubOptionsBuilder &operator=(const SubOptionsBuilder &);
@@ -6510,6 +8598,9 @@ struct DivOptionsT : public flatbuffers::NativeTable {
   tflite::ActivationFunctionType fused_activation_function;
   DivOptionsT()
       : fused_activation_function(tflite::ActivationFunctionType_NONE) {
+   std::vector<std::string> mht_640_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_640(mht_640_v, 8601, "", "./tensorflow/lite/schema/schema_generated.h", "DivOptionsT");
+
   }
 };
 
@@ -6519,9 +8610,15 @@ struct DivOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_FUSED_ACTIVATION_FUNCTION = 4
   };
   tflite::ActivationFunctionType fused_activation_function() const {
+   std::vector<std::string> mht_641_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_641(mht_641_v, 8613, "", "./tensorflow/lite/schema/schema_generated.h", "fused_activation_function");
+
     return static_cast<tflite::ActivationFunctionType>(GetField<int8_t>(VT_FUSED_ACTIVATION_FUNCTION, 0));
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_642_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_642(mht_642_v, 8619, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_FUSED_ACTIVATION_FUNCTION) &&
            verifier.EndTable();
@@ -6535,10 +8632,16 @@ struct DivOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_fused_activation_function(tflite::ActivationFunctionType fused_activation_function) {
+   std::vector<std::string> mht_643_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_643(mht_643_v, 8635, "", "./tensorflow/lite/schema/schema_generated.h", "add_fused_activation_function");
+
     fbb_.AddElement<int8_t>(DivOptions::VT_FUSED_ACTIVATION_FUNCTION, static_cast<int8_t>(fused_activation_function), 0);
   }
   explicit DivOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_644_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_644(mht_644_v, 8642, "", "./tensorflow/lite/schema/schema_generated.h", "DivOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   DivOptionsBuilder &operator=(const DivOptionsBuilder &);
@@ -6562,12 +8665,18 @@ flatbuffers::Offset<DivOptions> CreateDivOptions(flatbuffers::FlatBufferBuilder 
 struct TopKV2OptionsT : public flatbuffers::NativeTable {
   typedef TopKV2Options TableType;
   TopKV2OptionsT() {
+   std::vector<std::string> mht_645_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_645(mht_645_v, 8668, "", "./tensorflow/lite/schema/schema_generated.h", "TopKV2OptionsT");
+
   }
 };
 
 struct TopKV2Options FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef TopKV2OptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_646_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_646(mht_646_v, 8677, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -6581,6 +8690,9 @@ struct TopKV2OptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit TopKV2OptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_647_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_647(mht_647_v, 8693, "", "./tensorflow/lite/schema/schema_generated.h", "TopKV2OptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   TopKV2OptionsBuilder &operator=(const TopKV2OptionsBuilder &);
@@ -6604,6 +8716,9 @@ struct EmbeddingLookupSparseOptionsT : public flatbuffers::NativeTable {
   tflite::CombinerType combiner;
   EmbeddingLookupSparseOptionsT()
       : combiner(tflite::CombinerType_SUM) {
+   std::vector<std::string> mht_648_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_648(mht_648_v, 8719, "", "./tensorflow/lite/schema/schema_generated.h", "EmbeddingLookupSparseOptionsT");
+
   }
 };
 
@@ -6613,9 +8728,15 @@ struct EmbeddingLookupSparseOptions FLATBUFFERS_FINAL_CLASS : private flatbuffer
     VT_COMBINER = 4
   };
   tflite::CombinerType combiner() const {
+   std::vector<std::string> mht_649_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_649(mht_649_v, 8731, "", "./tensorflow/lite/schema/schema_generated.h", "combiner");
+
     return static_cast<tflite::CombinerType>(GetField<int8_t>(VT_COMBINER, 0));
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_650_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_650(mht_650_v, 8737, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_COMBINER) &&
            verifier.EndTable();
@@ -6629,10 +8750,16 @@ struct EmbeddingLookupSparseOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_combiner(tflite::CombinerType combiner) {
+   std::vector<std::string> mht_651_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_651(mht_651_v, 8753, "", "./tensorflow/lite/schema/schema_generated.h", "add_combiner");
+
     fbb_.AddElement<int8_t>(EmbeddingLookupSparseOptions::VT_COMBINER, static_cast<int8_t>(combiner), 0);
   }
   explicit EmbeddingLookupSparseOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_652_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_652(mht_652_v, 8760, "", "./tensorflow/lite/schema/schema_generated.h", "EmbeddingLookupSparseOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   EmbeddingLookupSparseOptionsBuilder &operator=(const EmbeddingLookupSparseOptionsBuilder &);
@@ -6660,6 +8787,9 @@ struct GatherOptionsT : public flatbuffers::NativeTable {
   GatherOptionsT()
       : axis(0),
         batch_dims(0) {
+   std::vector<std::string> mht_653_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_653(mht_653_v, 8790, "", "./tensorflow/lite/schema/schema_generated.h", "GatherOptionsT");
+
   }
 };
 
@@ -6670,12 +8800,21 @@ struct GatherOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_BATCH_DIMS = 6
   };
   int32_t axis() const {
+   std::vector<std::string> mht_654_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_654(mht_654_v, 8803, "", "./tensorflow/lite/schema/schema_generated.h", "axis");
+
     return GetField<int32_t>(VT_AXIS, 0);
   }
   int32_t batch_dims() const {
+   std::vector<std::string> mht_655_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_655(mht_655_v, 8809, "", "./tensorflow/lite/schema/schema_generated.h", "batch_dims");
+
     return GetField<int32_t>(VT_BATCH_DIMS, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_656_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_656(mht_656_v, 8815, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_AXIS) &&
            VerifyField<int32_t>(verifier, VT_BATCH_DIMS) &&
@@ -6690,13 +8829,22 @@ struct GatherOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_axis(int32_t axis) {
+   std::vector<std::string> mht_657_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_657(mht_657_v, 8832, "", "./tensorflow/lite/schema/schema_generated.h", "add_axis");
+
     fbb_.AddElement<int32_t>(GatherOptions::VT_AXIS, axis, 0);
   }
   void add_batch_dims(int32_t batch_dims) {
+   std::vector<std::string> mht_658_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_658(mht_658_v, 8838, "", "./tensorflow/lite/schema/schema_generated.h", "add_batch_dims");
+
     fbb_.AddElement<int32_t>(GatherOptions::VT_BATCH_DIMS, batch_dims, 0);
   }
   explicit GatherOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_659_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_659(mht_659_v, 8845, "", "./tensorflow/lite/schema/schema_generated.h", "GatherOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   GatherOptionsBuilder &operator=(const GatherOptionsBuilder &);
@@ -6722,12 +8870,18 @@ flatbuffers::Offset<GatherOptions> CreateGatherOptions(flatbuffers::FlatBufferBu
 struct TransposeOptionsT : public flatbuffers::NativeTable {
   typedef TransposeOptions TableType;
   TransposeOptionsT() {
+   std::vector<std::string> mht_660_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_660(mht_660_v, 8873, "", "./tensorflow/lite/schema/schema_generated.h", "TransposeOptionsT");
+
   }
 };
 
 struct TransposeOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef TransposeOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_661_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_661(mht_661_v, 8882, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -6741,6 +8895,9 @@ struct TransposeOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit TransposeOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_662_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_662(mht_662_v, 8898, "", "./tensorflow/lite/schema/schema_generated.h", "TransposeOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   TransposeOptionsBuilder &operator=(const TransposeOptionsBuilder &);
@@ -6762,12 +8919,18 @@ flatbuffers::Offset<TransposeOptions> CreateTransposeOptions(flatbuffers::FlatBu
 struct ExpOptionsT : public flatbuffers::NativeTable {
   typedef ExpOptions TableType;
   ExpOptionsT() {
+   std::vector<std::string> mht_663_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_663(mht_663_v, 8922, "", "./tensorflow/lite/schema/schema_generated.h", "ExpOptionsT");
+
   }
 };
 
 struct ExpOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef ExpOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_664_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_664(mht_664_v, 8931, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -6781,6 +8944,9 @@ struct ExpOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit ExpOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_665_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_665(mht_665_v, 8947, "", "./tensorflow/lite/schema/schema_generated.h", "ExpOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   ExpOptionsBuilder &operator=(const ExpOptionsBuilder &);
@@ -6802,12 +8968,18 @@ flatbuffers::Offset<ExpOptions> CreateExpOptions(flatbuffers::FlatBufferBuilder 
 struct CosOptionsT : public flatbuffers::NativeTable {
   typedef CosOptions TableType;
   CosOptionsT() {
+   std::vector<std::string> mht_666_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_666(mht_666_v, 8971, "", "./tensorflow/lite/schema/schema_generated.h", "CosOptionsT");
+
   }
 };
 
 struct CosOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef CosOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_667_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_667(mht_667_v, 8980, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -6821,6 +8993,9 @@ struct CosOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit CosOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_668_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_668(mht_668_v, 8996, "", "./tensorflow/lite/schema/schema_generated.h", "CosOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   CosOptionsBuilder &operator=(const CosOptionsBuilder &);
@@ -6844,6 +9019,9 @@ struct ReducerOptionsT : public flatbuffers::NativeTable {
   bool keep_dims;
   ReducerOptionsT()
       : keep_dims(false) {
+   std::vector<std::string> mht_669_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_669(mht_669_v, 9022, "", "./tensorflow/lite/schema/schema_generated.h", "ReducerOptionsT");
+
   }
 };
 
@@ -6853,9 +9031,15 @@ struct ReducerOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_KEEP_DIMS = 4
   };
   bool keep_dims() const {
+   std::vector<std::string> mht_670_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_670(mht_670_v, 9034, "", "./tensorflow/lite/schema/schema_generated.h", "keep_dims");
+
     return GetField<uint8_t>(VT_KEEP_DIMS, 0) != 0;
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_671_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_671(mht_671_v, 9040, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<uint8_t>(verifier, VT_KEEP_DIMS) &&
            verifier.EndTable();
@@ -6869,10 +9053,16 @@ struct ReducerOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_keep_dims(bool keep_dims) {
+   std::vector<std::string> mht_672_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_672(mht_672_v, 9056, "", "./tensorflow/lite/schema/schema_generated.h", "add_keep_dims");
+
     fbb_.AddElement<uint8_t>(ReducerOptions::VT_KEEP_DIMS, static_cast<uint8_t>(keep_dims), 0);
   }
   explicit ReducerOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_673_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_673(mht_673_v, 9063, "", "./tensorflow/lite/schema/schema_generated.h", "ReducerOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   ReducerOptionsBuilder &operator=(const ReducerOptionsBuilder &);
@@ -6897,6 +9087,9 @@ struct SqueezeOptionsT : public flatbuffers::NativeTable {
   typedef SqueezeOptions TableType;
   std::vector<int32_t> squeeze_dims;
   SqueezeOptionsT() {
+   std::vector<std::string> mht_674_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_674(mht_674_v, 9090, "", "./tensorflow/lite/schema/schema_generated.h", "SqueezeOptionsT");
+
   }
 };
 
@@ -6906,9 +9099,15 @@ struct SqueezeOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_SQUEEZE_DIMS = 4
   };
   const flatbuffers::Vector<int32_t> *squeeze_dims() const {
+   std::vector<std::string> mht_675_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_675(mht_675_v, 9102, "", "./tensorflow/lite/schema/schema_generated.h", "squeeze_dims");
+
     return GetPointer<const flatbuffers::Vector<int32_t> *>(VT_SQUEEZE_DIMS);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_676_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_676(mht_676_v, 9108, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_SQUEEZE_DIMS) &&
            verifier.VerifyVector(squeeze_dims()) &&
@@ -6923,10 +9122,16 @@ struct SqueezeOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_squeeze_dims(flatbuffers::Offset<flatbuffers::Vector<int32_t>> squeeze_dims) {
+   std::vector<std::string> mht_677_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_677(mht_677_v, 9125, "", "./tensorflow/lite/schema/schema_generated.h", "add_squeeze_dims");
+
     fbb_.AddOffset(SqueezeOptions::VT_SQUEEZE_DIMS, squeeze_dims);
   }
   explicit SqueezeOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_678_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_678(mht_678_v, 9132, "", "./tensorflow/lite/schema/schema_generated.h", "SqueezeOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   SqueezeOptionsBuilder &operator=(const SqueezeOptionsBuilder &);
@@ -6961,6 +9166,9 @@ struct SplitOptionsT : public flatbuffers::NativeTable {
   int32_t num_splits;
   SplitOptionsT()
       : num_splits(0) {
+   std::vector<std::string> mht_679_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_679(mht_679_v, 9169, "", "./tensorflow/lite/schema/schema_generated.h", "SplitOptionsT");
+
   }
 };
 
@@ -6970,9 +9178,15 @@ struct SplitOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_NUM_SPLITS = 4
   };
   int32_t num_splits() const {
+   std::vector<std::string> mht_680_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_680(mht_680_v, 9181, "", "./tensorflow/lite/schema/schema_generated.h", "num_splits");
+
     return GetField<int32_t>(VT_NUM_SPLITS, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_681_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_681(mht_681_v, 9187, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_NUM_SPLITS) &&
            verifier.EndTable();
@@ -6986,10 +9200,16 @@ struct SplitOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_num_splits(int32_t num_splits) {
+   std::vector<std::string> mht_682_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_682(mht_682_v, 9203, "", "./tensorflow/lite/schema/schema_generated.h", "add_num_splits");
+
     fbb_.AddElement<int32_t>(SplitOptions::VT_NUM_SPLITS, num_splits, 0);
   }
   explicit SplitOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_683_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_683(mht_683_v, 9210, "", "./tensorflow/lite/schema/schema_generated.h", "SplitOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   SplitOptionsBuilder &operator=(const SplitOptionsBuilder &);
@@ -7015,6 +9235,9 @@ struct SplitVOptionsT : public flatbuffers::NativeTable {
   int32_t num_splits;
   SplitVOptionsT()
       : num_splits(0) {
+   std::vector<std::string> mht_684_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_684(mht_684_v, 9238, "", "./tensorflow/lite/schema/schema_generated.h", "SplitVOptionsT");
+
   }
 };
 
@@ -7024,9 +9247,15 @@ struct SplitVOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_NUM_SPLITS = 4
   };
   int32_t num_splits() const {
+   std::vector<std::string> mht_685_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_685(mht_685_v, 9250, "", "./tensorflow/lite/schema/schema_generated.h", "num_splits");
+
     return GetField<int32_t>(VT_NUM_SPLITS, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_686_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_686(mht_686_v, 9256, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_NUM_SPLITS) &&
            verifier.EndTable();
@@ -7040,10 +9269,16 @@ struct SplitVOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_num_splits(int32_t num_splits) {
+   std::vector<std::string> mht_687_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_687(mht_687_v, 9272, "", "./tensorflow/lite/schema/schema_generated.h", "add_num_splits");
+
     fbb_.AddElement<int32_t>(SplitVOptions::VT_NUM_SPLITS, num_splits, 0);
   }
   explicit SplitVOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_688_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_688(mht_688_v, 9279, "", "./tensorflow/lite/schema/schema_generated.h", "SplitVOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   SplitVOptionsBuilder &operator=(const SplitVOptionsBuilder &);
@@ -7077,6 +9312,9 @@ struct StridedSliceOptionsT : public flatbuffers::NativeTable {
         ellipsis_mask(0),
         new_axis_mask(0),
         shrink_axis_mask(0) {
+   std::vector<std::string> mht_689_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_689(mht_689_v, 9315, "", "./tensorflow/lite/schema/schema_generated.h", "StridedSliceOptionsT");
+
   }
 };
 
@@ -7090,21 +9328,39 @@ struct StridedSliceOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table 
     VT_SHRINK_AXIS_MASK = 12
   };
   int32_t begin_mask() const {
+   std::vector<std::string> mht_690_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_690(mht_690_v, 9331, "", "./tensorflow/lite/schema/schema_generated.h", "begin_mask");
+
     return GetField<int32_t>(VT_BEGIN_MASK, 0);
   }
   int32_t end_mask() const {
+   std::vector<std::string> mht_691_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_691(mht_691_v, 9337, "", "./tensorflow/lite/schema/schema_generated.h", "end_mask");
+
     return GetField<int32_t>(VT_END_MASK, 0);
   }
   int32_t ellipsis_mask() const {
+   std::vector<std::string> mht_692_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_692(mht_692_v, 9343, "", "./tensorflow/lite/schema/schema_generated.h", "ellipsis_mask");
+
     return GetField<int32_t>(VT_ELLIPSIS_MASK, 0);
   }
   int32_t new_axis_mask() const {
+   std::vector<std::string> mht_693_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_693(mht_693_v, 9349, "", "./tensorflow/lite/schema/schema_generated.h", "new_axis_mask");
+
     return GetField<int32_t>(VT_NEW_AXIS_MASK, 0);
   }
   int32_t shrink_axis_mask() const {
+   std::vector<std::string> mht_694_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_694(mht_694_v, 9355, "", "./tensorflow/lite/schema/schema_generated.h", "shrink_axis_mask");
+
     return GetField<int32_t>(VT_SHRINK_AXIS_MASK, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_695_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_695(mht_695_v, 9361, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_BEGIN_MASK) &&
            VerifyField<int32_t>(verifier, VT_END_MASK) &&
@@ -7122,22 +9378,40 @@ struct StridedSliceOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_begin_mask(int32_t begin_mask) {
+   std::vector<std::string> mht_696_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_696(mht_696_v, 9381, "", "./tensorflow/lite/schema/schema_generated.h", "add_begin_mask");
+
     fbb_.AddElement<int32_t>(StridedSliceOptions::VT_BEGIN_MASK, begin_mask, 0);
   }
   void add_end_mask(int32_t end_mask) {
+   std::vector<std::string> mht_697_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_697(mht_697_v, 9387, "", "./tensorflow/lite/schema/schema_generated.h", "add_end_mask");
+
     fbb_.AddElement<int32_t>(StridedSliceOptions::VT_END_MASK, end_mask, 0);
   }
   void add_ellipsis_mask(int32_t ellipsis_mask) {
+   std::vector<std::string> mht_698_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_698(mht_698_v, 9393, "", "./tensorflow/lite/schema/schema_generated.h", "add_ellipsis_mask");
+
     fbb_.AddElement<int32_t>(StridedSliceOptions::VT_ELLIPSIS_MASK, ellipsis_mask, 0);
   }
   void add_new_axis_mask(int32_t new_axis_mask) {
+   std::vector<std::string> mht_699_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_699(mht_699_v, 9399, "", "./tensorflow/lite/schema/schema_generated.h", "add_new_axis_mask");
+
     fbb_.AddElement<int32_t>(StridedSliceOptions::VT_NEW_AXIS_MASK, new_axis_mask, 0);
   }
   void add_shrink_axis_mask(int32_t shrink_axis_mask) {
+   std::vector<std::string> mht_700_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_700(mht_700_v, 9405, "", "./tensorflow/lite/schema/schema_generated.h", "add_shrink_axis_mask");
+
     fbb_.AddElement<int32_t>(StridedSliceOptions::VT_SHRINK_AXIS_MASK, shrink_axis_mask, 0);
   }
   explicit StridedSliceOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_701_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_701(mht_701_v, 9412, "", "./tensorflow/lite/schema/schema_generated.h", "StridedSliceOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   StridedSliceOptionsBuilder &operator=(const StridedSliceOptionsBuilder &);
@@ -7169,12 +9443,18 @@ flatbuffers::Offset<StridedSliceOptions> CreateStridedSliceOptions(flatbuffers::
 struct LogSoftmaxOptionsT : public flatbuffers::NativeTable {
   typedef LogSoftmaxOptions TableType;
   LogSoftmaxOptionsT() {
+   std::vector<std::string> mht_702_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_702(mht_702_v, 9446, "", "./tensorflow/lite/schema/schema_generated.h", "LogSoftmaxOptionsT");
+
   }
 };
 
 struct LogSoftmaxOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef LogSoftmaxOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_703_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_703(mht_703_v, 9455, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -7188,6 +9468,9 @@ struct LogSoftmaxOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit LogSoftmaxOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_704_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_704(mht_704_v, 9471, "", "./tensorflow/lite/schema/schema_generated.h", "LogSoftmaxOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   LogSoftmaxOptionsBuilder &operator=(const LogSoftmaxOptionsBuilder &);
@@ -7213,6 +9496,9 @@ struct CastOptionsT : public flatbuffers::NativeTable {
   CastOptionsT()
       : in_data_type(tflite::TensorType_FLOAT32),
         out_data_type(tflite::TensorType_FLOAT32) {
+   std::vector<std::string> mht_705_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_705(mht_705_v, 9499, "", "./tensorflow/lite/schema/schema_generated.h", "CastOptionsT");
+
   }
 };
 
@@ -7223,12 +9509,21 @@ struct CastOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_OUT_DATA_TYPE = 6
   };
   tflite::TensorType in_data_type() const {
+   std::vector<std::string> mht_706_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_706(mht_706_v, 9512, "", "./tensorflow/lite/schema/schema_generated.h", "in_data_type");
+
     return static_cast<tflite::TensorType>(GetField<int8_t>(VT_IN_DATA_TYPE, 0));
   }
   tflite::TensorType out_data_type() const {
+   std::vector<std::string> mht_707_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_707(mht_707_v, 9518, "", "./tensorflow/lite/schema/schema_generated.h", "out_data_type");
+
     return static_cast<tflite::TensorType>(GetField<int8_t>(VT_OUT_DATA_TYPE, 0));
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_708_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_708(mht_708_v, 9524, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_IN_DATA_TYPE) &&
            VerifyField<int8_t>(verifier, VT_OUT_DATA_TYPE) &&
@@ -7243,13 +9538,22 @@ struct CastOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_in_data_type(tflite::TensorType in_data_type) {
+   std::vector<std::string> mht_709_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_709(mht_709_v, 9541, "", "./tensorflow/lite/schema/schema_generated.h", "add_in_data_type");
+
     fbb_.AddElement<int8_t>(CastOptions::VT_IN_DATA_TYPE, static_cast<int8_t>(in_data_type), 0);
   }
   void add_out_data_type(tflite::TensorType out_data_type) {
+   std::vector<std::string> mht_710_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_710(mht_710_v, 9547, "", "./tensorflow/lite/schema/schema_generated.h", "add_out_data_type");
+
     fbb_.AddElement<int8_t>(CastOptions::VT_OUT_DATA_TYPE, static_cast<int8_t>(out_data_type), 0);
   }
   explicit CastOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_711_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_711(mht_711_v, 9554, "", "./tensorflow/lite/schema/schema_generated.h", "CastOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   CastOptionsBuilder &operator=(const CastOptionsBuilder &);
@@ -7275,12 +9579,18 @@ flatbuffers::Offset<CastOptions> CreateCastOptions(flatbuffers::FlatBufferBuilde
 struct DequantizeOptionsT : public flatbuffers::NativeTable {
   typedef DequantizeOptions TableType;
   DequantizeOptionsT() {
+   std::vector<std::string> mht_712_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_712(mht_712_v, 9582, "", "./tensorflow/lite/schema/schema_generated.h", "DequantizeOptionsT");
+
   }
 };
 
 struct DequantizeOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef DequantizeOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_713_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_713(mht_713_v, 9591, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -7294,6 +9604,9 @@ struct DequantizeOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit DequantizeOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_714_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_714(mht_714_v, 9607, "", "./tensorflow/lite/schema/schema_generated.h", "DequantizeOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   DequantizeOptionsBuilder &operator=(const DequantizeOptionsBuilder &);
@@ -7315,12 +9628,18 @@ flatbuffers::Offset<DequantizeOptions> CreateDequantizeOptions(flatbuffers::Flat
 struct MaximumMinimumOptionsT : public flatbuffers::NativeTable {
   typedef MaximumMinimumOptions TableType;
   MaximumMinimumOptionsT() {
+   std::vector<std::string> mht_715_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_715(mht_715_v, 9631, "", "./tensorflow/lite/schema/schema_generated.h", "MaximumMinimumOptionsT");
+
   }
 };
 
 struct MaximumMinimumOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef MaximumMinimumOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_716_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_716(mht_716_v, 9640, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -7334,6 +9653,9 @@ struct MaximumMinimumOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit MaximumMinimumOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_717_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_717(mht_717_v, 9656, "", "./tensorflow/lite/schema/schema_generated.h", "MaximumMinimumOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   MaximumMinimumOptionsBuilder &operator=(const MaximumMinimumOptionsBuilder &);
@@ -7355,12 +9677,18 @@ flatbuffers::Offset<MaximumMinimumOptions> CreateMaximumMinimumOptions(flatbuffe
 struct TileOptionsT : public flatbuffers::NativeTable {
   typedef TileOptions TableType;
   TileOptionsT() {
+   std::vector<std::string> mht_718_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_718(mht_718_v, 9680, "", "./tensorflow/lite/schema/schema_generated.h", "TileOptionsT");
+
   }
 };
 
 struct TileOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef TileOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_719_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_719(mht_719_v, 9689, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -7374,6 +9702,9 @@ struct TileOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit TileOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_720_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_720(mht_720_v, 9705, "", "./tensorflow/lite/schema/schema_generated.h", "TileOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   TileOptionsBuilder &operator=(const TileOptionsBuilder &);
@@ -7397,6 +9728,9 @@ struct ArgMaxOptionsT : public flatbuffers::NativeTable {
   tflite::TensorType output_type;
   ArgMaxOptionsT()
       : output_type(tflite::TensorType_FLOAT32) {
+   std::vector<std::string> mht_721_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_721(mht_721_v, 9731, "", "./tensorflow/lite/schema/schema_generated.h", "ArgMaxOptionsT");
+
   }
 };
 
@@ -7406,9 +9740,15 @@ struct ArgMaxOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_OUTPUT_TYPE = 4
   };
   tflite::TensorType output_type() const {
+   std::vector<std::string> mht_722_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_722(mht_722_v, 9743, "", "./tensorflow/lite/schema/schema_generated.h", "output_type");
+
     return static_cast<tflite::TensorType>(GetField<int8_t>(VT_OUTPUT_TYPE, 0));
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_723_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_723(mht_723_v, 9749, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_OUTPUT_TYPE) &&
            verifier.EndTable();
@@ -7422,10 +9762,16 @@ struct ArgMaxOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_output_type(tflite::TensorType output_type) {
+   std::vector<std::string> mht_724_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_724(mht_724_v, 9765, "", "./tensorflow/lite/schema/schema_generated.h", "add_output_type");
+
     fbb_.AddElement<int8_t>(ArgMaxOptions::VT_OUTPUT_TYPE, static_cast<int8_t>(output_type), 0);
   }
   explicit ArgMaxOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_725_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_725(mht_725_v, 9772, "", "./tensorflow/lite/schema/schema_generated.h", "ArgMaxOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   ArgMaxOptionsBuilder &operator=(const ArgMaxOptionsBuilder &);
@@ -7451,6 +9797,9 @@ struct ArgMinOptionsT : public flatbuffers::NativeTable {
   tflite::TensorType output_type;
   ArgMinOptionsT()
       : output_type(tflite::TensorType_FLOAT32) {
+   std::vector<std::string> mht_726_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_726(mht_726_v, 9800, "", "./tensorflow/lite/schema/schema_generated.h", "ArgMinOptionsT");
+
   }
 };
 
@@ -7460,9 +9809,15 @@ struct ArgMinOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_OUTPUT_TYPE = 4
   };
   tflite::TensorType output_type() const {
+   std::vector<std::string> mht_727_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_727(mht_727_v, 9812, "", "./tensorflow/lite/schema/schema_generated.h", "output_type");
+
     return static_cast<tflite::TensorType>(GetField<int8_t>(VT_OUTPUT_TYPE, 0));
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_728_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_728(mht_728_v, 9818, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_OUTPUT_TYPE) &&
            verifier.EndTable();
@@ -7476,10 +9831,16 @@ struct ArgMinOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_output_type(tflite::TensorType output_type) {
+   std::vector<std::string> mht_729_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_729(mht_729_v, 9834, "", "./tensorflow/lite/schema/schema_generated.h", "add_output_type");
+
     fbb_.AddElement<int8_t>(ArgMinOptions::VT_OUTPUT_TYPE, static_cast<int8_t>(output_type), 0);
   }
   explicit ArgMinOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_730_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_730(mht_730_v, 9841, "", "./tensorflow/lite/schema/schema_generated.h", "ArgMinOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   ArgMinOptionsBuilder &operator=(const ArgMinOptionsBuilder &);
@@ -7503,12 +9864,18 @@ flatbuffers::Offset<ArgMinOptions> CreateArgMinOptions(flatbuffers::FlatBufferBu
 struct GreaterOptionsT : public flatbuffers::NativeTable {
   typedef GreaterOptions TableType;
   GreaterOptionsT() {
+   std::vector<std::string> mht_731_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_731(mht_731_v, 9867, "", "./tensorflow/lite/schema/schema_generated.h", "GreaterOptionsT");
+
   }
 };
 
 struct GreaterOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef GreaterOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_732_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_732(mht_732_v, 9876, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -7522,6 +9889,9 @@ struct GreaterOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit GreaterOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_733_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_733(mht_733_v, 9892, "", "./tensorflow/lite/schema/schema_generated.h", "GreaterOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   GreaterOptionsBuilder &operator=(const GreaterOptionsBuilder &);
@@ -7543,12 +9913,18 @@ flatbuffers::Offset<GreaterOptions> CreateGreaterOptions(flatbuffers::FlatBuffer
 struct GreaterEqualOptionsT : public flatbuffers::NativeTable {
   typedef GreaterEqualOptions TableType;
   GreaterEqualOptionsT() {
+   std::vector<std::string> mht_734_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_734(mht_734_v, 9916, "", "./tensorflow/lite/schema/schema_generated.h", "GreaterEqualOptionsT");
+
   }
 };
 
 struct GreaterEqualOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef GreaterEqualOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_735_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_735(mht_735_v, 9925, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -7562,6 +9938,9 @@ struct GreaterEqualOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit GreaterEqualOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_736_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_736(mht_736_v, 9941, "", "./tensorflow/lite/schema/schema_generated.h", "GreaterEqualOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   GreaterEqualOptionsBuilder &operator=(const GreaterEqualOptionsBuilder &);
@@ -7583,12 +9962,18 @@ flatbuffers::Offset<GreaterEqualOptions> CreateGreaterEqualOptions(flatbuffers::
 struct LessOptionsT : public flatbuffers::NativeTable {
   typedef LessOptions TableType;
   LessOptionsT() {
+   std::vector<std::string> mht_737_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_737(mht_737_v, 9965, "", "./tensorflow/lite/schema/schema_generated.h", "LessOptionsT");
+
   }
 };
 
 struct LessOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef LessOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_738_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_738(mht_738_v, 9974, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -7602,6 +9987,9 @@ struct LessOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit LessOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_739_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_739(mht_739_v, 9990, "", "./tensorflow/lite/schema/schema_generated.h", "LessOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   LessOptionsBuilder &operator=(const LessOptionsBuilder &);
@@ -7623,12 +10011,18 @@ flatbuffers::Offset<LessOptions> CreateLessOptions(flatbuffers::FlatBufferBuilde
 struct LessEqualOptionsT : public flatbuffers::NativeTable {
   typedef LessEqualOptions TableType;
   LessEqualOptionsT() {
+   std::vector<std::string> mht_740_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_740(mht_740_v, 10014, "", "./tensorflow/lite/schema/schema_generated.h", "LessEqualOptionsT");
+
   }
 };
 
 struct LessEqualOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef LessEqualOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_741_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_741(mht_741_v, 10023, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -7642,6 +10036,9 @@ struct LessEqualOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit LessEqualOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_742_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_742(mht_742_v, 10039, "", "./tensorflow/lite/schema/schema_generated.h", "LessEqualOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   LessEqualOptionsBuilder &operator=(const LessEqualOptionsBuilder &);
@@ -7663,12 +10060,18 @@ flatbuffers::Offset<LessEqualOptions> CreateLessEqualOptions(flatbuffers::FlatBu
 struct NegOptionsT : public flatbuffers::NativeTable {
   typedef NegOptions TableType;
   NegOptionsT() {
+   std::vector<std::string> mht_743_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_743(mht_743_v, 10063, "", "./tensorflow/lite/schema/schema_generated.h", "NegOptionsT");
+
   }
 };
 
 struct NegOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef NegOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_744_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_744(mht_744_v, 10072, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -7682,6 +10085,9 @@ struct NegOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit NegOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_745_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_745(mht_745_v, 10088, "", "./tensorflow/lite/schema/schema_generated.h", "NegOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   NegOptionsBuilder &operator=(const NegOptionsBuilder &);
@@ -7703,12 +10109,18 @@ flatbuffers::Offset<NegOptions> CreateNegOptions(flatbuffers::FlatBufferBuilder 
 struct SelectOptionsT : public flatbuffers::NativeTable {
   typedef SelectOptions TableType;
   SelectOptionsT() {
+   std::vector<std::string> mht_746_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_746(mht_746_v, 10112, "", "./tensorflow/lite/schema/schema_generated.h", "SelectOptionsT");
+
   }
 };
 
 struct SelectOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef SelectOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_747_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_747(mht_747_v, 10121, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -7722,6 +10134,9 @@ struct SelectOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit SelectOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_748_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_748(mht_748_v, 10137, "", "./tensorflow/lite/schema/schema_generated.h", "SelectOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   SelectOptionsBuilder &operator=(const SelectOptionsBuilder &);
@@ -7743,12 +10158,18 @@ flatbuffers::Offset<SelectOptions> CreateSelectOptions(flatbuffers::FlatBufferBu
 struct SliceOptionsT : public flatbuffers::NativeTable {
   typedef SliceOptions TableType;
   SliceOptionsT() {
+   std::vector<std::string> mht_749_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_749(mht_749_v, 10161, "", "./tensorflow/lite/schema/schema_generated.h", "SliceOptionsT");
+
   }
 };
 
 struct SliceOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef SliceOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_750_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_750(mht_750_v, 10170, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -7762,6 +10183,9 @@ struct SliceOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit SliceOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_751_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_751(mht_751_v, 10186, "", "./tensorflow/lite/schema/schema_generated.h", "SliceOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   SliceOptionsBuilder &operator=(const SliceOptionsBuilder &);
@@ -7789,6 +10213,9 @@ struct TransposeConvOptionsT : public flatbuffers::NativeTable {
       : padding(tflite::Padding_SAME),
         stride_w(0),
         stride_h(0) {
+   std::vector<std::string> mht_752_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_752(mht_752_v, 10216, "", "./tensorflow/lite/schema/schema_generated.h", "TransposeConvOptionsT");
+
   }
 };
 
@@ -7800,15 +10227,27 @@ struct TransposeConvOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table
     VT_STRIDE_H = 8
   };
   tflite::Padding padding() const {
+   std::vector<std::string> mht_753_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_753(mht_753_v, 10230, "", "./tensorflow/lite/schema/schema_generated.h", "padding");
+
     return static_cast<tflite::Padding>(GetField<int8_t>(VT_PADDING, 0));
   }
   int32_t stride_w() const {
+   std::vector<std::string> mht_754_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_754(mht_754_v, 10236, "", "./tensorflow/lite/schema/schema_generated.h", "stride_w");
+
     return GetField<int32_t>(VT_STRIDE_W, 0);
   }
   int32_t stride_h() const {
+   std::vector<std::string> mht_755_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_755(mht_755_v, 10242, "", "./tensorflow/lite/schema/schema_generated.h", "stride_h");
+
     return GetField<int32_t>(VT_STRIDE_H, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_756_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_756(mht_756_v, 10248, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_PADDING) &&
            VerifyField<int32_t>(verifier, VT_STRIDE_W) &&
@@ -7824,16 +10263,28 @@ struct TransposeConvOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_padding(tflite::Padding padding) {
+   std::vector<std::string> mht_757_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_757(mht_757_v, 10266, "", "./tensorflow/lite/schema/schema_generated.h", "add_padding");
+
     fbb_.AddElement<int8_t>(TransposeConvOptions::VT_PADDING, static_cast<int8_t>(padding), 0);
   }
   void add_stride_w(int32_t stride_w) {
+   std::vector<std::string> mht_758_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_758(mht_758_v, 10272, "", "./tensorflow/lite/schema/schema_generated.h", "add_stride_w");
+
     fbb_.AddElement<int32_t>(TransposeConvOptions::VT_STRIDE_W, stride_w, 0);
   }
   void add_stride_h(int32_t stride_h) {
+   std::vector<std::string> mht_759_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_759(mht_759_v, 10278, "", "./tensorflow/lite/schema/schema_generated.h", "add_stride_h");
+
     fbb_.AddElement<int32_t>(TransposeConvOptions::VT_STRIDE_H, stride_h, 0);
   }
   explicit TransposeConvOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_760_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_760(mht_760_v, 10285, "", "./tensorflow/lite/schema/schema_generated.h", "TransposeConvOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   TransposeConvOptionsBuilder &operator=(const TransposeConvOptionsBuilder &);
@@ -7861,12 +10312,18 @@ flatbuffers::Offset<TransposeConvOptions> CreateTransposeConvOptions(flatbuffers
 struct ExpandDimsOptionsT : public flatbuffers::NativeTable {
   typedef ExpandDimsOptions TableType;
   ExpandDimsOptionsT() {
+   std::vector<std::string> mht_761_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_761(mht_761_v, 10315, "", "./tensorflow/lite/schema/schema_generated.h", "ExpandDimsOptionsT");
+
   }
 };
 
 struct ExpandDimsOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef ExpandDimsOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_762_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_762(mht_762_v, 10324, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -7880,6 +10337,9 @@ struct ExpandDimsOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit ExpandDimsOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_763_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_763(mht_763_v, 10340, "", "./tensorflow/lite/schema/schema_generated.h", "ExpandDimsOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   ExpandDimsOptionsBuilder &operator=(const ExpandDimsOptionsBuilder &);
@@ -7903,6 +10363,9 @@ struct SparseToDenseOptionsT : public flatbuffers::NativeTable {
   bool validate_indices;
   SparseToDenseOptionsT()
       : validate_indices(false) {
+   std::vector<std::string> mht_764_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_764(mht_764_v, 10366, "", "./tensorflow/lite/schema/schema_generated.h", "SparseToDenseOptionsT");
+
   }
 };
 
@@ -7912,9 +10375,15 @@ struct SparseToDenseOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table
     VT_VALIDATE_INDICES = 4
   };
   bool validate_indices() const {
+   std::vector<std::string> mht_765_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_765(mht_765_v, 10378, "", "./tensorflow/lite/schema/schema_generated.h", "validate_indices");
+
     return GetField<uint8_t>(VT_VALIDATE_INDICES, 0) != 0;
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_766_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_766(mht_766_v, 10384, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<uint8_t>(verifier, VT_VALIDATE_INDICES) &&
            verifier.EndTable();
@@ -7928,10 +10397,16 @@ struct SparseToDenseOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_validate_indices(bool validate_indices) {
+   std::vector<std::string> mht_767_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_767(mht_767_v, 10400, "", "./tensorflow/lite/schema/schema_generated.h", "add_validate_indices");
+
     fbb_.AddElement<uint8_t>(SparseToDenseOptions::VT_VALIDATE_INDICES, static_cast<uint8_t>(validate_indices), 0);
   }
   explicit SparseToDenseOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_768_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_768(mht_768_v, 10407, "", "./tensorflow/lite/schema/schema_generated.h", "SparseToDenseOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   SparseToDenseOptionsBuilder &operator=(const SparseToDenseOptionsBuilder &);
@@ -7955,12 +10430,18 @@ flatbuffers::Offset<SparseToDenseOptions> CreateSparseToDenseOptions(flatbuffers
 struct EqualOptionsT : public flatbuffers::NativeTable {
   typedef EqualOptions TableType;
   EqualOptionsT() {
+   std::vector<std::string> mht_769_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_769(mht_769_v, 10433, "", "./tensorflow/lite/schema/schema_generated.h", "EqualOptionsT");
+
   }
 };
 
 struct EqualOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef EqualOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_770_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_770(mht_770_v, 10442, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -7974,6 +10455,9 @@ struct EqualOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit EqualOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_771_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_771(mht_771_v, 10458, "", "./tensorflow/lite/schema/schema_generated.h", "EqualOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   EqualOptionsBuilder &operator=(const EqualOptionsBuilder &);
@@ -7995,12 +10479,18 @@ flatbuffers::Offset<EqualOptions> CreateEqualOptions(flatbuffers::FlatBufferBuil
 struct NotEqualOptionsT : public flatbuffers::NativeTable {
   typedef NotEqualOptions TableType;
   NotEqualOptionsT() {
+   std::vector<std::string> mht_772_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_772(mht_772_v, 10482, "", "./tensorflow/lite/schema/schema_generated.h", "NotEqualOptionsT");
+
   }
 };
 
 struct NotEqualOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef NotEqualOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_773_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_773(mht_773_v, 10491, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -8014,6 +10504,9 @@ struct NotEqualOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit NotEqualOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_774_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_774(mht_774_v, 10507, "", "./tensorflow/lite/schema/schema_generated.h", "NotEqualOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   NotEqualOptionsBuilder &operator=(const NotEqualOptionsBuilder &);
@@ -8037,6 +10530,9 @@ struct ShapeOptionsT : public flatbuffers::NativeTable {
   tflite::TensorType out_type;
   ShapeOptionsT()
       : out_type(tflite::TensorType_FLOAT32) {
+   std::vector<std::string> mht_775_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_775(mht_775_v, 10533, "", "./tensorflow/lite/schema/schema_generated.h", "ShapeOptionsT");
+
   }
 };
 
@@ -8046,9 +10542,15 @@ struct ShapeOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_OUT_TYPE = 4
   };
   tflite::TensorType out_type() const {
+   std::vector<std::string> mht_776_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_776(mht_776_v, 10545, "", "./tensorflow/lite/schema/schema_generated.h", "out_type");
+
     return static_cast<tflite::TensorType>(GetField<int8_t>(VT_OUT_TYPE, 0));
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_777_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_777(mht_777_v, 10551, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_OUT_TYPE) &&
            verifier.EndTable();
@@ -8062,10 +10564,16 @@ struct ShapeOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_out_type(tflite::TensorType out_type) {
+   std::vector<std::string> mht_778_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_778(mht_778_v, 10567, "", "./tensorflow/lite/schema/schema_generated.h", "add_out_type");
+
     fbb_.AddElement<int8_t>(ShapeOptions::VT_OUT_TYPE, static_cast<int8_t>(out_type), 0);
   }
   explicit ShapeOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_779_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_779(mht_779_v, 10574, "", "./tensorflow/lite/schema/schema_generated.h", "ShapeOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   ShapeOptionsBuilder &operator=(const ShapeOptionsBuilder &);
@@ -8089,12 +10597,18 @@ flatbuffers::Offset<ShapeOptions> CreateShapeOptions(flatbuffers::FlatBufferBuil
 struct RankOptionsT : public flatbuffers::NativeTable {
   typedef RankOptions TableType;
   RankOptionsT() {
+   std::vector<std::string> mht_780_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_780(mht_780_v, 10600, "", "./tensorflow/lite/schema/schema_generated.h", "RankOptionsT");
+
   }
 };
 
 struct RankOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef RankOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_781_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_781(mht_781_v, 10609, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -8108,6 +10622,9 @@ struct RankOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit RankOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_782_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_782(mht_782_v, 10625, "", "./tensorflow/lite/schema/schema_generated.h", "RankOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   RankOptionsBuilder &operator=(const RankOptionsBuilder &);
@@ -8129,12 +10646,18 @@ flatbuffers::Offset<RankOptions> CreateRankOptions(flatbuffers::FlatBufferBuilde
 struct PowOptionsT : public flatbuffers::NativeTable {
   typedef PowOptions TableType;
   PowOptionsT() {
+   std::vector<std::string> mht_783_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_783(mht_783_v, 10649, "", "./tensorflow/lite/schema/schema_generated.h", "PowOptionsT");
+
   }
 };
 
 struct PowOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef PowOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_784_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_784(mht_784_v, 10658, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -8148,6 +10671,9 @@ struct PowOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit PowOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_785_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_785(mht_785_v, 10674, "", "./tensorflow/lite/schema/schema_generated.h", "PowOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   PowOptionsBuilder &operator=(const PowOptionsBuilder &);
@@ -8177,6 +10703,9 @@ struct FakeQuantOptionsT : public flatbuffers::NativeTable {
         max(0.0f),
         num_bits(0),
         narrow_range(false) {
+   std::vector<std::string> mht_786_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_786(mht_786_v, 10706, "", "./tensorflow/lite/schema/schema_generated.h", "FakeQuantOptionsT");
+
   }
 };
 
@@ -8189,18 +10718,33 @@ struct FakeQuantOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_NARROW_RANGE = 10
   };
   float min() const {
+   std::vector<std::string> mht_787_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_787(mht_787_v, 10721, "", "./tensorflow/lite/schema/schema_generated.h", "min");
+
     return GetField<float>(VT_MIN, 0.0f);
   }
   float max() const {
+   std::vector<std::string> mht_788_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_788(mht_788_v, 10727, "", "./tensorflow/lite/schema/schema_generated.h", "max");
+
     return GetField<float>(VT_MAX, 0.0f);
   }
   int32_t num_bits() const {
+   std::vector<std::string> mht_789_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_789(mht_789_v, 10733, "", "./tensorflow/lite/schema/schema_generated.h", "num_bits");
+
     return GetField<int32_t>(VT_NUM_BITS, 0);
   }
   bool narrow_range() const {
+   std::vector<std::string> mht_790_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_790(mht_790_v, 10739, "", "./tensorflow/lite/schema/schema_generated.h", "narrow_range");
+
     return GetField<uint8_t>(VT_NARROW_RANGE, 0) != 0;
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_791_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_791(mht_791_v, 10745, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<float>(verifier, VT_MIN) &&
            VerifyField<float>(verifier, VT_MAX) &&
@@ -8217,19 +10761,34 @@ struct FakeQuantOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_min(float min) {
+   std::vector<std::string> mht_792_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_792(mht_792_v, 10764, "", "./tensorflow/lite/schema/schema_generated.h", "add_min");
+
     fbb_.AddElement<float>(FakeQuantOptions::VT_MIN, min, 0.0f);
   }
   void add_max(float max) {
+   std::vector<std::string> mht_793_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_793(mht_793_v, 10770, "", "./tensorflow/lite/schema/schema_generated.h", "add_max");
+
     fbb_.AddElement<float>(FakeQuantOptions::VT_MAX, max, 0.0f);
   }
   void add_num_bits(int32_t num_bits) {
+   std::vector<std::string> mht_794_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_794(mht_794_v, 10776, "", "./tensorflow/lite/schema/schema_generated.h", "add_num_bits");
+
     fbb_.AddElement<int32_t>(FakeQuantOptions::VT_NUM_BITS, num_bits, 0);
   }
   void add_narrow_range(bool narrow_range) {
+   std::vector<std::string> mht_795_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_795(mht_795_v, 10782, "", "./tensorflow/lite/schema/schema_generated.h", "add_narrow_range");
+
     fbb_.AddElement<uint8_t>(FakeQuantOptions::VT_NARROW_RANGE, static_cast<uint8_t>(narrow_range), 0);
   }
   explicit FakeQuantOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_796_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_796(mht_796_v, 10789, "", "./tensorflow/lite/schema/schema_generated.h", "FakeQuantOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   FakeQuantOptionsBuilder &operator=(const FakeQuantOptionsBuilder &);
@@ -8263,6 +10822,9 @@ struct PackOptionsT : public flatbuffers::NativeTable {
   PackOptionsT()
       : values_count(0),
         axis(0) {
+   std::vector<std::string> mht_797_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_797(mht_797_v, 10825, "", "./tensorflow/lite/schema/schema_generated.h", "PackOptionsT");
+
   }
 };
 
@@ -8273,12 +10835,21 @@ struct PackOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_AXIS = 6
   };
   int32_t values_count() const {
+   std::vector<std::string> mht_798_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_798(mht_798_v, 10838, "", "./tensorflow/lite/schema/schema_generated.h", "values_count");
+
     return GetField<int32_t>(VT_VALUES_COUNT, 0);
   }
   int32_t axis() const {
+   std::vector<std::string> mht_799_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_799(mht_799_v, 10844, "", "./tensorflow/lite/schema/schema_generated.h", "axis");
+
     return GetField<int32_t>(VT_AXIS, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_800_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_800(mht_800_v, 10850, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_VALUES_COUNT) &&
            VerifyField<int32_t>(verifier, VT_AXIS) &&
@@ -8293,13 +10864,22 @@ struct PackOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_values_count(int32_t values_count) {
+   std::vector<std::string> mht_801_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_801(mht_801_v, 10867, "", "./tensorflow/lite/schema/schema_generated.h", "add_values_count");
+
     fbb_.AddElement<int32_t>(PackOptions::VT_VALUES_COUNT, values_count, 0);
   }
   void add_axis(int32_t axis) {
+   std::vector<std::string> mht_802_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_802(mht_802_v, 10873, "", "./tensorflow/lite/schema/schema_generated.h", "add_axis");
+
     fbb_.AddElement<int32_t>(PackOptions::VT_AXIS, axis, 0);
   }
   explicit PackOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_803_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_803(mht_803_v, 10880, "", "./tensorflow/lite/schema/schema_generated.h", "PackOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   PackOptionsBuilder &operator=(const PackOptionsBuilder &);
@@ -8325,12 +10905,18 @@ flatbuffers::Offset<PackOptions> CreatePackOptions(flatbuffers::FlatBufferBuilde
 struct LogicalOrOptionsT : public flatbuffers::NativeTable {
   typedef LogicalOrOptions TableType;
   LogicalOrOptionsT() {
+   std::vector<std::string> mht_804_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_804(mht_804_v, 10908, "", "./tensorflow/lite/schema/schema_generated.h", "LogicalOrOptionsT");
+
   }
 };
 
 struct LogicalOrOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef LogicalOrOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_805_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_805(mht_805_v, 10917, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -8344,6 +10930,9 @@ struct LogicalOrOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit LogicalOrOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_806_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_806(mht_806_v, 10933, "", "./tensorflow/lite/schema/schema_generated.h", "LogicalOrOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   LogicalOrOptionsBuilder &operator=(const LogicalOrOptionsBuilder &);
@@ -8367,6 +10956,9 @@ struct OneHotOptionsT : public flatbuffers::NativeTable {
   int32_t axis;
   OneHotOptionsT()
       : axis(0) {
+   std::vector<std::string> mht_807_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_807(mht_807_v, 10959, "", "./tensorflow/lite/schema/schema_generated.h", "OneHotOptionsT");
+
   }
 };
 
@@ -8376,9 +10968,15 @@ struct OneHotOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_AXIS = 4
   };
   int32_t axis() const {
+   std::vector<std::string> mht_808_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_808(mht_808_v, 10971, "", "./tensorflow/lite/schema/schema_generated.h", "axis");
+
     return GetField<int32_t>(VT_AXIS, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_809_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_809(mht_809_v, 10977, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_AXIS) &&
            verifier.EndTable();
@@ -8392,10 +10990,16 @@ struct OneHotOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_axis(int32_t axis) {
+   std::vector<std::string> mht_810_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_810(mht_810_v, 10993, "", "./tensorflow/lite/schema/schema_generated.h", "add_axis");
+
     fbb_.AddElement<int32_t>(OneHotOptions::VT_AXIS, axis, 0);
   }
   explicit OneHotOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_811_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_811(mht_811_v, 11000, "", "./tensorflow/lite/schema/schema_generated.h", "OneHotOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   OneHotOptionsBuilder &operator=(const OneHotOptionsBuilder &);
@@ -8419,12 +11023,18 @@ flatbuffers::Offset<OneHotOptions> CreateOneHotOptions(flatbuffers::FlatBufferBu
 struct AbsOptionsT : public flatbuffers::NativeTable {
   typedef AbsOptions TableType;
   AbsOptionsT() {
+   std::vector<std::string> mht_812_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_812(mht_812_v, 11026, "", "./tensorflow/lite/schema/schema_generated.h", "AbsOptionsT");
+
   }
 };
 
 struct AbsOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef AbsOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_813_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_813(mht_813_v, 11035, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -8438,6 +11048,9 @@ struct AbsOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit AbsOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_814_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_814(mht_814_v, 11051, "", "./tensorflow/lite/schema/schema_generated.h", "AbsOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   AbsOptionsBuilder &operator=(const AbsOptionsBuilder &);
@@ -8459,12 +11072,18 @@ flatbuffers::Offset<AbsOptions> CreateAbsOptions(flatbuffers::FlatBufferBuilder 
 struct HardSwishOptionsT : public flatbuffers::NativeTable {
   typedef HardSwishOptions TableType;
   HardSwishOptionsT() {
+   std::vector<std::string> mht_815_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_815(mht_815_v, 11075, "", "./tensorflow/lite/schema/schema_generated.h", "HardSwishOptionsT");
+
   }
 };
 
 struct HardSwishOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef HardSwishOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_816_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_816(mht_816_v, 11084, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -8478,6 +11097,9 @@ struct HardSwishOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit HardSwishOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_817_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_817(mht_817_v, 11100, "", "./tensorflow/lite/schema/schema_generated.h", "HardSwishOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   HardSwishOptionsBuilder &operator=(const HardSwishOptionsBuilder &);
@@ -8499,12 +11121,18 @@ flatbuffers::Offset<HardSwishOptions> CreateHardSwishOptions(flatbuffers::FlatBu
 struct LogicalAndOptionsT : public flatbuffers::NativeTable {
   typedef LogicalAndOptions TableType;
   LogicalAndOptionsT() {
+   std::vector<std::string> mht_818_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_818(mht_818_v, 11124, "", "./tensorflow/lite/schema/schema_generated.h", "LogicalAndOptionsT");
+
   }
 };
 
 struct LogicalAndOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef LogicalAndOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_819_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_819(mht_819_v, 11133, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -8518,6 +11146,9 @@ struct LogicalAndOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit LogicalAndOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_820_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_820(mht_820_v, 11149, "", "./tensorflow/lite/schema/schema_generated.h", "LogicalAndOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   LogicalAndOptionsBuilder &operator=(const LogicalAndOptionsBuilder &);
@@ -8539,12 +11170,18 @@ flatbuffers::Offset<LogicalAndOptions> CreateLogicalAndOptions(flatbuffers::Flat
 struct LogicalNotOptionsT : public flatbuffers::NativeTable {
   typedef LogicalNotOptions TableType;
   LogicalNotOptionsT() {
+   std::vector<std::string> mht_821_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_821(mht_821_v, 11173, "", "./tensorflow/lite/schema/schema_generated.h", "LogicalNotOptionsT");
+
   }
 };
 
 struct LogicalNotOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef LogicalNotOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_822_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_822(mht_822_v, 11182, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -8558,6 +11195,9 @@ struct LogicalNotOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit LogicalNotOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_823_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_823(mht_823_v, 11198, "", "./tensorflow/lite/schema/schema_generated.h", "LogicalNotOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   LogicalNotOptionsBuilder &operator=(const LogicalNotOptionsBuilder &);
@@ -8583,6 +11223,9 @@ struct UnpackOptionsT : public flatbuffers::NativeTable {
   UnpackOptionsT()
       : num(0),
         axis(0) {
+   std::vector<std::string> mht_824_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_824(mht_824_v, 11226, "", "./tensorflow/lite/schema/schema_generated.h", "UnpackOptionsT");
+
   }
 };
 
@@ -8593,12 +11236,21 @@ struct UnpackOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_AXIS = 6
   };
   int32_t num() const {
+   std::vector<std::string> mht_825_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_825(mht_825_v, 11239, "", "./tensorflow/lite/schema/schema_generated.h", "num");
+
     return GetField<int32_t>(VT_NUM, 0);
   }
   int32_t axis() const {
+   std::vector<std::string> mht_826_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_826(mht_826_v, 11245, "", "./tensorflow/lite/schema/schema_generated.h", "axis");
+
     return GetField<int32_t>(VT_AXIS, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_827_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_827(mht_827_v, 11251, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_NUM) &&
            VerifyField<int32_t>(verifier, VT_AXIS) &&
@@ -8613,13 +11265,22 @@ struct UnpackOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_num(int32_t num) {
+   std::vector<std::string> mht_828_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_828(mht_828_v, 11268, "", "./tensorflow/lite/schema/schema_generated.h", "add_num");
+
     fbb_.AddElement<int32_t>(UnpackOptions::VT_NUM, num, 0);
   }
   void add_axis(int32_t axis) {
+   std::vector<std::string> mht_829_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_829(mht_829_v, 11274, "", "./tensorflow/lite/schema/schema_generated.h", "add_axis");
+
     fbb_.AddElement<int32_t>(UnpackOptions::VT_AXIS, axis, 0);
   }
   explicit UnpackOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_830_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_830(mht_830_v, 11281, "", "./tensorflow/lite/schema/schema_generated.h", "UnpackOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   UnpackOptionsBuilder &operator=(const UnpackOptionsBuilder &);
@@ -8645,12 +11306,18 @@ flatbuffers::Offset<UnpackOptions> CreateUnpackOptions(flatbuffers::FlatBufferBu
 struct FloorDivOptionsT : public flatbuffers::NativeTable {
   typedef FloorDivOptions TableType;
   FloorDivOptionsT() {
+   std::vector<std::string> mht_831_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_831(mht_831_v, 11309, "", "./tensorflow/lite/schema/schema_generated.h", "FloorDivOptionsT");
+
   }
 };
 
 struct FloorDivOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef FloorDivOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_832_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_832(mht_832_v, 11318, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -8664,6 +11331,9 @@ struct FloorDivOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit FloorDivOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_833_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_833(mht_833_v, 11334, "", "./tensorflow/lite/schema/schema_generated.h", "FloorDivOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   FloorDivOptionsBuilder &operator=(const FloorDivOptionsBuilder &);
@@ -8685,12 +11355,18 @@ flatbuffers::Offset<FloorDivOptions> CreateFloorDivOptions(flatbuffers::FlatBuff
 struct SquareOptionsT : public flatbuffers::NativeTable {
   typedef SquareOptions TableType;
   SquareOptionsT() {
+   std::vector<std::string> mht_834_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_834(mht_834_v, 11358, "", "./tensorflow/lite/schema/schema_generated.h", "SquareOptionsT");
+
   }
 };
 
 struct SquareOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef SquareOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_835_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_835(mht_835_v, 11367, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -8704,6 +11380,9 @@ struct SquareOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit SquareOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_836_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_836(mht_836_v, 11383, "", "./tensorflow/lite/schema/schema_generated.h", "SquareOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   SquareOptionsBuilder &operator=(const SquareOptionsBuilder &);
@@ -8725,12 +11404,18 @@ flatbuffers::Offset<SquareOptions> CreateSquareOptions(flatbuffers::FlatBufferBu
 struct ZerosLikeOptionsT : public flatbuffers::NativeTable {
   typedef ZerosLikeOptions TableType;
   ZerosLikeOptionsT() {
+   std::vector<std::string> mht_837_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_837(mht_837_v, 11407, "", "./tensorflow/lite/schema/schema_generated.h", "ZerosLikeOptionsT");
+
   }
 };
 
 struct ZerosLikeOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef ZerosLikeOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_838_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_838(mht_838_v, 11416, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -8744,6 +11429,9 @@ struct ZerosLikeOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit ZerosLikeOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_839_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_839(mht_839_v, 11432, "", "./tensorflow/lite/schema/schema_generated.h", "ZerosLikeOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   ZerosLikeOptionsBuilder &operator=(const ZerosLikeOptionsBuilder &);
@@ -8765,12 +11453,18 @@ flatbuffers::Offset<ZerosLikeOptions> CreateZerosLikeOptions(flatbuffers::FlatBu
 struct FillOptionsT : public flatbuffers::NativeTable {
   typedef FillOptions TableType;
   FillOptionsT() {
+   std::vector<std::string> mht_840_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_840(mht_840_v, 11456, "", "./tensorflow/lite/schema/schema_generated.h", "FillOptionsT");
+
   }
 };
 
 struct FillOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef FillOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_841_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_841(mht_841_v, 11465, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -8784,6 +11478,9 @@ struct FillOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit FillOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_842_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_842(mht_842_v, 11481, "", "./tensorflow/lite/schema/schema_generated.h", "FillOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   FillOptionsBuilder &operator=(const FillOptionsBuilder &);
@@ -8805,12 +11502,18 @@ flatbuffers::Offset<FillOptions> CreateFillOptions(flatbuffers::FlatBufferBuilde
 struct FloorModOptionsT : public flatbuffers::NativeTable {
   typedef FloorModOptions TableType;
   FloorModOptionsT() {
+   std::vector<std::string> mht_843_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_843(mht_843_v, 11505, "", "./tensorflow/lite/schema/schema_generated.h", "FloorModOptionsT");
+
   }
 };
 
 struct FloorModOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef FloorModOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_844_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_844(mht_844_v, 11514, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -8824,6 +11527,9 @@ struct FloorModOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit FloorModOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_845_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_845(mht_845_v, 11530, "", "./tensorflow/lite/schema/schema_generated.h", "FloorModOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   FloorModOptionsBuilder &operator=(const FloorModOptionsBuilder &);
@@ -8845,12 +11551,18 @@ flatbuffers::Offset<FloorModOptions> CreateFloorModOptions(flatbuffers::FlatBuff
 struct RangeOptionsT : public flatbuffers::NativeTable {
   typedef RangeOptions TableType;
   RangeOptionsT() {
+   std::vector<std::string> mht_846_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_846(mht_846_v, 11554, "", "./tensorflow/lite/schema/schema_generated.h", "RangeOptionsT");
+
   }
 };
 
 struct RangeOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef RangeOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_847_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_847(mht_847_v, 11563, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -8864,6 +11576,9 @@ struct RangeOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit RangeOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_848_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_848(mht_848_v, 11579, "", "./tensorflow/lite/schema/schema_generated.h", "RangeOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   RangeOptionsBuilder &operator=(const RangeOptionsBuilder &);
@@ -8887,6 +11602,9 @@ struct LeakyReluOptionsT : public flatbuffers::NativeTable {
   float alpha;
   LeakyReluOptionsT()
       : alpha(0.0f) {
+   std::vector<std::string> mht_849_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_849(mht_849_v, 11605, "", "./tensorflow/lite/schema/schema_generated.h", "LeakyReluOptionsT");
+
   }
 };
 
@@ -8896,9 +11614,15 @@ struct LeakyReluOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_ALPHA = 4
   };
   float alpha() const {
+   std::vector<std::string> mht_850_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_850(mht_850_v, 11617, "", "./tensorflow/lite/schema/schema_generated.h", "alpha");
+
     return GetField<float>(VT_ALPHA, 0.0f);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_851_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_851(mht_851_v, 11623, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<float>(verifier, VT_ALPHA) &&
            verifier.EndTable();
@@ -8912,10 +11636,16 @@ struct LeakyReluOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_alpha(float alpha) {
+   std::vector<std::string> mht_852_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_852(mht_852_v, 11639, "", "./tensorflow/lite/schema/schema_generated.h", "add_alpha");
+
     fbb_.AddElement<float>(LeakyReluOptions::VT_ALPHA, alpha, 0.0f);
   }
   explicit LeakyReluOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_853_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_853(mht_853_v, 11646, "", "./tensorflow/lite/schema/schema_generated.h", "LeakyReluOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   LeakyReluOptionsBuilder &operator=(const LeakyReluOptionsBuilder &);
@@ -8939,12 +11669,18 @@ flatbuffers::Offset<LeakyReluOptions> CreateLeakyReluOptions(flatbuffers::FlatBu
 struct SquaredDifferenceOptionsT : public flatbuffers::NativeTable {
   typedef SquaredDifferenceOptions TableType;
   SquaredDifferenceOptionsT() {
+   std::vector<std::string> mht_854_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_854(mht_854_v, 11672, "", "./tensorflow/lite/schema/schema_generated.h", "SquaredDifferenceOptionsT");
+
   }
 };
 
 struct SquaredDifferenceOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef SquaredDifferenceOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_855_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_855(mht_855_v, 11681, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -8958,6 +11694,9 @@ struct SquaredDifferenceOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit SquaredDifferenceOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_856_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_856(mht_856_v, 11697, "", "./tensorflow/lite/schema/schema_generated.h", "SquaredDifferenceOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   SquaredDifferenceOptionsBuilder &operator=(const SquaredDifferenceOptionsBuilder &);
@@ -8981,6 +11720,9 @@ struct MirrorPadOptionsT : public flatbuffers::NativeTable {
   tflite::MirrorPadMode mode;
   MirrorPadOptionsT()
       : mode(tflite::MirrorPadMode_REFLECT) {
+   std::vector<std::string> mht_857_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_857(mht_857_v, 11723, "", "./tensorflow/lite/schema/schema_generated.h", "MirrorPadOptionsT");
+
   }
 };
 
@@ -8990,9 +11732,15 @@ struct MirrorPadOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_MODE = 4
   };
   tflite::MirrorPadMode mode() const {
+   std::vector<std::string> mht_858_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_858(mht_858_v, 11735, "", "./tensorflow/lite/schema/schema_generated.h", "mode");
+
     return static_cast<tflite::MirrorPadMode>(GetField<int8_t>(VT_MODE, 0));
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_859_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_859(mht_859_v, 11741, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_MODE) &&
            verifier.EndTable();
@@ -9006,10 +11754,16 @@ struct MirrorPadOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_mode(tflite::MirrorPadMode mode) {
+   std::vector<std::string> mht_860_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_860(mht_860_v, 11757, "", "./tensorflow/lite/schema/schema_generated.h", "add_mode");
+
     fbb_.AddElement<int8_t>(MirrorPadOptions::VT_MODE, static_cast<int8_t>(mode), 0);
   }
   explicit MirrorPadOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_861_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_861(mht_861_v, 11764, "", "./tensorflow/lite/schema/schema_generated.h", "MirrorPadOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   MirrorPadOptionsBuilder &operator=(const MirrorPadOptionsBuilder &);
@@ -9035,6 +11789,9 @@ struct UniqueOptionsT : public flatbuffers::NativeTable {
   tflite::TensorType idx_out_type;
   UniqueOptionsT()
       : idx_out_type(tflite::TensorType_INT32) {
+   std::vector<std::string> mht_862_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_862(mht_862_v, 11792, "", "./tensorflow/lite/schema/schema_generated.h", "UniqueOptionsT");
+
   }
 };
 
@@ -9044,9 +11801,15 @@ struct UniqueOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_IDX_OUT_TYPE = 4
   };
   tflite::TensorType idx_out_type() const {
+   std::vector<std::string> mht_863_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_863(mht_863_v, 11804, "", "./tensorflow/lite/schema/schema_generated.h", "idx_out_type");
+
     return static_cast<tflite::TensorType>(GetField<int8_t>(VT_IDX_OUT_TYPE, 2));
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_864_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_864(mht_864_v, 11810, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_IDX_OUT_TYPE) &&
            verifier.EndTable();
@@ -9060,10 +11823,16 @@ struct UniqueOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_idx_out_type(tflite::TensorType idx_out_type) {
+   std::vector<std::string> mht_865_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_865(mht_865_v, 11826, "", "./tensorflow/lite/schema/schema_generated.h", "add_idx_out_type");
+
     fbb_.AddElement<int8_t>(UniqueOptions::VT_IDX_OUT_TYPE, static_cast<int8_t>(idx_out_type), 2);
   }
   explicit UniqueOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_866_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_866(mht_866_v, 11833, "", "./tensorflow/lite/schema/schema_generated.h", "UniqueOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   UniqueOptionsBuilder &operator=(const UniqueOptionsBuilder &);
@@ -9087,12 +11856,18 @@ flatbuffers::Offset<UniqueOptions> CreateUniqueOptions(flatbuffers::FlatBufferBu
 struct ReverseV2OptionsT : public flatbuffers::NativeTable {
   typedef ReverseV2Options TableType;
   ReverseV2OptionsT() {
+   std::vector<std::string> mht_867_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_867(mht_867_v, 11859, "", "./tensorflow/lite/schema/schema_generated.h", "ReverseV2OptionsT");
+
   }
 };
 
 struct ReverseV2Options FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef ReverseV2OptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_868_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_868(mht_868_v, 11868, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -9106,6 +11881,9 @@ struct ReverseV2OptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit ReverseV2OptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_869_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_869(mht_869_v, 11884, "", "./tensorflow/lite/schema/schema_generated.h", "ReverseV2OptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   ReverseV2OptionsBuilder &operator=(const ReverseV2OptionsBuilder &);
@@ -9127,12 +11905,18 @@ flatbuffers::Offset<ReverseV2Options> CreateReverseV2Options(flatbuffers::FlatBu
 struct AddNOptionsT : public flatbuffers::NativeTable {
   typedef AddNOptions TableType;
   AddNOptionsT() {
+   std::vector<std::string> mht_870_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_870(mht_870_v, 11908, "", "./tensorflow/lite/schema/schema_generated.h", "AddNOptionsT");
+
   }
 };
 
 struct AddNOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef AddNOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_871_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_871(mht_871_v, 11917, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -9146,6 +11930,9 @@ struct AddNOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit AddNOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_872_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_872(mht_872_v, 11933, "", "./tensorflow/lite/schema/schema_generated.h", "AddNOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   AddNOptionsBuilder &operator=(const AddNOptionsBuilder &);
@@ -9167,12 +11954,18 @@ flatbuffers::Offset<AddNOptions> CreateAddNOptions(flatbuffers::FlatBufferBuilde
 struct GatherNdOptionsT : public flatbuffers::NativeTable {
   typedef GatherNdOptions TableType;
   GatherNdOptionsT() {
+   std::vector<std::string> mht_873_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_873(mht_873_v, 11957, "", "./tensorflow/lite/schema/schema_generated.h", "GatherNdOptionsT");
+
   }
 };
 
 struct GatherNdOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef GatherNdOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_874_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_874(mht_874_v, 11966, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -9186,6 +11979,9 @@ struct GatherNdOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit GatherNdOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_875_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_875(mht_875_v, 11982, "", "./tensorflow/lite/schema/schema_generated.h", "GatherNdOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   GatherNdOptionsBuilder &operator=(const GatherNdOptionsBuilder &);
@@ -9207,12 +12003,18 @@ flatbuffers::Offset<GatherNdOptions> CreateGatherNdOptions(flatbuffers::FlatBuff
 struct WhereOptionsT : public flatbuffers::NativeTable {
   typedef WhereOptions TableType;
   WhereOptionsT() {
+   std::vector<std::string> mht_876_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_876(mht_876_v, 12006, "", "./tensorflow/lite/schema/schema_generated.h", "WhereOptionsT");
+
   }
 };
 
 struct WhereOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef WhereOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_877_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_877(mht_877_v, 12015, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -9226,6 +12028,9 @@ struct WhereOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit WhereOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_878_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_878(mht_878_v, 12031, "", "./tensorflow/lite/schema/schema_generated.h", "WhereOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   WhereOptionsBuilder &operator=(const WhereOptionsBuilder &);
@@ -9251,6 +12056,9 @@ struct ReverseSequenceOptionsT : public flatbuffers::NativeTable {
   ReverseSequenceOptionsT()
       : seq_dim(0),
         batch_dim(0) {
+   std::vector<std::string> mht_879_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_879(mht_879_v, 12059, "", "./tensorflow/lite/schema/schema_generated.h", "ReverseSequenceOptionsT");
+
   }
 };
 
@@ -9261,12 +12069,21 @@ struct ReverseSequenceOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Tab
     VT_BATCH_DIM = 6
   };
   int32_t seq_dim() const {
+   std::vector<std::string> mht_880_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_880(mht_880_v, 12072, "", "./tensorflow/lite/schema/schema_generated.h", "seq_dim");
+
     return GetField<int32_t>(VT_SEQ_DIM, 0);
   }
   int32_t batch_dim() const {
+   std::vector<std::string> mht_881_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_881(mht_881_v, 12078, "", "./tensorflow/lite/schema/schema_generated.h", "batch_dim");
+
     return GetField<int32_t>(VT_BATCH_DIM, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_882_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_882(mht_882_v, 12084, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_SEQ_DIM) &&
            VerifyField<int32_t>(verifier, VT_BATCH_DIM) &&
@@ -9281,13 +12098,22 @@ struct ReverseSequenceOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_seq_dim(int32_t seq_dim) {
+   std::vector<std::string> mht_883_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_883(mht_883_v, 12101, "", "./tensorflow/lite/schema/schema_generated.h", "add_seq_dim");
+
     fbb_.AddElement<int32_t>(ReverseSequenceOptions::VT_SEQ_DIM, seq_dim, 0);
   }
   void add_batch_dim(int32_t batch_dim) {
+   std::vector<std::string> mht_884_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_884(mht_884_v, 12107, "", "./tensorflow/lite/schema/schema_generated.h", "add_batch_dim");
+
     fbb_.AddElement<int32_t>(ReverseSequenceOptions::VT_BATCH_DIM, batch_dim, 0);
   }
   explicit ReverseSequenceOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_885_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_885(mht_885_v, 12114, "", "./tensorflow/lite/schema/schema_generated.h", "ReverseSequenceOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   ReverseSequenceOptionsBuilder &operator=(const ReverseSequenceOptionsBuilder &);
@@ -9313,12 +12139,18 @@ flatbuffers::Offset<ReverseSequenceOptions> CreateReverseSequenceOptions(flatbuf
 struct MatrixDiagOptionsT : public flatbuffers::NativeTable {
   typedef MatrixDiagOptions TableType;
   MatrixDiagOptionsT() {
+   std::vector<std::string> mht_886_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_886(mht_886_v, 12142, "", "./tensorflow/lite/schema/schema_generated.h", "MatrixDiagOptionsT");
+
   }
 };
 
 struct MatrixDiagOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef MatrixDiagOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_887_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_887(mht_887_v, 12151, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -9332,6 +12164,9 @@ struct MatrixDiagOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit MatrixDiagOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_888_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_888(mht_888_v, 12167, "", "./tensorflow/lite/schema/schema_generated.h", "MatrixDiagOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   MatrixDiagOptionsBuilder &operator=(const MatrixDiagOptionsBuilder &);
@@ -9353,12 +12188,18 @@ flatbuffers::Offset<MatrixDiagOptions> CreateMatrixDiagOptions(flatbuffers::Flat
 struct QuantizeOptionsT : public flatbuffers::NativeTable {
   typedef QuantizeOptions TableType;
   QuantizeOptionsT() {
+   std::vector<std::string> mht_889_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_889(mht_889_v, 12191, "", "./tensorflow/lite/schema/schema_generated.h", "QuantizeOptionsT");
+
   }
 };
 
 struct QuantizeOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef QuantizeOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_890_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_890(mht_890_v, 12200, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -9372,6 +12213,9 @@ struct QuantizeOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit QuantizeOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_891_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_891(mht_891_v, 12216, "", "./tensorflow/lite/schema/schema_generated.h", "QuantizeOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   QuantizeOptionsBuilder &operator=(const QuantizeOptionsBuilder &);
@@ -9393,12 +12237,18 @@ flatbuffers::Offset<QuantizeOptions> CreateQuantizeOptions(flatbuffers::FlatBuff
 struct MatrixSetDiagOptionsT : public flatbuffers::NativeTable {
   typedef MatrixSetDiagOptions TableType;
   MatrixSetDiagOptionsT() {
+   std::vector<std::string> mht_892_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_892(mht_892_v, 12240, "", "./tensorflow/lite/schema/schema_generated.h", "MatrixSetDiagOptionsT");
+
   }
 };
 
 struct MatrixSetDiagOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef MatrixSetDiagOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_893_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_893(mht_893_v, 12249, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -9412,6 +12262,9 @@ struct MatrixSetDiagOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit MatrixSetDiagOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_894_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_894(mht_894_v, 12265, "", "./tensorflow/lite/schema/schema_generated.h", "MatrixSetDiagOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   MatrixSetDiagOptionsBuilder &operator=(const MatrixSetDiagOptionsBuilder &);
@@ -9437,6 +12290,9 @@ struct IfOptionsT : public flatbuffers::NativeTable {
   IfOptionsT()
       : then_subgraph_index(0),
         else_subgraph_index(0) {
+   std::vector<std::string> mht_895_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_895(mht_895_v, 12293, "", "./tensorflow/lite/schema/schema_generated.h", "IfOptionsT");
+
   }
 };
 
@@ -9447,12 +12303,21 @@ struct IfOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_ELSE_SUBGRAPH_INDEX = 6
   };
   int32_t then_subgraph_index() const {
+   std::vector<std::string> mht_896_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_896(mht_896_v, 12306, "", "./tensorflow/lite/schema/schema_generated.h", "then_subgraph_index");
+
     return GetField<int32_t>(VT_THEN_SUBGRAPH_INDEX, 0);
   }
   int32_t else_subgraph_index() const {
+   std::vector<std::string> mht_897_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_897(mht_897_v, 12312, "", "./tensorflow/lite/schema/schema_generated.h", "else_subgraph_index");
+
     return GetField<int32_t>(VT_ELSE_SUBGRAPH_INDEX, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_898_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_898(mht_898_v, 12318, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_THEN_SUBGRAPH_INDEX) &&
            VerifyField<int32_t>(verifier, VT_ELSE_SUBGRAPH_INDEX) &&
@@ -9467,13 +12332,22 @@ struct IfOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_then_subgraph_index(int32_t then_subgraph_index) {
+   std::vector<std::string> mht_899_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_899(mht_899_v, 12335, "", "./tensorflow/lite/schema/schema_generated.h", "add_then_subgraph_index");
+
     fbb_.AddElement<int32_t>(IfOptions::VT_THEN_SUBGRAPH_INDEX, then_subgraph_index, 0);
   }
   void add_else_subgraph_index(int32_t else_subgraph_index) {
+   std::vector<std::string> mht_900_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_900(mht_900_v, 12341, "", "./tensorflow/lite/schema/schema_generated.h", "add_else_subgraph_index");
+
     fbb_.AddElement<int32_t>(IfOptions::VT_ELSE_SUBGRAPH_INDEX, else_subgraph_index, 0);
   }
   explicit IfOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_901_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_901(mht_901_v, 12348, "", "./tensorflow/lite/schema/schema_generated.h", "IfOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   IfOptionsBuilder &operator=(const IfOptionsBuilder &);
@@ -9501,6 +12375,9 @@ struct CallOnceOptionsT : public flatbuffers::NativeTable {
   int32_t init_subgraph_index;
   CallOnceOptionsT()
       : init_subgraph_index(0) {
+   std::vector<std::string> mht_902_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_902(mht_902_v, 12378, "", "./tensorflow/lite/schema/schema_generated.h", "CallOnceOptionsT");
+
   }
 };
 
@@ -9510,9 +12387,15 @@ struct CallOnceOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_INIT_SUBGRAPH_INDEX = 4
   };
   int32_t init_subgraph_index() const {
+   std::vector<std::string> mht_903_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_903(mht_903_v, 12390, "", "./tensorflow/lite/schema/schema_generated.h", "init_subgraph_index");
+
     return GetField<int32_t>(VT_INIT_SUBGRAPH_INDEX, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_904_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_904(mht_904_v, 12396, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_INIT_SUBGRAPH_INDEX) &&
            verifier.EndTable();
@@ -9526,10 +12409,16 @@ struct CallOnceOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_init_subgraph_index(int32_t init_subgraph_index) {
+   std::vector<std::string> mht_905_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_905(mht_905_v, 12412, "", "./tensorflow/lite/schema/schema_generated.h", "add_init_subgraph_index");
+
     fbb_.AddElement<int32_t>(CallOnceOptions::VT_INIT_SUBGRAPH_INDEX, init_subgraph_index, 0);
   }
   explicit CallOnceOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_906_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_906(mht_906_v, 12419, "", "./tensorflow/lite/schema/schema_generated.h", "CallOnceOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   CallOnceOptionsBuilder &operator=(const CallOnceOptionsBuilder &);
@@ -9557,6 +12446,9 @@ struct WhileOptionsT : public flatbuffers::NativeTable {
   WhileOptionsT()
       : cond_subgraph_index(0),
         body_subgraph_index(0) {
+   std::vector<std::string> mht_907_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_907(mht_907_v, 12449, "", "./tensorflow/lite/schema/schema_generated.h", "WhileOptionsT");
+
   }
 };
 
@@ -9567,12 +12459,21 @@ struct WhileOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_BODY_SUBGRAPH_INDEX = 6
   };
   int32_t cond_subgraph_index() const {
+   std::vector<std::string> mht_908_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_908(mht_908_v, 12462, "", "./tensorflow/lite/schema/schema_generated.h", "cond_subgraph_index");
+
     return GetField<int32_t>(VT_COND_SUBGRAPH_INDEX, 0);
   }
   int32_t body_subgraph_index() const {
+   std::vector<std::string> mht_909_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_909(mht_909_v, 12468, "", "./tensorflow/lite/schema/schema_generated.h", "body_subgraph_index");
+
     return GetField<int32_t>(VT_BODY_SUBGRAPH_INDEX, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_910_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_910(mht_910_v, 12474, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_COND_SUBGRAPH_INDEX) &&
            VerifyField<int32_t>(verifier, VT_BODY_SUBGRAPH_INDEX) &&
@@ -9587,13 +12488,22 @@ struct WhileOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_cond_subgraph_index(int32_t cond_subgraph_index) {
+   std::vector<std::string> mht_911_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_911(mht_911_v, 12491, "", "./tensorflow/lite/schema/schema_generated.h", "add_cond_subgraph_index");
+
     fbb_.AddElement<int32_t>(WhileOptions::VT_COND_SUBGRAPH_INDEX, cond_subgraph_index, 0);
   }
   void add_body_subgraph_index(int32_t body_subgraph_index) {
+   std::vector<std::string> mht_912_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_912(mht_912_v, 12497, "", "./tensorflow/lite/schema/schema_generated.h", "add_body_subgraph_index");
+
     fbb_.AddElement<int32_t>(WhileOptions::VT_BODY_SUBGRAPH_INDEX, body_subgraph_index, 0);
   }
   explicit WhileOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_913_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_913(mht_913_v, 12504, "", "./tensorflow/lite/schema/schema_generated.h", "WhileOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   WhileOptionsBuilder &operator=(const WhileOptionsBuilder &);
@@ -9619,12 +12529,18 @@ flatbuffers::Offset<WhileOptions> CreateWhileOptions(flatbuffers::FlatBufferBuil
 struct NonMaxSuppressionV4OptionsT : public flatbuffers::NativeTable {
   typedef NonMaxSuppressionV4Options TableType;
   NonMaxSuppressionV4OptionsT() {
+   std::vector<std::string> mht_914_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_914(mht_914_v, 12532, "", "./tensorflow/lite/schema/schema_generated.h", "NonMaxSuppressionV4OptionsT");
+
   }
 };
 
 struct NonMaxSuppressionV4Options FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef NonMaxSuppressionV4OptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_915_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_915(mht_915_v, 12541, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -9638,6 +12554,9 @@ struct NonMaxSuppressionV4OptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit NonMaxSuppressionV4OptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_916_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_916(mht_916_v, 12557, "", "./tensorflow/lite/schema/schema_generated.h", "NonMaxSuppressionV4OptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   NonMaxSuppressionV4OptionsBuilder &operator=(const NonMaxSuppressionV4OptionsBuilder &);
@@ -9659,12 +12578,18 @@ flatbuffers::Offset<NonMaxSuppressionV4Options> CreateNonMaxSuppressionV4Options
 struct NonMaxSuppressionV5OptionsT : public flatbuffers::NativeTable {
   typedef NonMaxSuppressionV5Options TableType;
   NonMaxSuppressionV5OptionsT() {
+   std::vector<std::string> mht_917_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_917(mht_917_v, 12581, "", "./tensorflow/lite/schema/schema_generated.h", "NonMaxSuppressionV5OptionsT");
+
   }
 };
 
 struct NonMaxSuppressionV5Options FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef NonMaxSuppressionV5OptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_918_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_918(mht_918_v, 12590, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -9678,6 +12603,9 @@ struct NonMaxSuppressionV5OptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit NonMaxSuppressionV5OptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_919_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_919(mht_919_v, 12606, "", "./tensorflow/lite/schema/schema_generated.h", "NonMaxSuppressionV5OptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   NonMaxSuppressionV5OptionsBuilder &operator=(const NonMaxSuppressionV5OptionsBuilder &);
@@ -9699,12 +12627,18 @@ flatbuffers::Offset<NonMaxSuppressionV5Options> CreateNonMaxSuppressionV5Options
 struct ScatterNdOptionsT : public flatbuffers::NativeTable {
   typedef ScatterNdOptions TableType;
   ScatterNdOptionsT() {
+   std::vector<std::string> mht_920_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_920(mht_920_v, 12630, "", "./tensorflow/lite/schema/schema_generated.h", "ScatterNdOptionsT");
+
   }
 };
 
 struct ScatterNdOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef ScatterNdOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_921_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_921(mht_921_v, 12639, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -9718,6 +12652,9 @@ struct ScatterNdOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit ScatterNdOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_922_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_922(mht_922_v, 12655, "", "./tensorflow/lite/schema/schema_generated.h", "ScatterNdOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   ScatterNdOptionsBuilder &operator=(const ScatterNdOptionsBuilder &);
@@ -9739,12 +12676,18 @@ flatbuffers::Offset<ScatterNdOptions> CreateScatterNdOptions(flatbuffers::FlatBu
 struct SelectV2OptionsT : public flatbuffers::NativeTable {
   typedef SelectV2Options TableType;
   SelectV2OptionsT() {
+   std::vector<std::string> mht_923_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_923(mht_923_v, 12679, "", "./tensorflow/lite/schema/schema_generated.h", "SelectV2OptionsT");
+
   }
 };
 
 struct SelectV2Options FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef SelectV2OptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_924_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_924(mht_924_v, 12688, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -9758,6 +12701,9 @@ struct SelectV2OptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit SelectV2OptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_925_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_925(mht_925_v, 12704, "", "./tensorflow/lite/schema/schema_generated.h", "SelectV2OptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   SelectV2OptionsBuilder &operator=(const SelectV2OptionsBuilder &);
@@ -9779,12 +12725,18 @@ flatbuffers::Offset<SelectV2Options> CreateSelectV2Options(flatbuffers::FlatBuff
 struct DensifyOptionsT : public flatbuffers::NativeTable {
   typedef DensifyOptions TableType;
   DensifyOptionsT() {
+   std::vector<std::string> mht_926_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_926(mht_926_v, 12728, "", "./tensorflow/lite/schema/schema_generated.h", "DensifyOptionsT");
+
   }
 };
 
 struct DensifyOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef DensifyOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_927_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_927(mht_927_v, 12737, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -9798,6 +12750,9 @@ struct DensifyOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit DensifyOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_928_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_928(mht_928_v, 12753, "", "./tensorflow/lite/schema/schema_generated.h", "DensifyOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   DensifyOptionsBuilder &operator=(const DensifyOptionsBuilder &);
@@ -9819,12 +12774,18 @@ flatbuffers::Offset<DensifyOptions> CreateDensifyOptions(flatbuffers::FlatBuffer
 struct SegmentSumOptionsT : public flatbuffers::NativeTable {
   typedef SegmentSumOptions TableType;
   SegmentSumOptionsT() {
+   std::vector<std::string> mht_929_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_929(mht_929_v, 12777, "", "./tensorflow/lite/schema/schema_generated.h", "SegmentSumOptionsT");
+
   }
 };
 
 struct SegmentSumOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef SegmentSumOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_930_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_930(mht_930_v, 12786, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -9838,6 +12799,9 @@ struct SegmentSumOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit SegmentSumOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_931_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_931(mht_931_v, 12802, "", "./tensorflow/lite/schema/schema_generated.h", "SegmentSumOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   SegmentSumOptionsBuilder &operator=(const SegmentSumOptionsBuilder &);
@@ -9865,6 +12829,9 @@ struct BatchMatMulOptionsT : public flatbuffers::NativeTable {
       : adj_x(false),
         adj_y(false),
         asymmetric_quantize_inputs(false) {
+   std::vector<std::string> mht_932_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_932(mht_932_v, 12832, "", "./tensorflow/lite/schema/schema_generated.h", "BatchMatMulOptionsT");
+
   }
 };
 
@@ -9876,15 +12843,27 @@ struct BatchMatMulOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_ASYMMETRIC_QUANTIZE_INPUTS = 8
   };
   bool adj_x() const {
+   std::vector<std::string> mht_933_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_933(mht_933_v, 12846, "", "./tensorflow/lite/schema/schema_generated.h", "adj_x");
+
     return GetField<uint8_t>(VT_ADJ_X, 0) != 0;
   }
   bool adj_y() const {
+   std::vector<std::string> mht_934_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_934(mht_934_v, 12852, "", "./tensorflow/lite/schema/schema_generated.h", "adj_y");
+
     return GetField<uint8_t>(VT_ADJ_Y, 0) != 0;
   }
   bool asymmetric_quantize_inputs() const {
+   std::vector<std::string> mht_935_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_935(mht_935_v, 12858, "", "./tensorflow/lite/schema/schema_generated.h", "asymmetric_quantize_inputs");
+
     return GetField<uint8_t>(VT_ASYMMETRIC_QUANTIZE_INPUTS, 0) != 0;
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_936_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_936(mht_936_v, 12864, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<uint8_t>(verifier, VT_ADJ_X) &&
            VerifyField<uint8_t>(verifier, VT_ADJ_Y) &&
@@ -9900,16 +12879,28 @@ struct BatchMatMulOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_adj_x(bool adj_x) {
+   std::vector<std::string> mht_937_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_937(mht_937_v, 12882, "", "./tensorflow/lite/schema/schema_generated.h", "add_adj_x");
+
     fbb_.AddElement<uint8_t>(BatchMatMulOptions::VT_ADJ_X, static_cast<uint8_t>(adj_x), 0);
   }
   void add_adj_y(bool adj_y) {
+   std::vector<std::string> mht_938_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_938(mht_938_v, 12888, "", "./tensorflow/lite/schema/schema_generated.h", "add_adj_y");
+
     fbb_.AddElement<uint8_t>(BatchMatMulOptions::VT_ADJ_Y, static_cast<uint8_t>(adj_y), 0);
   }
   void add_asymmetric_quantize_inputs(bool asymmetric_quantize_inputs) {
+   std::vector<std::string> mht_939_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_939(mht_939_v, 12894, "", "./tensorflow/lite/schema/schema_generated.h", "add_asymmetric_quantize_inputs");
+
     fbb_.AddElement<uint8_t>(BatchMatMulOptions::VT_ASYMMETRIC_QUANTIZE_INPUTS, static_cast<uint8_t>(asymmetric_quantize_inputs), 0);
   }
   explicit BatchMatMulOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_940_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_940(mht_940_v, 12901, "", "./tensorflow/lite/schema/schema_generated.h", "BatchMatMulOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   BatchMatMulOptionsBuilder &operator=(const BatchMatMulOptionsBuilder &);
@@ -9941,6 +12932,9 @@ struct CumsumOptionsT : public flatbuffers::NativeTable {
   CumsumOptionsT()
       : exclusive(false),
         reverse(false) {
+   std::vector<std::string> mht_941_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_941(mht_941_v, 12935, "", "./tensorflow/lite/schema/schema_generated.h", "CumsumOptionsT");
+
   }
 };
 
@@ -9951,12 +12945,21 @@ struct CumsumOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_REVERSE = 6
   };
   bool exclusive() const {
+   std::vector<std::string> mht_942_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_942(mht_942_v, 12948, "", "./tensorflow/lite/schema/schema_generated.h", "exclusive");
+
     return GetField<uint8_t>(VT_EXCLUSIVE, 0) != 0;
   }
   bool reverse() const {
+   std::vector<std::string> mht_943_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_943(mht_943_v, 12954, "", "./tensorflow/lite/schema/schema_generated.h", "reverse");
+
     return GetField<uint8_t>(VT_REVERSE, 0) != 0;
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_944_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_944(mht_944_v, 12960, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<uint8_t>(verifier, VT_EXCLUSIVE) &&
            VerifyField<uint8_t>(verifier, VT_REVERSE) &&
@@ -9971,13 +12974,22 @@ struct CumsumOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_exclusive(bool exclusive) {
+   std::vector<std::string> mht_945_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_945(mht_945_v, 12977, "", "./tensorflow/lite/schema/schema_generated.h", "add_exclusive");
+
     fbb_.AddElement<uint8_t>(CumsumOptions::VT_EXCLUSIVE, static_cast<uint8_t>(exclusive), 0);
   }
   void add_reverse(bool reverse) {
+   std::vector<std::string> mht_946_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_946(mht_946_v, 12983, "", "./tensorflow/lite/schema/schema_generated.h", "add_reverse");
+
     fbb_.AddElement<uint8_t>(CumsumOptions::VT_REVERSE, static_cast<uint8_t>(reverse), 0);
   }
   explicit CumsumOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_947_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_947(mht_947_v, 12990, "", "./tensorflow/lite/schema/schema_generated.h", "CumsumOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   CumsumOptionsBuilder &operator=(const CumsumOptionsBuilder &);
@@ -10003,12 +13015,18 @@ flatbuffers::Offset<CumsumOptions> CreateCumsumOptions(flatbuffers::FlatBufferBu
 struct BroadcastToOptionsT : public flatbuffers::NativeTable {
   typedef BroadcastToOptions TableType;
   BroadcastToOptionsT() {
+   std::vector<std::string> mht_948_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_948(mht_948_v, 13018, "", "./tensorflow/lite/schema/schema_generated.h", "BroadcastToOptionsT");
+
   }
 };
 
 struct BroadcastToOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef BroadcastToOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_949_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_949(mht_949_v, 13027, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -10022,6 +13040,9 @@ struct BroadcastToOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit BroadcastToOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_950_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_950(mht_950_v, 13043, "", "./tensorflow/lite/schema/schema_generated.h", "BroadcastToOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   BroadcastToOptionsBuilder &operator=(const BroadcastToOptionsBuilder &);
@@ -10043,12 +13064,18 @@ flatbuffers::Offset<BroadcastToOptions> CreateBroadcastToOptions(flatbuffers::Fl
 struct Rfft2dOptionsT : public flatbuffers::NativeTable {
   typedef Rfft2dOptions TableType;
   Rfft2dOptionsT() {
+   std::vector<std::string> mht_951_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_951(mht_951_v, 13067, "", "./tensorflow/lite/schema/schema_generated.h", "Rfft2dOptionsT");
+
   }
 };
 
 struct Rfft2dOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef Rfft2dOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_952_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_952(mht_952_v, 13076, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -10062,6 +13089,9 @@ struct Rfft2dOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit Rfft2dOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_953_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_953(mht_953_v, 13092, "", "./tensorflow/lite/schema/schema_generated.h", "Rfft2dOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   Rfft2dOptionsBuilder &operator=(const Rfft2dOptionsBuilder &);
@@ -10089,6 +13119,9 @@ struct HashtableOptionsT : public flatbuffers::NativeTable {
       : table_id(0),
         key_dtype(tflite::TensorType_FLOAT32),
         value_dtype(tflite::TensorType_FLOAT32) {
+   std::vector<std::string> mht_954_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_954(mht_954_v, 13122, "", "./tensorflow/lite/schema/schema_generated.h", "HashtableOptionsT");
+
   }
 };
 
@@ -10100,15 +13133,27 @@ struct HashtableOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_VALUE_DTYPE = 8
   };
   int32_t table_id() const {
+   std::vector<std::string> mht_955_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_955(mht_955_v, 13136, "", "./tensorflow/lite/schema/schema_generated.h", "table_id");
+
     return GetField<int32_t>(VT_TABLE_ID, 0);
   }
   tflite::TensorType key_dtype() const {
+   std::vector<std::string> mht_956_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_956(mht_956_v, 13142, "", "./tensorflow/lite/schema/schema_generated.h", "key_dtype");
+
     return static_cast<tflite::TensorType>(GetField<int8_t>(VT_KEY_DTYPE, 0));
   }
   tflite::TensorType value_dtype() const {
+   std::vector<std::string> mht_957_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_957(mht_957_v, 13148, "", "./tensorflow/lite/schema/schema_generated.h", "value_dtype");
+
     return static_cast<tflite::TensorType>(GetField<int8_t>(VT_VALUE_DTYPE, 0));
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_958_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_958(mht_958_v, 13154, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_TABLE_ID) &&
            VerifyField<int8_t>(verifier, VT_KEY_DTYPE) &&
@@ -10124,16 +13169,28 @@ struct HashtableOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_table_id(int32_t table_id) {
+   std::vector<std::string> mht_959_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_959(mht_959_v, 13172, "", "./tensorflow/lite/schema/schema_generated.h", "add_table_id");
+
     fbb_.AddElement<int32_t>(HashtableOptions::VT_TABLE_ID, table_id, 0);
   }
   void add_key_dtype(tflite::TensorType key_dtype) {
+   std::vector<std::string> mht_960_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_960(mht_960_v, 13178, "", "./tensorflow/lite/schema/schema_generated.h", "add_key_dtype");
+
     fbb_.AddElement<int8_t>(HashtableOptions::VT_KEY_DTYPE, static_cast<int8_t>(key_dtype), 0);
   }
   void add_value_dtype(tflite::TensorType value_dtype) {
+   std::vector<std::string> mht_961_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_961(mht_961_v, 13184, "", "./tensorflow/lite/schema/schema_generated.h", "add_value_dtype");
+
     fbb_.AddElement<int8_t>(HashtableOptions::VT_VALUE_DTYPE, static_cast<int8_t>(value_dtype), 0);
   }
   explicit HashtableOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_962_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_962(mht_962_v, 13191, "", "./tensorflow/lite/schema/schema_generated.h", "HashtableOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   HashtableOptionsBuilder &operator=(const HashtableOptionsBuilder &);
@@ -10161,12 +13218,18 @@ flatbuffers::Offset<HashtableOptions> CreateHashtableOptions(flatbuffers::FlatBu
 struct HashtableFindOptionsT : public flatbuffers::NativeTable {
   typedef HashtableFindOptions TableType;
   HashtableFindOptionsT() {
+   std::vector<std::string> mht_963_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_963(mht_963_v, 13221, "", "./tensorflow/lite/schema/schema_generated.h", "HashtableFindOptionsT");
+
   }
 };
 
 struct HashtableFindOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef HashtableFindOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_964_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_964(mht_964_v, 13230, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -10180,6 +13243,9 @@ struct HashtableFindOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit HashtableFindOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_965_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_965(mht_965_v, 13246, "", "./tensorflow/lite/schema/schema_generated.h", "HashtableFindOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   HashtableFindOptionsBuilder &operator=(const HashtableFindOptionsBuilder &);
@@ -10201,12 +13267,18 @@ flatbuffers::Offset<HashtableFindOptions> CreateHashtableFindOptions(flatbuffers
 struct HashtableImportOptionsT : public flatbuffers::NativeTable {
   typedef HashtableImportOptions TableType;
   HashtableImportOptionsT() {
+   std::vector<std::string> mht_966_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_966(mht_966_v, 13270, "", "./tensorflow/lite/schema/schema_generated.h", "HashtableImportOptionsT");
+
   }
 };
 
 struct HashtableImportOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef HashtableImportOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_967_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_967(mht_967_v, 13279, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -10220,6 +13292,9 @@ struct HashtableImportOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit HashtableImportOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_968_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_968(mht_968_v, 13295, "", "./tensorflow/lite/schema/schema_generated.h", "HashtableImportOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   HashtableImportOptionsBuilder &operator=(const HashtableImportOptionsBuilder &);
@@ -10241,12 +13316,18 @@ flatbuffers::Offset<HashtableImportOptions> CreateHashtableImportOptions(flatbuf
 struct HashtableSizeOptionsT : public flatbuffers::NativeTable {
   typedef HashtableSizeOptions TableType;
   HashtableSizeOptionsT() {
+   std::vector<std::string> mht_969_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_969(mht_969_v, 13319, "", "./tensorflow/lite/schema/schema_generated.h", "HashtableSizeOptionsT");
+
   }
 };
 
 struct HashtableSizeOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef HashtableSizeOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_970_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_970(mht_970_v, 13328, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -10260,6 +13341,9 @@ struct HashtableSizeOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit HashtableSizeOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_971_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_971(mht_971_v, 13344, "", "./tensorflow/lite/schema/schema_generated.h", "HashtableSizeOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   HashtableSizeOptionsBuilder &operator=(const HashtableSizeOptionsBuilder &);
@@ -10283,6 +13367,9 @@ struct VarHandleOptionsT : public flatbuffers::NativeTable {
   std::string container;
   std::string shared_name;
   VarHandleOptionsT() {
+   std::vector<std::string> mht_972_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_972(mht_972_v, 13370, "", "./tensorflow/lite/schema/schema_generated.h", "VarHandleOptionsT");
+
   }
 };
 
@@ -10293,12 +13380,21 @@ struct VarHandleOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_SHARED_NAME = 6
   };
   const flatbuffers::String *container() const {
+   std::vector<std::string> mht_973_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_973(mht_973_v, 13383, "", "./tensorflow/lite/schema/schema_generated.h", "container");
+
     return GetPointer<const flatbuffers::String *>(VT_CONTAINER);
   }
   const flatbuffers::String *shared_name() const {
+   std::vector<std::string> mht_974_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_974(mht_974_v, 13389, "", "./tensorflow/lite/schema/schema_generated.h", "shared_name");
+
     return GetPointer<const flatbuffers::String *>(VT_SHARED_NAME);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_975_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_975(mht_975_v, 13395, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_CONTAINER) &&
            verifier.VerifyString(container()) &&
@@ -10315,13 +13411,22 @@ struct VarHandleOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_container(flatbuffers::Offset<flatbuffers::String> container) {
+   std::vector<std::string> mht_976_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_976(mht_976_v, 13414, "", "./tensorflow/lite/schema/schema_generated.h", "add_container");
+
     fbb_.AddOffset(VarHandleOptions::VT_CONTAINER, container);
   }
   void add_shared_name(flatbuffers::Offset<flatbuffers::String> shared_name) {
+   std::vector<std::string> mht_977_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_977(mht_977_v, 13420, "", "./tensorflow/lite/schema/schema_generated.h", "add_shared_name");
+
     fbb_.AddOffset(VarHandleOptions::VT_SHARED_NAME, shared_name);
   }
   explicit VarHandleOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_978_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_978(mht_978_v, 13427, "", "./tensorflow/lite/schema/schema_generated.h", "VarHandleOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   VarHandleOptionsBuilder &operator=(const VarHandleOptionsBuilder &);
@@ -10359,12 +13464,18 @@ flatbuffers::Offset<VarHandleOptions> CreateVarHandleOptions(flatbuffers::FlatBu
 struct ReadVariableOptionsT : public flatbuffers::NativeTable {
   typedef ReadVariableOptions TableType;
   ReadVariableOptionsT() {
+   std::vector<std::string> mht_979_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_979(mht_979_v, 13467, "", "./tensorflow/lite/schema/schema_generated.h", "ReadVariableOptionsT");
+
   }
 };
 
 struct ReadVariableOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef ReadVariableOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_980_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_980(mht_980_v, 13476, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -10378,6 +13489,9 @@ struct ReadVariableOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit ReadVariableOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_981_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_981(mht_981_v, 13492, "", "./tensorflow/lite/schema/schema_generated.h", "ReadVariableOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   ReadVariableOptionsBuilder &operator=(const ReadVariableOptionsBuilder &);
@@ -10399,12 +13513,18 @@ flatbuffers::Offset<ReadVariableOptions> CreateReadVariableOptions(flatbuffers::
 struct AssignVariableOptionsT : public flatbuffers::NativeTable {
   typedef AssignVariableOptions TableType;
   AssignVariableOptionsT() {
+   std::vector<std::string> mht_982_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_982(mht_982_v, 13516, "", "./tensorflow/lite/schema/schema_generated.h", "AssignVariableOptionsT");
+
   }
 };
 
 struct AssignVariableOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef AssignVariableOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_983_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_983(mht_983_v, 13525, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -10418,6 +13538,9 @@ struct AssignVariableOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit AssignVariableOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_984_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_984(mht_984_v, 13541, "", "./tensorflow/lite/schema/schema_generated.h", "AssignVariableOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   AssignVariableOptionsBuilder &operator=(const AssignVariableOptionsBuilder &);
@@ -10443,6 +13566,9 @@ struct RandomOptionsT : public flatbuffers::NativeTable {
   RandomOptionsT()
       : seed(0),
         seed2(0) {
+   std::vector<std::string> mht_985_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_985(mht_985_v, 13569, "", "./tensorflow/lite/schema/schema_generated.h", "RandomOptionsT");
+
   }
 };
 
@@ -10453,12 +13579,21 @@ struct RandomOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_SEED2 = 6
   };
   int64_t seed() const {
+   std::vector<std::string> mht_986_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_986(mht_986_v, 13582, "", "./tensorflow/lite/schema/schema_generated.h", "seed");
+
     return GetField<int64_t>(VT_SEED, 0);
   }
   int64_t seed2() const {
+   std::vector<std::string> mht_987_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_987(mht_987_v, 13588, "", "./tensorflow/lite/schema/schema_generated.h", "seed2");
+
     return GetField<int64_t>(VT_SEED2, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_988_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_988(mht_988_v, 13594, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int64_t>(verifier, VT_SEED) &&
            VerifyField<int64_t>(verifier, VT_SEED2) &&
@@ -10473,13 +13608,22 @@ struct RandomOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_seed(int64_t seed) {
+   std::vector<std::string> mht_989_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_989(mht_989_v, 13611, "", "./tensorflow/lite/schema/schema_generated.h", "add_seed");
+
     fbb_.AddElement<int64_t>(RandomOptions::VT_SEED, seed, 0);
   }
   void add_seed2(int64_t seed2) {
+   std::vector<std::string> mht_990_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_990(mht_990_v, 13617, "", "./tensorflow/lite/schema/schema_generated.h", "add_seed2");
+
     fbb_.AddElement<int64_t>(RandomOptions::VT_SEED2, seed2, 0);
   }
   explicit RandomOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_991_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_991(mht_991_v, 13624, "", "./tensorflow/lite/schema/schema_generated.h", "RandomOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   RandomOptionsBuilder &operator=(const RandomOptionsBuilder &);
@@ -10506,6 +13650,9 @@ struct BucketizeOptionsT : public flatbuffers::NativeTable {
   typedef BucketizeOptions TableType;
   std::vector<float> boundaries;
   BucketizeOptionsT() {
+   std::vector<std::string> mht_992_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_992(mht_992_v, 13653, "", "./tensorflow/lite/schema/schema_generated.h", "BucketizeOptionsT");
+
   }
 };
 
@@ -10515,9 +13662,15 @@ struct BucketizeOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_BOUNDARIES = 4
   };
   const flatbuffers::Vector<float> *boundaries() const {
+   std::vector<std::string> mht_993_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_993(mht_993_v, 13665, "", "./tensorflow/lite/schema/schema_generated.h", "boundaries");
+
     return GetPointer<const flatbuffers::Vector<float> *>(VT_BOUNDARIES);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_994_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_994(mht_994_v, 13671, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_BOUNDARIES) &&
            verifier.VerifyVector(boundaries()) &&
@@ -10532,10 +13685,16 @@ struct BucketizeOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_boundaries(flatbuffers::Offset<flatbuffers::Vector<float>> boundaries) {
+   std::vector<std::string> mht_995_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_995(mht_995_v, 13688, "", "./tensorflow/lite/schema/schema_generated.h", "add_boundaries");
+
     fbb_.AddOffset(BucketizeOptions::VT_BOUNDARIES, boundaries);
   }
   explicit BucketizeOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_996_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_996(mht_996_v, 13695, "", "./tensorflow/lite/schema/schema_generated.h", "BucketizeOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   BucketizeOptionsBuilder &operator=(const BucketizeOptionsBuilder &);
@@ -10570,6 +13729,9 @@ struct GeluOptionsT : public flatbuffers::NativeTable {
   bool approximate;
   GeluOptionsT()
       : approximate(false) {
+   std::vector<std::string> mht_997_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_997(mht_997_v, 13732, "", "./tensorflow/lite/schema/schema_generated.h", "GeluOptionsT");
+
   }
 };
 
@@ -10579,9 +13741,15 @@ struct GeluOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_APPROXIMATE = 4
   };
   bool approximate() const {
+   std::vector<std::string> mht_998_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_998(mht_998_v, 13744, "", "./tensorflow/lite/schema/schema_generated.h", "approximate");
+
     return GetField<uint8_t>(VT_APPROXIMATE, 0) != 0;
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_999_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_999(mht_999_v, 13750, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<uint8_t>(verifier, VT_APPROXIMATE) &&
            verifier.EndTable();
@@ -10595,10 +13763,16 @@ struct GeluOptionsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_approximate(bool approximate) {
+   std::vector<std::string> mht_1000_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1000(mht_1000_v, 13766, "", "./tensorflow/lite/schema/schema_generated.h", "add_approximate");
+
     fbb_.AddElement<uint8_t>(GeluOptions::VT_APPROXIMATE, static_cast<uint8_t>(approximate), 0);
   }
   explicit GeluOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_1001_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1001(mht_1001_v, 13773, "", "./tensorflow/lite/schema/schema_generated.h", "GeluOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   GeluOptionsBuilder &operator=(const GeluOptionsBuilder &);
@@ -10622,12 +13796,18 @@ flatbuffers::Offset<GeluOptions> CreateGeluOptions(flatbuffers::FlatBufferBuilde
 struct DynamicUpdateSliceOptionsT : public flatbuffers::NativeTable {
   typedef DynamicUpdateSliceOptions TableType;
   DynamicUpdateSliceOptionsT() {
+   std::vector<std::string> mht_1002_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1002(mht_1002_v, 13799, "", "./tensorflow/lite/schema/schema_generated.h", "DynamicUpdateSliceOptionsT");
+
   }
 };
 
 struct DynamicUpdateSliceOptions FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef DynamicUpdateSliceOptionsT NativeTableType;
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_1003_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1003(mht_1003_v, 13808, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -10641,6 +13821,9 @@ struct DynamicUpdateSliceOptionsBuilder {
   flatbuffers::uoffset_t start_;
   explicit DynamicUpdateSliceOptionsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_1004_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1004(mht_1004_v, 13824, "", "./tensorflow/lite/schema/schema_generated.h", "DynamicUpdateSliceOptionsBuilder");
+
     start_ = fbb_.StartTable();
   }
   DynamicUpdateSliceOptionsBuilder &operator=(const DynamicUpdateSliceOptionsBuilder &);
@@ -10669,6 +13852,9 @@ struct OperatorCodeT : public flatbuffers::NativeTable {
       : deprecated_builtin_code(0),
         version(1),
         builtin_code(tflite::BuiltinOperator_ADD) {
+   std::vector<std::string> mht_1005_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1005(mht_1005_v, 13855, "", "./tensorflow/lite/schema/schema_generated.h", "OperatorCodeT");
+
   }
 };
 
@@ -10681,18 +13867,33 @@ struct OperatorCode FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_BUILTIN_CODE = 10
   };
   int8_t deprecated_builtin_code() const {
+   std::vector<std::string> mht_1006_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1006(mht_1006_v, 13870, "", "./tensorflow/lite/schema/schema_generated.h", "deprecated_builtin_code");
+
     return GetField<int8_t>(VT_DEPRECATED_BUILTIN_CODE, 0);
   }
   const flatbuffers::String *custom_code() const {
+   std::vector<std::string> mht_1007_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1007(mht_1007_v, 13876, "", "./tensorflow/lite/schema/schema_generated.h", "custom_code");
+
     return GetPointer<const flatbuffers::String *>(VT_CUSTOM_CODE);
   }
   int32_t version() const {
+   std::vector<std::string> mht_1008_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1008(mht_1008_v, 13882, "", "./tensorflow/lite/schema/schema_generated.h", "version");
+
     return GetField<int32_t>(VT_VERSION, 1);
   }
   tflite::BuiltinOperator builtin_code() const {
+   std::vector<std::string> mht_1009_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1009(mht_1009_v, 13888, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_code");
+
     return static_cast<tflite::BuiltinOperator>(GetField<int32_t>(VT_BUILTIN_CODE, 0));
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_1010_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1010(mht_1010_v, 13894, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_DEPRECATED_BUILTIN_CODE) &&
            VerifyOffset(verifier, VT_CUSTOM_CODE) &&
@@ -10710,19 +13911,34 @@ struct OperatorCodeBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_deprecated_builtin_code(int8_t deprecated_builtin_code) {
+   std::vector<std::string> mht_1011_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1011(mht_1011_v, 13914, "", "./tensorflow/lite/schema/schema_generated.h", "add_deprecated_builtin_code");
+
     fbb_.AddElement<int8_t>(OperatorCode::VT_DEPRECATED_BUILTIN_CODE, deprecated_builtin_code, 0);
   }
   void add_custom_code(flatbuffers::Offset<flatbuffers::String> custom_code) {
+   std::vector<std::string> mht_1012_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1012(mht_1012_v, 13920, "", "./tensorflow/lite/schema/schema_generated.h", "add_custom_code");
+
     fbb_.AddOffset(OperatorCode::VT_CUSTOM_CODE, custom_code);
   }
   void add_version(int32_t version) {
+   std::vector<std::string> mht_1013_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1013(mht_1013_v, 13926, "", "./tensorflow/lite/schema/schema_generated.h", "add_version");
+
     fbb_.AddElement<int32_t>(OperatorCode::VT_VERSION, version, 1);
   }
   void add_builtin_code(tflite::BuiltinOperator builtin_code) {
+   std::vector<std::string> mht_1014_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1014(mht_1014_v, 13932, "", "./tensorflow/lite/schema/schema_generated.h", "add_builtin_code");
+
     fbb_.AddElement<int32_t>(OperatorCode::VT_BUILTIN_CODE, static_cast<int32_t>(builtin_code), 0);
   }
   explicit OperatorCodeBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_1015_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1015(mht_1015_v, 13939, "", "./tensorflow/lite/schema/schema_generated.h", "OperatorCodeBuilder");
+
     start_ = fbb_.StartTable();
   }
   OperatorCodeBuilder &operator=(const OperatorCodeBuilder &);
@@ -10777,6 +13993,9 @@ struct OperatorT : public flatbuffers::NativeTable {
   OperatorT()
       : opcode_index(0),
         custom_options_format(tflite::CustomOptionsFormat_FLEXBUFFERS) {
+   std::vector<std::string> mht_1016_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1016(mht_1016_v, 13996, "", "./tensorflow/lite/schema/schema_generated.h", "OperatorT");
+
   }
 };
 
@@ -10794,385 +14013,766 @@ struct Operator FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_INTERMEDIATES = 20
   };
   uint32_t opcode_index() const {
+   std::vector<std::string> mht_1017_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1017(mht_1017_v, 14016, "", "./tensorflow/lite/schema/schema_generated.h", "opcode_index");
+
     return GetField<uint32_t>(VT_OPCODE_INDEX, 0);
   }
   const flatbuffers::Vector<int32_t> *inputs() const {
+   std::vector<std::string> mht_1018_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1018(mht_1018_v, 14022, "", "./tensorflow/lite/schema/schema_generated.h", "inputs");
+
     return GetPointer<const flatbuffers::Vector<int32_t> *>(VT_INPUTS);
   }
   const flatbuffers::Vector<int32_t> *outputs() const {
+   std::vector<std::string> mht_1019_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1019(mht_1019_v, 14028, "", "./tensorflow/lite/schema/schema_generated.h", "outputs");
+
     return GetPointer<const flatbuffers::Vector<int32_t> *>(VT_OUTPUTS);
   }
   tflite::BuiltinOptions builtin_options_type() const {
+   std::vector<std::string> mht_1020_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1020(mht_1020_v, 14034, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_type");
+
     return static_cast<tflite::BuiltinOptions>(GetField<uint8_t>(VT_BUILTIN_OPTIONS_TYPE, 0));
   }
   const void *builtin_options() const {
+   std::vector<std::string> mht_1021_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1021(mht_1021_v, 14040, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options");
+
     return GetPointer<const void *>(VT_BUILTIN_OPTIONS);
   }
   template<typename T> const T *builtin_options_as() const;
   const tflite::Conv2DOptions *builtin_options_as_Conv2DOptions() const {
+   std::vector<std::string> mht_1022_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1022(mht_1022_v, 14047, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_Conv2DOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_Conv2DOptions ? static_cast<const tflite::Conv2DOptions *>(builtin_options()) : nullptr;
   }
   const tflite::DepthwiseConv2DOptions *builtin_options_as_DepthwiseConv2DOptions() const {
+   std::vector<std::string> mht_1023_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1023(mht_1023_v, 14053, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_DepthwiseConv2DOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_DepthwiseConv2DOptions ? static_cast<const tflite::DepthwiseConv2DOptions *>(builtin_options()) : nullptr;
   }
   const tflite::ConcatEmbeddingsOptions *builtin_options_as_ConcatEmbeddingsOptions() const {
+   std::vector<std::string> mht_1024_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1024(mht_1024_v, 14059, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_ConcatEmbeddingsOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_ConcatEmbeddingsOptions ? static_cast<const tflite::ConcatEmbeddingsOptions *>(builtin_options()) : nullptr;
   }
   const tflite::LSHProjectionOptions *builtin_options_as_LSHProjectionOptions() const {
+   std::vector<std::string> mht_1025_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1025(mht_1025_v, 14065, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_LSHProjectionOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_LSHProjectionOptions ? static_cast<const tflite::LSHProjectionOptions *>(builtin_options()) : nullptr;
   }
   const tflite::Pool2DOptions *builtin_options_as_Pool2DOptions() const {
+   std::vector<std::string> mht_1026_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1026(mht_1026_v, 14071, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_Pool2DOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_Pool2DOptions ? static_cast<const tflite::Pool2DOptions *>(builtin_options()) : nullptr;
   }
   const tflite::SVDFOptions *builtin_options_as_SVDFOptions() const {
+   std::vector<std::string> mht_1027_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1027(mht_1027_v, 14077, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_SVDFOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_SVDFOptions ? static_cast<const tflite::SVDFOptions *>(builtin_options()) : nullptr;
   }
   const tflite::RNNOptions *builtin_options_as_RNNOptions() const {
+   std::vector<std::string> mht_1028_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1028(mht_1028_v, 14083, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_RNNOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_RNNOptions ? static_cast<const tflite::RNNOptions *>(builtin_options()) : nullptr;
   }
   const tflite::FullyConnectedOptions *builtin_options_as_FullyConnectedOptions() const {
+   std::vector<std::string> mht_1029_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1029(mht_1029_v, 14089, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_FullyConnectedOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_FullyConnectedOptions ? static_cast<const tflite::FullyConnectedOptions *>(builtin_options()) : nullptr;
   }
   const tflite::SoftmaxOptions *builtin_options_as_SoftmaxOptions() const {
+   std::vector<std::string> mht_1030_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1030(mht_1030_v, 14095, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_SoftmaxOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_SoftmaxOptions ? static_cast<const tflite::SoftmaxOptions *>(builtin_options()) : nullptr;
   }
   const tflite::ConcatenationOptions *builtin_options_as_ConcatenationOptions() const {
+   std::vector<std::string> mht_1031_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1031(mht_1031_v, 14101, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_ConcatenationOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_ConcatenationOptions ? static_cast<const tflite::ConcatenationOptions *>(builtin_options()) : nullptr;
   }
   const tflite::AddOptions *builtin_options_as_AddOptions() const {
+   std::vector<std::string> mht_1032_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1032(mht_1032_v, 14107, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_AddOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_AddOptions ? static_cast<const tflite::AddOptions *>(builtin_options()) : nullptr;
   }
   const tflite::L2NormOptions *builtin_options_as_L2NormOptions() const {
+   std::vector<std::string> mht_1033_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1033(mht_1033_v, 14113, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_L2NormOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_L2NormOptions ? static_cast<const tflite::L2NormOptions *>(builtin_options()) : nullptr;
   }
   const tflite::LocalResponseNormalizationOptions *builtin_options_as_LocalResponseNormalizationOptions() const {
+   std::vector<std::string> mht_1034_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1034(mht_1034_v, 14119, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_LocalResponseNormalizationOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_LocalResponseNormalizationOptions ? static_cast<const tflite::LocalResponseNormalizationOptions *>(builtin_options()) : nullptr;
   }
   const tflite::LSTMOptions *builtin_options_as_LSTMOptions() const {
+   std::vector<std::string> mht_1035_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1035(mht_1035_v, 14125, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_LSTMOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_LSTMOptions ? static_cast<const tflite::LSTMOptions *>(builtin_options()) : nullptr;
   }
   const tflite::ResizeBilinearOptions *builtin_options_as_ResizeBilinearOptions() const {
+   std::vector<std::string> mht_1036_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1036(mht_1036_v, 14131, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_ResizeBilinearOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_ResizeBilinearOptions ? static_cast<const tflite::ResizeBilinearOptions *>(builtin_options()) : nullptr;
   }
   const tflite::CallOptions *builtin_options_as_CallOptions() const {
+   std::vector<std::string> mht_1037_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1037(mht_1037_v, 14137, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_CallOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_CallOptions ? static_cast<const tflite::CallOptions *>(builtin_options()) : nullptr;
   }
   const tflite::ReshapeOptions *builtin_options_as_ReshapeOptions() const {
+   std::vector<std::string> mht_1038_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1038(mht_1038_v, 14143, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_ReshapeOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_ReshapeOptions ? static_cast<const tflite::ReshapeOptions *>(builtin_options()) : nullptr;
   }
   const tflite::SkipGramOptions *builtin_options_as_SkipGramOptions() const {
+   std::vector<std::string> mht_1039_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1039(mht_1039_v, 14149, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_SkipGramOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_SkipGramOptions ? static_cast<const tflite::SkipGramOptions *>(builtin_options()) : nullptr;
   }
   const tflite::SpaceToDepthOptions *builtin_options_as_SpaceToDepthOptions() const {
+   std::vector<std::string> mht_1040_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1040(mht_1040_v, 14155, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_SpaceToDepthOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_SpaceToDepthOptions ? static_cast<const tflite::SpaceToDepthOptions *>(builtin_options()) : nullptr;
   }
   const tflite::EmbeddingLookupSparseOptions *builtin_options_as_EmbeddingLookupSparseOptions() const {
+   std::vector<std::string> mht_1041_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1041(mht_1041_v, 14161, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_EmbeddingLookupSparseOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_EmbeddingLookupSparseOptions ? static_cast<const tflite::EmbeddingLookupSparseOptions *>(builtin_options()) : nullptr;
   }
   const tflite::MulOptions *builtin_options_as_MulOptions() const {
+   std::vector<std::string> mht_1042_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1042(mht_1042_v, 14167, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_MulOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_MulOptions ? static_cast<const tflite::MulOptions *>(builtin_options()) : nullptr;
   }
   const tflite::PadOptions *builtin_options_as_PadOptions() const {
+   std::vector<std::string> mht_1043_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1043(mht_1043_v, 14173, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_PadOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_PadOptions ? static_cast<const tflite::PadOptions *>(builtin_options()) : nullptr;
   }
   const tflite::GatherOptions *builtin_options_as_GatherOptions() const {
+   std::vector<std::string> mht_1044_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1044(mht_1044_v, 14179, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_GatherOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_GatherOptions ? static_cast<const tflite::GatherOptions *>(builtin_options()) : nullptr;
   }
   const tflite::BatchToSpaceNDOptions *builtin_options_as_BatchToSpaceNDOptions() const {
+   std::vector<std::string> mht_1045_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1045(mht_1045_v, 14185, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_BatchToSpaceNDOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_BatchToSpaceNDOptions ? static_cast<const tflite::BatchToSpaceNDOptions *>(builtin_options()) : nullptr;
   }
   const tflite::SpaceToBatchNDOptions *builtin_options_as_SpaceToBatchNDOptions() const {
+   std::vector<std::string> mht_1046_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1046(mht_1046_v, 14191, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_SpaceToBatchNDOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_SpaceToBatchNDOptions ? static_cast<const tflite::SpaceToBatchNDOptions *>(builtin_options()) : nullptr;
   }
   const tflite::TransposeOptions *builtin_options_as_TransposeOptions() const {
+   std::vector<std::string> mht_1047_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1047(mht_1047_v, 14197, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_TransposeOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_TransposeOptions ? static_cast<const tflite::TransposeOptions *>(builtin_options()) : nullptr;
   }
   const tflite::ReducerOptions *builtin_options_as_ReducerOptions() const {
+   std::vector<std::string> mht_1048_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1048(mht_1048_v, 14203, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_ReducerOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_ReducerOptions ? static_cast<const tflite::ReducerOptions *>(builtin_options()) : nullptr;
   }
   const tflite::SubOptions *builtin_options_as_SubOptions() const {
+   std::vector<std::string> mht_1049_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1049(mht_1049_v, 14209, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_SubOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_SubOptions ? static_cast<const tflite::SubOptions *>(builtin_options()) : nullptr;
   }
   const tflite::DivOptions *builtin_options_as_DivOptions() const {
+   std::vector<std::string> mht_1050_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1050(mht_1050_v, 14215, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_DivOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_DivOptions ? static_cast<const tflite::DivOptions *>(builtin_options()) : nullptr;
   }
   const tflite::SqueezeOptions *builtin_options_as_SqueezeOptions() const {
+   std::vector<std::string> mht_1051_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1051(mht_1051_v, 14221, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_SqueezeOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_SqueezeOptions ? static_cast<const tflite::SqueezeOptions *>(builtin_options()) : nullptr;
   }
   const tflite::SequenceRNNOptions *builtin_options_as_SequenceRNNOptions() const {
+   std::vector<std::string> mht_1052_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1052(mht_1052_v, 14227, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_SequenceRNNOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_SequenceRNNOptions ? static_cast<const tflite::SequenceRNNOptions *>(builtin_options()) : nullptr;
   }
   const tflite::StridedSliceOptions *builtin_options_as_StridedSliceOptions() const {
+   std::vector<std::string> mht_1053_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1053(mht_1053_v, 14233, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_StridedSliceOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_StridedSliceOptions ? static_cast<const tflite::StridedSliceOptions *>(builtin_options()) : nullptr;
   }
   const tflite::ExpOptions *builtin_options_as_ExpOptions() const {
+   std::vector<std::string> mht_1054_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1054(mht_1054_v, 14239, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_ExpOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_ExpOptions ? static_cast<const tflite::ExpOptions *>(builtin_options()) : nullptr;
   }
   const tflite::TopKV2Options *builtin_options_as_TopKV2Options() const {
+   std::vector<std::string> mht_1055_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1055(mht_1055_v, 14245, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_TopKV2Options");
+
     return builtin_options_type() == tflite::BuiltinOptions_TopKV2Options ? static_cast<const tflite::TopKV2Options *>(builtin_options()) : nullptr;
   }
   const tflite::SplitOptions *builtin_options_as_SplitOptions() const {
+   std::vector<std::string> mht_1056_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1056(mht_1056_v, 14251, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_SplitOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_SplitOptions ? static_cast<const tflite::SplitOptions *>(builtin_options()) : nullptr;
   }
   const tflite::LogSoftmaxOptions *builtin_options_as_LogSoftmaxOptions() const {
+   std::vector<std::string> mht_1057_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1057(mht_1057_v, 14257, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_LogSoftmaxOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_LogSoftmaxOptions ? static_cast<const tflite::LogSoftmaxOptions *>(builtin_options()) : nullptr;
   }
   const tflite::CastOptions *builtin_options_as_CastOptions() const {
+   std::vector<std::string> mht_1058_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1058(mht_1058_v, 14263, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_CastOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_CastOptions ? static_cast<const tflite::CastOptions *>(builtin_options()) : nullptr;
   }
   const tflite::DequantizeOptions *builtin_options_as_DequantizeOptions() const {
+   std::vector<std::string> mht_1059_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1059(mht_1059_v, 14269, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_DequantizeOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_DequantizeOptions ? static_cast<const tflite::DequantizeOptions *>(builtin_options()) : nullptr;
   }
   const tflite::MaximumMinimumOptions *builtin_options_as_MaximumMinimumOptions() const {
+   std::vector<std::string> mht_1060_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1060(mht_1060_v, 14275, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_MaximumMinimumOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_MaximumMinimumOptions ? static_cast<const tflite::MaximumMinimumOptions *>(builtin_options()) : nullptr;
   }
   const tflite::ArgMaxOptions *builtin_options_as_ArgMaxOptions() const {
+   std::vector<std::string> mht_1061_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1061(mht_1061_v, 14281, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_ArgMaxOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_ArgMaxOptions ? static_cast<const tflite::ArgMaxOptions *>(builtin_options()) : nullptr;
   }
   const tflite::LessOptions *builtin_options_as_LessOptions() const {
+   std::vector<std::string> mht_1062_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1062(mht_1062_v, 14287, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_LessOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_LessOptions ? static_cast<const tflite::LessOptions *>(builtin_options()) : nullptr;
   }
   const tflite::NegOptions *builtin_options_as_NegOptions() const {
+   std::vector<std::string> mht_1063_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1063(mht_1063_v, 14293, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_NegOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_NegOptions ? static_cast<const tflite::NegOptions *>(builtin_options()) : nullptr;
   }
   const tflite::PadV2Options *builtin_options_as_PadV2Options() const {
+   std::vector<std::string> mht_1064_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1064(mht_1064_v, 14299, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_PadV2Options");
+
     return builtin_options_type() == tflite::BuiltinOptions_PadV2Options ? static_cast<const tflite::PadV2Options *>(builtin_options()) : nullptr;
   }
   const tflite::GreaterOptions *builtin_options_as_GreaterOptions() const {
+   std::vector<std::string> mht_1065_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1065(mht_1065_v, 14305, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_GreaterOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_GreaterOptions ? static_cast<const tflite::GreaterOptions *>(builtin_options()) : nullptr;
   }
   const tflite::GreaterEqualOptions *builtin_options_as_GreaterEqualOptions() const {
+   std::vector<std::string> mht_1066_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1066(mht_1066_v, 14311, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_GreaterEqualOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_GreaterEqualOptions ? static_cast<const tflite::GreaterEqualOptions *>(builtin_options()) : nullptr;
   }
   const tflite::LessEqualOptions *builtin_options_as_LessEqualOptions() const {
+   std::vector<std::string> mht_1067_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1067(mht_1067_v, 14317, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_LessEqualOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_LessEqualOptions ? static_cast<const tflite::LessEqualOptions *>(builtin_options()) : nullptr;
   }
   const tflite::SelectOptions *builtin_options_as_SelectOptions() const {
+   std::vector<std::string> mht_1068_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1068(mht_1068_v, 14323, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_SelectOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_SelectOptions ? static_cast<const tflite::SelectOptions *>(builtin_options()) : nullptr;
   }
   const tflite::SliceOptions *builtin_options_as_SliceOptions() const {
+   std::vector<std::string> mht_1069_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1069(mht_1069_v, 14329, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_SliceOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_SliceOptions ? static_cast<const tflite::SliceOptions *>(builtin_options()) : nullptr;
   }
   const tflite::TransposeConvOptions *builtin_options_as_TransposeConvOptions() const {
+   std::vector<std::string> mht_1070_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1070(mht_1070_v, 14335, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_TransposeConvOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_TransposeConvOptions ? static_cast<const tflite::TransposeConvOptions *>(builtin_options()) : nullptr;
   }
   const tflite::SparseToDenseOptions *builtin_options_as_SparseToDenseOptions() const {
+   std::vector<std::string> mht_1071_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1071(mht_1071_v, 14341, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_SparseToDenseOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_SparseToDenseOptions ? static_cast<const tflite::SparseToDenseOptions *>(builtin_options()) : nullptr;
   }
   const tflite::TileOptions *builtin_options_as_TileOptions() const {
+   std::vector<std::string> mht_1072_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1072(mht_1072_v, 14347, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_TileOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_TileOptions ? static_cast<const tflite::TileOptions *>(builtin_options()) : nullptr;
   }
   const tflite::ExpandDimsOptions *builtin_options_as_ExpandDimsOptions() const {
+   std::vector<std::string> mht_1073_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1073(mht_1073_v, 14353, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_ExpandDimsOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_ExpandDimsOptions ? static_cast<const tflite::ExpandDimsOptions *>(builtin_options()) : nullptr;
   }
   const tflite::EqualOptions *builtin_options_as_EqualOptions() const {
+   std::vector<std::string> mht_1074_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1074(mht_1074_v, 14359, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_EqualOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_EqualOptions ? static_cast<const tflite::EqualOptions *>(builtin_options()) : nullptr;
   }
   const tflite::NotEqualOptions *builtin_options_as_NotEqualOptions() const {
+   std::vector<std::string> mht_1075_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1075(mht_1075_v, 14365, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_NotEqualOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_NotEqualOptions ? static_cast<const tflite::NotEqualOptions *>(builtin_options()) : nullptr;
   }
   const tflite::ShapeOptions *builtin_options_as_ShapeOptions() const {
+   std::vector<std::string> mht_1076_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1076(mht_1076_v, 14371, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_ShapeOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_ShapeOptions ? static_cast<const tflite::ShapeOptions *>(builtin_options()) : nullptr;
   }
   const tflite::PowOptions *builtin_options_as_PowOptions() const {
+   std::vector<std::string> mht_1077_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1077(mht_1077_v, 14377, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_PowOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_PowOptions ? static_cast<const tflite::PowOptions *>(builtin_options()) : nullptr;
   }
   const tflite::ArgMinOptions *builtin_options_as_ArgMinOptions() const {
+   std::vector<std::string> mht_1078_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1078(mht_1078_v, 14383, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_ArgMinOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_ArgMinOptions ? static_cast<const tflite::ArgMinOptions *>(builtin_options()) : nullptr;
   }
   const tflite::FakeQuantOptions *builtin_options_as_FakeQuantOptions() const {
+   std::vector<std::string> mht_1079_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1079(mht_1079_v, 14389, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_FakeQuantOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_FakeQuantOptions ? static_cast<const tflite::FakeQuantOptions *>(builtin_options()) : nullptr;
   }
   const tflite::PackOptions *builtin_options_as_PackOptions() const {
+   std::vector<std::string> mht_1080_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1080(mht_1080_v, 14395, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_PackOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_PackOptions ? static_cast<const tflite::PackOptions *>(builtin_options()) : nullptr;
   }
   const tflite::LogicalOrOptions *builtin_options_as_LogicalOrOptions() const {
+   std::vector<std::string> mht_1081_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1081(mht_1081_v, 14401, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_LogicalOrOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_LogicalOrOptions ? static_cast<const tflite::LogicalOrOptions *>(builtin_options()) : nullptr;
   }
   const tflite::OneHotOptions *builtin_options_as_OneHotOptions() const {
+   std::vector<std::string> mht_1082_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1082(mht_1082_v, 14407, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_OneHotOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_OneHotOptions ? static_cast<const tflite::OneHotOptions *>(builtin_options()) : nullptr;
   }
   const tflite::LogicalAndOptions *builtin_options_as_LogicalAndOptions() const {
+   std::vector<std::string> mht_1083_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1083(mht_1083_v, 14413, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_LogicalAndOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_LogicalAndOptions ? static_cast<const tflite::LogicalAndOptions *>(builtin_options()) : nullptr;
   }
   const tflite::LogicalNotOptions *builtin_options_as_LogicalNotOptions() const {
+   std::vector<std::string> mht_1084_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1084(mht_1084_v, 14419, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_LogicalNotOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_LogicalNotOptions ? static_cast<const tflite::LogicalNotOptions *>(builtin_options()) : nullptr;
   }
   const tflite::UnpackOptions *builtin_options_as_UnpackOptions() const {
+   std::vector<std::string> mht_1085_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1085(mht_1085_v, 14425, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_UnpackOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_UnpackOptions ? static_cast<const tflite::UnpackOptions *>(builtin_options()) : nullptr;
   }
   const tflite::FloorDivOptions *builtin_options_as_FloorDivOptions() const {
+   std::vector<std::string> mht_1086_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1086(mht_1086_v, 14431, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_FloorDivOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_FloorDivOptions ? static_cast<const tflite::FloorDivOptions *>(builtin_options()) : nullptr;
   }
   const tflite::SquareOptions *builtin_options_as_SquareOptions() const {
+   std::vector<std::string> mht_1087_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1087(mht_1087_v, 14437, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_SquareOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_SquareOptions ? static_cast<const tflite::SquareOptions *>(builtin_options()) : nullptr;
   }
   const tflite::ZerosLikeOptions *builtin_options_as_ZerosLikeOptions() const {
+   std::vector<std::string> mht_1088_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1088(mht_1088_v, 14443, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_ZerosLikeOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_ZerosLikeOptions ? static_cast<const tflite::ZerosLikeOptions *>(builtin_options()) : nullptr;
   }
   const tflite::FillOptions *builtin_options_as_FillOptions() const {
+   std::vector<std::string> mht_1089_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1089(mht_1089_v, 14449, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_FillOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_FillOptions ? static_cast<const tflite::FillOptions *>(builtin_options()) : nullptr;
   }
   const tflite::BidirectionalSequenceLSTMOptions *builtin_options_as_BidirectionalSequenceLSTMOptions() const {
+   std::vector<std::string> mht_1090_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1090(mht_1090_v, 14455, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_BidirectionalSequenceLSTMOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_BidirectionalSequenceLSTMOptions ? static_cast<const tflite::BidirectionalSequenceLSTMOptions *>(builtin_options()) : nullptr;
   }
   const tflite::BidirectionalSequenceRNNOptions *builtin_options_as_BidirectionalSequenceRNNOptions() const {
+   std::vector<std::string> mht_1091_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1091(mht_1091_v, 14461, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_BidirectionalSequenceRNNOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_BidirectionalSequenceRNNOptions ? static_cast<const tflite::BidirectionalSequenceRNNOptions *>(builtin_options()) : nullptr;
   }
   const tflite::UnidirectionalSequenceLSTMOptions *builtin_options_as_UnidirectionalSequenceLSTMOptions() const {
+   std::vector<std::string> mht_1092_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1092(mht_1092_v, 14467, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_UnidirectionalSequenceLSTMOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_UnidirectionalSequenceLSTMOptions ? static_cast<const tflite::UnidirectionalSequenceLSTMOptions *>(builtin_options()) : nullptr;
   }
   const tflite::FloorModOptions *builtin_options_as_FloorModOptions() const {
+   std::vector<std::string> mht_1093_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1093(mht_1093_v, 14473, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_FloorModOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_FloorModOptions ? static_cast<const tflite::FloorModOptions *>(builtin_options()) : nullptr;
   }
   const tflite::RangeOptions *builtin_options_as_RangeOptions() const {
+   std::vector<std::string> mht_1094_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1094(mht_1094_v, 14479, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_RangeOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_RangeOptions ? static_cast<const tflite::RangeOptions *>(builtin_options()) : nullptr;
   }
   const tflite::ResizeNearestNeighborOptions *builtin_options_as_ResizeNearestNeighborOptions() const {
+   std::vector<std::string> mht_1095_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1095(mht_1095_v, 14485, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_ResizeNearestNeighborOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_ResizeNearestNeighborOptions ? static_cast<const tflite::ResizeNearestNeighborOptions *>(builtin_options()) : nullptr;
   }
   const tflite::LeakyReluOptions *builtin_options_as_LeakyReluOptions() const {
+   std::vector<std::string> mht_1096_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1096(mht_1096_v, 14491, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_LeakyReluOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_LeakyReluOptions ? static_cast<const tflite::LeakyReluOptions *>(builtin_options()) : nullptr;
   }
   const tflite::SquaredDifferenceOptions *builtin_options_as_SquaredDifferenceOptions() const {
+   std::vector<std::string> mht_1097_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1097(mht_1097_v, 14497, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_SquaredDifferenceOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_SquaredDifferenceOptions ? static_cast<const tflite::SquaredDifferenceOptions *>(builtin_options()) : nullptr;
   }
   const tflite::MirrorPadOptions *builtin_options_as_MirrorPadOptions() const {
+   std::vector<std::string> mht_1098_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1098(mht_1098_v, 14503, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_MirrorPadOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_MirrorPadOptions ? static_cast<const tflite::MirrorPadOptions *>(builtin_options()) : nullptr;
   }
   const tflite::AbsOptions *builtin_options_as_AbsOptions() const {
+   std::vector<std::string> mht_1099_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1099(mht_1099_v, 14509, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_AbsOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_AbsOptions ? static_cast<const tflite::AbsOptions *>(builtin_options()) : nullptr;
   }
   const tflite::SplitVOptions *builtin_options_as_SplitVOptions() const {
+   std::vector<std::string> mht_1100_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1100(mht_1100_v, 14515, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_SplitVOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_SplitVOptions ? static_cast<const tflite::SplitVOptions *>(builtin_options()) : nullptr;
   }
   const tflite::UniqueOptions *builtin_options_as_UniqueOptions() const {
+   std::vector<std::string> mht_1101_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1101(mht_1101_v, 14521, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_UniqueOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_UniqueOptions ? static_cast<const tflite::UniqueOptions *>(builtin_options()) : nullptr;
   }
   const tflite::ReverseV2Options *builtin_options_as_ReverseV2Options() const {
+   std::vector<std::string> mht_1102_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1102(mht_1102_v, 14527, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_ReverseV2Options");
+
     return builtin_options_type() == tflite::BuiltinOptions_ReverseV2Options ? static_cast<const tflite::ReverseV2Options *>(builtin_options()) : nullptr;
   }
   const tflite::AddNOptions *builtin_options_as_AddNOptions() const {
+   std::vector<std::string> mht_1103_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1103(mht_1103_v, 14533, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_AddNOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_AddNOptions ? static_cast<const tflite::AddNOptions *>(builtin_options()) : nullptr;
   }
   const tflite::GatherNdOptions *builtin_options_as_GatherNdOptions() const {
+   std::vector<std::string> mht_1104_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1104(mht_1104_v, 14539, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_GatherNdOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_GatherNdOptions ? static_cast<const tflite::GatherNdOptions *>(builtin_options()) : nullptr;
   }
   const tflite::CosOptions *builtin_options_as_CosOptions() const {
+   std::vector<std::string> mht_1105_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1105(mht_1105_v, 14545, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_CosOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_CosOptions ? static_cast<const tflite::CosOptions *>(builtin_options()) : nullptr;
   }
   const tflite::WhereOptions *builtin_options_as_WhereOptions() const {
+   std::vector<std::string> mht_1106_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1106(mht_1106_v, 14551, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_WhereOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_WhereOptions ? static_cast<const tflite::WhereOptions *>(builtin_options()) : nullptr;
   }
   const tflite::RankOptions *builtin_options_as_RankOptions() const {
+   std::vector<std::string> mht_1107_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1107(mht_1107_v, 14557, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_RankOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_RankOptions ? static_cast<const tflite::RankOptions *>(builtin_options()) : nullptr;
   }
   const tflite::ReverseSequenceOptions *builtin_options_as_ReverseSequenceOptions() const {
+   std::vector<std::string> mht_1108_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1108(mht_1108_v, 14563, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_ReverseSequenceOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_ReverseSequenceOptions ? static_cast<const tflite::ReverseSequenceOptions *>(builtin_options()) : nullptr;
   }
   const tflite::MatrixDiagOptions *builtin_options_as_MatrixDiagOptions() const {
+   std::vector<std::string> mht_1109_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1109(mht_1109_v, 14569, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_MatrixDiagOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_MatrixDiagOptions ? static_cast<const tflite::MatrixDiagOptions *>(builtin_options()) : nullptr;
   }
   const tflite::QuantizeOptions *builtin_options_as_QuantizeOptions() const {
+   std::vector<std::string> mht_1110_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1110(mht_1110_v, 14575, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_QuantizeOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_QuantizeOptions ? static_cast<const tflite::QuantizeOptions *>(builtin_options()) : nullptr;
   }
   const tflite::MatrixSetDiagOptions *builtin_options_as_MatrixSetDiagOptions() const {
+   std::vector<std::string> mht_1111_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1111(mht_1111_v, 14581, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_MatrixSetDiagOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_MatrixSetDiagOptions ? static_cast<const tflite::MatrixSetDiagOptions *>(builtin_options()) : nullptr;
   }
   const tflite::HardSwishOptions *builtin_options_as_HardSwishOptions() const {
+   std::vector<std::string> mht_1112_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1112(mht_1112_v, 14587, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_HardSwishOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_HardSwishOptions ? static_cast<const tflite::HardSwishOptions *>(builtin_options()) : nullptr;
   }
   const tflite::IfOptions *builtin_options_as_IfOptions() const {
+   std::vector<std::string> mht_1113_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1113(mht_1113_v, 14593, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_IfOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_IfOptions ? static_cast<const tflite::IfOptions *>(builtin_options()) : nullptr;
   }
   const tflite::WhileOptions *builtin_options_as_WhileOptions() const {
+   std::vector<std::string> mht_1114_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1114(mht_1114_v, 14599, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_WhileOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_WhileOptions ? static_cast<const tflite::WhileOptions *>(builtin_options()) : nullptr;
   }
   const tflite::DepthToSpaceOptions *builtin_options_as_DepthToSpaceOptions() const {
+   std::vector<std::string> mht_1115_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1115(mht_1115_v, 14605, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_DepthToSpaceOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_DepthToSpaceOptions ? static_cast<const tflite::DepthToSpaceOptions *>(builtin_options()) : nullptr;
   }
   const tflite::NonMaxSuppressionV4Options *builtin_options_as_NonMaxSuppressionV4Options() const {
+   std::vector<std::string> mht_1116_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1116(mht_1116_v, 14611, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_NonMaxSuppressionV4Options");
+
     return builtin_options_type() == tflite::BuiltinOptions_NonMaxSuppressionV4Options ? static_cast<const tflite::NonMaxSuppressionV4Options *>(builtin_options()) : nullptr;
   }
   const tflite::NonMaxSuppressionV5Options *builtin_options_as_NonMaxSuppressionV5Options() const {
+   std::vector<std::string> mht_1117_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1117(mht_1117_v, 14617, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_NonMaxSuppressionV5Options");
+
     return builtin_options_type() == tflite::BuiltinOptions_NonMaxSuppressionV5Options ? static_cast<const tflite::NonMaxSuppressionV5Options *>(builtin_options()) : nullptr;
   }
   const tflite::ScatterNdOptions *builtin_options_as_ScatterNdOptions() const {
+   std::vector<std::string> mht_1118_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1118(mht_1118_v, 14623, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_ScatterNdOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_ScatterNdOptions ? static_cast<const tflite::ScatterNdOptions *>(builtin_options()) : nullptr;
   }
   const tflite::SelectV2Options *builtin_options_as_SelectV2Options() const {
+   std::vector<std::string> mht_1119_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1119(mht_1119_v, 14629, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_SelectV2Options");
+
     return builtin_options_type() == tflite::BuiltinOptions_SelectV2Options ? static_cast<const tflite::SelectV2Options *>(builtin_options()) : nullptr;
   }
   const tflite::DensifyOptions *builtin_options_as_DensifyOptions() const {
+   std::vector<std::string> mht_1120_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1120(mht_1120_v, 14635, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_DensifyOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_DensifyOptions ? static_cast<const tflite::DensifyOptions *>(builtin_options()) : nullptr;
   }
   const tflite::SegmentSumOptions *builtin_options_as_SegmentSumOptions() const {
+   std::vector<std::string> mht_1121_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1121(mht_1121_v, 14641, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_SegmentSumOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_SegmentSumOptions ? static_cast<const tflite::SegmentSumOptions *>(builtin_options()) : nullptr;
   }
   const tflite::BatchMatMulOptions *builtin_options_as_BatchMatMulOptions() const {
+   std::vector<std::string> mht_1122_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1122(mht_1122_v, 14647, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_BatchMatMulOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_BatchMatMulOptions ? static_cast<const tflite::BatchMatMulOptions *>(builtin_options()) : nullptr;
   }
   const tflite::CumsumOptions *builtin_options_as_CumsumOptions() const {
+   std::vector<std::string> mht_1123_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1123(mht_1123_v, 14653, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_CumsumOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_CumsumOptions ? static_cast<const tflite::CumsumOptions *>(builtin_options()) : nullptr;
   }
   const tflite::CallOnceOptions *builtin_options_as_CallOnceOptions() const {
+   std::vector<std::string> mht_1124_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1124(mht_1124_v, 14659, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_CallOnceOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_CallOnceOptions ? static_cast<const tflite::CallOnceOptions *>(builtin_options()) : nullptr;
   }
   const tflite::BroadcastToOptions *builtin_options_as_BroadcastToOptions() const {
+   std::vector<std::string> mht_1125_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1125(mht_1125_v, 14665, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_BroadcastToOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_BroadcastToOptions ? static_cast<const tflite::BroadcastToOptions *>(builtin_options()) : nullptr;
   }
   const tflite::Rfft2dOptions *builtin_options_as_Rfft2dOptions() const {
+   std::vector<std::string> mht_1126_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1126(mht_1126_v, 14671, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_Rfft2dOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_Rfft2dOptions ? static_cast<const tflite::Rfft2dOptions *>(builtin_options()) : nullptr;
   }
   const tflite::Conv3DOptions *builtin_options_as_Conv3DOptions() const {
+   std::vector<std::string> mht_1127_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1127(mht_1127_v, 14677, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_Conv3DOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_Conv3DOptions ? static_cast<const tflite::Conv3DOptions *>(builtin_options()) : nullptr;
   }
   const tflite::HashtableOptions *builtin_options_as_HashtableOptions() const {
+   std::vector<std::string> mht_1128_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1128(mht_1128_v, 14683, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_HashtableOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_HashtableOptions ? static_cast<const tflite::HashtableOptions *>(builtin_options()) : nullptr;
   }
   const tflite::HashtableFindOptions *builtin_options_as_HashtableFindOptions() const {
+   std::vector<std::string> mht_1129_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1129(mht_1129_v, 14689, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_HashtableFindOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_HashtableFindOptions ? static_cast<const tflite::HashtableFindOptions *>(builtin_options()) : nullptr;
   }
   const tflite::HashtableImportOptions *builtin_options_as_HashtableImportOptions() const {
+   std::vector<std::string> mht_1130_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1130(mht_1130_v, 14695, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_HashtableImportOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_HashtableImportOptions ? static_cast<const tflite::HashtableImportOptions *>(builtin_options()) : nullptr;
   }
   const tflite::HashtableSizeOptions *builtin_options_as_HashtableSizeOptions() const {
+   std::vector<std::string> mht_1131_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1131(mht_1131_v, 14701, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_HashtableSizeOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_HashtableSizeOptions ? static_cast<const tflite::HashtableSizeOptions *>(builtin_options()) : nullptr;
   }
   const tflite::VarHandleOptions *builtin_options_as_VarHandleOptions() const {
+   std::vector<std::string> mht_1132_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1132(mht_1132_v, 14707, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_VarHandleOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_VarHandleOptions ? static_cast<const tflite::VarHandleOptions *>(builtin_options()) : nullptr;
   }
   const tflite::ReadVariableOptions *builtin_options_as_ReadVariableOptions() const {
+   std::vector<std::string> mht_1133_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1133(mht_1133_v, 14713, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_ReadVariableOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_ReadVariableOptions ? static_cast<const tflite::ReadVariableOptions *>(builtin_options()) : nullptr;
   }
   const tflite::AssignVariableOptions *builtin_options_as_AssignVariableOptions() const {
+   std::vector<std::string> mht_1134_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1134(mht_1134_v, 14719, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_AssignVariableOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_AssignVariableOptions ? static_cast<const tflite::AssignVariableOptions *>(builtin_options()) : nullptr;
   }
   const tflite::RandomOptions *builtin_options_as_RandomOptions() const {
+   std::vector<std::string> mht_1135_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1135(mht_1135_v, 14725, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_RandomOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_RandomOptions ? static_cast<const tflite::RandomOptions *>(builtin_options()) : nullptr;
   }
   const tflite::BucketizeOptions *builtin_options_as_BucketizeOptions() const {
+   std::vector<std::string> mht_1136_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1136(mht_1136_v, 14731, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_BucketizeOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_BucketizeOptions ? static_cast<const tflite::BucketizeOptions *>(builtin_options()) : nullptr;
   }
   const tflite::GeluOptions *builtin_options_as_GeluOptions() const {
+   std::vector<std::string> mht_1137_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1137(mht_1137_v, 14737, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_GeluOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_GeluOptions ? static_cast<const tflite::GeluOptions *>(builtin_options()) : nullptr;
   }
   const tflite::DynamicUpdateSliceOptions *builtin_options_as_DynamicUpdateSliceOptions() const {
+   std::vector<std::string> mht_1138_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1138(mht_1138_v, 14743, "", "./tensorflow/lite/schema/schema_generated.h", "builtin_options_as_DynamicUpdateSliceOptions");
+
     return builtin_options_type() == tflite::BuiltinOptions_DynamicUpdateSliceOptions ? static_cast<const tflite::DynamicUpdateSliceOptions *>(builtin_options()) : nullptr;
   }
   const flatbuffers::Vector<uint8_t> *custom_options() const {
+   std::vector<std::string> mht_1139_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1139(mht_1139_v, 14749, "", "./tensorflow/lite/schema/schema_generated.h", "custom_options");
+
     return GetPointer<const flatbuffers::Vector<uint8_t> *>(VT_CUSTOM_OPTIONS);
   }
   tflite::CustomOptionsFormat custom_options_format() const {
+   std::vector<std::string> mht_1140_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1140(mht_1140_v, 14755, "", "./tensorflow/lite/schema/schema_generated.h", "custom_options_format");
+
     return static_cast<tflite::CustomOptionsFormat>(GetField<int8_t>(VT_CUSTOM_OPTIONS_FORMAT, 0));
   }
   const flatbuffers::Vector<uint8_t> *mutating_variable_inputs() const {
+   std::vector<std::string> mht_1141_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1141(mht_1141_v, 14761, "", "./tensorflow/lite/schema/schema_generated.h", "mutating_variable_inputs");
+
     return GetPointer<const flatbuffers::Vector<uint8_t> *>(VT_MUTATING_VARIABLE_INPUTS);
   }
   const flatbuffers::Vector<int32_t> *intermediates() const {
+   std::vector<std::string> mht_1142_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1142(mht_1142_v, 14767, "", "./tensorflow/lite/schema/schema_generated.h", "intermediates");
+
     return GetPointer<const flatbuffers::Vector<int32_t> *>(VT_INTERMEDIATES);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_1143_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1143(mht_1143_v, 14773, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<uint32_t>(verifier, VT_OPCODE_INDEX) &&
            VerifyOffset(verifier, VT_INPUTS) &&
@@ -11197,470 +14797,821 @@ struct Operator FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
 };
 
 template<> inline const tflite::Conv2DOptions *Operator::builtin_options_as<tflite::Conv2DOptions>() const {
+   std::vector<std::string> mht_1144_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1144(mht_1144_v, 14800, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::Conv2DOptions>");
+
   return builtin_options_as_Conv2DOptions();
 }
 
 template<> inline const tflite::DepthwiseConv2DOptions *Operator::builtin_options_as<tflite::DepthwiseConv2DOptions>() const {
+   std::vector<std::string> mht_1145_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1145(mht_1145_v, 14807, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::DepthwiseConv2DOptions>");
+
   return builtin_options_as_DepthwiseConv2DOptions();
 }
 
 template<> inline const tflite::ConcatEmbeddingsOptions *Operator::builtin_options_as<tflite::ConcatEmbeddingsOptions>() const {
+   std::vector<std::string> mht_1146_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1146(mht_1146_v, 14814, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::ConcatEmbeddingsOptions>");
+
   return builtin_options_as_ConcatEmbeddingsOptions();
 }
 
 template<> inline const tflite::LSHProjectionOptions *Operator::builtin_options_as<tflite::LSHProjectionOptions>() const {
+   std::vector<std::string> mht_1147_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1147(mht_1147_v, 14821, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::LSHProjectionOptions>");
+
   return builtin_options_as_LSHProjectionOptions();
 }
 
 template<> inline const tflite::Pool2DOptions *Operator::builtin_options_as<tflite::Pool2DOptions>() const {
+   std::vector<std::string> mht_1148_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1148(mht_1148_v, 14828, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::Pool2DOptions>");
+
   return builtin_options_as_Pool2DOptions();
 }
 
 template<> inline const tflite::SVDFOptions *Operator::builtin_options_as<tflite::SVDFOptions>() const {
+   std::vector<std::string> mht_1149_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1149(mht_1149_v, 14835, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::SVDFOptions>");
+
   return builtin_options_as_SVDFOptions();
 }
 
 template<> inline const tflite::RNNOptions *Operator::builtin_options_as<tflite::RNNOptions>() const {
+   std::vector<std::string> mht_1150_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1150(mht_1150_v, 14842, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::RNNOptions>");
+
   return builtin_options_as_RNNOptions();
 }
 
 template<> inline const tflite::FullyConnectedOptions *Operator::builtin_options_as<tflite::FullyConnectedOptions>() const {
+   std::vector<std::string> mht_1151_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1151(mht_1151_v, 14849, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::FullyConnectedOptions>");
+
   return builtin_options_as_FullyConnectedOptions();
 }
 
 template<> inline const tflite::SoftmaxOptions *Operator::builtin_options_as<tflite::SoftmaxOptions>() const {
+   std::vector<std::string> mht_1152_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1152(mht_1152_v, 14856, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::SoftmaxOptions>");
+
   return builtin_options_as_SoftmaxOptions();
 }
 
 template<> inline const tflite::ConcatenationOptions *Operator::builtin_options_as<tflite::ConcatenationOptions>() const {
+   std::vector<std::string> mht_1153_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1153(mht_1153_v, 14863, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::ConcatenationOptions>");
+
   return builtin_options_as_ConcatenationOptions();
 }
 
 template<> inline const tflite::AddOptions *Operator::builtin_options_as<tflite::AddOptions>() const {
+   std::vector<std::string> mht_1154_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1154(mht_1154_v, 14870, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::AddOptions>");
+
   return builtin_options_as_AddOptions();
 }
 
 template<> inline const tflite::L2NormOptions *Operator::builtin_options_as<tflite::L2NormOptions>() const {
+   std::vector<std::string> mht_1155_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1155(mht_1155_v, 14877, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::L2NormOptions>");
+
   return builtin_options_as_L2NormOptions();
 }
 
 template<> inline const tflite::LocalResponseNormalizationOptions *Operator::builtin_options_as<tflite::LocalResponseNormalizationOptions>() const {
+   std::vector<std::string> mht_1156_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1156(mht_1156_v, 14884, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::LocalResponseNormalizationOptions>");
+
   return builtin_options_as_LocalResponseNormalizationOptions();
 }
 
 template<> inline const tflite::LSTMOptions *Operator::builtin_options_as<tflite::LSTMOptions>() const {
+   std::vector<std::string> mht_1157_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1157(mht_1157_v, 14891, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::LSTMOptions>");
+
   return builtin_options_as_LSTMOptions();
 }
 
 template<> inline const tflite::ResizeBilinearOptions *Operator::builtin_options_as<tflite::ResizeBilinearOptions>() const {
+   std::vector<std::string> mht_1158_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1158(mht_1158_v, 14898, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::ResizeBilinearOptions>");
+
   return builtin_options_as_ResizeBilinearOptions();
 }
 
 template<> inline const tflite::CallOptions *Operator::builtin_options_as<tflite::CallOptions>() const {
+   std::vector<std::string> mht_1159_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1159(mht_1159_v, 14905, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::CallOptions>");
+
   return builtin_options_as_CallOptions();
 }
 
 template<> inline const tflite::ReshapeOptions *Operator::builtin_options_as<tflite::ReshapeOptions>() const {
+   std::vector<std::string> mht_1160_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1160(mht_1160_v, 14912, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::ReshapeOptions>");
+
   return builtin_options_as_ReshapeOptions();
 }
 
 template<> inline const tflite::SkipGramOptions *Operator::builtin_options_as<tflite::SkipGramOptions>() const {
+   std::vector<std::string> mht_1161_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1161(mht_1161_v, 14919, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::SkipGramOptions>");
+
   return builtin_options_as_SkipGramOptions();
 }
 
 template<> inline const tflite::SpaceToDepthOptions *Operator::builtin_options_as<tflite::SpaceToDepthOptions>() const {
+   std::vector<std::string> mht_1162_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1162(mht_1162_v, 14926, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::SpaceToDepthOptions>");
+
   return builtin_options_as_SpaceToDepthOptions();
 }
 
 template<> inline const tflite::EmbeddingLookupSparseOptions *Operator::builtin_options_as<tflite::EmbeddingLookupSparseOptions>() const {
+   std::vector<std::string> mht_1163_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1163(mht_1163_v, 14933, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::EmbeddingLookupSparseOptions>");
+
   return builtin_options_as_EmbeddingLookupSparseOptions();
 }
 
 template<> inline const tflite::MulOptions *Operator::builtin_options_as<tflite::MulOptions>() const {
+   std::vector<std::string> mht_1164_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1164(mht_1164_v, 14940, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::MulOptions>");
+
   return builtin_options_as_MulOptions();
 }
 
 template<> inline const tflite::PadOptions *Operator::builtin_options_as<tflite::PadOptions>() const {
+   std::vector<std::string> mht_1165_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1165(mht_1165_v, 14947, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::PadOptions>");
+
   return builtin_options_as_PadOptions();
 }
 
 template<> inline const tflite::GatherOptions *Operator::builtin_options_as<tflite::GatherOptions>() const {
+   std::vector<std::string> mht_1166_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1166(mht_1166_v, 14954, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::GatherOptions>");
+
   return builtin_options_as_GatherOptions();
 }
 
 template<> inline const tflite::BatchToSpaceNDOptions *Operator::builtin_options_as<tflite::BatchToSpaceNDOptions>() const {
+   std::vector<std::string> mht_1167_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1167(mht_1167_v, 14961, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::BatchToSpaceNDOptions>");
+
   return builtin_options_as_BatchToSpaceNDOptions();
 }
 
 template<> inline const tflite::SpaceToBatchNDOptions *Operator::builtin_options_as<tflite::SpaceToBatchNDOptions>() const {
+   std::vector<std::string> mht_1168_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1168(mht_1168_v, 14968, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::SpaceToBatchNDOptions>");
+
   return builtin_options_as_SpaceToBatchNDOptions();
 }
 
 template<> inline const tflite::TransposeOptions *Operator::builtin_options_as<tflite::TransposeOptions>() const {
+   std::vector<std::string> mht_1169_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1169(mht_1169_v, 14975, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::TransposeOptions>");
+
   return builtin_options_as_TransposeOptions();
 }
 
 template<> inline const tflite::ReducerOptions *Operator::builtin_options_as<tflite::ReducerOptions>() const {
+   std::vector<std::string> mht_1170_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1170(mht_1170_v, 14982, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::ReducerOptions>");
+
   return builtin_options_as_ReducerOptions();
 }
 
 template<> inline const tflite::SubOptions *Operator::builtin_options_as<tflite::SubOptions>() const {
+   std::vector<std::string> mht_1171_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1171(mht_1171_v, 14989, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::SubOptions>");
+
   return builtin_options_as_SubOptions();
 }
 
 template<> inline const tflite::DivOptions *Operator::builtin_options_as<tflite::DivOptions>() const {
+   std::vector<std::string> mht_1172_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1172(mht_1172_v, 14996, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::DivOptions>");
+
   return builtin_options_as_DivOptions();
 }
 
 template<> inline const tflite::SqueezeOptions *Operator::builtin_options_as<tflite::SqueezeOptions>() const {
+   std::vector<std::string> mht_1173_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1173(mht_1173_v, 15003, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::SqueezeOptions>");
+
   return builtin_options_as_SqueezeOptions();
 }
 
 template<> inline const tflite::SequenceRNNOptions *Operator::builtin_options_as<tflite::SequenceRNNOptions>() const {
+   std::vector<std::string> mht_1174_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1174(mht_1174_v, 15010, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::SequenceRNNOptions>");
+
   return builtin_options_as_SequenceRNNOptions();
 }
 
 template<> inline const tflite::StridedSliceOptions *Operator::builtin_options_as<tflite::StridedSliceOptions>() const {
+   std::vector<std::string> mht_1175_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1175(mht_1175_v, 15017, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::StridedSliceOptions>");
+
   return builtin_options_as_StridedSliceOptions();
 }
 
 template<> inline const tflite::ExpOptions *Operator::builtin_options_as<tflite::ExpOptions>() const {
+   std::vector<std::string> mht_1176_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1176(mht_1176_v, 15024, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::ExpOptions>");
+
   return builtin_options_as_ExpOptions();
 }
 
 template<> inline const tflite::TopKV2Options *Operator::builtin_options_as<tflite::TopKV2Options>() const {
+   std::vector<std::string> mht_1177_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1177(mht_1177_v, 15031, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::TopKV2Options>");
+
   return builtin_options_as_TopKV2Options();
 }
 
 template<> inline const tflite::SplitOptions *Operator::builtin_options_as<tflite::SplitOptions>() const {
+   std::vector<std::string> mht_1178_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1178(mht_1178_v, 15038, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::SplitOptions>");
+
   return builtin_options_as_SplitOptions();
 }
 
 template<> inline const tflite::LogSoftmaxOptions *Operator::builtin_options_as<tflite::LogSoftmaxOptions>() const {
+   std::vector<std::string> mht_1179_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1179(mht_1179_v, 15045, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::LogSoftmaxOptions>");
+
   return builtin_options_as_LogSoftmaxOptions();
 }
 
 template<> inline const tflite::CastOptions *Operator::builtin_options_as<tflite::CastOptions>() const {
+   std::vector<std::string> mht_1180_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1180(mht_1180_v, 15052, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::CastOptions>");
+
   return builtin_options_as_CastOptions();
 }
 
 template<> inline const tflite::DequantizeOptions *Operator::builtin_options_as<tflite::DequantizeOptions>() const {
+   std::vector<std::string> mht_1181_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1181(mht_1181_v, 15059, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::DequantizeOptions>");
+
   return builtin_options_as_DequantizeOptions();
 }
 
 template<> inline const tflite::MaximumMinimumOptions *Operator::builtin_options_as<tflite::MaximumMinimumOptions>() const {
+   std::vector<std::string> mht_1182_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1182(mht_1182_v, 15066, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::MaximumMinimumOptions>");
+
   return builtin_options_as_MaximumMinimumOptions();
 }
 
 template<> inline const tflite::ArgMaxOptions *Operator::builtin_options_as<tflite::ArgMaxOptions>() const {
+   std::vector<std::string> mht_1183_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1183(mht_1183_v, 15073, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::ArgMaxOptions>");
+
   return builtin_options_as_ArgMaxOptions();
 }
 
 template<> inline const tflite::LessOptions *Operator::builtin_options_as<tflite::LessOptions>() const {
+   std::vector<std::string> mht_1184_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1184(mht_1184_v, 15080, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::LessOptions>");
+
   return builtin_options_as_LessOptions();
 }
 
 template<> inline const tflite::NegOptions *Operator::builtin_options_as<tflite::NegOptions>() const {
+   std::vector<std::string> mht_1185_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1185(mht_1185_v, 15087, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::NegOptions>");
+
   return builtin_options_as_NegOptions();
 }
 
 template<> inline const tflite::PadV2Options *Operator::builtin_options_as<tflite::PadV2Options>() const {
+   std::vector<std::string> mht_1186_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1186(mht_1186_v, 15094, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::PadV2Options>");
+
   return builtin_options_as_PadV2Options();
 }
 
 template<> inline const tflite::GreaterOptions *Operator::builtin_options_as<tflite::GreaterOptions>() const {
+   std::vector<std::string> mht_1187_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1187(mht_1187_v, 15101, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::GreaterOptions>");
+
   return builtin_options_as_GreaterOptions();
 }
 
 template<> inline const tflite::GreaterEqualOptions *Operator::builtin_options_as<tflite::GreaterEqualOptions>() const {
+   std::vector<std::string> mht_1188_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1188(mht_1188_v, 15108, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::GreaterEqualOptions>");
+
   return builtin_options_as_GreaterEqualOptions();
 }
 
 template<> inline const tflite::LessEqualOptions *Operator::builtin_options_as<tflite::LessEqualOptions>() const {
+   std::vector<std::string> mht_1189_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1189(mht_1189_v, 15115, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::LessEqualOptions>");
+
   return builtin_options_as_LessEqualOptions();
 }
 
 template<> inline const tflite::SelectOptions *Operator::builtin_options_as<tflite::SelectOptions>() const {
+   std::vector<std::string> mht_1190_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1190(mht_1190_v, 15122, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::SelectOptions>");
+
   return builtin_options_as_SelectOptions();
 }
 
 template<> inline const tflite::SliceOptions *Operator::builtin_options_as<tflite::SliceOptions>() const {
+   std::vector<std::string> mht_1191_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1191(mht_1191_v, 15129, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::SliceOptions>");
+
   return builtin_options_as_SliceOptions();
 }
 
 template<> inline const tflite::TransposeConvOptions *Operator::builtin_options_as<tflite::TransposeConvOptions>() const {
+   std::vector<std::string> mht_1192_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1192(mht_1192_v, 15136, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::TransposeConvOptions>");
+
   return builtin_options_as_TransposeConvOptions();
 }
 
 template<> inline const tflite::SparseToDenseOptions *Operator::builtin_options_as<tflite::SparseToDenseOptions>() const {
+   std::vector<std::string> mht_1193_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1193(mht_1193_v, 15143, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::SparseToDenseOptions>");
+
   return builtin_options_as_SparseToDenseOptions();
 }
 
 template<> inline const tflite::TileOptions *Operator::builtin_options_as<tflite::TileOptions>() const {
+   std::vector<std::string> mht_1194_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1194(mht_1194_v, 15150, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::TileOptions>");
+
   return builtin_options_as_TileOptions();
 }
 
 template<> inline const tflite::ExpandDimsOptions *Operator::builtin_options_as<tflite::ExpandDimsOptions>() const {
+   std::vector<std::string> mht_1195_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1195(mht_1195_v, 15157, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::ExpandDimsOptions>");
+
   return builtin_options_as_ExpandDimsOptions();
 }
 
 template<> inline const tflite::EqualOptions *Operator::builtin_options_as<tflite::EqualOptions>() const {
+   std::vector<std::string> mht_1196_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1196(mht_1196_v, 15164, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::EqualOptions>");
+
   return builtin_options_as_EqualOptions();
 }
 
 template<> inline const tflite::NotEqualOptions *Operator::builtin_options_as<tflite::NotEqualOptions>() const {
+   std::vector<std::string> mht_1197_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1197(mht_1197_v, 15171, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::NotEqualOptions>");
+
   return builtin_options_as_NotEqualOptions();
 }
 
 template<> inline const tflite::ShapeOptions *Operator::builtin_options_as<tflite::ShapeOptions>() const {
+   std::vector<std::string> mht_1198_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1198(mht_1198_v, 15178, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::ShapeOptions>");
+
   return builtin_options_as_ShapeOptions();
 }
 
 template<> inline const tflite::PowOptions *Operator::builtin_options_as<tflite::PowOptions>() const {
+   std::vector<std::string> mht_1199_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1199(mht_1199_v, 15185, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::PowOptions>");
+
   return builtin_options_as_PowOptions();
 }
 
 template<> inline const tflite::ArgMinOptions *Operator::builtin_options_as<tflite::ArgMinOptions>() const {
+   std::vector<std::string> mht_1200_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1200(mht_1200_v, 15192, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::ArgMinOptions>");
+
   return builtin_options_as_ArgMinOptions();
 }
 
 template<> inline const tflite::FakeQuantOptions *Operator::builtin_options_as<tflite::FakeQuantOptions>() const {
+   std::vector<std::string> mht_1201_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1201(mht_1201_v, 15199, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::FakeQuantOptions>");
+
   return builtin_options_as_FakeQuantOptions();
 }
 
 template<> inline const tflite::PackOptions *Operator::builtin_options_as<tflite::PackOptions>() const {
+   std::vector<std::string> mht_1202_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1202(mht_1202_v, 15206, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::PackOptions>");
+
   return builtin_options_as_PackOptions();
 }
 
 template<> inline const tflite::LogicalOrOptions *Operator::builtin_options_as<tflite::LogicalOrOptions>() const {
+   std::vector<std::string> mht_1203_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1203(mht_1203_v, 15213, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::LogicalOrOptions>");
+
   return builtin_options_as_LogicalOrOptions();
 }
 
 template<> inline const tflite::OneHotOptions *Operator::builtin_options_as<tflite::OneHotOptions>() const {
+   std::vector<std::string> mht_1204_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1204(mht_1204_v, 15220, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::OneHotOptions>");
+
   return builtin_options_as_OneHotOptions();
 }
 
 template<> inline const tflite::LogicalAndOptions *Operator::builtin_options_as<tflite::LogicalAndOptions>() const {
+   std::vector<std::string> mht_1205_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1205(mht_1205_v, 15227, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::LogicalAndOptions>");
+
   return builtin_options_as_LogicalAndOptions();
 }
 
 template<> inline const tflite::LogicalNotOptions *Operator::builtin_options_as<tflite::LogicalNotOptions>() const {
+   std::vector<std::string> mht_1206_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1206(mht_1206_v, 15234, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::LogicalNotOptions>");
+
   return builtin_options_as_LogicalNotOptions();
 }
 
 template<> inline const tflite::UnpackOptions *Operator::builtin_options_as<tflite::UnpackOptions>() const {
+   std::vector<std::string> mht_1207_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1207(mht_1207_v, 15241, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::UnpackOptions>");
+
   return builtin_options_as_UnpackOptions();
 }
 
 template<> inline const tflite::FloorDivOptions *Operator::builtin_options_as<tflite::FloorDivOptions>() const {
+   std::vector<std::string> mht_1208_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1208(mht_1208_v, 15248, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::FloorDivOptions>");
+
   return builtin_options_as_FloorDivOptions();
 }
 
 template<> inline const tflite::SquareOptions *Operator::builtin_options_as<tflite::SquareOptions>() const {
+   std::vector<std::string> mht_1209_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1209(mht_1209_v, 15255, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::SquareOptions>");
+
   return builtin_options_as_SquareOptions();
 }
 
 template<> inline const tflite::ZerosLikeOptions *Operator::builtin_options_as<tflite::ZerosLikeOptions>() const {
+   std::vector<std::string> mht_1210_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1210(mht_1210_v, 15262, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::ZerosLikeOptions>");
+
   return builtin_options_as_ZerosLikeOptions();
 }
 
 template<> inline const tflite::FillOptions *Operator::builtin_options_as<tflite::FillOptions>() const {
+   std::vector<std::string> mht_1211_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1211(mht_1211_v, 15269, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::FillOptions>");
+
   return builtin_options_as_FillOptions();
 }
 
 template<> inline const tflite::BidirectionalSequenceLSTMOptions *Operator::builtin_options_as<tflite::BidirectionalSequenceLSTMOptions>() const {
+   std::vector<std::string> mht_1212_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1212(mht_1212_v, 15276, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::BidirectionalSequenceLSTMOptions>");
+
   return builtin_options_as_BidirectionalSequenceLSTMOptions();
 }
 
 template<> inline const tflite::BidirectionalSequenceRNNOptions *Operator::builtin_options_as<tflite::BidirectionalSequenceRNNOptions>() const {
+   std::vector<std::string> mht_1213_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1213(mht_1213_v, 15283, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::BidirectionalSequenceRNNOptions>");
+
   return builtin_options_as_BidirectionalSequenceRNNOptions();
 }
 
 template<> inline const tflite::UnidirectionalSequenceLSTMOptions *Operator::builtin_options_as<tflite::UnidirectionalSequenceLSTMOptions>() const {
+   std::vector<std::string> mht_1214_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1214(mht_1214_v, 15290, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::UnidirectionalSequenceLSTMOptions>");
+
   return builtin_options_as_UnidirectionalSequenceLSTMOptions();
 }
 
 template<> inline const tflite::FloorModOptions *Operator::builtin_options_as<tflite::FloorModOptions>() const {
+   std::vector<std::string> mht_1215_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1215(mht_1215_v, 15297, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::FloorModOptions>");
+
   return builtin_options_as_FloorModOptions();
 }
 
 template<> inline const tflite::RangeOptions *Operator::builtin_options_as<tflite::RangeOptions>() const {
+   std::vector<std::string> mht_1216_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1216(mht_1216_v, 15304, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::RangeOptions>");
+
   return builtin_options_as_RangeOptions();
 }
 
 template<> inline const tflite::ResizeNearestNeighborOptions *Operator::builtin_options_as<tflite::ResizeNearestNeighborOptions>() const {
+   std::vector<std::string> mht_1217_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1217(mht_1217_v, 15311, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::ResizeNearestNeighborOptions>");
+
   return builtin_options_as_ResizeNearestNeighborOptions();
 }
 
 template<> inline const tflite::LeakyReluOptions *Operator::builtin_options_as<tflite::LeakyReluOptions>() const {
+   std::vector<std::string> mht_1218_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1218(mht_1218_v, 15318, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::LeakyReluOptions>");
+
   return builtin_options_as_LeakyReluOptions();
 }
 
 template<> inline const tflite::SquaredDifferenceOptions *Operator::builtin_options_as<tflite::SquaredDifferenceOptions>() const {
+   std::vector<std::string> mht_1219_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1219(mht_1219_v, 15325, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::SquaredDifferenceOptions>");
+
   return builtin_options_as_SquaredDifferenceOptions();
 }
 
 template<> inline const tflite::MirrorPadOptions *Operator::builtin_options_as<tflite::MirrorPadOptions>() const {
+   std::vector<std::string> mht_1220_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1220(mht_1220_v, 15332, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::MirrorPadOptions>");
+
   return builtin_options_as_MirrorPadOptions();
 }
 
 template<> inline const tflite::AbsOptions *Operator::builtin_options_as<tflite::AbsOptions>() const {
+   std::vector<std::string> mht_1221_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1221(mht_1221_v, 15339, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::AbsOptions>");
+
   return builtin_options_as_AbsOptions();
 }
 
 template<> inline const tflite::SplitVOptions *Operator::builtin_options_as<tflite::SplitVOptions>() const {
+   std::vector<std::string> mht_1222_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1222(mht_1222_v, 15346, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::SplitVOptions>");
+
   return builtin_options_as_SplitVOptions();
 }
 
 template<> inline const tflite::UniqueOptions *Operator::builtin_options_as<tflite::UniqueOptions>() const {
+   std::vector<std::string> mht_1223_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1223(mht_1223_v, 15353, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::UniqueOptions>");
+
   return builtin_options_as_UniqueOptions();
 }
 
 template<> inline const tflite::ReverseV2Options *Operator::builtin_options_as<tflite::ReverseV2Options>() const {
+   std::vector<std::string> mht_1224_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1224(mht_1224_v, 15360, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::ReverseV2Options>");
+
   return builtin_options_as_ReverseV2Options();
 }
 
 template<> inline const tflite::AddNOptions *Operator::builtin_options_as<tflite::AddNOptions>() const {
+   std::vector<std::string> mht_1225_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1225(mht_1225_v, 15367, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::AddNOptions>");
+
   return builtin_options_as_AddNOptions();
 }
 
 template<> inline const tflite::GatherNdOptions *Operator::builtin_options_as<tflite::GatherNdOptions>() const {
+   std::vector<std::string> mht_1226_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1226(mht_1226_v, 15374, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::GatherNdOptions>");
+
   return builtin_options_as_GatherNdOptions();
 }
 
 template<> inline const tflite::CosOptions *Operator::builtin_options_as<tflite::CosOptions>() const {
+   std::vector<std::string> mht_1227_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1227(mht_1227_v, 15381, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::CosOptions>");
+
   return builtin_options_as_CosOptions();
 }
 
 template<> inline const tflite::WhereOptions *Operator::builtin_options_as<tflite::WhereOptions>() const {
+   std::vector<std::string> mht_1228_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1228(mht_1228_v, 15388, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::WhereOptions>");
+
   return builtin_options_as_WhereOptions();
 }
 
 template<> inline const tflite::RankOptions *Operator::builtin_options_as<tflite::RankOptions>() const {
+   std::vector<std::string> mht_1229_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1229(mht_1229_v, 15395, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::RankOptions>");
+
   return builtin_options_as_RankOptions();
 }
 
 template<> inline const tflite::ReverseSequenceOptions *Operator::builtin_options_as<tflite::ReverseSequenceOptions>() const {
+   std::vector<std::string> mht_1230_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1230(mht_1230_v, 15402, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::ReverseSequenceOptions>");
+
   return builtin_options_as_ReverseSequenceOptions();
 }
 
 template<> inline const tflite::MatrixDiagOptions *Operator::builtin_options_as<tflite::MatrixDiagOptions>() const {
+   std::vector<std::string> mht_1231_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1231(mht_1231_v, 15409, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::MatrixDiagOptions>");
+
   return builtin_options_as_MatrixDiagOptions();
 }
 
 template<> inline const tflite::QuantizeOptions *Operator::builtin_options_as<tflite::QuantizeOptions>() const {
+   std::vector<std::string> mht_1232_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1232(mht_1232_v, 15416, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::QuantizeOptions>");
+
   return builtin_options_as_QuantizeOptions();
 }
 
 template<> inline const tflite::MatrixSetDiagOptions *Operator::builtin_options_as<tflite::MatrixSetDiagOptions>() const {
+   std::vector<std::string> mht_1233_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1233(mht_1233_v, 15423, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::MatrixSetDiagOptions>");
+
   return builtin_options_as_MatrixSetDiagOptions();
 }
 
 template<> inline const tflite::HardSwishOptions *Operator::builtin_options_as<tflite::HardSwishOptions>() const {
+   std::vector<std::string> mht_1234_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1234(mht_1234_v, 15430, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::HardSwishOptions>");
+
   return builtin_options_as_HardSwishOptions();
 }
 
 template<> inline const tflite::IfOptions *Operator::builtin_options_as<tflite::IfOptions>() const {
+   std::vector<std::string> mht_1235_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1235(mht_1235_v, 15437, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::IfOptions>");
+
   return builtin_options_as_IfOptions();
 }
 
 template<> inline const tflite::WhileOptions *Operator::builtin_options_as<tflite::WhileOptions>() const {
+   std::vector<std::string> mht_1236_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1236(mht_1236_v, 15444, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::WhileOptions>");
+
   return builtin_options_as_WhileOptions();
 }
 
 template<> inline const tflite::DepthToSpaceOptions *Operator::builtin_options_as<tflite::DepthToSpaceOptions>() const {
+   std::vector<std::string> mht_1237_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1237(mht_1237_v, 15451, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::DepthToSpaceOptions>");
+
   return builtin_options_as_DepthToSpaceOptions();
 }
 
 template<> inline const tflite::NonMaxSuppressionV4Options *Operator::builtin_options_as<tflite::NonMaxSuppressionV4Options>() const {
+   std::vector<std::string> mht_1238_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1238(mht_1238_v, 15458, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::NonMaxSuppressionV4Options>");
+
   return builtin_options_as_NonMaxSuppressionV4Options();
 }
 
 template<> inline const tflite::NonMaxSuppressionV5Options *Operator::builtin_options_as<tflite::NonMaxSuppressionV5Options>() const {
+   std::vector<std::string> mht_1239_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1239(mht_1239_v, 15465, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::NonMaxSuppressionV5Options>");
+
   return builtin_options_as_NonMaxSuppressionV5Options();
 }
 
 template<> inline const tflite::ScatterNdOptions *Operator::builtin_options_as<tflite::ScatterNdOptions>() const {
+   std::vector<std::string> mht_1240_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1240(mht_1240_v, 15472, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::ScatterNdOptions>");
+
   return builtin_options_as_ScatterNdOptions();
 }
 
 template<> inline const tflite::SelectV2Options *Operator::builtin_options_as<tflite::SelectV2Options>() const {
+   std::vector<std::string> mht_1241_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1241(mht_1241_v, 15479, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::SelectV2Options>");
+
   return builtin_options_as_SelectV2Options();
 }
 
 template<> inline const tflite::DensifyOptions *Operator::builtin_options_as<tflite::DensifyOptions>() const {
+   std::vector<std::string> mht_1242_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1242(mht_1242_v, 15486, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::DensifyOptions>");
+
   return builtin_options_as_DensifyOptions();
 }
 
 template<> inline const tflite::SegmentSumOptions *Operator::builtin_options_as<tflite::SegmentSumOptions>() const {
+   std::vector<std::string> mht_1243_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1243(mht_1243_v, 15493, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::SegmentSumOptions>");
+
   return builtin_options_as_SegmentSumOptions();
 }
 
 template<> inline const tflite::BatchMatMulOptions *Operator::builtin_options_as<tflite::BatchMatMulOptions>() const {
+   std::vector<std::string> mht_1244_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1244(mht_1244_v, 15500, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::BatchMatMulOptions>");
+
   return builtin_options_as_BatchMatMulOptions();
 }
 
 template<> inline const tflite::CumsumOptions *Operator::builtin_options_as<tflite::CumsumOptions>() const {
+   std::vector<std::string> mht_1245_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1245(mht_1245_v, 15507, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::CumsumOptions>");
+
   return builtin_options_as_CumsumOptions();
 }
 
 template<> inline const tflite::CallOnceOptions *Operator::builtin_options_as<tflite::CallOnceOptions>() const {
+   std::vector<std::string> mht_1246_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1246(mht_1246_v, 15514, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::CallOnceOptions>");
+
   return builtin_options_as_CallOnceOptions();
 }
 
 template<> inline const tflite::BroadcastToOptions *Operator::builtin_options_as<tflite::BroadcastToOptions>() const {
+   std::vector<std::string> mht_1247_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1247(mht_1247_v, 15521, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::BroadcastToOptions>");
+
   return builtin_options_as_BroadcastToOptions();
 }
 
 template<> inline const tflite::Rfft2dOptions *Operator::builtin_options_as<tflite::Rfft2dOptions>() const {
+   std::vector<std::string> mht_1248_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1248(mht_1248_v, 15528, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::Rfft2dOptions>");
+
   return builtin_options_as_Rfft2dOptions();
 }
 
 template<> inline const tflite::Conv3DOptions *Operator::builtin_options_as<tflite::Conv3DOptions>() const {
+   std::vector<std::string> mht_1249_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1249(mht_1249_v, 15535, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::Conv3DOptions>");
+
   return builtin_options_as_Conv3DOptions();
 }
 
 template<> inline const tflite::HashtableOptions *Operator::builtin_options_as<tflite::HashtableOptions>() const {
+   std::vector<std::string> mht_1250_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1250(mht_1250_v, 15542, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::HashtableOptions>");
+
   return builtin_options_as_HashtableOptions();
 }
 
 template<> inline const tflite::HashtableFindOptions *Operator::builtin_options_as<tflite::HashtableFindOptions>() const {
+   std::vector<std::string> mht_1251_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1251(mht_1251_v, 15549, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::HashtableFindOptions>");
+
   return builtin_options_as_HashtableFindOptions();
 }
 
 template<> inline const tflite::HashtableImportOptions *Operator::builtin_options_as<tflite::HashtableImportOptions>() const {
+   std::vector<std::string> mht_1252_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1252(mht_1252_v, 15556, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::HashtableImportOptions>");
+
   return builtin_options_as_HashtableImportOptions();
 }
 
 template<> inline const tflite::HashtableSizeOptions *Operator::builtin_options_as<tflite::HashtableSizeOptions>() const {
+   std::vector<std::string> mht_1253_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1253(mht_1253_v, 15563, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::HashtableSizeOptions>");
+
   return builtin_options_as_HashtableSizeOptions();
 }
 
 template<> inline const tflite::VarHandleOptions *Operator::builtin_options_as<tflite::VarHandleOptions>() const {
+   std::vector<std::string> mht_1254_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1254(mht_1254_v, 15570, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::VarHandleOptions>");
+
   return builtin_options_as_VarHandleOptions();
 }
 
 template<> inline const tflite::ReadVariableOptions *Operator::builtin_options_as<tflite::ReadVariableOptions>() const {
+   std::vector<std::string> mht_1255_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1255(mht_1255_v, 15577, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::ReadVariableOptions>");
+
   return builtin_options_as_ReadVariableOptions();
 }
 
 template<> inline const tflite::AssignVariableOptions *Operator::builtin_options_as<tflite::AssignVariableOptions>() const {
+   std::vector<std::string> mht_1256_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1256(mht_1256_v, 15584, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::AssignVariableOptions>");
+
   return builtin_options_as_AssignVariableOptions();
 }
 
 template<> inline const tflite::RandomOptions *Operator::builtin_options_as<tflite::RandomOptions>() const {
+   std::vector<std::string> mht_1257_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1257(mht_1257_v, 15591, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::RandomOptions>");
+
   return builtin_options_as_RandomOptions();
 }
 
 template<> inline const tflite::BucketizeOptions *Operator::builtin_options_as<tflite::BucketizeOptions>() const {
+   std::vector<std::string> mht_1258_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1258(mht_1258_v, 15598, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::BucketizeOptions>");
+
   return builtin_options_as_BucketizeOptions();
 }
 
 template<> inline const tflite::GeluOptions *Operator::builtin_options_as<tflite::GeluOptions>() const {
+   std::vector<std::string> mht_1259_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1259(mht_1259_v, 15605, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::GeluOptions>");
+
   return builtin_options_as_GeluOptions();
 }
 
 template<> inline const tflite::DynamicUpdateSliceOptions *Operator::builtin_options_as<tflite::DynamicUpdateSliceOptions>() const {
+   std::vector<std::string> mht_1260_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1260(mht_1260_v, 15612, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::builtin_options_as<tflite::DynamicUpdateSliceOptions>");
+
   return builtin_options_as_DynamicUpdateSliceOptions();
 }
 
@@ -11668,34 +15619,64 @@ struct OperatorBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_opcode_index(uint32_t opcode_index) {
+   std::vector<std::string> mht_1261_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1261(mht_1261_v, 15622, "", "./tensorflow/lite/schema/schema_generated.h", "add_opcode_index");
+
     fbb_.AddElement<uint32_t>(Operator::VT_OPCODE_INDEX, opcode_index, 0);
   }
   void add_inputs(flatbuffers::Offset<flatbuffers::Vector<int32_t>> inputs) {
+   std::vector<std::string> mht_1262_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1262(mht_1262_v, 15628, "", "./tensorflow/lite/schema/schema_generated.h", "add_inputs");
+
     fbb_.AddOffset(Operator::VT_INPUTS, inputs);
   }
   void add_outputs(flatbuffers::Offset<flatbuffers::Vector<int32_t>> outputs) {
+   std::vector<std::string> mht_1263_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1263(mht_1263_v, 15634, "", "./tensorflow/lite/schema/schema_generated.h", "add_outputs");
+
     fbb_.AddOffset(Operator::VT_OUTPUTS, outputs);
   }
   void add_builtin_options_type(tflite::BuiltinOptions builtin_options_type) {
+   std::vector<std::string> mht_1264_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1264(mht_1264_v, 15640, "", "./tensorflow/lite/schema/schema_generated.h", "add_builtin_options_type");
+
     fbb_.AddElement<uint8_t>(Operator::VT_BUILTIN_OPTIONS_TYPE, static_cast<uint8_t>(builtin_options_type), 0);
   }
   void add_builtin_options(flatbuffers::Offset<void> builtin_options) {
+   std::vector<std::string> mht_1265_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1265(mht_1265_v, 15646, "", "./tensorflow/lite/schema/schema_generated.h", "add_builtin_options");
+
     fbb_.AddOffset(Operator::VT_BUILTIN_OPTIONS, builtin_options);
   }
   void add_custom_options(flatbuffers::Offset<flatbuffers::Vector<uint8_t>> custom_options) {
+   std::vector<std::string> mht_1266_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1266(mht_1266_v, 15652, "", "./tensorflow/lite/schema/schema_generated.h", "add_custom_options");
+
     fbb_.AddOffset(Operator::VT_CUSTOM_OPTIONS, custom_options);
   }
   void add_custom_options_format(tflite::CustomOptionsFormat custom_options_format) {
+   std::vector<std::string> mht_1267_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1267(mht_1267_v, 15658, "", "./tensorflow/lite/schema/schema_generated.h", "add_custom_options_format");
+
     fbb_.AddElement<int8_t>(Operator::VT_CUSTOM_OPTIONS_FORMAT, static_cast<int8_t>(custom_options_format), 0);
   }
   void add_mutating_variable_inputs(flatbuffers::Offset<flatbuffers::Vector<uint8_t>> mutating_variable_inputs) {
+   std::vector<std::string> mht_1268_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1268(mht_1268_v, 15664, "", "./tensorflow/lite/schema/schema_generated.h", "add_mutating_variable_inputs");
+
     fbb_.AddOffset(Operator::VT_MUTATING_VARIABLE_INPUTS, mutating_variable_inputs);
   }
   void add_intermediates(flatbuffers::Offset<flatbuffers::Vector<int32_t>> intermediates) {
+   std::vector<std::string> mht_1269_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1269(mht_1269_v, 15670, "", "./tensorflow/lite/schema/schema_generated.h", "add_intermediates");
+
     fbb_.AddOffset(Operator::VT_INTERMEDIATES, intermediates);
   }
   explicit OperatorBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_1270_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1270(mht_1270_v, 15677, "", "./tensorflow/lite/schema/schema_generated.h", "OperatorBuilder");
+
     start_ = fbb_.StartTable();
   }
   OperatorBuilder &operator=(const OperatorBuilder &);
@@ -11769,6 +15750,9 @@ struct SubGraphT : public flatbuffers::NativeTable {
   std::vector<std::unique_ptr<tflite::OperatorT>> operators;
   std::string name;
   SubGraphT() {
+   std::vector<std::string> mht_1271_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1271(mht_1271_v, 15753, "", "./tensorflow/lite/schema/schema_generated.h", "SubGraphT");
+
   }
 };
 
@@ -11782,21 +15766,39 @@ struct SubGraph FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_NAME = 12
   };
   const flatbuffers::Vector<flatbuffers::Offset<tflite::Tensor>> *tensors() const {
+   std::vector<std::string> mht_1272_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1272(mht_1272_v, 15769, "", "./tensorflow/lite/schema/schema_generated.h", "tensors");
+
     return GetPointer<const flatbuffers::Vector<flatbuffers::Offset<tflite::Tensor>> *>(VT_TENSORS);
   }
   const flatbuffers::Vector<int32_t> *inputs() const {
+   std::vector<std::string> mht_1273_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1273(mht_1273_v, 15775, "", "./tensorflow/lite/schema/schema_generated.h", "inputs");
+
     return GetPointer<const flatbuffers::Vector<int32_t> *>(VT_INPUTS);
   }
   const flatbuffers::Vector<int32_t> *outputs() const {
+   std::vector<std::string> mht_1274_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1274(mht_1274_v, 15781, "", "./tensorflow/lite/schema/schema_generated.h", "outputs");
+
     return GetPointer<const flatbuffers::Vector<int32_t> *>(VT_OUTPUTS);
   }
   const flatbuffers::Vector<flatbuffers::Offset<tflite::Operator>> *operators() const {
+   std::vector<std::string> mht_1275_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1275(mht_1275_v, 15787, "", "./tensorflow/lite/schema/schema_generated.h", "operators");
+
     return GetPointer<const flatbuffers::Vector<flatbuffers::Offset<tflite::Operator>> *>(VT_OPERATORS);
   }
   const flatbuffers::String *name() const {
+   std::vector<std::string> mht_1276_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1276(mht_1276_v, 15793, "", "./tensorflow/lite/schema/schema_generated.h", "name");
+
     return GetPointer<const flatbuffers::String *>(VT_NAME);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_1277_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1277(mht_1277_v, 15799, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_TENSORS) &&
            verifier.VerifyVector(tensors()) &&
@@ -11821,22 +15823,40 @@ struct SubGraphBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_tensors(flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<tflite::Tensor>>> tensors) {
+   std::vector<std::string> mht_1278_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1278(mht_1278_v, 15826, "", "./tensorflow/lite/schema/schema_generated.h", "add_tensors");
+
     fbb_.AddOffset(SubGraph::VT_TENSORS, tensors);
   }
   void add_inputs(flatbuffers::Offset<flatbuffers::Vector<int32_t>> inputs) {
+   std::vector<std::string> mht_1279_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1279(mht_1279_v, 15832, "", "./tensorflow/lite/schema/schema_generated.h", "add_inputs");
+
     fbb_.AddOffset(SubGraph::VT_INPUTS, inputs);
   }
   void add_outputs(flatbuffers::Offset<flatbuffers::Vector<int32_t>> outputs) {
+   std::vector<std::string> mht_1280_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1280(mht_1280_v, 15838, "", "./tensorflow/lite/schema/schema_generated.h", "add_outputs");
+
     fbb_.AddOffset(SubGraph::VT_OUTPUTS, outputs);
   }
   void add_operators(flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<tflite::Operator>>> operators) {
+   std::vector<std::string> mht_1281_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1281(mht_1281_v, 15844, "", "./tensorflow/lite/schema/schema_generated.h", "add_operators");
+
     fbb_.AddOffset(SubGraph::VT_OPERATORS, operators);
   }
   void add_name(flatbuffers::Offset<flatbuffers::String> name) {
+   std::vector<std::string> mht_1282_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1282(mht_1282_v, 15850, "", "./tensorflow/lite/schema/schema_generated.h", "add_name");
+
     fbb_.AddOffset(SubGraph::VT_NAME, name);
   }
   explicit SubGraphBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_1283_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1283(mht_1283_v, 15857, "", "./tensorflow/lite/schema/schema_generated.h", "SubGraphBuilder");
+
     start_ = fbb_.StartTable();
   }
   SubGraphBuilder &operator=(const SubGraphBuilder &);
@@ -11890,6 +15910,9 @@ struct BufferT : public flatbuffers::NativeTable {
   typedef Buffer TableType;
   std::vector<uint8_t> data;
   BufferT() {
+   std::vector<std::string> mht_1284_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1284(mht_1284_v, 15913, "", "./tensorflow/lite/schema/schema_generated.h", "BufferT");
+
   }
 };
 
@@ -11899,9 +15922,15 @@ struct Buffer FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_DATA = 4
   };
   const flatbuffers::Vector<uint8_t> *data() const {
+   std::vector<std::string> mht_1285_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1285(mht_1285_v, 15925, "", "./tensorflow/lite/schema/schema_generated.h", "data");
+
     return GetPointer<const flatbuffers::Vector<uint8_t> *>(VT_DATA);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_1286_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1286(mht_1286_v, 15931, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_DATA) &&
            verifier.VerifyVector(data()) &&
@@ -11916,10 +15945,16 @@ struct BufferBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_data(flatbuffers::Offset<flatbuffers::Vector<uint8_t>> data) {
+   std::vector<std::string> mht_1287_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1287(mht_1287_v, 15948, "", "./tensorflow/lite/schema/schema_generated.h", "add_data");
+
     fbb_.AddOffset(Buffer::VT_DATA, data);
   }
   explicit BufferBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_1288_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1288(mht_1288_v, 15955, "", "./tensorflow/lite/schema/schema_generated.h", "BufferBuilder");
+
     start_ = fbb_.StartTable();
   }
   BufferBuilder &operator=(const BufferBuilder &);
@@ -11956,6 +15991,9 @@ struct MetadataT : public flatbuffers::NativeTable {
   uint32_t buffer;
   MetadataT()
       : buffer(0) {
+   std::vector<std::string> mht_1289_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1289(mht_1289_v, 15994, "", "./tensorflow/lite/schema/schema_generated.h", "MetadataT");
+
   }
 };
 
@@ -11966,12 +16004,21 @@ struct Metadata FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_BUFFER = 6
   };
   const flatbuffers::String *name() const {
+   std::vector<std::string> mht_1290_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1290(mht_1290_v, 16007, "", "./tensorflow/lite/schema/schema_generated.h", "name");
+
     return GetPointer<const flatbuffers::String *>(VT_NAME);
   }
   uint32_t buffer() const {
+   std::vector<std::string> mht_1291_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1291(mht_1291_v, 16013, "", "./tensorflow/lite/schema/schema_generated.h", "buffer");
+
     return GetField<uint32_t>(VT_BUFFER, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_1292_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1292(mht_1292_v, 16019, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_NAME) &&
            verifier.VerifyString(name()) &&
@@ -11987,13 +16034,22 @@ struct MetadataBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_name(flatbuffers::Offset<flatbuffers::String> name) {
+   std::vector<std::string> mht_1293_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1293(mht_1293_v, 16037, "", "./tensorflow/lite/schema/schema_generated.h", "add_name");
+
     fbb_.AddOffset(Metadata::VT_NAME, name);
   }
   void add_buffer(uint32_t buffer) {
+   std::vector<std::string> mht_1294_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1294(mht_1294_v, 16043, "", "./tensorflow/lite/schema/schema_generated.h", "add_buffer");
+
     fbb_.AddElement<uint32_t>(Metadata::VT_BUFFER, buffer, 0);
   }
   explicit MetadataBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_1295_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1295(mht_1295_v, 16050, "", "./tensorflow/lite/schema/schema_generated.h", "MetadataBuilder");
+
     start_ = fbb_.StartTable();
   }
   MetadataBuilder &operator=(const MetadataBuilder &);
@@ -12033,6 +16089,9 @@ struct TensorMapT : public flatbuffers::NativeTable {
   uint32_t tensor_index;
   TensorMapT()
       : tensor_index(0) {
+   std::vector<std::string> mht_1296_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1296(mht_1296_v, 16092, "", "./tensorflow/lite/schema/schema_generated.h", "TensorMapT");
+
   }
 };
 
@@ -12043,12 +16102,21 @@ struct TensorMap FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_TENSOR_INDEX = 6
   };
   const flatbuffers::String *name() const {
+   std::vector<std::string> mht_1297_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1297(mht_1297_v, 16105, "", "./tensorflow/lite/schema/schema_generated.h", "name");
+
     return GetPointer<const flatbuffers::String *>(VT_NAME);
   }
   uint32_t tensor_index() const {
+   std::vector<std::string> mht_1298_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1298(mht_1298_v, 16111, "", "./tensorflow/lite/schema/schema_generated.h", "tensor_index");
+
     return GetField<uint32_t>(VT_TENSOR_INDEX, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_1299_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1299(mht_1299_v, 16117, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_NAME) &&
            verifier.VerifyString(name()) &&
@@ -12064,13 +16132,22 @@ struct TensorMapBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_name(flatbuffers::Offset<flatbuffers::String> name) {
+   std::vector<std::string> mht_1300_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1300(mht_1300_v, 16135, "", "./tensorflow/lite/schema/schema_generated.h", "add_name");
+
     fbb_.AddOffset(TensorMap::VT_NAME, name);
   }
   void add_tensor_index(uint32_t tensor_index) {
+   std::vector<std::string> mht_1301_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1301(mht_1301_v, 16141, "", "./tensorflow/lite/schema/schema_generated.h", "add_tensor_index");
+
     fbb_.AddElement<uint32_t>(TensorMap::VT_TENSOR_INDEX, tensor_index, 0);
   }
   explicit TensorMapBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_1302_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1302(mht_1302_v, 16148, "", "./tensorflow/lite/schema/schema_generated.h", "TensorMapBuilder");
+
     start_ = fbb_.StartTable();
   }
   TensorMapBuilder &operator=(const TensorMapBuilder &);
@@ -12112,6 +16189,9 @@ struct SignatureDefT : public flatbuffers::NativeTable {
   uint32_t subgraph_index;
   SignatureDefT()
       : subgraph_index(0) {
+   std::vector<std::string> mht_1303_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1303(mht_1303_v, 16192, "", "./tensorflow/lite/schema/schema_generated.h", "SignatureDefT");
+
   }
 };
 
@@ -12124,18 +16204,33 @@ struct SignatureDef FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_SUBGRAPH_INDEX = 12
   };
   const flatbuffers::Vector<flatbuffers::Offset<tflite::TensorMap>> *inputs() const {
+   std::vector<std::string> mht_1304_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1304(mht_1304_v, 16207, "", "./tensorflow/lite/schema/schema_generated.h", "inputs");
+
     return GetPointer<const flatbuffers::Vector<flatbuffers::Offset<tflite::TensorMap>> *>(VT_INPUTS);
   }
   const flatbuffers::Vector<flatbuffers::Offset<tflite::TensorMap>> *outputs() const {
+   std::vector<std::string> mht_1305_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1305(mht_1305_v, 16213, "", "./tensorflow/lite/schema/schema_generated.h", "outputs");
+
     return GetPointer<const flatbuffers::Vector<flatbuffers::Offset<tflite::TensorMap>> *>(VT_OUTPUTS);
   }
   const flatbuffers::String *signature_key() const {
+   std::vector<std::string> mht_1306_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1306(mht_1306_v, 16219, "", "./tensorflow/lite/schema/schema_generated.h", "signature_key");
+
     return GetPointer<const flatbuffers::String *>(VT_SIGNATURE_KEY);
   }
   uint32_t subgraph_index() const {
+   std::vector<std::string> mht_1307_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1307(mht_1307_v, 16225, "", "./tensorflow/lite/schema/schema_generated.h", "subgraph_index");
+
     return GetField<uint32_t>(VT_SUBGRAPH_INDEX, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_1308_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1308(mht_1308_v, 16231, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_INPUTS) &&
            verifier.VerifyVector(inputs()) &&
@@ -12157,19 +16252,34 @@ struct SignatureDefBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_inputs(flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<tflite::TensorMap>>> inputs) {
+   std::vector<std::string> mht_1309_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1309(mht_1309_v, 16255, "", "./tensorflow/lite/schema/schema_generated.h", "add_inputs");
+
     fbb_.AddOffset(SignatureDef::VT_INPUTS, inputs);
   }
   void add_outputs(flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<tflite::TensorMap>>> outputs) {
+   std::vector<std::string> mht_1310_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1310(mht_1310_v, 16261, "", "./tensorflow/lite/schema/schema_generated.h", "add_outputs");
+
     fbb_.AddOffset(SignatureDef::VT_OUTPUTS, outputs);
   }
   void add_signature_key(flatbuffers::Offset<flatbuffers::String> signature_key) {
+   std::vector<std::string> mht_1311_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1311(mht_1311_v, 16267, "", "./tensorflow/lite/schema/schema_generated.h", "add_signature_key");
+
     fbb_.AddOffset(SignatureDef::VT_SIGNATURE_KEY, signature_key);
   }
   void add_subgraph_index(uint32_t subgraph_index) {
+   std::vector<std::string> mht_1312_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1312(mht_1312_v, 16273, "", "./tensorflow/lite/schema/schema_generated.h", "add_subgraph_index");
+
     fbb_.AddElement<uint32_t>(SignatureDef::VT_SUBGRAPH_INDEX, subgraph_index, 0);
   }
   explicit SignatureDefBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_1313_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1313(mht_1313_v, 16280, "", "./tensorflow/lite/schema/schema_generated.h", "SignatureDefBuilder");
+
     start_ = fbb_.StartTable();
   }
   SignatureDefBuilder &operator=(const SignatureDefBuilder &);
@@ -12225,6 +16335,9 @@ struct ModelT : public flatbuffers::NativeTable {
   std::vector<std::unique_ptr<tflite::SignatureDefT>> signature_defs;
   ModelT()
       : version(0) {
+   std::vector<std::string> mht_1314_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1314(mht_1314_v, 16338, "", "./tensorflow/lite/schema/schema_generated.h", "ModelT");
+
   }
 };
 
@@ -12241,30 +16354,57 @@ struct Model FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_SIGNATURE_DEFS = 18
   };
   uint32_t version() const {
+   std::vector<std::string> mht_1315_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1315(mht_1315_v, 16357, "", "./tensorflow/lite/schema/schema_generated.h", "version");
+
     return GetField<uint32_t>(VT_VERSION, 0);
   }
   const flatbuffers::Vector<flatbuffers::Offset<tflite::OperatorCode>> *operator_codes() const {
+   std::vector<std::string> mht_1316_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1316(mht_1316_v, 16363, "", "./tensorflow/lite/schema/schema_generated.h", "operator_codes");
+
     return GetPointer<const flatbuffers::Vector<flatbuffers::Offset<tflite::OperatorCode>> *>(VT_OPERATOR_CODES);
   }
   const flatbuffers::Vector<flatbuffers::Offset<tflite::SubGraph>> *subgraphs() const {
+   std::vector<std::string> mht_1317_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1317(mht_1317_v, 16369, "", "./tensorflow/lite/schema/schema_generated.h", "subgraphs");
+
     return GetPointer<const flatbuffers::Vector<flatbuffers::Offset<tflite::SubGraph>> *>(VT_SUBGRAPHS);
   }
   const flatbuffers::String *description() const {
+   std::vector<std::string> mht_1318_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1318(mht_1318_v, 16375, "", "./tensorflow/lite/schema/schema_generated.h", "description");
+
     return GetPointer<const flatbuffers::String *>(VT_DESCRIPTION);
   }
   const flatbuffers::Vector<flatbuffers::Offset<tflite::Buffer>> *buffers() const {
+   std::vector<std::string> mht_1319_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1319(mht_1319_v, 16381, "", "./tensorflow/lite/schema/schema_generated.h", "buffers");
+
     return GetPointer<const flatbuffers::Vector<flatbuffers::Offset<tflite::Buffer>> *>(VT_BUFFERS);
   }
   const flatbuffers::Vector<int32_t> *metadata_buffer() const {
+   std::vector<std::string> mht_1320_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1320(mht_1320_v, 16387, "", "./tensorflow/lite/schema/schema_generated.h", "metadata_buffer");
+
     return GetPointer<const flatbuffers::Vector<int32_t> *>(VT_METADATA_BUFFER);
   }
   const flatbuffers::Vector<flatbuffers::Offset<tflite::Metadata>> *metadata() const {
+   std::vector<std::string> mht_1321_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1321(mht_1321_v, 16393, "", "./tensorflow/lite/schema/schema_generated.h", "metadata");
+
     return GetPointer<const flatbuffers::Vector<flatbuffers::Offset<tflite::Metadata>> *>(VT_METADATA);
   }
   const flatbuffers::Vector<flatbuffers::Offset<tflite::SignatureDef>> *signature_defs() const {
+   std::vector<std::string> mht_1322_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1322(mht_1322_v, 16399, "", "./tensorflow/lite/schema/schema_generated.h", "signature_defs");
+
     return GetPointer<const flatbuffers::Vector<flatbuffers::Offset<tflite::SignatureDef>> *>(VT_SIGNATURE_DEFS);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_1323_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1323(mht_1323_v, 16405, "", "./tensorflow/lite/schema/schema_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<uint32_t>(verifier, VT_VERSION) &&
            VerifyOffset(verifier, VT_OPERATOR_CODES) &&
@@ -12297,31 +16437,58 @@ struct ModelBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_version(uint32_t version) {
+   std::vector<std::string> mht_1324_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1324(mht_1324_v, 16440, "", "./tensorflow/lite/schema/schema_generated.h", "add_version");
+
     fbb_.AddElement<uint32_t>(Model::VT_VERSION, version, 0);
   }
   void add_operator_codes(flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<tflite::OperatorCode>>> operator_codes) {
+   std::vector<std::string> mht_1325_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1325(mht_1325_v, 16446, "", "./tensorflow/lite/schema/schema_generated.h", "add_operator_codes");
+
     fbb_.AddOffset(Model::VT_OPERATOR_CODES, operator_codes);
   }
   void add_subgraphs(flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<tflite::SubGraph>>> subgraphs) {
+   std::vector<std::string> mht_1326_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1326(mht_1326_v, 16452, "", "./tensorflow/lite/schema/schema_generated.h", "add_subgraphs");
+
     fbb_.AddOffset(Model::VT_SUBGRAPHS, subgraphs);
   }
   void add_description(flatbuffers::Offset<flatbuffers::String> description) {
+   std::vector<std::string> mht_1327_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1327(mht_1327_v, 16458, "", "./tensorflow/lite/schema/schema_generated.h", "add_description");
+
     fbb_.AddOffset(Model::VT_DESCRIPTION, description);
   }
   void add_buffers(flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<tflite::Buffer>>> buffers) {
+   std::vector<std::string> mht_1328_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1328(mht_1328_v, 16464, "", "./tensorflow/lite/schema/schema_generated.h", "add_buffers");
+
     fbb_.AddOffset(Model::VT_BUFFERS, buffers);
   }
   void add_metadata_buffer(flatbuffers::Offset<flatbuffers::Vector<int32_t>> metadata_buffer) {
+   std::vector<std::string> mht_1329_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1329(mht_1329_v, 16470, "", "./tensorflow/lite/schema/schema_generated.h", "add_metadata_buffer");
+
     fbb_.AddOffset(Model::VT_METADATA_BUFFER, metadata_buffer);
   }
   void add_metadata(flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<tflite::Metadata>>> metadata) {
+   std::vector<std::string> mht_1330_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1330(mht_1330_v, 16476, "", "./tensorflow/lite/schema/schema_generated.h", "add_metadata");
+
     fbb_.AddOffset(Model::VT_METADATA, metadata);
   }
   void add_signature_defs(flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<tflite::SignatureDef>>> signature_defs) {
+   std::vector<std::string> mht_1331_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1331(mht_1331_v, 16482, "", "./tensorflow/lite/schema/schema_generated.h", "add_signature_defs");
+
     fbb_.AddOffset(Model::VT_SIGNATURE_DEFS, signature_defs);
   }
   explicit ModelBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_1332_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1332(mht_1332_v, 16489, "", "./tensorflow/lite/schema/schema_generated.h", "ModelBuilder");
+
     start_ = fbb_.StartTable();
   }
   ModelBuilder &operator=(const ModelBuilder &);
@@ -12386,18 +16553,27 @@ inline flatbuffers::Offset<Model> CreateModelDirect(
 flatbuffers::Offset<Model> CreateModel(flatbuffers::FlatBufferBuilder &_fbb, const ModelT *_o, const flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
 inline CustomQuantizationT *CustomQuantization::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1333_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1333(mht_1333_v, 16556, "", "./tensorflow/lite/schema/schema_generated.h", "CustomQuantization::UnPack");
+
   auto _o = new CustomQuantizationT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void CustomQuantization::UnPackTo(CustomQuantizationT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1334_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1334(mht_1334_v, 16565, "", "./tensorflow/lite/schema/schema_generated.h", "CustomQuantization::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = custom(); if (_e) { _o->custom.resize(_e->size()); std::copy(_e->begin(), _e->end(), _o->custom.begin()); } }
 }
 
 inline flatbuffers::Offset<CustomQuantization> CustomQuantization::Pack(flatbuffers::FlatBufferBuilder &_fbb, const CustomQuantizationT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1335_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1335(mht_1335_v, 16574, "", "./tensorflow/lite/schema/schema_generated.h", "CustomQuantization::Pack");
+
   return CreateCustomQuantization(_fbb, _o, _rehasher);
 }
 
@@ -12413,12 +16589,18 @@ inline flatbuffers::Offset<CustomQuantization> CreateCustomQuantization(flatbuff
 }
 
 inline QuantizationParametersT *QuantizationParameters::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1336_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1336(mht_1336_v, 16592, "", "./tensorflow/lite/schema/schema_generated.h", "QuantizationParameters::UnPack");
+
   auto _o = new QuantizationParametersT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void QuantizationParameters::UnPackTo(QuantizationParametersT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1337_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1337(mht_1337_v, 16601, "", "./tensorflow/lite/schema/schema_generated.h", "QuantizationParameters::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = min(); if (_e) { _o->min.resize(_e->size()); for (flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->min[_i] = _e->Get(_i); } } }
@@ -12431,6 +16613,9 @@ inline void QuantizationParameters::UnPackTo(QuantizationParametersT *_o, const 
 }
 
 inline flatbuffers::Offset<QuantizationParameters> QuantizationParameters::Pack(flatbuffers::FlatBufferBuilder &_fbb, const QuantizationParametersT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1338_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1338(mht_1338_v, 16616, "", "./tensorflow/lite/schema/schema_generated.h", "QuantizationParameters::Pack");
+
   return CreateQuantizationParameters(_fbb, _o, _rehasher);
 }
 
@@ -12457,18 +16642,27 @@ inline flatbuffers::Offset<QuantizationParameters> CreateQuantizationParameters(
 }
 
 inline Int32VectorT *Int32Vector::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1339_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1339(mht_1339_v, 16645, "", "./tensorflow/lite/schema/schema_generated.h", "Int32Vector::UnPack");
+
   auto _o = new Int32VectorT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void Int32Vector::UnPackTo(Int32VectorT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1340_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1340(mht_1340_v, 16654, "", "./tensorflow/lite/schema/schema_generated.h", "Int32Vector::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = values(); if (_e) { _o->values.resize(_e->size()); for (flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->values[_i] = _e->Get(_i); } } }
 }
 
 inline flatbuffers::Offset<Int32Vector> Int32Vector::Pack(flatbuffers::FlatBufferBuilder &_fbb, const Int32VectorT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1341_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1341(mht_1341_v, 16663, "", "./tensorflow/lite/schema/schema_generated.h", "Int32Vector::Pack");
+
   return CreateInt32Vector(_fbb, _o, _rehasher);
 }
 
@@ -12483,18 +16677,27 @@ inline flatbuffers::Offset<Int32Vector> CreateInt32Vector(flatbuffers::FlatBuffe
 }
 
 inline Uint16VectorT *Uint16Vector::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1342_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1342(mht_1342_v, 16680, "", "./tensorflow/lite/schema/schema_generated.h", "Uint16Vector::UnPack");
+
   auto _o = new Uint16VectorT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void Uint16Vector::UnPackTo(Uint16VectorT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1343_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1343(mht_1343_v, 16689, "", "./tensorflow/lite/schema/schema_generated.h", "Uint16Vector::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = values(); if (_e) { _o->values.resize(_e->size()); for (flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->values[_i] = _e->Get(_i); } } }
 }
 
 inline flatbuffers::Offset<Uint16Vector> Uint16Vector::Pack(flatbuffers::FlatBufferBuilder &_fbb, const Uint16VectorT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1344_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1344(mht_1344_v, 16698, "", "./tensorflow/lite/schema/schema_generated.h", "Uint16Vector::Pack");
+
   return CreateUint16Vector(_fbb, _o, _rehasher);
 }
 
@@ -12510,18 +16713,27 @@ inline flatbuffers::Offset<Uint16Vector> CreateUint16Vector(flatbuffers::FlatBuf
 }
 
 inline Uint8VectorT *Uint8Vector::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1345_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1345(mht_1345_v, 16716, "", "./tensorflow/lite/schema/schema_generated.h", "Uint8Vector::UnPack");
+
   auto _o = new Uint8VectorT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void Uint8Vector::UnPackTo(Uint8VectorT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1346_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1346(mht_1346_v, 16725, "", "./tensorflow/lite/schema/schema_generated.h", "Uint8Vector::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = values(); if (_e) { _o->values.resize(_e->size()); std::copy(_e->begin(), _e->end(), _o->values.begin()); } }
 }
 
 inline flatbuffers::Offset<Uint8Vector> Uint8Vector::Pack(flatbuffers::FlatBufferBuilder &_fbb, const Uint8VectorT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1347_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1347(mht_1347_v, 16734, "", "./tensorflow/lite/schema/schema_generated.h", "Uint8Vector::Pack");
+
   return CreateUint8Vector(_fbb, _o, _rehasher);
 }
 
@@ -12537,12 +16749,18 @@ inline flatbuffers::Offset<Uint8Vector> CreateUint8Vector(flatbuffers::FlatBuffe
 }
 
 inline DimensionMetadataT *DimensionMetadata::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1348_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1348(mht_1348_v, 16752, "", "./tensorflow/lite/schema/schema_generated.h", "DimensionMetadata::UnPack");
+
   auto _o = new DimensionMetadataT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void DimensionMetadata::UnPackTo(DimensionMetadataT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1349_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1349(mht_1349_v, 16761, "", "./tensorflow/lite/schema/schema_generated.h", "DimensionMetadata::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = format(); _o->format = _e; }
@@ -12554,6 +16772,9 @@ inline void DimensionMetadata::UnPackTo(DimensionMetadataT *_o, const flatbuffer
 }
 
 inline flatbuffers::Offset<DimensionMetadata> DimensionMetadata::Pack(flatbuffers::FlatBufferBuilder &_fbb, const DimensionMetadataT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1350_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1350(mht_1350_v, 16775, "", "./tensorflow/lite/schema/schema_generated.h", "DimensionMetadata::Pack");
+
   return CreateDimensionMetadata(_fbb, _o, _rehasher);
 }
 
@@ -12578,12 +16799,18 @@ inline flatbuffers::Offset<DimensionMetadata> CreateDimensionMetadata(flatbuffer
 }
 
 inline SparsityParametersT *SparsityParameters::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1351_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1351(mht_1351_v, 16802, "", "./tensorflow/lite/schema/schema_generated.h", "SparsityParameters::UnPack");
+
   auto _o = new SparsityParametersT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void SparsityParameters::UnPackTo(SparsityParametersT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1352_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1352(mht_1352_v, 16811, "", "./tensorflow/lite/schema/schema_generated.h", "SparsityParameters::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = traversal_order(); if (_e) { _o->traversal_order.resize(_e->size()); for (flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->traversal_order[_i] = _e->Get(_i); } } }
@@ -12592,6 +16819,9 @@ inline void SparsityParameters::UnPackTo(SparsityParametersT *_o, const flatbuff
 }
 
 inline flatbuffers::Offset<SparsityParameters> SparsityParameters::Pack(flatbuffers::FlatBufferBuilder &_fbb, const SparsityParametersT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1353_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1353(mht_1353_v, 16822, "", "./tensorflow/lite/schema/schema_generated.h", "SparsityParameters::Pack");
+
   return CreateSparsityParameters(_fbb, _o, _rehasher);
 }
 
@@ -12610,12 +16840,18 @@ inline flatbuffers::Offset<SparsityParameters> CreateSparsityParameters(flatbuff
 }
 
 inline TensorT *Tensor::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1354_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1354(mht_1354_v, 16843, "", "./tensorflow/lite/schema/schema_generated.h", "Tensor::UnPack");
+
   auto _o = new TensorT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void Tensor::UnPackTo(TensorT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1355_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1355(mht_1355_v, 16852, "", "./tensorflow/lite/schema/schema_generated.h", "Tensor::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = shape(); if (_e) { _o->shape.resize(_e->size()); for (flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->shape[_i] = _e->Get(_i); } } }
@@ -12629,6 +16865,9 @@ inline void Tensor::UnPackTo(TensorT *_o, const flatbuffers::resolver_function_t
 }
 
 inline flatbuffers::Offset<Tensor> Tensor::Pack(flatbuffers::FlatBufferBuilder &_fbb, const TensorT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1356_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1356(mht_1356_v, 16868, "", "./tensorflow/lite/schema/schema_generated.h", "Tensor::Pack");
+
   return CreateTensor(_fbb, _o, _rehasher);
 }
 
@@ -12657,12 +16896,18 @@ inline flatbuffers::Offset<Tensor> CreateTensor(flatbuffers::FlatBufferBuilder &
 }
 
 inline Conv2DOptionsT *Conv2DOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1357_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1357(mht_1357_v, 16899, "", "./tensorflow/lite/schema/schema_generated.h", "Conv2DOptions::UnPack");
+
   auto _o = new Conv2DOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void Conv2DOptions::UnPackTo(Conv2DOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1358_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1358(mht_1358_v, 16908, "", "./tensorflow/lite/schema/schema_generated.h", "Conv2DOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = padding(); _o->padding = _e; }
@@ -12674,6 +16919,9 @@ inline void Conv2DOptions::UnPackTo(Conv2DOptionsT *_o, const flatbuffers::resol
 }
 
 inline flatbuffers::Offset<Conv2DOptions> Conv2DOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const Conv2DOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1359_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1359(mht_1359_v, 16922, "", "./tensorflow/lite/schema/schema_generated.h", "Conv2DOptions::Pack");
+
   return CreateConv2DOptions(_fbb, _o, _rehasher);
 }
 
@@ -12698,12 +16946,18 @@ inline flatbuffers::Offset<Conv2DOptions> CreateConv2DOptions(flatbuffers::FlatB
 }
 
 inline Conv3DOptionsT *Conv3DOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1360_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1360(mht_1360_v, 16949, "", "./tensorflow/lite/schema/schema_generated.h", "Conv3DOptions::UnPack");
+
   auto _o = new Conv3DOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void Conv3DOptions::UnPackTo(Conv3DOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1361_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1361(mht_1361_v, 16958, "", "./tensorflow/lite/schema/schema_generated.h", "Conv3DOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = padding(); _o->padding = _e; }
@@ -12717,6 +16971,9 @@ inline void Conv3DOptions::UnPackTo(Conv3DOptionsT *_o, const flatbuffers::resol
 }
 
 inline flatbuffers::Offset<Conv3DOptions> Conv3DOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const Conv3DOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1362_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1362(mht_1362_v, 16974, "", "./tensorflow/lite/schema/schema_generated.h", "Conv3DOptions::Pack");
+
   return CreateConv3DOptions(_fbb, _o, _rehasher);
 }
 
@@ -12745,12 +17002,18 @@ inline flatbuffers::Offset<Conv3DOptions> CreateConv3DOptions(flatbuffers::FlatB
 }
 
 inline Pool2DOptionsT *Pool2DOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1363_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1363(mht_1363_v, 17005, "", "./tensorflow/lite/schema/schema_generated.h", "Pool2DOptions::UnPack");
+
   auto _o = new Pool2DOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void Pool2DOptions::UnPackTo(Pool2DOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1364_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1364(mht_1364_v, 17014, "", "./tensorflow/lite/schema/schema_generated.h", "Pool2DOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = padding(); _o->padding = _e; }
@@ -12762,6 +17025,9 @@ inline void Pool2DOptions::UnPackTo(Pool2DOptionsT *_o, const flatbuffers::resol
 }
 
 inline flatbuffers::Offset<Pool2DOptions> Pool2DOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const Pool2DOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1365_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1365(mht_1365_v, 17028, "", "./tensorflow/lite/schema/schema_generated.h", "Pool2DOptions::Pack");
+
   return CreatePool2DOptions(_fbb, _o, _rehasher);
 }
 
@@ -12786,12 +17052,18 @@ inline flatbuffers::Offset<Pool2DOptions> CreatePool2DOptions(flatbuffers::FlatB
 }
 
 inline DepthwiseConv2DOptionsT *DepthwiseConv2DOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1366_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1366(mht_1366_v, 17055, "", "./tensorflow/lite/schema/schema_generated.h", "DepthwiseConv2DOptions::UnPack");
+
   auto _o = new DepthwiseConv2DOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void DepthwiseConv2DOptions::UnPackTo(DepthwiseConv2DOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1367_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1367(mht_1367_v, 17064, "", "./tensorflow/lite/schema/schema_generated.h", "DepthwiseConv2DOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = padding(); _o->padding = _e; }
@@ -12804,6 +17076,9 @@ inline void DepthwiseConv2DOptions::UnPackTo(DepthwiseConv2DOptionsT *_o, const 
 }
 
 inline flatbuffers::Offset<DepthwiseConv2DOptions> DepthwiseConv2DOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const DepthwiseConv2DOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1368_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1368(mht_1368_v, 17079, "", "./tensorflow/lite/schema/schema_generated.h", "DepthwiseConv2DOptions::Pack");
+
   return CreateDepthwiseConv2DOptions(_fbb, _o, _rehasher);
 }
 
@@ -12830,12 +17105,18 @@ inline flatbuffers::Offset<DepthwiseConv2DOptions> CreateDepthwiseConv2DOptions(
 }
 
 inline ConcatEmbeddingsOptionsT *ConcatEmbeddingsOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1369_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1369(mht_1369_v, 17108, "", "./tensorflow/lite/schema/schema_generated.h", "ConcatEmbeddingsOptions::UnPack");
+
   auto _o = new ConcatEmbeddingsOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void ConcatEmbeddingsOptions::UnPackTo(ConcatEmbeddingsOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1370_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1370(mht_1370_v, 17117, "", "./tensorflow/lite/schema/schema_generated.h", "ConcatEmbeddingsOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = num_channels(); _o->num_channels = _e; }
@@ -12844,6 +17125,9 @@ inline void ConcatEmbeddingsOptions::UnPackTo(ConcatEmbeddingsOptionsT *_o, cons
 }
 
 inline flatbuffers::Offset<ConcatEmbeddingsOptions> ConcatEmbeddingsOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ConcatEmbeddingsOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1371_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1371(mht_1371_v, 17128, "", "./tensorflow/lite/schema/schema_generated.h", "ConcatEmbeddingsOptions::Pack");
+
   return CreateConcatEmbeddingsOptions(_fbb, _o, _rehasher);
 }
 
@@ -12862,18 +17146,27 @@ inline flatbuffers::Offset<ConcatEmbeddingsOptions> CreateConcatEmbeddingsOption
 }
 
 inline LSHProjectionOptionsT *LSHProjectionOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1372_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1372(mht_1372_v, 17149, "", "./tensorflow/lite/schema/schema_generated.h", "LSHProjectionOptions::UnPack");
+
   auto _o = new LSHProjectionOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void LSHProjectionOptions::UnPackTo(LSHProjectionOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1373_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1373(mht_1373_v, 17158, "", "./tensorflow/lite/schema/schema_generated.h", "LSHProjectionOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = type(); _o->type = _e; }
 }
 
 inline flatbuffers::Offset<LSHProjectionOptions> LSHProjectionOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const LSHProjectionOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1374_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1374(mht_1374_v, 17167, "", "./tensorflow/lite/schema/schema_generated.h", "LSHProjectionOptions::Pack");
+
   return CreateLSHProjectionOptions(_fbb, _o, _rehasher);
 }
 
@@ -12888,12 +17181,18 @@ inline flatbuffers::Offset<LSHProjectionOptions> CreateLSHProjectionOptions(flat
 }
 
 inline SVDFOptionsT *SVDFOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1375_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1375(mht_1375_v, 17184, "", "./tensorflow/lite/schema/schema_generated.h", "SVDFOptions::UnPack");
+
   auto _o = new SVDFOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void SVDFOptions::UnPackTo(SVDFOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1376_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1376(mht_1376_v, 17193, "", "./tensorflow/lite/schema/schema_generated.h", "SVDFOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = rank(); _o->rank = _e; }
@@ -12902,6 +17201,9 @@ inline void SVDFOptions::UnPackTo(SVDFOptionsT *_o, const flatbuffers::resolver_
 }
 
 inline flatbuffers::Offset<SVDFOptions> SVDFOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const SVDFOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1377_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1377(mht_1377_v, 17204, "", "./tensorflow/lite/schema/schema_generated.h", "SVDFOptions::Pack");
+
   return CreateSVDFOptions(_fbb, _o, _rehasher);
 }
 
@@ -12920,12 +17222,18 @@ inline flatbuffers::Offset<SVDFOptions> CreateSVDFOptions(flatbuffers::FlatBuffe
 }
 
 inline RNNOptionsT *RNNOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1378_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1378(mht_1378_v, 17225, "", "./tensorflow/lite/schema/schema_generated.h", "RNNOptions::UnPack");
+
   auto _o = new RNNOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void RNNOptions::UnPackTo(RNNOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1379_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1379(mht_1379_v, 17234, "", "./tensorflow/lite/schema/schema_generated.h", "RNNOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = fused_activation_function(); _o->fused_activation_function = _e; }
@@ -12933,6 +17241,9 @@ inline void RNNOptions::UnPackTo(RNNOptionsT *_o, const flatbuffers::resolver_fu
 }
 
 inline flatbuffers::Offset<RNNOptions> RNNOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const RNNOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1380_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1380(mht_1380_v, 17244, "", "./tensorflow/lite/schema/schema_generated.h", "RNNOptions::Pack");
+
   return CreateRNNOptions(_fbb, _o, _rehasher);
 }
 
@@ -12949,12 +17260,18 @@ inline flatbuffers::Offset<RNNOptions> CreateRNNOptions(flatbuffers::FlatBufferB
 }
 
 inline SequenceRNNOptionsT *SequenceRNNOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1381_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1381(mht_1381_v, 17263, "", "./tensorflow/lite/schema/schema_generated.h", "SequenceRNNOptions::UnPack");
+
   auto _o = new SequenceRNNOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void SequenceRNNOptions::UnPackTo(SequenceRNNOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1382_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1382(mht_1382_v, 17272, "", "./tensorflow/lite/schema/schema_generated.h", "SequenceRNNOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = time_major(); _o->time_major = _e; }
@@ -12963,6 +17280,9 @@ inline void SequenceRNNOptions::UnPackTo(SequenceRNNOptionsT *_o, const flatbuff
 }
 
 inline flatbuffers::Offset<SequenceRNNOptions> SequenceRNNOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const SequenceRNNOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1383_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1383(mht_1383_v, 17283, "", "./tensorflow/lite/schema/schema_generated.h", "SequenceRNNOptions::Pack");
+
   return CreateSequenceRNNOptions(_fbb, _o, _rehasher);
 }
 
@@ -12981,12 +17301,18 @@ inline flatbuffers::Offset<SequenceRNNOptions> CreateSequenceRNNOptions(flatbuff
 }
 
 inline BidirectionalSequenceRNNOptionsT *BidirectionalSequenceRNNOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1384_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1384(mht_1384_v, 17304, "", "./tensorflow/lite/schema/schema_generated.h", "BidirectionalSequenceRNNOptions::UnPack");
+
   auto _o = new BidirectionalSequenceRNNOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void BidirectionalSequenceRNNOptions::UnPackTo(BidirectionalSequenceRNNOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1385_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1385(mht_1385_v, 17313, "", "./tensorflow/lite/schema/schema_generated.h", "BidirectionalSequenceRNNOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = time_major(); _o->time_major = _e; }
@@ -12996,6 +17322,9 @@ inline void BidirectionalSequenceRNNOptions::UnPackTo(BidirectionalSequenceRNNOp
 }
 
 inline flatbuffers::Offset<BidirectionalSequenceRNNOptions> BidirectionalSequenceRNNOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const BidirectionalSequenceRNNOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1386_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1386(mht_1386_v, 17325, "", "./tensorflow/lite/schema/schema_generated.h", "BidirectionalSequenceRNNOptions::Pack");
+
   return CreateBidirectionalSequenceRNNOptions(_fbb, _o, _rehasher);
 }
 
@@ -13016,12 +17345,18 @@ inline flatbuffers::Offset<BidirectionalSequenceRNNOptions> CreateBidirectionalS
 }
 
 inline FullyConnectedOptionsT *FullyConnectedOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1387_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1387(mht_1387_v, 17348, "", "./tensorflow/lite/schema/schema_generated.h", "FullyConnectedOptions::UnPack");
+
   auto _o = new FullyConnectedOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void FullyConnectedOptions::UnPackTo(FullyConnectedOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1388_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1388(mht_1388_v, 17357, "", "./tensorflow/lite/schema/schema_generated.h", "FullyConnectedOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = fused_activation_function(); _o->fused_activation_function = _e; }
@@ -13031,6 +17366,9 @@ inline void FullyConnectedOptions::UnPackTo(FullyConnectedOptionsT *_o, const fl
 }
 
 inline flatbuffers::Offset<FullyConnectedOptions> FullyConnectedOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const FullyConnectedOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1389_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1389(mht_1389_v, 17369, "", "./tensorflow/lite/schema/schema_generated.h", "FullyConnectedOptions::Pack");
+
   return CreateFullyConnectedOptions(_fbb, _o, _rehasher);
 }
 
@@ -13051,18 +17389,27 @@ inline flatbuffers::Offset<FullyConnectedOptions> CreateFullyConnectedOptions(fl
 }
 
 inline SoftmaxOptionsT *SoftmaxOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1390_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1390(mht_1390_v, 17392, "", "./tensorflow/lite/schema/schema_generated.h", "SoftmaxOptions::UnPack");
+
   auto _o = new SoftmaxOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void SoftmaxOptions::UnPackTo(SoftmaxOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1391_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1391(mht_1391_v, 17401, "", "./tensorflow/lite/schema/schema_generated.h", "SoftmaxOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = beta(); _o->beta = _e; }
 }
 
 inline flatbuffers::Offset<SoftmaxOptions> SoftmaxOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const SoftmaxOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1392_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1392(mht_1392_v, 17410, "", "./tensorflow/lite/schema/schema_generated.h", "SoftmaxOptions::Pack");
+
   return CreateSoftmaxOptions(_fbb, _o, _rehasher);
 }
 
@@ -13077,12 +17424,18 @@ inline flatbuffers::Offset<SoftmaxOptions> CreateSoftmaxOptions(flatbuffers::Fla
 }
 
 inline ConcatenationOptionsT *ConcatenationOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1393_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1393(mht_1393_v, 17427, "", "./tensorflow/lite/schema/schema_generated.h", "ConcatenationOptions::UnPack");
+
   auto _o = new ConcatenationOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void ConcatenationOptions::UnPackTo(ConcatenationOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1394_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1394(mht_1394_v, 17436, "", "./tensorflow/lite/schema/schema_generated.h", "ConcatenationOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = axis(); _o->axis = _e; }
@@ -13090,6 +17443,9 @@ inline void ConcatenationOptions::UnPackTo(ConcatenationOptionsT *_o, const flat
 }
 
 inline flatbuffers::Offset<ConcatenationOptions> ConcatenationOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ConcatenationOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1395_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1395(mht_1395_v, 17446, "", "./tensorflow/lite/schema/schema_generated.h", "ConcatenationOptions::Pack");
+
   return CreateConcatenationOptions(_fbb, _o, _rehasher);
 }
 
@@ -13106,12 +17462,18 @@ inline flatbuffers::Offset<ConcatenationOptions> CreateConcatenationOptions(flat
 }
 
 inline AddOptionsT *AddOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1396_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1396(mht_1396_v, 17465, "", "./tensorflow/lite/schema/schema_generated.h", "AddOptions::UnPack");
+
   auto _o = new AddOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void AddOptions::UnPackTo(AddOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1397_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1397(mht_1397_v, 17474, "", "./tensorflow/lite/schema/schema_generated.h", "AddOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = fused_activation_function(); _o->fused_activation_function = _e; }
@@ -13119,6 +17481,9 @@ inline void AddOptions::UnPackTo(AddOptionsT *_o, const flatbuffers::resolver_fu
 }
 
 inline flatbuffers::Offset<AddOptions> AddOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const AddOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1398_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1398(mht_1398_v, 17484, "", "./tensorflow/lite/schema/schema_generated.h", "AddOptions::Pack");
+
   return CreateAddOptions(_fbb, _o, _rehasher);
 }
 
@@ -13135,18 +17500,27 @@ inline flatbuffers::Offset<AddOptions> CreateAddOptions(flatbuffers::FlatBufferB
 }
 
 inline MulOptionsT *MulOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1399_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1399(mht_1399_v, 17503, "", "./tensorflow/lite/schema/schema_generated.h", "MulOptions::UnPack");
+
   auto _o = new MulOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void MulOptions::UnPackTo(MulOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1400_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1400(mht_1400_v, 17512, "", "./tensorflow/lite/schema/schema_generated.h", "MulOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = fused_activation_function(); _o->fused_activation_function = _e; }
 }
 
 inline flatbuffers::Offset<MulOptions> MulOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const MulOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1401_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1401(mht_1401_v, 17521, "", "./tensorflow/lite/schema/schema_generated.h", "MulOptions::Pack");
+
   return CreateMulOptions(_fbb, _o, _rehasher);
 }
 
@@ -13161,18 +17535,27 @@ inline flatbuffers::Offset<MulOptions> CreateMulOptions(flatbuffers::FlatBufferB
 }
 
 inline L2NormOptionsT *L2NormOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1402_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1402(mht_1402_v, 17538, "", "./tensorflow/lite/schema/schema_generated.h", "L2NormOptions::UnPack");
+
   auto _o = new L2NormOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void L2NormOptions::UnPackTo(L2NormOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1403_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1403(mht_1403_v, 17547, "", "./tensorflow/lite/schema/schema_generated.h", "L2NormOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = fused_activation_function(); _o->fused_activation_function = _e; }
 }
 
 inline flatbuffers::Offset<L2NormOptions> L2NormOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const L2NormOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1404_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1404(mht_1404_v, 17556, "", "./tensorflow/lite/schema/schema_generated.h", "L2NormOptions::Pack");
+
   return CreateL2NormOptions(_fbb, _o, _rehasher);
 }
 
@@ -13187,12 +17570,18 @@ inline flatbuffers::Offset<L2NormOptions> CreateL2NormOptions(flatbuffers::FlatB
 }
 
 inline LocalResponseNormalizationOptionsT *LocalResponseNormalizationOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1405_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1405(mht_1405_v, 17573, "", "./tensorflow/lite/schema/schema_generated.h", "LocalResponseNormalizationOptions::UnPack");
+
   auto _o = new LocalResponseNormalizationOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void LocalResponseNormalizationOptions::UnPackTo(LocalResponseNormalizationOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1406_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1406(mht_1406_v, 17582, "", "./tensorflow/lite/schema/schema_generated.h", "LocalResponseNormalizationOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = radius(); _o->radius = _e; }
@@ -13202,6 +17591,9 @@ inline void LocalResponseNormalizationOptions::UnPackTo(LocalResponseNormalizati
 }
 
 inline flatbuffers::Offset<LocalResponseNormalizationOptions> LocalResponseNormalizationOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const LocalResponseNormalizationOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1407_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1407(mht_1407_v, 17594, "", "./tensorflow/lite/schema/schema_generated.h", "LocalResponseNormalizationOptions::Pack");
+
   return CreateLocalResponseNormalizationOptions(_fbb, _o, _rehasher);
 }
 
@@ -13222,12 +17614,18 @@ inline flatbuffers::Offset<LocalResponseNormalizationOptions> CreateLocalRespons
 }
 
 inline LSTMOptionsT *LSTMOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1408_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1408(mht_1408_v, 17617, "", "./tensorflow/lite/schema/schema_generated.h", "LSTMOptions::UnPack");
+
   auto _o = new LSTMOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void LSTMOptions::UnPackTo(LSTMOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1409_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1409(mht_1409_v, 17626, "", "./tensorflow/lite/schema/schema_generated.h", "LSTMOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = fused_activation_function(); _o->fused_activation_function = _e; }
@@ -13238,6 +17636,9 @@ inline void LSTMOptions::UnPackTo(LSTMOptionsT *_o, const flatbuffers::resolver_
 }
 
 inline flatbuffers::Offset<LSTMOptions> LSTMOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const LSTMOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1410_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1410(mht_1410_v, 17639, "", "./tensorflow/lite/schema/schema_generated.h", "LSTMOptions::Pack");
+
   return CreateLSTMOptions(_fbb, _o, _rehasher);
 }
 
@@ -13260,12 +17661,18 @@ inline flatbuffers::Offset<LSTMOptions> CreateLSTMOptions(flatbuffers::FlatBuffe
 }
 
 inline UnidirectionalSequenceLSTMOptionsT *UnidirectionalSequenceLSTMOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1411_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1411(mht_1411_v, 17664, "", "./tensorflow/lite/schema/schema_generated.h", "UnidirectionalSequenceLSTMOptions::UnPack");
+
   auto _o = new UnidirectionalSequenceLSTMOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void UnidirectionalSequenceLSTMOptions::UnPackTo(UnidirectionalSequenceLSTMOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1412_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1412(mht_1412_v, 17673, "", "./tensorflow/lite/schema/schema_generated.h", "UnidirectionalSequenceLSTMOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = fused_activation_function(); _o->fused_activation_function = _e; }
@@ -13276,6 +17683,9 @@ inline void UnidirectionalSequenceLSTMOptions::UnPackTo(UnidirectionalSequenceLS
 }
 
 inline flatbuffers::Offset<UnidirectionalSequenceLSTMOptions> UnidirectionalSequenceLSTMOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const UnidirectionalSequenceLSTMOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1413_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1413(mht_1413_v, 17686, "", "./tensorflow/lite/schema/schema_generated.h", "UnidirectionalSequenceLSTMOptions::Pack");
+
   return CreateUnidirectionalSequenceLSTMOptions(_fbb, _o, _rehasher);
 }
 
@@ -13298,12 +17708,18 @@ inline flatbuffers::Offset<UnidirectionalSequenceLSTMOptions> CreateUnidirection
 }
 
 inline BidirectionalSequenceLSTMOptionsT *BidirectionalSequenceLSTMOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1414_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1414(mht_1414_v, 17711, "", "./tensorflow/lite/schema/schema_generated.h", "BidirectionalSequenceLSTMOptions::UnPack");
+
   auto _o = new BidirectionalSequenceLSTMOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void BidirectionalSequenceLSTMOptions::UnPackTo(BidirectionalSequenceLSTMOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1415_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1415(mht_1415_v, 17720, "", "./tensorflow/lite/schema/schema_generated.h", "BidirectionalSequenceLSTMOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = fused_activation_function(); _o->fused_activation_function = _e; }
@@ -13315,6 +17731,9 @@ inline void BidirectionalSequenceLSTMOptions::UnPackTo(BidirectionalSequenceLSTM
 }
 
 inline flatbuffers::Offset<BidirectionalSequenceLSTMOptions> BidirectionalSequenceLSTMOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const BidirectionalSequenceLSTMOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1416_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1416(mht_1416_v, 17734, "", "./tensorflow/lite/schema/schema_generated.h", "BidirectionalSequenceLSTMOptions::Pack");
+
   return CreateBidirectionalSequenceLSTMOptions(_fbb, _o, _rehasher);
 }
 
@@ -13339,12 +17758,18 @@ inline flatbuffers::Offset<BidirectionalSequenceLSTMOptions> CreateBidirectional
 }
 
 inline ResizeBilinearOptionsT *ResizeBilinearOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1417_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1417(mht_1417_v, 17761, "", "./tensorflow/lite/schema/schema_generated.h", "ResizeBilinearOptions::UnPack");
+
   auto _o = new ResizeBilinearOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void ResizeBilinearOptions::UnPackTo(ResizeBilinearOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1418_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1418(mht_1418_v, 17770, "", "./tensorflow/lite/schema/schema_generated.h", "ResizeBilinearOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = align_corners(); _o->align_corners = _e; }
@@ -13352,6 +17777,9 @@ inline void ResizeBilinearOptions::UnPackTo(ResizeBilinearOptionsT *_o, const fl
 }
 
 inline flatbuffers::Offset<ResizeBilinearOptions> ResizeBilinearOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ResizeBilinearOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1419_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1419(mht_1419_v, 17780, "", "./tensorflow/lite/schema/schema_generated.h", "ResizeBilinearOptions::Pack");
+
   return CreateResizeBilinearOptions(_fbb, _o, _rehasher);
 }
 
@@ -13368,12 +17796,18 @@ inline flatbuffers::Offset<ResizeBilinearOptions> CreateResizeBilinearOptions(fl
 }
 
 inline ResizeNearestNeighborOptionsT *ResizeNearestNeighborOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1420_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1420(mht_1420_v, 17799, "", "./tensorflow/lite/schema/schema_generated.h", "ResizeNearestNeighborOptions::UnPack");
+
   auto _o = new ResizeNearestNeighborOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void ResizeNearestNeighborOptions::UnPackTo(ResizeNearestNeighborOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1421_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1421(mht_1421_v, 17808, "", "./tensorflow/lite/schema/schema_generated.h", "ResizeNearestNeighborOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = align_corners(); _o->align_corners = _e; }
@@ -13381,6 +17815,9 @@ inline void ResizeNearestNeighborOptions::UnPackTo(ResizeNearestNeighborOptionsT
 }
 
 inline flatbuffers::Offset<ResizeNearestNeighborOptions> ResizeNearestNeighborOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ResizeNearestNeighborOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1422_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1422(mht_1422_v, 17818, "", "./tensorflow/lite/schema/schema_generated.h", "ResizeNearestNeighborOptions::Pack");
+
   return CreateResizeNearestNeighborOptions(_fbb, _o, _rehasher);
 }
 
@@ -13397,18 +17834,27 @@ inline flatbuffers::Offset<ResizeNearestNeighborOptions> CreateResizeNearestNeig
 }
 
 inline CallOptionsT *CallOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1423_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1423(mht_1423_v, 17837, "", "./tensorflow/lite/schema/schema_generated.h", "CallOptions::UnPack");
+
   auto _o = new CallOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void CallOptions::UnPackTo(CallOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1424_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1424(mht_1424_v, 17846, "", "./tensorflow/lite/schema/schema_generated.h", "CallOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = subgraph(); _o->subgraph = _e; }
 }
 
 inline flatbuffers::Offset<CallOptions> CallOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const CallOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1425_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1425(mht_1425_v, 17855, "", "./tensorflow/lite/schema/schema_generated.h", "CallOptions::Pack");
+
   return CreateCallOptions(_fbb, _o, _rehasher);
 }
 
@@ -13423,17 +17869,26 @@ inline flatbuffers::Offset<CallOptions> CreateCallOptions(flatbuffers::FlatBuffe
 }
 
 inline PadOptionsT *PadOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1426_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1426(mht_1426_v, 17872, "", "./tensorflow/lite/schema/schema_generated.h", "PadOptions::UnPack");
+
   auto _o = new PadOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void PadOptions::UnPackTo(PadOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1427_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1427(mht_1427_v, 17881, "", "./tensorflow/lite/schema/schema_generated.h", "PadOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<PadOptions> PadOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const PadOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1428_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1428(mht_1428_v, 17889, "", "./tensorflow/lite/schema/schema_generated.h", "PadOptions::Pack");
+
   return CreatePadOptions(_fbb, _o, _rehasher);
 }
 
@@ -13446,17 +17901,26 @@ inline flatbuffers::Offset<PadOptions> CreatePadOptions(flatbuffers::FlatBufferB
 }
 
 inline PadV2OptionsT *PadV2Options::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1429_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1429(mht_1429_v, 17904, "", "./tensorflow/lite/schema/schema_generated.h", "PadV2Options::UnPack");
+
   auto _o = new PadV2OptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void PadV2Options::UnPackTo(PadV2OptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1430_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1430(mht_1430_v, 17913, "", "./tensorflow/lite/schema/schema_generated.h", "PadV2Options::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<PadV2Options> PadV2Options::Pack(flatbuffers::FlatBufferBuilder &_fbb, const PadV2OptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1431_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1431(mht_1431_v, 17921, "", "./tensorflow/lite/schema/schema_generated.h", "PadV2Options::Pack");
+
   return CreatePadV2Options(_fbb, _o, _rehasher);
 }
 
@@ -13469,18 +17933,27 @@ inline flatbuffers::Offset<PadV2Options> CreatePadV2Options(flatbuffers::FlatBuf
 }
 
 inline ReshapeOptionsT *ReshapeOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1432_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1432(mht_1432_v, 17936, "", "./tensorflow/lite/schema/schema_generated.h", "ReshapeOptions::UnPack");
+
   auto _o = new ReshapeOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void ReshapeOptions::UnPackTo(ReshapeOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1433_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1433(mht_1433_v, 17945, "", "./tensorflow/lite/schema/schema_generated.h", "ReshapeOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = new_shape(); if (_e) { _o->new_shape.resize(_e->size()); for (flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->new_shape[_i] = _e->Get(_i); } } }
 }
 
 inline flatbuffers::Offset<ReshapeOptions> ReshapeOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ReshapeOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1434_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1434(mht_1434_v, 17954, "", "./tensorflow/lite/schema/schema_generated.h", "ReshapeOptions::Pack");
+
   return CreateReshapeOptions(_fbb, _o, _rehasher);
 }
 
@@ -13495,17 +17968,26 @@ inline flatbuffers::Offset<ReshapeOptions> CreateReshapeOptions(flatbuffers::Fla
 }
 
 inline SpaceToBatchNDOptionsT *SpaceToBatchNDOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1435_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1435(mht_1435_v, 17971, "", "./tensorflow/lite/schema/schema_generated.h", "SpaceToBatchNDOptions::UnPack");
+
   auto _o = new SpaceToBatchNDOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void SpaceToBatchNDOptions::UnPackTo(SpaceToBatchNDOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1436_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1436(mht_1436_v, 17980, "", "./tensorflow/lite/schema/schema_generated.h", "SpaceToBatchNDOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<SpaceToBatchNDOptions> SpaceToBatchNDOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const SpaceToBatchNDOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1437_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1437(mht_1437_v, 17988, "", "./tensorflow/lite/schema/schema_generated.h", "SpaceToBatchNDOptions::Pack");
+
   return CreateSpaceToBatchNDOptions(_fbb, _o, _rehasher);
 }
 
@@ -13518,17 +18000,26 @@ inline flatbuffers::Offset<SpaceToBatchNDOptions> CreateSpaceToBatchNDOptions(fl
 }
 
 inline BatchToSpaceNDOptionsT *BatchToSpaceNDOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1438_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1438(mht_1438_v, 18003, "", "./tensorflow/lite/schema/schema_generated.h", "BatchToSpaceNDOptions::UnPack");
+
   auto _o = new BatchToSpaceNDOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void BatchToSpaceNDOptions::UnPackTo(BatchToSpaceNDOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1439_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1439(mht_1439_v, 18012, "", "./tensorflow/lite/schema/schema_generated.h", "BatchToSpaceNDOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<BatchToSpaceNDOptions> BatchToSpaceNDOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const BatchToSpaceNDOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1440_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1440(mht_1440_v, 18020, "", "./tensorflow/lite/schema/schema_generated.h", "BatchToSpaceNDOptions::Pack");
+
   return CreateBatchToSpaceNDOptions(_fbb, _o, _rehasher);
 }
 
@@ -13541,12 +18032,18 @@ inline flatbuffers::Offset<BatchToSpaceNDOptions> CreateBatchToSpaceNDOptions(fl
 }
 
 inline SkipGramOptionsT *SkipGramOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1441_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1441(mht_1441_v, 18035, "", "./tensorflow/lite/schema/schema_generated.h", "SkipGramOptions::UnPack");
+
   auto _o = new SkipGramOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void SkipGramOptions::UnPackTo(SkipGramOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1442_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1442(mht_1442_v, 18044, "", "./tensorflow/lite/schema/schema_generated.h", "SkipGramOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = ngram_size(); _o->ngram_size = _e; }
@@ -13555,6 +18052,9 @@ inline void SkipGramOptions::UnPackTo(SkipGramOptionsT *_o, const flatbuffers::r
 }
 
 inline flatbuffers::Offset<SkipGramOptions> SkipGramOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const SkipGramOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1443_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1443(mht_1443_v, 18055, "", "./tensorflow/lite/schema/schema_generated.h", "SkipGramOptions::Pack");
+
   return CreateSkipGramOptions(_fbb, _o, _rehasher);
 }
 
@@ -13573,18 +18073,27 @@ inline flatbuffers::Offset<SkipGramOptions> CreateSkipGramOptions(flatbuffers::F
 }
 
 inline SpaceToDepthOptionsT *SpaceToDepthOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1444_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1444(mht_1444_v, 18076, "", "./tensorflow/lite/schema/schema_generated.h", "SpaceToDepthOptions::UnPack");
+
   auto _o = new SpaceToDepthOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void SpaceToDepthOptions::UnPackTo(SpaceToDepthOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1445_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1445(mht_1445_v, 18085, "", "./tensorflow/lite/schema/schema_generated.h", "SpaceToDepthOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = block_size(); _o->block_size = _e; }
 }
 
 inline flatbuffers::Offset<SpaceToDepthOptions> SpaceToDepthOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const SpaceToDepthOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1446_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1446(mht_1446_v, 18094, "", "./tensorflow/lite/schema/schema_generated.h", "SpaceToDepthOptions::Pack");
+
   return CreateSpaceToDepthOptions(_fbb, _o, _rehasher);
 }
 
@@ -13599,18 +18108,27 @@ inline flatbuffers::Offset<SpaceToDepthOptions> CreateSpaceToDepthOptions(flatbu
 }
 
 inline DepthToSpaceOptionsT *DepthToSpaceOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1447_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1447(mht_1447_v, 18111, "", "./tensorflow/lite/schema/schema_generated.h", "DepthToSpaceOptions::UnPack");
+
   auto _o = new DepthToSpaceOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void DepthToSpaceOptions::UnPackTo(DepthToSpaceOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1448_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1448(mht_1448_v, 18120, "", "./tensorflow/lite/schema/schema_generated.h", "DepthToSpaceOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = block_size(); _o->block_size = _e; }
 }
 
 inline flatbuffers::Offset<DepthToSpaceOptions> DepthToSpaceOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const DepthToSpaceOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1449_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1449(mht_1449_v, 18129, "", "./tensorflow/lite/schema/schema_generated.h", "DepthToSpaceOptions::Pack");
+
   return CreateDepthToSpaceOptions(_fbb, _o, _rehasher);
 }
 
@@ -13625,12 +18143,18 @@ inline flatbuffers::Offset<DepthToSpaceOptions> CreateDepthToSpaceOptions(flatbu
 }
 
 inline SubOptionsT *SubOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1450_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1450(mht_1450_v, 18146, "", "./tensorflow/lite/schema/schema_generated.h", "SubOptions::UnPack");
+
   auto _o = new SubOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void SubOptions::UnPackTo(SubOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1451_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1451(mht_1451_v, 18155, "", "./tensorflow/lite/schema/schema_generated.h", "SubOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = fused_activation_function(); _o->fused_activation_function = _e; }
@@ -13638,6 +18162,9 @@ inline void SubOptions::UnPackTo(SubOptionsT *_o, const flatbuffers::resolver_fu
 }
 
 inline flatbuffers::Offset<SubOptions> SubOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const SubOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1452_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1452(mht_1452_v, 18165, "", "./tensorflow/lite/schema/schema_generated.h", "SubOptions::Pack");
+
   return CreateSubOptions(_fbb, _o, _rehasher);
 }
 
@@ -13654,18 +18181,27 @@ inline flatbuffers::Offset<SubOptions> CreateSubOptions(flatbuffers::FlatBufferB
 }
 
 inline DivOptionsT *DivOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1453_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1453(mht_1453_v, 18184, "", "./tensorflow/lite/schema/schema_generated.h", "DivOptions::UnPack");
+
   auto _o = new DivOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void DivOptions::UnPackTo(DivOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1454_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1454(mht_1454_v, 18193, "", "./tensorflow/lite/schema/schema_generated.h", "DivOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = fused_activation_function(); _o->fused_activation_function = _e; }
 }
 
 inline flatbuffers::Offset<DivOptions> DivOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const DivOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1455_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1455(mht_1455_v, 18202, "", "./tensorflow/lite/schema/schema_generated.h", "DivOptions::Pack");
+
   return CreateDivOptions(_fbb, _o, _rehasher);
 }
 
@@ -13680,17 +18216,26 @@ inline flatbuffers::Offset<DivOptions> CreateDivOptions(flatbuffers::FlatBufferB
 }
 
 inline TopKV2OptionsT *TopKV2Options::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1456_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1456(mht_1456_v, 18219, "", "./tensorflow/lite/schema/schema_generated.h", "TopKV2Options::UnPack");
+
   auto _o = new TopKV2OptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void TopKV2Options::UnPackTo(TopKV2OptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1457_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1457(mht_1457_v, 18228, "", "./tensorflow/lite/schema/schema_generated.h", "TopKV2Options::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<TopKV2Options> TopKV2Options::Pack(flatbuffers::FlatBufferBuilder &_fbb, const TopKV2OptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1458_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1458(mht_1458_v, 18236, "", "./tensorflow/lite/schema/schema_generated.h", "TopKV2Options::Pack");
+
   return CreateTopKV2Options(_fbb, _o, _rehasher);
 }
 
@@ -13703,18 +18248,27 @@ inline flatbuffers::Offset<TopKV2Options> CreateTopKV2Options(flatbuffers::FlatB
 }
 
 inline EmbeddingLookupSparseOptionsT *EmbeddingLookupSparseOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1459_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1459(mht_1459_v, 18251, "", "./tensorflow/lite/schema/schema_generated.h", "EmbeddingLookupSparseOptions::UnPack");
+
   auto _o = new EmbeddingLookupSparseOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void EmbeddingLookupSparseOptions::UnPackTo(EmbeddingLookupSparseOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1460_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1460(mht_1460_v, 18260, "", "./tensorflow/lite/schema/schema_generated.h", "EmbeddingLookupSparseOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = combiner(); _o->combiner = _e; }
 }
 
 inline flatbuffers::Offset<EmbeddingLookupSparseOptions> EmbeddingLookupSparseOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const EmbeddingLookupSparseOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1461_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1461(mht_1461_v, 18269, "", "./tensorflow/lite/schema/schema_generated.h", "EmbeddingLookupSparseOptions::Pack");
+
   return CreateEmbeddingLookupSparseOptions(_fbb, _o, _rehasher);
 }
 
@@ -13729,12 +18283,18 @@ inline flatbuffers::Offset<EmbeddingLookupSparseOptions> CreateEmbeddingLookupSp
 }
 
 inline GatherOptionsT *GatherOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1462_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1462(mht_1462_v, 18286, "", "./tensorflow/lite/schema/schema_generated.h", "GatherOptions::UnPack");
+
   auto _o = new GatherOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void GatherOptions::UnPackTo(GatherOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1463_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1463(mht_1463_v, 18295, "", "./tensorflow/lite/schema/schema_generated.h", "GatherOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = axis(); _o->axis = _e; }
@@ -13742,6 +18302,9 @@ inline void GatherOptions::UnPackTo(GatherOptionsT *_o, const flatbuffers::resol
 }
 
 inline flatbuffers::Offset<GatherOptions> GatherOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const GatherOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1464_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1464(mht_1464_v, 18305, "", "./tensorflow/lite/schema/schema_generated.h", "GatherOptions::Pack");
+
   return CreateGatherOptions(_fbb, _o, _rehasher);
 }
 
@@ -13758,17 +18321,26 @@ inline flatbuffers::Offset<GatherOptions> CreateGatherOptions(flatbuffers::FlatB
 }
 
 inline TransposeOptionsT *TransposeOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1465_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1465(mht_1465_v, 18324, "", "./tensorflow/lite/schema/schema_generated.h", "TransposeOptions::UnPack");
+
   auto _o = new TransposeOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void TransposeOptions::UnPackTo(TransposeOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1466_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1466(mht_1466_v, 18333, "", "./tensorflow/lite/schema/schema_generated.h", "TransposeOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<TransposeOptions> TransposeOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const TransposeOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1467_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1467(mht_1467_v, 18341, "", "./tensorflow/lite/schema/schema_generated.h", "TransposeOptions::Pack");
+
   return CreateTransposeOptions(_fbb, _o, _rehasher);
 }
 
@@ -13781,17 +18353,26 @@ inline flatbuffers::Offset<TransposeOptions> CreateTransposeOptions(flatbuffers:
 }
 
 inline ExpOptionsT *ExpOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1468_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1468(mht_1468_v, 18356, "", "./tensorflow/lite/schema/schema_generated.h", "ExpOptions::UnPack");
+
   auto _o = new ExpOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void ExpOptions::UnPackTo(ExpOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1469_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1469(mht_1469_v, 18365, "", "./tensorflow/lite/schema/schema_generated.h", "ExpOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<ExpOptions> ExpOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ExpOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1470_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1470(mht_1470_v, 18373, "", "./tensorflow/lite/schema/schema_generated.h", "ExpOptions::Pack");
+
   return CreateExpOptions(_fbb, _o, _rehasher);
 }
 
@@ -13804,17 +18385,26 @@ inline flatbuffers::Offset<ExpOptions> CreateExpOptions(flatbuffers::FlatBufferB
 }
 
 inline CosOptionsT *CosOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1471_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1471(mht_1471_v, 18388, "", "./tensorflow/lite/schema/schema_generated.h", "CosOptions::UnPack");
+
   auto _o = new CosOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void CosOptions::UnPackTo(CosOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1472_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1472(mht_1472_v, 18397, "", "./tensorflow/lite/schema/schema_generated.h", "CosOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<CosOptions> CosOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const CosOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1473_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1473(mht_1473_v, 18405, "", "./tensorflow/lite/schema/schema_generated.h", "CosOptions::Pack");
+
   return CreateCosOptions(_fbb, _o, _rehasher);
 }
 
@@ -13827,18 +18417,27 @@ inline flatbuffers::Offset<CosOptions> CreateCosOptions(flatbuffers::FlatBufferB
 }
 
 inline ReducerOptionsT *ReducerOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1474_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1474(mht_1474_v, 18420, "", "./tensorflow/lite/schema/schema_generated.h", "ReducerOptions::UnPack");
+
   auto _o = new ReducerOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void ReducerOptions::UnPackTo(ReducerOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1475_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1475(mht_1475_v, 18429, "", "./tensorflow/lite/schema/schema_generated.h", "ReducerOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = keep_dims(); _o->keep_dims = _e; }
 }
 
 inline flatbuffers::Offset<ReducerOptions> ReducerOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ReducerOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1476_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1476(mht_1476_v, 18438, "", "./tensorflow/lite/schema/schema_generated.h", "ReducerOptions::Pack");
+
   return CreateReducerOptions(_fbb, _o, _rehasher);
 }
 
@@ -13853,18 +18452,27 @@ inline flatbuffers::Offset<ReducerOptions> CreateReducerOptions(flatbuffers::Fla
 }
 
 inline SqueezeOptionsT *SqueezeOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1477_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1477(mht_1477_v, 18455, "", "./tensorflow/lite/schema/schema_generated.h", "SqueezeOptions::UnPack");
+
   auto _o = new SqueezeOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void SqueezeOptions::UnPackTo(SqueezeOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1478_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1478(mht_1478_v, 18464, "", "./tensorflow/lite/schema/schema_generated.h", "SqueezeOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = squeeze_dims(); if (_e) { _o->squeeze_dims.resize(_e->size()); for (flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->squeeze_dims[_i] = _e->Get(_i); } } }
 }
 
 inline flatbuffers::Offset<SqueezeOptions> SqueezeOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const SqueezeOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1479_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1479(mht_1479_v, 18473, "", "./tensorflow/lite/schema/schema_generated.h", "SqueezeOptions::Pack");
+
   return CreateSqueezeOptions(_fbb, _o, _rehasher);
 }
 
@@ -13879,18 +18487,27 @@ inline flatbuffers::Offset<SqueezeOptions> CreateSqueezeOptions(flatbuffers::Fla
 }
 
 inline SplitOptionsT *SplitOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1480_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1480(mht_1480_v, 18490, "", "./tensorflow/lite/schema/schema_generated.h", "SplitOptions::UnPack");
+
   auto _o = new SplitOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void SplitOptions::UnPackTo(SplitOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1481_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1481(mht_1481_v, 18499, "", "./tensorflow/lite/schema/schema_generated.h", "SplitOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = num_splits(); _o->num_splits = _e; }
 }
 
 inline flatbuffers::Offset<SplitOptions> SplitOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const SplitOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1482_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1482(mht_1482_v, 18508, "", "./tensorflow/lite/schema/schema_generated.h", "SplitOptions::Pack");
+
   return CreateSplitOptions(_fbb, _o, _rehasher);
 }
 
@@ -13905,18 +18522,27 @@ inline flatbuffers::Offset<SplitOptions> CreateSplitOptions(flatbuffers::FlatBuf
 }
 
 inline SplitVOptionsT *SplitVOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1483_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1483(mht_1483_v, 18525, "", "./tensorflow/lite/schema/schema_generated.h", "SplitVOptions::UnPack");
+
   auto _o = new SplitVOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void SplitVOptions::UnPackTo(SplitVOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1484_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1484(mht_1484_v, 18534, "", "./tensorflow/lite/schema/schema_generated.h", "SplitVOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = num_splits(); _o->num_splits = _e; }
 }
 
 inline flatbuffers::Offset<SplitVOptions> SplitVOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const SplitVOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1485_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1485(mht_1485_v, 18543, "", "./tensorflow/lite/schema/schema_generated.h", "SplitVOptions::Pack");
+
   return CreateSplitVOptions(_fbb, _o, _rehasher);
 }
 
@@ -13931,12 +18557,18 @@ inline flatbuffers::Offset<SplitVOptions> CreateSplitVOptions(flatbuffers::FlatB
 }
 
 inline StridedSliceOptionsT *StridedSliceOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1486_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1486(mht_1486_v, 18560, "", "./tensorflow/lite/schema/schema_generated.h", "StridedSliceOptions::UnPack");
+
   auto _o = new StridedSliceOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void StridedSliceOptions::UnPackTo(StridedSliceOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1487_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1487(mht_1487_v, 18569, "", "./tensorflow/lite/schema/schema_generated.h", "StridedSliceOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = begin_mask(); _o->begin_mask = _e; }
@@ -13947,6 +18579,9 @@ inline void StridedSliceOptions::UnPackTo(StridedSliceOptionsT *_o, const flatbu
 }
 
 inline flatbuffers::Offset<StridedSliceOptions> StridedSliceOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const StridedSliceOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1488_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1488(mht_1488_v, 18582, "", "./tensorflow/lite/schema/schema_generated.h", "StridedSliceOptions::Pack");
+
   return CreateStridedSliceOptions(_fbb, _o, _rehasher);
 }
 
@@ -13969,17 +18604,26 @@ inline flatbuffers::Offset<StridedSliceOptions> CreateStridedSliceOptions(flatbu
 }
 
 inline LogSoftmaxOptionsT *LogSoftmaxOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1489_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1489(mht_1489_v, 18607, "", "./tensorflow/lite/schema/schema_generated.h", "LogSoftmaxOptions::UnPack");
+
   auto _o = new LogSoftmaxOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void LogSoftmaxOptions::UnPackTo(LogSoftmaxOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1490_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1490(mht_1490_v, 18616, "", "./tensorflow/lite/schema/schema_generated.h", "LogSoftmaxOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<LogSoftmaxOptions> LogSoftmaxOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const LogSoftmaxOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1491_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1491(mht_1491_v, 18624, "", "./tensorflow/lite/schema/schema_generated.h", "LogSoftmaxOptions::Pack");
+
   return CreateLogSoftmaxOptions(_fbb, _o, _rehasher);
 }
 
@@ -13992,12 +18636,18 @@ inline flatbuffers::Offset<LogSoftmaxOptions> CreateLogSoftmaxOptions(flatbuffer
 }
 
 inline CastOptionsT *CastOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1492_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1492(mht_1492_v, 18639, "", "./tensorflow/lite/schema/schema_generated.h", "CastOptions::UnPack");
+
   auto _o = new CastOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void CastOptions::UnPackTo(CastOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1493_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1493(mht_1493_v, 18648, "", "./tensorflow/lite/schema/schema_generated.h", "CastOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = in_data_type(); _o->in_data_type = _e; }
@@ -14005,6 +18655,9 @@ inline void CastOptions::UnPackTo(CastOptionsT *_o, const flatbuffers::resolver_
 }
 
 inline flatbuffers::Offset<CastOptions> CastOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const CastOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1494_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1494(mht_1494_v, 18658, "", "./tensorflow/lite/schema/schema_generated.h", "CastOptions::Pack");
+
   return CreateCastOptions(_fbb, _o, _rehasher);
 }
 
@@ -14021,17 +18674,26 @@ inline flatbuffers::Offset<CastOptions> CreateCastOptions(flatbuffers::FlatBuffe
 }
 
 inline DequantizeOptionsT *DequantizeOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1495_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1495(mht_1495_v, 18677, "", "./tensorflow/lite/schema/schema_generated.h", "DequantizeOptions::UnPack");
+
   auto _o = new DequantizeOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void DequantizeOptions::UnPackTo(DequantizeOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1496_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1496(mht_1496_v, 18686, "", "./tensorflow/lite/schema/schema_generated.h", "DequantizeOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<DequantizeOptions> DequantizeOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const DequantizeOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1497_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1497(mht_1497_v, 18694, "", "./tensorflow/lite/schema/schema_generated.h", "DequantizeOptions::Pack");
+
   return CreateDequantizeOptions(_fbb, _o, _rehasher);
 }
 
@@ -14044,17 +18706,26 @@ inline flatbuffers::Offset<DequantizeOptions> CreateDequantizeOptions(flatbuffer
 }
 
 inline MaximumMinimumOptionsT *MaximumMinimumOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1498_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1498(mht_1498_v, 18709, "", "./tensorflow/lite/schema/schema_generated.h", "MaximumMinimumOptions::UnPack");
+
   auto _o = new MaximumMinimumOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void MaximumMinimumOptions::UnPackTo(MaximumMinimumOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1499_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1499(mht_1499_v, 18718, "", "./tensorflow/lite/schema/schema_generated.h", "MaximumMinimumOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<MaximumMinimumOptions> MaximumMinimumOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const MaximumMinimumOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1500_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1500(mht_1500_v, 18726, "", "./tensorflow/lite/schema/schema_generated.h", "MaximumMinimumOptions::Pack");
+
   return CreateMaximumMinimumOptions(_fbb, _o, _rehasher);
 }
 
@@ -14067,17 +18738,26 @@ inline flatbuffers::Offset<MaximumMinimumOptions> CreateMaximumMinimumOptions(fl
 }
 
 inline TileOptionsT *TileOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1501_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1501(mht_1501_v, 18741, "", "./tensorflow/lite/schema/schema_generated.h", "TileOptions::UnPack");
+
   auto _o = new TileOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void TileOptions::UnPackTo(TileOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1502_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1502(mht_1502_v, 18750, "", "./tensorflow/lite/schema/schema_generated.h", "TileOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<TileOptions> TileOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const TileOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1503_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1503(mht_1503_v, 18758, "", "./tensorflow/lite/schema/schema_generated.h", "TileOptions::Pack");
+
   return CreateTileOptions(_fbb, _o, _rehasher);
 }
 
@@ -14090,18 +18770,27 @@ inline flatbuffers::Offset<TileOptions> CreateTileOptions(flatbuffers::FlatBuffe
 }
 
 inline ArgMaxOptionsT *ArgMaxOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1504_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1504(mht_1504_v, 18773, "", "./tensorflow/lite/schema/schema_generated.h", "ArgMaxOptions::UnPack");
+
   auto _o = new ArgMaxOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void ArgMaxOptions::UnPackTo(ArgMaxOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1505_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1505(mht_1505_v, 18782, "", "./tensorflow/lite/schema/schema_generated.h", "ArgMaxOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = output_type(); _o->output_type = _e; }
 }
 
 inline flatbuffers::Offset<ArgMaxOptions> ArgMaxOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ArgMaxOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1506_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1506(mht_1506_v, 18791, "", "./tensorflow/lite/schema/schema_generated.h", "ArgMaxOptions::Pack");
+
   return CreateArgMaxOptions(_fbb, _o, _rehasher);
 }
 
@@ -14116,18 +18805,27 @@ inline flatbuffers::Offset<ArgMaxOptions> CreateArgMaxOptions(flatbuffers::FlatB
 }
 
 inline ArgMinOptionsT *ArgMinOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1507_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1507(mht_1507_v, 18808, "", "./tensorflow/lite/schema/schema_generated.h", "ArgMinOptions::UnPack");
+
   auto _o = new ArgMinOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void ArgMinOptions::UnPackTo(ArgMinOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1508_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1508(mht_1508_v, 18817, "", "./tensorflow/lite/schema/schema_generated.h", "ArgMinOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = output_type(); _o->output_type = _e; }
 }
 
 inline flatbuffers::Offset<ArgMinOptions> ArgMinOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ArgMinOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1509_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1509(mht_1509_v, 18826, "", "./tensorflow/lite/schema/schema_generated.h", "ArgMinOptions::Pack");
+
   return CreateArgMinOptions(_fbb, _o, _rehasher);
 }
 
@@ -14142,17 +18840,26 @@ inline flatbuffers::Offset<ArgMinOptions> CreateArgMinOptions(flatbuffers::FlatB
 }
 
 inline GreaterOptionsT *GreaterOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1510_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1510(mht_1510_v, 18843, "", "./tensorflow/lite/schema/schema_generated.h", "GreaterOptions::UnPack");
+
   auto _o = new GreaterOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void GreaterOptions::UnPackTo(GreaterOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1511_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1511(mht_1511_v, 18852, "", "./tensorflow/lite/schema/schema_generated.h", "GreaterOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<GreaterOptions> GreaterOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const GreaterOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1512_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1512(mht_1512_v, 18860, "", "./tensorflow/lite/schema/schema_generated.h", "GreaterOptions::Pack");
+
   return CreateGreaterOptions(_fbb, _o, _rehasher);
 }
 
@@ -14165,17 +18872,26 @@ inline flatbuffers::Offset<GreaterOptions> CreateGreaterOptions(flatbuffers::Fla
 }
 
 inline GreaterEqualOptionsT *GreaterEqualOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1513_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1513(mht_1513_v, 18875, "", "./tensorflow/lite/schema/schema_generated.h", "GreaterEqualOptions::UnPack");
+
   auto _o = new GreaterEqualOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void GreaterEqualOptions::UnPackTo(GreaterEqualOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1514_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1514(mht_1514_v, 18884, "", "./tensorflow/lite/schema/schema_generated.h", "GreaterEqualOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<GreaterEqualOptions> GreaterEqualOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const GreaterEqualOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1515_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1515(mht_1515_v, 18892, "", "./tensorflow/lite/schema/schema_generated.h", "GreaterEqualOptions::Pack");
+
   return CreateGreaterEqualOptions(_fbb, _o, _rehasher);
 }
 
@@ -14188,17 +18904,26 @@ inline flatbuffers::Offset<GreaterEqualOptions> CreateGreaterEqualOptions(flatbu
 }
 
 inline LessOptionsT *LessOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1516_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1516(mht_1516_v, 18907, "", "./tensorflow/lite/schema/schema_generated.h", "LessOptions::UnPack");
+
   auto _o = new LessOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void LessOptions::UnPackTo(LessOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1517_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1517(mht_1517_v, 18916, "", "./tensorflow/lite/schema/schema_generated.h", "LessOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<LessOptions> LessOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const LessOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1518_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1518(mht_1518_v, 18924, "", "./tensorflow/lite/schema/schema_generated.h", "LessOptions::Pack");
+
   return CreateLessOptions(_fbb, _o, _rehasher);
 }
 
@@ -14211,17 +18936,26 @@ inline flatbuffers::Offset<LessOptions> CreateLessOptions(flatbuffers::FlatBuffe
 }
 
 inline LessEqualOptionsT *LessEqualOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1519_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1519(mht_1519_v, 18939, "", "./tensorflow/lite/schema/schema_generated.h", "LessEqualOptions::UnPack");
+
   auto _o = new LessEqualOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void LessEqualOptions::UnPackTo(LessEqualOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1520_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1520(mht_1520_v, 18948, "", "./tensorflow/lite/schema/schema_generated.h", "LessEqualOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<LessEqualOptions> LessEqualOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const LessEqualOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1521_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1521(mht_1521_v, 18956, "", "./tensorflow/lite/schema/schema_generated.h", "LessEqualOptions::Pack");
+
   return CreateLessEqualOptions(_fbb, _o, _rehasher);
 }
 
@@ -14234,17 +18968,26 @@ inline flatbuffers::Offset<LessEqualOptions> CreateLessEqualOptions(flatbuffers:
 }
 
 inline NegOptionsT *NegOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1522_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1522(mht_1522_v, 18971, "", "./tensorflow/lite/schema/schema_generated.h", "NegOptions::UnPack");
+
   auto _o = new NegOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void NegOptions::UnPackTo(NegOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1523_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1523(mht_1523_v, 18980, "", "./tensorflow/lite/schema/schema_generated.h", "NegOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<NegOptions> NegOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const NegOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1524_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1524(mht_1524_v, 18988, "", "./tensorflow/lite/schema/schema_generated.h", "NegOptions::Pack");
+
   return CreateNegOptions(_fbb, _o, _rehasher);
 }
 
@@ -14257,17 +19000,26 @@ inline flatbuffers::Offset<NegOptions> CreateNegOptions(flatbuffers::FlatBufferB
 }
 
 inline SelectOptionsT *SelectOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1525_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1525(mht_1525_v, 19003, "", "./tensorflow/lite/schema/schema_generated.h", "SelectOptions::UnPack");
+
   auto _o = new SelectOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void SelectOptions::UnPackTo(SelectOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1526_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1526(mht_1526_v, 19012, "", "./tensorflow/lite/schema/schema_generated.h", "SelectOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<SelectOptions> SelectOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const SelectOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1527_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1527(mht_1527_v, 19020, "", "./tensorflow/lite/schema/schema_generated.h", "SelectOptions::Pack");
+
   return CreateSelectOptions(_fbb, _o, _rehasher);
 }
 
@@ -14280,17 +19032,26 @@ inline flatbuffers::Offset<SelectOptions> CreateSelectOptions(flatbuffers::FlatB
 }
 
 inline SliceOptionsT *SliceOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1528_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1528(mht_1528_v, 19035, "", "./tensorflow/lite/schema/schema_generated.h", "SliceOptions::UnPack");
+
   auto _o = new SliceOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void SliceOptions::UnPackTo(SliceOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1529_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1529(mht_1529_v, 19044, "", "./tensorflow/lite/schema/schema_generated.h", "SliceOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<SliceOptions> SliceOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const SliceOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1530_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1530(mht_1530_v, 19052, "", "./tensorflow/lite/schema/schema_generated.h", "SliceOptions::Pack");
+
   return CreateSliceOptions(_fbb, _o, _rehasher);
 }
 
@@ -14303,12 +19064,18 @@ inline flatbuffers::Offset<SliceOptions> CreateSliceOptions(flatbuffers::FlatBuf
 }
 
 inline TransposeConvOptionsT *TransposeConvOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1531_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1531(mht_1531_v, 19067, "", "./tensorflow/lite/schema/schema_generated.h", "TransposeConvOptions::UnPack");
+
   auto _o = new TransposeConvOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void TransposeConvOptions::UnPackTo(TransposeConvOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1532_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1532(mht_1532_v, 19076, "", "./tensorflow/lite/schema/schema_generated.h", "TransposeConvOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = padding(); _o->padding = _e; }
@@ -14317,6 +19084,9 @@ inline void TransposeConvOptions::UnPackTo(TransposeConvOptionsT *_o, const flat
 }
 
 inline flatbuffers::Offset<TransposeConvOptions> TransposeConvOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const TransposeConvOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1533_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1533(mht_1533_v, 19087, "", "./tensorflow/lite/schema/schema_generated.h", "TransposeConvOptions::Pack");
+
   return CreateTransposeConvOptions(_fbb, _o, _rehasher);
 }
 
@@ -14335,17 +19105,26 @@ inline flatbuffers::Offset<TransposeConvOptions> CreateTransposeConvOptions(flat
 }
 
 inline ExpandDimsOptionsT *ExpandDimsOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1534_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1534(mht_1534_v, 19108, "", "./tensorflow/lite/schema/schema_generated.h", "ExpandDimsOptions::UnPack");
+
   auto _o = new ExpandDimsOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void ExpandDimsOptions::UnPackTo(ExpandDimsOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1535_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1535(mht_1535_v, 19117, "", "./tensorflow/lite/schema/schema_generated.h", "ExpandDimsOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<ExpandDimsOptions> ExpandDimsOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ExpandDimsOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1536_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1536(mht_1536_v, 19125, "", "./tensorflow/lite/schema/schema_generated.h", "ExpandDimsOptions::Pack");
+
   return CreateExpandDimsOptions(_fbb, _o, _rehasher);
 }
 
@@ -14358,18 +19137,27 @@ inline flatbuffers::Offset<ExpandDimsOptions> CreateExpandDimsOptions(flatbuffer
 }
 
 inline SparseToDenseOptionsT *SparseToDenseOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1537_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1537(mht_1537_v, 19140, "", "./tensorflow/lite/schema/schema_generated.h", "SparseToDenseOptions::UnPack");
+
   auto _o = new SparseToDenseOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void SparseToDenseOptions::UnPackTo(SparseToDenseOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1538_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1538(mht_1538_v, 19149, "", "./tensorflow/lite/schema/schema_generated.h", "SparseToDenseOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = validate_indices(); _o->validate_indices = _e; }
 }
 
 inline flatbuffers::Offset<SparseToDenseOptions> SparseToDenseOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const SparseToDenseOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1539_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1539(mht_1539_v, 19158, "", "./tensorflow/lite/schema/schema_generated.h", "SparseToDenseOptions::Pack");
+
   return CreateSparseToDenseOptions(_fbb, _o, _rehasher);
 }
 
@@ -14384,17 +19172,26 @@ inline flatbuffers::Offset<SparseToDenseOptions> CreateSparseToDenseOptions(flat
 }
 
 inline EqualOptionsT *EqualOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1540_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1540(mht_1540_v, 19175, "", "./tensorflow/lite/schema/schema_generated.h", "EqualOptions::UnPack");
+
   auto _o = new EqualOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void EqualOptions::UnPackTo(EqualOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1541_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1541(mht_1541_v, 19184, "", "./tensorflow/lite/schema/schema_generated.h", "EqualOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<EqualOptions> EqualOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const EqualOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1542_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1542(mht_1542_v, 19192, "", "./tensorflow/lite/schema/schema_generated.h", "EqualOptions::Pack");
+
   return CreateEqualOptions(_fbb, _o, _rehasher);
 }
 
@@ -14407,17 +19204,26 @@ inline flatbuffers::Offset<EqualOptions> CreateEqualOptions(flatbuffers::FlatBuf
 }
 
 inline NotEqualOptionsT *NotEqualOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1543_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1543(mht_1543_v, 19207, "", "./tensorflow/lite/schema/schema_generated.h", "NotEqualOptions::UnPack");
+
   auto _o = new NotEqualOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void NotEqualOptions::UnPackTo(NotEqualOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1544_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1544(mht_1544_v, 19216, "", "./tensorflow/lite/schema/schema_generated.h", "NotEqualOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<NotEqualOptions> NotEqualOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const NotEqualOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1545_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1545(mht_1545_v, 19224, "", "./tensorflow/lite/schema/schema_generated.h", "NotEqualOptions::Pack");
+
   return CreateNotEqualOptions(_fbb, _o, _rehasher);
 }
 
@@ -14430,18 +19236,27 @@ inline flatbuffers::Offset<NotEqualOptions> CreateNotEqualOptions(flatbuffers::F
 }
 
 inline ShapeOptionsT *ShapeOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1546_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1546(mht_1546_v, 19239, "", "./tensorflow/lite/schema/schema_generated.h", "ShapeOptions::UnPack");
+
   auto _o = new ShapeOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void ShapeOptions::UnPackTo(ShapeOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1547_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1547(mht_1547_v, 19248, "", "./tensorflow/lite/schema/schema_generated.h", "ShapeOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = out_type(); _o->out_type = _e; }
 }
 
 inline flatbuffers::Offset<ShapeOptions> ShapeOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ShapeOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1548_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1548(mht_1548_v, 19257, "", "./tensorflow/lite/schema/schema_generated.h", "ShapeOptions::Pack");
+
   return CreateShapeOptions(_fbb, _o, _rehasher);
 }
 
@@ -14456,17 +19271,26 @@ inline flatbuffers::Offset<ShapeOptions> CreateShapeOptions(flatbuffers::FlatBuf
 }
 
 inline RankOptionsT *RankOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1549_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1549(mht_1549_v, 19274, "", "./tensorflow/lite/schema/schema_generated.h", "RankOptions::UnPack");
+
   auto _o = new RankOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void RankOptions::UnPackTo(RankOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1550_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1550(mht_1550_v, 19283, "", "./tensorflow/lite/schema/schema_generated.h", "RankOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<RankOptions> RankOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const RankOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1551_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1551(mht_1551_v, 19291, "", "./tensorflow/lite/schema/schema_generated.h", "RankOptions::Pack");
+
   return CreateRankOptions(_fbb, _o, _rehasher);
 }
 
@@ -14479,17 +19303,26 @@ inline flatbuffers::Offset<RankOptions> CreateRankOptions(flatbuffers::FlatBuffe
 }
 
 inline PowOptionsT *PowOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1552_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1552(mht_1552_v, 19306, "", "./tensorflow/lite/schema/schema_generated.h", "PowOptions::UnPack");
+
   auto _o = new PowOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void PowOptions::UnPackTo(PowOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1553_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1553(mht_1553_v, 19315, "", "./tensorflow/lite/schema/schema_generated.h", "PowOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<PowOptions> PowOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const PowOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1554_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1554(mht_1554_v, 19323, "", "./tensorflow/lite/schema/schema_generated.h", "PowOptions::Pack");
+
   return CreatePowOptions(_fbb, _o, _rehasher);
 }
 
@@ -14502,12 +19335,18 @@ inline flatbuffers::Offset<PowOptions> CreatePowOptions(flatbuffers::FlatBufferB
 }
 
 inline FakeQuantOptionsT *FakeQuantOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1555_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1555(mht_1555_v, 19338, "", "./tensorflow/lite/schema/schema_generated.h", "FakeQuantOptions::UnPack");
+
   auto _o = new FakeQuantOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void FakeQuantOptions::UnPackTo(FakeQuantOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1556_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1556(mht_1556_v, 19347, "", "./tensorflow/lite/schema/schema_generated.h", "FakeQuantOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = min(); _o->min = _e; }
@@ -14517,6 +19356,9 @@ inline void FakeQuantOptions::UnPackTo(FakeQuantOptionsT *_o, const flatbuffers:
 }
 
 inline flatbuffers::Offset<FakeQuantOptions> FakeQuantOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const FakeQuantOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1557_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1557(mht_1557_v, 19359, "", "./tensorflow/lite/schema/schema_generated.h", "FakeQuantOptions::Pack");
+
   return CreateFakeQuantOptions(_fbb, _o, _rehasher);
 }
 
@@ -14537,12 +19379,18 @@ inline flatbuffers::Offset<FakeQuantOptions> CreateFakeQuantOptions(flatbuffers:
 }
 
 inline PackOptionsT *PackOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1558_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1558(mht_1558_v, 19382, "", "./tensorflow/lite/schema/schema_generated.h", "PackOptions::UnPack");
+
   auto _o = new PackOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void PackOptions::UnPackTo(PackOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1559_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1559(mht_1559_v, 19391, "", "./tensorflow/lite/schema/schema_generated.h", "PackOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = values_count(); _o->values_count = _e; }
@@ -14550,6 +19398,9 @@ inline void PackOptions::UnPackTo(PackOptionsT *_o, const flatbuffers::resolver_
 }
 
 inline flatbuffers::Offset<PackOptions> PackOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const PackOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1560_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1560(mht_1560_v, 19401, "", "./tensorflow/lite/schema/schema_generated.h", "PackOptions::Pack");
+
   return CreatePackOptions(_fbb, _o, _rehasher);
 }
 
@@ -14566,17 +19417,26 @@ inline flatbuffers::Offset<PackOptions> CreatePackOptions(flatbuffers::FlatBuffe
 }
 
 inline LogicalOrOptionsT *LogicalOrOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1561_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1561(mht_1561_v, 19420, "", "./tensorflow/lite/schema/schema_generated.h", "LogicalOrOptions::UnPack");
+
   auto _o = new LogicalOrOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void LogicalOrOptions::UnPackTo(LogicalOrOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1562_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1562(mht_1562_v, 19429, "", "./tensorflow/lite/schema/schema_generated.h", "LogicalOrOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<LogicalOrOptions> LogicalOrOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const LogicalOrOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1563_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1563(mht_1563_v, 19437, "", "./tensorflow/lite/schema/schema_generated.h", "LogicalOrOptions::Pack");
+
   return CreateLogicalOrOptions(_fbb, _o, _rehasher);
 }
 
@@ -14589,18 +19449,27 @@ inline flatbuffers::Offset<LogicalOrOptions> CreateLogicalOrOptions(flatbuffers:
 }
 
 inline OneHotOptionsT *OneHotOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1564_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1564(mht_1564_v, 19452, "", "./tensorflow/lite/schema/schema_generated.h", "OneHotOptions::UnPack");
+
   auto _o = new OneHotOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void OneHotOptions::UnPackTo(OneHotOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1565_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1565(mht_1565_v, 19461, "", "./tensorflow/lite/schema/schema_generated.h", "OneHotOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = axis(); _o->axis = _e; }
 }
 
 inline flatbuffers::Offset<OneHotOptions> OneHotOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const OneHotOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1566_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1566(mht_1566_v, 19470, "", "./tensorflow/lite/schema/schema_generated.h", "OneHotOptions::Pack");
+
   return CreateOneHotOptions(_fbb, _o, _rehasher);
 }
 
@@ -14615,17 +19484,26 @@ inline flatbuffers::Offset<OneHotOptions> CreateOneHotOptions(flatbuffers::FlatB
 }
 
 inline AbsOptionsT *AbsOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1567_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1567(mht_1567_v, 19487, "", "./tensorflow/lite/schema/schema_generated.h", "AbsOptions::UnPack");
+
   auto _o = new AbsOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void AbsOptions::UnPackTo(AbsOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1568_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1568(mht_1568_v, 19496, "", "./tensorflow/lite/schema/schema_generated.h", "AbsOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<AbsOptions> AbsOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const AbsOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1569_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1569(mht_1569_v, 19504, "", "./tensorflow/lite/schema/schema_generated.h", "AbsOptions::Pack");
+
   return CreateAbsOptions(_fbb, _o, _rehasher);
 }
 
@@ -14638,17 +19516,26 @@ inline flatbuffers::Offset<AbsOptions> CreateAbsOptions(flatbuffers::FlatBufferB
 }
 
 inline HardSwishOptionsT *HardSwishOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1570_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1570(mht_1570_v, 19519, "", "./tensorflow/lite/schema/schema_generated.h", "HardSwishOptions::UnPack");
+
   auto _o = new HardSwishOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void HardSwishOptions::UnPackTo(HardSwishOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1571_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1571(mht_1571_v, 19528, "", "./tensorflow/lite/schema/schema_generated.h", "HardSwishOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<HardSwishOptions> HardSwishOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const HardSwishOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1572_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1572(mht_1572_v, 19536, "", "./tensorflow/lite/schema/schema_generated.h", "HardSwishOptions::Pack");
+
   return CreateHardSwishOptions(_fbb, _o, _rehasher);
 }
 
@@ -14661,17 +19548,26 @@ inline flatbuffers::Offset<HardSwishOptions> CreateHardSwishOptions(flatbuffers:
 }
 
 inline LogicalAndOptionsT *LogicalAndOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1573_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1573(mht_1573_v, 19551, "", "./tensorflow/lite/schema/schema_generated.h", "LogicalAndOptions::UnPack");
+
   auto _o = new LogicalAndOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void LogicalAndOptions::UnPackTo(LogicalAndOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1574_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1574(mht_1574_v, 19560, "", "./tensorflow/lite/schema/schema_generated.h", "LogicalAndOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<LogicalAndOptions> LogicalAndOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const LogicalAndOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1575_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1575(mht_1575_v, 19568, "", "./tensorflow/lite/schema/schema_generated.h", "LogicalAndOptions::Pack");
+
   return CreateLogicalAndOptions(_fbb, _o, _rehasher);
 }
 
@@ -14684,17 +19580,26 @@ inline flatbuffers::Offset<LogicalAndOptions> CreateLogicalAndOptions(flatbuffer
 }
 
 inline LogicalNotOptionsT *LogicalNotOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1576_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1576(mht_1576_v, 19583, "", "./tensorflow/lite/schema/schema_generated.h", "LogicalNotOptions::UnPack");
+
   auto _o = new LogicalNotOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void LogicalNotOptions::UnPackTo(LogicalNotOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1577_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1577(mht_1577_v, 19592, "", "./tensorflow/lite/schema/schema_generated.h", "LogicalNotOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<LogicalNotOptions> LogicalNotOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const LogicalNotOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1578_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1578(mht_1578_v, 19600, "", "./tensorflow/lite/schema/schema_generated.h", "LogicalNotOptions::Pack");
+
   return CreateLogicalNotOptions(_fbb, _o, _rehasher);
 }
 
@@ -14707,12 +19612,18 @@ inline flatbuffers::Offset<LogicalNotOptions> CreateLogicalNotOptions(flatbuffer
 }
 
 inline UnpackOptionsT *UnpackOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1579_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1579(mht_1579_v, 19615, "", "./tensorflow/lite/schema/schema_generated.h", "UnpackOptions::UnPack");
+
   auto _o = new UnpackOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void UnpackOptions::UnPackTo(UnpackOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1580_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1580(mht_1580_v, 19624, "", "./tensorflow/lite/schema/schema_generated.h", "UnpackOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = num(); _o->num = _e; }
@@ -14720,6 +19631,9 @@ inline void UnpackOptions::UnPackTo(UnpackOptionsT *_o, const flatbuffers::resol
 }
 
 inline flatbuffers::Offset<UnpackOptions> UnpackOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const UnpackOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1581_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1581(mht_1581_v, 19634, "", "./tensorflow/lite/schema/schema_generated.h", "UnpackOptions::Pack");
+
   return CreateUnpackOptions(_fbb, _o, _rehasher);
 }
 
@@ -14736,17 +19650,26 @@ inline flatbuffers::Offset<UnpackOptions> CreateUnpackOptions(flatbuffers::FlatB
 }
 
 inline FloorDivOptionsT *FloorDivOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1582_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1582(mht_1582_v, 19653, "", "./tensorflow/lite/schema/schema_generated.h", "FloorDivOptions::UnPack");
+
   auto _o = new FloorDivOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void FloorDivOptions::UnPackTo(FloorDivOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1583_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1583(mht_1583_v, 19662, "", "./tensorflow/lite/schema/schema_generated.h", "FloorDivOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<FloorDivOptions> FloorDivOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const FloorDivOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1584_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1584(mht_1584_v, 19670, "", "./tensorflow/lite/schema/schema_generated.h", "FloorDivOptions::Pack");
+
   return CreateFloorDivOptions(_fbb, _o, _rehasher);
 }
 
@@ -14759,17 +19682,26 @@ inline flatbuffers::Offset<FloorDivOptions> CreateFloorDivOptions(flatbuffers::F
 }
 
 inline SquareOptionsT *SquareOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1585_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1585(mht_1585_v, 19685, "", "./tensorflow/lite/schema/schema_generated.h", "SquareOptions::UnPack");
+
   auto _o = new SquareOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void SquareOptions::UnPackTo(SquareOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1586_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1586(mht_1586_v, 19694, "", "./tensorflow/lite/schema/schema_generated.h", "SquareOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<SquareOptions> SquareOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const SquareOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1587_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1587(mht_1587_v, 19702, "", "./tensorflow/lite/schema/schema_generated.h", "SquareOptions::Pack");
+
   return CreateSquareOptions(_fbb, _o, _rehasher);
 }
 
@@ -14782,17 +19714,26 @@ inline flatbuffers::Offset<SquareOptions> CreateSquareOptions(flatbuffers::FlatB
 }
 
 inline ZerosLikeOptionsT *ZerosLikeOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1588_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1588(mht_1588_v, 19717, "", "./tensorflow/lite/schema/schema_generated.h", "ZerosLikeOptions::UnPack");
+
   auto _o = new ZerosLikeOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void ZerosLikeOptions::UnPackTo(ZerosLikeOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1589_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1589(mht_1589_v, 19726, "", "./tensorflow/lite/schema/schema_generated.h", "ZerosLikeOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<ZerosLikeOptions> ZerosLikeOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ZerosLikeOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1590_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1590(mht_1590_v, 19734, "", "./tensorflow/lite/schema/schema_generated.h", "ZerosLikeOptions::Pack");
+
   return CreateZerosLikeOptions(_fbb, _o, _rehasher);
 }
 
@@ -14805,17 +19746,26 @@ inline flatbuffers::Offset<ZerosLikeOptions> CreateZerosLikeOptions(flatbuffers:
 }
 
 inline FillOptionsT *FillOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1591_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1591(mht_1591_v, 19749, "", "./tensorflow/lite/schema/schema_generated.h", "FillOptions::UnPack");
+
   auto _o = new FillOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void FillOptions::UnPackTo(FillOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1592_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1592(mht_1592_v, 19758, "", "./tensorflow/lite/schema/schema_generated.h", "FillOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<FillOptions> FillOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const FillOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1593_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1593(mht_1593_v, 19766, "", "./tensorflow/lite/schema/schema_generated.h", "FillOptions::Pack");
+
   return CreateFillOptions(_fbb, _o, _rehasher);
 }
 
@@ -14828,17 +19778,26 @@ inline flatbuffers::Offset<FillOptions> CreateFillOptions(flatbuffers::FlatBuffe
 }
 
 inline FloorModOptionsT *FloorModOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1594_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1594(mht_1594_v, 19781, "", "./tensorflow/lite/schema/schema_generated.h", "FloorModOptions::UnPack");
+
   auto _o = new FloorModOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void FloorModOptions::UnPackTo(FloorModOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1595_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1595(mht_1595_v, 19790, "", "./tensorflow/lite/schema/schema_generated.h", "FloorModOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<FloorModOptions> FloorModOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const FloorModOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1596_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1596(mht_1596_v, 19798, "", "./tensorflow/lite/schema/schema_generated.h", "FloorModOptions::Pack");
+
   return CreateFloorModOptions(_fbb, _o, _rehasher);
 }
 
@@ -14851,17 +19810,26 @@ inline flatbuffers::Offset<FloorModOptions> CreateFloorModOptions(flatbuffers::F
 }
 
 inline RangeOptionsT *RangeOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1597_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1597(mht_1597_v, 19813, "", "./tensorflow/lite/schema/schema_generated.h", "RangeOptions::UnPack");
+
   auto _o = new RangeOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void RangeOptions::UnPackTo(RangeOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1598_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1598(mht_1598_v, 19822, "", "./tensorflow/lite/schema/schema_generated.h", "RangeOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<RangeOptions> RangeOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const RangeOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1599_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1599(mht_1599_v, 19830, "", "./tensorflow/lite/schema/schema_generated.h", "RangeOptions::Pack");
+
   return CreateRangeOptions(_fbb, _o, _rehasher);
 }
 
@@ -14874,18 +19842,27 @@ inline flatbuffers::Offset<RangeOptions> CreateRangeOptions(flatbuffers::FlatBuf
 }
 
 inline LeakyReluOptionsT *LeakyReluOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1600_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1600(mht_1600_v, 19845, "", "./tensorflow/lite/schema/schema_generated.h", "LeakyReluOptions::UnPack");
+
   auto _o = new LeakyReluOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void LeakyReluOptions::UnPackTo(LeakyReluOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1601_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1601(mht_1601_v, 19854, "", "./tensorflow/lite/schema/schema_generated.h", "LeakyReluOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = alpha(); _o->alpha = _e; }
 }
 
 inline flatbuffers::Offset<LeakyReluOptions> LeakyReluOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const LeakyReluOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1602_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1602(mht_1602_v, 19863, "", "./tensorflow/lite/schema/schema_generated.h", "LeakyReluOptions::Pack");
+
   return CreateLeakyReluOptions(_fbb, _o, _rehasher);
 }
 
@@ -14900,17 +19877,26 @@ inline flatbuffers::Offset<LeakyReluOptions> CreateLeakyReluOptions(flatbuffers:
 }
 
 inline SquaredDifferenceOptionsT *SquaredDifferenceOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1603_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1603(mht_1603_v, 19880, "", "./tensorflow/lite/schema/schema_generated.h", "SquaredDifferenceOptions::UnPack");
+
   auto _o = new SquaredDifferenceOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void SquaredDifferenceOptions::UnPackTo(SquaredDifferenceOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1604_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1604(mht_1604_v, 19889, "", "./tensorflow/lite/schema/schema_generated.h", "SquaredDifferenceOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<SquaredDifferenceOptions> SquaredDifferenceOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const SquaredDifferenceOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1605_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1605(mht_1605_v, 19897, "", "./tensorflow/lite/schema/schema_generated.h", "SquaredDifferenceOptions::Pack");
+
   return CreateSquaredDifferenceOptions(_fbb, _o, _rehasher);
 }
 
@@ -14923,18 +19909,27 @@ inline flatbuffers::Offset<SquaredDifferenceOptions> CreateSquaredDifferenceOpti
 }
 
 inline MirrorPadOptionsT *MirrorPadOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1606_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1606(mht_1606_v, 19912, "", "./tensorflow/lite/schema/schema_generated.h", "MirrorPadOptions::UnPack");
+
   auto _o = new MirrorPadOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void MirrorPadOptions::UnPackTo(MirrorPadOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1607_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1607(mht_1607_v, 19921, "", "./tensorflow/lite/schema/schema_generated.h", "MirrorPadOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = mode(); _o->mode = _e; }
 }
 
 inline flatbuffers::Offset<MirrorPadOptions> MirrorPadOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const MirrorPadOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1608_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1608(mht_1608_v, 19930, "", "./tensorflow/lite/schema/schema_generated.h", "MirrorPadOptions::Pack");
+
   return CreateMirrorPadOptions(_fbb, _o, _rehasher);
 }
 
@@ -14949,18 +19944,27 @@ inline flatbuffers::Offset<MirrorPadOptions> CreateMirrorPadOptions(flatbuffers:
 }
 
 inline UniqueOptionsT *UniqueOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1609_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1609(mht_1609_v, 19947, "", "./tensorflow/lite/schema/schema_generated.h", "UniqueOptions::UnPack");
+
   auto _o = new UniqueOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void UniqueOptions::UnPackTo(UniqueOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1610_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1610(mht_1610_v, 19956, "", "./tensorflow/lite/schema/schema_generated.h", "UniqueOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = idx_out_type(); _o->idx_out_type = _e; }
 }
 
 inline flatbuffers::Offset<UniqueOptions> UniqueOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const UniqueOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1611_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1611(mht_1611_v, 19965, "", "./tensorflow/lite/schema/schema_generated.h", "UniqueOptions::Pack");
+
   return CreateUniqueOptions(_fbb, _o, _rehasher);
 }
 
@@ -14975,17 +19979,26 @@ inline flatbuffers::Offset<UniqueOptions> CreateUniqueOptions(flatbuffers::FlatB
 }
 
 inline ReverseV2OptionsT *ReverseV2Options::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1612_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1612(mht_1612_v, 19982, "", "./tensorflow/lite/schema/schema_generated.h", "ReverseV2Options::UnPack");
+
   auto _o = new ReverseV2OptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void ReverseV2Options::UnPackTo(ReverseV2OptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1613_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1613(mht_1613_v, 19991, "", "./tensorflow/lite/schema/schema_generated.h", "ReverseV2Options::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<ReverseV2Options> ReverseV2Options::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ReverseV2OptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1614_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1614(mht_1614_v, 19999, "", "./tensorflow/lite/schema/schema_generated.h", "ReverseV2Options::Pack");
+
   return CreateReverseV2Options(_fbb, _o, _rehasher);
 }
 
@@ -14998,17 +20011,26 @@ inline flatbuffers::Offset<ReverseV2Options> CreateReverseV2Options(flatbuffers:
 }
 
 inline AddNOptionsT *AddNOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1615_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1615(mht_1615_v, 20014, "", "./tensorflow/lite/schema/schema_generated.h", "AddNOptions::UnPack");
+
   auto _o = new AddNOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void AddNOptions::UnPackTo(AddNOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1616_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1616(mht_1616_v, 20023, "", "./tensorflow/lite/schema/schema_generated.h", "AddNOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<AddNOptions> AddNOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const AddNOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1617_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1617(mht_1617_v, 20031, "", "./tensorflow/lite/schema/schema_generated.h", "AddNOptions::Pack");
+
   return CreateAddNOptions(_fbb, _o, _rehasher);
 }
 
@@ -15021,17 +20043,26 @@ inline flatbuffers::Offset<AddNOptions> CreateAddNOptions(flatbuffers::FlatBuffe
 }
 
 inline GatherNdOptionsT *GatherNdOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1618_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1618(mht_1618_v, 20046, "", "./tensorflow/lite/schema/schema_generated.h", "GatherNdOptions::UnPack");
+
   auto _o = new GatherNdOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void GatherNdOptions::UnPackTo(GatherNdOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1619_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1619(mht_1619_v, 20055, "", "./tensorflow/lite/schema/schema_generated.h", "GatherNdOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<GatherNdOptions> GatherNdOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const GatherNdOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1620_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1620(mht_1620_v, 20063, "", "./tensorflow/lite/schema/schema_generated.h", "GatherNdOptions::Pack");
+
   return CreateGatherNdOptions(_fbb, _o, _rehasher);
 }
 
@@ -15044,17 +20075,26 @@ inline flatbuffers::Offset<GatherNdOptions> CreateGatherNdOptions(flatbuffers::F
 }
 
 inline WhereOptionsT *WhereOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1621_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1621(mht_1621_v, 20078, "", "./tensorflow/lite/schema/schema_generated.h", "WhereOptions::UnPack");
+
   auto _o = new WhereOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void WhereOptions::UnPackTo(WhereOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1622_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1622(mht_1622_v, 20087, "", "./tensorflow/lite/schema/schema_generated.h", "WhereOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<WhereOptions> WhereOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const WhereOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1623_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1623(mht_1623_v, 20095, "", "./tensorflow/lite/schema/schema_generated.h", "WhereOptions::Pack");
+
   return CreateWhereOptions(_fbb, _o, _rehasher);
 }
 
@@ -15067,12 +20107,18 @@ inline flatbuffers::Offset<WhereOptions> CreateWhereOptions(flatbuffers::FlatBuf
 }
 
 inline ReverseSequenceOptionsT *ReverseSequenceOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1624_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1624(mht_1624_v, 20110, "", "./tensorflow/lite/schema/schema_generated.h", "ReverseSequenceOptions::UnPack");
+
   auto _o = new ReverseSequenceOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void ReverseSequenceOptions::UnPackTo(ReverseSequenceOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1625_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1625(mht_1625_v, 20119, "", "./tensorflow/lite/schema/schema_generated.h", "ReverseSequenceOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = seq_dim(); _o->seq_dim = _e; }
@@ -15080,6 +20126,9 @@ inline void ReverseSequenceOptions::UnPackTo(ReverseSequenceOptionsT *_o, const 
 }
 
 inline flatbuffers::Offset<ReverseSequenceOptions> ReverseSequenceOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ReverseSequenceOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1626_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1626(mht_1626_v, 20129, "", "./tensorflow/lite/schema/schema_generated.h", "ReverseSequenceOptions::Pack");
+
   return CreateReverseSequenceOptions(_fbb, _o, _rehasher);
 }
 
@@ -15096,17 +20145,26 @@ inline flatbuffers::Offset<ReverseSequenceOptions> CreateReverseSequenceOptions(
 }
 
 inline MatrixDiagOptionsT *MatrixDiagOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1627_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1627(mht_1627_v, 20148, "", "./tensorflow/lite/schema/schema_generated.h", "MatrixDiagOptions::UnPack");
+
   auto _o = new MatrixDiagOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void MatrixDiagOptions::UnPackTo(MatrixDiagOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1628_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1628(mht_1628_v, 20157, "", "./tensorflow/lite/schema/schema_generated.h", "MatrixDiagOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<MatrixDiagOptions> MatrixDiagOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const MatrixDiagOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1629_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1629(mht_1629_v, 20165, "", "./tensorflow/lite/schema/schema_generated.h", "MatrixDiagOptions::Pack");
+
   return CreateMatrixDiagOptions(_fbb, _o, _rehasher);
 }
 
@@ -15119,17 +20177,26 @@ inline flatbuffers::Offset<MatrixDiagOptions> CreateMatrixDiagOptions(flatbuffer
 }
 
 inline QuantizeOptionsT *QuantizeOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1630_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1630(mht_1630_v, 20180, "", "./tensorflow/lite/schema/schema_generated.h", "QuantizeOptions::UnPack");
+
   auto _o = new QuantizeOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void QuantizeOptions::UnPackTo(QuantizeOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1631_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1631(mht_1631_v, 20189, "", "./tensorflow/lite/schema/schema_generated.h", "QuantizeOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<QuantizeOptions> QuantizeOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const QuantizeOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1632_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1632(mht_1632_v, 20197, "", "./tensorflow/lite/schema/schema_generated.h", "QuantizeOptions::Pack");
+
   return CreateQuantizeOptions(_fbb, _o, _rehasher);
 }
 
@@ -15142,17 +20209,26 @@ inline flatbuffers::Offset<QuantizeOptions> CreateQuantizeOptions(flatbuffers::F
 }
 
 inline MatrixSetDiagOptionsT *MatrixSetDiagOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1633_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1633(mht_1633_v, 20212, "", "./tensorflow/lite/schema/schema_generated.h", "MatrixSetDiagOptions::UnPack");
+
   auto _o = new MatrixSetDiagOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void MatrixSetDiagOptions::UnPackTo(MatrixSetDiagOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1634_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1634(mht_1634_v, 20221, "", "./tensorflow/lite/schema/schema_generated.h", "MatrixSetDiagOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<MatrixSetDiagOptions> MatrixSetDiagOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const MatrixSetDiagOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1635_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1635(mht_1635_v, 20229, "", "./tensorflow/lite/schema/schema_generated.h", "MatrixSetDiagOptions::Pack");
+
   return CreateMatrixSetDiagOptions(_fbb, _o, _rehasher);
 }
 
@@ -15165,12 +20241,18 @@ inline flatbuffers::Offset<MatrixSetDiagOptions> CreateMatrixSetDiagOptions(flat
 }
 
 inline IfOptionsT *IfOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1636_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1636(mht_1636_v, 20244, "", "./tensorflow/lite/schema/schema_generated.h", "IfOptions::UnPack");
+
   auto _o = new IfOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void IfOptions::UnPackTo(IfOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1637_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1637(mht_1637_v, 20253, "", "./tensorflow/lite/schema/schema_generated.h", "IfOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = then_subgraph_index(); _o->then_subgraph_index = _e; }
@@ -15178,6 +20260,9 @@ inline void IfOptions::UnPackTo(IfOptionsT *_o, const flatbuffers::resolver_func
 }
 
 inline flatbuffers::Offset<IfOptions> IfOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const IfOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1638_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1638(mht_1638_v, 20263, "", "./tensorflow/lite/schema/schema_generated.h", "IfOptions::Pack");
+
   return CreateIfOptions(_fbb, _o, _rehasher);
 }
 
@@ -15194,18 +20279,27 @@ inline flatbuffers::Offset<IfOptions> CreateIfOptions(flatbuffers::FlatBufferBui
 }
 
 inline CallOnceOptionsT *CallOnceOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1639_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1639(mht_1639_v, 20282, "", "./tensorflow/lite/schema/schema_generated.h", "CallOnceOptions::UnPack");
+
   auto _o = new CallOnceOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void CallOnceOptions::UnPackTo(CallOnceOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1640_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1640(mht_1640_v, 20291, "", "./tensorflow/lite/schema/schema_generated.h", "CallOnceOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = init_subgraph_index(); _o->init_subgraph_index = _e; }
 }
 
 inline flatbuffers::Offset<CallOnceOptions> CallOnceOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const CallOnceOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1641_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1641(mht_1641_v, 20300, "", "./tensorflow/lite/schema/schema_generated.h", "CallOnceOptions::Pack");
+
   return CreateCallOnceOptions(_fbb, _o, _rehasher);
 }
 
@@ -15220,12 +20314,18 @@ inline flatbuffers::Offset<CallOnceOptions> CreateCallOnceOptions(flatbuffers::F
 }
 
 inline WhileOptionsT *WhileOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1642_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1642(mht_1642_v, 20317, "", "./tensorflow/lite/schema/schema_generated.h", "WhileOptions::UnPack");
+
   auto _o = new WhileOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void WhileOptions::UnPackTo(WhileOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1643_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1643(mht_1643_v, 20326, "", "./tensorflow/lite/schema/schema_generated.h", "WhileOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = cond_subgraph_index(); _o->cond_subgraph_index = _e; }
@@ -15233,6 +20333,9 @@ inline void WhileOptions::UnPackTo(WhileOptionsT *_o, const flatbuffers::resolve
 }
 
 inline flatbuffers::Offset<WhileOptions> WhileOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const WhileOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1644_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1644(mht_1644_v, 20336, "", "./tensorflow/lite/schema/schema_generated.h", "WhileOptions::Pack");
+
   return CreateWhileOptions(_fbb, _o, _rehasher);
 }
 
@@ -15249,17 +20352,26 @@ inline flatbuffers::Offset<WhileOptions> CreateWhileOptions(flatbuffers::FlatBuf
 }
 
 inline NonMaxSuppressionV4OptionsT *NonMaxSuppressionV4Options::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1645_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1645(mht_1645_v, 20355, "", "./tensorflow/lite/schema/schema_generated.h", "NonMaxSuppressionV4Options::UnPack");
+
   auto _o = new NonMaxSuppressionV4OptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void NonMaxSuppressionV4Options::UnPackTo(NonMaxSuppressionV4OptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1646_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1646(mht_1646_v, 20364, "", "./tensorflow/lite/schema/schema_generated.h", "NonMaxSuppressionV4Options::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<NonMaxSuppressionV4Options> NonMaxSuppressionV4Options::Pack(flatbuffers::FlatBufferBuilder &_fbb, const NonMaxSuppressionV4OptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1647_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1647(mht_1647_v, 20372, "", "./tensorflow/lite/schema/schema_generated.h", "NonMaxSuppressionV4Options::Pack");
+
   return CreateNonMaxSuppressionV4Options(_fbb, _o, _rehasher);
 }
 
@@ -15272,17 +20384,26 @@ inline flatbuffers::Offset<NonMaxSuppressionV4Options> CreateNonMaxSuppressionV4
 }
 
 inline NonMaxSuppressionV5OptionsT *NonMaxSuppressionV5Options::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1648_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1648(mht_1648_v, 20387, "", "./tensorflow/lite/schema/schema_generated.h", "NonMaxSuppressionV5Options::UnPack");
+
   auto _o = new NonMaxSuppressionV5OptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void NonMaxSuppressionV5Options::UnPackTo(NonMaxSuppressionV5OptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1649_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1649(mht_1649_v, 20396, "", "./tensorflow/lite/schema/schema_generated.h", "NonMaxSuppressionV5Options::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<NonMaxSuppressionV5Options> NonMaxSuppressionV5Options::Pack(flatbuffers::FlatBufferBuilder &_fbb, const NonMaxSuppressionV5OptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1650_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1650(mht_1650_v, 20404, "", "./tensorflow/lite/schema/schema_generated.h", "NonMaxSuppressionV5Options::Pack");
+
   return CreateNonMaxSuppressionV5Options(_fbb, _o, _rehasher);
 }
 
@@ -15295,17 +20416,26 @@ inline flatbuffers::Offset<NonMaxSuppressionV5Options> CreateNonMaxSuppressionV5
 }
 
 inline ScatterNdOptionsT *ScatterNdOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1651_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1651(mht_1651_v, 20419, "", "./tensorflow/lite/schema/schema_generated.h", "ScatterNdOptions::UnPack");
+
   auto _o = new ScatterNdOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void ScatterNdOptions::UnPackTo(ScatterNdOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1652_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1652(mht_1652_v, 20428, "", "./tensorflow/lite/schema/schema_generated.h", "ScatterNdOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<ScatterNdOptions> ScatterNdOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ScatterNdOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1653_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1653(mht_1653_v, 20436, "", "./tensorflow/lite/schema/schema_generated.h", "ScatterNdOptions::Pack");
+
   return CreateScatterNdOptions(_fbb, _o, _rehasher);
 }
 
@@ -15318,17 +20448,26 @@ inline flatbuffers::Offset<ScatterNdOptions> CreateScatterNdOptions(flatbuffers:
 }
 
 inline SelectV2OptionsT *SelectV2Options::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1654_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1654(mht_1654_v, 20451, "", "./tensorflow/lite/schema/schema_generated.h", "SelectV2Options::UnPack");
+
   auto _o = new SelectV2OptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void SelectV2Options::UnPackTo(SelectV2OptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1655_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1655(mht_1655_v, 20460, "", "./tensorflow/lite/schema/schema_generated.h", "SelectV2Options::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<SelectV2Options> SelectV2Options::Pack(flatbuffers::FlatBufferBuilder &_fbb, const SelectV2OptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1656_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1656(mht_1656_v, 20468, "", "./tensorflow/lite/schema/schema_generated.h", "SelectV2Options::Pack");
+
   return CreateSelectV2Options(_fbb, _o, _rehasher);
 }
 
@@ -15341,17 +20480,26 @@ inline flatbuffers::Offset<SelectV2Options> CreateSelectV2Options(flatbuffers::F
 }
 
 inline DensifyOptionsT *DensifyOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1657_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1657(mht_1657_v, 20483, "", "./tensorflow/lite/schema/schema_generated.h", "DensifyOptions::UnPack");
+
   auto _o = new DensifyOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void DensifyOptions::UnPackTo(DensifyOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1658_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1658(mht_1658_v, 20492, "", "./tensorflow/lite/schema/schema_generated.h", "DensifyOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<DensifyOptions> DensifyOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const DensifyOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1659_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1659(mht_1659_v, 20500, "", "./tensorflow/lite/schema/schema_generated.h", "DensifyOptions::Pack");
+
   return CreateDensifyOptions(_fbb, _o, _rehasher);
 }
 
@@ -15364,17 +20512,26 @@ inline flatbuffers::Offset<DensifyOptions> CreateDensifyOptions(flatbuffers::Fla
 }
 
 inline SegmentSumOptionsT *SegmentSumOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1660_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1660(mht_1660_v, 20515, "", "./tensorflow/lite/schema/schema_generated.h", "SegmentSumOptions::UnPack");
+
   auto _o = new SegmentSumOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void SegmentSumOptions::UnPackTo(SegmentSumOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1661_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1661(mht_1661_v, 20524, "", "./tensorflow/lite/schema/schema_generated.h", "SegmentSumOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<SegmentSumOptions> SegmentSumOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const SegmentSumOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1662_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1662(mht_1662_v, 20532, "", "./tensorflow/lite/schema/schema_generated.h", "SegmentSumOptions::Pack");
+
   return CreateSegmentSumOptions(_fbb, _o, _rehasher);
 }
 
@@ -15387,12 +20544,18 @@ inline flatbuffers::Offset<SegmentSumOptions> CreateSegmentSumOptions(flatbuffer
 }
 
 inline BatchMatMulOptionsT *BatchMatMulOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1663_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1663(mht_1663_v, 20547, "", "./tensorflow/lite/schema/schema_generated.h", "BatchMatMulOptions::UnPack");
+
   auto _o = new BatchMatMulOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void BatchMatMulOptions::UnPackTo(BatchMatMulOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1664_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1664(mht_1664_v, 20556, "", "./tensorflow/lite/schema/schema_generated.h", "BatchMatMulOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = adj_x(); _o->adj_x = _e; }
@@ -15401,6 +20564,9 @@ inline void BatchMatMulOptions::UnPackTo(BatchMatMulOptionsT *_o, const flatbuff
 }
 
 inline flatbuffers::Offset<BatchMatMulOptions> BatchMatMulOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const BatchMatMulOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1665_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1665(mht_1665_v, 20567, "", "./tensorflow/lite/schema/schema_generated.h", "BatchMatMulOptions::Pack");
+
   return CreateBatchMatMulOptions(_fbb, _o, _rehasher);
 }
 
@@ -15419,12 +20585,18 @@ inline flatbuffers::Offset<BatchMatMulOptions> CreateBatchMatMulOptions(flatbuff
 }
 
 inline CumsumOptionsT *CumsumOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1666_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1666(mht_1666_v, 20588, "", "./tensorflow/lite/schema/schema_generated.h", "CumsumOptions::UnPack");
+
   auto _o = new CumsumOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void CumsumOptions::UnPackTo(CumsumOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1667_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1667(mht_1667_v, 20597, "", "./tensorflow/lite/schema/schema_generated.h", "CumsumOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = exclusive(); _o->exclusive = _e; }
@@ -15432,6 +20604,9 @@ inline void CumsumOptions::UnPackTo(CumsumOptionsT *_o, const flatbuffers::resol
 }
 
 inline flatbuffers::Offset<CumsumOptions> CumsumOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const CumsumOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1668_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1668(mht_1668_v, 20607, "", "./tensorflow/lite/schema/schema_generated.h", "CumsumOptions::Pack");
+
   return CreateCumsumOptions(_fbb, _o, _rehasher);
 }
 
@@ -15448,17 +20623,26 @@ inline flatbuffers::Offset<CumsumOptions> CreateCumsumOptions(flatbuffers::FlatB
 }
 
 inline BroadcastToOptionsT *BroadcastToOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1669_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1669(mht_1669_v, 20626, "", "./tensorflow/lite/schema/schema_generated.h", "BroadcastToOptions::UnPack");
+
   auto _o = new BroadcastToOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void BroadcastToOptions::UnPackTo(BroadcastToOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1670_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1670(mht_1670_v, 20635, "", "./tensorflow/lite/schema/schema_generated.h", "BroadcastToOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<BroadcastToOptions> BroadcastToOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const BroadcastToOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1671_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1671(mht_1671_v, 20643, "", "./tensorflow/lite/schema/schema_generated.h", "BroadcastToOptions::Pack");
+
   return CreateBroadcastToOptions(_fbb, _o, _rehasher);
 }
 
@@ -15471,17 +20655,26 @@ inline flatbuffers::Offset<BroadcastToOptions> CreateBroadcastToOptions(flatbuff
 }
 
 inline Rfft2dOptionsT *Rfft2dOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1672_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1672(mht_1672_v, 20658, "", "./tensorflow/lite/schema/schema_generated.h", "Rfft2dOptions::UnPack");
+
   auto _o = new Rfft2dOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void Rfft2dOptions::UnPackTo(Rfft2dOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1673_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1673(mht_1673_v, 20667, "", "./tensorflow/lite/schema/schema_generated.h", "Rfft2dOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<Rfft2dOptions> Rfft2dOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const Rfft2dOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1674_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1674(mht_1674_v, 20675, "", "./tensorflow/lite/schema/schema_generated.h", "Rfft2dOptions::Pack");
+
   return CreateRfft2dOptions(_fbb, _o, _rehasher);
 }
 
@@ -15494,12 +20687,18 @@ inline flatbuffers::Offset<Rfft2dOptions> CreateRfft2dOptions(flatbuffers::FlatB
 }
 
 inline HashtableOptionsT *HashtableOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1675_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1675(mht_1675_v, 20690, "", "./tensorflow/lite/schema/schema_generated.h", "HashtableOptions::UnPack");
+
   auto _o = new HashtableOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void HashtableOptions::UnPackTo(HashtableOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1676_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1676(mht_1676_v, 20699, "", "./tensorflow/lite/schema/schema_generated.h", "HashtableOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = table_id(); _o->table_id = _e; }
@@ -15508,6 +20707,9 @@ inline void HashtableOptions::UnPackTo(HashtableOptionsT *_o, const flatbuffers:
 }
 
 inline flatbuffers::Offset<HashtableOptions> HashtableOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const HashtableOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1677_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1677(mht_1677_v, 20710, "", "./tensorflow/lite/schema/schema_generated.h", "HashtableOptions::Pack");
+
   return CreateHashtableOptions(_fbb, _o, _rehasher);
 }
 
@@ -15526,17 +20728,26 @@ inline flatbuffers::Offset<HashtableOptions> CreateHashtableOptions(flatbuffers:
 }
 
 inline HashtableFindOptionsT *HashtableFindOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1678_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1678(mht_1678_v, 20731, "", "./tensorflow/lite/schema/schema_generated.h", "HashtableFindOptions::UnPack");
+
   auto _o = new HashtableFindOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void HashtableFindOptions::UnPackTo(HashtableFindOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1679_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1679(mht_1679_v, 20740, "", "./tensorflow/lite/schema/schema_generated.h", "HashtableFindOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<HashtableFindOptions> HashtableFindOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const HashtableFindOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1680_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1680(mht_1680_v, 20748, "", "./tensorflow/lite/schema/schema_generated.h", "HashtableFindOptions::Pack");
+
   return CreateHashtableFindOptions(_fbb, _o, _rehasher);
 }
 
@@ -15549,17 +20760,26 @@ inline flatbuffers::Offset<HashtableFindOptions> CreateHashtableFindOptions(flat
 }
 
 inline HashtableImportOptionsT *HashtableImportOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1681_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1681(mht_1681_v, 20763, "", "./tensorflow/lite/schema/schema_generated.h", "HashtableImportOptions::UnPack");
+
   auto _o = new HashtableImportOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void HashtableImportOptions::UnPackTo(HashtableImportOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1682_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1682(mht_1682_v, 20772, "", "./tensorflow/lite/schema/schema_generated.h", "HashtableImportOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<HashtableImportOptions> HashtableImportOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const HashtableImportOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1683_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1683(mht_1683_v, 20780, "", "./tensorflow/lite/schema/schema_generated.h", "HashtableImportOptions::Pack");
+
   return CreateHashtableImportOptions(_fbb, _o, _rehasher);
 }
 
@@ -15572,17 +20792,26 @@ inline flatbuffers::Offset<HashtableImportOptions> CreateHashtableImportOptions(
 }
 
 inline HashtableSizeOptionsT *HashtableSizeOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1684_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1684(mht_1684_v, 20795, "", "./tensorflow/lite/schema/schema_generated.h", "HashtableSizeOptions::UnPack");
+
   auto _o = new HashtableSizeOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void HashtableSizeOptions::UnPackTo(HashtableSizeOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1685_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1685(mht_1685_v, 20804, "", "./tensorflow/lite/schema/schema_generated.h", "HashtableSizeOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<HashtableSizeOptions> HashtableSizeOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const HashtableSizeOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1686_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1686(mht_1686_v, 20812, "", "./tensorflow/lite/schema/schema_generated.h", "HashtableSizeOptions::Pack");
+
   return CreateHashtableSizeOptions(_fbb, _o, _rehasher);
 }
 
@@ -15595,12 +20824,18 @@ inline flatbuffers::Offset<HashtableSizeOptions> CreateHashtableSizeOptions(flat
 }
 
 inline VarHandleOptionsT *VarHandleOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1687_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1687(mht_1687_v, 20827, "", "./tensorflow/lite/schema/schema_generated.h", "VarHandleOptions::UnPack");
+
   auto _o = new VarHandleOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void VarHandleOptions::UnPackTo(VarHandleOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1688_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1688(mht_1688_v, 20836, "", "./tensorflow/lite/schema/schema_generated.h", "VarHandleOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = container(); if (_e) _o->container = _e->str(); }
@@ -15608,6 +20843,9 @@ inline void VarHandleOptions::UnPackTo(VarHandleOptionsT *_o, const flatbuffers:
 }
 
 inline flatbuffers::Offset<VarHandleOptions> VarHandleOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const VarHandleOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1689_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1689(mht_1689_v, 20846, "", "./tensorflow/lite/schema/schema_generated.h", "VarHandleOptions::Pack");
+
   return CreateVarHandleOptions(_fbb, _o, _rehasher);
 }
 
@@ -15624,17 +20862,26 @@ inline flatbuffers::Offset<VarHandleOptions> CreateVarHandleOptions(flatbuffers:
 }
 
 inline ReadVariableOptionsT *ReadVariableOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1690_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1690(mht_1690_v, 20865, "", "./tensorflow/lite/schema/schema_generated.h", "ReadVariableOptions::UnPack");
+
   auto _o = new ReadVariableOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void ReadVariableOptions::UnPackTo(ReadVariableOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1691_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1691(mht_1691_v, 20874, "", "./tensorflow/lite/schema/schema_generated.h", "ReadVariableOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<ReadVariableOptions> ReadVariableOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ReadVariableOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1692_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1692(mht_1692_v, 20882, "", "./tensorflow/lite/schema/schema_generated.h", "ReadVariableOptions::Pack");
+
   return CreateReadVariableOptions(_fbb, _o, _rehasher);
 }
 
@@ -15647,17 +20894,26 @@ inline flatbuffers::Offset<ReadVariableOptions> CreateReadVariableOptions(flatbu
 }
 
 inline AssignVariableOptionsT *AssignVariableOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1693_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1693(mht_1693_v, 20897, "", "./tensorflow/lite/schema/schema_generated.h", "AssignVariableOptions::UnPack");
+
   auto _o = new AssignVariableOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void AssignVariableOptions::UnPackTo(AssignVariableOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1694_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1694(mht_1694_v, 20906, "", "./tensorflow/lite/schema/schema_generated.h", "AssignVariableOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<AssignVariableOptions> AssignVariableOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const AssignVariableOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1695_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1695(mht_1695_v, 20914, "", "./tensorflow/lite/schema/schema_generated.h", "AssignVariableOptions::Pack");
+
   return CreateAssignVariableOptions(_fbb, _o, _rehasher);
 }
 
@@ -15670,12 +20926,18 @@ inline flatbuffers::Offset<AssignVariableOptions> CreateAssignVariableOptions(fl
 }
 
 inline RandomOptionsT *RandomOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1696_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1696(mht_1696_v, 20929, "", "./tensorflow/lite/schema/schema_generated.h", "RandomOptions::UnPack");
+
   auto _o = new RandomOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void RandomOptions::UnPackTo(RandomOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1697_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1697(mht_1697_v, 20938, "", "./tensorflow/lite/schema/schema_generated.h", "RandomOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = seed(); _o->seed = _e; }
@@ -15683,6 +20945,9 @@ inline void RandomOptions::UnPackTo(RandomOptionsT *_o, const flatbuffers::resol
 }
 
 inline flatbuffers::Offset<RandomOptions> RandomOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const RandomOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1698_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1698(mht_1698_v, 20948, "", "./tensorflow/lite/schema/schema_generated.h", "RandomOptions::Pack");
+
   return CreateRandomOptions(_fbb, _o, _rehasher);
 }
 
@@ -15699,18 +20964,27 @@ inline flatbuffers::Offset<RandomOptions> CreateRandomOptions(flatbuffers::FlatB
 }
 
 inline BucketizeOptionsT *BucketizeOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1699_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1699(mht_1699_v, 20967, "", "./tensorflow/lite/schema/schema_generated.h", "BucketizeOptions::UnPack");
+
   auto _o = new BucketizeOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void BucketizeOptions::UnPackTo(BucketizeOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1700_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1700(mht_1700_v, 20976, "", "./tensorflow/lite/schema/schema_generated.h", "BucketizeOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = boundaries(); if (_e) { _o->boundaries.resize(_e->size()); for (flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->boundaries[_i] = _e->Get(_i); } } }
 }
 
 inline flatbuffers::Offset<BucketizeOptions> BucketizeOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const BucketizeOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1701_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1701(mht_1701_v, 20985, "", "./tensorflow/lite/schema/schema_generated.h", "BucketizeOptions::Pack");
+
   return CreateBucketizeOptions(_fbb, _o, _rehasher);
 }
 
@@ -15725,18 +20999,27 @@ inline flatbuffers::Offset<BucketizeOptions> CreateBucketizeOptions(flatbuffers:
 }
 
 inline GeluOptionsT *GeluOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1702_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1702(mht_1702_v, 21002, "", "./tensorflow/lite/schema/schema_generated.h", "GeluOptions::UnPack");
+
   auto _o = new GeluOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void GeluOptions::UnPackTo(GeluOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1703_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1703(mht_1703_v, 21011, "", "./tensorflow/lite/schema/schema_generated.h", "GeluOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = approximate(); _o->approximate = _e; }
 }
 
 inline flatbuffers::Offset<GeluOptions> GeluOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const GeluOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1704_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1704(mht_1704_v, 21020, "", "./tensorflow/lite/schema/schema_generated.h", "GeluOptions::Pack");
+
   return CreateGeluOptions(_fbb, _o, _rehasher);
 }
 
@@ -15751,17 +21034,26 @@ inline flatbuffers::Offset<GeluOptions> CreateGeluOptions(flatbuffers::FlatBuffe
 }
 
 inline DynamicUpdateSliceOptionsT *DynamicUpdateSliceOptions::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1705_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1705(mht_1705_v, 21037, "", "./tensorflow/lite/schema/schema_generated.h", "DynamicUpdateSliceOptions::UnPack");
+
   auto _o = new DynamicUpdateSliceOptionsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void DynamicUpdateSliceOptions::UnPackTo(DynamicUpdateSliceOptionsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1706_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1706(mht_1706_v, 21046, "", "./tensorflow/lite/schema/schema_generated.h", "DynamicUpdateSliceOptions::UnPackTo");
+
   (void)_o;
   (void)_resolver;
 }
 
 inline flatbuffers::Offset<DynamicUpdateSliceOptions> DynamicUpdateSliceOptions::Pack(flatbuffers::FlatBufferBuilder &_fbb, const DynamicUpdateSliceOptionsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1707_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1707(mht_1707_v, 21054, "", "./tensorflow/lite/schema/schema_generated.h", "DynamicUpdateSliceOptions::Pack");
+
   return CreateDynamicUpdateSliceOptions(_fbb, _o, _rehasher);
 }
 
@@ -15774,12 +21066,18 @@ inline flatbuffers::Offset<DynamicUpdateSliceOptions> CreateDynamicUpdateSliceOp
 }
 
 inline OperatorCodeT *OperatorCode::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1708_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1708(mht_1708_v, 21069, "", "./tensorflow/lite/schema/schema_generated.h", "OperatorCode::UnPack");
+
   auto _o = new OperatorCodeT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void OperatorCode::UnPackTo(OperatorCodeT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1709_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1709(mht_1709_v, 21078, "", "./tensorflow/lite/schema/schema_generated.h", "OperatorCode::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = deprecated_builtin_code(); _o->deprecated_builtin_code = _e; }
@@ -15789,6 +21087,9 @@ inline void OperatorCode::UnPackTo(OperatorCodeT *_o, const flatbuffers::resolve
 }
 
 inline flatbuffers::Offset<OperatorCode> OperatorCode::Pack(flatbuffers::FlatBufferBuilder &_fbb, const OperatorCodeT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1710_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1710(mht_1710_v, 21090, "", "./tensorflow/lite/schema/schema_generated.h", "OperatorCode::Pack");
+
   return CreateOperatorCode(_fbb, _o, _rehasher);
 }
 
@@ -15809,12 +21110,18 @@ inline flatbuffers::Offset<OperatorCode> CreateOperatorCode(flatbuffers::FlatBuf
 }
 
 inline OperatorT *Operator::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1711_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1711(mht_1711_v, 21113, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::UnPack");
+
   auto _o = new OperatorT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void Operator::UnPackTo(OperatorT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1712_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1712(mht_1712_v, 21122, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = opcode_index(); _o->opcode_index = _e; }
@@ -15829,6 +21136,9 @@ inline void Operator::UnPackTo(OperatorT *_o, const flatbuffers::resolver_functi
 }
 
 inline flatbuffers::Offset<Operator> Operator::Pack(flatbuffers::FlatBufferBuilder &_fbb, const OperatorT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1713_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1713(mht_1713_v, 21139, "", "./tensorflow/lite/schema/schema_generated.h", "Operator::Pack");
+
   return CreateOperator(_fbb, _o, _rehasher);
 }
 
@@ -15859,12 +21169,18 @@ inline flatbuffers::Offset<Operator> CreateOperator(flatbuffers::FlatBufferBuild
 }
 
 inline SubGraphT *SubGraph::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1714_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1714(mht_1714_v, 21172, "", "./tensorflow/lite/schema/schema_generated.h", "SubGraph::UnPack");
+
   auto _o = new SubGraphT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void SubGraph::UnPackTo(SubGraphT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1715_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1715(mht_1715_v, 21181, "", "./tensorflow/lite/schema/schema_generated.h", "SubGraph::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = tensors(); if (_e) { _o->tensors.resize(_e->size()); for (flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->tensors[_i] = std::unique_ptr<tflite::TensorT>(_e->Get(_i)->UnPack(_resolver)); } } }
@@ -15875,6 +21191,9 @@ inline void SubGraph::UnPackTo(SubGraphT *_o, const flatbuffers::resolver_functi
 }
 
 inline flatbuffers::Offset<SubGraph> SubGraph::Pack(flatbuffers::FlatBufferBuilder &_fbb, const SubGraphT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1716_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1716(mht_1716_v, 21194, "", "./tensorflow/lite/schema/schema_generated.h", "SubGraph::Pack");
+
   return CreateSubGraph(_fbb, _o, _rehasher);
 }
 
@@ -15897,18 +21216,27 @@ inline flatbuffers::Offset<SubGraph> CreateSubGraph(flatbuffers::FlatBufferBuild
 }
 
 inline BufferT *Buffer::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1717_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1717(mht_1717_v, 21219, "", "./tensorflow/lite/schema/schema_generated.h", "Buffer::UnPack");
+
   auto _o = new BufferT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void Buffer::UnPackTo(BufferT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1718_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1718(mht_1718_v, 21228, "", "./tensorflow/lite/schema/schema_generated.h", "Buffer::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = data(); if (_e) { _o->data.resize(_e->size()); std::copy(_e->begin(), _e->end(), _o->data.begin()); } }
 }
 
 inline flatbuffers::Offset<Buffer> Buffer::Pack(flatbuffers::FlatBufferBuilder &_fbb, const BufferT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1719_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1719(mht_1719_v, 21237, "", "./tensorflow/lite/schema/schema_generated.h", "Buffer::Pack");
+
   return CreateBuffer(_fbb, _o, _rehasher);
 }
 
@@ -15924,12 +21252,18 @@ inline flatbuffers::Offset<Buffer> CreateBuffer(flatbuffers::FlatBufferBuilder &
 }
 
 inline MetadataT *Metadata::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1720_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1720(mht_1720_v, 21255, "", "./tensorflow/lite/schema/schema_generated.h", "Metadata::UnPack");
+
   auto _o = new MetadataT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void Metadata::UnPackTo(MetadataT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1721_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1721(mht_1721_v, 21264, "", "./tensorflow/lite/schema/schema_generated.h", "Metadata::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = name(); if (_e) _o->name = _e->str(); }
@@ -15937,6 +21271,9 @@ inline void Metadata::UnPackTo(MetadataT *_o, const flatbuffers::resolver_functi
 }
 
 inline flatbuffers::Offset<Metadata> Metadata::Pack(flatbuffers::FlatBufferBuilder &_fbb, const MetadataT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1722_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1722(mht_1722_v, 21274, "", "./tensorflow/lite/schema/schema_generated.h", "Metadata::Pack");
+
   return CreateMetadata(_fbb, _o, _rehasher);
 }
 
@@ -15953,12 +21290,18 @@ inline flatbuffers::Offset<Metadata> CreateMetadata(flatbuffers::FlatBufferBuild
 }
 
 inline TensorMapT *TensorMap::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1723_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1723(mht_1723_v, 21293, "", "./tensorflow/lite/schema/schema_generated.h", "TensorMap::UnPack");
+
   auto _o = new TensorMapT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void TensorMap::UnPackTo(TensorMapT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1724_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1724(mht_1724_v, 21302, "", "./tensorflow/lite/schema/schema_generated.h", "TensorMap::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = name(); if (_e) _o->name = _e->str(); }
@@ -15966,6 +21309,9 @@ inline void TensorMap::UnPackTo(TensorMapT *_o, const flatbuffers::resolver_func
 }
 
 inline flatbuffers::Offset<TensorMap> TensorMap::Pack(flatbuffers::FlatBufferBuilder &_fbb, const TensorMapT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1725_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1725(mht_1725_v, 21312, "", "./tensorflow/lite/schema/schema_generated.h", "TensorMap::Pack");
+
   return CreateTensorMap(_fbb, _o, _rehasher);
 }
 
@@ -15982,12 +21328,18 @@ inline flatbuffers::Offset<TensorMap> CreateTensorMap(flatbuffers::FlatBufferBui
 }
 
 inline SignatureDefT *SignatureDef::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1726_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1726(mht_1726_v, 21331, "", "./tensorflow/lite/schema/schema_generated.h", "SignatureDef::UnPack");
+
   auto _o = new SignatureDefT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void SignatureDef::UnPackTo(SignatureDefT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1727_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1727(mht_1727_v, 21340, "", "./tensorflow/lite/schema/schema_generated.h", "SignatureDef::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = inputs(); if (_e) { _o->inputs.resize(_e->size()); for (flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->inputs[_i] = std::unique_ptr<tflite::TensorMapT>(_e->Get(_i)->UnPack(_resolver)); } } }
@@ -15997,6 +21349,9 @@ inline void SignatureDef::UnPackTo(SignatureDefT *_o, const flatbuffers::resolve
 }
 
 inline flatbuffers::Offset<SignatureDef> SignatureDef::Pack(flatbuffers::FlatBufferBuilder &_fbb, const SignatureDefT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1728_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1728(mht_1728_v, 21352, "", "./tensorflow/lite/schema/schema_generated.h", "SignatureDef::Pack");
+
   return CreateSignatureDef(_fbb, _o, _rehasher);
 }
 
@@ -16017,12 +21372,18 @@ inline flatbuffers::Offset<SignatureDef> CreateSignatureDef(flatbuffers::FlatBuf
 }
 
 inline ModelT *Model::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1729_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1729(mht_1729_v, 21375, "", "./tensorflow/lite/schema/schema_generated.h", "Model::UnPack");
+
   auto _o = new ModelT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void Model::UnPackTo(ModelT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_1730_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1730(mht_1730_v, 21384, "", "./tensorflow/lite/schema/schema_generated.h", "Model::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = version(); _o->version = _e; }
@@ -16036,6 +21397,9 @@ inline void Model::UnPackTo(ModelT *_o, const flatbuffers::resolver_function_t *
 }
 
 inline flatbuffers::Offset<Model> Model::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ModelT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_1731_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1731(mht_1731_v, 21400, "", "./tensorflow/lite/schema/schema_generated.h", "Model::Pack");
+
   return CreateModel(_fbb, _o, _rehasher);
 }
 
@@ -16064,6 +21428,9 @@ inline flatbuffers::Offset<Model> CreateModel(flatbuffers::FlatBufferBuilder &_f
 }
 
 inline bool VerifyQuantizationDetails(flatbuffers::Verifier &verifier, const void *obj, QuantizationDetails type) {
+   std::vector<std::string> mht_1732_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1732(mht_1732_v, 21431, "", "./tensorflow/lite/schema/schema_generated.h", "VerifyQuantizationDetails");
+
   switch (type) {
     case QuantizationDetails_NONE: {
       return true;
@@ -16077,6 +21444,9 @@ inline bool VerifyQuantizationDetails(flatbuffers::Verifier &verifier, const voi
 }
 
 inline bool VerifyQuantizationDetailsVector(flatbuffers::Verifier &verifier, const flatbuffers::Vector<flatbuffers::Offset<void>> *values, const flatbuffers::Vector<uint8_t> *types) {
+   std::vector<std::string> mht_1733_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1733(mht_1733_v, 21447, "", "./tensorflow/lite/schema/schema_generated.h", "VerifyQuantizationDetailsVector");
+
   if (!values || !types) return !values && !types;
   if (values->size() != types->size()) return false;
   for (flatbuffers::uoffset_t i = 0; i < values->size(); ++i) {
@@ -16089,6 +21459,9 @@ inline bool VerifyQuantizationDetailsVector(flatbuffers::Verifier &verifier, con
 }
 
 inline void *QuantizationDetailsUnion::UnPack(const void *obj, QuantizationDetails type, const flatbuffers::resolver_function_t *resolver) {
+   std::vector<std::string> mht_1734_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1734(mht_1734_v, 21462, "", "./tensorflow/lite/schema/schema_generated.h", "QuantizationDetailsUnion::UnPack");
+
   switch (type) {
     case QuantizationDetails_CustomQuantization: {
       auto ptr = reinterpret_cast<const tflite::CustomQuantization *>(obj);
@@ -16099,6 +21472,9 @@ inline void *QuantizationDetailsUnion::UnPack(const void *obj, QuantizationDetai
 }
 
 inline flatbuffers::Offset<void> QuantizationDetailsUnion::Pack(flatbuffers::FlatBufferBuilder &_fbb, const flatbuffers::rehasher_function_t *_rehasher) const {
+   std::vector<std::string> mht_1735_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1735(mht_1735_v, 21475, "", "./tensorflow/lite/schema/schema_generated.h", "QuantizationDetailsUnion::Pack");
+
   switch (type) {
     case QuantizationDetails_CustomQuantization: {
       auto ptr = reinterpret_cast<const tflite::CustomQuantizationT *>(value);
@@ -16120,6 +21496,9 @@ inline QuantizationDetailsUnion::QuantizationDetailsUnion(const QuantizationDeta
 }
 
 inline void QuantizationDetailsUnion::Reset() {
+   std::vector<std::string> mht_1736_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1736(mht_1736_v, 21499, "", "./tensorflow/lite/schema/schema_generated.h", "QuantizationDetailsUnion::Reset");
+
   switch (type) {
     case QuantizationDetails_CustomQuantization: {
       auto ptr = reinterpret_cast<tflite::CustomQuantizationT *>(value);
@@ -16133,6 +21512,9 @@ inline void QuantizationDetailsUnion::Reset() {
 }
 
 inline bool VerifySparseIndexVector(flatbuffers::Verifier &verifier, const void *obj, SparseIndexVector type) {
+   std::vector<std::string> mht_1737_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1737(mht_1737_v, 21515, "", "./tensorflow/lite/schema/schema_generated.h", "VerifySparseIndexVector");
+
   switch (type) {
     case SparseIndexVector_NONE: {
       return true;
@@ -16154,6 +21536,9 @@ inline bool VerifySparseIndexVector(flatbuffers::Verifier &verifier, const void 
 }
 
 inline bool VerifySparseIndexVectorVector(flatbuffers::Verifier &verifier, const flatbuffers::Vector<flatbuffers::Offset<void>> *values, const flatbuffers::Vector<uint8_t> *types) {
+   std::vector<std::string> mht_1738_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1738(mht_1738_v, 21539, "", "./tensorflow/lite/schema/schema_generated.h", "VerifySparseIndexVectorVector");
+
   if (!values || !types) return !values && !types;
   if (values->size() != types->size()) return false;
   for (flatbuffers::uoffset_t i = 0; i < values->size(); ++i) {
@@ -16166,6 +21551,9 @@ inline bool VerifySparseIndexVectorVector(flatbuffers::Verifier &verifier, const
 }
 
 inline void *SparseIndexVectorUnion::UnPack(const void *obj, SparseIndexVector type, const flatbuffers::resolver_function_t *resolver) {
+   std::vector<std::string> mht_1739_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1739(mht_1739_v, 21554, "", "./tensorflow/lite/schema/schema_generated.h", "SparseIndexVectorUnion::UnPack");
+
   switch (type) {
     case SparseIndexVector_Int32Vector: {
       auto ptr = reinterpret_cast<const tflite::Int32Vector *>(obj);
@@ -16184,6 +21572,9 @@ inline void *SparseIndexVectorUnion::UnPack(const void *obj, SparseIndexVector t
 }
 
 inline flatbuffers::Offset<void> SparseIndexVectorUnion::Pack(flatbuffers::FlatBufferBuilder &_fbb, const flatbuffers::rehasher_function_t *_rehasher) const {
+   std::vector<std::string> mht_1740_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1740(mht_1740_v, 21575, "", "./tensorflow/lite/schema/schema_generated.h", "SparseIndexVectorUnion::Pack");
+
   switch (type) {
     case SparseIndexVector_Int32Vector: {
       auto ptr = reinterpret_cast<const tflite::Int32VectorT *>(value);
@@ -16221,6 +21612,9 @@ inline SparseIndexVectorUnion::SparseIndexVectorUnion(const SparseIndexVectorUni
 }
 
 inline void SparseIndexVectorUnion::Reset() {
+   std::vector<std::string> mht_1741_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1741(mht_1741_v, 21615, "", "./tensorflow/lite/schema/schema_generated.h", "SparseIndexVectorUnion::Reset");
+
   switch (type) {
     case SparseIndexVector_Int32Vector: {
       auto ptr = reinterpret_cast<tflite::Int32VectorT *>(value);
@@ -16244,6 +21638,9 @@ inline void SparseIndexVectorUnion::Reset() {
 }
 
 inline bool VerifyBuiltinOptions(flatbuffers::Verifier &verifier, const void *obj, BuiltinOptions type) {
+   std::vector<std::string> mht_1742_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1742(mht_1742_v, 21641, "", "./tensorflow/lite/schema/schema_generated.h", "VerifyBuiltinOptions");
+
   switch (type) {
     case BuiltinOptions_NONE: {
       return true;
@@ -16721,6 +22118,9 @@ inline bool VerifyBuiltinOptions(flatbuffers::Verifier &verifier, const void *ob
 }
 
 inline bool VerifyBuiltinOptionsVector(flatbuffers::Verifier &verifier, const flatbuffers::Vector<flatbuffers::Offset<void>> *values, const flatbuffers::Vector<uint8_t> *types) {
+   std::vector<std::string> mht_1743_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1743(mht_1743_v, 22121, "", "./tensorflow/lite/schema/schema_generated.h", "VerifyBuiltinOptionsVector");
+
   if (!values || !types) return !values && !types;
   if (values->size() != types->size()) return false;
   for (flatbuffers::uoffset_t i = 0; i < values->size(); ++i) {
@@ -16733,6 +22133,9 @@ inline bool VerifyBuiltinOptionsVector(flatbuffers::Verifier &verifier, const fl
 }
 
 inline void *BuiltinOptionsUnion::UnPack(const void *obj, BuiltinOptions type, const flatbuffers::resolver_function_t *resolver) {
+   std::vector<std::string> mht_1744_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1744(mht_1744_v, 22136, "", "./tensorflow/lite/schema/schema_generated.h", "BuiltinOptionsUnion::UnPack");
+
   switch (type) {
     case BuiltinOptions_Conv2DOptions: {
       auto ptr = reinterpret_cast<const tflite::Conv2DOptions *>(obj);
@@ -17207,6 +22610,9 @@ inline void *BuiltinOptionsUnion::UnPack(const void *obj, BuiltinOptions type, c
 }
 
 inline flatbuffers::Offset<void> BuiltinOptionsUnion::Pack(flatbuffers::FlatBufferBuilder &_fbb, const flatbuffers::rehasher_function_t *_rehasher) const {
+   std::vector<std::string> mht_1745_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1745(mht_1745_v, 22613, "", "./tensorflow/lite/schema/schema_generated.h", "BuiltinOptionsUnion::Pack");
+
   switch (type) {
     case BuiltinOptions_Conv2DOptions: {
       auto ptr = reinterpret_cast<const tflite::Conv2DOptionsT *>(value);
@@ -18156,6 +23562,9 @@ inline BuiltinOptionsUnion::BuiltinOptionsUnion(const BuiltinOptionsUnion &u) FL
 }
 
 inline void BuiltinOptionsUnion::Reset() {
+   std::vector<std::string> mht_1746_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1746(mht_1746_v, 23565, "", "./tensorflow/lite/schema/schema_generated.h", "BuiltinOptionsUnion::Reset");
+
   switch (type) {
     case BuiltinOptions_Conv2DOptions: {
       auto ptr = reinterpret_cast<tflite::Conv2DOptionsT *>(value);
@@ -18749,45 +24158,72 @@ inline void BuiltinOptionsUnion::Reset() {
 }
 
 inline const tflite::Model *GetModel(const void *buf) {
+   std::vector<std::string> mht_1747_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1747(mht_1747_v, 24161, "", "./tensorflow/lite/schema/schema_generated.h", "GetModel");
+
   return flatbuffers::GetRoot<tflite::Model>(buf);
 }
 
 inline const tflite::Model *GetSizePrefixedModel(const void *buf) {
+   std::vector<std::string> mht_1748_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1748(mht_1748_v, 24168, "", "./tensorflow/lite/schema/schema_generated.h", "GetSizePrefixedModel");
+
   return flatbuffers::GetSizePrefixedRoot<tflite::Model>(buf);
 }
 
 inline const char *ModelIdentifier() {
+   std::vector<std::string> mht_1749_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1749(mht_1749_v, 24175, "", "./tensorflow/lite/schema/schema_generated.h", "ModelIdentifier");
+
   return "TFL3";
 }
 
 inline bool ModelBufferHasIdentifier(const void *buf) {
+   std::vector<std::string> mht_1750_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1750(mht_1750_v, 24182, "", "./tensorflow/lite/schema/schema_generated.h", "ModelBufferHasIdentifier");
+
   return flatbuffers::BufferHasIdentifier(
       buf, ModelIdentifier());
 }
 
 inline bool VerifyModelBuffer(
     flatbuffers::Verifier &verifier) {
+   std::vector<std::string> mht_1751_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1751(mht_1751_v, 24191, "", "./tensorflow/lite/schema/schema_generated.h", "VerifyModelBuffer");
+
   return verifier.VerifyBuffer<tflite::Model>(ModelIdentifier());
 }
 
 inline bool VerifySizePrefixedModelBuffer(
     flatbuffers::Verifier &verifier) {
+   std::vector<std::string> mht_1752_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1752(mht_1752_v, 24199, "", "./tensorflow/lite/schema/schema_generated.h", "VerifySizePrefixedModelBuffer");
+
   return verifier.VerifySizePrefixedBuffer<tflite::Model>(ModelIdentifier());
 }
 
 inline const char *ModelExtension() {
+   std::vector<std::string> mht_1753_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1753(mht_1753_v, 24206, "", "./tensorflow/lite/schema/schema_generated.h", "ModelExtension");
+
   return "tflite";
 }
 
 inline void FinishModelBuffer(
     flatbuffers::FlatBufferBuilder &fbb,
     flatbuffers::Offset<tflite::Model> root) {
+   std::vector<std::string> mht_1754_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1754(mht_1754_v, 24215, "", "./tensorflow/lite/schema/schema_generated.h", "FinishModelBuffer");
+
   fbb.Finish(root, ModelIdentifier());
 }
 
 inline void FinishSizePrefixedModelBuffer(
     flatbuffers::FlatBufferBuilder &fbb,
     flatbuffers::Offset<tflite::Model> root) {
+   std::vector<std::string> mht_1755_v;
+   MHTracer_DTPStensorflowPSlitePSschemaPSschema_generatedDTh mht_1755(mht_1755_v, 24224, "", "./tensorflow/lite/schema/schema_generated.h", "FinishSizePrefixedModelBuffer");
+
   fbb.FinishSizePrefixed(root, ModelIdentifier());
 }
 

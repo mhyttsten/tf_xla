@@ -62,6 +62,37 @@ filegroup(
     visibility = [":friends"],
 )
 
+cc_binary(
+    name = "XLATesting",
+    srcs = ["XLATesting.cc"],
+    deps = [
+        "//tensorflow/compiler/xla/service:compiler",
+        "//tensorflow/compiler/xla/client:client_library",
+        "//tensorflow/core:lib_internal_impl",
+        "//tensorflow/core:framework_internal_impl",
+        "//tensorflow/stream_executor:stream_executor_impl",
+        "//tensorflow/compiler/xla/service/cpu:cpu_compiler",
+        "//tensorflow/compiler/xla/service/cpu:cpu_transfer_manager",
+# NOTE 1:
+# Entries below these lines added to make xla::Compiler::GetForPlatform, and xla::ClientLibrary::GetOrCreateLocalClient
+# work. Otherwise their return status is NOT_FOUND for those calls.
+# Observe, no code changes are required, just linking these in make these call go to OK instead of NOT_FOUND so
+# probably a dependency on a global variable/constructor that registers these.
+# Only //tensorflow/compiler/jit:xla_cpu_jit is specified as needed but it needs to subsequent ones to link correctly
+# (i.e. no undefined symbol).
+# Unfortunate side-effect is that below addition increases link time from 53s to 2572s. 
+# Maybe it's possible to figure out how Compiler::GetForPlatform and ClientLibrary::GetOrCreateLocalClient depend
+# on //tensorflow/compiler/jit:xla_cpu_jit to shorten this down.
+#        "//tensorflow/compiler/jit:xla_cpu_jit",
+#        "//tensorflow/core/common_runtime:core_cpu_impl",
+#        "//tensorflow/core/common_runtime/gpu:gpu_runtime_impl",
+#        "//tensorflow/cc/saved_model:bundle_v2",
+#        "//tensorflow/core/grappler/optimizers:custom_graph_optimizer_registry_impl",
+#        "//tensorflow/core/profiler/internal/cpu:annotation_stack",
+    ],
+    visibility = ["//visibility:public"],
+)
+ 
 tf_proto_library(
     name = "xla_data_proto",
     srcs = ["xla_data.proto"],

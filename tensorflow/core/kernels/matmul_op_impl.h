@@ -17,6 +17,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_KERNELS_MATMUL_OP_IMPL_H_
 #define TENSORFLOW_CORE_KERNELS_MATMUL_OP_IMPL_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSmatmul_op_implDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmatmul_op_implDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSmatmul_op_implDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #define EIGEN_USE_THREADS
 
@@ -69,6 +237,9 @@ Eigen::IndexPair<Eigen::DenseIndex> ContractionDims(bool adj_x, bool adj_y) {
 template <typename Scalar, bool IsComplex = true>
 struct ParallelMatMulKernel {
   static void Conjugate(const OpKernelContext* context, Tensor* out) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmatmul_op_implDTh mht_0(mht_0_v, 240, "", "./tensorflow/core/kernels/matmul_op_impl.h", "Conjugate");
+
     const Eigen::ThreadPoolDevice d = context->eigen_cpu_device();
     auto z = out->tensor<Scalar, 3>();
     z.device(d) = z.conjugate();
@@ -78,6 +249,9 @@ struct ParallelMatMulKernel {
                   const Tensor in_y, bool adj_x, bool adj_y, bool trans_x,
                   bool trans_y, const MatMulBCast& bcast, Tensor* out,
                   int batch_size) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmatmul_op_implDTh mht_1(mht_1_v, 252, "", "./tensorflow/core/kernels/matmul_op_impl.h", "Run");
+
     static_assert(IsComplex, "Complex type expected.");
     auto Tx = in_x.tensor<Scalar, 3>();
     auto Ty = in_y.tensor<Scalar, 3>();
@@ -117,12 +291,18 @@ struct ParallelMatMulKernel {
 // but one of the instantiations.
 template <typename Scalar>
 struct ParallelMatMulKernel<Scalar, false> {
-  static void Conjugate(const OpKernelContext* context, Tensor* out) {}
+  static void Conjugate(const OpKernelContext* context, Tensor* out) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmatmul_op_implDTh mht_2(mht_2_v, 295, "", "./tensorflow/core/kernels/matmul_op_impl.h", "Conjugate");
+}
 
   static void Run(const OpKernelContext* context, const Tensor& in_x,
                   const Tensor& in_y, bool adj_x, bool adj_y, bool trans_x,
                   bool trans_y, const MatMulBCast& bcast, Tensor* out,
                   int batch_size) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmatmul_op_implDTh mht_3(mht_3_v, 303, "", "./tensorflow/core/kernels/matmul_op_impl.h", "Run");
+
     const bool should_bcast = bcast.IsBroadcastingRequired();
     const Eigen::ThreadPoolDevice d = context->eigen_cpu_device();
     Eigen::array<Eigen::IndexPair<Eigen::DenseIndex>, 1> contract_pairs;
@@ -164,12 +344,18 @@ struct SequentialMatMulKernel {
 
   static ConstMatrixMap ConstTensorSliceToEigenMatrix(const Tensor& t,
                                                       int slice) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmatmul_op_implDTh mht_4(mht_4_v, 347, "", "./tensorflow/core/kernels/matmul_op_impl.h", "ConstTensorSliceToEigenMatrix");
+
     return ConstMatrixMap(
         t.flat<Scalar>().data() + slice * t.dim_size(1) * t.dim_size(2),
         t.dim_size(1), t.dim_size(2));
   }
 
   static MatrixMap TensorSliceToEigenMatrix(Tensor* t, int slice) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmatmul_op_implDTh mht_5(mht_5_v, 356, "", "./tensorflow/core/kernels/matmul_op_impl.h", "TensorSliceToEigenMatrix");
+
     return MatrixMap(
         t->flat<Scalar>().data() + slice * t->dim_size(1) * t->dim_size(2),
         t->dim_size(1), t->dim_size(2));
@@ -178,6 +364,9 @@ struct SequentialMatMulKernel {
   static void Run(const Tensor& in_x, const Tensor& in_y, bool adj_x,
                   bool adj_y, bool trans_x, bool trans_y,
                   const MatMulBCast& bcast, Tensor* out, int start, int limit) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmatmul_op_implDTh mht_6(mht_6_v, 367, "", "./tensorflow/core/kernels/matmul_op_impl.h", "Run");
+
     const bool should_bcast = bcast.IsBroadcastingRequired();
     const auto& x_batch_indices = bcast.x_batch_indices();
     const auto& y_batch_indices = bcast.y_batch_indices();
@@ -228,6 +417,9 @@ struct LaunchBatchMatMul<CPUDevice, Scalar> {
   static void Launch(OpKernelContext* context, const Tensor& in_x,
                      const Tensor& in_y, bool adj_x, bool adj_y, bool trans_x,
                      bool trans_y, const MatMulBCast& bcast, Tensor* out) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmatmul_op_implDTh mht_7(mht_7_v, 420, "", "./tensorflow/core/kernels/matmul_op_impl.h", "Launch");
+
     typedef ParallelMatMulKernel<Scalar, Eigen::NumTraits<Scalar>::IsComplex>
         ParallelMatMulKernel;
     bool conjugate_result = false;
@@ -290,9 +482,15 @@ class BlasScratchAllocator : public se::ScratchAllocator {
   using Stream = se::Stream;
   using DeviceMemoryBytes = se::DeviceMemory<uint8>;
 
-  BlasScratchAllocator(OpKernelContext* context) : context_(context) {}
+  BlasScratchAllocator(OpKernelContext* context) : context_(context) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmatmul_op_implDTh mht_8(mht_8_v, 486, "", "./tensorflow/core/kernels/matmul_op_impl.h", "BlasScratchAllocator");
+}
 
-  int64_t GetMemoryLimitInBytes() override { return -1; }
+  int64_t GetMemoryLimitInBytes() override {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmatmul_op_implDTh mht_9(mht_9_v, 491, "", "./tensorflow/core/kernels/matmul_op_impl.h", "GetMemoryLimitInBytes");
+ return -1; }
 
   se::port::StatusOr<DeviceMemoryBytes> AllocateBytes(
       int64_t byte_size) override {
@@ -324,6 +522,9 @@ struct LaunchBatchMatMul<GPUDevice, Scalar> {
   static void Launch(OpKernelContext* context, const Tensor& in_x,
                      const Tensor& in_y, bool adj_x, bool adj_y, bool trans_x,
                      bool trans_y, const MatMulBCast& bcast, Tensor* out) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmatmul_op_implDTh mht_10(mht_10_v, 525, "", "./tensorflow/core/kernels/matmul_op_impl.h", "Launch");
+
     se::blas::Transpose trans[] = {se::blas::Transpose::kNoTranspose,
                                    se::blas::Transpose::kTranspose,
                                    se::blas::Transpose::kConjugateTranspose};
@@ -476,6 +677,9 @@ struct LaunchBatchMatMul<GPUDevice, Eigen::half> {
   static void Launch(OpKernelContext* context, const Tensor& in_x,
                      const Tensor& in_y, bool adj_x, bool adj_y, bool trans_x,
                      bool trans_y, const MatMulBCast& bcast, Tensor* out) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmatmul_op_implDTh mht_11(mht_11_v, 680, "", "./tensorflow/core/kernels/matmul_op_impl.h", "Launch");
+
     typedef Eigen::half Scalar;
     se::blas::Transpose trans[] = {se::blas::Transpose::kNoTranspose,
                                    se::blas::Transpose::kTranspose,
@@ -617,6 +821,9 @@ class BaseBatchMatMulOp : public OpKernel {
   explicit BaseBatchMatMulOp(OpKernelConstruction* context,
                              bool is_legacy_matmul)
       : OpKernel(context) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmatmul_op_implDTh mht_12(mht_12_v, 824, "", "./tensorflow/core/kernels/matmul_op_impl.h", "BaseBatchMatMulOp");
+
     if (is_legacy_matmul) {
       // The old MatMul kernel has "transpose_a/transpose_b" attributes.
       OP_REQUIRES_OK(context, context->GetAttr("transpose_a", &trans_x_));
@@ -631,9 +838,15 @@ class BaseBatchMatMulOp : public OpKernel {
     }
   }
 
-  ~BaseBatchMatMulOp() override {}
+  ~BaseBatchMatMulOp() override {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmatmul_op_implDTh mht_13(mht_13_v, 842, "", "./tensorflow/core/kernels/matmul_op_impl.h", "~BaseBatchMatMulOp");
+}
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmatmul_op_implDTh mht_14(mht_14_v, 847, "", "./tensorflow/core/kernels/matmul_op_impl.h", "Compute");
+
     const Tensor& in0 = ctx->input(0);
     const Tensor& in1 = ctx->input(1);
 
@@ -759,13 +972,22 @@ template <typename Device, typename Ta, typename Tb, typename Tout,
 class BatchMatMulOp : public BaseBatchMatMulOp<Device, Ta, Tb, Tout> {
  public:
   explicit BatchMatMulOp(OpKernelConstruction* context)
-      : BaseBatchMatMulOp<Device, Ta, Tb, Tout>(context, is_legacy_matmul) {}
+      : BaseBatchMatMulOp<Device, Ta, Tb, Tout>(context, is_legacy_matmul) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmatmul_op_implDTh mht_15(mht_15_v, 976, "", "./tensorflow/core/kernels/matmul_op_impl.h", "BatchMatMulOp");
+}
 
-  ~BatchMatMulOp() override {}
+  ~BatchMatMulOp() override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmatmul_op_implDTh mht_16(mht_16_v, 981, "", "./tensorflow/core/kernels/matmul_op_impl.h", "~BatchMatMulOp");
+}
 
  private:
   Status ValidateInputTensors(OpKernelContext* ctx, const Tensor& in0,
                               const Tensor& in1) override {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmatmul_op_implDTh mht_17(mht_17_v, 988, "", "./tensorflow/core/kernels/matmul_op_impl.h", "ValidateInputTensors");
+
     // Disallow broadcasting support. Ensure that all batch dimensions of the
     // input tensors match.
     if (in0.dims() != in1.dims()) {
@@ -804,13 +1026,22 @@ class BatchMatMulV2Op : public BaseBatchMatMulOp<Device, Ta, Tb, Tout> {
   explicit BatchMatMulV2Op(OpKernelConstruction* context)
       : BaseBatchMatMulOp<Device, Ta, Tb, Tout>(context,
                                                 /* is_legacy_matmul= */ false) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmatmul_op_implDTh mht_18(mht_18_v, 1029, "", "./tensorflow/core/kernels/matmul_op_impl.h", "BatchMatMulV2Op");
+
   }
 
-  ~BatchMatMulV2Op() override {}
+  ~BatchMatMulV2Op() override {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmatmul_op_implDTh mht_19(mht_19_v, 1035, "", "./tensorflow/core/kernels/matmul_op_impl.h", "~BatchMatMulV2Op");
+}
 
  private:
   Status ValidateInputTensors(OpKernelContext* ctx, const Tensor& in0,
                               const Tensor& in1) override {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmatmul_op_implDTh mht_20(mht_20_v, 1042, "", "./tensorflow/core/kernels/matmul_op_impl.h", "ValidateInputTensors");
+
     // Enable broadcasting support. Validity of broadcasting is checked in
     // BaseBatchMatMulOp.
     if (in0.dims() < 2) {

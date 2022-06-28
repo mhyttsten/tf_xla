@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -60,10 +228,17 @@ typedef std::unique_ptr<TF_Function, decltype(&TF_DeleteFunction)>
 
 // struct TF_Operation { tensorflow::Node node; };
 static TF_Operation* ToTF_Operation(Node* node) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_0(mht_0_v, 231, "", "./tensorflow/c/c_api_experimental.cc", "ToTF_Operation");
+
   return static_cast<TF_Operation*>(static_cast<void*>(node));
 }
 
 void TF_EnableXLACompilation(TF_SessionOptions* options, unsigned char enable) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("enable: '" + std::string(1, enable) + "'");
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_1(mht_1_v, 239, "", "./tensorflow/c/c_api_experimental.cc", "TF_EnableXLACompilation");
+
   tensorflow::ConfigProto& config = options->options.config;
   auto* optimizer_options =
       config.mutable_graph_options()->mutable_optimizer_options();
@@ -83,6 +258,10 @@ void TF_EnableXLACompilation(TF_SessionOptions* options, unsigned char enable) {
 }
 
 unsigned char TF_SetXlaEnableLazyCompilation(unsigned char enable) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("enable: '" + std::string(1, enable) + "'");
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_2(mht_2_v, 262, "", "./tensorflow/c/c_api_experimental.cc", "TF_SetXlaEnableLazyCompilation");
+
   tensorflow::BuildXlaOpsPassFlags* flags =
       tensorflow::GetBuildXlaOpsPassFlags();
   bool original = flags->tf_xla_enable_lazy_compilation;
@@ -91,6 +270,10 @@ unsigned char TF_SetXlaEnableLazyCompilation(unsigned char enable) {
 }
 
 unsigned char TF_SetTfXlaCpuGlobalJit(unsigned char enable) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("enable: '" + std::string(1, enable) + "'");
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_3(mht_3_v, 274, "", "./tensorflow/c/c_api_experimental.cc", "TF_SetTfXlaCpuGlobalJit");
+
   tensorflow::MarkForCompilationPassFlags* flags =
       tensorflow::GetMarkForCompilationPassFlags();
   bool original = flags->tf_xla_cpu_global_jit;
@@ -99,10 +282,17 @@ unsigned char TF_SetTfXlaCpuGlobalJit(unsigned char enable) {
 }
 
 void TF_SetXlaAutoJitMode(const char* mode) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("mode: \"" + (mode == nullptr ? std::string("nullptr") : std::string((char*)mode)) + "\"");
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_4(mht_4_v, 286, "", "./tensorflow/c/c_api_experimental.cc", "TF_SetXlaAutoJitMode");
+
   tensorflow::SetXlaAutoJitFlagFromFlagString(mode);
 }
 
 unsigned char TF_GetXlaAutoJitEnabled() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_5(mht_5_v, 293, "", "./tensorflow/c/c_api_experimental.cc", "TF_GetXlaAutoJitEnabled");
+
   tensorflow::XlaAutoJitFlag flag =
       tensorflow::GetMarkForCompilationPassFlags()->xla_auto_jit_flag;
   return static_cast<unsigned char>(flag.optimization_level_single_gpu > 0 ||
@@ -110,16 +300,26 @@ unsigned char TF_GetXlaAutoJitEnabled() {
 }
 
 unsigned char TF_GetXlaConstantFoldingDisabled() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_6(mht_6_v, 303, "", "./tensorflow/c/c_api_experimental.cc", "TF_GetXlaConstantFoldingDisabled");
+
   return static_cast<unsigned char>(
       tensorflow::GetBuildXlaOpsPassFlags()->tf_xla_disable_constant_folding);
 }
 
 void TF_SetXlaConstantFoldingDisabled(unsigned char should_enable) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("should_enable: '" + std::string(1, should_enable) + "'");
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_7(mht_7_v, 312, "", "./tensorflow/c/c_api_experimental.cc", "TF_SetXlaConstantFoldingDisabled");
+
   tensorflow::GetBuildXlaOpsPassFlags()->tf_xla_disable_constant_folding =
       static_cast<bool>(should_enable);
 }
 
 void TF_SetXlaMinClusterSize(int size) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_8(mht_8_v, 320, "", "./tensorflow/c/c_api_experimental.cc", "TF_SetXlaMinClusterSize");
+
   tensorflow::MarkForCompilationPassFlags* flags =
       tensorflow::GetMarkForCompilationPassFlags();
   flags->tf_xla_min_cluster_size = size;
@@ -128,6 +328,11 @@ void TF_SetXlaMinClusterSize(int size) {
 TF_Buffer* TF_CreateConfig(unsigned char enable_xla_compilation,
                            unsigned char gpu_memory_allow_growth,
                            unsigned int num_cpu_devices) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("enable_xla_compilation: '" + std::string(1, enable_xla_compilation) + "'");
+   mht_9_v.push_back("gpu_memory_allow_growth: '" + std::string(1, gpu_memory_allow_growth) + "'");
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_9(mht_9_v, 333, "", "./tensorflow/c/c_api_experimental.cc", "TF_CreateConfig");
+
   tensorflow::ConfigProto config;
   auto* optimizer_options =
       config.mutable_graph_options()->mutable_optimizer_options();
@@ -168,6 +373,10 @@ TF_Buffer* TF_CreateConfig(unsigned char enable_xla_compilation,
 }
 
 TF_Buffer* TF_CreateRunOptions(unsigned char enable_full_trace) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("enable_full_trace: '" + std::string(1, enable_full_trace) + "'");
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_10(mht_10_v, 377, "", "./tensorflow/c/c_api_experimental.cc", "TF_CreateRunOptions");
+
   tensorflow::RunOptions options;
   if (enable_full_trace) {
     options.set_trace_level(tensorflow::RunOptions::FULL_TRACE);
@@ -180,6 +389,9 @@ TF_Buffer* TF_CreateRunOptions(unsigned char enable_full_trace) {
 }
 
 const char* TF_GraphDebugString(TF_Graph* graph, size_t* len) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_11(mht_11_v, 392, "", "./tensorflow/c/c_api_experimental.cc", "TF_GraphDebugString");
+
   tensorflow::mutex_lock c(graph->mu);
   const auto& debug_str = graph->graph.ToGraphDefDebug().DebugString();
   *len = debug_str.size();
@@ -189,6 +401,9 @@ const char* TF_GraphDebugString(TF_Graph* graph, size_t* len) {
 }
 
 char* TF_FunctionDebugString(TF_Function* func, size_t* len) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_12(mht_12_v, 404, "", "./tensorflow/c/c_api_experimental.cc", "TF_FunctionDebugString");
+
   const auto& debug_str = DebugString(func->fdef);
   *len = debug_str.size();
   char* ret = static_cast<char*>(malloc(*len + 1));
@@ -238,6 +453,9 @@ static std::vector<UniqueFuncPtr> CreateFunctionsFromTextProto(
 
 TF_Tensor* TF_DequeueNamedTensor(TF_Session* session, int tensor_id,
                                  TF_Status* status) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_13(mht_13_v, 456, "", "./tensorflow/c/c_api_experimental.cc", "TF_DequeueNamedTensor");
+
   assert(session);
   {
     tensorflow::mutex_lock c(session->graph->mu);
@@ -277,6 +495,9 @@ TF_Tensor* TF_DequeueNamedTensor(TF_Session* session, int tensor_id,
 
 void TF_EnqueueNamedTensor(TF_Session* session, int tensor_id,
                            TF_Tensor* tensor, TF_Status* status) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_14(mht_14_v, 498, "", "./tensorflow/c/c_api_experimental.cc", "TF_EnqueueNamedTensor");
+
   assert(session);
   {
     tensorflow::mutex_lock c(session->graph->mu);
@@ -324,6 +545,10 @@ void TF_EnqueueNamedTensor(TF_Session* session, int tensor_id,
 }
 
 TF_Buffer* TFE_GetServerDef(const char* text_proto, TF_Status* status) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("text_proto: \"" + (text_proto == nullptr ? std::string("nullptr") : std::string((char*)text_proto)) + "\"");
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_15(mht_15_v, 549, "", "./tensorflow/c/c_api_experimental.cc", "TFE_GetServerDef");
+
   tensorflow::ServerDef server_def;
   if (!tensorflow::protobuf::TextFormat::ParseFromString(text_proto,
                                                          &server_def)) {
@@ -338,6 +563,10 @@ TF_Buffer* TFE_GetServerDef(const char* text_proto, TF_Status* status) {
 }
 
 void TF_MakeInternalErrorStatus(TF_Status* status, const char* errMsg) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("errMsg: \"" + (errMsg == nullptr ? std::string("nullptr") : std::string((char*)errMsg)) + "\"");
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_16(mht_16_v, 567, "", "./tensorflow/c/c_api_experimental.cc", "TF_MakeInternalErrorStatus");
+
   status->status = tensorflow::errors::Internal(errMsg);
 }
 
@@ -348,6 +577,10 @@ struct TF_CheckpointReader : public tensorflow::checkpoint::CheckpointReader {
 
 TF_CheckpointReader* TF_NewCheckpointReader(const char* filename,
                                             TF_Status* status) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("filename: \"" + (filename == nullptr ? std::string("nullptr") : std::string((char*)filename)) + "\"");
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_17(mht_17_v, 581, "", "./tensorflow/c/c_api_experimental.cc", "TF_NewCheckpointReader");
+
   TF_CheckpointReader* reader = new TF_CheckpointReader(filename, status);
   if (!status->status.ok()) {
     TF_DeleteCheckpointReader(reader);
@@ -360,30 +593,51 @@ TF_CheckpointReader* TF_NewCheckpointReader(const char* filename,
   return reader;
 }
 
-void TF_DeleteCheckpointReader(TF_CheckpointReader* reader) { delete reader; }
+void TF_DeleteCheckpointReader(TF_CheckpointReader* reader) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_18(mht_18_v, 597, "", "./tensorflow/c/c_api_experimental.cc", "TF_DeleteCheckpointReader");
+ delete reader; }
 
 int TF_CheckpointReaderHasTensor(TF_CheckpointReader* reader,
                                  const char* name) {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("name: \"" + (name == nullptr ? std::string("nullptr") : std::string((char*)name)) + "\"");
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_19(mht_19_v, 604, "", "./tensorflow/c/c_api_experimental.cc", "TF_CheckpointReaderHasTensor");
+
   return reader->HasTensor(name);
 }
 
 const char* TF_CheckpointReaderGetVariable(TF_CheckpointReader* reader,
                                            int index) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_20(mht_20_v, 612, "", "./tensorflow/c/c_api_experimental.cc", "TF_CheckpointReaderGetVariable");
+
   return reader->variable_list[index].c_str();
 }
 
 int TF_CheckpointReaderSize(TF_CheckpointReader* reader) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_21(mht_21_v, 619, "", "./tensorflow/c/c_api_experimental.cc", "TF_CheckpointReaderSize");
+
   return reader->variable_list.size();
 }
 
 TF_DataType TF_CheckpointReaderGetVariableDataType(TF_CheckpointReader* reader,
                                                    const char* name) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("name: \"" + (name == nullptr ? std::string("nullptr") : std::string((char*)name)) + "\"");
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_22(mht_22_v, 628, "", "./tensorflow/c/c_api_experimental.cc", "TF_CheckpointReaderGetVariableDataType");
+
   const auto& m = reader->GetVariableToDataTypeMap();
   return static_cast<TF_DataType>(m.at(name));
 }
 
 TF_Tensor* TF_CheckpointReaderGetTensor(TF_CheckpointReader* reader,
                                         const char* name, TF_Status* status) {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("name: \"" + (name == nullptr ? std::string("nullptr") : std::string((char*)name)) + "\"");
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_23(mht_23_v, 638, "", "./tensorflow/c/c_api_experimental.cc", "TF_CheckpointReaderGetTensor");
+
   std::unique_ptr<tensorflow::Tensor> tensor;
   reader->GetTensor(name, &tensor, status);
   if (!status->status.ok()) return nullptr;
@@ -393,6 +647,10 @@ TF_Tensor* TF_CheckpointReaderGetTensor(TF_CheckpointReader* reader,
 void TF_CheckpointReaderGetVariableShape(TF_CheckpointReader* reader,
                                          const char* name, int64_t* dims,
                                          int num_dims, TF_Status* status) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("name: \"" + (name == nullptr ? std::string("nullptr") : std::string((char*)name)) + "\"");
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_24(mht_24_v, 651, "", "./tensorflow/c/c_api_experimental.cc", "TF_CheckpointReaderGetVariableShape");
+
   const auto& shape = reader->GetVariableToShapeMap().at(name);
   int rank = shape.dims();
   if (num_dims != rank) {
@@ -407,6 +665,10 @@ void TF_CheckpointReaderGetVariableShape(TF_CheckpointReader* reader,
 
 int TF_CheckpointReaderGetVariableNumDims(TF_CheckpointReader* reader,
                                           const char* name) {
+   std::vector<std::string> mht_25_v;
+   mht_25_v.push_back("name: \"" + (name == nullptr ? std::string("nullptr") : std::string((char*)name)) + "\"");
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_25(mht_25_v, 669, "", "./tensorflow/c/c_api_experimental.cc", "TF_CheckpointReaderGetVariableNumDims");
+
   const auto& m = reader->GetVariableToShapeMap();
   return m.at(name).dims();
 }
@@ -421,19 +683,34 @@ struct TF_AttrBuilder : public tensorflow::AttrBuilder {
 };
 
 TF_AttrBuilder* TF_NewAttrBuilder(const char* op_name) {
+   std::vector<std::string> mht_26_v;
+   mht_26_v.push_back("op_name: \"" + (op_name == nullptr ? std::string("nullptr") : std::string((char*)op_name)) + "\"");
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_26(mht_26_v, 687, "", "./tensorflow/c/c_api_experimental.cc", "TF_NewAttrBuilder");
+
   return new TF_AttrBuilder(op_name);
 }
 
-void TF_DeleteAttrBuilder(TF_AttrBuilder* builder) { delete builder; }
+void TF_DeleteAttrBuilder(TF_AttrBuilder* builder) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_27(mht_27_v, 694, "", "./tensorflow/c/c_api_experimental.cc", "TF_DeleteAttrBuilder");
+ delete builder; }
 
 void TF_AttrBuilderSetType(TF_AttrBuilder* builder, const char* attr_name,
                            TF_DataType value) {
+   std::vector<std::string> mht_28_v;
+   mht_28_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_28(mht_28_v, 701, "", "./tensorflow/c/c_api_experimental.cc", "TF_AttrBuilderSetType");
+
   auto iter = builder->attr_names.insert(attr_name).first;
   builder->Set(*iter, static_cast<tensorflow::DataType>(value));
 }
 
 void TF_AttrBuilderSetTypeList(TF_AttrBuilder* builder, const char* attr_name,
                                const TF_DataType* values, int num_values) {
+   std::vector<std::string> mht_29_v;
+   mht_29_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_29(mht_29_v, 711, "", "./tensorflow/c/c_api_experimental.cc", "TF_AttrBuilderSetTypeList");
+
   auto iter = builder->attr_names.insert(attr_name).first;
   builder->Set(*iter, tensorflow::gtl::ArraySlice<const tensorflow::DataType>(
                           reinterpret_cast<const tensorflow::DataType*>(values),
@@ -443,6 +720,10 @@ void TF_AttrBuilderSetTypeList(TF_AttrBuilder* builder, const char* attr_name,
 void TF_AttrBuilderCheckCanRunOnDevice(TF_AttrBuilder* builder,
                                        const char* device_type,
                                        TF_Status* status) {
+   std::vector<std::string> mht_30_v;
+   mht_30_v.push_back("device_type: \"" + (device_type == nullptr ? std::string("nullptr") : std::string((char*)device_type)) + "\"");
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_30(mht_30_v, 724, "", "./tensorflow/c/c_api_experimental.cc", "TF_AttrBuilderCheckCanRunOnDevice");
+
   status->status = tensorflow::FindKernelDef(
       tensorflow::DeviceType(device_type), builder->BuildNodeDef(),
       /* def = */ nullptr, /* kernel_class_name = */ nullptr);
@@ -450,6 +731,10 @@ void TF_AttrBuilderCheckCanRunOnDevice(TF_AttrBuilder* builder,
 
 const char* TF_GetNumberAttrForOpListInput(const char* op_name, int input_index,
                                            TF_Status* status) {
+   std::vector<std::string> mht_31_v;
+   mht_31_v.push_back("op_name: \"" + (op_name == nullptr ? std::string("nullptr") : std::string((char*)op_name)) + "\"");
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_31(mht_31_v, 735, "", "./tensorflow/c/c_api_experimental.cc", "TF_GetNumberAttrForOpListInput");
+
   const tensorflow::OpDef* op_def = nullptr;
   status->status =
       tensorflow::OpRegistry::Global()->LookUpOpDef(op_name, &op_def);
@@ -474,6 +759,10 @@ const char* TF_GetNumberAttrForOpListInput(const char* op_name, int input_index,
 }
 
 int TF_OpIsStateful(const char* op_type, TF_Status* status) {
+   std::vector<std::string> mht_32_v;
+   mht_32_v.push_back("op_type: \"" + (op_type == nullptr ? std::string("nullptr") : std::string((char*)op_type)) + "\"");
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_32(mht_32_v, 763, "", "./tensorflow/c/c_api_experimental.cc", "TF_OpIsStateful");
+
   const tensorflow::OpRegistrationData* op_reg_data;
   status->status =
       tensorflow::OpRegistry::Global()->LookUp(op_type, &op_reg_data);
@@ -484,16 +773,26 @@ int TF_OpIsStateful(const char* op_type, TF_Status* status) {
 }
 
 void TF_InitMain(const char* usage, int* argc, char*** argv) {
+   std::vector<std::string> mht_33_v;
+   mht_33_v.push_back("usage: \"" + (usage == nullptr ? std::string("nullptr") : std::string((char*)usage)) + "\"");
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_33(mht_33_v, 777, "", "./tensorflow/c/c_api_experimental.cc", "TF_InitMain");
+
   tensorflow::port::InitMain(usage, argc, argv);
 }
 
 int TF_PickUnusedPortOrDie() {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_34(mht_34_v, 784, "", "./tensorflow/c/c_api_experimental.cc", "TF_PickUnusedPortOrDie");
+
   return tensorflow::internal::PickUnusedPortOrDie();
 }
 
 TFE_TensorHandle* TFE_NewTensorHandleFromScalar(TF_DataType data_type,
                                                 void* data, size_t len,
                                                 TF_Status* status) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_35(mht_35_v, 793, "", "./tensorflow/c/c_api_experimental.cc", "TFE_NewTensorHandleFromScalar");
+
   auto dtype = static_cast<tensorflow::DataType>(data_type);
   DCHECK(tensorflow::DataTypeCanUseMemcpy(dtype));
 
@@ -509,6 +808,9 @@ TF_CAPI_EXPORT extern void TFE_EnableCollectiveOps(TFE_Context* ctx,
                                                    const void* proto,
                                                    size_t proto_len,
                                                    TF_Status* status) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_36(mht_36_v, 811, "", "./tensorflow/c/c_api_experimental.cc", "TFE_EnableCollectiveOps");
+
   tensorflow::ServerDef server_def;
   if (!server_def.ParseFromArray(proto, proto_len)) {
     status->status = tensorflow::errors::InvalidArgument(
@@ -520,6 +822,9 @@ TF_CAPI_EXPORT extern void TFE_EnableCollectiveOps(TFE_Context* ctx,
 
 TF_CAPI_EXPORT extern void TFE_AbortCollectiveOps(TFE_Context* ctx,
                                                   TF_Status* status) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_37(mht_37_v, 825, "", "./tensorflow/c/c_api_experimental.cc", "TFE_AbortCollectiveOps");
+
   tensorflow::EagerContext* context =
       tensorflow::ContextFromInterface(tensorflow::unwrap(ctx));
   auto collective_executor_handle = context->GetCollectiveExecutorHandle();
@@ -529,6 +834,10 @@ TF_CAPI_EXPORT extern void TFE_AbortCollectiveOps(TFE_Context* ctx,
 TF_CAPI_EXPORT extern void TFE_CollectiveOpsCheckPeerHealth(
     TFE_Context* ctx, const char* task, int64_t timeout_in_ms,
     TF_Status* status) {
+   std::vector<std::string> mht_38_v;
+   mht_38_v.push_back("task: \"" + (task == nullptr ? std::string("nullptr") : std::string((char*)task)) + "\"");
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_38(mht_38_v, 838, "", "./tensorflow/c/c_api_experimental.cc", "TFE_CollectiveOpsCheckPeerHealth");
+
   tensorflow::EagerContext* context =
       tensorflow::ContextFromInterface(tensorflow::unwrap(ctx));
   auto collective_executor_handle = context->GetCollectiveExecutorHandle();
@@ -542,6 +851,9 @@ TF_CAPI_EXPORT extern void TFE_CollectiveOpsCheckPeerHealth(
 }
 
 TF_ShapeAndTypeList* TF_NewShapeAndTypeList(int num_items) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_39(mht_39_v, 854, "", "./tensorflow/c/c_api_experimental.cc", "TF_NewShapeAndTypeList");
+
   TF_ShapeAndTypeList* result = new TF_ShapeAndTypeList;
   result->num_items = num_items;
   result->items = (num_items == 0) ? nullptr : new TF_ShapeAndType[num_items]();
@@ -550,6 +862,9 @@ TF_ShapeAndTypeList* TF_NewShapeAndTypeList(int num_items) {
 
 void TF_ShapeAndTypeListSetShape(TF_ShapeAndTypeList* shape_list, int index,
                                  const int64_t* dims, int num_dims) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_40(mht_40_v, 865, "", "./tensorflow/c/c_api_experimental.cc", "TF_ShapeAndTypeListSetShape");
+
   DCHECK(index >= 0 && index < shape_list->num_items);
   TF_ShapeAndType& shape = shape_list->items[index];
   DCHECK(shape.dims == nullptr) << "Shape at " << index << " is already set!";
@@ -561,6 +876,9 @@ void TF_ShapeAndTypeListSetShape(TF_ShapeAndTypeList* shape_list, int index,
 
 void TF_ShapeAndTypeListSetUnknownShape(TF_ShapeAndTypeList* shape_list,
                                         int index) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_41(mht_41_v, 879, "", "./tensorflow/c/c_api_experimental.cc", "TF_ShapeAndTypeListSetUnknownShape");
+
   DCHECK(index >= 0 && index < shape_list->num_items);
   TF_ShapeAndType& shape = shape_list->items[index];
   DCHECK(shape.dims == nullptr) << "Shape at " << index << " is already set!";
@@ -570,12 +888,18 @@ void TF_ShapeAndTypeListSetUnknownShape(TF_ShapeAndTypeList* shape_list,
 
 void TF_ShapeAndTypeListSetDtype(TF_ShapeAndTypeList* shape_list, int index,
                                  TF_DataType dtype) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_42(mht_42_v, 891, "", "./tensorflow/c/c_api_experimental.cc", "TF_ShapeAndTypeListSetDtype");
+
   DCHECK(index >= 0 && index < shape_list->num_items);
   TF_ShapeAndType& shape_and_type = shape_list->items[index];
   shape_and_type.dtype = dtype;
 }
 
 void TF_DeleteShapeAndTypeList(TF_ShapeAndTypeList* shape_list) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_43(mht_43_v, 900, "", "./tensorflow/c/c_api_experimental.cc", "TF_DeleteShapeAndTypeList");
+
   if (shape_list == nullptr) return;
   for (size_t i = 0; i < shape_list->num_items; ++i) {
     delete[] shape_list->items[i].dims;
@@ -586,6 +910,9 @@ void TF_DeleteShapeAndTypeList(TF_ShapeAndTypeList* shape_list) {
 
 void TF_DeleteShapeAndTypeListArray(TF_ShapeAndTypeList** shape_list_array,
                                     int num_items) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_44(mht_44_v, 913, "", "./tensorflow/c/c_api_experimental.cc", "TF_DeleteShapeAndTypeListArray");
+
   if (shape_list_array == nullptr) return;
   for (int i = 0; i < num_items; ++i) {
     TF_DeleteShapeAndTypeList(shape_list_array[i]);
@@ -607,6 +934,9 @@ void TFE_InferShapes(TFE_Op* tfe_op, TF_ShapeAndTypeList* input_shapes,
                      TF_ShapeAndTypeList** output_shapes,
                      TF_ShapeAndTypeList*** output_resource_shapes_and_types,
                      TF_Status* status) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_45(mht_45_v, 937, "", "./tensorflow/c/c_api_experimental.cc", "TFE_InferShapes");
+
   using tensorflow::NodeDef;
   using tensorflow::OpRegistrationData;
   using tensorflow::Tensor;
@@ -710,6 +1040,10 @@ void TFE_InferShapes(TFE_Op* tfe_op, TF_ShapeAndTypeList* input_shapes,
 
 void TF_ImportGraphDefOptionsSetValidateColocationConstraints(
     TF_ImportGraphDefOptions* opts, unsigned char enable) {
+   std::vector<std::string> mht_46_v;
+   mht_46_v.push_back("enable: '" + std::string(1, enable) + "'");
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_46(mht_46_v, 1044, "", "./tensorflow/c/c_api_experimental.cc", "TF_ImportGraphDefOptionsSetValidateColocationConstraints");
+
   opts->opts.validate_colocation_constraints = enable;
 }
 
@@ -723,6 +1057,10 @@ void TF_ImportGraphDefOptionsSetValidateColocationConstraints(
 // for the first time.
 TF_Library* TF_LoadPluggableDeviceLibrary(const char* library_filename,
                                           TF_Status* status) {
+   std::vector<std::string> mht_47_v;
+   mht_47_v.push_back("library_filename: \"" + (library_filename == nullptr ? std::string("nullptr") : std::string((char*)library_filename)) + "\"");
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_47(mht_47_v, 1061, "", "./tensorflow/c/c_api_experimental.cc", "TF_LoadPluggableDeviceLibrary");
+
 #if defined(IS_MOBILE_PLATFORM) || defined(IS_SLIM_BUILD)
   status->status = tensorflow::errors::Unimplemented(
       "PluggableDevice plugin functionality is not supported on mobile");
@@ -755,5 +1093,8 @@ TF_Library* TF_LoadPluggableDeviceLibrary(const char* library_filename,
 }
 
 void TF_DeletePluggableDeviceLibraryHandle(TF_Library* lib_handle) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScPSc_api_experimentalDTcc mht_48(mht_48_v, 1096, "", "./tensorflow/c/c_api_experimental.cc", "TF_DeletePluggableDeviceLibraryHandle");
+
   delete lib_handle;
 }

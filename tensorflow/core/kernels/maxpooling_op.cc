@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -110,6 +278,9 @@ static void SpatialMaxPoolWithArgMaxHelper(
   auto shard = [&params, &in_mat, &out_mat, &out_arg_max_mat, &input_backprop,
                 &output_arg_max, &out_backprop,
                 include_batch_in_index](int64_t start, int64_t limit) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_0(mht_0_v, 281, "", "./tensorflow/core/kernels/maxpooling_op.cc", "lambda");
+
     const int32_t depth = params.depth;
     const int32_t in_rows = params.tensor_in_rows;
     const int32_t in_cols = params.tensor_in_cols;
@@ -225,6 +396,9 @@ template <class Device, class T>
 class MaxPoolingGradOp : public OpKernel {
  public:
   explicit MaxPoolingGradOp(OpKernelConstruction* context) : OpKernel(context) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_1(mht_1_v, 399, "", "./tensorflow/core/kernels/maxpooling_op.cc", "MaxPoolingGradOp");
+
     string data_format;
     OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
     OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
@@ -264,6 +438,9 @@ class MaxPoolingGradOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_2(mht_2_v, 441, "", "./tensorflow/core/kernels/maxpooling_op.cc", "Compute");
+
     const Tensor& tensor_in = context->input(0);
     const Tensor& tensor_out = context->input(1);
     const Tensor& out_backprop = context->input(2);
@@ -359,6 +536,9 @@ class MaxPoolingGradOp<Eigen::GpuDevice, T> : public OpKernel {
   typedef Eigen::GpuDevice Device;
 
   explicit MaxPoolingGradOp(OpKernelConstruction* context) : OpKernel(context) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_3(mht_3_v, 539, "", "./tensorflow/core/kernels/maxpooling_op.cc", "MaxPoolingGradOp");
+
     string data_format;
     OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
     OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
@@ -390,6 +570,9 @@ class MaxPoolingGradOp<Eigen::GpuDevice, T> : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_4(mht_4_v, 573, "", "./tensorflow/core/kernels/maxpooling_op.cc", "Compute");
+
     const Tensor& tensor_in = context->input(0);
     const Tensor& tensor_out = context->input(1);
     const Tensor& out_backprop = context->input(2);
@@ -466,6 +649,9 @@ class MaxPoolingGradGradOp : public OpKernel {
  public:
   explicit MaxPoolingGradGradOp(OpKernelConstruction* context)
       : OpKernel(context) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_5(mht_5_v, 652, "", "./tensorflow/core/kernels/maxpooling_op.cc", "MaxPoolingGradGradOp");
+
     string data_format;
     OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
     OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
@@ -497,6 +683,9 @@ class MaxPoolingGradGradOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_6(mht_6_v, 686, "", "./tensorflow/core/kernels/maxpooling_op.cc", "Compute");
+
     const Tensor& tensor_in = context->input(0);
     const Tensor& tensor_out = context->input(1);
     const Tensor& out_grad_backprop = context->input(2);
@@ -572,6 +761,9 @@ class MaxPoolingGradGradOp : public OpKernel {
                               const Tensor& top_diff,
                               const PoolParameters& params,
                               const Padding& padding) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_7(mht_7_v, 764, "", "./tensorflow/core/kernels/maxpooling_op.cc", "SpatialMaxPoolGradGrad");
+
     typedef Eigen::Map<const Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>>
         ConstEigenMatrixMap;
     typedef Eigen::Map<Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>>
@@ -612,6 +804,9 @@ class MaxPoolingGradGradOp : public OpKernel {
     //    top_diff_as_matrix.
     auto shard = [&params, &in_mat, &out_mat, &top_diff_mat, &bottom_diff_mat](
                      int64_t start, int64_t limit) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_8(mht_8_v, 807, "", "./tensorflow/core/kernels/maxpooling_op.cc", "lambda");
+
       const int32_t depth = params.depth;
       const int32_t in_rows = params.tensor_in_rows;
       const int32_t in_cols = params.tensor_in_cols;
@@ -688,6 +883,9 @@ class MaxPoolingGradGradOp<Eigen::GpuDevice, T> : public OpKernel {
 
   explicit MaxPoolingGradGradOp(OpKernelConstruction* context)
       : OpKernel(context) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_9(mht_9_v, 886, "", "./tensorflow/core/kernels/maxpooling_op.cc", "MaxPoolingGradGradOp");
+
     string data_format;
     OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
     OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
@@ -711,6 +909,9 @@ class MaxPoolingGradGradOp<Eigen::GpuDevice, T> : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_10(mht_10_v, 912, "", "./tensorflow/core/kernels/maxpooling_op.cc", "Compute");
+
     const Tensor& tensor_in = context->input(0);
     const Tensor& tensor_out = context->input(1);
     const Tensor& out_grad_backprop = context->input(2);
@@ -802,6 +1003,9 @@ class MaxPoolingNoMaskOp : public OpKernel {
  public:
   explicit MaxPoolingNoMaskOp(OpKernelConstruction* context)
       : OpKernel(context) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_11(mht_11_v, 1006, "", "./tensorflow/core/kernels/maxpooling_op.cc", "MaxPoolingNoMaskOp");
+
     string data_format;
     OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
     OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
@@ -830,6 +1034,9 @@ class MaxPoolingNoMaskOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_12(mht_12_v, 1037, "", "./tensorflow/core/kernels/maxpooling_op.cc", "Compute");
+
     const Tensor& tensor_in = context->input(0);
 
     PoolParameters params{context,
@@ -864,6 +1071,9 @@ class MaxPoolingNoMaskV2Op : public OpKernel {
  public:
   explicit MaxPoolingNoMaskV2Op(OpKernelConstruction* context)
       : OpKernel(context) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_13(mht_13_v, 1074, "", "./tensorflow/core/kernels/maxpooling_op.cc", "MaxPoolingNoMaskV2Op");
+
     string data_format;
     OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
     OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
@@ -890,6 +1100,9 @@ class MaxPoolingNoMaskV2Op : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_14(mht_14_v, 1103, "", "./tensorflow/core/kernels/maxpooling_op.cc", "Compute");
+
     const Tensor& tensor_in = context->input(0);
 
     std::vector<int32> ksize = ksize_;
@@ -950,6 +1163,9 @@ struct LaunchMaxPoolingWithArgmax<CPUDevice, T, Targmax> {
   static void launch(OpKernelContext* context, const PoolParameters& params,
                      const Tensor& input, Tensor* output, Tensor* argmax,
                      bool propagate_nans, bool include_batch_in_index) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_15(mht_15_v, 1166, "", "./tensorflow/core/kernels/maxpooling_op.cc", "launch");
+
     Tensor unused;
     SpatialMaxPoolWithArgMaxHelper<CPUDevice, T, Targmax>(
         context, output, argmax, /*input_backprop=*/nullptr, input, unused,
@@ -962,6 +1178,9 @@ class MaxPoolingWithArgmaxOp : public OpKernel {
  public:
   explicit MaxPoolingWithArgmaxOp(OpKernelConstruction* context)
       : OpKernel(context) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_16(mht_16_v, 1181, "", "./tensorflow/core/kernels/maxpooling_op.cc", "MaxPoolingWithArgmaxOp");
+
     OP_REQUIRES_OK(context, context->GetAttr("ksize", &ksize_));
     OP_REQUIRES(context, ksize_.size() == 4,
                 errors::InvalidArgument("Sliding window ksize field must "
@@ -981,6 +1200,9 @@ class MaxPoolingWithArgmaxOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_17(mht_17_v, 1203, "", "./tensorflow/core/kernels/maxpooling_op.cc", "Compute");
+
     const Tensor& tensor_in = context->input(0);
     OP_REQUIRES(context, tensor_in.dims() == 4,
                 errors::InvalidArgument("tensor_in must be 4-dimensional (2)"));
@@ -1029,11 +1251,17 @@ struct LaunchMaxPoolingGradWithArgmax<CPUDevice, T> {
   static void launch(OpKernelContext* context, const PoolParameters& params,
                      const Tensor& grad_in, const Tensor& argmax,
                      Tensor* grad_out, const bool include_batch_in_index) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_18(mht_18_v, 1254, "", "./tensorflow/core/kernels/maxpooling_op.cc", "launch");
+
     const DeviceBase::CpuWorkerThreads& worker_threads =
         *(context->device()->tensorflow_cpu_worker_threads());
 
     auto shard = [&grad_in, &argmax, &grad_out, include_batch_in_index](
                      int64_t start, int64_t limit) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_19(mht_19_v, 1262, "", "./tensorflow/core/kernels/maxpooling_op.cc", "lambda");
+
       const int64_t batch_size =
           GetTensorDim(grad_out->shape(), FORMAT_NHWC, 'N');
       const int64_t output_size_per_batch =
@@ -1084,6 +1312,9 @@ class MaxPoolingGradWithArgmaxOp : public OpKernel {
  public:
   explicit MaxPoolingGradWithArgmaxOp(OpKernelConstruction* context)
       : OpKernel(context) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_20(mht_20_v, 1315, "", "./tensorflow/core/kernels/maxpooling_op.cc", "MaxPoolingGradWithArgmaxOp");
+
     string data_format_str;
     if (std::is_same<Device, GPUDevice>::value) {
       OP_REQUIRES(context, !tensorflow::OpDeterminismRequired(),
@@ -1113,6 +1344,9 @@ class MaxPoolingGradWithArgmaxOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_21(mht_21_v, 1347, "", "./tensorflow/core/kernels/maxpooling_op.cc", "Compute");
+
     const Tensor& tensor_in = context->input(0);
     const Tensor& grad_in = context->input(1);
     const Tensor& argmax = context->input(2);
@@ -1164,6 +1398,9 @@ class MaxPoolingGradGradWithArgmaxOp : public OpKernel {
  public:
   explicit MaxPoolingGradGradWithArgmaxOp(OpKernelConstruction* context)
       : OpKernel(context) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_22(mht_22_v, 1401, "", "./tensorflow/core/kernels/maxpooling_op.cc", "MaxPoolingGradGradWithArgmaxOp");
+
     OP_REQUIRES_OK(context, context->GetAttr("ksize", &ksize_));
     OP_REQUIRES(context, ksize_.size() == 4,
                 errors::InvalidArgument("Sliding window ksize field must "
@@ -1181,6 +1418,9 @@ class MaxPoolingGradGradWithArgmaxOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_23(mht_23_v, 1421, "", "./tensorflow/core/kernels/maxpooling_op.cc", "Compute");
+
     const Tensor& tensor_in = context->input(0);
     const Tensor& grad_in = context->input(1);
     const Tensor& argmax = context->input(2);
@@ -1229,6 +1469,9 @@ class MaxPoolingNoMaskOp<GPUDevice, T> : public OpKernel {
   typedef GPUDevice Device;
   explicit MaxPoolingNoMaskOp(OpKernelConstruction* context)
       : OpKernel(context) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_24(mht_24_v, 1472, "", "./tensorflow/core/kernels/maxpooling_op.cc", "MaxPoolingNoMaskOp");
+
     string data_format;
     OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
     OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
@@ -1255,6 +1498,9 @@ class MaxPoolingNoMaskOp<GPUDevice, T> : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_25(mht_25_v, 1501, "", "./tensorflow/core/kernels/maxpooling_op.cc", "Compute");
+
     const Tensor& tensor_in = context->input(0);
 
     PoolParameters params{
@@ -1328,6 +1574,9 @@ class MaxPoolingNoMaskV2Op<GPUDevice, T> : public OpKernel {
   typedef GPUDevice Device;
   explicit MaxPoolingNoMaskV2Op(OpKernelConstruction* context)
       : OpKernel(context) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_26(mht_26_v, 1577, "", "./tensorflow/core/kernels/maxpooling_op.cc", "MaxPoolingNoMaskV2Op");
+
     string data_format;
     OP_REQUIRES_OK(context, context->GetAttr("data_format", &data_format));
     OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
@@ -1353,6 +1602,9 @@ class MaxPoolingNoMaskV2Op<GPUDevice, T> : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_27(mht_27_v, 1605, "", "./tensorflow/core/kernels/maxpooling_op.cc", "Compute");
+
     const Tensor& tensor_in = context->input(0);
 
     std::vector<int32> ksize = ksize_;
@@ -1423,6 +1675,9 @@ template <typename T>
 struct LaunchMaxPoolingNoMask<Eigen::GpuDevice, T> {
   static void launch(OpKernelContext* context, const PoolParameters& params,
                      const Tensor& input, Tensor* output, bool propagate_nans) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_28(mht_28_v, 1678, "", "./tensorflow/core/kernels/maxpooling_op.cc", "launch");
+
     bool status = functor::MaxPoolForwardWithOptionalArgmax<T>()(
         input.flat<T>().data(), params.tensor_in_batch, params.tensor_in_rows,
         params.tensor_in_cols, params.depth, params.out_height,
@@ -1442,6 +1697,9 @@ struct LaunchMaxPoolingWithArgmax<Eigen::GpuDevice, T, int64_t> {
   static void launch(OpKernelContext* context, const PoolParameters& params,
                      const Tensor& input, Tensor* output, Tensor* argmax,
                      bool propagate_nans, bool include_batch_in_index) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_29(mht_29_v, 1700, "", "./tensorflow/core/kernels/maxpooling_op.cc", "launch");
+
     bool status = functor::MaxPoolForwardWithOptionalArgmax<T>()(
         input.flat<T>().data(), params.tensor_in_batch, params.tensor_in_rows,
         params.tensor_in_cols, params.depth, params.out_height,
@@ -1462,6 +1720,9 @@ struct LaunchMaxPoolingGradWithArgmax<Eigen::GpuDevice, T> {
   static void launch(OpKernelContext* context, const PoolParameters& params,
                      const Tensor& grad_in, const Tensor& argmax,
                      Tensor* grad_out, const bool include_batch_in_index) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_30(mht_30_v, 1723, "", "./tensorflow/core/kernels/maxpooling_op.cc", "launch");
+
     const int input_size = params.tensor_in_batch * params.tensor_in_rows *
                            params.tensor_in_cols * params.depth;
     const int output_size = params.tensor_in_batch * params.out_height *
@@ -1486,6 +1747,9 @@ struct LaunchMaxPoolingGradGradWithArgmax<Eigen::GpuDevice, T> {
   static void launch(OpKernelContext* context, const PoolParameters& params,
                      const Tensor& grad_in, const Tensor& argmax,
                      Tensor* grad_out, const bool include_batch_in_index) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmaxpooling_opDTcc mht_31(mht_31_v, 1750, "", "./tensorflow/core/kernels/maxpooling_op.cc", "launch");
+
     const int input_size = params.tensor_in_batch * params.tensor_in_rows *
                            params.tensor_in_cols * params.depth;
     const int output_size = params.tensor_in_batch * params.out_height *

@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_FRAMEWORK_RESOURCE_MGR_H_
 #define TENSORFLOW_CORE_FRAMEWORK_RESOURCE_MGR_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <memory>
 #include <string>
@@ -89,7 +257,10 @@ class ScopedStepContainer {
       : step_id_(step_id),
         container_(strings::StrCat("__per_step_", step_id)),
         cleanup_(cleanup),
-        dirty_(false) {}
+        dirty_(false) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_0(mht_0_v, 261, "", "./tensorflow/core/framework/resource_mgr.h", "ScopedStepContainer");
+}
 
   ScopedStepContainer(const int64_t step_id,
                       std::function<void(const string&)> cleanup,
@@ -97,9 +268,16 @@ class ScopedStepContainer {
       : step_id_(step_id),
         container_(strings::StrCat("__", prefix, "_per_step_", step_id)),
         cleanup_(cleanup),
-        dirty_(false) {}
+        dirty_(false) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("prefix: \"" + prefix + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_1(mht_1_v, 273, "", "./tensorflow/core/framework/resource_mgr.h", "ScopedStepContainer");
+}
 
-  ~ScopedStepContainer() { CleanUp(); }
+  ~ScopedStepContainer() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_2(mht_2_v, 278, "", "./tensorflow/core/framework/resource_mgr.h", "~ScopedStepContainer");
+ CleanUp(); }
 
   void CleanUp() TF_NO_THREAD_SAFETY_ANALYSIS {
     // NOTE(mrry): Avoid acquiring the mutex in the case that the container is
@@ -135,7 +313,10 @@ class ScopedStepContainer {
   template <typename T>
   Status LookupOrCreate(ResourceMgr* rm, const std::string& name, T** resource,
                         std::function<Status(T**)> creator) TF_MUST_USE_RESULT;
-  int64_t StepId() const { return step_id_; }
+  int64_t StepId() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_3(mht_3_v, 317, "", "./tensorflow/core/framework/resource_mgr.h", "StepId");
+ return step_id_; }
 
  private:
   const int64_t step_id_;
@@ -152,7 +333,10 @@ class ResourceMgr {
   ~ResourceMgr();
 
   // Returns the default container name for *this.
-  const std::string& default_container() const { return default_container_; }
+  const std::string& default_container() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_4(mht_4_v, 337, "", "./tensorflow/core/framework/resource_mgr.h", "default_container");
+ return default_container_; }
 
   // Creates a resource "name" in the "container".  The caller transfers
   // the ownership of one ref on "resource" to *this, regardless of whether this
@@ -447,6 +631,9 @@ class ContainerInfo {
   Status Init(ResourceMgr* rmgr, const NodeDef& ndef,
               bool use_node_name_as_default);
   Status Init(ResourceMgr* rmgr, const NodeDef& ndef) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_5(mht_5_v, 634, "", "./tensorflow/core/framework/resource_mgr.h", "Init");
+
     return Init(rmgr, ndef, false);
   }
 
@@ -454,10 +641,22 @@ class ContainerInfo {
   // resource_manager(), the resource is in the container() and its
   // name is name().  If resource_is_private_to_kernel() is true, the
   // kernel should delete the resource when the kernel is deleted.
-  ResourceMgr* resource_manager() const { return rmgr_; }
-  const std::string& container() const { return container_; }
-  const std::string& name() const { return name_; }
+  ResourceMgr* resource_manager() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_6(mht_6_v, 645, "", "./tensorflow/core/framework/resource_mgr.h", "resource_manager");
+ return rmgr_; }
+  const std::string& container() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_7(mht_7_v, 649, "", "./tensorflow/core/framework/resource_mgr.h", "container");
+ return container_; }
+  const std::string& name() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_8(mht_8_v, 653, "", "./tensorflow/core/framework/resource_mgr.h", "name");
+ return name_; }
   bool resource_is_private_to_kernel() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_9(mht_9_v, 657, "", "./tensorflow/core/framework/resource_mgr.h", "resource_is_private_to_kernel");
+
     return resource_is_private_to_kernel_;
   }
 
@@ -488,7 +687,10 @@ Status GetResourceFromContext(OpKernelContext* ctx,
 template <typename T>
 class IsResourceInitialized : public OpKernel {
  public:
-  explicit IsResourceInitialized(OpKernelConstruction* c) : OpKernel(c) {}
+  explicit IsResourceInitialized(OpKernelConstruction* c) : OpKernel(c) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_10(mht_10_v, 691, "", "./tensorflow/core/framework/resource_mgr.h", "IsResourceInitialized");
+}
 
   void Compute(OpKernelContext* ctx) override;
 };
@@ -513,7 +715,10 @@ class ResourceHandleOp : public OpKernel {
 
   void Compute(OpKernelContext* ctx) override;
 
-  bool IsExpensive() override { return false; }
+  bool IsExpensive() override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_11(mht_11_v, 719, "", "./tensorflow/core/framework/resource_mgr.h", "IsExpensive");
+ return false; }
 
  private:
   std::string container_;
@@ -531,7 +736,10 @@ class ResourceHandlesOp : public OpKernel {
 
   void Compute(OpKernelContext* ctx) override;
 
-  bool IsExpensive() override { return false; }
+  bool IsExpensive() override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_12(mht_12_v, 740, "", "./tensorflow/core/framework/resource_mgr.h", "IsExpensive");
+ return false; }
 
  private:
   std::vector<string> containers_;
@@ -560,16 +768,28 @@ class ResourceHandlesOp : public OpKernel {
 // object, so the `Encode()` and `Decode()` methods are not implemented.
 class ResourceDeleter {
  public:
-  ResourceDeleter() : deleter_() {}
+  ResourceDeleter() : deleter_() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_13(mht_13_v, 772, "", "./tensorflow/core/framework/resource_mgr.h", "ResourceDeleter");
+}
 
   ResourceDeleter(ResourceHandle handle, ResourceMgr* resource_manager)
-      : deleter_(std::make_shared<Helper>(handle, resource_manager)) {}
+      : deleter_(std::make_shared<Helper>(handle, resource_manager)) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_14(mht_14_v, 778, "", "./tensorflow/core/framework/resource_mgr.h", "ResourceDeleter");
+}
 
   ResourceDeleter(ResourceDeleter&& rhs) : deleter_(std::move(rhs.deleter_)) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_15(mht_15_v, 783, "", "./tensorflow/core/framework/resource_mgr.h", "ResourceDeleter");
+
     VLOG(3) << "ResourceDeleter move constructor called.";
   }
 
   ResourceDeleter(const ResourceDeleter& rhs) : deleter_(rhs.deleter_) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_16(mht_16_v, 790, "", "./tensorflow/core/framework/resource_mgr.h", "ResourceDeleter");
+
     VLOG(3) << "ResourceDeleter copy constructor called.";
   }
 
@@ -578,15 +798,24 @@ class ResourceDeleter {
   ResourceDeleter& operator=(ResourceDeleter&& rhs) = default;
 
   virtual ~ResourceDeleter() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_17(mht_17_v, 801, "", "./tensorflow/core/framework/resource_mgr.h", "~ResourceDeleter");
+
     VLOG(3) << "ResourceDeleter destructor called.";
   }
 
   void Encode(VariantTensorData*) const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_18(mht_18_v, 808, "", "./tensorflow/core/framework/resource_mgr.h", "Encode");
+
     LOG(ERROR) << "The Encode() method is not implemented for ResourceDeleter "
                   "objects.";
   }
 
   bool Decode(const VariantTensorData&) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_19(mht_19_v, 816, "", "./tensorflow/core/framework/resource_mgr.h", "Decode");
+
     LOG(ERROR) << "The Decode() method is not implemented for ResourceDeleter "
                   "objects";
     return false;  // Not supported.
@@ -602,12 +831,18 @@ class ResourceDeleter {
   // manager will outlive it).
   struct Helper {
     Helper(ResourceHandle handle, ResourceMgr* resource_manager)
-        : handle(handle), resource_manager(resource_manager) {}
+        : handle(handle), resource_manager(resource_manager) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_20(mht_20_v, 835, "", "./tensorflow/core/framework/resource_mgr.h", "Helper");
+}
 
     Helper(const Helper& rhs) = delete;
     Helper(Helper&& rhs) = delete;
 
     ~Helper() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_21(mht_21_v, 843, "", "./tensorflow/core/framework/resource_mgr.h", "~Helper");
+
       VLOG(3) << "Deleting Resource: " << handle.DebugString();
       resource_manager->Delete(handle).IgnoreError();
     }
@@ -623,6 +858,9 @@ class ResourceDeleter {
 
 template <typename T>
 void CheckDeriveFromResourceBase() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_22(mht_22_v, 861, "", "./tensorflow/core/framework/resource_mgr.h", "CheckDeriveFromResourceBase");
+
   static_assert(std::is_base_of<ResourceBase, T>::value,
                 "T must derive from ResourceBase");
 }
@@ -630,6 +868,11 @@ void CheckDeriveFromResourceBase() {
 template <typename T>
 Status ResourceMgr::Create(const std::string& container,
                            const std::string& name, T* resource) {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("container: \"" + container + "\"");
+   mht_23_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_23(mht_23_v, 873, "", "./tensorflow/core/framework/resource_mgr.h", "ResourceMgr::Create");
+
   CheckDeriveFromResourceBase<T>();
   CHECK(resource != nullptr);
   mutex_lock l(mu_);
@@ -640,6 +883,11 @@ Status ResourceMgr::Create(const std::string& container,
 template <typename T>
 Status ResourceMgr::CreateUnowned(const std::string& container,
                                   const std::string& name, T* resource) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("container: \"" + container + "\"");
+   mht_24_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_24(mht_24_v, 888, "", "./tensorflow/core/framework/resource_mgr.h", "ResourceMgr::CreateUnowned");
+
   CheckDeriveFromResourceBase<T>();
   mutex_lock l(mu_);
   return DoCreate(container, TypeIndex::Make<T>(), name, resource,
@@ -677,12 +925,18 @@ Status ResourceMgr::LookupMany(
 // Simple wrapper to allow conditional dynamic / static casts.
 template <typename T, bool use_dynamic_cast>
 struct TypeCastFunctor {
-  static T* Cast(ResourceBase* r) { return static_cast<T*>(r); }
+  static T* Cast(ResourceBase* r) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_25(mht_25_v, 929, "", "./tensorflow/core/framework/resource_mgr.h", "Cast");
+ return static_cast<T*>(r); }
 };
 
 template <typename T>
 struct TypeCastFunctor<T, true> {
-  static T* Cast(ResourceBase* r) { return dynamic_cast<T*>(r); }
+  static T* Cast(ResourceBase* r) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_26(mht_26_v, 937, "", "./tensorflow/core/framework/resource_mgr.h", "Cast");
+ return dynamic_cast<T*>(r); }
 };
 
 template <typename T, bool use_dynamic_cast>
@@ -727,6 +981,11 @@ Status ResourceMgr::LookupOrCreate(const std::string& container,
 template <typename T>
 Status ResourceMgr::Delete(const std::string& container,
                            const std::string& name) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("container: \"" + container + "\"");
+   mht_27_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_27(mht_27_v, 986, "", "./tensorflow/core/framework/resource_mgr.h", "ResourceMgr::Delete");
+
   CheckDeriveFromResourceBase<T>();
   return DoDelete(container, TypeIndex::Make<T>(), name);
 }
@@ -734,6 +993,10 @@ Status ResourceMgr::Delete(const std::string& container,
 template <typename T>
 Status GetResourceFromContext(OpKernelContext* ctx,
                               const std::string& input_name, T** resource) {
+   std::vector<std::string> mht_28_v;
+   mht_28_v.push_back("input_name: \"" + input_name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_28(mht_28_v, 997, "", "./tensorflow/core/framework/resource_mgr.h", "GetResourceFromContext");
+
   DataType dtype;
   TF_RETURN_IF_ERROR(ctx->input_dtype(input_name, &dtype));
   if (dtype == DT_RESOURCE) {
@@ -766,6 +1029,9 @@ Status ValidateDevice(OpKernelContext* ctx, const ResourceHandle& p);
 
 template <typename T>
 Status ValidateDeviceAndType(OpKernelContext* ctx, const ResourceHandle& p) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_29(mht_29_v, 1032, "", "./tensorflow/core/framework/resource_mgr.h", "ValidateDeviceAndType");
+
   TF_RETURN_IF_ERROR(internal::ValidateDevice(ctx, p));
   TF_RETURN_IF_ERROR(p.ValidateType<T>());
   return Status::OK();
@@ -778,6 +1044,9 @@ Status ValidateDeviceAndType(OpKernelContext* ctx, const ResourceHandle& p) {
 // this operation succeeds or fails.
 template <typename T>
 Status CreateResource(OpKernelContext* ctx, const ResourceHandle& p, T* value) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_30(mht_30_v, 1047, "", "./tensorflow/core/framework/resource_mgr.h", "CreateResource");
+
   TF_RETURN_IF_ERROR(internal::ValidateDeviceAndType<T>(ctx, p));
   return ctx->resource_manager()->Create(p.container(), p.name(), value);
 }
@@ -812,6 +1081,9 @@ Status LookupResource(OpKernelContext* ctx, const ResourceHandle& p,
 template <typename T>
 Status LookupResource(OpKernelContext* ctx, const ResourceHandle& p,
                       core::RefCountPtr<T>* value) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_31(mht_31_v, 1084, "", "./tensorflow/core/framework/resource_mgr.h", "LookupResource");
+
   T* raw_ptr = nullptr;
   TF_RETURN_IF_ERROR(LookupResource<T, false>(ctx, p, &raw_ptr));
   value->reset(raw_ptr);
@@ -825,6 +1097,9 @@ template <typename T>
 Status LookupResources(OpKernelContext* ctx,
                        absl::Span<ResourceHandle const* const> p,
                        std::vector<core::RefCountPtr<T>>* values) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_32(mht_32_v, 1100, "", "./tensorflow/core/framework/resource_mgr.h", "LookupResources");
+
   std::vector<std::pair<const string*, const string*>> containers_and_names(
       p.size());
   for (size_t i = 0; i < p.size(); ++i) {
@@ -844,6 +1119,9 @@ Status LookupResources(OpKernelContext* ctx,
 template <typename T>
 Status LookupOrCreateResource(OpKernelContext* ctx, const ResourceHandle& p,
                               T** value, std::function<Status(T**)> creator) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_33(mht_33_v, 1122, "", "./tensorflow/core/framework/resource_mgr.h", "LookupOrCreateResource");
+
   TF_RETURN_IF_ERROR(internal::ValidateDeviceAndType<T>(ctx, p));
   return ctx->resource_manager()->LookupOrCreate(p.container(), p.name(), value,
                                                  creator);
@@ -859,6 +1137,9 @@ template <typename T>
 Status LookupOrCreateResource(OpKernelContext* ctx, const ResourceHandle& p,
                               core::RefCountPtr<T>* value,
                               std::function<Status(T**)> creator) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_34(mht_34_v, 1140, "", "./tensorflow/core/framework/resource_mgr.h", "LookupOrCreateResource");
+
   T* raw_ptr = nullptr;
   TF_RETURN_IF_ERROR(LookupOrCreateResource<T>(ctx, p, &raw_ptr, creator));
   value->reset(raw_ptr);
@@ -869,6 +1150,9 @@ Status LookupOrCreateResource(OpKernelContext* ctx, const ResourceHandle& p,
 // Deletes the resource pointed by "p", using the resource manager in "ctx".
 template <typename T>
 Status DeleteResource(OpKernelContext* ctx, const ResourceHandle& p) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_35(mht_35_v, 1153, "", "./tensorflow/core/framework/resource_mgr.h", "DeleteResource");
+
   TF_RETURN_IF_ERROR(internal::ValidateDeviceAndType<T>(ctx, p));
   // This is a noop because ResourceMgr does not hold a reference.
   // NOTE(feyu): if we can convert all resources handle to ref-counting, then
@@ -884,6 +1168,9 @@ Status DeleteResource(OpKernelContext* ctx, const ResourceHandle& p);
 
 template <typename T>
 void IsResourceInitialized<T>::Compute(OpKernelContext* ctx) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_36(mht_36_v, 1171, "", "./tensorflow/core/framework/resource_mgr.h", "IsResourceInitialized<T>::Compute");
+
   Tensor* output;
   OP_REQUIRES_OK(ctx, ctx->allocate_output(0, {}, &output));
   T* object;
@@ -901,12 +1188,18 @@ void IsResourceInitialized<T>::Compute(OpKernelContext* ctx) {
 template <typename T>
 ResourceHandleOp<T>::ResourceHandleOp(OpKernelConstruction* context)
     : OpKernel(context) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_37(mht_37_v, 1191, "", "./tensorflow/core/framework/resource_mgr.h", "ResourceHandleOp<T>::ResourceHandleOp");
+
   OP_REQUIRES_OK(context, context->GetAttr("container", &container_));
   OP_REQUIRES_OK(context, context->GetAttr("shared_name", &name_));
 }
 
 template <typename T>
 void ResourceHandleOp<T>::Compute(OpKernelContext* ctx) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_38(mht_38_v, 1200, "", "./tensorflow/core/framework/resource_mgr.h", "ResourceHandleOp<T>::Compute");
+
   if (name_ == ResourceHandle::ANONYMOUS_NAME) {
     AllocatorAttributes attr;
     attr.set_on_host(true);
@@ -938,6 +1231,9 @@ void ResourceHandleOp<T>::Compute(OpKernelContext* ctx) {
 template <typename T>
 ResourceHandlesOp<T>::ResourceHandlesOp(OpKernelConstruction* context)
     : OpKernel(context) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_39(mht_39_v, 1234, "", "./tensorflow/core/framework/resource_mgr.h", "ResourceHandlesOp<T>::ResourceHandlesOp");
+
   int n;
   OP_REQUIRES_OK(context, context->GetAttr("N", &n));
   OP_REQUIRES_OK(context, context->GetAttr("containers", &containers_));
@@ -954,6 +1250,9 @@ ResourceHandlesOp<T>::ResourceHandlesOp(OpKernelConstruction* context)
 
 template <typename T>
 void ResourceHandlesOp<T>::Compute(OpKernelContext* ctx) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_40(mht_40_v, 1253, "", "./tensorflow/core/framework/resource_mgr.h", "ResourceHandlesOp<T>::Compute");
+
   if (!initialized_.load()) {
     mutex_lock ml(mutex_);
     // Checking again to see if another thread has initialized the resource.
@@ -978,6 +1277,10 @@ void ResourceHandlesOp<T>::Compute(OpKernelContext* ctx) {
 template <typename T>
 ResourceHandle ScopedStepContainer::MakeResourceHandle(
     const std::string& name, const DeviceBase& device) {
+   std::vector<std::string> mht_41_v;
+   mht_41_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_41(mht_41_v, 1281, "", "./tensorflow/core/framework/resource_mgr.h", "ScopedStepContainer::MakeResourceHandle");
+
   mutex_lock ml(mu_);
   dirty_ = true;
   return tensorflow::MakeResourceHandle(container_, name, device,
@@ -987,6 +1290,10 @@ ResourceHandle ScopedStepContainer::MakeResourceHandle(
 template <typename T>
 Status ScopedStepContainer::Lookup(ResourceMgr* rm, const std::string& name,
                                    T** resource) const {
+   std::vector<std::string> mht_42_v;
+   mht_42_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_42(mht_42_v, 1294, "", "./tensorflow/core/framework/resource_mgr.h", "ScopedStepContainer::Lookup");
+
   return rm->Lookup<T>(container_, name, resource);
 }
 
@@ -995,6 +1302,10 @@ Status ScopedStepContainer::LookupOrCreate(ResourceMgr* rm,
                                            const std::string& name,
                                            T** resource,
                                            std::function<Status(T**)> creator) {
+   std::vector<std::string> mht_43_v;
+   mht_43_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_43(mht_43_v, 1306, "", "./tensorflow/core/framework/resource_mgr.h", "ScopedStepContainer::LookupOrCreate");
+
   mutex_lock ml(mu_);
   dirty_ = true;
   return rm->LookupOrCreate<T>(container_, name, resource, creator);
@@ -1003,6 +1314,10 @@ Status ScopedStepContainer::LookupOrCreate(ResourceMgr* rm,
 template <typename T>
 Status ScopedStepContainer::Create(ResourceMgr* rm, const std::string& name,
                                    T* resource) {
+   std::vector<std::string> mht_44_v;
+   mht_44_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_44(mht_44_v, 1318, "", "./tensorflow/core/framework/resource_mgr.h", "ScopedStepContainer::Create");
+
   mutex_lock ml(mu_);
   dirty_ = true;
   return rm->Create<T>(container_, name, resource);
@@ -1010,6 +1325,10 @@ Status ScopedStepContainer::Create(ResourceMgr* rm, const std::string& name,
 
 template <typename T>
 Status ScopedStepContainer::Delete(ResourceMgr* rm, const std::string& name) {
+   std::vector<std::string> mht_45_v;
+   mht_45_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTh mht_45(mht_45_v, 1329, "", "./tensorflow/core/framework/resource_mgr.h", "ScopedStepContainer::Delete");
+
   return rm->Delete<T>(container_, name);
 }
 

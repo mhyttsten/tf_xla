@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0(the "License");
@@ -135,16 +303,28 @@ TEST(StreamExecutor, UnifiedMemoryAllocateNotSet) {
 /*** StreamExecutor behavior tests ***/
 class StreamExecutorTest : public ::testing::Test {
  protected:
-  StreamExecutorTest() {}
+  StreamExecutorTest() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_0(mht_0_v, 307, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "StreamExecutorTest");
+}
   void SetUp() override {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_1(mht_1_v, 311, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "SetUp");
+
     test_util::PopulateDefaultPlatform(&platform_, &platform_fns_);
     test_util::PopulateDefaultDeviceFns(&device_fns_);
     test_util::PopulateDefaultStreamExecutor(&se_);
     test_util::PopulateDefaultTimerFns(&timer_fns_);
   }
-  void TearDown() override {}
+  void TearDown() override {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_2(mht_2_v, 320, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "TearDown");
+}
 
   StreamExecutor* GetExecutor(int ordinal) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_3(mht_3_v, 325, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "GetExecutor");
+
     if (!cplatform_) {
       cplatform_ = absl::make_unique<CPlatform>(
           platform_, test_util::DestroyPlatform, platform_fns_,
@@ -166,12 +346,18 @@ class StreamExecutorTest : public ::testing::Test {
 TEST_F(StreamExecutorTest, Allocate) {
   se_.allocate = [](const SP_Device* const device, uint64_t size,
                     int64_t memory_space, SP_DeviceMemoryBase* const mem) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_4(mht_4_v, 349, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "lambda");
+
     mem->struct_size = SP_DEVICE_MEMORY_BASE_STRUCT_SIZE;
     mem->opaque = malloc(size);
     mem->size = size;
   };
   se_.deallocate = [](const SP_Device* const device,
                       SP_DeviceMemoryBase* const mem) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_5(mht_5_v, 358, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "lambda");
+
     EXPECT_EQ(mem->size, 2 * sizeof(int));
     free(mem->opaque);
     mem->opaque = nullptr;
@@ -189,10 +375,16 @@ TEST_F(StreamExecutorTest, HostMemoryAllocate) {
   static bool allocate_called = false;
   static bool deallocate_called = false;
   se_.host_memory_allocate = [](const SP_Device* const device, uint64_t size) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_6(mht_6_v, 378, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "lambda");
+
     allocate_called = true;
     return malloc(size);
   };
   se_.host_memory_deallocate = [](const SP_Device* const device, void* mem) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_7(mht_7_v, 385, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "lambda");
+
     free(mem);
     deallocate_called = true;
   };
@@ -211,10 +403,16 @@ TEST_F(StreamExecutorTest, UnifiedMemoryAllocate) {
   static bool deallocate_called = false;
   se_.unified_memory_allocate = [](const SP_Device* const device,
                                    uint64_t size) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_8(mht_8_v, 406, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "lambda");
+
     allocate_called = true;
     return malloc(size);
   };
   se_.unified_memory_deallocate = [](const SP_Device* const device, void* mem) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_9(mht_9_v, 413, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "lambda");
+
     free(mem);
     deallocate_called = true;
   };
@@ -292,6 +490,9 @@ TEST_F(StreamExecutorTest, CreateStreamDependency) {
   se_.create_stream_dependency = [](const SP_Device* const device,
                                     SP_Stream dependent, SP_Stream other,
                                     TF_Status* const status) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_10(mht_10_v, 493, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "lambda");
+
     TF_SetStatus(status, TF_OK, "");
     create_stream_dependency_called = true;
   };
@@ -393,6 +594,9 @@ TEST_F(StreamExecutorTest, RecordAndWaitForEvent) {
                          SP_Event event) -> void { delete event; };
   se_.record_event = [](const SP_Device* const device, SP_Stream stream,
                         SP_Event event, TF_Status* const status) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_11(mht_11_v, 597, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "lambda");
+
     EXPECT_EQ(stream->stream_id, 1);
     EXPECT_EQ(event->event_id, 2);
     TF_SetStatus(status, TF_OK, "");
@@ -400,6 +604,9 @@ TEST_F(StreamExecutorTest, RecordAndWaitForEvent) {
   };
   se_.wait_for_event = [](const SP_Device* const device, SP_Stream stream,
                           SP_Event event, TF_Status* const status) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_12(mht_12_v, 607, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "lambda");
+
     EXPECT_EQ(stream->stream_id, 1);
     EXPECT_EQ(event->event_id, 2);
     TF_SetStatus(status, TF_OK, "");
@@ -461,12 +668,18 @@ TEST_F(StreamExecutorTest, StartTimer) {
                          SP_Timer timer) -> void { delete timer; };
   se_.start_timer = [](const SP_Device* const device, SP_Stream stream,
                        SP_Timer timer, TF_Status* const status) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_13(mht_13_v, 671, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "lambda");
+
     TF_SetStatus(status, start_timer_status, "");
     EXPECT_EQ(timer->timer_id, 7);
     start_called = true;
   };
   se_.stop_timer = [](const SP_Device* const device, SP_Stream stream,
                       SP_Timer timer, TF_Status* const status) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_14(mht_14_v, 680, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "lambda");
+
     TF_SetStatus(status, stop_timer_status, "");
     EXPECT_EQ(timer->timer_id, 7);
     stop_called = true;
@@ -535,6 +748,9 @@ TEST_F(StreamExecutorTest, MemcpyToHost) {
                        void* host_dst,
                        const SP_DeviceMemoryBase* const device_src,
                        uint64_t size, TF_Status* const status) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_15(mht_15_v, 751, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "lambda");
+
     TF_SetStatus(status, TF_OK, "");
     EXPECT_EQ(stream->stream_id, 14);
     std::memcpy(host_dst, device_src->opaque, size);
@@ -557,6 +773,9 @@ TEST_F(StreamExecutorTest, MemcpyFromHost) {
                        SP_DeviceMemoryBase* const device_dst,
                        const void* host_src, uint64_t size,
                        TF_Status* const status) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_16(mht_16_v, 776, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "lambda");
+
     TF_SetStatus(status, TF_OK, "");
     std::memcpy(device_dst->opaque, host_src, size);
   };
@@ -577,6 +796,9 @@ TEST_F(StreamExecutorTest, MemcpyDeviceToDevice) {
                        SP_DeviceMemoryBase* const device_dst,
                        const SP_DeviceMemoryBase* const device_src,
                        uint64_t size, TF_Status* const status) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_17(mht_17_v, 799, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "lambda");
+
     TF_SetStatus(status, TF_OK, "");
     std::memcpy(device_dst->opaque, device_src->opaque, size);
   };
@@ -597,6 +819,9 @@ TEST_F(StreamExecutorTest, SyncMemcpyToHost) {
   se_.sync_memcpy_dtoh = [](const SP_Device* const device, void* host_dst,
                             const SP_DeviceMemoryBase* const device_src,
                             uint64_t size, TF_Status* const status) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_18(mht_18_v, 822, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "lambda");
+
     TF_SetStatus(status, TF_OK, "");
     std::memcpy(host_dst, device_src->opaque, size);
   };
@@ -614,6 +839,9 @@ TEST_F(StreamExecutorTest, SyncMemcpyFromHost) {
   se_.sync_memcpy_htod =
       [](const SP_Device* const device, SP_DeviceMemoryBase* const device_dst,
          const void* host_src, uint64_t size, TF_Status* const status) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_19(mht_19_v, 842, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "lambda");
+
         TF_SetStatus(status, TF_OK, "");
         std::memcpy(device_dst->opaque, host_src, size);
       };
@@ -632,6 +860,9 @@ TEST_F(StreamExecutorTest, SyncMemcpyDeviceToDevice) {
                             SP_DeviceMemoryBase* const device_dst,
                             const SP_DeviceMemoryBase* const device_src,
                             uint64_t size, TF_Status* const status) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_20(mht_20_v, 863, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "lambda");
+
     TF_SetStatus(status, TF_OK, "");
     std::memcpy(device_dst->opaque, device_src->opaque, size);
   };
@@ -650,9 +881,15 @@ TEST_F(StreamExecutorTest, BlockHostForEvent) {
   static bool block_host_for_event_called = false;
   se_.create_event = [](const SP_Device* const device, SP_Event* event,
                         TF_Status* const status) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_21(mht_21_v, 884, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "lambda");
+
     *event = new SP_Event_st(357);
   };
   se_.destroy_event = [](const SP_Device* const device, SP_Event event) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_22(mht_22_v, 890, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "lambda");
+
     delete event;
   };
   se_.block_host_for_event = [](const SP_Device* const device, SP_Event event,
@@ -674,9 +911,15 @@ TEST_F(StreamExecutorTest, BlockHostUntilDone) {
   static bool block_host_until_done_called = false;
   se_.create_stream = [](const SP_Device* const device, SP_Stream* stream,
                          TF_Status* const status) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_23(mht_23_v, 914, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "lambda");
+
     *stream = new SP_Stream_st(58);
   };
   se_.destroy_stream = [](const SP_Device* const device, SP_Stream stream) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_24(mht_24_v, 920, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "lambda");
+
     delete stream;
   };
   se_.block_host_until_done = [](const SP_Device* const device,
@@ -699,6 +942,9 @@ TEST_F(StreamExecutorTest, SynchronizeAllActivity) {
   static bool synchronize_all_called = false;
   se_.synchronize_all_activity = [](const SP_Device* const device,
                                     TF_Status* const status) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_25(mht_25_v, 945, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "lambda");
+
     TF_SetStatus(status, TF_OK, "");
     synchronize_all_called = true;
   };
@@ -756,12 +1002,18 @@ TEST_F(StreamExecutorTest, DeviceDescription) {
   platform_fns_.create_device = [](const SP_Platform* platform,
                                    SE_CreateDeviceParams* params,
                                    TF_Status* status) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_26(mht_26_v, 1005, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "lambda");
+
     params->device->hardware_name = hardware_name;
     params->device->device_vendor = vendor;
     params->device->pci_bus_id = pci_bus_id;
   };
 
-  device_fns_.get_numa_node = [](const SP_Device* device) { return 123; };
+  device_fns_.get_numa_node = [](const SP_Device* device) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_27(mht_27_v, 1014, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "lambda");
+ return 123; };
   device_fns_.get_memory_bandwidth = [](const SP_Device* device) -> int64_t {
     return 54;
   };
@@ -783,6 +1035,9 @@ TEST_F(StreamExecutorTest, DeviceDescriptionNumaNodeNotSet) {
   platform_fns_.create_device = [](const SP_Platform* platform,
                                    SE_CreateDeviceParams* params,
                                    TF_Status* status) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_28(mht_28_v, 1038, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "lambda");
+
     params->device->hardware_name = hardware_name;
     params->device->device_vendor = vendor;
     params->device->pci_bus_id = pci_bus_id;
@@ -813,6 +1068,9 @@ TEST_F(StreamExecutorTest, MemZero) {
   se_.mem_zero = [](const SP_Device* device, SP_Stream stream,
                     SP_DeviceMemoryBase* location, uint64_t size,
                     TF_Status* status) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_29(mht_29_v, 1071, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "lambda");
+
     TF_SetStatus(status, TF_OK, "");
     EXPECT_EQ(stream->stream_id, 14);
     std::memset(location->opaque, 0, size);
@@ -840,6 +1098,9 @@ TEST_F(StreamExecutorTest, Memset32) {
   se_.memset32 = [](const SP_Device* device, SP_Stream stream,
                     SP_DeviceMemoryBase* location, uint32_t pattern,
                     uint64_t size, TF_Status* status) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSstream_executorPSstream_executor_testDTcc mht_30(mht_30_v, 1101, "", "./tensorflow/c/experimental/stream_executor/stream_executor_test.cc", "lambda");
+
     TF_SetStatus(status, TF_OK, "");
     EXPECT_EQ(stream->stream_id, 14);
     EXPECT_EQ(size % 4, 0);

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPStoolsPSbenchmarkPSbenchmark_modelDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPStoolsPSbenchmarkPSbenchmark_modelDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPStoolsPSbenchmarkPSbenchmark_modelDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -53,6 +221,9 @@ namespace {
 
 Status InitializeVariables(Session* session,
                            const std::vector<string>& init_ops) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPStoolsPSbenchmarkPSbenchmark_modelDTcc mht_0(mht_0_v, 224, "", "./tensorflow/tools/benchmark/benchmark_model.cc", "InitializeVariables");
+
   LOG(INFO) << "Initializing graph variables";
   for (const string& init_op : init_ops) {
     TF_RETURN_IF_ERROR(session->Run({}, {}, {init_op}, nullptr));
@@ -63,6 +234,9 @@ Status InitializeVariables(Session* session,
 template <class T>
 void InitializeTensor(const std::vector<float>& initialization_values,
                       Tensor* input_tensor) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPStoolsPSbenchmarkPSbenchmark_modelDTcc mht_1(mht_1_v, 237, "", "./tensorflow/tools/benchmark/benchmark_model.cc", "InitializeTensor");
+
   auto type_tensor = input_tensor->flat<T>();
   type_tensor = type_tensor.constant(0);
   if (!initialization_values.empty()) {
@@ -75,6 +249,9 @@ void InitializeTensor(const std::vector<float>& initialization_values,
 void CreateTensorsFromInputInfo(
     const std::vector<InputLayerInfo>& inputs,
     std::vector<std::pair<string, tensorflow::Tensor> >* input_tensors) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPStoolsPSbenchmarkPSbenchmark_modelDTcc mht_2(mht_2_v, 252, "", "./tensorflow/tools/benchmark/benchmark_model.cc", "CreateTensorsFromInputInfo");
+
   for (const InputLayerInfo& input : inputs) {
     Tensor input_tensor(input.data_type, input.shape);
     switch (input.data_type) {
@@ -117,6 +294,9 @@ void CreateTensorsFromInputInfo(
 Status GetOutputShapes(const std::vector<InputLayerInfo>& inputs,
                        const std::set<string>& wanted_shapes, Session* session,
                        std::unordered_map<string, TensorShape>* node_shapes) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPStoolsPSbenchmarkPSbenchmark_modelDTcc mht_3(mht_3_v, 297, "", "./tensorflow/tools/benchmark/benchmark_model.cc", "GetOutputShapes");
+
   std::vector<std::pair<string, tensorflow::Tensor> > input_tensors;
   CreateTensorsFromInputInfo(inputs, &input_tensors);
   std::vector<tensorflow::Tensor> output_tensors;
@@ -150,6 +330,9 @@ Status CalculateFlops(const GraphDef& graph,
                       const std::vector<InputLayerInfo>& inputs,
                       Session* session, int64_t* total_flops,
                       std::unordered_map<string, int64_t>* flops_by_op) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPStoolsPSbenchmarkPSbenchmark_modelDTcc mht_4(mht_4_v, 333, "", "./tensorflow/tools/benchmark/benchmark_model.cc", "CalculateFlops");
+
   std::unordered_set<string> floppable_ops = {
       "Conv2D", "MatMul", "QuantizedConv2D", "QuantizedMatMul",
       "DepthwiseConv2dNative"};
@@ -216,6 +399,12 @@ void RecordBenchmarkEntry(const string& output_prefix,
                           const string& benchmark_name, const string& postfix,
                           int num_runs, double total_time_s,
                           double throughput = -1.0) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("output_prefix: \"" + output_prefix + "\"");
+   mht_5_v.push_back("benchmark_name: \"" + benchmark_name + "\"");
+   mht_5_v.push_back("postfix: \"" + postfix + "\"");
+   MHTracer_DTPStensorflowPStoolsPSbenchmarkPSbenchmark_modelDTcc mht_5(mht_5_v, 405, "", "./tensorflow/tools/benchmark/benchmark_model.cc", "RecordBenchmarkEntry");
+
   std::stringstream stream;
   stream << benchmark_name;
   if (!postfix.empty()) {
@@ -230,6 +419,9 @@ void RecordBenchmarkEntry(const string& output_prefix,
 }
 
 void SleepSeconds(double sleep_seconds) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPStoolsPSbenchmarkPSbenchmark_modelDTcc mht_6(mht_6_v, 422, "", "./tensorflow/tools/benchmark/benchmark_model.cc", "SleepSeconds");
+
   if (sleep_seconds <= 0.0) {
     return;
   }
@@ -249,6 +441,10 @@ void SleepSeconds(double sleep_seconds) {
 Status InitializeSession(int num_threads, const string& graph,
                          std::unique_ptr<Session>* session,
                          std::unique_ptr<GraphDef>* graph_def) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("graph: \"" + graph + "\"");
+   MHTracer_DTPStensorflowPStoolsPSbenchmarkPSbenchmark_modelDTcc mht_7(mht_7_v, 445, "", "./tensorflow/tools/benchmark/benchmark_model.cc", "InitializeSession");
+
   LOG(INFO) << "Loading TensorFlow.";
 
   tensorflow::SessionOptions options;
@@ -285,6 +481,9 @@ Status RunBenchmark(const std::vector<InputLayerInfo>& inputs,
                     const std::vector<string>& outputs,
                     const std::vector<string>& targets, Session* session,
                     StatSummarizer* stats, int64_t* inference_time_us) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPStoolsPSbenchmarkPSbenchmark_modelDTcc mht_8(mht_8_v, 484, "", "./tensorflow/tools/benchmark/benchmark_model.cc", "RunBenchmark");
+
   std::vector<std::pair<string, tensorflow::Tensor> > input_tensors;
   CreateTensorsFromInputInfo(inputs, &input_tensors);
 
@@ -324,6 +523,9 @@ Status TimeMultipleRuns(double sleep_seconds, int num_runs, double max_time_s,
                         const std::vector<string>& targets, Session* session,
                         StatSummarizer* stats, int64_t* total_time_us,
                         int64_t* actual_num_runs) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPStoolsPSbenchmarkPSbenchmark_modelDTcc mht_9(mht_9_v, 526, "", "./tensorflow/tools/benchmark/benchmark_model.cc", "TimeMultipleRuns");
+
   *total_time_us = 0;
 
   LOG(INFO) << "Running benchmark for max " << num_runs << " iterations, max "
@@ -366,6 +568,9 @@ Status TimeMultipleRuns(double sleep_seconds, int num_runs, double max_time_s,
 }
 
 int Main(int argc, char** argv) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPStoolsPSbenchmarkPSbenchmark_modelDTcc mht_10(mht_10_v, 571, "", "./tensorflow/tools/benchmark/benchmark_model.cc", "Main");
+
   string graph = "/data/local/tmp/tensorflow_inception_graph.pb";
   string init_ops_string = "";
   string input_layer_string = "input:0";

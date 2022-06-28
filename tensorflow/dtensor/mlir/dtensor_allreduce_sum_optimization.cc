@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSdtensorPSmlirPSdtensor_allreduce_sum_optimizationDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSdtensor_allreduce_sum_optimizationDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSdtensorPSmlirPSdtensor_allreduce_sum_optimizationDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2022 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,6 +208,9 @@ namespace {
 constexpr int kMaxIteration = 10;
 
 mlir::Value GetIdentitySkippedInputs(mlir::Value val) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSdtensor_allreduce_sum_optimizationDTcc mht_0(mht_0_v, 211, "", "./tensorflow/dtensor/mlir/dtensor_allreduce_sum_optimization.cc", "GetIdentitySkippedInputs");
+
   mlir::Value input = val;
   while (auto identity = llvm::dyn_cast_or_null<mlir::TF::IdentityOp>(
              input.getDefiningOp())) {
@@ -49,6 +220,9 @@ mlir::Value GetIdentitySkippedInputs(mlir::Value val) {
 }
 
 bool IsZeroConstant(mlir::Value val) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSdtensor_allreduce_sum_optimizationDTcc mht_1(mht_1_v, 223, "", "./tensorflow/dtensor/mlir/dtensor_allreduce_sum_optimization.cc", "IsZeroConstant");
+
   auto const_input = llvm::dyn_cast_or_null<mlir::TF::ConstOp>(
       GetIdentitySkippedInputs(val).getDefiningOp());
   if (!const_input) return false;
@@ -70,6 +244,9 @@ mlir::LogicalResult CheckReduceAndSumOptimizationCriteria(
     llvm::SmallVectorImpl<mlir::Value>* reduction_inputs,
     llvm::SmallVectorImpl<mlir::TF::DTensorAllReduceOp>* reduction_ops,
     bool* can_be_reordered) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSdtensor_allreduce_sum_optimizationDTcc mht_2(mht_2_v, 247, "", "./tensorflow/dtensor/mlir/dtensor_allreduce_sum_optimization.cc", "CheckReduceAndSumOptimizationCriteria");
+
   for (mlir::Value operand : add_op->getOperands()) {
     if (IsZeroConstant(operand)) {
       reduction_inputs->emplace_back(operand);
@@ -121,6 +298,9 @@ mlir::LogicalResult CheckReduceAndSumOptimizationCriteria(
 // Therefore reducing the number of Reduction/cross device communication.
 mlir::LogicalResult OptimizeAllReduceAndSum(mlir::Operation* op,
                                             bool* changed) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSdtensor_allreduce_sum_optimizationDTcc mht_3(mht_3_v, 301, "", "./tensorflow/dtensor/mlir/dtensor_allreduce_sum_optimization.cc", "OptimizeAllReduceAndSum");
+
   bool can_be_reordered;
   llvm::SmallVector<mlir::TF::DTensorAllReduceOp, 4> reduction_ops;
   llvm::SmallVector<mlir::Value, 4> reduction_op_inputs;
@@ -190,6 +370,9 @@ mlir::LogicalResult OptimizeAllReduceAndSum(mlir::Operation* op,
 }
 
 mlir::Value SkipIdentityLikeOpsOutputs(mlir::Value val) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSdtensor_allreduce_sum_optimizationDTcc mht_4(mht_4_v, 373, "", "./tensorflow/dtensor/mlir/dtensor_allreduce_sum_optimization.cc", "SkipIdentityLikeOpsOutputs");
+
   while (val.hasOneUse() &&
          llvm::isa<mlir::TF::CastOp, mlir::TF::ReshapeOp, mlir::TF::IdentityOp>(
              *val.user_begin())) {
@@ -202,6 +385,9 @@ mlir::Value SkipIdentityLikeOpsOutputs(mlir::Value val) {
 // the IR and only apply optimizations when total number of DTensorAllReduce in
 // the graph is reduced.
 bool MayRemoveAllReduce(mlir::Operation* op) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSdtensor_allreduce_sum_optimizationDTcc mht_5(mht_5_v, 388, "", "./tensorflow/dtensor/mlir/dtensor_allreduce_sum_optimization.cc", "MayRemoveAllReduce");
+
   mlir::Value op_output = op->getResult(0);
   mlir::Value value_after_identity_like_ops =
       SkipIdentityLikeOpsOutputs(op_output);
@@ -236,6 +422,9 @@ bool MayRemoveAllReduce(mlir::Operation* op) {
 //  %8 = "tf.Reshape"(%4, %7)
 //  %9 = "tf.DTensorAllReduce"(%8, %0) {reduce_op = "Add"}
 void OptimizeIdentityLikeOps(mlir::Operation* op, bool* changed) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSdtensor_allreduce_sum_optimizationDTcc mht_6(mht_6_v, 425, "", "./tensorflow/dtensor/mlir/dtensor_allreduce_sum_optimization.cc", "OptimizeIdentityLikeOps");
+
   auto dtensor_all_reduce =
       llvm::dyn_cast_or_null<mlir::TF::DTensorAllReduceOp>(
           op->getOperand(0).getDefiningOp());
@@ -263,6 +452,9 @@ bool CheckWhileLoopOptimizationCriteria(
     const int index, mlir::TF::WhileRegionOp while_op, mlir::Value while_output,
     mlir::Operation** add_op, mlir::TF::DTensorAllReduceOp* all_reduce_op,
     mlir::OpOperand** add_input) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSdtensor_allreduce_sum_optimizationDTcc mht_7(mht_7_v, 455, "", "./tensorflow/dtensor/mlir/dtensor_allreduce_sum_optimization.cc", "CheckWhileLoopOptimizationCriteria");
+
   // Loop variant input that is being optimized should not be used in loop
   // condition.
   mlir::Value loop_condition_input = while_op.cond().getArgument(index);
@@ -367,6 +559,9 @@ mlir::LogicalResult ExtractAllReduceFromWhileOp(
     const int output_index, mlir::TF::DTensorAllReduceOp all_reduce,
     mlir::TF::WhileRegionOp while_op, mlir::OpOperand& add_input,
     mlir::Operation* add_op, bool* changed) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSdtensor_allreduce_sum_optimizationDTcc mht_8(mht_8_v, 562, "", "./tensorflow/dtensor/mlir/dtensor_allreduce_sum_optimization.cc", "ExtractAllReduceFromWhileOp");
+
   // Set add input to input of all reduce.
   mlir::Value all_reduce_input = all_reduce.input();
   const int replacement_add_input_index =
@@ -416,6 +611,9 @@ mlir::LogicalResult ExtractAllReduceFromWhileOp(
 
 mlir::LogicalResult OptimizeWhileLoopLazyAllReduce(
     mlir::TF::WhileRegionOp while_op, bool* changed) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSdtensor_allreduce_sum_optimizationDTcc mht_9(mht_9_v, 614, "", "./tensorflow/dtensor/mlir/dtensor_allreduce_sum_optimization.cc", "OptimizeWhileLoopLazyAllReduce");
+
   mlir::Operation* while_body_terminator =
       while_op.body().front().getTerminator();
   for (const auto& data :
@@ -444,6 +642,9 @@ mlir::LogicalResult ApplyOptimization(
     const llvm::SmallVectorImpl<mlir::Operation*>& identity_like_ops,
     const llvm::SmallVectorImpl<mlir::TF::WhileRegionOp>& while_ops,
     const llvm::SmallVectorImpl<mlir::Operation*>& add_ops, bool* changed) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSdtensor_allreduce_sum_optimizationDTcc mht_10(mht_10_v, 645, "", "./tensorflow/dtensor/mlir/dtensor_allreduce_sum_optimization.cc", "ApplyOptimization");
+
   // Collect and fold the reduction operations within the function.
   for (mlir::Operation* add_op : add_ops)
     if (mlir::failed(OptimizeAllReduceAndSum(add_op, changed)))
@@ -469,6 +670,9 @@ void CollectOptimizationCandidates(
     llvm::SmallVectorImpl<mlir::Operation*>* identity_like_ops,
     llvm::SmallVectorImpl<mlir::Operation*>* add_ops,
     llvm::SmallVectorImpl<mlir::TF::WhileRegionOp>* while_ops) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSdtensor_allreduce_sum_optimizationDTcc mht_11(mht_11_v, 673, "", "./tensorflow/dtensor/mlir/dtensor_allreduce_sum_optimization.cc", "CollectOptimizationCandidates");
+
   func.walk([&](mlir::Operation* op) {
     if (llvm::isa<mlir::TF::IdentityOp, mlir::TF::CastOp, mlir::TF::ReshapeOp>(
             op))
@@ -487,6 +691,9 @@ struct DTensorAllReduceSumOptimization
     : public DTensorAllReduceSumOptimizationBase<
           DTensorAllReduceSumOptimization> {
   void runOnOperation() override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSdtensor_allreduce_sum_optimizationDTcc mht_12(mht_12_v, 694, "", "./tensorflow/dtensor/mlir/dtensor_allreduce_sum_optimization.cc", "runOnOperation");
+
     mlir::func::FuncOp function = getOperation();
     bool changed = true;
     int iteration = 0;

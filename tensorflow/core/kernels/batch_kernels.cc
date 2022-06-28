@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -67,6 +235,10 @@ auto* batch_op_split_usage = monitoring::Gauge<string, 1>::New(
 void RecordBatchSplitUsage(
     absl::optional<bool> maybe_enable_large_batch_splitting,
     const string& model_name) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("model_name: \"" + model_name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_0(mht_0_v, 239, "", "./tensorflow/core/kernels/batch_kernels.cc", "RecordBatchSplitUsage");
+
   if (maybe_enable_large_batch_splitting.has_value()) {
     if (maybe_enable_large_batch_splitting.value()) {
       batch_op_split_usage->GetCell(model_name)->Set("true");
@@ -80,6 +252,10 @@ void RecordBatchSplitUsage(
 
 void RecordBatchParamNumBatchThreads(int64_t num_batch_threads,
                                      const string& model_name) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("model_name: \"" + model_name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_1(mht_1_v, 256, "", "./tensorflow/core/kernels/batch_kernels.cc", "RecordBatchParamNumBatchThreads");
+
   static auto* cell = monitoring::Gauge<int64_t, 1>::New(
       "/tensorflow/serving/batching/num_batch_threads",
       "Tracks the number of batch threads of a model.", "model_name");
@@ -87,6 +263,9 @@ void RecordBatchParamNumBatchThreads(int64_t num_batch_threads,
 }
 
 const string& GetModelName(OpKernelContext* ctx) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_2(mht_2_v, 266, "", "./tensorflow/core/kernels/batch_kernels.cc", "GetModelName");
+
   static string* kModelNameUnset = new string("model_name_unset");
   if (!ctx->session_metadata()) return *kModelNameUnset;
   if (ctx->session_metadata()->name().empty()) return *kModelNameUnset;
@@ -97,6 +276,9 @@ using ::tensorflow::concat_split_util::Concat;
 using ::tensorflow::concat_split_util::Split;
 
 int32 NumBatchThreadsFromEnvironmentWithDefault(int default_num_batch_threads) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_3(mht_3_v, 279, "", "./tensorflow/core/kernels/batch_kernels.cc", "NumBatchThreadsFromEnvironmentWithDefault");
+
   int32_t num;
   const char* val = std::getenv("TF_NUM_BATCH_THREADS");
 
@@ -105,6 +287,9 @@ int32 NumBatchThreadsFromEnvironmentWithDefault(int default_num_batch_threads) {
 }
 
 static thread::ThreadPool* GetOrCreateBatchThreadsPool() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_4(mht_4_v, 290, "", "./tensorflow/core/kernels/batch_kernels.cc", "GetOrCreateBatchThreadsPool");
+
   static thread::ThreadPool* shared_thread_pool = [&]() -> thread::ThreadPool* {
     serving::BoundedExecutor::Options options;
 
@@ -138,6 +323,9 @@ class BatchResource : public serving::BatchResourceBase {
                        FunctionLibraryRuntime* flib,
                        bool enable_large_batch_splitting,
                        std::unique_ptr<BatchResource>* resource) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_5(mht_5_v, 326, "", "./tensorflow/core/kernels/batch_kernels.cc", "Create");
+
     BatcherT::Options batcher_options;
     batcher_options.num_batch_threads = num_batch_threads;
     std::shared_ptr<BatcherT> batcher;
@@ -160,6 +348,9 @@ class BatchResource : public serving::BatchResourceBase {
       const std::vector<int32>& allowed_batch_sizes,
       FunctionLibraryRuntime::Handle fhandle, FunctionLibraryRuntime* flib,
       std::unique_ptr<BatchResource>* resource) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_6(mht_6_v, 351, "", "./tensorflow/core/kernels/batch_kernels.cc", "Create");
+
     std::shared_ptr<AdaptiveBatcherT> batcher;
     TF_RETURN_IF_ERROR(AdaptiveBatcherT::Create(
         adaptive_shared_batch_scheduler_options, &batcher));
@@ -173,7 +364,10 @@ class BatchResource : public serving::BatchResourceBase {
     return Status::OK();
   }
 
-  string DebugString() const final { return "BatchResource"; }
+  string DebugString() const final {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_7(mht_7_v, 368, "", "./tensorflow/core/kernels/batch_kernels.cc", "DebugString");
+ return "BatchResource"; }
 
  private:
   BatchResource(FunctionLibraryRuntime::Handle fhandle,
@@ -185,7 +379,10 @@ class BatchResource : public serving::BatchResourceBase {
             std::move(batcher), batcher_queue_options,
             std::move(allowed_batch_sizes)),
         fhandle_(fhandle),
-        flib_(flib) {}
+        flib_(flib) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_8(mht_8_v, 383, "", "./tensorflow/core/kernels/batch_kernels.cc", "BatchResource");
+}
 
   BatchResource(FunctionLibraryRuntime::Handle fhandle,
                 FunctionLibraryRuntime* flib,
@@ -197,12 +394,18 @@ class BatchResource : public serving::BatchResourceBase {
             std::move(batcher), batcher_queue_options,
             std::move(allowed_batch_sizes)),
         fhandle_(fhandle),
-        flib_(flib) {}
+        flib_(flib) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_9(mht_9_v, 398, "", "./tensorflow/core/kernels/batch_kernels.cc", "BatchResource");
+}
 
   void ProcessFuncBatchImpl(
       const BatchTask& last_task, absl::Span<const Tensor> inputs,
       std::vector<Tensor>* combined_outputs,
       std::function<void(const Status&)> done) const override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_10(mht_10_v, 406, "", "./tensorflow/core/kernels/batch_kernels.cc", "ProcessFuncBatchImpl");
+
     auto* last_task_context = last_task.context;
     FunctionLibraryRuntime::Options opts;
     opts.step_container = last_task_context->step_container();
@@ -235,6 +438,9 @@ class BatchResource : public serving::BatchResourceBase {
 
 BatchFunctionKernel::BatchFunctionKernel(OpKernelConstruction* c)
     : AsyncOpKernel(c) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_11(mht_11_v, 441, "", "./tensorflow/core/kernels/batch_kernels.cc", "BatchFunctionKernel::BatchFunctionKernel");
+
   OP_REQUIRES_OK(c, c->GetAttr("container", &container_));
   OP_REQUIRES_OK(c, c->GetAttr("shared_name", &shared_name_));
   OP_REQUIRES_OK(c, c->GetAttr("batching_queue", &batcher_queue_));
@@ -282,9 +488,15 @@ BatchFunctionKernel::BatchFunctionKernel(OpKernelConstruction* c)
   OP_REQUIRES_OK(c, ValidateAllowedBatchSizes());
 }
 
-bool BatchFunctionKernel::IsExpensive() { return false; }
+bool BatchFunctionKernel::IsExpensive() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_12(mht_12_v, 492, "", "./tensorflow/core/kernels/batch_kernels.cc", "BatchFunctionKernel::IsExpensive");
+ return false; }
 
 void BatchFunctionKernel::ComputeAsync(OpKernelContext* c, DoneCallback done) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_13(mht_13_v, 497, "", "./tensorflow/core/kernels/batch_kernels.cc", "BatchFunctionKernel::ComputeAsync");
+
   RecordBatchSplitUsage(has_attribute_enable_large_batch_splitting_
                             ? absl::make_optional(enable_large_batch_splitting_)
                             : absl::nullopt,
@@ -299,6 +511,9 @@ void BatchFunctionKernel::ComputeAsync(OpKernelContext* c, DoneCallback done) {
 
   if (adaptive_batch_scheduler_options_ != absl::nullopt) {
     creator = [this, handle](BatchResource** r) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_14(mht_14_v, 514, "", "./tensorflow/core/kernels/batch_kernels.cc", "lambda");
+
       serving::AdaptiveSharedBatchScheduler<
           serving::BatchResourceBase::BatchTask>::Options
           adaptive_shared_batch_scheduler_options;
@@ -337,6 +552,9 @@ void BatchFunctionKernel::ComputeAsync(OpKernelContext* c, DoneCallback done) {
     };
   } else {
     creator = [this, handle](BatchResource** r) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_15(mht_15_v, 555, "", "./tensorflow/core/kernels/batch_kernels.cc", "lambda");
+
       std::unique_ptr<BatchResource> new_resource;
       TF_RETURN_IF_ERROR(BatchResource::Create(
           num_batch_threads_, max_batch_size_, batch_timeout_micros_,
@@ -361,6 +579,9 @@ void BatchFunctionKernel::ComputeAsync(OpKernelContext* c, DoneCallback done) {
 
 Status BatchFunctionKernel::InstantiateFunction(
     OpKernelContext* c, FunctionLibraryRuntime::Handle* handle) const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_16(mht_16_v, 582, "", "./tensorflow/core/kernels/batch_kernels.cc", "BatchFunctionKernel::InstantiateFunction");
+
   // TODO(b/173748062): Merge this instantiation logic with PartitionedCall.
   if (!flib_) {
     return errors::Internal("No function library");
@@ -421,6 +642,9 @@ Status BatchFunctionKernel::InstantiateFunction(
 
 Status BatchFunctionKernel::GetOrCreateFunctionHandle(
     OpKernelContext* c, FunctionLibraryRuntime::Handle* handle) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_17(mht_17_v, 645, "", "./tensorflow/core/kernels/batch_kernels.cc", "BatchFunctionKernel::GetOrCreateFunctionHandle");
+
   mutex_lock ml(mu_);
   if (!fhandle_) {
     TF_RETURN_IF_ERROR(InstantiateFunction(c, handle));
@@ -436,6 +660,9 @@ Status BatchFunctionKernel::GetOrCreateFunctionHandle(
 // `max_batch_size_`. otherwise the last element must be smaller than or equal
 // to `max_batch_size_`.
 Status BatchFunctionKernel::ValidateAllowedBatchSizes() const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_18(mht_18_v, 663, "", "./tensorflow/core/kernels/batch_kernels.cc", "BatchFunctionKernel::ValidateAllowedBatchSizes");
+
   if (allowed_batch_sizes_.empty()) {
     return Status::OK();
   }
@@ -468,6 +695,9 @@ Status BatchFunctionKernel::ValidateAllowedBatchSizes() const {
 //   Read from corresponding attributes as long as they are set.
 void BatchFunctionKernel::SetAdaptiveBatchSchedulerOptions(
     OpKernelConstruction* c, int32_t num_batch_threads) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_19(mht_19_v, 698, "", "./tensorflow/core/kernels/batch_kernels.cc", "BatchFunctionKernel::SetAdaptiveBatchSchedulerOptions");
+
   if (c->HasAttr(kEnableAdaptiveSchedulerAttr)) {
     OP_REQUIRES_OK(c, c->GetAttr(kEnableAdaptiveSchedulerAttr,
                                  &enable_adaptive_batch_threads_));
@@ -538,6 +768,9 @@ REGISTER_KERNEL_BUILDER(Name("BatchFunction")
 class BatchKernel : public AsyncOpKernel {
  public:
   explicit BatchKernel(OpKernelConstruction* c) : AsyncOpKernel(c) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_20(mht_20_v, 771, "", "./tensorflow/core/kernels/batch_kernels.cc", "BatchKernel");
+
     OP_REQUIRES_OK(c, c->GetAttr("container", &container_));
     OP_REQUIRES_OK(c, c->GetAttr("shared_name", &shared_name_));
     // If shared_name is not supplied, use name instead (prevent collisions by
@@ -557,8 +790,14 @@ class BatchKernel : public AsyncOpKernel {
   }
 
   void ComputeAsync(OpKernelContext* c, DoneCallback done) final {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_21(mht_21_v, 793, "", "./tensorflow/core/kernels/batch_kernels.cc", "ComputeAsync");
+
     BatchResource* br;
     std::function<Status(BatchResource**)> creator = [this](BatchResource** r) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_22(mht_22_v, 798, "", "./tensorflow/core/kernels/batch_kernels.cc", "lambda");
+
       std::unique_ptr<BatchResource> new_resource;
       TF_RETURN_IF_ERROR(BatchResource::Create(
           num_batch_threads_, max_batch_size_, batch_timeout_micros_,
@@ -581,6 +820,9 @@ class BatchKernel : public AsyncOpKernel {
   // Validates 'allowed_batch_sizes_'. The entries must increase
   // monotonically, and the last one must equal 'max_batch_size_'.
   Status ValidateAllowedBatchSizes() const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_23(mht_23_v, 823, "", "./tensorflow/core/kernels/batch_kernels.cc", "ValidateAllowedBatchSizes");
+
     if (allowed_batch_sizes_.empty()) {
       return Status::OK();
     }
@@ -626,17 +868,29 @@ class UnbatchResource : public ResourceBase {
   explicit UnbatchResource(int32_t timeout_micros)
       : timeout_micros_(timeout_micros),
         timeout_enforcer_(new serving::PeriodicFunction(
-            [this] { EnforceTimeout(); }, 1000 /* 1 ms */)) {}
+            [this] { EnforceTimeout(); }, 1000 /* 1 ms */)) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_24(mht_24_v, 872, "", "./tensorflow/core/kernels/batch_kernels.cc", "UnbatchResource");
+}
 
   ~UnbatchResource() override {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_25(mht_25_v, 877, "", "./tensorflow/core/kernels/batch_kernels.cc", "~UnbatchResource");
+
     // Tear down 'timeout_enforcer_' first, since it accesses other state in
     // this class.
     timeout_enforcer_ = nullptr;
   }
 
-  string DebugString() const final { return "UnbatchResource"; }
+  string DebugString() const final {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_26(mht_26_v, 886, "", "./tensorflow/core/kernels/batch_kernels.cc", "DebugString");
+ return "UnbatchResource"; }
 
   Status Compute(OpKernelContext* context, AsyncOpKernel::DoneCallback done) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_27(mht_27_v, 891, "", "./tensorflow/core/kernels/batch_kernels.cc", "Compute");
+
     const Tensor& data_t = context->input(0);
     const Tensor& batch_index_t = context->input(1);
 
@@ -738,6 +992,9 @@ class UnbatchResource : public ResourceBase {
  private:
   // Evicts waiting tensors and callbacks that have exceeded their deadline.
   void EnforceTimeout() {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_28(mht_28_v, 995, "", "./tensorflow/core/kernels/batch_kernels.cc", "EnforceTimeout");
+
     const uint64 now = Env::Default()->NowMicros();
     std::vector<WaitingCallback> evicted_callbacks;
 
@@ -802,6 +1059,9 @@ class UnbatchResource : public ResourceBase {
 class UnbatchKernel : public AsyncOpKernel {
  public:
   explicit UnbatchKernel(OpKernelConstruction* c) : AsyncOpKernel(c) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_29(mht_29_v, 1062, "", "./tensorflow/core/kernels/batch_kernels.cc", "UnbatchKernel");
+
     OP_REQUIRES_OK(c, c->GetAttr("container", &container_));
     OP_REQUIRES_OK(c, c->GetAttr("shared_name", &shared_name_));
     // If shared_name is not supplied, use name instead (prevent collisions by
@@ -813,9 +1073,15 @@ class UnbatchKernel : public AsyncOpKernel {
   }
 
   void ComputeAsync(OpKernelContext* c, DoneCallback done) final {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_30(mht_30_v, 1076, "", "./tensorflow/core/kernels/batch_kernels.cc", "ComputeAsync");
+
     UnbatchResource* ubr;
     std::function<Status(UnbatchResource**)> creator =
         [this](UnbatchResource** r) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_31(mht_31_v, 1082, "", "./tensorflow/core/kernels/batch_kernels.cc", "lambda");
+
           *r = new UnbatchResource(timeout_micros_);
           return Status::OK();
         };
@@ -840,15 +1106,24 @@ REGISTER_KERNEL_BUILDER(Name("Unbatch").Device(DEVICE_CPU), UnbatchKernel);
 // deterministically for the gradient of unbatch.
 class UnbatchGradResource : public ResourceBase {
  public:
-  UnbatchGradResource() {}
+  UnbatchGradResource() {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_32(mht_32_v, 1110, "", "./tensorflow/core/kernels/batch_kernels.cc", "UnbatchGradResource");
+}
 
-  string DebugString() const final { return "UnbatchGradResource"; }
+  string DebugString() const final {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_33(mht_33_v, 1115, "", "./tensorflow/core/kernels/batch_kernels.cc", "DebugString");
+ return "UnbatchGradResource"; }
 
   // Flushes the information for one batch, given its context and done
   // callback. Clears all information about it from the available_tensors_.
   Status OutputBatch(OpKernelContext* context,
                      const AsyncOpKernel::DoneCallback& done)
       TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_34(mht_34_v, 1124, "", "./tensorflow/core/kernels/batch_kernels.cc", "OutputBatch");
+
     const Tensor& batch_index_t = context->input(1);
     auto batch_index =
         batch_index_t.shaped<int64_t, 2>({batch_index_t.dim_size(0), 3});
@@ -882,6 +1157,9 @@ class UnbatchGradResource : public ResourceBase {
   // Ingests data from one invocation of the op.
   Status Compute(OpKernelContext* context,
                  const AsyncOpKernel::DoneCallback& done) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_35(mht_35_v, 1160, "", "./tensorflow/core/kernels/batch_kernels.cc", "Compute");
+
     const Tensor& data_t = context->input(0);
     const Tensor& batch_index_t = context->input(1);
     const Tensor& grad_t = context->input(2);
@@ -989,6 +1267,9 @@ class UnbatchGradResource : public ResourceBase {
 class UnbatchGradKernel : public AsyncOpKernel {
  public:
   explicit UnbatchGradKernel(OpKernelConstruction* c) : AsyncOpKernel(c) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_36(mht_36_v, 1270, "", "./tensorflow/core/kernels/batch_kernels.cc", "UnbatchGradKernel");
+
     OP_REQUIRES_OK(c, c->GetAttr("container", &container_));
     OP_REQUIRES_OK(c, c->GetAttr("shared_name", &shared_name_));
     // If shared_name is not supplied, use name instead (prevent collisions by
@@ -999,9 +1280,15 @@ class UnbatchGradKernel : public AsyncOpKernel {
   }
 
   void ComputeAsync(OpKernelContext* c, DoneCallback done) final {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_37(mht_37_v, 1283, "", "./tensorflow/core/kernels/batch_kernels.cc", "ComputeAsync");
+
     UnbatchGradResource* ubr;
     std::function<Status(UnbatchGradResource**)> creator =
         [](UnbatchGradResource** r) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatch_kernelsDTcc mht_38(mht_38_v, 1289, "", "./tensorflow/core/kernels/batch_kernels.cc", "lambda");
+
           *r = new UnbatchGradResource();
           return Status::OK();
         };

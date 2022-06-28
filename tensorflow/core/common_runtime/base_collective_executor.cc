@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,6 +215,9 @@ namespace tensorflow {
 
 namespace {
 bool IsCancelled(CancellationManager* cancel_mgr) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc mht_0(mht_0_v, 218, "", "./tensorflow/core/common_runtime/base_collective_executor.cc", "IsCancelled");
+
   return cancel_mgr != nullptr &&
          (cancel_mgr->IsCancelled() || cancel_mgr->IsCancelling());
 }
@@ -56,6 +227,9 @@ bool IsCancelled(CancellationManager* cancel_mgr) {
 int64_t CollectiveAdapter::AlignedChunkElts(int64_t elt_bytes,
                                             int64_t total_elts,
                                             int64_t num_chunks) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc mht_1(mht_1_v, 230, "", "./tensorflow/core/common_runtime/base_collective_executor.cc", "CollectiveAdapter::AlignedChunkElts");
+
   DCHECK_GT(num_chunks, 0);
   int64_t base_chunk_elts = (total_elts + (num_chunks - 1)) / num_chunks;
   if (EIGEN_MAX_ALIGN_BYTES == 0) return base_chunk_elts;
@@ -104,6 +278,9 @@ class CollectiveAdapterImpl : public CollectiveAdapter {
                         : total_elts_ / num_chunks_),
         data_start_(reinterpret_cast<T*>(DMAHelper::base(&output_))),
         data_end_(data_start_ + total_elts_) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc mht_2(mht_2_v, 281, "", "./tensorflow/core/common_runtime/base_collective_executor.cc", "CollectiveAdapterImpl");
+
     if (!align_chunks) {
       DCHECK_EQ(total_elts_, num_chunks_ * chunk_elts_);
     }
@@ -111,12 +288,21 @@ class CollectiveAdapterImpl : public CollectiveAdapter {
     Flatten();
   }
 
-  ~CollectiveAdapterImpl() override {}
+  ~CollectiveAdapterImpl() override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc mht_3(mht_3_v, 292, "", "./tensorflow/core/common_runtime/base_collective_executor.cc", "~CollectiveAdapterImpl");
+}
 
-  const Tensor& Value() const override { return output_; }
+  const Tensor& Value() const override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc mht_4(mht_4_v, 297, "", "./tensorflow/core/common_runtime/base_collective_executor.cc", "Value");
+ return output_; }
 
   // If necessary, flatten output.
   void Flatten() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc mht_5(mht_5_v, 303, "", "./tensorflow/core/common_runtime/base_collective_executor.cc", "Flatten");
+
     if (old_shape_.dims() != 1) {
       TensorShape new_shape = TensorShape({old_shape_.num_elements()});
       DMAHelper::UnsafeSetShape(&output_, new_shape);
@@ -124,6 +310,9 @@ class CollectiveAdapterImpl : public CollectiveAdapter {
   }
 
   void ConsumeFinalValue(Tensor* output) override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc mht_6(mht_6_v, 313, "", "./tensorflow/core/common_runtime/base_collective_executor.cc", "ConsumeFinalValue");
+
     if (old_shape_ != output_.shape()) {
       DMAHelper::UnsafeSetShape(&output_, old_shape_);
     }
@@ -132,16 +321,25 @@ class CollectiveAdapterImpl : public CollectiveAdapter {
 
   // Number of T elements in a particular chunk.
   inline int64_t ChunkElts(int i) const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc mht_7(mht_7_v, 324, "", "./tensorflow/core/common_runtime/base_collective_executor.cc", "ChunkElts");
+
     DCHECK_LT(i, num_chunks_);
     const T* chunk_start = std::min(data_end_, data_start_ + i * chunk_elts_);
     const T* chunk_end = std::min(data_end_, chunk_start + chunk_elts_);
     return chunk_end - chunk_start;
   }
 
-  int64_t ChunkBytes(int i) const override { return sizeof(T) * ChunkElts(i); }
+  int64_t ChunkBytes(int i) const override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc mht_8(mht_8_v, 334, "", "./tensorflow/core/common_runtime/base_collective_executor.cc", "ChunkBytes");
+ return sizeof(T) * ChunkElts(i); }
 
   // Returns a new Tensor that aliases the required chunk.
   Tensor ChunkAlias(int i) override {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc mht_9(mht_9_v, 340, "", "./tensorflow/core/common_runtime/base_collective_executor.cc", "ChunkAlias");
+
     int64_t start = chunk_elts_ * i;
     int64_t num_elts = ChunkElts(i);
     // If this chunk is empty the prior chunk might also be short
@@ -152,6 +350,9 @@ class CollectiveAdapterImpl : public CollectiveAdapter {
   }
 
   Tensor TempChunk(int i) const override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc mht_10(mht_10_v, 353, "", "./tensorflow/core/common_runtime/base_collective_executor.cc", "TempChunk");
+
     AllocationAttributes empty;
     profiler::ScopedMemoryDebugAnnotation op_annotation(
         "CollectiveAdapterImpl::TempChunk");
@@ -159,6 +360,9 @@ class CollectiveAdapterImpl : public CollectiveAdapter {
   }
 
   string DebugString() const override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc mht_11(mht_11_v, 363, "", "./tensorflow/core/common_runtime/base_collective_executor.cc", "DebugString");
+
     return strings::StrCat(
         "base addr ", reinterpret_cast<int64_t>(DMAHelper::base(&output_)),
         " num_chunks ", num_chunks_, " total_elts ", total_elts_, " chunk_elts",
@@ -167,14 +371,23 @@ class CollectiveAdapterImpl : public CollectiveAdapter {
   }
 
   string TBounds(const Tensor& t) const override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc mht_12(mht_12_v, 374, "", "./tensorflow/core/common_runtime/base_collective_executor.cc", "TBounds");
+
     int64_t base_addr = reinterpret_cast<int64_t>(DMAHelper::base(&t));
     return strings::StrCat("(", base_addr, ", ", (base_addr + t.TotalBytes()),
                            ")");
   }
 
-  Tensor Scalar(int v) const override { return Tensor(static_cast<T>(v)); }
+  Tensor Scalar(int v) const override {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc mht_13(mht_13_v, 383, "", "./tensorflow/core/common_runtime/base_collective_executor.cc", "Scalar");
+ return Tensor(static_cast<T>(v)); }
 
   Tensor Scalar(Allocator* a, const AllocationAttributes& attr) const override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc mht_14(mht_14_v, 388, "", "./tensorflow/core/common_runtime/base_collective_executor.cc", "Scalar");
+
     Tensor t(a, dt_, TensorShape({}), attr);
     return t;
   }
@@ -195,6 +408,9 @@ class CollectiveAdapterImpl : public CollectiveAdapter {
 CollectiveAdapter* MakeCollectiveAdapter(Tensor* output, int num_chunks,
                                          Allocator* allocator,
                                          bool align_chunks) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc mht_15(mht_15_v, 411, "", "./tensorflow/core/common_runtime/base_collective_executor.cc", "MakeCollectiveAdapter");
+
   switch (output->dtype()) {
     case DT_BFLOAT16:
       return new CollectiveAdapterImpl<Eigen::bfloat16>(
@@ -227,9 +443,15 @@ CollectiveAdapter* MakeCollectiveAdapter(Tensor* output, int num_chunks,
   }
 }
 
-BaseCollectiveExecutor::~BaseCollectiveExecutor() {}
+BaseCollectiveExecutor::~BaseCollectiveExecutor() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc mht_16(mht_16_v, 447, "", "./tensorflow/core/common_runtime/base_collective_executor.cc", "BaseCollectiveExecutor::~BaseCollectiveExecutor");
+}
 
 void BaseCollectiveExecutor::StartAbort(const Status& s) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc mht_17(mht_17_v, 452, "", "./tensorflow/core/common_runtime/base_collective_executor.cc", "BaseCollectiveExecutor::StartAbort");
+
   Status status;
   {
     mutex_lock l(status_mu_);
@@ -255,6 +477,9 @@ void BaseCollectiveExecutor::StartAbort(const Status& s) {
 }
 
 Status BaseCollectiveExecutor::GetStatus(const Status& s) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc mht_18(mht_18_v, 480, "", "./tensorflow/core/common_runtime/base_collective_executor.cc", "BaseCollectiveExecutor::GetStatus");
+
   if (s.ok()) return s;
   mutex_lock l(status_mu_);
   // If the collective executor is already aborted, use the aborted status
@@ -273,9 +498,16 @@ void BaseCollectiveExecutor::ExecuteAsync(OpKernelContext* ctx,
                                           const CollectiveParams* col_params,
                                           const string& exec_key,
                                           StatusCallback done) {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("exec_key: \"" + exec_key + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc mht_19(mht_19_v, 502, "", "./tensorflow/core/common_runtime/base_collective_executor.cc", "BaseCollectiveExecutor::ExecuteAsync");
+
   // See CompleteParamsAsync() how done() and the timeout callback interacts.
   const auto is_callback_called = std::make_shared<std::atomic<bool>>(false);
   auto done_safe = [this, done, ctx, is_callback_called](const Status& s) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc mht_20(mht_20_v, 508, "", "./tensorflow/core/common_runtime/base_collective_executor.cc", "lambda");
+
     bool called = is_callback_called->exchange(true);
     if (!called) {
       if (!s.ok() && !IsCancelled(ctx->cancellation_manager())) {
@@ -353,6 +585,9 @@ void BaseCollectiveExecutor::ExecuteAsync(OpKernelContext* ctx,
 void BaseCollectiveExecutor::CompleteParamsAsync(
     const DeviceAttributes& device, CollectiveParams* cp,
     CancellationManager* cancel_mgr, StatusCallback done) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc mht_21(mht_21_v, 588, "", "./tensorflow/core/common_runtime/base_collective_executor.cc", "BaseCollectiveExecutor::CompleteParamsAsync");
+
   // We need to make sure that when the timeout callback executes,
   // CollectiveExecutor and CollectiveExecutorMgr are both alive. After done()
   // is called, CollectiveExecutorMgr may be destructed and we don't have a way
@@ -364,6 +599,9 @@ void BaseCollectiveExecutor::CompleteParamsAsync(
       profiler::TraceMe::ActivityStart("CollectiveExecutor::CompleteParams");
   auto done_safe = [this, is_callback_called, cancel_mgr, trace_id,
                     done](const Status& s) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc mht_22(mht_22_v, 602, "", "./tensorflow/core/common_runtime/base_collective_executor.cc", "lambda");
+
     profiler::TraceMe::ActivityEnd(trace_id);
     bool called = is_callback_called->exchange(true);
     if (!called) {
@@ -398,6 +636,9 @@ void BaseCollectiveExecutor::CompleteParamsAsync(
 Status BaseCollectiveExecutor::CreateCollective(
     const CollectiveParams& col_params,
     CollectiveImplementationInterface** col_impl) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc mht_23(mht_23_v, 639, "", "./tensorflow/core/common_runtime/base_collective_executor.cc", "BaseCollectiveExecutor::CreateCollective");
+
   VLOG(2) << "CreateCollective type "
           << DataTypeString(col_params.instance.data_type) << " name "
           << col_params.instance.impl_details.collective_name;
@@ -448,6 +689,9 @@ Status BaseCollectiveExecutor::CreateCollective(
 
 bool BaseCollectiveExecutor::CheckDependencies(
     const CollectiveParams& col_params) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc mht_24(mht_24_v, 692, "", "./tensorflow/core/common_runtime/base_collective_executor.cc", "BaseCollectiveExecutor::CheckDependencies");
+
   for (int32_t instance : col_params.instance.impl_details.dependencies) {
     auto find_iter = launched_.find(instance);
     if (find_iter == launched_.end() || find_iter->second != 0) {
@@ -461,6 +705,9 @@ bool BaseCollectiveExecutor::CheckDependencies(
 
 void BaseCollectiveExecutor::WaitForDependencies(
     const CollectiveParams& col_params) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc mht_25(mht_25_v, 708, "", "./tensorflow/core/common_runtime/base_collective_executor.cc", "BaseCollectiveExecutor::WaitForDependencies");
+
   mutex_lock l(launch_mu_);
   while (!CheckDependencies(col_params)) {
     launch_cv_.wait(l);
@@ -470,6 +717,9 @@ void BaseCollectiveExecutor::WaitForDependencies(
 
 void BaseCollectiveExecutor::UnblockDependencies(
     const CollectiveParams& col_params) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbase_collective_executorDTcc mht_26(mht_26_v, 720, "", "./tensorflow/core/common_runtime/base_collective_executor.cc", "BaseCollectiveExecutor::UnblockDependencies");
+
   mutex_lock l(launch_mu_);
   if (launched_.find(col_params.instance.instance_key) == launched_.end()) {
     const string& task_name =

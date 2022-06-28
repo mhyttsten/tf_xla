@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPSjitPStf_jitrt_kernelsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPSjitPStf_jitrt_kernelsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPSjitPStf_jitrt_kernelsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -127,14 +295,23 @@ using ::tensorflow::thread::ThreadPool;
 
 class CompilationThreadPool : public SharedContext {
  public:
-  explicit CompilationThreadPool(HostContext* host) { Reset(); }
+  explicit CompilationThreadPool(HostContext* host) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPSjitPStf_jitrt_kernelsDTcc mht_0(mht_0_v, 299, "", "./tensorflow/compiler/mlir/tfrt/jit/tf_jitrt_kernels.cc", "CompilationThreadPool");
+ Reset(); }
 
   static CompilationThreadPool& Get(HostContext* host) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPSjitPStf_jitrt_kernelsDTcc mht_1(mht_1_v, 304, "", "./tensorflow/compiler/mlir/tfrt/jit/tf_jitrt_kernels.cc", "Get");
+
     return host->GetOrCreateSharedContext<CompilationThreadPool>();
   }
 
   template <typename Task>
   void Schedule(Task&& task) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPSjitPStf_jitrt_kernelsDTcc mht_2(mht_2_v, 312, "", "./tensorflow/compiler/mlir/tfrt/jit/tf_jitrt_kernels.cc", "Schedule");
+
     // Because compilation tasks can capture move only types, and Tensorflow
     // thread pool requires std::function tasks, we have to do manual memory
     // management here.
@@ -148,6 +325,9 @@ class CompilationThreadPool : public SharedContext {
   // This is an unsafe function intended only for use in tests. It is undefined
   // behavior to call it concurrently with `Schedule`.
   void Reset() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPSjitPStf_jitrt_kernelsDTcc mht_3(mht_3_v, 328, "", "./tensorflow/compiler/mlir/tfrt/jit/tf_jitrt_kernels.cc", "Reset");
+
     thread_pool_ = std::make_unique<ThreadPool>(
         Env::Default(), "tf-jitrt-compiler", /*num_threads=*/32);
   }
@@ -197,6 +377,9 @@ struct TfJitRtPipelineOpts {
 
 // Prints memref descriptor as a tensor type: tensor<NxMxf32>.
 static std::string AsTensorType(const MemrefDesc& desc) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPSjitPStf_jitrt_kernelsDTcc mht_4(mht_4_v, 380, "", "./tensorflow/compiler/mlir/tfrt/jit/tf_jitrt_kernels.cc", "AsTensorType");
+
   std::string str;
   llvm::raw_string_ostream os(str);
 
@@ -210,14 +393,23 @@ static std::string AsTensorType(const MemrefDesc& desc) {
 
 // Print memref descriptor content to trace value specializations.
 static std::string AsTensorContent(const MemrefDesc& desc) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPSjitPStf_jitrt_kernelsDTcc mht_5(mht_5_v, 396, "", "./tensorflow/compiler/mlir/tfrt/jit/tf_jitrt_kernels.cc", "AsTensorContent");
+
   std::string str;
   llvm::raw_string_ostream os(str);
 
   auto print_0d = [&](auto type_tag) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPSjitPStf_jitrt_kernelsDTcc mht_6(mht_6_v, 403, "", "./tensorflow/compiler/mlir/tfrt/jit/tf_jitrt_kernels.cc", "lambda");
+
     os << desc.dtype << ": " << *static_cast<decltype(type_tag)*>(desc.data);
   };
 
   auto print_1d = [&](auto type_tag) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPSjitPStf_jitrt_kernelsDTcc mht_7(mht_7_v, 410, "", "./tensorflow/compiler/mlir/tfrt/jit/tf_jitrt_kernels.cc", "lambda");
+
     os << desc.dtype << ": [";
     for (size_t i = 0; i < desc.sizes[0]; ++i) {
       if (i != 0) os << ",";
@@ -227,6 +419,9 @@ static std::string AsTensorContent(const MemrefDesc& desc) {
   };
 
   auto type_dispatch = [&](auto functor) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPSjitPStf_jitrt_kernelsDTcc mht_8(mht_8_v, 422, "", "./tensorflow/compiler/mlir/tfrt/jit/tf_jitrt_kernels.cc", "lambda");
+
     switch (desc.dtype) {
       case DType::I32:
         functor(int32_t{});
@@ -257,6 +452,9 @@ static std::string AsTensorContent(const MemrefDesc& desc) {
 
 // Gets the session name from the fallback request state.
 static const std::string GetSessionName(RequestContext* req_ctx) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPSjitPStf_jitrt_kernelsDTcc mht_9(mht_9_v, 455, "", "./tensorflow/compiler/mlir/tfrt/jit/tf_jitrt_kernels.cc", "GetSessionName");
+
   auto* fallback = req_ctx->GetDataIfExists<KernelFallbackCompatRequestState>();
   if (!fallback) return "<unknown>";
 
@@ -332,6 +530,9 @@ static Expected<AsyncValuePtr<JitExecutable>> CompileImpl(
                               ArrayRef<MemrefDesc> operands,
                               TaskFunction compile,
                               JitExecutable::UserData user_data) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPSjitPStf_jitrt_kernelsDTcc mht_10(mht_10_v, 533, "", "./tensorflow/compiler/mlir/tfrt/jit/tf_jitrt_kernels.cc", "lambda");
+
     assert(operands.size() == constraints.size());
 
     // Get the context of the request that triggered specialization compilation.
@@ -435,12 +636,18 @@ static Expected<AsyncValuePtr<JitExecutable>> CompileImpl(
 
     // Register dialects and interfaces required for the compilation pipeline.
     opts.register_dialects = [](mlir::DialectRegistry& registry) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPSjitPStf_jitrt_kernelsDTcc mht_11(mht_11_v, 639, "", "./tensorflow/compiler/mlir/tfrt/jit/tf_jitrt_kernels.cc", "lambda");
+
       mlir::RegisterAllTensorFlowDialects(registry);
       RegisterDefaultJitRtDialects(registry);
     };
 
     // Register a custom pipeline for lowering from Tensorflow dialect to LLVM.
     opts.create_compilation_pipeline = [=](mlir::PassManager& pm) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPSjitPStf_jitrt_kernelsDTcc mht_12(mht_12_v, 648, "", "./tensorflow/compiler/mlir/tfrt/jit/tf_jitrt_kernels.cc", "lambda");
+
       TfJitRtPipelineOptions opts;
       if (tf_jitrt_opts) {
         opts.vectorize = tf_jitrt_opts->vectorize;
@@ -569,6 +776,9 @@ using TensorflowReturnValueConverter =
 // value is compatible with the memref type.
 static void ConvertTensorToMemrefDesc(const tensorflow::Tensor& tensor,
                                       MemrefDesc* memref) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPSjitPStf_jitrt_kernelsDTcc mht_13(mht_13_v, 779, "", "./tensorflow/compiler/mlir/tfrt/jit/tf_jitrt_kernels.cc", "ConvertTensorToMemrefDesc");
+
   memref->dtype = tfd::GetTfrtDtype(tensor.dtype());
   memref->data = const_cast<void*>(tensor.data());
   memref->offset = 0;
@@ -590,6 +800,9 @@ static void ConvertTensorToMemrefDesc(const tensorflow::Tensor& tensor,
 static void ConvertTensorOperandsToMemrefDesc(
     RepeatedArguments<FallbackTensor> operands,
     llvm::SmallVectorImpl<MemrefDesc>* memrefs) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPSjitPStf_jitrt_kernelsDTcc mht_14(mht_14_v, 803, "", "./tensorflow/compiler/mlir/tfrt/jit/tf_jitrt_kernels.cc", "ConvertTensorOperandsToMemrefDesc");
+
   assert(memrefs->empty() && "memrefs must be empty");
   memrefs->resize(operands.size());
 
@@ -601,6 +814,9 @@ struct DebugListener : public SpecializationListener {
   void notifyModuleSpecialized(
       ArrayRef<mlir::Type> operands,
       ArrayRef<mlir::DictionaryAttr> attrs) const override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPSjitPStf_jitrt_kernelsDTcc mht_15(mht_15_v, 817, "", "./tensorflow/compiler/mlir/tfrt/jit/tf_jitrt_kernels.cc", "notifyModuleSpecialized");
+
     std::string message;
     llvm::raw_string_ostream os(message);
     os << "Specialized operands:\n";
@@ -615,6 +831,9 @@ struct DebugListener : public SpecializationListener {
 
   void notifyValueSpecialized(unsigned index, mlir::Type type,
                               mlir::Attribute value) const override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPSjitPStf_jitrt_kernelsDTcc mht_16(mht_16_v, 834, "", "./tensorflow/compiler/mlir/tfrt/jit/tf_jitrt_kernels.cc", "notifyValueSpecialized");
+
     std::string message;
     llvm::raw_string_ostream(message) << "%arg" << index << " "
                                       << "value specialized: " << value << "\n";
@@ -628,6 +847,9 @@ struct DebugListener : public SpecializationListener {
 template <typename Error>
 static void ReturnErrors(RemainingResults results, Error error,
                          const ExecutionContext& exec_ctx) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPSjitPStf_jitrt_kernelsDTcc mht_17(mht_17_v, 850, "", "./tensorflow/compiler/mlir/tfrt/jit/tf_jitrt_kernels.cc", "ReturnErrors");
+
   EmitError(exec_ctx, StrCat(error));
   ReturnErrors(results, std::move(error));
 }
@@ -637,6 +859,9 @@ static void ExecuteImpl(Executable& executable,
                         RepeatedArguments<FallbackTensor> operands,
                         RemainingResults results,
                         const ExecutionContext& exec_ctx) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPSjitPStf_jitrt_kernelsDTcc mht_18(mht_18_v, 862, "", "./tensorflow/compiler/mlir/tfrt/jit/tf_jitrt_kernels.cc", "ExecuteImpl");
+
   // Bind execution trace to the request context.
   TraceMe trace_me([&] {
     int64_t id = exec_ctx.request_ctx()->id();
@@ -693,6 +918,9 @@ static void ExecuteImpl(JitExecutable& jit_executable,
                         RepeatedArguments<FallbackTensor> operands,
                         RemainingResults results,
                         const ExecutionContext& exec_ctx, bool debug) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPSjitPStf_jitrt_kernelsDTcc mht_19(mht_19_v, 921, "", "./tensorflow/compiler/mlir/tfrt/jit/tf_jitrt_kernels.cc", "ExecuteImpl");
+
   // Convert Tensor operands to memref descriptors.
   llvm::SmallVector<MemrefDesc> memrefs;
   ConvertTensorOperandsToMemrefDesc(operands, &memrefs);
@@ -759,6 +987,9 @@ static void ExecuteImpl(RepeatedArguments<FallbackTensor> operands,
                         const CompilationUnitAttribute& kernel,
                         const ExecutionContext& exec_ctx, bool debug = false,
                         const Optional<TfJitRtPipelineOpts>& opts = None) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPSjitPStf_jitrt_kernelsDTcc mht_20(mht_20_v, 990, "", "./tensorflow/compiler/mlir/tfrt/jit/tf_jitrt_kernels.cc", "ExecuteImpl");
+
   // Compile kernel module into the JitExecutable.
   Expected<AsyncValuePtr<JitExecutable>> jit_executable =
       CompileImpl(kernel, exec_ctx, opts);
@@ -818,6 +1049,9 @@ static void Execute(RepeatedArguments<FallbackTensor> operands,
                     RemainingResults results, StringAttribute device,
                     CompilationUnitAttribute kernel,
                     const ExecutionContext& exec_ctx) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPSjitPStf_jitrt_kernelsDTcc mht_21(mht_21_v, 1052, "", "./tensorflow/compiler/mlir/tfrt/jit/tf_jitrt_kernels.cc", "Execute");
+
   ExecuteImpl(operands, results, device, kernel, exec_ctx);
 }
 
@@ -831,6 +1065,9 @@ void ExecuteDebug(RepeatedArguments<FallbackTensor> operands,
                   CompilationUnitAttribute kernel, Attribute<bool> vectorize,
                   Attribute<bool> legalize_i1_tensors,
                   const ExecutionContext& exec_ctx) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPSjitPStf_jitrt_kernelsDTcc mht_22(mht_22_v, 1068, "", "./tensorflow/compiler/mlir/tfrt/jit/tf_jitrt_kernels.cc", "ExecuteDebug");
+
   TfJitRtPipelineOpts opts;
   opts.vectorize = *vectorize;
   opts.legalize_i1_tensors = *legalize_i1_tensors;
@@ -841,6 +1078,9 @@ void ExecuteDebug(RepeatedArguments<FallbackTensor> operands,
 }  // namespace
 
 void RegisterTfJitRuntimeKernels(KernelRegistry* registry) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPSjitPStf_jitrt_kernelsDTcc mht_23(mht_23_v, 1081, "", "./tensorflow/compiler/mlir/tfrt/jit/tf_jitrt_kernels.cc", "RegisterTfJitRuntimeKernels");
+
   registry->AddKernel("tf_jitrt.fallback.compile", TFRT_KERNEL(Compile));
   registry->AddKernel("tf_jitrt.fallback.execute", TFRT_KERNEL(Execute));
   registry->AddKernel("tf_jitrt.fallback.debug.execute",

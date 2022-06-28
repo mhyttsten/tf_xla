@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -92,12 +260,18 @@ namespace tensorflow {
 namespace {
 
 const string& DeviceNameOrUnspecified(Device* device) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_0(mht_0_v, 263, "", "./tensorflow/core/common_runtime/eager/execute.cc", "DeviceNameOrUnspecified");
+
   static string* unspecified_string = new string("<unspecified>");
   return (device == nullptr) ? *unspecified_string : device->name();
 }
 
 // Returns whether a kernel should be cached.
 bool KernelCacheEnabled(const OpDef& op_def) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_1(mht_1_v, 272, "", "./tensorflow/core/common_runtime/eager/execute.cc", "KernelCacheEnabled");
+
   if (data::DatasetOpKernel::IsDatasetOp(op_def)) {
     return false;
   }
@@ -122,6 +296,9 @@ Status CopyInputToExpectedDevice(EagerContext* ctx, EagerOperation* op,
                                  int i, Device* handle_device,
                                  Device* expected_input_device,
                                  TensorHandle** result) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_2(mht_2_v, 299, "", "./tensorflow/core/common_runtime/eager/execute.cc", "CopyInputToExpectedDevice");
+
   VLOG(6) << "Expected input device: " << expected_input_device->name()
           << "; handle_device: " << handle_device->name();
   // Should only be called when these don't match
@@ -205,6 +382,9 @@ Status CopyInputToExpectedDevice(EagerContext* ctx, EagerOperation* op,
 Status ValidateInputTypeAndPlacement(
     EagerContext* ctx, EagerOperation* op,
     const core::RefCountPtr<KernelAndDevice>& kernel) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_3(mht_3_v, 385, "", "./tensorflow/core/common_runtime/eager/execute.cc", "ValidateInputTypeAndPlacement");
+
   profiler::TraceMe activity("ValidateInputTypeAndPlacement",
                              profiler::TraceMeLevel::kInfo);
   const int n_inputs = op->Inputs().size();
@@ -262,6 +442,9 @@ Status ValidateInputTypeAndPlacement(
 }
 
 Status GetOutputDTypes(EagerOperation* op, DataTypeVector* output_dtypes) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_4(mht_4_v, 445, "", "./tensorflow/core/common_runtime/eager/execute.cc", "GetOutputDTypes");
+
   const auto& node_def = op->MutableAttrs()->BuildNodeDef();
   const OpDef* op_def = nullptr;
 
@@ -280,18 +463,27 @@ Status GetOutputDTypes(EagerOperation* op, DataTypeVector* output_dtypes) {
 
 inline tensorflow::Fprint128 FingerprintCat128(const tensorflow::Fprint128& a,
                                                const tensorflow::Fprint128& b) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_5(mht_5_v, 466, "", "./tensorflow/core/common_runtime/eager/execute.cc", "FingerprintCat128");
+
   return {tensorflow::FingerprintCat64(a.low64, b.low64),
           tensorflow::FingerprintCat64(a.high64, b.high64)};
 }
 
 inline tensorflow::Fprint128 FingerprintCat128(const tensorflow::Fprint128& a,
                                                const int64_t b) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_6(mht_6_v, 475, "", "./tensorflow/core/common_runtime/eager/execute.cc", "FingerprintCat128");
+
   auto x = tensorflow::FingerprintCat64(a.low64, b);
   return {x, tensorflow::FingerprintCat64(a.high64, x)};
 }
 
 Status GetDeviceForInput(const EagerContext& ctx, TensorHandle* tensor_handle,
                          Device** result) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_7(mht_7_v, 484, "", "./tensorflow/core/common_runtime/eager/execute.cc", "GetDeviceForInput");
+
   Device* cpu_device = ctx.HostCPU();
   string device_name;
   if (tensor_handle->Type() != TensorHandle::LOCAL) {
@@ -338,6 +530,9 @@ Status GetDeviceForInput(const EagerContext& ctx, TensorHandle* tensor_handle,
 // attach every dim size to hashed content.
 void AppendTensorShapeToFingerprint(const PartialTensorShape& shape,
                                     Fprint128* fingerprint) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_8(mht_8_v, 533, "", "./tensorflow/core/common_runtime/eager/execute.cc", "AppendTensorShapeToFingerprint");
+
   if (shape.unknown_rank()) {
     char c = '?';
     *fingerprint = FingerprintCat128(*fingerprint, c);
@@ -351,6 +546,10 @@ void AppendTensorShapeToFingerprint(const PartialTensorShape& shape,
 
 Status GetFuncAttr(const EagerOperation* op, const EagerContext& ctx,
                    const char* attr_name, bool* value) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_9(mht_9_v, 550, "", "./tensorflow/core/common_runtime/eager/execute.cc", "GetFuncAttr");
+
   Status status = op->Attrs().Get(attr_name, value);
   if (status.ok()) {
     VLOG(2) << "Caller explicitly specifies "
@@ -375,6 +574,9 @@ Status GetFuncAttr(const EagerOperation* op, const EagerContext& ctx,
 
 Status MustCompileWithXLA(const EagerOperation* op, const EagerContext& ctx,
                           bool* compile_with_xla) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_10(mht_10_v, 577, "", "./tensorflow/core/common_runtime/eager/execute.cc", "MustCompileWithXLA");
+
   if (!op->is_function()) {
     *compile_with_xla = false;
     return Status::OK();
@@ -409,6 +611,9 @@ Status MustCompileWithXLA(const EagerOperation* op, const EagerContext& ctx,
 }
 
 Status VerifyWrappableInCallOp(const OpDef& opdef, EagerOperation* op) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_11(mht_11_v, 614, "", "./tensorflow/core/common_runtime/eager/execute.cc", "VerifyWrappableInCallOp");
+
   absl::flat_hash_set<string> opdef_attrs;
   for (const auto& attr : opdef.attr()) {
     opdef_attrs.insert(attr.name());
@@ -426,6 +631,10 @@ Status VerifyWrappableInCallOp(const OpDef& opdef, EagerOperation* op) {
 using ProtoArgListType = protobuf::RepeatedPtrField<OpDef_ArgDef>;
 
 string EscapeOrigName(const string& orig_name) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("orig_name: \"" + orig_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_12(mht_12_v, 635, "", "./tensorflow/core/common_runtime/eager/execute.cc", "EscapeOrigName");
+
   // Replace _ with __ in the original name to avoid name conflicts.
   return absl::StrReplaceAll(orig_name, {{"_", "__"}});
 }
@@ -433,6 +642,10 @@ string EscapeOrigName(const string& orig_name) {
 // Variadic args are flattened during wrapping. This utility returns the name
 // of a flattened arg/attr.
 string GetFlatName(const string orig_name, int index) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("orig_name: \"" + orig_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_13(mht_13_v, 646, "", "./tensorflow/core/common_runtime/eager/execute.cc", "GetFlatName");
+
   return absl::StrCat(EscapeOrigName(orig_name), "_", index);
 }
 
@@ -447,12 +660,18 @@ string GetFlatName(const string orig_name, int index) {
 // Concat[N:2, T:DT_FLOAT] -> __wrapped__Concat_N_2
 Status BuildWrappedOpName(EagerOperation* op, const OpDef& opdef,
                           const AbstractOpAttrs* op_attrs, string* name) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_14(mht_14_v, 663, "", "./tensorflow/core/common_runtime/eager/execute.cc", "BuildWrappedOpName");
+
   string fname = absl::StrCat("__wrapped__", EscapeOrigName(op->Name()));
   // For every variadic arg in `args`, populates `attr_to_len` with
   // (attr_name, len(arg)).
   auto FillAttrToLen = [op_attrs, op](
                            const ProtoArgListType& args,
                            absl::btree_map<string, int>* attr_to_len) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_15(mht_15_v, 672, "", "./tensorflow/core/common_runtime/eager/execute.cc", "lambda");
+
     for (const auto& arg : args) {
       if (!arg.type_list_attr().empty()) {
         gtl::InlinedVector<DataType, 4> type_list;
@@ -492,6 +711,9 @@ Status BuildWrappedOpName(EagerOperation* op, const OpDef& opdef,
 // or the eager execution's validation (which is reached via the CreateOpKernel
 // call).
 Status ValidateOp(EagerOperation* op) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_16(mht_16_v, 714, "", "./tensorflow/core/common_runtime/eager/execute.cc", "ValidateOp");
+
   const NodeDef& node_def = op->MutableAttrs()->BuildNodeDef();
   const OpDef* op_def;
   TF_RETURN_IF_ERROR(OpRegistry::Global()->LookUpOpDef(node_def.op(), &op_def));
@@ -620,6 +842,10 @@ Status ValidateOp(EagerOperation* op) {
 // inner op via a placeholder. This allows additional verification.
 Status BuildWrappedOpSignature(EagerOperation* op, const OpDef& opdef,
                                const string& fname, OpDef& signature) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_17(mht_17_v, 846, "", "./tensorflow/core/common_runtime/eager/execute.cc", "BuildWrappedOpSignature");
+
   signature = opdef;
   signature.clear_input_arg();
   signature.clear_output_arg();
@@ -629,6 +855,9 @@ Status BuildWrappedOpSignature(EagerOperation* op, const OpDef& opdef,
                                const ProtoArgListType& opdef_args,
                                ProtoArgListType* sig_args,
                                absl::flat_hash_set<string>& new_attrs) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_18(mht_18_v, 858, "", "./tensorflow/core/common_runtime/eager/execute.cc", "lambda");
+
     for (const auto& arg : opdef_args) {
       if (!arg.type_list_attr().empty()) {
         gtl::InlinedVector<DataType, 4> type_list;
@@ -687,9 +916,15 @@ Status BuildWrappedOpSignature(EagerOperation* op, const OpDef& opdef,
 Status AddMixedTypeListAttrs(EagerOperation* wrapped_op,
                              const AbstractOpAttrs* op_attrs,
                              const OpDef& opdef) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_19(mht_19_v, 919, "", "./tensorflow/core/common_runtime/eager/execute.cc", "AddMixedTypeListAttrs");
+
   auto FillAttrsToAdd =
       [op_attrs](const ProtoArgListType& opdef_args,
                  absl::flat_hash_map<string, DataType>* attrs_to_add) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_20(mht_20_v, 925, "", "./tensorflow/core/common_runtime/eager/execute.cc", "lambda");
+
         for (const auto& arg : opdef_args) {
           if (!arg.type_list_attr().empty()) {
             gtl::InlinedVector<DataType, 4> type_list;
@@ -719,6 +954,10 @@ Status AddMixedTypeListAttrs(EagerOperation* wrapped_op,
 Status PopulateRetMap(FunctionDef* fdef, const AbstractOpAttrs* op_attrs,
                       const EagerOperation* op, const OpDef& opdef,
                       const OpDef& signature, const string& node_name) {
+   std::vector<std::string> mht_21_v;
+   mht_21_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_21(mht_21_v, 958, "", "./tensorflow/core/common_runtime/eager/execute.cc", "PopulateRetMap");
+
   int next_sig_output = 0;
   for (size_t i = 0; i < opdef.output_arg_size(); i++) {
     const auto& output_arg = opdef.output_arg(i);
@@ -836,6 +1075,9 @@ Status WrapInCallOp(EagerOperation* op, EagerOperation** wrapped_op) {
 }
 
 bool IntArgsAndRetvalsOnDevice(EagerOperation* op) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_22(mht_22_v, 1078, "", "./tensorflow/core/common_runtime/eager/execute.cc", "IntArgsAndRetvalsOnDevice");
+
   // Most TF ops expect and generate int32 tensors on the host (or a TPU/XLA
   // device). This is not the case with IteratorGetNext since it is possible to
   // build int32 datasets that produce outputs on device when using
@@ -896,6 +1138,9 @@ StatusOr<Fprint128> GetKernelCacheKey(
 Status GetOrCreateKernelAndDevice(
     EagerOperation* op, TensorHandle** retvals, int* num_retvals,
     core::RefCountPtr<KernelAndDevice>* out_kernel) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_23(mht_23_v, 1141, "", "./tensorflow/core/common_runtime/eager/execute.cc", "GetOrCreateKernelAndDevice");
+
   EagerContext& ctx = op->EagerContext();
   Device* device = absl::get<Device*>(op->Device());
 
@@ -1094,7 +1339,10 @@ Status GetOrCreateKernelAndDevice(
               << "Full node_def=" << ndef.DebugString();
       std::function<int64_t()> get_op_id = nullptr;
 #if !defined(IS_MOBILE_PLATFORM)
-      get_op_id = [&ctx]() { return ctx.RemoteMgr()->NextOpId(); };
+      get_op_id = [&ctx]() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_24(mht_24_v, 1343, "", "./tensorflow/core/common_runtime/eager/execute.cc", "lambda");
+ return ctx.RemoteMgr()->NextOpId(); };
 #endif  // IS_MOBILE_PLATFORM
 
       ctx.reuse_rendezvous_for_functions_mu()->lock();
@@ -1158,6 +1406,9 @@ Status CreateUnshapedOutput(
     const DataType& output_dtype,
     const absl::optional<EagerFunctionParams>& eager_func_params,
     EagerContext* ctx, TensorHandle** output) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_25(mht_25_v, 1409, "", "./tensorflow/core/common_runtime/eager/execute.cc", "CreateUnshapedOutput");
+
 #if defined(IS_MOBILE_PLATFORM)
   return errors::Unimplemented(
       "Remote outputs are not available on mobile devices.");
@@ -1190,6 +1441,9 @@ Status CreateUnshapedOutput(
 
 Status AddOrExecuteNode(core::RefCountPtr<KernelAndDevice> kernel,
                         EagerOperation* op, TensorHandle** retvals) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_26(mht_26_v, 1444, "", "./tensorflow/core/common_runtime/eager/execute.cc", "AddOrExecuteNode");
+
   EagerExecutor& executor = op->Executor();
   EagerContext& ctx = op->EagerContext();
   GraphCollector* graph_collector = nullptr;
@@ -1274,6 +1528,9 @@ Status AddOrExecuteNode(core::RefCountPtr<KernelAndDevice> kernel,
 //    running without an explicitly requested device.
 Status EagerLocalExecute(EagerOperation* op, TensorHandle** retvals,
                          int* num_retvals) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_27(mht_27_v, 1531, "", "./tensorflow/core/common_runtime/eager/execute.cc", "EagerLocalExecute");
+
   profiler::ScopedMemoryDebugAnnotation op_annotation(
       op->op_name(), op->eager_func_params().has_value()
                          ? op->eager_func_params().value().step_id.value_or(0)
@@ -1342,6 +1599,9 @@ Status EagerLocalExecute(EagerOperation* op, TensorHandle** retvals,
 // Run a Pack op to pack the tensors pointed by a packed input TensorHandle if
 // the op is a primitive op.
 Status MaybePackInputTensor(EagerOperation* op) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_28(mht_28_v, 1602, "", "./tensorflow/core/common_runtime/eager/execute.cc", "MaybePackInputTensor");
+
   if (op->is_function() || op->EagerContext().RunEagerOpAsFunction()) {
     // Functions could take packed TensorHandles as inputs.
     return Status::OK();
@@ -1389,6 +1649,9 @@ void PrepareRemoteOp(eager::Operation* remote_op, EagerOperation* op) {
 Status StoreResourceDtypesAndShapes(const eager::Operation& remote_op,
                                     const DataTypeVector& output_dtypes,
                                     TensorHandle** retvals) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_29(mht_29_v, 1652, "", "./tensorflow/core/common_runtime/eager/execute.cc", "StoreResourceDtypesAndShapes");
+
   if (remote_op.name() == "VarHandleOp") {
     if (output_dtypes.size() != 1) {
       return errors::Internal("VarHandleOp should only have one output.");
@@ -1410,6 +1673,9 @@ Status StoreResourceDtypesAndShapes(const eager::Operation& remote_op,
 
 Status EagerRemoteExecute(EagerOperation* op, TensorHandle** retvals,
                           int* num_retvals) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_30(mht_30_v, 1676, "", "./tensorflow/core/common_runtime/eager/execute.cc", "EagerRemoteExecute");
+
   EagerContext& ctx = op->EagerContext();
 
   // TODO(fishx): Remove following code when lazy tensor copy is ready.
@@ -1637,6 +1903,9 @@ Status GetKernelOutputs(
 }
 
 void CollectGraphs(EagerContext* ctx) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_31(mht_31_v, 1906, "", "./tensorflow/core/common_runtime/eager/execute.cc", "CollectGraphs");
+
   mutex_lock ml(*ctx->MetadataMu());
 
   GraphCollector* collector = ctx->GetGraphCollector();
@@ -1663,6 +1932,9 @@ void CollectGraphs(EagerContext* ctx) {
 
 Status EagerExecute(EagerOperation* op, TensorHandle** retvals,
                     int* num_retvals) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_32(mht_32_v, 1935, "", "./tensorflow/core/common_runtime/eager/execute.cc", "EagerExecute");
+
   profiler::TraceMe activity([&] {
     return ::tensorflow::profiler::TraceMeEncode(
         "EagerExecute",
@@ -1713,6 +1985,9 @@ Status EagerKernelExecute(
     GraphCollector* graph_collector, CancellationManager* cancellation_manager,
     absl::Span<TensorHandle*> retvals,
     const absl::optional<ManagedStackTrace>& stack_trace) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_33(mht_33_v, 1988, "", "./tensorflow/core/common_runtime/eager/execute.cc", "EagerKernelExecute");
+
   profiler::TraceMe activity("EagerKernelExecute",
                              profiler::TraceMeLevel::kInfo);
   std::vector<EagerKernelRet> outputs(1);
@@ -1754,6 +2029,9 @@ namespace {
 Status LocalEagerCopyToDevice(TensorHandle* h, EagerContext* ctx,
                               EagerExecutor* executor, Device* dstd,
                               bool mirror, TensorHandle** result) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_34(mht_34_v, 2032, "", "./tensorflow/core/common_runtime/eager/execute.cc", "LocalEagerCopyToDevice");
+
   TF_RETURN_IF_ERROR(executor->status());
   Device* d = ctx->CanonicalDevice(dstd);
   if (mirror && h->HasLocalMirror(d)) {
@@ -1823,6 +2101,9 @@ Status LocalEagerCopyToDevice(TensorHandle* h, EagerContext* ctx,
 Status EagerCopyToDevice(TensorHandle* h, EagerContext* ctx,
                          EagerExecutor* executor, Device* device, bool mirror,
                          TensorHandle** result) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_35(mht_35_v, 2104, "", "./tensorflow/core/common_runtime/eager/execute.cc", "EagerCopyToDevice");
+
   TF_RETURN_IF_ERROR(h->WaitUnknownDevice());
   auto send_device = h->DeviceOrHostCPU(*ctx);
   bool sender_is_local = send_device->IsLocal();
@@ -1926,6 +2207,9 @@ void EagerKernelExecuteAsync(
     const core::RefCountPtr<KernelAndDevice> kernel,
     GraphCollector* graph_collector, CancellationManager* cancellation_manager,
     TensorHandle** retvals, int num_outputs, StatusCallback done) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_36(mht_36_v, 2210, "", "./tensorflow/core/common_runtime/eager/execute.cc", "EagerKernelExecuteAsync");
+
   auto inputs = std::make_shared<ExecuteNodeArgs>(op_inputs.size());
   auto outputs = std::make_shared<std::vector<EagerKernelRet>>(1);
 
@@ -1948,6 +2232,9 @@ void EagerKernelExecuteAsync(
        eager_func_params, kernel_raw = kernel.get(),
        done = std::move(done)](const Status& s) {
         auto wrapped_done = [&](const Status& s) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_37(mht_37_v, 2235, "", "./tensorflow/core/common_runtime/eager/execute.cc", "lambda");
+
           kernel_raw->Unref();
           done(s);
         };
@@ -1972,6 +2259,9 @@ void EagerKernelExecuteAsync(
 // triggered after execution with its status.
 void EagerLocalExecuteAsync(EagerOperation* op, TensorHandle** retvals,
                             int* num_retvals, StatusCallback done) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPSexecuteDTcc mht_38(mht_38_v, 2262, "", "./tensorflow/core/common_runtime/eager/execute.cc", "EagerLocalExecuteAsync");
+
   if (!op->IsLocal()) {
     done(errors::InvalidArgument(
         "Remote execution is not supported in async EagerLocalExecuteAsync"));

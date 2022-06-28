@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,8 +214,14 @@ namespace {
 
 class TestEagerServiceImpl : public EagerServiceImpl {
  public:
-  explicit TestEagerServiceImpl(const WorkerEnv* env) : EagerServiceImpl(env) {}
+  explicit TestEagerServiceImpl(const WorkerEnv* env) : EagerServiceImpl(env) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_0(mht_0_v, 218, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "TestEagerServiceImpl");
+}
   Status GetEagerContext(const uint64 context_id, EagerContext** ctx) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_1(mht_1_v, 222, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "GetEagerContext");
+
     ServerContext* context = nullptr;
     TF_RETURN_IF_ERROR(GetServerContext(context_id, &context));
     core::ScopedUnref context_unref(context);
@@ -57,6 +231,9 @@ class TestEagerServiceImpl : public EagerServiceImpl {
   Status GetTensorHandle(const uint64 context_id,
                          const RemoteTensorHandleInternal& remote_handle,
                          tensorflow::TensorHandle** handle) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_2(mht_2_v, 234, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "GetTensorHandle");
+
     ServerContext* context = nullptr;
     TF_RETURN_IF_ERROR(GetServerContext(context_id, &context));
     core::ScopedUnref context_unref(context);
@@ -68,10 +245,19 @@ class TestEagerServiceImpl : public EagerServiceImpl {
 
 class FakeEagerClient : public EagerClient {
  public:
-  FakeEagerClient() {}
-  ~FakeEagerClient() override {}
+  FakeEagerClient() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_3(mht_3_v, 249, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "FakeEagerClient");
+}
+  ~FakeEagerClient() override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_4(mht_4_v, 253, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "~FakeEagerClient");
+}
 
-  void SetServiceImpl(TestEagerServiceImpl* impl) { impl_ = impl; }
+  void SetServiceImpl(TestEagerServiceImpl* impl) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_5(mht_5_v, 258, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "SetServiceImpl");
+ impl_ = impl; }
 
 #define CLIENT_METHOD(method)                                         \
   void method##Async(const method##Request* request,                  \
@@ -96,6 +282,9 @@ class FakeEagerClient : public EagerClient {
                                  const RunComponentFunctionRequest* request,
                                  RunComponentFunctionResponse* response,
                                  StatusCallback done) override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_6(mht_6_v, 285, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "RunComponentFunctionAsync");
+
     impl_->RunComponentFunction(call_opts, request, response, std::move(done));
   }
 
@@ -103,10 +292,16 @@ class FakeEagerClient : public EagerClient {
                              const EnqueueRequest* request,
                              EnqueueResponse* response,
                              StatusCallback done) override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_7(mht_7_v, 295, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "StreamingEnqueueAsync");
+
     done(impl_->Enqueue(nullptr, request, response));
   }
 
-  bool allow_multiple_pending_requests() const override { return false; }
+  bool allow_multiple_pending_requests() const override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_8(mht_8_v, 302, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "allow_multiple_pending_requests");
+ return false; }
 
  private:
   TestEagerServiceImpl* impl_;
@@ -114,9 +309,16 @@ class FakeEagerClient : public EagerClient {
 
 class DummyEagerClientCache : public EagerClientCache {
  public:
-  DummyEagerClientCache() : client_(new FakeEagerClient) {}
+  DummyEagerClientCache() : client_(new FakeEagerClient) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_9(mht_9_v, 313, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "DummyEagerClientCache");
+}
   Status GetClient(const string& target,
                    core::RefCountPtr<EagerClient>* client) override {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("target: \"" + target + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_10(mht_10_v, 319, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "GetClient");
+
     client->reset(client_.get());
     client_->Ref();
     return Status::OK();
@@ -129,11 +331,17 @@ class DummyEagerClientCache : public EagerClientCache {
 class FakeCache : public TestWorkerCache {
   Status GetEagerClientCache(
       std::unique_ptr<eager::EagerClientCache>* eager_client_cache) override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_11(mht_11_v, 334, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "GetEagerClientCache");
+
     eager_client_cache->reset(new DummyEagerClientCache);
     return Status::OK();
   }
 
   void ListWorkers(std::vector<string>* workers) const override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_12(mht_12_v, 342, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "ListWorkers");
+
     workers->push_back("/job:localhost/replica:0/task:0");
   }
 };
@@ -150,6 +358,9 @@ class EagerServiceImplTest : public ::testing::Test {
               *worker_cache = new FakeCache;
               return Status::OK();
             })) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_13(mht_13_v, 361, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "EagerServiceImplTest");
+
     worker_env_.env = Env::Default();
 
     worker_env_.rendezvous_mgr = &rendezvous_mgr_;
@@ -169,6 +380,9 @@ class EagerServiceImplTest : public ::testing::Test {
 };
 
 void SetTensorProto(TensorProto* tensor_proto) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_14(mht_14_v, 383, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "SetTensorProto");
+
   int64_t dims[] = {2, 2};
   float data[] = {1.0f, 2.0f, 3.0f, 4.0f};
   TF_Tensor* t = TF_AllocateTensor(
@@ -185,6 +399,11 @@ void BuildOperation(
     const std::vector<absl::variant<TensorProto, std::pair<int64_t, int32>>>&
         inputs,
     const std::unordered_map<string, AttrValue>& attrs, const string& device) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("name: \"" + name + "\"");
+   mht_15_v.push_back("device: \"" + device + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_15(mht_15_v, 404, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "BuildOperation");
+
   operation->set_id(id);
   operation->set_name(name);
   operation->set_device(device);
@@ -215,6 +434,11 @@ void AddOperationToEnqueueRequest(
         inputs,
     const std::unordered_map<string, AttrValue>& attrs, const string& device,
     EnqueueRequest* request) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("name: \"" + name + "\"");
+   mht_16_v.push_back("device: \"" + device + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_16(mht_16_v, 439, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "AddOperationToEnqueueRequest");
+
   auto* operation = request->add_queue()->mutable_operation();
   BuildOperation(operation, id, name, inputs, attrs, device);
 }
@@ -225,6 +449,11 @@ void AddOperationToRunComponentFunctionRequest(
         inputs,
     const std::unordered_map<string, AttrValue>& attrs, const string& device,
     const int output_num, RunComponentFunctionRequest* request) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("name: \"" + name + "\"");
+   mht_17_v.push_back("device: \"" + device + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_17(mht_17_v, 454, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "AddOperationToRunComponentFunctionRequest");
+
   auto* operation = request->mutable_operation();
   operation->set_is_function(true);
   operation->set_is_component_function(true);
@@ -233,6 +462,9 @@ void AddOperationToRunComponentFunctionRequest(
 }
 
 tensorflow::NodeDef MatMulFunctionNodeDef() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_18(mht_18_v, 465, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "MatMulFunctionNodeDef");
+
   tensorflow::NodeDef def;
   CHECK(tensorflow::protobuf::TextFormat::ParseFromString(
       "    name: 'matmul_func'"
@@ -250,6 +482,9 @@ tensorflow::NodeDef MatMulFunctionNodeDef() {
 }
 
 tensorflow::FunctionDef MatMulFunction() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_19(mht_19_v, 485, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "MatMulFunction");
+
   tensorflow::FunctionDef def;
   CHECK(tensorflow::protobuf::TextFormat::ParseFromString(
       "    signature {"
@@ -290,6 +525,9 @@ tensorflow::FunctionDef MatMulFunction() {
 }
 
 tensorflow::FunctionDef MatMulNestedFunction() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_20(mht_20_v, 528, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "MatMulNestedFunction");
+
   tensorflow::FunctionDef def;
   CHECK(tensorflow::protobuf::TextFormat::ParseFromString(
       "    signature {"
@@ -323,6 +561,9 @@ tensorflow::FunctionDef MatMulNestedFunction() {
 }
 
 tensorflow::FunctionDef SingleRecvNodeFunction() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_21(mht_21_v, 564, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "SingleRecvNodeFunction");
+
   tensorflow::FunctionDef def;
   CHECK(tensorflow::protobuf::TextFormat::ParseFromString(
       "    signature {"
@@ -464,13 +705,20 @@ TEST_F(EagerServiceImplTest, BasicTest) {
 
 class EagerServiceImplFunctionTest : public EagerServiceImplTest {
  public:
-  EagerServiceImplFunctionTest() : EagerServiceImplTest() {}
+  EagerServiceImplFunctionTest() : EagerServiceImplTest() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_22(mht_22_v, 709, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "EagerServiceImplFunctionTest");
+}
 
   // Creates a context and attempts to execute a function.
   void TestFunction(const RegisterFunctionOp& register_op,
                     const string& function_name,
                     const bool local_inputs = false,
                     const bool test_cancel = false) {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("function_name: \"" + function_name + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_23(mht_23_v, 719, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "TestFunction");
+
     TestEagerServiceImpl eager_service_impl(&worker_env_);
 
     uint64 context_id = random::New64();
@@ -570,6 +818,10 @@ class EagerServiceImplFunctionTest : public EagerServiceImplTest {
   void TestComponentFunction(const RegisterFunctionOp& register_op,
                              const string& function_name,
                              const bool test_cancel) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("function_name: \"" + function_name + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_24(mht_24_v, 822, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "TestComponentFunction");
+
     TestEagerServiceImpl eager_service_impl(&worker_env_);
     uint64 context_id = random::New64();
 
@@ -703,6 +955,9 @@ class FunctionWithRemoteInputsTest : public EagerServiceImplTest {
  public:
   FunctionWithRemoteInputsTest()
       : EagerServiceImplTest(), eager_service_impl_(&worker_env_) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_25(mht_25_v, 958, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "FunctionWithRemoteInputsTest");
+
     remote_device_mgr_ = absl::make_unique<StaticDeviceMgr>(
         DeviceFactory::NewDevice("CPU", {}, "/job:localhost/replica:0/task:1"));
     context_id_ = random::New64();
@@ -715,12 +970,21 @@ class FunctionWithRemoteInputsTest : public EagerServiceImplTest {
         std::function<Status(const int, eager::RemoteTensorHandle*)>
             serialize_remote_handle)
         : EagerKernelArgs(std::move(tensor_args)),
-          serialize_remote_handle_(std::move(serialize_remote_handle)) {}
+          serialize_remote_handle_(std::move(serialize_remote_handle)) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_26(mht_26_v, 974, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "TestExecuteNodeArgs");
+}
 
-    bool HasRemoteOrPackedInputs() const override { return true; }
+    bool HasRemoteOrPackedInputs() const override {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_27(mht_27_v, 979, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "HasRemoteOrPackedInputs");
+ return true; }
 
     Status GetRemoteArg(const FunctionArgIndex& index,
                         eager::RemoteTensorHandle* val) const override {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_28(mht_28_v, 985, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "GetRemoteArg");
+
       return serialize_remote_handle_(index.index, val);
     }
 
@@ -730,6 +994,9 @@ class FunctionWithRemoteInputsTest : public EagerServiceImplTest {
   };
 
   bool MatMulHasAttrWithDefaultValue(const tensorflow::FunctionDef& fdef) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_29(mht_29_v, 997, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "MatMulHasAttrWithDefaultValue");
+
     for (const auto& node : fdef.node_def()) {
       if (node.op() == "MatMul") {
         return node.attr().find("transpose_a") != node.attr().end();
@@ -739,6 +1006,9 @@ class FunctionWithRemoteInputsTest : public EagerServiceImplTest {
   }
 
   void Init() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_30(mht_30_v, 1009, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "Init");
+
     CreateContextRequest request;
     request.mutable_server_def()->set_job_name("localhost");
     request.mutable_server_def()->set_task_index(0);
@@ -784,12 +1054,18 @@ class FunctionWithRemoteInputsTest : public EagerServiceImplTest {
         Rendezvous::Factory{[this](const int64_t step_id,
                                    const DeviceMgr* device_mgr,
                                    Rendezvous** r) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_31(mht_31_v, 1057, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "lambda");
+
           *r = worker_env_.rendezvous_mgr->Find(step_id);
           return Status::OK();
         }});
   }
 
   void CheckOutputTensorAndClose(const Tensor& tensor) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_32(mht_32_v, 1066, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "CheckOutputTensorAndClose");
+
     auto actual = tensor.flat<float>();
     EXPECT_EQ(4, actual.size());
     EXPECT_EQ(7, actual(0));
@@ -807,6 +1083,9 @@ class FunctionWithRemoteInputsTest : public EagerServiceImplTest {
 
   void CheckOutputsAndClose(const std::vector<FunctionRet>& outputs,
                             const int64_t op_id) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_33(mht_33_v, 1086, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "CheckOutputsAndClose");
+
     const tensorflow::Tensor* t = nullptr;
     tensorflow::TensorHandle* tensor_handle;
     TF_ASSERT_OK(eager_service_impl_.GetTensorHandle(
@@ -960,7 +1239,10 @@ TEST_F(FunctionWithRemoteInputsTest, KernelAndDeviceFuncTest) {
       /*shape_inference_on_tfe_dialect_import=*/true,
       /*int_args_and_retvals_on_device=*/false,
       /*xla_compile_device_type=*/absl::nullopt, ctx->RendezvousCreator(),
-      [=]() { return op_id; }));
+      [=]() {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_34(mht_34_v, 1243, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "lambda");
+ return op_id; }));
 
   // Instantiate MatMulFunction on remote_device.
   const NodeDef node_def = MatMulFunctionNodeDef();
@@ -1014,7 +1296,10 @@ TEST_F(FunctionWithRemoteInputsTest, KernelAndDeviceFuncAsyncTest) {
       /*shape_inference_on_tfe_dialect_import=*/true,
       /*int_args_and_retvals_on_device=*/false,
       /*xla_compile_device_type=*/absl::nullopt, ctx->RendezvousCreator(),
-      [=]() { return op_id; }));
+      [=]() {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSeager_service_impl_testDTcc mht_35(mht_35_v, 1300, "", "./tensorflow/core/distributed_runtime/eager/eager_service_impl_test.cc", "lambda");
+ return op_id; }));
 
   // Instantiate MatMulFunction on remote_device.
   const NodeDef node_def = MatMulFunctionNodeDef();

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePScommon_runtimePSeval_const_tensorDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeval_const_tensorDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePScommon_runtimePSeval_const_tensorDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,6 +203,9 @@ using ::tensorflow::shape_inference::ShapeHandle;
 // Returns a Tensor containing the underlyiing constant value of a Node if the
 // node contains a constant value.
 Status EvaluateConstantNode(const Node& node, Tensor* output, bool* success) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeval_const_tensorDTcc mht_0(mht_0_v, 206, "", "./tensorflow/core/common_runtime/eval_const_tensor.cc", "EvaluateConstantNode");
+
   *success = false;
   if (node.IsConstant()) {
     if (output->FromProto(node.def().attr().at("value").tensor())) {
@@ -48,6 +219,9 @@ Status EvaluateConstantNode(const Node& node, Tensor* output, bool* success) {
 // input src contains a scalar tensor.
 Status EvaluateConstantIntFromScalarEdge(const Node& node, int input_idx,
                                          int64* output, bool* success) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeval_const_tensorDTcc mht_1(mht_1_v, 222, "", "./tensorflow/core/common_runtime/eval_const_tensor.cc", "EvaluateConstantIntFromScalarEdge");
+
   *success = false;
   Tensor scalar;
   const Edge* edge;
@@ -77,6 +251,9 @@ Status TryToInferTensorOutputFromShapeNode(const Node& shape_node,
                                            InferenceContext* shape_c,
                                            Tensor* output, bool* success,
                                            bool allow_partial = false) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeval_const_tensorDTcc mht_2(mht_2_v, 254, "", "./tensorflow/core/common_runtime/eval_const_tensor.cc", "TryToInferTensorOutputFromShapeNode");
+
   *success = false;
   if (shape_node.type_string() != "Shape") return Status::OK();
   if (shape_c == nullptr) return Status::OK();
@@ -130,6 +307,9 @@ Status TryToInferTensorOutputFromStridedSliceNode(const Node& node,
                                                   const ShapeRefiner& refiner,
                                                   Tensor* output,
                                                   bool* success) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeval_const_tensorDTcc mht_3(mht_3_v, 310, "", "./tensorflow/core/common_runtime/eval_const_tensor.cc", "TryToInferTensorOutputFromStridedSliceNode");
+
   *success = false;
   const Edge* edge;
   TF_RETURN_IF_ERROR(node.input_edge(0, &edge));
@@ -214,6 +394,9 @@ Status TryToInferTensorOutputFromStridedSliceNode(const Node& node,
 Status TryToInferTensorOutputFromInputShapes(const Edge& edge,
                                              const ShapeRefiner& refiner,
                                              Tensor* output, bool* success) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeval_const_tensorDTcc mht_4(mht_4_v, 397, "", "./tensorflow/core/common_runtime/eval_const_tensor.cc", "TryToInferTensorOutputFromInputShapes");
+
   *success = false;
   const Node* node = edge.src();
   InferenceContext* c = refiner.GetContext(node);
@@ -272,12 +455,18 @@ Status TryToInferTensorOutputFromInputShapes(const Edge& edge,
 
 // Returns true if 'node' has a registered CPU kernel.
 bool HasCpuKernel(const Node& node) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeval_const_tensorDTcc mht_5(mht_5_v, 458, "", "./tensorflow/core/common_runtime/eval_const_tensor.cc", "HasCpuKernel");
+
   return FindKernelDef(DeviceType(DEVICE_CPU), node.def(), /*def=*/nullptr,
                        /*kernel_class_name=*/nullptr)
       .ok();
 }
 
 Status GetArgNodeIndex(const Node* node, int num_function_inputs, int* index) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeval_const_tensorDTcc mht_6(mht_6_v, 467, "", "./tensorflow/core/common_runtime/eval_const_tensor.cc", "GetArgNodeIndex");
+
   DCHECK(node->IsArg());
   TF_RETURN_IF_ERROR(GetNodeAttr(AttrSlice(node->def()), "index", index));
   if (*index < 0 || num_function_inputs <= *index) {
@@ -297,6 +486,9 @@ Status ExtractConstantSubgraph(
     bool* is_constant_graph,
     std::vector<std::pair<string, Tensor>>* const_inputs,
     InferenceContext* outer_context) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeval_const_tensorDTcc mht_7(mht_7_v, 489, "", "./tensorflow/core/common_runtime/eval_const_tensor.cc", "ExtractConstantSubgraph");
+
   *is_constant_graph = false;
   std::unordered_set<string> const_inputs_added;
   if (target_node.op_def().is_stateful()) {
@@ -504,6 +696,9 @@ Status EvaluateConstantTensor(OutputTensor tensor, const ShapeRefiner& refiner,
                               int64 max_cached_value_size,
                               bool disable_constant_propagation,
                               InferenceContext* outer_context) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeval_const_tensorDTcc mht_8(mht_8_v, 699, "", "./tensorflow/core/common_runtime/eval_const_tensor.cc", "EvaluateConstantTensor");
+
   *evaluated = false;
   const Node* src = tensor.node;
 

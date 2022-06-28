@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSkernelsPSmirror_padDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSmirror_padDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSkernelsPSmirror_padDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -61,12 +229,18 @@ struct EvalData {
 template <typename T>
 inline void GetPadding(const T* data, int offset, int64_t* left_pad,
                        int64_t* right_pad) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSmirror_padDTcc mht_0(mht_0_v, 232, "", "./tensorflow/lite/kernels/mirror_pad.cc", "GetPadding");
+
   *left_pad = static_cast<int64_t>(*(data + offset * 2));
   *right_pad = static_cast<int64_t>(*(data + offset * 2 + 1));
 }
 
 inline void GetPadding(const TfLiteTensor* padding_matrix, int dimension,
                        int64_t* left_pad, int64_t* right_pad) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSmirror_padDTcc mht_1(mht_1_v, 241, "", "./tensorflow/lite/kernels/mirror_pad.cc", "GetPadding");
+
   switch (padding_matrix->type) {
     case kTfLiteInt32:
       GetPadding(padding_matrix->data.i32, dimension, left_pad, right_pad);
@@ -98,6 +272,9 @@ std::unique_ptr<TfLiteIntArray, void (*)(TfLiteIntArray*)> GetPaddedOutputShape(
 // Returns the corresponding dimension in the input array.
 inline int GetInputDimension(int padded_dimension, int left_pad, int right_pad,
                              int input_dim_size, int offset) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSmirror_padDTcc mht_2(mht_2_v, 275, "", "./tensorflow/lite/kernels/mirror_pad.cc", "GetInputDimension");
+
   if (padded_dimension < left_pad) {
     const int original_ind = left_pad + offset - 1;
     return original_ind - (std::min(padded_dimension, original_ind - offset));
@@ -115,6 +292,9 @@ inline int GetInputDimension(int padded_dimension, int left_pad, int right_pad,
 // in input array.
 template <typename T>
 int GetFlatIndex(int index, EvalData<T>* eval_data) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSmirror_padDTcc mht_3(mht_3_v, 295, "", "./tensorflow/lite/kernels/mirror_pad.cc", "GetFlatIndex");
+
   int flat_index = 0;
   int64_t left_pad = 0, right_pad = 0, dimension_index, index_in_input;
   for (int i = 0; i < eval_data->num_dims; ++i) {
@@ -143,8 +323,14 @@ int GetFlatIndex(int index, EvalData<T>* eval_data) {
 template <typename T>
 struct MirrorPadWorkerTask : cpu_backend_threadpool::Task {
   MirrorPadWorkerTask(EvalData<T>* eval_data, int start, int end)
-      : eval_data(eval_data), start(start), end(end) {}
+      : eval_data(eval_data), start(start), end(end) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSmirror_padDTcc mht_4(mht_4_v, 327, "", "./tensorflow/lite/kernels/mirror_pad.cc", "MirrorPadWorkerTask");
+}
   void Run() override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSmirror_padDTcc mht_5(mht_5_v, 331, "", "./tensorflow/lite/kernels/mirror_pad.cc", "Run");
+
     auto* input_data = eval_data->input_data;
     auto* output_data = eval_data->output_data;
     for (int i = start; i < end; ++i) {
@@ -161,6 +347,9 @@ struct MirrorPadWorkerTask : cpu_backend_threadpool::Task {
 }  // namespace
 
 TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSmirror_padDTcc mht_6(mht_6_v, 350, "", "./tensorflow/lite/kernels/mirror_pad.cc", "Eval");
+
   ruy::profiler::ScopeLabel label("MirrorPad");
   const TfLiteTensor* input_tensor;
   TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, 0, &input_tensor));
@@ -255,12 +444,22 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
 }
 
 void* Init(TfLiteContext* context, const char* buffer, size_t length) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSkernelsPSmirror_padDTcc mht_7(mht_7_v, 448, "", "./tensorflow/lite/kernels/mirror_pad.cc", "Init");
+
   return nullptr;
 }
 
-void Free(TfLiteContext* context, void* buffer) {}
+void Free(TfLiteContext* context, void* buffer) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSmirror_padDTcc mht_8(mht_8_v, 455, "", "./tensorflow/lite/kernels/mirror_pad.cc", "Free");
+}
 
 TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSmirror_padDTcc mht_9(mht_9_v, 460, "", "./tensorflow/lite/kernels/mirror_pad.cc", "Prepare");
+
   const TfLiteTensor* input_tensor;
   TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, 0, &input_tensor));
   const TfLiteTensor* padding_matrix;
@@ -286,6 +485,9 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
 
 }  // namespace mirror_pad
 TfLiteRegistration* Register_MIRROR_PAD() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSmirror_padDTcc mht_10(mht_10_v, 488, "", "./tensorflow/lite/kernels/mirror_pad.cc", "Register_MIRROR_PAD");
+
   static TfLiteRegistration r = {mirror_pad::Init, mirror_pad::Free,
                                  mirror_pad::Prepare, mirror_pad::Eval};
   return &r;

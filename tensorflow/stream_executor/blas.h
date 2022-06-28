@@ -39,6 +39,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_STREAM_EXECUTOR_BLAS_H_
 #define TENSORFLOW_STREAM_EXECUTOR_BLAS_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSstream_executorPSblasDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSstream_executorPSblasDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSstream_executorPSblasDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <complex>
 #include <vector>
@@ -193,12 +361,30 @@ constexpr AlgorithmType kDefaultGemmAlgo = -1;
 // algorithms are valid for all calls), is_valid() will be false.
 class ProfileResult {
  public:
-  bool is_valid() const { return is_valid_; }
-  void set_is_valid(bool val) { is_valid_ = val; }
-  AlgorithmType algorithm() const { return algorithm_; }
-  void set_algorithm(AlgorithmType val) { algorithm_ = val; }
-  float elapsed_time_in_ms() const { return elapsed_time_in_ms_; }
-  void set_elapsed_time_in_ms(float val) { elapsed_time_in_ms_ = val; }
+  bool is_valid() const {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSstream_executorPSblasDTh mht_0(mht_0_v, 365, "", "./tensorflow/stream_executor/blas.h", "is_valid");
+ return is_valid_; }
+  void set_is_valid(bool val) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSstream_executorPSblasDTh mht_1(mht_1_v, 369, "", "./tensorflow/stream_executor/blas.h", "set_is_valid");
+ is_valid_ = val; }
+  AlgorithmType algorithm() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSstream_executorPSblasDTh mht_2(mht_2_v, 373, "", "./tensorflow/stream_executor/blas.h", "algorithm");
+ return algorithm_; }
+  void set_algorithm(AlgorithmType val) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSstream_executorPSblasDTh mht_3(mht_3_v, 377, "", "./tensorflow/stream_executor/blas.h", "set_algorithm");
+ algorithm_ = val; }
+  float elapsed_time_in_ms() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSstream_executorPSblasDTh mht_4(mht_4_v, 381, "", "./tensorflow/stream_executor/blas.h", "elapsed_time_in_ms");
+ return elapsed_time_in_ms_; }
+  void set_elapsed_time_in_ms(float val) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSstream_executorPSblasDTh mht_5(mht_5_v, 385, "", "./tensorflow/stream_executor/blas.h", "set_elapsed_time_in_ms");
+ elapsed_time_in_ms_ = val; }
 
  private:
   bool is_valid_ = false;
@@ -208,10 +394,22 @@ class ProfileResult {
 
 class AlgorithmConfig {
  public:
-  AlgorithmConfig() : algorithm_(kDefaultAlgorithm) {}
-  explicit AlgorithmConfig(AlgorithmType algorithm) : algorithm_(algorithm) {}
-  AlgorithmType algorithm() const { return algorithm_; }
-  void set_algorithm(AlgorithmType val) { algorithm_ = val; }
+  AlgorithmConfig() : algorithm_(kDefaultAlgorithm) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSstream_executorPSblasDTh mht_6(mht_6_v, 398, "", "./tensorflow/stream_executor/blas.h", "AlgorithmConfig");
+}
+  explicit AlgorithmConfig(AlgorithmType algorithm) : algorithm_(algorithm) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSstream_executorPSblasDTh mht_7(mht_7_v, 402, "", "./tensorflow/stream_executor/blas.h", "AlgorithmConfig");
+}
+  AlgorithmType algorithm() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSstream_executorPSblasDTh mht_8(mht_8_v, 406, "", "./tensorflow/stream_executor/blas.h", "algorithm");
+ return algorithm_; }
+  void set_algorithm(AlgorithmType val) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSstream_executorPSblasDTh mht_9(mht_9_v, 410, "", "./tensorflow/stream_executor/blas.h", "set_algorithm");
+ algorithm_ = val; }
   bool operator==(const AlgorithmConfig &other) const {
     return this->algorithm_ == other.algorithm_;
   }
@@ -229,11 +427,17 @@ struct IBlasLtMatmulPlan {
   virtual DataType ab_type() const = 0;
   // Returns the data type of the C (input/output) matrix.
   virtual DataType c_type() const = 0;
-  virtual ~IBlasLtMatmulPlan() {}
+  virtual ~IBlasLtMatmulPlan() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSstream_executorPSblasDTh mht_10(mht_10_v, 431, "", "./tensorflow/stream_executor/blas.h", "~IBlasLtMatmulPlan");
+}
 };
 
 struct IBlasLtMatmulAlgorithm {
-  virtual ~IBlasLtMatmulAlgorithm() {}
+  virtual ~IBlasLtMatmulAlgorithm() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSstream_executorPSblasDTh mht_11(mht_11_v, 438, "", "./tensorflow/stream_executor/blas.h", "~IBlasLtMatmulAlgorithm");
+}
   // Returns the index of the algorithm within the list returned by
   // GetBlasLtMatmulAlgorithms.
   virtual AlgorithmType index() const = 0;
@@ -272,7 +476,10 @@ struct BlasLtMatmulPlanParams {
 // behavior at the current time; see b/13176597
 class BlasSupport {
  public:
-  virtual ~BlasSupport() {}
+  virtual ~BlasSupport() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSstream_executorPSblasDTh mht_12(mht_12_v, 480, "", "./tensorflow/stream_executor/blas.h", "~BlasSupport");
+}
 
   // Computes the sum of magnitudes of the vector elements.
   // result <- |Re x(1)| + |Im x(1)| + |Re  x(2)| + |Im  x(2)|+ ... + |Re  x(n)|
@@ -1514,7 +1721,10 @@ class BlasSupport {
   virtual port::Status GetVersion(std::string *version) = 0;
 
  protected:
-  BlasSupport() {}
+  BlasSupport() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSstream_executorPSblasDTh mht_13(mht_13_v, 1725, "", "./tensorflow/stream_executor/blas.h", "BlasSupport");
+}
 
  private:
   SE_DISALLOW_COPY_AND_ASSIGN(BlasSupport);

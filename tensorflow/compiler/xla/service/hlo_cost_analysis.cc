@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -36,12 +204,21 @@ constexpr const char HloCostAnalysis::kTranscendentalsKey[];
 constexpr const char HloCostAnalysis::kBytesAccessedKey[];
 constexpr const char HloCostAnalysis::kOptimalSecondsKey[];
 
-HloCostAnalysis::HloCostAnalysis(const Options& options) : options_(options) {}
+HloCostAnalysis::HloCostAnalysis(const Options& options) : options_(options) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_0(mht_0_v, 208, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HloCostAnalysis");
+}
 HloCostAnalysis::HloCostAnalysis(ShapeSizeFunction shape_size,
                                  const Properties& per_second_rates)
-    : HloCostAnalysis(Options{shape_size, per_second_rates}) {}
+    : HloCostAnalysis(Options{shape_size, per_second_rates}) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_1(mht_1_v, 214, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HloCostAnalysis");
+}
 
 Status HloCostAnalysis::Preprocess(const HloInstruction* hlo) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_2(mht_2_v, 219, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::Preprocess");
+
   // Set current instruction cost values to reasonable default values. Each
   // handler can overwrite these values. In Postprocess, these values are
   // accumulated and written to the per-instruction maps.
@@ -64,6 +241,9 @@ Status HloCostAnalysis::Preprocess(const HloInstruction* hlo) {
 }
 
 Status HloCostAnalysis::Postprocess(const HloInstruction* hlo) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_3(mht_3_v, 244, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::Postprocess");
+
   if (current_should_compute_bottleneck_time_) {
     // Compute the time as the time of the bottleneck, i.e. the slowest property
     // given the per-second rate of each property.
@@ -89,6 +269,9 @@ Status HloCostAnalysis::Postprocess(const HloInstruction* hlo) {
 
 Status HloCostAnalysis::HandleElementwiseOp(
     const HloInstruction* hlo_instruction) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_4(mht_4_v, 272, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleElementwiseOp");
+
   const auto& shape = hlo_instruction->shape();
   // For element-wise operations, the number of computations is the same as the
   // number of elements in the output shape.
@@ -117,6 +300,10 @@ Status HloCostAnalysis::HandleElementwiseOp(
 /*static*/ float HloCostAnalysis::GetProperty(absl::string_view key,
                                               const Properties& properties,
                                               const float default_value) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("key: \"" + std::string(key.data(), key.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_5(mht_5_v, 304, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::GetProperty");
+
   auto key_value = properties.find(key);
   return key_value == properties.end() ? default_value : key_value->second;
 }
@@ -124,6 +311,10 @@ Status HloCostAnalysis::HandleElementwiseOp(
 /*static*/ float HloCostAnalysis::GetPropertyForHlo(
     const HloInstruction& hlo, const std::string& key,
     const HloToProperties& hlo_to_properties) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_6(mht_6_v, 315, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::GetPropertyForHlo");
+
   auto it = hlo_to_properties.find(&hlo);
   if (it == hlo_to_properties.end()) {
     return 0.0f;
@@ -133,6 +324,9 @@ Status HloCostAnalysis::HandleElementwiseOp(
 }
 
 int64_t HloCostAnalysis::GetShapeSize(const Shape& shape) const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_7(mht_7_v, 327, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::GetShapeSize");
+
   if (!LayoutUtil::HasLayout(shape)) {
     return 0;
   }
@@ -141,6 +335,9 @@ int64_t HloCostAnalysis::GetShapeSize(const Shape& shape) const {
 
 int64_t HloCostAnalysis::FusionParameterReadBytes(
     const HloInstruction* hlo) const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_8(mht_8_v, 338, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::FusionParameterReadBytes");
+
   int64_t size = 0;
   bool seen_trivial_user = false;
   CHECK(hlo->IsFused() && (hlo->opcode() == HloOpcode::kParameter ||
@@ -183,26 +380,44 @@ int64_t HloCostAnalysis::FusionParameterReadBytes(
 }
 
 Status HloCostAnalysis::HandleElementwiseUnary(const HloInstruction* hlo) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_9(mht_9_v, 383, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleElementwiseUnary");
+
   return HandleElementwiseOp(hlo);
 }
 
 Status HloCostAnalysis::HandleElementwiseBinary(const HloInstruction* hlo) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_10(mht_10_v, 390, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleElementwiseBinary");
+
   return HandleElementwiseOp(hlo);
 }
 
 Status HloCostAnalysis::HandleCompare(const HloInstruction* compare) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_11(mht_11_v, 397, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleCompare");
+
   return HandleElementwiseOp(compare);
 }
 
 Status HloCostAnalysis::HandleClamp(const HloInstruction* clamp) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_12(mht_12_v, 404, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleClamp");
+
   return HandleElementwiseOp(clamp);
 }
 
 Status HloCostAnalysis::HandleReducePrecision(const HloInstruction* hlo) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_13(mht_13_v, 411, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleReducePrecision");
+
   return HandleElementwiseOp(hlo);
 }
 
 Status HloCostAnalysis::HandleParameter(const HloInstruction*) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_14(mht_14_v, 418, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleParameter");
+
   current_should_compute_bottleneck_time_ = false;
   current_properties_[kBytesAccessedKey] = 0;
   SetOutputBytesAccessed(0);
@@ -211,6 +426,9 @@ Status HloCostAnalysis::HandleParameter(const HloInstruction*) {
 }
 
 Status HloCostAnalysis::HandleConstant(const HloInstruction*) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_15(mht_15_v, 429, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleConstant");
+
   current_should_compute_bottleneck_time_ = false;
   current_properties_[kBytesAccessedKey] = 0;
   SetOutputBytesAccessed(0);
@@ -219,11 +437,17 @@ Status HloCostAnalysis::HandleConstant(const HloInstruction*) {
 }
 
 Status HloCostAnalysis::HandleIota(const HloInstruction*) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_16(mht_16_v, 440, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleIota");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleGetTupleElement(
     const HloInstruction* get_tuple_element) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_17(mht_17_v, 448, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleGetTupleElement");
+
   // GetTupleElement forwards a pointer and does not touch each element in the
   // output.
   current_should_compute_bottleneck_time_ = false;
@@ -235,18 +459,30 @@ Status HloCostAnalysis::HandleGetTupleElement(
 }
 
 Status HloCostAnalysis::HandleSelect(const HloInstruction* hlo) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_18(mht_18_v, 462, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleSelect");
+
   return HandleElementwiseOp(hlo);
 }
 
 Status HloCostAnalysis::HandleTupleSelect(const HloInstruction*) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_19(mht_19_v, 469, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleTupleSelect");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleReverse(const HloInstruction*) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_20(mht_20_v, 476, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleReverse");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleSlice(const HloInstruction* slice) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_21(mht_21_v, 483, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleSlice");
+
   current_properties_[kBytesAccessedKey] = GetShapeSize(slice->shape()) * 2;
   SetOutputBytesAccessed(GetShapeSize(slice->shape()));
   SetOperandBytesAccessed(0, GetShapeSize(slice->shape()));
@@ -255,6 +491,9 @@ Status HloCostAnalysis::HandleSlice(const HloInstruction* slice) {
 
 Status HloCostAnalysis::HandleDynamicSlice(
     const HloInstruction* dynamic_slice) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_22(mht_22_v, 494, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleDynamicSlice");
+
   current_properties_[kBytesAccessedKey] =
       GetShapeSize(dynamic_slice->shape()) * 2 +
       GetShapeSize(dynamic_slice->operand(1)->shape());
@@ -266,6 +505,9 @@ Status HloCostAnalysis::HandleDynamicSlice(
 
 Status HloCostAnalysis::HandleDynamicUpdateSlice(
     const HloInstruction* dynamic_update_slice) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_23(mht_23_v, 508, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleDynamicUpdateSlice");
+
   current_properties_[kBytesAccessedKey] =
       GetShapeSize(dynamic_update_slice->operand(1)->shape()) * 2 +
       GetShapeSize(dynamic_update_slice->operand(2)->shape());
@@ -281,6 +523,9 @@ Status HloCostAnalysis::HandleDynamicUpdateSlice(
 }
 
 Status HloCostAnalysis::HandleTuple(const HloInstruction* tuple) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_24(mht_24_v, 526, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleTuple");
+
   // The tuple instruction only gathers pointers from inputs (it doesn't iterate
   // through them). The memory touched is then only the size of the output
   // index table of the tuple.
@@ -294,18 +539,30 @@ Status HloCostAnalysis::HandleTuple(const HloInstruction* tuple) {
 }
 
 Status HloCostAnalysis::HandleConcatenate(const HloInstruction*) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_25(mht_25_v, 542, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleConcatenate");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleConvert(const HloInstruction* convert) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_26(mht_26_v, 549, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleConvert");
+
   return HandleElementwiseOp(convert);
 }
 
 Status HloCostAnalysis::HandleCopy(const HloInstruction*) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_27(mht_27_v, 556, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleCopy");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleDomain(const HloInstruction* domain) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_28(mht_28_v, 563, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleDomain");
+
   // Domain does not have any computation or data transfer.
   current_should_compute_bottleneck_time_ = false;
   current_properties_[kBytesAccessedKey] = 0;
@@ -321,6 +578,9 @@ Status HloCostAnalysis::HandleDomain(const HloInstruction* domain) {
 int64_t HloCostAnalysis::GetDotFlops(const Shape& lhs_shape,
                                      const Shape& result_shape,
                                      const DotDimensionNumbers& dnums) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_29(mht_29_v, 581, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::GetDotFlops");
+
   // Count of elements along the reduction dimensions.
   int64_t reduction_width = 1;
   for (auto dim : dnums.lhs_contracting_dimensions()) {
@@ -331,12 +591,18 @@ int64_t HloCostAnalysis::GetDotFlops(const Shape& lhs_shape,
 }
 
 Status HloCostAnalysis::HandleDot(const HloInstruction* dot) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_30(mht_30_v, 594, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleDot");
+
   current_properties_[kFlopsKey] = GetDotFlops(
       dot->operand(0)->shape(), dot->shape(), dot->dot_dimension_numbers());
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleInfeed(const HloInstruction* infeed) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_31(mht_31_v, 603, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleInfeed");
+
   // Count nested infeed output tuples.
   int64_t size = 0;
   for (const auto& indexed_shape : ShapeUtil::GetLeafShapes(infeed->shape())) {
@@ -350,6 +616,9 @@ Status HloCostAnalysis::HandleInfeed(const HloInstruction* infeed) {
 }
 
 Status HloCostAnalysis::HandleOutfeed(const HloInstruction* outfeed) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_32(mht_32_v, 619, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleOutfeed");
+
   // Count nested outfeed operand tuples.
   current_properties_[kBytesAccessedKey] = 0;
   for (int64_t i = 0; i < outfeed->operand_count(); ++i) {
@@ -368,6 +637,9 @@ Status HloCostAnalysis::HandleOutfeed(const HloInstruction* outfeed) {
 }
 
 Status HloCostAnalysis::HandleMap(const HloInstruction* map) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_33(mht_33_v, 640, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleMap");
+
   // Compute properties of the mapped function.
   TF_ASSIGN_OR_RETURN(const Properties sub_properties,
                       ProcessSubcomputation(map->to_apply()));
@@ -383,6 +655,9 @@ Status HloCostAnalysis::HandleMap(const HloInstruction* map) {
 }
 
 Status HloCostAnalysis::HandleReduce(const HloInstruction* reduce) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_34(mht_34_v, 658, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleReduce");
+
   HloComputation* function = reduce->to_apply();
   // Compute the cost of the user function.
   TF_ASSIGN_OR_RETURN(const Properties sub_properties,
@@ -408,6 +683,9 @@ Status HloCostAnalysis::HandleReduce(const HloInstruction* reduce) {
 
 Status HloCostAnalysis::HandleReduceWindow(
     const HloInstruction* reduce_window) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_35(mht_35_v, 686, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleReduceWindow");
+
   const Window& window = reduce_window->window();
   auto function = reduce_window->to_apply();
   // Compute the properties of the reduction function.
@@ -437,6 +715,9 @@ Status HloCostAnalysis::HandleReduceWindow(
 
 Status HloCostAnalysis::HandleSelectAndScatter(
     const HloInstruction* instruction) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_36(mht_36_v, 718, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleSelectAndScatter");
+
   // Compute the properties of the select and scatter function.
   // Compute the properties of the reduction function.
   TF_ASSIGN_OR_RETURN(const Properties select_properties,
@@ -470,6 +751,9 @@ Status HloCostAnalysis::HandleSelectAndScatter(
 }
 
 Status HloCostAnalysis::HandleBitcast(const HloInstruction*) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_37(mht_37_v, 754, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleBitcast");
+
   // A bitcast does no computation and touches no memory.
   current_properties_[kBytesAccessedKey] = 0;
   SetOutputBytesAccessed(0);
@@ -479,14 +763,23 @@ Status HloCostAnalysis::HandleBitcast(const HloInstruction*) {
 }
 
 Status HloCostAnalysis::HandleBroadcast(const HloInstruction*) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_38(mht_38_v, 766, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleBroadcast");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandlePad(const HloInstruction*) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_39(mht_39_v, 773, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandlePad");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleAsyncStart(const HloInstruction* async_start) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_40(mht_40_v, 780, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleAsyncStart");
+
   TF_ASSIGN_OR_RETURN(
       current_properties_,
       ProcessSubcomputation(async_start->called_computations()[0]));
@@ -494,61 +787,103 @@ Status HloCostAnalysis::HandleAsyncStart(const HloInstruction* async_start) {
 }
 
 Status HloCostAnalysis::HandleAsyncUpdate(const HloInstruction*) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_41(mht_41_v, 790, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleAsyncUpdate");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleAsyncDone(const HloInstruction*) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_42(mht_42_v, 797, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleAsyncDone");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleCopyStart(const HloInstruction*) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_43(mht_43_v, 804, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleCopyStart");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleCopyDone(const HloInstruction*) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_44(mht_44_v, 811, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleCopyDone");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleSend(const HloInstruction*) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_45(mht_45_v, 818, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleSend");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleSendDone(const HloInstruction*) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_46(mht_46_v, 825, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleSendDone");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleRecv(const HloInstruction*) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_47(mht_47_v, 832, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleRecv");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleRecvDone(const HloInstruction*) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_48(mht_48_v, 839, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleRecvDone");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleReshape(const HloInstruction*) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_49(mht_49_v, 846, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleReshape");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleDynamicReshape(const HloInstruction*) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_50(mht_50_v, 853, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleDynamicReshape");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleBatchNormTraining(const HloInstruction*) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_51(mht_51_v, 860, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleBatchNormTraining");
+
   // TODO(b/62294698): Implement cost analysis for batch-norm-training.
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleBatchNormInference(const HloInstruction*) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_52(mht_52_v, 868, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleBatchNormInference");
+
   // TODO(b/62294698): Implement cost analysis for batch-norm-inference.
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleBatchNormGrad(const HloInstruction*) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_53(mht_53_v, 876, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleBatchNormGrad");
+
   // TODO(b/62294698): Implement cost analysis for batch-norm-grad.
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleTranspose(const HloInstruction* transpose) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_54(mht_54_v, 884, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleTranspose");
+
   if (transpose->IsEffectiveBitcast()) {
     return HandleBitcast(transpose);
   }
@@ -556,6 +891,9 @@ Status HloCostAnalysis::HandleTranspose(const HloInstruction* transpose) {
 }
 
 Status HloCostAnalysis::HandleAfterAll(const HloInstruction* token) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_55(mht_55_v, 894, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleAfterAll");
+
   // This instruction is used to enforce ordering at compile time. No code is
   // emitted.
   current_should_compute_bottleneck_time_ = false;
@@ -570,6 +908,9 @@ Status HloCostAnalysis::HandleAfterAll(const HloInstruction* token) {
 
 Status HloCostAnalysis::HandleAddDependency(
     const HloInstruction* add_dependency) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_56(mht_56_v, 911, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleAddDependency");
+
   // This instruction is used to enforce ordering at compile time. No code is
   // emitted.
   current_should_compute_bottleneck_time_ = false;
@@ -584,6 +925,9 @@ Status HloCostAnalysis::HandleAddDependency(
 
 int64_t HloCostAnalysis::GetConvolutionFlops(
     const HloInstruction* convolution) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_57(mht_57_v, 928, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::GetConvolutionFlops");
+
   auto lhs = convolution->operand(0);
   auto rhs = convolution->operand(1);
   const Shape& lhs_shape = lhs->shape();
@@ -598,6 +942,9 @@ int64_t HloCostAnalysis::GetConvolutionFlops(const HloInstruction* convolution,
                                              const Shape& lhs_shape,
                                              const Shape& rhs_shape,
                                              const Shape& result_shape) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_58(mht_58_v, 945, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::GetConvolutionFlops");
+
   Window window = convolution->window();
   const auto& dnums = convolution->convolution_dimension_numbers();
   const int64_t input_batch_dim = dnums.input_batch_dimension();
@@ -715,11 +1062,17 @@ int64_t HloCostAnalysis::GetConvolutionFlops(const HloInstruction* convolution,
 }
 
 Status HloCostAnalysis::HandleConvolution(const HloInstruction* convolution) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_59(mht_59_v, 1065, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleConvolution");
+
   current_properties_[kFlopsKey] = GetConvolutionFlops(convolution);
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleFft(const HloInstruction* fft) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_60(mht_60_v, 1073, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleFft");
+
   auto real_shape =
       fft->operand(0)->shape().IsTuple()
           ? ShapeUtil::GetTupleElementShape(fft->operand(0)->shape(), 0)
@@ -735,6 +1088,9 @@ Status HloCostAnalysis::HandleFft(const HloInstruction* fft) {
 }
 
 Status HloCostAnalysis::HandleTriangularSolve(const HloInstruction* hlo) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_61(mht_61_v, 1091, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleTriangularSolve");
+
   // Half of operand 0 is read.
   float bytes_accessed = GetShapeSize(hlo->shape());
   SetOutputBytesAccessed(GetShapeSize(hlo->shape()));
@@ -754,6 +1110,9 @@ Status HloCostAnalysis::HandleTriangularSolve(const HloInstruction* hlo) {
 }
 
 Status HloCostAnalysis::HandleCholesky(const HloInstruction* hlo) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_62(mht_62_v, 1113, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleCholesky");
+
   // Half of operand 0 is read and half of the output will be written.
   float bytes_accessed = GetShapeSize(hlo->operand(0)->shape()) / 2.0f;
   SetOutputBytesAccessed(GetShapeSize(hlo->operand(0)->shape()) / 2.0f);
@@ -771,22 +1130,37 @@ Status HloCostAnalysis::HandleCholesky(const HloInstruction* hlo) {
 
 Status HloCostAnalysis::HandleOptimizationBarrier(
     const HloInstruction* /*hlo*/) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_63(mht_63_v, 1133, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleOptimizationBarrier");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleAllGather(const HloInstruction* /*hlo*/) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_64(mht_64_v, 1140, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleAllGather");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleAllGatherStart(const HloInstruction* hlo) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_65(mht_65_v, 1147, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleAllGatherStart");
+
   return HandleAllGather(hlo);
 }
 
 Status HloCostAnalysis::HandleAllGatherDone(const HloInstruction* /*hlo*/) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_66(mht_66_v, 1154, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleAllGatherDone");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleAllReduce(const HloInstruction* crs) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_67(mht_67_v, 1161, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleAllReduce");
+
   // We assume 2 replicas, so that each output element is the sum of two input
   // elements.
   //
@@ -812,44 +1186,74 @@ Status HloCostAnalysis::HandleAllReduce(const HloInstruction* crs) {
 }
 
 Status HloCostAnalysis::HandleReduceScatter(const HloInstruction* hlo) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_68(mht_68_v, 1189, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleReduceScatter");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleAllReduceStart(const HloInstruction* hlo) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_69(mht_69_v, 1196, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleAllReduceStart");
+
   return HandleAllReduce(hlo);
 }
 
 Status HloCostAnalysis::HandleAllReduceDone(const HloInstruction* /*hlo*/) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_70(mht_70_v, 1203, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleAllReduceDone");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleAllToAll(const HloInstruction* hlo) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_71(mht_71_v, 1210, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleAllToAll");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleCollectivePermute(const HloInstruction* /*hlo*/) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_72(mht_72_v, 1217, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleCollectivePermute");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleCollectivePermuteStart(
     const HloInstruction* /*hlo*/) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_73(mht_73_v, 1225, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleCollectivePermuteStart");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleCollectivePermuteDone(
     const HloInstruction* /*hlo*/) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_74(mht_74_v, 1233, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleCollectivePermuteDone");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandlePartitionId(const HloInstruction* /*hlo*/) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_75(mht_75_v, 1240, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandlePartitionId");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleReplicaId(const HloInstruction* /*hlo*/) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_76(mht_76_v, 1247, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleReplicaId");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleRng(const HloInstruction* random) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_77(mht_77_v, 1254, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleRng");
+
   // TODO(b/26346211): Implement better estimates for the RNG cost, since the
   // cost changes with the implementation and the distribution. For now, assume
   // the cost of each RNG is same as a transcendental operation.
@@ -859,6 +1263,9 @@ Status HloCostAnalysis::HandleRng(const HloInstruction* random) {
 }
 
 Status HloCostAnalysis::HandleRngBitGenerator(const HloInstruction* random) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_78(mht_78_v, 1266, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleRngBitGenerator");
+
   // TODO(b/26346211): Implement better estimates for the RNG cost, since the
   // cost changes with the implementation and the distribution. For now, assume
   // the cost of each RNG is same as a transcendental operation.
@@ -869,10 +1276,16 @@ Status HloCostAnalysis::HandleRngBitGenerator(const HloInstruction* random) {
 
 Status HloCostAnalysis::HandleRngGetAndUpdateState(
     const HloInstruction* random) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_79(mht_79_v, 1279, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleRngGetAndUpdateState");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleFusion(const HloInstruction* fusion) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_80(mht_80_v, 1286, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleFusion");
+
   if (fusion->IsCustomFusion()) {
     for (const HloInstruction* hlo :
          fusion->fused_instructions_computation()->instructions()) {
@@ -934,6 +1347,9 @@ Status HloCostAnalysis::HandleFusion(const HloInstruction* fusion) {
         propagate_output_size_to_parent;
     propagate_output_size_to_parent = [&](const Shape& shape,
                                           const ShapeIndex& shape_index) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_81(mht_81_v, 1350, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "lambda");
+
       auto output_bytes_it =
           current_properties_.find(GetOutputBytesAccessedKey(shape_index));
       if (output_bytes_it != current_properties_.end()) {
@@ -988,6 +1404,9 @@ Status HloCostAnalysis::HandleFusion(const HloInstruction* fusion) {
 }
 
 Status HloCostAnalysis::HandleCall(const HloInstruction* call) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_82(mht_82_v, 1407, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleCall");
+
   TF_ASSIGN_OR_RETURN(current_properties_,
                       ProcessSubcomputation(call->to_apply()));
   current_should_compute_bottleneck_time_ = false;
@@ -995,6 +1414,9 @@ Status HloCostAnalysis::HandleCall(const HloInstruction* call) {
 }
 
 Status HloCostAnalysis::HandleCustomCall(const HloInstruction* custom_call) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_83(mht_83_v, 1417, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleCustomCall");
+
   // Mark applicable fields as "unknown", since we don't know what this
   // CustomCall does.  This is better than returning an error, which would stop
   // iteration, and therefore would prevent us from getting *any* stats for a
@@ -1011,6 +1433,9 @@ Status HloCostAnalysis::HandleCustomCall(const HloInstruction* custom_call) {
 }
 
 Status HloCostAnalysis::HandleSort(const HloInstruction* sort) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_84(mht_84_v, 1436, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleSort");
+
   // This assumes a comparison based N*log(N) algorithm. As for all ops, the
   // actual properties of the op depend on the backend implementation.
   int64_t elements = ShapeUtil::ElementsIn(sort->operand(0)->shape());
@@ -1019,6 +1444,9 @@ Status HloCostAnalysis::HandleSort(const HloInstruction* sort) {
 }
 
 Status HloCostAnalysis::HandleWhile(const HloInstruction* xla_while) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_85(mht_85_v, 1447, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleWhile");
+
   // Since the number of iterations of the while node will not always be
   // something that we can statically analyze, we cannot precisely compute the
   // cost of a while node. For now compute the cost of a single iteration.
@@ -1041,6 +1469,9 @@ Status HloCostAnalysis::HandleWhile(const HloInstruction* xla_while) {
 }
 
 Status HloCostAnalysis::HandleConditional(const HloInstruction* conditional) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_86(mht_86_v, 1472, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleConditional");
+
   // Compute the cost of the branch computations and take the maximum from those
   // for each property.
   TF_ASSIGN_OR_RETURN(
@@ -1065,6 +1496,9 @@ Status HloCostAnalysis::HandleConditional(const HloInstruction* conditional) {
 }
 
 Status HloCostAnalysis::HandleGather(const HloInstruction* gather) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_87(mht_87_v, 1499, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleGather");
+
   // Gather doesn't read the whole input buffer, it's equivalent to a copy the
   // size of the output shape and a read of the gather indices.
   int64_t output_size = GetShapeSize(gather->shape());
@@ -1078,6 +1512,9 @@ Status HloCostAnalysis::HandleGather(const HloInstruction* gather) {
 }
 
 Status HloCostAnalysis::HandleScatter(const HloInstruction* scatter) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_88(mht_88_v, 1515, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleScatter");
+
   // Scatter accesses the equivalent of 3 update shapes (input, output, and
   // updates), and the scatter indices.
   int64_t update_size = GetShapeSize(scatter->operand(2)->shape());
@@ -1101,65 +1538,107 @@ Status HloCostAnalysis::HandleScatter(const HloInstruction* scatter) {
 
 Status HloCostAnalysis::HandleGetDimensionSize(
     const HloInstruction* /*get_size*/) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_89(mht_89_v, 1541, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleGetDimensionSize");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::HandleSetDimensionSize(
     const HloInstruction* /*set_size*/) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_90(mht_90_v, 1549, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::HandleSetDimensionSize");
+
   return Status::OK();
 }
 
 Status HloCostAnalysis::FinishVisit(const HloInstruction*) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_91(mht_91_v, 1556, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::FinishVisit");
+
   return Status::OK();
 }
 
 float HloCostAnalysis::flop_count() const {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_92(mht_92_v, 1563, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::flop_count");
+
   return GetProperty(kFlopsKey, properties_sum_);
 }
 
 float HloCostAnalysis::transcendental_count() const {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_93(mht_93_v, 1570, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::transcendental_count");
+
   return GetProperty(kTranscendentalsKey, properties_sum_);
 }
 
 float HloCostAnalysis::bytes_accessed() const {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_94(mht_94_v, 1577, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::bytes_accessed");
+
   return GetProperty(kBytesAccessedKey, properties_sum_);
 }
 
 float HloCostAnalysis::optimal_seconds() const {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_95(mht_95_v, 1584, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::optimal_seconds");
+
   return GetProperty(kOptimalSecondsKey, properties_sum_);
 }
 
 int64_t HloCostAnalysis::flop_count(const HloInstruction& hlo) const {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_96(mht_96_v, 1591, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::flop_count");
+
   return GetPropertyForHlo(hlo, kFlopsKey, hlo_properties_);
 }
 
 int64_t HloCostAnalysis::transcendental_count(const HloInstruction& hlo) const {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_97(mht_97_v, 1598, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::transcendental_count");
+
   return GetPropertyForHlo(hlo, kTranscendentalsKey, hlo_properties_);
 }
 
 int64_t HloCostAnalysis::bytes_accessed(const HloInstruction& hlo) const {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_98(mht_98_v, 1605, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::bytes_accessed");
+
   return GetPropertyForHlo(hlo, kBytesAccessedKey, hlo_properties_);
 }
 
 int64_t HloCostAnalysis::operand_bytes_accessed(const HloInstruction& hlo,
                                                 int64_t operand_num,
                                                 ShapeIndex index) const {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_99(mht_99_v, 1614, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::operand_bytes_accessed");
+
   return GetPropertyForHlo(hlo, GetOperandBytesAccessedKey(operand_num, index),
                            hlo_properties_);
 }
 
 int64_t HloCostAnalysis::output_bytes_accessed(const HloInstruction& hlo,
                                                ShapeIndex index) const {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_100(mht_100_v, 1623, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::output_bytes_accessed");
+
   return GetPropertyForHlo(hlo, GetOutputBytesAccessedKey(index),
                            hlo_properties_);
 }
 
 float HloCostAnalysis::optimal_seconds(const HloInstruction& hlo) const {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_101(mht_101_v, 1631, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::optimal_seconds");
+
   return GetPropertyForHlo(hlo, kOptimalSecondsKey, hlo_properties_);
 }
 
 int64_t HloCostAnalysis::GetBytesRead(
     const HloInstruction& hlo, absl::optional<int64_t> memory_space) const {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_102(mht_102_v, 1639, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::GetBytesRead");
+
   int64_t bytes_read = 0;
   for (int operand_number = 0; operand_number < hlo.operand_count();
        ++operand_number) {
@@ -1182,6 +1661,9 @@ int64_t HloCostAnalysis::GetBytesRead(
 
 int64_t HloCostAnalysis::GetBytesWritten(
     const HloInstruction& hlo, absl::optional<int64_t> memory_space) const {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_103(mht_103_v, 1664, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::GetBytesWritten");
+
   int64_t bytes_written = 0;
   for (const ShapeUtil::IndexedShape& indexed_shape :
        ShapeUtil::GetLeafShapes(hlo.shape())) {
@@ -1198,6 +1680,9 @@ int64_t HloCostAnalysis::GetBytesWritten(
 
 StatusOr<HloCostAnalysis::Properties> HloCostAnalysis::ProcessSubcomputation(
     HloComputation* computation) {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_104(mht_104_v, 1683, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::ProcessSubcomputation");
+
   auto visitor = CreateNestedCostAnalysis();
   visitor->ReserveVisitStates(computation->instruction_count());
   TF_RETURN_IF_ERROR(computation->Accept(visitor.get()));
@@ -1207,36 +1692,57 @@ StatusOr<HloCostAnalysis::Properties> HloCostAnalysis::ProcessSubcomputation(
 }
 
 std::unique_ptr<HloCostAnalysis> HloCostAnalysis::CreateNestedCostAnalysis() {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_105(mht_105_v, 1695, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::CreateNestedCostAnalysis");
+
   return std::make_unique<HloCostAnalysis>(options_);
 }
 
 void HloCostAnalysis::SetOperandBytesAccessed(int64_t operand_num,
                                               float value) {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_106(mht_106_v, 1703, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::SetOperandBytesAccessed");
+
   current_properties_[GetOperandBytesAccessedKey(operand_num).c_str()] = value;
 }
 
 void HloCostAnalysis::SetOperandBytesAccessed(int64_t operand_num,
                                               ShapeIndex index, float value) {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_107(mht_107_v, 1711, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::SetOperandBytesAccessed");
+
   current_properties_[GetOperandBytesAccessedKey(operand_num, index).c_str()] =
       value;
 }
 
 void HloCostAnalysis::SetOutputBytesAccessed(float value) {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_108(mht_108_v, 1719, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::SetOutputBytesAccessed");
+
   current_properties_[GetOutputBytesAccessedKey()] = value;
 }
 
 void HloCostAnalysis::SetOutputBytesAccessed(ShapeIndex index, float value) {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_109(mht_109_v, 1726, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::SetOutputBytesAccessed");
+
   current_properties_[GetOutputBytesAccessedKey(index)] = value;
 }
 
 /*static*/ std::string HloCostAnalysis::GetOperandBytesAccessedKey(
     int64_t operand_num, ShapeIndex index) {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_110(mht_110_v, 1734, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::GetOperandBytesAccessedKey");
+
   return absl::StrCat(kBytesAccessedKey, " operand ", operand_num, " ",
                       index.ToString());
 }
 
 /*static*/ std::string HloCostAnalysis::GetOutputBytesAccessedKey(
     ShapeIndex index) {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_cost_analysisDTcc mht_111(mht_111_v, 1743, "", "./tensorflow/compiler/xla/service/hlo_cost_analysis.cc", "HloCostAnalysis::GetOutputBytesAccessedKey");
+
   return absl::StrCat(kBytesAccessedKey, " output ", index.ToString());
 }
 

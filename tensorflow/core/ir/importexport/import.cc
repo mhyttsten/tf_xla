@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSirPSimportexportPSimportDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSirPSimportexportPSimportDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSirPSimportexportPSimportDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -129,6 +297,9 @@ namespace tfg {
 namespace {
 
 void LoadDialects(MLIRContext* context) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSirPSimportexportPSimportDTcc mht_0(mht_0_v, 300, "", "./tensorflow/core/ir/importexport/import.cc", "LoadDialects");
+
   // Load dialects involved in the conversion
   context->getOrLoadDialect<TFGraphDialect>();
 }
@@ -136,6 +307,9 @@ void LoadDialects(MLIRContext* context) {
 // Construct the MLIR VersionAttr for the provided GraphDef.
 static VersionAttr getVersionAttr(MLIRContext* context,
                                   const VersionDef& version) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSirPSimportexportPSimportDTcc mht_1(mht_1_v, 310, "", "./tensorflow/core/ir/importexport/import.cc", "getVersionAttr");
+
   int producer = 0;
   int min_consumer = 0;
   llvm::SmallVector<int32_t> bad_consumers;
@@ -160,7 +334,10 @@ class GraphImporter {
         dialect_(context->getLoadedDialect<TFGraphDialect>()),
         unknown_loc_(UnknownLoc::get(context)),
         debug_info_(debug_info),
-        function_name_for_debug_info_(function_name_for_debug_info) {}
+        function_name_for_debug_info_(function_name_for_debug_info) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSirPSimportexportPSimportDTcc mht_2(mht_2_v, 338, "", "./tensorflow/core/ir/importexport/import.cc", "GraphImporter");
+}
 
   // Converts the prepared graph to a Function and adds it to the module. A set
   // of nodes from the graph are given to converted to the arguments and returns
@@ -168,6 +345,9 @@ class GraphImporter {
   Status Convert(Block* body);
 
   Operation* GetOperationForNode(int node_id) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSirPSimportexportPSimportDTcc mht_3(mht_3_v, 348, "", "./tensorflow/core/ir/importexport/import.cc", "GetOperationForNode");
+
     auto it = node_values_.find(node_id);
     if (it == node_values_.end()) return nullptr;
     return it->second;
@@ -249,6 +429,9 @@ class GraphImporter {
 
 Optional<Status> GraphImporter::InferOutputTypesFromShapesAttribute(
     Builder& builder, OperationState& result, const Node& node) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSirPSimportexportPSimportDTcc mht_4(mht_4_v, 432, "", "./tensorflow/core/ir/importexport/import.cc", "GraphImporter::InferOutputTypesFromShapesAttribute");
+
   const AttrValue* output_shapes = nullptr;
   if (node.IsWhileNode() || node.IsIfNode() || node.IsCaseNode() ||
       node.type_string() == "IteratorGetNext" ||
@@ -285,6 +468,9 @@ Optional<Status> GraphImporter::InferOutputTypesFromShapesAttribute(
 
 Optional<Status> GraphImporter::InferOutputTypesWithContext(
     Builder& builder, OperationState& result, const Node& node) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSirPSimportexportPSimportDTcc mht_5(mht_5_v, 471, "", "./tensorflow/core/ir/importexport/import.cc", "GraphImporter::InferOutputTypesWithContext");
+
   // Below we only try and do some shape inference for "source" ops which have
   // no inputs.
   if (node.num_inputs() > 0) return {};
@@ -320,6 +506,9 @@ Optional<Status> GraphImporter::InferOutputTypesWithContext(
 
 Status GraphImporter::InferOutputTypes(Builder& builder, OperationState& result,
                                        const Node& node) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSirPSimportexportPSimportDTcc mht_6(mht_6_v, 509, "", "./tensorflow/core/ir/importexport/import.cc", "GraphImporter::InferOutputTypes");
+
   // Exit early if there are no outputs.
   if (node.num_outputs() == 0) return Status::OK();
 
@@ -359,6 +548,9 @@ tensorflow::StatusOr<TensorType> GraphImporter::ConvertDataTypeAndShape(
     DataType dtype, const ShapeHandle& handle,
     const std::vector<ShapeAndType>* handle_subtypes, InferenceContext* context,
     Builder builder) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSirPSimportexportPSimportDTcc mht_7(mht_7_v, 551, "", "./tensorflow/core/ir/importexport/import.cc", "GraphImporter::ConvertDataTypeAndShape");
+
   TF_ASSIGN_OR_RETURN(auto subtypes,
                       ConvertSubtypes(handle_subtypes, context, builder));
 
@@ -376,6 +568,9 @@ tensorflow::StatusOr<TensorType> GraphImporter::ConvertDataTypeAndShape(
 tensorflow::StatusOr<TensorType> GraphImporter::ConvertElementTypeAndShape(
     Type element_type, const ShapeHandle& handle, InferenceContext* context,
     Builder builder) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSirPSimportexportPSimportDTcc mht_8(mht_8_v, 571, "", "./tensorflow/core/ir/importexport/import.cc", "GraphImporter::ConvertElementTypeAndShape");
+
   if (!context->RankKnown(handle)) {
     return UnrankedTensorType::get(element_type);
   }
@@ -401,6 +596,9 @@ tensorflow::StatusOr<TensorType> GraphImporter::ConvertElementTypeAndShape(
 tensorflow::StatusOr<GraphImporter::ElementSubtypes>
 GraphImporter::ConvertSubtypes(const std::vector<ShapeAndType>* handle_subtypes,
                                InferenceContext* context, Builder builder) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSirPSimportexportPSimportDTcc mht_9(mht_9_v, 599, "", "./tensorflow/core/ir/importexport/import.cc", "GraphImporter::ConvertSubtypes");
+
   ElementSubtypes subtypes;
   if (!handle_subtypes) return subtypes;
 
@@ -417,6 +615,9 @@ GraphImporter::ConvertSubtypes(const std::vector<ShapeAndType>* handle_subtypes,
 }
 
 Status GraphImporter::Convert(Block* body) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSirPSimportexportPSimportDTcc mht_10(mht_10_v, 618, "", "./tensorflow/core/ir/importexport/import.cc", "GraphImporter::Convert");
+
   VLOG(4) << "Convert";
   builder_ = OpBuilder::atBlockEnd(body);
   // Create the graph operation in which we will convert the individual nodes.
@@ -429,6 +630,9 @@ Status GraphImporter::Convert(Block* body) {
 }
 
 Location GraphImporter::GetLocation(const Node& node) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSirPSimportexportPSimportDTcc mht_11(mht_11_v, 633, "", "./tensorflow/core/ir/importexport/import.cc", "GraphImporter::GetLocation");
+
   DVLOG(3) << "Getting location for " << node.name() << " " << &node;
   const auto& debug_info = debug_info_.traces();
   // Create a location for node `name` in function `function_name`.
@@ -523,10 +727,16 @@ Location GraphImporter::GetLocation(const Node& node) {
 }
 
 Value GraphImporter::GetOperand(const Edge& edge) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSirPSimportexportPSimportDTcc mht_12(mht_12_v, 730, "", "./tensorflow/core/ir/importexport/import.cc", "GraphImporter::GetOperand");
+
   const Node& input_node = *edge.src();
   int resultId = edge.src_output();
   Operation*& inst = node_values_[input_node.id()];
   auto getResult = [&]() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSirPSimportexportPSimportDTcc mht_13(mht_13_v, 737, "", "./tensorflow/core/ir/importexport/import.cc", "lambda");
+
     if (edge.IsControlEdge()) return inst->getResult(inst->getNumResults() - 1);
     return inst->getResult(resultId);
   };
@@ -547,6 +757,9 @@ Value GraphImporter::GetOperand(const Edge& edge) {
 }
 
 Status GraphImporter::ConvertNode(const Node& node) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSirPSimportexportPSimportDTcc mht_14(mht_14_v, 760, "", "./tensorflow/core/ir/importexport/import.cc", "GraphImporter::ConvertNode");
+
   if (!node.IsOp()) {
     // Don't import the pseudo-nodes _SOURCE or _SINK. These are added by
     // Graph and don't exist in GraphDef.
@@ -631,6 +844,9 @@ Status GraphImporter::ConvertNode(const Node& node) {
 
 void FindPlaceholders(const AttrValue& value, AttrSlice set,
                       AttrValueMap& founds) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSirPSimportexportPSimportDTcc mht_15(mht_15_v, 847, "", "./tensorflow/core/ir/importexport/import.cc", "FindPlaceholders");
+
   switch (value.value_case()) {
     case AttrValue::kList:
       for (const NameAttrList& func : value.list().func())
@@ -664,6 +880,9 @@ tensorflow::StatusOr<std::string> MangleName(const FunctionDef& fdef,
     used_attr.insert({a.name(), *v});
   }
   auto process_argdef = [&](const OpDef::ArgDef& arg_def) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSirPSimportexportPSimportDTcc mht_16(mht_16_v, 883, "", "./tensorflow/core/ir/importexport/import.cc", "lambda");
+
     if (!arg_def.type_list_attr().empty()) {
       const AttrValue* v = attrs.Find(arg_def.type_list_attr());
       if (v == nullptr)
@@ -935,6 +1154,9 @@ tensorflow::StatusOr<GraphFuncOp> ImportFunctionDef(
 }
 
 bool IsGenericFunction(FunctionDef fdef) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSirPSimportexportPSimportDTcc mht_17(mht_17_v, 1157, "", "./tensorflow/core/ir/importexport/import.cc", "IsGenericFunction");
+
   for (const NodeDef& node : fdef.node_def())
     for (const auto& named_attr : node.attr()) {
       if (!named_attr.second.placeholder().empty()) return true;

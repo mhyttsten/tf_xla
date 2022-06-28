@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -67,6 +235,9 @@ namespace {
 CallableOptions MakeCallableOptions(gtl::ArraySlice<string> feeds,
                                     gtl::ArraySlice<string> fetches,
                                     gtl::ArraySlice<string> targets) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_0(mht_0_v, 238, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "MakeCallableOptions");
+
   CallableOptions ret;
   for (const string& feed : feeds) {
     ret.add_feed(feed);
@@ -81,6 +252,9 @@ CallableOptions MakeCallableOptions(gtl::ArraySlice<string> feeds,
 }
 
 SessionOptions DefaultSessionOptions() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_1(mht_1_v, 255, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "DefaultSessionOptions");
+
   SessionOptions options;
   (*options.config.mutable_device_count())["CPU"] = 2;
   return options;
@@ -93,6 +267,9 @@ std::unique_ptr<Session> CreateSession() {
 class DirectSessionMinusAXTest : public ::testing::Test {
  public:
   void Initialize(std::initializer_list<float> a_values) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_2(mht_2_v, 270, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "Initialize");
+
     Graph graph(OpRegistry::Global());
 
     Tensor a_tensor(DT_FLOAT, TensorShape({2, 2}));
@@ -563,6 +740,9 @@ TEST_F(DirectSessionMinusAXTest, TestConcurrency) {
   // Run the graph 1000 times in 4 different threads concurrently.
   std::vector<string> output_names = {y_ + ":0"};
   auto fn = [&session, output_names]() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_3(mht_3_v, 743, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "lambda");
+
     for (int i = 0; i < 1000; ++i) {
       std::vector<std::pair<string, Tensor>> inputs;
       std::vector<Tensor> outputs;
@@ -598,6 +778,9 @@ TEST_F(DirectSessionMinusAXTest, TestConcurrency_Callable) {
 
   // Run the callable 1000 times in 4 different threads concurrently.
   auto fn = [&session, handle]() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_4(mht_4_v, 781, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "lambda");
+
     for (int i = 0; i < 1000; ++i) {
       std::vector<Tensor> outputs;
       // Run the graph
@@ -633,6 +816,9 @@ TEST_F(DirectSessionMinusAXTest, TestPerSessionThreads) {
   // Run the graph 1000 times in 4 different threads concurrently.
   std::vector<string> output_names = {y_ + ":0"};
   auto fn = [&session, output_names]() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_5(mht_5_v, 819, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "lambda");
+
     for (int i = 0; i < 1000; ++i) {
       std::vector<std::pair<string, Tensor>> inputs;
       std::vector<Tensor> outputs;
@@ -1162,8 +1348,14 @@ y: string
 
 class SessionMetadataReaderOp : public OpKernel {
  public:
-  explicit SessionMetadataReaderOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+  explicit SessionMetadataReaderOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_6(mht_6_v, 1352, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "SessionMetadataReaderOp");
+}
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_7(mht_7_v, 1356, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "Compute");
+
     Tensor* out_tensor = nullptr;
     OP_REQUIRES_OK(ctx,
                    ctx->allocate_output("y", TensorShape({}), &out_tensor));
@@ -1180,6 +1372,9 @@ REGISTER_KERNEL_BUILDER(Name("SessionMetadataReader").Device(DEVICE_GPU),
                         SessionMetadataReaderOp);
 
 FunctionDef SessionMetadataReaderOpFn() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_8(mht_8_v, 1375, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "SessionMetadataReaderOpFn");
+
   return FunctionDefHelper::Define(
       // Name
       "SessionMetadataReaderFn",
@@ -1356,8 +1551,14 @@ y: int64
 // The ThreadID kernel returns the thread ID that executed Compute.
 class ThreadIDOp : public OpKernel {
  public:
-  explicit ThreadIDOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+  explicit ThreadIDOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_9(mht_9_v, 1555, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "ThreadIDOp");
+}
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_10(mht_10_v, 1559, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "Compute");
+
     Tensor* out_tensor = nullptr;
     OP_REQUIRES_OK(ctx,
                    ctx->allocate_output("y", TensorShape({}), &out_tensor));
@@ -1393,8 +1594,14 @@ REGISTER_OP("ExpensiveNoop").SetIsStateful();
 class ExpensiveNoopOp : public OpKernel {
  public:
   using OpKernel::OpKernel;
-  bool IsExpensive() override { return true; }
+  bool IsExpensive() override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_11(mht_11_v, 1598, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "IsExpensive");
+ return true; }
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_12(mht_12_v, 1602, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "Compute");
+
     const string& stack_trace = tensorflow::CurrentStackTrace();
     const string process_method = "ExecutorState::Process()";
     size_t pos = 0;
@@ -1420,6 +1627,9 @@ TEST(DirectSessionTest, SessionSyncRun_DeepGraph) {
   nodes.reserve(1024);
 
   auto make_expensive_noop = [&g](gtl::ArraySlice<Node*> control_deps) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_13(mht_13_v, 1630, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "lambda");
+
     Node* ret;
     auto builder = NodeBuilder(g.NewName("N"), "ExpensiveNoop");
     for (Node* control_dep : control_deps) {
@@ -1479,8 +1689,14 @@ y: float
 // The DarthOp kernel violates its promise to return one-value.
 class DarthOp : public OpKernel {
  public:
-  explicit DarthOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
-  void Compute(OpKernelContext* ctx) override {}
+  explicit DarthOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_14(mht_14_v, 1693, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "DarthOp");
+}
+  void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_15(mht_15_v, 1697, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "Compute");
+}
 };
 REGISTER_KERNEL_BUILDER(Name("Darth").Device(DEVICE_CPU), DarthOp);
 
@@ -1885,8 +2101,14 @@ TEST(DirectSessionTest, TimeoutSession) {
 class CancellationMgrPollingOp : public OpKernel {
  public:
   explicit CancellationMgrPollingOp(OpKernelConstruction* ctx)
-      : OpKernel(ctx) {}
+      : OpKernel(ctx) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_16(mht_16_v, 2105, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "CancellationMgrPollingOp");
+}
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_17(mht_17_v, 2109, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "Compute");
+
     CancellationManager* cm = ctx->cancellation_manager();
     while (!cm->IsCancelled()) {
       ctx->env()->SleepForMicroseconds(1000);
@@ -1933,6 +2155,9 @@ TEST(DirectSessionTest, TestTimeoutCleanShutdown) {
 
 static void TestSessionInterOpThreadsImpl(bool use_function_lib,
                                           bool use_global_pools) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_18(mht_18_v, 2158, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "TestSessionInterOpThreadsImpl");
+
   using test::function::blocking_op_state;
   using test::function::BlockingOpState;
 
@@ -1990,8 +2215,14 @@ static void TestSessionInterOpThreadsImpl(bool use_function_lib,
   auto add_session_run_call =
       [use_global_pools, &def, &options, &sessions, &sessions_mu, &num_done](
           thread::ThreadPool* tp, Node* node, int inter_op_pool) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_19(mht_19_v, 2218, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "lambda");
+
         auto fn = [use_global_pools, &def, &options, &sessions, &sessions_mu,
                    inter_op_pool, node, &num_done]() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_20(mht_20_v, 2223, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "lambda");
+
           RunOptions run_options;
           run_options.set_inter_op_thread_pool(inter_op_pool);
           std::vector<Tensor> outputs;
@@ -2302,6 +2533,9 @@ TEST(DirectSessionTest, LocalDeviceManager) {
 
 // y = tf.square(x)
 GraphDef CreateGraphForYEqualsXSquared() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_21(mht_21_v, 2536, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "CreateGraphForYEqualsXSquared");
+
   GraphDef graph_def;
   const char* text_proto = R"EOF(
 node {
@@ -2329,6 +2563,9 @@ versions {
 // (which are not GPU-compatible, i.e., there are no
 // GPU kernels for these operations).
 bool IsCUDATensor(const Tensor& t) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_22(mht_22_v, 2566, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "IsCUDATensor");
+
 #ifdef GOOGLE_CUDA
   cudaPointerAttributes attributes;
   cudaError_t err =
@@ -2348,6 +2585,9 @@ bool IsCUDATensor(const Tensor& t) {
 }
 
 string GPUDeviceName(Session* session) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_23(mht_23_v, 2588, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "GPUDeviceName");
+
   std::vector<DeviceAttributes> devices;
   TF_CHECK_OK(session->ListDevices(&devices));
   for (const DeviceAttributes& d : devices) {
@@ -2406,6 +2646,9 @@ TEST(DirectSessionTest, FeedAndFetchTensorsInDeviceMemory) {
 }
 
 GraphDef CreateIdentityGraphDef(DataType dtype) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_24(mht_24_v, 2649, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "CreateIdentityGraphDef");
+
   GraphDef def;
 
   AttrValue dtype_attr;
@@ -2431,6 +2674,9 @@ GraphDef CreateIdentityGraphDef(DataType dtype) {
 
 void TestFeedAndFetchTensorsInDeviceMemory(
     const SessionOptions& session_options, DataType dtype) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_25(mht_25_v, 2677, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "TestFeedAndFetchTensorsInDeviceMemory");
+
   std::unique_ptr<Session> session(NewSession(session_options));
   const string gpu_device_name = GPUDeviceName(session.get());
   if (gpu_device_name.empty()) {
@@ -2487,6 +2733,9 @@ void TestFeedAndFetchTensorsInDeviceMemory(
 
 void TestFeedAndFetchTensorsInDeviceMemoryFailsToMakeCallable(
     const SessionOptions& session_options, DataType dtype) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_26(mht_26_v, 2736, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "TestFeedAndFetchTensorsInDeviceMemoryFailsToMakeCallable");
+
   std::unique_ptr<Session> session(NewSession(session_options));
   const string gpu_device_name = GPUDeviceName(session.get());
   if (gpu_device_name.empty()) {
@@ -2536,6 +2785,9 @@ void TestFeedAndFetchTensorsInDeviceMemoryFailsToMakeCallable(
 
 void TestFeedAndFetchTensorsInDeviceMemoryForAllDataTypes(
     const SessionOptions& opts) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_27(mht_27_v, 2788, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "TestFeedAndFetchTensorsInDeviceMemoryForAllDataTypes");
+
   // Feeding/fetching on device does not work for all DataTypes as it
   // relies on the implementation of the _Arg and _Retval kernels which
   // are not registered for some types or consume/produce inputs/outputs
@@ -2597,6 +2849,9 @@ TEST(DirectSessionTest,
 void FeedFetchBenchmarkHelper(::testing::benchmark::State& state, int num_feeds,
                               bool use_make_callable, int inter_op_threads,
                               bool use_single_threaded_executor) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_28(mht_28_v, 2852, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "FeedFetchBenchmarkHelper");
+
   Tensor value(DT_FLOAT, TensorShape());
   value.flat<float>()(0) = 37.0;
 
@@ -2673,6 +2928,9 @@ void FeedFetchBenchmarkHelper(::testing::benchmark::State& state, int num_feeds,
 }
 
 void BM_FeedFetch(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_29(mht_29_v, 2931, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "BM_FeedFetch");
+
   const int num_feeds = state.range(0);
 
   FeedFetchBenchmarkHelper(state, num_feeds, /* use_make_callable */ false,
@@ -2680,6 +2938,9 @@ void BM_FeedFetch(::testing::benchmark::State& state) {
                            /* use_single_threaded_executor */ false);
 }
 void BM_FeedFetchCallable(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_30(mht_30_v, 2941, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "BM_FeedFetchCallable");
+
   const int num_feeds = state.range(0);
 
   FeedFetchBenchmarkHelper(state, num_feeds, /* use_make_callable */ true,
@@ -2687,6 +2948,9 @@ void BM_FeedFetchCallable(::testing::benchmark::State& state) {
                            /* use_single_threaded_executor */ false);
 }
 void BM_FeedFetchCallableSingleThread(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_31(mht_31_v, 2951, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "BM_FeedFetchCallableSingleThread");
+
   const int num_feeds = state.range(0);
 
   FeedFetchBenchmarkHelper(state, num_feeds, /* use_make_callable */ true,
@@ -2695,6 +2959,9 @@ void BM_FeedFetchCallableSingleThread(::testing::benchmark::State& state) {
 }
 void BM_FeedFetchCallableSingleThreadExecutor(
     ::testing::benchmark::State& state) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_32(mht_32_v, 2962, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "BM_FeedFetchCallableSingleThreadExecutor");
+
   const int num_feeds = state.range(0);
 
   FeedFetchBenchmarkHelper(state, num_feeds, /* use_make_callable */ true,
@@ -2719,6 +2986,9 @@ class DirectSessionCollectiveTest : public ::testing::Test {
   // the generated collective_graph_key.
   Status RunGraphWithCollectiveFunctions(bool add_unused_function,
                                          int64_t* collective_graph_key) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_33(mht_33_v, 2989, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "RunGraphWithCollectiveFunctions");
+
     GraphDef g = CreateGraph(add_unused_function);
     const Tensor t1 =
         test::AsTensor<float>({0.1, 1.1, 2.1, 3.1, 4.1, 5.1, 6.1, 7.1});
@@ -2743,6 +3013,10 @@ class DirectSessionCollectiveTest : public ::testing::Test {
   // node with instance key set as `instance_key`.
   FunctionDef CollectiveFunction(const string& function_name,
                                  int instance_key) {
+   std::vector<std::string> mht_34_v;
+   mht_34_v.push_back("function_name: \"" + function_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_34(mht_34_v, 3017, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "CollectiveFunction");
+
     return FunctionDefHelper::Define(
         // Function name
         function_name,
@@ -2768,6 +3042,9 @@ class DirectSessionCollectiveTest : public ::testing::Test {
   }
 
   NodeDef Input(int id) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_35(mht_35_v, 3045, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "Input");
+
     AttrValue dtype_attr;
     SetAttrValue(DT_FLOAT, &dtype_attr);
     NodeDef input;
@@ -2778,6 +3055,11 @@ class DirectSessionCollectiveTest : public ::testing::Test {
   }
 
   NodeDef CollectiveCall(const string& op, const string& input, int cpu_id) {
+   std::vector<std::string> mht_36_v;
+   mht_36_v.push_back("op: \"" + op + "\"");
+   mht_36_v.push_back("input: \"" + input + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_36(mht_36_v, 3060, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "CollectiveCall");
+
     NodeDef collective_call;
     collective_call.set_name(strings::StrCat("collective_call", cpu_id));
     collective_call.set_op(op);
@@ -2792,6 +3074,9 @@ class DirectSessionCollectiveTest : public ::testing::Test {
   // `add_unused_function` is true, adds another CollectiveFunction with
   // instance_key 2 that is not invoked in the graph.
   GraphDef CreateGraph(bool add_unused_function) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_37(mht_37_v, 3077, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "CreateGraph");
+
     GraphDef g;
     FunctionDef collective_function =
         CollectiveFunction("CollectiveFunction1", 1);
@@ -2828,8 +3113,14 @@ TEST_F(DirectSessionCollectiveTest,
 class StatefulOutputRequiredOp : public OpKernel {
  public:
   explicit StatefulOutputRequiredOp(OpKernelConstruction* ctx)
-      : OpKernel(ctx) {}
+      : OpKernel(ctx) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_38(mht_38_v, 3117, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "StatefulOutputRequiredOp");
+}
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_session_testDTcc mht_39(mht_39_v, 3121, "", "./tensorflow/core/common_runtime/direct_session_test.cc", "Compute");
+
     // The op counts the number of outputs required in the current subgraph,
     // and emits that number on each of its required outputs.
     Tensor count_outputs_required_t(int64_t{0});

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,6 +210,9 @@ REGISTER_NO_GRADIENT_OP("Floor");
 // Conjugate helper function returns the conjugate of an Output if it
 // is complex valued.
 Output ConjugateHelper(const Scope& scope, const Output& out) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_0(mht_0_v, 213, "", "./tensorflow/cc/gradients/math_grad.cc", "ConjugateHelper");
+
   DataType dtype = out.type();
   if (dtype == DT_COMPLEX64 || dtype == DT_COMPLEX128) {
     return Conj(scope, out);
@@ -55,6 +226,9 @@ Output ConjugateHelper(const Scope& scope, const Output& out) {
 Status AbsGrad(const Scope& scope, const Operation& op,
                const std::vector<Output>& grad_inputs,
                std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_1(mht_1_v, 229, "", "./tensorflow/cc/gradients/math_grad.cc", "AbsGrad");
+
   // dx = dy * sign(x)
   grad_outputs->push_back(Mul(scope, grad_inputs[0], Sign(scope, op.input(0))));
   return scope.status();
@@ -64,6 +238,9 @@ REGISTER_GRADIENT_OP("Abs", AbsGrad);
 Status NegGrad(const Scope& scope, const Operation& op,
                const std::vector<Output>& grad_inputs,
                std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_2(mht_2_v, 241, "", "./tensorflow/cc/gradients/math_grad.cc", "NegGrad");
+
   // dx = -dy;
   grad_outputs->push_back(Neg(scope, grad_inputs[0]));
   return scope.status();
@@ -73,6 +250,9 @@ REGISTER_GRADIENT_OP("Neg", NegGrad);
 Status InvGrad(const Scope& scope, const Operation& op,
                const std::vector<Output>& grad_inputs,
                std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_3(mht_3_v, 253, "", "./tensorflow/cc/gradients/math_grad.cc", "InvGrad");
+
   // Use the built-in operator.
   grad_outputs->push_back(
       internal::ReciprocalGrad(scope, op.output(0), grad_inputs[0]));
@@ -84,6 +264,9 @@ REGISTER_GRADIENT_OP("Reciprocal", InvGrad);
 Status SquareGrad(const Scope& scope, const Operation& op,
                   const std::vector<Output>& grad_inputs,
                   std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_4(mht_4_v, 267, "", "./tensorflow/cc/gradients/math_grad.cc", "SquareGrad");
+
   // dy/dx = (2 * x)
   auto two = Cast(scope, Const(scope, 2), op.input(0).type());
   auto dydx = Mul(scope, two, op.input(0));
@@ -97,6 +280,9 @@ REGISTER_GRADIENT_OP("Square", SquareGrad);
 Status SqrtGrad(const Scope& scope, const Operation& op,
                 const std::vector<Output>& grad_inputs,
                 std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_5(mht_5_v, 283, "", "./tensorflow/cc/gradients/math_grad.cc", "SqrtGrad");
+
   // Use the built-in operator.
   grad_outputs->push_back(
       internal::SqrtGrad(scope, op.output(0), grad_inputs[0]));
@@ -107,6 +293,9 @@ REGISTER_GRADIENT_OP("Sqrt", SqrtGrad);
 Status RsqrtGrad(const Scope& scope, const Operation& op,
                  const std::vector<Output>& grad_inputs,
                  std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_6(mht_6_v, 296, "", "./tensorflow/cc/gradients/math_grad.cc", "RsqrtGrad");
+
   // Use the built-in operator.
   grad_outputs->push_back(
       internal::RsqrtGrad(scope, op.output(0), grad_inputs[0]));
@@ -117,6 +306,9 @@ REGISTER_GRADIENT_OP("Rsqrt", RsqrtGrad);
 Status ExpGrad(const Scope& scope, const Operation& op,
                const std::vector<Output>& grad_inputs,
                std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_7(mht_7_v, 309, "", "./tensorflow/cc/gradients/math_grad.cc", "ExpGrad");
+
   // dy/dx = exp(x) = y
   // grad(x) = grad(y) * conj(dy/dx)
   //         = grad(y) * conj(y)
@@ -129,6 +321,9 @@ REGISTER_GRADIENT_OP("Exp", ExpGrad);
 Status Expm1Grad(const Scope& scope, const Operation& op,
                  const std::vector<Output>& grad_inputs,
                  std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_8(mht_8_v, 324, "", "./tensorflow/cc/gradients/math_grad.cc", "Expm1Grad");
+
   // y = expm1(x)
   // dy/dx = exp(x)
   auto dydx = Exp(scope, op.input(0));
@@ -142,6 +337,9 @@ REGISTER_GRADIENT_OP("Expm1", Expm1Grad);
 Status LogGrad(const Scope& scope, const Operation& op,
                const std::vector<Output>& grad_inputs,
                std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_9(mht_9_v, 340, "", "./tensorflow/cc/gradients/math_grad.cc", "LogGrad");
+
   // y = log(x)
   // dy/dx = 1 / x
   auto dydx = Reciprocal(scope, op.input(0));
@@ -155,6 +353,9 @@ REGISTER_GRADIENT_OP("Log", LogGrad);
 Status Log1pGrad(const Scope& scope, const Operation& op,
                  const std::vector<Output>& grad_inputs,
                  std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_10(mht_10_v, 356, "", "./tensorflow/cc/gradients/math_grad.cc", "Log1pGrad");
+
   // y = log1p(x)
   // dy/dx = 1 / (1 + x)
   auto one = Cast(scope, Const(scope, 1.0), op.input(0).type());
@@ -169,6 +370,9 @@ REGISTER_GRADIENT_OP("Log1p", Log1pGrad);
 Status SinhGrad(const Scope& scope, const Operation& op,
                 const std::vector<Output>& grad_inputs,
                 std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_11(mht_11_v, 373, "", "./tensorflow/cc/gradients/math_grad.cc", "SinhGrad");
+
   // y = sinh(x)
   // dy/dx = cosh(x)
   auto dydx = Cosh(scope, op.input(0));
@@ -182,6 +386,9 @@ REGISTER_GRADIENT_OP("Sinh", SinhGrad);
 Status CoshGrad(const Scope& scope, const Operation& op,
                 const std::vector<Output>& grad_inputs,
                 std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_12(mht_12_v, 389, "", "./tensorflow/cc/gradients/math_grad.cc", "CoshGrad");
+
   // y = cosh(x)
   // dy/dx = sinh(x)
   auto dydx = Sinh(scope, op.input(0));
@@ -195,6 +402,9 @@ REGISTER_GRADIENT_OP("Cosh", CoshGrad);
 Status TanhGrad(const Scope& scope, const Operation& op,
                 const std::vector<Output>& grad_inputs,
                 std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_13(mht_13_v, 405, "", "./tensorflow/cc/gradients/math_grad.cc", "TanhGrad");
+
   // Use the built-in operator.
   // Note that the built-in operator does not return the conjugate of
   // the gradient.
@@ -211,6 +421,9 @@ REGISTER_GRADIENT_OP("Tanh", TanhGrad);
 Status AsinhGrad(const Scope& scope, const Operation& op,
                  const std::vector<Output>& grad_inputs,
                  std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_14(mht_14_v, 424, "", "./tensorflow/cc/gradients/math_grad.cc", "AsinhGrad");
+
   // y = asinh(x)
   // dy/dx = 1 / cosh(y)
   auto dydx = Reciprocal(scope, Cosh(scope, op.output(0)));
@@ -224,6 +437,9 @@ REGISTER_GRADIENT_OP("Asinh", AsinhGrad);
 Status AcoshGrad(const Scope& scope, const Operation& op,
                  const std::vector<Output>& grad_inputs,
                  std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_15(mht_15_v, 440, "", "./tensorflow/cc/gradients/math_grad.cc", "AcoshGrad");
+
   // y = acosh(x)
   // dy/dx = 1 / sinh(y)
   auto dydx = Reciprocal(scope, Sinh(scope, op.output(0)));
@@ -237,6 +453,9 @@ REGISTER_GRADIENT_OP("Acosh", AcoshGrad);
 Status AtanhGrad(const Scope& scope, const Operation& op,
                  const std::vector<Output>& grad_inputs,
                  std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_16(mht_16_v, 456, "", "./tensorflow/cc/gradients/math_grad.cc", "AtanhGrad");
+
   // y = atanh(x)
   // dy/dx = 1 / (1 - x^2)
   auto one = Cast(scope, Const(scope, 1.0), op.input(0).type());
@@ -251,6 +470,9 @@ REGISTER_GRADIENT_OP("Atanh", AtanhGrad);
 Status SigmoidGrad(const Scope& scope, const Operation& op,
                    const std::vector<Output>& grad_inputs,
                    std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_17(mht_17_v, 473, "", "./tensorflow/cc/gradients/math_grad.cc", "SigmoidGrad");
+
   // Use the built-in operator.
   // Note that the built-in operator does not return the conjugate of
   // the gradient.
@@ -267,6 +489,9 @@ REGISTER_GRADIENT_OP("Sigmoid", SigmoidGrad);
 Status SignGrad(const Scope& scope, const Operation& op,
                 const std::vector<Output>& grad_inputs,
                 std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_18(mht_18_v, 492, "", "./tensorflow/cc/gradients/math_grad.cc", "SignGrad");
+
   auto shape = Shape(scope, op.input(0));
   auto zero = Cast(scope, Const(scope, 0.0), op.input(0).type());
   auto dx = Fill(scope, shape, zero);
@@ -278,6 +503,9 @@ REGISTER_GRADIENT_OP("Sign", SignGrad);
 Status SinGrad(const Scope& scope, const Operation& op,
                const std::vector<Output>& grad_inputs,
                std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_19(mht_19_v, 506, "", "./tensorflow/cc/gradients/math_grad.cc", "SinGrad");
+
   // y = sin(x)
   // dy/dx = cos(x)
   auto dydx = Cos(scope, op.input(0));
@@ -291,6 +519,9 @@ REGISTER_GRADIENT_OP("Sin", SinGrad);
 Status CosGrad(const Scope& scope, const Operation& op,
                const std::vector<Output>& grad_inputs,
                std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_20(mht_20_v, 522, "", "./tensorflow/cc/gradients/math_grad.cc", "CosGrad");
+
   // y = cos(x)
   // dy/dx = -sin(x)
   auto dydx = Neg(scope, Sin(scope, op.input(0)));
@@ -304,6 +535,9 @@ REGISTER_GRADIENT_OP("Cos", CosGrad);
 Status AsinGrad(const Scope& scope, const Operation& op,
                 const std::vector<Output>& grad_inputs,
                 std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_21(mht_21_v, 538, "", "./tensorflow/cc/gradients/math_grad.cc", "AsinGrad");
+
   // y = asin(x)
   // dy/dx = 1 / sqrt(1 - x^2)
   auto x2 = Square(scope, op.input(0));
@@ -319,6 +553,9 @@ REGISTER_GRADIENT_OP("Asin", AsinGrad);
 Status AcosGrad(const Scope& scope, const Operation& op,
                 const std::vector<Output>& grad_inputs,
                 std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_22(mht_22_v, 556, "", "./tensorflow/cc/gradients/math_grad.cc", "AcosGrad");
+
   // y = acos(x)
   // dy/dx = - 1 / (1 - x * x)^1/2
   // dx = dy * (- 1 / (1 - x * x)^1/2)
@@ -334,6 +571,9 @@ REGISTER_GRADIENT_OP("Acos", AcosGrad);
 Status TanGrad(const Scope& scope, const Operation& op,
                const std::vector<Output>& grad_inputs,
                std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_23(mht_23_v, 574, "", "./tensorflow/cc/gradients/math_grad.cc", "TanGrad");
+
   // y = tan(x)
   // dy/dx = sec(x)^2 = 1 / cos(x)^2
   auto dydx = Square(scope, Reciprocal(scope, Cos(scope, op.input(0))));
@@ -347,6 +587,9 @@ REGISTER_GRADIENT_OP("Tan", TanGrad);
 Status AtanGrad(const Scope& scope, const Operation& op,
                 const std::vector<Output>& grad_inputs,
                 std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_24(mht_24_v, 590, "", "./tensorflow/cc/gradients/math_grad.cc", "AtanGrad");
+
   // y = arctan(x)
   // dy/dx = 1 / (1 + x^2)
   // dx = dy * (1 / (1 + x^2)
@@ -361,6 +604,9 @@ REGISTER_GRADIENT_OP("Atan", AtanGrad);
 Status Atan2Grad(const Scope& scope, const Operation& op,
                  const std::vector<Output>& grad_inputs,
                  std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_25(mht_25_v, 607, "", "./tensorflow/cc/gradients/math_grad.cc", "Atan2Grad");
+
   auto y = op.input(0);
   auto x = op.input(1);
   Output grad_inv = Div(scope, grad_inputs[0],
@@ -376,6 +622,9 @@ REGISTER_GRADIENT_OP("Atan2", Atan2Grad);
 Status BinaryGradCommon(const Scope& scope, const Operation& op,
                         std::vector<Output>* grad_outputs, const Output& gx_1,
                         const Output& gx_2) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_26(mht_26_v, 625, "", "./tensorflow/cc/gradients/math_grad.cc", "BinaryGradCommon");
+
   auto sx_1 = Shape(scope, op.input(0));
   auto sx_2 = Shape(scope, op.input(1));
   auto rx = internal::BroadcastGradientArgs(scope, sx_1, sx_2);
@@ -389,6 +638,9 @@ Status BinaryGradCommon(const Scope& scope, const Operation& op,
 Status AddGrad(const Scope& scope, const Operation& op,
                const std::vector<Output>& grad_inputs,
                std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_27(mht_27_v, 641, "", "./tensorflow/cc/gradients/math_grad.cc", "AddGrad");
+
   // y = x_1 + x_2
   // dy/dx_1 = dy/dx_2 = 1
   auto gx_1 = Identity(scope, grad_inputs[0]);
@@ -401,6 +653,9 @@ REGISTER_GRADIENT_OP("AddV2", AddGrad);
 Status SubGrad(const Scope& scope, const Operation& op,
                const std::vector<Output>& grad_inputs,
                std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_28(mht_28_v, 656, "", "./tensorflow/cc/gradients/math_grad.cc", "SubGrad");
+
   // y = x_1 - x_2
   // dy/dx_1 = 1
   // dy/dx_2 = -1
@@ -413,6 +668,9 @@ REGISTER_GRADIENT_OP("Sub", SubGrad);
 Status MulGrad(const Scope& scope, const Operation& op,
                const std::vector<Output>& grad_inputs,
                std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_29(mht_29_v, 671, "", "./tensorflow/cc/gradients/math_grad.cc", "MulGrad");
+
   auto x_1 = ConjugateHelper(scope, op.input(0));
   auto x_2 = ConjugateHelper(scope, op.input(1));
   // y = x_1 * x_2
@@ -427,6 +685,9 @@ REGISTER_GRADIENT_OP("Mul", MulGrad);
 Status DivGrad(const Scope& scope, const Operation& op,
                const std::vector<Output>& grad_inputs,
                std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_30(mht_30_v, 688, "", "./tensorflow/cc/gradients/math_grad.cc", "DivGrad");
+
   auto x_1 = ConjugateHelper(scope, op.input(0));
   auto x_2 = ConjugateHelper(scope, op.input(1));
   // y = x_1 / x_2
@@ -442,6 +703,9 @@ REGISTER_GRADIENT_OP("Div", DivGrad);
 Status RealDivGrad(const Scope& scope, const Operation& op,
                    const std::vector<Output>& grad_inputs,
                    std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_31(mht_31_v, 706, "", "./tensorflow/cc/gradients/math_grad.cc", "RealDivGrad");
+
   auto x_1 = ConjugateHelper(scope, op.input(0));
   auto x_2 = ConjugateHelper(scope, op.input(1));
   // y = x_1 / x_2
@@ -457,6 +721,9 @@ REGISTER_GRADIENT_OP("RealDiv", RealDivGrad);
 Status DivNoNanGrad(const Scope& scope, const Operation& op,
                     const std::vector<Output>& grad_inputs,
                     std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_32(mht_32_v, 724, "", "./tensorflow/cc/gradients/math_grad.cc", "DivNoNanGrad");
+
   auto x_1 = ConjugateHelper(scope, op.input(0));
   auto x_2 = ConjugateHelper(scope, op.input(1));
   // y = x_1 / x_2
@@ -472,6 +739,9 @@ REGISTER_GRADIENT_OP("DivNoNan", DivNoNanGrad);
 Status SquaredDifferenceGrad(const Scope& scope, const Operation& op,
                              const std::vector<Output>& grad_inputs,
                              std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_33(mht_33_v, 742, "", "./tensorflow/cc/gradients/math_grad.cc", "SquaredDifferenceGrad");
+
   auto x_1 = ConjugateHelper(scope, op.input(0));
   auto x_2 = ConjugateHelper(scope, op.input(1));
   // y = (x_1 - x_2)^2
@@ -487,6 +757,9 @@ REGISTER_GRADIENT_OP("SquaredDifference", SquaredDifferenceGrad);
 Status AddNGrad(const Scope& scope, const Operation& op,
                 const std::vector<Output>& grad_inputs,
                 std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_34(mht_34_v, 760, "", "./tensorflow/cc/gradients/math_grad.cc", "AddNGrad");
+
   // AddN doesn't support broadcasting, so all the inputs must be the
   // same shape.
   // Note:
@@ -505,6 +778,9 @@ REGISTER_GRADIENT_OP("AddN", AddNGrad);
 Status PowGrad(const Scope& scope, const Operation& op,
                const std::vector<Output>& grad_inputs,
                std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_35(mht_35_v, 781, "", "./tensorflow/cc/gradients/math_grad.cc", "PowGrad");
+
   auto x = ConjugateHelper(scope, op.input(0));
   auto y = ConjugateHelper(scope, op.input(1));
   auto z = ConjugateHelper(scope, op.output(0));
@@ -543,6 +819,9 @@ Status MaximumMinimumGradCommon(const Scope& scope, const Operation& op,
                                 const std::vector<Output>& grad_inputs,
                                 std::vector<Output>* grad_outputs,
                                 const Output& comparator) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_36(mht_36_v, 822, "", "./tensorflow/cc/gradients/math_grad.cc", "MaximumMinimumGradCommon");
+
   // comparator is a boolean tensor, with
   // y = x_1 at points where comparator is true, and x_2 otherwise
   // Therefore
@@ -558,6 +837,9 @@ Status MaximumMinimumGradCommon(const Scope& scope, const Operation& op,
 Status MaximumGrad(const Scope& scope, const Operation& op,
                    const std::vector<Output>& grad_inputs,
                    std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_37(mht_37_v, 840, "", "./tensorflow/cc/gradients/math_grad.cc", "MaximumGrad");
+
   auto comparator = GreaterEqual(scope, op.input(0), op.input(1));
   return MaximumMinimumGradCommon(scope, op, grad_inputs, grad_outputs,
                                   comparator);
@@ -567,6 +849,9 @@ REGISTER_GRADIENT_OP("Maximum", MaximumGrad);
 Status MinimumGrad(const Scope& scope, const Operation& op,
                    const std::vector<Output>& grad_inputs,
                    std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_38(mht_38_v, 852, "", "./tensorflow/cc/gradients/math_grad.cc", "MinimumGrad");
+
   auto comparator = LessEqual(scope, op.input(0), op.input(1));
   return MaximumMinimumGradCommon(scope, op, grad_inputs, grad_outputs,
                                   comparator);
@@ -576,6 +861,9 @@ REGISTER_GRADIENT_OP("Minimum", MinimumGrad);
 Status RealGrad(const Scope& scope, const Operation& op,
                 const std::vector<Output>& grad_inputs,
                 std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_39(mht_39_v, 864, "", "./tensorflow/cc/gradients/math_grad.cc", "RealGrad");
+
   auto zero = Cast(scope, Const(scope, 0.0), op.output(0).type());
   auto dx = Complex(scope, grad_inputs[0], zero);
   grad_outputs->push_back(dx);
@@ -586,6 +874,9 @@ REGISTER_GRADIENT_OP("Real", RealGrad);
 Status ImagGrad(const Scope& scope, const Operation& op,
                 const std::vector<Output>& grad_inputs,
                 std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_40(mht_40_v, 877, "", "./tensorflow/cc/gradients/math_grad.cc", "ImagGrad");
+
   auto zero = Cast(scope, Const(scope, 0.0), op.output(0).type());
   auto dx = Complex(scope, zero, grad_inputs[0]);
   grad_outputs->push_back(dx);
@@ -596,6 +887,9 @@ REGISTER_GRADIENT_OP("Imag", ImagGrad);
 Status ComplexGrad(const Scope& scope, const Operation& op,
                    const std::vector<Output>& grad_inputs,
                    std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_41(mht_41_v, 890, "", "./tensorflow/cc/gradients/math_grad.cc", "ComplexGrad");
+
   auto gx_1 = Real(scope, grad_inputs[0]);
   auto gx_2 = Imag(scope, grad_inputs[0]);
   return BinaryGradCommon(scope, op, grad_outputs, gx_1, gx_2);
@@ -605,6 +899,9 @@ REGISTER_GRADIENT_OP("Complex", ComplexGrad);
 Status AngleGrad(const Scope& scope, const Operation& op,
                  const std::vector<Output>& grad_inputs,
                  std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_42(mht_42_v, 902, "", "./tensorflow/cc/gradients/math_grad.cc", "AngleGrad");
+
   // y = Angle(x)
   // dx = -dy / (Im(x) + iRe(x)) = -dy * z
   auto re = Real(scope, op.input(0));
@@ -621,6 +918,9 @@ REGISTER_GRADIENT_OP("Angle", AngleGrad);
 Status ConjGrad(const Scope& scope, const Operation& op,
                 const std::vector<Output>& grad_inputs,
                 std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_43(mht_43_v, 921, "", "./tensorflow/cc/gradients/math_grad.cc", "ConjGrad");
+
   grad_outputs->push_back(Conj(scope, grad_inputs[0]));
   return scope.status();
 }
@@ -628,6 +928,9 @@ REGISTER_GRADIENT_OP("Conj", ConjGrad);
 
 // Integer division x / y, assuming x and y >=0, but treats x/0 = x
 Output SafeDivHelper(const Scope& scope, const Output& x, const Output& y) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_44(mht_44_v, 931, "", "./tensorflow/cc/gradients/math_grad.cc", "SafeDivHelper");
+
   return Div(scope, x, Maximum(scope, y, Const(scope, 1)));
 }
 
@@ -635,6 +938,9 @@ Output SafeDivHelper(const Scope& scope, const Output& x, const Output& y) {
 // by SumGrad and MeanGrad.
 Output SumGradHelper(const Scope& scope, const Operation& op,
                      const std::vector<Output>& grad_inputs) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_45(mht_45_v, 941, "", "./tensorflow/cc/gradients/math_grad.cc", "SumGradHelper");
+
   // The partial derivative for any input along a "reduced" dimension
   // is just 1, so we only need replicate the output gradient on such a
   // dimension to its "expanded" shape.
@@ -673,6 +979,9 @@ Output SumGradHelper(const Scope& scope, const Operation& op,
 Status SumGrad(const Scope& scope, const Operation& op,
                const std::vector<Output>& grad_inputs,
                std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_46(mht_46_v, 982, "", "./tensorflow/cc/gradients/math_grad.cc", "SumGrad");
+
   grad_outputs->push_back(SumGradHelper(scope, op, grad_inputs));
 
   // Stop propagation along reduction_indices
@@ -684,6 +993,9 @@ REGISTER_GRADIENT_OP("Sum", SumGrad);
 Status MeanGrad(const Scope& scope, const Operation& op,
                 const std::vector<Output>& grad_inputs,
                 std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_47(mht_47_v, 996, "", "./tensorflow/cc/gradients/math_grad.cc", "MeanGrad");
+
   // The Mean gradient is just like the Sum gradient, except that
   // all gradients are also divided by the size of reduced groups.
   auto sum_grad = SumGradHelper(scope, op, grad_inputs);
@@ -711,6 +1023,9 @@ REGISTER_GRADIENT_OP("Mean", MeanGrad);
 Status ErfGrad(const Scope& scope, const Operation& op,
                const std::vector<Output>& grad_inputs,
                std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_48(mht_48_v, 1026, "", "./tensorflow/cc/gradients/math_grad.cc", "ErfGrad");
+
   auto grad = grad_inputs[0];
   auto two_over_root_pi = Cast(scope, Const(scope, 2 / std::sqrt(M_PI)),
                                grad.type());
@@ -728,6 +1043,9 @@ REGISTER_GRADIENT_OP("Erf", ErfGrad);
 Status ErfinvGrad(const Scope& scope, const Operation& op,
                   const std::vector<Output>& grad_inputs,
                   std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_49(mht_49_v, 1046, "", "./tensorflow/cc/gradients/math_grad.cc", "ErfinvGrad");
+
   auto grad = grad_inputs[0];
   auto root_pi_over_two =
       Cast(scope, Const(scope, std::sqrt(M_PI) / 2), grad.type());
@@ -744,6 +1062,9 @@ REGISTER_GRADIENT_OP("Erfinv", ErfinvGrad);
 Status NdtriGrad(const Scope& scope, const Operation& op,
                  const std::vector<Output>& grad_inputs,
                  std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_50(mht_50_v, 1065, "", "./tensorflow/cc/gradients/math_grad.cc", "NdtriGrad");
+
   auto grad = grad_inputs[0];
   auto root_two_pi =
       Cast(scope, Const(scope, std::sqrt(2 * M_PI)), grad.type());
@@ -762,6 +1083,9 @@ REGISTER_GRADIENT_OP("Ndtri", NdtriGrad);
 Status LgammaGrad(const Scope& scope, const Operation& op,
                   const std::vector<Output>& grad_inputs,
                   std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_51(mht_51_v, 1086, "", "./tensorflow/cc/gradients/math_grad.cc", "LgammaGrad");
+
   auto grad = grad_inputs[0];
   Scope grad_scope = scope.WithControlDependencies(grad);
   auto x = ConjugateHelper(grad_scope, op.input(0));
@@ -774,6 +1098,9 @@ REGISTER_GRADIENT_OP("Lgamma", LgammaGrad);
 Status MinOrMaxGrad(const Scope& scope, const Operation& op,
                     const std::vector<Output>& grad_inputs,
                     std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_52(mht_52_v, 1101, "", "./tensorflow/cc/gradients/math_grad.cc", "MinOrMaxGrad");
+
   // The partial derivative for any input along a "reduced" dimension
   // is 1 when it is the min (or max) and 0 everywhere else. So the
   // gradient calculation is identical for both operators.
@@ -840,6 +1167,9 @@ REGISTER_GRADIENT_OP("Max", MinOrMaxGrad);
 Status ProdGrad(const Scope& scope, const Operation& op,
                 const std::vector<Output>& grad_inputs,
                 std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_53(mht_53_v, 1170, "", "./tensorflow/cc/gradients/math_grad.cc", "ProdGrad");
+
   auto zero = Const(scope, 0);
   auto one = Const(scope, 1);
 
@@ -1017,6 +1347,9 @@ REGISTER_GRADIENT_OP("Prod", ProdGrad);
 Status SegmentSumGrad(const Scope& scope, const Operation& op,
                       const std::vector<Output>& grad_inputs,
                       std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_54(mht_54_v, 1350, "", "./tensorflow/cc/gradients/math_grad.cc", "SegmentSumGrad");
+
   // The SegmentSum operation sums segments of the Tensor that have the same
   // index in the segment_ids parameter.
   // i.e z = [2, 3, 4, 5], segment_ids [0, 0, 0, 1]
@@ -1041,6 +1374,9 @@ Status MatMulGradHelper(const Scope& scope, const bool is_batch,
                         const bool adj_x1, const Output& y0, const bool adj_y0,
                         const Output& y1, const bool adj_y1,
                         std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_55(mht_55_v, 1377, "", "./tensorflow/cc/gradients/math_grad.cc", "MatMulGradHelper");
+
   if (is_batch == false) {
     auto dx =
         MatMul(scope, x0, x1, MatMul::TransposeA(adj_x0).TransposeB(adj_x1));
@@ -1067,6 +1403,11 @@ Status MatMulGradCommon(const Scope& scope, const Operation& op,
                         const std::vector<Output>& grad_inputs,
                         const string& attr_adj_x, const string& attr_adj_y,
                         std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_56_v;
+   mht_56_v.push_back("attr_adj_x: \"" + attr_adj_x + "\"");
+   mht_56_v.push_back("attr_adj_y: \"" + attr_adj_y + "\"");
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_56(mht_56_v, 1408, "", "./tensorflow/cc/gradients/math_grad.cc", "MatMulGradCommon");
+
   auto a = op.input(0);
   auto b = op.input(1);
   // Use conjugate of the inputs for MatMul
@@ -1098,6 +1439,9 @@ Status MatMulGradCommon(const Scope& scope, const Operation& op,
 Status MatMulGrad(const Scope& scope, const Operation& op,
                   const std::vector<Output>& grad_inputs,
                   std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_57(mht_57_v, 1442, "", "./tensorflow/cc/gradients/math_grad.cc", "MatMulGrad");
+
   return MatMulGradCommon(scope, op, false, grad_inputs, "transpose_a",
                           "transpose_b", grad_outputs);
 }
@@ -1106,6 +1450,9 @@ REGISTER_GRADIENT_OP("MatMul", MatMulGrad);
 Status BatchMatMulGrad(const Scope& scope, const Operation& op,
                        const std::vector<Output>& grad_inputs,
                        std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_58(mht_58_v, 1453, "", "./tensorflow/cc/gradients/math_grad.cc", "BatchMatMulGrad");
+
   return MatMulGradCommon(scope, op, true, grad_inputs, "adj_x", "adj_y",
                           grad_outputs);
 }
@@ -1114,6 +1461,9 @@ REGISTER_GRADIENT_OP("BatchMatMul", BatchMatMulGrad);
 Status CumsumGrad(const Scope& scope, const Operation& op,
                   const std::vector<Output>& grad_inputs,
                   std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_59(mht_59_v, 1464, "", "./tensorflow/cc/gradients/math_grad.cc", "CumsumGrad");
+
   if (op.num_inputs() != 2) {
     return errors::InvalidArgument("Cumsum requires 2 arguments");
   }
@@ -1137,6 +1487,9 @@ Status CumsumGrad(const Scope& scope, const Operation& op,
 REGISTER_GRADIENT_OP("Cumsum", CumsumGrad);
 
 bool IsFloatingPointDtype(DataType dtype) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_60(mht_60_v, 1490, "", "./tensorflow/cc/gradients/math_grad.cc", "IsFloatingPointDtype");
+
   static constexpr DataType valid_dtypes[] = {
       DT_FLOAT, DT_HALF, DT_DOUBLE, DT_BFLOAT16, DT_COMPLEX64, DT_COMPLEX128};
   return std::find(std::begin(valid_dtypes), std::end(valid_dtypes), dtype) !=
@@ -1146,6 +1499,9 @@ bool IsFloatingPointDtype(DataType dtype) {
 Status CastGrad(const Scope& scope, const Operation& op,
                 const std::vector<Output>& grad_inputs,
                 std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_61(mht_61_v, 1502, "", "./tensorflow/cc/gradients/math_grad.cc", "CastGrad");
+
   if (op.num_inputs() != 1) {
     return errors::InvalidArgument("Cast requires 2 arguments");
   }
@@ -1167,6 +1523,9 @@ REGISTER_GRADIENT_OP("Cast", CastGrad);
 Status SelectGrad(const Scope& scope, const Operation& op,
                   const std::vector<Output>& grad_inputs,
                   std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_62(mht_62_v, 1526, "", "./tensorflow/cc/gradients/math_grad.cc", "SelectGrad");
+
   if (op.num_inputs() != 3) {
     return errors::InvalidArgument("Select requires 3 arguments");
   }
@@ -1186,6 +1545,9 @@ REGISTER_GRADIENT_OP("Select", SelectGrad);
 Status SelectV2Grad(const Scope& scope, const Operation& op,
                     const std::vector<Output>& grad_inputs,
                     std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSmath_gradDTcc mht_63(mht_63_v, 1548, "", "./tensorflow/cc/gradients/math_grad.cc", "SelectV2Grad");
+
   if (op.num_inputs() != 3) {
     return errors::InvalidArgument("Select requires 3 arguments");
   }

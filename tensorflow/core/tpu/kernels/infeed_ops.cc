@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePStpuPSkernelsPSinfeed_opsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPSinfeed_opsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePStpuPSkernelsPSinfeed_opsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -55,6 +223,9 @@ typedef std::deque<LinearizerBuffer> LinearizerBufferList;
 // has the same dimensions as the original shape, and only the layout is
 // changed.
 xla::Shape GetTPUInfeedLayout(const xla::Shape& shape) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPSinfeed_opsDTcc mht_0(mht_0_v, 226, "", "./tensorflow/core/tpu/kernels/infeed_ops.cc", "GetTPUInfeedLayout");
+
   XLA_Shape c_shape;
   XLA_Shape c_infeed_shape;
 
@@ -125,6 +296,10 @@ Status GetInfeedShapeWithLayout(OpKernelConstruction* ctx,
                                 const char* attrn_name,
                                 const xla::Shape& input_shape,
                                 xla::Shape* output_shape) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("attrn_name: \"" + (attrn_name == nullptr ? std::string("nullptr") : std::string((char*)attrn_name)) + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPSinfeed_opsDTcc mht_1(mht_1_v, 300, "", "./tensorflow/core/tpu/kernels/infeed_ops.cc", "GetInfeedShapeWithLayout");
+
   std::vector<int64_t> minor_to_major;
   TF_ASSIGN_OR_RETURN(bool has_override,
                       GetLayoutOverride(ctx, attrn_name, &minor_to_major));
@@ -160,11 +335,20 @@ Status GetInfeedShapeWithLayout(OpKernelConstruction* ctx,
 // `LinearizerBufferList` (aka `std::deque<LinearizerBuffer>`)
 // object, so the `Encode()` and `Decode()` methods are not implemented.
 struct LinearizedBuffersWrapper {
-  explicit LinearizedBuffersWrapper() {}
+  explicit LinearizedBuffersWrapper() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPSinfeed_opsDTcc mht_2(mht_2_v, 339, "", "./tensorflow/core/tpu/kernels/infeed_ops.cc", "LinearizedBuffersWrapper");
+}
   explicit LinearizedBuffersWrapper(LinearizerBufferList bufs,
                                     std::vector<tensorflow::Tensor> ts)
-      : buffers(std::move(bufs)), tensors(std::move(ts)) {}
+      : buffers(std::move(bufs)), tensors(std::move(ts)) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPSinfeed_opsDTcc mht_3(mht_3_v, 345, "", "./tensorflow/core/tpu/kernels/infeed_ops.cc", "LinearizedBuffersWrapper");
+}
   LinearizedBuffersWrapper(const LinearizedBuffersWrapper& wrapper) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPSinfeed_opsDTcc mht_4(mht_4_v, 349, "", "./tensorflow/core/tpu/kernels/infeed_ops.cc", "LinearizedBuffersWrapper");
+
     // tensorflow::Variant requires this copy constructor to compile.
     LOG(FATAL) << "LinearizedBuffersWrapper should not copy.";
   }
@@ -175,12 +359,21 @@ struct LinearizedBuffersWrapper {
   ~LinearizedBuffersWrapper() = default;
 
   // These functions are tensorflow::Variant requirements.
-  string TypeName() const { return "(anonymous)::LinearizedBuffersWrapper"; }
+  string TypeName() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPSinfeed_opsDTcc mht_5(mht_5_v, 363, "", "./tensorflow/core/tpu/kernels/infeed_ops.cc", "TypeName");
+ return "(anonymous)::LinearizedBuffersWrapper"; }
   void Encode(tensorflow::VariantTensorData* data) const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPSinfeed_opsDTcc mht_6(mht_6_v, 367, "", "./tensorflow/core/tpu/kernels/infeed_ops.cc", "Encode");
+
     LOG(ERROR) << "Encode() is not implemented for LinearizedBuffersWrapper "
                   "objects.";
   }
   bool Decode(const tensorflow::VariantTensorData& data) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPSinfeed_opsDTcc mht_7(mht_7_v, 374, "", "./tensorflow/core/tpu/kernels/infeed_ops.cc", "Decode");
+
     LOG(ERROR) << "Decode() is not implemented for LinearizedBuffersWrapper "
                   "objects.";
     return false;
@@ -197,6 +390,9 @@ Status AutoTransposeAndLinearize(OpKernelContext* ctx,
                                  const xla::Shape& shape,
                                  LinearizerBufferList* linearized_buffers,
                                  std::vector<Tensor>* saved_input_tensors) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPSinfeed_opsDTcc mht_8(mht_8_v, 393, "", "./tensorflow/core/tpu/kernels/infeed_ops.cc", "AutoTransposeAndLinearize");
+
   const Tensor* tensor = &input_tensor;
   // If the given layout is not in dim0major layout, tranposes the tensor.
   bool has_transposed = false;
@@ -239,6 +435,9 @@ Status AutoTransposeAndLinearize(OpKernelContext* ctx,
 class PrelinearizeOp : public OpKernel {
  public:
   explicit PrelinearizeOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPSinfeed_opsDTcc mht_9(mht_9_v, 438, "", "./tensorflow/core/tpu/kernels/infeed_ops.cc", "PrelinearizeOp");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("shape", &shape_));
     OP_REQUIRES_OK(ctx, ctx->GetAttr("dtype", &dtype_));
     xla::Shape shape;
@@ -248,6 +447,9 @@ class PrelinearizeOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPSinfeed_opsDTcc mht_10(mht_10_v, 450, "", "./tensorflow/core/tpu/kernels/infeed_ops.cc", "Compute");
+
     const Tensor& input_tensor = ctx->input(0);
     // Validate input.
     OP_REQUIRES(
@@ -277,7 +479,10 @@ class PrelinearizeOp : public OpKernel {
         std::move(linearized_buffers), std::move(saved_input_tensors)};
   }
 
-  bool IsExpensive() override { return true; }
+  bool IsExpensive() override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPSinfeed_opsDTcc mht_11(mht_11_v, 483, "", "./tensorflow/core/tpu/kernels/infeed_ops.cc", "IsExpensive");
+ return true; }
 
  private:
   TensorShape shape_;
@@ -294,6 +499,9 @@ class PrelinearizeOp : public OpKernel {
 class PrelinearizeTupleOp : public OpKernel {
  public:
   explicit PrelinearizeTupleOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPSinfeed_opsDTcc mht_12(mht_12_v, 502, "", "./tensorflow/core/tpu/kernels/infeed_ops.cc", "PrelinearizeTupleOp");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("shapes", &shapes_));
     OP_REQUIRES_OK(ctx, ctx->GetAttr("dtypes", &dtypes_));
     OP_REQUIRES(
@@ -316,6 +524,9 @@ class PrelinearizeTupleOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPSinfeed_opsDTcc mht_13(mht_13_v, 527, "", "./tensorflow/core/tpu/kernels/infeed_ops.cc", "Compute");
+
     OpInputList values;
     OP_REQUIRES_OK(ctx, ctx->input_list("inputs", &values));
     OP_REQUIRES(ctx, values.size() == shapes_.size(),
@@ -362,7 +573,10 @@ class PrelinearizeTupleOp : public OpKernel {
         std::move(all_linearized_buffers), std::move(all_saved_input_tensors)};
   }
 
-  bool IsExpensive() override { return true; }
+  bool IsExpensive() override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPSinfeed_opsDTcc mht_14(mht_14_v, 577, "", "./tensorflow/core/tpu/kernels/infeed_ops.cc", "IsExpensive");
+ return true; }
 
  private:
   std::vector<TensorShape> shapes_;
@@ -378,7 +592,10 @@ class StreamExecutorInfeedEnqueueOp : public TpuInfeedEnqueueOp {
  public:
   explicit StreamExecutorInfeedEnqueueOp(OpKernelConstruction* ctx)
       : TpuInfeedEnqueueOp(ctx,
-                           absl::make_unique<StreamExecutorTransferOpImpl>()) {}
+                           absl::make_unique<StreamExecutorTransferOpImpl>()) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPSinfeed_opsDTcc mht_15(mht_15_v, 596, "", "./tensorflow/core/tpu/kernels/infeed_ops.cc", "StreamExecutorInfeedEnqueueOp");
+}
 
  private:
   StreamExecutorInfeedEnqueueOp(const StreamExecutorInfeedEnqueueOp&) = delete;
@@ -390,7 +607,10 @@ class StreamExecutorInfeedEnqueueTupleOp : public TpuInfeedEnqueueTupleOp {
  public:
   explicit StreamExecutorInfeedEnqueueTupleOp(OpKernelConstruction* ctx)
       : TpuInfeedEnqueueTupleOp(
-            ctx, absl::make_unique<StreamExecutorTransferOpImpl>()) {}
+            ctx, absl::make_unique<StreamExecutorTransferOpImpl>()) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPSinfeed_opsDTcc mht_16(mht_16_v, 611, "", "./tensorflow/core/tpu/kernels/infeed_ops.cc", "StreamExecutorInfeedEnqueueTupleOp");
+}
 
  private:
   StreamExecutorInfeedEnqueueTupleOp(
@@ -405,7 +625,10 @@ class StreamExecutorInfeedEnqueuePrelinearizedBufferOp
   explicit StreamExecutorInfeedEnqueuePrelinearizedBufferOp(
       OpKernelConstruction* ctx)
       : InfeedEnqueuePrelinearizedBufferOp(
-            ctx, absl::make_unique<StreamExecutorTransferOpImpl>()) {}
+            ctx, absl::make_unique<StreamExecutorTransferOpImpl>()) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPSinfeed_opsDTcc mht_17(mht_17_v, 629, "", "./tensorflow/core/tpu/kernels/infeed_ops.cc", "StreamExecutorInfeedEnqueuePrelinearizedBufferOp");
+}
 
  private:
   // InfeedEnqueuePrelinearizedBufferOp is neither copyable nor movable.
@@ -421,6 +644,9 @@ TpuInfeedEnqueueOp::TpuInfeedEnqueueOp(
     std::unique_ptr<TpuTransferOpInterface> transfer_op)
     : TpuTransferAsyncOpKernel(ctx, "infeed_enqueue", 8,
                                std::move(transfer_op)) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPSinfeed_opsDTcc mht_18(mht_18_v, 647, "", "./tensorflow/core/tpu/kernels/infeed_ops.cc", "TpuInfeedEnqueueOp::TpuInfeedEnqueueOp");
+
   OP_REQUIRES_OK(ctx, ctx->GetAttr("shape", &shape_));
   OP_REQUIRES_OK(ctx, ctx->GetAttr("dtype", &dtype_));
   xla::Shape shape;
@@ -430,6 +656,9 @@ TpuInfeedEnqueueOp::TpuInfeedEnqueueOp(
 }
 
 Status TpuInfeedEnqueueOp::DoWork(OpKernelContext* ctx, int device_ordinal) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPSinfeed_opsDTcc mht_19(mht_19_v, 659, "", "./tensorflow/core/tpu/kernels/infeed_ops.cc", "TpuInfeedEnqueueOp::DoWork");
+
   VLOG(1) << "TpuInfeedEnqueueOp::DoWork. iter_id=" << ctx->frame_iter().iter_id
           << " device_ordinal=" << device_ordinal;
   const Tensor& input_tensor = ctx->input(0);
@@ -469,6 +698,9 @@ TpuInfeedEnqueueTupleOp::TpuInfeedEnqueueTupleOp(
     std::unique_ptr<TpuTransferOpInterface> transfer_op)
     : TpuTransferAsyncOpKernel(ctx, "infeed_enqueue", 8,
                                std::move(transfer_op)) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPSinfeed_opsDTcc mht_20(mht_20_v, 701, "", "./tensorflow/core/tpu/kernels/infeed_ops.cc", "TpuInfeedEnqueueTupleOp::TpuInfeedEnqueueTupleOp");
+
   OP_REQUIRES_OK(ctx, ctx->GetAttr("shapes", &shapes_));
   OP_REQUIRES_OK(ctx, ctx->GetAttr("dtypes", &dtypes_));
   OP_REQUIRES(
@@ -490,6 +722,9 @@ TpuInfeedEnqueueTupleOp::TpuInfeedEnqueueTupleOp(
 
 Status TpuInfeedEnqueueTupleOp::DoWork(OpKernelContext* ctx,
                                        int device_ordinal) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPSinfeed_opsDTcc mht_21(mht_21_v, 725, "", "./tensorflow/core/tpu/kernels/infeed_ops.cc", "TpuInfeedEnqueueTupleOp::DoWork");
+
   VLOG(1) << "TpuInfeedEnqueueTupleOp::DoWork. iter_id="
           << ctx->frame_iter().iter_id << " device_ordinal=" << device_ordinal;
   OpInputList values;
@@ -544,9 +779,15 @@ InfeedEnqueuePrelinearizedBufferOp::InfeedEnqueuePrelinearizedBufferOp(
     OpKernelConstruction* ctx,
     std::unique_ptr<TpuTransferOpInterface> transfer_op)
     : TpuTransferAsyncOpKernel(ctx, "prelinearized_buffers_to_infeed", 8,
-                               std::move(transfer_op)) {}
+                               std::move(transfer_op)) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPSinfeed_opsDTcc mht_22(mht_22_v, 783, "", "./tensorflow/core/tpu/kernels/infeed_ops.cc", "InfeedEnqueuePrelinearizedBufferOp::InfeedEnqueuePrelinearizedBufferOp");
+}
 Status InfeedEnqueuePrelinearizedBufferOp::DoWork(OpKernelContext* ctx,
                                                   int device_ordinal) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPSinfeed_opsDTcc mht_23(mht_23_v, 788, "", "./tensorflow/core/tpu/kernels/infeed_ops.cc", "InfeedEnqueuePrelinearizedBufferOp::DoWork");
+
   const Tensor& input_tensor = ctx->input(0);
   const LinearizedBuffersWrapper* wrapper =
       input_tensor.scalar<tensorflow::Variant>()()

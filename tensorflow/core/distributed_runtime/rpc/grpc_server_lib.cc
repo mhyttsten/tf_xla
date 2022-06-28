@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -70,11 +238,17 @@ namespace {
 class NoReusePortOption : public ::grpc::ServerBuilderOption {
  public:
   void UpdateArguments(::grpc::ChannelArguments* args) override {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_0(mht_0_v, 241, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "UpdateArguments");
+
     args->SetInt(GRPC_ARG_ALLOW_REUSEPORT, 0);
   }
 
   void UpdatePlugins(std::vector<std::unique_ptr<::grpc::ServerBuilderPlugin>>*
-                         plugins) override {}
+                         plugins) override {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_1(mht_1_v, 249, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "UpdatePlugins");
+}
 };
 
 // Define an option subclass in order to enable SO_REUSEPORT for the
@@ -82,24 +256,39 @@ class NoReusePortOption : public ::grpc::ServerBuilderOption {
 class ReusePortOption : public ::grpc::ServerBuilderOption {
  public:
   void UpdateArguments(::grpc::ChannelArguments* args) override {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_2(mht_2_v, 259, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "UpdateArguments");
+
     args->SetInt(GRPC_ARG_ALLOW_REUSEPORT, 1);
   }
 
   void UpdatePlugins(std::vector<std::unique_ptr<::grpc::ServerBuilderPlugin>>*
-                         plugins) override {}
+                         plugins) override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_3(mht_3_v, 267, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "UpdatePlugins");
+}
 };
 
 // static utility function
 RendezvousMgrInterface* NewRpcRendezvousMgr(const WorkerEnv* env) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_4(mht_4_v, 274, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "NewRpcRendezvousMgr");
+
   return new RpcRendezvousMgr(env);
 }
 
 }  // namespace
 
 GrpcServer::GrpcServer(const ServerDef& server_def, Env* env)
-    : env_(env), state_(NEW), server_def_(server_def) {}
+    : env_(env), state_(NEW), server_def_(server_def) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_5(mht_5_v, 284, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "GrpcServer::GrpcServer");
+}
 
 GrpcServer::~GrpcServer() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_6(mht_6_v, 289, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "GrpcServer::~GrpcServer");
+
   TF_CHECK_OK(Stop());
   TF_CHECK_OK(Join());
 
@@ -136,6 +325,9 @@ GrpcServer::~GrpcServer() {
 // Look up the requested host name and port for this task in `server_def`.
 Status GrpcServer::GetHostAndPort(const ServerDef& server_def,
                                   string* host_name, int* port) const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_7(mht_7_v, 328, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "GrpcServer::GetHostAndPort");
+
   *port = -1;
   *host_name = "localhost";
   for (const auto& job : server_def.cluster().job()) {
@@ -175,6 +367,9 @@ Status GrpcServer::GetHostAndPort(const ServerDef& server_def,
 }
 
 Status GrpcServer::Init(const GrpcServerOptions& opts) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_8(mht_8_v, 370, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "GrpcServer::Init");
+
   mutex_lock l(mu_);
   CHECK_EQ(state_, NEW);
   master_env_.env = env_;
@@ -322,6 +517,9 @@ Status GrpcServer::Init(const GrpcServerOptions& opts) {
           std::unique_ptr<WorkerCacheInterface> worker_cache,
           std::unique_ptr<DeviceSet> device_set,
           std::vector<string> filtered_worker_list) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_9(mht_9_v, 520, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "lambda");
+
         options.config.MergeFrom(config);
         return new MasterSession(options, env, std::move(remote_devs),
                                  std::move(worker_cache), std::move(device_set),
@@ -331,6 +529,9 @@ Status GrpcServer::Init(const GrpcServerOptions& opts) {
   master_env_.worker_cache_factory =
       [this](const WorkerCacheFactoryOptions& options,
              WorkerCacheInterface** worker_cache) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_10(mht_10_v, 532, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "lambda");
+
         return WorkerCacheFactory(options, worker_cache);
       };
 
@@ -343,6 +544,9 @@ Status GrpcServer::Init(const GrpcServerOptions& opts) {
 
 Status GrpcServer::ParseChannelSpec(const WorkerCacheFactoryOptions& options,
                                     GrpcChannelSpec* channel_spec) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_11(mht_11_v, 547, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "GrpcServer::ParseChannelSpec");
+
   for (const auto& job : options.cluster_def->job()) {
     std::map<int, string> host_ports;
     for (const auto& task : job.tasks()) {
@@ -366,6 +570,9 @@ Status GrpcServer::ParseChannelSpec(const WorkerCacheFactoryOptions& options,
 
 Status GrpcServer::WorkerCacheFactory(const WorkerCacheFactoryOptions& options,
                                       WorkerCacheInterface** worker_cache) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_12(mht_12_v, 573, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "GrpcServer::WorkerCacheFactory");
+
   if (options.job_name == nullptr || options.job_name->empty()) {
     Status s = errors::InvalidArgument(
         "The master (current machine) is not included in the provided "
@@ -407,6 +614,9 @@ Status GrpcServer::WorkerCacheFactory(const WorkerCacheFactoryOptions& options,
 }
 
 Status GrpcServer::Start() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_13(mht_13_v, 617, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "GrpcServer::Start");
+
   mutex_lock l(mu_);
   switch (state_) {
     case NEW: {
@@ -450,12 +660,18 @@ Status GrpcServer::Start() {
 
 Status GrpcServer::AddMasterEagerContextToEagerService(
     const tensorflow::uint64 context_id, tensorflow::EagerContext* context) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_14(mht_14_v, 663, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "GrpcServer::AddMasterEagerContextToEagerService");
+
   auto* eager_service =
       static_cast<eager::GrpcEagerServiceImpl*>(eager_service_);
   return eager_service->CreateMasterContext(context_id, context);
 }
 
 Status GrpcServer::UpdateServerDef(const ServerDef& server_def) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_15(mht_15_v, 672, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "GrpcServer::UpdateServerDef");
+
   mutex_lock l(mu_);
   server_def_ = server_def;
   WorkerCacheInterface* worker_cache;
@@ -490,6 +706,9 @@ Status GrpcServer::UpdateServerDef(const ServerDef& server_def) {
 // field inside the RPC coordination service handler.
 Status GrpcServer::SetCoordinationServiceAgentInstance(
     CoordinationServiceAgent* agent) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_16(mht_16_v, 709, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "GrpcServer::SetCoordinationServiceAgentInstance");
+
   auto* coord_service =
       static_cast<GrpcCoordinationServiceImpl*>(coordination_service_);
   coord_service->SetCoordinationServiceAgentInstance(agent);
@@ -497,6 +716,9 @@ Status GrpcServer::SetCoordinationServiceAgentInstance(
 }
 
 Status GrpcServer::StopCoordinationService() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_17(mht_17_v, 719, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "GrpcServer::StopCoordinationService");
+
   // Note: the sequence of events is important here.
   // 1. Agent must be torn down before the service as it needs to notify the
   // service.
@@ -510,6 +732,9 @@ Status GrpcServer::StopCoordinationService() {
 }
 
 Status GrpcServer::Stop() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_18(mht_18_v, 735, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "GrpcServer::Stop");
+
   mutex_lock l(mu_);
   switch (state_) {
     case NEW:
@@ -527,6 +752,9 @@ Status GrpcServer::Stop() {
 }
 
 Status GrpcServer::Join() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_19(mht_19_v, 755, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "GrpcServer::Join");
+
   mutex_lock l(mu_);
   switch (state_) {
     case NEW:
@@ -548,21 +776,33 @@ Status GrpcServer::Join() {
 }
 
 const string GrpcServer::target() const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_20(mht_20_v, 779, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "GrpcServer::target");
+
   return strings::StrCat("grpc://", host_name_, ":", bound_port_);
 }
 
 std::shared_ptr<::grpc::ServerCredentials> GrpcServer::GetServerCredentials(
     const ServerDef& server_def) const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_21(mht_21_v, 787, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "GrpcServer::GetServerCredentials");
+
   return ::grpc::InsecureServerCredentials();
 }
 
 ChannelCreationFunction GrpcServer::GetChannelCreationFunction() const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_22(mht_22_v, 794, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "GrpcServer::GetChannelCreationFunction");
+
   // We can do this because SparseGrpcChannelCache is robust to nullptr being
   // returned by the channel creation function
   return ConvertToChannelCreationFunction(NewHostPortGrpcChannel);
 }
 
 std::unique_ptr<Master> GrpcServer::CreateMaster(MasterEnv* master_env) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_23(mht_23_v, 803, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "GrpcServer::CreateMaster");
+
   return std::unique_ptr<Master>(new Master(master_env, 0.0));
 }
 
@@ -570,6 +810,9 @@ std::unique_ptr<Master> GrpcServer::CreateMaster(MasterEnv* master_env) {
 Status GrpcServer::Create(const ServerDef& server_def, Env* env,
                           DeviceMgr* local_device_mgr,
                           std::unique_ptr<ServerInterface>* out_server) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_24(mht_24_v, 813, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "GrpcServer::Create");
+
   std::unique_ptr<GrpcServer> ret(
       new GrpcServer(server_def, env == nullptr ? Env::Default() : env));
   GrpcServerOptions options;
@@ -587,12 +830,18 @@ Status GrpcServer::Create(const ServerDef& server_def, Env* env,
 /* static */
 Status GrpcServer::Create(const ServerDef& server_def, Env* env,
                           std::unique_ptr<ServerInterface>* out_server) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_25(mht_25_v, 833, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "GrpcServer::Create");
+
   return Create(server_def, env, nullptr, out_server);
 }
 
 /* static */
 Status GrpcServer::Create(const ServerDef& server_def, Env* env,
                           std::unique_ptr<GrpcServer>* out_server) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_26(mht_26_v, 842, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "GrpcServer::Create");
+
   std::unique_ptr<ServerInterface> server;
   Status s = Create(server_def, env, nullptr, &server);
   if (!s.ok()) {
@@ -607,11 +856,17 @@ namespace {
 class GrpcServerFactory : public ServerFactory {
  public:
   bool AcceptsOptions(const ServerDef& server_def) override {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_27(mht_27_v, 859, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "AcceptsOptions");
+
     return server_def.protocol() == "grpc";
   }
 
   Status NewServer(const ServerDef& server_def, const Options& options,
                    std::unique_ptr<ServerInterface>* out_server) override {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_28(mht_28_v, 867, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "NewServer");
+
     return GrpcServer::Create(server_def, Env::Default(),
                               options.local_device_mgr, out_server);
   }
@@ -621,6 +876,9 @@ class GrpcServerFactory : public ServerFactory {
 class GrpcServerRegistrar {
  public:
   GrpcServerRegistrar() {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_server_libDTcc mht_29(mht_29_v, 879, "", "./tensorflow/core/distributed_runtime/rpc/grpc_server_lib.cc", "GrpcServerRegistrar");
+
     ServerFactory::Register("GRPC_SERVER", new GrpcServerFactory());
   }
 };

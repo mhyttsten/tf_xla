@@ -14,6 +14,174 @@ limitations under the License.
 ==============================================================================*/
 #ifndef TENSORFLOW_CORE_FRAMEWORK_SHAPE_INFERENCE_H_
 #define TENSORFLOW_CORE_FRAMEWORK_SHAPE_INFERENCE_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <vector>
 
@@ -119,7 +287,10 @@ class Dimension {
  private:
   Dimension();
   Dimension(int64_t value);
-  ~Dimension() {}
+  ~Dimension() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_0(mht_0_v, 291, "", "./tensorflow/core/framework/shape_inference.h", "~Dimension");
+}
 
   const int64_t value_;
 
@@ -130,15 +301,30 @@ class Dimension {
 
 class DimensionHandle {
  public:
-  DimensionHandle() {}
-  bool SameHandle(DimensionHandle d) const { return ptr_ == d.ptr_; }
-  std::size_t Handle() const { return reinterpret_cast<std::size_t>(ptr_); }
+  DimensionHandle() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_1(mht_1_v, 305, "", "./tensorflow/core/framework/shape_inference.h", "DimensionHandle");
+}
+  bool SameHandle(DimensionHandle d) const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_2(mht_2_v, 309, "", "./tensorflow/core/framework/shape_inference.h", "SameHandle");
+ return ptr_ == d.ptr_; }
+  std::size_t Handle() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_3(mht_3_v, 313, "", "./tensorflow/core/framework/shape_inference.h", "Handle");
+ return reinterpret_cast<std::size_t>(ptr_); }
 
  private:
-  DimensionHandle(const Dimension* dim) { ptr_ = dim; }
+  DimensionHandle(const Dimension* dim) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_4(mht_4_v, 319, "", "./tensorflow/core/framework/shape_inference.h", "DimensionHandle");
+ ptr_ = dim; }
 
   const Dimension* operator->() const { return ptr_; }
-  bool IsSet() const { return ptr_ != nullptr; }
+  bool IsSet() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_5(mht_5_v, 325, "", "./tensorflow/core/framework/shape_inference.h", "IsSet");
+ return ptr_ != nullptr; }
 
   const Dimension* ptr_ = nullptr;
 
@@ -157,7 +343,10 @@ class Shape {
  private:
   Shape();
   Shape(const std::vector<DimensionHandle>& dims);
-  ~Shape() {}
+  ~Shape() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_6(mht_6_v, 347, "", "./tensorflow/core/framework/shape_inference.h", "~Shape");
+}
 
   const int32 rank_;
   const std::vector<DimensionHandle> dims_;
@@ -170,14 +359,29 @@ class Shape {
 
 class ShapeHandle {
  public:
-  ShapeHandle() {}
-  bool SameHandle(ShapeHandle s) const { return ptr_ == s.ptr_; }
-  std::size_t Handle() const { return reinterpret_cast<std::size_t>(ptr_); }
+  ShapeHandle() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_7(mht_7_v, 363, "", "./tensorflow/core/framework/shape_inference.h", "ShapeHandle");
+}
+  bool SameHandle(ShapeHandle s) const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_8(mht_8_v, 367, "", "./tensorflow/core/framework/shape_inference.h", "SameHandle");
+ return ptr_ == s.ptr_; }
+  std::size_t Handle() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_9(mht_9_v, 371, "", "./tensorflow/core/framework/shape_inference.h", "Handle");
+ return reinterpret_cast<std::size_t>(ptr_); }
 
  private:
-  ShapeHandle(const Shape* shape) { ptr_ = shape; }
+  ShapeHandle(const Shape* shape) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_10(mht_10_v, 377, "", "./tensorflow/core/framework/shape_inference.h", "ShapeHandle");
+ ptr_ = shape; }
   const Shape* operator->() const { return ptr_; }
-  bool IsSet() const { return ptr_ != nullptr; }
+  bool IsSet() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_11(mht_11_v, 382, "", "./tensorflow/core/framework/shape_inference.h", "IsSet");
+ return ptr_ != nullptr; }
 
   const Shape* ptr_ = nullptr;
 
@@ -208,13 +412,22 @@ struct DimensionOrConstant {
 };
 
 struct ShapeAndType {
-  ShapeAndType() {}
-  ShapeAndType(ShapeHandle s, DataType t) : shape(s), dtype(t) {}
+  ShapeAndType() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_12(mht_12_v, 416, "", "./tensorflow/core/framework/shape_inference.h", "ShapeAndType");
+}
+  ShapeAndType(ShapeHandle s, DataType t) : shape(s), dtype(t) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_13(mht_13_v, 420, "", "./tensorflow/core/framework/shape_inference.h", "ShapeAndType");
+}
   // TODO(mdan): Remove dtype from constructor, and use type_ instead.
   // dtype is kept here for backward compatibiity. Its information should
   // be redundant to that in type;
   ShapeAndType(ShapeHandle s, DataType t, FullTypeDef type_)
-      : shape(s), dtype(t), type(type_) {}
+      : shape(s), dtype(t), type(type_) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_14(mht_14_v, 428, "", "./tensorflow/core/framework/shape_inference.h", "ShapeAndType");
+}
 
   ShapeHandle shape;
   DataType dtype = DT_INVALID;
@@ -295,6 +508,9 @@ class InferenceContext {
   // This requires idx to be in the [0, num_inputs) range. If the merge is
   // successful, return true. Return false otherwise.
   bool MergeInput(int idx, ShapeHandle shape) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_15(mht_15_v, 511, "", "./tensorflow/core/framework/shape_inference.h", "MergeInput");
+
     ShapeHandle new_shape;
     if (!Merge(inputs_[idx], shape, &new_shape).ok()) return false;
     inputs_[idx] = new_shape;
@@ -327,6 +543,9 @@ class InferenceContext {
   // successful and the new shape differs from the old one, store the new
   // shape and return true. Return false otherwise.
   bool RelaxInput(int idx, ShapeHandle shape) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_16(mht_16_v, 546, "", "./tensorflow/core/framework/shape_inference.h", "RelaxInput");
+
     ShapeHandle new_shape;
     Relax(inputs_[idx], shape, &new_shape);
     if (inputs_[idx].SameHandle(new_shape)) {
@@ -336,15 +555,27 @@ class InferenceContext {
     return true;
   }
 
-  void SetInput(int idx, ShapeHandle shape) { inputs_[idx] = shape; }
+  void SetInput(int idx, ShapeHandle shape) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_17(mht_17_v, 559, "", "./tensorflow/core/framework/shape_inference.h", "SetInput");
+ inputs_[idx] = shape; }
 
-  ShapeHandle input(int64_t idx) const { return inputs_[idx]; }
+  ShapeHandle input(int64_t idx) const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_18(mht_18_v, 564, "", "./tensorflow/core/framework/shape_inference.h", "input");
+ return inputs_[idx]; }
   Status input(StringPiece input_name, std::vector<ShapeHandle>* output) const;
-  int num_inputs() const { return inputs_.size(); }
+  int num_inputs() const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_19(mht_19_v, 569, "", "./tensorflow/core/framework/shape_inference.h", "num_inputs");
+ return inputs_.size(); }
 
   // Returns the input tensor at index <idx>, or nullptr if the input tensor is
   // not available at the time of shape inference.
   const Tensor* input_tensor(int idx) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_20(mht_20_v, 576, "", "./tensorflow/core/framework/shape_inference.h", "input_tensor");
+
     // Mark that this idx was requested.
     request_input_tensor(idx);
     return input_tensors_[idx];
@@ -354,10 +585,16 @@ class InferenceContext {
   // is needed. The shape refiner tries to statically compute this tensor,
   // and if successful re-runs the  shape function with this tensor available
   // in the call to 'input_tensor(idx)'.
-  void request_input_tensor(int idx) { requested_input_tensor_[idx] = true; }
+  void request_input_tensor(int idx) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_21(mht_21_v, 589, "", "./tensorflow/core/framework/shape_inference.h", "request_input_tensor");
+ requested_input_tensor_[idx] = true; }
 
   // Returns true iff input_tensor(idx) was called by the shape function.
   bool requested_input_tensor(int idx) const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_22(mht_22_v, 595, "", "./tensorflow/core/framework/shape_inference.h", "requested_input_tensor");
+
     return requested_input_tensor_[idx];
   }
 
@@ -368,51 +605,90 @@ class InferenceContext {
   // 'MakeShapeFromShapeTensor(idx, handle)' or
   // 'MakeShapeFromShapeTensorTreatScalarAsUnknownShape(idx, handle)'.
   void request_input_tensor_as_partial_shape(int idx) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_23(mht_23_v, 608, "", "./tensorflow/core/framework/shape_inference.h", "request_input_tensor_as_partial_shape");
+
     requested_input_tensor_as_partial_shape_[idx] = true;
   }
 
   // Returns true if MakeShapeFromInputTensor was called but the constant
   // input_tensor was not present.
   bool requested_input_tensor_as_partial_shape(int idx) const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_24(mht_24_v, 617, "", "./tensorflow/core/framework/shape_inference.h", "requested_input_tensor_as_partial_shape");
+
     return requested_input_tensor_as_partial_shape_[idx];
   }
 
   void set_input_tensors(const std::vector<const Tensor*>& input_tensors) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_25(mht_25_v, 624, "", "./tensorflow/core/framework/shape_inference.h", "set_input_tensors");
+
     input_tensors_ = input_tensors;
   }
 
   void set_input_tensors_as_shapes(
       const std::vector<ShapeHandle>& input_tensors_as_shapes) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_26(mht_26_v, 632, "", "./tensorflow/core/framework/shape_inference.h", "set_input_tensors_as_shapes");
+
     input_tensors_as_shapes_ = input_tensors_as_shapes;
   }
 
   const std::vector<ShapeHandle>& input_tensors_as_shapes() const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_27(mht_27_v, 639, "", "./tensorflow/core/framework/shape_inference.h", "input_tensors_as_shapes");
+
     return input_tensors_as_shapes_;
   }
 
-  ShapeHandle output(int64_t idx) const { return outputs_.at(idx); }
-  void set_output(int idx, ShapeHandle shape) { outputs_.at(idx) = shape; }
+  ShapeHandle output(int64_t idx) const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_28(mht_28_v, 646, "", "./tensorflow/core/framework/shape_inference.h", "output");
+ return outputs_.at(idx); }
+  void set_output(int idx, ShapeHandle shape) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_29(mht_29_v, 650, "", "./tensorflow/core/framework/shape_inference.h", "set_output");
+ outputs_.at(idx) = shape; }
   Status set_output(StringPiece output_name,
                     const std::vector<ShapeHandle>& shapes);
 
-  int num_outputs() const { return outputs_.size(); }
-  ShapeHandle output(int idx) const { return outputs_.at(idx); }
+  int num_outputs() const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_30(mht_30_v, 657, "", "./tensorflow/core/framework/shape_inference.h", "num_outputs");
+ return outputs_.size(); }
+  ShapeHandle output(int idx) const {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_31(mht_31_v, 661, "", "./tensorflow/core/framework/shape_inference.h", "output");
+ return outputs_.at(idx); }
   Status output(StringPiece output_name,
                 std::vector<ShapeHandle>* output) const;
 
   // Returns the value for attribute named `attr_name`.
   Status GetAttr(StringPiece attr_name, const AttrValue** attr_value) const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_32(mht_32_v, 669, "", "./tensorflow/core/framework/shape_inference.h", "GetAttr");
+
     return attrs_.Find(attr_name, attr_value);
   }
   const AttrValue* GetAttr(StringPiece attr_name) const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_33(mht_33_v, 675, "", "./tensorflow/core/framework/shape_inference.h", "GetAttr");
+
     return attrs_.Find(attr_name);
   }
 
-  const FullTypeDef& ret_types() const { return ret_types_; }
+  const FullTypeDef& ret_types() const {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_34(mht_34_v, 682, "", "./tensorflow/core/framework/shape_inference.h", "ret_types");
+ return ret_types_; }
 
   // idx can be negative for an offset from end of dimensions.
   // idx must be in the range [-1 * s.rank, s.rank).
   DimensionHandle Dim(ShapeHandle s, int64_t idx) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_35(mht_35_v, 689, "", "./tensorflow/core/framework/shape_inference.h", "Dim");
+
     if (!s.Handle() || s->rank_ == kUnknownRank) {
       return UnknownDim();
     }
@@ -420,6 +696,9 @@ class InferenceContext {
   }
   // As above, but asserts that the rank of the shape is known.
   static DimensionHandle DimKnownRank(ShapeHandle s, int64_t idx) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_36(mht_36_v, 699, "", "./tensorflow/core/framework/shape_inference.h", "DimKnownRank");
+
     CHECK_NE(s->rank_, kUnknownRank);
     if (idx < 0) {
       return s->dims_[s->dims_.size() + idx];
@@ -428,15 +707,27 @@ class InferenceContext {
   }
 
   static int32 Rank(ShapeHandle s) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_37(mht_37_v, 710, "", "./tensorflow/core/framework/shape_inference.h", "Rank");
+
     return s.IsSet() ? s->rank_ : kUnknownRank;
   }
   static bool RankKnown(ShapeHandle s) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_38(mht_38_v, 716, "", "./tensorflow/core/framework/shape_inference.h", "RankKnown");
+
     return (s.IsSet() && (Rank(s) != kUnknownRank));
   }
   static inline int64_t Value(DimensionOrConstant d) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_39(mht_39_v, 722, "", "./tensorflow/core/framework/shape_inference.h", "Value");
+
     return d.dim.IsSet() ? d.dim->value_ : d.val;
   }
   static inline bool ValueKnown(DimensionOrConstant d) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_40(mht_40_v, 728, "", "./tensorflow/core/framework/shape_inference.h", "ValueKnown");
+
     return Value(d) != kUnknownDim;
   }
 
@@ -570,10 +861,16 @@ class InferenceContext {
   // Returns a new dimension of the given size.  The returned value is owned by
   // this context.
   inline DimensionHandle MakeDim(DimensionOrConstant d) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_41(mht_41_v, 864, "", "./tensorflow/core/framework/shape_inference.h", "MakeDim");
+
     return shape_manager_.MakeDim(d);
   }
 
-  inline DimensionHandle UnknownDim() { return MakeDim(kUnknownDim); }
+  inline DimensionHandle UnknownDim() {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_42(mht_42_v, 871, "", "./tensorflow/core/framework/shape_inference.h", "UnknownDim");
+ return MakeDim(kUnknownDim); }
 
   // Returns in <val> a scalar value from an input tensor <t>.  The input tensor
   // must be a 0-dimensional int32 or int64 tensor.  Caller must ensure that the
@@ -632,7 +929,10 @@ class InferenceContext {
   Status Max(DimensionHandle first, DimensionOrConstant second,
              DimensionHandle* out);
 
-  Status construction_status() const { return construction_status_; }
+  Status construction_status() const {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_43(mht_43_v, 933, "", "./tensorflow/core/framework/shape_inference.h", "construction_status");
+ return construction_status_; }
 
   // Methods to propagate shape and dtype on edges of handles. Handles are the
   // dtype DT_RESOURCE which can be used to access state stored in a
@@ -680,6 +980,9 @@ class InferenceContext {
 
   void set_input_handle_shapes_and_types(
       int idx, const std::vector<ShapeAndType>& shapes_and_types) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_44(mht_44_v, 983, "", "./tensorflow/core/framework/shape_inference.h", "set_input_handle_shapes_and_types");
+
     input_handle_shapes_and_types_[idx] =
         absl::make_unique<std::vector<ShapeAndType>>(shapes_and_types);
   }
@@ -687,17 +990,26 @@ class InferenceContext {
   // Returns the output handle shapes and types, for the resource tensor output
   // at index <idx>. Returns NULL if the shape and types were never set.
   const std::vector<ShapeAndType>* output_handle_shapes_and_types(int idx) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_45(mht_45_v, 993, "", "./tensorflow/core/framework/shape_inference.h", "output_handle_shapes_and_types");
+
     return output_handle_shapes_and_types_[idx].get();
   }
 
   // Returns the inputs handle shapes and types, for the resource tensor output
   // at index <idx>. Returns NULL if the shape and types were not available.
   const std::vector<ShapeAndType>* input_handle_shapes_and_types(int idx) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_46(mht_46_v, 1002, "", "./tensorflow/core/framework/shape_inference.h", "input_handle_shapes_and_types");
+
     return input_handle_shapes_and_types_[idx].get();
   }
 
   void set_output_handle_shapes_and_types(
       int idx, const std::vector<ShapeAndType>& shapes_and_types) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_47(mht_47_v, 1010, "", "./tensorflow/core/framework/shape_inference.h", "set_output_handle_shapes_and_types");
+
     output_handle_shapes_and_types_[idx].reset(
         new std::vector<ShapeAndType>(shapes_and_types));
   }
@@ -711,7 +1023,10 @@ class InferenceContext {
   Status MakeShapeFromTensor(const Tensor* t, ShapeHandle tensor_shape,
                              ShapeHandle* out);
 
-  int graph_def_version() const { return graph_def_version_; }
+  int graph_def_version() const {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_48(mht_48_v, 1027, "", "./tensorflow/core/framework/shape_inference.h", "graph_def_version");
+ return graph_def_version_; }
 
   const std::vector<std::pair<ShapeHandle, ShapeHandle>>& MergedShapes() const {
     return merged_shapes_;
@@ -741,6 +1056,9 @@ class InferenceContext {
     // Returns a new dimension of the given size.  The returned value
     // is owned by this class.
     inline DimensionHandle MakeDim(DimensionOrConstant d) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_49(mht_49_v, 1059, "", "./tensorflow/core/framework/shape_inference.h", "MakeDim");
+
       if (d.dim.IsSet()) {
         return d.dim;
       } else {
@@ -768,11 +1086,17 @@ class InferenceContext {
                          input_handle_data);
 
   Status ReturnUnknownShape(ShapeHandle* out) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_50(mht_50_v, 1089, "", "./tensorflow/core/framework/shape_inference.h", "ReturnUnknownShape");
+
     *out = UnknownShape();
     return Status::OK();
   }
   Status ReturnCreatedShape(const std::vector<DimensionHandle>& dims,
                             ShapeHandle* out) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_51(mht_51_v, 1097, "", "./tensorflow/core/framework/shape_inference.h", "ReturnCreatedShape");
+
     *out = MakeShape(dims);
     return Status::OK();
   }
@@ -805,6 +1129,9 @@ class InferenceContext {
 
   // Forget all the previous merged shapes and dims.
   void ForgetMerges() {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_52(mht_52_v, 1132, "", "./tensorflow/core/framework/shape_inference.h", "ForgetMerges");
+
     merged_shapes_.clear();
     merged_dims_.clear();
   }
@@ -867,24 +1194,42 @@ class InferenceContext {
 // -----------------------------------------------------------------------------
 // Template and inline method implementations, please ignore
 
-inline Dimension::Dimension() : value_(InferenceContext::kUnknownDim) {}
+inline Dimension::Dimension() : value_(InferenceContext::kUnknownDim) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_53(mht_53_v, 1198, "", "./tensorflow/core/framework/shape_inference.h", "Dimension::Dimension");
+}
 inline Dimension::Dimension(int64_t value) : value_(value) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_54(mht_54_v, 1202, "", "./tensorflow/core/framework/shape_inference.h", "Dimension::Dimension");
+
   DCHECK(value >= 0 || value == InferenceContext::kUnknownDim)
       << "Dimension must be non-negative or equal to "
          "InferenceContext::kUnknownDim but got "
       << value;
 }
 
-inline Shape::Shape() : rank_(InferenceContext::kUnknownRank) {}
+inline Shape::Shape() : rank_(InferenceContext::kUnknownRank) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_55(mht_55_v, 1212, "", "./tensorflow/core/framework/shape_inference.h", "Shape::Shape");
+}
 inline Shape::Shape(const std::vector<DimensionHandle>& dims)
-    : rank_(dims.size()), dims_(dims) {}
+    : rank_(dims.size()), dims_(dims) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_56(mht_56_v, 1217, "", "./tensorflow/core/framework/shape_inference.h", "Shape::Shape");
+}
 
 inline DimensionOrConstant::DimensionOrConstant(DimensionHandle dim)
     : dim(dim) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_57(mht_57_v, 1223, "", "./tensorflow/core/framework/shape_inference.h", "DimensionOrConstant::DimensionOrConstant");
+
   DCHECK(dim.IsSet()) << "Internal error: Got nullptr for Dimension.";
 }
 
 inline DimensionOrConstant::DimensionOrConstant(int64_t val) : val(val) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_58(mht_58_v, 1230, "", "./tensorflow/core/framework/shape_inference.h", "DimensionOrConstant::DimensionOrConstant");
+
   DCHECK(val >= 0 || val == InferenceContext::kUnknownDim)
       << "Dimension must be non-negative or equal to "
          "InferenceContext::kUnknownDim but got "
@@ -893,6 +1238,9 @@ inline DimensionOrConstant::DimensionOrConstant(int64_t val) : val(val) {
 
 template <class T>
 Status InferenceContext::GetAttr(StringPiece attr_name, T* value) const {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTh mht_59(mht_59_v, 1241, "", "./tensorflow/core/framework/shape_inference.h", "InferenceContext::GetAttr");
+
   return GetNodeAttr(attrs_, attr_name, value);
 }
 

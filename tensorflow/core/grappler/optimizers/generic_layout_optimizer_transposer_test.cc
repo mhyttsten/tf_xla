@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposer_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposer_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposer_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -65,14 +233,24 @@ constexpr char kOpTranspose[] = "Transpose";
 
 class TransposerImpl : public Transposer {
  public:
-  explicit TransposerImpl() : Transposer() {}
+  explicit TransposerImpl() : Transposer() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposer_testDTcc mht_0(mht_0_v, 237, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer_test.cc", "TransposerImpl");
+}
   Status TransposeNode(TransposeContext*, utils::MutableNodeView*) override {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposer_testDTcc mht_1(mht_1_v, 241, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer_test.cc", "TransposeNode");
+
     return Status::OK();
   }
 };
 
 void VerifyRegularFaninMatch(const utils::MutableNodeView* node, int port,
                              absl::string_view fanin_name, int fanin_port) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("fanin_name: \"" + std::string(fanin_name.data(), fanin_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposer_testDTcc mht_2(mht_2_v, 251, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer_test.cc", "VerifyRegularFaninMatch");
+
   ASSERT_GT(node->NumRegularFanins(), port);
   const auto& fanin = node->GetRegularFanin(port);
   EXPECT_EQ(fanin.node_view()->GetName(), fanin_name);
@@ -81,6 +259,10 @@ void VerifyRegularFaninMatch(const utils::MutableNodeView* node, int port,
 
 void VerifyShapeAttributeMatch(const utils::MutableNodeView* node,
                                absl::string_view attr_value) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("attr_value: \"" + std::string(attr_value.data(), attr_value.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposer_testDTcc mht_3(mht_3_v, 263, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer_test.cc", "VerifyShapeAttributeMatch");
+
   const auto* attr = node->GetAttr(kAttrOutputShapes);
   ASSERT_NE(attr, nullptr);
   EXPECT_EQ(attr->shape().DebugString(), attr_value);
@@ -88,6 +270,10 @@ void VerifyShapeAttributeMatch(const utils::MutableNodeView* node,
 
 void VerifyShapeAttributeMatch(const utils::MutableNodeView* node,
                                int shape_index, absl::string_view attr_value) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("attr_value: \"" + std::string(attr_value.data(), attr_value.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposer_testDTcc mht_4(mht_4_v, 274, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer_test.cc", "VerifyShapeAttributeMatch");
+
   const auto* attr = node->GetAttr(kAttrOutputShapes);
   ASSERT_NE(attr, nullptr);
   ASSERT_GT(attr->list().shape_size(), shape_index);
@@ -96,12 +282,19 @@ void VerifyShapeAttributeMatch(const utils::MutableNodeView* node,
 
 void VerifyDataFormatAttributeMatch(const utils::MutableNodeView* node,
                                     absl::string_view attr_value) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("attr_value: \"" + std::string(attr_value.data(), attr_value.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposer_testDTcc mht_5(mht_5_v, 286, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer_test.cc", "VerifyDataFormatAttributeMatch");
+
   const auto* attr = node->GetAttr(kAttrDataFormat);
   ASSERT_NE(attr, nullptr);
   EXPECT_EQ(attr->s(), attr_value);
 }
 
 Output SimpleConv2D(const Scope* scope, const DataType& data_type = DT_FLOAT) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposer_testDTcc mht_6(mht_6_v, 295, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer_test.cc", "SimpleConv2D");
+
   auto input =
       ops::RandomUniform(scope->WithOpName("input"),
                          {kBatchSize, kHeight, kWidth, kDepthIn}, data_type);
@@ -117,6 +310,9 @@ Output SimpleConv2D(const Scope* scope, const DataType& data_type = DT_FLOAT) {
 
 Status CreateSimpleConv2DGraph(GraphDef* graph,
                                const DataType& data_type = DT_FLOAT) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposer_testDTcc mht_7(mht_7_v, 313, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer_test.cc", "CreateSimpleConv2DGraph");
+
   Scope scope = Scope::NewRootScope();
   auto conv2d = SimpleConv2D(&scope, data_type);
   auto output = ops::Identity(scope.WithOpName("output"), conv2d);
@@ -126,6 +322,9 @@ Status CreateSimpleConv2DGraph(GraphDef* graph,
 
 Status CreateSimpleFusedBatchNorm(GraphDef* graph,
                                   const DataType& data_type = DT_FLOAT) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposer_testDTcc mht_8(mht_8_v, 325, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer_test.cc", "CreateSimpleFusedBatchNorm");
+
   Scope scope = Scope::NewRootScope();
   auto x =
       ops::RandomUniform(scope.WithOpName("x"),
@@ -151,6 +350,9 @@ Status CreateSimpleFusedBatchNorm(GraphDef* graph,
 }
 
 Status CreateSimpleMaxPoolGrad(GraphDef* graph, bool use_grad_grad) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposer_testDTcc mht_9(mht_9_v, 353, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer_test.cc", "CreateSimpleMaxPoolGrad");
+
   Scope scope = Scope::NewRootScope();
   auto input =
       ops::RandomUniform(scope.WithOpName("orig_input"),
@@ -182,6 +384,9 @@ Status CreateSimpleMaxPoolGrad(GraphDef* graph, bool use_grad_grad) {
 }
 
 Status CreateSimpleBiasAddGrad(GraphDef* graph, const Input& shape) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposer_testDTcc mht_10(mht_10_v, 387, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer_test.cc", "CreateSimpleBiasAddGrad");
+
   Scope scope = Scope::NewRootScope();
   auto input = ops::RandomUniform(scope.WithOpName("input"), shape, DT_FLOAT);
   auto bag =
@@ -195,6 +400,9 @@ Status CreateSimpleBiasAddGrad(GraphDef* graph, const Input& shape) {
 Status CreateSimpleConv2DBackpropFilter(GraphDef* graph,
                                         const DataType& data_type = DT_FLOAT,
                                         absl::string_view padding = "SAME") {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposer_testDTcc mht_11(mht_11_v, 403, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer_test.cc", "CreateSimpleConv2DBackpropFilter");
+
   Scope scope = Scope::NewRootScope();
   auto input =
       ops::RandomUniform(scope.WithOpName("input"),
@@ -229,6 +437,9 @@ Status CreateSimpleConv2DBackpropFilter(GraphDef* graph,
 
 Status CreateSimpleConv2DBackpropInput(GraphDef* graph,
                                        const DataType& data_type = DT_FLOAT) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposer_testDTcc mht_12(mht_12_v, 440, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer_test.cc", "CreateSimpleConv2DBackpropInput");
+
   Scope scope = Scope::NewRootScope();
   auto input_sizes = ops::Const(scope.WithOpName("input_sizes"),
                                 {kBatchSize, kHeight, kWidth, kDepthIn});
@@ -252,6 +463,9 @@ Status CreateSimpleConv2DBackpropInput(GraphDef* graph,
 
 Status CreateSimpleFusedBatchNormGrad(GraphDef* graph, bool is_training,
                                       const DataType& data_type = DT_FLOAT) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposer_testDTcc mht_13(mht_13_v, 466, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer_test.cc", "CreateSimpleFusedBatchNormGrad");
+
   Scope scope = Scope::NewRootScope();
   auto y_backprop =
       ops::RandomUniform(scope.WithOpName("y_backprop"),
@@ -286,6 +500,9 @@ Status CreateSimpleFusedBatchNormGrad(GraphDef* graph, bool is_training,
 }
 
 Status CreateSimpleAddN(GraphDef* graph) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposer_testDTcc mht_14(mht_14_v, 503, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer_test.cc", "CreateSimpleAddN");
+
   Scope scope = Scope::NewRootScope();
   auto input =
       ops::RandomUniform(scope.WithOpName("input"),
@@ -310,6 +527,9 @@ Status CreateSimpleAddN(GraphDef* graph) {
 }
 
 Status CreateSimpleIdentityN(GraphDef* graph) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposer_testDTcc mht_15(mht_15_v, 530, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer_test.cc", "CreateSimpleIdentityN");
+
   Scope scope = Scope::NewRootScope();
   auto conv2d_1_input =
       ops::RandomUniform(scope.WithOpName("conv2d_1_input"),
@@ -353,6 +573,9 @@ Status CreateSimpleIdentityN(GraphDef* graph) {
 class TransposerTest : public ::testing::Test {
  protected:
   void SetUp() override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposer_testDTcc mht_16(mht_16_v, 576, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer_test.cc", "SetUp");
+
     bool gpu_available = GetNumAvailableGPUs() > 0;
 
     if (gpu_available) {
@@ -368,10 +591,16 @@ class TransposerTest : public ::testing::Test {
     TF_ASSERT_OK(virtual_cluster_->Provision());
   }
 
-  void TearDown() override { TF_ASSERT_OK(virtual_cluster_->Shutdown()); }
+  void TearDown() override {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposer_testDTcc mht_17(mht_17_v, 595, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer_test.cc", "TearDown");
+ TF_ASSERT_OK(virtual_cluster_->Shutdown()); }
 
   template <typename T>
   void ReduceTransposerKeepDims() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposer_testDTcc mht_18(mht_18_v, 601, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer_test.cc", "ReduceTransposerKeepDims");
+
 #if !(GOOGLE_CUDA || TENSORFLOW_USE_ROCM)
     GTEST_SKIP() << "Neither CUDA nor ROCm is enabled";
 #endif  // !(GOOGLE_CUDA || TENSORFLOW_USE_ROCM)
@@ -440,6 +669,9 @@ class TransposerTest : public ::testing::Test {
 
   template <typename T>
   void ReduceTransposerValidAxisNode() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposer_testDTcc mht_19(mht_19_v, 672, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer_test.cc", "ReduceTransposerValidAxisNode");
+
 #if !(GOOGLE_CUDA || TENSORFLOW_USE_ROCM)
     GTEST_SKIP() << "Neither CUDA nor ROCm is enabled";
 #endif  // !(GOOGLE_CUDA || TENSORFLOW_USE_ROCM)
@@ -538,6 +770,9 @@ TEST_F(TransposerTest, CreateConstPermNode) {
 }
 
 TensorShapeProto MakeTensorShapeFromDimensions(absl::Span<const int> dims) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposer_testDTcc mht_20(mht_20_v, 773, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer_test.cc", "MakeTensorShapeFromDimensions");
+
   TensorShapeProto shape_proto = TensorShapeProto();
   for (const int dim : dims) {
     TensorShapeProto_Dim dim_proto = TensorShapeProto_Dim();
@@ -611,6 +846,9 @@ TEST_F(TransposerTest, UpdateNode) {
 
 AttrValue_ListValue MakeAttrValueListValueFromVector(
     absl::Span<const int> vec) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposer_testDTcc mht_21(mht_21_v, 849, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer_test.cc", "MakeAttrValueListValueFromVector");
+
   AttrValue_ListValue list_proto = AttrValue_ListValue();
   for (const int i : vec) {
     list_proto.add_i(i);
@@ -2743,6 +2981,9 @@ TEST_F(TransposerTest, BinaryOpTransposerPolygamma) {
 
 bool CreateConcatV1Op(const Scope& scope, const InputList& tensors,
                       const Input& concat_axis, Output* output) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposer_testDTcc mht_22(mht_22_v, 2984, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer_test.cc", "CreateConcatV1Op");
+
   if (!scope.ok()) {
     return false;
   }

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_helpersDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_helpersDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_helpersDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,12 +207,18 @@ limitations under the License.
 namespace tensorflow {
 
 xla::XlaOp XlaHelpers::Zero(xla::XlaBuilder* b, DataType data_type) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_helpersDTcc mht_0(mht_0_v, 210, "", "./tensorflow/compiler/tf2xla/xla_helpers.cc", "XlaHelpers::Zero");
+
   xla::PrimitiveType type;
   TF_CHECK_OK(DataTypeToPrimitiveType(data_type, &type));
   return xla::ConstantLiteral(b, xla::LiteralUtil::Zero(type));
 }
 
 xla::XlaOp XlaHelpers::One(xla::XlaBuilder* b, DataType data_type) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_helpersDTcc mht_1(mht_1_v, 219, "", "./tensorflow/compiler/tf2xla/xla_helpers.cc", "XlaHelpers::One");
+
   xla::PrimitiveType type;
   TF_CHECK_OK(DataTypeToPrimitiveType(data_type, &type));
   return xla::ConstantLiteral(b, xla::LiteralUtil::One(type));
@@ -52,6 +226,9 @@ xla::XlaOp XlaHelpers::One(xla::XlaBuilder* b, DataType data_type) {
 
 xla::XlaOp XlaHelpers::IntegerLiteral(xla::XlaBuilder* b, DataType data_type,
                                       int64_t value) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_helpersDTcc mht_2(mht_2_v, 229, "", "./tensorflow/compiler/tf2xla/xla_helpers.cc", "XlaHelpers::IntegerLiteral");
+
   xla::PrimitiveType type;
   TF_CHECK_OK(DataTypeToPrimitiveType(data_type, &type));
   return ::tensorflow::IntegerLiteral(b, type, value);
@@ -59,6 +236,9 @@ xla::XlaOp XlaHelpers::IntegerLiteral(xla::XlaBuilder* b, DataType data_type,
 
 xla::XlaOp XlaHelpers::FloatLiteral(xla::XlaBuilder* b, DataType data_type,
                                     double value) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_helpersDTcc mht_3(mht_3_v, 239, "", "./tensorflow/compiler/tf2xla/xla_helpers.cc", "XlaHelpers::FloatLiteral");
+
   xla::PrimitiveType type;
   TF_CHECK_OK(DataTypeToPrimitiveType(data_type, &type));
   return ::tensorflow::FloatLiteral(b, type, value);
@@ -67,6 +247,9 @@ xla::XlaOp XlaHelpers::FloatLiteral(xla::XlaBuilder* b, DataType data_type,
 /* static */ Status XlaHelpers::ReshapeLiteral(
     const xla::Literal& input, absl::Span<const int64_t> dimensions,
     xla::Literal* output) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_helpersDTcc mht_4(mht_4_v, 250, "", "./tensorflow/compiler/tf2xla/xla_helpers.cc", "XlaHelpers::ReshapeLiteral");
+
   if (input.shape().IsTuple()) {
     return errors::InvalidArgument("ReshapeLiteral does not support tuples.");
   }
@@ -89,6 +272,9 @@ Status XlaHelpers::OneHot(xla::XlaBuilder* builder, int64_t depth, int axis,
                           DataType index_type, const TensorShape& indices_shape,
                           const xla::XlaOp& indices, const xla::XlaOp& on_value,
                           const xla::XlaOp& off_value, xla::XlaOp* one_hot) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_helpersDTcc mht_5(mht_5_v, 275, "", "./tensorflow/compiler/tf2xla/xla_helpers.cc", "XlaHelpers::OneHot");
+
   // Broadcast the linspace constant across the indices along the new axis,
   // and test equality at each position.
   std::vector<int64_t> broadcast_dims(indices_shape.dims());
@@ -110,6 +296,9 @@ Status XlaHelpers::OneHot(xla::XlaBuilder* builder, int64_t depth, int axis,
 }
 
 DataType XlaHelpers::SumAccumulationType(const DataType& dtype) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_helpersDTcc mht_6(mht_6_v, 299, "", "./tensorflow/compiler/tf2xla/xla_helpers.cc", "XlaHelpers::SumAccumulationType");
+
   // Upcast 16 bit sum reductions to 32 bit to reduce the precision loss from
   // repeated floating point additions.
   if (dtype == DT_BFLOAT16 || dtype == DT_HALF) {
@@ -127,12 +316,18 @@ DataType XlaHelpers::SumAccumulationType(const DataType& dtype) {
 
 xla::XlaOp XlaHelpers::ConvertElementType(const xla::XlaOp& operand,
                                           const DataType new_element_type) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_helpersDTcc mht_7(mht_7_v, 319, "", "./tensorflow/compiler/tf2xla/xla_helpers.cc", "XlaHelpers::ConvertElementType");
+
   xla::PrimitiveType convert_to;
   TF_CHECK_OK(DataTypeToPrimitiveType(new_element_type, &convert_to));
   return xla::ConvertElementType(operand, convert_to);
 }
 
 XlaHelpers::ShapeRepresentationFn IdentityShapeRepresentationFn() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_helpersDTcc mht_8(mht_8_v, 328, "", "./tensorflow/compiler/tf2xla/xla_helpers.cc", "IdentityShapeRepresentationFn");
+
   return [](const TensorShape& shape, DataType dtype, bool use_fast_memory,
             XlaLayoutPreference layout_preference) -> StatusOr<xla::Shape> {
     xla::Shape xla_shape;
@@ -147,6 +342,9 @@ Status ResolveDeviceAssignment(
     xla::ExecutableRunOptions& run_options,
     xla::DeviceAssignment& device_assignment,
     xla::gpu::GpuExecutableRunOptions& gpu_options) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_helpersDTcc mht_9(mht_9_v, 345, "", "./tensorflow/compiler/tf2xla/xla_helpers.cc", "ResolveDeviceAssignment");
+
   // TODO(nnigania): workaround for b/199436990
   static const int kTimeoutSeconds = 1000;
   if (ctx->collective_executor() == nullptr) {

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSoptional_debug_toolsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSoptional_debug_toolsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSoptional_debug_toolsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,9 +218,15 @@ void PrintIntVector(const std::vector<int>& v,
 class MemoryArenaInfo {
  public:
   explicit MemoryArenaInfo(TfLiteAllocationType type)
-      : allocation_type_(type) {}
+      : allocation_type_(type) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSoptional_debug_toolsDTcc mht_0(mht_0_v, 222, "", "./tensorflow/lite/optional_debug_tools.cc", "MemoryArenaInfo");
+}
 
   void Update(size_t tensor_index, const TfLiteTensor& tensor) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSoptional_debug_toolsDTcc mht_1(mht_1_v, 227, "", "./tensorflow/lite/optional_debug_tools.cc", "Update");
+
     if (tensor.allocation_type != allocation_type_) return;
     if (tensor.data.data == nullptr) return;
     if (tensor.bytes > max_tensor_mem_bytes_) {
@@ -80,9 +254,15 @@ class MemoryArenaInfo {
     (void)result;  // suppress the "unused variable" compilation error.
   }
 
-  size_t GetArenaStartingAddress() const { return min_tensor_start_addr_; }
+  size_t GetArenaStartingAddress() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSoptional_debug_toolsDTcc mht_2(mht_2_v, 258, "", "./tensorflow/lite/optional_debug_tools.cc", "GetArenaStartingAddress");
+ return min_tensor_start_addr_; }
 
   void Print() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSoptional_debug_toolsDTcc mht_3(mht_3_v, 263, "", "./tensorflow/lite/optional_debug_tools.cc", "Print");
+
     printf("%s Info: ", AllocTypeName(allocation_type_));
     if (max_tensor_end_addr_ == 0) {
       printf("not holding any allocation.\n");
@@ -151,6 +331,9 @@ class MemoryArenaInfo {
 class DynamicMemoryInfo {
  public:
   void Update(size_t tensor_index, const TfLiteTensor& tensor) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSoptional_debug_toolsDTcc mht_4(mht_4_v, 334, "", "./tensorflow/lite/optional_debug_tools.cc", "Update");
+
     if (tensor.allocation_type != kTfLiteDynamic) return;
     if (tensor.data.data == nullptr) return;
     if (tensor.bytes > max_tensor_mem_bytes_) {
@@ -165,6 +348,9 @@ class DynamicMemoryInfo {
   }
 
   void Print() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSoptional_debug_toolsDTcc mht_5(mht_5_v, 351, "", "./tensorflow/lite/optional_debug_tools.cc", "Print");
+
     printf("kTfLiteDynamic Info: ");
     if (total_mem_bytes_ == 0) {
       printf("not holding any allocation.\n");
@@ -192,9 +378,15 @@ class ModelTensorMemoryInfo {
   ModelTensorMemoryInfo()
       : rw_info_(kTfLiteArenaRw),
         rw_persistent_info_(kTfLiteArenaRwPersistent),
-        mmap_info_(kTfLiteMmapRo) {}
+        mmap_info_(kTfLiteMmapRo) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSoptional_debug_toolsDTcc mht_6(mht_6_v, 382, "", "./tensorflow/lite/optional_debug_tools.cc", "ModelTensorMemoryInfo");
+}
 
   void Update(size_t tensor_index, const TfLiteTensor& tensor) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSoptional_debug_toolsDTcc mht_7(mht_7_v, 387, "", "./tensorflow/lite/optional_debug_tools.cc", "Update");
+
     rw_info_.Update(tensor_index, tensor);
     rw_persistent_info_.Update(tensor_index, tensor);
     mmap_info_.Update(tensor_index, tensor);
@@ -204,6 +396,9 @@ class ModelTensorMemoryInfo {
   // Get the offset from the beginning address of the memory arena for 'tensor'.
   // Returns -1 if not applicable. Otherwise, returns a non-negative value.
   int64_t GetOffsetFromArenaStart(const TfLiteTensor& tensor) const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSoptional_debug_toolsDTcc mht_8(mht_8_v, 399, "", "./tensorflow/lite/optional_debug_tools.cc", "GetOffsetFromArenaStart");
+
     if (tensor.data.data == nullptr) return -1;
     size_t tensor_address = reinterpret_cast<size_t>(tensor.data.data);
     if (tensor.allocation_type == kTfLiteArenaRw) {
@@ -222,6 +417,9 @@ class ModelTensorMemoryInfo {
   }
 
   void Print() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSoptional_debug_toolsDTcc mht_9(mht_9_v, 420, "", "./tensorflow/lite/optional_debug_tools.cc", "Print");
+
     printf("\n");
     rw_info_.Print();
     printf("\n");
@@ -243,6 +441,9 @@ class ModelTensorMemoryInfo {
 template <typename T>
 void PrintTotalBytesOfTensors(const Subgraph& subgraph, const T& tensor_ids,
                               const std::string& prefix = " -> ") {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSoptional_debug_toolsDTcc mht_10(mht_10_v, 444, "", "./tensorflow/lite/optional_debug_tools.cc", "PrintTotalBytesOfTensors");
+
   size_t total = 0;
   for (const auto id : tensor_ids) {
     const TfLiteTensor* tensor = subgraph.tensor(id);
@@ -255,6 +456,9 @@ void PrintTotalBytesOfTensors(const Subgraph& subgraph, const T& tensor_ids,
 
 void PrintIntVector(const std::vector<int>& v, bool collapse_consecutives,
                     bool add_newline) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSoptional_debug_toolsDTcc mht_11(mht_11_v, 459, "", "./tensorflow/lite/optional_debug_tools.cc", "PrintIntVector");
+
   if (v.empty()) {
     printf("(null)");
     if (add_newline) {
@@ -266,6 +470,10 @@ void PrintIntVector(const std::vector<int>& v, bool collapse_consecutives,
   int range_start = v[0];
   int range_end = range_start;
   std::function<void(const char*)> print_range = [&](const char* suffix) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("suffix: \"" + (suffix == nullptr ? std::string("nullptr") : std::string((char*)suffix)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSoptional_debug_toolsDTcc mht_12(mht_12_v, 474, "", "./tensorflow/lite/optional_debug_tools.cc", "lambda");
+
     if (range_end == range_start) {
       printf("%d%s", range_start, suffix);
     } else if (range_end == range_start + 1) {
@@ -294,6 +502,9 @@ void PrintIntVector(const std::vector<int>& v, bool collapse_consecutives,
 void PrintTfLiteIntVector(const TfLiteIntArray* v,
                           bool collapse_consecutives = true,
                           bool add_newline = false) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSoptional_debug_toolsDTcc mht_13(mht_13_v, 505, "", "./tensorflow/lite/optional_debug_tools.cc", "PrintTfLiteIntVector");
+
   std::vector<int> tmp;
   if (!v || v->size <= 0) {
     PrintIntVector(tmp, collapse_consecutives, add_newline);
@@ -304,6 +515,9 @@ void PrintTfLiteIntVector(const TfLiteIntArray* v,
 }
 
 const char* TensorTypeName(TfLiteType type) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSoptional_debug_toolsDTcc mht_14(mht_14_v, 518, "", "./tensorflow/lite/optional_debug_tools.cc", "TensorTypeName");
+
   switch (type) {
     case kTfLiteNoType:
       return "kTfLiteNoType";
@@ -346,6 +560,9 @@ const char* TensorTypeName(TfLiteType type) {
 }
 
 const char* AllocTypeName(TfLiteAllocationType type) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSoptional_debug_toolsDTcc mht_15(mht_15_v, 563, "", "./tensorflow/lite/optional_debug_tools.cc", "AllocTypeName");
+
   switch (type) {
     case kTfLiteMemNone:
       return "kTfLiteMemNone";
@@ -367,6 +584,10 @@ const char* AllocTypeName(TfLiteAllocationType type) {
 
 std::string TruncateString(const char* str, int size_limit,
                            bool truncate_at_end = false) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("str: \"" + (str == nullptr ? std::string("nullptr") : std::string((char*)str)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSoptional_debug_toolsDTcc mht_16(mht_16_v, 588, "", "./tensorflow/lite/optional_debug_tools.cc", "TruncateString");
+
   if (str == nullptr) return "(nil)";
 
   std::string truncated(str);
@@ -391,6 +612,9 @@ std::string TruncateString(const char* str, int size_limit,
 
 // Prints a dump of what tensors and what nodes are in the interpreter.
 void PrintInterpreterState(const Interpreter* interpreter) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSoptional_debug_toolsDTcc mht_17(mht_17_v, 615, "", "./tensorflow/lite/optional_debug_tools.cc", "PrintInterpreterState");
+
   const size_t num_subgraphs = interpreter->subgraphs_size();
   printf("Interpreter has %zu subgraphs.\n\n", num_subgraphs);
 

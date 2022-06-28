@@ -14,6 +14,174 @@ limitations under the License.
 ==============================================================================*/
 #ifndef TENSORFLOW_C_EAGER_TAPE_H_
 #define TENSORFLOW_C_EAGER_TAPE_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScPSeagerPStapeDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScPSeagerPStapeDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScPSeagerPStapeDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 // Language-agnostic gradient tape. Does not perform backpropagation, just
 // maintains the data structures required to do so.
@@ -82,7 +250,10 @@ using OpTape =
 template <typename Gradient, typename BackwardFunction, typename TapeTensor>
 class VSpace {
  public:
-  virtual ~VSpace() {}
+  virtual ~VSpace() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScPSeagerPStapeDTh mht_0(mht_0_v, 254, "", "./tensorflow/c/eager/tape.h", "~VSpace");
+}
 
   // Returns the number of elements in the gradient tensor.
   virtual int64_t NumElements(Gradient* tensor) const = 0;
@@ -129,8 +300,14 @@ class GradientTape {
   // functions (and hence the tensors they keep alive). Instead, everything
   // is deleted in ~GradientTape. Persistent GradientTapes are useful when
   // users want to compute multiple gradients over the same tape.
-  explicit GradientTape(bool persistent) : persistent_(persistent) {}
+  explicit GradientTape(bool persistent) : persistent_(persistent) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScPSeagerPStapeDTh mht_1(mht_1_v, 304, "", "./tensorflow/c/eager/tape.h", "GradientTape");
+}
   ~GradientTape() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScPSeagerPStapeDTh mht_2(mht_2_v, 308, "", "./tensorflow/c/eager/tape.h", "~GradientTape");
+
     for (const auto& pair : op_tape_) {
       pair.second.backward_function_deleter(pair.second.backward_function);
     }
@@ -179,7 +356,10 @@ class GradientTape {
       bool build_default_zeros_grads = true);
 
   // Whether the tape is persistent. See ctor for detailed description.
-  bool IsPersistent() const { return persistent_; }
+  bool IsPersistent() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScPSeagerPStapeDTh mht_3(mht_3_v, 360, "", "./tensorflow/c/eager/tape.h", "IsPersistent");
+ return persistent_; }
 
  private:
   TensorTape tensor_tape_;
@@ -207,7 +387,10 @@ class ForwardFunction
   template <typename lambda_type>
   explicit ForwardFunction(lambda_type lambda)
       : std::function<Status(const std::vector<Gradient*>&,
-                             std::vector<Gradient*>*, bool)>(lambda) {}
+                             std::vector<Gradient*>*, bool)>(lambda) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScPSeagerPStapeDTh mht_4(mht_4_v, 391, "", "./tensorflow/c/eager/tape.h", "ForwardFunction");
+}
 };
 
 // Computes Jacobian-vector products using forward-mode automatic
@@ -233,10 +416,16 @@ class ForwardAccumulator {
       const VSpace<Gradient, BackwardFunction, TapeTensor>& vspace,
       bool use_batch)
       : vspace_(vspace), use_batch_(use_batch) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScPSeagerPStapeDTh mht_5(mht_5_v, 419, "", "./tensorflow/c/eager/tape.h", "ForwardAccumulator");
+
     call_state_.emplace(nullptr, false);
   }
 
   virtual ~ForwardAccumulator() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScPSeagerPStapeDTh mht_6(mht_6_v, 426, "", "./tensorflow/c/eager/tape.h", "~ForwardAccumulator");
+
     for (auto accumulated : accumulated_gradients_) {
       vspace_.DeleteGradient(accumulated.second);
     }
@@ -291,7 +480,10 @@ class ForwardAccumulator {
   // there isn't an intervening PushState. This is useful for ordering
   // ForwardAccumulators, where more deeply nested accumulators should not see
   // computations from less deeply nested accumulators.
-  bool BusyAccumulating() const { return call_state_.top().accumulating; }
+  bool BusyAccumulating() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScPSeagerPStapeDTh mht_7(mht_7_v, 484, "", "./tensorflow/c/eager/tape.h", "BusyAccumulating");
+ return call_state_.top().accumulating; }
 
   // Fetches the current Jacobian-vector product associated with `tensor_id`, or
   // a nullptr if none is available.
@@ -313,8 +505,14 @@ class ForwardAccumulator {
   // temporarily reset its state. Without pushing and popping, accumulators
   // ignore operations executed as a direct result of their own jvp
   // computations.
-  void PushState() { call_state_.emplace(nullptr, false); }
-  void PopState() { call_state_.pop(); }
+  void PushState() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScPSeagerPStapeDTh mht_8(mht_8_v, 509, "", "./tensorflow/c/eager/tape.h", "PushState");
+ call_state_.emplace(nullptr, false); }
+  void PopState() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScPSeagerPStapeDTh mht_9(mht_9_v, 513, "", "./tensorflow/c/eager/tape.h", "PopState");
+ call_state_.pop(); }
 
  private:
   // Helper for Accumulate: uses a GradientTape to compute forward gradients
@@ -346,7 +544,10 @@ class ForwardAccumulator {
     AccumulatorCallState(
         GradientTape<Gradient, BackwardFunction, TapeTensor>* backward_tape,
         bool accumulating)
-        : backward_tape(backward_tape), accumulating(accumulating) {}
+        : backward_tape(backward_tape), accumulating(accumulating) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScPSeagerPStapeDTh mht_10(mht_10_v, 548, "", "./tensorflow/c/eager/tape.h", "AccumulatorCallState");
+}
     // Set temporarily while in the Accumulate method; if backward_tape is not
     // nullptr then we forward op executions to it so Accumulate can compute a
     // backward pass on its backward function.
@@ -366,6 +567,9 @@ class ForwardAccumulator {
 // Template instantiations here
 
 inline bool IsDtypeTrainable(DataType dtype) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScPSeagerPStapeDTh mht_11(mht_11_v, 570, "", "./tensorflow/c/eager/tape.h", "IsDtypeTrainable");
+
   switch (dtype) {
     case DT_HALF:
     case DT_BFLOAT16:
@@ -661,6 +865,9 @@ Status InitialGradients(
 // this by not constructing zeros to pass for those indices.
 std::unordered_map<string, std::unordered_set<int>>*
 FunctionsAcceptingNoneForIndicesMap() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScPSeagerPStapeDTh mht_12(mht_12_v, 868, "", "./tensorflow/c/eager/tape.h", "FunctionsAcceptingNoneForIndicesMap");
+
   static auto* const m =
       new std::unordered_map<string, std::unordered_set<int>>({
           {"SoftmaxCrossEntropyWithLogits", {1}},

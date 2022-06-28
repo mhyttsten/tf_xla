@@ -14,6 +14,174 @@ limitations under the License.
 ==============================================================================*/
 #ifndef TENSORFLOW_LITE_KERNELS_INTERNAL_OPTIMIZED_LEGACY_OPTIMIZED_OPS_H_
 #define TENSORFLOW_LITE_KERNELS_INTERNAL_OPTIMIZED_LEGACY_OPTIMIZED_OPS_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <stdint.h>
 #include <sys/types.h>
@@ -126,6 +294,9 @@ MatrixMap<Scalar> MapAsMatrixWithGivenNumberOfRows(Scalar* data,
 }
 
 inline bool AreSameDims(const Dims<4>& dims1, const Dims<4>& dims2) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_0(mht_0_v, 297, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "AreSameDims");
+
   for (int i = 0; i < 4; i++) {
     if (dims1.sizes[i] != dims2.sizes[i]) {
       return false;
@@ -143,6 +314,9 @@ inline void DepthwiseConv(const float* input_data, const Dims<4>& input_dims,
                           float output_activation_min,
                           float output_activation_max, float* output_data,
                           const Dims<4>& output_dims) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_1(mht_1_v, 317, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "DepthwiseConv");
+
   tflite::DepthwiseParams op_params;
   // Padding type is ignored, but still set.
   op_params.padding_type = PaddingType::kSame;
@@ -174,6 +348,9 @@ inline void DepthwiseConv(const float* input_data, const Dims<4>& input_dims,
                           float output_activation_min,
                           float output_activation_max, float* output_data,
                           const Dims<4>& output_dims) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_2(mht_2_v, 351, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "DepthwiseConv");
+
   DepthwiseConv(input_data, input_dims, filter_data, filter_dims, bias_data,
                 bias_dims, stride_width, stride_height, 1, 1, pad_width,
                 pad_height, depth_multiplier, output_activation_min,
@@ -188,6 +365,9 @@ void DepthwiseConv(const float* input_data, const Dims<4>& input_dims,
                    int stride_width, int stride_height, int pad_width,
                    int pad_height, int depth_multiplier, float* output_data,
                    const Dims<4>& output_dims) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_3(mht_3_v, 368, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "DepthwiseConv");
+
   float output_activation_min, output_activation_max;
   GetActivationMinMax(Ac, &output_activation_min, &output_activation_max);
   DepthwiseConv(input_data, input_dims, filter_data, filter_dims, bias_data,
@@ -203,6 +383,9 @@ void DepthwiseConv(const float* input_data, const Dims<4>& input_dims,
                    const float* bias_data, const Dims<4>& bias_dims, int stride,
                    int pad_width, int pad_height, int depth_multiplier,
                    float* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_4(mht_4_v, 386, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "DepthwiseConv");
+
   DepthwiseConv<Ac>(input_data, input_dims, filter_data, filter_dims, bias_data,
                     bias_dims, stride, stride, pad_width, pad_height,
                     depth_multiplier, output_data, output_dims);
@@ -215,6 +398,9 @@ inline void LegacyDepthwiseConvWithRounding(
     const uint8* filter_data, const RuntimeShape& bias_shape,
     const int32* bias_data, const RuntimeShape& output_shape,
     uint8* output_data, int thread_start, int thread_end, int thread_dim) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_5(mht_5_v, 401, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "LegacyDepthwiseConvWithRounding");
+
   ruy::profiler::ScopeLabel label("DepthwiseConv/8bit");
   const int depth_multiplier = params.depth_multiplier;
   const int32 output_activation_min = params.quantized_activation_min;
@@ -269,6 +455,9 @@ inline void LegacyDepthwiseConvImpl(
     const uint8* filter_data, const RuntimeShape& bias_shape,
     const int32* bias_data, const RuntimeShape& output_shape,
     uint8* output_data, int thread_start, int thread_end, int thread_dim) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_6(mht_6_v, 458, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "LegacyDepthwiseConvImpl");
+
   return LegacyDepthwiseConvWithRounding<
       DepthwiseConvOutputRounding::kAwayFromZero>(
       params, input_shape, input_data, filter_shape, filter_data, bias_shape,
@@ -287,6 +476,9 @@ inline void DepthwiseConv(const uint8* input_data, const Dims<4>& input_dims,
                           int output_shift, int32 output_activation_min,
                           int32 output_activation_max, uint8* output_data,
                           const Dims<4>& output_dims) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_7(mht_7_v, 479, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "DepthwiseConv");
+
   tflite::DepthwiseParams op_params;
   // Padding type is ignored, but still set.
   op_params.padding_type = PaddingType::kSame;
@@ -326,6 +518,9 @@ inline void DepthwiseConv(const uint8* input_data, const Dims<4>& input_dims,
                           int output_shift, int32 output_activation_min,
                           int32 output_activation_max, uint8* output_data,
                           const Dims<4>& output_dims) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_8(mht_8_v, 521, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "DepthwiseConv");
+
   DepthwiseConv(input_data, input_dims, input_offset, filter_data, filter_dims,
                 filter_offset, bias_data, bias_dims, stride_width,
                 stride_height, 1, 1, pad_width, pad_height, depth_multiplier,
@@ -345,6 +540,9 @@ void DepthwiseConv(const uint8* input_data, const Dims<4>& input_dims,
                    int32 output_multiplier, int output_shift,
                    int32 output_activation_min, int32 output_activation_max,
                    uint8* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_9(mht_9_v, 543, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "DepthwiseConv");
+
   if (Ac == FusedActivationFunctionType::kNone) {
     TFLITE_DCHECK_EQ(output_activation_min, 0);
     TFLITE_DCHECK_EQ(output_activation_max, 255);
@@ -368,6 +566,9 @@ void DepthwiseConv(const uint8* input_data, const Dims<4>& input_dims,
                    int output_shift, int32 output_activation_min,
                    int32 output_activation_max, uint8* output_data,
                    const Dims<4>& output_dims) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_10(mht_10_v, 569, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "DepthwiseConv");
+
   DepthwiseConv<Ac>(input_data, input_dims, input_offset, filter_data,
                     filter_dims, filter_offset, bias_data, bias_dims, stride,
                     stride, pad_width, pad_height, depth_multiplier,
@@ -398,6 +599,9 @@ struct LegacyDepthwiseConvWorkerTask : public gemmlowp::Task {
         thread_dim_(thread_dim) {}
 
   void Run() override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_11(mht_11_v, 602, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Run");
+
     LegacyDepthwiseConvImpl(params_, input_shape_, input_data_, filter_shape_,
                             filter_data_, bias_shape_, bias_data_,
                             output_shape_, output_data_, thread_start_,
@@ -422,6 +626,9 @@ struct LegacyDepthwiseConvWorkerTask : public gemmlowp::Task {
 inline int HowManyConvThreads(const RuntimeShape& output_shape,
                               const RuntimeShape& filter_shape,
                               int thread_dim) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_12(mht_12_v, 629, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "HowManyConvThreads");
+
   constexpr int kMinMulPerThread = 8;
   const int output_units = output_shape.Dims(thread_dim);
   const int filter_height = filter_shape.Dims(1);
@@ -439,6 +646,9 @@ inline void DepthwiseConv(
     const uint8* filter_data, const RuntimeShape& bias_shape,
     const int32* bias_data, const RuntimeShape& output_shape,
     uint8* output_data, gemmlowp::GemmContext* gemmlowp_context = nullptr) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_13(mht_13_v, 649, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "DepthwiseConv");
+
   ruy::profiler::ScopeLabel label("DepthwiseConv");
 
   TFLITE_DCHECK_EQ(input_shape.DimensionsCount(), 4);
@@ -510,6 +720,9 @@ struct LegacyPerChannelDepthwiseConvWorkerTask : public gemmlowp::Task {
         thread_dim_(thread_dim) {}
 
   void Run() override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_14(mht_14_v, 723, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Run");
+
     CpuBackendContext backend_context;
     optimized_integer_ops::DepthwiseConvImpl(
         params_, output_multiplier_, output_shift_, input_shape_, input_data_,
@@ -541,6 +754,9 @@ inline void DepthwiseConvPerChannel(
     const int8* filter_data, const RuntimeShape& bias_shape,
     const int32* bias_data, const RuntimeShape& output_shape, int8* output_data,
     gemmlowp::GemmContext* gemmlowp_context = nullptr) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_15(mht_15_v, 757, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "DepthwiseConvPerChannel");
+
   ruy::profiler::ScopeLabel label("DepthwiseConvInt8");
 
   TFLITE_DCHECK_EQ(input_shape.DimensionsCount(), 4);
@@ -595,6 +811,9 @@ inline void DepthwiseConv(
     const float* filter_data, const RuntimeShape& bias_shape,
     const float* bias_data, const RuntimeShape& output_shape,
     float* output_data) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_16(mht_16_v, 814, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "DepthwiseConv");
+
   DepthwiseConvImpl(params, input_shape, input_data, filter_shape, filter_data,
                     bias_shape, bias_data, output_shape, output_data,
                     CpuFlags(),
@@ -608,6 +827,9 @@ inline void AddBiasAndEvalActivationFunction(const float* bias_data,
                                              const Dims<4>& array_dims,
                                              float output_activation_min,
                                              float output_activation_max) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_17(mht_17_v, 830, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "AddBiasAndEvalActivationFunction");
+
   AddBiasAndEvalActivationFunction(output_activation_min, output_activation_max,
                                    DimsToShape(bias_dims), bias_data,
                                    DimsToShape(array_dims), array_data);
@@ -619,6 +841,9 @@ void AddBiasAndEvalActivationFunction(const float* bias_data,
                                       const Dims<4>& bias_dims,
                                       float* array_data,
                                       const Dims<4>& array_dims) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_18(mht_18_v, 844, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "AddBiasAndEvalActivationFunction");
+
   float output_activation_min, output_activation_max;
   GetActivationMinMax(Ac, &output_activation_min, &output_activation_max);
   AddBiasAndEvalActivationFunction(bias_data, bias_dims, array_data, array_dims,
@@ -644,6 +869,9 @@ inline void FullyConnected(
     const float* weights_data, const RuntimeShape& bias_shape,
     const float* optional_bias_data, const RuntimeShape& output_shape,
     float* output_data) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_19(mht_19_v, 872, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "FullyConnected");
+
   ruy::profiler::ScopeLabel label("FullyConnected");
   const float output_activation_min = params.float_activation_min;
   const float output_activation_max = params.float_activation_max;
@@ -687,6 +915,9 @@ inline void FullyConnected(const float* input_data, const Dims<4>& input_dims,
                            float output_activation_min,
                            float output_activation_max, float* output_data,
                            const Dims<4>& output_dims) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_20(mht_20_v, 918, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "FullyConnected");
+
   tflite::FullyConnectedParams op_params;
   op_params.float_activation_min = output_activation_min;
   op_params.float_activation_max = output_activation_max;
@@ -703,6 +934,9 @@ void FullyConnected(const float* input_data, const Dims<4>& input_dims,
                     const float* weights_data, const Dims<4>& weights_dims,
                     const float* bias_data, const Dims<4>& bias_dims,
                     float* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_21(mht_21_v, 937, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "FullyConnected");
+
   float output_activation_min, output_activation_max;
   GetActivationMinMax(Ac, &output_activation_min, &output_activation_max);
   FullyConnected(input_data, input_dims, weights_data, weights_dims, bias_data,
@@ -722,6 +956,9 @@ struct GemmlowpOutputPipeline {
                           int32 output_offset, int32 output_multiplier,
                           int output_left_shift, int32 output_activation_min,
                           int32 output_activation_max) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_22(mht_22_v, 959, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "MakeExp");
+
     ColVectorMap bias_vector(bias_data, output_rows);
     gemmlowp::OutputStageBiasAddition<ColVectorMap> bias_addition_stage;
     bias_addition_stage.bias_vector = bias_vector;
@@ -750,6 +987,9 @@ struct GemmlowpOutputPipelineInt8 {
                           int32 output_offset, int32 output_multiplier,
                           int output_left_shift, int32 output_activation_min,
                           int32 output_activation_max) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_23(mht_23_v, 990, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "MakeExp");
+
     ColVectorMap bias_vector(bias_data, output_rows);
     gemmlowp::OutputStageBiasAddition<ColVectorMap> bias_addition_stage;
     bias_addition_stage.bias_vector = bias_vector;
@@ -1013,6 +1253,9 @@ struct LegacyFullyConnectedAsGEMVWorkerTask : public gemmlowp::Task {
         row_end_(row_end) {}
 
   void Run() override {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_24(mht_24_v, 1256, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Run");
+
     LegacyFullyConnectedAsGEMVWorkerImpl(
         input_shape_, input_data_, input_offset_, filter_shape_, filter_data_,
         filter_offset_, bias_shape_, bias_data_, output_offset_,
@@ -1048,6 +1291,9 @@ inline void FullyConnectedAsGEMV(
     int32 output_multiplier, int output_shift, int32 output_activation_min,
     int32 output_activation_max, const RuntimeShape& output_shape,
     uint8* output_data, gemmlowp::GemmContext* gemmlowp_context) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_25(mht_25_v, 1294, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "FullyConnectedAsGEMV");
+
   const int output_dim_count = output_shape.DimensionsCount();
   const int batches = FlatSizeSkipDim(output_shape, output_dim_count - 1);
   const int output_rows = output_shape.Dims(output_dim_count - 1);
@@ -1726,6 +1972,9 @@ inline void FullyConnected(const uint8* input_data, const Dims<4>& input_dims,
                            int32 output_activation_max, uint8* output_data,
                            const Dims<4>& output_dims,
                            gemmlowp::GemmContext* gemmlowp_context) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_26(mht_26_v, 1975, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "FullyConnected");
+
   tflite::FullyConnectedParams op_params;
   op_params.input_offset = input_offset;
   op_params.weights_offset = filter_offset;
@@ -1749,6 +1998,9 @@ inline void FullyConnected(
     int32 output_multiplier, int output_shift, int32 output_activation_min,
     int32 output_activation_max, int16* output_data, const Dims<4>& output_dims,
     gemmlowp::GemmContext* gemmlowp_context) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_27(mht_27_v, 2001, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "FullyConnected");
+
   tflite::FullyConnectedParams op_params;
   op_params.input_offset = input_offset;
   op_params.weights_offset = filter_offset;
@@ -1776,6 +2028,9 @@ void FullyConnected(const uint8* input_data, const Dims<4>& input_dims,
                     int32 output_activation_max, uint8* output_data,
                     const Dims<4>& output_dims,
                     gemmlowp::GemmContext* gemmlowp_context) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_28(mht_28_v, 2031, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "FullyConnected");
+
   static_assert(Ac == FusedActivationFunctionType::kNone ||
                     Ac == FusedActivationFunctionType::kRelu ||
                     Ac == FusedActivationFunctionType::kRelu6 ||
@@ -2024,6 +2279,9 @@ struct LegacyInt8FullyConnectedAsGEMVWorkerTask : public gemmlowp::Task {
         row_end_(row_end) {}
 
   void Run() override {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_29(mht_29_v, 2282, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Run");
+
     LegacyInt8FullyConnectedAsGEMVWorkerImpl(
         input_shape_, input_data_, input_offset_, filter_shape_, filter_data_,
         filter_offset_, bias_shape_, bias_data_, output_offset_,
@@ -2059,6 +2317,9 @@ inline void LegacyInt8FullyConnectedAsGEMV(
     int32 output_multiplier, int output_shift, int32 output_activation_min,
     int32 output_activation_max, const RuntimeShape& output_shape,
     int8_t* output_data, gemmlowp::GemmContext* gemmlowp_context) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_30(mht_30_v, 2320, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "LegacyInt8FullyConnectedAsGEMV");
+
   const int output_dim_count = output_shape.DimensionsCount();
   const int batches = FlatSizeSkipDim(output_shape, output_dim_count - 1);
   const int output_rows = output_shape.Dims(output_dim_count - 1);
@@ -2191,6 +2452,9 @@ struct LegacyShuffledFullyConnectedWorkerTask : gemmlowp::Task {
         output_data_(output_data) {}
 
   void Run() override {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_31(mht_31_v, 2455, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Run");
+
     ShuffledFullyConnectedWorkerImpl(
         input_data_, shuffled_weights_data_, batches_, output_depth_,
         output_stride_, accum_depth_, bias_data_, output_multiplier_,
@@ -2216,6 +2480,9 @@ inline void ShuffledFullyConnected(
     const int32* bias_data, const RuntimeShape& output_shape,
     int16* output_data, uint8* shuffled_input_workspace_data,
     gemmlowp::GemmContext* gemmlowp_context) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_32(mht_32_v, 2483, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "ShuffledFullyConnected");
+
   ruy::profiler::ScopeLabel label("ShuffledFullyConnected/8bit");
   const int32 output_multiplier = params.output_multiplier;
   const int output_shift = params.output_shift;
@@ -2342,6 +2609,9 @@ inline void ShuffledFullyConnected(
     int16* output_data, const Dims<4>& output_dims,
     uint8* shuffled_input_workspace_data,
     gemmlowp::GemmContext* gemmlowp_context) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_33(mht_33_v, 2612, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "ShuffledFullyConnected");
+
   tflite::FullyConnectedParams op_params;
   op_params.output_multiplier = output_multiplier;
   // Legacy ops used mixed left and right shifts. Now all are +ve-means-left.
@@ -2362,6 +2632,9 @@ inline void ExtractPatchIntoBufferColumn(
     int stride_width, int stride_height, int pad_width, int pad_height,
     int in_width, int in_height, int in_depth, int single_buffer_length,
     int buffer_id, const T* in_data, T* conv_buffer_data, uint8 zero_byte) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_34(mht_34_v, 2635, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "ExtractPatchIntoBufferColumn");
+
   ExtractPatchIntoBufferColumn(
       DimsToShape(input_dims), w, h, b, kheight, kwidth, stride_width,
       stride_height, pad_width, pad_height, in_width, in_height, in_depth,
@@ -2375,6 +2648,9 @@ void DilatedIm2col(const T* input_data, const Dims<4>& input_dims,
                    int dilation_height_factor, int pad_width, int pad_height,
                    const Dims<4>& output_dims, uint8 zero_byte,
                    T* im2col_data) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_35(mht_35_v, 2651, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "DilatedIm2col");
+
   tflite::ConvParams op_params;
   // Padding type is ignored, but still set.
   op_params.padding_type = PaddingType::kSame;
@@ -2395,6 +2671,9 @@ void Im2col(const T* input_data, const Dims<4>& input_dims, int stride_width,
             int stride_height, int pad_width, int pad_height, int kheight,
             int kwidth, uint8 zero_byte, T* output_data,
             const Dims<4>& output_dims) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_36(mht_36_v, 2674, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Im2col");
+
   tflite::ConvParams op_params;
   // Padding type is ignored, but still set.
   op_params.padding_type = PaddingType::kSame;
@@ -2414,6 +2693,9 @@ template <typename T>
 void Im2col(const T* input_data, const Dims<4>& input_dims, int stride,
             int pad_width, int pad_height, int kheight, int kwidth,
             uint8 zero_byte, T* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_37(mht_37_v, 2696, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Im2col");
+
   Im2col(input_data, input_dims, stride, stride, pad_width, pad_height, kheight,
          kwidth, zero_byte, output_data, output_dims);
 }
@@ -2424,6 +2706,9 @@ inline void Conv(const ConvParams& params, const RuntimeShape& input_shape,
                  const float* bias_data, const RuntimeShape& output_shape,
                  float* output_data, const RuntimeShape& im2col_shape,
                  float* im2col_data) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_38(mht_38_v, 2709, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Conv");
+
   const int stride_width = params.stride_width;
   const int stride_height = params.stride_height;
   const int dilation_width_factor = params.dilation_width_factor;
@@ -2529,6 +2814,9 @@ inline void Conv(const float* input_data, const Dims<4>& input_dims,
                  float output_activation_min, float output_activation_max,
                  float* output_data, const Dims<4>& output_dims,
                  float* im2col_data, const Dims<4>& im2col_dims) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_39(mht_39_v, 2817, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Conv");
+
   tflite::ConvParams op_params;
   // Padding type is ignored, but still set.
   op_params.padding_type = PaddingType::kSame;
@@ -2556,6 +2844,9 @@ inline void HybridConv(const int8_t* input_data, const Dims<4>& input_dims,
                        float* output_data, const Dims<4>& output_dims,
                        int8_t* im2col_data, const Dims<4>& im2col_dims,
                        CpuBackendContext* context) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_40(mht_40_v, 2847, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "HybridConv");
+
   tflite::ConvParams op_params;
   // Padding type is ignored, but still set.
   op_params.padding_type = PaddingType::kSame;
@@ -2581,6 +2872,9 @@ void Conv(const float* input_data, const Dims<4>& input_dims,
           int dilation_height_factor, int pad_width, int pad_height,
           float* output_data, const Dims<4>& output_dims, float* im2col_data,
           const Dims<4>& im2col_dims) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_41(mht_41_v, 2875, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Conv");
+
   float output_activation_min, output_activation_max;
   GetActivationMinMax(Ac, &output_activation_min, &output_activation_max);
   Conv(input_data, input_dims, filter_data, filter_dims, bias_data, bias_dims,
@@ -2598,6 +2892,9 @@ void Conv(const float* input_data, const Dims<4>& input_dims,
           int stride_height, int pad_width, int pad_height, float* output_data,
           const Dims<4>& output_dims, float* im2col_data,
           const Dims<4>& im2col_dims) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_42(mht_42_v, 2895, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Conv");
+
   float output_activation_min, output_activation_max;
   GetActivationMinMax(Ac, &output_activation_min, &output_activation_max);
   Conv(input_data, input_dims, filter_data, filter_dims, bias_data, bias_dims,
@@ -2614,6 +2911,9 @@ void Conv(const float* input_data, const Dims<4>& input_dims,
           int pad_width, int pad_height, float* output_data,
           const Dims<4>& output_dims, float* im2col_data,
           const Dims<4>& im2col_dims) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_43(mht_43_v, 2914, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Conv");
+
   Conv<Ac>(input_data, input_dims, filter_data, filter_dims, bias_data,
            bias_dims, stride, stride, 1, 1, pad_width, pad_height, output_data,
            output_dims, im2col_data, im2col_dims);
@@ -2625,6 +2925,9 @@ inline void Conv(const ConvParams& params, const RuntimeShape& input_shape,
                  const int32* bias_data, const RuntimeShape& output_shape,
                  uint8* output_data, const RuntimeShape& im2col_shape,
                  uint8* im2col_data, gemmlowp::GemmContext* gemmlowp_context) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_44(mht_44_v, 2928, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Conv");
+
   ruy::profiler::ScopeLabel label("Conv/8bit");
   const int stride_width = params.stride_width;
   const int stride_height = params.stride_height;
@@ -2736,6 +3039,9 @@ inline void Conv(const uint8* input_data, const Dims<4>& input_dims,
                  uint8* output_data, const Dims<4>& output_dims,
                  uint8* im2col_data, const Dims<4>& im2col_dims,
                  gemmlowp::GemmContext* gemmlowp_context) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_45(mht_45_v, 3042, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Conv");
+
   tflite::ConvParams op_params;
   // Padding type is ignored, but still set.
   op_params.padding_type = PaddingType::kSame;
@@ -2770,6 +3076,9 @@ inline void Conv(const uint8* input_data, const Dims<4>& input_dims,
                  const Dims<4>& output_dims, uint8* im2col_data,
                  const Dims<4>& im2col_dims,
                  gemmlowp::GemmContext* gemmlowp_context) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_46(mht_46_v, 3079, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Conv");
+
   Conv(input_data, input_dims, input_offset, filter_data, filter_dims,
        filter_offset, bias_data, bias_dims, stride_width, stride_height, 1, 1,
        pad_width, pad_height, output_offset, output_multiplier, output_shift,
@@ -2790,6 +3099,9 @@ inline void Conv(const uint8* input_data, const Dims<4>& input_dims,
                  const Dims<4>& output_dims, uint8* im2col_data,
                  const Dims<4>& im2col_dims,
                  gemmlowp::GemmContext* gemmlowp_context) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_47(mht_47_v, 3102, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Conv");
+
   static_assert(Ac == FusedActivationFunctionType::kNone ||
                     Ac == FusedActivationFunctionType::kRelu ||
                     Ac == FusedActivationFunctionType::kRelu6 ||
@@ -2817,6 +3129,9 @@ void Conv(const uint8* input_data, const Dims<4>& input_dims,
           int32 output_activation_min, int32 output_activation_max,
           uint8* output_data, const Dims<4>& output_dims, uint8* im2col_data,
           const Dims<4>& im2col_dims, gemmlowp::GemmContext* gemmlowp_context) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_48(mht_48_v, 3132, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Conv");
+
   static_assert(Ac == FusedActivationFunctionType::kNone ||
                     Ac == FusedActivationFunctionType::kRelu ||
                     Ac == FusedActivationFunctionType::kRelu6 ||
@@ -2844,6 +3159,9 @@ void ConvAsGemm(const float* input_data, const Dims<4>& input_dims,
                 const float* filter_data, const Dims<4>& filter_dims,
                 const float* bias_data, const Dims<4>& bias_dims,
                 float* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_49(mht_49_v, 3162, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "ConvAsGemm");
+
   ruy::profiler::ScopeLabel label("ConvAsGemm");
 
   const auto input_matrix_map =
@@ -2869,6 +3187,9 @@ void ConvAsGemm(const uint8* input_data, const Dims<4>& input_dims,
                 int32 output_activation_min, int32 output_activation_max,
                 uint8* output_data, const Dims<4>& output_dims,
                 gemmlowp::GemmContext* gemmlowp_context) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_50(mht_50_v, 3190, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "ConvAsGemm");
+
   ruy::profiler::ScopeLabel label("ConvAsGemm/8bit");
   static_assert(Ac == FusedActivationFunctionType::kNone ||
                     Ac == FusedActivationFunctionType::kRelu ||
@@ -2908,6 +3229,9 @@ inline void TransposeConv(
     const float* input_data, const RuntimeShape& filter_shape,
     const float* filter_data, const RuntimeShape& output_shape,
     float* output_data, const RuntimeShape& im2col_shape, float* im2col_data) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_51(mht_51_v, 3232, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "TransposeConv");
+
   ruy::profiler::ScopeLabel label("TransposeConv");
   // Note we could use transposed weights with forward conv for unstrided
   // cases. But we are already getting good performance with this code as-is.
@@ -2931,6 +3255,9 @@ inline void TransposeConv(const float* input_data, const Dims<4>& input_dims,
                           int pad_height, float* output_data,
                           const Dims<4>& output_dims, float* im2col_data,
                           const Dims<4>& im2col_dims) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_52(mht_52_v, 3258, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "TransposeConv");
+
   tflite::ConvParams op_params;
   // Padding type is ignored, but still set.
   op_params.padding_type = PaddingType::kSame;
@@ -2950,6 +3277,9 @@ inline void TransposeConvV2(
     const float* hwoi_ordered_filter_data, const RuntimeShape& output_shape,
     float* output_data, const RuntimeShape& col2im_shape, float* col2im_data,
     CpuBackendContext* cpu_backend_context) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_53(mht_53_v, 3280, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "TransposeConvV2");
+
   TransposeConvV2(params, input_shape, input_data, hwoi_ordered_filter_shape,
                   hwoi_ordered_filter_data, /*bias_shape*/ RuntimeShape(),
                   /*bias_data*/ nullptr, output_shape, output_data,
@@ -2962,6 +3292,9 @@ void TransposeIm2col(const T* input_data, const Dims<4>& input_dims,
                      int stride_height, int pad_width, int pad_height,
                      const Dims<4>& output_dims, uint8 zero_byte,
                      T* im2col_data) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_54(mht_54_v, 3295, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "TransposeIm2col");
+
   tflite::ConvParams op_params;
   // Padding type is ignored, but still set.
   op_params.padding_type = PaddingType::kSame;
@@ -2986,6 +3319,9 @@ inline void LstmCell(
     const RuntimeShape& unextended_output_activ_shape, float* output_activ_data,
     const RuntimeShape& unextended_concat_temp_shape, float* concat_temp_data,
     const RuntimeShape& unextended_activ_temp_shape, float* activ_temp_data) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_55(mht_55_v, 3322, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "LstmCell");
+
   ruy::profiler::ScopeLabel label("LstmCell");
   TFLITE_DCHECK_LE(unextended_input_shape.DimensionsCount(), 4);
   TFLITE_DCHECK_LE(unextended_prev_activ_shape.DimensionsCount(), 4);
@@ -3102,6 +3438,9 @@ inline void LstmCell(const float* input_data, const Dims<4>& input_dims,
                      const Dims<4>& output_activ_dims, float* concat_temp_data,
                      const Dims<4>& concat_temp_dims, float* activ_temp_data,
                      const Dims<4>& activ_temp_dims) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_56(mht_56_v, 3441, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "LstmCell");
+
   tflite::LstmCellParams op_params;
   // Float LSTM cell does not need parameters to be set: leave untouched.
 
@@ -3133,6 +3472,9 @@ inline void LstmCell(
     uint8* concat_temp_data_uint8,
     const RuntimeShape& unextended_activ_temp_shape,
     int16* activ_temp_data_int16, gemmlowp::GemmContext* gemmlowp_context) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_57(mht_57_v, 3475, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "LstmCell");
+
   ruy::profiler::ScopeLabel label(
       "LstmCell/quantized (8bit external, 16bit internal)");
   int32 weights_zero_point = params.weights_zero_point;
@@ -3415,6 +3757,9 @@ void LstmCell(const uint8* input_data_uint8, const Dims<4>& input_dims,
               const Dims<4>& activ_temp_dims, int32 weights_zero_point,
               int32 accum_multiplier, int accum_shift,
               gemmlowp::GemmContext* gemmlowp_context) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_58(mht_58_v, 3760, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "LstmCell");
+
   tflite::LstmCellParams op_params;
   op_params.weights_zero_point = weights_zero_point;
   op_params.accum_multiplier = accum_multiplier;
@@ -3436,6 +3781,9 @@ void BroadcastDiv(const T* input1_data, const Dims<4>& input1_dims,
                   const T* input2_data, const Dims<4>& input2_dims,
                   T output_activation_min, T output_activation_max,
                   T* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_59(mht_59_v, 3784, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "BroadcastDiv");
+
   tflite::ArithmeticParams op_params;
   SetActivationParams(output_activation_min, output_activation_max, &op_params);
 
@@ -3447,6 +3795,9 @@ void BroadcastDiv(const T* input1_data, const Dims<4>& input1_dims,
 template <FusedActivationFunctionType Ac>
 void L2Normalization(const float* input_data, const RuntimeShape& input_shape,
                      float* output_data, const RuntimeShape& output_shape) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_60(mht_60_v, 3798, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "L2Normalization");
+
   static_assert(Ac == FusedActivationFunctionType::kNone, "");
   tflite::L2NormalizationParams op_params;
   // No params need to be set for float, but reserved in signature for future
@@ -3460,6 +3811,9 @@ inline void L2Normalization(const uint8* input_data,
                             const RuntimeShape& input_shape,
                             int32 input_zero_point, uint8* output_data,
                             const RuntimeShape& output_shape) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_61(mht_61_v, 3814, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "L2Normalization");
+
   tflite::L2NormalizationParams op_params;
   op_params.input_zero_point = input_zero_point;
 
@@ -3470,6 +3824,9 @@ inline void L2Normalization(const uint8* input_data,
 template <FusedActivationFunctionType Ac>
 void L2Normalization(const float* input_data, const Dims<4>& input_dims,
                      float* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_62(mht_62_v, 3827, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "L2Normalization");
+
   L2Normalization<Ac>(input_data, DimsToShape(input_dims), output_data,
                       DimsToShape(output_dims));
 }
@@ -3477,12 +3834,18 @@ void L2Normalization(const float* input_data, const Dims<4>& input_dims,
 inline void L2Normalization(const uint8* input_data, const Dims<4>& input_dims,
                             int32 input_zero_point, uint8* output_data,
                             const Dims<4>& output_dims) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_63(mht_63_v, 3837, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "L2Normalization");
+
   L2Normalization(input_data, DimsToShape(input_dims), input_zero_point,
                   output_data, DimsToShape(output_dims));
 }
 
 inline void Relu(const float* input_data, const Dims<4>& input_dims,
                  float* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_64(mht_64_v, 3846, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Relu");
+
   Relu(DimsToShape(input_dims), input_data, DimsToShape(output_dims),
        output_data);
 }
@@ -3492,6 +3855,9 @@ template <FusedActivationFunctionType Ac>
 void Add(const float* input1_data, const Dims<4>& input1_dims,
          const float* input2_data, const Dims<4>& input2_dims,
          float* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_65(mht_65_v, 3858, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Add");
+
   float output_activation_min, output_activation_max;
   GetActivationMinMax(Ac, &output_activation_min, &output_activation_max);
 
@@ -3512,6 +3878,9 @@ inline void Add(int left_shift, const uint8* input1_data,
                 int32 output_offset, int32 output_multiplier, int output_shift,
                 int32 output_activation_min, int32 output_activation_max,
                 uint8* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_66(mht_66_v, 3881, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Add");
+
   constexpr int kReverseShift = -1;
   static_assert(Ac == FusedActivationFunctionType::kNone ||
                     Ac == FusedActivationFunctionType::kRelu ||
@@ -3546,6 +3915,9 @@ template <FusedActivationFunctionType Ac>
 void Add(const int32* input1_data, const Dims<4>& input1_dims,
          const int32* input2_data, const Dims<4>& input2_dims,
          int32* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_67(mht_67_v, 3918, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Add");
+
   ruy::profiler::ScopeLabel label("Add/int32");
   TFLITE_DCHECK(Ac == FusedActivationFunctionType::kNone);
 
@@ -3562,6 +3934,9 @@ void BroadcastAdd(const T* input1_data, const Dims<4>& input1_dims,
                   const T* input2_data, const Dims<4>& input2_dims,
                   T output_activation_min, T output_activation_max,
                   T* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_68(mht_68_v, 3937, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "BroadcastAdd");
+
   tflite::ArithmeticParams op_params;
   op_params.float_activation_min = output_activation_min;
   op_params.float_activation_max = output_activation_max;
@@ -3581,6 +3956,9 @@ inline void BroadcastAdd(int left_shift, const uint8* input1_data,
                          int32 output_activation_min,
                          int32 output_activation_max, uint8* output_data,
                          const Dims<4>& output_dims) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_69(mht_69_v, 3959, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "BroadcastAdd");
+
   constexpr int kReverseShift = -1;
   static_assert(Ac == FusedActivationFunctionType::kNone ||
                     Ac == FusedActivationFunctionType::kRelu ||
@@ -3620,6 +3998,9 @@ inline void BroadcastAddFivefold(
     int input2_shift, int32 output_offset, int32 output_multiplier,
     int output_shift, int32 output_activation_min, int32 output_activation_max,
     uint8* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_70(mht_70_v, 4001, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "BroadcastAddFivefold");
+
   constexpr int kReverseShift = -1;
   static_assert(Ac == FusedActivationFunctionType::kNone ||
                     Ac == FusedActivationFunctionType::kRelu ||
@@ -3675,6 +4056,9 @@ inline void Add(const int16* input1_data, const Dims<4>& input1_dims,
                 const Dims<4>& input2_dims, int input2_shift,
                 int16 output_activation_min, int16 output_activation_max,
                 int16* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_71(mht_71_v, 4059, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Add");
+
   constexpr int kReverseShift = -1;
   static_assert(Ac == FusedActivationFunctionType::kNone ||
                     Ac == FusedActivationFunctionType::kRelu ||
@@ -3700,6 +4084,9 @@ inline void Add(const int16* input1_data, const Dims<4>& input1_dims,
 inline void Sub(const float* input1_data, const Dims<4>& input1_dims,
                 const float* input2_data, const Dims<4>& input2_dims,
                 float* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_72(mht_72_v, 4087, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Sub");
+
   float output_activation_min, output_activation_max;
   GetActivationMinMax(FusedActivationFunctionType::kNone,
                       &output_activation_min, &output_activation_max);
@@ -3715,6 +4102,9 @@ template <typename T>
 void Sub(const T* input1_data, const Dims<4>& input1_dims, const T* input2_data,
          const Dims<4>& input2_dims, T* output_data,
          const Dims<4>& output_dims) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_73(mht_73_v, 4105, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Sub");
+
   T output_activation_min, output_activation_max;
   GetActivationMinMax(FusedActivationFunctionType::kNone,
                       &output_activation_min, &output_activation_max);
@@ -3733,6 +4123,9 @@ inline void BroadcastMul(const uint8* input1_data, const Dims<4>& input1_dims,
                          int output_shift, int32 output_activation_min,
                          int32 output_activation_max, uint8* output_data,
                          const Dims<4>& output_dims) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_74(mht_74_v, 4126, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "BroadcastMul");
+
   tflite::ArithmeticParams op_params;
   SetActivationParams(output_activation_min, output_activation_max, &op_params);
   op_params.input1_offset = input1_offset;
@@ -3755,6 +4148,9 @@ inline void BroadcastMul(const uint8* input1_data, const Dims<4>& input1_dims,
                          int output_shift, int32 output_activation_min,
                          int32 output_activation_max, uint8* output_data,
                          const Dims<4>& output_dims) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_75(mht_75_v, 4151, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "BroadcastMul");
+
   BroadcastMul(input1_data, input1_dims, input1_offset, input2_data,
                input2_dims, input2_offset, output_offset, output_multiplier,
                output_shift, output_activation_min, output_activation_max,
@@ -3767,6 +4163,9 @@ inline bool AveragePool(const float* input_data, const Dims<4>& input_dims,
                         float output_activation_min,
                         float output_activation_max, float* output_data,
                         const Dims<4>& output_dims) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_76(mht_76_v, 4166, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "AveragePool");
+
   tflite::PoolParams params;
   params.stride_height = stride_height;
   params.stride_width = stride_width;
@@ -3786,6 +4185,9 @@ bool AveragePool(const float* input_data, const Dims<4>& input_dims,
                  int stride_width, int stride_height, int pad_width,
                  int pad_height, int kwidth, int kheight, float* output_data,
                  const Dims<4>& output_dims) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_77(mht_77_v, 4188, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "AveragePool");
+
   float output_activation_min, output_activation_max;
   GetActivationMinMax(Ac, &output_activation_min, &output_activation_max);
 
@@ -3801,6 +4203,9 @@ bool AveragePool(const float* input_data, const Dims<4>& input_dims, int stride,
                  int pad_width, int pad_height, int filter_width,
                  int filter_height, float* output_data,
                  const Dims<4>& output_dims) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_78(mht_78_v, 4206, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "AveragePool");
+
   return AveragePool<Ac>(input_data, input_dims, stride, stride, pad_width,
                          pad_height, filter_width, filter_height, output_data,
                          output_dims);
@@ -3812,6 +4217,9 @@ inline bool AveragePool(const uint8* input_data, const Dims<4>& input_dims,
                         int32 output_activation_min,
                         int32 output_activation_max, uint8* output_data,
                         const Dims<4>& output_dims) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_79(mht_79_v, 4220, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "AveragePool");
+
   tflite::PoolParams params;
   params.stride_height = stride_height;
   params.stride_width = stride_width;
@@ -3832,6 +4240,9 @@ bool AveragePool(const uint8* input_data, const Dims<4>& input_dims,
                  int pad_height, int filter_width, int filter_height,
                  int32 output_activation_min, int32 output_activation_max,
                  uint8* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_80(mht_80_v, 4243, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "AveragePool");
+
   static_assert(Ac == FusedActivationFunctionType::kNone ||
                     Ac == FusedActivationFunctionType::kRelu ||
                     Ac == FusedActivationFunctionType::kRelu6 ||
@@ -3854,6 +4265,9 @@ bool AveragePool(const uint8* input_data, const Dims<4>& input_dims, int stride,
                  int filter_height, int32 output_activation_min,
                  int32 output_activation_max, uint8* output_data,
                  const Dims<4>& output_dims) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_81(mht_81_v, 4268, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "AveragePool");
+
   return AveragePool<Ac>(input_data, input_dims, stride, stride, pad_width,
                          pad_height, filter_width, filter_height,
                          output_activation_min, output_activation_max,
@@ -3865,6 +4279,9 @@ inline void MaxPool(const float* input_data, const Dims<4>& input_dims,
                     int pad_height, int kwidth, int kheight,
                     float output_activation_min, float output_activation_max,
                     float* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_82(mht_82_v, 4282, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "MaxPool");
+
   tflite::PoolParams params;
   params.stride_height = stride_height;
   params.stride_width = stride_width;
@@ -3884,6 +4301,9 @@ void MaxPool(const float* input_data, const Dims<4>& input_dims,
              int stride_width, int stride_height, int pad_width, int pad_height,
              int kwidth, int kheight, float* output_data,
              const Dims<4>& output_dims) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_83(mht_83_v, 4304, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "MaxPool");
+
   float output_activation_min, output_activation_max;
   GetActivationMinMax(Ac, &output_activation_min, &output_activation_max);
   MaxPool(input_data, input_dims, stride_width, stride_height, pad_width,
@@ -3896,6 +4316,9 @@ template <FusedActivationFunctionType Ac>
 void MaxPool(const float* input_data, const Dims<4>& input_dims, int stride,
              int pad_width, int pad_height, int filter_width, int filter_height,
              float* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_84(mht_84_v, 4319, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "MaxPool");
+
   MaxPool<Ac>(input_data, input_dims, stride, stride, pad_width, pad_height,
               filter_width, filter_height, output_data, output_dims);
 }
@@ -3905,6 +4328,9 @@ inline void MaxPool(const uint8* input_data, const Dims<4>& input_dims,
                     int pad_height, int filter_width, int filter_height,
                     int32 output_activation_min, int32 output_activation_max,
                     uint8* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_85(mht_85_v, 4331, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "MaxPool");
+
   PoolParams params;
   params.stride_height = stride_height;
   params.stride_width = stride_width;
@@ -3925,6 +4351,9 @@ void MaxPool(const uint8* input_data, const Dims<4>& input_dims,
              int filter_width, int filter_height, int32 output_activation_min,
              int32 output_activation_max, uint8* output_data,
              const Dims<4>& output_dims) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_86(mht_86_v, 4354, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "MaxPool");
+
   static_assert(Ac == FusedActivationFunctionType::kNone ||
                     Ac == FusedActivationFunctionType::kRelu ||
                     Ac == FusedActivationFunctionType::kRelu6 ||
@@ -3945,6 +4374,9 @@ void MaxPool(const uint8* input_data, const Dims<4>& input_dims, int stride,
              int pad_width, int pad_height, int filter_width, int filter_height,
              int32 output_activation_min, int32 output_activation_max,
              uint8* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_87(mht_87_v, 4377, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "MaxPool");
+
   MaxPool<Ac>(input_data, input_dims, stride, stride, pad_width, pad_height,
               filter_width, filter_height, output_activation_min,
               output_activation_max, output_data, output_dims);
@@ -3955,6 +4387,9 @@ inline void L2Pool(const float* input_data, const Dims<4>& input_dims,
                    int pad_height, int filter_width, int filter_height,
                    float output_activation_min, float output_activation_max,
                    float* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_88(mht_88_v, 4390, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "L2Pool");
+
   PoolParams params;
   params.stride_height = stride_height;
   params.stride_width = stride_width;
@@ -3974,6 +4409,9 @@ void L2Pool(const float* input_data, const Dims<4>& input_dims,
             int stride_width, int stride_height, int pad_width, int pad_height,
             int filter_width, int filter_height, float* output_data,
             const Dims<4>& output_dims) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_89(mht_89_v, 4412, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "L2Pool");
+
   float output_activation_min, output_activation_max;
   GetActivationMinMax(Ac, &output_activation_min, &output_activation_max);
   L2Pool(input_data, input_dims, stride_width, stride_height, pad_width,
@@ -3986,6 +4424,9 @@ template <FusedActivationFunctionType Ac>
 void L2Pool(const float* input_data, const Dims<4>& input_dims, int stride,
             int pad_width, int pad_height, int filter_width, int filter_height,
             float* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_90(mht_90_v, 4427, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "L2Pool");
+
   L2Pool<Ac>(input_data, input_dims, stride, stride, pad_width, pad_height,
              filter_width, filter_height, output_data, output_dims);
 }
@@ -3993,6 +4434,9 @@ void L2Pool(const float* input_data, const Dims<4>& input_dims, int stride,
 inline void Softmax(const SoftmaxParams& params,
                     const RuntimeShape& input_shape, const uint8* input_data,
                     const RuntimeShape& output_shape, uint8* output_data) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_91(mht_91_v, 4437, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Softmax");
+
   const int32 input_beta_multiplier = params.input_multiplier;
   const int32 input_beta_left_shift = params.input_left_shift;
   const int diff_min = params.diff_min;
@@ -4195,6 +4639,9 @@ inline void Softmax(const SoftmaxParams& params,
 inline void Softmax(const float* input_data, const RuntimeShape& input_shape,
                     float beta, float* output_data,
                     const RuntimeShape& output_shape) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_92(mht_92_v, 4642, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Softmax");
+
   SoftmaxParams params;
   params.beta = beta;
   Softmax(params, input_shape, input_data, output_shape, output_data);
@@ -4203,6 +4650,9 @@ inline void Softmax(const float* input_data, const RuntimeShape& input_shape,
 inline void Softmax(const float* input_data, const Dims<4>& input_dims,
                     float beta, float* output_data,
                     const Dims<4>& output_dims) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_93(mht_93_v, 4653, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Softmax");
+
   Softmax(input_data, DimsToShape(input_dims), beta, output_data,
           DimsToShape(output_dims));
 }
@@ -4211,6 +4661,9 @@ inline void Softmax(const uint8* input_data, const RuntimeShape& input_shape,
                     int32 input_beta_multiplier, int32 input_beta_left_shift,
                     int diff_min, uint8* output_data,
                     const RuntimeShape& output_shape) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_94(mht_94_v, 4664, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Softmax");
+
   SoftmaxParams params;
   params.input_multiplier = input_beta_multiplier;
   params.input_left_shift = input_beta_left_shift;
@@ -4221,6 +4674,9 @@ inline void Softmax(const uint8* input_data, const Dims<4>& input_dims,
                     int32 input_beta_multiplier, int32 input_beta_left_shift,
                     int diff_min, uint8* output_data,
                     const Dims<4>& output_dims) {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_95(mht_95_v, 4677, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Softmax");
+
   Softmax(input_data, DimsToShape(input_dims), input_beta_multiplier,
           input_beta_left_shift, diff_min, output_data,
           DimsToShape(output_dims));
@@ -4228,6 +4684,9 @@ inline void Softmax(const uint8* input_data, const Dims<4>& input_dims,
 
 inline void LogSoftmax(const float* input_data, const RuntimeShape& input_shape,
                        float* output_data, const RuntimeShape& output_shape) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_96(mht_96_v, 4687, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "LogSoftmax");
+
   SoftmaxParams params;
   // No params currently used for float LogSoftmax.
   LogSoftmax(params, input_shape, input_data, output_shape, output_data);
@@ -4235,6 +4694,9 @@ inline void LogSoftmax(const float* input_data, const RuntimeShape& input_shape,
 
 inline void LogSoftmax(const float* input_data, const Dims<4>& input_dims,
                        float* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_97(mht_97_v, 4697, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "LogSoftmax");
+
   LogSoftmax(input_data, DimsToShape(input_dims), output_data,
              DimsToShape(output_dims));
 }
@@ -4244,6 +4706,9 @@ inline void LogSoftmax(const uint8* input_data, const RuntimeShape& input_shape,
                        int32 reverse_scaling_divisor,
                        int32 reverse_scaling_right_shift, int diff_min,
                        uint8* output_data, const RuntimeShape& output_shape) {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_98(mht_98_v, 4709, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "LogSoftmax");
+
   SoftmaxParams params;
   params.input_multiplier = input_multiplier;
   params.input_left_shift = input_left_shift;
@@ -4259,6 +4724,9 @@ inline void LogSoftmax(const uint8* input_data, const Dims<4>& input_dims,
                        int32 reverse_scaling_divisor,
                        int32 reverse_scaling_right_shift, int diff_min,
                        uint8* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_99(mht_99_v, 4727, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "LogSoftmax");
+
   reference_ops::LogSoftmax(
       input_data, DimsToShape(input_dims), input_multiplier, input_left_shift,
       reverse_scaling_divisor, reverse_scaling_right_shift, diff_min,
@@ -4268,6 +4736,9 @@ inline void LogSoftmax(const uint8* input_data, const Dims<4>& input_dims,
 inline void Logistic(const LogisticParams& params,
                      const RuntimeShape& input_shape, const uint8* input_data,
                      const RuntimeShape& output_shape, uint8* output_data) {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_100(mht_100_v, 4739, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Logistic");
+
   ruy::profiler::ScopeLabel label("Logistic/Uint8");
   const int32 input_zero_point = params.input_zero_point;
   const int32 input_range_radius = params.input_range_radius;
@@ -4409,6 +4880,9 @@ inline void Logistic(const uint8* input_data, const RuntimeShape& input_shape,
                      int32 input_zero_point, int32 input_range_radius,
                      int32 input_multiplier, int input_left_shift,
                      uint8* output_data, const RuntimeShape& output_shape) {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_101(mht_101_v, 4883, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Logistic");
+
   LogisticParams params;
   params.input_zero_point = input_zero_point;
   params.input_range_radius = input_range_radius;
@@ -4419,6 +4893,9 @@ inline void Logistic(const uint8* input_data, const RuntimeShape& input_shape,
 
 inline void Logistic(const float* input_data, const Dims<4>& input_dims,
                      float* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_102(mht_102_v, 4896, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Logistic");
+
   Logistic(DimsToShape(input_dims), input_data, DimsToShape(output_dims),
            output_data);
 }
@@ -4427,6 +4904,9 @@ inline void Logistic(const uint8* input_data, const Dims<4>& input_dims,
                      int32 input_zero_point, int32 input_range_radius,
                      int32 input_multiplier, int input_left_shift,
                      uint8* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_103(mht_103_v, 4907, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Logistic");
+
   Logistic(input_data, DimsToShape(input_dims), input_zero_point,
            input_range_radius, input_multiplier, input_left_shift, output_data,
            DimsToShape(output_dims));
@@ -4434,6 +4914,9 @@ inline void Logistic(const uint8* input_data, const Dims<4>& input_dims,
 
 inline void Logistic(const RuntimeShape& input_shape, const int16* input_data,
                      const RuntimeShape& output_shape, int16* output_data) {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_104(mht_104_v, 4917, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Logistic");
+
   LogisticParams params;
   // No params currently needed by int16 Logistic.
   Logistic(params, input_shape, input_data, output_shape, output_data);
@@ -4441,6 +4924,9 @@ inline void Logistic(const RuntimeShape& input_shape, const int16* input_data,
 
 inline void Logistic(const int16* input_data, const RuntimeShape& input_shape,
                      int16* output_data, const RuntimeShape& output_shape) {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_105(mht_105_v, 4927, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Logistic");
+
   LogisticParams params;
   // No params currently needed by int16 Logistic.
   Logistic(params, input_shape, input_data, output_shape, output_data);
@@ -4448,12 +4934,18 @@ inline void Logistic(const int16* input_data, const RuntimeShape& input_shape,
 
 inline void Logistic(const int16* input_data, const Dims<4>& input_dims,
                      int16* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_106(mht_106_v, 4937, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Logistic");
+
   Logistic(input_data, DimsToShape(input_dims), output_data,
            DimsToShape(output_dims));
 }
 
 inline void Tanh(const float* input_data, const Dims<4>& input_dims,
                  float* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_107(mht_107_v, 4946, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Tanh");
+
   Tanh(DimsToShape(input_dims), input_data, DimsToShape(output_dims),
        output_data);
 }
@@ -4461,6 +4953,9 @@ inline void Tanh(const float* input_data, const Dims<4>& input_dims,
 inline void Tanh(const TanhParams& params, const RuntimeShape& input_shape,
                  const uint8* input_data, const RuntimeShape& output_shape,
                  uint8* output_data) {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_108(mht_108_v, 4956, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Tanh");
+
   // Note that this is almost the exact same code as in Logistic().
   ruy::profiler::ScopeLabel label("Tanh");
   const int32 input_zero_point = params.input_zero_point;
@@ -4612,6 +5107,9 @@ inline void Tanh(const uint8* input_data, const RuntimeShape& input_shape,
                  int32 input_zero_point, int32 input_range_radius,
                  int32 input_multiplier, int input_left_shift,
                  uint8* output_data, const RuntimeShape& output_shape) {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_109(mht_109_v, 5110, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Tanh");
+
   TanhParams params;
   params.input_zero_point = input_zero_point;
   params.input_range_radius = input_range_radius;
@@ -4624,6 +5122,9 @@ inline void Tanh(const uint8* input_data, const Dims<4>& input_dims,
                  int32 input_zero_point, int32 input_range_radius,
                  int32 input_multiplier, int input_left_shift,
                  uint8* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_110(mht_110_v, 5125, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Tanh");
+
   Tanh(input_data, DimsToShape(input_dims), input_zero_point,
        input_range_radius, input_multiplier, input_left_shift, output_data,
        DimsToShape(output_dims));
@@ -4632,6 +5133,9 @@ inline void Tanh(const uint8* input_data, const Dims<4>& input_dims,
 inline void Tanh(const int16* input_data, const RuntimeShape& input_shape,
                  int input_left_shift, int16* output_data,
                  const RuntimeShape& output_shape) {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_111(mht_111_v, 5136, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Tanh");
+
   TanhParams params;
   params.input_left_shift = input_left_shift;
   Tanh(params, input_shape, input_data, output_shape, output_data);
@@ -4640,6 +5144,9 @@ inline void Tanh(const int16* input_data, const RuntimeShape& input_shape,
 inline void Tanh(const int16* input_data, const Dims<4>& input_dims,
                  int input_left_shift, int16* output_data,
                  const Dims<4>& output_dims) {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_112(mht_112_v, 5147, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Tanh");
+
   Tanh(input_data, DimsToShape(input_dims), input_left_shift, output_data,
        DimsToShape(output_dims));
 }
@@ -4648,6 +5155,9 @@ template <typename T>
 inline void DepthToSpace(const T* input_data, const Dims<4>& input_dims,
                          int block_size, T* output_data,
                          const Dims<4>& output_dims) {
+   std::vector<std::string> mht_113_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_113(mht_113_v, 5158, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "DepthToSpace");
+
   tflite::DepthToSpaceParams op_params;
   op_params.block_size = block_size;
 
@@ -4659,6 +5169,9 @@ template <typename T>
 inline void SpaceToDepth(const T* input_data, const Dims<4>& input_dims,
                          int block_size, T* output_data,
                          const Dims<4>& output_dims) {
+   std::vector<std::string> mht_114_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_114(mht_114_v, 5172, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "SpaceToDepth");
+
   tflite::SpaceToDepthParams op_params;
   op_params.block_size = block_size;
 
@@ -4670,6 +5183,9 @@ inline void Mul(const float* input1_data, const Dims<4>& input1_dims,
                 const float* input2_data, const Dims<4>& input2_dims,
                 float output_activation_min, float output_activation_max,
                 float* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_115(mht_115_v, 5186, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Mul");
+
   tflite::ArithmeticParams op_params;
   op_params.float_activation_min = output_activation_min;
   op_params.float_activation_max = output_activation_max;
@@ -4683,6 +5199,9 @@ template <FusedActivationFunctionType Ac>
 void Mul(const float* input1_data, const Dims<4>& input1_dims,
          const float* input2_data, const Dims<4>& input2_dims,
          float* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_116_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_116(mht_116_v, 5202, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Mul");
+
   float output_activation_min, output_activation_max;
   GetActivationMinMax(Ac, &output_activation_min, &output_activation_max);
 
@@ -4694,6 +5213,9 @@ inline void Mul(const int32* input1_data, const Dims<4>& input1_dims,
                 const int32* input2_data, const Dims<4>& input2_dims,
                 int32 output_activation_min, int32 output_activation_max,
                 int32* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_117(mht_117_v, 5216, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Mul");
+
   tflite::ArithmeticParams op_params;
   op_params.quantized_activation_min = output_activation_min;
   op_params.quantized_activation_max = output_activation_max;
@@ -4707,6 +5229,9 @@ template <FusedActivationFunctionType Ac>
 void Mul(const int32* input1_data, const Dims<4>& input1_dims,
          const int32* input2_data, const Dims<4>& input2_dims,
          int32* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_118_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_118(mht_118_v, 5232, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Mul");
+
   TFLITE_DCHECK(Ac == FusedActivationFunctionType::kNone);
   tflite::ArithmeticParams op_params;
   // No parameters needed.
@@ -4719,6 +5244,9 @@ void Mul(const int32* input1_data, const Dims<4>& input1_dims,
 inline void Mul(const int16* input1_data, const Dims<4>& input1_dims,
                 const int16* input2_data, const Dims<4>& input2_dims,
                 int16* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_119(mht_119_v, 5247, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Mul");
+
   tflite::ArithmeticParams op_params;
   // No parameters needed.
 
@@ -4732,6 +5260,9 @@ inline void Mul(const int16* input1_data, const Dims<4>& input1_dims,
                 int32 output_offset, int32 output_activation_min,
                 int32 output_activation_max, uint8* output_data,
                 const Dims<4>& output_dims) {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_120(mht_120_v, 5263, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Mul");
+
   tflite::ArithmeticParams op_params;
   op_params.output_offset = output_offset;
   op_params.quantized_activation_min = output_activation_min;
@@ -4747,6 +5278,9 @@ void BroadcastMul(const T* input1_data, const Dims<4>& input1_dims,
                   const T* input2_data, const Dims<4>& input2_dims,
                   T output_activation_min, T output_activation_max,
                   T* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_121(mht_121_v, 5281, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "BroadcastMul");
+
   tflite::ArithmeticParams op_params;
   SetActivationParams(output_activation_min, output_activation_max, &op_params);
 
@@ -4760,6 +5294,9 @@ template <FusedActivationFunctionType Ac>
 inline void BroadcastMul(const float* input1_data, const Dims<4>& input1_dims,
                          const float* input2_data, const Dims<4>& input2_dims,
                          float* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_122_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_122(mht_122_v, 5297, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "BroadcastMul");
+
   tflite::ArithmeticParams op_params;
   float float_activation_min;
   float float_activation_max;
@@ -4776,6 +5313,9 @@ inline void LocalResponseNormalization(const float* input_data,
                                        float bias, float alpha, float beta,
                                        float* output_data,
                                        const Dims<4>& output_dims) {
+   std::vector<std::string> mht_123_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_123(mht_123_v, 5316, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "LocalResponseNormalization");
+
   tflite::LocalResponseNormalizationParams op_params;
   op_params.range = range;
   op_params.bias = bias;
@@ -4795,6 +5335,9 @@ void Cast(const SrcT* input_data, const Dims<4>& input_dims, DstT* output_data,
 
 inline void Floor(const float* input_data, const Dims<4>& input_dims,
                   float* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_124_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_124(mht_124_v, 5338, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Floor");
+
   Floor(DimsToShape(input_dims), input_data, DimsToShape(output_dims),
         output_data);
 }
@@ -4803,6 +5346,9 @@ inline void ResizeBilinear(const float* input_data, const Dims<4>& input_dims,
                            const int32* output_size_data,
                            const Dims<4>& output_size_dims, float* output_data,
                            const Dims<4>& output_dims, bool align_corners) {
+   std::vector<std::string> mht_125_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_125(mht_125_v, 5349, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "ResizeBilinear");
+
   tflite::ResizeBilinearParams op_params;
   op_params.align_corners = align_corners;
   op_params.half_pixel_centers = false;
@@ -4815,6 +5361,9 @@ inline void ResizeBilinear(const uint8* input_data, const Dims<4>& input_dims,
                            const int32* output_size_data,
                            const Dims<4>& output_size_dims, uint8* output_data,
                            const Dims<4>& output_dims, bool align_corners) {
+   std::vector<std::string> mht_126_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_126(mht_126_v, 5364, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "ResizeBilinear");
+
   tflite::ResizeBilinearParams op_params;
   op_params.align_corners = align_corners;
   op_params.half_pixel_centers = false;
@@ -4828,6 +5377,9 @@ inline void ResizeBilinear(const float* input_data, const Dims<4>& input_dims,
                            const int32* output_size_data,
                            const Dims<4>& output_size_dims, float* output_data,
                            const Dims<4>& output_dims) {
+   std::vector<std::string> mht_127_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_127(mht_127_v, 5380, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "ResizeBilinear");
+
   ResizeBilinear(input_data, input_dims, output_size_data, output_size_dims,
                  output_data, output_dims, /*align_corners=*/false);
 }
@@ -4837,6 +5389,9 @@ inline void ResizeBilinear(const uint8* input_data, const Dims<4>& input_dims,
                            const int32* output_size_data,
                            const Dims<4>& output_size_dims, uint8* output_data,
                            const Dims<4>& output_dims) {
+   std::vector<std::string> mht_128_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_128(mht_128_v, 5392, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "ResizeBilinear");
+
   ResizeBilinear(input_data, input_dims, output_size_data, output_size_dims,
                  output_data, output_dims, /*align_corners=*/false);
 }
@@ -4847,6 +5402,9 @@ inline void BatchToSpaceND(const T* input_data, const Dims<4>& input_dims,
                            const Dims<4>& block_shape_dims,
                            const int32* crops_data, const Dims<4>& crops_dims,
                            T* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_129_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_129(mht_129_v, 5405, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "BatchToSpaceND");
+
   BatchToSpaceND(DimsToShape(input_dims), input_data,
                  DimsToShape(block_shape_dims), block_shape_data,
                  DimsToShape(crops_dims), crops_data, DimsToShape(output_dims),
@@ -4859,6 +5417,9 @@ inline void PadV2(const T* input_data, const Dims<4>& input_dims,
                   const std::vector<int>& left_paddings,
                   const std::vector<int>& right_paddings, T* output_data,
                   const Dims<4>& output_dims, const T pad_value) {
+   std::vector<std::string> mht_130_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_130(mht_130_v, 5420, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "PadV2");
+
   TFLITE_DCHECK_EQ(left_paddings.size(), 4);
   TFLITE_DCHECK_EQ(right_paddings.size(), 4);
   tflite::PadParams op_params;
@@ -4880,6 +5441,9 @@ inline void Pad(const T* input_data, const Dims<4>& input_dims,
                 const std::vector<int>& left_paddings,
                 const std::vector<int>& right_paddings, T* output_data,
                 const Dims<4>& output_dims, const int32_t pad_value) {
+   std::vector<std::string> mht_131_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_131(mht_131_v, 5444, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Pad");
+
   const T converted_pad_value = static_cast<T>(pad_value);
   PadV2<T>(input_data, input_dims, left_paddings, right_paddings, output_data,
            output_dims, converted_pad_value);
@@ -4891,6 +5455,9 @@ inline void Pad(const T* input_data, const Dims<4>& input_dims,
                 const std::vector<int>& left_paddings,
                 const std::vector<int>& right_paddings, T* output_data,
                 const Dims<4>& output_dims) {
+   std::vector<std::string> mht_132_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_132(mht_132_v, 5458, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Pad");
+
   const T pad_value = static_cast<T>(0);
   PadV2<T>(input_data, input_dims, left_paddings, right_paddings, output_data,
            output_dims, pad_value);
@@ -4900,6 +5467,9 @@ template <typename T>
 inline void Slice(const T* input_data, const Dims<4>& input_dims,
                   const std::vector<int>& begin, const std::vector<int>& size,
                   T* output_data, const Dims<4>& output_dims) {
+   std::vector<std::string> mht_133_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_133(mht_133_v, 5470, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Slice");
+
   tflite::SliceParams op_params;
   op_params.begin_count = 4;
   op_params.size_count = 4;
@@ -4916,6 +5486,9 @@ template <typename T>
 void TensorFlowMinimum(const T* input1_data, const Dims<4>& input1_dims,
                        const T* input2_data, T* output_data,
                        const Dims<4>& output_dims) {
+   std::vector<std::string> mht_134_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_134(mht_134_v, 5489, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "TensorFlowMinimum");
+
   Minimum(DimsToShape(input1_dims), input1_data, input2_data,
           DimsToShape(output_dims), output_data);
 }
@@ -4924,6 +5497,9 @@ template <typename T>
 void TensorFlowMaximum(const T* input1_data, const Dims<4>& input1_dims,
                        const T* input2_data, T* output_data,
                        const Dims<4>& output_dims) {
+   std::vector<std::string> mht_135_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_135(mht_135_v, 5500, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "TensorFlowMaximum");
+
   Maximum(DimsToShape(input1_dims), input1_data, input2_data,
           DimsToShape(output_dims), output_data);
 }
@@ -4931,6 +5507,9 @@ void TensorFlowMaximum(const T* input1_data, const Dims<4>& input1_dims,
 inline void Dequantize(const uint8* input_data, const Dims<4>& input_dims,
                        int32 zero_point, double scale, float* output_data,
                        const Dims<4>& output_dims) {
+   std::vector<std::string> mht_136_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_136(mht_136_v, 5510, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Dequantize");
+
   tflite::DequantizationParams op_params;
   op_params.zero_point = zero_point;
   op_params.scale = scale;
@@ -4942,6 +5521,9 @@ inline void Dequantize(const uint8* input_data, const Dims<4>& input_dims,
 template <typename T>
 void Transpose(const T* input, const Dims<4>& input_dims, T* output,
                const Dims<4>& output_dims, const int* permuted_axes) {
+   std::vector<std::string> mht_137_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_137(mht_137_v, 5524, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "Transpose");
+
   TransposeParams params;
   params.perm_count = 4;
   for (int i = 0; i < 4; ++i) {
@@ -4958,6 +5540,9 @@ inline void StridedSlice(const T* input_data, const Dims<4>& input_dims,
                          const std::vector<int>& stop_indices,
                          const std::vector<int>& strides, T* output_data,
                          const Dims<4>& output_dims) {
+   std::vector<std::string> mht_138_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSlegacy_optimized_opsDTh mht_138(mht_138_v, 5543, "", "./tensorflow/lite/kernels/internal/optimized/legacy_optimized_ops.h", "StridedSlice");
+
   TFLITE_DCHECK_EQ(start_indices.size(), 4);
   auto op_params = strided_slice::BuildStridedSliceParams(
       begin_mask, end_mask, shrink_axis_mask, start_indices, stop_indices,

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,12 +217,18 @@ namespace {
 // userspace construct) to avoid unnecessary system calls. Without this caching,
 // it can take roughly 98ns, while it takes roughly 1ns with this caching.
 int32_t GetCachedTID() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_0(mht_0_v, 220, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "GetCachedTID");
+
   static thread_local int32_t current_thread_id =
       Env::Default()->GetCurrentThreadId();
   return current_thread_id;
 }
 
 const char* GetActivityDomainName(uint32_t domain) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_1(mht_1_v, 229, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "GetActivityDomainName");
+
   switch (domain) {
     case ACTIVITY_DOMAIN_HSA_API:
       return "HSA API";
@@ -78,6 +252,9 @@ const char* GetActivityDomainName(uint32_t domain) {
 }
 
 string GetActivityDomainOpName(uint32_t domain, uint32_t op) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_2(mht_2_v, 255, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "GetActivityDomainOpName");
+
   std::ostringstream oss;
   oss << GetActivityDomainName(domain) << " - ";
   switch (domain) {
@@ -92,6 +269,9 @@ string GetActivityDomainOpName(uint32_t domain, uint32_t op) {
 }
 
 const char* GetActivityPhaseName(uint32_t phase) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_3(mht_3_v, 272, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "GetActivityPhaseName");
+
   switch (phase) {
     case ACTIVITY_API_PHASE_ENTER:
       return "ENTER";
@@ -106,6 +286,9 @@ const char* GetActivityPhaseName(uint32_t phase) {
 
 inline void DumpApiCallbackData(uint32_t domain, uint32_t cbid,
                                 const void* cbdata) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_4(mht_4_v, 289, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "DumpApiCallbackData");
+
   std::ostringstream oss;
   oss << "API callback for " << GetActivityDomainName(domain);
   if (domain == ACTIVITY_DOMAIN_HIP_API) {
@@ -177,6 +360,10 @@ inline void DumpApiCallbackData(uint32_t domain, uint32_t cbid,
 
 void DumpActivityRecord(const roctracer_record_t* record,
                         std::string extra_info) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("extra_info: \"" + extra_info + "\"");
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_5(mht_5_v, 364, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "DumpActivityRecord");
+
   std::ostringstream oss;
   oss << "Activity callback for " << GetActivityDomainName(record->domain);
   oss << ", op name= "
@@ -201,6 +388,9 @@ void DumpActivityRecord(const roctracer_record_t* record,
 }  // namespace
 
 const char* GetRocmTracerEventTypeName(const RocmTracerEventType& type) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_6(mht_6_v, 391, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "GetRocmTracerEventTypeName");
+
   switch (type) {
     case RocmTracerEventType::MemcpyH2D:
       return "MemcpyH2D";
@@ -230,6 +420,9 @@ const char* GetRocmTracerEventTypeName(const RocmTracerEventType& type) {
 }
 
 const char* GetRocmTracerEventSourceName(const RocmTracerEventSource& source) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_7(mht_7_v, 423, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "GetRocmTracerEventSourceName");
+
   switch (source) {
     case RocmTracerEventSource::ApiCallback:
       return "ApiCallback";
@@ -250,6 +443,9 @@ const char* GetRocmTracerEventSourceName(const RocmTracerEventSource& source) {
 // FIXME(rocm-profiler): These domain names are not consistent with the
 // GetActivityDomainName function
 const char* GetRocmTracerEventDomainName(const RocmTracerEventDomain& domain) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_8(mht_8_v, 446, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "GetRocmTracerEventDomainName");
+
   switch (domain) {
     case RocmTracerEventDomain::HIP_API:
       return "HIP_API";
@@ -267,6 +463,10 @@ const char* GetRocmTracerEventDomainName(const RocmTracerEventDomain& domain) {
 void DumpRocmTracerEvent(const RocmTracerEvent& event,
                          uint64_t start_walltime_ns, uint64_t start_gputime_ns,
                          const string& message) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("message: \"" + message + "\"");
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_9(mht_9_v, 467, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "DumpRocmTracerEvent");
+
   std::ostringstream oss;
   oss << "correlation_id=" << event.correlation_id;
   oss << ",type=" << GetRocmTracerEventTypeName(event.type);
@@ -436,6 +636,9 @@ void RocmApiCallbackImpl::AddKernelEventUponApiExit(uint32_t cbid,
                                                     const hip_api_data_t* data,
                                                     const uint64_t enter_time,
                                                     const uint64_t exit_time) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_10(mht_10_v, 639, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "RocmApiCallbackImpl::AddKernelEventUponApiExit");
+
   /*
   extra fields:
     kernel_info, domain
@@ -547,6 +750,9 @@ void RocmApiCallbackImpl::AddKernelEventUponApiExit(uint32_t cbid,
 void RocmApiCallbackImpl::AddNormalMemcpyEventUponApiExit(
     uint32_t cbid, const hip_api_data_t* data, uint64_t enter_time,
     uint64_t exit_time) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_11(mht_11_v, 753, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "RocmApiCallbackImpl::AddNormalMemcpyEventUponApiExit");
+
   /*
     missing:
       device_id(partially, have only for async), context_id,
@@ -647,6 +853,9 @@ void RocmApiCallbackImpl::AddNormalMemcpyEventUponApiExit(
 void RocmApiCallbackImpl::AddMemcpyPeerEventUponApiExit(
     uint32_t cbid, const hip_api_data_t* data, uint64_t enter_time,
     uint64_t exit_time) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_12(mht_12_v, 856, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "RocmApiCallbackImpl::AddMemcpyPeerEventUponApiExit");
+
   /*
     missing: context_id, memcpy_info.kind
 
@@ -692,6 +901,9 @@ void RocmApiCallbackImpl::AddMemsetEventUponApiExit(uint32_t cbid,
                                                     const hip_api_data_t* data,
                                                     uint64_t enter_time,
                                                     uint64_t exit_time) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_13(mht_13_v, 904, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "RocmApiCallbackImpl::AddMemsetEventUponApiExit");
+
   /*
     misses:
       device_id(only avail. for async), context_id
@@ -773,6 +985,9 @@ void RocmApiCallbackImpl::AddMemsetEventUponApiExit(uint32_t cbid,
 void RocmApiCallbackImpl::AddMallocFreeEventUponApiExit(
     uint32_t cbid, const hip_api_data_t* data, uint32_t device_id,
     uint64_t enter_time, uint64_t exit_time) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_14(mht_14_v, 988, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "RocmApiCallbackImpl::AddMallocFreeEventUponApiExit");
+
   /*
     misses: context_id
 
@@ -826,6 +1041,9 @@ void RocmApiCallbackImpl::AddMallocFreeEventUponApiExit(
 void RocmApiCallbackImpl::AddSynchronizeEventUponApiExit(
     uint32_t cbid, const hip_api_data_t* data, uint64_t enter_time,
     uint64_t exit_time) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_15(mht_15_v, 1044, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "RocmApiCallbackImpl::AddSynchronizeEventUponApiExit");
+
   // TODO(rocm-profiler): neither CUDA and nor we capture annotaint for this
   // event
   /*
@@ -1015,6 +1233,9 @@ Status RocmActivityCallbackImpl::operator()(const char* begin,
 
 void RocmActivityCallbackImpl::AddHipKernelActivityEvent(
     const roctracer_record_t* record) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_16(mht_16_v, 1236, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "RocmActivityCallbackImpl::AddHipKernelActivityEvent");
+
   /*
   missing:
    name, device_id(got from hcc), context_id, stream_id(got from hcc),
@@ -1043,6 +1264,9 @@ void RocmActivityCallbackImpl::AddHipKernelActivityEvent(
 
 void RocmActivityCallbackImpl::AddNormalHipMemcpyActivityEvent(
     const roctracer_record_t* record) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_17(mht_17_v, 1267, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "RocmActivityCallbackImpl::AddNormalHipMemcpyActivityEvent");
+
   /*
   ---------------NormalMemcpy-------------------
     misses:context_id, memcpy_info.kind, memcpy_info.srckind,
@@ -1112,6 +1336,9 @@ void RocmActivityCallbackImpl::AddNormalHipMemcpyActivityEvent(
 
 void RocmActivityCallbackImpl::AddHipMemsetActivityEvent(
     const roctracer_record_t* record) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_18(mht_18_v, 1339, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "RocmActivityCallbackImpl::AddHipMemsetActivityEvent");
+
   /*
     misses:
       device_id, context_id, stram_id, memset_info.num_bytes
@@ -1166,6 +1393,9 @@ void RocmActivityCallbackImpl::AddHipMemsetActivityEvent(
 
 void RocmActivityCallbackImpl::AddHipMallocActivityEvent(
     const roctracer_record_t* record) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_19(mht_19_v, 1396, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "RocmActivityCallbackImpl::AddHipMallocActivityEvent");
+
   /*
     misses: device_id, context_id, memory_residency_info (num_byts, kind,
     address)
@@ -1194,6 +1424,9 @@ void RocmActivityCallbackImpl::AddHipMallocActivityEvent(
 
 void RocmActivityCallbackImpl::AddHipStreamSynchronizeActivityEvent(
     const roctracer_record_t* record) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_20(mht_20_v, 1427, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "RocmActivityCallbackImpl::AddHipStreamSynchronizeActivityEvent");
+
   /*
   misses: context_id, device_id (cuda also does not provide but we can get from
   API-CB)
@@ -1233,6 +1466,9 @@ void RocmActivityCallbackImpl::AddHipStreamSynchronizeActivityEvent(
 // TODO(rocm-profiler): rename this function. this is HIP-OP
 void RocmActivityCallbackImpl::AddHccKernelActivityEvent(
     const roctracer_record_t* record) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_21(mht_21_v, 1469, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "RocmActivityCallbackImpl::AddHccKernelActivityEvent");
+
   /*
    missing:
      name, context_id, nvtx_range, kernel_info
@@ -1258,6 +1494,9 @@ void RocmActivityCallbackImpl::AddHccKernelActivityEvent(
 
 void RocmActivityCallbackImpl::AddNormalHipOpsMemcpyActivityEvent(
     const roctracer_record_t* record) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_22(mht_22_v, 1497, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "RocmActivityCallbackImpl::AddNormalHipOpsMemcpyActivityEvent");
+
   /*
     misses:
       type, name(the name set here is not clear enough but we keep it for
@@ -1292,6 +1531,9 @@ void RocmActivityCallbackImpl::AddNormalHipOpsMemcpyActivityEvent(
 
 void RocmActivityCallbackImpl::AddHipOpsMemsetActivityEvent(
     const roctracer_record_t* record) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_23(mht_23_v, 1534, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "RocmActivityCallbackImpl::AddHipOpsMemsetActivityEvent");
+
   /*
     misses:
       name (name recorder here is not clear enough for Memset. We only capture
@@ -1323,6 +1565,10 @@ void RocmActivityCallbackImpl::AddHipOpsMemsetActivityEvent(
 
 void AnnotationMap::Add(uint32_t correlation_id,
                         const std::string& annotation) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("annotation: \"" + annotation + "\"");
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_24(mht_24_v, 1569, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "AnnotationMap::Add");
+
   if (annotation.empty()) return;
   VLOG(3) << "Add annotation: "
           << " correlation_id=" << correlation_id
@@ -1336,22 +1582,34 @@ void AnnotationMap::Add(uint32_t correlation_id,
 }
 
 absl::string_view AnnotationMap::LookUp(uint32_t correlation_id) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_25(mht_25_v, 1585, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "AnnotationMap::LookUp");
+
   absl::MutexLock lock(&map_.mutex);
   auto it = map_.correlation_map.find(correlation_id);
   return it != map_.correlation_map.end() ? it->second : absl::string_view();
 }
 
 /* static */ RocmTracer* RocmTracer::GetRocmTracerSingleton() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_26(mht_26_v, 1594, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "RocmTracer::GetRocmTracerSingleton");
+
   static auto* singleton = new RocmTracer();
   return singleton;
 }
 
 // FIXME(rocm-profiler): we should also check if we have AMD GPUs
 bool RocmTracer::IsAvailable() const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_27(mht_27_v, 1603, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "RocmTracer::IsAvailable");
+
   return !activity_tracing_enabled_ && !api_tracing_enabled_;  // &&NumGpus()
 }
 
 int RocmTracer::NumGpus() {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_28(mht_28_v, 1610, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "RocmTracer::NumGpus");
+
   static int num_gpus = []() -> int {
     if (hipInit(0) != hipSuccess) {
       return 0;
@@ -1368,6 +1626,9 @@ int RocmTracer::NumGpus() {
 
 void RocmTracer::Enable(const RocmTracerOptions& options,
                         RocmTraceCollector* collector) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_29(mht_29_v, 1629, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "RocmTracer::Enable");
+
   options_ = options;
   collector_ = collector;
   api_cb_impl_ = new RocmApiCallbackImpl(options, this, collector);
@@ -1384,6 +1645,9 @@ void RocmTracer::Enable(const RocmTracerOptions& options,
 }
 
 void RocmTracer::Disable() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_30(mht_30_v, 1648, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "RocmTracer::Disable");
+
   // TODO(rocm-profiler): TF has a SyncAndFlush() function
   // to be called before disabling. It makes sure all the contexts
   // has finished all the tasks before shutting down the profiler
@@ -1399,16 +1663,25 @@ void RocmTracer::Disable() {
 
 void ApiCallback(uint32_t domain, uint32_t cbid, const void* cbdata,
                  void* user_data) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_31(mht_31_v, 1666, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "ApiCallback");
+
   RocmTracer* tracer = reinterpret_cast<RocmTracer*>(user_data);
   tracer->ApiCallbackHandler(domain, cbid, cbdata);
 }
 
 void RocmTracer::ApiCallbackHandler(uint32_t domain, uint32_t cbid,
                                     const void* cbdata) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_32(mht_32_v, 1675, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "RocmTracer::ApiCallbackHandler");
+
   if (api_tracing_enabled_) (*api_cb_impl_)(domain, cbid, cbdata);
 }
 
 Status RocmTracer::EnableApiTracing() {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_33(mht_33_v, 1682, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "RocmTracer::EnableApiTracing");
+
   if (api_tracing_enabled_) return Status::OK();
   api_tracing_enabled_ = true;
 
@@ -1435,6 +1708,9 @@ Status RocmTracer::EnableApiTracing() {
 }
 
 Status RocmTracer::DisableApiTracing() {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_34(mht_34_v, 1711, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "RocmTracer::DisableApiTracing");
+
   if (!api_tracing_enabled_) return Status::OK();
   api_tracing_enabled_ = false;
 
@@ -1461,11 +1737,21 @@ Status RocmTracer::DisableApiTracing() {
 }
 
 void ActivityCallback(const char* begin, const char* end, void* user_data) {
+   std::vector<std::string> mht_35_v;
+   mht_35_v.push_back("begin: \"" + (begin == nullptr ? std::string("nullptr") : std::string((char*)begin)) + "\"");
+   mht_35_v.push_back("end: \"" + (end == nullptr ? std::string("nullptr") : std::string((char*)end)) + "\"");
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_35(mht_35_v, 1742, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "ActivityCallback");
+
   RocmTracer* tracer = reinterpret_cast<RocmTracer*>(user_data);
   tracer->ActivityCallbackHandler(begin, end);
 }
 
 void RocmTracer::ActivityCallbackHandler(const char* begin, const char* end) {
+   std::vector<std::string> mht_36_v;
+   mht_36_v.push_back("begin: \"" + (begin == nullptr ? std::string("nullptr") : std::string((char*)begin)) + "\"");
+   mht_36_v.push_back("end: \"" + (end == nullptr ? std::string("nullptr") : std::string((char*)end)) + "\"");
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_36(mht_36_v, 1752, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "RocmTracer::ActivityCallbackHandler");
+
   if (activity_tracing_enabled_) {
     (*activity_cb_impl_)(begin, end);
   } else {
@@ -1487,6 +1773,9 @@ void RocmTracer::ActivityCallbackHandler(const char* begin, const char* end) {
 }
 
 Status RocmTracer::EnableActivityTracing() {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_37(mht_37_v, 1776, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "RocmTracer::EnableActivityTracing");
+
   if (activity_tracing_enabled_) return Status::OK();
   activity_tracing_enabled_ = true;
 
@@ -1528,6 +1817,9 @@ Status RocmTracer::EnableActivityTracing() {
 }
 
 Status RocmTracer::DisableActivityTracing() {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_38(mht_38_v, 1820, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "RocmTracer::DisableActivityTracing");
+
   if (!activity_tracing_enabled_) return Status::OK();
 
   for (auto& iter : options_->activity_tracing) {
@@ -1583,6 +1875,9 @@ Status RocmTracer::DisableActivityTracing() {
 }
 
 /*static*/ uint64_t RocmTracer::GetTimestamp() {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPSrocm_tracerDTcc mht_39(mht_39_v, 1878, "", "./tensorflow/core/profiler/internal/gpu/rocm_tracer.cc", "RocmTracer::GetTimestamp");
+
   uint64_t ts;
   if (wrap::roctracer_get_timestamp(&ts) != ROCTRACER_STATUS_SUCCESS) {
     const char* errstr = wrap::roctracer_error_string();

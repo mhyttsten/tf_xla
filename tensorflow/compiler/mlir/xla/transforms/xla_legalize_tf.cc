@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSxla_legalize_tfDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSxla_legalize_tfDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSxla_legalize_tfDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,6 +218,9 @@ class LegalizeTF : public LegalizeTFBase<LegalizeTF> {
   explicit LegalizeTF(bool allow_partial_conversion, bool legalize_chlo,
                       llvm::Optional<StringRef> tf2xla_fallback_device_type,
                       bool prefer_tf2xla) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSxla_legalize_tfDTcc mht_0(mht_0_v, 221, "", "./tensorflow/compiler/mlir/xla/transforms/xla_legalize_tf.cc", "LegalizeTF");
+
     allow_partial_conversion_ = allow_partial_conversion;
     legalize_chlo_ = legalize_chlo;
     prefer_tf2xla_ = prefer_tf2xla;
@@ -66,6 +237,9 @@ class LegalizeTF : public LegalizeTFBase<LegalizeTF> {
 // failed to legalize.
 void EmitLegalizationErrors(Operation *op,
                             const DenseSet<Operation *> &nonlegalized_ops) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSxla_legalize_tfDTcc mht_1(mht_1_v, 240, "", "./tensorflow/compiler/mlir/xla/transforms/xla_legalize_tf.cc", "EmitLegalizationErrors");
+
   // Track the legalization failures by mapping op name to information about
   // that failure: the number of unlegalized occurrences of the op, and one
   // example operation that failed.
@@ -111,6 +285,9 @@ void EmitLegalizationErrors(Operation *op,
 /// prefer_tf2xla. All other ops not in this list should use XlaOpKernel
 /// legalization only or not be legalized by the new bridge.
 const llvm::DenseSet<mlir::TypeID> &MlirPreferredOps() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSxla_legalize_tfDTcc mht_2(mht_2_v, 288, "", "./tensorflow/compiler/mlir/xla/transforms/xla_legalize_tf.cc", "MlirPreferredOps");
+
   // The static variable is a pointer in order to avoid destruction upon thread
   // termination.
 
@@ -213,6 +390,9 @@ const llvm::DenseSet<mlir::TypeID> &MlirPreferredOps() {
 // can be cleanly migrated from the old bridge to the MLIR bridge.
 RewritePatternSet PatternsIncludeOps(
     RewritePatternSet &from, const llvm::DenseSet<mlir::TypeID> &include_ops) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSxla_legalize_tfDTcc mht_3(mht_3_v, 393, "", "./tensorflow/compiler/mlir/xla/transforms/xla_legalize_tf.cc", "PatternsIncludeOps");
+
   RewritePatternSet to(from.getContext());
   // Filter NativePatterns.
   for (auto &pattern : from.getNativePatterns()) {
@@ -239,6 +419,9 @@ LogicalResult legalizeTF(Operation *op, bool allow_partial_conversion,
                          bool legalize_chlo,
                          llvm::Optional<StringRef> tf2xla_fallback_device_type,
                          bool prefer_tf2xla) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSxla_legalize_tfDTcc mht_4(mht_4_v, 422, "", "./tensorflow/compiler/mlir/xla/transforms/xla_legalize_tf.cc", "legalizeTF");
+
   MLIRContext *context = op->getContext();
   RewritePatternSet legalize_lower_patterns(context);
   // Note that the `OperationConverter` orders patterns lexicographically by:
@@ -325,6 +508,9 @@ LogicalResult legalizeTF(Operation *op, bool allow_partial_conversion,
 
 // Performs the lowering to XLA dialect.
 void LegalizeTF::runOnOperation() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSxla_legalize_tfDTcc mht_5(mht_5_v, 511, "", "./tensorflow/compiler/mlir/xla/transforms/xla_legalize_tf.cc", "LegalizeTF::runOnOperation");
+
   llvm::Optional<StringRef> tf2xla_fallback_device_type = llvm::None;
   if (use_tf2xla_fallback_) {
     tf2xla_fallback_device_type = device_type_;

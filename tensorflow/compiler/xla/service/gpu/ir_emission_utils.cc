@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,6 +202,9 @@ namespace {
 
 // Return whether the given shape is rank 2 excluding the batch dimensions.
 bool IsRank2(const Shape& shape, int64_t batch_dimensions_size) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc mht_0(mht_0_v, 205, "", "./tensorflow/compiler/xla/service/gpu/ir_emission_utils.cc", "IsRank2");
+
   return shape.rank() == batch_dimensions_size + 2;
 }
 
@@ -69,6 +240,9 @@ std::array<int64_t, 3> PartitionShapeByMiddleDimensions(
 }
 
 Shape GetShapeFromTensorType(mlir::Value value) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc mht_1(mht_1_v, 243, "", "./tensorflow/compiler/xla/service/gpu/ir_emission_utils.cc", "GetShapeFromTensorType");
+
   constexpr char kDefaultLayoutAttrName[] = "xla_shape";
 
   mlir::Operation* op = value.getDefiningOp();
@@ -87,6 +261,9 @@ Shape GetShapeFromTensorType(mlir::Value value) {
 }  // namespace
 
 bool IsMatrixMultiplication(const HloInstruction& dot) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc mht_2(mht_2_v, 264, "", "./tensorflow/compiler/xla/service/gpu/ir_emission_utils.cc", "IsMatrixMultiplication");
+
   if (dot.opcode() != HloOpcode::kDot) {
     return false;
   }
@@ -138,6 +315,9 @@ std::array<int64_t, 3> GetReductionTiling(
 const char* const kCusolverCholeskyCallTarget = "__cusolver$cholesky";
 
 bool IsCustomCallToCusolver(const HloInstruction& hlo) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc mht_3(mht_3_v, 318, "", "./tensorflow/compiler/xla/service/gpu/ir_emission_utils.cc", "IsCustomCallToCusolver");
+
   if (hlo.opcode() != HloOpcode::kCustomCall) {
     return false;
   }
@@ -147,6 +327,9 @@ bool IsCustomCallToCusolver(const HloInstruction& hlo) {
 
 static ReductionDimensions GetReductionKindAndContiguousComponentsImpl(
     const Shape& input_shape, absl::Span<const int64_t> dims_to_reduce) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc mht_4(mht_4_v, 330, "", "./tensorflow/compiler/xla/service/gpu/ir_emission_utils.cc", "GetReductionKindAndContiguousComponentsImpl");
+
   DimensionVector dims_to_keep;
   for (int64_t dim = 0; dim < input_shape.rank(); ++dim) {
     if (!absl::c_linear_search(dims_to_reduce, dim)) {
@@ -186,6 +369,9 @@ static ReductionDimensions GetReductionKindAndContiguousComponentsImpl(
 
 static bool IsUnnestedReductionFasterThanElemental(
     const ReductionDimensions& reduction_dimensions) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc mht_5(mht_5_v, 372, "", "./tensorflow/compiler/xla/service/gpu/ir_emission_utils.cc", "IsUnnestedReductionFasterThanElemental");
+
   if (reduction_dimensions.is_row_reduction) {
     // For row reduction, the tile block is 1 x tile_size_x, and we are reducing
     // along tile_size_x which needs to be large enough to make the tiling
@@ -212,6 +398,9 @@ static bool IsUnnestedReductionFasterThanElemental(
 // Whether we can/should use the unnested emitter for reduction.
 static bool IsReductionFromOrToContiguousDimensionsImpl(
     const Shape& operand_shape, absl::Span<int64_t const> dims_to_reduce) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc mht_6(mht_6_v, 401, "", "./tensorflow/compiler/xla/service/gpu/ir_emission_utils.cc", "IsReductionFromOrToContiguousDimensionsImpl");
+
   DimensionVector dims_to_keep;
   for (int64_t dim = 0; dim < operand_shape.dimensions().size(); ++dim) {
     if (!absl::c_linear_search(dims_to_reduce, dim)) {
@@ -233,12 +422,18 @@ static bool IsReductionFromOrToContiguousDimensionsImpl(
 }
 
 bool IsReductionFromOrToContiguousDimensions(const HloInstruction& reduce) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc mht_7(mht_7_v, 425, "", "./tensorflow/compiler/xla/service/gpu/ir_emission_utils.cc", "IsReductionFromOrToContiguousDimensions");
+
   return reduce.opcode() == HloOpcode::kReduce &&
          IsReductionFromOrToContiguousDimensionsImpl(reduce.operand(0)->shape(),
                                                      reduce.dimensions());
 }
 
 bool IsReductionFromOrToContiguousDimensions(mlir::Operation* op) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc mht_8(mht_8_v, 434, "", "./tensorflow/compiler/xla/service/gpu/ir_emission_utils.cc", "IsReductionFromOrToContiguousDimensions");
+
   auto reduce = mlir::dyn_cast<mlir::mhlo::ReduceOp>(op);
   if (!reduce) {
     return false;
@@ -258,6 +453,9 @@ bool IsReductionFromOrToContiguousDimensions(mlir::Operation* op) {
 
 bool IsInputFusibleSlices(mlir::Operation* unnested_hlo,
                           bool verify_no_strides) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc mht_9(mht_9_v, 456, "", "./tensorflow/compiler/xla/service/gpu/ir_emission_utils.cc", "IsInputFusibleSlices");
+
   auto fusion = mlir::dyn_cast<mlir::lmhlo::FusionOp>(unnested_hlo);
   if (!fusion) {
     return false;
@@ -283,12 +481,18 @@ bool IsInputFusibleSlices(mlir::Operation* unnested_hlo,
 
 ReductionDimensions GetReductionKindAndContiguousComponents(
     const HloInstruction& reduce) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc mht_10(mht_10_v, 484, "", "./tensorflow/compiler/xla/service/gpu/ir_emission_utils.cc", "GetReductionKindAndContiguousComponents");
+
   return GetReductionKindAndContiguousComponentsImpl(reduce.operand(0)->shape(),
                                                      reduce.dimensions());
 }
 
 ReductionDimensions GetReductionKindAndContiguousComponents(
     mlir::Operation* reduce) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc mht_11(mht_11_v, 493, "", "./tensorflow/compiler/xla/service/gpu/ir_emission_utils.cc", "GetReductionKindAndContiguousComponents");
+
   mlir::Value input = reduce->getOperand(0);
   Shape operand_shape = GetShape(input);
   llvm::SmallVector<int64_t> dimensions_to_reduce;
@@ -306,17 +510,27 @@ ReductionDimensions GetReductionKindAndContiguousComponents(
 llvm::Value* EmitPrintf(absl::string_view fmt,
                         absl::Span<llvm::Value* const> arguments,
                         llvm::IRBuilder<>* builder) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("fmt: \"" + std::string(fmt.data(), fmt.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc mht_12(mht_12_v, 514, "", "./tensorflow/compiler/xla/service/gpu/ir_emission_utils.cc", "EmitPrintf");
+
   std::vector<llvm::Type*> argument_types;
 
   // Variadic arguments implicit promotion [1] converts float to double,
   // and bool/char/short are converted to int.
   // [1] https://en.cppreference.com/w/cpp/language/variadic_arguments
   auto requires_int32_promotion = [](llvm::Type* type) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc mht_13(mht_13_v, 523, "", "./tensorflow/compiler/xla/service/gpu/ir_emission_utils.cc", "lambda");
+
     return type->isIntegerTy(/*BitWidth=*/1) ||
            type->isIntegerTy(/*BitWidth=*/8) ||
            type->isIntegerTy(/*BitWidth=*/16);
   };
   auto requires_double_promotion = [](llvm::Type* type) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc mht_14(mht_14_v, 531, "", "./tensorflow/compiler/xla/service/gpu/ir_emission_utils.cc", "lambda");
+
     return type->isFloatingPointTy();
   };
 
@@ -359,6 +573,9 @@ llvm::Value* EmitPrintf(absl::string_view fmt,
 // Helper function to emit call to AMDGPU shfl_down function.
 llvm::Value* EmitAMDGPUShflDown(llvm::Value* value, llvm::Value* offset,
                                 llvm::IRBuilder<>* b) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc mht_15(mht_15_v, 576, "", "./tensorflow/compiler/xla/service/gpu/ir_emission_utils.cc", "EmitAMDGPUShflDown");
+
   llvm::Module* module = b->GetInsertBlock()->getModule();
   CHECK_EQ(value->getType()->getPrimitiveSizeInBits(), 32);
   auto* i32_ty = b->getInt32Ty();
@@ -376,6 +593,9 @@ llvm::Value* EmitAMDGPUShflDown(llvm::Value* value, llvm::Value* offset,
 // Helper function to emit call to NVPTX shfl_down intrinsic.
 llvm::Value* EmitNVPTXShflDown(llvm::Value* value, llvm::Value* offset,
                                llvm::IRBuilder<>* b) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc mht_16(mht_16_v, 596, "", "./tensorflow/compiler/xla/service/gpu/ir_emission_utils.cc", "EmitNVPTXShflDown");
+
   llvm::Module* module = b->GetInsertBlock()->getModule();
   llvm::Intrinsic::ID llvm_intrinsic_id;
   CHECK_EQ(value->getType()->getPrimitiveSizeInBits(), 32);
@@ -392,6 +612,9 @@ llvm::Value* EmitNVPTXShflDown(llvm::Value* value, llvm::Value* offset,
 
 llvm::Value* EmitFullWarpShuffleDown(llvm::Value* value, llvm::Value* offset,
                                      llvm::IRBuilder<>* builder) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc mht_17(mht_17_v, 615, "", "./tensorflow/compiler/xla/service/gpu/ir_emission_utils.cc", "EmitFullWarpShuffleDown");
+
   int bit_width = value->getType()->getPrimitiveSizeInBits();
   llvm::Module* module = builder->GetInsertBlock()->getModule();
   llvm::Triple target_triple = llvm::Triple(module->getTargetTriple());
@@ -436,6 +659,9 @@ llvm::Value* EmitFullWarpShuffleDown(llvm::Value* value, llvm::Value* offset,
 }
 
 llvm::Value* IsBlock0Thread0(llvm::IRBuilder<>* b) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc mht_18(mht_18_v, 662, "", "./tensorflow/compiler/xla/service/gpu/ir_emission_utils.cc", "IsBlock0Thread0");
+
   llvm::Value* is_thread0 = b->CreateICmpEQ(
       b->getInt32(0),
       EmitCallToTargetIntrinsic(TargetIntrinsicID::kThreadIdx, {}, {}, b));
@@ -448,6 +674,9 @@ llvm::Value* IsBlock0Thread0(llvm::IRBuilder<>* b) {
 
 bool IsFusedReductionOutputConsistent(const HloInstruction* inst,
                                       const HloInstruction* first_reduce) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc mht_19(mht_19_v, 677, "", "./tensorflow/compiler/xla/service/gpu/ir_emission_utils.cc", "IsFusedReductionOutputConsistent");
+
   if (IsReductionFromOrToContiguousDimensions(*inst)) {
     // Shapes, layouts and dimensions must be the same for all reduces
     // inside of this fusion.
@@ -474,6 +703,9 @@ bool IsFusedReductionOutputConsistent(const HloInstruction* inst,
 // output is the opposite, being both WritesMlirBuffer() and does not equal to
 // any later operand.
 int PartitionLmhloOperandsAndOutputs(mlir::Operation* op) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc mht_20(mht_20_v, 706, "", "./tensorflow/compiler/xla/service/gpu/ir_emission_utils.cc", "PartitionLmhloOperandsAndOutputs");
+
   CHECK(op->getDialect() == op->getContext()->getLoadedDialect("lmhlo"));
 
   int i;
@@ -528,6 +760,9 @@ std::vector<mlir::Value> GetHloOutputs(mlir::Operation* op) {
 }
 
 bool WritesMlirBuffer(mlir::Operation* op, mlir::Value operand) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc mht_21(mht_21_v, 763, "", "./tensorflow/compiler/xla/service/gpu/ir_emission_utils.cc", "WritesMlirBuffer");
+
   llvm::SmallVector<mlir::MemoryEffects::EffectInstance, 2> effects;
   mlir::cast<mlir::MemoryEffectOpInterface>(op).getEffectsOnValue(operand,
                                                                   effects);
@@ -538,6 +773,9 @@ bool WritesMlirBuffer(mlir::Operation* op, mlir::Value operand) {
 }
 
 static int64_t GetMemRefSizeInBytes(mlir::MemRefType type) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc mht_22(mht_22_v, 776, "", "./tensorflow/compiler/xla/service/gpu/ir_emission_utils.cc", "GetMemRefSizeInBytes");
+
   // For i1 memrefs, the underlying allocation is 8 bits.
   if (type.getElementType().isInteger(/*width=*/1)) {
     return type.getNumElements();
@@ -548,6 +786,9 @@ static int64_t GetMemRefSizeInBytes(mlir::MemRefType type) {
 
 static int64_t GetAllocationIndex(mlir::BlockArgument func_arg,
                                   std::string* constant_name) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc mht_23(mht_23_v, 789, "", "./tensorflow/compiler/xla/service/gpu/ir_emission_utils.cc", "GetAllocationIndex");
+
   auto func_op =
       mlir::cast<mlir::func::FuncOp>(func_arg.getParentRegion()->getParentOp());
   if (constant_name) {
@@ -616,6 +857,9 @@ StatusOr<BufferAllocation::Slice> GetAllocationSlice(
 bool CanEmitFusedDynamicUpdateSliceInPlaceForGpu(
     mlir::lmhlo::FusionOp fusion,
     absl::Span<const BufferAllocation> allocations) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc mht_24(mht_24_v, 860, "", "./tensorflow/compiler/xla/service/gpu/ir_emission_utils.cc", "CanEmitFusedDynamicUpdateSliceInPlaceForGpu");
+
   auto results = fusion.getFusionResults();
   if (results.size() != 1) {
     return false;
@@ -641,6 +885,9 @@ bool CanEmitFusedDynamicUpdateSliceInPlaceForGpu(
 }
 
 Shape GetShape(mlir::Value value) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc mht_25(mht_25_v, 888, "", "./tensorflow/compiler/xla/service/gpu/ir_emission_utils.cc", "GetShape");
+
   if (value.getType().isa<mlir::MemRefType>()) {
     return TypeToShape(value.getType());
   } else if (value.getType().isa<mlir::TensorType>()) {
@@ -654,6 +901,9 @@ Shape GetShape(mlir::Value value) {
 
 bool ReductionIsRaceFree(const ReductionDimensions& reduction_dimensions,
                          const std::array<int64_t, 3>& reduction_tiling) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emission_utilsDTcc mht_26(mht_26_v, 904, "", "./tensorflow/compiler/xla/service/gpu/ir_emission_utils.cc", "ReductionIsRaceFree");
+
   return (reduction_dimensions.is_row_reduction &&
           reduction_dimensions.dimensions[2] <=
               MinThreadsXRowReduction() * reduction_tiling[2] &&

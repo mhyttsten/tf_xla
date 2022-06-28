@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -43,6 +211,9 @@ using absl::StrJoin;
 }  // namespace
 
 std::string IndexedArrayAnalysis::ToString(Array* root, bool print_constants) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_0(mht_0_v, 214, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "IndexedArrayAnalysis::ToString");
+
   switch (root->kind()) {
     case Array::kUnknown: {
       auto* unknown_tensor = root->as<UnknownArray>();
@@ -83,6 +254,9 @@ std::string IndexedArrayAnalysis::ToString(Array* root, bool print_constants) {
 
 StatusOr<Analysis::Array*> IndexedArrayAnalysis::GetArrayFor(
     const HloInstruction* instr) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_1(mht_1_v, 257, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "IndexedArrayAnalysis::GetArrayFor");
+
   auto it = cache_.find(instr);
   if (it != cache_.end()) {
     return it->second;
@@ -94,6 +268,9 @@ StatusOr<Analysis::Array*> IndexedArrayAnalysis::GetArrayFor(
 
 Status IndexedArrayAnalysis::TraverseAndPopulateCache(
     const HloInstruction* root) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_2(mht_2_v, 271, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "IndexedArrayAnalysis::TraverseAndPopulateCache");
+
   // Depth first search over the DAG, invoking ComputeArrayFor in post order.
   // The HLO instructions already in the cache are considered leaves.
 
@@ -139,6 +316,9 @@ Status IndexedArrayAnalysis::TraverseAndPopulateCache(
 
 StatusOr<Analysis::Array*> IndexedArrayAnalysis::ComputeArrayFor(
     const HloInstruction* instr) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_3(mht_3_v, 319, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "IndexedArrayAnalysis::ComputeArrayFor");
+
   Array* computed_array;
   if (instr->IsElementwise() && instr->operand_count() == 1) {
     TF_ASSIGN_OR_RETURN(
@@ -186,12 +366,18 @@ StatusOr<Analysis::Array*> IndexedArrayAnalysis::ComputeArrayFor(
 
 StatusOr<Analysis::Array*> IndexedArrayAnalysis::ComputeArrayForConstant(
     const Literal& literal) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_4(mht_4_v, 369, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "IndexedArrayAnalysis::ComputeArrayForConstant");
+
   return Construct<ConstantArray>(&literal);
 }
 
 StatusOr<ScalarIndexedArray*> IndexedArrayAnalysis::FoldGatherOfGather(
     ScalarIndexedArray* source, Array* indices, int64_t source_dim,
     absl::Span<const int64_t> output_dims, Shape shape) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_5(mht_5_v, 378, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "IndexedArrayAnalysis::FoldGatherOfGather");
+
   // We want to transform Gather(Gather(A, X), Y) => Gather(A, Gather(X, Y)).
   // `source` is the inner Gather(A, X).
 
@@ -258,6 +444,9 @@ StatusOr<ScalarIndexedArray*> IndexedArrayAnalysis::FoldGatherOfGather(
 StatusOr<Analysis::Array*> IndexedArrayAnalysis::ComputeArrayForGather(
     const Shape& shape, const GatherDimensionNumbers& dim_numbers,
     absl::Span<const int64_t> slice_sizes, Array* source, Array* indices) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_6(mht_6_v, 447, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "IndexedArrayAnalysis::ComputeArrayForGather");
+
   if (dim_numbers.index_vector_dim() != indices->shape().dimensions_size()) {
     VLOG(3) << "ComputeArrayForGather: indices are not scalar";
     return nullptr;
@@ -320,6 +509,9 @@ namespace {
 // such index, return -1.  All integers in `values` must be positive.
 int64_t FindSuffixWithProduct(absl::Span<const int64_t> values,
                               int64_t product) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_7(mht_7_v, 512, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "FindSuffixWithProduct");
+
   DCHECK(absl::c_all_of(values, [](int64_t value) { return value > 0; }));
 
   int64_t current_product = 1;
@@ -427,6 +619,9 @@ std::vector<ReshapePassthroughDimPair> ComputeReshapePassthroughDimPairs(
 // `passthrough_dims`.
 bool IsReshapePassthroughOperandDim(
     absl::Span<const ReshapePassthroughDimPair> passthrough_dims, int64_t dim) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_8(mht_8_v, 622, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "IsReshapePassthroughOperandDim");
+
   return absl::c_any_of(passthrough_dims,
                         [&](ReshapePassthroughDimPair passthrough_dim_pair) {
                           return passthrough_dim_pair.operand_dim == dim;
@@ -438,6 +633,9 @@ bool IsReshapePassthroughOperandDim(
 int64_t MapPassthroughOperandDimToResultDim(
     absl::Span<const ReshapePassthroughDimPair> passthrough_dims,
     int64_t operand_dim) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_9(mht_9_v, 636, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "MapPassthroughOperandDimToResultDim");
+
   auto it = absl::c_find_if(
       passthrough_dims, [&](ReshapePassthroughDimPair passthrough_dim_pair) {
         return passthrough_dim_pair.operand_dim == operand_dim;
@@ -449,6 +647,9 @@ int64_t MapPassthroughOperandDimToResultDim(
 int64_t FindSourcePositionForPassthroughResultDim(
     absl::Span<const int64_t> operand_shape,
     absl::Span<const int64_t> result_shape, int64_t source_passthrough_dim) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_10(mht_10_v, 650, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "FindSourcePositionForPassthroughResultDim");
+
   VLOG(3) << "FindSourcePositionForPassthroughResultDim(["
           << StrJoin(operand_shape, ",") << "], [" << StrJoin(result_shape, ",")
           << "], " << source_passthrough_dim << ")";
@@ -461,6 +662,9 @@ int64_t FindSourcePositionForPassthroughResultDim(
 }
 
 Shape StripDegenerateDimensions(const Shape& shape) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_11(mht_11_v, 665, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "StripDegenerateDimensions");
+
   DimensionVector new_dims;
   absl::c_copy_if(shape.dimensions(), std::back_inserter(new_dims),
                   [](int64_t dim) { return dim != 1; });
@@ -471,6 +675,9 @@ Shape StripDegenerateDimensions(const Shape& shape) {
 StatusOr<ScalarIndexedArray*>
 IndexedArrayAnalysis::ReshapeToRemoveDegenerateDims(
     ScalarIndexedArray* operand) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_12(mht_12_v, 678, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "IndexedArrayAnalysis::ReshapeToRemoveDegenerateDims");
+
   const Shape& shape = operand->shape();
   if (!ShapeUtil::HasDegenerateDimensions(shape)) {
     return operand;
@@ -527,6 +734,9 @@ IndexedArrayAnalysis::ReshapeToRemoveDegenerateDims(
 
 StatusOr<ScalarIndexedArray*> IndexedArrayAnalysis::ReshapeToAddDegenerateDims(
     ScalarIndexedArray* operand, absl::Span<const int64_t> degenerate_dims) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_13(mht_13_v, 737, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "IndexedArrayAnalysis::ReshapeToAddDegenerateDims");
+
   if (degenerate_dims.empty()) {
     return operand;
   }
@@ -534,6 +744,9 @@ StatusOr<ScalarIndexedArray*> IndexedArrayAnalysis::ReshapeToAddDegenerateDims(
   CHECK(!ShapeUtil::HasDegenerateDimensions(operand->shape()));
 
   DimensionVector new_output_dims = [&]() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_14(mht_14_v, 747, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "lambda");
+
     // To make things easy we use a "scratch" buffer of bools where the i'th
     // element is true iff the i'th component of the result index is an output
     // index.
@@ -572,6 +785,9 @@ StatusOr<ScalarIndexedArray*> IndexedArrayAnalysis::ReshapeToAddDegenerateDims(
   }
 
   int64_t new_source_dim = [&]() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_15(mht_15_v, 788, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "lambda");
+
     for (int i = 0, e = new_source_shape_dims.size(); i < e; i++) {
       int64_t non_degenerate_dims_seen = 0;
       if (non_degenerate_dims_seen == operand->source_dim()) {
@@ -604,6 +820,9 @@ StatusOr<ScalarIndexedArray*> IndexedArrayAnalysis::ReshapeToAddDegenerateDims(
 
 StatusOr<ScalarIndexedArray*> IndexedArrayAnalysis::FoldReshapeOfGather(
     const Shape& shape, ScalarIndexedConstantArray* operand) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_16(mht_16_v, 823, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "IndexedArrayAnalysis::FoldReshapeOfGather");
+
   VLOG(3) << "FoldReshapeOfGather(" << ToString(operand) << ")";
 
   // To make things easier on ourselves, instead of directly trying to fold the
@@ -639,6 +858,9 @@ StatusOr<ScalarIndexedArray*> IndexedArrayAnalysis::FoldReshapeOfGather(
 StatusOr<ScalarIndexedArray*>
 IndexedArrayAnalysis::FoldReshapeOfGatherNoDegenerateDims(
     const Shape& shape, ScalarIndexedConstantArray* scalar_indexed) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_17(mht_17_v, 861, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "IndexedArrayAnalysis::FoldReshapeOfGatherNoDegenerateDims");
+
   VLOG(3) << "FoldReshapeOfGatherNoDegenerateDims(" << ToString(scalar_indexed)
           << ")";
   CHECK(!ShapeUtil::HasDegenerateDimensions(shape));
@@ -698,6 +920,9 @@ IndexedArrayAnalysis::FoldReshapeOfGatherNoDegenerateDims(
           /*result_shape=*/shape.dimensions());
 
   auto is_reshape_passthrough_operand_dim = [&](int64_t operand_dim) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_18(mht_18_v, 923, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "lambda");
+
     return IsReshapePassthroughOperandDim(reshape_passthrough_dims,
                                           operand_dim);
   };
@@ -781,6 +1006,9 @@ IndexedArrayAnalysis::FoldReshapeOfGatherNoDegenerateDims(
       scalar_indexed->source_dim()));
 
   auto map_passthrough_operand_dim_to_result_dim = [&](int64_t result_dim) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_19(mht_19_v, 1009, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "lambda");
+
     return MapPassthroughOperandDimToResultDim(reshape_passthrough_dims,
                                                result_dim);
   };
@@ -805,6 +1033,9 @@ IndexedArrayAnalysis::FoldReshapeOfGatherNoDegenerateDims(
 
 StatusOr<Analysis::Array*> IndexedArrayAnalysis::ComputeArrayForReshape(
     const Shape& shape, Array* operand) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_20(mht_20_v, 1036, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "IndexedArrayAnalysis::ComputeArrayForReshape");
+
   if (ShapeUtil::Compatible(operand->shape(), shape)) {
     return operand;
   }
@@ -832,6 +1063,9 @@ StatusOr<Analysis::Array*>
 IndexedArrayAnalysis::ComputeArrayForElementwiseBinaryOp(HloOpcode opcode,
                                                          Array* lhs,
                                                          Array* rhs) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_21(mht_21_v, 1066, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "IndexedArrayAnalysis::ComputeArrayForElementwiseBinaryOp");
+
   // Try to fold BinaryOp(Broadcast(Const0), ScalarIndexed(Const1, Indices))
   //          => ScalarIndexed(BinaryOp(Broadcast'(Const0), Const1), Indices)
   //
@@ -879,6 +1113,9 @@ IndexedArrayAnalysis::ComputeArrayForElementwiseBinaryOp(HloOpcode opcode,
 
   absl::Span<const int64_t> broadcast_dims = broadcast_instr->dimensions();
   auto is_broadcasted_dim = [&](int64_t output_dim) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_22(mht_22_v, 1116, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "lambda");
+
     return absl::c_find(broadcast_dims, output_dim) == broadcast_dims.end();
   };
 
@@ -952,6 +1189,9 @@ IndexedArrayAnalysis::ComputeArrayForElementwiseBinaryOp(HloOpcode opcode,
 StatusOr<Analysis::Array*>
 IndexedArrayAnalysis::ComputeArrayForElementwiseUnaryOp(HloOpcode opcode,
                                                         Array* operand) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_23(mht_23_v, 1192, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "IndexedArrayAnalysis::ComputeArrayForElementwiseUnaryOp");
+
   auto* scalar_indexed_const =
       dynamic_cast<ScalarIndexedConstantArray*>(operand);
   if (scalar_indexed_const == nullptr) {
@@ -1004,6 +1244,10 @@ bool CanFoldDotIntoIndexedArray(
     absl::string_view tag, Analysis::ScalarIndexedConstantArray* indexed_array,
     absl::Span<const int64_t> contracting_dims,
     absl::Span<const int64_t> batch_dims) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("tag: \"" + std::string(tag.data(), tag.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_24(mht_24_v, 1248, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "CanFoldDotIntoIndexedArray");
+
   absl::optional<int64_t> non_contracting_non_batch_dim =
       GetOnlyNonContractingNonBatchDim(indexed_array->shape().rank(),
                                        contracting_dims, batch_dims);
@@ -1037,6 +1281,9 @@ IndexedArrayAnalysis::ComputeArrayForDotWithIndexedLhs(
     const Shape& shape, const DotDimensionNumbers& dim_numbers,
     const PrecisionConfig& precision_config, ScalarIndexedConstantArray* lhs,
     ConstantArray* rhs) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_25(mht_25_v, 1284, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "IndexedArrayAnalysis::ComputeArrayForDotWithIndexedLhs");
+
   VLOG(3) << "ComputeArrayForDotWithIndexedLhs(" << ToString(lhs) << " "
           << ToString(rhs);
   if (!CanFoldDotIntoIndexedArray(
@@ -1072,6 +1319,9 @@ IndexedArrayAnalysis::ComputeArrayForDotWithIndexedRhs(
     const Shape& shape, const DotDimensionNumbers& dim_numbers,
     const PrecisionConfig& precision_config, ConstantArray* lhs,
     ScalarIndexedConstantArray* rhs) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_26(mht_26_v, 1322, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "IndexedArrayAnalysis::ComputeArrayForDotWithIndexedRhs");
+
   VLOG(3) << "ComputeArrayForDotWithIndexedRhs(" << ToString(lhs) << " "
           << ToString(rhs);
   if (!CanFoldDotIntoIndexedArray(
@@ -1106,6 +1356,9 @@ IndexedArrayAnalysis::ComputeArrayForDotWithIndexedRhs(
 StatusOr<Analysis::Array*> IndexedArrayAnalysis::ComputeArrayForDot(
     const Shape& shape, const DotDimensionNumbers& dim_numbers,
     const PrecisionConfig& precision_config, Array* lhs, Array* rhs) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_27(mht_27_v, 1359, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "IndexedArrayAnalysis::ComputeArrayForDot");
+
   // Intuitively, if
   //
   //  - The LHS of a dot product is a gathered sequence of rows from a constant
@@ -1146,10 +1399,16 @@ StatusOr<Analysis::Array*> IndexedArrayAnalysis::ComputeArrayForDot(
 }
 
 absl::string_view IndexedArrayAnalysisPrinterPass::name() const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_28(mht_28_v, 1402, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "IndexedArrayAnalysisPrinterPass::name");
+
   return "indexed-array-analysis-printer-pass";
 }
 
 StatusOr<bool> IndexedArrayAnalysisPrinterPass::Run(HloModule* module) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTcc mht_29(mht_29_v, 1409, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.cc", "IndexedArrayAnalysisPrinterPass::Run");
+
   if (!VLOG_IS_ON(2)) {
     return false;
   }

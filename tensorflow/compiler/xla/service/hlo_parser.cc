@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -70,6 +238,9 @@ using absl::StrJoin;
 // Creates and returns a schedule created using the order of the instructions in
 // the HloComputation::instructions() vectors in the module.
 HloSchedule ScheduleFromInstructionOrder(HloModule* module) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_0(mht_0_v, 241, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "ScheduleFromInstructionOrder");
+
   HloSchedule schedule(module);
   for (HloComputation* computation : module->computations()) {
     if (!computation->IsFusionComputation()) {
@@ -82,6 +253,9 @@ HloSchedule ScheduleFromInstructionOrder(HloModule* module) {
 }
 
 bool CanInferShape(HloOpcode code) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_1(mht_1_v, 256, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "CanInferShape");
+
   switch (code) {
     case HloOpcode::kAbs:
     case HloOpcode::kAdd:
@@ -213,14 +387,21 @@ class HloParserImpl : public HloParser {
  public:
   using LocTy = HloLexer::LocTy;
 
-  explicit HloParserImpl(absl::string_view str) : lexer_(str) {}
+  explicit HloParserImpl(absl::string_view str) : lexer_(str) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("str: \"" + std::string(str.data(), str.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_2(mht_2_v, 392, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl");
+}
 
   // Runs the parser and constructs the resulting HLO in the given (empty)
   // HloModule. Returns the error status in case an error occurred.
   Status Run(HloModule* module) override;
 
   // Returns the error information.
-  std::string GetError() const { return StrJoin(error_, "\n"); }
+  std::string GetError() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_3(mht_3_v, 402, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "GetError");
+ return StrJoin(error_, "\n"); }
 
   // Stand alone parsing utils for various aggregate data types.
   StatusOr<Shape> ParseShapeOnly();
@@ -283,7 +464,10 @@ class HloParserImpl : public HloParser {
 
   // Returns the map from the instruction name to the instruction itself and its
   // location in the current scope.
-  InstrNameTable& current_name_table() { return scoped_name_tables_.back(); }
+  InstrNameTable& current_name_table() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_4(mht_4_v, 468, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "current_name_table");
+ return scoped_name_tables_.back(); }
 
   // Locates an instruction with the given name in the current_name_table() or
   // returns nullptr.
@@ -560,9 +744,15 @@ class HloParserImpl : public HloParser {
    public:
     explicit Scope(std::vector<InstrNameTable>* scoped_name_tables)
         : scoped_name_tables_(scoped_name_tables) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_5(mht_5_v, 747, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "Scope");
+
       scoped_name_tables_->emplace_back();
     }
-    ~Scope() { scoped_name_tables_->pop_back(); }
+    ~Scope() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_6(mht_6_v, 753, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "~Scope");
+ scoped_name_tables_->pop_back(); }
 
    private:
     std::vector<InstrNameTable>* scoped_name_tables_;
@@ -590,6 +780,11 @@ class HloParserImpl : public HloParser {
 };
 
 bool SplitToInt64s(absl::string_view s, char delim, std::vector<int64_t>* out) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("s: \"" + std::string(s.data(), s.size()) + "\"");
+   mht_7_v.push_back("delim: '" + std::string(1, delim) + "'");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_7(mht_7_v, 785, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "SplitToInt64s");
+
   for (const auto& split : absl::StrSplit(s, delim)) {
     int64_t val;
     if (!absl::SimpleAtoi(split, &val)) {
@@ -615,6 +810,10 @@ std::vector<ReplicaGroup> CreateReplicaGroups(
 }
 
 bool HloParserImpl::Error(LocTy loc, absl::string_view msg) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("msg: \"" + std::string(msg.data(), msg.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_8(mht_8_v, 814, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::Error");
+
   auto line_col = lexer_.GetLineAndColumn(loc);
   const unsigned line = line_col.first;
   const unsigned col = line_col.second;
@@ -630,10 +829,17 @@ bool HloParserImpl::Error(LocTy loc, absl::string_view msg) {
 }
 
 bool HloParserImpl::TokenError(absl::string_view msg) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("msg: \"" + std::string(msg.data(), msg.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_9(mht_9_v, 833, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::TokenError");
+
   return Error(lexer_.GetLoc(), msg);
 }
 
 Status HloParserImpl::Run(HloModule* module) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_10(mht_10_v, 840, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::Run");
+
   lexer_.Lex();
   if (lexer_.GetKind() == TokKind::kw_HloModule) {
     // This means that the text contains a full HLO module.
@@ -657,6 +863,10 @@ Status HloParserImpl::Run(HloModule* module) {
 std::pair<HloInstruction*, HloParserImpl::LocTy>*
 HloParserImpl::FindInstruction(const std::string& name,
                                const optional<Shape>& shape) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_11(mht_11_v, 867, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::FindInstruction");
+
   std::pair<HloInstruction*, LocTy>* instr = nullptr;
   if (!name.empty()) {
     instr = tensorflow::gtl::FindOrNull(current_name_table(), name);
@@ -689,6 +899,9 @@ HloParserImpl::FindInstruction(const std::string& name,
 }
 
 bool HloParserImpl::ParseShapeIndex(ShapeIndex* out) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_12(mht_12_v, 902, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseShapeIndex");
+
   if (!ParseToken(TokKind::kLbrace, "Expects '{' at the start of ShapeIndex")) {
     return false;
   }
@@ -712,6 +925,9 @@ bool HloParserImpl::ParseShapeIndex(ShapeIndex* out) {
 }
 
 bool HloParserImpl::ParseAliasing(AliasingData* data) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_13(mht_13_v, 928, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseAliasing");
+
   if (!ParseToken(TokKind::kLbrace,
                   "Expects '{' at the start of aliasing description")) {
     return false;
@@ -776,6 +992,9 @@ bool HloParserImpl::ParseAliasing(AliasingData* data) {
 bool HloParserImpl::ParseInstructionOutputOperandAliasing(
     std::vector<std::pair<ShapeIndex, std::pair<int64_t, ShapeIndex>>>*
         aliasing_output_operand_pairs) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_14(mht_14_v, 995, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseInstructionOutputOperandAliasing");
+
   if (!ParseToken(
           TokKind::kLbrace,
           "Expects '{' at the start of instruction aliasing description")) {
@@ -827,6 +1046,9 @@ bool HloParserImpl::ParseInstructionOutputOperandAliasing(
 }
 
 bool HloParserImpl::ParseCustomCallSchedule(CustomCallSchedule* result) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_15(mht_15_v, 1049, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseCustomCallSchedule");
+
   VLOG(3) << "ParseCustomCallSchedule";
   if (lexer_.GetKind() != TokKind::kIdent) {
     return TokenError("expects custom-call schedule");
@@ -844,6 +1066,9 @@ bool HloParserImpl::ParseCustomCallSchedule(CustomCallSchedule* result) {
 }
 
 bool HloParserImpl::ParseCustomCallApiVersion(CustomCallApiVersion* result) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_16(mht_16_v, 1069, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseCustomCallApiVersion");
+
   VLOG(3) << "ParseCustomCallApiVersion";
   if (lexer_.GetKind() != TokKind::kIdent) {
     return TokenError("expects custom-call API version");
@@ -862,6 +1087,9 @@ bool HloParserImpl::ParseCustomCallApiVersion(CustomCallApiVersion* result) {
 
 // ::= 'HloModule' name computations
 bool HloParserImpl::ParseHloModule(HloModule* module) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_17(mht_17_v, 1090, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseHloModule");
+
   if (lexer_.GetKind() != TokKind::kw_HloModule) {
     return TokenError("expects HloModule");
   }
@@ -917,6 +1145,9 @@ bool HloParserImpl::ParseHloModule(HloModule* module) {
 
 // computations ::= (computation)+
 bool HloParserImpl::ParseComputations(HloModule* module) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_18(mht_18_v, 1148, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseComputations");
+
   HloComputation* entry_computation = nullptr;
   do {
     if (!ParseComputation(&entry_computation)) {
@@ -954,6 +1185,9 @@ bool HloParserImpl::ParseComputations(HloModule* module) {
 
 // computation ::= ('ENTRY')? name (param_list_to_shape)? instruction_list
 bool HloParserImpl::ParseComputation(HloComputation** entry_computation) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_19(mht_19_v, 1188, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseComputation");
+
   LocTy maybe_entry_loc = lexer_.GetLoc();
   const bool is_entry_computation = EatIfPresent(TokKind::kw_ENTRY);
 
@@ -1000,6 +1234,10 @@ bool HloParserImpl::ParseComputation(HloComputation** entry_computation) {
 // instruction_list1 ::= (instruction)+
 bool HloParserImpl::ParseInstructionList(HloComputation** computation,
                                          const std::string& computation_name) {
+   std::vector<std::string> mht_20_v;
+   mht_20_v.push_back("computation_name: \"" + computation_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_20(mht_20_v, 1238, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseInstructionList");
+
   Scope scope(&scoped_name_tables_);
   HloComputation::Builder builder(computation_name);
   if (!ParseToken(TokKind::kLbrace,
@@ -1042,6 +1280,9 @@ bool HloParserImpl::ParseInstructionList(HloComputation** computation,
 // instruction ::= ('ROOT')? name '=' shape opcode operands (attribute)*
 bool HloParserImpl::ParseInstruction(HloComputation::Builder* builder,
                                      std::string* root_name) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_21(mht_21_v, 1283, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseInstruction");
+
   std::string name;
   LocTy maybe_root_loc = lexer_.GetLoc();
   bool is_root = EatIfPresent(TokKind::kw_ROOT);
@@ -1065,6 +1306,10 @@ bool HloParserImpl::ParseInstruction(HloComputation::Builder* builder,
 bool HloParserImpl::ParseInstructionRhs(HloComputation::Builder* builder,
                                         std::string name, LocTy name_loc,
                                         bool allow_attributes) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_22(mht_22_v, 1310, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseInstructionRhs");
+
   Shape shape;
   HloOpcode opcode;
   absl::optional<HloOpcode> async_wrapped_opcode;
@@ -1182,12 +1427,19 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
     absl::optional<HloOpcode> async_wrapped_opcode,
     absl::flat_hash_map<std::string, AttrConfig>& attrs, bool allow_attributes,
     std::vector<HloInstruction*>* preset_operands) {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_23(mht_23_v, 1431, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::CreateInstruction");
+
   std::vector<HloInstruction*> operands;
   if (preset_operands) {
     operands = *preset_operands;
   }
   const auto maybe_infer_shape =
       [&](const std::function<StatusOr<Shape>()>& infer) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_24(mht_24_v, 1440, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "lambda");
+
         if (shape.has_value()) {
           return true;
         }
@@ -1546,6 +1798,9 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
         return nullptr;
       }
       auto is_async_shape_correct = [](const Shape& shape) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_25(mht_25_v, 1801, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "lambda");
+
         return shape.IsTuple() && shape.tuple_shapes_size() >= 2 &&
                shape.tuple_shapes(0).IsTuple();
       };
@@ -2883,6 +3138,9 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
 //
 // tuple_sharding ::= single_sharding* (',' single_sharding)*
 bool HloParserImpl::ParseSharding(OpSharding* sharding) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_26(mht_26_v, 3141, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseSharding");
+
   // A single sharding starts with '{' and is not followed by '{'.
   // A tuple sharding starts with '{' and is followed by '{', or is '{''}' for
   // an empty tuple.
@@ -2917,6 +3175,9 @@ bool HloParserImpl::ParseSharding(OpSharding* sharding) {
 //   ::= attribute '=' value (',' attribute '=' value)*
 bool HloParserImpl::ParseFrontendAttributes(
     FrontendAttributes* frontend_attributes) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_27(mht_27_v, 3178, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseFrontendAttributes");
+
   CHECK(frontend_attributes != nullptr);
   if (!ParseToken(TokKind::kLbrace,
                   "expected '{' to start frontend attributes")) {
@@ -2951,6 +3212,9 @@ bool HloParserImpl::ParseFrontendAttributes(
 // last_tile_dims ::= sharding_type_list
 bool HloParserImpl::ParseSingleSharding(OpSharding* sharding,
                                         bool lbrace_pre_lexed) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_28(mht_28_v, 3215, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseSingleSharding");
+
   if (!lbrace_pre_lexed &&
       !ParseToken(TokKind::kLbrace,
                   "expected '{' to start sharding attribute")) {
@@ -3097,6 +3361,9 @@ bool HloParserImpl::ParseSingleSharding(OpSharding* sharding,
 //   '{' ('true' | 'false')* (',' ('true' | 'false'))*  '}'
 bool HloParserImpl::ParseParameterReplication(
     ParameterReplication* parameter_replication) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_29(mht_29_v, 3364, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseParameterReplication");
+
   if (!ParseToken(TokKind::kLbrace,
                   "expected '{' to start parameter_replication attribute")) {
     return false;
@@ -3129,6 +3396,9 @@ bool HloParserImpl::ParseParameterReplication(
 //   ::= int64_val (',' int64_val)*
 bool HloParserImpl::ParseReplicaGroupsOnly(
     std::vector<ReplicaGroup>* replica_groups) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_30(mht_30_v, 3399, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseReplicaGroupsOnly");
+
   std::vector<std::vector<int64_t>> result;
   if (!ParseInt64ListList(TokKind::kLbrace, TokKind::kRbrace, TokKind::kComma,
                           &result)) {
@@ -3141,6 +3411,9 @@ bool HloParserImpl::ParseReplicaGroupsOnly(
 // domain ::= '{' 'kind=' domain_kind ',' 'entry=' entry_sharding ','
 //            'exit=' exit_sharding '}'
 bool HloParserImpl::ParseDomain(DomainData* domain) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_31(mht_31_v, 3414, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseDomain");
+
   absl::flat_hash_map<std::string, AttrConfig> attrs;
   optional<std::string> kind;
   optional<OpSharding> entry_sharding;
@@ -3169,6 +3442,9 @@ bool HloParserImpl::ParseDomain(DomainData* domain) {
 // '{' name+ '}'
 bool HloParserImpl::ParseInstructionNames(
     std::vector<HloInstruction*>* instructions) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_32(mht_32_v, 3445, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseInstructionNames");
+
   if (!ParseToken(TokKind::kLbrace,
                   "expects '{' at the beginning of instruction name list")) {
     return false;
@@ -3192,6 +3468,9 @@ bool HloParserImpl::ParseInstructionNames(
 
 bool HloParserImpl::SetValueInLiteral(LocTy loc, int64_t value, int64_t index,
                                       Literal* literal) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_33(mht_33_v, 3471, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::SetValueInLiteral");
+
   const Shape& shape = literal->shape();
   switch (shape.element_type()) {
     case S8:
@@ -3222,6 +3501,9 @@ bool HloParserImpl::SetValueInLiteral(LocTy loc, int64_t value, int64_t index,
 
 bool HloParserImpl::SetValueInLiteral(LocTy loc, double value, int64_t index,
                                       Literal* literal) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_34(mht_34_v, 3504, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::SetValueInLiteral");
+
   const Shape& shape = literal->shape();
   switch (shape.element_type()) {
     case F16:
@@ -3241,6 +3523,9 @@ bool HloParserImpl::SetValueInLiteral(LocTy loc, double value, int64_t index,
 
 bool HloParserImpl::SetValueInLiteral(LocTy loc, bool value, int64_t index,
                                       Literal* literal) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_35(mht_35_v, 3526, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::SetValueInLiteral");
+
   const Shape& shape = literal->shape();
   switch (shape.element_type()) {
     case PRED:
@@ -3253,6 +3538,9 @@ bool HloParserImpl::SetValueInLiteral(LocTy loc, bool value, int64_t index,
 
 bool HloParserImpl::SetValueInLiteral(LocTy loc, std::complex<double> value,
                                       int64_t index, Literal* literal) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_36(mht_36_v, 3541, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::SetValueInLiteral");
+
   const Shape& shape = literal->shape();
   switch (shape.element_type()) {
     case C64:
@@ -3269,10 +3557,16 @@ bool HloParserImpl::SetValueInLiteral(LocTy loc, std::complex<double> value,
 
 template <typename T>
 std::string StringifyValue(T val) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_37(mht_37_v, 3560, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "StringifyValue");
+
   return StrCat(val);
 }
 template <>
 std::string StringifyValue(std::complex<double> val) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_38(mht_38_v, 3567, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "StringifyValue");
+
   return StrFormat("(%f, %f)", std::real(val), std::imag(val));
 }
 
@@ -3324,21 +3618,33 @@ struct ComponentType<std::complex<T>> {
 
 template <typename T>
 T GetReal(T value) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_39(mht_39_v, 3621, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "GetReal");
+
   return value;
 }
 
 template <typename T>
 T GetReal(std::complex<T> value) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_40(mht_40_v, 3629, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "GetReal");
+
   return value.real();
 }
 
 template <typename T>
 T GetImag(T value) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_41(mht_41_v, 3637, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "GetImag");
+
   return 0;
 }
 
 template <typename T>
 T GetImag(std::complex<T> value) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_42(mht_42_v, 3645, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "GetImag");
+
   return value.imag();
 }
 
@@ -3363,6 +3669,9 @@ bool HloParserImpl::SetValueInLiteralHelper(LocTy loc, ParsedElemT value,
                               ParsedElemComponentT parsed_value_component,
                               LiteralNativeComponentT*
                                   literal_value_component) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_43(mht_43_v, 3672, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "lambda");
+
     if (!std::isnan(static_cast<double>(parsed_value_component))) {
       return true;
     }
@@ -3411,6 +3720,9 @@ bool HloParserImpl::SetValueInLiteralHelper(LocTy loc, ParsedElemT value,
 // Similar to ParseLiteral(Literal* literal, const Shape& shape), but parse the
 // shape instead of accepting one as argument.
 bool HloParserImpl::ParseLiteral(Literal* literal) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_44(mht_44_v, 3723, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseLiteral");
+
   if (lexer_.GetKind() == TokKind::kLparen) {
     // Consume Lparen
     lexer_.Lex();
@@ -3441,6 +3753,9 @@ bool HloParserImpl::ParseLiteral(Literal* literal) {
 //  ::= tuple
 //  ::= non_tuple
 bool HloParserImpl::ParseLiteral(Literal* literal, const Shape& shape) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_45(mht_45_v, 3756, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseLiteral");
+
   return shape.IsTuple() ? ParseTupleLiteral(literal, shape)
                          : ParseNonTupleLiteral(literal, shape);
 }
@@ -3451,6 +3766,9 @@ bool HloParserImpl::ParseLiteral(Literal* literal, const Shape& shape) {
 //  ::= /*empty*/
 //  ::= literal (',' literal)*
 bool HloParserImpl::ParseTupleLiteral(Literal* literal, const Shape& shape) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_46(mht_46_v, 3769, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseTupleLiteral");
+
   if (!ParseToken(TokKind::kLparen, "expects '(' in front of tuple elements")) {
     return false;
   }
@@ -3481,11 +3799,17 @@ bool HloParserImpl::ParseTupleLiteral(Literal* literal, const Shape& shape) {
 //   ::= rank2345
 // rank2345 ::= shape nested_array
 bool HloParserImpl::ParseNonTupleLiteral(Literal* literal, const Shape& shape) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_47(mht_47_v, 3802, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseNonTupleLiteral");
+
   CHECK(LayoutUtil::IsDenseArray(shape)) << shape.ToString(true);
   return ParseDenseLiteral(literal, shape);
 }
 
 bool HloParserImpl::ParseDenseLiteral(Literal* literal, const Shape& shape) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_48(mht_48_v, 3810, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseDenseLiteral");
+
   // Cast `rank` to int because we call shape.dimensions(int rank) below, and if
   // `rank` is an int64_t, that's an implicit narrowing conversion, which is
   // implementation-defined behavior.
@@ -3664,25 +3988,43 @@ bool HloParserImpl::ParseDenseLiteral(Literal* literal, const Shape& shape) {
 // HloParserImpl::CheckParsedValueIsInRange.
 template <typename T>
 struct MinMaxFiniteValue {
-  static T max() { return std::numeric_limits<T>::max(); }
-  static T min() { return std::numeric_limits<T>::lowest(); }
+  static T max() {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_49(mht_49_v, 3992, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "max");
+ return std::numeric_limits<T>::max(); }
+  static T min() {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_50(mht_50_v, 3996, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "min");
+ return std::numeric_limits<T>::lowest(); }
 };
 
 template <>
 struct MinMaxFiniteValue<Eigen::half> {
   static double max() {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_51(mht_51_v, 4004, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "max");
+
     // Sadly this is not constexpr, so this forces `value` to be a method.
     return static_cast<double>(Eigen::NumTraits<Eigen::half>::highest());
   }
-  static double min() { return -max(); }
+  static double min() {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_52(mht_52_v, 4011, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "min");
+ return -max(); }
 };
 
 template <>
 struct MinMaxFiniteValue<bfloat16> {
   static double max() {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_53(mht_53_v, 4019, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "max");
+
     return static_cast<double>(Eigen::NumTraits<Eigen::bfloat16>::highest());
   }
-  static double min() { return -max(); }
+  static double min() {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_54(mht_54_v, 4025, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "min");
+ return -max(); }
 };
 
 // MSVC's standard C++ library does not define isnan/isfinite for integer types.
@@ -3750,6 +4092,9 @@ bool HloParserImpl::CheckParsedValueIsInRange(LocTy loc, ParsedElemT value) {
 template <typename LiteralNativeT>
 bool HloParserImpl::CheckParsedValueIsInRange(LocTy loc,
                                               std::complex<double> value) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_55(mht_55_v, 4095, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::CheckParsedValueIsInRange");
+
   // e.g. `float` for std::complex<float>
   using LiteralComplexComponentT =
       decltype(std::real(std::declval<LiteralNativeT>()));
@@ -3762,6 +4107,10 @@ bool HloParserImpl::CheckParsedValueIsInRange(LocTy loc,
   // but this would give bad error messages on failure.
 
   auto check_component = [&](absl::string_view name, double v) {
+   std::vector<std::string> mht_56_v;
+   mht_56_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_56(mht_56_v, 4111, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "lambda");
+
     if (std::isnan(v) || v == std::numeric_limits<double>::infinity() ||
         v == -std::numeric_limits<double>::infinity()) {
       // Skip range-checking for non-finite values.
@@ -3794,6 +4143,9 @@ bool HloParserImpl::CheckParsedValueIsInRange(LocTy loc,
 //         ::= (shape)? opcode operands
 bool HloParserImpl::ParseOperands(std::vector<HloInstruction*>* operands,
                                   HloComputation::Builder* builder) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_57(mht_57_v, 4146, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseOperands");
+
   CHECK(operands != nullptr);
   if (!ParseToken(TokKind::kLparen,
                   "expects '(' at the beginning of operands")) {
@@ -3903,6 +4255,9 @@ bool HloParserImpl::ParseOperands(std::vector<HloInstruction*>* operands,
 bool HloParserImpl::ParseOperands(std::vector<HloInstruction*>* operands,
                                   HloComputation::Builder* builder,
                                   const int expected_size) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_58(mht_58_v, 4258, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseOperands");
+
   CHECK(operands != nullptr);
   LocTy loc = lexer_.GetLoc();
   if (!ParseOperands(operands, builder)) {
@@ -3918,6 +4273,9 @@ bool HloParserImpl::ParseOperands(std::vector<HloInstruction*>* operands,
 // sub_attributes ::= '{' (','? attribute)* '}'
 bool HloParserImpl::ParseSubAttributes(
     const absl::flat_hash_map<std::string, AttrConfig>& attrs) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_59(mht_59_v, 4276, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseSubAttributes");
+
   LocTy loc = lexer_.GetLoc();
   if (!ParseToken(TokKind::kLbrace, "expects '{' to start sub attributes")) {
     return false;
@@ -3948,6 +4306,9 @@ bool HloParserImpl::ParseSubAttributes(
 bool HloParserImpl::ParseAttributes(
     const absl::flat_hash_map<std::string, AttrConfig>& attrs,
     bool allow_attributes) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_60(mht_60_v, 4309, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseAttributes");
+
   LocTy loc = lexer_.GetLoc();
   absl::flat_hash_set<std::string> seen_attrs;
   if (allow_attributes) {
@@ -3972,6 +4333,9 @@ bool HloParserImpl::ParseAttributes(
 bool HloParserImpl::ParseAttributeHelper(
     const absl::flat_hash_map<std::string, AttrConfig>& attrs,
     absl::flat_hash_set<std::string>* seen_attrs) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_61(mht_61_v, 4336, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseAttributeHelper");
+
   LocTy loc = lexer_.GetLoc();
   std::string name;
   if (!ParseAttributeName(&name)) {
@@ -4324,6 +4688,9 @@ bool HloParserImpl::CopyAttributeToProtoMessage(
     absl::flat_hash_set<std::string> non_proto_attrs,
     const absl::flat_hash_map<std::string, AttrConfig>& attrs,
     tensorflow::protobuf::Message* message) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_62(mht_62_v, 4691, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::CopyAttributeToProtoMessage");
+
   const tensorflow::protobuf::Descriptor* descriptor = message->GetDescriptor();
   const tensorflow::protobuf::Reflection* reflection = message->GetReflection();
 
@@ -4385,6 +4752,9 @@ bool HloParserImpl::CopyAttributeToProtoMessage(
 bool HloParserImpl::ParseAttributesAsProtoMessage(
     const absl::flat_hash_map<std::string, AttrConfig>& non_proto_attrs,
     tensorflow::protobuf::Message* message) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_63(mht_63_v, 4755, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseAttributesAsProtoMessage");
+
   const tensorflow::protobuf::Descriptor* descriptor = message->GetDescriptor();
   absl::flat_hash_map<std::string, AttrConfig> attrs;
 
@@ -4441,6 +4811,9 @@ bool HloParserImpl::ParseAttributesAsProtoMessage(
 }
 
 bool HloParserImpl::ParseComputationName(HloComputation** value) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_64(mht_64_v, 4814, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseComputationName");
+
   std::string name;
   LocTy loc = lexer_.GetLoc();
   if (!ParseName(&name)) {
@@ -4459,6 +4832,9 @@ bool HloParserImpl::ParseComputationName(HloComputation** value) {
 // The subattributes can appear in any order. 'size=' is required, others are
 // optional.
 bool HloParserImpl::ParseWindow(Window* window, bool expect_outer_curlies) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_65(mht_65_v, 4835, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseWindow");
+
   LocTy loc = lexer_.GetLoc();
   if (expect_outer_curlies &&
       !ParseToken(TokKind::kLbrace, "expected '{' to start window attribute")) {
@@ -4544,6 +4920,9 @@ bool HloParserImpl::ParseWindow(Window* window, bool expect_outer_curlies) {
 // one '?' dim.
 bool HloParserImpl::ParseConvolutionDimensionNumbers(
     ConvolutionDimensionNumbers* dnums) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_66(mht_66_v, 4923, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseConvolutionDimensionNumbers");
+
   if (lexer_.GetKind() != TokKind::kDimLabels) {
     return TokenError("expects dim labels pattern, e.g., 'bf0_0io->0bf'");
   }
@@ -4701,6 +5080,9 @@ bool HloParserImpl::ParseConvolutionDimensionNumbers(
 //  {/*starts=*/{2, 5, 8}, /*limits=*/{3, 6, 9}, /*strides=*/{4, 7, 1}}
 //
 bool HloParserImpl::ParseSliceRanges(SliceRanges* result) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_67(mht_67_v, 5083, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseSliceRanges");
+
   if (!ParseToken(TokKind::kLbrace, "expects '{' to start ranges")) {
     return false;
   }
@@ -4739,7 +5121,13 @@ bool HloParserImpl::ParseSliceRanges(SliceRanges* result) {
 //   ::= precision_val (delim precision_val)*
 bool HloParserImpl::ParsePrecisionList(
     std::vector<PrecisionConfig::Precision>* result) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_68(mht_68_v, 5124, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParsePrecisionList");
+
   auto parse_and_add_item = [&]() {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_69(mht_69_v, 5128, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "lambda");
+
     PrecisionConfig::Precision item;
     if (!ParsePrecision(&item)) {
       return false;
@@ -4752,6 +5140,9 @@ bool HloParserImpl::ParsePrecisionList(
 }
 
 bool HloParserImpl::ParseHloComputation(HloComputation** result) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_70(mht_70_v, 5143, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseHloComputation");
+
   if (lexer_.GetKind() == TokKind::kLbrace) {
     // This means it is a nested computation.
     return ParseInstructionList(result, /*computation_name=*/"_");
@@ -4762,7 +5153,13 @@ bool HloParserImpl::ParseHloComputation(HloComputation** result) {
 
 bool HloParserImpl::ParseHloComputationList(
     std::vector<HloComputation*>* result) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_71(mht_71_v, 5156, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseHloComputationList");
+
   auto parse_and_add_item = [&]() {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_72(mht_72_v, 5160, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "lambda");
+
     HloComputation* computation;
     if (!ParseHloComputation(&computation)) {
       return false;
@@ -4780,7 +5177,13 @@ bool HloParserImpl::ParseHloComputationList(
 //   ::= /*empty*/
 //   ::= shape (',' shape)*
 bool HloParserImpl::ParseShapeList(std::vector<Shape>* result) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_73(mht_73_v, 5180, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseShapeList");
+
   auto parse_and_add_item = [&]() {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_74(mht_74_v, 5184, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "lambda");
+
     Shape shape;
     if (!ParseShape(&shape)) {
       return false;
@@ -4799,7 +5202,13 @@ bool HloParserImpl::ParseShapeList(std::vector<Shape>* result) {
 bool HloParserImpl::ParseInt64List(const TokKind start, const TokKind end,
                                    const TokKind delim,
                                    std::vector<int64_t>* result) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_75(mht_75_v, 5205, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseInt64List");
+
   auto parse_and_add_item = [&]() {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_76(mht_76_v, 5209, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "lambda");
+
     int64_t i;
     if (!ParseInt64(&i)) {
       return false;
@@ -4821,7 +5230,13 @@ bool HloParserImpl::ParseInt64List(const TokKind start, const TokKind end,
 bool HloParserImpl::ParseInt64ListList(
     const TokKind start, const TokKind end, const TokKind delim,
     std::vector<std::vector<int64_t>>* result) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_77(mht_77_v, 5233, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseInt64ListList");
+
   auto parse_and_add_item = [&]() {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_78(mht_78_v, 5237, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "lambda");
+
     std::vector<int64_t> item;
     if (!ParseInt64List(start, end, delim, &item)) {
       return false;
@@ -4835,6 +5250,9 @@ bool HloParserImpl::ParseInt64ListList(
 bool HloParserImpl::ParseList(const TokKind start, const TokKind end,
                               const TokKind delim,
                               const std::function<bool()>& parse_and_add_item) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_79(mht_79_v, 5253, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseList");
+
   if (!ParseToken(start, StrCat("expects a list starting with ",
                                 TokKindToString(start)))) {
     return false;
@@ -4854,6 +5272,9 @@ bool HloParserImpl::ParseList(const TokKind start, const TokKind end,
 
 // param_list_to_shape ::= param_list '->' shape
 bool HloParserImpl::ParseParamListToShape(Shape* shape, LocTy* shape_loc) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_80(mht_80_v, 5275, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseParamListToShape");
+
   if (!ParseParamList() || !ParseToken(TokKind::kArrow, "expects '->'")) {
     return false;
   }
@@ -4862,6 +5283,9 @@ bool HloParserImpl::ParseParamListToShape(Shape* shape, LocTy* shape_loc) {
 }
 
 bool HloParserImpl::CanBeParamListToShape() {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_81(mht_81_v, 5286, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::CanBeParamListToShape");
+
   return lexer_.GetKind() == TokKind::kLparen;
 }
 
@@ -4871,6 +5295,9 @@ bool HloParserImpl::CanBeParamListToShape() {
 //   ::= param (',' param)*
 // param ::= name shape
 bool HloParserImpl::ParseParamList() {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_82(mht_82_v, 5298, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseParamList");
+
   if (!ParseToken(TokKind::kLparen,
                   "expects '(' at the beginning of param list")) {
     return false;
@@ -4897,7 +5324,13 @@ bool HloParserImpl::ParseParamList() {
 // param ::= name shape
 bool HloParserImpl::ParseDimensionSizes(std::vector<int64_t>* dimension_sizes,
                                         std::vector<bool>* dynamic_dimensions) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_83(mht_83_v, 5327, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseDimensionSizes");
+
   auto parse_and_add_item = [&]() {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_84(mht_84_v, 5331, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "lambda");
+
     int64_t i;
     bool is_dynamic = false;
     if (lexer_.GetKind() == TokKind::kLeq) {
@@ -4922,7 +5355,13 @@ bool HloParserImpl::ParseDimensionSizes(std::vector<int64_t>* dimension_sizes,
 //   ::= /*empty*/
 //   ::= (int64_t | '*') (',' (int64_t | '*'))*
 bool HloParserImpl::ParseTiles(std::vector<Tile>* tiles) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_85(mht_85_v, 5358, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseTiles");
+
   auto parse_and_add_tile_dimension = [&]() {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_86(mht_86_v, 5362, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "lambda");
+
     int64_t i;
     if (ParseInt64(&i)) {
       tiles->back().add_dimensions(i);
@@ -4955,6 +5394,10 @@ bool HloParserImpl::ParseTiles(std::vector<Tile>* tiles) {
 //   ::= int64_t
 bool HloParserImpl::ParseLayoutIntAttribute(
     int64_t* attr_value, absl::string_view attr_description) {
+   std::vector<std::string> mht_87_v;
+   mht_87_v.push_back("attr_description: \"" + std::string(attr_description.data(), attr_description.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_87(mht_87_v, 5398, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseLayoutIntAttribute");
+
   if (!ParseToken(TokKind::kLparen,
                   StrCat("expects ", attr_description, " to start with ",
                          TokKindToString(TokKind::kLparen)))) {
@@ -4979,12 +5422,18 @@ bool HloParserImpl::ParseLayoutIntAttribute(
 //   ::= /*empty*/
 //   ::= 'S' '(' int64_t ')'
 bool HloParserImpl::ParseLayout(Layout* layout) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_88(mht_88_v, 5425, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseLayout");
+
   std::vector<int64_t> minor_to_major;
   std::vector<Tile> tiles;
   int64_t element_size_in_bits = 0;
   int64_t memory_space = 0;
 
   auto parse_and_add_item = [&]() {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_89(mht_89_v, 5434, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "lambda");
+
     int64_t i;
     if (!ParseInt64(&i)) {
       return false;
@@ -5047,6 +5496,9 @@ bool HloParserImpl::ParseLayout(Layout* layout) {
 //   ::= /*empty*/
 //   ::= shape (',' shape)*
 bool HloParserImpl::ParseShape(Shape* result) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_90(mht_90_v, 5499, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseShape");
+
   if (EatIfPresent(TokKind::kLparen)) {  // Tuple
     std::vector<Shape> shapes;
     if (lexer_.GetKind() == TokKind::kRparen) {
@@ -5126,6 +5578,9 @@ bool HloParserImpl::ParseShape(Shape* result) {
 }
 
 bool HloParserImpl::CanBeShape() {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_91(mht_91_v, 5581, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::CanBeShape");
+
   // A non-tuple shape starts with a kPrimitiveType token; a tuple shape starts
   // with '('.
   return lexer_.GetKind() == TokKind::kPrimitiveType ||
@@ -5133,6 +5588,9 @@ bool HloParserImpl::CanBeShape() {
 }
 
 bool HloParserImpl::ParseName(std::string* result) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_92(mht_92_v, 5591, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseName");
+
   VLOG(3) << "ParseName";
   if (lexer_.GetKind() != TokKind::kIdent &&
       lexer_.GetKind() != TokKind::kName) {
@@ -5144,6 +5602,9 @@ bool HloParserImpl::ParseName(std::string* result) {
 }
 
 bool HloParserImpl::ParseAttributeName(std::string* result) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_93(mht_93_v, 5605, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseAttributeName");
+
   if (lexer_.GetKind() != TokKind::kAttributeName) {
     return TokenError("expects attribute name");
   }
@@ -5153,6 +5614,9 @@ bool HloParserImpl::ParseAttributeName(std::string* result) {
 }
 
 bool HloParserImpl::ParseString(std::string* result) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_94(mht_94_v, 5617, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseString");
+
   VLOG(3) << "ParseString";
   if (lexer_.GetKind() != TokKind::kString) {
     return TokenError("expects string");
@@ -5164,6 +5628,10 @@ bool HloParserImpl::ParseString(std::string* result) {
 
 bool HloParserImpl::ParseDxD(const std::string& name,
                              std::vector<int64_t>* result) {
+   std::vector<std::string> mht_95_v;
+   mht_95_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_95(mht_95_v, 5632, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseDxD");
+
   LocTy loc = lexer_.GetLoc();
   if (!result->empty()) {
     return Error(loc, StrFormat("sub-attribute '%s=' already exists", name));
@@ -5190,6 +5658,9 @@ bool HloParserImpl::ParseDxD(const std::string& name,
 }
 
 bool HloParserImpl::ParseWindowPad(std::vector<std::vector<int64_t>>* pad) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_96(mht_96_v, 5661, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseWindowPad");
+
   LocTy loc = lexer_.GetLoc();
   if (!pad->empty()) {
     return Error(loc, "sub-attribute 'pad=' already exists");
@@ -5216,6 +5687,9 @@ bool HloParserImpl::ParseWindowPad(std::vector<std::vector<int64_t>>* pad) {
 // substring represents one PaddingConfigDimension. The substring is 3 (or 2)
 // numbers joined by '_'.
 bool HloParserImpl::ParsePaddingConfig(PaddingConfig* padding) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_97(mht_97_v, 5690, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParsePaddingConfig");
+
   if (lexer_.GetKind() != TokKind::kPad) {
     return TokenError("expects padding config, e.g., '0_0_0x3_3_1'");
   }
@@ -5240,6 +5714,9 @@ bool HloParserImpl::ParsePaddingConfig(PaddingConfig* padding) {
 
 // '{' metadata_string '}'
 bool HloParserImpl::ParseMetadata(OpMetadata* metadata) {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_98(mht_98_v, 5717, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseMetadata");
+
   absl::flat_hash_map<std::string, AttrConfig> attrs;
   optional<std::string> op_type;
   optional<std::string> op_name;
@@ -5281,6 +5758,9 @@ bool HloParserImpl::ParseMetadata(OpMetadata* metadata) {
 // ::= single_metadata | ('{' [single_metadata (',' single_metadata)*] '}')
 bool HloParserImpl::ParseSingleOrListMetadata(
     tensorflow::protobuf::RepeatedPtrField<OpMetadata>* metadata) {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_99(mht_99_v, 5761, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseSingleOrListMetadata");
+
   if (lexer_.GetKind() == TokKind::kLbrace &&
       lexer_.LookAhead() == TokKind::kLbrace) {
     if (!ParseToken(TokKind::kLbrace, "expected '{' to start metadata list")) {
@@ -5302,6 +5782,9 @@ bool HloParserImpl::ParseSingleOrListMetadata(
 }
 
 bool HloParserImpl::ParseOpShardingType(OpSharding::Type* type) {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_100(mht_100_v, 5785, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseOpShardingType");
+
   switch (lexer_.GetKind()) {
     case TokKind::kw_maximal:
       *type = OpSharding::MAXIMAL;
@@ -5323,6 +5806,9 @@ bool HloParserImpl::ParseOpShardingType(OpSharding::Type* type) {
 
 bool HloParserImpl::ParseListShardingType(
     std::vector<OpSharding::Type>* types) {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_101(mht_101_v, 5809, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseListShardingType");
+
   if (!ParseToken(TokKind::kLbrace,
                   "expected '{' to start sharding type list")) {
     return false;
@@ -5343,6 +5829,9 @@ bool HloParserImpl::ParseListShardingType(
 
 bool HloParserImpl::ParseOpcode(
     HloOpcode* opcode, absl::optional<HloOpcode>* async_wrapped_opcode) {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_102(mht_102_v, 5832, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseOpcode");
+
   VLOG(3) << "ParseOpcode";
   if (lexer_.GetKind() != TokKind::kIdent) {
     return TokenError("expects opcode");
@@ -5352,6 +5841,10 @@ bool HloParserImpl::ParseOpcode(
   if (!status_or_result.ok()) {
     auto try_parsing_async_op = [&](absl::string_view suffix,
                                     HloOpcode async_opcode) {
+   std::vector<std::string> mht_103_v;
+   mht_103_v.push_back("suffix: \"" + std::string(suffix.data(), suffix.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_103(mht_103_v, 5845, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "lambda");
+
       absl::string_view wrapped_opcode_view(val);
       if (absl::ConsumeSuffix(&wrapped_opcode_view, suffix)) {
         *opcode = async_opcode;
@@ -5382,6 +5875,9 @@ bool HloParserImpl::ParseOpcode(
 }
 
 bool HloParserImpl::ParseFftType(FftType* result) {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_104(mht_104_v, 5878, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseFftType");
+
   VLOG(3) << "ParseFftType";
   if (lexer_.GetKind() != TokKind::kIdent) {
     return TokenError("expects fft type");
@@ -5395,6 +5891,9 @@ bool HloParserImpl::ParseFftType(FftType* result) {
 }
 
 bool HloParserImpl::ParsePaddingType(PaddingType* result) {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_105(mht_105_v, 5894, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParsePaddingType");
+
   VLOG(3) << "ParsePaddingType";
   if (lexer_.GetKind() != TokKind::kIdent) {
     return TokenError("expects padding type");
@@ -5408,6 +5907,9 @@ bool HloParserImpl::ParsePaddingType(PaddingType* result) {
 }
 
 bool HloParserImpl::ParseComparisonDirection(ComparisonDirection* result) {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_106(mht_106_v, 5910, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseComparisonDirection");
+
   VLOG(3) << "ParseComparisonDirection";
   if (lexer_.GetKind() != TokKind::kIdent) {
     return TokenError("expects comparison direction");
@@ -5424,6 +5926,9 @@ bool HloParserImpl::ParseComparisonDirection(ComparisonDirection* result) {
 }
 
 bool HloParserImpl::ParseComparisonType(Comparison::Type* result) {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_107(mht_107_v, 5929, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseComparisonType");
+
   VLOG(1) << "ParseComparisonType";
   if (lexer_.GetKind() != TokKind::kIdent) {
     return TokenError("expects comparison type");
@@ -5439,6 +5944,9 @@ bool HloParserImpl::ParseComparisonType(Comparison::Type* result) {
 }
 
 bool HloParserImpl::ParseFusionKind(HloInstruction::FusionKind* result) {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_108(mht_108_v, 5947, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseFusionKind");
+
   VLOG(3) << "ParseFusionKind";
   if (lexer_.GetKind() != TokKind::kIdent) {
     return TokenError("expects fusion kind");
@@ -5456,6 +5964,9 @@ bool HloParserImpl::ParseFusionKind(HloInstruction::FusionKind* result) {
 }
 
 bool HloParserImpl::ParseRandomDistribution(RandomDistribution* result) {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_109(mht_109_v, 5967, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseRandomDistribution");
+
   VLOG(3) << "ParseRandomDistribution";
   if (lexer_.GetKind() != TokKind::kIdent) {
     return TokenError("expects random distribution");
@@ -5473,6 +5984,9 @@ bool HloParserImpl::ParseRandomDistribution(RandomDistribution* result) {
 }
 
 bool HloParserImpl::ParseRandomAlgorithm(RandomAlgorithm* result) {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_110(mht_110_v, 5987, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseRandomAlgorithm");
+
   VLOG(3) << "ParseRandomAlgorithm";
   if (lexer_.GetKind() != TokKind::kIdent) {
     return TokenError("expects random algorithm");
@@ -5490,6 +6004,9 @@ bool HloParserImpl::ParseRandomAlgorithm(RandomAlgorithm* result) {
 }
 
 bool HloParserImpl::ParsePrecision(PrecisionConfig::Precision* result) {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_111(mht_111_v, 6007, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParsePrecision");
+
   VLOG(3) << "ParsePrecision";
   if (lexer_.GetKind() != TokKind::kIdent) {
     return TokenError("expects random distribution");
@@ -5507,6 +6024,9 @@ bool HloParserImpl::ParsePrecision(PrecisionConfig::Precision* result) {
 }
 
 bool HloParserImpl::ParseInt64(int64_t* result) {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_112(mht_112_v, 6027, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseInt64");
+
   VLOG(3) << "ParseInt64";
   if (lexer_.GetKind() != TokKind::kInt) {
     return TokenError("expects integer");
@@ -5517,6 +6037,9 @@ bool HloParserImpl::ParseInt64(int64_t* result) {
 }
 
 bool HloParserImpl::ParseDouble(double* result) {
+   std::vector<std::string> mht_113_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_113(mht_113_v, 6040, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseDouble");
+
   switch (lexer_.GetKind()) {
     case TokKind::kDecimal: {
       double val = lexer_.GetDecimalVal();
@@ -5547,6 +6070,9 @@ bool HloParserImpl::ParseDouble(double* result) {
 }
 
 bool HloParserImpl::ParseComplex(std::complex<double>* result) {
+   std::vector<std::string> mht_114_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_114(mht_114_v, 6073, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseComplex");
+
   if (lexer_.GetKind() != TokKind::kLparen) {
     return TokenError("expects '(' before complex number");
   }
@@ -5583,6 +6109,9 @@ bool HloParserImpl::ParseComplex(std::complex<double>* result) {
 }
 
 bool HloParserImpl::ParseBool(bool* result) {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_115(mht_115_v, 6112, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseBool");
+
   if (lexer_.GetKind() != TokKind::kw_true &&
       lexer_.GetKind() != TokKind::kw_false) {
     return TokenError("expects true or false");
@@ -5593,6 +6122,10 @@ bool HloParserImpl::ParseBool(bool* result) {
 }
 
 bool HloParserImpl::ParseToken(TokKind kind, const std::string& msg) {
+   std::vector<std::string> mht_116_v;
+   mht_116_v.push_back("msg: \"" + msg + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_116(mht_116_v, 6126, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseToken");
+
   VLOG(3) << "ParseToken " << TokKindToString(kind) << " " << msg;
   if (lexer_.GetKind() != kind) {
     return TokenError(msg);
@@ -5602,6 +6135,9 @@ bool HloParserImpl::ParseToken(TokKind kind, const std::string& msg) {
 }
 
 bool HloParserImpl::EatIfPresent(TokKind kind) {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_117(mht_117_v, 6138, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::EatIfPresent");
+
   if (lexer_.GetKind() != kind) {
     return false;
   }
@@ -5612,6 +6148,10 @@ bool HloParserImpl::EatIfPresent(TokKind kind) {
 bool HloParserImpl::AddInstruction(const std::string& name,
                                    HloInstruction* instruction,
                                    LocTy name_loc) {
+   std::vector<std::string> mht_118_v;
+   mht_118_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_118(mht_118_v, 6152, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::AddInstruction");
+
   auto result = current_name_table().insert({name, {instruction, name_loc}});
   if (!result.second) {
     Error(name_loc, StrCat("instruction already exists: ", name));
@@ -5624,6 +6164,10 @@ bool HloParserImpl::AddInstruction(const std::string& name,
 bool HloParserImpl::AddComputation(const std::string& name,
                                    HloComputation* computation,
                                    LocTy name_loc) {
+   std::vector<std::string> mht_119_v;
+   mht_119_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_119(mht_119_v, 6168, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::AddComputation");
+
   auto result = computation_pool_.insert({name, {computation, name_loc}});
   if (!result.second) {
     Error(name_loc, StrCat("computation already exists: ", name));
@@ -5634,6 +6178,9 @@ bool HloParserImpl::AddComputation(const std::string& name,
 }
 
 StatusOr<Shape> HloParserImpl::ParseShapeOnly() {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_120(mht_120_v, 6181, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseShapeOnly");
+
   lexer_.Lex();
   Shape shape;
   if (!ParseShape(&shape)) {
@@ -5646,6 +6193,9 @@ StatusOr<Shape> HloParserImpl::ParseShapeOnly() {
 }
 
 StatusOr<HloSharding> HloParserImpl::ParseShardingOnly() {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_121(mht_121_v, 6196, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseShardingOnly");
+
   lexer_.Lex();
   OpSharding op_sharding;
   if (!ParseSharding(&op_sharding)) {
@@ -5658,6 +6208,9 @@ StatusOr<HloSharding> HloParserImpl::ParseShardingOnly() {
 }
 
 StatusOr<FrontendAttributes> HloParserImpl::ParseFrontendAttributesOnly() {
+   std::vector<std::string> mht_122_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_122(mht_122_v, 6211, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseFrontendAttributesOnly");
+
   lexer_.Lex();
   FrontendAttributes attributes;
   if (!ParseFrontendAttributes(&attributes)) {
@@ -5671,6 +6224,9 @@ StatusOr<FrontendAttributes> HloParserImpl::ParseFrontendAttributesOnly() {
 }
 
 StatusOr<std::vector<bool>> HloParserImpl::ParseParameterReplicationOnly() {
+   std::vector<std::string> mht_123_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_123(mht_123_v, 6227, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseParameterReplicationOnly");
+
   lexer_.Lex();
   ParameterReplication parameter_replication;
   if (!ParseParameterReplication(&parameter_replication)) {
@@ -5686,6 +6242,9 @@ StatusOr<std::vector<bool>> HloParserImpl::ParseParameterReplicationOnly() {
 }
 
 StatusOr<std::vector<ReplicaGroup>> HloParserImpl::ParseReplicaGroupsOnly() {
+   std::vector<std::string> mht_124_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_124(mht_124_v, 6245, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseReplicaGroupsOnly");
+
   lexer_.Lex();
   std::vector<ReplicaGroup> replica_groups;
   if (!ParseReplicaGroupsOnly(&replica_groups)) {
@@ -5698,6 +6257,9 @@ StatusOr<std::vector<ReplicaGroup>> HloParserImpl::ParseReplicaGroupsOnly() {
 }
 
 StatusOr<Window> HloParserImpl::ParseWindowOnly() {
+   std::vector<std::string> mht_125_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_125(mht_125_v, 6260, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseWindowOnly");
+
   lexer_.Lex();
   Window window;
   if (!ParseWindow(&window, /*expect_outer_curlies=*/false)) {
@@ -5711,6 +6273,9 @@ StatusOr<Window> HloParserImpl::ParseWindowOnly() {
 
 StatusOr<ConvolutionDimensionNumbers>
 HloParserImpl::ParseConvolutionDimensionNumbersOnly() {
+   std::vector<std::string> mht_126_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_126(mht_126_v, 6276, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseConvolutionDimensionNumbersOnly");
+
   lexer_.Lex();
   ConvolutionDimensionNumbers dnums;
   if (!ParseConvolutionDimensionNumbers(&dnums)) {
@@ -5724,6 +6289,9 @@ HloParserImpl::ParseConvolutionDimensionNumbersOnly() {
 }
 
 StatusOr<PaddingConfig> HloParserImpl::ParsePaddingConfigOnly() {
+   std::vector<std::string> mht_127_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_127(mht_127_v, 6292, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParsePaddingConfigOnly");
+
   lexer_.Lex();
   PaddingConfig padding_config;
   if (!ParsePaddingConfig(&padding_config)) {
@@ -5736,6 +6304,9 @@ StatusOr<PaddingConfig> HloParserImpl::ParsePaddingConfigOnly() {
 }
 
 bool HloParserImpl::ParseSingleInstruction(HloModule* module) {
+   std::vector<std::string> mht_128_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_128(mht_128_v, 6307, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParserImpl::ParseSingleInstruction");
+
   if (create_missing_instruction_ != nullptr || !scoped_name_tables_.empty()) {
     LOG(FATAL) << "Parser state is not clean. Please do not call any other "
                   "methods before calling ParseSingleInstruction.";
@@ -5851,6 +6422,10 @@ StatusOr<Shape> ParseShape(absl::string_view str) {
 
 std::unique_ptr<HloParser> HloParser::CreateHloParserForTests(
     absl::string_view str) {
+   std::vector<std::string> mht_129_v;
+   mht_129_v.push_back("str: \"" + std::string(str.data(), str.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_parserDTcc mht_129(mht_129_v, 6426, "", "./tensorflow/compiler/xla/service/hlo_parser.cc", "HloParser::CreateHloParserForTests");
+
   return absl::make_unique<HloParserImpl>(str);
 }
 

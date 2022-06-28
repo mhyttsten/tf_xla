@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 // Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -48,7 +216,10 @@ class GrpcTpuDriver;
 class GrpcEvent : public Event {
  public:
   explicit GrpcEvent(EventId id, GrpcTpuStream* stream)
-      : id_(id), stream_(stream) {}
+      : id_(id), stream_(stream) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_0(mht_0_v, 220, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcEvent");
+}
   ~GrpcEvent() override;
 
   xla::Status Await() override;
@@ -56,8 +227,14 @@ class GrpcEvent : public Event {
       absl::Duration duration) override;
   void AddCallback(std::function<void(Status)> callback) override;
 
-  EventId id() const { return id_; }
-  GrpcTpuStream* stream() const { return stream_; }
+  EventId id() const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_1(mht_1_v, 231, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "id");
+ return id_; }
+  GrpcTpuStream* stream() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_2(mht_2_v, 235, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "stream");
+ return stream_; }
 
  private:
   const EventId id_;
@@ -67,15 +244,24 @@ class GrpcEvent : public Event {
 class ErrorEvent : public GrpcEvent {
  public:
   explicit ErrorEvent(Status status) : GrpcEvent(EventId{0, 0}, nullptr) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_3(mht_3_v, 247, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "ErrorEvent");
+
     status_ = status;
   }
 
-  xla::Status Await() override { return status_; }
+  xla::Status Await() override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_4(mht_4_v, 254, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "Await");
+ return status_; }
   absl::optional<xla::Status> AwaitWithTimeout(
       absl::Duration duration) override {
     return status_;
   }
   void AddCallback(std::function<void(Status)> callback) override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_5(mht_5_v, 262, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "AddCallback");
+
     callback(status_);
   }
 
@@ -92,13 +278,25 @@ class GrpcBufferHandle : public BufferHandle {
         stream_(event->stream()),
         event_(std::move(event)),
         bytes_(bytes),
-        shape_(shape) {}
+        shape_(shape) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_6(mht_6_v, 282, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcBufferHandle");
+}
 
   std::shared_ptr<Event> OnReady() override { return event_; }
-  int64_t size_in_bytes() override { return bytes_; }
+  int64_t size_in_bytes() override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_7(mht_7_v, 288, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "size_in_bytes");
+ return bytes_; }
 
-  EventId id() const { return id_; }
-  GrpcTpuStream* stream() const { return stream_; }
+  EventId id() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_8(mht_8_v, 293, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "id");
+ return id_; }
+  GrpcTpuStream* stream() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_9(mht_9_v, 297, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "stream");
+ return stream_; }
 
   absl::optional<xla::ShapeProto> shape() override { return shape_; }
 
@@ -117,14 +315,26 @@ class GrpcCompiledProgramHandle : public CompiledProgramHandle {
       : id_(id),
         stream_(event->stream()),
         event_(std::move(event)),
-        metadata_(std::make_shared<CompiledProgramMetadata>()) {}
+        metadata_(std::make_shared<CompiledProgramMetadata>()) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_10(mht_10_v, 319, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcCompiledProgramHandle");
+}
 
   std::shared_ptr<Event> OnReady() override { return event_; }
 
-  EventId id() const { return id_; }
-  GrpcTpuStream* stream() const { return stream_; }
+  EventId id() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_11(mht_11_v, 326, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "id");
+ return id_; }
+  GrpcTpuStream* stream() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_12(mht_12_v, 330, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "stream");
+ return stream_; }
 
   Status program_shape(xla::ProgramShapeProto* program_shape) override {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_13(mht_13_v, 335, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "program_shape");
+
     auto opt_status = OnReady()->AwaitWithTimeout(absl::Hours(1));
     if (!opt_status.has_value()) {
       return xla::InternalError("Compile failed to finish within 1 hour.");
@@ -154,12 +364,21 @@ class GrpcCompiledProgramHandle : public CompiledProgramHandle {
 class GrpcLoadedProgramHandle : public LoadedProgramHandle {
  public:
   explicit GrpcLoadedProgramHandle(EventId id, std::shared_ptr<GrpcEvent> event)
-      : id_(id), stream_(event->stream()), event_(std::move(event)) {}
+      : id_(id), stream_(event->stream()), event_(std::move(event)) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_14(mht_14_v, 368, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcLoadedProgramHandle");
+}
 
   std::shared_ptr<Event> OnReady() override { return event_; }
 
-  EventId id() const { return id_; }
-  GrpcTpuStream* stream() const { return stream_; }
+  EventId id() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_15(mht_15_v, 375, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "id");
+ return id_; }
+  GrpcTpuStream* stream() const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_16(mht_16_v, 379, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "stream");
+ return stream_; }
 
  private:
   const EventId id_;
@@ -226,7 +445,10 @@ class GrpcTpuStream {
 
   struct TransferInfo {
     explicit TransferInfo(void* dst, int64_t num_bytes)
-        : dst(dst), num_bytes(num_bytes) {}
+        : dst(dst), num_bytes(num_bytes) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_17(mht_17_v, 449, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "TransferInfo");
+}
 
     void* const dst;
     const uint64_t num_bytes;
@@ -235,6 +457,9 @@ class GrpcTpuStream {
   struct CompileMetadataInfo {
     explicit CompileMetadataInfo(
         std::shared_ptr<CompiledProgramMetadata> metadata) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_18(mht_18_v, 460, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "CompileMetadataInfo");
+
       compiled_metadata = metadata;
     }
     std::shared_ptr<CompiledProgramMetadata> compiled_metadata;
@@ -265,6 +490,9 @@ class GrpcTpuStream {
       ABSL_LOCKS_EXCLUDED(events_mutex_);
 
   void AddWriteRequest(std::unique_ptr<StreamRequest::Entry> req) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_19(mht_19_v, 493, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "AddWriteRequest");
+
     absl::MutexLock m(&request_lock_);
     VLOG(2) << "Adding request: " << req->DebugString();
     requests_.push_back(std::move(req));
@@ -317,6 +545,9 @@ class GrpcTpuDriver : public TpuDriver {
                          std::shared_ptr<::grpc::ChannelCredentials> creds,
                          int32_t client_id)
       : config_(config), creds_(creds), client_id_(client_id) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_20(mht_20_v, 548, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcTpuDriver");
+
     SystemInfo system_info;
     QuerySystemInfo(&system_info);
     for (auto& chip_info : system_info.tpu_chip()) {
@@ -332,6 +563,9 @@ class GrpcTpuDriver : public TpuDriver {
   }
 
   ~GrpcTpuDriver() override {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_21(mht_21_v, 566, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "~GrpcTpuDriver");
+
     if (closed_) {
       return;
     }
@@ -417,13 +651,19 @@ class GrpcTpuDriver : public TpuDriver {
                                   wait_for);
   }
 
-  EventId NewOperationId() { return EventId{client_id_, ++operation_id_}; }
+  EventId NewOperationId() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_22(mht_22_v, 655, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "NewOperationId");
+ return EventId{client_id_, ++operation_id_}; }
 
   static std::unique_ptr<grpc::CloudTpuDriver::Stub> CreateTpuDriverStub(
       const TpuDriverConfig& config,
       std::shared_ptr<::grpc::ChannelCredentials> creds);
 
-  uint32_t client_id() const { return client_id_; }
+  uint32_t client_id() const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_23(mht_23_v, 664, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "client_id");
+ return client_id_; }
 
  private:
   Status Close();
@@ -440,18 +680,30 @@ class GrpcTpuDriver : public TpuDriver {
   std::atomic<bool> closed_{false};
 };  // namespace
 
-GrpcEvent::~GrpcEvent() { stream_->DeleteEvent(id_); }
+GrpcEvent::~GrpcEvent() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_24(mht_24_v, 684, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcEvent::~GrpcEvent");
+ stream_->DeleteEvent(id_); }
 
 Status GrpcEvent::Await() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_25(mht_25_v, 689, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcEvent::Await");
+
   auto opt_status = stream_->WaitForEvent(id_, absl::InfiniteDuration());
   return opt_status.value();
 }
 
 absl::optional<Status> GrpcEvent::AwaitWithTimeout(absl::Duration duration) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_26(mht_26_v, 697, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcEvent::AwaitWithTimeout");
+
   return stream_->WaitForEvent(id_, duration);
 }
 
 void GrpcEvent::AddCallback(std::function<void(Status)> callback) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_27(mht_27_v, 704, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcEvent::AddCallback");
+
   stream_->AddEventCallback(id_, std::move(callback));
 }
 
@@ -462,9 +714,15 @@ GrpcTpuStream::GrpcTpuStream(int32_t id, GrpcTpuDriver* driver,
       stub_(std::move(stub)),
       stream_(stub_->StreamExecute(&ctx_)),
       writer_thread_(&GrpcTpuStream::StreamWriterFn, this),
-      reader_thread_(&GrpcTpuStream::StreamReaderFn, this) {}
+      reader_thread_(&GrpcTpuStream::StreamReaderFn, this) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_28(mht_28_v, 718, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcTpuStream::GrpcTpuStream");
+}
 
 GrpcTpuStream::~GrpcTpuStream() {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_29(mht_29_v, 723, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcTpuStream::~GrpcTpuStream");
+
   {
     absl::MutexLock lock(&request_lock_);
     shutting_down_ = true;
@@ -493,6 +751,9 @@ GrpcTpuStream::~GrpcTpuStream() {
 
 void GrpcTpuStream::InitializeRequest(StreamRequest::Entry* req,
                                       absl::Span<Event* const> wait_for) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_30(mht_30_v, 754, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcTpuStream::InitializeRequest");
+
   auto operation_id = driver_->NewOperationId();
   EventInfo event_info;
 
@@ -513,6 +774,9 @@ void GrpcTpuStream::InitializeRequest(StreamRequest::Entry* req,
 }
 
 void GrpcTpuStream::UpdateEventStatus(EventId id, Status status) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_31(mht_31_v, 777, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcTpuStream::UpdateEventStatus");
+
   auto it = events_.find(id);
 
   // These should only happen when the server shuts down, and our local event
@@ -550,6 +814,9 @@ void GrpcTpuStream::UpdateEventStatus(EventId id, Status status) {
 }
 
 void GrpcTpuStream::DeleteEvent(EventId id) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_32(mht_32_v, 817, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcTpuStream::DeleteEvent");
+
   absl::MutexLock lock(&events_mutex_);
   auto it = events_.find(id);
   CHECK(it != events_.end());
@@ -563,6 +830,9 @@ void GrpcTpuStream::DeleteEvent(EventId id) {
 
 absl::optional<Status> GrpcTpuStream::WaitForEvent(EventId id,
                                                    absl::Duration duration) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_33(mht_33_v, 833, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcTpuStream::WaitForEvent");
+
   events_mutex_.Lock();
   auto it = events_.find(id);
 
@@ -593,6 +863,9 @@ absl::optional<Status> GrpcTpuStream::WaitForEvent(EventId id,
   }
 
   auto done = [this, id]() {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_34(mht_34_v, 866, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "lambda");
+
     events_mutex_.AssertHeld();
     return !events_.contains(id) || events_[id].done;
   };
@@ -607,6 +880,9 @@ absl::optional<Status> GrpcTpuStream::WaitForEvent(EventId id,
 
 void GrpcTpuStream::AddEventCallback(EventId id,
                                      std::function<void(Status)> callback) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_35(mht_35_v, 883, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcTpuStream::AddEventCallback");
+
   absl::MutexLock lock(&events_mutex_);
   auto it = events_.find(id);
   if (it == events_.end()) {
@@ -621,10 +897,16 @@ void GrpcTpuStream::AddEventCallback(EventId id,
 }
 
 static bool ShouldBeginWriting(int64_t* pending_requests) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_36(mht_36_v, 900, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "ShouldBeginWriting");
+
   return *pending_requests > 32;
 }
 
 void GrpcTpuStream::StreamWriterFn() {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_37(mht_37_v, 907, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcTpuStream::StreamWriterFn");
+
   while (true) {
     request_lock_.LockWhenWithTimeout(
         absl::Condition(&ShouldBeginWriting, &num_pending_requests_),
@@ -666,6 +948,9 @@ void GrpcTpuStream::StreamWriterFn() {
 }
 
 void GrpcTpuStream::StreamReaderFn() {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_38(mht_38_v, 951, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcTpuStream::StreamReaderFn");
+
   StreamResponse resp;
   while (stream_->Read(&resp)) {
     VLOG(2) << "Received response: " << resp.DebugString();
@@ -719,6 +1004,9 @@ void GrpcTpuStream::StreamReaderFn() {
 std::unique_ptr<BufferHandle> GrpcTpuStream::Allocate(
     int32_t core_id, MemoryRegion region, int64_t num_bytes,
     absl::Span<Event* const> wait_for) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_39(mht_39_v, 1007, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcTpuStream::Allocate");
+
   auto req = absl::make_unique<StreamRequest::Entry>();
   InitializeRequest(req.get(), wait_for);
   TraceMe activity("GrpcTpuStream::Allocate(num_bytes)");
@@ -735,6 +1023,9 @@ std::unique_ptr<BufferHandle> GrpcTpuStream::Allocate(
 std::unique_ptr<BufferHandle> GrpcTpuStream::Allocate(
     int32_t core_id, MemoryRegion region, const xla::ShapeProto& shape,
     absl::Span<Event* const> wait_for) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_40(mht_40_v, 1026, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcTpuStream::Allocate");
+
   auto req = absl::make_unique<StreamRequest::Entry>();
   InitializeRequest(req.get(), wait_for);
   TraceMe activity("GrpcTpuStream::Allocate(shape)");
@@ -752,6 +1043,9 @@ std::unique_ptr<BufferHandle> GrpcTpuStream::AllocateTuple(
     int32_t core_id, MemoryRegion region,
     absl::Span<BufferHandle* const> children,
     absl::Span<Event* const> wait_for) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_41(mht_41_v, 1046, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcTpuStream::AllocateTuple");
+
   auto req = absl::make_unique<StreamRequest::Entry>();
   InitializeRequest(req.get(), wait_for);
   TraceMe activity("GrpcTpuStream::AllocateTuple");
@@ -769,6 +1063,9 @@ std::unique_ptr<BufferHandle> GrpcTpuStream::AllocateTuple(
 
 std::shared_ptr<Event> GrpcTpuStream::Deallocate(
     std::unique_ptr<BufferHandle> handle, absl::Span<Event* const> wait_for) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_42(mht_42_v, 1066, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcTpuStream::Deallocate");
+
   auto req = absl::make_unique<StreamRequest::Entry>();
   InitializeRequest(req.get(), wait_for);
   TraceMe activity("GrpcTpuStream::Deallocate");
@@ -782,6 +1079,9 @@ std::shared_ptr<Event> GrpcTpuStream::Deallocate(
 
 std::shared_ptr<Event> GrpcTpuStream::TransferToDevice(
     const void* src, BufferHandle* dst, absl::Span<Event* const> wait_for) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_43(mht_43_v, 1082, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcTpuStream::TransferToDevice");
+
   auto req = absl::make_unique<StreamRequest::Entry>();
   InitializeRequest(req.get(), wait_for);
   TraceMe activity("GrpcTpuStream::TransferToDevice");
@@ -797,6 +1097,9 @@ std::shared_ptr<Event> GrpcTpuStream::TransferToDevice(
 
 std::shared_ptr<Event> GrpcTpuStream::TransferFromDevice(
     const BufferHandle* src, void* dst, absl::Span<Event* const> wait_for) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_44(mht_44_v, 1100, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcTpuStream::TransferFromDevice");
+
   auto req = absl::make_unique<StreamRequest::Entry>();
   InitializeRequest(req.get(), wait_for);
   TraceMe activity("GrpcTpuStream::TransferFromDevice");
@@ -816,6 +1119,9 @@ std::shared_ptr<Event> GrpcTpuStream::TransferFromDevice(
 std::shared_ptr<Event> GrpcTpuStream::TransferFromDeviceToDevice(
     const BufferHandle* src, BufferHandle* dst,
     absl::Span<Event* const> wait_for) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_45(mht_45_v, 1122, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcTpuStream::TransferFromDeviceToDevice");
+
   auto req = absl::make_unique<StreamRequest::Entry>();
   InitializeRequest(req.get(), wait_for);
   TraceMe activity([&req] {
@@ -836,6 +1142,9 @@ std::shared_ptr<Event> GrpcTpuStream::TransferFromDeviceToDevice(
 std::unique_ptr<CompiledProgramHandle> GrpcTpuStream::CompileProgram(
     const xla::HloProto& source, int32_t num_replicas,
     absl::Span<Event* const> wait_for) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_46(mht_46_v, 1145, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcTpuStream::CompileProgram");
+
   auto req = absl::make_unique<StreamRequest::Entry>();
   InitializeRequest(req.get(), wait_for);
   TraceMe activity("GrpcTpuStream::CompileProgram");
@@ -861,6 +1170,9 @@ std::unique_ptr<CompiledProgramHandle> GrpcTpuStream::CompileProgram(
 std::unique_ptr<LoadedProgramHandle> GrpcTpuStream::LoadProgram(
     int32_t core_id, const CompiledProgramHandle* handle,
     absl::Span<Event* const> wait_for) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_47(mht_47_v, 1173, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcTpuStream::LoadProgram");
+
   auto req = absl::make_unique<StreamRequest::Entry>();
   InitializeRequest(req.get(), wait_for);
   TraceMe activity("GrpcTpuStream::LoadProgram");
@@ -884,6 +1196,9 @@ std::unique_ptr<LoadedProgramHandle> GrpcTpuStream::LoadProgram(
 std::shared_ptr<Event> GrpcTpuStream::UnloadProgram(
     std::unique_ptr<LoadedProgramHandle> handle,
     absl::Span<Event* const> wait_for) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_48(mht_48_v, 1199, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcTpuStream::UnloadProgram");
+
   auto req = absl::make_unique<StreamRequest::Entry>();
   InitializeRequest(req.get(), wait_for);
   TraceMe activity("GrpcTpuStream::UnloadProgram");
@@ -900,6 +1215,9 @@ std::shared_ptr<Event> GrpcTpuStream::ExecuteProgram(
     absl::Span<BufferHandle* const> outputs,
     const xla::DeviceAssignmentProto& device_assignment,
     absl::Span<Event* const> wait_for) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_49(mht_49_v, 1218, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcTpuStream::ExecuteProgram");
+
   auto req = absl::make_unique<StreamRequest::Entry>();
   InitializeRequest(req.get(), wait_for);
   auto program_handle = static_cast<GrpcLoadedProgramHandle*>(program);
@@ -947,6 +1265,9 @@ std::shared_ptr<Event> GrpcTpuStream::ExecuteProgram(
 GrpcTpuDriver::CreateTpuDriverStub(
     const TpuDriverConfig& config,
     std::shared_ptr<::grpc::ChannelCredentials> creds) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_50(mht_50_v, 1268, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcTpuDriver::CreateTpuDriverStub");
+
   ::grpc::ChannelArguments args;
   args.SetMaxReceiveMessageSize(std::numeric_limits<int>::max());
   args.SetMaxSendMessageSize(std::numeric_limits<int>::max());
@@ -987,6 +1308,9 @@ GrpcTpuDriver::CreateTpuDriverStub(
 }
 
 std::unique_ptr<GrpcTpuStream> GrpcTpuDriver::AllocateStream(int32_t id) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_51(mht_51_v, 1311, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcTpuDriver::AllocateStream");
+
   auto stub = CreateTpuDriverStub(config_, creds_);
   ::grpc::ClientContext ctx;
   ctx.set_fail_fast(false);
@@ -995,6 +1319,9 @@ std::unique_ptr<GrpcTpuStream> GrpcTpuDriver::AllocateStream(int32_t id) {
 }
 
 void GrpcTpuDriver::QuerySystemInfo(SystemInfo* system_info) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_52(mht_52_v, 1322, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcTpuDriver::QuerySystemInfo");
+
   auto stub = CreateTpuDriverStub(config_, creds_);
   ::grpc::ClientContext ctx;
   ctx.set_fail_fast(false);
@@ -1013,6 +1340,9 @@ void GrpcTpuDriver::QuerySystemInfo(SystemInfo* system_info) {
 }
 
 Status GrpcTpuDriver::Reset() {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_53(mht_53_v, 1343, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcTpuDriver::Reset");
+
   auto stub = CreateTpuDriverStub(config_, creds_);
   ::grpc::ClientContext ctx;
   ctx.set_fail_fast(false);
@@ -1035,6 +1365,9 @@ Status GrpcTpuDriver::Reset() {
 }
 
 Status GrpcTpuDriver::Close() {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSgrpc_tpu_driverDTcc mht_54(mht_54_v, 1368, "", "./tensorflow/compiler/xla/python/tpu_driver/grpc_tpu_driver.cc", "GrpcTpuDriver::Close");
+
   auto stub = CreateTpuDriverStub(config_, creds_);
   ::grpc::ClientContext ctx;
   ctx.set_fail_fast(false);

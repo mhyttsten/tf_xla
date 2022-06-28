@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantization_utilsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantization_utilsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantization_utilsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,6 +214,9 @@ constexpr int kPerChannelMaxDim = 4;
 }  // namespace
 
 TfLiteStatus NumElements(const TensorT& tensor, uint64_t* num_elements) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantization_utilsDTcc mht_0(mht_0_v, 217, "", "./tensorflow/lite/tools/optimize/quantization_utils.cc", "NumElements");
+
   *num_elements = 1;
   for (const int64_t dim : tensor.shape) {
     if (dim <= 0 || *num_elements > UINT64_MAX / static_cast<uint64_t>(dim)) {
@@ -65,6 +236,9 @@ TfLiteStatus NumElements(const TensorT& tensor, uint64_t* num_elements) {
 void GetAsymmetricQuantizationParams(
     float min, float max, const int quant_min, const int quant_max,
     QuantizationParametersT* quantization_params) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantization_utilsDTcc mht_1(mht_1_v, 239, "", "./tensorflow/lite/tools/optimize/quantization_utils.cc", "GetAsymmetricQuantizationParams");
+
   const float quant_min_float = static_cast<float>(quant_min);
   const float quant_max_float = static_cast<float>(quant_max);
   // Adjust the boundaries to guarantee 0 is included.
@@ -93,6 +267,9 @@ void GetAsymmetricQuantizationParams(
 void GetSymmetricQuantizationParams(
     float min, float max, const int half_quant_range,
     QuantizationParametersT* quantization_params) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantization_utilsDTcc mht_2(mht_2_v, 270, "", "./tensorflow/lite/tools/optimize/quantization_utils.cc", "GetSymmetricQuantizationParams");
+
   // Adjust the boundaries to guarantee 0 is included.
   min = std::min(min, 0.0f);
   max = std::max(max, 0.0f);
@@ -106,6 +283,9 @@ void GetSymmetricQuantizationParams(
 TfLiteStatus GetQuantizationParams(TensorT* tensor, TensorType activations_type,
                                    QuantizationParametersT* quantization_params,
                                    ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantization_utilsDTcc mht_3(mht_3_v, 286, "", "./tensorflow/lite/tools/optimize/quantization_utils.cc", "GetQuantizationParams");
+
   if (activations_type == TensorType_INT8) {
     GetAsymmetricQuantizationParams(
         tensor->quantization->min[0], tensor->quantization->max[0],
@@ -130,6 +310,9 @@ TfLiteStatus GetQuantizationParams(TensorT* tensor, TensorType activations_type,
 // values.
 void FillSingleMinMax(const float* const input, const uint64_t input_size,
                       QuantizationParametersT* quantization_params) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantization_utilsDTcc mht_4(mht_4_v, 313, "", "./tensorflow/lite/tools/optimize/quantization_utils.cc", "FillSingleMinMax");
+
   const auto minmax = std::minmax_element(input, input + input_size);
   quantization_params->min.assign(1, *minmax.first);
   quantization_params->max.assign(1, *minmax.second);
@@ -140,6 +323,9 @@ TfLiteStatus FillPerChannelMinMax(const float* const input,
                                   int32_t channel_dim_index,
                                   QuantizationParametersT* quantization_params,
                                   ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantization_utilsDTcc mht_5(mht_5_v, 326, "", "./tensorflow/lite/tools/optimize/quantization_utils.cc", "FillPerChannelMinMax");
+
   if (!quantization_params->min.empty() || !quantization_params->max.empty()) {
     TF_LITE_REPORT_ERROR(
         error_reporter,
@@ -203,6 +389,9 @@ TfLiteStatus FillPerChannelMinMax(const float* const input,
 TfLiteStatus GetSymmetricScalesFromMaxMin(QuantizationParametersT* quant_params,
                                           std::vector<float>* scales,
                                           ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantization_utilsDTcc mht_6(mht_6_v, 392, "", "./tensorflow/lite/tools/optimize/quantization_utils.cc", "GetSymmetricScalesFromMaxMin");
+
   // Check that max and min values are present and their sizes match.
   if (quant_params->min.empty() || quant_params->max.empty()) {
     TF_LITE_REPORT_ERROR(error_reporter,
@@ -244,6 +433,9 @@ TfLiteStatus AdjustWeightsForBiasScale(QuantizationParametersT* quant_params,
                                        const size_t bias_size,
                                        const float input_scale,
                                        ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantization_utilsDTcc mht_7(mht_7_v, 436, "", "./tensorflow/lite/tools/optimize/quantization_utils.cc", "AdjustWeightsForBiasScale");
+
   // TODO(dmolitor) Allow adjusting activation scale.
   // TODO(dmolitor) Tighten scale adjustment.
   // TODO(dmolitor) Test using a separate strategy for scales of 0.
@@ -304,6 +496,9 @@ TfLiteStatus SymmetricPerChannelQuantization(TensorT* tensor,
                                              std::vector<float>* output_scales,
                                              std::vector<int8_t>* output_value,
                                              ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantization_utilsDTcc mht_8(mht_8_v, 499, "", "./tensorflow/lite/tools/optimize/quantization_utils.cc", "SymmetricPerChannelQuantization");
+
   if (tensor == nullptr) {
     TF_LITE_REPORT_ERROR(error_reporter, "Cannot quantize. Tensor is null.");
     return kTfLiteError;
@@ -360,6 +555,9 @@ std::vector<int16_t> SymmetricQuantizeFloatsToInt16(const float* data,
 TfLiteStatus SymmetricQuantizeFloatsToInt16(ModelT* model, TensorT* tensor,
                                             float scaling_factor,
                                             ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantization_utilsDTcc mht_9(mht_9_v, 558, "", "./tensorflow/lite/tools/optimize/quantization_utils.cc", "SymmetricQuantizeFloatsToInt16");
+
   const BufferT* buffer = model->buffers[tensor->buffer].get();
   const float* float_data = reinterpret_cast<const float*>(buffer->data.data());
   uint64_t num_elements;
@@ -382,6 +580,9 @@ void SymmetricPerChannelQuantizeValues(const float* const input,
                                        const std::vector<int32_t>& dimension,
                                        int32_t channel_dim_index,
                                        std::vector<int8_t>* output_value) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantization_utilsDTcc mht_10(mht_10_v, 583, "", "./tensorflow/lite/tools/optimize/quantization_utils.cc", "SymmetricPerChannelQuantizeValues");
+
   // Quantize the values.
   int indices[kPerChannelMaxDim];
   RuntimeShape unextended_tensor_dims(dimension.size(), dimension.data());
@@ -411,6 +612,9 @@ void SymmetricPerChannelQuantizeValues(const float* const input,
 // parameters. Applies per-layer quantization.
 TfLiteStatus SymmetricQuantizeTensorFromMinMax(ModelT* model, TensorT* tensor,
                                                ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantization_utilsDTcc mht_11(mht_11_v, 615, "", "./tensorflow/lite/tools/optimize/quantization_utils.cc", "SymmetricQuantizeTensorFromMinMax");
+
   if (model == nullptr || tensor == nullptr) {
     TF_LITE_REPORT_ERROR(error_reporter, "No tensor to quantize.");
     return kTfLiteError;
@@ -460,6 +664,9 @@ TfLiteStatus SymmetricQuantizeTensorFromMinMax(ModelT* model, TensorT* tensor,
 }
 
 TfLiteStatus SymmetricQuantizeTensor(ModelT* model, TensorT* tensor) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantization_utilsDTcc mht_12(mht_12_v, 667, "", "./tensorflow/lite/tools/optimize/quantization_utils.cc", "SymmetricQuantizeTensor");
+
   if (model == nullptr || tensor == nullptr) {
     TFLITE_LOG(TFLITE_LOG_ERROR, "No tensor to quantize.");
     return kTfLiteError;
@@ -499,6 +706,9 @@ TfLiteStatus SymmetricQuantizeTensor(ModelT* model, TensorT* tensor) {
 }
 
 TfLiteStatus QuantizeTensorFloat16(ModelT* model, TensorT* tensor) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantization_utilsDTcc mht_13(mht_13_v, 709, "", "./tensorflow/lite/tools/optimize/quantization_utils.cc", "QuantizeTensorFloat16");
+
   if (model == nullptr || tensor == nullptr) {
     TFLITE_LOG(TFLITE_LOG_ERROR, "No tensor to quantize.");
     return kTfLiteError;
@@ -548,6 +758,9 @@ TfLiteStatus AddQuantizationParams(const std::vector<float>& scales,
                                    size_t buffer_size, TensorType output_type,
                                    ModelT* model, TensorT* tensor,
                                    ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantization_utilsDTcc mht_14(mht_14_v, 761, "", "./tensorflow/lite/tools/optimize/quantization_utils.cc", "AddQuantizationParams");
+
   if (tensor->quantization == nullptr) {
     tensor->quantization = absl::make_unique<QuantizationParametersT>();
   }
@@ -572,6 +785,9 @@ TfLiteStatus AddQuantizationParams(const std::vector<float>& scales,
 TfLiteStatus SymmetricQuantizeTensorPerChannel(ModelT* model, TensorT* tensor,
                                                int32_t channel_dim_index,
                                                ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantization_utilsDTcc mht_15(mht_15_v, 788, "", "./tensorflow/lite/tools/optimize/quantization_utils.cc", "SymmetricQuantizeTensorPerChannel");
+
   if (tensor->shape.size() > kPerChannelMaxDim) {
     TF_LITE_REPORT_ERROR(
         error_reporter,
@@ -635,6 +851,9 @@ template <class BiasType>
 TfLiteStatus SymmetricPerLayerBiasQuantize(ModelT* model, TensorT* tensor,
                                            float scaling_factor,
                                            ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantization_utilsDTcc mht_16(mht_16_v, 854, "", "./tensorflow/lite/tools/optimize/quantization_utils.cc", "SymmetricPerLayerBiasQuantize");
+
   const BufferT* buffer = model->buffers[tensor->buffer].get();
   const float* float_data = reinterpret_cast<const float*>(buffer->data.data());
   uint64_t num_elements;
@@ -671,6 +890,9 @@ TfLiteStatus SymmetricPerChannelBiasQuantize(ModelT* model, TensorT* tensor,
                                              const float* weight_scales,
                                              int number_of_dimension,
                                              ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantization_utilsDTcc mht_17(mht_17_v, 893, "", "./tensorflow/lite/tools/optimize/quantization_utils.cc", "SymmetricPerChannelBiasQuantize");
+
   // Compute scales.
   std::vector<float> scales(number_of_dimension);
   for (int i = 0; i < number_of_dimension; i++) {
@@ -709,6 +931,9 @@ template TfLiteStatus SymmetricPerChannelBiasQuantize<std::int32_t>(
 
 TfLiteStatus QuantizeWeight(ModelT* model, TensorT* tensor, bool per_channel,
                             int per_axis_index, ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantization_utilsDTcc mht_18(mht_18_v, 934, "", "./tensorflow/lite/tools/optimize/quantization_utils.cc", "QuantizeWeight");
+
   // TODO(suharshs): Currently we conflate quantizing weights and constants. Its
   // possible that the right thing to do is asymmetric quantize the weight. Add
   // support for this.
@@ -729,6 +954,9 @@ float GetEffectiveScale(ModelT* model, SubGraphT* subgraph, int op_idx,
                         std::vector<int> input_index,
                         std::vector<int> intermediate_index,
                         std::vector<float> factors) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantization_utilsDTcc mht_19(mht_19_v, 957, "", "./tensorflow/lite/tools/optimize/quantization_utils.cc", "GetEffectiveScale");
+
   float scale = 1.0f;
   OperatorT* op = subgraph->operators[op_idx].get();
   for (int i = 0, end = input_index.size(); i < end; ++i) {
@@ -751,6 +979,9 @@ float GetEffectiveScale(ModelT* model, SubGraphT* subgraph, int op_idx,
 
 TfLiteStatus QuantizeActivation(TensorT* tensor, TensorType activations_type,
                                 ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantization_utilsDTcc mht_20(mht_20_v, 982, "", "./tensorflow/lite/tools/optimize/quantization_utils.cc", "QuantizeActivation");
+
   TF_LITE_ENSURE_STATUS(GetQuantizationParams(
       tensor, activations_type, tensor->quantization.get(), error_reporter));
   tensor->type = activations_type;
@@ -758,6 +989,9 @@ TfLiteStatus QuantizeActivation(TensorT* tensor, TensorType activations_type,
 }
 
 TfLiteStatus QuantizeActivationToInt16(TensorT* tensor, float scale) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantization_utilsDTcc mht_21(mht_21_v, 992, "", "./tensorflow/lite/tools/optimize/quantization_utils.cc", "QuantizeActivationToInt16");
+
   const int32_t zero_point = 0;
   tensor->quantization = absl::make_unique<QuantizationParametersT>();
   tensor->quantization->scale.push_back(scale);
@@ -767,6 +1001,9 @@ TfLiteStatus QuantizeActivationToInt16(TensorT* tensor, float scale) {
 }
 
 int GetPowerOfTwoScale(float min, float max) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantization_utilsDTcc mht_22(mht_22_v, 1004, "", "./tensorflow/lite/tools/optimize/quantization_utils.cc", "GetPowerOfTwoScale");
+
   const float range = std::max(std::abs(min), std::abs(max));
   int pot = 0;
   for (int i = 0; i < 10; i++) {

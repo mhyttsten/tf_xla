@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,7 +209,10 @@ namespace {
 // Performs lowering to TOSA dialect
 class LegalizeTF : public TosaLegalizeTFPassBase<LegalizeTF> {
  public:
-  explicit LegalizeTF() {}
+  explicit LegalizeTF() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_0(mht_0_v, 213, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "LegalizeTF");
+}
   void runOnOperation() override;
 };
 
@@ -160,6 +331,9 @@ LogicalResult ConvertTFReluOp::matchAndRewrite(
 
 LogicalResult ConvertTFRelu6Op::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_1(mht_1_v, 334, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFRelu6Op::matchAndRewrite");
+
   auto tf_relu6_op = cast<TF::Relu6Op>(op);
 
   TensorType output_type =
@@ -176,6 +350,9 @@ LogicalResult ConvertTFRelu6Op::matchAndRewrite(
 
 LogicalResult ConvertTFEqualOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_2(mht_2_v, 353, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFEqualOp::matchAndRewrite");
+
   auto tf_equal_op = cast<TF::EqualOp>(op);
 
   TensorType output_type =
@@ -190,6 +367,9 @@ LogicalResult ConvertTFEqualOp::matchAndRewrite(
 
 LogicalResult ConvertTFNotEqualOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_3(mht_3_v, 370, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFNotEqualOp::matchAndRewrite");
+
   auto tf_not_equal_op = cast<TF::NotEqualOp>(op);
 
   TensorType output_type =
@@ -211,6 +391,9 @@ LogicalResult ConvertTFNotEqualOp::matchAndRewrite(
 
 LogicalResult ConvertTFGreaterOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_4(mht_4_v, 394, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFGreaterOp::matchAndRewrite");
+
   auto tf_greater_op = cast<TF::GreaterOp>(op);
 
   TensorType output_type =
@@ -225,6 +408,9 @@ LogicalResult ConvertTFGreaterOp::matchAndRewrite(
 
 LogicalResult ConvertTFGreaterEqualOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_5(mht_5_v, 411, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFGreaterEqualOp::matchAndRewrite");
+
   auto tf_greater_equal_op = cast<TF::GreaterEqualOp>(op);
 
   TensorType output_type =
@@ -240,6 +426,9 @@ LogicalResult ConvertTFGreaterEqualOp::matchAndRewrite(
 
 LogicalResult ConvertTFAddOp::matchAndRewrite(Operation* op,
                                               PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_6(mht_6_v, 429, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFAddOp::matchAndRewrite");
+
   auto tf_add_op = cast<TF::AddOp>(op);
 
   TensorType output_type =
@@ -254,6 +443,9 @@ LogicalResult ConvertTFAddOp::matchAndRewrite(Operation* op,
 
 LogicalResult ConvertTFAddV2Op::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_7(mht_7_v, 446, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFAddV2Op::matchAndRewrite");
+
   auto tf_addv2_op = cast<TF::AddV2Op>(op);
 
   TensorType output_type =
@@ -269,6 +461,9 @@ LogicalResult ConvertTFAddV2Op::matchAndRewrite(
 // AddN is commutative
 LogicalResult ConvertTFAddNOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_8(mht_8_v, 464, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFAddNOp::matchAndRewrite");
+
   auto tf_addn_op = cast<TF::AddNOp>(op);
 
   TensorType output_type =
@@ -294,6 +489,9 @@ LogicalResult ConvertTFAddNOp::matchAndRewrite(
 
 LogicalResult ConvertTFSubOp::matchAndRewrite(Operation* op,
                                               PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_9(mht_9_v, 492, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFSubOp::matchAndRewrite");
+
   auto tf_sub_op = cast<TF::SubOp>(op);
 
   TensorType output_type =
@@ -308,6 +506,9 @@ LogicalResult ConvertTFSubOp::matchAndRewrite(Operation* op,
 
 LogicalResult ConvertTFMulOp::matchAndRewrite(Operation* op,
                                               PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_10(mht_10_v, 509, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFMulOp::matchAndRewrite");
+
   auto tf_mul_op = cast<TF::MulOp>(op);
 
   llvm::Optional<Value> result = convertMultiplyOp(
@@ -321,6 +522,9 @@ LogicalResult ConvertTFMulOp::matchAndRewrite(Operation* op,
 
 LogicalResult ConvertTFSquareOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_11(mht_11_v, 525, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFSquareOp::matchAndRewrite");
+
   auto tf_square_op = cast<TF::SquareOp>(op);
 
   llvm::Optional<Value> result =
@@ -335,6 +539,9 @@ LogicalResult ConvertTFSquareOp::matchAndRewrite(
 
 LogicalResult ConvertTFSquaredDifferenceOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_12(mht_12_v, 542, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFSquaredDifferenceOp::matchAndRewrite");
+
   auto tf_squared_op = cast<TF::SquaredDifferenceOp>(op);
 
   llvm::Optional<Value> result =
@@ -349,6 +556,9 @@ LogicalResult ConvertTFSquaredDifferenceOp::matchAndRewrite(
 
 LogicalResult ConvertTFRoundOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_13(mht_13_v, 559, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFRoundOp::matchAndRewrite");
+
   auto tf_round_op = cast<TF::RoundOp>(op);
 
   TensorType input_type = tf_round_op.x().getType().dyn_cast<TensorType>();
@@ -373,6 +583,9 @@ LogicalResult ConvertTFRoundOp::matchAndRewrite(
 
 LogicalResult ConvertTFFloorDivOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_14(mht_14_v, 586, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFFloorDivOp::matchAndRewrite");
+
   auto tf_floordiv_op = cast<TF::FloorDivOp>(op);
 
   llvm::Optional<Value> result =
@@ -388,6 +601,9 @@ LogicalResult ConvertTFFloorDivOp::matchAndRewrite(
 
 LogicalResult ConvertTFFloorModOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_15(mht_15_v, 604, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFFloorModOp::matchAndRewrite");
+
   auto tf_floormod_op = cast<TF::FloorModOp>(op);
 
   llvm::Optional<Value> result =
@@ -403,6 +619,9 @@ LogicalResult ConvertTFFloorModOp::matchAndRewrite(
 
 LogicalResult ConvertTFAssertOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_16(mht_16_v, 622, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFAssertOp::matchAndRewrite");
+
   op->dropAllReferences();
   op->erase();
   return success();
@@ -410,6 +629,9 @@ LogicalResult ConvertTFAssertOp::matchAndRewrite(
 
 LogicalResult ConvertTFMaximumOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_17(mht_17_v, 632, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFMaximumOp::matchAndRewrite");
+
   auto tf_maximum_op = cast<TF::MaximumOp>(op);
 
   TensorType output_type =
@@ -424,6 +646,9 @@ LogicalResult ConvertTFMaximumOp::matchAndRewrite(
 
 LogicalResult ConvertTFMinimumOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_18(mht_18_v, 649, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFMinimumOp::matchAndRewrite");
+
   auto tf_minimum_op = cast<TF::MinimumOp>(op);
 
   TensorType output_type =
@@ -438,6 +663,9 @@ LogicalResult ConvertTFMinimumOp::matchAndRewrite(
 
 LogicalResult ConvertTFRealDivOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_19(mht_19_v, 666, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFRealDivOp::matchAndRewrite");
+
   auto tf_div_op = cast<TF::RealDivOp>(op);
 
   TensorType y_type = tf_div_op.y().getType().dyn_cast<TensorType>();
@@ -467,6 +695,9 @@ LogicalResult ConvertTFRealDivOp::matchAndRewrite(
 
 LogicalResult ConvertTFArgMaxOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_20(mht_20_v, 698, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFArgMaxOp::matchAndRewrite");
+
   auto tf_argmax_op = cast<TF::ArgMaxOp>(op);
 
   TensorType input_type = tf_argmax_op.input().getType().dyn_cast<TensorType>();
@@ -497,6 +728,9 @@ LogicalResult ConvertTFArgMaxOp::matchAndRewrite(
 }
 LogicalResult ConvertTFAvgPoolOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_21(mht_21_v, 731, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFAvgPoolOp::matchAndRewrite");
+
   auto tf_avgpool_op = cast<TF::AvgPoolOp>(op);
 
   RankedTensorType input_type =
@@ -567,6 +801,9 @@ LogicalResult ConvertTFAvgPoolOp::matchAndRewrite(
 
 LogicalResult ConvertTFMaxPoolOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_22(mht_22_v, 804, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFMaxPoolOp::matchAndRewrite");
+
   auto tf_maxpool_op = cast<TF::MaxPoolOp>(op);
 
   RankedTensorType input_type =
@@ -637,6 +874,9 @@ LogicalResult ConvertTFMaxPoolOp::matchAndRewrite(
 
 LogicalResult ConvertTFConcatV2Op::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_23(mht_23_v, 877, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFConcatV2Op::matchAndRewrite");
+
   auto tf_concatv2_op = cast<TF::ConcatV2Op>(op);
   SmallVector<Value> values(tf_concatv2_op.values());
 
@@ -658,6 +898,9 @@ LogicalResult ConvertTFConcatV2Op::matchAndRewrite(
 
 LogicalResult ConvertTFReshapeOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_24(mht_24_v, 901, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFReshapeOp::matchAndRewrite");
+
   auto tf_reshape_op = cast<TF::ReshapeOp>(op);
 
   RankedTensorType output_type =
@@ -680,6 +923,9 @@ LogicalResult ConvertTFReshapeOp::matchAndRewrite(
 
 LogicalResult ConvertTFRankOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_25(mht_25_v, 926, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFRankOp::matchAndRewrite");
+
   auto tf_rank_op = cast<TF::RankOp>(op);
 
   RankedTensorType input_type =
@@ -701,6 +947,9 @@ LogicalResult ConvertTFRankOp::matchAndRewrite(
 
 LogicalResult ConvertTFShapeOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_26(mht_26_v, 950, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFShapeOp::matchAndRewrite");
+
   auto tf_shape_op = cast<TF::ShapeOp>(op);
 
   RankedTensorType output_type =
@@ -733,6 +982,9 @@ LogicalResult ConvertTFShapeOp::matchAndRewrite(
 
 LogicalResult ConvertTFExpandDimsOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_27(mht_27_v, 985, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFExpandDimsOp::matchAndRewrite");
+
   auto tf_expanddims_op = cast<TF::ExpandDimsOp>(op);
 
   llvm::Optional<Value> result =
@@ -748,6 +1000,9 @@ LogicalResult ConvertTFExpandDimsOp::matchAndRewrite(
 
 LogicalResult ConvertTFSqueezeOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_28(mht_28_v, 1003, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFSqueezeOp::matchAndRewrite");
+
   auto tf_squeeze_op = cast<TF::SqueezeOp>(op);
 
   // Copy squeeze_dims into int32_t array
@@ -770,6 +1025,9 @@ LogicalResult ConvertTFSqueezeOp::matchAndRewrite(
 
 LogicalResult ConvertTFFillOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_29(mht_29_v, 1028, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFFillOp::matchAndRewrite");
+
   auto tf_fill_op = cast<TF::FillOp>(op);
 
   RankedTensorType output_type =
@@ -816,6 +1074,9 @@ LogicalResult ConvertTFFillOp::matchAndRewrite(
 
 LogicalResult ConvertTFConv2DOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_30(mht_30_v, 1077, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFConv2DOp::matchAndRewrite");
+
   auto tf_conv2d_op = cast<TF::Conv2DOp>(op);
 
   RankedTensorType filter_type =
@@ -846,6 +1107,9 @@ LogicalResult ConvertTFConv2DOp::matchAndRewrite(
 
 LogicalResult ConvertTFDepthwiseConv2dNativeOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_31(mht_31_v, 1110, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFDepthwiseConv2dNativeOp::matchAndRewrite");
+
   auto tf_dwconv2d_op = cast<TF::DepthwiseConv2dNativeOp>(op);
 
   RankedTensorType input_type =
@@ -928,6 +1192,9 @@ LogicalResult ConvertTFDepthwiseConv2dNativeOp::matchAndRewrite(
 
 LogicalResult ConvertTFConv2DBackpropInputOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_32(mht_32_v, 1195, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFConv2DBackpropInputOp::matchAndRewrite");
+
   auto tf_conv_op = cast<TF::Conv2DBackpropInputOp>(op);
 
   RankedTensorType input_type =
@@ -1038,6 +1305,9 @@ LogicalResult ConvertTFConv2DBackpropInputOp::matchAndRewrite(
 
 LogicalResult ConvertTFAllOp::matchAndRewrite(Operation* op,
                                               PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_33(mht_33_v, 1308, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFAllOp::matchAndRewrite");
+
   auto tf_all_op = cast<TF::AllOp>(op);
 
   RankedTensorType output_type =
@@ -1060,6 +1330,9 @@ LogicalResult ConvertTFAllOp::matchAndRewrite(Operation* op,
 
 LogicalResult ConvertTFAnyOp::matchAndRewrite(Operation* op,
                                               PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_34(mht_34_v, 1333, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFAnyOp::matchAndRewrite");
+
   auto tf_any_op = cast<TF::AnyOp>(op);
 
   RankedTensorType output_type =
@@ -1082,6 +1355,9 @@ LogicalResult ConvertTFAnyOp::matchAndRewrite(Operation* op,
 
 LogicalResult ConvertTFMaxOp::matchAndRewrite(Operation* op,
                                               PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_35(mht_35_v, 1358, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFMaxOp::matchAndRewrite");
+
   auto tf_max_op = cast<TF::MaxOp>(op);
 
   RankedTensorType output_type =
@@ -1104,6 +1380,9 @@ LogicalResult ConvertTFMaxOp::matchAndRewrite(Operation* op,
 
 LogicalResult ConvertTFMinOp::matchAndRewrite(Operation* op,
                                               PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_36(mht_36_v, 1383, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFMinOp::matchAndRewrite");
+
   auto tf_min_op = cast<TF::MinOp>(op);
 
   RankedTensorType output_type =
@@ -1126,6 +1405,9 @@ LogicalResult ConvertTFMinOp::matchAndRewrite(Operation* op,
 
 LogicalResult ConvertTFMeanOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_37(mht_37_v, 1408, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFMeanOp::matchAndRewrite");
+
   auto tf_mean_op = cast<TF::MeanOp>(op);
 
   RankedTensorType output_type =
@@ -1148,6 +1430,9 @@ LogicalResult ConvertTFMeanOp::matchAndRewrite(
 
 LogicalResult ConvertTFProdOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_38(mht_38_v, 1433, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFProdOp::matchAndRewrite");
+
   auto tf_prod_op = cast<TF::ProdOp>(op);
 
   RankedTensorType output_type =
@@ -1170,6 +1455,9 @@ LogicalResult ConvertTFProdOp::matchAndRewrite(
 
 LogicalResult ConvertTFSumOp::matchAndRewrite(Operation* op,
                                               PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_39(mht_39_v, 1458, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFSumOp::matchAndRewrite");
+
   auto tf_sum_op = cast<TF::SumOp>(op);
 
   RankedTensorType output_type =
@@ -1192,6 +1480,9 @@ LogicalResult ConvertTFSumOp::matchAndRewrite(Operation* op,
 
 LogicalResult ConvertTFEluOp::matchAndRewrite(Operation* op,
                                               PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_40(mht_40_v, 1483, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFEluOp::matchAndRewrite");
+
   auto tf_elu_op = cast<TF::EluOp>(op);
 
   llvm::Optional<Value> result =
@@ -1206,6 +1497,9 @@ LogicalResult ConvertTFEluOp::matchAndRewrite(Operation* op,
 
 LogicalResult ConvertTFSoftmaxOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_41(mht_41_v, 1500, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFSoftmaxOp::matchAndRewrite");
+
   auto tf_softmax_op = cast<TF::SoftmaxOp>(op);
 
   llvm::Optional<Value> result =
@@ -1221,6 +1515,9 @@ LogicalResult ConvertTFSoftmaxOp::matchAndRewrite(
 
 LogicalResult ConvertTFLogSoftmaxOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_42(mht_42_v, 1518, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFLogSoftmaxOp::matchAndRewrite");
+
   auto tf_logsoftmax_op = cast<TF::LogSoftmaxOp>(op);
 
   llvm::Optional<Value> result = convertLogSoftmaxOp(
@@ -1235,6 +1532,9 @@ LogicalResult ConvertTFLogSoftmaxOp::matchAndRewrite(
 
 LogicalResult ConvertTFFusedBatchNormOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_43(mht_43_v, 1535, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFFusedBatchNormOp::matchAndRewrite");
+
   auto tf_batchnorm_op = cast<TF::FusedBatchNormOp>(op);
 
   RankedTensorType output_type =
@@ -1319,6 +1619,9 @@ LogicalResult ConvertTFFusedBatchNormOp::matchAndRewrite(
 
 LogicalResult ConvertTFFusedBatchNormV3Op::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_44(mht_44_v, 1622, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFFusedBatchNormV3Op::matchAndRewrite");
+
   auto tf_batchnorm_op = cast<TF::FusedBatchNormV3Op>(op);
 
   RankedTensorType output_type =
@@ -1376,6 +1679,9 @@ LogicalResult ConvertTFFusedBatchNormV3Op::matchAndRewrite(
 
 LogicalResult ConvertTFBiasAddOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_45(mht_45_v, 1682, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFBiasAddOp::matchAndRewrite");
+
   auto tf_biasadd_op = cast<TF::BiasAddOp>(op);
 
   RankedTensorType output_type =
@@ -1393,6 +1699,9 @@ LogicalResult ConvertTFBiasAddOp::matchAndRewrite(
 
 LogicalResult ConvertTFSliceOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_46(mht_46_v, 1702, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFSliceOp::matchAndRewrite");
+
   auto tf_slice_op = cast<TF::SliceOp>(op);
 
   RankedTensorType output_type =
@@ -1432,6 +1741,9 @@ LogicalResult ConvertTFSliceOp::matchAndRewrite(
 
 LogicalResult ConvertTFTileOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_47(mht_47_v, 1744, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFTileOp::matchAndRewrite");
+
   auto tf_tile_op = cast<TF::TileOp>(op);
 
   RankedTensorType output_type =
@@ -1457,6 +1769,9 @@ LogicalResult ConvertTFTileOp::matchAndRewrite(
 
 LogicalResult ConvertTFTransposeOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_48(mht_48_v, 1772, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFTransposeOp::matchAndRewrite");
+
   auto tf_transpose_op = cast<TF::TransposeOp>(op);
 
   TensorType output_type =
@@ -1474,6 +1789,9 @@ LogicalResult ConvertTFTransposeOp::matchAndRewrite(
 
 LogicalResult ConvertTFPackOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_49(mht_49_v, 1792, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFPackOp::matchAndRewrite");
+
   auto tf_pack_op = cast<TF::PackOp>(op);
 
   SmallVector<Value> inputs(tf_pack_op.values());
@@ -1497,6 +1815,9 @@ LogicalResult ConvertTFPackOp::matchAndRewrite(
 
 LogicalResult ConvertTFUnpackOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_50(mht_50_v, 1818, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFUnpackOp::matchAndRewrite");
+
   auto tf_unpack_op = cast<TF::UnpackOp>(op);
 
   IntegerAttr axis_attr;
@@ -1520,6 +1841,9 @@ LogicalResult ConvertTFUnpackOp::matchAndRewrite(
 // Splits in num_split parts along split_dim
 LogicalResult ConvertTFSplitOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_51(mht_51_v, 1844, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFSplitOp::matchAndRewrite");
+
   auto tf_split_op = cast<TF::SplitOp>(op);
 
   // Get the number of splits
@@ -1549,6 +1873,9 @@ LogicalResult ConvertTFSplitOp::matchAndRewrite(
 // TFSplitV op splits based on a vector of sizes
 LogicalResult ConvertTFSplitVOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_52(mht_52_v, 1876, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFSplitVOp::matchAndRewrite");
+
   auto tf_splitv_op = cast<TF::SplitVOp>(op);
 
   // Get the size_splits array
@@ -1584,6 +1911,9 @@ LogicalResult ConvertTFSplitVOp::matchAndRewrite(
 
 LogicalResult ConvertTFLessOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_53(mht_53_v, 1914, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFLessOp::matchAndRewrite");
+
   auto tf_less_op = cast<TF::LessOp>(op);
 
   TensorType output_type =
@@ -1604,6 +1934,9 @@ LogicalResult ConvertTFLessOp::matchAndRewrite(
 
 LogicalResult ConvertTFLessEqualOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_54(mht_54_v, 1937, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFLessEqualOp::matchAndRewrite");
+
   auto tf_less_equal_op = cast<TF::LessEqualOp>(op);
 
   TensorType output_type =
@@ -1624,6 +1957,9 @@ LogicalResult ConvertTFLessEqualOp::matchAndRewrite(
 
 LogicalResult ConvertTFPadOp::matchAndRewrite(Operation* op,
                                               PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_55(mht_55_v, 1960, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFPadOp::matchAndRewrite");
+
   auto tf_pad_op = cast<TF::PadOp>(op);
 
   TensorType output_type =
@@ -1641,6 +1977,9 @@ LogicalResult ConvertTFPadOp::matchAndRewrite(Operation* op,
 
 LogicalResult ConvertTFResizeBilinearOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_56(mht_56_v, 1980, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFResizeBilinearOp::matchAndRewrite");
+
   auto tf_resize_op = cast<TF::ResizeBilinearOp>(op);
 
   RankedTensorType output_type =
@@ -1662,6 +2001,9 @@ LogicalResult ConvertTFResizeBilinearOp::matchAndRewrite(
 
 LogicalResult ConvertTFResizeNearestNeighborOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_57(mht_57_v, 2004, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFResizeNearestNeighborOp::matchAndRewrite");
+
   auto tf_resize_op = cast<TF::ResizeNearestNeighborOp>(op);
 
   RankedTensorType output_type =
@@ -1684,6 +2026,9 @@ LogicalResult ConvertTFResizeNearestNeighborOp::matchAndRewrite(
 
 LogicalResult ConvertTFMatMulOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_58(mht_58_v, 2029, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFMatMulOp::matchAndRewrite");
+
   auto tf_matmul_op = cast<TF::MatMulOp>(op);
 
   RankedTensorType a_type =
@@ -1746,6 +2091,9 @@ LogicalResult ConvertTFMatMulOp::matchAndRewrite(
 
 LogicalResult ConvertTFGatherOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_59(mht_59_v, 2094, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFGatherOp::matchAndRewrite");
+
   auto tf_gather_op = cast<TF::GatherOp>(op);
 
   // tf.Gather is equivalent to tf.GatherV2 with batch_dims = 0, axis = 0
@@ -1765,6 +2113,9 @@ LogicalResult ConvertTFGatherOp::matchAndRewrite(
 
 LogicalResult ConvertTFGatherV2Op::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_60(mht_60_v, 2116, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFGatherV2Op::matchAndRewrite");
+
   auto tf_gather_op = cast<TF::GatherV2Op>(op);
 
   // Axis is a tensor.  Pull out the one integer value.
@@ -1789,6 +2140,9 @@ LogicalResult ConvertTFGatherV2Op::matchAndRewrite(
 
 LogicalResult ConvertTFGatherNdOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_61(mht_61_v, 2143, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFGatherNdOp::matchAndRewrite");
+
   auto tf_gathernd_op = cast<TF::GatherNdOp>(op);
 
   llvm::Optional<Value> result =
@@ -1804,6 +2158,9 @@ LogicalResult ConvertTFGatherNdOp::matchAndRewrite(
 
 LogicalResult ConvertTFSelectV2Op::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_62(mht_62_v, 2161, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFSelectV2Op::matchAndRewrite");
+
   auto tf_sel_op = cast<TF::SelectV2Op>(op);
 
   llvm::Optional<Value> result =
@@ -1819,6 +2176,9 @@ LogicalResult ConvertTFSelectV2Op::matchAndRewrite(
 
 LogicalResult ConvertTFSpaceToDepthOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_63(mht_63_v, 2179, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFSpaceToDepthOp::matchAndRewrite");
+
   auto tf_s2d_op = cast<TF::SpaceToDepthOp>(op);
 
   llvm::Optional<Value> result = convertSpaceToDepthOp(
@@ -1834,6 +2194,9 @@ LogicalResult ConvertTFSpaceToDepthOp::matchAndRewrite(
 
 LogicalResult ConvertTFDepthToSpaceOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_64(mht_64_v, 2197, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFDepthToSpaceOp::matchAndRewrite");
+
   auto tf_d2s_op = cast<TF::DepthToSpaceOp>(op);
 
   llvm::Optional<Value> result = convertDepthToSpaceOp(
@@ -1849,6 +2212,9 @@ LogicalResult ConvertTFDepthToSpaceOp::matchAndRewrite(
 
 LogicalResult ConvertTFSpaceToBatchNDOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_65(mht_65_v, 2215, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFSpaceToBatchNDOp::matchAndRewrite");
+
   auto tf_s2b_op = cast<TF::SpaceToBatchNDOp>(op);
 
   llvm::Optional<Value> result = convertSpaceToBatchNDOp(
@@ -1863,6 +2229,9 @@ LogicalResult ConvertTFSpaceToBatchNDOp::matchAndRewrite(
 
 LogicalResult ConvertTFBatchToSpaceNDOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_66(mht_66_v, 2232, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFBatchToSpaceNDOp::matchAndRewrite");
+
   auto tf_b2s_op = cast<TF::BatchToSpaceNDOp>(op);
 
   llvm::Optional<Value> result = convertBatchToSpaceNDOp(
@@ -1878,6 +2247,9 @@ LogicalResult ConvertTFBatchToSpaceNDOp::matchAndRewrite(
 
 LogicalResult ConvertTFStridedSliceOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_67(mht_67_v, 2250, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFStridedSliceOp::matchAndRewrite");
+
   auto tf_ss_op = cast<TF::StridedSliceOp>(op);
 
   llvm::Optional<Value> result = convertStridedSliceOp(
@@ -1896,6 +2268,9 @@ LogicalResult ConvertTFStridedSliceOp::matchAndRewrite(
 
 LogicalResult ConvertTFZerosLikeOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_68(mht_68_v, 2271, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFZerosLikeOp::matchAndRewrite");
+
   auto tf_zeroslike_op = cast<TF::ZerosLikeOp>(op);
 
   llvm::Optional<Value> result = convertZerosLikeOp(
@@ -1910,6 +2285,9 @@ LogicalResult ConvertTFZerosLikeOp::matchAndRewrite(
 
 LogicalResult ConvertTFSigmoidOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_69(mht_69_v, 2288, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFSigmoidOp::matchAndRewrite");
+
   auto tf_sigmoid_op = cast<TF::SigmoidOp>(op);
   TensorType output_type =
       tf_sigmoid_op.getResult().getType().dyn_cast<TensorType>();
@@ -1923,6 +2301,9 @@ LogicalResult ConvertTFSigmoidOp::matchAndRewrite(
 
 LogicalResult ConvertTFTanhOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_70(mht_70_v, 2304, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFTanhOp::matchAndRewrite");
+
   auto tf_tanh_op = cast<TF::TanhOp>(op);
   TensorType output_type =
       tf_tanh_op.getResult().getType().dyn_cast<TensorType>();
@@ -1936,6 +2317,9 @@ LogicalResult ConvertTFTanhOp::matchAndRewrite(
 
 LogicalResult ConvertTFLeakyReluOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_71(mht_71_v, 2320, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFLeakyReluOp::matchAndRewrite");
+
   auto tf_leakyrelu_op = cast<TF::LeakyReluOp>(op);
   TensorType output_type =
       tf_leakyrelu_op.getResult().getType().dyn_cast<TensorType>();
@@ -1993,6 +2377,9 @@ LogicalResult ConvertTFLeakyReluOp::matchAndRewrite(
 
 LogicalResult ConvertTFNegOp::matchAndRewrite(Operation* op,
                                               PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_72(mht_72_v, 2380, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFNegOp::matchAndRewrite");
+
   auto tf_neg_op = cast<TF::NegOp>(op);
   TensorType output_type =
       tf_neg_op.getResult().getType().dyn_cast<TensorType>();
@@ -2006,6 +2393,9 @@ LogicalResult ConvertTFNegOp::matchAndRewrite(Operation* op,
 
 LogicalResult ConvertTFStopGradientOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_73(mht_73_v, 2396, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFStopGradientOp::matchAndRewrite");
+
   auto tf_stopgrad_op = cast<TF::StopGradientOp>(op);
   TensorType output_type =
       tf_stopgrad_op.getResult().getType().dyn_cast<TensorType>();
@@ -2019,6 +2409,9 @@ LogicalResult ConvertTFStopGradientOp::matchAndRewrite(
 
 LogicalResult ConvertTFReverseV2Op::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_74(mht_74_v, 2412, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFReverseV2Op::matchAndRewrite");
+
   auto tf_reverse_op = cast<TF::ReverseV2Op>(op);
   RankedTensorType input_type =
       tf_reverse_op.tensor().getType().dyn_cast<RankedTensorType>();
@@ -2055,6 +2448,9 @@ LogicalResult ConvertTFReverseV2Op::matchAndRewrite(
 
 LogicalResult ConvertTFFakeQuantWithMinMaxArgsOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_75(mht_75_v, 2451, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFFakeQuantWithMinMaxArgsOp::matchAndRewrite");
+
   auto tf_fakequant_op = cast<TF::FakeQuantWithMinMaxArgsOp>(op);
 
   TensorType output_type =
@@ -2078,6 +2474,9 @@ LogicalResult ConvertTFFakeQuantWithMinMaxArgsOp::matchAndRewrite(
 
 LogicalResult ConvertTFFakeQuantWithMinMaxVarsOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_76(mht_76_v, 2477, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFFakeQuantWithMinMaxVarsOp::matchAndRewrite");
+
   auto tf_fakequant_op = cast<TF::FakeQuantWithMinMaxVarsOp>(op);
 
   TensorType output_type =
@@ -2113,6 +2512,9 @@ LogicalResult ConvertTFFakeQuantWithMinMaxVarsOp::matchAndRewrite(
 
 LogicalResult ConvertTFLeftShiftOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_77(mht_77_v, 2515, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFLeftShiftOp::matchAndRewrite");
+
   auto tf_left_shift_op = cast<TF::LeftShiftOp>(op);
 
   TensorType output_type =
@@ -2127,6 +2529,9 @@ LogicalResult ConvertTFLeftShiftOp::matchAndRewrite(
 
 LogicalResult ConvertTFRightShiftOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_78(mht_78_v, 2532, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFRightShiftOp::matchAndRewrite");
+
   // Performs a logical shift for unsigned integer types, and an arithmetic
   // shift for signed integer types.
   auto tf_right_shift_op = cast<TF::RightShiftOp>(op);
@@ -2155,6 +2560,9 @@ LogicalResult ConvertTFRightShiftOp::matchAndRewrite(
 
 LogicalResult ConvertTFOneHotOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_79(mht_79_v, 2563, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFOneHotOp::matchAndRewrite");
+
   auto tf_one_hot_op = cast<TF::OneHotOp>(op);
 
   ElementsAttr depth_elems;
@@ -2178,6 +2586,9 @@ LogicalResult ConvertTFOneHotOp::matchAndRewrite(
 
 LogicalResult ConvertTFBatchMatMulV2Op::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_80(mht_80_v, 2589, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "ConvertTFBatchMatMulV2Op::matchAndRewrite");
+
   auto tf_batch_matmul_op = cast<TF::BatchMatMulV2Op>(op);
 
   RankedTensorType x_type =
@@ -2253,6 +2664,9 @@ LogicalResult ConvertTFBatchMatMulV2Op::matchAndRewrite(
 }
 
 void LegalizeTF::runOnOperation() {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_81(mht_81_v, 2667, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "LegalizeTF::runOnOperation");
+
   auto* ctx = &getContext();
   RewritePatternSet patterns(ctx);
   auto func = getOperation();
@@ -2266,6 +2680,9 @@ void LegalizeTF::runOnOperation() {
 }  // anonymous namespace
 
 void populateLegalizeTFPatterns(MLIRContext* ctx, RewritePatternSet& patterns) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_tfDTcc mht_82(mht_82_v, 2683, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_tf.cc", "populateLegalizeTFPatterns");
+
   // Add the generated patterns to the list.
   populateWithGenerated(patterns);
   patterns.add<ConvertTFMatMulOp>(ctx);

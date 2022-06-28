@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifier_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifier_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifier_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -3689,6 +3857,9 @@ TEST_F(AlgebraicSimplifierTest, NegativePadding) {
   AlgebraicSimplifier simplifier(default_options_);
 
   auto has_negative_padding = [](const HloInstruction* pad) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifier_testDTcc mht_0(mht_0_v, 3860, "", "./tensorflow/compiler/xla/service/algebraic_simplifier_test.cc", "lambda");
+
     for (auto& padding_dimension : pad->padding_config().dimensions()) {
       if (padding_dimension.edge_padding_low() < 0 ||
           padding_dimension.edge_padding_high() < 0) {
@@ -3769,6 +3940,9 @@ TEST_F(AlgebraicSimplifierTest, CanDisableNegativePadding) {
   AlgebraicSimplifier simplifier(opts);
 
   auto has_negative_padding = [](const HloInstruction* pad) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifier_testDTcc mht_1(mht_1_v, 3943, "", "./tensorflow/compiler/xla/service/algebraic_simplifier_test.cc", "lambda");
+
     for (auto& padding_dimension : pad->padding_config().dimensions()) {
       if (padding_dimension.edge_padding_low() < 0 ||
           padding_dimension.edge_padding_high() < 0) {
@@ -4194,7 +4368,13 @@ struct ConvPaddingTestcase {
                       absl::string_view orig_conv_window,
                       absl::string_view expected_conv_window)
       : ConvPaddingTestcase(padding, orig_conv_window, expected_conv_window,
-                            /*pad_value=*/0) {}
+                            /*pad_value=*/0) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("padding: \"" + std::string(padding.data(), padding.size()) + "\"");
+   mht_2_v.push_back("orig_conv_window: \"" + std::string(orig_conv_window.data(), orig_conv_window.size()) + "\"");
+   mht_2_v.push_back("expected_conv_window: \"" + std::string(expected_conv_window.data(), expected_conv_window.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifier_testDTcc mht_2(mht_2_v, 4375, "", "./tensorflow/compiler/xla/service/algebraic_simplifier_test.cc", "ConvPaddingTestcase");
+}
 
   ConvPaddingTestcase(absl::string_view padding,
                       absl::string_view orig_conv_window,
@@ -4202,9 +4382,18 @@ struct ConvPaddingTestcase {
       : padding(padding),
         orig_conv_window(orig_conv_window),
         expected_conv_window(expected_conv_window),
-        pad_value(pad_value) {}
+        pad_value(pad_value) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("padding: \"" + std::string(padding.data(), padding.size()) + "\"");
+   mht_3_v.push_back("orig_conv_window: \"" + std::string(orig_conv_window.data(), orig_conv_window.size()) + "\"");
+   mht_3_v.push_back("expected_conv_window: \"" + std::string(expected_conv_window.data(), expected_conv_window.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifier_testDTcc mht_3(mht_3_v, 4389, "", "./tensorflow/compiler/xla/service/algebraic_simplifier_test.cc", "ConvPaddingTestcase");
+}
 
   std::string ToString() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifier_testDTcc mht_4(mht_4_v, 4394, "", "./tensorflow/compiler/xla/service/algebraic_simplifier_test.cc", "ToString");
+
     return absl::StrFormat(
         "padding=%s, orig_conv_window=%s, expected_conv_window=%s, "
         "pad_value=%f",
@@ -4475,6 +4664,9 @@ TEST_F(AlgebraicSimplifierTest, ConvertConvToMatmul) {
     const char* kernel_dim_order = "HWIO";  // can use chars HWIO in any order.
 
     ConvTestOptions& Reset() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifier_testDTcc mht_5(mht_5_v, 4667, "", "./tensorflow/compiler/xla/service/algebraic_simplifier_test.cc", "Reset");
+
       *this = ConvTestOptions();
       return *this;
     }
@@ -4556,6 +4748,9 @@ TEST_F(AlgebraicSimplifierTest, ConvertConvToMatmul) {
 
     auto make_shape = [](absl::Span<const int64_t> dims,
                          bool minor_to_major_layout) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifier_testDTcc mht_6(mht_6_v, 4751, "", "./tensorflow/compiler/xla/service/algebraic_simplifier_test.cc", "lambda");
+
       if (minor_to_major_layout) {
         return ShapeUtil::MakeShapeWithLayout(F32, dims, {0, 1, 2, 3});
       } else {
@@ -5613,6 +5808,9 @@ struct PadReduceWindowEffectiveBroadcastCase {
   bool should_become_broadcast;
 
   std::string ToTestCaseName() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifier_testDTcc mht_7(mht_7_v, 5811, "", "./tensorflow/compiler/xla/service/algebraic_simplifier_test.cc", "ToTestCaseName");
+
     return absl::StrCat(absl::StrJoin(input_spatials, ","), ";",
                         absl::StrJoin(symmetric_pad_spatials, ","), ";",
                         absl::StrJoin(reduce_window_spatials, ","), ";",
@@ -5621,6 +5819,9 @@ struct PadReduceWindowEffectiveBroadcastCase {
 };
 
 void PrintTo(const PadReduceWindowEffectiveBroadcastCase& c, std::ostream* os) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifier_testDTcc mht_8(mht_8_v, 5822, "", "./tensorflow/compiler/xla/service/algebraic_simplifier_test.cc", "PrintTo");
+
   *os << c.ToTestCaseName();
 }
 
@@ -5637,6 +5838,9 @@ TEST_P(PadReduceWindowEffectiveBroadcastTest, DoIt) {
   // `B S0 S1 F` kind of pattern.
   auto decorate_spatials = [&param](absl::Span<const int64_t> spatials,
                                     int64_t a, int64_t b) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifier_testDTcc mht_9(mht_9_v, 5841, "", "./tensorflow/compiler/xla/service/algebraic_simplifier_test.cc", "lambda");
+
     std::vector<int64_t> result;
     if (param.prepend_a) {
       result.push_back(a);
@@ -5712,6 +5916,9 @@ TEST_P(PadReduceWindowEffectiveBroadcastTest, DoIt) {
 
 const std::vector<PadReduceWindowEffectiveBroadcastCase>&
 PadReduceWindowEffectiveBroadcastCases() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifier_testDTcc mht_10(mht_10_v, 5919, "", "./tensorflow/compiler/xla/service/algebraic_simplifier_test.cc", "PadReduceWindowEffectiveBroadcastCases");
+
   static auto* cases = new std::vector<PadReduceWindowEffectiveBroadcastCase>{
       {/*input_spatials=*/{1, 1}, /*symmetric_pad_amount=*/{6, 6},
        /*reduce_window_spatials=*/{7, 7}, /*prepend_a=*/true,

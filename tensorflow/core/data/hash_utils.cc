@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -60,6 +228,9 @@ constexpr char kSeedGeneratorInputName[] = "seed_generator";
 template <std::size_t SIZE>
 bool IsNodeOfType(const NodeDef& node,
                   const std::array<const char*, SIZE>& op_types) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_0(mht_0_v, 231, "", "./tensorflow/core/data/hash_utils.cc", "IsNodeOfType");
+
   for (const auto& type : op_types) {
     if (MatchesAnyVersion(type, node.op())) {
       return true;
@@ -69,6 +240,9 @@ bool IsNodeOfType(const NodeDef& node,
 }
 
 Status GetSink(const GraphDef& graph_def, const NodeDef** sink) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_1(mht_1_v, 243, "", "./tensorflow/core/data/hash_utils.cc", "GetSink");
+
   for (auto& node : graph_def.node()) {
     if (node.op() == "_Retval") {
       *sink = &node;
@@ -83,6 +257,9 @@ Status GetSink(const GraphDef& graph_def, const NodeDef** sink) {
 }
 
 Status ShouldIgnoreInput(const NodeDef& node, int i, bool* result) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_2(mht_2_v, 260, "", "./tensorflow/core/data/hash_utils.cc", "ShouldIgnoreInput");
+
   *result = false;
   if (IsNodeOfType(node, kOpsWithSeed)) {
     const OpRegistrationData* reg;
@@ -114,6 +291,10 @@ Status ShouldIgnoreInput(const NodeDef& node, int i, bool* result) {
 Status ParseInputNodeName(absl::string_view input_name,
                           absl::string_view* node_name,
                           absl::string_view* suffix, bool* is_control_input) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("input_name: \"" + std::string(input_name.data(), input_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_3(mht_3_v, 295, "", "./tensorflow/core/data/hash_utils.cc", "ParseInputNodeName");
+
   if (input_name[0] == '^') {
     *node_name = input_name.substr(1);
     *is_control_input = true;
@@ -148,6 +329,9 @@ class GraphHasher {
   explicit GraphHasher(const GraphDef* graph, const NodeDef* root,
                        const FunctionLibraryDefinition* flib)
       : graph_(graph), root_(root), flib_(flib) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_4(mht_4_v, 332, "", "./tensorflow/core/data/hash_utils.cc", "GraphHasher");
+
     node_cache_ = std::make_shared<NodeCache>();
     function_cache_ = std::make_shared<FunctionCache>();
     attr_cache_ = std::make_shared<AttrCache>();
@@ -162,9 +346,15 @@ class GraphHasher {
         flib_(flib),
         node_cache_(node_cache),
         function_cache_(function_cache),
-        attr_cache_(attr_cache) {}
+        attr_cache_(attr_cache) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_5(mht_5_v, 350, "", "./tensorflow/core/data/hash_utils.cc", "GraphHasher");
+}
 
   Status Init() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_6(mht_6_v, 355, "", "./tensorflow/core/data/hash_utils.cc", "Init");
+
     // Construct a map of name -> NodeDef to avoid repeated linear searches.
     absl::flat_hash_map<absl::string_view, const NodeDef*> node_def_by_name;
     node_def_by_name.reserve(graph_->node_size());
@@ -174,6 +364,9 @@ class GraphHasher {
         auto node_name_formatter =
             [](std::string* out,
                const decltype(node_def_by_name)::value_type& item) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_7(mht_7_v, 367, "", "./tensorflow/core/data/hash_utils.cc", "lambda");
+
               absl::StrAppend(out, "'", item.first, "'");
             };
         return errors::Internal(
@@ -234,14 +427,23 @@ class GraphHasher {
     return Status::OK();
   }
 
-  Status HashRoot(uint64* hash) { return HashNode(root_, hash); }
+  Status HashRoot(uint64* hash) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_8(mht_8_v, 431, "", "./tensorflow/core/data/hash_utils.cc", "HashRoot");
+ return HashNode(root_, hash); }
 
   Status CheckEqual(GraphHasher* that) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_9(mht_9_v, 436, "", "./tensorflow/core/data/hash_utils.cc", "CheckEqual");
+
     return CheckNodesEqual(root_, that, that->root_);
   }
 
  private:
   Status HashNode(const NodeDef* node, uint64* hash) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_10(mht_10_v, 444, "", "./tensorflow/core/data/hash_utils.cc", "HashNode");
+
     auto it = node_cache_->find(node);
     if (it != node_cache_->end()) {
       *hash = it->second;
@@ -290,6 +492,9 @@ class GraphHasher {
 
   Status CheckNodesEqual(const NodeDef* this_node, GraphHasher* that,
                          const NodeDef* that_node) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_11(mht_11_v, 495, "", "./tensorflow/core/data/hash_utils.cc", "CheckNodesEqual");
+
     Status s = CheckNodesEqualHelper(this_node, that, that_node);
     if (!s.ok()) {
       return errors::FailedPrecondition("Nodes ", this_node->name(), " and ",
@@ -301,6 +506,9 @@ class GraphHasher {
 
   Status CheckNodesEqualHelper(const NodeDef* this_node, GraphHasher* that,
                                const NodeDef* that_node) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_12(mht_12_v, 509, "", "./tensorflow/core/data/hash_utils.cc", "CheckNodesEqualHelper");
+
     TF_RETURN_IF_ERROR(CheckNodesEqualNonInput(this_node, that, that_node,
                                                /*compare_functions=*/true));
 
@@ -338,6 +546,9 @@ class GraphHasher {
 
   Status HashNodeNonInput(const NodeDef* node, bool hash_functions,
                           uint64* hash) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_13(mht_13_v, 549, "", "./tensorflow/core/data/hash_utils.cc", "HashNodeNonInput");
+
     auto iter = attr_cache_->find(std::make_pair(node, hash_functions));
     if (iter != attr_cache_->end()) {
       *hash = iter->second;
@@ -396,6 +607,9 @@ class GraphHasher {
   Status CheckNodesEqualNonInput(const NodeDef* this_node, GraphHasher* that,
                                  const NodeDef* that_node,
                                  bool compare_functions) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_14(mht_14_v, 610, "", "./tensorflow/core/data/hash_utils.cc", "CheckNodesEqualNonInput");
+
     // We get the list of attrs from the op registry and then look
     // up their values in the NodeDef attr map. This avoids looping over
     // a map which is non-deterministic.
@@ -450,6 +664,10 @@ class GraphHasher {
 
   Status HashAttr(const std::string& attr_name, const AttrValue& attr_value,
                   bool hash_functions, uint64* hash) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("attr_name: \"" + attr_name + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_15(mht_15_v, 668, "", "./tensorflow/core/data/hash_utils.cc", "HashAttr");
+
     uint64 value_hash = 0;
     if (attr_value.has_func()) {
       if (hash_functions) {
@@ -473,6 +691,10 @@ class GraphHasher {
   Status CheckAttrsEqual(const std::string& attr_name,
                          const AttrValue& this_attr, GraphHasher* that,
                          const AttrValue& that_attr, bool compare_functions) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("attr_name: \"" + attr_name + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_16(mht_16_v, 695, "", "./tensorflow/core/data/hash_utils.cc", "CheckAttrsEqual");
+
     if (this_attr.has_func() != that_attr.has_func()) {
       return errors::FailedPrecondition(
           "AttrValues are of different types: ", this_attr.DebugString(),
@@ -518,11 +740,18 @@ class GraphHasher {
   }
 
   Status HashFunction(const NameAttrList& func, uint64* hash) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_17(mht_17_v, 743, "", "./tensorflow/core/data/hash_utils.cc", "HashFunction");
+
     return HashFunction(func.name(), func.attr(), hash);
   }
 
   Status HashFunction(const std::string& name, const AttrValueMap& attrs,
                       uint64* hash) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_18(mht_18_v, 752, "", "./tensorflow/core/data/hash_utils.cc", "HashFunction");
+
     const FunctionDef* fdef = flib_->Find(name);
     auto it = function_cache_->find(fdef);
     if (it != function_cache_->end()) {
@@ -568,6 +797,9 @@ class GraphHasher {
 
   Status CheckFunctionsEqual(const NameAttrList& this_func, GraphHasher* that,
                              const NameAttrList& that_func) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_19(mht_19_v, 800, "", "./tensorflow/core/data/hash_utils.cc", "CheckFunctionsEqual");
+
     return CheckFunctionsEqual(this_func.name(), this_func.attr(), that,
                                that_func.name(), that_func.attr());
   }
@@ -575,6 +807,11 @@ class GraphHasher {
                              const AttrValueMap& this_attrs, GraphHasher* that,
                              const std::string& that_name,
                              const AttrValueMap& that_attrs) {
+   std::vector<std::string> mht_20_v;
+   mht_20_v.push_back("this_name: \"" + this_name + "\"");
+   mht_20_v.push_back("that_name: \"" + that_name + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_20(mht_20_v, 812, "", "./tensorflow/core/data/hash_utils.cc", "CheckFunctionsEqual");
+
     Status s = CheckFunctionsEqualHelper(this_name, this_attrs, that, that_name,
                                          that_attrs);
     if (!s.ok()) {
@@ -589,6 +826,11 @@ class GraphHasher {
                                    GraphHasher* that,
                                    const std::string& that_name,
                                    const AttrValueMap& that_attrs) {
+   std::vector<std::string> mht_21_v;
+   mht_21_v.push_back("this_name: \"" + this_name + "\"");
+   mht_21_v.push_back("that_name: \"" + that_name + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_21(mht_21_v, 831, "", "./tensorflow/core/data/hash_utils.cc", "CheckFunctionsEqualHelper");
+
     const FunctionDef* this_fdef = flib_->Find(this_name);
     const FunctionDef* that_fdef = that->flib_->Find(that_name);
 
@@ -637,6 +879,9 @@ class GraphHasher {
 
   Status HashControlInputs(const std::vector<const NodeDef*>& inputs,
                            uint64* hash) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_22(mht_22_v, 882, "", "./tensorflow/core/data/hash_utils.cc", "HashControlInputs");
+
     *hash = 0;
     for (const NodeDef* input : inputs) {
       uint64 node_hash = 0;
@@ -650,6 +895,9 @@ class GraphHasher {
   Status CheckControlInputsEqual(
       const std::vector<const NodeDef*>& this_inputs, GraphHasher* that,
       const std::vector<const NodeDef*>& that_inputs) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_23(mht_23_v, 898, "", "./tensorflow/core/data/hash_utils.cc", "CheckControlInputsEqual");
+
     absl::flat_hash_map<uint64, const NodeDef*> this_hashes;
     for (const NodeDef* input : this_inputs) {
       uint64 node_hash = 0;
@@ -672,6 +920,9 @@ class GraphHasher {
     if (!this_hashes.empty()) {
       auto formatter = [](string* out,
                           const decltype(this_hashes)::value_type& item) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_24(mht_24_v, 923, "", "./tensorflow/core/data/hash_utils.cc", "lambda");
+
         out->append(item.second->name());
       };
       return errors::FailedPrecondition(
@@ -685,6 +936,9 @@ class GraphHasher {
 
  private:
   bool is_cycle_forming_edge(const NodeDef* start, const NodeDef* end) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_25(mht_25_v, 939, "", "./tensorflow/core/data/hash_utils.cc", "is_cycle_forming_edge");
+
     EdgeRep edge(start, end);
     return cycle_forming_edges_.contains(edge.GetHash());
   }
@@ -699,9 +953,15 @@ class GraphHasher {
     const NodeDef* end_node;
 
     EdgeRep(const NodeDef* start, const NodeDef* end)
-        : start_node(start), end_node(end) {}
+        : start_node(start), end_node(end) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_26(mht_26_v, 957, "", "./tensorflow/core/data/hash_utils.cc", "EdgeRep");
+}
 
     uint64 GetHash() {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_27(mht_27_v, 962, "", "./tensorflow/core/data/hash_utils.cc", "GetHash");
+
       return Hash64Combine(absl::Hash<const NodeDef*>()(start_node),
                            absl::Hash<const NodeDef*>()(end_node));
     }
@@ -720,6 +980,9 @@ class GraphHasher {
 }  // anonymous namespace
 
 Status HashTensor(const Tensor& tensor, uint64* hash) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_28(mht_28_v, 983, "", "./tensorflow/core/data/hash_utils.cc", "HashTensor");
+
   const tstring* s = nullptr;
   // Hash tensor type.
   *hash = Hash64Combine(0, tensor.dtype());
@@ -746,6 +1009,9 @@ Status HashTensor(const Tensor& tensor, uint64* hash) {
 }
 
 Status HashNode(const GraphDef& graph, const NodeDef& node, uint64* hash) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_29(mht_29_v, 1012, "", "./tensorflow/core/data/hash_utils.cc", "HashNode");
+
   const FunctionLibraryDefinition flib_def(OpRegistry::Global(),
                                            graph.library());
   return HashNode(graph, node, flib_def, hash);
@@ -753,18 +1019,27 @@ Status HashNode(const GraphDef& graph, const NodeDef& node, uint64* hash) {
 
 Status HashNode(const GraphDef& graph, const NodeDef& node,
                 const FunctionLibraryDefinition& flib_def, uint64* hash) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_30(mht_30_v, 1022, "", "./tensorflow/core/data/hash_utils.cc", "HashNode");
+
   GraphHasher hasher(&graph, &node, &flib_def);
   TF_RETURN_IF_ERROR(hasher.Init());
   return hasher.HashRoot(hash);
 }
 
 Status HashGraph(const GraphDef& graph_def, uint64* hash) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_31(mht_31_v, 1031, "", "./tensorflow/core/data/hash_utils.cc", "HashGraph");
+
   const NodeDef* sink = nullptr;
   TF_RETURN_IF_ERROR(GetSink(graph_def, &sink));
   return HashNode(graph_def, *sink, hash);
 }
 
 Status CheckGraphsEqual(const GraphDef& a, const GraphDef& b) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_32(mht_32_v, 1040, "", "./tensorflow/core/data/hash_utils.cc", "CheckGraphsEqual");
+
   const NodeDef* sink_a;
   TF_RETURN_IF_ERROR(GetSink(a, &sink_a));
   const NodeDef* sink_b;
@@ -774,6 +1049,9 @@ Status CheckGraphsEqual(const GraphDef& a, const GraphDef& b) {
 
 Status CheckSubgraphsEqual(const GraphDef& a, const NodeDef* node_a,
                            const GraphDef& b, const NodeDef* node_b) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSdataPShash_utilsDTcc mht_33(mht_33_v, 1052, "", "./tensorflow/core/data/hash_utils.cc", "CheckSubgraphsEqual");
+
   const FunctionLibraryDefinition flib_def_a(OpRegistry::Global(), a.library());
   GraphHasher hasher_a(&a, node_a, &flib_def_a);
   TF_RETURN_IF_ERROR(hasher_a.Init());

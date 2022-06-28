@@ -20,6 +20,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_STREAM_EXECUTOR_STREAM_H_
 #define TENSORFLOW_STREAM_EXECUTOR_STREAM_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSstream_executorPSstreamDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSstream_executorPSstreamDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSstream_executorPSstreamDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <complex>
 #include <functional>
@@ -126,7 +294,10 @@ class Stream {
 
   // Returns whether any errors have occurred while entraining work for this
   // stream.
-  bool ok() const { return !InErrorState(); }
+  bool ok() const {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstreamDTh mht_0(mht_0_v, 298, "", "./tensorflow/stream_executor/stream.h", "ok");
+ return !InErrorState(); }
 
   // Retrieves execution status back into the stream from the underlying
   // implementation without blocking the stream.
@@ -223,6 +394,9 @@ class Stream {
   // others)
   template <typename P>
   Stream &ThenWaitFor(P others) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstreamDTh mht_1(mht_1_v, 397, "", "./tensorflow/stream_executor/stream.h", "ThenWaitFor");
+
     for (auto &stream : *others) {
       CHECK_NE(stream.get(), this);
       ThenWaitFor(stream.get());
@@ -343,6 +517,9 @@ class Stream {
       ScratchAllocator *scratch_allocator,
       const dnn::AlgorithmConfig &algorithm_config,
       dnn::ProfileResult *output_profile_result) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstreamDTh mht_2(mht_2_v, 520, "", "./tensorflow/stream_executor/stream.h", "ConvolveWithAlgorithm");
+
     DeviceMemory<uint8> scratch_memory;
     dnn::AlgorithmDesc algorithm_desc;
     if (dnn::DnnSupport *dnn = parent_->AsDnn()) {
@@ -376,6 +553,9 @@ class Stream {
       DeviceMemory<OutputT> *output, ScratchAllocator *scratch_allocator,
       const dnn::AlgorithmConfig &algorithm_config,
       dnn::ProfileResult *output_profile_result) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstreamDTh mht_3(mht_3_v, 556, "", "./tensorflow/stream_executor/stream.h", "FusedConvolveWithAlgorithm");
+
     if (dnn::DnnSupport *dnn = parent_->AsDnn()) {
       return dnn->DoFusedConvolve(
           this, dnn::ToDataType<InputT>::value,
@@ -632,6 +812,9 @@ class Stream {
   Stream &ThenMemcpyD2HQuantized(
       const DeviceMemory<float> &gpu_unquantized_src,
       port::MutableArraySlice<ElementType> host_dst) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstreamDTh mht_4(mht_4_v, 815, "", "./tensorflow/stream_executor/stream.h", "ThenMemcpyD2HQuantized");
+
     return ThenMemcpyD2HQuantized(
         gpu_unquantized_src, Quantization<ElementType>::kModeId,
         host_dst.data(), host_dst.size() * sizeof(ElementType));
@@ -648,6 +831,9 @@ class Stream {
   template <typename ElementType>
   Stream &ThenMemcpyH2DQuantized(port::ArraySlice<ElementType> host_src,
                                  DeviceMemory<float> *gpu_unquantized_dst) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstreamDTh mht_5(mht_5_v, 834, "", "./tensorflow/stream_executor/stream.h", "ThenMemcpyH2DQuantized");
+
     return ThenMemcpyH2DQuantized(
         host_src.data(), host_src.size() * sizeof(ElementType),
         Quantization<ElementType>::kModeId, gpu_unquantized_dst);
@@ -1201,6 +1387,9 @@ class Stream {
                             const DeviceMemory<InputType> &a, int lda,
                             const DeviceMemory<InputType> &b, int ldb,
                             DeviceMemory<InputType> *c, int ldc) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstreamDTh mht_6(mht_6_v, 1390, "", "./tensorflow/stream_executor/stream.h", "ThenBlasGemm");
+
     InputType alpha{1.0};
     InputType beta{0.0};
     return ThenBlasGemm(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c,
@@ -1214,6 +1403,9 @@ class Stream {
                             const DeviceMemory<InputType> &b, int ldb,
                             ConstantType beta, DeviceMemory<InputType> *c,
                             int ldc) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstreamDTh mht_7(mht_7_v, 1406, "", "./tensorflow/stream_executor/stream.h", "ThenBlasGemm");
+
     static_assert(!std::is_same<InputType, Eigen::half>::value ||
                       std::is_same<ConstantType, float>::value ||
                       std::is_same<ConstantType, Eigen::half>::value,
@@ -1296,6 +1488,9 @@ class Stream {
       int ldc, blas::ComputationType computation_type,
       blas::AlgorithmType algorithm,
       blas::ProfileResult *output_profile_result) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstreamDTh mht_8(mht_8_v, 1491, "", "./tensorflow/stream_executor/stream.h", "ThenBlasGemmWithAlgorithm");
+
     OutputType alpha{1};
     OutputType beta{0};
     return ThenBlasGemmWithAlgorithm(transa, transb, m, n, k, alpha, a, lda, b,
@@ -1311,6 +1506,9 @@ class Stream {
       DeviceMemory<OutputType> *c, int ldc,
       blas::ComputationType computation_type, blas::AlgorithmType algorithm,
       blas::ProfileResult *output_profile_result) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstreamDTh mht_9(mht_9_v, 1509, "", "./tensorflow/stream_executor/stream.h", "ThenBlasGemmWithAlgorithm");
+
     TF_RETURN_IF_ERROR(
         CheckTypesForExtendedBlas<InputType, OutputType, ConstantType>(
             computation_type));
@@ -1350,6 +1548,9 @@ class Stream {
       int64_t stride_c, int batch_count, blas::ComputationType computation_type,
       blas::AlgorithmType algorithm,
       blas::ProfileResult *output_profile_result) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstreamDTh mht_10(mht_10_v, 1551, "", "./tensorflow/stream_executor/stream.h", "ThenBlasGemmStridedBatchedWithAlgorithm");
+
     TF_RETURN_IF_ERROR(
         CheckTypesForExtendedBlas<InputType, OutputType, ConstantType>(
             computation_type));
@@ -1462,6 +1663,9 @@ class Stream {
       int64_t stride_a, const DeviceMemory<InputType> &b, int ldb,
       int64_t stride_b, ConstantType beta, DeviceMemory<InputType> *c, int ldc,
       int64_t stride_c, int batch_count) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstreamDTh mht_11(mht_11_v, 1666, "", "./tensorflow/stream_executor/stream.h", "ThenBlasGemmStridedBatched");
+
     static_assert(((std::is_same<InputType, Eigen::half>::value ||
                     std::is_same<InputType, Eigen::bfloat16>::value) &&
                    std::is_same<ConstantType, float>::value) ||
@@ -1752,6 +1956,9 @@ class Stream {
   template <typename T>
   Stream &ThenMemcpyD2H(const DeviceMemory<T> &gpu_src,
                         port::MutableArraySlice<T> host_dst) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstreamDTh mht_12(mht_12_v, 1959, "", "./tensorflow/stream_executor/stream.h", "ThenMemcpyD2H");
+
     auto host_size = host_dst.size() * sizeof(T);
     CHECK(gpu_src.size() == 0 || host_size >= gpu_src.size());
     return ThenMemcpy(host_dst.begin(), gpu_src, host_size);
@@ -1763,6 +1970,9 @@ class Stream {
   template <typename T>
   Stream &ThenMemcpyH2D(port::ArraySlice<T> host_src,
                         DeviceMemory<T> *gpu_dst) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstreamDTh mht_13(mht_13_v, 1973, "", "./tensorflow/stream_executor/stream.h", "ThenMemcpyH2D");
+
     auto host_size = host_src.size() * sizeof(T);
     CHECK(gpu_dst->size() == 0 || gpu_dst->size() >= host_size);
     return ThenMemcpy(gpu_dst, host_src.begin(), host_size);
@@ -1779,6 +1989,9 @@ class Stream {
   // device pointer if you're not doing metaprogramming against the API.
   Stream &ThenMemcpyD2D(DeviceMemoryBase *gpu_dst,
                         const DeviceMemoryBase &gpu_src, uint64_t size) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstreamDTh mht_14(mht_14_v, 1992, "", "./tensorflow/stream_executor/stream.h", "ThenMemcpyD2D");
+
     return ThenMemcpy(gpu_dst, gpu_src, size);
   }
 
@@ -1995,7 +2208,10 @@ class Stream {
 
   // Returns the (opaque) platform-specific backing object. Ownership is not
   // transferred to the caller.
-  internal::StreamInterface *implementation() { return implementation_.get(); }
+  internal::StreamInterface *implementation() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstreamDTh mht_15(mht_15_v, 2212, "", "./tensorflow/stream_executor/stream.h", "implementation");
+ return implementation_.get(); }
 
   // Entrains onto the stream a callback to the host (from the device).
   // Behaves as ThenDoHostCallbackWithStatus below, but the callback should
@@ -2028,16 +2244,25 @@ class Stream {
 
   // Returns the StreamExecutor (parent object) associated with this stream.
   StreamExecutor *parent() const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstreamDTh mht_16(mht_16_v, 2247, "", "./tensorflow/stream_executor/stream.h", "parent");
+
     CHECK(parent_ != nullptr);
     return parent_;
   }
 
   //
   CudaComputeCapability GetCudaComputeCapability() const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstreamDTh mht_17(mht_17_v, 2256, "", "./tensorflow/stream_executor/stream.h", "GetCudaComputeCapability");
+
     return parent()->GetDeviceDescription().cuda_compute_capability();
   }
 
   RocmComputeCapability GetRocmComputeCapability() const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstreamDTh mht_18(mht_18_v, 2263, "", "./tensorflow/stream_executor/stream.h", "GetRocmComputeCapability");
+
     return parent()->GetDeviceDescription().rocm_compute_capability();
   }
   // Returns the (internal usage) temporary-memory-allocation manager associated
@@ -2059,6 +2284,9 @@ class Stream {
   template <typename InputType, typename OutputType, typename ConstantType>
   port::Status CheckTypesForExtendedBlas(
       blas::ComputationType computation_type) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstreamDTh mht_19(mht_19_v, 2287, "", "./tensorflow/stream_executor/stream.h", "CheckTypesForExtendedBlas");
+
     static_assert(std::is_same<InputType, Eigen::half>::value ||
                       std::is_same<InputType, Eigen::bfloat16>::value ||
                       std::is_same<InputType, float>::value ||
@@ -2112,9 +2340,15 @@ class Stream {
   // Checks the status and logs the error message, if any.
   void CheckStatus(port::Status status) TF_LOCKS_EXCLUDED(mu_);
 
-  void SetError() { CheckError(false /* = operation_retcode */); }
+  void SetError() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstreamDTh mht_20(mht_20_v, 2344, "", "./tensorflow/stream_executor/stream.h", "SetError");
+ CheckError(false /* = operation_retcode */); }
 
   void SetErrorAndLogNoDnnSupport() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstreamDTh mht_21(mht_21_v, 2349, "", "./tensorflow/stream_executor/stream.h", "SetErrorAndLogNoDnnSupport");
+
     SetError();
     LOG(WARNING) << "attempting to perform DNN operation using StreamExecutor "
                     "without DNN support";
@@ -2178,6 +2412,9 @@ class Stream {
   template <typename T>
   void UpcastHalfToFloat(void **alpha_ptr, void **beta_ptr,
                          float *alpha_storage, float *beta_storage) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstreamDTh mht_22(mht_22_v, 2415, "", "./tensorflow/stream_executor/stream.h", "UpcastHalfToFloat");
+
     if (std::is_same<T, Eigen::half>::value) {
       *alpha_storage =
           static_cast<float>(*reinterpret_cast<Eigen::half *>(*alpha_ptr));
@@ -2230,10 +2467,16 @@ inline Stream &Stream::ThenLaunch(ThreadDim thread_dims, BlockDim block_dims,
 template <typename T>
 inline port::StatusOr<std::unique_ptr<TemporaryDeviceMemory<T>>>
 Stream::AllocateTemporaryArray(uint64_t element_count) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstreamDTh mht_23(mht_23_v, 2470, "", "./tensorflow/stream_executor/stream.h", "Stream::AllocateTemporaryArray");
+
   return temporary_memory_manager_.AllocateArray<T>(element_count);
 }
 
 inline internal::TemporaryMemoryManager *Stream::temporary_memory_manager() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstreamDTh mht_24(mht_24_v, 2477, "", "./tensorflow/stream_executor/stream.h", "Stream::temporary_memory_manager");
+
   return &temporary_memory_manager_;
 }
 

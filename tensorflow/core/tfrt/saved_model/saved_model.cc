@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePStfrtPSsaved_modelPSsaved_modelDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePStfrtPSsaved_modelPSsaved_modelDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePStfrtPSsaved_modelPSsaved_modelDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -121,6 +289,10 @@ auto* saved_model_init_time_seconds =
         "Record the initialization time for the savedmodel.", "model_name");
 
 tensorflow::Tensor CreateScalarStringTensor(absl::string_view str) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("str: \"" + std::string(str.data(), str.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSsaved_modelPSsaved_modelDTcc mht_0(mht_0_v, 293, "", "./tensorflow/core/tfrt/saved_model/saved_model.cc", "CreateScalarStringTensor");
+
   return tensorflow::Tensor(tensorflow::tstring(str));
 }
 
@@ -156,6 +328,9 @@ StatusOr<SignatureMap> GetFunctionSignaturesFromTFSavedModelMLIR(
 
         auto copy = [](llvm::ArrayRef<llvm::StringRef> src,
                        std::vector<std::string>* dst) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSsaved_modelPSsaved_modelDTcc mht_1(mht_1_v, 331, "", "./tensorflow/core/tfrt/saved_model/saved_model.cc", "lambda");
+
           transform(src, std::back_inserter(*dst),
                     [](llvm::StringRef x) { return x.str(); });
         };
@@ -199,6 +374,9 @@ tensorflow::Status RunInitializers(
     const SessionMetadata& model_metadata, tfrt::BEFFile* bef_file,
     const Runtime& runtime, tfrt::ResourceContext* resource_context,
     const FallbackState& fallback_state) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSsaved_modelPSsaved_modelDTcc mht_2(mht_2_v, 377, "", "./tensorflow/core/tfrt/saved_model/saved_model.cc", "RunInitializers");
+
   auto* host = runtime.core_runtime()->GetHostContext();
   TF_ASSIGN_OR_RETURN(auto request_info,
                       SetUpRequestContext(/*run_options=*/{}, model_metadata,
@@ -267,10 +445,16 @@ std::vector<std::string> FindNamesForValidSignatures(
   std::vector<std::string> valid_signature_names;
 
   auto is_dense_tensor_info = [](const auto& named_tensor_info) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSsaved_modelPSsaved_modelDTcc mht_3(mht_3_v, 448, "", "./tensorflow/core/tfrt/saved_model/saved_model.cc", "lambda");
+
     return !named_tensor_info.second.name().empty();
   };
 
   auto is_ref_type_tensor_info = [](const auto& named_tensor_info) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSsaved_modelPSsaved_modelDTcc mht_4(mht_4_v, 455, "", "./tensorflow/core/tfrt/saved_model/saved_model.cc", "lambda");
+
     return tensorflow::IsRefType(named_tensor_info.second.dtype());
   };
 
@@ -364,6 +548,9 @@ tensorflow::Status InitSavedModel(
     tfrt::BEFFile* bef_file, const SavedModel::Options& options,
     tfrt::ResourceContext* resource_context,
     const FallbackState& fallback_state) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSsaved_modelPSsaved_modelDTcc mht_5(mht_5_v, 551, "", "./tensorflow/core/tfrt/saved_model/saved_model.cc", "InitSavedModel");
+
   TF_RETURN_IF_ERROR(
       RunInitializers(initializers_and_signatures,
                       options.graph_execution_options.model_metadata, bef_file,
@@ -375,15 +562,25 @@ tensorflow::Status InitSavedModel(
 
 }  // namespace
 
-SavedModel::~SavedModel() {}
+SavedModel::~SavedModel() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSsaved_modelPSsaved_modelDTcc mht_6(mht_6_v, 566, "", "./tensorflow/core/tfrt/saved_model/saved_model.cc", "SavedModel::~SavedModel");
+}
 
 tfrt::HostContext* SavedModel::GetHostContext() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSsaved_modelPSsaved_modelDTcc mht_7(mht_7_v, 571, "", "./tensorflow/core/tfrt/saved_model/saved_model.cc", "SavedModel::GetHostContext");
+
   return runtime_->core_runtime()->GetHostContext();
 }
 
 std::unique_ptr<SavedModel> SavedModelImpl::LoadSavedModel(
     Options options, absl::string_view saved_model_dir,
     const std::unordered_set<std::string>& tags, tensorflow::Status* status) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("saved_model_dir: \"" + std::string(saved_model_dir.data(), saved_model_dir.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSsaved_modelPSsaved_modelDTcc mht_8(mht_8_v, 581, "", "./tensorflow/core/tfrt/saved_model/saved_model.cc", "SavedModelImpl::LoadSavedModel");
+
   LOG(INFO) << "TFRT reading v1 savedmodel: " << saved_model_dir;
   auto read_start_time = absl::Now();
 
@@ -414,6 +611,9 @@ void GetSignaturesFromSignatureDef(
     SignatureMap& signatures,
     const google::protobuf::Map<std::string, tensorflow::SignatureDef>& signature_defs,
     const SavedModel::Options& options) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSsaved_modelPSsaved_modelDTcc mht_9(mht_9_v, 614, "", "./tensorflow/core/tfrt/saved_model/saved_model.cc", "GetSignaturesFromSignatureDef");
+
   for (const auto& p : signature_defs) {
     const std::string& signature_name = p.first;
     const tensorflow::SignatureDef& signature_def = p.second;
@@ -451,6 +651,10 @@ void GetSignaturesFromSignatureDef(
 std::unique_ptr<SavedModel> SavedModelImpl::LoadSavedModel(
     Options options, absl::string_view saved_model_dir,
     tensorflow::MetaGraphDef meta_graph_def, tensorflow::Status* status) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("saved_model_dir: \"" + std::string(saved_model_dir.data(), saved_model_dir.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSsaved_modelPSsaved_modelDTcc mht_10(mht_10_v, 655, "", "./tensorflow/core/tfrt/saved_model/saved_model.cc", "SavedModelImpl::LoadSavedModel");
+
   LOG(INFO) << "TFRT loading v1 savedmodel: " << saved_model_dir;
   tfrt::metrics::AddTFRTVersionMetric();
 
@@ -577,11 +781,17 @@ SavedModelImpl::SavedModelImpl(
       fallback_state_(std::move(fallback_state)),
       tpu_model_resource_(std::move(tpu_model_resource)),
       resource_context_(std::move(resource_context)),
-      graph_executor_(std::move(graph_executor)) {}
+      graph_executor_(std::move(graph_executor)) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSsaved_modelPSsaved_modelDTcc mht_11(mht_11_v, 785, "", "./tensorflow/core/tfrt/saved_model/saved_model.cc", "SavedModelImpl::SavedModelImpl");
+}
 
 SavedModelImpl::~SavedModelImpl() = default;
 
 std::vector<std::string> SavedModelImpl::GetFunctionNames() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSsaved_modelPSsaved_modelDTcc mht_12(mht_12_v, 792, "", "./tensorflow/core/tfrt/saved_model/saved_model.cc", "SavedModelImpl::GetFunctionNames");
+
   std::vector<std::string> result;
   for (const auto& entry : signatures_) {
     result.push_back(entry.first);
@@ -590,11 +800,18 @@ std::vector<std::string> SavedModelImpl::GetFunctionNames() const {
 }
 
 const tensorflow::MetaGraphDef& SavedModelImpl::GetMetaGraphDef() const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSsaved_modelPSsaved_modelDTcc mht_13(mht_13_v, 803, "", "./tensorflow/core/tfrt/saved_model/saved_model.cc", "SavedModelImpl::GetMetaGraphDef");
+
   return meta_graph_def_;
 }
 
 absl::optional<FunctionMetadata> SavedModelImpl::GetFunctionMetadata(
     absl::string_view func_name) const {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("func_name: \"" + std::string(func_name.data(), func_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSsaved_modelPSsaved_modelDTcc mht_14(mht_14_v, 812, "", "./tensorflow/core/tfrt/saved_model/saved_model.cc", "SavedModelImpl::GetFunctionMetadata");
+
   auto iter = signatures_.find(func_name);
   if (iter == signatures_.end()) return absl::nullopt;
   return FunctionMetadata(&iter->second);
@@ -604,6 +821,10 @@ namespace {
 tensorflow::Status IsInputSpecsCorrect(
     absl::string_view name, const internal::Signature& signature,
     absl::Span<const tensorflow::Tensor> inputs) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSsaved_modelPSsaved_modelDTcc mht_15(mht_15_v, 825, "", "./tensorflow/core/tfrt/saved_model/saved_model.cc", "IsInputSpecsCorrect");
+
   TF_RET_CHECK(signature.input_specs.size() == inputs.size())
       << "signature " << name
       << " input size is wrong, expected: " << signature.input_specs.size()
@@ -627,6 +848,10 @@ tensorflow::Status SavedModelImpl::Run(
     const RunOptions& run_options, absl::string_view name,
     absl::Span<const tensorflow::Tensor> inputs,
     std::vector<tensorflow::Tensor>* outputs) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSsaved_modelPSsaved_modelDTcc mht_16(mht_16_v, 852, "", "./tensorflow/core/tfrt/saved_model/saved_model.cc", "SavedModelImpl::Run");
+
   TF_RET_CHECK(outputs) << "outputs must be provided";
   outputs->clear();
 
@@ -680,6 +905,9 @@ tensorflow::Status SavedModelImpl::RunMultipleSignatures(
     const RunOptions& run_options, absl::Span<const std::string> names,
     absl::Span<const std::vector<tensorflow::Tensor>> multi_inputs,
     std::vector<std::vector<tensorflow::Tensor>>* multi_outputs) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSsaved_modelPSsaved_modelDTcc mht_17(mht_17_v, 908, "", "./tensorflow/core/tfrt/saved_model/saved_model.cc", "SavedModelImpl::RunMultipleSignatures");
+
   TF_RET_CHECK(names.size() == multi_inputs.size())
       << "the sizes of names and inputs should be the same";
   TF_RET_CHECK(multi_outputs) << "outputs must be provided";
@@ -793,6 +1021,9 @@ SavedModelImpl::ImportSubgraph(
     const tensorflow::GraphImportConfig::InputArrays& input_nodes,
     const std::vector<std::string>& output_nodes,
     const std::vector<std::string>& target_nodes) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSsaved_modelPSsaved_modelDTcc mht_18(mht_18_v, 1024, "", "./tensorflow/core/tfrt/saved_model/saved_model.cc", "SavedModelImpl::ImportSubgraph");
+
   tensorflow::GraphImportConfig graph_import_config;
   graph_import_config.prune_unused_nodes = true;
   graph_import_config.enable_shape_inference = false;
@@ -818,6 +1049,9 @@ tensorflow::Status SavedModelImpl::RunByTensorNames(
     absl::Span<const std::string> output_tensor_names,
     absl::Span<const std::string> target_node_names,
     std::vector<tensorflow::Tensor>* outputs) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSsaved_modelPSsaved_modelDTcc mht_19(mht_19_v, 1052, "", "./tensorflow/core/tfrt/saved_model/saved_model.cc", "SavedModelImpl::RunByTensorNames");
+
   // TODO(b/192498110): Validate input type.
 
   return graph_executor_->Run(run_options, inputs, output_tensor_names,
@@ -910,6 +1144,9 @@ StatusOr<JoinedSignature> JoinSignatures(
 // TODO(b/216379787): Reuse `GraphExecutor::LoadClientGraph()`.
 StatusOr<std::reference_wrapper<const SavedModelImpl::LoadingResult>>
 SavedModelImpl::LoadJoinedSignature(const JoinedSignature& joined_signature) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSsaved_modelPSsaved_modelDTcc mht_20(mht_20_v, 1147, "", "./tensorflow/core/tfrt/saved_model/saved_model.cc", "SavedModelImpl::LoadJoinedSignature");
+
   // Step 1: Import the combined subgraph from proto to an MLIR module.
   mlir::MLIRContext context;
   TF_ASSIGN_OR_RETURN(auto module,
@@ -947,6 +1184,9 @@ SavedModelImpl::LoadJoinedSignature(const JoinedSignature& joined_signature) {
 
 StatusOr<std::reference_wrapper<const SavedModelImpl::LoadingResult>>
 SavedModelImpl::GetOrCreateLoadingResult(absl::Span<const std::string> names) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSsaved_modelPSsaved_modelDTcc mht_21(mht_21_v, 1187, "", "./tensorflow/core/tfrt/saved_model/saved_model.cc", "SavedModelImpl::GetOrCreateLoadingResult");
+
   const auto joined_name = absl::StrJoin(names, kSignatureJoiningDelimiter);
   tensorflow::mutex_lock l(loading_result_cache_mu_);
   const auto iter = loading_result_cache_.find(joined_name);

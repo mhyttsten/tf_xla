@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -69,6 +237,9 @@ namespace {
 bool AreAllParentsGuaranteedConst(
     const Node& n,
     const absl::flat_hash_set<const Node*>& runtime_const_nodes) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_0(mht_0_v, 240, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "AreAllParentsGuaranteedConst");
+
   if (n.type_string() == "GuaranteeConst") {
     // If the current node is itself a cast-to-const, no need
     // to look at the incoming edges.
@@ -91,6 +262,9 @@ bool AreAllParentsGuaranteedConst(
 void MarkGuaranteedConstants(
     const Graph& graph,
     const std::vector<std::pair<const Node*, Node*>>& src_arg_pairs) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_1(mht_1_v, 265, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "MarkGuaranteedConstants");
+
   absl::flat_hash_set<const Node*> guaranteed_const_nodes;
   std::vector<const Node*> srcs;
   srcs.reserve(src_arg_pairs.size());
@@ -129,7 +303,11 @@ static const char* const kRetValOp = "_Retval";
 class Encapsulator {
  public:
   Encapsulator(string group_attribute, Graph const* graph_in)
-      : group_attribute_(std::move(group_attribute)), graph_in_(graph_in) {}
+      : group_attribute_(std::move(group_attribute)), graph_in_(graph_in) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("group_attribute: \"" + group_attribute + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_2(mht_2_v, 308, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator");
+}
 
   // Find subgraphs marked with 'group_attribute', and build a new
   // subgraph, one for each value of 'group_attribute'.
@@ -373,6 +551,9 @@ void TopologicalClusterSort(
     const std::unordered_set<string>& has_successors,
     const std::unordered_map<string, std::unordered_set<string>>& ancestors,
     std::vector<string>* sorted) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_3(mht_3_v, 554, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "TopologicalClusterSort");
+
   // The nodes are placed in 'sorted' in topological order.
   sorted->clear();
   // We don't use the standard DFS because we are not operating on Node*
@@ -413,17 +594,29 @@ void TopologicalClusterSort(
 
 }  // namespace
 
-Node* Encapsulator::Subgraph::GetCallNode() const { return call_node_; }
+Node* Encapsulator::Subgraph::GetCallNode() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_4(mht_4_v, 598, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::Subgraph::GetCallNode");
+ return call_node_; }
 
 int Encapsulator::Subgraph::GetArgIndexForEdge(const Edge* edge) const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_5(mht_5_v, 603, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::Subgraph::GetArgIndexForEdge");
+
   return args_by_dst_.at(InputTensor(edge->dst(), edge->dst_input()));
 }
 
 int Encapsulator::Subgraph::GetResultIndexForEdge(const Edge* edge) const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_6(mht_6_v, 610, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::Subgraph::GetResultIndexForEdge");
+
   return results_.at(OutputTensor(edge->src(), edge->src_output()));
 }
 
 Node* Encapsulator::Subgraph::MakeNodeImage(const Graph* graph_in, Node* node) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_7(mht_7_v, 617, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::Subgraph::MakeNodeImage");
+
   if (!graph_) {
     graph_.reset(new Graph(graph_in->op_registry()));
     graph_->set_versions(graph_in->versions());
@@ -444,11 +637,17 @@ Node* Encapsulator::Subgraph::MakeNodeImage(const Graph* graph_in, Node* node) {
   return graph_->CopyNode(node);
 }
 
-Graph* Encapsulator::Subgraph::GetGraph() const { return graph_.get(); }
+Graph* Encapsulator::Subgraph::GetGraph() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_8(mht_8_v, 641, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::Subgraph::GetGraph");
+ return graph_.get(); }
 
 Status Encapsulator::Subgraph::RecordArg(
     const Edge* edge, const std::unordered_map<const Node*, Node*>& node_images,
     std::vector<std::pair<const Node*, Node*>>* src_arg_pairs) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_9(mht_9_v, 648, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::Subgraph::RecordArg");
+
   Node* src_node = edge->src();
   int src_slot = edge->src_output();
   std::unordered_map<OutputTensor, int, OutputTensor::Hash>::iterator iter;
@@ -482,6 +681,9 @@ Status Encapsulator::Subgraph::RecordArg(
 Status Encapsulator::Subgraph::RecordControlResult(
     const Edge* edge,
     const std::unordered_map<const Node*, Node*>& node_images) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_10(mht_10_v, 684, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::Subgraph::RecordControlResult");
+
   Node* src_node = edge->src();
   Node* src_image = node_images.at(src_node);
   control_output_nodes_.insert(src_image->name());
@@ -491,6 +693,9 @@ Status Encapsulator::Subgraph::RecordControlResult(
 Status Encapsulator::Subgraph::RecordResult(
     const Edge* edge,
     const std::unordered_map<const Node*, Node*>& node_images) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_11(mht_11_v, 696, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::Subgraph::RecordResult");
+
   Node* src_node = edge->src();
   Node* src_image = node_images.at(src_node);
   int src_slot = edge->src_output();
@@ -518,6 +723,10 @@ Status Encapsulator::Subgraph::RecordResult(
 
 Status Encapsulator::Subgraph::MakeSequencingNode(const string& subgraph_name,
                                                   Graph* graph_out) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("subgraph_name: \"" + subgraph_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_12(mht_12_v, 727, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::Subgraph::MakeSequencingNode");
+
   if (sequencer_ == nullptr) {
     NodeDef seq_def;
     // TODO(shikharagarwal): What source node should we use for errors?
@@ -533,6 +742,9 @@ Status Encapsulator::Subgraph::MakeSequencingNode(const string& subgraph_name,
 }
 
 void Encapsulator::Subgraph::ConnectSequencerToCallNode(Graph* graph_out) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_13(mht_13_v, 745, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::Subgraph::ConnectSequencerToCallNode");
+
   if (sequencer_ != nullptr) {
     VLOG(2) << "ConnectSequencerToCallNode";
     graph_out->AddControlEdge(sequencer_, call_node_,
@@ -543,6 +755,10 @@ void Encapsulator::Subgraph::ConnectSequencerToCallNode(Graph* graph_out) {
 Status Encapsulator::Subgraph::BuildFunctionDef(
     const string& name_in, const RewriteSubgraphFn& rewrite_subgraph_fn,
     bool reuse_existing_functions, FunctionLibraryDefinition* library) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("name_in: \"" + name_in + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_14(mht_14_v, 759, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::Subgraph::BuildFunctionDef");
+
   // name_in is copied here because name may be modified below if
   // rewrite_subgraph_fn is true.
   string name = name_in;
@@ -619,6 +835,9 @@ Status Encapsulator::Subgraph::BuildFunctionDef(
 
 Status Encapsulator::Subgraph::ReplaceFunctionDef(
     FunctionLibraryDefinition* library) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_15(mht_15_v, 838, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::Subgraph::ReplaceFunctionDef");
+
   const string& name = function_def_name_;
 
   FunctionDef fdef;
@@ -639,6 +858,9 @@ Status Encapsulator::Subgraph::ReplaceFunctionDef(
 Status Encapsulator::Subgraph::AddFunctionCallNode(
     const std::unordered_map<const Node*, Node*>& node_images,
     Graph* graph_out) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_16(mht_16_v, 861, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::Subgraph::AddFunctionCallNode");
+
   TF_ASSIGN_OR_RETURN(call_node_, graph_out->AddNode(call_node_def_));
 
   // Copy the assigned device and the key_annotation over.
@@ -648,6 +870,9 @@ Status Encapsulator::Subgraph::AddFunctionCallNode(
 }
 
 Status Encapsulator::GetFunctionNameAttr(Node const* node, string* attr) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_17(mht_17_v, 873, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::GetFunctionNameAttr");
+
   AttrSlice attrs = node->attrs();
   attr->clear();
   for (const auto& node_attr : attrs) {
@@ -660,10 +885,17 @@ Status Encapsulator::GetFunctionNameAttr(Node const* node, string* attr) const {
   return Status::OK();
 }
 
-bool IsInSubgraph(const string& func_id) { return !func_id.empty(); }
+bool IsInSubgraph(const string& func_id) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("func_id: \"" + func_id + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_18(mht_18_v, 890, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "IsInSubgraph");
+ return !func_id.empty(); }
 
 Status Encapsulator::CopySubgraphNodes(
     std::unordered_map<const Node*, Node*>* node_images) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_19(mht_19_v, 896, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::CopySubgraphNodes");
+
   for (Node* node : graph_in_->op_nodes()) {
     string func_id;
     TF_RETURN_IF_ERROR(GetFunctionNameAttr(node, &func_id));
@@ -680,6 +912,9 @@ Status Encapsulator::CopySubgraphNodes(
 Status Encapsulator::CopySubgraphEdges(
     const std::unordered_map<const Node*, Node*>& node_images,
     std::vector<std::pair<const Node*, Node*>>* src_arg_pairs) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_20(mht_20_v, 915, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::CopySubgraphEdges");
+
   for (const Edge* edge : graph_in_->edges()) {
     string src_func_id;
     TF_RETURN_IF_ERROR(GetFunctionNameAttr(edge->src(), &src_func_id));
@@ -749,6 +984,9 @@ Status Encapsulator::CopySubgraphEdges(
 }
 
 Status Encapsulator::SplitIntoSubgraphs(FunctionLibraryDefinition* library) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_21(mht_21_v, 987, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::SplitIntoSubgraphs");
+
   Status s;
 
   // Map from input graph nodes to subgraph nodes.
@@ -784,6 +1022,9 @@ Status Encapsulator::SplitIntoSubgraphs(FunctionLibraryDefinition* library) {
 Status Encapsulator::BuildFunctionDefs(
     const RewriteSubgraphFn& rewrite_subgraph_fn, bool reuse_existing_functions,
     FunctionLibraryDefinition* library) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_22(mht_22_v, 1025, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::BuildFunctionDefs");
+
   for (auto& subgraph_entry : subgraphs_) {
     string name = subgraph_entry.first;
     Subgraph& subgraph = subgraph_entry.second;
@@ -795,6 +1036,9 @@ Status Encapsulator::BuildFunctionDefs(
 
 Status Encapsulator::CopyNodesToOutputGraph(
     Graph* graph_out, std::unordered_map<const Node*, Node*>* node_images) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_23(mht_23_v, 1039, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::CopyNodesToOutputGraph");
+
   for (Node* node : graph_in_->op_nodes()) {
     string func_id;
     TF_RETURN_IF_ERROR(GetFunctionNameAttr(node, &func_id));
@@ -813,6 +1057,9 @@ Status Encapsulator::CopyNodesToOutputGraph(
 Status Encapsulator::AddFunctionCallNodes(
     const std::unordered_map<const Node*, Node*>& node_images,
     Graph* graph_out) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_24(mht_24_v, 1060, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::AddFunctionCallNodes");
+
   for (auto& subgraph_entry : subgraphs_) {
     TF_RETURN_IF_ERROR(
         subgraph_entry.second.AddFunctionCallNode(node_images, graph_out));
@@ -824,6 +1071,11 @@ Status Encapsulator::FindOutputImageOfEdgeSrc(
     const string& src_func_id, const string& dst_func_id,
     const std::unordered_map<const Node*, Node*>& node_images,
     const Node* original_src_node, Node** src_image) {
+   std::vector<std::string> mht_25_v;
+   mht_25_v.push_back("src_func_id: \"" + src_func_id + "\"");
+   mht_25_v.push_back("dst_func_id: \"" + dst_func_id + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_25(mht_25_v, 1076, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::FindOutputImageOfEdgeSrc");
+
   if (IsInSubgraph(src_func_id)) {
     // The edge is from a subgraph to a regular node in the output graph so
     // use the subgraph's call node output.
@@ -839,6 +1091,11 @@ Status Encapsulator::FindOutputImageOfEdgeSrc(
 int Encapsulator::FindOutputSlotOfEdgeSrc(const string& src_func_id,
                                           const string& dst_func_id,
                                           const Edge* edge) {
+   std::vector<std::string> mht_26_v;
+   mht_26_v.push_back("src_func_id: \"" + src_func_id + "\"");
+   mht_26_v.push_back("dst_func_id: \"" + dst_func_id + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_26(mht_26_v, 1096, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::FindOutputSlotOfEdgeSrc");
+
   if (IsInSubgraph(src_func_id)) {
     const Subgraph& src_subgraph = subgraphs_.at(src_func_id);
     // 'src' is in a subgraph and 'dst' is a regular node in the output
@@ -855,6 +1112,11 @@ Status Encapsulator::FindOutputImageOfEdgeDst(
     const string& src_func_id, const string& dst_func_id,
     const std::unordered_map<const Node*, Node*>& node_images,
     const Node* original_dst_node, Node** dst_image) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("src_func_id: \"" + src_func_id + "\"");
+   mht_27_v.push_back("dst_func_id: \"" + dst_func_id + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_27(mht_27_v, 1117, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::FindOutputImageOfEdgeDst");
+
   if (IsInSubgraph(dst_func_id)) {
     // The edge is to a subgraph from a regular node in the output graph so
     // use the subgraph's call node input.
@@ -870,6 +1132,11 @@ Status Encapsulator::FindOutputImageOfEdgeDst(
 int Encapsulator::FindOutputSlotOfEdgeDst(const string& src_func_id,
                                           const string& dst_func_id,
                                           const Edge* edge) {
+   std::vector<std::string> mht_28_v;
+   mht_28_v.push_back("src_func_id: \"" + src_func_id + "\"");
+   mht_28_v.push_back("dst_func_id: \"" + dst_func_id + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_28(mht_28_v, 1137, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::FindOutputSlotOfEdgeDst");
+
   if (IsInSubgraph(dst_func_id)) {
     const Subgraph& dst_subgraph = subgraphs_.at(dst_func_id);
       // 'dst' is in a subgraph and 'src' is a regular node in the output
@@ -887,6 +1154,11 @@ Status Encapsulator::CopyEdgeToOutputGraph(
     const std::unordered_map<const Node*, Node*>& node_images, Graph* graph_out,
     std::unordered_set<std::pair<OutputTensor, InputTensor>,
                        OutputInputTensorPairHasher>* edges_added) {
+   std::vector<std::string> mht_29_v;
+   mht_29_v.push_back("src_func_id: \"" + src_func_id + "\"");
+   mht_29_v.push_back("dst_func_id: \"" + dst_func_id + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_29(mht_29_v, 1159, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::CopyEdgeToOutputGraph");
+
   Node* src_image;
   TF_RETURN_IF_ERROR(FindOutputImageOfEdgeSrc(
       src_func_id, dst_func_id, node_images, edge->src(), &src_image));
@@ -926,6 +1198,9 @@ Status Encapsulator::CopyEdgeToOutputGraph(
 Status Encapsulator::AddEdgesToOutputGraph(
     const std::unordered_map<const Node*, Node*>& node_images,
     Graph* graph_out) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_30(mht_30_v, 1201, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::AddEdgesToOutputGraph");
+
   // Set of edges already added to the output graph, represented as (src, dst)
   // pairs. We use the set to deduplicate edges; multiple edges in the input
   // graph may map to one edge in the output graph.
@@ -974,6 +1249,9 @@ namespace {
 Node* AddDummyShapedNode(const Node* src_node, int src_port,
                          const std::vector<ControlFlowInfo>& control_flow_info,
                          const TensorShapeProto& shape, Graph* graph_out) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_31(mht_31_v, 1252, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "AddDummyShapedNode");
+
   DataType data_type = src_node->output_type(src_port);
   TensorProto dummy_proto;
   dummy_proto.set_dtype(data_type);
@@ -1012,6 +1290,9 @@ Status Encapsulator::MakePrunedGraphCopyAndInline(
     std::unique_ptr<Graph>* pruned_graph,
     std::unordered_map<const Node*, Node*>* node_images,
     FunctionLibraryDefinition* library) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_32(mht_32_v, 1293, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::MakePrunedGraphCopyAndInline");
+
   // First copy all ancestor nodes of sink_nodes into a new graph.
   pruned_graph->reset(new Graph(library));
   (*pruned_graph)->set_versions(graph.versions());
@@ -1069,6 +1350,9 @@ Status Encapsulator::MakePrunedGraphCopyAndInline(
 
 Status Encapsulator::BuildOutputGraph(Graph* graph_out,
                                       FunctionLibraryDefinition* library) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_33(mht_33_v, 1353, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "Encapsulator::BuildOutputGraph");
+
   // Map from nodes in the input graph to nodes in the output graph.
   std::unordered_map<const Node*, Node*> node_images;
 
@@ -1085,6 +1369,10 @@ Status EncapsulateSubgraphsInFunctions(
     string group_attribute, const Graph& graph_in,
     const RewriteSubgraphFn& rewrite_subgraph_fn, bool reuse_existing_functions,
     std::unique_ptr<Graph>* graph_out, FunctionLibraryDefinition* library) {
+   std::vector<std::string> mht_34_v;
+   mht_34_v.push_back("group_attribute: \"" + group_attribute + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_34(mht_34_v, 1373, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "EncapsulateSubgraphsInFunctions");
+
   Encapsulator encapsulator(std::move(group_attribute),
                             &graph_in);
   TF_RETURN_IF_ERROR(encapsulator.SplitIntoSubgraphs(library));
@@ -1102,6 +1390,9 @@ Status EncapsulateSubgraphsInFunctions(
 
 // Finds the types of the _Arg nodes, indexed by position.
 static Status GetArgTypes(const Graph& graph, DataTypeVector* types) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_35(mht_35_v, 1393, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "GetArgTypes");
+
   for (Node* n : graph.op_nodes()) {
     if (n->type_string() == kArgOp) {
       int index;
@@ -1120,6 +1411,9 @@ static Status GetArgTypes(const Graph& graph, DataTypeVector* types) {
 // 'permutation' that maps old indices to new indices.
 static Status RenumberArguments(Graph* graph,
                                 const std::vector<int>& permutation) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_36(mht_36_v, 1414, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "RenumberArguments");
+
   for (Node* n : graph->op_nodes()) {
     if (n->type_string() == kArgOp) {
       int index;
@@ -1136,6 +1430,9 @@ static Status RenumberArguments(Graph* graph,
 
 Status EncapsulateSubgraphsPass::Run(
     const GraphOptimizationPassOptions& options) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_37(mht_37_v, 1433, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "EncapsulateSubgraphsPass::Run");
+
   VLOG(1) << "EncapsulateSubgraphsPass::Run";
   if (VLOG_IS_ON(1)) {
     DumpGraphToFile("encapsulate_subgraphs_before", **options.graph,
@@ -1200,6 +1497,9 @@ Status EncapsulateSubgraphsPass::Run(
             std::unique_ptr<Graph>* subgraph,
             std::vector<int>* input_permutation,
             std::vector<int>* output_permutation, NodeDef* node) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_38(mht_38_v, 1500, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "lambda");
+
         // Optimize the subgraph.
         // Do not constant fold nodes that output DT_VARIANT type tensors.
         // XLA does not support Const nodes of Variant type since it needs
@@ -1220,6 +1520,9 @@ Status EncapsulateSubgraphsPass::Run(
         bool disable_constant_folding =
             GetBuildXlaOpsPassFlags()->tf_xla_disable_constant_folding;
         auto cf_consider_fn = [disable_constant_folding](const Node* n) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_39(mht_39_v, 1523, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "lambda");
+
           if (disable_constant_folding) return false;
           for (const auto& output_arg : n->op_def().output_arg()) {
             if (output_arg.type() == DT_VARIANT) {
@@ -1311,6 +1614,9 @@ Status EncapsulateSubgraphsPass::Run(
 }
 
 bool IsXlaCompiledKernel(const Node& node) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSencapsulate_subgraphs_passDTcc mht_40(mht_40_v, 1617, "", "./tensorflow/compiler/jit/encapsulate_subgraphs_pass.cc", "IsXlaCompiledKernel");
+
   bool is_compiled = false;
   bool has_compilation_attr =
       TryGetNodeAttr(node.attrs(), kXlaCompiledKernelAttr, &is_compiled) &&

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -75,6 +243,9 @@ constexpr char kBeforeOptimizationsDumpName[] = "before_optimizations";
 Status RecordArguments(const absl::Span<const ShapedBuffer* const> arguments,
                        se::Stream* stream, TransferManager* transfer_manager,
                        HloSnapshot* module) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_0(mht_0_v, 246, "", "./tensorflow/compiler/xla/service/service.cc", "RecordArguments");
+
   module->clear_arguments();
   for (const ShapedBuffer* argument : arguments) {
     TF_ASSIGN_OR_RETURN(
@@ -88,6 +259,9 @@ Status RecordArguments(const absl::Span<const ShapedBuffer* const> arguments,
 // Records the result of a computation in a HloSnapshot proto.
 Status RecordResult(const ShapedBuffer& result, se::Stream* stream,
                     TransferManager* transfer_manager, HloSnapshot* module) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_1(mht_1_v, 262, "", "./tensorflow/compiler/xla/service/service.cc", "RecordResult");
+
   module->clear_result();
   TF_ASSIGN_OR_RETURN(
       Literal literal,
@@ -99,41 +273,68 @@ Status RecordResult(const ShapedBuffer& result, se::Stream* stream,
 }  // namespace
 
 ServiceOptions& ServiceOptions::set_platform(se::Platform* platform) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_2(mht_2_v, 276, "", "./tensorflow/compiler/xla/service/service.cc", "ServiceOptions::set_platform");
+
   platform_ = platform;
   return *this;
 }
 
-se::Platform* ServiceOptions::platform() const { return platform_; }
+se::Platform* ServiceOptions::platform() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_3(mht_3_v, 284, "", "./tensorflow/compiler/xla/service/service.cc", "ServiceOptions::platform");
+ return platform_; }
 
 ServiceOptions& ServiceOptions::set_number_of_replicas(int number_of_replicas) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_4(mht_4_v, 289, "", "./tensorflow/compiler/xla/service/service.cc", "ServiceOptions::set_number_of_replicas");
+
   number_of_replicas_ = number_of_replicas;
   return *this;
 }
 
-int ServiceOptions::number_of_replicas() const { return number_of_replicas_; }
+int ServiceOptions::number_of_replicas() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_5(mht_5_v, 297, "", "./tensorflow/compiler/xla/service/service.cc", "ServiceOptions::number_of_replicas");
+ return number_of_replicas_; }
 
 ServiceOptions& ServiceOptions::set_intra_op_parallelism_threads(
     int num_threads) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_6(mht_6_v, 303, "", "./tensorflow/compiler/xla/service/service.cc", "ServiceOptions::set_intra_op_parallelism_threads");
+
   intra_op_parallelism_threads_ = num_threads;
   return *this;
 }
 
 int ServiceOptions::intra_op_parallelism_threads() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_7(mht_7_v, 311, "", "./tensorflow/compiler/xla/service/service.cc", "ServiceOptions::intra_op_parallelism_threads");
+
   return intra_op_parallelism_threads_;
 }
 
 ServiceOptions& ServiceOptions::set_allowed_devices(
     const absl::optional<std::set<int>>& allowed_devices) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_8(mht_8_v, 319, "", "./tensorflow/compiler/xla/service/service.cc", "ServiceOptions::set_allowed_devices");
+
   allowed_devices_ = allowed_devices;
   return *this;
 }
 
 const absl::optional<std::set<int>>& ServiceOptions::allowed_devices() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_9(mht_9_v, 327, "", "./tensorflow/compiler/xla/service/service.cc", "ServiceOptions::allowed_devices");
+
   return allowed_devices_;
 }
 
 /* static */ StatusOr<std::unique_ptr<Service>> Service::NewService(
     se::Platform* platform) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_10(mht_10_v, 335, "", "./tensorflow/compiler/xla/service/service.cc", "Service::NewService");
+
   ServiceOptions default_options;
   default_options.set_platform(platform);
   return NewService(default_options);
@@ -141,6 +342,9 @@ const absl::optional<std::set<int>>& ServiceOptions::allowed_devices() const {
 
 /* static */ StatusOr<std::unique_ptr<Service>> Service::NewService(
     const ServiceOptions& options) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_11(mht_11_v, 345, "", "./tensorflow/compiler/xla/service/service.cc", "Service::NewService");
+
   se::Platform* platform = options.platform();
   std::unique_ptr<Backend> execute_backend;
   if (platform == nullptr) {
@@ -161,6 +365,9 @@ Service::Service(const ServiceOptions& options,
     : options_(options),
       allocation_tracker_(execute_backend.get()),
       execute_backend_(std::move(execute_backend)) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_12(mht_12_v, 368, "", "./tensorflow/compiler/xla/service/service.cc", "Service::Service");
+
   CHECK_GT(options_.number_of_replicas(), 0);
   if (execute_backend_) {
     if (execute_backend_->device_count() > 0) {
@@ -186,6 +393,9 @@ Service::Service(const ServiceOptions& options,
 
 Status Service::CreateChannelHandle(const CreateChannelHandleRequest* arg,
                                     CreateChannelHandleResponse* result) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_13(mht_13_v, 396, "", "./tensorflow/compiler/xla/service/service.cc", "Service::CreateChannelHandle");
+
   TF_ASSIGN_OR_RETURN(*result->mutable_channel(),
                       channel_tracker_.NewChannel(arg->channel_type()));
   return Status::OK();
@@ -193,6 +403,9 @@ Status Service::CreateChannelHandle(const CreateChannelHandleRequest* arg,
 
 Status Service::Unregister(const UnregisterRequest* arg,
                            UnregisterResponse* result) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_14(mht_14_v, 406, "", "./tensorflow/compiler/xla/service/service.cc", "Service::Unregister");
+
   Status status;
   for (auto& data : arg->data()) {
     Status unregister_status = allocation_tracker_.Unregister(data);
@@ -206,6 +419,9 @@ Status Service::Unregister(const UnregisterRequest* arg,
 // Deconstructs a previously-allocated global handle.
 Status Service::DeconstructTuple(const DeconstructTupleRequest* arg,
                                  DeconstructTupleResponse* result) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_15(mht_15_v, 422, "", "./tensorflow/compiler/xla/service/service.cc", "Service::DeconstructTuple");
+
   TF_ASSIGN_OR_RETURN(
       std::vector<GlobalDataHandle> elements,
       allocation_tracker_.DeconstructTuple(arg->tuple_handle()));
@@ -218,6 +434,9 @@ Status Service::DeconstructTuple(const DeconstructTupleRequest* arg,
 
 Status Service::ValidateResultShape(const Shape& client_shape,
                                     const Shape& result_shape) const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_16(mht_16_v, 437, "", "./tensorflow/compiler/xla/service/service.cc", "Service::ValidateResultShape");
+
   TF_RETURN_IF_ERROR(ShapeUtil::ValidateShapeWithOptionalLayout(client_shape));
   if (!ShapeUtil::Compatible(client_shape, result_shape)) {
     return InvalidArgument(
@@ -233,6 +452,9 @@ StatusOr<std::vector<std::vector<const ShapedBuffer*>>>
 Service::ResolveAndValidateArguments(
     absl::Span<const GlobalDataHandle* const> arguments,
     absl::Span<se::StreamExecutor* const> stream_executors) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_17(mht_17_v, 455, "", "./tensorflow/compiler/xla/service/service.cc", "Service::ResolveAndValidateArguments");
+
   CHECK_EQ(options_.number_of_replicas(), stream_executors.size());
   std::vector<std::vector<const ShapedBuffer*>> replicated_arguments;
   replicated_arguments.resize(options_.number_of_replicas());
@@ -259,6 +481,9 @@ StatusOr<std::unique_ptr<HloModuleConfig>> Service::CreateModuleConfig(
     absl::Span<const Shape* const> argument_shapes,
     const ExecutionOptions* execution_options,
     const AotCompilationOptions* aot_options) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_18(mht_18_v, 484, "", "./tensorflow/compiler/xla/service/service.cc", "Service::CreateModuleConfig");
+
   int default_num_replicas = options_.number_of_replicas();
   absl::optional<int> num_threads;
   if (execute_backend_ != nullptr &&
@@ -276,6 +501,9 @@ StatusOr<std::unique_ptr<HloModuleConfig>> Service::CreateModuleConfig(
     absl::Span<const ShapedBuffer* const> arguments,
     const ExecutionOptions& execution_options,
     const AotCompilationOptions* aot_options) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_19(mht_19_v, 504, "", "./tensorflow/compiler/xla/service/service.cc", "Service::CreateModuleConfig");
+
   std::vector<const Shape*> argument_shapes;
   for (const auto* arg : arguments) {
     argument_shapes.push_back(&arg->on_host_shape());
@@ -289,6 +517,9 @@ StatusOr<std::vector<std::unique_ptr<Executable>>> Service::BuildExecutables(
     std::vector<std::unique_ptr<HloModuleConfig>> module_configs,
     Backend* backend, std::vector<std::vector<se::StreamExecutor*>> executors,
     const Compiler::CompileOptions& options, bool run_backend_only) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_20(mht_20_v, 520, "", "./tensorflow/compiler/xla/service/service.cc", "Service::BuildExecutables");
+
   VLOG(1) << StrFormat("BuildExecutable on service %p", this);
 
   VLOG(1) << "Computations:";
@@ -332,6 +563,9 @@ Service::BuildAotResults(
     std::vector<std::unique_ptr<HloModuleConfig>> module_configs,
     Backend* backend, std::vector<std::vector<se::StreamExecutor*>> executors,
     const Compiler::CompileOptions& options, bool run_backend_only) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_21(mht_21_v, 566, "", "./tensorflow/compiler/xla/service/service.cc", "Service::BuildAotResults");
+
   VLOG(1) << StrFormat("BuildAotResults on service %p", this);
 
   VLOG(1) << "Computations:";
@@ -369,6 +603,9 @@ Service::ExecuteParallelAndRegisterResult(
     absl::Span<const std::vector<std::vector<const ShapedBuffer*>>> arguments,
     Backend* backend, absl::Span<const DeviceHandle> device_handles,
     absl::Span<const std::string> result_tags, ExecutionProfile* profile) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_22(mht_22_v, 606, "", "./tensorflow/compiler/xla/service/service.cc", "Service::ExecuteParallelAndRegisterResult");
+
   // Streams where the computation are launched, so we can wait on the streams
   // to complete.
   std::vector<StreamPool::Ptr> streams;
@@ -496,6 +733,10 @@ StatusOr<GlobalDataHandle> Service::ExecuteAndRegisterResult(
     absl::Span<const std::vector<const ShapedBuffer*>> arguments,
     Backend* backend, const DeviceHandle& device_handle,
     const std::string& result_tag, ExecutionProfile* profile) {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("result_tag: \"" + result_tag + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_23(mht_23_v, 737, "", "./tensorflow/compiler/xla/service/service.cc", "Service::ExecuteAndRegisterResult");
+
   // Set up streams.
   std::vector<StreamPool::Ptr> streams;
 
@@ -551,6 +792,9 @@ StatusOr<GlobalDataHandle> Service::ExecuteAndRegisterResult(
 StatusOr<std::vector<se::StreamExecutor*>> Service::GetExecutors(
     const ExecutionOptions& execution_options, int64_t requests_size,
     int64_t request_index) const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_24(mht_24_v, 795, "", "./tensorflow/compiler/xla/service/service.cc", "Service::GetExecutors");
+
   if (execution_options.device_handles().empty()) {
     return FailedPrecondition(
         "device handles must be given to execute parallel computations");
@@ -576,6 +820,9 @@ StatusOr<std::vector<se::StreamExecutor*>> Service::GetExecutors(
 StatusOr<std::vector<std::vector<const ShapedBuffer*>>> Service::GetArguments(
     const ExecutionOptions& execution_options,
     absl::Span<const GlobalDataHandle* const> arguments) const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_25(mht_25_v, 823, "", "./tensorflow/compiler/xla/service/service.cc", "Service::GetArguments");
+
   // Resolve the allocations for the arguments of the computation, and create
   // a vector of device memory offsets for the arguments from the allocations.
   // In the case of partitioned computations, assume all arguments go on the
@@ -591,6 +838,9 @@ StatusOr<std::vector<std::vector<const ShapedBuffer*>>> Service::GetArguments(
 
 Status Service::ExecuteGraphParallel(const ExecuteGraphParallelRequest* arg,
                                      ExecuteParallelResponse* result) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_26(mht_26_v, 841, "", "./tensorflow/compiler/xla/service/service.cc", "Service::ExecuteGraphParallel");
+
   VLOG(1) << "running execute-graph-parallel request";
 
   std::vector<std::vector<std::vector<const ShapedBuffer*>>> all_arguments;
@@ -757,6 +1007,9 @@ Status Service::ExecuteGraphParallel(const ExecuteGraphParallelRequest* arg,
 
 Status Service::GetDeviceHandles(const GetDeviceHandlesRequest* arg,
                                  GetDeviceHandlesResponse* result) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_27(mht_27_v, 1010, "", "./tensorflow/compiler/xla/service/service.cc", "Service::GetDeviceHandles");
+
   const int64_t available_device_count = execute_backend_->device_count();
   const int64_t replica_count = options_.number_of_replicas();
   if (replica_count <= 0) {
@@ -784,6 +1037,9 @@ StatusOr<std::unique_ptr<Executable>> Service::BuildExecutable(
     std::unique_ptr<HloModuleConfig> module_config, Backend* backend,
     se::StreamExecutor* executor, const Compiler::CompileOptions& options,
     bool run_backend_only) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_28(mht_28_v, 1040, "", "./tensorflow/compiler/xla/service/service.cc", "Service::BuildExecutable");
+
   VLOG(1) << StrFormat(
       "BuildExecutable on service %p with serialized module proto: %s", this,
       module_proto.name());
@@ -806,6 +1062,9 @@ StatusOr<std::unique_ptr<Executable>> Service::BuildExecutable(
 }
 
 Status Service::Compile(const CompileRequest* arg, CompileResponse* result) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_29(mht_29_v, 1065, "", "./tensorflow/compiler/xla/service/service.cc", "Service::Compile");
+
   VLOG(1) << "running compile request";
   if (!arg->has_computation()) {
     return InvalidArgument("computations may not be empty");
@@ -847,6 +1106,9 @@ Status Service::Compile(const CompileRequest* arg, CompileResponse* result) {
 }
 
 Status Service::Execute(const ExecuteRequest* arg, ExecuteResponse* result) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_30(mht_30_v, 1109, "", "./tensorflow/compiler/xla/service/service.cc", "Service::Execute");
+
   VLOG(1) << "running execute request";
   if (!arg->has_handle()) {
     return InvalidArgument("execution handle should not be empty");
@@ -918,6 +1180,9 @@ Status Service::Execute(const ExecuteRequest* arg, ExecuteResponse* result) {
 
 Status Service::WaitForExecution(const WaitForExecutionRequest* arg,
                                  WaitForExecutionResponse* result) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_31(mht_31_v, 1183, "", "./tensorflow/compiler/xla/service/service.cc", "Service::WaitForExecution");
+
   TF_ASSIGN_OR_RETURN(const auto execution,
                       execution_tracker_.Resolve(arg->execution()));
 
@@ -933,6 +1198,9 @@ Status Service::WaitForExecution(const WaitForExecutionRequest* arg,
 
 Status Service::TransferToClient(const TransferToClientRequest* arg,
                                  TransferToClientResponse* result) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_32(mht_32_v, 1201, "", "./tensorflow/compiler/xla/service/service.cc", "Service::TransferToClient");
+
   TF_ASSIGN_OR_RETURN(const ShapedBuffer* shaped_buffer,
                       allocation_tracker_.ResolveForReplica(arg->data(), 0));
 
@@ -965,6 +1233,9 @@ Status Service::TransferToClient(const TransferToClientRequest* arg,
 
 Status Service::TransferToServer(const TransferToServerRequest* arg,
                                  TransferToServerResponse* result) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_33(mht_33_v, 1236, "", "./tensorflow/compiler/xla/service/service.cc", "Service::TransferToServer");
+
   TF_ASSIGN_OR_RETURN(Literal literal,
                       Literal::CreateFromProto(arg->literal()));
   const Shape& shape = literal.shape();
@@ -1004,6 +1275,9 @@ Status Service::TransferToServer(const TransferToServerRequest* arg,
 
 Status Service::TransferToInfeed(const TransferToInfeedRequest* arg,
                                  TransferToInfeedResponse* result) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_34(mht_34_v, 1278, "", "./tensorflow/compiler/xla/service/service.cc", "Service::TransferToInfeed");
+
   const int64_t replica_count = options_.number_of_replicas();
   if (arg->replica_id() < 0 || arg->replica_id() >= replica_count) {
     return FailedPrecondition(
@@ -1033,6 +1307,9 @@ Status Service::TransferToInfeed(const TransferToInfeedRequest* arg,
 
 Status Service::TransferFromOutfeed(const TransferFromOutfeedRequest* arg,
                                     TransferFromOutfeedResponse* result) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_35(mht_35_v, 1310, "", "./tensorflow/compiler/xla/service/service.cc", "Service::TransferFromOutfeed");
+
   const int64_t replica_count = options_.number_of_replicas();
   if (arg->replica_id() < 0 || arg->replica_id() >= replica_count) {
     return FailedPrecondition(
@@ -1063,11 +1340,17 @@ Status Service::TransferFromOutfeed(const TransferFromOutfeedRequest* arg,
 
 Status Service::ResetDevice(const ResetDeviceRequest* arg,
                             ResetDeviceResponse* result) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_36(mht_36_v, 1343, "", "./tensorflow/compiler/xla/service/service.cc", "Service::ResetDevice");
+
   return execute_backend_->ResetDevices();
 }
 
 Status Service::ComputeConstantGraph(const ComputeConstantGraphRequest* arg,
                                      ComputeConstantResponse* result) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_37(mht_37_v, 1351, "", "./tensorflow/compiler/xla/service/service.cc", "Service::ComputeConstantGraph");
+
   if (!arg->has_computation()) {
     return InvalidArgument("computations may not be empty");
   }
@@ -1129,6 +1412,9 @@ Status Service::ComputeConstantGraph(const ComputeConstantGraphRequest* arg,
 }
 
 Status Service::GetShape(const GetShapeRequest* arg, GetShapeResponse* result) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_38(mht_38_v, 1415, "", "./tensorflow/compiler/xla/service/service.cc", "Service::GetShape");
+
   TF_ASSIGN_OR_RETURN(const ShapedBuffer* buffer,
                       allocation_tracker_.ResolveForReplica(arg->data(), 0));
   *result->mutable_shape() = buffer->on_host_shape().ToProto();
@@ -1137,6 +1423,9 @@ Status Service::GetShape(const GetShapeRequest* arg, GetShapeResponse* result) {
 
 Status Service::GetComputationGraphStats(
     const ComputationGraphStatsRequest* arg, ComputationStatsResponse* result) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_39(mht_39_v, 1426, "", "./tensorflow/compiler/xla/service/service.cc", "Service::GetComputationGraphStats");
+
   if (!arg->has_computation()) {
     return InvalidArgument("Computations may not be empty.");
   }
@@ -1164,6 +1453,9 @@ Status Service::GetComputationGraphStats(
 }
 
 DeviceHandle Service::SingleComputationDeviceHandle() const {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_40(mht_40_v, 1456, "", "./tensorflow/compiler/xla/service/service.cc", "Service::SingleComputationDeviceHandle");
+
   DeviceHandle device_handle;
   device_handle.set_handle(0);
   device_handle.set_device_count(1);
@@ -1172,6 +1464,9 @@ DeviceHandle Service::SingleComputationDeviceHandle() const {
 
 StatusOr<std::vector<se::StreamExecutor*>> Service::Replicas(
     const Backend& backend, const DeviceHandle& device_handle) const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSserviceDTcc mht_41(mht_41_v, 1467, "", "./tensorflow/compiler/xla/service/service.cc", "Service::Replicas");
+
   std::vector<se::StreamExecutor*> replicas;
   for (int replica = 0; replica < options_.number_of_replicas(); ++replica) {
     // From the computation placer, find out the device ids of the replicas for

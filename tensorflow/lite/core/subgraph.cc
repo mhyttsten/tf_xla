@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -74,6 +242,10 @@ using ScopedTfLiteSparsity =
 TfLiteStatus ReportOpError(TfLiteContext* context, const TfLiteNode& node,
                            const TfLiteRegistration& registration,
                            int node_index, const char* message) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("message: \"" + (message == nullptr ? std::string("nullptr") : std::string((char*)message)) + "\"");
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_0(mht_0_v, 246, "", "./tensorflow/lite/core/subgraph.cc", "ReportOpError");
+
   context->ReportError(
       context, "Node number %d (%s) %s.", node_index,
       registration.custom_name
@@ -90,6 +262,9 @@ TfLiteStatus ReportOpError(TfLiteContext* context, const TfLiteNode& node,
 // * The type of first parameter have to be `TfLiteContext*`.
 // * All parameters must be trivially destructible. (E.g. No C++ class)
 TfLiteStatus ForbiddenContextFunction(TfLiteContext* context, ...) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_1(mht_1_v, 265, "", "./tensorflow/lite/core/subgraph.cc", "ForbiddenContextFunction");
+
   context->ReportError(context,
                        "The function is forbidden if not calling in delegate.");
   return kTfLiteError;
@@ -98,6 +273,9 @@ TfLiteStatus ForbiddenContextFunction(TfLiteContext* context, ...) {
 // Set the ForbiddenContextFunction to a compatible function pointer.
 template <typename FunctionType>
 void SetForbiddenContextFunction(FunctionType* func) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_2(mht_2_v, 276, "", "./tensorflow/lite/core/subgraph.cc", "SetForbiddenContextFunction");
+
   *func = reinterpret_cast<FunctionType>(ForbiddenContextFunction);
 }
 
@@ -106,6 +284,9 @@ template <typename TensorIntArray>
 bool HasDynamicTensorImpl(const TfLiteContext& context,
                           const TensorIntArray& int_array,
                           int* dynamic_tensor_index) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_3(mht_3_v, 287, "", "./tensorflow/lite/core/subgraph.cc", "HasDynamicTensorImpl");
+
   for (int i : int_array) {
     if (i == kTfLiteOptionalTensor) continue;
     const TfLiteTensor& tensor = context.tensors[i];
@@ -122,6 +303,9 @@ bool HasDynamicTensorImpl(const TfLiteContext& context,
 bool HasDynamicTensor(const TfLiteContext& context,
                       const TfLiteIntArray* int_array,
                       int* dynamic_tensor_index) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_4(mht_4_v, 306, "", "./tensorflow/lite/core/subgraph.cc", "HasDynamicTensor");
+
   return HasDynamicTensorImpl(context, TfLiteIntArrayView{int_array},
                               dynamic_tensor_index);
 }
@@ -129,6 +313,9 @@ bool HasDynamicTensor(const TfLiteContext& context,
 // Gets the legacy TfLiteQuantizationParams from the current TfLiteQuantization.
 TfLiteQuantizationParams GetLegacyQuantization(
     const TfLiteQuantization& quantization) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_5(mht_5_v, 316, "", "./tensorflow/lite/core/subgraph.cc", "GetLegacyQuantization");
+
   TfLiteQuantizationParams legacy_quantization;
   legacy_quantization.scale = 0;
   legacy_quantization.zero_point = 0;
@@ -156,6 +343,9 @@ TfLiteQuantizationParams GetLegacyQuantization(
 
 static constexpr const char kUnknownCustomOpName[] = "UnknownCustomOp";
 const char* GetTFLiteOpName(const TfLiteRegistration& op_reg) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_6(mht_6_v, 346, "", "./tensorflow/lite/core/subgraph.cc", "GetTFLiteOpName");
+
   if (op_reg.builtin_code == tflite::BuiltinOperator_CUSTOM) {
     const char* const custom_name = op_reg.custom_name;
     return custom_name ? custom_name : kUnknownCustomOpName;
@@ -172,6 +362,9 @@ TfLiteStatus VerifyCustomAllocationForTensor(
     TfLiteContext* context,
     const std::map<int, TfLiteCustomAllocation>& tensor_idx_to_alloc,
     const int tensor_idx) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_7(mht_7_v, 365, "", "./tensorflow/lite/core/subgraph.cc", "VerifyCustomAllocationForTensor");
+
   auto& tensor = context->tensors[tensor_idx];
   if (tensor.allocation_type != kTfLiteCustom) return kTfLiteOk;
   const auto idx_and_alloc = tensor_idx_to_alloc.find(tensor_idx);
@@ -194,30 +387,60 @@ TfLiteStatus VerifyCustomAllocationForTensor(
 // indices.
 class InterpreterInfo : public GraphInfo {
  public:
-  explicit InterpreterInfo(Subgraph* subgraph) : subgraph_(subgraph) {}
+  explicit InterpreterInfo(Subgraph* subgraph) : subgraph_(subgraph) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_8(mht_8_v, 391, "", "./tensorflow/lite/core/subgraph.cc", "InterpreterInfo");
+}
 
-  size_t num_tensors() const override { return subgraph_->tensors_size(); }
+  size_t num_tensors() const override {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_9(mht_9_v, 396, "", "./tensorflow/lite/core/subgraph.cc", "num_tensors");
+ return subgraph_->tensors_size(); }
   TfLiteTensor* tensor(size_t index) override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_10(mht_10_v, 400, "", "./tensorflow/lite/core/subgraph.cc", "tensor");
+
     return subgraph_->tensor(index);
   }
   size_t num_execution_nodes() const override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_11(mht_11_v, 406, "", "./tensorflow/lite/core/subgraph.cc", "num_execution_nodes");
+
     return subgraph_->execution_plan().size();
   }
-  size_t num_total_nodes() const override { return subgraph_->nodes_size(); }
+  size_t num_total_nodes() const override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_12(mht_12_v, 412, "", "./tensorflow/lite/core/subgraph.cc", "num_total_nodes");
+ return subgraph_->nodes_size(); }
   const TfLiteNode& node(size_t index) const override {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_13(mht_13_v, 416, "", "./tensorflow/lite/core/subgraph.cc", "node");
+
     int node_index = subgraph_->execution_plan()[index];
     return subgraph_->nodes_and_registration()[node_index].first;
   }
   size_t node_index(size_t index) const override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_14(mht_14_v, 423, "", "./tensorflow/lite/core/subgraph.cc", "node_index");
+
     return subgraph_->execution_plan()[index];
   }
   const std::vector<int>& inputs() const override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_15(mht_15_v, 429, "", "./tensorflow/lite/core/subgraph.cc", "inputs");
+
     return subgraph_->inputs();
   }
   const std::vector<int>& outputs() const override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_16(mht_16_v, 435, "", "./tensorflow/lite/core/subgraph.cc", "outputs");
+
     return subgraph_->outputs();
   }
   const std::vector<int>& variables() const override {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_17(mht_17_v, 441, "", "./tensorflow/lite/core/subgraph.cc", "variables");
+
     return subgraph_->variables();
   }
 
@@ -239,6 +462,9 @@ Subgraph::Subgraph(ErrorReporter* error_reporter,
       resources_(resources),
       resource_ids_(resource_ids),
       initialization_status_map_(initialization_status_map) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_18(mht_18_v, 465, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::Subgraph");
+
   context_.impl_ = static_cast<void*>(this);
   context_.ResizeTensor = ResizeTensor;
   context_.ReportError = ReportErrorC;
@@ -262,6 +488,9 @@ Subgraph::Subgraph(ErrorReporter* error_reporter,
 }
 
 Subgraph::~Subgraph() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_19(mht_19_v, 491, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::~Subgraph");
+
   for (int node_index = 0; node_index < nodes_and_registration_.size();
        ++node_index) {
     CleanupNode(node_index);
@@ -279,6 +508,9 @@ Subgraph::~Subgraph() {
 }
 
 void Subgraph::CleanupNode(int node_index) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_20(mht_20_v, 511, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::CleanupNode");
+
   TfLiteNode& node = nodes_and_registration_[node_index].first;
   const TfLiteRegistration& registration =
       nodes_and_registration_[node_index].second;
@@ -294,6 +526,9 @@ void Subgraph::CleanupNode(int node_index) {
 TfLiteStatus Subgraph::ReplaceNodeSubsetsWithDelegateKernels(
     TfLiteContext* context, TfLiteRegistration registration,
     const TfLiteIntArray* nodes_to_replace, TfLiteDelegate* delegate) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_21(mht_21_v, 529, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::ReplaceNodeSubsetsWithDelegateKernels");
+
   return static_cast<Subgraph*>(context->impl_)
       ->ReplaceNodeSubsetsWithDelegateKernels(registration, nodes_to_replace,
                                               delegate);
@@ -306,6 +541,9 @@ namespace {
 // responsibility to ensure TfLiteIntArray has enough size.
 void CopyVectorToTfLiteIntArray(const std::vector<int>& vec,
                                 TfLiteIntArray* arr) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_22(mht_22_v, 544, "", "./tensorflow/lite/core/subgraph.cc", "CopyVectorToTfLiteIntArray");
+
   arr->size = vec.size();
   memcpy(arr->data, vec.data(), sizeof(int) * arr->size);
 }
@@ -330,6 +568,9 @@ void CopyVectorToTfLiteIntArray(const std::vector<int>& vec,
 // +-----------------------------------+
 TfLiteDelegateParams* CreateDelegateParams(TfLiteDelegate* delegate,
                                            const NodeSubset& node_subset) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_23(mht_23_v, 571, "", "./tensorflow/lite/core/subgraph.cc", "CreateDelegateParams");
+
   // Step 1: Calculate the allocation size.
   int allocation_size = sizeof(TfLiteDelegateParams);
 
@@ -374,6 +615,9 @@ TfLiteDelegateParams* CreateDelegateParams(TfLiteDelegate* delegate,
 // Assumes that params is not nullptr.
 void PopulatePreviewDelegateParams(const NodeSubset& node_subset,
                                    TfLiteDelegateParams* params) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_24(mht_24_v, 618, "", "./tensorflow/lite/core/subgraph.cc", "PopulatePreviewDelegateParams");
+
   // Since these params are used for previewing partitioning, params->delegate
   // is not required.
   params->delegate = nullptr;
@@ -396,6 +640,9 @@ void PopulatePreviewDelegateParams(const NodeSubset& node_subset,
 TfLiteStatus Subgraph::ReplaceNodeSubsetsWithDelegateKernels(
     TfLiteRegistration registration, const TfLiteIntArray* nodes_to_replace,
     TfLiteDelegate* delegate) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_25(mht_25_v, 643, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::ReplaceNodeSubsetsWithDelegateKernels");
+
   // Ignore empty node replacement sets.
   if (!nodes_to_replace->size) {
     return kTfLiteOk;
@@ -476,6 +723,9 @@ TfLiteStatus Subgraph::ReplaceNodeSubsetsWithDelegateKernels(
 
 TfLiteExternalContext* Subgraph::GetExternalContext(
     TfLiteExternalContextType type) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_26(mht_26_v, 726, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::GetExternalContext");
+
   if (static_cast<int>(type) >= 0 && type < kTfLiteMaxExternalContexts) {
     return external_contexts_[type];
   }
@@ -484,11 +734,17 @@ TfLiteExternalContext* Subgraph::GetExternalContext(
 
 TfLiteExternalContext* Subgraph::GetExternalContext(
     struct TfLiteContext* context, TfLiteExternalContextType type) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_27(mht_27_v, 737, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::GetExternalContext");
+
   return static_cast<Subgraph*>(context->impl_)->GetExternalContext(type);
 }
 
 void Subgraph::SetExternalContext(TfLiteExternalContextType type,
                                   TfLiteExternalContext* ctx) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_28(mht_28_v, 745, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::SetExternalContext");
+
   if (static_cast<int>(type) >= 0 && type < kTfLiteMaxExternalContexts) {
     external_contexts_[type] = ctx;
   }
@@ -497,6 +753,9 @@ void Subgraph::SetExternalContext(TfLiteExternalContextType type,
 void Subgraph::SetExternalContext(struct TfLiteContext* context,
                                   TfLiteExternalContextType type,
                                   TfLiteExternalContext* ctx) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_29(mht_29_v, 756, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::SetExternalContext");
+
   return static_cast<Subgraph*>(context->impl_)->SetExternalContext(type, ctx);
 }
 
@@ -504,6 +763,9 @@ void Subgraph::SetExternalContext(struct TfLiteContext* context,
 // this memory and it is only guaranteed to exist during the invocation of the
 // delegate prepare.
 TfLiteStatus Subgraph::GetExecutionPlan(TfLiteIntArray** execution_plan) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_30(mht_30_v, 766, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::GetExecutionPlan");
+
   plan_cache_.reset(TfLiteIntArrayCreate(execution_plan_.size()));
   *execution_plan = plan_cache_.get();
   static_assert(sizeof(plan_cache_->data[0]) == sizeof(execution_plan_[0]),
@@ -517,11 +779,17 @@ TfLiteStatus Subgraph::GetExecutionPlan(TfLiteIntArray** execution_plan) {
 // Entry point for C node plugin API to get the execution plan
 TfLiteStatus Subgraph::GetExecutionPlan(struct TfLiteContext* context,
                                         TfLiteIntArray** execution_plan) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_31(mht_31_v, 782, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::GetExecutionPlan");
+
   return static_cast<Subgraph*>(context->impl_)
       ->GetExecutionPlan(execution_plan);
 }
 
 void Subgraph::FreeDelegatePartitioningData() {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_32(mht_32_v, 790, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::FreeDelegatePartitioningData");
+
   for (auto& params : partitioning_preview_cache_) {
     TfLiteIntArrayFree(params.nodes_to_replace);
     TfLiteIntArrayFree(params.input_tensors);
@@ -532,6 +800,10 @@ void Subgraph::FreeDelegatePartitioningData() {
 
 TfLiteStatus Subgraph::GetModelMetadata(const char* name, const char** ptr,
                                         size_t* bytes) {
+   std::vector<std::string> mht_33_v;
+   mht_33_v.push_back("name: \"" + (name == nullptr ? std::string("nullptr") : std::string((char*)name)) + "\"");
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_33(mht_33_v, 804, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::GetModelMetadata");
+
   TF_LITE_ENSURE(&context_, ptr != nullptr);
   TF_LITE_ENSURE(&context_, bytes != nullptr);
   *ptr = nullptr;
@@ -550,6 +822,10 @@ TfLiteStatus Subgraph::GetModelMetadata(const char* name, const char** ptr,
 TfLiteStatus Subgraph::GetModelMetadata(const struct TfLiteContext* context,
                                         const char* name, const char** ptr,
                                         size_t* bytes) {
+   std::vector<std::string> mht_34_v;
+   mht_34_v.push_back("name: \"" + (name == nullptr ? std::string("nullptr") : std::string((char*)name)) + "\"");
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_34(mht_34_v, 826, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::GetModelMetadata");
+
   return static_cast<Subgraph*>(context->impl_)
       ->GetModelMetadata(name, ptr, bytes);
 }
@@ -557,6 +833,9 @@ TfLiteStatus Subgraph::GetModelMetadata(const struct TfLiteContext* context,
 TfLiteStatus Subgraph::PreviewDelegatePartitioning(
     const TfLiteIntArray* nodes_to_replace,
     TfLiteDelegateParams** partition_params_array, int* num_partitions) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_35(mht_35_v, 836, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::PreviewDelegatePartitioning");
+
   // Ensure partitioning cache is empty.
   FreeDelegatePartitioningData();
   // Defaults.
@@ -591,12 +870,18 @@ TfLiteStatus Subgraph::PreviewDelegatePartitioning(
 TfLiteStatus Subgraph::PreviewDelegatePartitioning(
     struct TfLiteContext* context, const TfLiteIntArray* nodes_to_replace,
     TfLiteDelegateParams** partition_params_array, int* num_partitions) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_36(mht_36_v, 873, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::PreviewDelegatePartitioning");
+
   return static_cast<Subgraph*>(context->impl_)
       ->PreviewDelegatePartitioning(nodes_to_replace, partition_params_array,
                                     num_partitions);
 }
 
 TfLiteStatus Subgraph::SetInputs(std::vector<int> inputs) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_37(mht_37_v, 882, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::SetInputs");
+
   TF_LITE_ENSURE_OK(&context_,
                     CheckTensorIndices("inputs", inputs.data(), inputs.size()));
   inputs_ = std::move(inputs);
@@ -604,6 +889,9 @@ TfLiteStatus Subgraph::SetInputs(std::vector<int> inputs) {
 }
 
 TfLiteStatus Subgraph::SetOutputs(std::vector<int> outputs) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_38(mht_38_v, 892, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::SetOutputs");
+
   TF_LITE_ENSURE_OK(
       &context_, CheckTensorIndices("outputs", outputs.data(), outputs.size()));
   outputs_ = std::move(outputs);
@@ -611,6 +899,9 @@ TfLiteStatus Subgraph::SetOutputs(std::vector<int> outputs) {
 }
 
 TfLiteStatus Subgraph::SetVariables(std::vector<int> variables) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_39(mht_39_v, 902, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::SetVariables");
+
   TF_LITE_ENSURE_OK(&context_, CheckTensorIndices("variables", variables.data(),
                                                   variables.size()));
   variables_ = std::move(variables);
@@ -619,27 +910,43 @@ TfLiteStatus Subgraph::SetVariables(std::vector<int> variables) {
 
 TfLiteStatus Subgraph::SetMetadata(
     const std::map<std::string, std::string>* metadata) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_40(mht_40_v, 913, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::SetMetadata");
+
   metadata_ = metadata;
   return kTfLiteOk;
 }
 
 void Subgraph::SetCancellationFunction(void* data,
                                        bool (*check_cancelled_func)(void*)) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_41(mht_41_v, 922, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::SetCancellationFunction");
+
   cancellation_data_ = data;
   check_cancelled_func_ = check_cancelled_func;
 }
 
 bool Subgraph::IsCancelled() {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_42(mht_42_v, 930, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::IsCancelled");
+
   return (check_cancelled_func_ != nullptr) &&
          (*check_cancelled_func_)(cancellation_data_);
 }
 
 void Subgraph::ReserveNodes(int count) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_43(mht_43_v, 938, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::ReserveNodes");
+
   nodes_and_registration_.reserve(count);
 }
 
 TfLiteStatus Subgraph::CheckTensorIndices(const char* label, const int* indices,
                                           int length) {
+   std::vector<std::string> mht_44_v;
+   mht_44_v.push_back("label: \"" + (label == nullptr ? std::string("nullptr") : std::string((char*)label)) + "\"");
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_44(mht_44_v, 947, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::CheckTensorIndices");
+
   // Making sure kTfLiteOptionalTensor is not re-defined to something other than
   // -1.
   static_assert(kTfLiteOptionalTensor == -1,
@@ -677,6 +984,9 @@ TfLiteStatus Subgraph::CheckInputAndOutputForOverlap(const int* input_indices,
                                                      int num_inputs,
                                                      const int* output_indices,
                                                      int num_outputs) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_45(mht_45_v, 987, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::CheckInputAndOutputForOverlap");
+
   for (int i = 0; i < num_inputs; i++) {
     for (int j = 0; j < num_outputs; j++) {
       if (input_indices[i] == output_indices[j]) {
@@ -692,6 +1002,9 @@ TfLiteStatus Subgraph::CheckInputAndOutputForOverlap(const int* input_indices,
 
 TfLiteStatus Subgraph::BytesRequired(TfLiteType type, const int* dims,
                                      size_t dims_size, size_t* bytes) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_46(mht_46_v, 1005, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::BytesRequired");
+
   TF_LITE_ENSURE(&context_, bytes != nullptr);
   // When 'dims_size' is 0, we simply assume it's a scalar. Therefore, we start
   // 'count' as 1.
@@ -712,6 +1025,9 @@ TfLiteStatus Subgraph::BytesRequired(TfLiteType type, const int* dims,
 }
 
 TfLiteStatus Subgraph::AllocateTensors() {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_47(mht_47_v, 1028, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::AllocateTensors");
+
   TFLITE_SCOPED_TAGGED_DEFAULT_PROFILE(profiler_.get(), "AllocateTensors");
   if (!consistent_) {
     ReportError("AllocateTensors() called on inconsistent model.");
@@ -772,6 +1088,9 @@ TfLiteStatus Subgraph::AllocateTensors() {
 
 // TODO(b/115961645): Support non-zero default values.
 TfLiteStatus Subgraph::ResetVariableTensors() {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_48(mht_48_v, 1091, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::ResetVariableTensors");
+
   for (auto& tensor : tensors_) {
     if (!tensor.is_variable) {
       continue;
@@ -797,6 +1116,10 @@ TfLiteStatus Subgraph::AddNodeWithParameters(
     const std::vector<int>& intermediates, const char* init_data,
     size_t init_data_size, void* builtin_data,
     const TfLiteRegistration* registration, int* node_index) {
+   std::vector<std::string> mht_49_v;
+   mht_49_v.push_back("init_data: \"" + (init_data == nullptr ? std::string("nullptr") : std::string((char*)init_data)) + "\"");
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_49(mht_49_v, 1120, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::AddNodeWithParameters");
+
   std::unique_ptr<void, decltype(free)*> builtin_data_deleter(builtin_data,
                                                               free);
   if (state_ == kStateInvokableAndImmutable) {
@@ -866,6 +1189,9 @@ namespace {
 // of type 'kTfLiteResource'. False otherwise.
 bool AnyTensorOfTypeResource(const std::vector<TfLiteTensor>& tensors,
                              const TfLiteIntArray* tensor_indexes) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_50(mht_50_v, 1192, "", "./tensorflow/lite/core/subgraph.cc", "AnyTensorOfTypeResource");
+
   for (int i = 0; i < tensor_indexes->size; ++i) {
     int tensor_index = tensor_indexes->data[i];
     if (tensor_index >= 0 && tensor_index < tensors.size() &&
@@ -879,6 +1205,9 @@ bool AnyTensorOfTypeResource(const std::vector<TfLiteTensor>& tensors,
 
 bool Subgraph::OpMightHaveSideEffect(
     const TfLiteNode* node, const TfLiteRegistration* registration) const {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_51(mht_51_v, 1208, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::OpMightHaveSideEffect");
+
   // Check if any of the input tensors are of type resource.
   if (AnyTensorOfTypeResource(tensors_, node->inputs)) return true;
   // Check if any of the output tensors are of type resource.
@@ -894,6 +1223,9 @@ bool Subgraph::OpMightHaveSideEffect(
 
 TfLiteStatus Subgraph::ResizeInputTensor(int tensor_index,
                                          const std::vector<int>& dims) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_52(mht_52_v, 1226, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::ResizeInputTensor");
+
   const bool delegates_applied = !pre_delegation_execution_plan_.empty();
   const bool graph_is_immutable = state_ == kStateInvokableAndImmutable;
   if (graph_is_immutable && !delegates_applied) {
@@ -926,6 +1258,9 @@ TfLiteStatus Subgraph::ResizeInputTensor(int tensor_index,
 
 TfLiteStatus Subgraph::ResizeInputTensorStrict(int tensor_index,
                                                const std::vector<int>& dims) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_53(mht_53_v, 1261, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::ResizeInputTensorStrict");
+
   TF_LITE_ENSURE(&context_,
                  tensor_index < context_.tensors_size && tensor_index >= 0);
   TfLiteTensor* tensor = &context_.tensors[tensor_index];
@@ -955,6 +1290,9 @@ TfLiteStatus Subgraph::ResizeInputTensorStrict(int tensor_index,
 }
 
 TfLiteStatus Subgraph::ReleaseNonPersistentMemory() {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_54(mht_54_v, 1293, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::ReleaseNonPersistentMemory");
+
   if (memory_planner_) {
     TF_LITE_ENSURE_STATUS(memory_planner_->ReleaseNonPersistentMemory());
   }
@@ -963,6 +1301,9 @@ TfLiteStatus Subgraph::ReleaseNonPersistentMemory() {
 
 TfLiteStatus Subgraph::OpPrepare(const TfLiteRegistration& op_reg,
                                  TfLiteNode* node) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_55(mht_55_v, 1304, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::OpPrepare");
+
   if (op_reg.prepare == nullptr) {
     // Check if it's an unresolved custom op.
     if (IsUnresolvedCustomOp(op_reg)) {
@@ -991,6 +1332,9 @@ TfLiteStatus Subgraph::OpPrepare(const TfLiteRegistration& op_reg,
 TfLiteStatus Subgraph::PrepareOpsStartingAt(
     int first_execution_plan_index, const std::vector<int>& execution_plan,
     int* last_execution_plan_index_prepared) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_56(mht_56_v, 1335, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::PrepareOpsStartingAt");
+
   if (first_execution_plan_index == 0) {
     // Forwarding inputs without modification won't be not evaluated in the
     // operators. So, it needs to look up the subgraph's output tensors at the
@@ -1026,6 +1370,9 @@ TfLiteStatus Subgraph::PrepareOpsStartingAt(
 }
 
 TfLiteStatus Subgraph::PrepareOpsAndTensors() {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_57(mht_57_v, 1373, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::PrepareOpsAndTensors");
+
   if (!memory_planner_) {
 #ifdef TFLITE_USE_SIMPLE_MEMORY_PLANNER
     memory_planner_.reset(new SimplePlanner(&context_, CreateGraphInfo()));
@@ -1103,6 +1450,9 @@ TfLiteStatus Subgraph::PrepareOpsAndTensors() {
 }
 
 TfLiteStatus Subgraph::RemoveUnusedInputs() {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_58(mht_58_v, 1453, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::RemoveUnusedInputs");
+
   auto graph_info = CreateGraphInfo();
   std::vector<int> refcounts(graph_info->num_tensors(), 0);
 
@@ -1137,6 +1487,9 @@ TfLiteStatus Subgraph::RemoveUnusedInputs() {
 }
 
 TfLiteStatus Subgraph::Invoke() {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_59(mht_59_v, 1490, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::Invoke");
+
   if (!consistent_) {
     ReportError("Invoke called on model that is not consistent.");
     return kTfLiteError;
@@ -1250,6 +1603,9 @@ TfLiteStatus Subgraph::Invoke() {
 TfLiteStatus Subgraph::ResizeTensor(TfLiteContext* context,
                                     TfLiteTensor* tensor,
                                     TfLiteIntArray* new_size) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_60(mht_60_v, 1606, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::ResizeTensor");
+
   // If the dimensions don't change, avoiding
   // unnecessary (re)allocations.
   //
@@ -1274,10 +1630,18 @@ TfLiteStatus Subgraph::ResizeTensor(TfLiteContext* context,
 }
 
 void Subgraph::ReportErrorImpl(const char* format, va_list args) {
+   std::vector<std::string> mht_61_v;
+   mht_61_v.push_back("format: \"" + (format == nullptr ? std::string("nullptr") : std::string((char*)format)) + "\"");
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_61(mht_61_v, 1634, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::ReportErrorImpl");
+
   error_reporter_->Report(format, args);
 }
 
 void Subgraph::ReportErrorC(TfLiteContext* context, const char* format, ...) {
+   std::vector<std::string> mht_62_v;
+   mht_62_v.push_back("format: \"" + (format == nullptr ? std::string("nullptr") : std::string((char*)format)) + "\"");
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_62(mht_62_v, 1642, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::ReportErrorC");
+
   va_list args;
   va_start(args, format);
   auto* f = static_cast<Subgraph*>(context->impl_);
@@ -1290,6 +1654,10 @@ void Subgraph::ReportErrorC(TfLiteContext* context, const char* format, ...) {
 
 // Entry point for C node plugin API to report an error.
 void Subgraph::ReportError(const char* format, ...) {
+   std::vector<std::string> mht_63_v;
+   mht_63_v.push_back("format: \"" + (format == nullptr ? std::string("nullptr") : std::string((char*)format)) + "\"");
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_63(mht_63_v, 1658, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::ReportError");
+
   va_list args;
   va_start(args, format);
   auto* f = static_cast<Subgraph*>(context_.impl_);
@@ -1302,6 +1670,9 @@ void Subgraph::ReportError(const char* format, ...) {
 
 TfLiteStatus Subgraph::AddTensors(int tensors_to_add,
                                   int* first_new_tensor_index) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_64(mht_64_v, 1673, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::AddTensors");
+
   const size_t base_index = tensors_.size();
   if (first_new_tensor_index) *first_new_tensor_index = base_index;
   tensors_.resize(tensors_.size() + tensors_to_add);
@@ -1316,6 +1687,9 @@ TfLiteStatus Subgraph::AddTensors(int tensors_to_add,
 
 TfLiteStatus Subgraph::AddTensors(TfLiteContext* context, int tensors_to_add,
                                   int* first_new_tensor_index) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_65(mht_65_v, 1690, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::AddTensors");
+
   // Note here that context->impl_ is recovering the this pointer for an
   // instance of Interpreter to call into the member function AddTensors
   // (this function is static).
@@ -1325,6 +1699,9 @@ TfLiteStatus Subgraph::AddTensors(TfLiteContext* context, int tensors_to_add,
 
 TfLiteStatus Subgraph::GetNodeAndRegistration(
     int node_index, TfLiteNode** node, TfLiteRegistration** registration) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_66(mht_66_v, 1702, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::GetNodeAndRegistration");
+
   TF_LITE_ENSURE(&context_, node_index >= 0);
   auto nodes_size = nodes_and_registration_.size();
   TF_LITE_ENSURE(&context_, static_cast<size_t>(node_index) < nodes_size);
@@ -1338,6 +1715,9 @@ TfLiteStatus Subgraph::GetNodeAndRegistration(
 TfLiteStatus Subgraph::GetNodeAndRegistration(
     struct TfLiteContext* context, int node_index, TfLiteNode** node,
     TfLiteRegistration** registration) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_67(mht_67_v, 1718, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::GetNodeAndRegistration");
+
   return static_cast<Subgraph*>(context->impl_)
       ->GetNodeAndRegistration(node_index, node, registration);
 }
@@ -1346,6 +1726,11 @@ TfLiteStatus Subgraph::SetTensorParametersReadOnly(
     int tensor_index, TfLiteType type, const char* name, const size_t rank,
     const int* dims, TfLiteQuantization quantization, const char* buffer,
     size_t bytes, const Allocation* allocation, TfLiteSparsity* sparsity) {
+   std::vector<std::string> mht_68_v;
+   mht_68_v.push_back("name: \"" + (name == nullptr ? std::string("nullptr") : std::string((char*)name)) + "\"");
+   mht_68_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_68(mht_68_v, 1731, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::SetTensorParametersReadOnly");
+
   // Ensure quantization cleanup on failure.
   ScopedTfLiteQuantization scoped_quantization(&quantization);
   ScopedTfLiteSparsity scoped_sparsity(sparsity);
@@ -1403,6 +1788,10 @@ TfLiteStatus Subgraph::SetTensorParametersReadWrite(
     int tensor_index, TfLiteType type, const char* name, const size_t rank,
     const int* dims, TfLiteQuantization quantization, bool is_variable,
     const size_t rank_dims_signature, const int* dims_signature) {
+   std::vector<std::string> mht_69_v;
+   mht_69_v.push_back("name: \"" + (name == nullptr ? std::string("nullptr") : std::string((char*)name)) + "\"");
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_69(mht_69_v, 1792, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::SetTensorParametersReadWrite");
+
   // Ensure quantization cleanup on failure.
   ScopedTfLiteQuantization scoped_quantization(&quantization);
   if (state_ == kStateInvokableAndImmutable) {
@@ -1448,6 +1837,9 @@ TfLiteStatus Subgraph::SetTensorParametersReadWrite(
 }
 
 TfLiteStatus Subgraph::SetExecutionPlan(const std::vector<int>& new_plan) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_70(mht_70_v, 1840, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::SetExecutionPlan");
+
   for (int node_index : new_plan) {
     TF_LITE_ENSURE(&context_, node_index >= 0 &&
                                   node_index < nodes_and_registration_.size());
@@ -1458,6 +1850,9 @@ TfLiteStatus Subgraph::SetExecutionPlan(const std::vector<int>& new_plan) {
 
 TfLiteStatus Subgraph::ResizeTensorImpl(TfLiteTensor* tensor,
                                         TfLiteIntArray* new_size) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_71(mht_71_v, 1853, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::ResizeTensorImpl");
+
   // Note that in theory we could resize kTfLiteArenaRwPersistent tensors too.
   if (tensor->allocation_type == kTfLiteArenaRw ||
       tensor->allocation_type == kTfLiteDynamic ||
@@ -1500,6 +1895,9 @@ TfLiteStatus Subgraph::ResizeTensorImpl(TfLiteTensor* tensor,
 
 void Subgraph::UseDynamicAllocationForLargeTensors(
     int large_tensors_threshods_in_bytes) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_72(mht_72_v, 1898, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::UseDynamicAllocationForLargeTensors");
+
   for (size_t tensor_index = 0; tensor_index < context_.tensors_size;
        tensor_index++) {
     TfLiteTensor* tensor = &context_.tensors[tensor_index];
@@ -1518,6 +1916,9 @@ void Subgraph::UseDynamicAllocationForLargeTensors(
 }
 
 void Subgraph::SwitchToDelegateContext() {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_73(mht_73_v, 1919, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::SwitchToDelegateContext");
+
   context_.GetNodeAndRegistration = GetNodeAndRegistration;
   context_.ReplaceNodeSubsetsWithDelegateKernels =
       ReplaceNodeSubsetsWithDelegateKernels;
@@ -1526,30 +1927,48 @@ void Subgraph::SwitchToDelegateContext() {
 }
 
 void Subgraph::SwitchToKernelContext() {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_74(mht_74_v, 1930, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::SwitchToKernelContext");
+
   context_.GetNodeAndRegistration = [](struct TfLiteContext* context,
                                        int node_index, TfLiteNode** node,
                                        TfLiteRegistration** registration) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_75(mht_75_v, 1936, "", "./tensorflow/lite/core/subgraph.cc", "lambda");
+
     return ForbiddenContextFunction(context);
   };
   context_.ReplaceNodeSubsetsWithDelegateKernels =
       [](TfLiteContext* context, TfLiteRegistration registration,
          const TfLiteIntArray* nodes_to_replace, TfLiteDelegate* delegate) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_76(mht_76_v, 1944, "", "./tensorflow/lite/core/subgraph.cc", "lambda");
+
         return ForbiddenContextFunction(context);
       };
   context_.GetExecutionPlan = [](struct TfLiteContext* context,
                                  TfLiteIntArray**) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_77(mht_77_v, 1951, "", "./tensorflow/lite/core/subgraph.cc", "lambda");
+
     return ForbiddenContextFunction(context);
   };
   context_.PreviewDelegatePartitioning =
       [](struct TfLiteContext* context, const TfLiteIntArray* nodes_to_replace,
          TfLiteDelegateParams** partition_params_array,
-         int* num_partitions) { return ForbiddenContextFunction(context); };
+         int* num_partitions) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_78(mht_78_v, 1960, "", "./tensorflow/lite/core/subgraph.cc", "lambda");
+ return ForbiddenContextFunction(context); };
   // Free any memory that might have been allocated by
   // PreviewDelegatePartitioning.
   FreeDelegatePartitioningData();
 }
 
 TfLiteStatus Subgraph::UndoAllDelegates() {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_79(mht_79_v, 1969, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::UndoAllDelegates");
+
   // Return early if there is nothing to reset to.
   if (pre_delegation_execution_plan_.empty()) return kTfLiteOk;
 
@@ -1629,6 +2048,9 @@ TfLiteStatus Subgraph::UndoAllDelegates() {
 }
 
 TfLiteStatus Subgraph::RedoAllDelegates() {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_80(mht_80_v, 2051, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::RedoAllDelegates");
+
   if (!delegates_undone_) return kTfLiteOk;
 
   delegates_undone_ = false;
@@ -1641,6 +2063,9 @@ TfLiteStatus Subgraph::RedoAllDelegates() {
 }
 
 TfLiteStatus Subgraph::RemoveAllDelegates() {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_81(mht_81_v, 2066, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::RemoveAllDelegates");
+
   TF_LITE_ENSURE_STATUS(UndoAllDelegates());
   delegates_applied_.clear();
   delegates_undone_ = false;
@@ -1648,9 +2073,15 @@ TfLiteStatus Subgraph::RemoveAllDelegates() {
   return kTfLiteOk;
 }
 
-bool Subgraph::HasDelegates() { return !delegates_applied_.empty(); }
+bool Subgraph::HasDelegates() {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_82(mht_82_v, 2077, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::HasDelegates");
+ return !delegates_applied_.empty(); }
 
 bool Subgraph::IsFullyDelegated() const {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_83(mht_83_v, 2082, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::IsFullyDelegated");
+
   for (const int nid : execution_plan_) {
     const TfLiteNode& node = nodes_and_registration_[nid].first;
     if (node.delegate == nullptr) return false;
@@ -1659,6 +2090,9 @@ bool Subgraph::IsFullyDelegated() const {
 }
 
 void Subgraph::EnsureTensorsVectorCapacity() {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_84(mht_84_v, 2093, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::EnsureTensorsVectorCapacity");
+
   const size_t required_capacity = tensors_.size() + kTensorsCapacityHeadroom;
   if (required_capacity > tensors_.capacity()) {
     // Whenever it's required to increase the vector capacity, make it at
@@ -1673,6 +2107,9 @@ void Subgraph::EnsureTensorsVectorCapacity() {
 }
 
 TfLiteStatus Subgraph::EnsureMemoryAllocations() {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_85(mht_85_v, 2110, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::EnsureMemoryAllocations");
+
   if (memory_planner_) {
     state_ = kStateUninvokable;
     TF_LITE_ENSURE_OK(&context_, memory_planner_->PlanAllocations());
@@ -1683,6 +2120,9 @@ TfLiteStatus Subgraph::EnsureMemoryAllocations() {
 }
 
 TfLiteStatus Subgraph::ModifyGraphWithDelegate(TfLiteDelegate* delegate) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_86(mht_86_v, 2123, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::ModifyGraphWithDelegate");
+
   TFLITE_SCOPED_TAGGED_DEFAULT_PROFILE(profiler_.get(),
                                        "ModifyGraphWithDelegate");
 
@@ -1694,6 +2134,9 @@ TfLiteStatus Subgraph::ModifyGraphWithDelegate(TfLiteDelegate* delegate) {
   // Resets delegation & leaves graph in consistent state if delegate status is
   // not okay.
   auto reset_delegation_if_not_ok = [this](TfLiteStatus status) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_87(mht_87_v, 2137, "", "./tensorflow/lite/core/subgraph.cc", "lambda");
+
     if (status != kTfLiteOk) {
       TF_LITE_ENSURE_STATUS(RemoveAllDelegates());
       ReportError(
@@ -1797,6 +2240,9 @@ TfLiteStatus Subgraph::ModifyGraphWithDelegate(TfLiteDelegate* delegate) {
 
 TfLiteStatus Subgraph::SetCustomAllocationForTensor(
     int tensor_index, const TfLiteCustomAllocation& allocation, int64_t flags) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_88(mht_88_v, 2243, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::SetCustomAllocationForTensor");
+
   TfLiteTensor* tensor = &context_.tensors[tensor_index];
   TF_LITE_ENSURE(context(),
                  (tensor->allocation_type == kTfLiteArenaRw ||
@@ -1823,6 +2269,10 @@ TfLiteStatus Subgraph::SetCustomAllocationForTensor(
 }
 
 void Subgraph::SetName(const char* name) {
+   std::vector<std::string> mht_89_v;
+   mht_89_v.push_back("name: \"" + (name == nullptr ? std::string("nullptr") : std::string((char*)name)) + "\"");
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_89(mht_89_v, 2273, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::SetName");
+
   if (name) {
     name_ = name;
   } else {
@@ -1830,14 +2280,23 @@ void Subgraph::SetName(const char* name) {
   }
 }
 
-const std::string& Subgraph::GetName() const { return name_; }
+const std::string& Subgraph::GetName() const {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_90(mht_90_v, 2284, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::GetName");
+ return name_; }
 
 void Subgraph::DumpMemoryPlannerDebugInfo() const {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_91(mht_91_v, 2289, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::DumpMemoryPlannerDebugInfo");
+
   if (memory_planner_ == nullptr) return;
   memory_planner_->DumpDebugInfo(execution_plan());
 }
 
 TfLiteStatus Subgraph::PreserveAllTensorsExperimental() {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_92(mht_92_v, 2297, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::PreserveAllTensorsExperimental");
+
   if (memory_planner_) {
     ReportError(
         "PreserveAllTensorsExperimental called after memory was planned. ");
@@ -1848,10 +2307,16 @@ TfLiteStatus Subgraph::PreserveAllTensorsExperimental() {
 }
 
 std::unique_ptr<GraphInfo> Subgraph::CreateGraphInfo() {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_93(mht_93_v, 2310, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::CreateGraphInfo");
+
   return std::unique_ptr<GraphInfo>(new InterpreterInfo(this));
 }
 
 void Subgraph::InitializeTensorReleaseMap() {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_94(mht_94_v, 2317, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::InitializeTensorReleaseMap");
+
   for (int i = 0; i < execution_plan_.size(); ++i) {
     int node_index = execution_plan_[i];
     const TfLiteNode& node = nodes_and_registration_[node_index].first;
@@ -1866,8 +2331,14 @@ void Subgraph::InitializeTensorReleaseMap() {
 
 void Subgraph::MaybeReleaseDynamicInputs(const TfLiteNode& node,
                                          size_t node_index) {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_95(mht_95_v, 2334, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::MaybeReleaseDynamicInputs");
+
   if (!release_dynamic_tensors_if_unused_) return;
   auto tensorIsInput = [&](int index) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_96(mht_96_v, 2339, "", "./tensorflow/lite/core/subgraph.cc", "lambda");
+
     for (int idx : inputs_) {
       if (idx == index) return true;
     }
@@ -1893,6 +2364,9 @@ void Subgraph::MaybeReleaseDynamicInputs(const TfLiteNode& node,
 }
 
 void Subgraph::MaybeAllocateLargeDynamicTensors() {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTcc mht_97(mht_97_v, 2367, "", "./tensorflow/lite/core/subgraph.cc", "Subgraph::MaybeAllocateLargeDynamicTensors");
+
   for (int tensor_index : large_static_shape_tensors_) {
     TfLiteTensor* tensor = &context_.tensors[tensor_index];
     if (tensor->allocation_type == kTfLiteDynamic &&

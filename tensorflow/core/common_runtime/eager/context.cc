@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -73,13 +241,22 @@ EagerContext* global_c_eager_context = nullptr;
 
 }  // namespace
 
-void SetCEagerContext(EagerContext* ctx) { global_c_eager_context = ctx; }
+void SetCEagerContext(EagerContext* ctx) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_0(mht_0_v, 245, "", "./tensorflow/core/common_runtime/eager/context.cc", "SetCEagerContext");
+ global_c_eager_context = ctx; }
 
-EagerContext* GetCEagerContext() { return global_c_eager_context; }
+EagerContext* GetCEagerContext() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_1(mht_1_v, 250, "", "./tensorflow/core/common_runtime/eager/context.cc", "GetCEagerContext");
+ return global_c_eager_context; }
 
 namespace {
 
 bool ReadBoolFromEnvVar(StringPiece env_var_name, bool default_val) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_2(mht_2_v, 257, "", "./tensorflow/core/common_runtime/eager/context.cc", "ReadBoolFromEnvVar");
+
   bool val;
   if (tensorflow::ReadBoolFromEnvVar(env_var_name, default_val, &val).ok()) {
     return val;
@@ -99,6 +276,9 @@ const int64_t EagerContext::kGlobalRendezvousId = -1;
 // new instance if not existing.
 IntraProcessRendezvous* EagerContext::LocalRendezvousTable::FindOrCreate(
     int64_t step_id, DeviceMgr* device_mgr) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_3(mht_3_v, 279, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::LocalRendezvousTable::FindOrCreate");
+
   mutex_lock l(table_lock_);
   auto iter = table_.find(step_id);
   if (iter == table_.end()) {
@@ -115,6 +295,9 @@ IntraProcessRendezvous* EagerContext::LocalRendezvousTable::FindOrCreate(
 
 IntraProcessRendezvous* EagerContext::LocalRendezvousTable::Find(
     int64_t step_id) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_4(mht_4_v, 298, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::LocalRendezvousTable::Find");
+
   mutex_lock l(table_lock_);
   auto iter = table_.find(step_id);
   if (iter == table_.end()) return nullptr;
@@ -123,6 +306,9 @@ IntraProcessRendezvous* EagerContext::LocalRendezvousTable::Find(
 }
 
 void EagerContext::LocalRendezvousTable::Remove(int64_t step_id) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_5(mht_5_v, 309, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::LocalRendezvousTable::Remove");
+
   mutex_lock l(table_lock_);
   auto iter = table_.find(step_id);
   if (iter != table_.end()) {
@@ -131,6 +317,9 @@ void EagerContext::LocalRendezvousTable::Remove(int64_t step_id) {
 }
 
 void EagerContext::LocalRendezvousTable::CleanUpAll() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_6(mht_6_v, 320, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::LocalRendezvousTable::CleanUpAll");
+
   mutex_lock l(table_lock_);
   for (auto iter = table_.begin(); iter != table_.end(); iter++) {
     // Unref all redezvous instance, except for global rendezvous,
@@ -142,7 +331,10 @@ void EagerContext::LocalRendezvousTable::CleanUpAll() {
   }
 }
 
-EagerContext::LocalRendezvousTable::~LocalRendezvousTable() { CleanUpAll(); }
+EagerContext::LocalRendezvousTable::~LocalRendezvousTable() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_7(mht_7_v, 335, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::LocalRendezvousTable::~LocalRendezvousTable");
+ CleanUpAll(); }
 
 EagerContext::EagerContext(
     const SessionOptions& opts,
@@ -173,6 +365,9 @@ EagerContext::EagerContext(
           "TF_EAGER_ENABLE_SMALL_TENSOR_CPU_PINNING", false)),
       run_eager_op_as_function_(run_eager_op_as_function),
       jit_compile_rewrite_(jit_compile_rewrite) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_8(mht_8_v, 368, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::EagerContext");
+
   ResetPFLR(device_mgr, opts.env, &opts.config, TF_GRAPH_DEF_VERSION,
             &func_lib_def_, opts.config.graph_options().optimizer_options(),
             thread_pool_.get(), cluster_flr);
@@ -182,6 +377,9 @@ EagerContext::EagerContext(
   eager_context_created->GetCell()->Set(true);
   InitPrioritizedDeviceTypeList();
   runner_ = [this](std::function<void()> closure) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_9(mht_9_v, 380, "", "./tensorflow/core/common_runtime/eager/context.cc", "lambda");
+
     this->thread_pool_->Schedule(std::move(closure));
   };
 
@@ -209,50 +407,84 @@ EagerContext::EagerContext(
 }
 
 AbstractTensorInterface* EagerContext::CreateInt64Scalar(int64_t value) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_10(mht_10_v, 410, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::CreateInt64Scalar");
+
   return new TensorInterface(Tensor(value));
 }
 
 AbstractTensorInterface* EagerContext::CreateUint64Scalar(uint64 value) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_11(mht_11_v, 417, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::CreateUint64Scalar");
+
   return new TensorInterface(Tensor(value));
 }
 
 AbstractTensorInterface* EagerContext::CreateInt32Scalar(int32_t value) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_12(mht_12_v, 424, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::CreateInt32Scalar");
+
   return new TensorInterface(Tensor(value));
 }
 
 AbstractTensorInterface* EagerContext::CreateFloatScalar(float value) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_13(mht_13_v, 431, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::CreateFloatScalar");
+
   return new TensorInterface(Tensor(value));
 }
 
 AbstractTensorInterface* EagerContext::CreateDoubleScalar(double value) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_14(mht_14_v, 438, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::CreateDoubleScalar");
+
   return new TensorInterface(Tensor(value));
 }
 
 AbstractTensorInterface* EagerContext::CreateHalfScalar(Eigen::half value) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_15(mht_15_v, 445, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::CreateHalfScalar");
+
   return new TensorInterface(Tensor(value));
 }
 
 AbstractTensorInterface* EagerContext::CreateStringScalar(tstring value) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("value: \"" + (std::string)value + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_16(mht_16_v, 453, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::CreateStringScalar");
+
   return new TensorInterface(Tensor(value));
 }
 
 AbstractTensorInterface* EagerContext::CreateComplex128Scalar(
     complex128 value) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_17(mht_17_v, 461, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::CreateComplex128Scalar");
+
   return new TensorInterface(Tensor(value));
 }
 
 AbstractTensorInterface* EagerContext::CreateBoolScalar(bool value) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_18(mht_18_v, 468, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::CreateBoolScalar");
+
   return new TensorInterface(Tensor(value));
 }
 
 AbstractTensorInterface* EagerContext::CreateTensor(
     DataType dtype, absl::Span<const int64_t> dim_sizes) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_19(mht_19_v, 476, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::CreateTensor");
+
   return new TensorInterface(Tensor(dtype, TensorShape(dim_sizes)));
 }
 
 AbstractTensorInterface* EagerContext::CreateTensor(
     DataType dtype, const int64_t* dims, int num_dims, void* data, size_t len,
     MemoryReleaser memory_releaser, void* memory_releaser_arg) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_20(mht_20_v, 485, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::CreateTensor");
+
   TF_Tensor* tensor_wrapper =
       TF_NewTensor(static_cast<TF_DataType>(dtype), dims, num_dims, data, len,
                    memory_releaser, memory_releaser_arg);
@@ -269,8 +501,14 @@ void EagerContext::ResetPFLR(const DeviceMgr* device_mgr, Env* env,
                              const OptimizerOptions& optimizer_options,
                              thread::ThreadPool* thread_pool,
                              DistributedFunctionLibraryRuntime* cluster_flr) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_21(mht_21_v, 504, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::ResetPFLR");
+
   Rendezvous::Factory rendezvous_factory{
       [this](const int64_t step_id, const DeviceMgr*, Rendezvous** r) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_22(mht_22_v, 509, "", "./tensorflow/core/common_runtime/eager/context.cc", "lambda");
+
         *r = CreateRendezvous(step_id);
         return Status::OK();
       }};
@@ -281,6 +519,9 @@ void EagerContext::ResetPFLR(const DeviceMgr* device_mgr, Env* env,
 }
 
 void EagerContext::InitPrioritizedDeviceTypeList() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_23(mht_23_v, 522, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::InitPrioritizedDeviceTypeList");
+
   DeviceSet ds;
   for (Device* d : local_device_mgr()->ListDevices()) {
     ds.AddDevice(d);
@@ -330,6 +571,9 @@ std::vector<string> DeviceTypesToString(
 Device* SelectBestMatchingDevice(const DeviceNameUtils::ParsedName& pattern,
                                  const PrioritizedDeviceVector& existing,
                                  const PrioritizedDeviceTypeVector& supported) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_24(mht_24_v, 574, "", "./tensorflow/core/common_runtime/eager/context.cc", "SelectBestMatchingDevice");
+
   for (const std::pair<DeviceType, int32>& prioritized_type : supported) {
     for (const std::pair<Device*, int32>& prioritized_device : existing) {
       Device* dev = prioritized_device.first;
@@ -348,6 +592,9 @@ Device* SelectBestMatchingDevice(const DeviceNameUtils::ParsedName& pattern,
 
 Status EagerContext::SelectDevice(DeviceNameUtils::ParsedName preferred,
                                   const NodeDef& ndef, Device** out) const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_25(mht_25_v, 595, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::SelectDevice");
+
   DCHECK(out != nullptr);
 
   PrioritizedDeviceTypeVector supported_devs;
@@ -405,11 +652,17 @@ Status EagerContext::SelectDevice(DeviceNameUtils::ParsedName preferred,
 
 void EagerContext::ResetClusterFLR(
     DistributedFunctionLibraryRuntime* cluster_flr) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_26(mht_26_v, 655, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::ResetClusterFLR");
+
   cluster_flr_.Reset(cluster_flr, /*owned=*/true);
 }
 
 void EagerContext::UpdateClusterFLRAndInitDevices(
     DistributedFunctionLibraryRuntime* cluster_flr) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_27(mht_27_v, 663, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::UpdateClusterFLRAndInitDevices");
+
   ResetClusterFLR(cluster_flr);
 
   const ConfigProto* config = pflr_ ? pflr_->config() : nullptr;
@@ -422,12 +675,18 @@ void EagerContext::UpdateClusterFLRAndInitDevices(
 }
 
 EagerExecutor& EagerContext::Executor() {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_28(mht_28_v, 678, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::Executor");
+
   tf_shared_lock l(executor_map_mu_);
   return *gtl::FindWithDefault(thread_local_executor_,
                                std::this_thread::get_id(), &default_executor_);
 }
 
 void EagerContext::SetExecutorForThread(EagerExecutor* executor) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_29(mht_29_v, 687, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::SetExecutorForThread");
+
   tensorflow::mutex_lock l(executor_map_mu_);
   if (executor == &default_executor_) {
     thread_local_executor_.erase(std::this_thread::get_id());
@@ -468,6 +727,9 @@ void EagerContext::SetExecutorForThread(EagerExecutor* executor) {
 }
 
 void EagerContext::ClearCachesAndThreadExecutors() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_30(mht_30_v, 730, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::ClearCachesAndThreadExecutors");
+
   std::unordered_map<std::thread::id, EagerExecutor*> executors_copy;
   {
     mutex_lock l(executor_map_mu_);
@@ -480,6 +742,9 @@ void EagerContext::ClearCachesAndThreadExecutors() {
 }
 
 void EagerContext::ClearCachesAndDefaultExecutor() {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_31(mht_31_v, 745, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::ClearCachesAndDefaultExecutor");
+
   // The executor stores pointers to kernels, so we need to make sure that no
   // async eager ops are still executing. We lock the cache during this time
   // as well.
@@ -498,12 +763,18 @@ void EagerContext::ClearCachesAndDefaultExecutor() {
 
 void EagerContext::SetThreadLocalDevicePlacementPolicy(
     ContextDevicePlacementPolicy policy) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_32(mht_32_v, 766, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::SetThreadLocalDevicePlacementPolicy");
+
   mutex_lock ml(policy_map_mu_);
   VLOG(6) << "Setting device placement policy to: " << policy;
   device_placement_policy_[std::this_thread::get_id()] = policy;
 }
 
 ContextDevicePlacementPolicy EagerContext::GetDevicePlacementPolicy() const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_33(mht_33_v, 775, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::GetDevicePlacementPolicy");
+
   tf_shared_lock l(policy_map_mu_);
   auto policy_map_it =
       device_placement_policy_.find(std::this_thread::get_id());
@@ -517,16 +788,25 @@ ContextDevicePlacementPolicy EagerContext::GetDevicePlacementPolicy() const {
 
 #if !defined(IS_MOBILE_PLATFORM)
 std::vector<string> EagerContext::GetRemoteContexts() {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_34(mht_34_v, 791, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::GetRemoteContexts");
+
   tf_shared_lock l(remote_state_mu_);
   return remote_contexts_;
 }
 
 bool EagerContext::IsRemoteContextsEmpty() {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_35(mht_35_v, 799, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::IsRemoteContextsEmpty");
+
   tf_shared_lock l(remote_state_mu_);
   return remote_contexts_.empty();
 }
 
 void EagerContext::CloseAndClearAllRemoteContexts() {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_36(mht_36_v, 807, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::CloseAndClearAllRemoteContexts");
+
   uint64 context_id;
   uint64 context_view_id;
   std::vector<string> remote_contexts_copy;
@@ -550,6 +830,9 @@ void EagerContext::CloseAndClearAllRemoteContexts() {
 void EagerContext::CloseRemoteContexts(
     const std::vector<string>& remote_contexts, uint64 context_id,
     uint64 context_view_id) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_37(mht_37_v, 833, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::CloseRemoteContexts");
+
   // Close all remote contexts.
   eager::CloseContextRequest request;
   request.set_context_id(context_id);
@@ -623,6 +906,9 @@ void EagerContext::WaitForAndCloseRemoteContexts() {
 }
 
 EagerContext::~EagerContext() {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_38(mht_38_v, 909, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::~EagerContext");
+
   // TODO(iga): Add a separate API method to shutdown EagerContext so that we
   // don't send RPCs and block in destructor.
   WaitForAndCloseRemoteContexts();
@@ -700,47 +986,80 @@ EagerContext::~EagerContext() {
 }
 
 bool EagerContext::FindFunctionByName(const string& name) const {
+   std::vector<std::string> mht_39_v;
+   mht_39_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_39(mht_39_v, 990, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::FindFunctionByName");
+
   return func_lib_def_.Find(name) != nullptr;
 }
 
 Status EagerContext::FindFunctionOpData(
     const string& name, const tensorflow::OpRegistrationData** op_data) {
+   std::vector<std::string> mht_40_v;
+   mht_40_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_40(mht_40_v, 999, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::FindFunctionOpData");
+
   return func_lib_def_.LookUp(name, op_data);
 }
 
 const FunctionDef* EagerContext::FindFunctionDef(const string& name) const {
+   std::vector<std::string> mht_41_v;
+   mht_41_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_41(mht_41_v, 1007, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::FindFunctionDef");
+
   return func_lib_def_.Find(name);
 }
 
 std::unique_ptr<RunMetadata> EagerContext::ExportRunMetadata() {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_42(mht_42_v, 1014, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::ExportRunMetadata");
+
   mutex_lock ml(metadata_mu_);
   auto result = std::make_unique<RunMetadata>();
   run_metadata_.swap(result);
   return result;
 }
 
-bool EagerContext::UsesTFRT() { return false; }
+bool EagerContext::UsesTFRT() {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_43(mht_43_v, 1024, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::UsesTFRT");
+ return false; }
 
 bool EagerContext::RunEagerOpAsFunction() const {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_44(mht_44_v, 1029, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::RunEagerOpAsFunction");
+
   VLOG(3) << "RunEagerOpAsFunction: " << run_eager_op_as_function_;
   return run_eager_op_as_function_;
 }
 
 void EagerContext::SetRunEagerOpAsFunction(bool enable) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_45(mht_45_v, 1037, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::SetRunEagerOpAsFunction");
+
   run_eager_op_as_function_ = enable;
 }
 
 bool EagerContext::JitCompileRewrite() const {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_46(mht_46_v, 1044, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::JitCompileRewrite");
+
   VLOG(3) << "JitCompileRewrite: " << jit_compile_rewrite_;
   return jit_compile_rewrite_;
 }
 
 void EagerContext::SetJitCompileRewrite(bool enable) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_47(mht_47_v, 1052, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::SetJitCompileRewrite");
+
   jit_compile_rewrite_ = enable;
 }
 
 void EagerContext::ListDevices(
     std::vector<tensorflow::DeviceAttributes>* device_attributes) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_48(mht_48_v, 1060, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::ListDevices");
+
   std::vector<Device*> devices = ListAllTfDevices();
   device_attributes->reserve(devices.size());
   for (const auto& dev : devices) {
@@ -749,6 +1068,9 @@ void EagerContext::ListDevices(
 }
 
 std::vector<Device*> EagerContext::ListAllTfDevices() {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_49(mht_49_v, 1071, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::ListAllTfDevices");
+
   // Since remote_device_mgr may also contain local devices, make sure no
   // duplicated device is returned.
   std::vector<Device*> devices;
@@ -779,6 +1101,9 @@ std::vector<Device*> EagerContext::ListAllTfDevices() {
 }
 
 Status EagerContext::AddDevices(std::vector<std::unique_ptr<Device>> devices) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_50(mht_50_v, 1104, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::AddDevices");
+
   std::vector<std::unique_ptr<Device>> local_devices, remote_devices;
   while (!devices.empty()) {
     if (devices.front()->IsLocal()) {
@@ -809,11 +1134,17 @@ Status EagerContext::AddDevices(std::vector<std::unique_ptr<Device>> devices) {
 }
 
 void EagerContext::StartStep() {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_51(mht_51_v, 1137, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::StartStep");
+
   mutex_lock ml(metadata_mu_);
   num_active_steps_++;
 }
 
 void EagerContext::EndStep() {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_52(mht_52_v, 1145, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::EndStep");
+
   mutex_lock ml(metadata_mu_);
   num_active_steps_--;
   if (num_active_steps_ == 0) {
@@ -825,11 +1156,17 @@ void EagerContext::EndStep() {
 }
 
 ScopedStepContainer* EagerContext::StepContainer() {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_53(mht_53_v, 1159, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::StepContainer");
+
   mutex_lock ml(metadata_mu_);
   return step_container_.get();
 }
 
 Status EagerContext::MaybeRegisterFunctionRemotely(const FunctionDef& fdef) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_54(mht_54_v, 1167, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::MaybeRegisterFunctionRemotely");
+
   // Only client context can register function on remote worker context.
   if (!remote_device_manager_.Owned()) return Status::OK();
 #if !defined(IS_MOBILE_PLATFORM)
@@ -867,6 +1204,9 @@ Status EagerContext::MaybeRegisterFunctionRemotely(const FunctionDef& fdef) {
 
 Status EagerContext::RegisterExistingFunctionsOnRemoteWorkers(
     const std::vector<string>& remote_workers) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_55(mht_55_v, 1207, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::RegisterExistingFunctionsOnRemoteWorkers");
+
 #if !defined(IS_MOBILE_PLATFORM)
   // Register multiple functions on selected remote workers.
   uint64 context_id = GetContextId();
@@ -911,11 +1251,17 @@ Status EagerContext::RegisterExistingFunctionsOnRemoteWorkers(
 
 Status EagerContext::AddFunctionDefWithStackTraces(
     const FunctionDef& fdef, const StackTracesMap& stack_traces) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_56(mht_56_v, 1254, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::AddFunctionDefWithStackTraces");
+
   return AddFunctionDef(fdef, FunctionDefLibrary(),
                         /* add_to_local_only=*/false, stack_traces);
 }
 
 Status EagerContext::AddFunctionDef(const FunctionDef& fdef) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_57(mht_57_v, 1262, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::AddFunctionDef");
+
   return AddFunctionDef(fdef, FunctionDefLibrary(),
                         /* add_to_local_only=*/false);
 }
@@ -924,6 +1270,9 @@ Status EagerContext::AddFunctionDef(const FunctionDef& fdef,
                                     const FunctionDefLibrary& library,
                                     const bool add_to_local_only,
                                     const StackTracesMap& stack_traces) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_58(mht_58_v, 1273, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::AddFunctionDef");
+
   bool is_first_ref = false;
   {
     mutex_lock l(cache_mu_);
@@ -967,14 +1316,25 @@ Status EagerContext::AddFunctionDef(const FunctionDef& fdef,
 }
 
 const FunctionDef* EagerContext::GetFunctionDef(const string& function_name) {
+   std::vector<std::string> mht_59_v;
+   mht_59_v.push_back("function_name: \"" + function_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_59(mht_59_v, 1320, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::GetFunctionDef");
+
   return func_lib_def_.Find(function_name);
 }
 
 std::vector<string> EagerContext::ListFunctionNames() {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_60(mht_60_v, 1327, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::ListFunctionNames");
+
   return func_lib_def_.ListFunctionNames();
 }
 
 Status EagerContext::RemoveFunction(const string& func) {
+   std::vector<std::string> mht_61_v;
+   mht_61_v.push_back("func: \"" + func + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_61(mht_61_v, 1335, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::RemoveFunction");
+
   // TODO(mdan): The context owns these functions. Why check refcount then?
   mutex_lock l(cache_mu_);
   auto* registered_function = gtl::FindPtrOrNull(registered_functions_, func);
@@ -998,6 +1358,9 @@ Status EagerContext::RemoveFunction(const string& func) {
 }
 
 Status EagerContext::SyncExecutors() {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_62(mht_62_v, 1361, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::SyncExecutors");
+
   VLOG(6) << "Calling SyncExecutors";
   StatusGroup sg;
   // Synchronize on context default executor
@@ -1052,6 +1415,9 @@ Status EagerContext::SyncExecutors() {
 
 core::RefCountPtr<KernelAndDevice> EagerContext::GetCachedKernel(
     Fprint128 cache_key) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_63(mht_63_v, 1418, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::GetCachedKernel");
+
   tf_shared_lock l(cache_mu_);
   auto iter = kernel_cache_.find(cache_key);
   if (iter == kernel_cache_.end()) {
@@ -1064,6 +1430,9 @@ core::RefCountPtr<KernelAndDevice> EagerContext::GetCachedKernel(
 
 void EagerContext::AddKernelToCache(Fprint128 cache_key,
                                     KernelAndDevice* kernel) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_64(mht_64_v, 1433, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::AddKernelToCache");
+
   mutex_lock ml(cache_mu_);
   core::RefCountPtr<KernelAndDevice> new_ref(kernel);
   new_ref->Ref();
@@ -1076,9 +1445,15 @@ void EagerContext::AddKernelToCache(Fprint128 cache_key,
   }
 }
 
-bool EagerContext::ShouldStoreGraphs() { return should_store_graphs_.load(); }
+bool EagerContext::ShouldStoreGraphs() {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_65(mht_65_v, 1449, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::ShouldStoreGraphs");
+ return should_store_graphs_.load(); }
 
 void EagerContext::SetShouldStoreGraphs(bool value) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_66(mht_66_v, 1454, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::SetShouldStoreGraphs");
+
   mutex_lock ml(metadata_mu_);
   should_store_graphs_.store(value);
   if (!value) {
@@ -1088,6 +1463,10 @@ void EagerContext::SetShouldStoreGraphs(bool value) {
 
 Status EagerContext::FindDeviceFromName(const char* device_name,
                                         Device** device) const {
+   std::vector<std::string> mht_67_v;
+   mht_67_v.push_back("device_name: \"" + (device_name == nullptr ? std::string("nullptr") : std::string((char*)device_name)) + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_67(mht_67_v, 1467, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::FindDeviceFromName");
+
   *device = HostCPU();
   if (device_name == nullptr || strlen(device_name) == 0) {
     return Status::OK();
@@ -1107,6 +1486,9 @@ Status EagerContext::FindDeviceFromName(const char* device_name,
 
 Status EagerContext::FindCompositeDeviceFromName(
     StringPiece device_name, CompositeDevice** device) const {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_68(mht_68_v, 1489, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::FindCompositeDeviceFromName");
+
   tf_shared_lock l(composite_devices_mu_);
   for (const auto& d : composite_devices_) {
     if (d.second->name() == device_name) {
@@ -1119,6 +1501,10 @@ Status EagerContext::FindCompositeDeviceFromName(
 
 Status EagerContext::RegisterCustomDevice(
     const string& device_name, std::unique_ptr<CustomDevice> device) {
+   std::vector<std::string> mht_69_v;
+   mht_69_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_69(mht_69_v, 1505, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::RegisterCustomDevice");
+
   Device* existing_physical_device = nullptr;
   if (FindDeviceFromName(device_name.c_str(), &existing_physical_device).ok()) {
     return errors::AlreadyExists(device_name,
@@ -1131,6 +1517,10 @@ Status EagerContext::RegisterCustomDevice(
 Status EagerContext::FindOrCreateCompositeDevice(
     const std::vector<string>& underlying_devices, const string& device_name,
     CompositeDevice** composite_device) {
+   std::vector<std::string> mht_70_v;
+   mht_70_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_70(mht_70_v, 1521, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::FindOrCreateCompositeDevice");
+
   if (!device_name.empty() &&
       FindCompositeDeviceFromName(device_name, composite_device).ok()) {
     return Status::OK();
@@ -1164,6 +1554,9 @@ Status EagerContext::FindOrCreateCompositeDevice(
 }
 
 bool EagerContext::OnSameTask(const Device* first, const Device* second) const {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_71(mht_71_v, 1557, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::OnSameTask");
+
   if (first == nullptr) first = HostCPU();
   if (second == nullptr) second = HostCPU();
   return first->parsed_name().job == second->parsed_name().job &&
@@ -1174,6 +1567,9 @@ bool EagerContext::OnSameTask(const Device* first, const Device* second) const {
 // Gets the CPU device on the task of device.
 Status EagerContext::CPUDeviceOnTask(const Device* device,
                                      Device** cpu_device) const {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_72(mht_72_v, 1570, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::CPUDeviceOnTask");
+
   string cpu_device_name;
   TF_RETURN_IF_ERROR(DeviceNameUtils::DeviceNameToCpuDeviceName(
       device->name(), &cpu_device_name));
@@ -1182,6 +1578,10 @@ Status EagerContext::CPUDeviceOnTask(const Device* device,
 }
 
 void EagerContext::ClearResourceContainer(const string& name) {
+   std::vector<std::string> mht_73_v;
+   mht_73_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_73(mht_73_v, 1582, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::ClearResourceContainer");
+
   // TODO(b/139809335): This does not properly clean up remote resources
   auto local_devices = local_device_mgr()->ListDevices();
   for (Device* device : local_devices) {
@@ -1191,6 +1591,9 @@ void EagerContext::ClearResourceContainer(const string& name) {
 }
 
 Status EagerContext::GetGlobalRendezvousForFunctionLocalRendezvousStatus() {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_74(mht_74_v, 1594, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::GetGlobalRendezvousForFunctionLocalRendezvousStatus");
+
   mutex_lock l(global_rendezvous_mu_);
   IntraProcessRendezvous* rendezvous =
       local_rendezvous_table_->Find(kGlobalRendezvousId);
@@ -1202,6 +1605,9 @@ Status EagerContext::GetGlobalRendezvousForFunctionLocalRendezvousStatus() {
 
 void EagerContext::UpdateGlobalRendezvousDeviceManager(
     tensorflow::DeviceMgr* device_mgr) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_75(mht_75_v, 1608, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::UpdateGlobalRendezvousDeviceManager");
+
   mutex_lock l(global_rendezvous_mu_);
   IntraProcessRendezvous* rendezvous =
       local_rendezvous_table_->Find(kGlobalRendezvousId);
@@ -1212,6 +1618,9 @@ void EagerContext::UpdateGlobalRendezvousDeviceManager(
 
 namespace {
 Status GetTaskName(Device* d, string* task_name) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_76(mht_76_v, 1621, "", "./tensorflow/core/common_runtime/eager/context.cc", "GetTaskName");
+
   string ignored;
   if (!DeviceNameUtils::SplitDeviceName(d->name(), task_name, &ignored)) {
     return errors::InvalidArgument("Unable to parse device name: ", d->name());
@@ -1229,6 +1638,9 @@ Status EagerContext::GetClient(Device* device,
 
 Status EagerContext::GetClient(const DeviceNameUtils::ParsedName& device_name,
                                core::RefCountPtr<eager::EagerClient>* client) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_77(mht_77_v, 1641, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::GetClient");
+
   string device_task_name;
   if (!DeviceNameUtils::GetTaskName(device_name, &device_task_name)) {
     return errors::InvalidArgument(
@@ -1262,6 +1674,10 @@ Status EagerContext::GetClient(const DeviceNameUtils::ParsedName& device_name,
 
 Status EagerContext::GetClient(const string& remote_task,
                                core::RefCountPtr<eager::EagerClient>* client) {
+   std::vector<std::string> mht_78_v;
+   mht_78_v.push_back("remote_task: \"" + remote_task + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_78(mht_78_v, 1678, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::GetClient");
+
   {
     tf_shared_lock l(remote_state_mu_);
     if (remote_eager_workers_ == nullptr) {
@@ -1279,21 +1695,33 @@ Status EagerContext::GetClient(const string& remote_task,
 }
 
 uint64 EagerContext::GetContextId() const {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_79(mht_79_v, 1698, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::GetContextId");
+
   tf_shared_lock l(remote_state_mu_);
   return context_id_;
 }
 
 uint64 EagerContext::GetContextViewId() const {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_80(mht_80_v, 1706, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::GetContextViewId");
+
   tf_shared_lock l(remote_state_mu_);
   return context_view_id_;
 }
 
 void EagerContext::IncrementContextViewId() {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_81(mht_81_v, 1714, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::IncrementContextViewId");
+
   mutex_lock l(remote_state_mu_);
   context_view_id_ += 1;
 }
 
 Status EagerContext::EnableCollectiveOps(const ServerDef& server_def) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_82(mht_82_v, 1722, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::EnableCollectiveOps");
+
   return distributed_manager_->EnableCollectiveOps(server_def);
 }
 
@@ -1302,6 +1730,9 @@ Status EagerContext::EnableCollectiveOps(const ServerDef& server_def) {
 Status EagerContext::StoreCollectiveOpsServer(
     std::unique_ptr<ServerInterface> new_server, DeviceMgr* device_mgr,
     CollectiveExecutorMgrInterface* rpc_collective_executor_mgr) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_83(mht_83_v, 1733, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::StoreCollectiveOpsServer");
+
   collective_executor_mgr_.Reset(rpc_collective_executor_mgr);
 
   if (device_mgr != local_device_manager_.Get()) {
@@ -1350,6 +1781,10 @@ Status EagerContext::StoreCollectiveOpsServer(
 
 Status EagerContext::SetRemoteDeviceFilters(
     const string& remote_worker, const std::vector<string>& device_filters) {
+   std::vector<std::string> mht_84_v;
+   mht_84_v.push_back("remote_worker: \"" + remote_worker + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_84(mht_84_v, 1785, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::SetRemoteDeviceFilters");
+
   // Get fully specified task name for remote worker
   string remote_worker_task_name;
   DeviceNameUtils::ParsedName pw;
@@ -1391,6 +1826,10 @@ void EagerContext::FilterDevicesForRemoteWorkers(
     const string& remote_worker,
     const protobuf::RepeatedPtrField<DeviceAttributes>& device_attrs,
     std::vector<bool>* filtered_device_mask) {
+   std::vector<std::string> mht_85_v;
+   mht_85_v.push_back("remote_worker: \"" + remote_worker + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_85(mht_85_v, 1830, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::FilterDevicesForRemoteWorkers");
+
   filtered_device_mask->resize(device_attrs.size());
   std::fill(filtered_device_mask->begin(), filtered_device_mask->end(), false);
 
@@ -1430,6 +1869,9 @@ void EagerContext::FilterDevicesForRemoteWorkers(
 
 void EagerContext::SetWorkerEnv(WorkerEnv* worker_env,
                                 std::shared_ptr<WorkerSession> worker_session) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_86(mht_86_v, 1872, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::SetWorkerEnv");
+
   worker_env_ = worker_env;
   worker_session_ = worker_session;
 }
@@ -1444,6 +1886,9 @@ Status EagerContext::InitializeRemoteMaster(
     DistributedFunctionLibraryRuntime* cluster_flr,
     std::unique_ptr<eager::RemoteMgr, std::function<void(eager::RemoteMgr*)>>
         remote_mgr) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_87(mht_87_v, 1889, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::InitializeRemoteMaster");
+
   if (context_id == kInvalidContextId) {
     return errors::InvalidArgument(
         "Failed to initialize remote for master context due to invalid ",
@@ -1470,6 +1915,9 @@ Status EagerContext::UpdateRemoteMaster(
     std::unique_ptr<eager::EagerClientCache> remote_eager_workers,
     const std::vector<string>& add_remote_contexts,
     const std::vector<string>& remove_remote_contexts) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_88(mht_88_v, 1918, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::UpdateRemoteMaster");
+
   {
     tf_shared_lock l(remote_state_mu_);
     if (context_id != context_id_) {
@@ -1541,6 +1989,9 @@ Status EagerContext::SetMasterContextState(
     int keep_alive_secs, DistributedFunctionLibraryRuntime* cluster_flr,
     std::unique_ptr<eager::RemoteMgr, std::function<void(eager::RemoteMgr*)>>
         remote_mgr) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_89(mht_89_v, 1992, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::SetMasterContextState");
+
   mutex_lock l(remote_state_mu_);
   is_master_ = true;
   context_id_ = context_id;
@@ -1599,6 +2050,9 @@ Status EagerContext::SetMasterContextState(
   if (keep_alive_thread_ == nullptr) {
     keep_alive_thread_.reset(
         env_->StartThread({}, "EagerKeepAliveThread", [this]() {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_90(mht_90_v, 2053, "", "./tensorflow/core/common_runtime/eager/context.cc", "lambda");
+
           while (true) {
             {
               {
@@ -1664,6 +2118,9 @@ Status EagerContext::InitializeRemoteWorker(
     std::unique_ptr<eager::RemoteMgr, std::function<void(eager::RemoteMgr*)>>
         remote_mgr,
     std::function<void()> resource_deallocator) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_91(mht_91_v, 2121, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::InitializeRemoteWorker");
+
   if (context_id == kInvalidContextId) {
     return errors::InvalidArgument(
         "Failed to initialize remote for worker context due to invalid ",
@@ -1713,6 +2170,9 @@ Status EagerContext::InitializeRemoteWorker(
 Status EagerContext::UpdateRemoteWorker(
     std::unique_ptr<eager::EagerClientCache> remote_eager_workers,
     const std::vector<string>& remote_contexts, uint64 context_id) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSeagerPScontextDTcc mht_92(mht_92_v, 2173, "", "./tensorflow/core/common_runtime/eager/context.cc", "EagerContext::UpdateRemoteWorker");
+
   {
     mutex_lock l(remote_state_mu_);
     if (context_id != context_id_) {

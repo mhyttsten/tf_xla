@@ -177,10 +177,12 @@ cc_library(
     deps = [
         ":math_utils",
         "//tensorflow/core:lib",
-    ] + if_static([
         ":time_utils_impl",
-    ]),
+    ]
 )
+#    ] + if_static([
+#        ":time_utils_impl",
+#    ]),
 
 cc_library(
     name = "time_utils_impl",

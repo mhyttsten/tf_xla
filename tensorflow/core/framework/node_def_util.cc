@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,6 +220,9 @@ const char* const kTpuExecuteStagingOp = "IdentityN";
 const char* const kTpuExecuteStagingNodeName = "_variable_copy";
 
 AttrSlice::AttrSlice() : ndef_(nullptr) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_0(mht_0_v, 223, "", "./tensorflow/core/framework/node_def_util.cc", "AttrSlice::AttrSlice");
+
   static const AttrValueMap* const kEmptyAttrValueMap = new AttrValueMap;
   attrs_ = kEmptyAttrValueMap;
 }
@@ -59,11 +230,20 @@ AttrSlice::AttrSlice() : ndef_(nullptr) {
 // Do not cache the map field reference because that may be invalidated on
 // Clear.
 AttrSlice::AttrSlice(const NodeDef& node_def)
-    : ndef_(&node_def), attrs_(nullptr) {}
+    : ndef_(&node_def), attrs_(nullptr) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_1(mht_1_v, 234, "", "./tensorflow/core/framework/node_def_util.cc", "AttrSlice::AttrSlice");
+}
 
-AttrSlice::AttrSlice(const AttrValueMap* a) : ndef_(nullptr), attrs_(a) {}
+AttrSlice::AttrSlice(const AttrValueMap* a) : ndef_(nullptr), attrs_(a) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_2(mht_2_v, 239, "", "./tensorflow/core/framework/node_def_util.cc", "AttrSlice::AttrSlice");
+}
 
 string SummarizeAttrsHelper(AttrSlice attrs, StringPiece device) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_3(mht_3_v, 244, "", "./tensorflow/core/framework/node_def_util.cc", "SummarizeAttrsHelper");
+
   string ret;
 
   // We sort the attrs so the output is deterministic.
@@ -91,12 +271,18 @@ string SummarizeAttrsHelper(AttrSlice attrs, StringPiece device) {
 }
 
 string AttrSlice::SummarizeNode() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_4(mht_4_v, 274, "", "./tensorflow/core/framework/node_def_util.cc", "AttrSlice::SummarizeNode");
+
   return ndef_ ? SummarizeNodeDef(*ndef_)
                : strings::StrCat(
                      "[", SummarizeAttrsHelper(*this, StringPiece()), "]");
 }
 
 string AttrSlice::DebugString() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_5(mht_5_v, 283, "", "./tensorflow/core/framework/node_def_util.cc", "AttrSlice::DebugString");
+
   std::vector<string> attr_key_vals;
   attr_key_vals.reserve(attrs()->size());
   for (const auto& it : *this) {
@@ -109,6 +295,9 @@ string AttrSlice::DebugString() const {
 }
 
 string SummarizeNodeDef(const NodeDef& node_def, int max_inputs_in_summary) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_6(mht_6_v, 298, "", "./tensorflow/core/framework/node_def_util.cc", "SummarizeNodeDef");
+
   string ret = strings::StrCat(errors::FormatNodeNameForError(node_def.name()),
                                " = ", node_def.op(), "[");
   strings::StrAppend(&ret, SummarizeAttrsHelper(node_def, node_def.device()));
@@ -130,12 +319,18 @@ string SummarizeNodeDef(const NodeDef& node_def, int max_inputs_in_summary) {
 }
 
 string SummarizeAttrs(const NodeDef& node_def) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_7(mht_7_v, 322, "", "./tensorflow/core/framework/node_def_util.cc", "SummarizeAttrs");
+
   return SummarizeAttrsHelper(node_def, node_def.device());
 }
 
 string FormatNodeDefForError(
     StringPiece node_name, bool has_experimental_debug_info,
     const NodeDef_ExperimentalDebugInfo& experimental_debug_info) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_8(mht_8_v, 331, "", "./tensorflow/core/framework/node_def_util.cc", "FormatNodeDefForError");
+
   return !has_experimental_debug_info ||
                  experimental_debug_info.original_node_names().empty()
              ? errors::FormatNodeNameForError(string(node_name))
@@ -145,12 +340,18 @@ string FormatNodeDefForError(
 }
 
 string FormatNodeDefForError(const NodeDef& node_def) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_9(mht_9_v, 343, "", "./tensorflow/core/framework/node_def_util.cc", "FormatNodeDefForError");
+
   return FormatNodeDefForError(node_def.name(),
                                node_def.has_experimental_debug_info(),
                                node_def.experimental_debug_info());
 }
 
 const AttrValue* AttrSlice::Find(StringPiece attr_name) const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_10(mht_10_v, 352, "", "./tensorflow/core/framework/node_def_util.cc", "AttrSlice::Find");
+
   // Currently, the collection used for NodeDef::attr() (google::protobuf::Map)
   // requires that the keys used for lookups have type 'const string&'. Because
   // this method takes a StringPiece, it is necessary to allocate a temporary
@@ -173,6 +374,10 @@ const AttrValue* AttrSlice::Find(StringPiece attr_name) const {
 }
 
 const AttrValue* AttrSlice::FindByString(const string& attr_name) const {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("attr_name: \"" + attr_name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_11(mht_11_v, 378, "", "./tensorflow/core/framework/node_def_util.cc", "AttrSlice::FindByString");
+
   auto iter = attrs()->find(attr_name);
   if (iter != attrs()->end()) {
     return &iter->second;
@@ -183,6 +388,9 @@ const AttrValue* AttrSlice::FindByString(const string& attr_name) const {
 
 Status AttrSlice::Find(StringPiece attr_name,
                        const AttrValue** attr_value) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_12(mht_12_v, 391, "", "./tensorflow/core/framework/node_def_util.cc", "AttrSlice::Find");
+
   *attr_value = Find(attr_name);
   if (*attr_value != nullptr) {
     return Status::OK();
@@ -198,6 +406,9 @@ Status AttrSlice::Find(StringPiece attr_name,
 }
 
 bool AttrSlice::EqualAttrs(AttrSlice other, Scratch* scratch) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_13(mht_13_v, 409, "", "./tensorflow/core/framework/node_def_util.cc", "AttrSlice::EqualAttrs");
+
   if (size() != other.size()) return false;
 
   for (const auto& attr : *other.attrs()) {
@@ -337,6 +548,9 @@ bool HasNodeAttr(const NodeDef& node_def, StringPiece attr_name) {
 static const string& kEmptyString = *new string();
 
 const string& GetNodeAttrString(const AttrSlice& attrs, StringPiece attr_name) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_14(mht_14_v, 551, "", "./tensorflow/core/framework/node_def_util.cc", "GetNodeAttrString");
+
   const AttrValue* attr_value = attrs.Find(attr_name);
   if (attr_value == nullptr) {
     return kEmptyString;
@@ -350,6 +564,9 @@ const string& GetNodeAttrString(const AttrSlice& attrs, StringPiece attr_name) {
 
 bool TryGetNodeAttr(const AttrSlice& attrs, StringPiece attr_name,
                     std::vector<const string*>* value) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_15(mht_15_v, 567, "", "./tensorflow/core/framework/node_def_util.cc", "TryGetNodeAttr");
+
   const AttrValue* attr_value = attrs.Find(attr_name);
   if (attr_value == nullptr) {
     return false;
@@ -367,6 +584,9 @@ bool TryGetNodeAttr(const AttrSlice& attrs, StringPiece attr_name,
 
 bool TryGetNodeAttr(const AttrSlice& attrs, StringPiece attr_name,
                     std::vector<const TensorShapeProto*>* value) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_16(mht_16_v, 587, "", "./tensorflow/core/framework/node_def_util.cc", "TryGetNodeAttr");
+
   const AttrValue* attr_value = attrs.Find(attr_name);
   if (attr_value == nullptr) {
     return false;
@@ -384,6 +604,9 @@ bool TryGetNodeAttr(const AttrSlice& attrs, StringPiece attr_name,
 
 Status GetNodeAttr(const AttrSlice& attrs, StringPiece attr_name,
                    DataTypeVector* value) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_17(mht_17_v, 607, "", "./tensorflow/core/framework/node_def_util.cc", "GetNodeAttr");
+
   const AttrValue* attr_value;
   TF_RETURN_IF_ERROR(attrs.Find(attr_name, &attr_value));
   TF_RETURN_IF_ERROR(AttrValueHasType(*attr_value, "list(type)"));
@@ -395,6 +618,9 @@ Status GetNodeAttr(const AttrSlice& attrs, StringPiece attr_name,
 
 Status GetNodeAttr(const AttrSlice& attrs, StringPiece attr_name,
                    const TensorProto** value) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_18(mht_18_v, 621, "", "./tensorflow/core/framework/node_def_util.cc", "GetNodeAttr");
+
   const AttrValue* attr_value;
   TF_RETURN_IF_ERROR(attrs.Find(attr_name, &attr_value));
   TF_RETURN_IF_ERROR(AttrValueHasType(*attr_value, "tensor"));
@@ -404,6 +630,9 @@ Status GetNodeAttr(const AttrSlice& attrs, StringPiece attr_name,
 
 bool TryGetNodeAttr(const AttrSlice& attrs, StringPiece attr_name,
                     const TensorProto** value) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_19(mht_19_v, 633, "", "./tensorflow/core/framework/node_def_util.cc", "TryGetNodeAttr");
+
   const AttrValue* attr_value = attrs.Find(attr_name);
   if (attr_value == nullptr) {
     return false;
@@ -418,6 +647,9 @@ bool TryGetNodeAttr(const AttrSlice& attrs, StringPiece attr_name,
 
 Status GetNodeAttr(const AttrSlice& attrs, StringPiece attr_name,
                    const NameAttrList** value) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_20(mht_20_v, 650, "", "./tensorflow/core/framework/node_def_util.cc", "GetNodeAttr");
+
   const AttrValue* attr_value;
   TF_RETURN_IF_ERROR(attrs.Find(attr_name, &attr_value));
   TF_RETURN_IF_ERROR(AttrValueHasType(*attr_value, "func"));
@@ -427,6 +659,9 @@ Status GetNodeAttr(const AttrSlice& attrs, StringPiece attr_name,
 
 bool TryGetNodeAttr(const AttrSlice& attrs, StringPiece attr_name,
                     const NameAttrList** value) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_21(mht_21_v, 662, "", "./tensorflow/core/framework/node_def_util.cc", "TryGetNodeAttr");
+
   const AttrValue* attr_value = attrs.Find(attr_name);
   if (attr_value == nullptr) {
     return false;
@@ -441,6 +676,9 @@ bool TryGetNodeAttr(const AttrSlice& attrs, StringPiece attr_name,
 
 Status GetNodeAttr(const AttrSlice& attrs, StringPiece attr_name,
                    Padding* value) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_22(mht_22_v, 679, "", "./tensorflow/core/framework/node_def_util.cc", "GetNodeAttr");
+
   string str_value;
   TF_RETURN_IF_ERROR(GetNodeAttr(attrs, attr_name, &str_value));
   return GetPaddingFromString(str_value, value);
@@ -451,6 +689,9 @@ namespace {  // Helper for InOutTypesForNode().
 template <class NodeDefOrAttrSlice>
 Status AddArgToSig(const NodeDefOrAttrSlice& node_or_attrs,
                    const OpDef::ArgDef& arg_def, DataTypeVector* sig) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_23(mht_23_v, 692, "", "./tensorflow/core/framework/node_def_util.cc", "AddArgToSig");
+
   const int original_size = sig->size();
   if (!arg_def.number_attr().empty()) {
     // Same type repeated "repeats" times.
@@ -517,6 +758,9 @@ Status AddArgToSig(const NodeDefOrAttrSlice& node_or_attrs,
 
 Status InputTypeForNode(const NodeDef& node_def, const OpDef& op_def,
                         int input_port, DataType* input_type) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_24(mht_24_v, 761, "", "./tensorflow/core/framework/node_def_util.cc", "InputTypeForNode");
+
   DataTypeVector input_types;
   for (const auto& arg : op_def.input_arg()) {
     TF_RETURN_IF_ERROR(AddArgToSig(node_def, arg, &input_types));
@@ -533,6 +777,9 @@ Status InputTypeForNode(const NodeDef& node_def, const OpDef& op_def,
 
 Status InputTypesForNode(const NodeDef& node_def, const OpDef& op_def,
                          DataTypeVector* inputs) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_25(mht_25_v, 780, "", "./tensorflow/core/framework/node_def_util.cc", "InputTypesForNode");
+
   for (const auto& arg : op_def.input_arg()) {
     TF_RETURN_IF_ERROR(AddArgToSig(node_def, arg, inputs));
   }
@@ -541,6 +788,9 @@ Status InputTypesForNode(const NodeDef& node_def, const OpDef& op_def,
 
 Status OutputTypeForNode(const NodeDef& node_def, const OpDef& op_def,
                          int output_port, DataType* output_type) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_26(mht_26_v, 791, "", "./tensorflow/core/framework/node_def_util.cc", "OutputTypeForNode");
+
   DataTypeVector output_types;
   for (const auto& arg : op_def.output_arg()) {
     TF_RETURN_IF_ERROR(AddArgToSig(node_def, arg, &output_types));
@@ -557,6 +807,9 @@ Status OutputTypeForNode(const NodeDef& node_def, const OpDef& op_def,
 
 Status OutputTypesForNode(const NodeDef& node_def, const OpDef& op_def,
                           DataTypeVector* outputs) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_27(mht_27_v, 810, "", "./tensorflow/core/framework/node_def_util.cc", "OutputTypesForNode");
+
   for (const auto& arg : op_def.output_arg()) {
     TF_RETURN_IF_ERROR(AddArgToSig(node_def, arg, outputs));
   }
@@ -565,6 +818,9 @@ Status OutputTypesForNode(const NodeDef& node_def, const OpDef& op_def,
 
 Status OutputTypesForNode(const AttrSlice& attrs, const OpDef& op_def,
                           DataTypeVector* outputs) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_28(mht_28_v, 821, "", "./tensorflow/core/framework/node_def_util.cc", "OutputTypesForNode");
+
   for (const auto& arg : op_def.output_arg()) {
     TF_RETURN_IF_ERROR(AddArgToSig(attrs, arg, outputs));
   }
@@ -573,12 +829,18 @@ Status OutputTypesForNode(const AttrSlice& attrs, const OpDef& op_def,
 
 Status InOutTypesForNode(const NodeDef& node_def, const OpDef& op_def,
                          DataTypeVector* inputs, DataTypeVector* outputs) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_29(mht_29_v, 832, "", "./tensorflow/core/framework/node_def_util.cc", "InOutTypesForNode");
+
   TF_RETURN_IF_ERROR(InputTypesForNode(node_def, op_def, inputs));
   return OutputTypesForNode(node_def, op_def, outputs);
 }
 
 Status NumOutputsForNode(const NodeDef& node_def, const OpDef& op_def,
                          int* num_outputs) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_30(mht_30_v, 841, "", "./tensorflow/core/framework/node_def_util.cc", "NumOutputsForNode");
+
   DataTypeVector outputs;
   TF_RETURN_IF_ERROR(OutputTypesForNode(node_def, op_def, &outputs));
   *num_outputs = outputs.size();
@@ -586,6 +848,9 @@ Status NumOutputsForNode(const NodeDef& node_def, const OpDef& op_def,
 }
 
 Status ValidateNodeDef(const NodeDef& node_def, const OpDef& op_def) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_31(mht_31_v, 851, "", "./tensorflow/core/framework/node_def_util.cc", "ValidateNodeDef");
+
   if (node_def.op() != op_def.name()) {
     return errors::InvalidArgument(
         "NodeDef op '", node_def.op(), "' does not match ",
@@ -679,6 +944,9 @@ namespace {  // Helpers for NameRangesForNode()
 
 Status ComputeArgRange(const AttrSlice& attrs, const OpDef::ArgDef& arg_def,
                        const OpDef& op_def, int* num) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_32(mht_32_v, 947, "", "./tensorflow/core/framework/node_def_util.cc", "ComputeArgRange");
+
   if (!arg_def.number_attr().empty()) {
     // Same type repeated "num" times.
     return GetNodeAttr(attrs, arg_def.number_attr(), num);
@@ -699,6 +967,9 @@ Status ComputeArgRange(const AttrSlice& attrs, const OpDef::ArgDef& arg_def,
 Status NameRangesHelper(const AttrSlice& attrs,
                         const protobuf::RepeatedPtrField<OpDef::ArgDef>& args,
                         const OpDef& op_def, NameRangeMap* result) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_33(mht_33_v, 970, "", "./tensorflow/core/framework/node_def_util.cc", "NameRangesHelper");
+
   int start = 0;
   int num;
   for (const auto& arg : args) {
@@ -713,6 +984,9 @@ Status NameRangesHelper(const AttrSlice& attrs,
 
 Status NameRangesForNode(const AttrSlice& attrs, const OpDef& op_def,
                          NameRangeMap* inputs, NameRangeMap* outputs) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_34(mht_34_v, 987, "", "./tensorflow/core/framework/node_def_util.cc", "NameRangesForNode");
+
   if (inputs != nullptr) {
     TF_RETURN_IF_ERROR(
         NameRangesHelper(attrs, op_def.input_arg(), op_def, inputs));
@@ -724,6 +998,9 @@ Status NameRangesForNode(const AttrSlice& attrs, const OpDef& op_def,
 }
 
 void AddDefaultsToNodeDef(const OpDef& op_def, NodeDef* node_def) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_35(mht_35_v, 1001, "", "./tensorflow/core/framework/node_def_util.cc", "AddDefaultsToNodeDef");
+
   for (const auto& attr_def : op_def.attr()) {
     AttrSlice attrs(*node_def);
     if (attr_def.has_default_value() && !attrs.Find(attr_def.name())) {
@@ -733,6 +1010,9 @@ void AddDefaultsToNodeDef(const OpDef& op_def, NodeDef* node_def) {
 }
 
 void StripDefaultsFromNodeDef(const OpDef& op_def, NodeDef* node_def) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_36(mht_36_v, 1013, "", "./tensorflow/core/framework/node_def_util.cc", "StripDefaultsFromNodeDef");
+
   AttrSlice attrs(*node_def);
   for (const auto& attr_def : op_def.attr()) {
     if (attr_def.has_default_value()) {
@@ -749,6 +1029,9 @@ using ::tensorflow::tstring;
 using ::tensorflow::strings::Scanner;
 
 bool IsValidNodeName(StringPiece sp) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_37(mht_37_v, 1032, "", "./tensorflow/core/framework/node_def_util.cc", "IsValidNodeName");
+
   Scanner scanner(sp);
   scanner.One(Scanner::LETTER_DIGIT_DOT)
       .Any(Scanner::LETTER_DIGIT_DASH_DOT_SLASH_UNDERSCORE);
@@ -767,6 +1050,9 @@ bool IsValidNodeName(StringPiece sp) {
 }
 
 bool IsValidDataInputName(StringPiece sp) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_38(mht_38_v, 1053, "", "./tensorflow/core/framework/node_def_util.cc", "IsValidDataInputName");
+
   // Data inputs are op_name, op_name:0, or op_name:12345.
   Scanner scan(sp);
   scan.One(Scanner::LETTER_DIGIT_DOT)
@@ -795,6 +1081,9 @@ bool IsValidDataInputName(StringPiece sp) {
 }
 
 bool IsValidControlInputName(StringPiece sp) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_39(mht_39_v, 1084, "", "./tensorflow/core/framework/node_def_util.cc", "IsValidControlInputName");
+
   Scanner scan(sp);
   scan.OneLiteral("^")
       .One(Scanner::LETTER_DIGIT_DOT)
@@ -818,6 +1107,10 @@ const StringPiece kColocationGroupPrefixStringPiece(kColocationGroupPrefix);
 }  // namespace
 
 Status ValidateOpInput(const string& input_name, bool* is_control_input) {
+   std::vector<std::string> mht_40_v;
+   mht_40_v.push_back("input_name: \"" + input_name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_40(mht_40_v, 1111, "", "./tensorflow/core/framework/node_def_util.cc", "ValidateOpInput");
+
   *is_control_input = false;
   if (IsValidDataInputName(input_name)) {
     return Status::OK();
@@ -830,6 +1123,10 @@ Status ValidateOpInput(const string& input_name, bool* is_control_input) {
 }
 
 Status ValidateNodeName(const string& node_name) {
+   std::vector<std::string> mht_41_v;
+   mht_41_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_41(mht_41_v, 1127, "", "./tensorflow/core/framework/node_def_util.cc", "ValidateNodeName");
+
   if (IsValidNodeName(node_name)) {
     return Status::OK();
   } else {
@@ -838,6 +1135,9 @@ Status ValidateNodeName(const string& node_name) {
 }
 
 Status ValidateExternalNodeDefSyntax(const NodeDef& node_def) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_42(mht_42_v, 1138, "", "./tensorflow/core/framework/node_def_util.cc", "ValidateExternalNodeDefSyntax");
+
   Status s = ValidateNodeName(node_def.name());
   if (!s.ok()) {
     return AttachDef(s, node_def);
@@ -862,6 +1162,9 @@ Status ValidateExternalNodeDefSyntax(const NodeDef& node_def) {
 
 Status AttachDef(const Status& status, const NodeDef& node_def,
                  bool allow_multiple_formatted_node) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_43(mht_43_v, 1165, "", "./tensorflow/core/framework/node_def_util.cc", "AttachDef");
+
   Status ret = status;
   string node_error;
   if (!allow_multiple_formatted_node &&
@@ -875,11 +1178,17 @@ Status AttachDef(const Status& status, const NodeDef& node_def,
 }
 
 void AddNodeAttr(StringPiece name, const AttrValue& value, NodeDef* node_def) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_44(mht_44_v, 1181, "", "./tensorflow/core/framework/node_def_util.cc", "AddNodeAttr");
+
   node_def->mutable_attr()->insert(
       AttrValueMap::value_type(string(name), value));
 }
 
 void AddNodeAttr(StringPiece name, AttrValue&& value, NodeDef* node_def) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_45(mht_45_v, 1189, "", "./tensorflow/core/framework/node_def_util.cc", "AddNodeAttr");
+
   (*node_def->mutable_attr())[string(name)] = std::move(value);
 }
 
@@ -950,6 +1259,9 @@ Status AddPrefixAndSuffixToNode(StringPiece prefix, StringPiece suffix,
 Status MaybeAddPrefixToColocationConstraints(
     const std::unordered_set<string>& match, StringPiece prefix,
     NodeDef* node_def) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_46(mht_46_v, 1262, "", "./tensorflow/core/framework/node_def_util.cc", "MaybeAddPrefixToColocationConstraints");
+
   auto attr = node_def->mutable_attr()->find(kColocationAttrName);
   if (attr == node_def->mutable_attr()->end()) {
     return Status::OK();
@@ -971,6 +1283,9 @@ Status MaybeAddPrefixToColocationConstraints(
 Status MaybeUpdateColocationConstraintsWithMap(
     const std::map<absl::string_view, absl::string_view>& node_name_map,
     NodeDef* node_def) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSnode_def_utilDTcc mht_47(mht_47_v, 1286, "", "./tensorflow/core/framework/node_def_util.cc", "MaybeUpdateColocationConstraintsWithMap");
+
   auto attr = node_def->mutable_attr()->find(kColocationAttrName);
   if (attr == node_def->mutable_attr()->end()) {
     return Status::OK();

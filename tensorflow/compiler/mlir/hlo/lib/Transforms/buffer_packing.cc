@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSbuffer_packingDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSbuffer_packingDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSbuffer_packingDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,17 +201,26 @@ namespace {
 
 /// Returns the length of an userange interval.
 size_t computeUserangeSize(const UseInterval &interval) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSbuffer_packingDTcc mht_0(mht_0_v, 204, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/buffer_packing.cc", "computeUserangeSize");
+
   return interval.end - interval.start + 1;
 }
 
 /// Compute the byte size of a given Value.
 size_t computeByteSize(const Value &v) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSbuffer_packingDTcc mht_1(mht_1_v, 212, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/buffer_packing.cc", "computeByteSize");
+
   auto type = v.getType().cast<ShapedType>();
   return type.getSizeInBits() / 8;
 }
 
 /// Compute the 64 byte alinged segments of a given Value.
 size_t computeAlignedSegments(const Value &v) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSbuffer_packingDTcc mht_2(mht_2_v, 221, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/buffer_packing.cc", "computeAlignedSegments");
+
   size_t padding = 64;
   size_t bytes = computeByteSize(v);
   return std::ceil(bytes / (double)padding);
@@ -53,7 +230,10 @@ size_t computeAlignedSegments(const Value &v) {
 struct AllocBufferOffset {
  public:
   AllocBufferOffset(Value source, size_t offset)
-      : source(source), offset(offset) {}
+      : source(source), offset(offset) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSbuffer_packingDTcc mht_3(mht_3_v, 234, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/buffer_packing.cc", "AllocBufferOffset");
+}
 
   Value source;
   size_t offset;
@@ -65,7 +245,10 @@ struct PackedBuffer {
  public:
   PackedBuffer(size_t numSegments,
                std::vector<AllocBufferOffset> &packedBuffers)
-      : numSegments(numSegments), allocBufferOffsets(packedBuffers) {}
+      : numSegments(numSegments), allocBufferOffsets(packedBuffers) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSbuffer_packingDTcc mht_4(mht_4_v, 249, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/buffer_packing.cc", "PackedBuffer");
+}
 
   size_t numSegments;
   std::vector<AllocBufferOffset> allocBufferOffsets;
@@ -87,7 +270,10 @@ struct AllocationInfo {
         lastUse(lastUse),
         numSegments(numSegments),
         windowId(windowId),
-        userangeIntervals(userangeIntervals) {}
+        userangeIntervals(userangeIntervals) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSbuffer_packingDTcc mht_5(mht_5_v, 274, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/buffer_packing.cc", "AllocationInfo");
+}
 
   /// The allocation value.
   Value alloc;
@@ -138,7 +324,10 @@ struct AllocationInfo {
   }
 
   /// Compute the userange size.
-  size_t getUserangeSize() const { return lastUse - firstUse + 1; }
+  size_t getUserangeSize() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSbuffer_packingDTcc mht_6(mht_6_v, 328, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/buffer_packing.cc", "getUserangeSize");
+ return lastUse - firstUse + 1; }
 };
 
 // Comparator to sort allocation informations by window id, userange and by
@@ -178,12 +367,18 @@ class SortedPackingStrategy {
   /// mapped to the same window id. So the information of the allocation
   /// starting position is blured.
   SortedPackingStrategy(size_t windowSize, CompareT compare)
-      : windowSize(windowSize), compare(compare) {}
+      : windowSize(windowSize), compare(compare) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSbuffer_packingDTcc mht_7(mht_7_v, 371, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/buffer_packing.cc", "SortedPackingStrategy");
+}
 
   /// Optimize the buffer allocations.
   void optimze(const mlir::bufferization::BufferPlacementAllocs &allocs,
                const UserangeAnalysis &userangeAnalysis,
                std::vector<PackedBuffer> &packedBuffers) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSbuffer_packingDTcc mht_8(mht_8_v, 379, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/buffer_packing.cc", "optimze");
+
     AllocInfoList allocInfos;
     allocInfos.reserve(std::distance(allocs.begin(), allocs.end()));
 
@@ -232,6 +427,9 @@ class SortedPackingStrategy {
                         std::vector<AllocBufferOffset> &allocBufferOffsets,
                         const AllocationInfo &allocToPack,
                         const AllocationInfo &allocToPackInto) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSbuffer_packingDTcc mht_9(mht_9_v, 430, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/buffer_packing.cc", "findGapAndUpdate");
+
     // Check if the buffer to pack into has enough memory.
     if (allocToPackInto.numSegments < allocToPack.numSegments) return false;
     for (auto gapIter = gaps.begin(); gapIter != gaps.end();) {
@@ -295,6 +493,9 @@ class SortedPackingStrategy {
   size_t computeAllocationInfos(
       AllocInfoList &allocInfos, const UserangeAnalysis &userangeAnalysis,
       const mlir::bufferization::BufferPlacementAllocs &allocs) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSbuffer_packingDTcc mht_10(mht_10_v, 496, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/buffer_packing.cc", "computeAllocationInfos");
+
     // Create allocInformations and store them in allocInfos.
     size_t maxUserangeId = 0;
 
@@ -353,6 +554,9 @@ class BufferPacking : bufferization::BufferPlacementTransformationBase {
       : BufferPlacementTransformationBase(op),
         userangeAnalysis(op, allocs, aliases),
         dominators(op) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSbuffer_packingDTcc mht_11(mht_11_v, 557, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/buffer_packing.cc", "BufferPacking");
+
     std::vector<PackedBuffer> packedBuffers;
     strategy.optimze(allocs, userangeAnalysis, packedBuffers);
 
@@ -407,6 +611,9 @@ class BufferPacking : bufferization::BufferPlacementTransformationBase {
   /// Find the block that dominates all buffer allocations.
   Block *findAllocationsDominator(
       const std::vector<AllocBufferOffset> &packingInfos) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSbuffer_packingDTcc mht_12(mht_12_v, 614, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/buffer_packing.cc", "findAllocationsDominator");
+
     SmallPtrSet<Value, 16> allocValues;
     for (auto &packInfo : packingInfos) {
       allocValues.insert(packInfo.source);
@@ -424,10 +631,16 @@ class BufferPacking : bufferization::BufferPlacementTransformationBase {
 /// id. The information of the allocation starting position is blured.
 struct BufferPackingPass : public BufferPackingBase<BufferPackingPass> {
   explicit BufferPackingPass(unsigned windowSize) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSbuffer_packingDTcc mht_13(mht_13_v, 634, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/buffer_packing.cc", "BufferPackingPass");
+
     this->window_size_ = windowSize;
   }
 
   void runOnOperation() override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSbuffer_packingDTcc mht_14(mht_14_v, 641, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/buffer_packing.cc", "runOnOperation");
+
     if (window_size_ == 0) {
       SortedPackingStrategy<AllocInfoMemSizeCompare> strategy(
           window_size_, AllocInfoMemSizeCompare());
@@ -443,6 +656,9 @@ struct BufferPackingPass : public BufferPackingBase<BufferPackingPass> {
 /// Pass to find all allocations and to compute memory usage.
 struct MemoryCountPass : MemoryCountBase<MemoryCountPass> {
   void runOnOperation() override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSbuffer_packingDTcc mht_15(mht_15_v, 659, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/buffer_packing.cc", "runOnOperation");
+
     Operation *op = getOperation();
     std::vector<Value> allocs;
     op->walk([&](MemoryEffectOpInterface opInterface) {

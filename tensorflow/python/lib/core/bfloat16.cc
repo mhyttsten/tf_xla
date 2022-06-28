@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,10 +208,16 @@ struct PyDecrefDeleter {
 // the contained object will be decremented.
 using Safe_PyObjectPtr = std::unique_ptr<PyObject, PyDecrefDeleter>;
 Safe_PyObjectPtr make_safe(PyObject* object) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_0(mht_0_v, 211, "", "./tensorflow/python/lib/core/bfloat16.cc", "make_safe");
+
   return Safe_PyObjectPtr(object);
 }
 
 bool PyLong_CheckNoOverflow(PyObject* object) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_1(mht_1_v, 218, "", "./tensorflow/python/lib/core/bfloat16.cc", "PyLong_CheckNoOverflow");
+
   if (!PyLong_Check(object)) {
     return false;
   }
@@ -72,17 +246,26 @@ struct PyBfloat16 {
 
 // Returns true if 'object' is a PyBfloat16.
 bool PyBfloat16_Check(PyObject* object) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_2(mht_2_v, 249, "", "./tensorflow/python/lib/core/bfloat16.cc", "PyBfloat16_Check");
+
   return PyObject_IsInstance(object,
                              reinterpret_cast<PyObject*>(&bfloat16_type));
 }
 
 // Extracts the value of a PyBfloat16 object.
 bfloat16 PyBfloat16_Bfloat16(PyObject* object) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_3(mht_3_v, 258, "", "./tensorflow/python/lib/core/bfloat16.cc", "PyBfloat16_Bfloat16");
+
   return reinterpret_cast<PyBfloat16*>(object)->value;
 }
 
 // Constructs a PyBfloat16 object from a bfloat16.
 Safe_PyObjectPtr PyBfloat16_FromBfloat16(bfloat16 x) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_4(mht_4_v, 266, "", "./tensorflow/python/lib/core/bfloat16.cc", "PyBfloat16_FromBfloat16");
+
   Safe_PyObjectPtr ref = make_safe(bfloat16_type.tp_alloc(&bfloat16_type, 0));
   PyBfloat16* p = reinterpret_cast<PyBfloat16*>(ref.get());
   if (p) {
@@ -94,6 +277,9 @@ Safe_PyObjectPtr PyBfloat16_FromBfloat16(bfloat16 x) {
 // Converts a Python object to a bfloat16 value. Returns true on success,
 // returns false and reports a Python error on failure.
 bool CastToBfloat16(PyObject* arg, bfloat16* output) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_5(mht_5_v, 280, "", "./tensorflow/python/lib/core/bfloat16.cc", "CastToBfloat16");
+
   if (PyBfloat16_Check(arg)) {
     *output = PyBfloat16_Bfloat16(arg);
     return true;
@@ -158,6 +344,9 @@ bool CastToBfloat16(PyObject* arg, bfloat16* output) {
 }
 
 bool SafeCastToBfloat16(PyObject* arg, bfloat16* output) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_6(mht_6_v, 347, "", "./tensorflow/python/lib/core/bfloat16.cc", "SafeCastToBfloat16");
+
   if (PyBfloat16_Check(arg)) {
     *output = PyBfloat16_Bfloat16(arg);
     return true;
@@ -167,12 +356,18 @@ bool SafeCastToBfloat16(PyObject* arg, bfloat16* output) {
 
 // Converts a PyBfloat16 into a PyFloat.
 PyObject* PyBfloat16_Float(PyObject* self) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_7(mht_7_v, 359, "", "./tensorflow/python/lib/core/bfloat16.cc", "PyBfloat16_Float");
+
   bfloat16 x = PyBfloat16_Bfloat16(self);
   return PyFloat_FromDouble(static_cast<double>(x));
 }
 
 // Converts a PyBfloat16 into a PyInt.
 PyObject* PyBfloat16_Int(PyObject* self) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_8(mht_8_v, 368, "", "./tensorflow/python/lib/core/bfloat16.cc", "PyBfloat16_Int");
+
   bfloat16 x = PyBfloat16_Bfloat16(self);
   long y = static_cast<long>(x);  // NOLINT
   return PyLong_FromLong(y);
@@ -180,11 +375,17 @@ PyObject* PyBfloat16_Int(PyObject* self) {
 
 // Negates a PyBfloat16.
 PyObject* PyBfloat16_Negative(PyObject* self) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_9(mht_9_v, 378, "", "./tensorflow/python/lib/core/bfloat16.cc", "PyBfloat16_Negative");
+
   bfloat16 x = PyBfloat16_Bfloat16(self);
   return PyBfloat16_FromBfloat16(-x).release();
 }
 
 PyObject* PyBfloat16_Add(PyObject* a, PyObject* b) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_10(mht_10_v, 386, "", "./tensorflow/python/lib/core/bfloat16.cc", "PyBfloat16_Add");
+
   bfloat16 x, y;
   if (SafeCastToBfloat16(a, &x) && SafeCastToBfloat16(b, &y)) {
     return PyBfloat16_FromBfloat16(x + y).release();
@@ -193,6 +394,9 @@ PyObject* PyBfloat16_Add(PyObject* a, PyObject* b) {
 }
 
 PyObject* PyBfloat16_Subtract(PyObject* a, PyObject* b) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_11(mht_11_v, 397, "", "./tensorflow/python/lib/core/bfloat16.cc", "PyBfloat16_Subtract");
+
   bfloat16 x, y;
   if (SafeCastToBfloat16(a, &x) && SafeCastToBfloat16(b, &y)) {
     return PyBfloat16_FromBfloat16(x - y).release();
@@ -201,6 +405,9 @@ PyObject* PyBfloat16_Subtract(PyObject* a, PyObject* b) {
 }
 
 PyObject* PyBfloat16_Multiply(PyObject* a, PyObject* b) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_12(mht_12_v, 408, "", "./tensorflow/python/lib/core/bfloat16.cc", "PyBfloat16_Multiply");
+
   bfloat16 x, y;
   if (SafeCastToBfloat16(a, &x) && SafeCastToBfloat16(b, &y)) {
     return PyBfloat16_FromBfloat16(x * y).release();
@@ -209,6 +416,9 @@ PyObject* PyBfloat16_Multiply(PyObject* a, PyObject* b) {
 }
 
 PyObject* PyBfloat16_TrueDivide(PyObject* a, PyObject* b) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_13(mht_13_v, 419, "", "./tensorflow/python/lib/core/bfloat16.cc", "PyBfloat16_TrueDivide");
+
   bfloat16 x, y;
   if (SafeCastToBfloat16(a, &x) && SafeCastToBfloat16(b, &y)) {
     return PyBfloat16_FromBfloat16(x / y).release();
@@ -258,6 +468,9 @@ PyNumberMethods PyBfloat16_AsNumber = {
 
 // Constructs a new PyBfloat16.
 PyObject* PyBfloat16_New(PyTypeObject* type, PyObject* args, PyObject* kwds) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_14(mht_14_v, 471, "", "./tensorflow/python/lib/core/bfloat16.cc", "PyBfloat16_New");
+
   if (kwds && PyDict_Size(kwds)) {
     PyErr_SetString(PyExc_TypeError, "constructor takes no keyword arguments");
     return nullptr;
@@ -292,6 +505,9 @@ PyObject* PyBfloat16_New(PyTypeObject* type, PyObject* args, PyObject* kwds) {
 
 // Comparisons on PyBfloat16s.
 PyObject* PyBfloat16_RichCompare(PyObject* a, PyObject* b, int op) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_15(mht_15_v, 508, "", "./tensorflow/python/lib/core/bfloat16.cc", "PyBfloat16_RichCompare");
+
   bfloat16 x, y;
   if (!SafeCastToBfloat16(a, &x) || !SafeCastToBfloat16(b, &y)) {
     return PyGenericArrType_Type.tp_richcompare(a, b, op);
@@ -324,6 +540,9 @@ PyObject* PyBfloat16_RichCompare(PyObject* a, PyObject* b, int op) {
 
 // Implementation of repr() for PyBfloat16.
 PyObject* PyBfloat16_Repr(PyObject* self) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_16(mht_16_v, 543, "", "./tensorflow/python/lib/core/bfloat16.cc", "PyBfloat16_Repr");
+
   bfloat16 x = reinterpret_cast<PyBfloat16*>(self)->value;
   std::string v = absl::StrCat(static_cast<float>(x));
   return PyUnicode_FromString(v.c_str());
@@ -331,6 +550,9 @@ PyObject* PyBfloat16_Repr(PyObject* self) {
 
 // Implementation of str() for PyBfloat16.
 PyObject* PyBfloat16_Str(PyObject* self) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_17(mht_17_v, 553, "", "./tensorflow/python/lib/core/bfloat16.cc", "PyBfloat16_Str");
+
   bfloat16 x = reinterpret_cast<PyBfloat16*>(self)->value;
   std::string v = absl::StrCat(static_cast<float>(x));
   return PyUnicode_FromString(v.c_str());
@@ -341,17 +563,26 @@ PyObject* PyBfloat16_Str(PyObject* self) {
 // NOLINTNEXTLINE(clang-diagnostic-unused-function)
 Py_hash_t HashImpl(Py_hash_t (*hash_double)(PyObject*, double), PyObject* self,
                    double value) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_18(mht_18_v, 566, "", "./tensorflow/python/lib/core/bfloat16.cc", "HashImpl");
+
   return hash_double(self, value);
 }
 
 // NOLINTNEXTLINE(clang-diagnostic-unused-function)
 Py_hash_t HashImpl(Py_hash_t (*hash_double)(double), PyObject* self,
                    double value) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_19(mht_19_v, 575, "", "./tensorflow/python/lib/core/bfloat16.cc", "HashImpl");
+
   return hash_double(value);
 }
 
 // Hash function for PyBfloat16.
 Py_hash_t PyBfloat16_Hash(PyObject* self) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_20(mht_20_v, 583, "", "./tensorflow/python/lib/core/bfloat16.cc", "PyBfloat16_Hash");
+
   bfloat16 x = reinterpret_cast<PyBfloat16*>(self)->value;
   return HashImpl(&_Py_HashDouble, self, static_cast<double>(x));
 }
@@ -445,12 +676,18 @@ PyArray_Descr NPyBfloat16_Descr = {
 // Implementations of NumPy array methods.
 
 PyObject* NPyBfloat16_GetItem(void* data, void* arr) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_21(mht_21_v, 679, "", "./tensorflow/python/lib/core/bfloat16.cc", "NPyBfloat16_GetItem");
+
   bfloat16 x;
   memcpy(&x, data, sizeof(bfloat16));
   return PyBfloat16_FromBfloat16(x).release();
 }
 
 int NPyBfloat16_SetItem(PyObject* item, void* data, void* arr) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_22(mht_22_v, 688, "", "./tensorflow/python/lib/core/bfloat16.cc", "NPyBfloat16_SetItem");
+
   bfloat16 x;
   if (!CastToBfloat16(item, &x)) {
     PyErr_Format(PyExc_TypeError, "expected number, got %s",
@@ -462,11 +699,17 @@ int NPyBfloat16_SetItem(PyObject* item, void* data, void* arr) {
 }
 
 void ByteSwap16(void* value) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_23(mht_23_v, 702, "", "./tensorflow/python/lib/core/bfloat16.cc", "ByteSwap16");
+
   char* p = reinterpret_cast<char*>(value);
   std::swap(p[0], p[1]);
 }
 
 int NPyBfloat16_Compare(const void* a, const void* b, void* arr) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_24(mht_24_v, 710, "", "./tensorflow/python/lib/core/bfloat16.cc", "NPyBfloat16_Compare");
+
   bfloat16 x;
   memcpy(&x, a, sizeof(bfloat16));
 
@@ -491,6 +734,9 @@ int NPyBfloat16_Compare(const void* a, const void* b, void* arr) {
 
 void NPyBfloat16_CopySwapN(void* dstv, npy_intp dstride, void* srcv,
                            npy_intp sstride, npy_intp n, int swap, void* arr) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_25(mht_25_v, 737, "", "./tensorflow/python/lib/core/bfloat16.cc", "NPyBfloat16_CopySwapN");
+
   char* dst = reinterpret_cast<char*>(dstv);
   char* src = reinterpret_cast<char*>(srcv);
   if (!src) {
@@ -512,6 +758,9 @@ void NPyBfloat16_CopySwapN(void* dstv, npy_intp dstride, void* srcv,
 }
 
 void NPyBfloat16_CopySwap(void* dst, void* src, int swap, void* arr) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_26(mht_26_v, 761, "", "./tensorflow/python/lib/core/bfloat16.cc", "NPyBfloat16_CopySwap");
+
   if (!src) {
     return;
   }
@@ -522,12 +771,18 @@ void NPyBfloat16_CopySwap(void* dst, void* src, int swap, void* arr) {
 }
 
 npy_bool NPyBfloat16_NonZero(void* data, void* arr) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_27(mht_27_v, 774, "", "./tensorflow/python/lib/core/bfloat16.cc", "NPyBfloat16_NonZero");
+
   bfloat16 x;
   memcpy(&x, data, sizeof(x));
   return x != static_cast<bfloat16>(0);
 }
 
 int NPyBfloat16_Fill(void* buffer_raw, npy_intp length, void* ignored) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_28(mht_28_v, 783, "", "./tensorflow/python/lib/core/bfloat16.cc", "NPyBfloat16_Fill");
+
   bfloat16* const buffer = reinterpret_cast<bfloat16*>(buffer_raw);
   const float start(buffer[0]);
   const float delta = static_cast<float>(buffer[1]) - start;
@@ -539,6 +794,9 @@ int NPyBfloat16_Fill(void* buffer_raw, npy_intp length, void* ignored) {
 
 void NPyBfloat16_DotFunc(void* ip1, npy_intp is1, void* ip2, npy_intp is2,
                          void* op, npy_intp n, void* arr) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_29(mht_29_v, 797, "", "./tensorflow/python/lib/core/bfloat16.cc", "NPyBfloat16_DotFunc");
+
   char* c1 = reinterpret_cast<char*>(ip1);
   char* c2 = reinterpret_cast<char*>(ip2);
   float acc = 0.0f;
@@ -554,6 +812,9 @@ void NPyBfloat16_DotFunc(void* ip1, npy_intp is1, void* ip2, npy_intp is2,
 }
 
 int NPyBfloat16_CompareFunc(const void* v1, const void* v2, void* arr) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_30(mht_30_v, 815, "", "./tensorflow/python/lib/core/bfloat16.cc", "NPyBfloat16_CompareFunc");
+
   bfloat16 b1 = *reinterpret_cast<const bfloat16*>(v1);
   bfloat16 b2 = *reinterpret_cast<const bfloat16*>(v2);
   if (b1 < b2) {
@@ -567,6 +828,9 @@ int NPyBfloat16_CompareFunc(const void* v1, const void* v2, void* arr) {
 
 int NPyBfloat16_ArgMaxFunc(void* data, npy_intp n, npy_intp* max_ind,
                            void* arr) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_31(mht_31_v, 831, "", "./tensorflow/python/lib/core/bfloat16.cc", "NPyBfloat16_ArgMaxFunc");
+
   const bfloat16* bdata = reinterpret_cast<const bfloat16*>(data);
   // Start with a max_val of NaN, this results in the first iteration preferring
   // bdata[0].
@@ -587,6 +851,9 @@ int NPyBfloat16_ArgMaxFunc(void* data, npy_intp n, npy_intp* max_ind,
 
 int NPyBfloat16_ArgMinFunc(void* data, npy_intp n, npy_intp* min_ind,
                            void* arr) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_32(mht_32_v, 854, "", "./tensorflow/python/lib/core/bfloat16.cc", "NPyBfloat16_ArgMinFunc");
+
   const bfloat16* bdata = reinterpret_cast<const bfloat16*>(data);
   float min_val = std::numeric_limits<float>::quiet_NaN();
   // Start with a min_val of NaN, this results in the first iteration preferring
@@ -616,19 +883,28 @@ struct TypeDescriptor {
 template <>
 struct TypeDescriptor<bfloat16> {
   typedef bfloat16 T;
-  static int Dtype() { return npy_bfloat16; }
+  static int Dtype() {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_33(mht_33_v, 887, "", "./tensorflow/python/lib/core/bfloat16.cc", "Dtype");
+ return npy_bfloat16; }
 };
 
 template <>
 struct TypeDescriptor<unsigned char> {
   typedef unsigned char T;
-  static int Dtype() { return NPY_UBYTE; }
+  static int Dtype() {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_34(mht_34_v, 896, "", "./tensorflow/python/lib/core/bfloat16.cc", "Dtype");
+ return NPY_UBYTE; }
 };
 
 template <>
 struct TypeDescriptor<unsigned short> {  // NOLINT
   typedef unsigned short T;              // NOLINT
-  static int Dtype() { return NPY_USHORT; }
+  static int Dtype() {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_35(mht_35_v, 905, "", "./tensorflow/python/lib/core/bfloat16.cc", "Dtype");
+ return NPY_USHORT; }
 };
 
 // We register "int", "long", and "long long" types for portability across
@@ -637,97 +913,145 @@ struct TypeDescriptor<unsigned short> {  // NOLINT
 template <>
 struct TypeDescriptor<unsigned int> {
   typedef unsigned int T;
-  static int Dtype() { return NPY_UINT; }
+  static int Dtype() {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_36(mht_36_v, 917, "", "./tensorflow/python/lib/core/bfloat16.cc", "Dtype");
+ return NPY_UINT; }
 };
 
 template <>
 struct TypeDescriptor<unsigned long> {  // NOLINT
   typedef unsigned long T;              // NOLINT
-  static int Dtype() { return NPY_ULONG; }
+  static int Dtype() {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_37(mht_37_v, 926, "", "./tensorflow/python/lib/core/bfloat16.cc", "Dtype");
+ return NPY_ULONG; }
 };
 
 template <>
 struct TypeDescriptor<unsigned long long> {  // NOLINT
   typedef unsigned long long T;              // NOLINT
-  static int Dtype() { return NPY_ULONGLONG; }
+  static int Dtype() {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_38(mht_38_v, 935, "", "./tensorflow/python/lib/core/bfloat16.cc", "Dtype");
+ return NPY_ULONGLONG; }
 };
 
 template <>
 struct TypeDescriptor<signed char> {
   typedef signed char T;
-  static int Dtype() { return NPY_BYTE; }
+  static int Dtype() {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_39(mht_39_v, 944, "", "./tensorflow/python/lib/core/bfloat16.cc", "Dtype");
+ return NPY_BYTE; }
 };
 
 template <>
 struct TypeDescriptor<short> {  // NOLINT
   typedef short T;              // NOLINT
-  static int Dtype() { return NPY_SHORT; }
+  static int Dtype() {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_40(mht_40_v, 953, "", "./tensorflow/python/lib/core/bfloat16.cc", "Dtype");
+ return NPY_SHORT; }
 };
 
 template <>
 struct TypeDescriptor<int> {
   typedef int T;
-  static int Dtype() { return NPY_INT; }
+  static int Dtype() {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_41(mht_41_v, 962, "", "./tensorflow/python/lib/core/bfloat16.cc", "Dtype");
+ return NPY_INT; }
 };
 
 template <>
 struct TypeDescriptor<long> {  // NOLINT
   typedef long T;              // NOLINT
-  static int Dtype() { return NPY_LONG; }
+  static int Dtype() {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_42(mht_42_v, 971, "", "./tensorflow/python/lib/core/bfloat16.cc", "Dtype");
+ return NPY_LONG; }
 };
 
 template <>
 struct TypeDescriptor<long long> {  // NOLINT
   typedef long long T;              // NOLINT
-  static int Dtype() { return NPY_LONGLONG; }
+  static int Dtype() {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_43(mht_43_v, 980, "", "./tensorflow/python/lib/core/bfloat16.cc", "Dtype");
+ return NPY_LONGLONG; }
 };
 
 template <>
 struct TypeDescriptor<bool> {
   typedef unsigned char T;
-  static int Dtype() { return NPY_BOOL; }
+  static int Dtype() {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_44(mht_44_v, 989, "", "./tensorflow/python/lib/core/bfloat16.cc", "Dtype");
+ return NPY_BOOL; }
 };
 
 template <>
 struct TypeDescriptor<Eigen::half> {
   typedef Eigen::half T;
-  static int Dtype() { return NPY_HALF; }
+  static int Dtype() {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_45(mht_45_v, 998, "", "./tensorflow/python/lib/core/bfloat16.cc", "Dtype");
+ return NPY_HALF; }
 };
 
 template <>
 struct TypeDescriptor<float> {
   typedef float T;
-  static int Dtype() { return NPY_FLOAT; }
+  static int Dtype() {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_46(mht_46_v, 1007, "", "./tensorflow/python/lib/core/bfloat16.cc", "Dtype");
+ return NPY_FLOAT; }
 };
 
 template <>
 struct TypeDescriptor<double> {
   typedef double T;
-  static int Dtype() { return NPY_DOUBLE; }
+  static int Dtype() {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_47(mht_47_v, 1016, "", "./tensorflow/python/lib/core/bfloat16.cc", "Dtype");
+ return NPY_DOUBLE; }
 };
 
 template <>
 struct TypeDescriptor<long double> {
   typedef long double T;
-  static int Dtype() { return NPY_LONGDOUBLE; }
+  static int Dtype() {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_48(mht_48_v, 1025, "", "./tensorflow/python/lib/core/bfloat16.cc", "Dtype");
+ return NPY_LONGDOUBLE; }
 };
 
 template <>
 struct TypeDescriptor<std::complex<float>> {
   typedef std::complex<float> T;
-  static int Dtype() { return NPY_CFLOAT; }
+  static int Dtype() {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_49(mht_49_v, 1034, "", "./tensorflow/python/lib/core/bfloat16.cc", "Dtype");
+ return NPY_CFLOAT; }
 };
 
 template <>
 struct TypeDescriptor<std::complex<double>> {
   typedef std::complex<double> T;
-  static int Dtype() { return NPY_CDOUBLE; }
+  static int Dtype() {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_50(mht_50_v, 1043, "", "./tensorflow/python/lib/core/bfloat16.cc", "Dtype");
+ return NPY_CDOUBLE; }
 };
 
 template <>
 struct TypeDescriptor<std::complex<long double>> {
   typedef std::complex<long double> T;
-  static int Dtype() { return NPY_CLONGDOUBLE; }
+  static int Dtype() {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_51(mht_51_v, 1052, "", "./tensorflow/python/lib/core/bfloat16.cc", "Dtype");
+ return NPY_CLONGDOUBLE; }
 };
 
 // Performs a NumPy array cast from type 'From' to 'To'.
@@ -747,6 +1071,9 @@ void NPyCast(void* from_void, void* to_void, npy_intp n, void* fromarr,
 // type corresponding to 'T'.
 template <typename T>
 bool RegisterBfloat16Cast(int numpy_type) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_52(mht_52_v, 1074, "", "./tensorflow/python/lib/core/bfloat16.cc", "RegisterBfloat16Cast");
+
   PyArray_Descr* descr = PyArray_DescrFromType(numpy_type);
   if (PyArray_RegisterCastFunc(descr, npy_bfloat16, NPyCast<T, bfloat16>) < 0) {
     return false;
@@ -765,6 +1092,9 @@ struct UnaryUFunc {
   }
   static void Call(char** args, const npy_intp* dimensions,
                    const npy_intp* steps, void* data) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_53(mht_53_v, 1095, "", "./tensorflow/python/lib/core/bfloat16.cc", "Call");
+
     const char* i0 = args[0];
     char* o = args[1];
     for (npy_intp k = 0; k < *dimensions; k++) {
@@ -785,6 +1115,9 @@ struct UnaryUFunc2 {
   }
   static void Call(char** args, const npy_intp* dimensions,
                    const npy_intp* steps, void* data) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_54(mht_54_v, 1118, "", "./tensorflow/python/lib/core/bfloat16.cc", "Call");
+
     const char* i0 = args[0];
     char* o0 = args[1];
     char* o1 = args[2];
@@ -808,6 +1141,9 @@ struct BinaryUFunc {
   }
   static void Call(char** args, const npy_intp* dimensions,
                    const npy_intp* steps, void* data) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_55(mht_55_v, 1144, "", "./tensorflow/python/lib/core/bfloat16.cc", "Call");
+
     const char* i0 = args[0];
     const char* i1 = args[1];
     char* o = args[2];
@@ -831,6 +1167,9 @@ struct BinaryUFunc2 {
   }
   static void Call(char** args, const npy_intp* dimensions,
                    const npy_intp* steps, void* data) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_56(mht_56_v, 1170, "", "./tensorflow/python/lib/core/bfloat16.cc", "Call");
+
     const char* i0 = args[0];
     const char* i1 = args[1];
     char* o = args[2];
@@ -849,6 +1188,10 @@ struct BinaryUFunc2 {
 
 template <typename UFunc>
 bool RegisterUFunc(PyObject* numpy, const char* name) {
+   std::vector<std::string> mht_57_v;
+   mht_57_v.push_back("name: \"" + (name == nullptr ? std::string("nullptr") : std::string((char*)name)) + "\"");
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_57(mht_57_v, 1192, "", "./tensorflow/python/lib/core/bfloat16.cc", "RegisterUFunc");
+
   std::vector<int> types = UFunc::Types();
   PyUFuncGenericFunction fn =
       reinterpret_cast<PyUFuncGenericFunction>(UFunc::Call);
@@ -931,6 +1274,9 @@ struct DivmodUFunc {
   }
   static void Call(char** args, npy_intp* dimensions, npy_intp* steps,
                    void* data) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_58(mht_58_v, 1277, "", "./tensorflow/python/lib/core/bfloat16.cc", "Call");
+
     const char* i0 = args[0];
     const char* i1 = args[1];
     char* o0 = args[2];
@@ -1349,6 +1695,9 @@ struct Spacing {
 
 // Initializes the module.
 bool Initialize() {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_59(mht_59_v, 1698, "", "./tensorflow/python/lib/core/bfloat16.cc", "Initialize");
+
   ImportNumpy();
   import_umath1(false);
 
@@ -1686,6 +2035,9 @@ bool Initialize() {
 }
 
 bool RegisterNumpyBfloat16() {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_60(mht_60_v, 2038, "", "./tensorflow/python/lib/core/bfloat16.cc", "RegisterNumpyBfloat16");
+
   if (npy_bfloat16 != NPY_NOTYPE) {
     // Already initialized.
     return true;
@@ -1701,9 +2053,15 @@ bool RegisterNumpyBfloat16() {
 }
 
 PyObject* Bfloat16Dtype() {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_61(mht_61_v, 2056, "", "./tensorflow/python/lib/core/bfloat16.cc", "Bfloat16Dtype");
+
   return reinterpret_cast<PyObject*>(bfloat16_type_ptr);
 }
 
-int Bfloat16NumpyType() { return npy_bfloat16; }
+int Bfloat16NumpyType() {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSbfloat16DTcc mht_62(mht_62_v, 2063, "", "./tensorflow/python/lib/core/bfloat16.cc", "Bfloat16NumpyType");
+ return npy_bfloat16; }
 
 }  // namespace tensorflow

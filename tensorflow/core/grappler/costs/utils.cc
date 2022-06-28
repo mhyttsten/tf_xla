@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSutilsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSutilsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSutilsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,6 +219,9 @@ namespace tensorflow {
 namespace grappler {
 
 static OpInfo::TensorProperties UnknownInput() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSutilsDTcc mht_0(mht_0_v, 222, "", "./tensorflow/core/grappler/costs/utils.cc", "UnknownInput");
+
   OpInfo::TensorProperties input;
   input.set_dtype(DataType::DT_INVALID);
   input.mutable_shape()->set_unknown_rank(true);
@@ -82,6 +253,9 @@ static void ExtractExtraProperties(
     const NodeDef& node,
     const std::unordered_map<string, const NodeDef*>& name_to_node,
     OpInfo* op_info) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSutilsDTcc mht_1(mht_1_v, 256, "", "./tensorflow/core/grappler/costs/utils.cc", "ExtractExtraProperties");
+
   OpRegistry* op_registry = OpRegistry::Global();
   const OpDef* op_def = nullptr;
   auto s = op_registry->LookUpOpDef(node.op(), &op_def);
@@ -199,6 +373,9 @@ std::vector<OpInfo::TensorProperties> FindInputFeatures(
 }
 
 int64_t CalculateTensorSize(const OpInfo::TensorProperties& prop) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSutilsDTcc mht_2(mht_2_v, 376, "", "./tensorflow/core/grappler/costs/utils.cc", "CalculateTensorSize");
+
   int64_t size = DataTypeSize(BaseType(prop.dtype()));
   TensorShapeProto shape = prop.shape();
 
@@ -230,6 +407,9 @@ int64_t CalculateTensorSize(const OpInfo::TensorProperties& prop) {
 int64_t CalculateOutputSize(
     const std::vector<OpInfo::TensorProperties>& output_properties,
     const int port_num) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSutilsDTcc mht_3(mht_3_v, 410, "", "./tensorflow/core/grappler/costs/utils.cc", "CalculateOutputSize");
+
   if (port_num < 0) return 4;  // 4B for control dependency.
 
   if (port_num >= output_properties.size()) {
@@ -242,6 +422,10 @@ int64_t CalculateOutputSize(
 }
 
 DeviceProperties GetDeviceInfo(const string& device_str) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("device_str: \"" + device_str + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSutilsDTcc mht_4(mht_4_v, 426, "", "./tensorflow/core/grappler/costs/utils.cc", "GetDeviceInfo");
+
   DeviceProperties unknown;
   unknown.set_type("UNKNOWN");
 
@@ -265,6 +449,9 @@ DeviceProperties GetDeviceInfo(const string& device_str) {
 }
 
 DeviceProperties GetDeviceInfo(const CostGraphDef::Node& node) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSutilsDTcc mht_5(mht_5_v, 452, "", "./tensorflow/core/grappler/costs/utils.cc", "GetDeviceInfo");
+
   return GetDeviceInfo(node.device());
 }
 
@@ -272,6 +459,9 @@ OpInfo BuildOpInfoWithoutDevice(
     const NodeDef& node,
     const std::unordered_map<string, const NodeDef*>& name_to_node,
     const std::vector<OpInfo::TensorProperties>& inputs) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSutilsDTcc mht_6(mht_6_v, 462, "", "./tensorflow/core/grappler/costs/utils.cc", "BuildOpInfoWithoutDevice");
+
   OpInfo op_info;
   op_info.set_op(node.op());
   *op_info.mutable_attr() = node.attr();
@@ -283,6 +473,9 @@ OpInfo BuildOpInfoWithoutDevice(
 }
 
 string GetOpDescription(const OpInfo& op_info) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSutilsDTcc mht_7(mht_7_v, 476, "", "./tensorflow/core/grappler/costs/utils.cc", "GetOpDescription");
+
   string description = "[";
   description += "Op=" + op_info.op() + ", ";
   description += "input_shapes=[";
@@ -295,6 +488,9 @@ string GetOpDescription(const OpInfo& op_info) {
 
 OpPerformanceList CostGraphToOpPerformanceData(const CostGraphDef& cost_graph,
                                                const GraphDef& graph) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSutilsDTcc mht_8(mht_8_v, 491, "", "./tensorflow/core/grappler/costs/utils.cc", "CostGraphToOpPerformanceData");
+
   OpPerformanceList ret;
   std::unordered_map<string, const CostGraphDef::Node*> name_to_cost;
   std::unordered_map<string, const NodeDef*> name_to_node;
@@ -345,6 +541,9 @@ OpPerformanceList CostGraphToOpPerformanceData(const CostGraphDef& cost_graph,
 }
 
 void TensorSizeHistogram::Add(const uint64 value) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSutilsDTcc mht_9(mht_9_v, 544, "", "./tensorflow/core/grappler/costs/utils.cc", "TensorSizeHistogram::Add");
+
   num_elem_++;
   sum_elem_ += value;
   min_ = std::min(min_, value);
@@ -353,6 +552,9 @@ void TensorSizeHistogram::Add(const uint64 value) {
 }
 
 void TensorSizeHistogram::Merge(const TensorSizeHistogram& src) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSutilsDTcc mht_10(mht_10_v, 555, "", "./tensorflow/core/grappler/costs/utils.cc", "TensorSizeHistogram::Merge");
+
   num_elem_ += src.num_elem_;
   sum_elem_ += src.sum_elem_;
   min_ = std::min(min_, src.min_);
@@ -362,6 +564,9 @@ void TensorSizeHistogram::Merge(const TensorSizeHistogram& src) {
 }
 
 string TensorSizeHistogram::ToString() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSutilsDTcc mht_11(mht_11_v, 567, "", "./tensorflow/core/grappler/costs/utils.cc", "TensorSizeHistogram::ToString");
+
   string r = absl::StrFormat(
       "Count: %lld, Average: %s, Min: %s, Max: %s"
       "\n------------------------------------------------------\n",
@@ -392,12 +597,19 @@ string TensorSizeHistogram::ToString() const {
 }
 
 const int TensorSizeHistogram::Index(const uint64 value) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSutilsDTcc mht_12(mht_12_v, 600, "", "./tensorflow/core/grappler/costs/utils.cc", "TensorSizeHistogram::Index");
+
   // Log2Floor64 returns -1 for 0, 0 for 1, 1 for 2-3, 2 for 4-7, ...
   const auto index = Log2Floor64(value) + 1;
   return std::min(index, kMaxBuckets - 1);
 }
 
 string GetDeviceClassForNonChannelDevice(const string& device_name) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSutilsDTcc mht_13(mht_13_v, 610, "", "./tensorflow/core/grappler/costs/utils.cc", "GetDeviceClassForNonChannelDevice");
+
   DeviceNameUtils::ParsedName parsed_name;
   bool parsed = DeviceNameUtils::ParseFullName(device_name, &parsed_name);
   if (!parsed) {
@@ -420,6 +632,10 @@ string GetDeviceClassForNonChannelDevice(const string& device_name) {
 }
 
 string GetDeviceClass(const string& device_name) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSutilsDTcc mht_14(mht_14_v, 636, "", "./tensorflow/core/grappler/costs/utils.cc", "GetDeviceClass");
+
   // TODO(dyoon): channel device name follows the convention we currently have
   // in VirtualScheduler. This should be revised with VirtualScheduler as well
   // as VirtualPlacer in the future.
@@ -441,6 +657,9 @@ string GetDeviceClass(const string& device_name) {
 
 string GetStatsStringFromRunMetadata(const RunMetadata& run_metadata,
                                      bool verbosity) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSutilsDTcc mht_15(mht_15_v, 660, "", "./tensorflow/core/grappler/costs/utils.cc", "GetStatsStringFromRunMetadata");
+
   // TODO(dyoon): print out other stats as needed.
   std::ostringstream output;
 
@@ -497,6 +716,9 @@ string GetStatsStringFromRunMetadata(const RunMetadata& run_metadata,
 
 void CombineCostsAndUpdateExecutionTime(bool compute_memory_overlap,
                                         Costs* costs) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSutilsDTcc mht_16(mht_16_v, 719, "", "./tensorflow/core/grappler/costs/utils.cc", "CombineCostsAndUpdateExecutionTime");
+
   if (compute_memory_overlap) {
     costs->execution_time =
         std::max(costs->intermediate_memory_time,

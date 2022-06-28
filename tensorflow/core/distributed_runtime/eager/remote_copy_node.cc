@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSremote_copy_nodeDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSremote_copy_nodeDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSremote_copy_nodeDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,6 +202,9 @@ namespace eager {
 namespace {
 
 void PrepareRemoteOp(eager::Operation* remote_op, EagerOperation* op) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSremote_copy_nodeDTcc mht_0(mht_0_v, 205, "", "./tensorflow/core/distributed_runtime/eager/remote_copy_node.cc", "PrepareRemoteOp");
+
   remote_op->set_name(op->Name());
 
   op->Attrs().FillAttrValueMap(remote_op->mutable_attrs());
@@ -42,6 +213,9 @@ void PrepareRemoteOp(eager::Operation* remote_op, EagerOperation* op) {
 
 Status CreateUncachedKernelAndDeviceOp(
     EagerOperation* op, core::RefCountPtr<KernelAndDevice>* kernel) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSremote_copy_nodeDTcc mht_1(mht_1_v, 216, "", "./tensorflow/core/distributed_runtime/eager/remote_copy_node.cc", "CreateUncachedKernelAndDeviceOp");
+
   EagerContext& ctx = op->EagerContext();
   Device* device = absl::get<Device*>(op->Device());
 
@@ -65,6 +239,9 @@ Status CreateUncachedKernelAndDeviceOp(
 // This gets a unique wire ID. We add a random identifier so that if the
 // worker has other clients that it is servicing, we don't have any collision.
 string GetUniqueWireID() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSremote_copy_nodeDTcc mht_2(mht_2_v, 242, "", "./tensorflow/core/distributed_runtime/eager/remote_copy_node.cc", "GetUniqueWireID");
+
   static tensorflow::uint64 random_seed = random::New64();
   static tensorflow::mutex wireid_mutex(tensorflow::LINKER_INITIALIZED);
   static std::atomic<int64_t> wire_id;
@@ -86,17 +263,26 @@ RemoteCopyNode::RemoteCopyNode(EagerContext* ctx, EagerExecutor* executor,
       recv_op_id_(recv_op_id),
       captured_state_(std::make_shared<CapturedSharedState>(dst)),
       started_(false) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSremote_copy_nodeDTcc mht_3(mht_3_v, 266, "", "./tensorflow/core/distributed_runtime/eager/remote_copy_node.cc", "RemoteCopyNode::RemoteCopyNode");
+
   DCHECK(!send_device_->IsLocal() || !recv_device_->IsLocal());
   src_->Ref();
   ctx_->Ref();
 }
 
 RemoteCopyNode::~RemoteCopyNode() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSremote_copy_nodeDTcc mht_4(mht_4_v, 275, "", "./tensorflow/core/distributed_runtime/eager/remote_copy_node.cc", "RemoteCopyNode::~RemoteCopyNode");
+
   src_->Unref();
   ctx_->Unref();
 }
 
 Status RemoteCopyNode::RunLocalSend(EagerOperation* op) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSremote_copy_nodeDTcc mht_5(mht_5_v, 283, "", "./tensorflow/core/distributed_runtime/eager/remote_copy_node.cc", "RemoteCopyNode::RunLocalSend");
+
   TF_RETURN_IF_ERROR(executor_->status());
 
   TF_RETURN_IF_ERROR(op->AddInput(src_));
@@ -118,6 +304,9 @@ Status RemoteCopyNode::RunLocalSend(EagerOperation* op) {
 }
 
 void RemoteCopyNode::StartSend() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSremote_copy_nodeDTcc mht_6(mht_6_v, 307, "", "./tensorflow/core/distributed_runtime/eager/remote_copy_node.cc", "RemoteCopyNode::StartSend");
+
   // TODO(gjn): We should consider just using the low-level SendOp::Compute()
   // functionality here instead of constructing an Op.
   EagerOperation op(ctx_);
@@ -190,6 +379,9 @@ void RemoteCopyNode::StartSend() {
 
 Status RemoteCopyNode::RunLocalRecv(EagerOperation* op,
                                     std::vector<Tensor>* outputs) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSremote_copy_nodeDTcc mht_7(mht_7_v, 382, "", "./tensorflow/core/distributed_runtime/eager/remote_copy_node.cc", "RemoteCopyNode::RunLocalRecv");
+
   TF_RETURN_IF_ERROR(executor_->status());
 
   core::RefCountPtr<KernelAndDevice> kernel;
@@ -217,6 +409,9 @@ Status RemoteCopyNode::RunLocalRecv(EagerOperation* op,
 }
 
 void RemoteCopyNode::RunRemoteRecv(EagerOperation* op, StatusCallback done) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSremote_copy_nodeDTcc mht_8(mht_8_v, 412, "", "./tensorflow/core/distributed_runtime/eager/remote_copy_node.cc", "RemoteCopyNode::RunRemoteRecv");
+
   EnqueueRequest request;
   uint64 context_id = ctx_->GetContextId();
   request.set_context_id(context_id);
@@ -272,6 +467,9 @@ void RemoteCopyNode::RunRemoteRecv(EagerOperation* op, StatusCallback done) {
 }
 
 void RemoteCopyNode::StartRecv(StatusCallback done) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSremote_copy_nodeDTcc mht_9(mht_9_v, 470, "", "./tensorflow/core/distributed_runtime/eager/remote_copy_node.cc", "RemoteCopyNode::StartRecv");
+
   // TODO(gjn): We should consider just using the low-level RecvOp::Compute()
   // functionality here instead of constructing an Op.
   EagerOperation op(ctx_);
@@ -316,6 +514,9 @@ void RemoteCopyNode::StartRecv(StatusCallback done) {
 Status SerializePackedHandle(const uint64 op_id, TensorHandle* packed_handle,
                              const Device* target_device, EagerContext* ctx,
                              SendPackedHandleOp* op) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSremote_copy_nodeDTcc mht_10(mht_10_v, 517, "", "./tensorflow/core/distributed_runtime/eager/remote_copy_node.cc", "SerializePackedHandle");
+
   op->set_op_id(op_id);
   op->set_device_name(packed_handle->DeviceOrHostCPU(*ctx)->name());
   for (int i = 0; i < packed_handle->NumPackedHandles(); ++i) {
@@ -358,6 +559,9 @@ Status SerializePackedHandle(const uint64 op_id, TensorHandle* packed_handle,
 }
 
 void RemoteCopyNode::StartSendPackedHandle(StatusCallback done) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSremote_copy_nodeDTcc mht_11(mht_11_v, 562, "", "./tensorflow/core/distributed_runtime/eager/remote_copy_node.cc", "RemoteCopyNode::StartSendPackedHandle");
+
   Status s;
   const uint64 context_view_id = ctx_->GetContextViewId();
   if (!send_device_->IsLocal()) {
@@ -420,6 +624,9 @@ void RemoteCopyNode::StartSendPackedHandle(StatusCallback done) {
 }
 
 void RemoteCopyNode::StartRemoteSendTensor(StatusCallback done) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSremote_copy_nodeDTcc mht_12(mht_12_v, 627, "", "./tensorflow/core/distributed_runtime/eager/remote_copy_node.cc", "RemoteCopyNode::StartRemoteSendTensor");
+
   Status s;
   EnqueueRequest request;
   uint64 context_id = ctx_->GetContextId();
@@ -472,11 +679,17 @@ void RemoteCopyNode::StartRemoteSendTensor(StatusCallback done) {
 }
 
 Status RemoteCopyNode::Prepare() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSremote_copy_nodeDTcc mht_13(mht_13_v, 682, "", "./tensorflow/core/distributed_runtime/eager/remote_copy_node.cc", "RemoteCopyNode::Prepare");
+
   TF_RETURN_IF_ERROR(captured_state_->dst()->CopyInferenceShape(src_));
   return Status::OK();
 }
 
 void RemoteCopyNode::RunAsync(StatusCallback done) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSremote_copy_nodeDTcc mht_14(mht_14_v, 690, "", "./tensorflow/core/distributed_runtime/eager/remote_copy_node.cc", "RemoteCopyNode::RunAsync");
+
   started_ = true;
   if (src_->Type() == TensorHandle::PACKED) {
     return StartSendPackedHandle(std::move(done));
@@ -491,6 +704,9 @@ void RemoteCopyNode::RunAsync(StatusCallback done) {
   const std::shared_ptr<CapturedSharedState>& captured_state = captured_state_;
   auto done_wrapper = [captured_state,
                        done = std::move(done)](const Status& s) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSremote_copy_nodeDTcc mht_15(mht_15_v, 707, "", "./tensorflow/core/distributed_runtime/eager/remote_copy_node.cc", "lambda");
+
     if (!s.ok() && errors::IsCancelled(s)) {
       Status send_status = captured_state->GetSendStatus();
       if (!send_status.ok()) {
@@ -509,6 +725,9 @@ void RemoteCopyNode::RunAsync(StatusCallback done) {
 }
 
 void RemoteCopyNode::Abort(Status status) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSeagerPSremote_copy_nodeDTcc mht_16(mht_16_v, 728, "", "./tensorflow/core/distributed_runtime/eager/remote_copy_node.cc", "RemoteCopyNode::Abort");
+
   if (!started_) {
     uint64 context_view_id = ctx_->GetContextViewId();
     captured_state_->dst()->PoisonRemote(status, recv_device_, context_view_id);

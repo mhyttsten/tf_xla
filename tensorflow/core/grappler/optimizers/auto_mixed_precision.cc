@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -111,10 +279,17 @@ struct TypeAttrId {
   explicit TypeAttrId(const string& _attr_name, int _type_index = kSingleType)
       : attr_name(_attr_name),
         type_index(_type_index),
-        fixed_type(DT_INVALID) {}
+        fixed_type(DT_INVALID) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("_attr_name: \"" + _attr_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_0(mht_0_v, 284, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "TypeAttrId");
+}
 
   explicit TypeAttrId(DataType _fixed_type)
-      : attr_name(), type_index(kSingleType), fixed_type(_fixed_type) {}
+      : attr_name(), type_index(kSingleType), fixed_type(_fixed_type) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_1(mht_1_v, 290, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "TypeAttrId");
+}
 
   bool operator==(const TypeAttrId& other) const {
     return attr_name == other.attr_name && type_index == other.type_index &&
@@ -122,16 +297,25 @@ struct TypeAttrId {
   }
 
   bool operator<(const TypeAttrId& other) const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_2(mht_2_v, 300, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "operator<");
+
     return std::make_tuple(attr_name, type_index, fixed_type) <
            std::make_tuple(other.attr_name, other.type_index, other.fixed_type);
   }
 
   template <typename H>
   friend H AbslHashValue(H h, const TypeAttrId& ta) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_3(mht_3_v, 309, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AbslHashValue");
+
     return H::combine(std::move(h), ta.attr_name, ta.type_index, ta.fixed_type);
   }
 
   string DebugString() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_4(mht_4_v, 316, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "DebugString");
+
     if (!attr_name.empty()) {
       if (type_index == kSingleType) {
         return attr_name;
@@ -153,6 +337,9 @@ struct TypeAttrId {
 // Returns the data type of the given type attribute, or DT_INVALID if the type
 // attribute is invalid.
 DataType GetDataType(const NodeDef& node, const TypeAttrId& type_attr) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_5(mht_5_v, 340, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "GetDataType");
+
   if (type_attr.attr_name.empty()) {
     return type_attr.fixed_type;
   }
@@ -174,6 +361,9 @@ DataType GetDataType(const NodeDef& node, const TypeAttrId& type_attr) {
 // Sets the data type of the given type attribute. Returns false if the type
 // attribute is invalid, otherwise true.
 bool SetDataType(NodeDef* node, const TypeAttrId& type_attr, DataType type) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_6(mht_6_v, 364, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "SetDataType");
+
   if (type_attr.attr_name.empty() || !node->attr().count(type_attr.attr_name)) {
     return false;
   }
@@ -241,6 +431,9 @@ std::vector<std::pair<int, int>> OutputPortArgDefIndexes(const NodeDef& node,
 }
 
 TypeAttrId GetTypeAttrId(const OpDef::ArgDef& arg_def, int arg_type_index) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_7(mht_7_v, 434, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "GetTypeAttrId");
+
   if (!arg_def.type_list_attr().empty()) {
     return TypeAttrId(arg_def.type_list_attr(), arg_type_index);
   } else if (!arg_def.type_attr().empty()) {
@@ -264,11 +457,20 @@ std::vector<int> NonControlInputs(const NodeDef& node) {
 // input/output port mappings.
 class NodeTypeAttrMap {
  public:
-  NodeTypeAttrMap() {}
+  NodeTypeAttrMap() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_8(mht_8_v, 461, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "NodeTypeAttrMap");
+}
 
-  explicit NodeTypeAttrMap(const GraphDef& graph) { TF_CHECK_OK(Init(graph)); }
+  explicit NodeTypeAttrMap(const GraphDef& graph) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_9(mht_9_v, 466, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "NodeTypeAttrMap");
+ TF_CHECK_OK(Init(graph)); }
 
   Status Init(const GraphDef& graph) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_10(mht_10_v, 471, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "Init");
+
     if (graph_ != nullptr) {
       return errors::InvalidArgument("NodeTypeAttrMap is already initialized.");
     }
@@ -281,7 +483,10 @@ class NodeTypeAttrMap {
     return Status::OK();
   }
 
-  bool is_initialized() const { return graph_ != nullptr; }
+  bool is_initialized() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_11(mht_11_v, 487, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "is_initialized");
+ return graph_ != nullptr; }
 
   // Returns the set of all type attributes in the given node.
   absl::flat_hash_set<TypeAttrId> GetTypeAttrs(const NodeDef& node) const {
@@ -297,17 +502,26 @@ class NodeTypeAttrMap {
 
   const absl::flat_hash_set<int>& GetInputPorts(
       const NodeDef& node, const TypeAttrId& type_attr) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_12(mht_12_v, 505, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "GetInputPorts");
+
     DCHECK(is_initialized()) << "NodeTypeAttrMap is not initialized";
     return type2io_.at(&node).at(type_attr).first;
   }
 
   const absl::flat_hash_set<int>& GetOutputPorts(
       const NodeDef& node, const TypeAttrId& type_attr) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_13(mht_13_v, 514, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "GetOutputPorts");
+
     DCHECK(is_initialized()) << "NodeTypeAttrMap is not initialized";
     return type2io_.at(&node).at(type_attr).second;
   }
 
   TypeAttrId GetInputTypeAttr(const NodeDef& node, int port) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_14(mht_14_v, 522, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "GetInputTypeAttr");
+
     DCHECK(is_initialized()) << "NodeTypeAttrMap is not initialized";
     const auto iter = io2type_.find(&node);
     DCHECK(iter != io2type_.end())
@@ -319,6 +533,9 @@ class NodeTypeAttrMap {
   }
 
   TypeAttrId GetOutputTypeAttr(const NodeDef& node, int port) const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_15(mht_15_v, 536, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "GetOutputTypeAttr");
+
     DCHECK(is_initialized()) << "NodeTypeAttrMap is not initialized";
     auto type_vec = io2type_.at(&node).second;
     CHECK_GE(port, 0);                // Crash Ok
@@ -328,6 +545,9 @@ class NodeTypeAttrMap {
 
  private:
   Status AddNode(const NodeDef& node) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_16(mht_16_v, 548, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AddNode");
+
     const OpDef* op_def_ptr = nullptr;
     TF_RETURN_IF_ERROR(function_library_->LookUpOpDef(node.op(), &op_def_ptr));
     const OpDef& op_def = *op_def_ptr;
@@ -413,7 +633,10 @@ class NodeTypeAttrMap {
 
 struct NodeTypeId {
   NodeTypeId(const NodeDef* _node, const TypeAttrId& _type_attr)
-      : node(_node), type_attr(_type_attr) {}
+      : node(_node), type_attr(_type_attr) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_17(mht_17_v, 637, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "NodeTypeId");
+}
 
   const NodeDef* node;
   TypeAttrId type_attr;
@@ -424,13 +647,19 @@ struct NodeTypeId {
 
   template <typename H>
   friend H AbslHashValue(H h, const NodeTypeId& nt) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_18(mht_18_v, 650, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AbslHashValue");
+
     return H::combine(std::move(h), nt.node, nt.type_attr);
   }
 };
 
 struct NodeTypeIdEdge {
   NodeTypeIdEdge(const NodeTypeId& _src, const NodeTypeId& _dst)
-      : src(_src), dst(_dst) {}
+      : src(_src), dst(_dst) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_19(mht_19_v, 660, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "NodeTypeIdEdge");
+}
   NodeTypeId src;
   NodeTypeId dst;
 };
@@ -446,7 +675,10 @@ class GraphTypeTopologyView {
  public:
   GraphTypeTopologyView() = default;
   explicit GraphTypeTopologyView(bool skip_invalid_edges)
-      : skip_invalid_edges_(skip_invalid_edges) {}
+      : skip_invalid_edges_(skip_invalid_edges) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_20(mht_20_v, 679, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "GraphTypeTopologyView");
+}
 
   // Initialize graph topology view from the graph. It's possible to pass
   // additional edges that do not exist in a graph, but must be respected when
@@ -458,9 +690,18 @@ class GraphTypeTopologyView {
 
   Status AddEphemeralEdges(absl::Span<const NodeTypeIdEdge> ephemeral_edges);
 
-  bool is_initialized() const { return graph_ != nullptr; }
-  int num_nodes() const { return num_nodes_; }
-  const GraphDef* graph() const { return graph_; }
+  bool is_initialized() const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_21(mht_21_v, 694, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "is_initialized");
+ return graph_ != nullptr; }
+  int num_nodes() const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_22(mht_22_v, 698, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "num_nodes");
+ return num_nodes_; }
+  const GraphDef* graph() const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_23(mht_23_v, 702, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "graph");
+ return graph_; }
 
   // Returns true iff the node exists in the underlying graph.
   bool HasNode(absl::string_view node_name, const TypeAttrId& type_attr) const;
@@ -496,6 +737,9 @@ class GraphTypeTopologyView {
 
     template <typename H>
     friend H AbslHashValue(H h, const NodeTypeKey& nt) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_24(mht_24_v, 740, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AbslHashValue");
+
       return H::combine(std::move(h), nt.first, nt.second);
     }
   };
@@ -523,12 +767,18 @@ class GraphTypeTopologyView {
 
 template <typename T>
 inline void SortAndRemoveDuplicates(T* v) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_25(mht_25_v, 770, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "SortAndRemoveDuplicates");
+
   std::sort(v->begin(), v->end());
   v->erase(std::unique(v->begin(), v->end()), v->end());
 }
 
 Status GraphTypeTopologyView::InitializeFromGraph(
     const GraphDef& graph, const NodeTypeAttrMap& node_type_map) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_26(mht_26_v, 779, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "GraphTypeTopologyView::InitializeFromGraph");
+
   if (graph_ != nullptr) {
     return errors::InvalidArgument(
         "GraphTypeTopologyView is already initialized.");
@@ -613,6 +863,9 @@ Status GraphTypeTopologyView::InitializeFromGraph(
 
 Status GraphTypeTopologyView::AddEphemeralEdges(
     absl::Span<const NodeTypeIdEdge> ephemeral_edges) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_27(mht_27_v, 866, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "GraphTypeTopologyView::AddEphemeralEdges");
+
   // Add ephemeral edges to the adjacency lists.
   for (const NodeTypeIdEdge& edge : ephemeral_edges) {
     const auto src = node_name_to_index_.find(edge.src.node->name());
@@ -663,6 +916,10 @@ Status GraphTypeTopologyView::AddEphemeralEdges(
 
 bool GraphTypeTopologyView::HasNode(absl::string_view node_name,
                                     const TypeAttrId& type_attr) const {
+   std::vector<std::string> mht_28_v;
+   mht_28_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_28(mht_28_v, 920, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "GraphTypeTopologyView::HasNode");
+
   DCHECK(is_initialized()) << "GraphTypeTopologyView is not initialized";
   NodeTypeKey key(node_name, type_attr);
   const auto it = node_type_name_to_index_.find(key);
@@ -671,6 +928,10 @@ bool GraphTypeTopologyView::HasNode(absl::string_view node_name,
 
 const NodeTypeId* GraphTypeTopologyView::GetNode(
     absl::string_view node_name, const TypeAttrId& type_attr) const {
+   std::vector<std::string> mht_29_v;
+   mht_29_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_29(mht_29_v, 932, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "GraphTypeTopologyView::GetNode");
+
   DCHECK(is_initialized()) << "GraphTypeTopologyView is not initialized";
   NodeTypeKey key(node_name, type_attr);
   const auto it = node_type_name_to_index_.find(key);
@@ -680,6 +941,9 @@ const NodeTypeId* GraphTypeTopologyView::GetNode(
 }
 
 const NodeTypeId* GraphTypeTopologyView::GetNode(int node_idx) const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_30(mht_30_v, 944, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "GraphTypeTopologyView::GetNode");
+
   DCHECK(is_initialized()) << "GraphTypeTopologyView is not initialized";
   DCHECK(node_idx >= 0 && node_idx < num_nodes_) << "node_idx is out of range";
   return &node_type_attrs_.at(node_idx);
@@ -687,6 +951,10 @@ const NodeTypeId* GraphTypeTopologyView::GetNode(int node_idx) const {
 
 const absl::optional<int> GraphTypeTopologyView::GetNodeIndex(
     absl::string_view node_name, const TypeAttrId& type_attr) const {
+   std::vector<std::string> mht_31_v;
+   mht_31_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_31(mht_31_v, 955, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "GraphTypeTopologyView::GetNodeIndex");
+
   DCHECK(is_initialized()) << "GraphTypeTopologyView is not initialized";
   NodeTypeKey key(node_name, type_attr);
   const auto it = node_type_name_to_index_.find(key);
@@ -698,6 +966,9 @@ const absl::optional<int> GraphTypeTopologyView::GetNodeIndex(
 
 const absl::optional<int> GraphTypeTopologyView::GetNodeIndex(
     const NodeTypeId& node) const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_32(mht_32_v, 969, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "GraphTypeTopologyView::GetNodeIndex");
+
   return GetNodeIndex(node.node->name(), node.type_attr);
 }
 
@@ -736,13 +1007,22 @@ struct DfsTypeCallbacks {
                    std::function<void(int, int)> back_edge)
       : pre_order(std::move(pre)),
         post_order(std::move(post)),
-        on_back_edge(std::move(back_edge)) {}
+        on_back_edge(std::move(back_edge)) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_33(mht_33_v, 1011, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "DfsTypeCallbacks");
+}
 
   static DfsTypeCallbacks PreOrder(std::function<void(int)> pre) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_34(mht_34_v, 1016, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "PreOrder");
+
     return DfsTypeCallbacks(std::move(pre), nullptr, nullptr);
   }
 
   static DfsTypeCallbacks PostOrder(std::function<void(int)> post) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_35(mht_35_v, 1023, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "PostOrder");
+
     return DfsTypeCallbacks(nullptr, std::move(post), nullptr);
   }
 
@@ -763,13 +1043,22 @@ struct DfsTypePredicates {
   DfsTypePredicates() = default;
   DfsTypePredicates(std::function<bool(int)> enter,
                     std::function<bool(int)> advance)
-      : enter(std::move(enter)), advance(std::move(advance)) {}
+      : enter(std::move(enter)), advance(std::move(advance)) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_36(mht_36_v, 1047, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "DfsTypePredicates");
+}
 
   static DfsTypePredicates Enter(std::function<bool(int)> enter) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_37(mht_37_v, 1052, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "Enter");
+
     return DfsTypePredicates(std::move(enter), nullptr);
   }
 
   static DfsTypePredicates Advance(std::function<bool(int)> advance) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_38(mht_38_v, 1059, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "Advance");
+
     return DfsTypePredicates(nullptr, std::move(advance));
   }
 
@@ -779,8 +1068,14 @@ struct DfsTypePredicates {
 
 struct DfsStackElem {
   DfsStackElem(int node, bool children_visited, int src)
-      : node(node), children_visited(children_visited), src(src) {}
-  explicit DfsStackElem(int node) : DfsStackElem(node, false, -1) {}
+      : node(node), children_visited(children_visited), src(src) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_39(mht_39_v, 1072, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "DfsStackElem");
+}
+  explicit DfsStackElem(int node) : DfsStackElem(node, false, -1) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_40(mht_40_v, 1076, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "DfsStackElem");
+}
 
   // Index of the node in the graph ∊ [0, num_nodes).
   int node;
@@ -798,6 +1093,9 @@ void DfsTypeTraversal(const GraphTypeTopologyView& graph_type_view,
                       const TypeTraversalDirection direction,
                       const DfsTypePredicates& predicates,
                       const DfsTypeCallbacks& callbacks) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_41(mht_41_v, 1096, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "DfsTypeTraversal");
+
   std::vector<DfsStackElem> stack;
   stack.reserve(from.size());
 
@@ -871,6 +1169,9 @@ void DfsTypeTraversal(const GraphTypeTopologyView& graph_type_view,
 }
 
 DataTypeSet AllowedDataTypes(const OpDef::AttrDef& attr_def) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_42(mht_42_v, 1172, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AllowedDataTypes");
+
   const auto& allowed_types = attr_def.allowed_values().list().type();
   if (allowed_types.empty()) {
     return AllTypes();
@@ -883,6 +1184,9 @@ DataTypeSet AllowedDataTypes(const OpDef::AttrDef& attr_def) {
 }
 
 DataTypeSet AllowedDataTypes(const OpDef& op_def, const TypeAttrId& t_attr_id) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_43(mht_43_v, 1187, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AllowedDataTypes");
+
   if (t_attr_id.attr_name.empty()) {
     return ToSet(t_attr_id.fixed_type);
   }
@@ -895,6 +1199,9 @@ Status ValidateLists(const gtl::FlatSet<string>& allow_list,
                      const gtl::FlatSet<string>& deny_list,
                      const gtl::FlatSet<string>& infer_list,
                      const gtl::FlatSet<string>& clear_list) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_44(mht_44_v, 1202, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "ValidateLists");
+
   std::vector<gtl::FlatSet<string>> lists{allow_list, deny_list, infer_list,
                                           clear_list};
   std::multiset<string> counts;
@@ -916,6 +1223,9 @@ Status ValidateLists(const gtl::FlatSet<string>& allow_list,
 }
 
 bool HasInputOrOutputRefs(const NodeDef& node) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_45(mht_45_v, 1226, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "HasInputOrOutputRefs");
+
   const OpDef* op_def;
   Status status = OpRegistry::Global()->LookUpOpDef(node.op(), &op_def);
   if (!status.ok()) {
@@ -936,11 +1246,17 @@ bool HasInputOrOutputRefs(const NodeDef& node) {
 
 // See TF issue 25977 for no-FP16 on SCEWL
 bool CanForceFP16(const NodeDef& node) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_46(mht_46_v, 1249, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "CanForceFP16");
+
   return node.op() != "Const" && node.op() != "SoftmaxCrossEntropyWithLogits" &&
          !IsStateful(node) && !HasInputOrOutputRefs(node);
 }
 
 int GetCudaVersion(const Cluster& cluster) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_47(mht_47_v, 1257, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "GetCudaVersion");
+
   auto devices = cluster.GetDevices();
   for (const auto& device : devices) {
     const DeviceProperties& device_properties = device.second;
@@ -957,6 +1273,9 @@ int GetCudaVersion(const Cluster& cluster) {
 }
 
 int GetCudnnVersion(const Cluster& cluster) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_48(mht_48_v, 1276, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "GetCudnnVersion");
+
   auto devices = cluster.GetDevices();
   for (const auto& device : devices) {
     const DeviceProperties& device_properties = device.second;
@@ -996,7 +1315,11 @@ class AutoMixedPrecisionImpl {
         target_dtype_((mode_ == AutoMixedPrecisionMode::CUDA ||
                        mode_ == AutoMixedPrecisionMode::CPU)
                           ? DT_HALF
-                          : DT_BFLOAT16) {}
+                          : DT_BFLOAT16) {
+   std::vector<std::string> mht_49_v;
+   mht_49_v.push_back("id: \"" + id + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_49(mht_49_v, 1320, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl");
+}
 
   Status Optimize();
 
@@ -1096,6 +1419,10 @@ NodeDef AutoMixedPrecisionImpl::BuildCastNode(
     const MutableGraphView::OutputPort& src,
     const MutableGraphView::InputPort& dst, bool to_f16,
     const string& device) const {
+   std::vector<std::string> mht_50_v;
+   mht_50_v.push_back("device: \"" + device + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_50(mht_50_v, 1423, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::BuildCastNode");
+
   DataType src_type = to_f16 ? DT_FLOAT : target_dtype_;
   DataType dst_type = to_f16 ? target_dtype_ : DT_FLOAT;
   const char* cast_string = !to_f16                    ? kCastToFp32
@@ -1117,6 +1444,9 @@ NodeDef AutoMixedPrecisionImpl::BuildCastNode(
 
 bool AutoMixedPrecisionImpl::NodeHasF16KernelForTypeAttr(
     const NodeDef& node, TypeAttrId taid) const {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_51(mht_51_v, 1447, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::NodeHasF16KernelForTypeAttr");
+
   NodeDef node_copy(node);
   if (node.device().empty()) {
     string device_name = virtual_placer_.get_canonical_device_name(node);
@@ -1129,6 +1459,9 @@ bool AutoMixedPrecisionImpl::NodeHasF16KernelForTypeAttr(
 }
 
 Status AutoMixedPrecisionImpl::PrintDebugLogs(bool preop, size_t timestamp) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_52(mht_52_v, 1462, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::PrintDebugLogs");
+
   string prepend_path;
   TF_RETURN_IF_ERROR(ReadStringFromEnvVar(
       "TF_AUTO_MIXED_PRECISION_GRAPH_REWRITE_LOG_PATH", "", &prepend_path));
@@ -1183,6 +1516,9 @@ Status AutoMixedPrecisionImpl::PrintDebugLogs(bool preop, size_t timestamp) {
 }
 
 void AutoMixedPrecisionImpl::LogSkippedNode(const NodeDef& node) const {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_53(mht_53_v, 1519, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::LogSkippedNode");
+
   VLOG(2) << "Skipping " << node.op() << " node " << node.name()
           << " because it "
           << (MustPreserve(node)
@@ -1191,11 +1527,18 @@ void AutoMixedPrecisionImpl::LogSkippedNode(const NodeDef& node) const {
 }
 
 bool AutoMixedPrecisionImpl::MustPreserve(const NodeDef& node) const {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_54(mht_54_v, 1530, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::MustPreserve");
+
   return nodes_to_preserve_.count(node.name());
 }
 
 bool AutoMixedPrecisionImpl::IsOnDevice(const NodeDef& node,
                                         const string& device_type) const {
+   std::vector<std::string> mht_55_v;
+   mht_55_v.push_back("device_type: \"" + device_type + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_55(mht_55_v, 1539, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::IsOnDevice");
+
   string device_name;
   if (node.device().empty()) {
     device_name = virtual_placer_.get_canonical_device_name(node);
@@ -1213,23 +1556,40 @@ bool AutoMixedPrecisionImpl::IsOnDevice(const NodeDef& node,
 }
 
 bool AutoMixedPrecisionImpl::IsOnSuitableGPUArch(const NodeDef& node) const {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_56(mht_56_v, 1559, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::IsOnSuitableGPUArch");
+
   return HasFastFP16Support(virtual_placer_.get_device(node));
 }
 
 bool AutoMixedPrecisionImpl::ShouldProcess(const NodeDef& node) const {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_57(mht_57_v, 1566, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::ShouldProcess");
+
   return should_process_nodes_.count(&node);
 }
 
 bool IsFloat32(const NodeTypeId& node_type) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_58(mht_58_v, 1573, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "IsFloat32");
+
   return GetDataType(*node_type.node, node_type.type_attr) ==
          DataType::DT_FLOAT;
 }
 
 bool IsTensorListOp(const string& op) {
+   std::vector<std::string> mht_59_v;
+   mht_59_v.push_back("op: \"" + op + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_59(mht_59_v, 1582, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "IsTensorListOp");
+
   return absl::StrContains(op, "TensorList");
 }
 
 bool IsTensorListReaderOp(const string& op) {
+   std::vector<std::string> mht_60_v;
+   mht_60_v.push_back("op: \"" + op + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_60(mht_60_v, 1590, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "IsTensorListReaderOp");
+
   static const gtl::FlatSet<string> tensor_list_reader_ops = {
       "TensorListConcat",  "TensorListConcatV2", "TensorListGather",
       "TensorListGetItem", "TensorListPopBack",  "TensorListStack"};
@@ -1237,6 +1597,10 @@ bool IsTensorListReaderOp(const string& op) {
 }
 
 bool IsTensorListWriterOp(const string& op) {
+   std::vector<std::string> mht_61_v;
+   mht_61_v.push_back("op: \"" + op + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_61(mht_61_v, 1601, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "IsTensorListWriterOp");
+
   static const gtl::FlatSet<string> tensor_list_writer_ops = {
       "TensorListFromTensor",    "TensorListPushBack",
       "TensorListPushBackBatch", "TensorListScatter",
@@ -1246,6 +1610,9 @@ bool IsTensorListWriterOp(const string& op) {
 }
 
 bool AutoMixedPrecisionImpl::SupportsF16(const NodeTypeId& node_type) const {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_62(mht_62_v, 1613, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::SupportsF16");
+
   const OpDef* op_def;
   Status status =
       OpRegistry::Global()->LookUpOpDef(node_type.node->op(), &op_def);
@@ -1257,6 +1624,9 @@ bool AutoMixedPrecisionImpl::SupportsF16(const NodeTypeId& node_type) const {
 
 bool AutoMixedPrecisionImpl::SupportsF16DataType(
     const NodeTypeId& node_type) const {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_63(mht_63_v, 1627, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::SupportsF16DataType");
+
   const OpDef* op_def;
   Status status =
       OpRegistry::Global()->LookUpOpDef(node_type.node->op(), &op_def);
@@ -1265,6 +1635,9 @@ bool AutoMixedPrecisionImpl::SupportsF16DataType(
 }
 
 bool AutoMixedPrecisionImpl::IsQuantized(const NodeTypeId& node_type) const {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_64(mht_64_v, 1638, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::IsQuantized");
+
   for (const TypeAttrId& type_attr :
        node_type_map_.GetTypeAttrs(*node_type.node)) {
     if (DataTypeIsQuantized(GetDataType(*node_type.node, type_attr))) {
@@ -1277,6 +1650,9 @@ bool AutoMixedPrecisionImpl::IsQuantized(const NodeTypeId& node_type) const {
 // TODO(mconley): Make this change the node's name (to aid debugging). Need to
 // make sure that doing this won't break anything.
 void AutoMixedPrecisionImpl::ConvertBatchNormOpsToV2() {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_65(mht_65_v, 1653, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::ConvertBatchNormOpsToV2");
+
   for (int node_idx = 0; node_idx < graph_->node_size(); ++node_idx) {
     NodeDef* node = graph_->mutable_node(node_idx);
     if (!ShouldProcess(*node)) continue;
@@ -1302,6 +1678,9 @@ void AutoMixedPrecisionImpl::ConvertBatchNormOpsToV2() {
 // rewriting the graph. This can be useful for testing the numerical effects of
 // reduced precision on systems that have poor mixed precision performance.
 bool ShouldIgnorePerformance() {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_66(mht_66_v, 1681, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "ShouldIgnorePerformance");
+
   static bool is_enabled = [] {
     bool ret = false;
     TF_CHECK_OK(ReadBoolFromEnvVar(
@@ -1313,6 +1692,9 @@ bool ShouldIgnorePerformance() {
 }
 
 Status AutoMixedPrecisionImpl::Optimize() {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_67(mht_67_v, 1695, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::Optimize");
+
   string optimization_level;
   TF_RETURN_IF_ERROR(ReadStringFromEnvVar(
       "TF_AUTO_MIXED_PRECISION_GRAPH_REWRITE_LEVEL", "", &optimization_level));
@@ -1491,6 +1873,9 @@ Status AutoMixedPrecisionImpl::Optimize() {
 // all other cases this returns nullptr.
 const NodeTypeId* AutoMixedPrecisionImpl::GetTensorListFloat32NodeTypeId(
     const NodeDef& node) const {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_68(mht_68_v, 1876, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::GetTensorListFloat32NodeTypeId");
+
   if (!IsTensorListOp(node.op())) return nullptr;
   for (const TypeAttrId& type_attr : node_type_map_.GetTypeAttrs(node)) {
     const NodeTypeId* node_type =
@@ -1510,6 +1895,10 @@ const NodeTypeId* AutoMixedPrecisionImpl::GetTensorListFloat32NodeTypeId(
 }
 
 bool AutoMixedPrecisionImpl::IsSourceOrSinkOp(const string& op) const {
+   std::vector<std::string> mht_69_v;
+   mht_69_v.push_back("op: \"" + op + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_69(mht_69_v, 1899, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::IsSourceOrSinkOp");
+
   const gtl::FlatSet<string> source_and_sink_ops = {
       "_Arg",
       "_Retval",
@@ -1530,6 +1919,9 @@ bool AutoMixedPrecisionImpl::IsSourceOrSinkOp(const string& op) const {
 void AutoMixedPrecisionImpl::FindFloat32TensorListOpClustersAndDenylistUnsafe(
     std::vector<absl::flat_hash_set<const NodeDef*>>* tensor_list_clusters,
     absl::flat_hash_set<int>* deny_set) const {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_70(mht_70_v, 1922, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::FindFloat32TensorListOpClustersAndDenylistUnsafe");
+
   absl::flat_hash_set<const NodeDef*> tensor_list_prop_set;
   for (int root_idx = 0; root_idx < graph_type_view_.num_nodes(); ++root_idx) {
     const NodeTypeId& root = *graph_type_view_.GetNode(root_idx);
@@ -1582,6 +1974,9 @@ void AutoMixedPrecisionImpl::FindFloat32TensorListOpClustersAndDenylistUnsafe(
 void AutoMixedPrecisionImpl::FindTensorListImplicitFloat32Edges(
     const absl::flat_hash_set<const NodeDef*>& tensor_list_nodes,
     std::vector<NodeTypeIdEdge>* implicit_fp32_edges) const {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_71(mht_71_v, 1977, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::FindTensorListImplicitFloat32Edges");
+
   for (const NodeDef* root_node : tensor_list_nodes) {
     if (!IsTensorListReaderOp(root_node->op())) continue;
     NodeTypeId root(root_node, TypeAttrId(DataType::DT_VARIANT));
@@ -1617,6 +2012,9 @@ void AutoMixedPrecisionImpl::FindTensorListImplicitFloat32Edges(
 
 void AutoMixedPrecisionImpl::AddAllowlistOps(
     absl::flat_hash_set<int>* allow_set) const {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_72(mht_72_v, 2015, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::AddAllowlistOps");
+
   // Add allowlisted ops to allow_set.
   for (int root_idx = 0; root_idx < graph_type_view_.num_nodes(); ++root_idx) {
     const NodeTypeId& root = *graph_type_view_.GetNode(root_idx);
@@ -1640,6 +2038,9 @@ void AutoMixedPrecisionImpl::AddAllowlistOps(
 // becomes: deny -> deny -> deny -> deny -> clear -> allow -> infer.
 void AutoMixedPrecisionImpl::PropagateDenyFwdThroughClearAndInfer(
     absl::flat_hash_set<int>* deny_set) const {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_73(mht_73_v, 2041, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::PropagateDenyFwdThroughClearAndInfer");
+
   if (force_all_fp16_) return;
 
   // Find clear nodes that are upstream of deny or infer.
@@ -1690,6 +2091,9 @@ void AutoMixedPrecisionImpl::PropagateDenyFwdThroughClearAndInfer(
 void AutoMixedPrecisionImpl::AddClearAndInferToAllowIfBetweenAllow(
     const absl::flat_hash_set<int>& deny_set,
     absl::flat_hash_set<int>* allow_set) const {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_74(mht_74_v, 2094, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::AddClearAndInferToAllowIfBetweenAllow");
+
   // Find clear/inferlist ops that are downstream of allow ops.
   absl::flat_hash_set<int> downstream_of_allow_set;
   for (int root_idx = 0; root_idx < graph_type_view_.num_nodes(); ++root_idx) {
@@ -1746,6 +2150,9 @@ void AutoMixedPrecisionImpl::AddClearAndInferToAllowIfBetweenAllow(
 void AutoMixedPrecisionImpl::PropagateAllowThroughClear(
     const absl::flat_hash_set<int>& deny_set,
     absl::flat_hash_set<int>* allow_set) const {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_75(mht_75_v, 2153, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::PropagateAllowThroughClear");
+
   // Propagate allow from allow nodes through clearlist ops.
   absl::flat_hash_set<int> clear_prop_set;
   for (int root_idx = 0; root_idx < graph_type_view_.num_nodes(); ++root_idx) {
@@ -1787,6 +2194,9 @@ void AutoMixedPrecisionImpl::PropagateAllowThroughClear(
 void AutoMixedPrecisionImpl::AddInferToAllowIfFollowAllow(
     const absl::flat_hash_set<int>& deny_set,
     absl::flat_hash_set<int>* allow_set) const {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_76(mht_76_v, 2197, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::AddInferToAllowIfFollowAllow");
+
   // Currently only target for MKL
   if (mode_ != AutoMixedPrecisionMode::MKL) {
     return;
@@ -1825,6 +2235,9 @@ void AutoMixedPrecisionImpl::AddInferToAllowIfFollowAllow(
 // Also don't convert quantized ops to FP16.
 void AutoMixedPrecisionImpl::RemoveAllowsetWithFp32(
     absl::flat_hash_set<int>* allow_set) const {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_77(mht_77_v, 2238, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::RemoveAllowsetWithFp32");
+
   for (int root_idx = 0; root_idx < graph_type_view_.num_nodes(); ++root_idx) {
     const NodeTypeId& root = *graph_type_view_.GetNode(root_idx);
     if (f16_allowlist_.count(root.node->op()) && allow_set->count(root_idx) &&
@@ -1845,6 +2258,9 @@ void AutoMixedPrecisionImpl::RemoveAllowsetWithFp32(
 // allow_set.
 Status AutoMixedPrecisionImpl::ForceColorMatchOnRecurrentEdges(
     absl::flat_hash_set<int>* allow_set) const {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_78(mht_78_v, 2261, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::ForceColorMatchOnRecurrentEdges");
+
   for (const NodeDef& node : graph_->node()) {
     if (node.op() == "NextIteration") {
       GraphView::OutputPort output_port(&node, 0);
@@ -1907,6 +2323,9 @@ void AutoMixedPrecisionImpl::ForceColorMatchBetweenTensorListOps(
     const absl::flat_hash_set<const NodeDef*>& tensor_list_nodes,
     absl::flat_hash_set<int>* allow_set,
     absl::flat_hash_set<int>* deny_set) const {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_79(mht_79_v, 2326, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::ForceColorMatchBetweenTensorListOps");
+
   bool any_deny = false;
   bool any_allow = false;
   std::vector<int> node_type_idxs;
@@ -1947,6 +2366,9 @@ void AutoMixedPrecisionImpl::ForceColorMatchBetweenTensorListOps(
 
 bool AutoMixedPrecisionImpl::NodeImplicitlyReadsNonResourceVariable(
     const NodeDef& node) const {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_80(mht_80_v, 2369, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::NodeImplicitlyReadsNonResourceVariable");
+
   if (node.op() == "Identity" || node.op() == "Enter") {
     GraphView::InputPort node_input(&node, 0);
     MutableGraphView::OutputPort prev_output =
@@ -1966,6 +2388,9 @@ bool AutoMixedPrecisionImpl::NodeImplicitlyReadsNonResourceVariable(
 // avoiding the need to add a new Cast node after an existing Cast.
 void AutoMixedPrecisionImpl::MakeCastsAllowIfAllOutputsAllow(
     absl::flat_hash_set<int>* allow_set) const {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_81(mht_81_v, 2391, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::MakeCastsAllowIfAllOutputsAllow");
+
   int num_nodes_preop = graph_->node_size();
   for (int node_idx = 0; node_idx < num_nodes_preop; ++node_idx) {
     NodeDef* node = graph_->mutable_node(node_idx);
@@ -2012,6 +2437,9 @@ void AutoMixedPrecisionImpl::MakeCastsAllowIfAllOutputsAllow(
 StatusOr<NodeDef*> AutoMixedPrecisionImpl::InsertCastNodeAtFanout(
     const absl::flat_hash_set<int>& allow_set, const bool src_is_allow,
     const CastType& cast_type, MutableGraphView::OutputPort& src) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_82(mht_82_v, 2440, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::InsertCastNodeAtFanout");
+
   NodeDef* added_cast_node = nullptr;
   // Note: This is copied so that edges can be modified inside the loop.
   auto fanout = graph_view_.GetFanout(src);
@@ -2072,6 +2500,9 @@ StatusOr<NodeDef*> AutoMixedPrecisionImpl::InsertCastNodeAtFanout(
 // a Cast op.
 StatusOr<DataType> AutoMixedPrecisionImpl::GetCastToType(
     const NodeDef* node) const {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_83(mht_83_v, 2503, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::GetCastToType");
+
   CHECK_EQ(node->op(), "Cast")  // Crash OK
       << "Node " << node->name() << " is not a Cast op";
   return node->attr().at("DstT").type();
@@ -2085,6 +2516,9 @@ StatusOr<DataType> AutoMixedPrecisionImpl::GetCastToType(
 void AutoMixedPrecisionImpl::CollectOutputPorts(
     const TypeAttrId& type_attr, NodeDef* node,
     std::vector<MutableGraphView::OutputPort>& output_ports) const {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_84(mht_84_v, 2519, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::CollectOutputPorts");
+
   for (int port_id : node_type_map_.GetOutputPorts(*node, type_attr)) {
     output_ports.emplace_back(node, port_id);
   }
@@ -2095,6 +2529,9 @@ void AutoMixedPrecisionImpl::CollectOutputPorts(
 // allow-painted <-> non-allow-painted type attributes.
 Status AutoMixedPrecisionImpl::ChangeTypeAttrsAndAddCasts(
     const absl::flat_hash_set<int>& allow_set) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_85(mht_85_v, 2532, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecisionImpl::ChangeTypeAttrsAndAddCasts");
+
   int num_nodes_changed = 0;
   const int num_nodes_preop = graph_->node_size();
 
@@ -2190,6 +2627,9 @@ Status AutoMixedPrecisionImpl::ChangeTypeAttrsAndAddCasts(
 }
 
 int GetNumGPUs(const Cluster& cluster) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_86(mht_86_v, 2630, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "GetNumGPUs");
+
   auto devices = cluster.GetDevices();
   int num_gpus = 0;
   for (const auto& device : devices) {
@@ -2206,6 +2646,9 @@ int GetNumGPUs(const Cluster& cluster) {
 
 Status AutoMixedPrecision::Optimize(Cluster* cluster, const GrapplerItem& item,
                                     GraphDef* output) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSauto_mixed_precisionDTcc mht_87(mht_87_v, 2649, "", "./tensorflow/core/grappler/optimizers/auto_mixed_precision.cc", "AutoMixedPrecision::Optimize");
+
   if (cluster == nullptr) {
     return errors::InvalidArgument("cluster == nullptr");
   }

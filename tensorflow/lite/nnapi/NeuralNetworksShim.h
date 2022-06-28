@@ -14,6 +14,174 @@ limitations under the License.
 ==============================================================================*/
 #ifndef TENSORFLOW_LITE_NNAPI_NEURALNETWORKSSHIM_H_
 #define TENSORFLOW_LITE_NNAPI_NEURALNETWORKSSHIM_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <dlfcn.h>
 #include <stdint.h>
@@ -39,6 +207,10 @@ limitations under the License.
 #define EXECUTE_FUNCTION_RETURN(...) return fn != nullptr ? fn(__VA_ARGS__) : 0;
 
 inline void* loadLibrary(const char* name) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("name: \"" + (name == nullptr ? std::string("nullptr") : std::string((char*)name)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_0(mht_0_v, 211, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "loadLibrary");
+
   // TODO: change RTLD_LOCAL? Assumes there can be multiple instances of nn
   // api RT
   void* handle = nullptr;
@@ -54,6 +226,10 @@ inline void* loadLibrary(const char* name) {
 // ASharedMemory_create was added in Android 8.0, so safe to use with NNAPI
 // which was added in 8.1.
 inline int ASharedMemory_create(const char* name, size_t size) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("name: \"" + (name == nullptr ? std::string("nullptr") : std::string((char*)name)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_1(mht_1_v, 230, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ASharedMemory_create");
+
   static void* handle = loadLibrary("libandroid.so");
   static ASharedMemory_create_fn fn =
       handle != nullptr ? reinterpret_cast<ASharedMemory_create_fn>(
@@ -64,11 +240,18 @@ inline int ASharedMemory_create(const char* name, size_t size) {
 }
 
 inline void* getLibraryHandle() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_2(mht_2_v, 243, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "getLibraryHandle");
+
   static void* handle = loadLibrary("libneuralnetworks.so");
   return handle;
 }
 
 inline void* loadFunction(const char* name) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("name: \"" + (name == nullptr ? std::string("nullptr") : std::string((char*)name)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_3(mht_3_v, 252, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "loadFunction");
+
   void* fn = nullptr;
   if (getLibraryHandle() != nullptr) {
     fn = dlsym(getLibraryHandle(), name);
@@ -80,6 +263,9 @@ inline void* loadFunction(const char* name) {
 }
 
 inline bool NNAPIExists() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_4(mht_4_v, 266, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "NNAPIExists");
+
   static bool nnapi_is_available = getLibraryHandle();
   return nnapi_is_available;
 }
@@ -112,6 +298,9 @@ inline bool NNAPIExists() {
 inline int ANeuralNetworksMemory_createFromFd(size_t size, int protect, int fd,
                                               size_t offset,
                                               ANeuralNetworksMemory** memory) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_5(mht_5_v, 301, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksMemory_createFromFd");
+
   LOAD_FUNCTION(ANeuralNetworksMemory_createFromFd);
   EXECUTE_FUNCTION_RETURN(size, protect, fd, offset, memory);
 }
@@ -126,6 +315,9 @@ inline int ANeuralNetworksMemory_createFromFd(size_t size, int protect, int fd,
  * @param memory The memory object to be freed.
  */
 inline void ANeuralNetworksMemory_free(ANeuralNetworksMemory* memory) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_6(mht_6_v, 318, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksMemory_free");
+
   LOAD_FUNCTION(ANeuralNetworksMemory_free);
   EXECUTE_FUNCTION(memory);
 }
@@ -152,6 +344,9 @@ inline void ANeuralNetworksMemory_free(ANeuralNetworksMemory* memory) {
  * @return ANEURALNETWORKS_NO_ERROR if successful.
  */
 inline int ANeuralNetworksModel_create(ANeuralNetworksModel** model) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_7(mht_7_v, 347, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksModel_create");
+
   LOAD_FUNCTION(ANeuralNetworksModel_create);
   EXECUTE_FUNCTION_RETURN(model);
 }
@@ -168,6 +363,9 @@ inline int ANeuralNetworksModel_create(ANeuralNetworksModel** model) {
  *              results in no operation.
  */
 inline void ANeuralNetworksModel_free(ANeuralNetworksModel* model) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_8(mht_8_v, 366, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksModel_free");
+
   LOAD_FUNCTION(ANeuralNetworksModel_free);
   EXECUTE_FUNCTION(model);
 }
@@ -186,6 +384,9 @@ inline void ANeuralNetworksModel_free(ANeuralNetworksModel* model) {
  * @return ANEURALNETWORKS_NO_ERROR if successful.
  */
 inline int ANeuralNetworksModel_finish(ANeuralNetworksModel* model) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_9(mht_9_v, 387, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksModel_finish");
+
   LOAD_FUNCTION(ANeuralNetworksModel_finish);
   EXECUTE_FUNCTION_RETURN(model);
 }
@@ -221,6 +422,9 @@ inline int ANeuralNetworksModel_finish(ANeuralNetworksModel* model) {
  */
 inline int ANeuralNetworksModel_addOperand(
     ANeuralNetworksModel* model, const ANeuralNetworksOperandType* type) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_10(mht_10_v, 425, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksModel_addOperand");
+
   LOAD_FUNCTION(ANeuralNetworksModel_addOperand);
   EXECUTE_FUNCTION_RETURN(model, type);
 }
@@ -252,6 +456,9 @@ inline int ANeuralNetworksModel_setOperandValue(ANeuralNetworksModel* model,
                                                 int32_t index,
                                                 const void* buffer,
                                                 size_t length) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_11(mht_11_v, 459, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksModel_setOperandValue");
+
   LOAD_FUNCTION(ANeuralNetworksModel_setOperandValue);
   EXECUTE_FUNCTION_RETURN(model, index, buffer, length);
 }
@@ -278,6 +485,9 @@ inline int ANeuralNetworksModel_setOperandValue(ANeuralNetworksModel* model,
 inline int ANeuralNetworksModel_setOperandSymmPerChannelQuantParams(
     ANeuralNetworksModel* model, int32_t index,
     const ANeuralNetworksSymmPerChannelQuantParams* channelQuant) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_12(mht_12_v, 488, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksModel_setOperandSymmPerChannelQuantParams");
+
   LOAD_FUNCTION(ANeuralNetworksModel_setOperandSymmPerChannelQuantParams);
   EXECUTE_FUNCTION_RETURN(model, index, channelQuant);
 }
@@ -309,6 +519,9 @@ inline int ANeuralNetworksModel_setOperandSymmPerChannelQuantParams(
 inline int ANeuralNetworksModel_setOperandValueFromMemory(
     ANeuralNetworksModel* model, int32_t index,
     const ANeuralNetworksMemory* memory, size_t offset, size_t length) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_13(mht_13_v, 522, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksModel_setOperandValueFromMemory");
+
   LOAD_FUNCTION(ANeuralNetworksModel_setOperandValueFromMemory);
   EXECUTE_FUNCTION_RETURN(model, index, memory, offset, length);
 }
@@ -339,6 +552,9 @@ inline int ANeuralNetworksModel_addOperation(ANeuralNetworksModel* model,
                                              const uint32_t* inputs,
                                              uint32_t outputCount,
                                              const uint32_t* outputs) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_14(mht_14_v, 555, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksModel_addOperation");
+
   LOAD_FUNCTION(ANeuralNetworksModel_addOperation);
   EXECUTE_FUNCTION_RETURN(model, type, inputCount, inputs, outputCount,
                           outputs);
@@ -368,6 +584,9 @@ inline int ANeuralNetworksModel_addOperation(ANeuralNetworksModel* model,
 inline int ANeuralNetworksModel_identifyInputsAndOutputs(
     ANeuralNetworksModel* model, uint32_t inputCount, const uint32_t* inputs,
     uint32_t outputCount, const uint32_t* outputs) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_15(mht_15_v, 587, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksModel_identifyInputsAndOutputs");
+
   LOAD_FUNCTION(ANeuralNetworksModel_identifyInputsAndOutputs);
   EXECUTE_FUNCTION_RETURN(model, inputCount, inputs, outputCount, outputs);
 }
@@ -396,6 +615,9 @@ inline int ANeuralNetworksModel_identifyInputsAndOutputs(
  */
 inline int ANeuralNetworksModel_relaxComputationFloat32toFloat16(
     ANeuralNetworksModel* model, bool allow) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_16(mht_16_v, 618, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksModel_relaxComputationFloat32toFloat16");
+
   LOAD_FUNCTION(ANeuralNetworksModel_relaxComputationFloat32toFloat16);
   EXECUTE_FUNCTION_RETURN(model, allow);
 }
@@ -421,6 +643,9 @@ inline int ANeuralNetworksModel_relaxComputationFloat32toFloat16(
  */
 inline int ANeuralNetworksCompilation_create(
     ANeuralNetworksModel* model, ANeuralNetworksCompilation** compilation) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_17(mht_17_v, 646, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksCompilation_create");
+
   LOAD_FUNCTION(ANeuralNetworksCompilation_create);
   EXECUTE_FUNCTION_RETURN(model, compilation);
 }
@@ -442,6 +667,9 @@ inline int ANeuralNetworksCompilation_create(
  */
 inline void ANeuralNetworksCompilation_free(
     ANeuralNetworksCompilation* compilation) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_18(mht_18_v, 670, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksCompilation_free");
+
   LOAD_FUNCTION(ANeuralNetworksCompilation_free);
   EXECUTE_FUNCTION(compilation);
 }
@@ -463,6 +691,9 @@ inline void ANeuralNetworksCompilation_free(
  */
 inline int ANeuralNetworksCompilation_setPreference(
     ANeuralNetworksCompilation* compilation, int32_t preference) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_19(mht_19_v, 694, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksCompilation_setPreference");
+
   LOAD_FUNCTION(ANeuralNetworksCompilation_setPreference);
   EXECUTE_FUNCTION_RETURN(compilation, preference);
 }
@@ -480,6 +711,9 @@ inline int ANeuralNetworksCompilation_setPreference(
  */
 inline int ANeuralNetworksCompilation_finish(
     ANeuralNetworksCompilation* compilation) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_20(mht_20_v, 714, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksCompilation_finish");
+
   LOAD_FUNCTION(ANeuralNetworksCompilation_finish);
   EXECUTE_FUNCTION_RETURN(compilation);
 }
@@ -501,6 +735,9 @@ inline int ANeuralNetworksCompilation_finish(
 inline int ANeuralNetworksExecution_create(
     ANeuralNetworksCompilation* compilation,
     ANeuralNetworksExecution** execution) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_21(mht_21_v, 738, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksExecution_create");
+
   LOAD_FUNCTION(ANeuralNetworksExecution_create);
   EXECUTE_FUNCTION_RETURN(compilation, execution);
 }
@@ -520,6 +757,9 @@ inline int ANeuralNetworksExecution_create(
  * and results in no operation.
  */
 inline void ANeuralNetworksExecution_free(ANeuralNetworksExecution* execution) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_22(mht_22_v, 760, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksExecution_free");
+
   LOAD_FUNCTION(ANeuralNetworksExecution_free);
   EXECUTE_FUNCTION(execution);
 }
@@ -552,6 +792,9 @@ inline void ANeuralNetworksExecution_free(ANeuralNetworksExecution* execution) {
 inline int ANeuralNetworksExecution_setInput(
     ANeuralNetworksExecution* execution, int32_t index,
     const ANeuralNetworksOperandType* type, const void* buffer, size_t length) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_23(mht_23_v, 795, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksExecution_setInput");
+
   LOAD_FUNCTION(ANeuralNetworksExecution_setInput);
   EXECUTE_FUNCTION_RETURN(execution, index, type, buffer, length);
 }
@@ -587,6 +830,9 @@ inline int ANeuralNetworksExecution_setInputFromMemory(
     ANeuralNetworksExecution* execution, int32_t index,
     const ANeuralNetworksOperandType* type, const ANeuralNetworksMemory* memory,
     size_t offset, size_t length) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_24(mht_24_v, 833, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksExecution_setInputFromMemory");
+
   LOAD_FUNCTION(ANeuralNetworksExecution_setInputFromMemory);
   EXECUTE_FUNCTION_RETURN(execution, index, type, memory, offset, length);
 }
@@ -619,6 +865,9 @@ inline int ANeuralNetworksExecution_setInputFromMemory(
 inline int ANeuralNetworksExecution_setOutput(
     ANeuralNetworksExecution* execution, int32_t index,
     const ANeuralNetworksOperandType* type, void* buffer, size_t length) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_25(mht_25_v, 868, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksExecution_setOutput");
+
   LOAD_FUNCTION(ANeuralNetworksExecution_setOutput);
   EXECUTE_FUNCTION_RETURN(execution, index, type, buffer, length);
 }
@@ -654,6 +903,9 @@ inline int ANeuralNetworksExecution_setOutputFromMemory(
     ANeuralNetworksExecution* execution, int32_t index,
     const ANeuralNetworksOperandType* type, const ANeuralNetworksMemory* memory,
     size_t offset, size_t length) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_26(mht_26_v, 906, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksExecution_setOutputFromMemory");
+
   LOAD_FUNCTION(ANeuralNetworksExecution_setOutputFromMemory);
   EXECUTE_FUNCTION_RETURN(execution, index, type, memory, offset, length);
 }
@@ -684,6 +936,9 @@ inline int ANeuralNetworksExecution_setOutputFromMemory(
  */
 inline int ANeuralNetworksExecution_startCompute(
     ANeuralNetworksExecution* execution, ANeuralNetworksEvent** event) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_27(mht_27_v, 939, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksExecution_startCompute");
+
   LOAD_FUNCTION(ANeuralNetworksExecution_startCompute);
   EXECUTE_FUNCTION_RETURN(execution, event);
 }
@@ -699,6 +954,9 @@ inline int ANeuralNetworksExecution_startCompute(
  * @return ANEURALNETWORKS_NO_ERROR if the execution completed normally.
  */
 inline int ANeuralNetworksEvent_wait(ANeuralNetworksEvent* event) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_28(mht_28_v, 957, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksEvent_wait");
+
   LOAD_FUNCTION(ANeuralNetworksEvent_wait);
   EXECUTE_FUNCTION_RETURN(event);
 }
@@ -709,6 +967,9 @@ inline int ANeuralNetworksEvent_wait(ANeuralNetworksEvent* event) {
  * See {@link ANeuralNetworksExecution} for information on multithreaded usage.
  */
 inline void ANeuralNetworksEvent_free(ANeuralNetworksEvent* event) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_29(mht_29_v, 970, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksEvent_free");
+
   LOAD_FUNCTION(ANeuralNetworksEvent_free);
   EXECUTE_FUNCTION(event);
 }
@@ -723,6 +984,9 @@ inline void ANeuralNetworksEvent_free(ANeuralNetworksEvent* event) {
  * Available since API level 29.
  */
 inline int ANeuralNetworks_getDeviceCount(uint32_t* numDevices) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_30(mht_30_v, 987, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworks_getDeviceCount");
+
   LOAD_FUNCTION(ANeuralNetworks_getDeviceCount);
   EXECUTE_FUNCTION_RETURN(numDevices);
 }
@@ -743,6 +1007,9 @@ inline int ANeuralNetworks_getDeviceCount(uint32_t* numDevices) {
 
 inline int ANeuralNetworks_getDevice(uint32_t devIndex,
                                      ANeuralNetworksDevice** device) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_31(mht_31_v, 1010, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworks_getDevice");
+
   LOAD_FUNCTION(ANeuralNetworks_getDevice);
   EXECUTE_FUNCTION_RETURN(devIndex, device);
 }
@@ -765,6 +1032,9 @@ inline int ANeuralNetworks_getDevice(uint32_t devIndex,
  */
 inline int ANeuralNetworksDevice_getName(const ANeuralNetworksDevice* device,
                                          const char** name) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_32(mht_32_v, 1035, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksDevice_getName");
+
   LOAD_FUNCTION(ANeuralNetworksDevice_getName);
   EXECUTE_FUNCTION_RETURN(device, name);
 }
@@ -802,6 +1072,9 @@ inline int ANeuralNetworksDevice_getName(const ANeuralNetworksDevice* device,
  */
 inline int ANeuralNetworksDevice_getVersion(const ANeuralNetworksDevice* device,
                                             const char** version) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_33(mht_33_v, 1075, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksDevice_getVersion");
+
   LOAD_FUNCTION(ANeuralNetworksDevice_getVersion);
   EXECUTE_FUNCTION_RETURN(device, version);
 }
@@ -826,6 +1099,9 @@ inline int ANeuralNetworksDevice_getVersion(const ANeuralNetworksDevice* device,
  */
 inline int ANeuralNetworksDevice_getFeatureLevel(
     const ANeuralNetworksDevice* device, int64_t* featureLevel) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_34(mht_34_v, 1102, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksDevice_getFeatureLevel");
+
   LOAD_FUNCTION(ANeuralNetworksDevice_getFeatureLevel);
   EXECUTE_FUNCTION_RETURN(device, featureLevel);
 }
@@ -853,6 +1129,9 @@ inline int ANeuralNetworksModel_getSupportedOperationsForDevices(
     const ANeuralNetworksModel* model,
     const ANeuralNetworksDevice* const* devices, uint32_t numDevices,
     bool* supportedOps) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_35(mht_35_v, 1132, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksModel_getSupportedOperationsForDevices");
+
   LOAD_FUNCTION(ANeuralNetworksModel_getSupportedOperationsForDevices);
   EXECUTE_FUNCTION_RETURN(model, devices, numDevices, supportedOps);
 }
@@ -878,6 +1157,9 @@ inline int ANeuralNetworksModel_getSupportedOperationsForDevices(
 inline int ANeuralNetworksCompilation_createForDevices(
     ANeuralNetworksModel* model, const ANeuralNetworksDevice* const* devices,
     uint32_t numDevices, ANeuralNetworksCompilation** compilation) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_36(mht_36_v, 1160, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksCompilation_createForDevices");
+
   LOAD_FUNCTION(ANeuralNetworksCompilation_createForDevices);
   EXECUTE_FUNCTION_RETURN(model, devices, numDevices, compilation);
 }
@@ -911,6 +1193,10 @@ inline int ANeuralNetworksCompilation_createForDevices(
 inline int ANeuralNetworksCompilation_setCaching(
     ANeuralNetworksCompilation* compilation, const char* cacheDir,
     const uint8_t* token) {
+   std::vector<std::string> mht_37_v;
+   mht_37_v.push_back("cacheDir: \"" + (cacheDir == nullptr ? std::string("nullptr") : std::string((char*)cacheDir)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_37(mht_37_v, 1197, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksCompilation_setCaching");
+
   LOAD_FUNCTION(ANeuralNetworksCompilation_setCaching);
   EXECUTE_FUNCTION_RETURN(compilation, cacheDir, token);
 }
@@ -937,6 +1223,9 @@ inline int ANeuralNetworksCompilation_setCaching(
  */
 inline int ANeuralNetworksExecution_compute(
     ANeuralNetworksExecution* execution) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_38(mht_38_v, 1226, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksExecution_compute");
+
   LOAD_FUNCTION(ANeuralNetworksExecution_compute);
   EXECUTE_FUNCTION_RETURN(execution);
 }
@@ -968,6 +1257,9 @@ inline int ANeuralNetworksExecution_compute(
  */
 inline int ANeuralNetworksExecution_getOutputOperandRank(
     ANeuralNetworksExecution* execution, int32_t index, uint32_t* rank) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_39(mht_39_v, 1260, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksExecution_getOutputOperandRank");
+
   LOAD_FUNCTION(ANeuralNetworksExecution_getOutputOperandRank);
   EXECUTE_FUNCTION_RETURN(execution, index, rank);
 }
@@ -1002,6 +1294,9 @@ inline int ANeuralNetworksExecution_getOutputOperandRank(
  */
 inline int ANeuralNetworksExecution_getOutputOperandDimensions(
     ANeuralNetworksExecution* execution, int32_t index, uint32_t* dimensions) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_40(mht_40_v, 1297, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksExecution_getOutputOperandDimensions");
+
   LOAD_FUNCTION(ANeuralNetworksExecution_getOutputOperandDimensions);
   EXECUTE_FUNCTION_RETURN(execution, index, dimensions);
 }
@@ -1024,6 +1319,9 @@ inline int ANeuralNetworksExecution_getOutputOperandDimensions(
  */
 inline int ANeuralNetworksBurst_create(ANeuralNetworksCompilation* compilation,
                                        ANeuralNetworksBurst** burst) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_41(mht_41_v, 1322, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksBurst_create");
+
   LOAD_FUNCTION(ANeuralNetworksBurst_create);
   EXECUTE_FUNCTION_RETURN(compilation, burst);
 }
@@ -1037,6 +1335,9 @@ inline int ANeuralNetworksBurst_create(ANeuralNetworksCompilation* compilation,
  *              results in no operation.
  */
 inline void ANeuralNetworksBurst_free(ANeuralNetworksBurst* burst) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_42(mht_42_v, 1338, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksBurst_free");
+
   LOAD_FUNCTION(ANeuralNetworksBurst_free);
   EXECUTE_FUNCTION(burst);
 }
@@ -1063,6 +1364,9 @@ inline void ANeuralNetworksBurst_free(ANeuralNetworksBurst* burst) {
  */
 inline int ANeuralNetworksExecution_burstCompute(
     ANeuralNetworksExecution* execution, ANeuralNetworksBurst* burst) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_43(mht_43_v, 1367, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksExecution_burstCompute");
+
   LOAD_FUNCTION(ANeuralNetworksExecution_burstCompute);
   EXECUTE_FUNCTION_RETURN(execution, burst);
 }
@@ -1105,6 +1409,9 @@ inline int ANeuralNetworksExecution_burstCompute(
  */
 inline int ANeuralNetworksMemory_createFromAHardwareBuffer(
     const AHardwareBuffer* ahwb, ANeuralNetworksMemory** memory) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_44(mht_44_v, 1412, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksMemory_createFromAHardwareBuffer");
+
   LOAD_FUNCTION(ANeuralNetworksMemory_createFromAHardwareBuffer);
   EXECUTE_FUNCTION_RETURN(ahwb, memory);
 }
@@ -1127,6 +1434,9 @@ inline int ANeuralNetworksMemory_createFromAHardwareBuffer(
  */
 inline int ANeuralNetworksExecution_setMeasureTiming(
     ANeuralNetworksExecution* execution, bool measure) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_45(mht_45_v, 1437, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksExecution_setMeasureTiming");
+
   LOAD_FUNCTION(ANeuralNetworksExecution_setMeasureTiming);
   EXECUTE_FUNCTION_RETURN(execution, measure);
 }
@@ -1148,6 +1458,9 @@ inline int ANeuralNetworksExecution_setMeasureTiming(
 inline int ANeuralNetworksExecution_getDuration(
     const ANeuralNetworksExecution* execution, int32_t durationCode,
     uint64_t* duration) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_46(mht_46_v, 1461, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksExecution_getDuration");
+
   LOAD_FUNCTION(ANeuralNetworksExecution_getDuration);
   EXECUTE_FUNCTION_RETURN(execution, durationCode, duration);
 }
@@ -1168,6 +1481,10 @@ inline int ANeuralNetworksExecution_getDuration(
 inline int ANeuralNetworksDevice_getExtensionSupport(
     const ANeuralNetworksDevice* device, const char* extensionName,
     bool* isExtensionSupported) {
+   std::vector<std::string> mht_47_v;
+   mht_47_v.push_back("extensionName: \"" + (extensionName == nullptr ? std::string("nullptr") : std::string((char*)extensionName)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_47(mht_47_v, 1485, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksDevice_getExtensionSupport");
+
   LOAD_FUNCTION(ANeuralNetworksDevice_getExtensionSupport);
   EXECUTE_FUNCTION_RETURN(device, extensionName, isExtensionSupported);
 }
@@ -1189,6 +1506,10 @@ inline int ANeuralNetworksDevice_getExtensionSupport(
 inline int ANeuralNetworksModel_getExtensionOperandType(
     ANeuralNetworksModel* model, const char* extensionName,
     uint16_t operandCodeWithinExtension, int32_t* type) {
+   std::vector<std::string> mht_48_v;
+   mht_48_v.push_back("extensionName: \"" + (extensionName == nullptr ? std::string("nullptr") : std::string((char*)extensionName)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_48(mht_48_v, 1510, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksModel_getExtensionOperandType");
+
   LOAD_FUNCTION(ANeuralNetworksModel_getExtensionOperandType);
   EXECUTE_FUNCTION_RETURN(model, extensionName, operandCodeWithinExtension,
                           type);
@@ -1212,6 +1533,10 @@ inline int ANeuralNetworksModel_getExtensionOperandType(
 inline int ANeuralNetworksModel_getExtensionOperationType(
     ANeuralNetworksModel* model, const char* extensionName,
     uint16_t operationCodeWithinExtension, ANeuralNetworksOperationType* type) {
+   std::vector<std::string> mht_49_v;
+   mht_49_v.push_back("extensionName: \"" + (extensionName == nullptr ? std::string("nullptr") : std::string((char*)extensionName)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_49(mht_49_v, 1537, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksModel_getExtensionOperationType");
+
   LOAD_FUNCTION(ANeuralNetworksModel_getExtensionOperationType);
   EXECUTE_FUNCTION_RETURN(model, extensionName, operationCodeWithinExtension,
                           type);
@@ -1233,6 +1558,9 @@ inline int ANeuralNetworksModel_getExtensionOperationType(
 inline int ANeuralNetworksModel_setOperandExtensionData(
     ANeuralNetworksModel* model, int32_t index, const void* data,
     size_t length) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_50(mht_50_v, 1561, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksModel_setOperandExtensionData");
+
   LOAD_FUNCTION(ANeuralNetworksModel_setOperandExtensionData);
   EXECUTE_FUNCTION_RETURN(model, index, data, length);
 }
@@ -1260,6 +1588,9 @@ inline int ANeuralNetworksModel_setOperandExtensionData(
  * @return ANEURALNETWORKS_NO_ERROR if successful.
  */
 inline int ANeuralNetworksMemoryDesc_create(ANeuralNetworksMemoryDesc** desc) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_51(mht_51_v, 1591, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksMemoryDesc_create");
+
   LOAD_FUNCTION(ANeuralNetworksMemoryDesc_create);
   EXECUTE_FUNCTION_RETURN(desc);
 }
@@ -1278,6 +1609,9 @@ inline int ANeuralNetworksMemoryDesc_create(ANeuralNetworksMemoryDesc** desc) {
  * and results in no operation.
  */
 inline void ANeuralNetworksMemoryDesc_free(ANeuralNetworksMemoryDesc* desc) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_52(mht_52_v, 1612, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksMemoryDesc_free");
+
   LOAD_FUNCTION(ANeuralNetworksMemoryDesc_free);
   EXECUTE_FUNCTION(desc);
 }
@@ -1332,6 +1666,9 @@ inline int ANeuralNetworksMemoryDesc_addOutputRole(
     ANeuralNetworksMemoryDesc* desc,
     const ANeuralNetworksCompilation* compilation, int32_t index,
     float frequency) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_53(mht_53_v, 1669, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksMemoryDesc_addOutputRole");
+
   LOAD_FUNCTION(ANeuralNetworksMemoryDesc_addOutputRole);
   EXECUTE_FUNCTION_RETURN(desc, compilation, index, frequency);
 }
@@ -1386,6 +1723,9 @@ inline int ANeuralNetworksMemoryDesc_addInputRole(
     ANeuralNetworksMemoryDesc* desc,
     const ANeuralNetworksCompilation* compilation, uint32_t index,
     float frequency) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_54(mht_54_v, 1726, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksMemoryDesc_addInputRole");
+
   LOAD_FUNCTION(ANeuralNetworksMemoryDesc_addInputRole);
   EXECUTE_FUNCTION_RETURN(desc, compilation, index, frequency);
 }
@@ -1419,6 +1759,9 @@ inline int ANeuralNetworksMemoryDesc_addInputRole(
 inline int ANeuralNetworksMemoryDesc_setDimensions(
     ANeuralNetworksMemoryDesc* desc, uint32_t rank,
     const uint32_t* dimensions) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_55(mht_55_v, 1762, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksMemoryDesc_setDimensions");
+
   LOAD_FUNCTION(ANeuralNetworksMemoryDesc_setDimensions);
   EXECUTE_FUNCTION_RETURN(desc, rank, dimensions);
 }
@@ -1439,6 +1782,9 @@ inline int ANeuralNetworksMemoryDesc_setDimensions(
  * @return ANEURALNETWORKS_NO_ERROR if successful.
  */
 inline int ANeuralNetworksMemoryDesc_finish(ANeuralNetworksMemoryDesc* desc) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_56(mht_56_v, 1785, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksMemoryDesc_finish");
+
   LOAD_FUNCTION(ANeuralNetworksMemoryDesc_finish);
   EXECUTE_FUNCTION_RETURN(desc);
 }
@@ -1508,6 +1854,9 @@ inline int ANeuralNetworksMemoryDesc_finish(ANeuralNetworksMemoryDesc* desc) {
  */
 inline int ANeuralNetworksMemory_createFromDesc(
     const ANeuralNetworksMemoryDesc* desc, ANeuralNetworksMemory** memory) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_57(mht_57_v, 1857, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksMemory_createFromDesc");
+
   LOAD_FUNCTION(ANeuralNetworksMemory_createFromDesc);
   EXECUTE_FUNCTION_RETURN(desc, memory);
 }
@@ -1558,6 +1907,9 @@ inline int ANeuralNetworksMemory_createFromDesc(
  */
 inline int ANeuralNetworksMemory_copy(const ANeuralNetworksMemory* src,
                                       const ANeuralNetworksMemory* dst) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_58(mht_58_v, 1910, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksMemory_copy");
+
   LOAD_FUNCTION(ANeuralNetworksMemory_copy);
   EXECUTE_FUNCTION_RETURN(src, dst);
 }
@@ -1578,6 +1930,9 @@ inline int ANeuralNetworksMemory_copy(const ANeuralNetworksMemory* src,
  */
 inline int ANeuralNetworksEvent_createFromSyncFenceFd(
     int sync_fence_fd, ANeuralNetworksEvent** event) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_59(mht_59_v, 1933, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksEvent_createFromSyncFenceFd");
+
   LOAD_FUNCTION(ANeuralNetworksEvent_createFromSyncFenceFd);
   EXECUTE_FUNCTION_RETURN(sync_fence_fd, event);
 }
@@ -1605,6 +1960,9 @@ inline int ANeuralNetworksEvent_createFromSyncFenceFd(
  */
 inline int ANeuralNetworksEvent_getSyncFenceFd(
     const ANeuralNetworksEvent* event, int* sync_fence_fd) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_60(mht_60_v, 1963, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksEvent_getSyncFenceFd");
+
   LOAD_FUNCTION(ANeuralNetworksEvent_getSyncFenceFd);
   EXECUTE_FUNCTION_RETURN(event, sync_fence_fd);
 }
@@ -1688,6 +2046,9 @@ inline int ANeuralNetworksExecution_startComputeWithDependencies(
     ANeuralNetworksExecution* execution,
     const ANeuralNetworksEvent* const* dependencies, uint32_t num_dependencies,
     uint64_t duration, ANeuralNetworksEvent** event) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_61(mht_61_v, 2049, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksExecution_startComputeWithDependencies");
+
   LOAD_FUNCTION(ANeuralNetworksExecution_startComputeWithDependencies);
   EXECUTE_FUNCTION_RETURN(execution, dependencies, num_dependencies, duration,
                           event);
@@ -1736,6 +2097,9 @@ inline int ANeuralNetworksExecution_startComputeWithDependencies(
  */
 inline int ANeuralNetworksExecution_enableInputAndOutputPadding(
     ANeuralNetworksExecution* execution, bool enable) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_62(mht_62_v, 2100, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksExecution_enableInputAndOutputPadding");
+
   LOAD_FUNCTION(ANeuralNetworksExecution_enableInputAndOutputPadding);
   EXECUTE_FUNCTION_RETURN(execution, enable);
 }
@@ -1772,6 +2136,9 @@ inline int ANeuralNetworksExecution_enableInputAndOutputPadding(
  */
 inline int ANeuralNetworksExecution_setReusable(
     ANeuralNetworksExecution* execution, bool reusable) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPSlitePSnnapiPSNeuralNetworksShimDTh mht_63(mht_63_v, 2139, "", "./tensorflow/lite/nnapi/NeuralNetworksShim.h", "ANeuralNetworksExecution_setReusable");
+
   LOAD_FUNCTION(ANeuralNetworksExecution_setReusable);
   EXECUTE_FUNCTION_RETURN(execution, reusable);
 }

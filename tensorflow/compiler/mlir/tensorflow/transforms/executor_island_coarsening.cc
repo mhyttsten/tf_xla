@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSexecutor_island_coarseningDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSexecutor_island_coarseningDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSexecutor_island_coarseningDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,6 +220,9 @@ namespace {
 struct MergedIsland {
   // Construct a new island from the given root.
   explicit MergedIsland(IslandOp root) : insert_point(root) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSexecutor_island_coarseningDTcc mht_0(mht_0_v, 223, "", "./tensorflow/compiler/mlir/tensorflow/transforms/executor_island_coarsening.cc", "MergedIsland");
+
     islands.push_back(root);
   }
 
@@ -94,6 +265,9 @@ class CoarseningAnalysis {
   GetMergableIslands() const {
     function_ref<bool(const MergedIsland&)> filter_fn =
         [](const MergedIsland& merged_island) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSexecutor_island_coarseningDTcc mht_1(mht_1_v, 268, "", "./tensorflow/compiler/mlir/tensorflow/transforms/executor_island_coarsening.cc", "lambda");
+
           return merged_island.islands.size() > 1;
         };
     return llvm::make_filter_range(merged_islands_, filter_fn);
@@ -120,6 +294,9 @@ class CoarseningAnalysis {
 };
 
 CoarseningAnalysis::CoarseningAnalysis(GraphOp graph) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSexecutor_island_coarseningDTcc mht_2(mht_2_v, 297, "", "./tensorflow/compiler/mlir/tensorflow/transforms/executor_island_coarsening.cc", "CoarseningAnalysis::CoarseningAnalysis");
+
   // As an initial step, construct a merged island for each island in the
   // graph.
   for (IslandOp island : graph.getBody()->getOps<IslandOp>())
@@ -137,6 +314,9 @@ CoarseningAnalysis::CoarseningAnalysis(GraphOp graph) {
   auto merge_islands = [&](MergedIsland& old_merged_island,
                            MergedIsland& new_merged_island,
                            bool merge_in_front) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSexecutor_island_coarseningDTcc mht_3(mht_3_v, 317, "", "./tensorflow/compiler/mlir/tensorflow/transforms/executor_island_coarsening.cc", "lambda");
+
     for (IslandOp island : old_merged_island.islands)
       island_to_merged_island_[island] = &new_merged_island;
 
@@ -182,6 +362,9 @@ CoarseningAnalysis::CoarseningAnalysis(GraphOp graph) {
 
 MergedIsland* CoarseningAnalysis::GetOperandCandidateToMergeWith(
     GraphOp graph, MergedIsland& merged_island) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSexecutor_island_coarseningDTcc mht_4(mht_4_v, 365, "", "./tensorflow/compiler/mlir/tensorflow/transforms/executor_island_coarsening.cc", "CoarseningAnalysis::GetOperandCandidateToMergeWith");
+
   // The candidate operation to consider merging the current island group with.
   Operation* candidate = nullptr;
   // The island group of the current candidate if it is an IslandOp, nullptr
@@ -191,6 +374,9 @@ MergedIsland* CoarseningAnalysis::GetOperandCandidateToMergeWith(
   // Given an input operation, try to replace the current candidate operation
   // with it.
   auto try_update_current_candidate = [&](Operation* rhs) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSexecutor_island_coarseningDTcc mht_5(mht_5_v, 377, "", "./tensorflow/compiler/mlir/tensorflow/transforms/executor_island_coarsening.cc", "lambda");
+
     MergedIsland* rhs_island = nullptr;
     // Check if this is an island operation we can merge with.
     auto rhs_it = island_to_merged_island_.find(rhs);
@@ -232,6 +418,9 @@ MergedIsland* CoarseningAnalysis::GetOperandCandidateToMergeWith(
 
 MergedIsland* CoarseningAnalysis::GetResultCandidateToMergeWith(
     GraphOp graph, MergedIsland& merged_island) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSexecutor_island_coarseningDTcc mht_6(mht_6_v, 421, "", "./tensorflow/compiler/mlir/tensorflow/transforms/executor_island_coarsening.cc", "CoarseningAnalysis::GetResultCandidateToMergeWith");
+
   // The candidate operation to consider merging the current island group with.
   Operation* candidate = nullptr;
   // The island group of the current candidate if it is an IslandOp, nullptr
@@ -241,6 +430,9 @@ MergedIsland* CoarseningAnalysis::GetResultCandidateToMergeWith(
   // Given an input operation, try to replace the current candidate operation
   // with it.
   auto try_update_current_candidate = [&](Operation* rhs) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSexecutor_island_coarseningDTcc mht_7(mht_7_v, 433, "", "./tensorflow/compiler/mlir/tensorflow/transforms/executor_island_coarsening.cc", "lambda");
+
     MergedIsland* rhs_island = nullptr;
 
     // Check if this is an island operation we can merge with.
@@ -288,7 +480,10 @@ MergedIsland* CoarseningAnalysis::GetResultCandidateToMergeWith(
 // inner op result.
 struct IslandResult {
   IslandResult(Value inner_op_result, Value island_result)
-      : inner_op_result(inner_op_result), island_result(island_result) {}
+      : inner_op_result(inner_op_result), island_result(island_result) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSexecutor_island_coarseningDTcc mht_8(mht_8_v, 484, "", "./tensorflow/compiler/mlir/tensorflow/transforms/executor_island_coarsening.cc", "IslandResult");
+}
 
   Value inner_op_result;
   Value island_result;
@@ -311,6 +506,9 @@ struct IslandOperandsAndResults {
 void GetNewIslandResultsAndForwardResults(
     const MergedIsland& merged_island,
     llvm::SmallVector<IslandResult>& results) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSexecutor_island_coarseningDTcc mht_9(mht_9_v, 509, "", "./tensorflow/compiler/mlir/tensorflow/transforms/executor_island_coarsening.cc", "GetNewIslandResultsAndForwardResults");
+
   results.clear();
 
   // Collect all of the blocks within each of the island operations, these will
@@ -344,6 +542,9 @@ void GetNewIslandResultsAndForwardResults(
 IslandOp CreateNewIsland(const MergedIsland& merged_island,
                          llvm::ArrayRef<Value> operands,
                          llvm::ArrayRef<IslandResult> results) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSexecutor_island_coarseningDTcc mht_10(mht_10_v, 545, "", "./tensorflow/compiler/mlir/tensorflow/transforms/executor_island_coarsening.cc", "CreateNewIsland");
+
   // Collect types from results.
   llvm::SmallVector<Type, 8> result_types;
   result_types.reserve(results.size());
@@ -364,6 +565,9 @@ IslandOp CreateNewIsland(const MergedIsland& merged_island,
 // Creates respective YieldOp for the new merged island.
 YieldOp CreateNewIslandYieldOp(IslandOp new_island,
                                llvm::ArrayRef<IslandResult> results) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSexecutor_island_coarseningDTcc mht_11(mht_11_v, 568, "", "./tensorflow/compiler/mlir/tensorflow/transforms/executor_island_coarsening.cc", "CreateNewIslandYieldOp");
+
   llvm::SmallVector<Value, 8> yield_operands;
   yield_operands.reserve(results.size());
 
@@ -386,9 +590,15 @@ YieldOp CreateNewIslandYieldOp(IslandOp new_island,
 // the new merged island.
 void MoveInnerOpsToNewIsland(const MergedIsland& merged_island,
                              Operation* new_yield_op) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSexecutor_island_coarseningDTcc mht_12(mht_12_v, 593, "", "./tensorflow/compiler/mlir/tensorflow/transforms/executor_island_coarsening.cc", "MoveInnerOpsToNewIsland");
+
   Block* block = new_yield_op->getBlock();
 
   auto move_inner_ops = [block, new_yield_op](IslandOp island) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSexecutor_island_coarseningDTcc mht_13(mht_13_v, 599, "", "./tensorflow/compiler/mlir/tensorflow/transforms/executor_island_coarsening.cc", "lambda");
+
     auto& island_body = island.GetBody().getOperations();
     block->getOperations().splice(new_yield_op->getIterator(), island_body,
                                   island_body.begin(),
@@ -402,6 +612,9 @@ void MoveInnerOpsToNewIsland(const MergedIsland& merged_island,
 // of this function.
 void MergeIslands(const MergedIsland& merged_island,
                   IslandOperandsAndResults& island_operands_and_results) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSexecutor_island_coarseningDTcc mht_14(mht_14_v, 615, "", "./tensorflow/compiler/mlir/tensorflow/transforms/executor_island_coarsening.cc", "MergeIslands");
+
   // Collect operands for the new merged island.
   island_operands_and_results.operands.clear();
   for (IslandOp island : merged_island.islands)
@@ -438,6 +651,9 @@ void MergeIslands(const MergedIsland& merged_island,
 // This allows our def-use based island coarsening algorithm to merge
 // islands that independently feed into a fetch.
 void InsertDummyIslandForFetch(FetchOp fetch) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSexecutor_island_coarseningDTcc mht_15(mht_15_v, 654, "", "./tensorflow/compiler/mlir/tensorflow/transforms/executor_island_coarsening.cc", "InsertDummyIslandForFetch");
+
   llvm::SmallVector<Value, 4> data_fetches;
   llvm::SmallVector<Type, 4> data_types;
   llvm::SmallVector<Value, 4> control_fetches;
@@ -484,6 +700,9 @@ struct ExecutorIslandCoarseningPass
 };
 
 void ExecutorIslandCoarseningPass::runOnOperation() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSexecutor_island_coarseningDTcc mht_16(mht_16_v, 703, "", "./tensorflow/compiler/mlir/tensorflow/transforms/executor_island_coarsening.cc", "ExecutorIslandCoarseningPass::runOnOperation");
+
   // Temporary datastructure to keep operands and results for each island.
   // We define it here to grow and reuse the storage for the duration of the
   // pass.

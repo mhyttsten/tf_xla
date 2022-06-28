@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -77,6 +245,9 @@ struct Endpoint {
 
   // Returns the string name represents this endpoint.
   string name() const {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_0(mht_0_v, 248, "", "./tensorflow/core/common_runtime/function.cc", "name");
+
     if (index == 0) {
       return node->name();
     } else {
@@ -84,7 +255,10 @@ struct Endpoint {
     }
   }
 
-  DataType dtype() const { return node->output_type(index); }
+  DataType dtype() const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_1(mht_1_v, 259, "", "./tensorflow/core/common_runtime/function.cc", "dtype");
+ return node->output_type(index); }
 };
 
 struct EndpointHash {
@@ -103,6 +277,9 @@ struct EndpointEq {
 // The following Add* routines are used to add a few graph nodes while
 // functions are transformed.
 static Node* AddArg(Graph* g, DataType dtype, int index) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_2(mht_2_v, 280, "", "./tensorflow/core/common_runtime/function.cc", "AddArg");
+
   DCHECK_LT(0, dtype);
   DCHECK_LT(dtype, DT_FLOAT_REF);
   NodeDef ndef;
@@ -117,6 +294,9 @@ static Node* AddArg(Graph* g, DataType dtype, int index) {
 }
 
 static Node* AddRet(Graph* g, Endpoint input, int index) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_3(mht_3_v, 297, "", "./tensorflow/core/common_runtime/function.cc", "AddRet");
+
   DCHECK_LT(0, input.dtype());
   DCHECK_LT(input.dtype(), DT_FLOAT_REF);
   NodeDef ndef;
@@ -151,7 +331,10 @@ class FunctionLibraryRuntimeOverlay : public FunctionLibraryRuntime {
  public:
   FunctionLibraryRuntimeOverlay(FunctionLibraryRuntime* base_flr,
                                 const FunctionLibraryDefinition* lib_def)
-      : base_flr_(base_flr), lib_def_(lib_def) {}
+      : base_flr_(base_flr), lib_def_(lib_def) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_4(mht_4_v, 335, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeOverlay");
+}
   ~FunctionLibraryRuntimeOverlay() override;
 
   Status Instantiate(const string& function_name, AttrSlice attrs,
@@ -209,6 +392,10 @@ FunctionLibraryRuntimeOverlay::~FunctionLibraryRuntimeOverlay() = default;
 Status FunctionLibraryRuntimeOverlay::Instantiate(
     const string& function_name, AttrSlice attrs,
     const InstantiateOptions& options, Handle* handle) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("function_name: \"" + function_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_5(mht_5_v, 396, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeOverlay::Instantiate");
+
   // We automatically set the `lib_def` option for all instantiations, if the
   // caller doesn't set this option explicitly.
   if (!options.lib_def && lib_def_) {
@@ -221,15 +408,24 @@ Status FunctionLibraryRuntimeOverlay::Instantiate(
 }
 
 Status FunctionLibraryRuntimeOverlay::ReleaseHandle(Handle handle) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_6(mht_6_v, 411, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeOverlay::ReleaseHandle");
+
   return base_flr_->ReleaseHandle(handle);
 }
 
 const FunctionBody* FunctionLibraryRuntimeOverlay::GetFunctionBody(Handle h) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_7(mht_7_v, 418, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeOverlay::GetFunctionBody");
+
   return base_flr_->GetFunctionBody(h);
 }
 
 Status FunctionLibraryRuntimeOverlay::GetRetTypes(Handle h,
                                                   DataTypeVector* ret_types) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_8(mht_8_v, 426, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeOverlay::GetRetTypes");
+
   return base_flr_->GetRetTypes(h, ret_types);
 }
 
@@ -237,28 +433,43 @@ void FunctionLibraryRuntimeOverlay::Run(const Options& opts, Handle handle,
                                         gtl::ArraySlice<Tensor> args,
                                         std::vector<Tensor>* rets,
                                         DoneCallback done) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_9(mht_9_v, 436, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeOverlay::Run");
+
   base_flr_->Run(opts, handle, args, rets, std::move(done));
 }
 
 void FunctionLibraryRuntimeOverlay::Run(const Options& opts, Handle handle,
                                         CallFrameInterface* call_frame,
                                         DoneCallback done) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_10(mht_10_v, 445, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeOverlay::Run");
+
   base_flr_->Run(opts, handle, call_frame, std::move(done));
 }
 
 Status FunctionLibraryRuntimeOverlay::RunSync(Options opts, Handle handle,
                                               gtl::ArraySlice<Tensor> args,
                                               std::vector<Tensor>* rets) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_11(mht_11_v, 454, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeOverlay::RunSync");
+
   return base_flr_->RunSync(std::move(opts), handle, args, rets);
 }
 
 Status FunctionLibraryRuntimeOverlay::RunSync(Options opts, Handle handle,
                                               CallFrameInterface* call_frame) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_12(mht_12_v, 462, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeOverlay::RunSync");
+
   return base_flr_->RunSync(std::move(opts), handle, call_frame);
 }
 
 Status FunctionLibraryRuntimeOverlay::CreateKernel(
     const std::shared_ptr<const NodeProperties>&, OpKernel**) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_13(mht_13_v, 470, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeOverlay::CreateKernel");
+
   // We don't have access to base_lib_def_ in base function library runtime (aka
   // FunctionLibraryRuntimeImpl), so to make sure we do not create a kernel with
   // the wrong lib_def we just disable creation of new kernels through overlays.
@@ -272,21 +483,37 @@ Status FunctionLibraryRuntimeOverlay::CreateKernel(
 
 bool FunctionLibraryRuntimeOverlay::IsStateful(
     const string& function_name) const {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("function_name: \"" + function_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_14(mht_14_v, 487, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeOverlay::IsStateful");
+
   // Important: we do not forward lookup to the base FLR.
   const OpDef* op_def;
   const Status s = lib_def_->LookUpOpDef(function_name, &op_def);
   return s.ok() && op_def->is_stateful();
 }
 
-Env* FunctionLibraryRuntimeOverlay::env() { return base_flr_->env(); }
+Env* FunctionLibraryRuntimeOverlay::env() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_15(mht_15_v, 497, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeOverlay::env");
+ return base_flr_->env(); }
 
 const ConfigProto* const FunctionLibraryRuntimeOverlay::config_proto() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_16(mht_16_v, 502, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeOverlay::config_proto");
+
   return base_flr_->config_proto();
 }
 
-Device* FunctionLibraryRuntimeOverlay::device() { return base_flr_->device(); }
+Device* FunctionLibraryRuntimeOverlay::device() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_17(mht_17_v, 509, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeOverlay::device");
+ return base_flr_->device(); }
 
 const Device* FunctionLibraryRuntimeOverlay::device() const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_18(mht_18_v, 514, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeOverlay::device");
+
   return base_flr_->device();
 }
 
@@ -296,19 +523,31 @@ FunctionLibraryRuntimeOverlay::runner() {
 }
 
 const DeviceMgr* FunctionLibraryRuntimeOverlay::device_mgr() const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_19(mht_19_v, 526, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeOverlay::device_mgr");
+
   return base_flr_->device_mgr();
 }
 
 const FunctionLibraryDefinition*
 FunctionLibraryRuntimeOverlay::GetFunctionLibraryDefinition() const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_20(mht_20_v, 534, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeOverlay::GetFunctionLibraryDefinition");
+
   return lib_def_ ? lib_def_ : base_flr_->GetFunctionLibraryDefinition();
 }
 
 string FunctionLibraryRuntimeOverlay::DebugString(Handle handle) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_21(mht_21_v, 541, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeOverlay::DebugString");
+
   return base_flr_->DebugString(handle);
 }
 
 int FunctionLibraryRuntimeOverlay::graph_def_version() const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_22(mht_22_v, 548, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeOverlay::graph_def_version");
+
   return base_flr_->graph_def_version();
 }
 
@@ -316,6 +555,9 @@ Status FunctionLibraryRuntimeOverlay::Clone(
     std::unique_ptr<FunctionLibraryDefinition>* out_lib_def,
     std::unique_ptr<ProcessFunctionLibraryRuntime>* out_pflr,
     FunctionLibraryRuntime** out_flr, bool skip_flib_def) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_23(mht_23_v, 558, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeOverlay::Clone");
+
   // NOTE(ezhulenev): The cloned FunctionLibraryRuntime will be missing the
   // FunctionLibraryDefinition override, but that's ok because we anyway do not
   // copy / clone instantiated items from the base FLR.
@@ -361,20 +603,41 @@ class FunctionLibraryRuntimeImpl : public FunctionLibraryRuntime {
 
   const FunctionLibraryDefinition* GetFunctionLibraryDefinition()
       const override {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_24(mht_24_v, 606, "", "./tensorflow/core/common_runtime/function.cc", "GetFunctionLibraryDefinition");
+
     return base_lib_def_;
   }
 
-  Device* device() override { return device_; }
-  const Device* device() const override { return device_; }
+  Device* device() override {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_25(mht_25_v, 613, "", "./tensorflow/core/common_runtime/function.cc", "device");
+ return device_; }
+  const Device* device() const override {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_26(mht_26_v, 617, "", "./tensorflow/core/common_runtime/function.cc", "device");
+ return device_; }
 
   std::function<void(std::function<void()>)>* runner() override {
     return &default_runner_;
   }
 
-  const DeviceMgr* device_mgr() const override { return device_mgr_; }
-  Env* env() override { return env_; }
-  const ConfigProto* const config_proto() override { return config_; }
-  int graph_def_version() const override { return graph_def_version_; }
+  const DeviceMgr* device_mgr() const override {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_27(mht_27_v, 626, "", "./tensorflow/core/common_runtime/function.cc", "device_mgr");
+ return device_mgr_; }
+  Env* env() override {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_28(mht_28_v, 630, "", "./tensorflow/core/common_runtime/function.cc", "env");
+ return env_; }
+  const ConfigProto* const config_proto() override {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_29(mht_29_v, 634, "", "./tensorflow/core/common_runtime/function.cc", "config_proto");
+ return config_; }
+  int graph_def_version() const override {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_30(mht_30_v, 638, "", "./tensorflow/core/common_runtime/function.cc", "graph_def_version");
+ return graph_def_version_; }
 
   string DebugString(Handle h) override;
 
@@ -420,6 +683,9 @@ class FunctionLibraryRuntimeImpl : public FunctionLibraryRuntime {
     bool allow_control_flow_sync_execution = false;
 
     ~Item() {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_31(mht_31_v, 686, "", "./tensorflow/core/common_runtime/function.cc", "~Item");
+
       delete this->func_graph;
       delete this->exec;
       delete this->overlay_flr;
@@ -487,11 +753,21 @@ FunctionLibraryRuntimeImpl::FunctionLibraryRuntimeImpl(
              absl::flat_hash_map<Handle, std::unique_ptr<Item>>>()),
       function_handle_cache_(absl::make_unique<FunctionHandleCache>(this)),
       parent_(parent) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_32(mht_32_v, 756, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeImpl::FunctionLibraryRuntimeImpl");
+
   get_func_sig_ = [this](const string& op, const OpDef** sig) {
+   std::vector<std::string> mht_33_v;
+   mht_33_v.push_back("op: \"" + op + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_33(mht_33_v, 761, "", "./tensorflow/core/common_runtime/function.cc", "lambda");
+
     return base_lib_def_->LookUpOpDef(op, sig);
   };
   create_kernel_ = [this](const std::shared_ptr<const NodeProperties>& props,
                           OpKernel** kernel) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_34(mht_34_v, 768, "", "./tensorflow/core/common_runtime/function.cc", "lambda");
+
     return CreateKernel(props, kernel);
   };
   thread::ThreadPool* pool = nullptr;
@@ -503,12 +779,18 @@ FunctionLibraryRuntimeImpl::FunctionLibraryRuntimeImpl(
   }
   if (pool != nullptr) {
     default_runner_ = [pool](Executor::Args::Closure c) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_35(mht_35_v, 782, "", "./tensorflow/core/common_runtime/function.cc", "lambda");
+
       pool->Schedule(std::move(c));
     };
   }
 }
 
 FunctionLibraryRuntimeImpl::~FunctionLibraryRuntimeImpl() {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_36(mht_36_v, 791, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeImpl::~FunctionLibraryRuntimeImpl");
+
   // Deleting the items_ list will delete all the function handles registered in
   // this object. A function may contains a few sub-functions which have also
   // been registered in this object. Deleting the parent function will call
@@ -524,13 +806,22 @@ FunctionLibraryRuntimeImpl::~FunctionLibraryRuntimeImpl() {
 class CallOp : public AsyncOpKernel {
  public:
   CallOp(FunctionLibraryRuntime::Handle handle, OpKernelConstruction* ctx)
-      : AsyncOpKernel(ctx), handle_(handle) {}
+      : AsyncOpKernel(ctx), handle_(handle) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_37(mht_37_v, 810, "", "./tensorflow/core/common_runtime/function.cc", "CallOp");
+}
 
   ~CallOp() override {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_38(mht_38_v, 815, "", "./tensorflow/core/common_runtime/function.cc", "~CallOp");
+
     // TODO(iga): Release the cached handle_
   }
 
   void ComputeAsync(OpKernelContext* ctx, DoneCallback done) override {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_39(mht_39_v, 822, "", "./tensorflow/core/common_runtime/function.cc", "ComputeAsync");
+
     FunctionLibraryRuntime* lib = ctx->function_library();
     OP_REQUIRES_ASYNC(ctx, lib != nullptr,
                       errors::Internal("No function library is provided."),
@@ -579,6 +870,9 @@ class CallOp : public AsyncOpKernel {
 };
 
 const FunctionBody* FunctionLibraryRuntimeImpl::GetFunctionBody(Handle h) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_40(mht_40_v, 873, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeImpl::GetFunctionBody");
+
   LocalHandle local_handle = parent_->GetHandleOnDevice(device_name_, h);
   if (local_handle == kInvalidLocalHandle) {
     LOG(ERROR) << "Could not find Handle: " << h
@@ -594,6 +888,9 @@ const FunctionBody* FunctionLibraryRuntimeImpl::GetFunctionBody(Handle h) {
 
 Status FunctionLibraryRuntimeImpl::GetRetTypes(Handle h,
                                                DataTypeVector* ret_types) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_41(mht_41_v, 891, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeImpl::GetRetTypes");
+
   if (parent_->IsMultiDevice(h)) {
     return parent_->GetRetTypes(h, ret_types);
   }
@@ -608,12 +905,18 @@ Status FunctionLibraryRuntimeImpl::GetRetTypes(Handle h,
 
 Status FunctionLibraryRuntimeImpl::CreateKernel(
     const std::shared_ptr<const NodeProperties>& props, OpKernel** kernel) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_42(mht_42_v, 908, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeImpl::CreateKernel");
+
   return CreateKernel(props, this, kernel);
 }
 
 Status FunctionLibraryRuntimeImpl::CreateKernel(
     const std::shared_ptr<const NodeProperties>& props,
     FunctionLibraryRuntime* flr, OpKernel** kernel) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_43(mht_43_v, 917, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeImpl::CreateKernel");
+
   // If a custom kernel creator is given, try that.
   Status s;
   const CustomKernelCreator* custom_kernel_creator =
@@ -684,10 +987,17 @@ Status FunctionLibraryRuntimeImpl::FunctionDefToBody(
     const FunctionDef& fdef, AttrSlice attrs,
     const FunctionLibraryDefinition* lib_def,
     std::unique_ptr<FunctionBody>* fbody) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_44(mht_44_v, 990, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeImpl::FunctionDefToBody");
+
   if (lib_def == base_lib_def_) {
     return FunctionDefToBodyHelper(fdef, attrs, lib_def, get_func_sig_, fbody);
   } else {
     auto get_func_sig = [lib_def](const string& op, const OpDef** sig) {
+   std::vector<std::string> mht_45_v;
+   mht_45_v.push_back("op: \"" + op + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_45(mht_45_v, 998, "", "./tensorflow/core/common_runtime/function.cc", "lambda");
+
       return lib_def->LookUpOpDef(op, sig);
     };
     return FunctionDefToBodyHelper(fdef, attrs, lib_def, get_func_sig, fbody);
@@ -697,6 +1007,9 @@ Status FunctionLibraryRuntimeImpl::FunctionDefToBody(
 Status FunctionLibraryRuntimeImpl::InstantiateSymbolicGradient(
     const NameAttrList& func, const FunctionLibraryDefinition* lib_def,
     std::unique_ptr<FunctionBody>* g_body) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_46(mht_46_v, 1010, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeImpl::InstantiateSymbolicGradient");
+
   const FunctionDef* fdef = lib_def->Find(func.name());
   if (fdef == nullptr) {
     // f is a primitive op.
@@ -730,6 +1043,9 @@ Status FunctionLibraryRuntimeImpl::InstantiateSymbolicGradient(
 
 bool FunctionLibraryRuntimeImpl::IsLocalTarget(
     const InstantiateOptions& options) const {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_47(mht_47_v, 1046, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeImpl::IsLocalTarget");
+
   if (device_ == nullptr) return true;
   if (options.target.empty()) return true;
   if (options.is_multi_device_function) return false;
@@ -751,6 +1067,10 @@ bool FunctionLibraryRuntimeImpl::IsLocalTarget(
 Status FunctionLibraryRuntimeImpl::Instantiate(
     const string& function_name, AttrSlice attrs,
     const InstantiateOptions& options, Handle* handle) {
+   std::vector<std::string> mht_48_v;
+   mht_48_v.push_back("function_name: \"" + function_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_48(mht_48_v, 1071, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeImpl::Instantiate");
+
   if (!IsLocalTarget(options)) {
     return parent_->Instantiate(function_name, attrs, options, handle);
   }
@@ -849,6 +1169,9 @@ Status FunctionLibraryRuntimeImpl::Instantiate(
 }
 
 Status FunctionLibraryRuntimeImpl::ReleaseHandle(Handle handle) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_49(mht_49_v, 1172, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeImpl::ReleaseHandle");
+
   LocalHandle h = parent_->GetHandleOnDevice(device_name_, handle);
   if (h == kInvalidLocalHandle) {
     return parent_->ReleaseHandle(handle);
@@ -896,6 +1219,9 @@ namespace {
 // stateful ops, graph should encode nodes that must execute with `control_ret`
 // and `control_output`.
 void PruneFunctionBody(const FunctionDef& fdef, Graph* g) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_50(mht_50_v, 1222, "", "./tensorflow/core/common_runtime/function.cc", "PruneFunctionBody");
+
   VLOG(2) << "Pruning function body: function_name=" << fdef.signature().name();
 
   // `control_ret` nodes must be always executed.
@@ -928,6 +1254,9 @@ void PruneFunctionBody(const FunctionDef& fdef, Graph* g) {
 }  // namespace
 
 Status FunctionLibraryRuntimeImpl::CreateItem(Item** item) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_51(mht_51_v, 1257, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeImpl::CreateItem");
+
   const FunctionBody* fbody;
   FunctionLibraryRuntime* flr;
   string executor_type;
@@ -962,10 +1291,16 @@ Status FunctionLibraryRuntimeImpl::CreateItem(Item** item) {
     params.create_kernel =
         [this, flr](const std::shared_ptr<const NodeProperties>& props,
                     OpKernel** kernel) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_52(mht_52_v, 1294, "", "./tensorflow/core/common_runtime/function.cc", "lambda");
+
           return CreateKernel(props, flr, kernel);
         };
   }
   params.delete_kernel = [](OpKernel* kernel) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_53(mht_53_v, 1301, "", "./tensorflow/core/common_runtime/function.cc", "lambda");
+
     DeleteNonCachedKernel(kernel);
   };
   params.session_metadata = session_metadata_;
@@ -996,6 +1331,9 @@ Status FunctionLibraryRuntimeImpl::CreateItem(Item** item) {
 
 Status FunctionLibraryRuntimeImpl::GetOrCreateItem(LocalHandle local_handle,
                                                    Item** item) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_54(mht_54_v, 1334, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeImpl::GetOrCreateItem");
+
   {
     tf_shared_lock l(mu_);
     auto iter = items_->find(local_handle);
@@ -1016,6 +1354,9 @@ Status FunctionLibraryRuntimeImpl::GetOrCreateItem(LocalHandle local_handle,
 void FunctionLibraryRuntimeImpl::ExecutorArgsFromOptions(
     const FunctionLibraryRuntime::Options& run_opts, CallFrameInterface* frame,
     Executor::Args* exec_args) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_55(mht_55_v, 1357, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeImpl::ExecutorArgsFromOptions");
+
   // Inherit the step_id from the caller.
   exec_args->step_id = run_opts.step_id;
   exec_args->rendezvous = run_opts.rendezvous;
@@ -1039,6 +1380,9 @@ void FunctionLibraryRuntimeImpl::RunRemote(const Options& opts, Handle handle,
                                            gtl::ArraySlice<Tensor> args,
                                            std::vector<Tensor>* rets,
                                            Item* item, DoneCallback done) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_56(mht_56_v, 1383, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeImpl::RunRemote");
+
   string target_device = parent_->GetDeviceName(handle);
   string source_device = opts.source_device;
   RendezvousInterface* rendezvous = opts.rendezvous;
@@ -1134,6 +1478,9 @@ void FunctionLibraryRuntimeImpl::Run(const Options& opts, Handle handle,
                                      gtl::ArraySlice<Tensor> args,
                                      std::vector<Tensor>* rets,
                                      DoneCallback done) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_57(mht_57_v, 1481, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeImpl::Run");
+
   if (opts.cancellation_manager && opts.cancellation_manager->IsCancelled()) {
     done(errors::Cancelled("Function was cancelled before it was started"));
     return;
@@ -1213,6 +1560,9 @@ void FunctionLibraryRuntimeImpl::Run(const Options& opts, Handle handle,
 void FunctionLibraryRuntimeImpl::Run(const Options& opts, Handle handle,
                                      CallFrameInterface* frame,
                                      DoneCallback done) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_58(mht_58_v, 1563, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeImpl::Run");
+
   if (opts.cancellation_manager && opts.cancellation_manager->IsCancelled()) {
     done(errors::Cancelled(""));
     return;
@@ -1273,6 +1623,9 @@ void FunctionLibraryRuntimeImpl::Run(const Options& opts, Handle handle,
 Status FunctionLibraryRuntimeImpl::PrepareRunSync(
     Handle handle, Options* run_opts, Item** out_item,
     std::unique_ptr<PrivateIntraProcessRendezvous>* out_rendezvous) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_59(mht_59_v, 1626, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeImpl::PrepareRunSync");
+
   if (run_opts->cancellation_manager &&
       run_opts->cancellation_manager->IsCancelled()) {
     return errors::Cancelled("");
@@ -1313,6 +1666,9 @@ Status FunctionLibraryRuntimeImpl::PrepareRunSync(
 Status FunctionLibraryRuntimeImpl::RunSync(Options opts, Handle handle,
                                            gtl::ArraySlice<Tensor> args,
                                            std::vector<Tensor>* rets) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_60(mht_60_v, 1669, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeImpl::RunSync");
+
   Item* item = nullptr;
   std::unique_ptr<PrivateIntraProcessRendezvous> rendezvous;
   TF_RETURN_IF_ERROR(PrepareRunSync(handle, &opts, &item, &rendezvous));
@@ -1332,6 +1688,9 @@ Status FunctionLibraryRuntimeImpl::RunSync(Options opts, Handle handle,
 
 Status FunctionLibraryRuntimeImpl::RunSync(Options opts, Handle handle,
                                            CallFrameInterface* call_frame) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_61(mht_61_v, 1691, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeImpl::RunSync");
+
   Item* item = nullptr;
   std::unique_ptr<PrivateIntraProcessRendezvous> rendezvous;
   TF_RETURN_IF_ERROR(PrepareRunSync(handle, &opts, &item, &rendezvous));
@@ -1345,12 +1704,19 @@ Status FunctionLibraryRuntimeImpl::RunSync(Options opts, Handle handle,
 }
 
 bool FunctionLibraryRuntimeImpl::IsStateful(const string& func) const {
+   std::vector<std::string> mht_62_v;
+   mht_62_v.push_back("func: \"" + func + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_62(mht_62_v, 1708, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeImpl::IsStateful");
+
   const OpDef* op_def;
   const Status s = base_lib_def_->LookUpOpDef(func, &op_def);
   return s.ok() && op_def->is_stateful();
 }
 
 string FunctionLibraryRuntimeImpl::DebugString(Handle handle) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_63(mht_63_v, 1717, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeImpl::DebugString");
+
   Item* item = nullptr;
   LocalHandle local_handle = parent_->GetHandleOnDevice(device_name_, handle);
   Status s = GetOrCreateItem(local_handle, &item);
@@ -1369,6 +1735,9 @@ Status FunctionLibraryRuntimeImpl::Clone(
     std::unique_ptr<FunctionLibraryDefinition>* out_lib_def,
     std::unique_ptr<ProcessFunctionLibraryRuntime>* out_pflr,
     FunctionLibraryRuntime** out_flr, bool skip_flib_def) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_64(mht_64_v, 1738, "", "./tensorflow/core/common_runtime/function.cc", "FunctionLibraryRuntimeImpl::Clone");
+
   TF_RETURN_IF_ERROR(parent_->Clone(env_, graph_def_version_,
                                     optimizer_.options(), out_lib_def, out_pflr,
                                     skip_flib_def));
@@ -1387,17 +1756,26 @@ struct CustomCreatorSingleton {
   std::unique_ptr<CustomKernelCreator> custom_creator = nullptr;
 
   void Set(CustomKernelCreator* cb) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_65(mht_65_v, 1759, "", "./tensorflow/core/common_runtime/function.cc", "Set");
+
     mutex_lock l(mu);
     custom_creator.reset(cb);
   }
 
   CustomKernelCreator* Get() {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_66(mht_66_v, 1767, "", "./tensorflow/core/common_runtime/function.cc", "Get");
+
     mutex_lock l(mu);
     return custom_creator.get();
   }
 };
 
 CustomCreatorSingleton* GetCustomCreatorSingleton() {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_67(mht_67_v, 1776, "", "./tensorflow/core/common_runtime/function.cc", "GetCustomCreatorSingleton");
+
   static CustomCreatorSingleton* ccs = new CustomCreatorSingleton;
   return ccs;
 }
@@ -1405,10 +1783,16 @@ CustomCreatorSingleton* GetCustomCreatorSingleton() {
 }  // namespace
 
 const CustomKernelCreator* GetDefaultCustomKernelCreator() {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_68(mht_68_v, 1786, "", "./tensorflow/core/common_runtime/function.cc", "GetDefaultCustomKernelCreator");
+
   return GetCustomCreatorSingleton()->Get();
 }
 
 void RegisterDefaultCustomKernelCreator(CustomKernelCreator* c) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_69(mht_69_v, 1793, "", "./tensorflow/core/common_runtime/function.cc", "RegisterDefaultCustomKernelCreator");
+
   GetCustomCreatorSingleton()->Set(c);
 }
 
@@ -1426,7 +1810,10 @@ std::unique_ptr<FunctionLibraryRuntime> NewFunctionLibraryRuntime(
 
 class SymbolicGradientHelper {
  public:
-  explicit SymbolicGradientHelper(const FunctionBody& f) : fbody_(&f) {}
+  explicit SymbolicGradientHelper(const FunctionBody& f) : fbody_(&f) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_70(mht_70_v, 1814, "", "./tensorflow/core/common_runtime/function.cc", "SymbolicGradientHelper");
+}
   ~SymbolicGradientHelper() = default;
 
   std::unique_ptr<FunctionBody> Compute();
@@ -1441,6 +1828,9 @@ class SymbolicGradientHelper {
 };
 
 void SymbolicGradientHelper::Copy(FunctionBody* gbody) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_71(mht_71_v, 1831, "", "./tensorflow/core/common_runtime/function.cc", "SymbolicGradientHelper::Copy");
+
   const Graph& src = *(fbody_->graph);
   gbody->graph = new Graph(src.op_registry());
   Graph* dst = gbody->graph;
@@ -1481,6 +1871,9 @@ void SymbolicGradientHelper::Copy(FunctionBody* gbody) {
 }
 
 std::unique_ptr<FunctionBody> SymbolicGradientHelper::Compute() {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunctionDTcc mht_72(mht_72_v, 1874, "", "./tensorflow/core/common_runtime/function.cc", "SymbolicGradientHelper::Compute");
+
   FunctionBody* gbody = new FunctionBody;
   Copy(gbody);  // copy fbody_ into gbody.
 

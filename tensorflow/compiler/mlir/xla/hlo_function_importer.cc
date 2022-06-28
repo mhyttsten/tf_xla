@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -67,6 +235,9 @@ constexpr char kShardingAttr[] = "mhlo.sharding";
 // direction. Longterm solution is to add a function attribute to maintain the
 // original HLO naming.
 std::string SanitizeFunctionName(llvm::StringRef name) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_0(mht_0_v, 238, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "SanitizeFunctionName");
+
   std::string output(name);
   llvm::for_each(output, [](char& x) { x = x == '-' ? '_' : x; });
   return output;
@@ -74,6 +245,9 @@ std::string SanitizeFunctionName(llvm::StringRef name) {
 
 // Returns whether the instruction is a default dot operation.
 bool DotIsDefault(const HloInstruction* instruction) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_1(mht_1_v, 248, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "DotIsDefault");
+
   const auto& operands = instruction->operands();
   // eg. vector[3] dot matrix[3, 2] => [2] not default dot
   if (operands[0]->shape().rank() < operands[1]->shape().rank()) {
@@ -91,6 +265,9 @@ bool DotIsDefault(const HloInstruction* instruction) {
 // metadata if present or instruction name.
 mlir::Location GenerateInstructionLocation(const HloInstruction* instruction,
                                            mlir::OpBuilder* func_builder) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_2(mht_2_v, 268, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "GenerateInstructionLocation");
+
   const std::string& op_name = instruction->metadata().op_name();
   if (op_name.empty()) {
     return mlir::NameLoc::get(func_builder->getStringAttr(instruction->name()));
@@ -114,6 +291,9 @@ mlir::Location GenerateInstructionLocation(const HloInstruction* instruction,
 // get-tuple-element can transitively make the defining TupleOp dead to be
 // removed subsequently.
 void CleanUpTupleOps(mlir::Block* block, mlir::OpBuilder* builder) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_3(mht_3_v, 294, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "CleanUpTupleOps");
+
   bool changed = true;
   llvm::SmallVector<Value> folded_results;
 
@@ -139,6 +319,9 @@ void CleanUpTupleOps(mlir::Block* block, mlir::OpBuilder* builder) {
 
 void HloFunctionImporter::ReplaceBlockArgumentsWithImplicitOperands(
     mlir::Operation* op, llvm::ArrayRef<mlir::Value> implicit_operands) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_4(mht_4_v, 322, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::ReplaceBlockArgumentsWithImplicitOperands");
+
   assert((mlir::dyn_cast<mlir::mhlo::IfOp>(*op) ||
           mlir::dyn_cast<mlir::mhlo::CaseOp>(*op)) &&
          "Unexpected mlir op in "
@@ -158,6 +341,9 @@ void HloFunctionImporter::ReplaceBlockArgumentsWithImplicitOperands(
 mlir::Operation* HloFunctionImporter::CreateTupleFromOpResults(
     mlir::OpBuilder* func_builder, mlir::Location loc, mlir::Operation* op,
     mlir::Type type) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_5(mht_5_v, 344, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::CreateTupleFromOpResults");
+
   if (!type.isa<mlir::TupleType>()) return op;
 
   llvm::SmallVector<Value> flattened_results = op->getResults();
@@ -171,6 +357,9 @@ mlir::Operation* HloFunctionImporter::CreateTupleFromOpResults(
 }
 
 static bool IsNestedTupleInData(Type type) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_6(mht_6_v, 360, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "IsNestedTupleInData");
+
   auto tuple_type = type.dyn_cast<mlir::TupleType>();
   if (!tuple_type) return false;
 
@@ -190,6 +379,9 @@ static bool IsNestedTupleInData(Type type) {
 
 void HloFunctionImporter::FlattenTupleType(
     Type type, llvm::SmallVectorImpl<Type>& flattened_types) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_7(mht_7_v, 382, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::FlattenTupleType");
+
   auto tuple_type = type.dyn_cast<mlir::TupleType>();
   if (!tuple_type) {
     flattened_types.push_back(type);
@@ -204,6 +396,9 @@ void HloFunctionImporter::FlattenTupleType(
 void HloFunctionImporter::FlattenTupleValue(
     mlir::OpBuilder* func_builder, mlir::Location loc, Value value,
     llvm::SmallVectorImpl<Value>& flattened_values) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_8(mht_8_v, 399, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::FlattenTupleValue");
+
   auto tuple_type = value.getType().dyn_cast<mlir::TupleType>();
   if (!tuple_type) {
     flattened_values.push_back(value);
@@ -221,6 +416,9 @@ void HloFunctionImporter::FlattenTupleValue(
 Value HloFunctionImporter::CreateTupleValue(
     mlir::OpBuilder* func_builder, mlir::Location loc,
     llvm::MutableArrayRef<Value>& flatten_values, Type type) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_9(mht_9_v, 419, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::CreateTupleValue");
+
   auto tuple_type = type.dyn_cast<mlir::TupleType>();
   if (!tuple_type) {
     assert(!flatten_values.empty());
@@ -242,6 +440,9 @@ Status HloFunctionImporter::ImportAsFunc(
     const HloComputation& computation, mlir::ModuleOp module,
     std::unordered_map<const HloComputation*, FuncOp>* function_map,
     mlir::Builder* builder) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_10(mht_10_v, 443, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::ImportAsFunc");
+
   HloFunctionImporter importer(module, function_map, builder);
   return importer.ImportAsFunc(computation).status();
 }
@@ -249,6 +450,9 @@ Status HloFunctionImporter::ImportAsFunc(
 Status HloFunctionImporter::ImportAsRegion(
     const xla::HloComputation& computation, mlir::Region* region,
     mlir::Builder* builder, bool flatten_region_arg_tuple) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_11(mht_11_v, 453, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::ImportAsRegion");
+
   HloFunctionImporter importer(region->getParentOfType<mlir::ModuleOp>(), {},
                                builder);
   return importer.ImportAsRegion(computation, region, flatten_region_arg_tuple);
@@ -256,6 +460,9 @@ Status HloFunctionImporter::ImportAsRegion(
 
 StatusOr<mlir::func::FuncOp> HloFunctionImporter::ImportAsFunc(
     const HloComputation& computation) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_12(mht_12_v, 463, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::ImportAsFunc");
+
   auto& imported = (*function_map_)[&computation];
   if (imported) return imported;
   llvm::SmallVector<Type, 4> args, rets;
@@ -290,6 +497,9 @@ StatusOr<mlir::func::FuncOp> HloFunctionImporter::ImportAsFunc(
 tensorflow::Status HloFunctionImporter::ImportAsRegion(
     const HloComputation& computation, mlir::Region* region,
     bool flatten_region_arg_tuple) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_13(mht_13_v, 500, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::ImportAsRegion");
+
   auto loc = region->getLoc();
   // TODO(hinsu): Store computation name as an attribute for round-trip.
   auto* block = new mlir::Block;
@@ -318,6 +528,9 @@ tensorflow::Status HloFunctionImporter::ImportAsRegion(
 StatusOr<Value> HloFunctionImporter::ImportInstructionsImpl(
     const xla::HloComputation& computation,
     const llvm::SmallVectorImpl<Value>& arguments, mlir::OpBuilder* builder) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_14(mht_14_v, 531, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::ImportInstructionsImpl");
+
   // Setup the input parameters.
   const int num_parameters = computation.num_parameters();
 
@@ -343,6 +556,9 @@ StatusOr<Value> HloFunctionImporter::ImportInstructionsImpl(
 Status HloFunctionImporter::ImportInstructions(
     const HloComputation& computation, mlir::Block* block,
     bool flatten_region_arg_tuple) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_15(mht_15_v, 559, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::ImportInstructions");
+
   llvm::SmallVector<Value, 4> arguments(block->args_begin(), block->args_end());
   mlir::OpBuilder builder = mlir::OpBuilder::atBlockEnd(block);
 
@@ -422,6 +638,9 @@ Status HloFunctionImporter::ImportInstructions(
 StatusOr<Value> HloFunctionImporter::ImportInstructions(
     const xla::HloComputation& computation,
     const llvm::SmallVectorImpl<Value>& arguments, mlir::OpBuilder* builder) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_16(mht_16_v, 641, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::ImportInstructions");
+
   mlir::Block* block = builder->getBlock();
   if (block == nullptr)
     return InvalidArgument(
@@ -436,6 +655,9 @@ StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstruction(
     const xla::HloInstruction* instr,
     const llvm::SmallVectorImpl<mlir::Value>& operands,
     mlir::OpBuilder* builder, DynamicShapeHandlingMode mode) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_17(mht_17_v, 658, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::ImportInstruction");
+
   mlir::Block* block = builder->getBlock();
   if (block == nullptr)
     return InvalidArgument(
@@ -451,6 +673,9 @@ StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
     const HloInstruction* instruction,
     const llvm::SmallVectorImpl<mlir::Value>& operands,
     mlir::OpBuilder* func_builder, DynamicShapeHandlingMode mode) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_18(mht_18_v, 676, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::ImportInstructionImpl");
+
   const Shape& instruction_shape = instruction->shape();
   const Shape& shape = mode == DynamicShapeHandlingMode::kConvertToStatic
                            ? xla::ShapeUtil::MakeStaticShape(instruction_shape)
@@ -1451,6 +1676,9 @@ StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
 }
 
 void SetXlaShape(mlir::Operation* op, const Shape& shape) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_19(mht_19_v, 1679, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "SetXlaShape");
+
   op->setAttr("xla_shape",
               mlir::Builder(op->getContext())
                   .getStringAttr(shape.ToString(/*print_layout=*/true)));
@@ -1460,6 +1688,9 @@ StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionWithLayout(
     const HloInstruction* instruction,
     const llvm::SmallVectorImpl<mlir::Value>& operands,
     mlir::OpBuilder* func_builder, DynamicShapeHandlingMode mode) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_20(mht_20_v, 1691, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::ImportInstructionWithLayout");
+
   TF_ASSIGN_OR_RETURN(
       mlir::Operation * op,
       ImportInstructionImpl(instruction, operands, func_builder, mode));
@@ -1500,6 +1731,9 @@ StatusOr<llvm::SmallVector<mlir::Value, 4>> HloFunctionImporter::GetOperands(
 tensorflow::Status HloFunctionImporter::GetMlirTypes(
     const std::vector<HloInstruction*>& instructions,
     llvm::SmallVectorImpl<mlir::Type>* types) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_21(mht_21_v, 1734, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::GetMlirTypes");
+
   for (auto instruction : instructions) {
     TF_ASSIGN_OR_RETURN(auto ret_type, ConvertShapeToType<RankedTensorType>(
                                            instruction->shape(), *builder_));
@@ -1510,6 +1744,9 @@ tensorflow::Status HloFunctionImporter::GetMlirTypes(
 
 StatusOr<Value> HloFunctionImporter::GetMlirValue(
     const HloInstruction* instruction) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_22(mht_22_v, 1747, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::GetMlirValue");
+
   auto lookup = instruction_value_map_.find(instruction);
   if (lookup != instruction_value_map_.end()) {
     return lookup->second;
@@ -1521,6 +1758,9 @@ StatusOr<Value> HloFunctionImporter::GetMlirValue(
 
 mlir::NamedAttribute HloFunctionImporter::ConvertComparisonDirection(
     ComparisonDirection direction) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_23(mht_23_v, 1761, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::ConvertComparisonDirection");
+
   return builder_->getNamedAttr(
       "comparison_direction",
       mlir::mhlo::ComparisonDirectionAttr::get(
@@ -1531,6 +1771,9 @@ mlir::NamedAttribute HloFunctionImporter::ConvertComparisonDirection(
 
 mlir::NamedAttribute HloFunctionImporter::ConvertComparisonType(
     Comparison::Type type) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_24(mht_24_v, 1774, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::ConvertComparisonType");
+
   return builder_->getNamedAttr(
       "compare_type",
       mlir::mhlo::ComparisonTypeAttr::get(
@@ -1541,6 +1784,9 @@ mlir::NamedAttribute HloFunctionImporter::ConvertComparisonType(
 
 mlir::DenseIntElementsAttr HloFunctionImporter::ConvertDimensions(
     absl::Span<const int64_t> op_dimensions) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_25(mht_25_v, 1787, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::ConvertDimensions");
+
   llvm::SmallVector<APInt, 8> dimensions;
   dimensions.reserve(op_dimensions.size());
   for (auto value : op_dimensions) dimensions.emplace_back(APInt(64, value));
@@ -1552,6 +1798,9 @@ mlir::DenseIntElementsAttr HloFunctionImporter::ConvertDimensions(
 
 mlir::DenseIntElementsAttr HloFunctionImporter::Convert(
     llvm::ArrayRef<int64_t> elements) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_26(mht_26_v, 1801, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::Convert");
+
   return DenseIntElementsAttr::get(
       RankedTensorType::get(elements.size(), builder_->getIntegerType(64)),
       elements);
@@ -1559,6 +1808,9 @@ mlir::DenseIntElementsAttr HloFunctionImporter::Convert(
 
 mlir::NamedAttribute HloFunctionImporter::ConvertPadding(
     llvm::ArrayRef<int64_t> padding) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_27(mht_27_v, 1811, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::ConvertPadding");
+
   auto ty =
       mlir::RankedTensorType::get({static_cast<int64_t>(padding.size()) / 2, 2},
                                   builder_->getIntegerType(64));
@@ -1569,6 +1821,9 @@ mlir::NamedAttribute HloFunctionImporter::ConvertPadding(
 mlir::NamedAttribute HloFunctionImporter::ConvertSourceTargetPairs(
     const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
     mlir::Builder* builder) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_28(mht_28_v, 1824, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::ConvertSourceTargetPairs");
+
   std::vector<int64_t> attr(source_target_pairs.size() * 2);
   for (const auto& p : llvm::enumerate(source_target_pairs)) {
     attr[2 * p.index()] = p.value().first;
@@ -1582,6 +1837,9 @@ mlir::NamedAttribute HloFunctionImporter::ConvertSourceTargetPairs(
 
 mlir::NamedAttribute HloFunctionImporter::ConvertReplicaGroups(
     absl::Span<const ReplicaGroup> replica_groups, mlir::Builder* builder) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_29(mht_29_v, 1840, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::ConvertReplicaGroups");
+
   const int64_t num_groups = replica_groups.size();
   // Replica groups in HLO can be non-uniform in size, for example:
   // replica_groups={{0},{1,2},{3}}. Since we are representing them as a 2D
@@ -1605,6 +1863,9 @@ mlir::NamedAttribute HloFunctionImporter::ConvertReplicaGroups(
 
 mlir::NamedAttribute HloFunctionImporter::ConvertChannelHandle(
     absl::optional<int64_t> channel_id) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_30(mht_30_v, 1866, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::ConvertChannelHandle");
+
   xla::ChannelHandle channel_handle;
   if (channel_id) channel_handle.set_handle(*channel_id);
   return ConvertChannelHandle(channel_handle);
@@ -1612,6 +1873,9 @@ mlir::NamedAttribute HloFunctionImporter::ConvertChannelHandle(
 
 mlir::NamedAttribute HloFunctionImporter::ConvertChannelHandle(
     const xla::ChannelHandle& channel) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_31(mht_31_v, 1876, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::ConvertChannelHandle");
+
   return builder_->getNamedAttr(
       "channel_handle",
       mlir::mhlo::ChannelHandle::get(
@@ -1622,6 +1886,9 @@ mlir::NamedAttribute HloFunctionImporter::ConvertChannelHandle(
 void HloFunctionImporter::SetLayoutForMlir(mlir::Operation* op,
                                            const Shape& shape,
                                            llvm::StringRef attr_name) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_32(mht_32_v, 1889, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::SetLayoutForMlir");
+
   llvm::SmallVector<int64_t, 4> minor_to_major(
       shape.layout().minor_to_major().begin(),
       shape.layout().minor_to_major().end());
@@ -1633,6 +1900,9 @@ void HloFunctionImporter::SetLayoutForMlir(mlir::Operation* op,
 Status HloFunctionImporter::ConvertShapeToMlirLayout(
     const xla::Shape& shape,
     llvm::SmallVectorImpl<mlir::Attribute>& flattened_attr) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPShlo_function_importerDTcc mht_33(mht_33_v, 1903, "", "./tensorflow/compiler/mlir/xla/hlo_function_importer.cc", "HloFunctionImporter::ConvertShapeToMlirLayout");
+
   if (shape.IsToken()) {
     return tensorflow::Status::OK();
   }

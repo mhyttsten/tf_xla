@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -116,6 +284,9 @@ struct TransposePlan::Node {
 };
 
 void ConvertF64ToEf57(const double* input, float* output, int n) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_0(mht_0_v, 287, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "ConvertF64ToEf57");
+
   // TODO(phawkins): vectorize this transformation.
   for (int i = 0; i < n; ++i) {
     std::tie(output[0], output[1]) = SplitF64ToF32(*input);
@@ -129,6 +300,9 @@ template <typename T, int inner_bs,
 void MacroKernel(const char* __restrict a, int64_t lda, int outer_bs_a,
                  char* __restrict b, int64_t ldb, int outer_bs_b,
                  void* __restrict scratch) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_1(mht_1_v, 303, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "MacroKernel");
+
   DVLOG(10) << "MacroKernel lda=" << lda << " ldb=" << ldb
             << " outer_bs_a=" << outer_bs_a << " outer_bs_b=" << outer_bs_b
             << " inner_bs=" << inner_bs;
@@ -163,6 +337,9 @@ template <typename T, int inner_bs,
 void Transpose(const char* __restrict a, int outer_bs_a, char* __restrict b,
                int outer_bs_b, TransposePlan::Node const* __restrict node,
                void* __restrict scratch) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_2(mht_2_v, 340, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "Transpose");
+
   DVLOG(10) << "Transpose " << outer_bs_a << " " << outer_bs_b;
   DCHECK_GT(outer_bs_a, 0);
   DCHECK_GT(outer_bs_b, 0);
@@ -299,6 +476,9 @@ void Transpose(const char* __restrict a, int outer_bs_a, char* __restrict b,
 template <typename T>
 void TransposeConstStride1(const char* __restrict a, char* __restrict b,
                            TransposePlan::Node const* __restrict node) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_3(mht_3_v, 479, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "TransposeConstStride1");
+
   a += node[0].start * node[0].lda;
   b += node[0].start * node[0].ldb;
   if (node[0].is_inner_dim_in_a) {
@@ -374,6 +554,11 @@ void TransposeConstStride1(const char* __restrict a, char* __restrict b,
 template <typename T, TransposePlan::Transformation transformation>
 void TransposePlan::ExecuteTyped(const char* a, char* b,
                                  absl::Span<Node const> nodes) const {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("a: \"" + (a == nullptr ? std::string("nullptr") : std::string((char*)a)) + "\"");
+   mht_4_v.push_back("b: \"" + (b == nullptr ? std::string("nullptr") : std::string((char*)b)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_4(mht_4_v, 559, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "TransposePlan::ExecuteTyped");
+
   if (inner_kernel_is_memcpy_) {
     DCHECK(transformation_ == Transformation::kNone);
     TransposeConstStride1<T>(a, b, nodes.data());
@@ -454,6 +639,9 @@ static_assert(sizeof(uint128) == 16, "uint128 should be 16 bytes in size");
 void TransposePlan::Execute(
     const void* a, void* b,
     const std::function<void(std::function<void(void)>)>& schedule_work) const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_5(mht_5_v, 642, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "TransposePlan::Execute");
+
   if (num_elems_ == 0) {
     return;
   }
@@ -462,6 +650,9 @@ void TransposePlan::Execute(
   char* bc = static_cast<char*>(b);
 
   auto execute_by_type = [&](absl::Span<Node const> nodes) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_6(mht_6_v, 653, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "lambda");
+
     switch (elem_size_in_bytes_) {
       case 1:
         ExecuteTyped<uint8_t, Transformation::kNone>(ac, bc, nodes);
@@ -517,6 +708,9 @@ static void ComputeStrides(
     absl::Span<const int64_t> tiling,
     absl::InlinedVector<int64_t, 4>& outer_tile_strides,
     absl::InlinedVector<int64_t, 4>& inner_tile_strides) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_7(mht_7_v, 711, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "ComputeStrides");
+
   inner_tile_strides.resize(dims.size());
   int64_t acc = elem_size_in_bytes;
   for (int d = static_cast<int>(dims.size()) - 1; d >= 0; --d) {
@@ -537,6 +731,9 @@ void TransposePlan::RemoveTrivialDimensions(
     absl::InlinedVector<int64_t, 4>& lda_tile,
     absl::InlinedVector<int64_t, 4>& a_tiling,
     absl::InlinedVector<int64_t, 4>& b_tiling) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_8(mht_8_v, 734, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "TransposePlan::RemoveTrivialDimensions");
+
   int ndim = a_dims.size();
   // How many positions has the i-th dimension of 'a' been moved to the left?
   // -1 if the dimension is to be removed.
@@ -593,6 +790,9 @@ void TransposePlan::CoalesceDimensions(
     absl::InlinedVector<int64_t, 4>& lda_tile,
     absl::InlinedVector<int64_t, 4>& a_tiling,
     absl::InlinedVector<int64_t, 4>& b_tiling) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_9(mht_9_v, 793, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "TransposePlan::CoalesceDimensions");
+
   int ndim = a_dims.size();
   // How many positions has the i-th dimension of 'a' been moved to the left?
   // -1 if the dimension is to be removed.
@@ -649,6 +849,9 @@ void TransposePlan::CoalesceDimensions(
 }
 
 int64_t TransposePlan::InputNumElems() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_10(mht_10_v, 852, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "TransposePlan::InputNumElems");
+
   int64_t size = 1;
   for (size_t i = 0; i < a_dims_.size(); ++i) {
     size *= RoundUpTo(a_dims_[i], a_tiling_[i]);
@@ -657,6 +860,9 @@ int64_t TransposePlan::InputNumElems() const {
 }
 
 int64_t TransposePlan::OutputNumElems() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_11(mht_11_v, 863, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "TransposePlan::OutputNumElems");
+
   int64_t size = 1;
   for (size_t i = 0; i < a_dims_.size(); ++i) {
     size *= RoundUpTo(a_dims_[permutation_[i]], b_tiling_[i]);
@@ -668,6 +874,9 @@ int64_t TransposePlan::OutputNumElems() const {
 static Status ParseTilingSpecification(
     int ndim, absl::Span<int64_t const> tiling_spec,
     absl::InlinedVector<int64_t, 4>& tiling) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_12(mht_12_v, 877, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "ParseTilingSpecification");
+
   tiling.resize(ndim, 1);
   if (tiling_spec.size() > ndim) {
     return InvalidArgument(
@@ -689,6 +898,9 @@ static Status ParseTilingSpecification(
 void TransposePlan::BuildPlanNodes(
     absl::Span<int64_t const> inverse_permutation, int thread_id,
     std::vector<TransposePlan::Node>& nodes) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_13(mht_13_v, 901, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "TransposePlan::BuildPlanNodes");
+
   VLOG(8) << "Before plan build: " << ToString();
   const int ndim = a_dims_.size();
   DCHECK_GT(ndim, 0);
@@ -728,6 +940,9 @@ void TransposePlan::BuildPlanNodes(
                       absl::InlinedVector<bool, 4>(ndim, false)});
 
   auto loop_has_trivial_iteration_space = [](const Node& node) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_14(mht_14_v, 943, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "lambda");
+
     return node.start == 0 && node.start + node.inc == node.end;
   };
 
@@ -882,7 +1097,13 @@ StatusOr<std::unique_ptr<TransposePlan>> TransposePlan::Create(
     absl::Span<int64_t const> permutation,
     absl::variant<Tiling, Striding> input_layout, Tiling output_tiling,
     Transformation transformation, int num_threads) {
-  auto is_negative = [](int d) { return d < 0; };
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_15(mht_15_v, 1100, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "TransposePlan::Create");
+
+  auto is_negative = [](int d) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_16(mht_16_v, 1104, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "lambda");
+ return d < 0; };
   if (absl::c_find_if(dims, is_negative) != dims.end()) {
     return InvalidArgument("dims must be non-negative, got %s",
                            absl::StrJoin(dims, ","));
@@ -944,6 +1165,9 @@ StatusOr<std::unique_ptr<TransposePlan>> TransposePlan::Create(
     absl::c_iota(dim_order, 0);
 
     auto cost = [&](int k) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_17(mht_17_v, 1168, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "lambda");
+
       int64_t stride = input_strides_in_bytes.at(k);
       // If there is a dimension with size equal to the element size, sort it
       // last. This ensures that we place any stride-1 dimension last.
@@ -988,7 +1212,10 @@ StatusOr<std::unique_ptr<TransposePlan>> TransposePlan::Create(
                    plan->lda_, plan->lda_tile_);
   }
 
-  auto is_not_one = [](int64_t x) { return x != 1; };
+  auto is_not_one = [](int64_t x) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_18(mht_18_v, 1216, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "lambda");
+ return x != 1; };
   plan->a_is_tiled_ =
       (absl::c_find_if(plan->a_tiling_, is_not_one) != plan->a_tiling_.end());
   plan->b_is_tiled_ =
@@ -1026,6 +1253,9 @@ StatusOr<std::unique_ptr<TransposePlan>> TransposePlan::Create(
 }
 
 void TransposePlan::Initialize() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_19(mht_19_v, 1256, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "TransposePlan::Initialize");
+
   if (num_elems_ == 0) {
     return;
   }
@@ -1144,6 +1374,9 @@ void TransposePlan::Initialize() {
 
   // Loop order heuristic: try to make loops with small strides innermost.
   auto cost = [&](const Loop& l) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_20(mht_20_v, 1377, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "lambda");
+
     int64_t a_stride =
         std::abs((l.tile_interior && a_is_tiled_) ? lda_tile_[l.dim_in_a]
                                                   : lda_[l.dim_in_a]);
@@ -1210,6 +1443,9 @@ void TransposePlan::Initialize() {
 
 std::vector<int> TransposePlan::ChooseParallelizationStrategy(
     absl::Span<int64_t const> inverse_permutation) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_21(mht_21_v, 1446, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "TransposePlan::ChooseParallelizationStrategy");
+
   std::vector<int> parallelism;
   int available_parallelism = num_threads_requested_;
   parallelism.reserve(loop_order_.size());
@@ -1219,6 +1455,9 @@ std::vector<int> TransposePlan::ChooseParallelizationStrategy(
   const int pos_stride1b_in_a = permutation_.back();
   // Compute the number of iterations in `loop`.
   auto loop_iterations = [&](const Loop& loop) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_22(mht_22_v, 1458, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "lambda");
+
     int a_dim = loop.dim_in_a;
     int b_dim = inverse_permutation[a_dim];
     int64_t tile_size = std::max(a_tiling_[a_dim], b_tiling_[b_dim]);
@@ -1277,6 +1516,9 @@ std::vector<int> TransposePlan::ChooseParallelizationStrategy(
 }
 
 std::string TransposePlan::ToString() const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_23(mht_23_v, 1519, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "TransposePlan::ToString");
+
   std::string nodes_str = absl::StrJoin(
       nodes_, "\n", [](std::string* out, absl::Span<Node const> thread_nodes) {
         absl::StrAppend(
@@ -1295,6 +1537,9 @@ std::string TransposePlan::ToString() const {
                 }));
       });
   auto format_loop_order = [](std::string* out, const Loop& loop) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_24(mht_24_v, 1540, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "lambda");
+
     return absl::StrAppend(out, loop.dim_in_a,
                            loop.tile_interior ? "[tile]" : "");
   };
@@ -1351,6 +1596,9 @@ bool TransposePlanCacheKey::operator==(
 
 template <typename H>
 H AbslHashValue(H h, const TransposePlanCacheKey& key) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_25(mht_25_v, 1599, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "AbslHashValue");
+
   return H::combine(std::move(h), key.elem_size_in_bytes,
                     key.input_layout_is_tiling, key.num_threads,
                     key.transformation, key.dims, key.permutation,
@@ -1358,7 +1606,10 @@ H AbslHashValue(H h, const TransposePlanCacheKey& key) {
 }
 
 TransposePlanCache::TransposePlanCache(int capacity)
-    : lru_list_(capacity), cache_(&lru_list_) {}
+    : lru_list_(capacity), cache_(&lru_list_) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_26(mht_26_v, 1610, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "TransposePlanCache::TransposePlanCache");
+}
 
 TransposePlanCache::~TransposePlanCache() = default;
 
@@ -1368,6 +1619,9 @@ StatusOr<std::shared_ptr<TransposePlan>> TransposePlanCache::GetOrCreate(
     absl::variant<TransposePlan::Tiling, TransposePlan::Striding> input_layout,
     TransposePlan::Tiling output_tiling,
     TransposePlan::Transformation transformation, int num_threads) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPStransposeDTcc mht_27(mht_27_v, 1622, "", "./tensorflow/compiler/xla/pjrt/transpose.cc", "TransposePlanCache::GetOrCreate");
+
   TransposePlanCacheKey key;
   key.elem_size_in_bytes = elem_size_in_bytes;
   key.dims.resize(dims.size());

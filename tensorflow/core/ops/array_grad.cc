@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSopsPSarray_gradDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSopsPSarray_gradDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSopsPSarray_gradDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,6 +199,9 @@ REGISTER_OP_NO_GRADIENT("EditDistance");
 REGISTER_OP_NO_GRADIENT("StopGradient");
 
 Status ReshapeGrad(const AttrSlice& attrs, FunctionDef* g) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSopsPSarray_gradDTcc mht_0(mht_0_v, 202, "", "./tensorflow/core/ops/array_grad.cc", "ReshapeGrad");
+
   // clang-format off
   *g = FDH::Define(
       // Arg defs
@@ -52,6 +223,9 @@ REGISTER_OP_GRADIENT("Reshape", ReshapeGrad);
 REGISTER_OP_GRADIENT("ExpandDims", ReshapeGrad);
 
 Status SqueezeGrad(const AttrSlice& attrs, FunctionDef* g) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSopsPSarray_gradDTcc mht_1(mht_1_v, 226, "", "./tensorflow/core/ops/array_grad.cc", "SqueezeGrad");
+
   // clang-format off
   *g = FDH::Define(
       // Arg defs
@@ -71,6 +245,9 @@ Status SqueezeGrad(const AttrSlice& attrs, FunctionDef* g) {
 REGISTER_OP_GRADIENT("Squeeze", SqueezeGrad);
 
 Status IdentityGrad(const AttrSlice& attrs, FunctionDef* g) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSopsPSarray_gradDTcc mht_2(mht_2_v, 248, "", "./tensorflow/core/ops/array_grad.cc", "IdentityGrad");
+
   // clang-format off
   *g = FDH::Define(
       // Arg defs
@@ -90,6 +267,9 @@ Status IdentityGrad(const AttrSlice& attrs, FunctionDef* g) {
 REGISTER_OP_GRADIENT("Identity", IdentityGrad);
 
 Status PackGrad(const AttrSlice& attrs, FunctionDef* g) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSopsPSarray_gradDTcc mht_3(mht_3_v, 270, "", "./tensorflow/core/ops/array_grad.cc", "PackGrad");
+
   // clang-format off
   *g = FDH::Create(
       "_",
@@ -116,6 +296,9 @@ Status PackGrad(const AttrSlice& attrs, FunctionDef* g) {
 REGISTER_OP_GRADIENT("Pack", PackGrad);
 
 Status UnpackGrad(const AttrSlice& attrs, FunctionDef* g) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSopsPSarray_gradDTcc mht_4(mht_4_v, 299, "", "./tensorflow/core/ops/array_grad.cc", "UnpackGrad");
+
   // clang-format off
   *g = FDH::Define(
       // Arg defs
@@ -141,6 +324,9 @@ REGISTER_OP_GRADIENT("Unpack", UnpackGrad);
 
 Status ConcatGradHelper(const AttrSlice& attrs, FunctionDef* g,
                         bool dim_is_last_arg) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSopsPSarray_gradDTcc mht_5(mht_5_v, 327, "", "./tensorflow/core/ops/array_grad.cc", "ConcatGradHelper");
+
   int N;
   TF_RETURN_IF_ERROR(GetNodeAttr(attrs, "N", &N));
   DataType T;
@@ -214,10 +400,16 @@ Status ConcatGradHelper(const AttrSlice& attrs, FunctionDef* g,
 }
 
 Status ConcatGrad(const AttrSlice& attrs, FunctionDef* g) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSopsPSarray_gradDTcc mht_6(mht_6_v, 403, "", "./tensorflow/core/ops/array_grad.cc", "ConcatGrad");
+
   return ConcatGradHelper(attrs, g, false);
 }
 
 Status ConcatGradV2(const AttrSlice& attrs, FunctionDef* g) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSopsPSarray_gradDTcc mht_7(mht_7_v, 410, "", "./tensorflow/core/ops/array_grad.cc", "ConcatGradV2");
+
   return ConcatGradHelper(attrs, g, true);
 }
 
@@ -225,6 +417,9 @@ REGISTER_OP_GRADIENT("Concat", ConcatGrad);
 REGISTER_OP_GRADIENT("ConcatV2", ConcatGradV2);
 
 Status SplitGrad(const AttrSlice& attrs, FunctionDef* g) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSopsPSarray_gradDTcc mht_8(mht_8_v, 420, "", "./tensorflow/core/ops/array_grad.cc", "SplitGrad");
+
   // clang-format off
   *g = FDH::Define(
       // Arg defs
@@ -245,6 +440,9 @@ Status SplitGrad(const AttrSlice& attrs, FunctionDef* g) {
 REGISTER_OP_GRADIENT("Split", SplitGrad);
 
 Status SplitVGrad(const AttrSlice& attrs, FunctionDef* g) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSopsPSarray_gradDTcc mht_9(mht_9_v, 443, "", "./tensorflow/core/ops/array_grad.cc", "SplitVGrad");
+
   // clang-format off
   *g = FDH::Define(
       // Arg defs
@@ -266,6 +464,9 @@ Status SplitVGrad(const AttrSlice& attrs, FunctionDef* g) {
 REGISTER_OP_GRADIENT("SplitV", SplitVGrad);
 
 Status ArrayToListGrad(const AttrSlice& attrs, FunctionDef* g) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSopsPSarray_gradDTcc mht_10(mht_10_v, 467, "", "./tensorflow/core/ops/array_grad.cc", "ArrayToListGrad");
+
   int N;
   TF_RETURN_IF_ERROR(GetNodeAttr(attrs, "N", &N));
   std::vector<string> dys;
@@ -293,6 +494,9 @@ Status ArrayToListGrad(const AttrSlice& attrs, FunctionDef* g) {
 REGISTER_OP_GRADIENT("_ArrayToList", ArrayToListGrad);
 
 Status ListToArrayGrad(const AttrSlice& attrs, FunctionDef* g) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSopsPSarray_gradDTcc mht_11(mht_11_v, 497, "", "./tensorflow/core/ops/array_grad.cc", "ListToArrayGrad");
+
   // clang-format off
   *g = FDH::Define(
       // Arg defs
@@ -313,6 +517,9 @@ Status ListToArrayGrad(const AttrSlice& attrs, FunctionDef* g) {
 REGISTER_OP_GRADIENT("_ListToArray", ListToArrayGrad);
 
 Status FillGrad(const AttrSlice& attrs, FunctionDef* g) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSopsPSarray_gradDTcc mht_12(mht_12_v, 520, "", "./tensorflow/core/ops/array_grad.cc", "FillGrad");
+
   *g = FDH::Define(
       // Arg defs
       {"dims: int32", "x: T", "dy: T"},
@@ -336,6 +543,9 @@ Status FillGrad(const AttrSlice& attrs, FunctionDef* g) {
 REGISTER_OP_GRADIENT("Fill", FillGrad);
 
 Status TransposeGrad(const AttrSlice& attrs, FunctionDef* g) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSopsPSarray_gradDTcc mht_13(mht_13_v, 546, "", "./tensorflow/core/ops/array_grad.cc", "TransposeGrad");
+
   *g = FDH::Define(
       // Arg defs
       {"x: T", "p: int32", "dy: T"},
@@ -355,6 +565,9 @@ Status TransposeGrad(const AttrSlice& attrs, FunctionDef* g) {
 REGISTER_OP_GRADIENT("Transpose", TransposeGrad);
 
 Status GatherNdGrad(const AttrSlice& attrs, FunctionDef* g) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSopsPSarray_gradDTcc mht_14(mht_14_v, 568, "", "./tensorflow/core/ops/array_grad.cc", "GatherNdGrad");
+
   // clang-format off
   *g = FDH::Define(
       // Arg defs
@@ -376,6 +589,9 @@ Status GatherNdGrad(const AttrSlice& attrs, FunctionDef* g) {
 REGISTER_OP_GRADIENT("GatherNd", GatherNdGrad);
 
 Status ConjugateTransposeGrad(const AttrSlice& attrs, FunctionDef* g) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSopsPSarray_gradDTcc mht_15(mht_15_v, 592, "", "./tensorflow/core/ops/array_grad.cc", "ConjugateTransposeGrad");
+
   *g = FDH::Define(
       // Arg defs
       {"x: T", "p: int32", "dy: T"},
@@ -395,6 +611,9 @@ Status ConjugateTransposeGrad(const AttrSlice& attrs, FunctionDef* g) {
 REGISTER_OP_GRADIENT("ConjugateTranspose", ConjugateTransposeGrad);
 
 Status ReverseGrad(const AttrSlice& attrs, FunctionDef* g) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSopsPSarray_gradDTcc mht_16(mht_16_v, 614, "", "./tensorflow/core/ops/array_grad.cc", "ReverseGrad");
+
   *g = FDH::Define(
       // Arg defs
       {"x: T", "d: bool", "dy: T"},
@@ -413,6 +632,9 @@ Status ReverseGrad(const AttrSlice& attrs, FunctionDef* g) {
 REGISTER_OP_GRADIENT("Reverse", ReverseGrad);
 
 Status ReverseV2Grad(const AttrSlice& attrs, FunctionDef* g) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSopsPSarray_gradDTcc mht_17(mht_17_v, 635, "", "./tensorflow/core/ops/array_grad.cc", "ReverseV2Grad");
+
   DataType itype;
   TF_RETURN_IF_ERROR(GetNodeAttr(attrs, "Tidx", &itype));
   if (itype != DT_INT32) {
@@ -437,6 +659,9 @@ Status ReverseV2Grad(const AttrSlice& attrs, FunctionDef* g) {
 REGISTER_OP_GRADIENT("ReverseV2", ReverseV2Grad);
 
 Status SliceGrad(const AttrSlice& attrs, FunctionDef* g) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSopsPSarray_gradDTcc mht_18(mht_18_v, 662, "", "./tensorflow/core/ops/array_grad.cc", "SliceGrad");
+
   DataType itype;
   TF_RETURN_IF_ERROR(GetNodeAttr(attrs, "Index", &itype));
   if (itype != DT_INT32) {
@@ -472,6 +697,9 @@ Status SliceGrad(const AttrSlice& attrs, FunctionDef* g) {
 REGISTER_OP_GRADIENT("Slice", SliceGrad);
 
 Status StridedSliceGrad(const AttrSlice& attrs, FunctionDef* g) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSopsPSarray_gradDTcc mht_19(mht_19_v, 700, "", "./tensorflow/core/ops/array_grad.cc", "StridedSliceGrad");
+
   DataType itype;
   TF_RETURN_IF_ERROR(GetNodeAttr(attrs, "Index", &itype));
   if (itype != DT_INT32) {
@@ -509,6 +737,9 @@ Status StridedSliceGrad(const AttrSlice& attrs, FunctionDef* g) {
 REGISTER_OP_GRADIENT("StridedSlice", StridedSliceGrad);
 
 Status StridedSliceGradGrad(const AttrSlice& attrs, FunctionDef* g) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSopsPSarray_gradDTcc mht_20(mht_20_v, 740, "", "./tensorflow/core/ops/array_grad.cc", "StridedSliceGradGrad");
+
   DataType itype;
   TF_RETURN_IF_ERROR(GetNodeAttr(attrs, "Index", &itype));
   if (itype != DT_INT32) {
@@ -551,6 +782,9 @@ Status StridedSliceGradGrad(const AttrSlice& attrs, FunctionDef* g) {
 REGISTER_OP_GRADIENT("StridedSliceGrad", StridedSliceGradGrad);
 
 Status BroadcastToGrad(const AttrSlice& attrs, FunctionDef* g) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSopsPSarray_gradDTcc mht_21(mht_21_v, 785, "", "./tensorflow/core/ops/array_grad.cc", "BroadcastToGrad");
+
   DataType itype;
   TF_RETURN_IF_ERROR(GetNodeAttr(attrs, "Tidx", &itype));
   if (itype != DT_INT32) {

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -135,6 +303,9 @@ using se::dnn::ToDataType;
 using se::port::StatusOr;
 
 uint64 HashList(const std::vector<int>& list) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_0(mht_0_v, 306, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "HashList");
+
   if (list.empty()) {
     return 0;
   }
@@ -164,6 +335,9 @@ class CudnnRnnParameters {
         rnn_mode_(rnn_mode),
         rnn_input_mode_(rnn_input_mode),
         dtype_(dtype) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_1(mht_1_v, 338, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "CudnnRnnParameters");
+
     hash_code_ =
         HashList({num_layers, input_size, num_units, max_seq_length, batch_size,
                   dir_count, static_cast<int>(has_dropout),
@@ -178,9 +352,15 @@ class CudnnRnnParameters {
   bool operator!=(const CudnnRnnParameters& other) const {
     return !(*this == other);
   }
-  uint64 hash() const { return hash_code_; }
+  uint64 hash() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_2(mht_2_v, 356, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "hash");
+ return hash_code_; }
 
   string ToString() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_3(mht_3_v, 361, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "ToString");
+
     std::vector<string> fields = {
         std::to_string(num_layers_),
         std::to_string(input_size_),
@@ -201,6 +381,9 @@ class CudnnRnnParameters {
                                        RnnMode, TFRNNInputMode, DataType>;
 
   ParameterDataType get_data_as_tuple() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_4(mht_4_v, 384, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "get_data_as_tuple");
+
     return std::make_tuple(num_layers_, input_size_, num_units_, seq_length_,
                            batch_size_, dir_count_, has_dropout_, is_training_,
                            rnn_mode_, rnn_input_mode_, dtype_);
@@ -221,13 +404,20 @@ class CudnnRnnParameters {
 };
 
 struct RnnAutotuneGroup {
-  static string name() { return "Rnn"; }
+  static string name() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_5(mht_5_v, 408, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "name");
+ return "Rnn"; }
 };
 
 using AutotuneRnnConfigMap =
     AutotuneSingleton<RnnAutotuneGroup, CudnnRnnParameters, AlgorithmConfig>;
 
 Status ParseRNNMode(const string& str, RnnMode* rnn_mode) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("str: \"" + str + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_6(mht_6_v, 418, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "ParseRNNMode");
+
   if (str == "rnn_relu") {
     *rnn_mode = RnnMode::kRnnRelu;
     return Status::OK();
@@ -245,6 +435,10 @@ Status ParseRNNMode(const string& str, RnnMode* rnn_mode) {
 }
 
 Status ParseTFRNNInputMode(const string& str, TFRNNInputMode* rnn_input_mode) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("str: \"" + str + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_7(mht_7_v, 439, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "ParseTFRNNInputMode");
+
   if (str == "linear_input") {
     *rnn_input_mode = TFRNNInputMode::kRNNLinearInput;
     return Status::OK();
@@ -260,6 +454,10 @@ Status ParseTFRNNInputMode(const string& str, TFRNNInputMode* rnn_input_mode) {
 
 Status ParseRNNDirectionMode(const string& str,
                              RnnDirectionMode* rnn_dir_mode) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("str: \"" + str + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_8(mht_8_v, 458, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "ParseRNNDirectionMode");
+
   if (str == "unidirectional") {
     *rnn_dir_mode = RnnDirectionMode::kRnnUnidirectional;
     return Status::OK();
@@ -272,6 +470,9 @@ Status ParseRNNDirectionMode(const string& str,
 
 Status ToRNNInputMode(TFRNNInputMode tf_input_mode, int num_units,
                       int input_size, RnnInputMode* input_mode) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_9(mht_9_v, 473, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "ToRNNInputMode");
+
   switch (tf_input_mode) {
     case TFRNNInputMode::kRNNLinearInput:
       *input_mode = RnnInputMode::kRnnLinearSkip;
@@ -314,6 +515,9 @@ DeviceMemory<U> CastDeviceMemory(Tensor* tensor) {
 
 DeviceMemoryBase SliceDeviceMemory(const DeviceMemoryBase& device_memory,
                                    int64_t offset, int64_t size) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_10(mht_10_v, 518, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "SliceDeviceMemory");
+
   const void* base_ptr = device_memory.opaque();
   void* offset_ptr =
       const_cast<char*>(reinterpret_cast<const char*>(base_ptr) + offset);
@@ -323,6 +527,9 @@ DeviceMemoryBase SliceDeviceMemory(const DeviceMemoryBase& device_memory,
 }
 
 inline Status FromExecutorStatus(const se::port::Status& s) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_11(mht_11_v, 530, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "FromExecutorStatus");
+
   return s.ok() ? Status::OK()
                 : Status(static_cast<error::Code>(static_cast<int>(s.code())),
                          s.error_message());
@@ -330,10 +537,16 @@ inline Status FromExecutorStatus(const se::port::Status& s) {
 
 template <typename T>
 inline Status FromExecutorStatus(const se::port::StatusOr<T>& s) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_12(mht_12_v, 540, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "FromExecutorStatus");
+
   return FromExecutorStatus(s.status());
 }
 
 inline se::port::Status ToExecutorStatus(const Status& s) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_13(mht_13_v, 547, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "ToExecutorStatus");
+
   return s.ok() ? se::port::Status::OK()
                 : se::port::Status(static_cast<se::port::error::Code>(
                                        static_cast<int>(s.code())),
@@ -364,8 +577,14 @@ class CudnnRnnAllocatorInTemp : public ScratchAllocator {
   ~CudnnRnnAllocatorInTemp() override = default;
 
   explicit CudnnRnnAllocatorInTemp(OpKernelContext* context)
-      : context_(context) {}
+      : context_(context) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_14(mht_14_v, 581, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "CudnnRnnAllocatorInTemp");
+}
   int64_t GetMemoryLimitInBytes() override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_15(mht_15_v, 585, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "GetMemoryLimitInBytes");
+
     return std::numeric_limits<int64_t>::max();
   }
 
@@ -388,9 +607,15 @@ class CudnnRnnAllocatorInTemp : public ScratchAllocator {
         temporary_memory.template flat<T>().size() * sizeof(T));
   }
 
-  int64_t TotalByteSize() const { return total_byte_size_; }
+  int64_t TotalByteSize() const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_16(mht_16_v, 611, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "TotalByteSize");
+ return total_byte_size_; }
 
   Tensor get_allocated_tensor(int index) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_17(mht_17_v, 616, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "get_allocated_tensor");
+
     return allocated_tensors_[index];
   }
 
@@ -407,10 +632,19 @@ class CudnnRnnAllocatorInTemp : public ScratchAllocator {
 template <typename T>
 class CudnnRnnAllocatorInOutput : public ScratchAllocator {
  public:
-  ~CudnnRnnAllocatorInOutput() override {}
+  ~CudnnRnnAllocatorInOutput() override {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_18(mht_18_v, 636, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "~CudnnRnnAllocatorInOutput");
+}
   CudnnRnnAllocatorInOutput(OpKernelContext* context, int output_index)
-      : context_(context), output_index_(output_index) {}
+      : context_(context), output_index_(output_index) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_19(mht_19_v, 641, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "CudnnRnnAllocatorInOutput");
+}
   int64_t GetMemoryLimitInBytes() override {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_20(mht_20_v, 645, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "GetMemoryLimitInBytes");
+
     return std::numeric_limits<int64_t>::max();
   }
   StatusOr<DeviceMemory<uint8>> AllocateBytes(int64_t byte_size) override {
@@ -431,7 +665,10 @@ class CudnnRnnAllocatorInOutput : public ScratchAllocator {
         temporary_memory->template flat<T>().size() * sizeof(T));
     return StatusOr<DeviceMemory<uint8>>(memory_uint8);
   }
-  int64_t TotalByteSize() { return total_byte_size_; }
+  int64_t TotalByteSize() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_21(mht_21_v, 669, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "TotalByteSize");
+ return total_byte_size_; }
 
  private:
   int64_t total_byte_size_ = 0;
@@ -445,11 +682,20 @@ class CudnnRnnAllocatorInOutput : public ScratchAllocator {
 class CudnnRNNSpaceAllocator : public ScratchAllocator {
  public:
   explicit CudnnRNNSpaceAllocator(OpKernelContext* context)
-      : context_(context) {}
+      : context_(context) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_22(mht_22_v, 686, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "CudnnRNNSpaceAllocator");
+}
 
-  ~CudnnRNNSpaceAllocator() override {}
+  ~CudnnRNNSpaceAllocator() override {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_23(mht_23_v, 691, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "~CudnnRNNSpaceAllocator");
+}
 
   int64_t GetMemoryLimitInBytes() override {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_24(mht_24_v, 696, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "GetMemoryLimitInBytes");
+
     return std::numeric_limits<int64_t>::max();
   }
 
@@ -467,7 +713,10 @@ class CudnnRNNSpaceAllocator : public ScratchAllocator {
     total_byte_size_ += byte_size;
     return AsDeviceMemory<uint8>(&tensor_);
   }
-  int64_t TotalByteSize() { return total_byte_size_; }
+  int64_t TotalByteSize() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_25(mht_25_v, 717, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "TotalByteSize");
+ return total_byte_size_; }
 
  private:
   int64_t total_byte_size_ = 0;
@@ -480,12 +729,18 @@ struct CudnnModelTypes {
   TFRNNInputMode rnn_input_mode;
   RnnDirectionMode rnn_direction_mode;
   bool HasInputC() const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_26(mht_26_v, 732, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "HasInputC");
+
     // For Cudnn 5.0, only LSTM has input-c. All other models use only
     // input-h.
     return rnn_mode == RnnMode::kRnnLstm;
   }
 
   string DebugString() const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_27(mht_27_v, 741, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "DebugString");
+
     return strings::Printf(
         "[rnn_mode, rnn_input_mode, rnn_direction_mode]: %d, %d, %d ",
         static_cast<int>(rnn_mode), static_cast<int>(rnn_input_mode),
@@ -511,12 +766,18 @@ struct CudnnRnnModelShapes {
   TensorShape cell_state_shape;
   // At present only fields related to cached RnnDescriptor are concerned.
   bool IsCompatibleWith(const CudnnRnnModelShapes& rhs) const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_28(mht_28_v, 769, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "IsCompatibleWith");
+
     return num_layers == rhs.num_layers && input_size == rhs.input_size &&
            num_units == rhs.num_units && dir_count == rhs.dir_count &&
            cell_num_units == rhs.cell_num_units &&
            max_seq_length == rhs.max_seq_length;
   }
   string DebugString() const {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_29(mht_29_v, 778, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "DebugString");
+
     return strings::Printf(
         "[num_layers, input_size, num_units, dir_count, max_seq_length, "
         "batch_size, cell_num_units]: [%d, %d, %d, %d, %d, %d, %d] ",
@@ -570,6 +831,9 @@ Status ExtractForwardInput(OpKernelContext* context,
                            const Tensor** input_c, const Tensor** params,
                            const int num_proj,
                            CudnnRnnModelShapes* model_shapes) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_30(mht_30_v, 834, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "ExtractForwardInput");
+
   TF_RETURN_IF_ERROR(context->input("input", input));
   TF_RETURN_IF_ERROR(context->input("input_h", input_h));
   if (model_types.HasInputC()) {
@@ -684,6 +948,9 @@ Status ExtractForwardInput(OpKernelContext* context,
                            const Tensor** input_c, const Tensor** params,
                            const Tensor** sequence_lengths, const int num_proj,
                            CudnnRnnModelShapes* model_shapes) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_31(mht_31_v, 951, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "ExtractForwardInput");
+
   TF_RETURN_IF_ERROR(context->input("sequence_lengths", sequence_lengths));
   return ExtractForwardInput(context, model_types, time_major, input, input_h,
                              input_c, params, num_proj, model_shapes);
@@ -697,6 +964,9 @@ Status CreateForwardAndBackwardIODescriptors(
     std::unique_ptr<RnnStateTensorDescriptor>* c_state_desc,
     std::unique_ptr<RnnSequenceTensorDescriptor>* output_desc,
     const absl::Span<const int> seq_lengths, bool time_major) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_32(mht_32_v, 967, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "CreateForwardAndBackwardIODescriptors");
+
   StreamExecutor* executor = context->op_device_context()->stream()->parent();
   se::dnn::DataType data_type = ToDataType<T>::value;
 
@@ -798,6 +1068,9 @@ Status DoForward(OpKernelContext* context, const RnnDescriptor& rnn_desc,
                  ScratchAllocator* reserve_space_allocator,
                  ScratchAllocator* workspace_allocator,
                  ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_33(mht_33_v, 1071, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "DoForward");
+
   std::unique_ptr<RnnSequenceTensorDescriptor> input_desc;
   std::unique_ptr<RnnStateTensorDescriptor> h_state_desc;
   std::unique_ptr<RnnStateTensorDescriptor> c_state_desc;
@@ -881,6 +1154,9 @@ Status DoBackward(
     Tensor* params_backprop, const Tensor* sequence_lengths, bool time_major,
     ScratchAllocator* workspace_allocator,
     ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_34(mht_34_v, 1157, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "DoBackward");
+
   std::unique_ptr<RnnSequenceTensorDescriptor> input_desc;
   std::unique_ptr<RnnStateTensorDescriptor> h_state_desc;
   std::unique_ptr<RnnStateTensorDescriptor> c_state_desc;
@@ -969,6 +1245,9 @@ template <typename T>
 void RestoreParams(const OpInputList params_input,
                    const std::vector<RnnDescriptor::ParamsRegion>& params,
                    DeviceMemoryBase* data_dst, Stream* stream) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_35(mht_35_v, 1248, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "RestoreParams");
+
   int num_params = params.size();
   CHECK(params_input.size() == num_params)
       << "Number of params mismatch. Expected " << params_input.size()
@@ -989,6 +1268,9 @@ void RestoreParams(const OpInputList params_input,
 bool ShouldUsePaddedIO(const Tensor* sequence_lengths,
                        const CudnnRnnModelShapes& model_shapes,
                        bool time_major) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_36(mht_36_v, 1271, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "ShouldUsePaddedIO");
+
   auto seq_array = sequence_lengths->template flat<int>().data();
   bool all_max_seq_length = true;
   for (int i = 0; i < model_shapes.batch_size; i++) {
@@ -1017,6 +1299,9 @@ class CudnnRNNKernelCommon : public OpKernel {
  protected:
   explicit CudnnRNNKernelCommon(OpKernelConstruction* context)
       : OpKernel(context) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_37(mht_37_v, 1302, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "CudnnRNNKernelCommon");
+
     OP_REQUIRES_OK(context, context->GetAttr("dropout", &dropout_));
     OP_REQUIRES_OK(context, context->GetAttr("seed", &seed_));
     OP_REQUIRES_OK(context, context->GetAttr("seed2", &seed2_));
@@ -1035,20 +1320,47 @@ class CudnnRNNKernelCommon : public OpKernel {
                                                false, &reset_rnd_gen_state_));
   }
 
-  bool HasInputC() const { return model_types_.HasInputC(); }
-  RnnMode rnn_mode() const { return model_types_.rnn_mode; }
-  TFRNNInputMode rnn_input_mode() const { return model_types_.rnn_input_mode; }
+  bool HasInputC() const {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_38(mht_38_v, 1324, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "HasInputC");
+ return model_types_.HasInputC(); }
+  RnnMode rnn_mode() const {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_39(mht_39_v, 1328, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "rnn_mode");
+ return model_types_.rnn_mode; }
+  TFRNNInputMode rnn_input_mode() const {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_40(mht_40_v, 1332, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "rnn_input_mode");
+ return model_types_.rnn_input_mode; }
   RnnDirectionMode rnn_direction_mode() const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_41(mht_41_v, 1336, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "rnn_direction_mode");
+
     return model_types_.rnn_direction_mode;
   }
-  const CudnnModelTypes& model_types() const { return model_types_; }
-  float dropout() const { return dropout_; }
-  uint64 seed() { return (static_cast<uint64>(seed_) << 32) | seed2_; }
-  bool ResetRndGenState() { return reset_rnd_gen_state_; }
+  const CudnnModelTypes& model_types() const {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_42(mht_42_v, 1342, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "model_types");
+ return model_types_; }
+  float dropout() const {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_43(mht_43_v, 1346, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "dropout");
+ return dropout_; }
+  uint64 seed() {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_44(mht_44_v, 1350, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "seed");
+ return (static_cast<uint64>(seed_) << 32) | seed2_; }
+  bool ResetRndGenState() {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_45(mht_45_v, 1354, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "ResetRndGenState");
+ return reset_rnd_gen_state_; }
 
   template <typename T>
   Status ExtractCudnnRNNParamsInfo(OpKernelContext* context, int num_proj,
                                    std::unique_ptr<RnnDescriptor>* rnn_desc) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_46(mht_46_v, 1361, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "ExtractCudnnRNNParamsInfo");
+
     const Tensor* num_layers_t = nullptr;
     TF_RETURN_IF_ERROR(context->input("num_layers", &num_layers_t));
     if (!TensorShapeUtils::IsScalar(num_layers_t->shape())) {
@@ -1099,6 +1411,9 @@ class CudnnRNNKernelCommon : public OpKernel {
                              ScratchAllocator* dropout_state_allocator,
                              std::unique_ptr<RnnDescriptor>* rnn_desc,
                              bool use_padded_io) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_47(mht_47_v, 1414, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "CreateRnnDescriptor");
+
     StreamExecutor* executor = context->op_device_context()->stream()->parent();
     se::dnn::DataType data_type = ToDataType<T>::value;
     auto rnn_desc_s = executor->createRnnDescriptor(
@@ -1125,6 +1440,9 @@ class CudnnRNNKernelCommon : public OpKernel {
                                 const AlgorithmConfig& algo_config,
                                 RnnStateCache* cache, RnnDescriptor** rnn_desc,
                                 bool use_padded_io) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_48(mht_48_v, 1443, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "GetCachedRnnDescriptor");
+
     auto key = std::make_pair(model_shapes, algo_config.algorithm());
     RnnScratchSpace& rnn_state = (*cache)[key];
     if (rnn_state.rnn_desc == nullptr || ResetRndGenState()) {
@@ -1157,6 +1475,9 @@ class CudnnRNNParamsSizeOp<GPUDevice, T, Index> : public CudnnRNNKernelCommon {
  public:
   explicit CudnnRNNParamsSizeOp(OpKernelConstruction* context)
       : CudnnRNNKernelCommon(context) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_49(mht_49_v, 1478, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "CudnnRNNParamsSizeOp");
+
     if (context->HasAttr("num_proj")) {
       OP_REQUIRES_OK(context, context->GetAttr("num_proj", &num_proj_));
     } else {
@@ -1165,6 +1486,9 @@ class CudnnRNNParamsSizeOp<GPUDevice, T, Index> : public CudnnRNNKernelCommon {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_50(mht_50_v, 1489, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "Compute");
+
     std::unique_ptr<RnnDescriptor> rnn_desc;
     OP_REQUIRES_OK(context,
                    ExtractCudnnRNNParamsInfo<T>(context, num_proj_, &rnn_desc));
@@ -1205,6 +1529,9 @@ class CudnnRNNParamsToCanonical<GPUDevice, T> : public CudnnRNNKernelCommon {
  public:
   explicit CudnnRNNParamsToCanonical(OpKernelConstruction* context)
       : CudnnRNNKernelCommon(context) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_51(mht_51_v, 1532, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "CudnnRNNParamsToCanonical");
+
     if (context->HasAttr("num_params")) {
       OP_REQUIRES_OK(context, context->GetAttr("num_params", &num_params_));
     } else {
@@ -1234,6 +1561,9 @@ class CudnnRNNParamsToCanonical<GPUDevice, T> : public CudnnRNNKernelCommon {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_52(mht_52_v, 1564, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "Compute");
+
     const Tensor& input = context->input(3);
     auto input_ptr = StreamExecutorUtil::AsDeviceMemory<T>(input);
     Stream* stream = context->op_device_context()->stream();
@@ -1407,6 +1737,9 @@ class CudnnRNNCanonicalToParams<GPUDevice, T> : public CudnnRNNKernelCommon {
  public:
   explicit CudnnRNNCanonicalToParams(OpKernelConstruction* context)
       : CudnnRNNKernelCommon(context) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_53(mht_53_v, 1740, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "CudnnRNNCanonicalToParams");
+
     if (context->HasAttr("num_proj")) {
       OP_REQUIRES_OK(context, context->GetAttr("num_proj", &num_proj_));
     } else {
@@ -1415,6 +1748,9 @@ class CudnnRNNCanonicalToParams<GPUDevice, T> : public CudnnRNNKernelCommon {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_54(mht_54_v, 1751, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "Compute");
+
     std::unique_ptr<RnnDescriptor> rnn_desc;
     OP_REQUIRES_OK(context,
                    ExtractCudnnRNNParamsInfo<T>(context, num_proj_, &rnn_desc));
@@ -1475,6 +1811,9 @@ class CudnnRNNForwardOp<GPUDevice, T> : public CudnnRNNKernelCommon {
  public:
   explicit CudnnRNNForwardOp(OpKernelConstruction* context)
       : CudnnRNNKernelCommon(context) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_55(mht_55_v, 1814, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "CudnnRNNForwardOp");
+
     OP_REQUIRES_OK(context, context->GetAttr("is_training", &is_training_));
 
     // Read debug env variables.
@@ -1484,6 +1823,9 @@ class CudnnRNNForwardOp<GPUDevice, T> : public CudnnRNNKernelCommon {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_56(mht_56_v, 1826, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "Compute");
+
     AlgorithmConfig algo_config;
     ComputeAndReturnAlgorithm(context, &algo_config, /*var_seq_lengths=*/false,
                               /*time_major=*/true, /*num_proj=*/0);
@@ -1494,6 +1836,9 @@ class CudnnRNNForwardOp<GPUDevice, T> : public CudnnRNNKernelCommon {
                                          AlgorithmConfig* output_algo_config,
                                          bool var_seq_lengths, bool time_major,
                                          int num_proj) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_57(mht_57_v, 1839, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "ComputeAndReturnAlgorithm");
+
     CHECK_NE(output_algo_config, nullptr);
 
     const Tensor* input = nullptr;
@@ -1572,12 +1917,18 @@ class CudnnRNNForwardOp<GPUDevice, T> : public CudnnRNNKernelCommon {
                                Tensor* output, Tensor* output_h,
                                Tensor* output_c,
                                AlgorithmConfig* best_algo_config) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_58(mht_58_v, 1920, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "MaybeAutotune");
+
     CHECK_NE(best_algo_config, nullptr);
     *best_algo_config = AlgorithmConfig();
     return Status::OK();
   }
 
-  bool is_training() const { return is_training_; }
+  bool is_training() const {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_59(mht_59_v, 1929, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "is_training");
+ return is_training_; }
   bool is_debug_mode_;
   bool debug_use_tensor_ops_;
   int64_t debug_cudnn_rnn_algo_;
@@ -1587,6 +1938,9 @@ class CudnnRNNForwardOp<GPUDevice, T> : public CudnnRNNKernelCommon {
                          const CudnnRnnModelShapes& model_shapes,
                          Tensor** output, Tensor** output_h,
                          Tensor** output_c) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_60(mht_60_v, 1941, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "AllocateOutputs");
+
     const TensorShape& hidden_state_shape = model_shapes.hidden_state_shape;
     const TensorShape& output_shape = model_shapes.output_shape;
     const TensorShape& cell_state_shape = model_shapes.cell_state_shape;
@@ -1636,9 +1990,15 @@ class CudnnRNNForwardOpV2<GPUDevice, T>
 
  public:
   explicit CudnnRNNForwardOpV2(OpKernelConstruction* context)
-      : CudnnRNNForwardOp<GPUDevice, T>(context) {}
+      : CudnnRNNForwardOp<GPUDevice, T>(context) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_61(mht_61_v, 1994, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "CudnnRNNForwardOpV2");
+}
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_62(mht_62_v, 1999, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "Compute");
+
     AlgorithmConfig best_algo_config;
     CudnnRNNForwardOp<GPUDevice, T>::ComputeAndReturnAlgorithm(
         context, &best_algo_config, /*var_seq_lengths=*/false,
@@ -1678,6 +2038,9 @@ class CudnnRNNForwardOpV2<GPUDevice, T>
                        const Tensor* params, Tensor* output, Tensor* output_h,
                        Tensor* output_c,
                        AlgorithmConfig* algo_config) override {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_63(mht_63_v, 2041, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "MaybeAutotune");
+
     CHECK_NE(algo_config, nullptr);
     if (!CudnnRnnUseAutotune() || this->is_debug_mode_) {
       *algo_config = AlgorithmConfig();
@@ -1837,11 +2200,17 @@ class CudnnRNNForwardOpV3<GPUDevice, T>
   bool time_major_;
 
  protected:
-  bool time_major() { return time_major_; }
+  bool time_major() {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_64(mht_64_v, 2204, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "time_major");
+ return time_major_; }
 
  public:
   explicit CudnnRNNForwardOpV3(OpKernelConstruction* context)
       : CudnnRNNForwardOp<GPUDevice, T>(context) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_65(mht_65_v, 2211, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "CudnnRNNForwardOpV3");
+
     OP_REQUIRES_OK(context, context->GetAttr("time_major", &time_major_));
     if (context->HasAttr("num_proj")) {
       OP_REQUIRES_OK(context, context->GetAttr("num_proj", &num_proj_));
@@ -1851,6 +2220,9 @@ class CudnnRNNForwardOpV3<GPUDevice, T>
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_66(mht_66_v, 2223, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "Compute");
+
     AlgorithmConfig best_algo_config;
     CudnnRNNForwardOp<GPUDevice, T>::ComputeAndReturnAlgorithm(
         context, &best_algo_config, /*var_seq_lengths=*/true,
@@ -1889,15 +2261,24 @@ template <typename T>
 class CudnnRNNBackwardOp<GPUDevice, T> : public CudnnRNNKernelCommon {
  public:
   explicit CudnnRNNBackwardOp(OpKernelConstruction* context)
-      : CudnnRNNKernelCommon(context) {}
+      : CudnnRNNKernelCommon(context) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_67(mht_67_v, 2265, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "CudnnRNNBackwardOp");
+}
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_68(mht_68_v, 2270, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "Compute");
+
     ComputeImpl(context, false, true, 0);
   }
 
  protected:
   virtual void ComputeImpl(OpKernelContext* context, bool var_seq_lengths,
                            bool time_major, int num_proj) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_69(mht_69_v, 2279, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "ComputeImpl");
+
     const Tensor* input = nullptr;
     const Tensor* input_h = nullptr;
     const Tensor* input_c = nullptr;
@@ -1972,6 +2353,9 @@ class CudnnRNNBackwardOp<GPUDevice, T> : public CudnnRNNKernelCommon {
  protected:
   virtual Status GetAlgorithm(OpKernelContext* context,
                               AlgorithmConfig* algo_config) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_70(mht_70_v, 2356, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "GetAlgorithm");
+
     CHECK_NE(algo_config, nullptr);
     *algo_config = AlgorithmConfig();
     return Status::OK();
@@ -1987,6 +2371,9 @@ class CudnnRNNBackwardOp<GPUDevice, T> : public CudnnRNNKernelCommon {
       const Tensor** output_h, const Tensor** output_c,
       const Tensor** output_backprop, const Tensor** output_h_backprop,
       const Tensor** output_c_backprop, const Tensor** reserve_space) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_71(mht_71_v, 2374, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "ExtractBackwardInputs");
+
     TF_RETURN_IF_ERROR(context->input("output", output));
     TF_RETURN_IF_ERROR(context->input("output_backprop", output_backprop));
     TF_RETURN_IF_ERROR(context->input("output_h", output_h));
@@ -2045,6 +2432,9 @@ class CudnnRNNBackwardOp<GPUDevice, T> : public CudnnRNNKernelCommon {
                          const TensorShape& params_shape,
                          Tensor** input_backprop, Tensor** input_h_backprop,
                          Tensor** input_c_backprop, Tensor** params_backprop) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_72(mht_72_v, 2435, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "AllocateOutputs");
+
     const TensorShape& input_shape = model_shapes.input_shape;
     const TensorShape& hidden_state_shape = model_shapes.hidden_state_shape;
     const TensorShape& cell_state_shape = model_shapes.cell_state_shape;
@@ -2082,11 +2472,17 @@ class CudnnRNNBackwardOpV2<GPUDevice, T>
     : public CudnnRNNBackwardOp<GPUDevice, T> {
  public:
   explicit CudnnRNNBackwardOpV2(OpKernelConstruction* context)
-      : CudnnRNNBackwardOp<GPUDevice, T>(context) {}
+      : CudnnRNNBackwardOp<GPUDevice, T>(context) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_73(mht_73_v, 2476, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "CudnnRNNBackwardOpV2");
+}
 
  protected:
   Status GetAlgorithm(OpKernelContext* context,
                       AlgorithmConfig* algo_config) override {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_74(mht_74_v, 2483, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "GetAlgorithm");
+
     CHECK_NE(algo_config, nullptr);
     const Tensor* host_reserved = nullptr;
     TF_RETURN_IF_ERROR(context->input("host_reserved", &host_reserved));
@@ -2118,11 +2514,17 @@ class CudnnRNNBackwardOpV3<GPUDevice, T>
   bool time_major_;
 
  protected:
-  bool time_major() { return time_major_; }
+  bool time_major() {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_75(mht_75_v, 2518, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "time_major");
+ return time_major_; }
 
  public:
   explicit CudnnRNNBackwardOpV3(OpKernelConstruction* context)
       : CudnnRNNBackwardOp<GPUDevice, T>(context) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_76(mht_76_v, 2525, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "CudnnRNNBackwardOpV3");
+
     OP_REQUIRES_OK(context, context->GetAttr("time_major", &time_major_));
     if (context->HasAttr("num_proj")) {
       OP_REQUIRES_OK(context, context->GetAttr("num_proj", &num_proj_));
@@ -2132,6 +2534,9 @@ class CudnnRNNBackwardOpV3<GPUDevice, T>
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScudnn_rnn_opsDTcc mht_77(mht_77_v, 2537, "", "./tensorflow/core/kernels/cudnn_rnn_ops.cc", "Compute");
+
     CudnnRNNBackwardOp<GPUDevice, T>::ComputeImpl(context, true, time_major(),
                                                   num_proj_);
   }

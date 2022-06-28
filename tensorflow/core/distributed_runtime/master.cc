@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -68,6 +236,9 @@ Master::Master(MasterEnv* env, double session_gc_seconds)
       step_count_(0),
       session_gc_seconds_(session_gc_seconds),
       recent_request_ids_(10000) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc mht_0(mht_0_v, 239, "", "./tensorflow/core/distributed_runtime/master.cc", "Master::Master");
+
   // Right now, a master service must be co-located with a device.
   // Otherwise, fetches do not work.
   CHECK(!env->local_devices.empty());
@@ -81,6 +252,9 @@ Master::Master(MasterEnv* env, double session_gc_seconds)
 }
 
 Master::~Master() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc mht_1(mht_1_v, 255, "", "./tensorflow/core/distributed_runtime/master.cc", "Master::~Master");
+
   if (gc_thread_) {
     mutex_lock l(mu_);
     shutdown_ = true;
@@ -90,6 +264,9 @@ Master::~Master() {
 }
 
 void Master::GC() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc mht_2(mht_2_v, 267, "", "./tensorflow/core/distributed_runtime/master.cc", "Master::GC");
+
   Env* env = Env::Default();
   while (true) {
     mutex_lock l(mu_);
@@ -121,6 +298,10 @@ void Master::GC() {
 }
 
 MasterSession* Master::FindMasterSession(const string& handle) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("handle: \"" + handle + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc mht_3(mht_3_v, 302, "", "./tensorflow/core/distributed_runtime/master.cc", "Master::FindMasterSession");
+
   MasterSession* session = nullptr;
   {
     mutex_lock l(mu_);
@@ -138,6 +319,9 @@ class DeviceFinder {
       const protobuf::RepeatedPtrField<string>& device_filters, MasterEnv* env,
       WorkerCacheInterface* worker_cache,
       std::vector<std::unique_ptr<Device>>* out_remote) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc mht_4(mht_4_v, 322, "", "./tensorflow/core/distributed_runtime/master.cc", "GetRemoteDevices");
+
     DeviceFinder finder(device_filters, env, worker_cache);
     finder.Start();
     TF_RETURN_IF_ERROR(finder.Wait());
@@ -148,6 +332,9 @@ class DeviceFinder {
   static void GetRemoteWorkers(
       const protobuf::RepeatedPtrField<string>& device_filters, MasterEnv* env,
       WorkerCacheInterface* worker_cache, std::vector<string>* workers) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc mht_5(mht_5_v, 335, "", "./tensorflow/core/distributed_runtime/master.cc", "GetRemoteWorkers");
+
     DeviceFinder finder(device_filters, env, worker_cache);
     *workers = finder.targets_;
   }
@@ -157,8 +344,15 @@ class DeviceFinder {
       const protobuf::RepeatedPtrField<string>& device_filters, MasterEnv* env,
       WorkerCacheInterface* worker_cache)
       : env_(env), worker_cache_(worker_cache) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc mht_6(mht_6_v, 347, "", "./tensorflow/core/distributed_runtime/master.cc", "DeviceFinder");
+
     CHECK(worker_cache) << "Worker cache was null!";
     auto process_filter = [this](const string& filter) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("filter: \"" + filter + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc mht_7(mht_7_v, 353, "", "./tensorflow/core/distributed_runtime/master.cc", "lambda");
+
       DeviceNameUtils::ParsedName parsed;
       if (DeviceNameUtils::ParseFullName(filter, &parsed)) {
         filters_.push_back(parsed);
@@ -231,10 +425,16 @@ class DeviceFinder {
   }
 
   ~DeviceFinder() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc mht_8(mht_8_v, 428, "", "./tensorflow/core/distributed_runtime/master.cc", "~DeviceFinder");
+
     for (Device* dev : found_) delete dev;
   }
 
   void Start() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc mht_9(mht_9_v, 435, "", "./tensorflow/core/distributed_runtime/master.cc", "Start");
+
     {
       mutex_lock l(mu_);
       num_pending_ = targets_.size();
@@ -259,6 +459,9 @@ class DeviceFinder {
   const int32 kLoggingPeriodMs = 10 * 1000;
 
   Status Wait() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc mht_10(mht_10_v, 462, "", "./tensorflow/core/distributed_runtime/master.cc", "Wait");
+
     mutex_lock l(mu_);
     // TODO(mrry): Propagate a timeout here, since `num_pending_` may
     // never become zero.
@@ -280,6 +483,9 @@ class DeviceFinder {
   // The caller takes the ownership of returned remote devices.
   void GetRemoteDevices(const std::vector<Device*>& local,
                         std::vector<std::unique_ptr<Device>>* remote) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc mht_11(mht_11_v, 486, "", "./tensorflow/core/distributed_runtime/master.cc", "GetRemoteDevices");
+
     std::unordered_set<string> names(local.size());
     for (Device* dev : local) names.insert(dev->name());
     mutex_lock l(mu_);
@@ -312,6 +518,9 @@ class DeviceFinder {
 
   void WhenFound(int target_index, const Status& s,
                  std::vector<Device*>* devices) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc mht_12(mht_12_v, 521, "", "./tensorflow/core/distributed_runtime/master.cc", "WhenFound");
+
     mutex_lock l(mu_);
     seen_targets_[target_index] = true;
     if (!s.ok()) {
@@ -332,6 +541,9 @@ class DeviceFinder {
   // with the set of devices allowed by 'y'.
   bool Intersects(const DeviceNameUtils::ParsedName& x,
                   const DeviceNameUtils::ParsedName& y) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc mht_13(mht_13_v, 544, "", "./tensorflow/core/distributed_runtime/master.cc", "Intersects");
+
     return (!x.has_job || !y.has_job || x.job == y.job) &&
            (!x.has_replica || !y.has_replica || x.replica == y.replica) &&
            (!x.has_task || !y.has_task || x.task == y.task) &&
@@ -341,6 +553,10 @@ class DeviceFinder {
 
   // Returns true iff 'name' matches one of the filters_.
   bool MatchFilters(const string& name) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc mht_14(mht_14_v, 557, "", "./tensorflow/core/distributed_runtime/master.cc", "MatchFilters");
+
     if (filters_.empty()) return true;
     DeviceNameUtils::ParsedName x;
     if (DeviceNameUtils::ParseFullName(name, &x)) {
@@ -356,6 +572,9 @@ class DeviceFinder {
 
 void Master::CreateSession(const CreateSessionRequest* req,
                            CreateSessionResponse* resp, MyClosure done) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc mht_15(mht_15_v, 575, "", "./tensorflow/core/distributed_runtime/master.cc", "Master::CreateSession");
+
   SchedClosure([this, req, resp, done]() {
     Status status;
     WorkerCacheFactoryOptions worker_cache_factory_options;
@@ -491,6 +710,9 @@ void Master::CreateSession(const CreateSessionRequest* req,
 
 void Master::ExtendSession(const ExtendSessionRequest* req,
                            ExtendSessionResponse* resp, MyClosure done) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc mht_16(mht_16_v, 713, "", "./tensorflow/core/distributed_runtime/master.cc", "Master::ExtendSession");
+
   auto session = FindMasterSession(req->session_handle());
   if (session == nullptr) {
     done(errors::Aborted("Session ", req->session_handle(), " is not found."));
@@ -509,6 +731,9 @@ void Master::ExtendSession(const ExtendSessionRequest* req,
 
 void Master::PartialRunSetup(const PartialRunSetupRequest* req,
                              PartialRunSetupResponse* resp, MyClosure done) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc mht_17(mht_17_v, 734, "", "./tensorflow/core/distributed_runtime/master.cc", "Master::PartialRunSetup");
+
   Status s = recent_request_ids_.TrackUnique(req->request_id(),
                                              "PartialRunSetup (Master)", *req);
   if (!s.ok()) {
@@ -530,6 +755,9 @@ void Master::PartialRunSetup(const PartialRunSetupRequest* req,
 
 void Master::RunStep(CallOptions* opts, const RunStepRequestWrapper* req,
                      MutableRunStepResponseWrapper* resp, MyClosure done) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc mht_18(mht_18_v, 758, "", "./tensorflow/core/distributed_runtime/master.cc", "Master::RunStep");
+
   Status s = recent_request_ids_.TrackUnique(req->request_id(),
                                              "RunStep (Master)", req);
   if (!s.ok()) {
@@ -556,6 +784,9 @@ void Master::RunStep(CallOptions* opts, const RunStepRequestWrapper* req,
 
 void Master::CloseSession(const CloseSessionRequest* req,
                           CloseSessionResponse* resp, MyClosure done) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc mht_19(mht_19_v, 787, "", "./tensorflow/core/distributed_runtime/master.cc", "Master::CloseSession");
+
   MasterSession* session = nullptr;
   {
     mu_.lock();
@@ -585,6 +816,9 @@ void Master::CloseSession(const CloseSessionRequest* req,
 
 void Master::ListDevices(const ListDevicesRequest* req,
                          ListDevicesResponse* resp, MyClosure done) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc mht_20(mht_20_v, 819, "", "./tensorflow/core/distributed_runtime/master.cc", "Master::ListDevices");
+
   SchedClosure([this, req, resp, done]() {
     if (!req->session_handle().empty()) {
       auto session = FindMasterSession(req->session_handle());
@@ -615,6 +849,9 @@ void Master::ListDevices(const ListDevicesRequest* req,
 }
 
 void Master::CleanupWorkers(const ResetRequest& reset) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc mht_21(mht_21_v, 852, "", "./tensorflow/core/distributed_runtime/master.cc", "Master::CleanupWorkers");
+
   std::vector<string> worker_names;
   DeviceFinder::GetRemoteWorkers(reset.device_filters(), env_,
                                  env_->worker_cache, &worker_names);
@@ -648,6 +885,9 @@ void Master::CleanupWorkers(const ResetRequest& reset) {
 
 void Master::Reset(const ResetRequest* req, ResetResponse* resp,
                    MyClosure done) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc mht_22(mht_22_v, 888, "", "./tensorflow/core/distributed_runtime/master.cc", "Master::Reset");
+
   // Vector to hold the session pointers present in the sessions_
   // (string->Session*) map.
   std::vector<MasterSession*> sessions_to_close;
@@ -675,6 +915,9 @@ void Master::Reset(const ResetRequest* req, ResetResponse* resp,
 
 void Master::MakeCallable(const MakeCallableRequest* req,
                           MakeCallableResponse* resp, MyClosure done) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc mht_23(mht_23_v, 918, "", "./tensorflow/core/distributed_runtime/master.cc", "Master::MakeCallable");
+
   Status s = recent_request_ids_.TrackUnique(req->request_id(),
                                              "MakeCallable (Master)", *req);
   if (!s.ok()) {
@@ -696,6 +939,9 @@ void Master::MakeCallable(const MakeCallableRequest* req,
 
 void Master::RunCallable(CallOptions* opts, const RunCallableRequest* req,
                          RunCallableResponse* resp, MyClosure done) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc mht_24(mht_24_v, 942, "", "./tensorflow/core/distributed_runtime/master.cc", "Master::RunCallable");
+
   Status s = recent_request_ids_.TrackUnique(req->request_id(),
                                              "RunCallable (Master)", *req);
   if (!s.ok()) {
@@ -717,6 +963,9 @@ void Master::RunCallable(CallOptions* opts, const RunCallableRequest* req,
 
 void Master::ReleaseCallable(const ReleaseCallableRequest* req,
                              ReleaseCallableResponse* resp, MyClosure done) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmasterDTcc mht_25(mht_25_v, 966, "", "./tensorflow/core/distributed_runtime/master.cc", "Master::ReleaseCallable");
+
   auto session = FindMasterSession(req->session_handle());
   if (session == nullptr) {
     done(errors::Aborted("Session ", req->session_handle(), " is not found."));

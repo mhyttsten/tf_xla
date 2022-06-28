@@ -21,6 +21,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_PLATFORM_DEFAULT_LOGGING_H_
 #define TENSORFLOW_CORE_PLATFORM_DEFAULT_LOGGING_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 // IWYU pragma: private, include "third_party/tensorflow/core/platform/logging.h"
 // IWYU pragma: friend third_party/tensorflow/core/platform/logging.h
@@ -85,7 +253,10 @@ class LogMessage : public std::basic_ostringstream<char> {
 // that the ternary VLOG() implementation is balanced, type wise.
 struct Voidifier {
   template <typename T>
-  void operator&(const T&) const {}
+  void operator&(const T&) const {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_0(mht_0_v, 257, "", "./tensorflow/core/platform/default/logging.h", "&");
+}
 };
 
 // LogMessageFatal ensures the process will exit in failure after
@@ -99,8 +270,14 @@ class LogMessageFatal : public LogMessage {
 // LogMessageNull supports the DVLOG macro by simply dropping any log messages.
 class LogMessageNull : public std::basic_ostringstream<char> {
  public:
-  LogMessageNull() {}
-  ~LogMessageNull() override {}
+  LogMessageNull() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_1(mht_1_v, 274, "", "./tensorflow/core/platform/default/logging.h", "LogMessageNull");
+}
+  ~LogMessageNull() override {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_2(mht_2_v, 278, "", "./tensorflow/core/platform/default/logging.h", "~LogMessageNull");
+}
 };
 
 #define _TF_LOG_INFO \
@@ -154,7 +331,10 @@ class LogMessageNull : public std::basic_ostringstream<char> {
 class LogEveryNState {
  public:
   bool ShouldLog(int n);
-  uint32_t counter() { return counter_.load(std::memory_order_relaxed); }
+  uint32_t counter() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_3(mht_3_v, 335, "", "./tensorflow/core/platform/default/logging.h", "counter");
+ return counter_.load(std::memory_order_relaxed); }
 
  private:
   std::atomic<uint32> counter_{0};
@@ -163,7 +343,10 @@ class LogEveryNState {
 class LogFirstNState {
  public:
   bool ShouldLog(int n);
-  uint32 counter() { return counter_.load(std::memory_order_relaxed); }
+  uint32 counter() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_4(mht_4_v, 347, "", "./tensorflow/core/platform/default/logging.h", "counter");
+ return counter_.load(std::memory_order_relaxed); }
 
  private:
   std::atomic<uint32> counter_{0};
@@ -172,7 +355,10 @@ class LogFirstNState {
 class LogEveryPow2State {
  public:
   bool ShouldLog(int ignored);
-  uint32 counter() { return counter_.load(std::memory_order_relaxed); }
+  uint32 counter() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_5(mht_5_v, 359, "", "./tensorflow/core/platform/default/logging.h", "counter");
+ return counter_.load(std::memory_order_relaxed); }
 
  private:
   std::atomic<uint32> counter_{0};
@@ -181,7 +367,10 @@ class LogEveryPow2State {
 class LogEveryNSecState {
  public:
   bool ShouldLog(double seconds);
-  uint32 counter() { return counter_.load(std::memory_order_relaxed); }
+  uint32 counter() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_6(mht_6_v, 371, "", "./tensorflow/core/platform/default/logging.h", "counter");
+ return counter_.load(std::memory_order_relaxed); }
 
  private:
   std::atomic<uint32> counter_{0};
@@ -269,20 +458,53 @@ template <typename T>
 inline const T& GetReferenceableValue(const T& t) {
   return t;
 }
-inline char GetReferenceableValue(char t) { return t; }
-inline unsigned char GetReferenceableValue(unsigned char t) { return t; }
-inline signed char GetReferenceableValue(signed char t) { return t; }
-inline int16 GetReferenceableValue(int16_t t) { return t; }
-inline uint16 GetReferenceableValue(uint16 t) { return t; }
-inline int GetReferenceableValue(int t) { return t; }
-inline unsigned int GetReferenceableValue(unsigned int t) { return t; }
-inline int64_t GetReferenceableValue(int64_t t) { return t; }
-inline uint64 GetReferenceableValue(uint64 t) { return t; }
+inline char GetReferenceableValue(char t) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("t: '" + std::string(1, t) + "'");
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_7(mht_7_v, 463, "", "./tensorflow/core/platform/default/logging.h", "GetReferenceableValue");
+ return t; }
+inline unsigned char GetReferenceableValue(unsigned char t) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("t: '" + std::string(1, t) + "'");
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_8(mht_8_v, 468, "", "./tensorflow/core/platform/default/logging.h", "GetReferenceableValue");
+ return t; }
+inline signed char GetReferenceableValue(signed char t) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("t: '" + std::string(1, t) + "'");
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_9(mht_9_v, 473, "", "./tensorflow/core/platform/default/logging.h", "GetReferenceableValue");
+ return t; }
+inline int16 GetReferenceableValue(int16_t t) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_10(mht_10_v, 477, "", "./tensorflow/core/platform/default/logging.h", "GetReferenceableValue");
+ return t; }
+inline uint16 GetReferenceableValue(uint16 t) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_11(mht_11_v, 481, "", "./tensorflow/core/platform/default/logging.h", "GetReferenceableValue");
+ return t; }
+inline int GetReferenceableValue(int t) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_12(mht_12_v, 485, "", "./tensorflow/core/platform/default/logging.h", "GetReferenceableValue");
+ return t; }
+inline unsigned int GetReferenceableValue(unsigned int t) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_13(mht_13_v, 489, "", "./tensorflow/core/platform/default/logging.h", "GetReferenceableValue");
+ return t; }
+inline int64_t GetReferenceableValue(int64_t t) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_14(mht_14_v, 493, "", "./tensorflow/core/platform/default/logging.h", "GetReferenceableValue");
+ return t; }
+inline uint64 GetReferenceableValue(uint64 t) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_15(mht_15_v, 497, "", "./tensorflow/core/platform/default/logging.h", "GetReferenceableValue");
+ return t; }
 
 // This formats a value for a failing CHECK_XX statement.  Ordinarily,
 // it uses the definition for operator<<, with a few special cases below.
 template <typename T>
 inline void MakeCheckOpValueString(std::ostream* os, const T& v) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_16(mht_16_v, 505, "", "./tensorflow/core/platform/default/logging.h", "MakeCheckOpValueString");
+
   (*os) << v;
 }
 
@@ -304,10 +526,16 @@ void MakeCheckOpValueString(std::ostream* os, const std::nullptr_t& v);
 // A container for a string pointer which can be evaluated to a bool -
 // true iff the pointer is non-NULL.
 struct CheckOpString {
-  explicit CheckOpString(string* str) : str_(str) {}
+  explicit CheckOpString(string* str) : str_(str) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_17(mht_17_v, 530, "", "./tensorflow/core/platform/default/logging.h", "CheckOpString");
+}
   // No destructor: if str_ is non-NULL, we're about to LOG(FATAL),
   // so there's no point in cleaning up str_.
-  explicit operator bool() const { return TF_PREDICT_FALSE(str_ != nullptr); }
+  explicit operator bool() const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_18(mht_18_v, 536, "", "./tensorflow/core/platform/default/logging.h", "bool");
+ return TF_PREDICT_FALSE(str_ != nullptr); }
   string* str_;
 };
 
@@ -329,7 +557,10 @@ class CheckOpMessageBuilder {
   // Deletes "stream_".
   ~CheckOpMessageBuilder();
   // For inserting the first variable.
-  std::ostream* ForVar1() { return stream_; }
+  std::ostream* ForVar1() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_19(mht_19_v, 561, "", "./tensorflow/core/platform/default/logging.h", "ForVar1");
+ return stream_; }
   // For inserting the second variable (adds an intermediate " vs. ").
   std::ostream* ForVar2();
   // Get the result (inserts the closing ")").
@@ -383,6 +614,10 @@ inline string* Check_EQImpl(int v1, size_t v2, const char* exprtext) {
 }
 
 inline string* Check_EQImpl(size_t v1, int v2, const char* exprtext) {
+   std::vector<std::string> mht_20_v;
+   mht_20_v.push_back("exprtext: \"" + (exprtext == nullptr ? std::string("nullptr") : std::string((char*)exprtext)) + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_20(mht_20_v, 618, "", "./tensorflow/core/platform/default/logging.h", "Check_EQImpl");
+
   return Check_EQImpl(v2, v1, exprtext);
 }
 
@@ -395,6 +630,10 @@ inline string* Check_NEImpl(int v1, size_t v2, const char* exprtext) {
 }
 
 inline string* Check_NEImpl(size_t v1, int v2, const char* exprtext) {
+   std::vector<std::string> mht_21_v;
+   mht_21_v.push_back("exprtext: \"" + (exprtext == nullptr ? std::string("nullptr") : std::string((char*)exprtext)) + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_21(mht_21_v, 634, "", "./tensorflow/core/platform/default/logging.h", "Check_NEImpl");
+
   return Check_NEImpl(v2, v1, exprtext);
 }
 
@@ -407,6 +646,10 @@ inline string* Check_LEImpl(int v1, size_t v2, const char* exprtext) {
 }
 
 inline string* Check_LEImpl(size_t v1, int v2, const char* exprtext) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("exprtext: \"" + (exprtext == nullptr ? std::string("nullptr") : std::string((char*)exprtext)) + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_22(mht_22_v, 650, "", "./tensorflow/core/platform/default/logging.h", "Check_LEImpl");
+
   if (TF_PREDICT_FALSE(v2 < 0))
     return ::tensorflow::internal::MakeCheckOpString(v1, v2, exprtext);
   return Check_LEImpl(v1, size_t(v2), exprtext);
@@ -421,6 +664,10 @@ inline string* Check_LTImpl(int v1, size_t v2, const char* exprtext) {
 }
 
 inline string* Check_LTImpl(size_t v1, int v2, const char* exprtext) {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("exprtext: \"" + (exprtext == nullptr ? std::string("nullptr") : std::string((char*)exprtext)) + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_23(mht_23_v, 668, "", "./tensorflow/core/platform/default/logging.h", "Check_LTImpl");
+
   if (v2 < 0)
     return ::tensorflow::internal::MakeCheckOpString(v1, v2, exprtext);
   return Check_LTImpl(v1, size_t(v2), exprtext);
@@ -525,25 +772,52 @@ int64_t MaxVLogLevelFromEnv();
 // operation.
 class TFLogEntry {
   static absl::LogSeverity AsAbslLogSeverity(int severity) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_24(mht_24_v, 775, "", "./tensorflow/core/platform/default/logging.h", "AsAbslLogSeverity");
+
     return static_cast<absl::LogSeverity>(severity);
   }
 
  public:
   explicit TFLogEntry(int severity, absl::string_view message)
-      : severity_(AsAbslLogSeverity(severity)), message_(message) {}
+      : severity_(AsAbslLogSeverity(severity)), message_(message) {
+   std::vector<std::string> mht_25_v;
+   mht_25_v.push_back("message: \"" + std::string(message.data(), message.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_25(mht_25_v, 785, "", "./tensorflow/core/platform/default/logging.h", "TFLogEntry");
+}
 
   explicit TFLogEntry(int severity, absl::string_view fname, int line,
                       absl::string_view message)
       : severity_(AsAbslLogSeverity(severity)),
         fname_(fname),
         line_(line),
-        message_(message) {}
+        message_(message) {
+   std::vector<std::string> mht_26_v;
+   mht_26_v.push_back("fname: \"" + std::string(fname.data(), fname.size()) + "\"");
+   mht_26_v.push_back("message: \"" + std::string(message.data(), message.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_26(mht_26_v, 797, "", "./tensorflow/core/platform/default/logging.h", "TFLogEntry");
+}
 
-  absl::LogSeverity log_severity() const { return severity_; }
-  std::string FName() const { return fname_; }
-  int Line() const { return line_; }
-  std::string ToString() const { return message_; }
-  absl::string_view text_message() const { return message_; }
+  absl::LogSeverity log_severity() const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_27(mht_27_v, 802, "", "./tensorflow/core/platform/default/logging.h", "log_severity");
+ return severity_; }
+  std::string FName() const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_28(mht_28_v, 806, "", "./tensorflow/core/platform/default/logging.h", "FName");
+ return fname_; }
+  int Line() const {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_29(mht_29_v, 810, "", "./tensorflow/core/platform/default/logging.h", "Line");
+ return line_; }
+  std::string ToString() const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_30(mht_30_v, 814, "", "./tensorflow/core/platform/default/logging.h", "ToString");
+ return message_; }
+  absl::string_view text_message() const {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_31(mht_31_v, 818, "", "./tensorflow/core/platform/default/logging.h", "text_message");
+ return message_; }
 
  private:
   const absl::LogSeverity severity_;
@@ -574,7 +848,10 @@ class TFLogSink {
   // The default implementation returns immediately.  Like `Send`,
   // implementations should be careful not to call `LOG` or `CHECK or take any
   // locks that might be held by the `LOG` caller, to avoid deadlock.
-  virtual void WaitTillSent() {}
+  virtual void WaitTillSent() {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSdefaultPSloggingDTh mht_32(mht_32_v, 852, "", "./tensorflow/core/platform/default/logging.h", "WaitTillSent");
+}
 };
 
 // This is the default log sink. This log sink is used if there are no other

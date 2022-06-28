@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSregion_control_flow_to_functionalDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSregion_control_flow_to_functionalDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSregion_control_flow_to_functionalDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -69,6 +237,9 @@ struct RegionControlFlowToFunctional
 
 std::string RegionControlFlowToFunctional::GetName(Operation* op,
                                                    StringRef suffix) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSregion_control_flow_to_functionalDTcc mht_0(mht_0_v, 240, "", "./tensorflow/compiler/mlir/tensorflow/transforms/region_control_flow_to_functional.cc", "RegionControlFlowToFunctional::GetName");
+
   return (mapper.GetUniqueName(op) + suffix).str();
 }
 
@@ -103,6 +274,9 @@ llvm::SmallVector<Value, 4> CollectExternValues(Region& first, Region& second) {
 // functional op `dst` and appropriately overrides any necessary attributes.
 void CopyAndOverrideAttributes(Operation* src, Operation* dst,
                                OpBuilder* builder) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSregion_control_flow_to_functionalDTcc mht_1(mht_1_v, 277, "", "./tensorflow/compiler/mlir/tensorflow/transforms/region_control_flow_to_functional.cc", "CopyAndOverrideAttributes");
+
   CopyDeviceAndUnderscoredAttributes(src, dst);
 
   // Explicitly override attribute to propagate constants to the functions
@@ -124,6 +298,9 @@ void ExtractSingleBlockRegion(Region& region, StringRef name,
                               llvm::SmallVectorImpl<Value>& extern_values,
                               llvm::SmallVectorImpl<FuncOp>& worklist,
                               bool extern_values_passthrough) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSregion_control_flow_to_functionalDTcc mht_2(mht_2_v, 301, "", "./tensorflow/compiler/mlir/tensorflow/transforms/region_control_flow_to_functional.cc", "ExtractSingleBlockRegion");
+
   ModuleOp module = region.getParentOfType<ModuleOp>();
   auto builder = OpBuilder::atBlockBegin(module.getBody());
   auto loc = region.getParentOp()->getLoc();
@@ -230,6 +407,9 @@ using ArgMatcherFn = function_ref<bool(Value, Region&, Value, Region&)>;
 // match.
 bool MatchCallArgs(func::CallOp first, func::CallOp second,
                    ArgMatcherFn matcher) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSregion_control_flow_to_functionalDTcc mht_3(mht_3_v, 410, "", "./tensorflow/compiler/mlir/tensorflow/transforms/region_control_flow_to_functional.cc", "MatchCallArgs");
+
   if (first.getNumOperands() != second.getNumOperands()) return false;
 
   Region& first_region = *first->getParentRegion();
@@ -238,6 +418,9 @@ bool MatchCallArgs(func::CallOp first, func::CallOp second,
   for (auto it : llvm::zip(first.getArgOperands(), second.getArgOperands())) {
     // Get the defining Op, skipping over casts.
     auto get_defining_op = [](Value value) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSregion_control_flow_to_functionalDTcc mht_4(mht_4_v, 421, "", "./tensorflow/compiler/mlir/tensorflow/transforms/region_control_flow_to_functional.cc", "lambda");
+
       while (auto cast_op =
                  llvm::dyn_cast_or_null<CastOp>(value.getDefiningOp())) {
         // Consider cast compatibility in case
@@ -281,6 +464,9 @@ struct TrivialTransformInfo {
   TrivialTransformInfo(llvm::Optional<func::CallOp> first_call,
                        llvm::Optional<func::CallOp> second_call,
                        ArgMatcherFn arg_matcher) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSregion_control_flow_to_functionalDTcc mht_5(mht_5_v, 467, "", "./tensorflow/compiler/mlir/tensorflow/transforms/region_control_flow_to_functional.cc", "TrivialTransformInfo");
+
     if (!first_call || !second_call) return;
 
     if (!MatchCallArgs(first_call.getValue(), second_call.getValue(),
@@ -295,11 +481,17 @@ struct TrivialTransformInfo {
 
 // Transform IfRegionOp to IfOp.
 LogicalResult RegionControlFlowToFunctional::ConvertIfOp(IfRegionOp if_region) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSregion_control_flow_to_functionalDTcc mht_6(mht_6_v, 484, "", "./tensorflow/compiler/mlir/tensorflow/transforms/region_control_flow_to_functional.cc", "RegionControlFlowToFunctional::ConvertIfOp");
+
   llvm::SmallVector<Value, 4> extern_values;
 
   // For IfOp, arguments of calls in the then and else regions match if they
   // are the same value.
   auto if_arg_matcher = [&](Value first, Region&, Value second, Region&) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSregion_control_flow_to_functionalDTcc mht_7(mht_7_v, 492, "", "./tensorflow/compiler/mlir/tensorflow/transforms/region_control_flow_to_functional.cc", "lambda");
+
     if (first != second) return false;
 
     // collect the call arguments post lookup through cast Op's
@@ -375,6 +567,9 @@ LogicalResult RegionControlFlowToFunctional::ConvertIfOp(IfRegionOp if_region) {
 // Transform WhileRegion to WhileOp.
 LogicalResult RegionControlFlowToFunctional::ConvertWhileOp(
     WhileRegionOp while_region) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSregion_control_flow_to_functionalDTcc mht_8(mht_8_v, 570, "", "./tensorflow/compiler/mlir/tensorflow/transforms/region_control_flow_to_functional.cc", "RegionControlFlowToFunctional::ConvertWhileOp");
+
   // For While, the arguments of the calls in the body and cond regions match
   // if they are region arguments with the same region argument numbers. If the
   // 2 calls have the same value (an extern value) used as an argument, we
@@ -383,6 +578,9 @@ LogicalResult RegionControlFlowToFunctional::ConvertWhileOp(
   // existing function as is.
   auto while_arg_matcher = [](Value first, Region& first_region, Value second,
                               Region& second_region) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSregion_control_flow_to_functionalDTcc mht_9(mht_9_v, 581, "", "./tensorflow/compiler/mlir/tensorflow/transforms/region_control_flow_to_functional.cc", "lambda");
+
     if (!first.isa<BlockArgument>() || !second.isa<BlockArgument>())
       return false;
     BlockArgument first_block_arg = first.cast<BlockArgument>();
@@ -457,6 +655,9 @@ LogicalResult RegionControlFlowToFunctional::ConvertWhileOp(
 }
 
 void RegionControlFlowToFunctional::runOnOperation() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSregion_control_flow_to_functionalDTcc mht_10(mht_10_v, 658, "", "./tensorflow/compiler/mlir/tensorflow/transforms/region_control_flow_to_functional.cc", "RegionControlFlowToFunctional::runOnOperation");
+
   ModuleOp module = getOperation();
 
   // Seed worklist with all functions in the module.

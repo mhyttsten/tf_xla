@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -96,17 +264,26 @@ constexpr char kDefaultLayoutAttrName[] = "xla_shape";
 // as a pointer and there is otherwise no way to avoid a memory leak.
 template <typename T>
 T Unwrap(T t) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_0(mht_0_v, 267, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "Unwrap");
+
   return t;
 }
 
 template <typename T>
 T* Unwrap(const std::unique_ptr<T>& t) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_1(mht_1_v, 275, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "Unwrap");
+
   return t.get();
 }
 
 static mlir::LogicalResult GetXlaOp(
     mlir::Value val, const llvm::DenseMap<mlir::Value, xla::XlaOp>& val_map,
     xla::XlaOp* result, mlir::Operation* op) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_2(mht_2_v, 284, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "GetXlaOp");
+
   auto iter = val_map.find(val);
   if (iter == val_map.end()) {
     return op->emitOpError(
@@ -118,13 +295,25 @@ static mlir::LogicalResult GetXlaOp(
 
 // Convert APInt into an int.
 // TODO(hpucha): This should be consolidated into a general place.
-static int ConvertAPInt(llvm::APInt i) { return i.getSExtValue(); }
+static int ConvertAPInt(llvm::APInt i) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_3(mht_3_v, 299, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ConvertAPInt");
+ return i.getSExtValue(); }
 
-static uint32_t Convertuint32_t(uint32_t i) { return i; }
-static uint64_t Convertuint64_t(uint64_t i) { return i; }
+static uint32_t Convertuint32_t(uint32_t i) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_4(mht_4_v, 304, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "Convertuint32_t");
+ return i; }
+static uint64_t Convertuint64_t(uint64_t i) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_5(mht_5_v, 308, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "Convertuint64_t");
+ return i; }
 
 // Convert APFloat to double.
 static double ConvertAPFloat(llvm::APFloat value) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_6(mht_6_v, 314, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ConvertAPFloat");
+
   const auto& semantics = value.getSemantics();
   bool losesInfo = false;
   if (&semantics != &llvm::APFloat::IEEEdouble())
@@ -133,9 +322,15 @@ static double ConvertAPFloat(llvm::APFloat value) {
   return value.convertToDouble();
 }
 
-static inline bool Convertbool(bool value) { return value; }
+static inline bool Convertbool(bool value) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_7(mht_7_v, 326, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "Convertbool");
+ return value; }
 
 static absl::string_view ConvertStringRef(mlir::StringRef value) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_8(mht_8_v, 331, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ConvertStringRef");
+
   return {value.data(), value.size()};
 }
 
@@ -162,6 +357,9 @@ static std::vector<int64_t> Convert_broadcast_dimensions(
 
 // Converts StringRef to xla FftType enum
 static xla::FftType Convert_fft_type(mlir::mhlo::FftType fft_type) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_9(mht_9_v, 360, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "Convert_fft_type");
+
   xla::FftType fft_type_enum;
   // Illegal fft_type string would be caught by the verifier, so 'FftType_Parse'
   // call below should never return false.
@@ -212,6 +410,9 @@ static std::vector<xla::Shape> ConvertTypesToShapesWithLayout(
 // supported for export.
 static xla::Shape GetCustomCallResultShapeWithLayout(mlir::Type type,
                                                      mlir::ArrayAttr layouts) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_10(mht_10_v, 413, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "GetCustomCallResultShapeWithLayout");
+
   auto tuple_type = type.dyn_cast<mlir::TupleType>();
   if (!tuple_type) return ConvertTypesToShapesWithLayout({type}, layouts)[0];
 
@@ -223,6 +424,9 @@ static xla::Shape GetCustomCallResultShapeWithLayout(mlir::Type type,
 // Converts StringRef to xla Transpose enum.
 static xla::TriangularSolveOptions::Transpose Convert_transpose_a(
     mlir::mhlo::Transpose transpose) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_11(mht_11_v, 427, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "Convert_transpose_a");
+
   return xla::ConvertTranspose(mlir::mhlo::stringifyTranspose(transpose))
       .ValueOrDie();
 }
@@ -230,6 +434,9 @@ static xla::TriangularSolveOptions::Transpose Convert_transpose_a(
 static xla::Layout ExtractLayout(
     mlir::Operation* op, int rank,
     llvm::StringRef attr_name = kDefaultLayoutAttrName) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_12(mht_12_v, 437, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExtractLayout");
+
   if (auto attr = op->getAttrOfType<mlir::DenseIntElementsAttr>(attr_name)) {
     llvm::SmallVector<int64_t, 4> minor_to_major;
     DCHECK_EQ(rank, attr.size());
@@ -243,6 +450,9 @@ static xla::Layout ExtractLayout(
 }
 
 static xla::Shape ExtractXlaShape(mlir::Operation* op) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_13(mht_13_v, 453, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExtractXlaShape");
+
   if (auto attr = op->getAttrOfType<mlir::StringAttr>(kDefaultLayoutAttrName)) {
     return *xla::ParseShape(
         absl::string_view(attr.getValue().data(), attr.getValue().size()));
@@ -312,6 +522,9 @@ static std::unique_ptr<xla::PrecisionConfig> Convert_precision_config(
 
 static xla::DotDimensionNumbers Convert_dot_dimension_numbers(
     mlir::mhlo::DotDimensionNumbersAttr dot_dimension_numbers_attr) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_14(mht_14_v, 525, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "Convert_dot_dimension_numbers");
+
   xla::DotDimensionNumbers dot_dimension_numbers;
 
   auto rhs_contracting_dimensions =
@@ -343,10 +556,16 @@ static xla::DotDimensionNumbers Convert_dot_dimension_numbers(
 
 static xla::ConvolutionDimensionNumbers Convert_dimension_numbers(
     mlir::mhlo::ConvDimensionNumbersAttr input) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_15(mht_15_v, 559, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "Convert_dimension_numbers");
+
   return xla::ConvertConvDimensionNumbers(input);
 }
 
 xla::ChannelHandle Convert_channel_handle(mlir::mhlo::ChannelHandle attr) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_16(mht_16_v, 566, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "Convert_channel_handle");
+
   xla::ChannelHandle channel_handle;
   channel_handle.set_handle(ConvertAPInt(attr.handle().getValue()));
   channel_handle.set_type(static_cast<xla::ChannelHandle::ChannelType>(
@@ -365,12 +584,18 @@ absl::optional<xla::ChannelHandle> Convert_channel_handle(
 // representing the enum. This should have been checked in the op verify method.
 static xla::ComparisonDirection Convert_comparison_direction(
     llvm::StringRef comparison_direction_string) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_17(mht_17_v, 587, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "Convert_comparison_direction");
+
   return xla::StringToComparisonDirection(comparison_direction_string.str())
       .ValueOrDie();
 }
 
 static xla::GatherDimensionNumbers Convert_dimension_numbers(
     mlir::mhlo::GatherDimensionNumbersAttr input) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_18(mht_18_v, 596, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "Convert_dimension_numbers");
+
   xla::GatherDimensionNumbers output;
 
   auto offset_dims = input.getOffsetDims();
@@ -394,6 +619,9 @@ static xla::GatherDimensionNumbers Convert_dimension_numbers(
 
 static xla::ScatterDimensionNumbers Convert_scatter_dimension_numbers(
     mlir::mhlo::ScatterDimensionNumbersAttr input) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_19(mht_19_v, 622, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "Convert_scatter_dimension_numbers");
+
   xla::ScatterDimensionNumbers output;
 
   auto update_window_dims = input.getUpdateWindowDims();
@@ -439,6 +667,9 @@ static absl::optional<xla::OpSharding> CreateOpShardingFromAttribute(
 // have frontend attributes.
 static xla::FrontendAttributes CreateOpFrontendAttributesFromAttribute(
     mlir::Operation* op) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_20(mht_20_v, 670, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "CreateOpFrontendAttributesFromAttribute");
+
   xla::FrontendAttributes frontend_attributes;
   auto frontend_attributes_dict =
       op->getAttrOfType<mlir::DictionaryAttr>(kFrontendAttributesAttr);
@@ -460,6 +691,9 @@ static xla::FrontendAttributes CreateOpFrontendAttributesFromAttribute(
 // respectively.
 static xla::OpMetadata CreateOpMetadataFromLocation(
     mlir::Operation* op, mlir::MlirToHloConversionOptions options) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_21(mht_21_v, 694, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "CreateOpMetadataFromLocation");
+
   xla::OpMetadata metadata;
   mlir::Location loc = op->getLoc();
   if (loc.isa<mlir::UnknownLoc>()) return metadata;
@@ -489,6 +723,9 @@ static xla::OpMetadata CreateOpMetadataFromLocation(
 // Checks if all shardings are set.
 static bool AllOptionalShardingsAreSet(
     llvm::ArrayRef<absl::optional<xla::OpSharding>> shardings) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_22(mht_22_v, 726, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "AllOptionalShardingsAreSet");
+
   return llvm::all_of(shardings,
                       [](const absl::optional<xla::OpSharding>& sharding) {
                         return sharding.has_value();
@@ -500,6 +737,9 @@ static void ExtractShardingsFromFunction(
     mlir::func::FuncOp function,
     llvm::SmallVectorImpl<absl::optional<xla::OpSharding>>* arg_shardings,
     llvm::SmallVectorImpl<absl::optional<xla::OpSharding>>* ret_shardings) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_23(mht_23_v, 740, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExtractShardingsFromFunction");
+
   arg_shardings->resize(function.getNumArguments(),
                         absl::optional<xla::OpSharding>());
   for (int i = 0, end = function.getNumArguments(); i < end; ++i)
@@ -540,6 +780,9 @@ class ConvertToHloModule {
         return_tuple_(return_tuple),
         shape_representation_fn_(shape_representation_fn),
         options_(options) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_24(mht_24_v, 783, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ConvertToHloModule");
+
     if (!shape_representation_fn_)
       shape_representation_fn_ = tensorflow::IdentityShapeRepresentationFn();
   }
@@ -549,6 +792,9 @@ class ConvertToHloModule {
   //
   // TODO(hinsu): Check for dynamic shapes and exit instead of crashing.
   LogicalResult Run() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_25(mht_25_v, 795, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "Run");
+
     auto main = module_.lookupSymbol<mlir::func::FuncOp>("main");
     if (!main)
       return module_.emitError(
@@ -583,6 +829,9 @@ class ConvertToHloModule {
           llvm::None);
 
   ::xla::HloModuleProto ConsumeMainProto() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_26(mht_26_v, 832, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ConsumeMainProto");
+
     auto main = module_.lookupSymbol<mlir::func::FuncOp>("main");
     // This is an invariant check as Run returns failure if there is no main
     // function and so the main proto shouldn't be consumed in that case.
@@ -598,11 +847,17 @@ class ConvertToHloModule {
   // Look up a symbol with the specified name, returning null if no such name
   // exists.
   FuncOp LookUpSymbol(FlatSymbolRefAttr symbol) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_27(mht_27_v, 850, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "LookUpSymbol");
+
     return module_.lookupSymbol<mlir::func::FuncOp>(symbol);
   }
 
   // Get Reference to lowered XLA computation for a function.
   xla::XlaComputation& GetLoweredComputation(FuncOp func) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_28(mht_28_v, 858, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "GetLoweredComputation");
+
     return lowered_computation_[func];
   }
 
@@ -613,7 +868,10 @@ class ConvertToHloModule {
       ConvertToHloModule::ValueLoweringMap* value_lowering,
       xla::XlaOp* return_value);
 
-  const MlirToHloConversionOptions& GetOptions() const { return options_; }
+  const MlirToHloConversionOptions& GetOptions() const {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_29(mht_29_v, 872, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "GetOptions");
+ return options_; }
 
  private:
   LogicalResult SetEntryTupleShapesAndLeafReplication(
@@ -666,6 +924,9 @@ mlir::LogicalResult GetTuple(mlir::Operation* op,
                              mlir::Operation::operand_range values,
                              OpLoweringContext ctx,
                              llvm::SmallVectorImpl<xla::XlaOp>& results) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_30(mht_30_v, 927, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "GetTuple");
+
   results.reserve(values.size());
   for (mlir::Value value : values) {
     if (failed(GetXlaOp(value, *ctx.values, &results.emplace_back(), op)))
@@ -678,6 +939,9 @@ mlir::LogicalResult GetXlaOps(mlir::Operation* op,
                               llvm::ArrayRef<mlir::Value> values,
                               OpLoweringContext ctx,
                               llvm::SmallVectorImpl<xla::XlaOp>& results) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_31(mht_31_v, 942, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "GetXlaOps");
+
   results.reserve(values.size());
   for (mlir::Value value : values) {
     if (failed(GetXlaOp(value, *ctx.values, &results.emplace_back(), op)))
@@ -693,6 +957,9 @@ namespace mhlo {
 namespace {
 
 LogicalResult ExportXlaOp(ComputeReshapeShapeOp, OpLoweringContext) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_32(mht_32_v, 960, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   // This op has no expression in the legacy export format. It can be expanded
   // to a sequence of operations if needed in the future, but would feed into
   // ops creating unsupported dynamic shapes.
@@ -700,11 +967,17 @@ LogicalResult ExportXlaOp(ComputeReshapeShapeOp, OpLoweringContext) {
 }
 
 LogicalResult ExportXlaOp(CstrReshapableOp, OpLoweringContext) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_33(mht_33_v, 970, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   // This op has no expression in the legacy export format.
   return failure();
 }
 
 LogicalResult ExportXlaOp(AllGatherOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_34(mht_34_v, 978, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto& valueMap = *ctx.values;
   xla::XlaOp operand;
   if (failed(GetXlaOp(op.operand(), valueMap, &operand, op))) return failure();
@@ -722,6 +995,9 @@ LogicalResult ExportXlaOp(AllGatherOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(AllReduceOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_35(mht_35_v, 998, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto& value_map = *ctx.values;
   xla::XlaComputation computation;
   if (failed(ctx.converter->LowerRegionAsComputation(&op.computation(),
@@ -739,6 +1015,9 @@ LogicalResult ExportXlaOp(AllReduceOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(ReduceScatterOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_36(mht_36_v, 1018, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto& valueMap = *ctx.values;
   xla::XlaOp operand;
   if (failed(GetXlaOp(op.operand(), valueMap, &operand, op))) return failure();
@@ -764,6 +1043,9 @@ LogicalResult ExportXlaOp(ReduceScatterOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(BitcastConvertOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_37(mht_37_v, 1046, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto& value_map = *ctx.values;
   xla::XlaOp operand;
   if (failed(GetXlaOp(op.operand(), value_map, &operand, op))) return failure();
@@ -774,6 +1056,9 @@ LogicalResult ExportXlaOp(BitcastConvertOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(BroadcastInDimOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_38(mht_38_v, 1059, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto type = op.getType().dyn_cast<RankedTensorType>();
   if (!type) return failure();
   auto& value_map = *ctx.values;
@@ -787,6 +1072,9 @@ LogicalResult ExportXlaOp(BroadcastInDimOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(DotOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_39(mht_39_v, 1075, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto& value_map = *ctx.values;
   xla::XlaOp lhs, rhs;
   if (failed(GetXlaOp(op.lhs(), value_map, &lhs, op))) return mlir::failure();
@@ -800,6 +1088,9 @@ LogicalResult ExportXlaOp(DotOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(DotGeneralOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_40(mht_40_v, 1091, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto& value_map = *ctx.values;
   xla::XlaOp lhs, rhs;
   if (failed(GetXlaOp(op.lhs(), value_map, &lhs, op))) return mlir::failure();
@@ -814,21 +1105,33 @@ LogicalResult ExportXlaOp(DotGeneralOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(DynamicBroadcastInDimOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_41(mht_41_v, 1108, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   // This op has no expression in the legacy export format.
   return failure();
 }
 
 LogicalResult ExportXlaOp(DynamicIotaOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_42(mht_42_v, 1116, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   // This op has no expression in the legacy export format.
   return failure();
 }
 
 LogicalResult ExportXlaOp(DynamicReshapeOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_43(mht_43_v, 1124, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   // This op has no expression in the legacy export format.
   return failure();
 }
 
 LogicalResult ExportXlaOp(IfOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_44(mht_44_v, 1132, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   xla::XlaComputation true_branch;
   xla::XlaComputation false_branch;
   auto& value_map = *ctx.values;
@@ -905,6 +1208,9 @@ LogicalResult ExportXlaOp(IfOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(CaseOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_45(mht_45_v, 1211, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   llvm::DenseMap<mlir::Value, xla::XlaOp>& value_map = *ctx.values;
   // OperandRange operands = op.branch_operands();
   MutableArrayRef<Region> branches = op.branches();
@@ -964,6 +1270,9 @@ LogicalResult ExportXlaOp(CaseOp op, OpLoweringContext ctx) {
 // Specialize CompareOp export to set broadcast_dimensions argument.
 mlir::LogicalResult ExportXlaOp(mlir::mhlo::CompareOp op,
                                 OpLoweringContext ctx) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_46(mht_46_v, 1273, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto& value_map = *ctx.values;
   xla::XlaOp lhs, rhs;
   if (failed(GetXlaOp(op.lhs(), value_map, &lhs, op))) return mlir::failure();
@@ -986,10 +1295,16 @@ mlir::LogicalResult ExportXlaOp(mlir::mhlo::CompareOp op,
 }
 
 LogicalResult ExportXlaOp(ConstOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_47(mht_47_v, 1298, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   return failure();
 }
 
 LogicalResult ExportXlaOp(mlir::mhlo::ConvOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_48(mht_48_v, 1305, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   // XLA client builder API does not support generating convolution instructions
   // with window reversal.
   if (op.hasWindowReversal()) return failure();
@@ -1013,6 +1328,9 @@ LogicalResult ExportXlaOp(mlir::mhlo::ConvOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(ConvertOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_49(mht_49_v, 1331, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto& value_map = *ctx.values;
   xla::XlaOp operand;
   if (failed(GetXlaOp(op.operand(), value_map, &operand, op))) return failure();
@@ -1023,6 +1341,9 @@ LogicalResult ExportXlaOp(ConvertOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(CustomCallOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_50(mht_50_v, 1344, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   if (op.getNumResults() != 1)
     return op.emitOpError() << "with multiple results cannot be exported";
 
@@ -1089,6 +1410,9 @@ LogicalResult ExportXlaOp(CustomCallOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(DequantizeOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_51(mht_51_v, 1413, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   xla::QuantizedRange range(ConvertAPFloat(op.min_range()),
                             ConvertAPFloat(op.max_range()));
   auto& value_map = *ctx.values;
@@ -1111,6 +1435,9 @@ LogicalResult ExportXlaOp(DequantizeOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(InfeedOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_52(mht_52_v, 1438, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto& value_map = *ctx.values;
   xla::XlaOp token;
   if (failed(GetXlaOp(op.token(), value_map, &token, op))) return failure();
@@ -1151,6 +1478,9 @@ LogicalResult ExportXlaOp(InfeedOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(IotaOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_53(mht_53_v, 1481, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto& value_map = *ctx.values;
   value_map[op] = xla::Iota(ctx.builder, xla::TypeToShape(op.getType()),
                             op.iota_dimension());
@@ -1158,6 +1488,9 @@ LogicalResult ExportXlaOp(IotaOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(MapOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_54(mht_54_v, 1491, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto& value_map = *ctx.values;
   xla::XlaComputation computation;
   if (failed(ctx.converter->LowerRegionAsComputation(&op.computation(),
@@ -1172,6 +1505,9 @@ LogicalResult ExportXlaOp(MapOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(OutfeedOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_55(mht_55_v, 1508, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto& value_map = *ctx.values;
 
   llvm::SmallVector<xla::XlaOp> operands;
@@ -1194,6 +1530,9 @@ LogicalResult ExportXlaOp(OutfeedOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(PadOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_56(mht_56_v, 1533, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto& value_map = *ctx.values;
   xla::PaddingConfig padding_config;
   auto edge_padding_low = ConvertDenseIntAttr(op.edge_padding_low());
@@ -1215,6 +1554,9 @@ LogicalResult ExportXlaOp(PadOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(RecvOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_57(mht_57_v, 1557, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto& value_map = *ctx.values;
 
   xla::XlaOp token;
@@ -1268,6 +1610,9 @@ LogicalResult ExportXlaOp(RecvOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(ReduceOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_58(mht_58_v, 1613, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto& value_map = *ctx.values;
   xla::XlaComputation body;
   if (failed(ctx.converter->LowerRegionAsComputation(&op.body(), &body))) {
@@ -1292,6 +1637,9 @@ LogicalResult ExportXlaOp(ReduceOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(ReduceWindowOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_59(mht_59_v, 1640, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto& value_map = *ctx.values;
   xla::XlaComputation body;
   if (failed(ctx.converter->LowerRegionAsComputation(&op.body(), &body))) {
@@ -1321,6 +1669,9 @@ LogicalResult ExportXlaOp(ReduceWindowOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(ReshapeOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_60(mht_60_v, 1672, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto& value_map = *ctx.values;
   xla::XlaOp operand;
   if (failed(GetXlaOp(op.operand(), value_map, &operand, op))) return failure();
@@ -1331,12 +1682,18 @@ LogicalResult ExportXlaOp(ReshapeOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(ReturnOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_61(mht_61_v, 1685, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   // Failure on purpose because `mhlo::ReturnOp` will be handled by
   // special purpose logic in `ConvertToHloModule::Lower`.
   return failure();
 }
 
 LogicalResult ExportXlaOp(RngBitGeneratorOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_62(mht_62_v, 1694, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto& value_map = *ctx.values;
   auto results = op.getResults();
   auto xla_arg_1 = value_map[*op.getODSOperands(0).begin()];
@@ -1351,6 +1708,9 @@ LogicalResult ExportXlaOp(RngBitGeneratorOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(XlaRngGetAndUpdateStateOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_63(mht_63_v, 1711, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   // This op does not exist in the XLA builder interface.
   (*ctx.values)[op.getResult()] =
       xla::internal::XlaBuilderFriend::BuildRngGetAndUpdateState(
@@ -1360,6 +1720,9 @@ LogicalResult ExportXlaOp(XlaRngGetAndUpdateStateOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(BatchNormGradOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_64(mht_64_v, 1723, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto& value_map = *ctx.values;
   auto results = op.getResults();
 
@@ -1383,6 +1746,9 @@ LogicalResult ExportXlaOp(BatchNormGradOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(BatchNormTrainingOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_65(mht_65_v, 1749, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto& value_map = *ctx.values;
   auto results = op.getResults();
 
@@ -1401,6 +1767,9 @@ LogicalResult ExportXlaOp(BatchNormTrainingOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(RngNormalOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_66(mht_66_v, 1770, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto& value_map = *ctx.values;
   xla::XlaOp mu, sigma;
   if (failed(GetXlaOp(op.mu(), value_map, &mu, op))) return failure();
@@ -1411,6 +1780,9 @@ LogicalResult ExportXlaOp(RngNormalOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(RngUniformOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_67(mht_67_v, 1783, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto& value_map = *ctx.values;
   xla::XlaOp a, b;
   if (failed(GetXlaOp(op.a(), value_map, &a, op))) return failure();
@@ -1421,6 +1793,9 @@ LogicalResult ExportXlaOp(RngUniformOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(ScatterOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_68(mht_68_v, 1796, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto& value_map = *ctx.values;
   xla::XlaComputation update_computation;
   if (failed(ctx.converter->LowerRegionAsComputation(&op.update_computation(),
@@ -1442,6 +1817,9 @@ LogicalResult ExportXlaOp(ScatterOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(SelectAndScatterOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_69(mht_69_v, 1820, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto& value_map = *ctx.values;
   xla::XlaComputation select;
   xla::XlaComputation scatter;
@@ -1464,6 +1842,9 @@ LogicalResult ExportXlaOp(SelectAndScatterOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(SendOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_70(mht_70_v, 1845, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto& value_map = *ctx.values;
 
   llvm::SmallVector<xla::XlaOp> operands;
@@ -1491,10 +1872,16 @@ LogicalResult ExportXlaOp(SendOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(SliceOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_71(mht_71_v, 1875, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   return failure();
 }
 
 LogicalResult ExportXlaOp(SortOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_72(mht_72_v, 1882, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   xla::XlaComputation comparator;
   if (failed(ctx.converter->LowerRegionAsComputation(&op.comparator(),
                                                      &comparator)))
@@ -1524,6 +1911,9 @@ LogicalResult ExportXlaOp(SortOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(TraceOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_73(mht_73_v, 1914, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto& value_map = *ctx.values;
   xla::XlaOp operand;
   if (failed(GetXlaOp(op.operand(), value_map, &operand, op))) return failure();
@@ -1532,12 +1922,18 @@ LogicalResult ExportXlaOp(TraceOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(UnaryEinsumOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_74(mht_74_v, 1925, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   // Intentional as UnaryEinsumOp is always lowered to the EinsumOp with two
   // operands.
   return failure();
 }
 
 LogicalResult ExportXlaOp(WhileOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_75(mht_75_v, 1934, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   xla::XlaComputation condition;
   xla::XlaComputation body;
   if (failed(ctx.converter->LowerRegionAsComputation(
@@ -1578,6 +1974,9 @@ LogicalResult ExportXlaOp(WhileOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(OptimizationBarrierOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_76(mht_76_v, 1977, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   // In case MHLO's OptimizationBarrierOp has multiple operands,
   // create xla::Tuple, using those operands, to be used as
   // sole operand of xla::OptimizationBarrier.
@@ -1600,6 +1999,9 @@ LogicalResult ExportXlaOp(OptimizationBarrierOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(FusionOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_77(mht_77_v, 2002, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   if (!op.fusion_kind()) {
     op.emitOpError() << "requires fusion kind for HLO translation";
     return failure();
@@ -1631,6 +2033,9 @@ LogicalResult ExportXlaOp(FusionOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(BitcastOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_78(mht_78_v, 2036, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   auto& value_map = *ctx.values;
   xla::XlaOp operand;
   if (failed(GetXlaOp(op.operand(), value_map, &operand, op))) return failure();
@@ -1664,22 +2069,37 @@ LogicalResult ExportXlaOp(BitcastOp op, OpLoweringContext ctx) {
 }
 
 LogicalResult ExportXlaOp(RealDynamicSliceOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_79(mht_79_v, 2072, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   return failure();
 }
 
 LogicalResult ExportXlaOp(DynamicPadOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_80(mht_80_v, 2079, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   return failure();
 }
 
 LogicalResult ExportXlaOp(DynamicGatherOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_81(mht_81_v, 2086, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   return failure();
 }
 
 LogicalResult ExportXlaOp(DynamicConvOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_82(mht_82_v, 2093, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   return failure();
 }
 
 LogicalResult ExportXlaOp(PrintOp op, OpLoweringContext ctx) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_83(mht_83_v, 2100, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOp");
+
   return failure();
 }
 
@@ -1733,6 +2153,9 @@ StatusOr<xla::Literal> CreateArrayLiteralFromAttr(ElementsAttr attr,
 
 LogicalResult ConvertLayout(mlir::Operation* op, const mlir::ArrayAttr& layout,
                             xla::ShapeProto* shape) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_84(mht_84_v, 2156, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ConvertLayout");
+
   // In the case of tuples, ShapeProtos can be nested, and so can the mlir
   // attribute describing the layout. So recurse into the subshapes in both data
   // structures in parallel.
@@ -1800,6 +2223,9 @@ LogicalResult ConvertInfeedtLayout(mlir::Operation* op,
                                    const mlir::ArrayAttr& layout,
                                    xla::ShapeProto* shape,
                                    int64_t layout_index = 0) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_85(mht_85_v, 2226, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ConvertInfeedtLayout");
+
   if (shape->element_type() != xla::TUPLE) {
     // Handles following shape:
     //   single array-shape of infeed data
@@ -1875,6 +2301,9 @@ LogicalResult ConvertInfeedtLayout(mlir::Operation* op,
 // for this single case, and inline the code to emit an `xor`.
 LogicalResult ExportXlaOperatorWrapped(mlir::Operation* inst,
                                        OpLoweringContext ctx) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_86(mht_86_v, 2304, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ExportXlaOperatorWrapped");
+
   auto op = dyn_cast<mlir::mhlo::AddOp>(inst);
   if (op && op.getResult()
                 .getType()
@@ -1903,6 +2332,9 @@ LogicalResult ConvertToHloModule::Lower(
     xla::XlaBuilder* builder,
     ConvertToHloModule::ValueLoweringMap* value_lowering,
     xla::XlaOp* return_value) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_87(mht_87_v, 2335, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ConvertToHloModule::Lower");
+
   // Explicitly fail for ops that are not supported for export.
   if (inst->getDialect() !=
           inst->getContext()->getLoadedDialect<mlir::mhlo::MhloDialect>() &&
@@ -2130,6 +2562,9 @@ LogicalResult ConvertToHloModule::Lower(
 LogicalResult ConvertToHloModule::LowerFunctionCall(
     mlir::func::CallOp call_op, xla::XlaBuilder* builder,
     ConvertToHloModule::ValueLoweringMap* value_lowering) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_88(mht_88_v, 2565, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ConvertToHloModule::LowerFunctionCall");
+
   auto& value_map = *value_lowering;
   mlir::func::FuncOp callee =
       module_.lookupSymbol<mlir::func::FuncOp>(call_op.getCallee());
@@ -2162,6 +2597,9 @@ LogicalResult ConvertToHloModule::LowerFunctionCall(
 }
 
 LogicalResult ConvertToHloModule::RunOnFunction(mlir::func::FuncOp f) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_89(mht_89_v, 2600, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ConvertToHloModule::RunOnFunction");
+
   if (lowered_computation_.count(f)) return success();
   if (!llvm::hasSingleElement(f)) {
     return f.emitError("only single block Function supported");
@@ -2229,6 +2667,9 @@ LogicalResult ConvertToHloModule::SetEntryTupleShapesAndLeafReplication(
     Block* block, const std::vector<bool>& entry_args_same_across_replicas,
     llvm::SmallVectorImpl<xla::Shape>* arg_shapes,
     std::vector<bool>* leaf_replication) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_90(mht_90_v, 2670, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ConvertToHloModule::SetEntryTupleShapesAndLeafReplication");
+
   arg_shapes->reserve(block->getNumArguments());
   leaf_replication->reserve(block->getNumArguments());
   for (BlockArgument& arg : block->getArguments()) {
@@ -2268,6 +2709,9 @@ LogicalResult ConvertToHloModule::SetEntryTupleShardings(
     Block* block, xla::XlaBuilder* builder,
     llvm::ArrayRef<absl::optional<xla::OpSharding>> arg_shardings,
     llvm::SmallVectorImpl<xla::Shape>* arg_shapes) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_91(mht_91_v, 2712, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ConvertToHloModule::SetEntryTupleShardings");
+
   if (!arg_shardings.empty() && AllOptionalShardingsAreSet(arg_shardings)) {
     xla::OpSharding sharding;
     sharding.set_type(xla::OpSharding::TUPLE);
@@ -2300,6 +2744,9 @@ LogicalResult ConvertToHloModule::LowerBasicBlockAsFunction(
     llvm::ArrayRef<absl::optional<xla::OpSharding>> ret_shardings,
     xla::XlaComputation* result,
     llvm::Optional<llvm::ArrayRef<mlir::Value>> implicit_operands) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_92(mht_92_v, 2747, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ConvertToHloModule::LowerBasicBlockAsFunction");
+
   // Mapping from the Value to lowered XlaOp.
   ValueLoweringMap lowering;
 
@@ -2419,6 +2866,9 @@ LogicalResult ConvertToHloModule::LowerRegionAsComputation(
     mlir::Region* region, xla::XlaComputation* func,
     llvm::Optional<llvm::ArrayRef<mlir::Value>> implicit_operands,
     bool ensure_single_arg) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_93(mht_93_v, 2869, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ConvertToHloModule::LowerRegionAsComputation");
+
   std::unique_ptr<xla::XlaBuilder> builder =
       module_builder_.CreateSubBuilder(absl::StrCat("region_", region_id_++));
   return LowerBasicBlockAsFunction(&region->front(), builder.get(),
@@ -2433,6 +2883,9 @@ void AddDynamicParameterBindingEntry(xla::DynamicParameterBindingProto* binding,
                                      int arg_index, int32_t shape_index,
                                      int32_t padding_arg_index,
                                      bool use_tuple_args) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_94(mht_94_v, 2886, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "AddDynamicParameterBindingEntry");
+
   auto* entry = binding->add_entries();
   entry->set_target_param_dim_num(shape_index);
   if (use_tuple_args) {
@@ -2448,6 +2901,9 @@ void AddDynamicParameterBindingEntry(xla::DynamicParameterBindingProto* binding,
 
 // Runs the PrepareForExport pass on the ModuleOp.
 Status PrepareForExport(mlir::ModuleOp module) {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_95(mht_95_v, 2904, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "PrepareForExport");
+
   // Prepare for export to XLA HLO.
   mlir::PassManager pm(module.getContext());
   pm.addNestedPass<mlir::func::FuncOp>(mhlo::CreatePrepareForExport());
@@ -2461,6 +2917,9 @@ Status PrepareForExport(mlir::ModuleOp module) {
 Status ConvertRegionToComputation(mlir::Region* region,
                                   xla::XlaComputation* func,
                                   MlirToHloConversionOptions options) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_96(mht_96_v, 2920, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ConvertRegionToComputation");
+
   mlir::ModuleOp module;
   xla::XlaBuilder module_builder("main");
   ConvertToHloModule converter(module, module_builder, true, true, {}, options);
@@ -2475,6 +2934,9 @@ Status ConvertMlirHloToHlo(
     bool return_tuple,
     const tensorflow::XlaHelpers::ShapeRepresentationFn shape_representation_fn,
     MlirToHloConversionOptions options) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_97(mht_97_v, 2937, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "ConvertMlirHloToHlo");
+
   TF_RETURN_IF_ERROR(PrepareForExport(module));
   mlir::StatusScopedDiagnosticHandler diag_handler(module.getContext());
   xla::XlaBuilder module_builder("main");
@@ -2492,6 +2954,9 @@ Status BuildHloFromMlirHlo(mlir::Block& block, xla::XlaBuilder& builder,
                            llvm::ArrayRef<xla::XlaOp> xla_params,
                            std::vector<xla::XlaOp>& returns,
                            MlirToHloConversionOptions options) {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPSmlir_hlo_to_hloDTcc mht_98(mht_98_v, 2957, "", "./tensorflow/compiler/mlir/xla/mlir_hlo_to_hlo.cc", "BuildHloFromMlirHlo");
+
   auto module = block.getParentOp()->getParentOfType<mlir::ModuleOp>();
   TF_RETURN_IF_ERROR(PrepareForExport(module));
   ConvertToHloModule converter(module, builder,

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSncclPSnccl_managerDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_managerDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSncclPSnccl_managerDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -100,6 +268,9 @@ struct NcclManager::CommunicatorMember {
  public:
   CommunicatorMember() {}
   ~CommunicatorMember() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_managerDTcc mht_0(mht_0_v, 271, "", "./tensorflow/core/nccl/nccl_manager.cc", "~CommunicatorMember");
+
     if (nccl_comm != nullptr) ncclCommDestroy(nccl_comm);
   }
 
@@ -126,6 +297,9 @@ static constexpr DataTypeSet kValidDataTypes =
     ToSet(DT_INT64);
 
 ncclDataType_t ToNcclType(DataType t) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_managerDTcc mht_1(mht_1_v, 300, "", "./tensorflow/core/nccl/nccl_manager.cc", "ToNcclType");
+
   switch (t) {
     case DT_HALF:
       return ncclHalf;
@@ -143,6 +317,10 @@ ncclDataType_t ToNcclType(DataType t) {
 }
 
 void StringToNcclUniqueId(const string& str_id, ncclUniqueId* nccl_id) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("str_id: \"" + str_id + "\"");
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_managerDTcc mht_2(mht_2_v, 321, "", "./tensorflow/core/nccl/nccl_manager.cc", "StringToNcclUniqueId");
+
   if (str_id.size() == NCCL_UNIQUE_ID_BYTES) {
     memcpy(nccl_id->internal, str_id.data(), NCCL_UNIQUE_ID_BYTES);
   }
@@ -226,12 +404,18 @@ struct NcclManager::Collective : public core::RefCounted {
 };
 
 NcclManager::NcclManager() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_managerDTcc mht_3(mht_3_v, 407, "", "./tensorflow/core/nccl/nccl_manager.cc", "NcclManager::NcclManager");
+
   VLOG(2) << "New NcclManager " << this;
 #if TENSORFLOW_USE_ROCM
   ++instance_count;
 #endif
 }
 NcclManager::~NcclManager() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_managerDTcc mht_4(mht_4_v, 416, "", "./tensorflow/core/nccl/nccl_manager.cc", "NcclManager::~NcclManager");
+
   VLOG(2) << "~NcclManager " << this;
 #if TENSORFLOW_USE_ROCM
   --instance_count;
@@ -248,6 +432,9 @@ NcclManager::~NcclManager() {
   }
 }
 NcclManager* NcclManager::instance() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_managerDTcc mht_5(mht_5_v, 435, "", "./tensorflow/core/nccl/nccl_manager.cc", "NcclManager::instance");
+
   static NcclManager* instance = new NcclManager();
 #if TENSORFLOW_USE_ROCM
   // singleton does not count against total instances
@@ -259,6 +446,9 @@ NcclManager* NcclManager::instance() {
 }
 
 string NcclManager::GenerateCommunicatorKey() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_managerDTcc mht_6(mht_6_v, 449, "", "./tensorflow/core/nccl/nccl_manager.cc", "NcclManager::GenerateCommunicatorKey");
+
   ncclUniqueId nccl_id;
   ncclGetUniqueId(&nccl_id);
   return string(nccl_id.internal, NCCL_UNIQUE_ID_BYTES);
@@ -266,6 +456,9 @@ string NcclManager::GenerateCommunicatorKey() {
 
 Status NcclManager::GetCommunicator(NcclManager::Collective* collective,
                                     NcclManager::Communicator** communicator) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_managerDTcc mht_7(mht_7_v, 459, "", "./tensorflow/core/nccl/nccl_manager.cc", "NcclManager::GetCommunicator");
+
   // Sort by device ID, executor, and global rank to make ordering of
   // participants deterministic.
   std::sort(collective->participants.begin(), collective->participants.end(),
@@ -432,17 +625,26 @@ Status NcclManager::GetCommunicator(NcclManager::Collective* collective,
 void NcclManager::AddToAllReduce(std::unique_ptr<Participant> participant,
                                  const Context& context,
                                  ncclRedOp_t reduction_op) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_managerDTcc mht_8(mht_8_v, 628, "", "./tensorflow/core/nccl/nccl_manager.cc", "NcclManager::AddToAllReduce");
+
   AddParticipant(std::move(participant), context, kAllReduce, reduction_op);
 }
 
 void NcclManager::AddToAllGather(std::unique_ptr<Participant> participant,
                                  const Context& context) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_managerDTcc mht_9(mht_9_v, 636, "", "./tensorflow/core/nccl/nccl_manager.cc", "NcclManager::AddToAllGather");
+
   AddParticipant(std::move(participant), context, kAllGather,
                  ncclSum /* unused */);
 }
 
 void NcclManager::AddBroadcastSend(std::unique_ptr<Participant> participant,
                                    const Context& context) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_managerDTcc mht_10(mht_10_v, 645, "", "./tensorflow/core/nccl/nccl_manager.cc", "NcclManager::AddBroadcastSend");
+
   participant->root = true;
   AddParticipant(std::move(participant), context, kBroadcast,
                  ncclSum /* unused */);
@@ -450,6 +652,9 @@ void NcclManager::AddBroadcastSend(std::unique_ptr<Participant> participant,
 
 void NcclManager::AddBroadcastRecv(std::unique_ptr<Participant> participant,
                                    const Context& context) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_managerDTcc mht_11(mht_11_v, 655, "", "./tensorflow/core/nccl/nccl_manager.cc", "NcclManager::AddBroadcastRecv");
+
   AddParticipant(std::move(participant), context, kBroadcast,
                  ncclSum /* unused */);
 }
@@ -457,17 +662,27 @@ void NcclManager::AddBroadcastRecv(std::unique_ptr<Participant> participant,
 void NcclManager::AddReduceSend(std::unique_ptr<Participant> participant,
                                 const Context& context,
                                 ncclRedOp_t reduction_op) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_managerDTcc mht_12(mht_12_v, 665, "", "./tensorflow/core/nccl/nccl_manager.cc", "NcclManager::AddReduceSend");
+
   AddParticipant(std::move(participant), context, kReduce, reduction_op);
 }
 
 void NcclManager::AddReduceRecv(std::unique_ptr<Participant> participant,
                                 const Context& context,
                                 ncclRedOp_t reduction_op) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_managerDTcc mht_13(mht_13_v, 674, "", "./tensorflow/core/nccl/nccl_manager.cc", "NcclManager::AddReduceRecv");
+
   participant->root = true;
   AddParticipant(std::move(participant), context, kReduce, reduction_op);
 }
 
 void NcclManager::SignalMultiNodeReady(const string& collective_key) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("collective_key: \"" + collective_key + "\"");
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_managerDTcc mht_14(mht_14_v, 683, "", "./tensorflow/core/nccl/nccl_manager.cc", "NcclManager::SignalMultiNodeReady");
+
   Collective* to_run = nullptr;
   {
     mutex_lock l(mu_);
@@ -490,6 +705,9 @@ void NcclManager::AddParticipant(std::unique_ptr<Participant> participant,
                                  const Context& context,
                                  CollectiveType collective_type,
                                  ncclRedOp_t reduction_op) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_managerDTcc mht_15(mht_15_v, 708, "", "./tensorflow/core/nccl/nccl_manager.cc", "NcclManager::AddParticipant");
+
   Collective* to_run = nullptr;
   DataType data_type;
   Status nccl_manager_status;
@@ -599,6 +817,10 @@ void NcclManager::AddParticipant(std::unique_ptr<Participant> participant,
 
 bool NcclManager::CheckReady(const string& collective_key,
                              Collective* collective) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("collective_key: \"" + collective_key + "\"");
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_managerDTcc mht_16(mht_16_v, 821, "", "./tensorflow/core/nccl/nccl_manager.cc", "NcclManager::CheckReady");
+
   if (collective->available_participants == collective->num_local_devices) {
     if (collective->num_global_devices == collective->num_local_devices ||
         collective->multi_node_ready) {
@@ -611,6 +833,9 @@ bool NcclManager::CheckReady(const string& collective_key,
 }
 
 void NcclManager::RunCollective(Collective* collective) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_managerDTcc mht_17(mht_17_v, 836, "", "./tensorflow/core/nccl/nccl_manager.cc", "NcclManager::RunCollective");
+
   // For TraceMeConsumer in Connection::RPCDone().
   tensorflow::profiler::TraceMeProducer traceme("Schedule Collective");
   collective->trace_context = traceme.GetContextId();
@@ -685,6 +910,9 @@ namespace {
 // For tracing purpose.
 size_t ComputeBufferSize(const NcclManager::Participant* p,
                          DataType data_type) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_managerDTcc mht_18(mht_18_v, 913, "", "./tensorflow/core/nccl/nccl_manager.cc", "ComputeBufferSize");
+
   size_t num_elements = 0;
   if (p->output) {
     num_elements += p->output->NumElements();
@@ -696,6 +924,9 @@ size_t ComputeBufferSize(const NcclManager::Participant* p,
 }  // namespace
 
 void NcclManager::LoopKernelLaunches(NcclStream* nccl_stream) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_managerDTcc mht_19(mht_19_v, 927, "", "./tensorflow/core/nccl/nccl_manager.cc", "NcclManager::LoopKernelLaunches");
+
 #if TENSORFLOW_USE_ROCM
   se::Stream* comm_stream = nccl_stream->stream;
 #else
@@ -832,6 +1063,9 @@ void NcclManager::LoopKernelLaunches(NcclStream* nccl_stream) {
 
     // Run the done_callback when the nccl kernel finishes running.
     auto done_callback = [collective, p_idx, nccl_result]() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_managerDTcc mht_20(mht_20_v, 1066, "", "./tensorflow/core/nccl/nccl_manager.cc", "lambda");
+
       VLOG(2) << "done Nccl kernel collective_key "
               << collective->collective_key << " participant " << p_idx
               << " ncclResult " << nccl_result;
@@ -850,6 +1084,9 @@ void NcclManager::LoopKernelLaunches(NcclStream* nccl_stream) {
 }
 
 void NcclManager::StartAbort(const Status& s) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_managerDTcc mht_21(mht_21_v, 1087, "", "./tensorflow/core/nccl/nccl_manager.cc", "NcclManager::StartAbort");
+
   absl::flat_hash_map<string, Collective*> collectives;
   std::vector<std::unique_ptr<Communicator>> communicators;
   {
@@ -900,6 +1137,9 @@ void NcclManager::StartAbort(const Status& s) {
 }
 
 void NcclManager::Reset() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_managerDTcc mht_22(mht_22_v, 1140, "", "./tensorflow/core/nccl/nccl_manager.cc", "NcclManager::Reset");
+
   mutex_lock l(mu_);
   status_ = Status();
   VLOG(2) << "Reset NcclManager " << this;

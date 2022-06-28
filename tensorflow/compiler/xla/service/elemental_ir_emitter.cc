@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -217,6 +385,9 @@ StatusOr<llvm::Value*> EmitF32ToBF16(llvm::Value* f32_value,
 }
 
 llvm::Value* EmitBF16ToF32(llvm::Value* bf16_value, llvm::IRBuilder<>* b) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_0(mht_0_v, 388, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "EmitBF16ToF32");
+
   auto as_int16 = b->CreateBitCast(bf16_value, b->getInt16Ty());
   auto as_int32 = b->CreateZExt(as_int16, b->getInt32Ty());
   auto shifted = b->CreateShl(as_int32, 16);
@@ -227,6 +398,9 @@ llvm::Value* EmitIntegralToFloating(llvm::Value* integer_value,
                                     PrimitiveType from_type,
                                     PrimitiveType to_type, llvm::Module* module,
                                     llvm::IRBuilder<>* b) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_1(mht_1_v, 401, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "EmitIntegralToFloating");
+
   if (primitive_util::IsSignedIntegralType(from_type)) {
     return b->CreateSIToFP(integer_value,
                            llvm_ir::PrimitiveTypeToIrType(to_type, module));
@@ -242,6 +416,9 @@ llvm::Value* EmitIntegralToFloating(llvm::Value* integer_value,
 
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitUnaryOp(
     const HloInstruction* op, llvm::Value* operand_value) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_2(mht_2_v, 419, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitUnaryOp");
+
   if (ShapeUtil::ElementIsIntegral(op->operand(0)->shape()) ||
       op->operand(0)->shape().element_type() == PRED) {
     return EmitIntegerUnaryOp(op, operand_value);
@@ -254,6 +431,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitUnaryOp(
 
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitIntegerUnaryOp(
     const HloInstruction* op, llvm::Value* operand_value) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_3(mht_3_v, 434, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitIntegerUnaryOp");
+
   switch (op->opcode()) {
     case HloOpcode::kConvert: {
       PrimitiveType from_type = op->operand(0)->shape().element_type();
@@ -374,6 +554,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitIntegerUnaryOp(
 
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitFloatUnaryOp(
     const HloInstruction* op, llvm::Value* operand_value) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_4(mht_4_v, 557, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitFloatUnaryOp");
+
   switch (op->opcode()) {
     case HloOpcode::kConvert: {
       PrimitiveType from_type = op->operand(0)->shape().element_type();
@@ -557,6 +740,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitFloatUnaryOp(
 
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexUnaryOp(
     const HloInstruction* op, llvm::Value* operand_value) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_5(mht_5_v, 743, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitComplexUnaryOp");
+
   PrimitiveType input_type = op->operand(0)->shape().element_type();
   PrimitiveType component_type =
       primitive_util::IsComplexType(input_type)
@@ -847,6 +1033,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexUnaryOp(
 
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitBinaryOp(
     const HloInstruction* op, llvm::Value* lhs_value, llvm::Value* rhs_value) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_6(mht_6_v, 1036, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitBinaryOp");
+
   PrimitiveType operand_type = op->operand(0)->shape().element_type();
   if (operand_type == PRED) {
     return EmitPredBinaryOp(op, lhs_value, rhs_value);
@@ -863,6 +1052,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitBinaryOp(
 
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitFloatBinaryOp(
     const HloInstruction* op, llvm::Value* lhs_value, llvm::Value* rhs_value) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_7(mht_7_v, 1055, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitFloatBinaryOp");
+
   switch (op->opcode()) {
     case HloOpcode::kComplex:
       return EmitComposeComplex(op, lhs_value, rhs_value);
@@ -941,6 +1133,9 @@ StatusOr<std::tuple<llvm::Value*, llvm::Value*, llvm::Value*>>
 ElementalIrEmitter::EmitComplexAbsHelper(PrimitiveType prim_type,
                                          llvm::Value* operand_value,
                                          bool return_sqrt) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_8(mht_8_v, 1136, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitComplexAbsHelper");
+
   llvm::Value* real = EmitExtractReal(operand_value);
   llvm::Value* imag = EmitExtractImag(operand_value);
   llvm::Value* abs_real = llvm_ir::EmitCallToIntrinsic(
@@ -960,6 +1155,9 @@ ElementalIrEmitter::EmitComplexAbsHelper(PrimitiveType prim_type,
 
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexAbs(
     PrimitiveType prim_type, llvm::Value* operand_value) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_9(mht_9_v, 1158, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitComplexAbs");
+
   llvm::Value* min;
   llvm::Value* max;
   llvm::Value* sqrt;
@@ -976,6 +1174,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexAbs(
 // sqrt(|a| * sqrt(1 + (b/a)^2)) = sqrt(|a|) * pow(1 + (b/a)^2, .25)
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitSqrtComplexAbs(
     PrimitiveType prim_type, llvm::Value* operand_value) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_10(mht_10_v, 1177, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitSqrtComplexAbs");
+
   llvm::Value* min;
   llvm::Value* max;
   llvm::Value* one_p_div_sq;
@@ -996,6 +1197,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitSqrtComplexAbs(
 // rsqrt(|a| * sqrt(1 + (b/a)^2)) = rsqrt(|a|) * rsqrt(sqrt(1 + (b/a)^2))
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitRsqrtComplexAbs(
     PrimitiveType prim_type, llvm::Value* operand_value) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_11(mht_11_v, 1200, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitRsqrtComplexAbs");
+
   llvm::Value* min;
   llvm::Value* max;
   llvm::Value* sqrt;
@@ -1013,6 +1217,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitRsqrtComplexAbs(
 
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexAdd(
     const HloInstruction* op, llvm::Value* lhs_value, llvm::Value* rhs_value) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_12(mht_12_v, 1220, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitComplexAdd");
+
   return EmitComposeComplex(
       op, FAdd(EmitExtractReal(lhs_value), EmitExtractReal(rhs_value)),
       FAdd(EmitExtractImag(lhs_value), EmitExtractImag(rhs_value)));
@@ -1020,6 +1227,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexAdd(
 
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexSubtract(
     const HloInstruction* op, llvm::Value* lhs_value, llvm::Value* rhs_value) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_13(mht_13_v, 1230, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitComplexSubtract");
+
   return EmitComposeComplex(
       op, FSub(EmitExtractReal(lhs_value), EmitExtractReal(rhs_value)),
       FSub(EmitExtractImag(lhs_value), EmitExtractImag(rhs_value)));
@@ -1027,6 +1237,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexSubtract(
 
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexMultiply(
     const HloInstruction* op, llvm::Value* lhs_value, llvm::Value* rhs_value) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_14(mht_14_v, 1240, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitComplexMultiply");
+
   return EmitComposeComplex(
       op,
       FSub(FMul(EmitExtractReal(lhs_value), EmitExtractReal(rhs_value)),
@@ -1037,6 +1250,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexMultiply(
 
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexDivide(
     const HloInstruction* op, llvm::Value* lhs_value, llvm::Value* rhs_value) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_15(mht_15_v, 1253, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitComplexDivide");
+
   // Division of complex numbers is implemented here, taking into account
   // over/underflow, NaN and Inf values.
   auto a_r = EmitExtractReal(lhs_value);
@@ -1154,6 +1370,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexDivide(
 
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexLog(
     const HloInstruction* op, llvm::Value* operand_value) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_16(mht_16_v, 1373, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitComplexLog");
+
   // log(a+bi) = log(abs(a+bi)) + i*atan2(b,a)
   PrimitiveType component_type =
       primitive_util::ComplexComponentType(op->shape().element_type());
@@ -1176,6 +1395,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexLog(
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexSqrt(
     const HloInstruction* op, PrimitiveType prim_type,
     llvm::Value* operand_value) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_17(mht_17_v, 1398, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitComplexSqrt");
+
   llvm::Type* type = static_cast<llvm::StructType*>(operand_value->getType())
                          ->getElementType(0);
 
@@ -1232,6 +1454,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexSqrt(
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexRsqrt(
     const HloInstruction* op, PrimitiveType prim_type,
     llvm::Value* operand_value) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_18(mht_18_v, 1457, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitComplexRsqrt");
+
   llvm::Type* type = static_cast<llvm::StructType*>(operand_value->getType())
                          ->getElementType(0);
 
@@ -1294,6 +1519,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexRsqrt(
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexCbrt(
     const HloInstruction* op, PrimitiveType prim_type,
     llvm::Value* operand_value) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_19(mht_19_v, 1522, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitComplexCbrt");
+
   auto type = llvm_ir::PrimitiveTypeToIrType(prim_type, module_);
   auto third = llvm::ConstantFP::get(type, 1.0 / 3.0);
   auto zero = llvm::ConstantFP::get(type, 0);
@@ -1308,6 +1536,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexCbrt(
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexPower(
     const HloInstruction* op, llvm::Value* a, llvm::Value* b, llvm::Value* c,
     llvm::Value* d) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_20(mht_20_v, 1539, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitComplexPower");
+
   PrimitiveType component_type =
       primitive_util::ComplexComponentType(op->shape().element_type());
   auto aa_p_bb = FAdd(FMul(a, a), FMul(b, b));
@@ -1341,6 +1572,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexPower(
 
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexBinaryOp(
     const HloInstruction* op, llvm::Value* lhs_value, llvm::Value* rhs_value) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_21(mht_21_v, 1575, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitComplexBinaryOp");
+
   switch (op->opcode()) {
     case HloOpcode::kAdd:
       return EmitComplexAdd(op, lhs_value, rhs_value);
@@ -1423,23 +1657,37 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexBinaryOp(
 llvm::Value* ElementalIrEmitter::EmitFloatMax(llvm::Value* lhs_value,
                                               llvm::Value* rhs_value,
                                               absl::string_view name) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_22(mht_22_v, 1661, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitFloatMax");
+
   return llvm_ir::EmitFloatMax(lhs_value, rhs_value, b_, fast_min_max(), name);
 }
 
 llvm::Value* ElementalIrEmitter::EmitFloatMin(llvm::Value* lhs_value,
                                               llvm::Value* rhs_value,
                                               absl::string_view name) {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_23(mht_23_v, 1671, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitFloatMin");
+
   return llvm_ir::EmitFloatMin(lhs_value, rhs_value, b_, fast_min_max(), name);
 }
 
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitLog(PrimitiveType prim_type,
                                                    llvm::Value* value) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_24(mht_24_v, 1679, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitLog");
+
   return llvm_ir::EmitCallToIntrinsic(llvm::Intrinsic::log, {value},
                                       {value->getType()}, b_);
 }
 
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitLog1p(PrimitiveType prim_type,
                                                      llvm::Value* value) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_25(mht_25_v, 1688, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitLog1p");
+
   auto x = value;
   auto type = llvm_ir::PrimitiveTypeToIrType(prim_type, module_);
   auto one = llvm::ConstantFP::get(type, 1.0);
@@ -1490,24 +1738,36 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitLog1p(PrimitiveType prim_type,
 
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitSqrt(PrimitiveType,
                                                     llvm::Value* value) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_26(mht_26_v, 1741, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitSqrt");
+
   return llvm_ir::EmitCallToIntrinsic(llvm::Intrinsic::sqrt, {value},
                                       {value->getType()}, b_);
 }
 
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitRsqrt(PrimitiveType prim_type,
                                                      llvm::Value* value) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_27(mht_27_v, 1750, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitRsqrt");
+
   TF_ASSIGN_OR_RETURN(auto sqrt, EmitSqrt(prim_type, value));
   return FDiv(llvm::ConstantFP::get(sqrt->getType(), 1.0), sqrt);
 }
 
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitSin(PrimitiveType prim_type,
                                                    llvm::Value* value) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_28(mht_28_v, 1759, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitSin");
+
   return llvm_ir::EmitCallToIntrinsic(llvm::Intrinsic::sin, {value},
                                       {value->getType()}, b_);
 }
 
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitCos(PrimitiveType prim_type,
                                                    llvm::Value* value) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_29(mht_29_v, 1768, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitCos");
+
   return llvm_ir::EmitCallToIntrinsic(llvm::Intrinsic::cos, {value},
                                       {value->getType()}, b_);
 }
@@ -1515,12 +1775,19 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitCos(PrimitiveType prim_type,
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitExp(PrimitiveType prim_type,
                                                    llvm::Value* value,
                                                    absl::string_view name) {
+   std::vector<std::string> mht_30_v;
+   mht_30_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_30(mht_30_v, 1779, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitExp");
+
   return llvm_ir::EmitCallToIntrinsic(llvm::Intrinsic::exp, {value},
                                       {value->getType()}, b_, name);
 }
 
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitExpm1(PrimitiveType prim_type,
                                                      llvm::Value* value) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_31(mht_31_v, 1788, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitExpm1");
+
   auto x = value;
   auto type = llvm_ir::PrimitiveTypeToIrType(prim_type, module_);
   auto one = llvm::ConstantFP::get(type, 1.0);
@@ -1549,12 +1816,19 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitPow(PrimitiveType prim_type,
                                                    llvm::Value* lhs,
                                                    llvm::Value* rhs,
                                                    absl::string_view name) {
+   std::vector<std::string> mht_32_v;
+   mht_32_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_32(mht_32_v, 1820, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitPow");
+
   return llvm_ir::EmitCallToIntrinsic(llvm::Intrinsic::pow, {lhs, rhs},
                                       {lhs->getType()}, b_, name);
 }
 
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitCbrt(PrimitiveType prim_type,
                                                     llvm::Value* value) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_33(mht_33_v, 1829, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitCbrt");
+
   auto type = llvm_ir::PrimitiveTypeToIrType(prim_type, module_);
   auto third = llvm::ConstantFP::get(type, 1.0 / 3.0);
   auto abs_value =
@@ -1569,16 +1843,25 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitCbrt(PrimitiveType prim_type,
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitAtan2(
     PrimitiveType prim_type, llvm::Value* lhs, llvm::Value* /*rhs*/,
     absl::string_view /*name*/) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_34(mht_34_v, 1846, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitAtan2");
+
   return Unimplemented("atan2");
 }
 
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitTanh(PrimitiveType prim_type,
                                                     llvm::Value* value) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_35(mht_35_v, 1854, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitTanh");
+
   return Unimplemented("tanh");
 }
 
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitReducePrecision(
     const HloInstruction* hlo, llvm::Value* x) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_36(mht_36_v, 1862, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitReducePrecision");
+
   return EmitReducePrecisionIR(
       /*src_ty=*/hlo->operand(0)->shape().element_type(), x,
       /*dest_exponent_bits=*/hlo->exponent_bits(),
@@ -1590,6 +1873,9 @@ static llvm::Value* SaturateShiftIfNecessary(llvm::IRBuilder<>* b,
                                              llvm::Value* lhs, llvm::Value* rhs,
                                              llvm::Value* shift_result,
                                              bool saturate_to_sign_bit) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_37(mht_37_v, 1876, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "SaturateShiftIfNecessary");
+
   llvm::IntegerType* integer_type =
       llvm::cast<llvm::IntegerType>(lhs->getType());
   unsigned integer_bitsize = integer_type->getBitWidth();
@@ -1610,31 +1896,49 @@ static llvm::Value* SaturateShiftIfNecessary(llvm::IRBuilder<>* b,
 }
 
 llvm::Value* ElementalIrEmitter::GetOne(llvm::Type* type) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_38(mht_38_v, 1899, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::GetOne");
+
   return llvm::ConstantInt::get(llvm::cast<llvm::IntegerType>(type), 1);
 }
 
 llvm::Value* ElementalIrEmitter::GetZero(llvm::Type* type) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_39(mht_39_v, 1906, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::GetZero");
+
   return llvm::ConstantInt::get(llvm::cast<llvm::IntegerType>(type), 0);
 }
 
 llvm::Value* ElementalIrEmitter::GetIntSMin(llvm::Type* type) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_40(mht_40_v, 1913, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::GetIntSMin");
+
   auto* integer_type = llvm::cast<llvm::IntegerType>(type);
   return llvm::ConstantInt::get(integer_type, llvm::APInt::getSignedMinValue(
                                                   integer_type->getBitWidth()));
 }
 
 llvm::Value* ElementalIrEmitter::GetMinusOne(llvm::Type* type) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_41(mht_41_v, 1922, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::GetMinusOne");
+
   auto* integer_type = llvm::cast<llvm::IntegerType>(type);
   return llvm::ConstantInt::get(
       integer_type, llvm::APInt::getAllOnesValue(integer_type->getBitWidth()));
 }
 
 llvm::Value* ElementalIrEmitter::IsZero(llvm::Value* v) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_42(mht_42_v, 1931, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::IsZero");
+
   return ICmpEQ(v, llvm::ConstantInt::get(v->getType(), 0));
 }
 
 llvm::Value* ElementalIrEmitter::IsIntMinDivisionOverflow(llvm::Value* lhs,
                                                           llvm::Value* rhs) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_43(mht_43_v, 1939, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::IsIntMinDivisionOverflow");
+
   return And(ICmpEQ(lhs, GetIntSMin(lhs->getType())),
              ICmpEQ(rhs, GetMinusOne(rhs->getType())));
 }
@@ -1642,6 +1946,9 @@ llvm::Value* ElementalIrEmitter::IsIntMinDivisionOverflow(llvm::Value* lhs,
 llvm::Value* ElementalIrEmitter::EmitIntegerDivide(llvm::Value* lhs,
                                                    llvm::Value* rhs,
                                                    bool is_signed) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_44(mht_44_v, 1949, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitIntegerDivide");
+
   // Integer division overflow behavior:
   //
   // X / 0 == -1
@@ -1668,6 +1975,9 @@ llvm::Value* ElementalIrEmitter::EmitIntegerDivide(llvm::Value* lhs,
 llvm::Value* ElementalIrEmitter::EmitIntegerRemainder(llvm::Value* lhs,
                                                       llvm::Value* rhs,
                                                       bool is_signed) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_45(mht_45_v, 1978, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitIntegerRemainder");
+
   // Integer remainder overflow behavior:
   //
   // X % 0 == X
@@ -1694,6 +2004,9 @@ llvm::Value* ElementalIrEmitter::EmitIntegerRemainder(llvm::Value* lhs,
 llvm::Value* ElementalIrEmitter::EmitIntegerPow(llvm::Value* base,
                                                 llvm::Value* exponent,
                                                 bool is_signed) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_46(mht_46_v, 2007, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitIntegerPow");
+
   // Exponentiation by squaring:
   // https://en.wikipedia.org/wiki/Exponentiation_by_squaring;
   int bits = 6;  // Everything else would overflow for any exponent > 1, as 2^64
@@ -1720,6 +2033,9 @@ llvm::Value* ElementalIrEmitter::EmitIntegerPow(llvm::Value* base,
 
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitPredBinaryOp(
     const HloInstruction* op, llvm::Value* lhs_value, llvm::Value* rhs_value) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_47(mht_47_v, 2036, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitPredBinaryOp");
+
   // Per the reference interpreter, pred arithmetic should behave like
   // `int8_t(x) OP int8_t(y) != 0`.  For most permitted ops, we can just emit
   // the underlying i8 op to achieve this (e.g. kAnd, kOr, kXor, kMultiply).  In
@@ -1772,6 +2088,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitPredBinaryOp(
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitIntegerBinaryOp(
     const HloInstruction* op, llvm::Value* lhs_value, llvm::Value* rhs_value,
     bool is_signed) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_48(mht_48_v, 2091, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitIntegerBinaryOp");
+
   switch (op->opcode()) {
     // TODO(jingyue): add the "nsw" attribute for signed types.
     case HloOpcode::kAdd:
@@ -1849,6 +2168,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitIntegerBinaryOp(
 llvm::Value* ElementalIrEmitter::EmitIntegralMax(llvm::Value* lhs_value,
                                                  llvm::Value* rhs_value,
                                                  bool is_signed) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_49(mht_49_v, 2171, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitIntegralMax");
+
   return Select(b_->CreateICmp(is_signed ? llvm::ICmpInst::ICMP_SGE
                                          : llvm::ICmpInst::ICMP_UGE,
                                lhs_value, rhs_value),
@@ -1858,6 +2180,9 @@ llvm::Value* ElementalIrEmitter::EmitIntegralMax(llvm::Value* lhs_value,
 llvm::Value* ElementalIrEmitter::EmitIntegralMin(llvm::Value* lhs_value,
                                                  llvm::Value* rhs_value,
                                                  bool is_signed) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_50(mht_50_v, 2183, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitIntegralMin");
+
   return Select(b_->CreateICmp(is_signed ? llvm::ICmpInst::ICMP_SLE
                                          : llvm::ICmpInst::ICMP_ULE,
                                lhs_value, rhs_value),
@@ -1868,6 +2193,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalSelect(
     const HloInstruction* hlo,
     const ElementalIrEmitter::HloToElementGeneratorMap& operand_to_generator,
     const llvm_ir::IrArray::Index& index) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_51(mht_51_v, 2196, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitElementalSelect");
+
   TF_ASSIGN_OR_RETURN(llvm::Value * pred_value,
                       operand_to_generator.at(hlo->operand(0))(index));
   TF_ASSIGN_OR_RETURN(llvm::Value * on_true_value,
@@ -1882,6 +2210,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalClamp(
     const HloInstruction* hlo,
     const ElementalIrEmitter::HloToElementGeneratorMap& operand_to_generator,
     const llvm_ir::IrArray::Index& index) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_52(mht_52_v, 2213, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitElementalClamp");
+
   TF_ASSIGN_OR_RETURN(llvm::Value * min_value,
                       operand_to_generator.at(hlo->operand(0))(index));
   TF_ASSIGN_OR_RETURN(llvm::Value * arg_value,
@@ -1905,6 +2236,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalConcatenate(
     const HloInstruction* hlo,
     const ElementalIrEmitter::HloToElementGeneratorMap& operand_to_generator,
     const llvm_ir::IrArray::Index& source_index) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_53(mht_53_v, 2239, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitElementalConcatenate");
+
   const int64_t concat_dim = hlo->dimensions(0);
   llvm::BasicBlock* init_block = b_->GetInsertBlock();
 
@@ -1999,6 +2333,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalConcatenate(
       emit_tree =
           [&](absl::Span<const std::pair<int64_t, const HloInstruction*>>
                   operands) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_54(mht_54_v, 2336, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "lambda");
+
             llvm::IRBuilder<>::InsertPointGuard guard(*b_);
             size_t mid = operands.size() / 2;
             const std::pair<int64_t, const HloInstruction*>& pivot =
@@ -2045,6 +2382,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalDynamicSlice(
     const HloInstruction* hlo,
     const ElementalIrEmitter::HloToElementGeneratorMap& operand_to_generator,
     const llvm_ir::IrArray::Index& index) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_55(mht_55_v, 2385, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitElementalDynamicSlice");
+
   // Emit IR to read dynamic start indices from hlo->operand(1).
   const HloInstruction* input_hlo = hlo->operand(0);
   const int64_t rank = input_hlo->shape().rank();
@@ -2092,6 +2432,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalGather(
     const HloInstruction* hlo,
     const ElementalIrEmitter::HloToElementGeneratorMap& operand_to_generator,
     const llvm_ir::IrArray::Index& index) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_56(mht_56_v, 2435, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitElementalGather");
+
   const Shape& operand_shape = hlo->operand(0)->shape();
   const Shape& indices_shape = hlo->operand(1)->shape();
   const Shape& output_shape = hlo->shape();
@@ -2144,6 +2487,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalGather(
   }
 
   auto add_to_operand_index = [&](llvm::Value* index_component, int64_t dim) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_57(mht_57_v, 2490, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "lambda");
+
     auto index_component_type = index_component->getType();
     auto extended_type = index_component_type->getScalarSizeInBits() >=
                                  index_type->getScalarSizeInBits()
@@ -2211,6 +2557,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalDynamicUpdateSlice(
     const HloInstruction* hlo,
     const ElementalIrEmitter::HloToElementGeneratorMap& operand_to_generator,
     const llvm_ir::IrArray::Index& index) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_58(mht_58_v, 2560, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitElementalDynamicUpdateSlice");
+
   const HloInstruction* input_hlo = hlo->operand(0);
   const HloInstruction* update_hlo = hlo->operand(1);
   const HloInstruction* start_hlo = hlo->operand(2);
@@ -2297,10 +2646,16 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalPad(
     const HloInstruction* hlo,
     const ElementalIrEmitter::HloToElementGeneratorMap& operand_to_generator,
     const llvm_ir::IrArray::Index& padded_index) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_59(mht_59_v, 2649, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitElementalPad");
+
   std::vector<llvm::Value*> multi_index = padded_index.multidim();
   llvm::Value* in_bounds = b_->getTrue();
   for (size_t i = 0; i < multi_index.size(); ++i) {
     auto index_typed_const = [=](int64_t n) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_60(mht_60_v, 2656, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "lambda");
+
       return padded_index.GetConstantWithIndexType(n);
     };
     const auto& pad_dim = hlo->padding_config().dimensions(i);
@@ -2358,6 +2713,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalDot(
     const HloInstruction* hlo,
     const ElementalIrEmitter::HloToElementGeneratorMap& operand_to_generator,
     const llvm_ir::IrArray::Index& dot_result_index) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_61(mht_61_v, 2716, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitElementalDot");
+
   auto lhs_generator = operand_to_generator.at(hlo->operand(0));
   auto rhs_generator = operand_to_generator.at(hlo->operand(1));
 
@@ -2431,6 +2789,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalDot(
 llvm_ir::ElementGenerator ElementalIrEmitter::MakeElementGenerator(
     const HloInstruction* hlo,
     const ElementalIrEmitter::HloToElementGeneratorMap& operand_to_generator) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_62(mht_62_v, 2792, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::MakeElementGenerator");
+
   switch (hlo->opcode()) {
     case HloOpcode::kAbs:
     case HloOpcode::kRoundNearestAfz:
@@ -2622,6 +2983,9 @@ llvm_ir::ElementGenerator ElementalIrEmitter::MakeElementGenerator(
       CHECK_EQ(ShapeUtil::ElementsIn(hlo->shape()),
                ShapeUtil::ElementsIn(hlo->operand(0)->shape()));
       return [this, hlo, &operand_to_generator](const IrArray::Index& index) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_63(mht_63_v, 2986, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "lambda");
+
         const HloInstruction* operand = hlo->operand(0);
         return operand_to_generator.at(operand)(
             GetSourceIndexOfBitcast(index, hlo));
@@ -2630,6 +2994,9 @@ llvm_ir::ElementGenerator ElementalIrEmitter::MakeElementGenerator(
       CHECK_EQ(ShapeUtil::ElementsIn(hlo->shape()),
                ShapeUtil::ElementsIn(hlo->operand(0)->shape()));
       return [this, hlo, &operand_to_generator](const IrArray::Index& index) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_64(mht_64_v, 2997, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "lambda");
+
         const HloInstruction* operand = hlo->operand(0);
         return operand_to_generator.at(operand)(
             index.SourceIndexOfReshape(hlo->shape(), operand->shape(), b_));
@@ -2648,6 +3015,9 @@ llvm_ir::ElementGenerator ElementalIrEmitter::MakeElementGenerator(
     case HloOpcode::kTranspose:
       return [this, hlo,
               &operand_to_generator](const IrArray::Index& target_index) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_65(mht_65_v, 3018, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "lambda");
+
         return operand_to_generator.at(hlo->operand(0))(
             target_index.SourceIndexOfTranspose(
                 hlo->shape(), hlo->operand(0)->shape(), hlo->dimensions()));
@@ -2677,6 +3047,9 @@ llvm_ir::ElementGenerator ElementalIrEmitter::MakeElementGenerator(
       };
     case HloOpcode::kReduceWindow:
       return [this, hlo, &operand_to_generator](const IrArray::Index& index) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_66(mht_66_v, 3050, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "lambda");
+
         auto reduce_window_instr = Cast<HloReduceWindowInstruction>(hlo);
         std::vector<llvm_ir::ElementGenerator> input_generators;
         for (const HloInstruction* instr : reduce_window_instr->inputs()) {
@@ -2693,6 +3066,9 @@ llvm_ir::ElementGenerator ElementalIrEmitter::MakeElementGenerator(
       };
     case HloOpcode::kReduce:
       return [this, hlo, &operand_to_generator](const IrArray::Index& index) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_67(mht_67_v, 3069, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "lambda");
+
         auto reduce_instr = Cast<HloReduceInstruction>(hlo);
         std::vector<llvm_ir::ElementGenerator> input_generators;
         for (const HloInstruction* instr : reduce_instr->inputs()) {
@@ -2708,10 +3084,16 @@ llvm_ir::ElementGenerator ElementalIrEmitter::MakeElementGenerator(
       };
     case HloOpcode::kConvolution:
       return [this, hlo, &operand_to_generator](const IrArray::Index& index) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_68(mht_68_v, 3087, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "lambda");
+
         return EmitConvolution(hlo, operand_to_generator, index);
       };
     default:
       return [hlo](const IrArray::Index& index) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_69(mht_69_v, 3094, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "lambda");
+
         return Unimplemented("Unhandled opcode for elemental IR emission: %s",
                              HloOpcodeString(hlo->opcode()));
       };
@@ -2719,16 +3101,25 @@ llvm_ir::ElementGenerator ElementalIrEmitter::MakeElementGenerator(
 }
 
 llvm::Value* ElementalIrEmitter::EmitExtractReal(llvm::Value* value) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_70(mht_70_v, 3104, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitExtractReal");
+
   return ExtractValue(value, {0});
 }
 
 llvm::Value* ElementalIrEmitter::EmitExtractImag(llvm::Value* value) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_71(mht_71_v, 3111, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitExtractImag");
+
   return ExtractValue(value, {1});
 }
 
 llvm::Value* ElementalIrEmitter::EmitComposeComplex(const HloInstruction* op,
                                                     llvm::Value* real,
                                                     llvm::Value* imag) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_72(mht_72_v, 3120, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitComposeComplex");
+
   auto cplx_type =
       llvm_ir::PrimitiveTypeToIrType(op->shape().element_type(), module_);
   auto complex =
@@ -2742,6 +3133,9 @@ llvm::Value* ElementalIrEmitter::EmitComposeComplex(const HloInstruction* op,
 llvm::Value* ElementalIrEmitter::EmitMulAdd(llvm::Value* lhs, llvm::Value* rhs,
                                             llvm::Value* accumulator,
                                             xla::PrimitiveType primitive_type) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_73(mht_73_v, 3136, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitMulAdd");
+
   if (primitive_util::IsComplexType(primitive_type)) {
     llvm::Value* product_real =
         FSub(FMul(EmitExtractReal(lhs), EmitExtractReal(rhs)),
@@ -2764,6 +3158,9 @@ llvm::Value* ElementalIrEmitter::EmitMulAdd(llvm::Value* lhs, llvm::Value* rhs,
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalMap(
     const HloMapInstruction* map_instr,
     absl::Span<llvm::Value* const> elemental_operands) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_74(mht_74_v, 3161, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitElementalMap");
+
   TF_ASSIGN_OR_RETURN(
       std::vector<llvm::Value*> values,
       EmitThreadLocalCall(*map_instr->to_apply(), elemental_operands,
@@ -2777,6 +3174,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalReduceWindow(
     std::vector<llvm_ir::ElementGenerator> input_generators,
     std::vector<llvm_ir::ElementGenerator> initial_value_generators,
     const llvm_ir::IrArray::Index& index) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_75(mht_75_v, 3177, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitElementalReduceWindow");
+
   // Pseudocode:
   // for each index I in output
   //   value = init_value
@@ -2900,6 +3300,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalReduce(
     std::vector<llvm_ir::ElementGenerator> input_generators,
     std::vector<llvm_ir::ElementGenerator> initial_value_generators,
     const llvm_ir::IrArray::Index& index) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_76(mht_76_v, 3303, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitElementalReduce");
+
   const Shape& out_shape = reduce->shape();
   bool is_variadic = !out_shape.IsArray();
   int accumulators_count = 1;
@@ -2988,6 +3391,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalReduce(
 StatusOr<llvm::Value*> ElementalIrEmitter::EmitAccumResult(
     absl::Span<llvm::Value* const> accumulator_addrs,
     llvm::ArrayRef<llvm::Type*> accumulator_types, bool is_variadic) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_77(mht_77_v, 3394, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitAccumResult");
+
   TF_RET_CHECK(accumulator_addrs.size() == accumulator_types.size());
   if (is_variadic) {
     // Emit a structure, as that what the LoopEmitter expects.
@@ -3009,6 +3415,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitConvolution(
     const HloInstruction* convolution,
     const ElementalIrEmitter::HloToElementGeneratorMap& operand_to_generator,
     const llvm_ir::IrArray::Index& index) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_78(mht_78_v, 3418, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EmitConvolution");
+
   TF_RET_CHECK(convolution->batch_group_count() == 1);
   const HloInstruction* lhs = convolution->operand(0);
   const auto& input_generator = operand_to_generator.at(lhs);
@@ -3070,6 +3479,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitConvolution(
   const auto calculate_input_index = [this](llvm::Value* output_index,
                                             llvm::Value* kernel_index,
                                             const WindowDimension& window_dim) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_79(mht_79_v, 3482, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "lambda");
+
     llvm::Value* strided_index =
         NSWMul(output_index, b_->getInt64(window_dim.stride()));
     llvm::Value* dilated_kernel_index =
@@ -3093,6 +3505,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitConvolution(
   // holes created by base dilation.
   const auto not_in_hole = [&](llvm::Value* input_index,
                                int64_t base_dilation) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_80(mht_80_v, 3508, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "lambda");
+
     llvm::Value* remainder = SRem(input_index, b_->getInt64(base_dilation));
     return ICmpEQ(remainder, b_->getInt64(0));
   };
@@ -3112,6 +3527,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitConvolution(
   // Now we need to map the dilated base coordinates back to the actual
   // data indices on the lhs.
   const auto undilate = [&](llvm::Value* input_index, int64_t base_dilation) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_81(mht_81_v, 3530, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "lambda");
+
     return SDiv(input_index, b_->getInt64(base_dilation));
   };
   for (int i = 0; i < num_spatial_dims; ++i) {
@@ -3163,6 +3581,9 @@ StatusOr<llvm::Value*> ElementalIrEmitter::EmitConvolution(
 // Evaluate polynomial using Horner's method.
 StatusOr<llvm::Value*> ElementalIrEmitter::EvaluatePolynomial(
     llvm::Type* type, llvm::Value* x, absl::Span<const double> coefficients) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSelemental_ir_emitterDTcc mht_82(mht_82_v, 3584, "", "./tensorflow/compiler/xla/service/elemental_ir_emitter.cc", "ElementalIrEmitter::EvaluatePolynomial");
+
   llvm::Value* poly = llvm::ConstantFP::get(type, 0.0);
   for (const double c : coefficients) {
     poly = FAdd(FMul(poly, x), llvm::ConstantFP::get(type, c));

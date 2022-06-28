@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2022 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -83,6 +251,9 @@ namespace {
 // above are an example of this.
 ShardVector ExpandShardVector(const ShardVector& shard_vec,
                               const std::vector<int>& new_num_shards_per_dim) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_0(mht_0_v, 254, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "ExpandShardVector");
+
   if (shard_vec.shards.empty()) return shard_vec;
 
   // Takes a single shard and expands it into multiple shards.
@@ -154,6 +325,9 @@ bool ShardVector::operator==(const ShardVector& other) const {
 }
 
 std::string ShardVector::ToString() const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_1(mht_1_v, 328, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "ShardVector::ToString");
+
   std::string string = "shards:[";
   // Convert each Shard into string.
   std::vector<std::string> shard_strs;
@@ -168,6 +342,9 @@ std::string ShardVector::ToString() const {
 }
 
 bool ShardVector::ContainsShard(const Shard& shard) const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_2(mht_2_v, 345, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "ShardVector::ContainsShard");
+
   for (const auto& shard_in_vec : shards)
     if (shard_in_vec == shard) return true;
   return false;
@@ -175,18 +352,27 @@ bool ShardVector::ContainsShard(const Shard& shard) const {
 
 // static
 std::map<std::string, std::vector<int>>& Mesh::tpu_core_ids() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_3(mht_3_v, 355, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Mesh::tpu_core_ids");
+
   static auto tpu_core_ids = new std::map<std::string, std::vector<int>>();
   return *tpu_core_ids;
 }
 
 // static
 std::string& Mesh::tpu_host_mesh() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_4(mht_4_v, 364, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Mesh::tpu_host_mesh");
+
   static auto tpu_host_mesh = new std::string;
   return *tpu_host_mesh;
 }
 
 // static
 StatusOr<Mesh> Mesh::ParseFromProto(const MeshProto& proto) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_5(mht_5_v, 373, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Mesh::ParseFromProto");
+
   Mesh mesh;
   mesh.name_ = proto.name();
 
@@ -229,6 +415,10 @@ StatusOr<Mesh> Mesh::ParseFromProto(const MeshProto& proto) {
 // static
 StatusOr<Mesh> Mesh::GetAbstractMesh(
     const std::string& name, const std::vector<MeshDimension>& mesh_dims) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_6(mht_6_v, 419, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Mesh::GetAbstractMesh");
+
   Mesh mesh;
   mesh.name_ = name;
   mesh.mesh_dims_ = mesh_dims;
@@ -256,6 +446,10 @@ StatusOr<Mesh> Mesh::GetMesh(const std::string& name,
                              const std::vector<std::int64_t>& local_device_ids,
                              const std::vector<std::string>& local_devices,
                              const std::vector<std::string>& global_devices) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_7(mht_7_v, 450, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Mesh::GetMesh");
+
   TF_ASSIGN_OR_RETURN(Mesh mesh, GetAbstractMesh(name, mesh_dims));
   mesh.global_device_ids_ = global_device_ids;
   mesh.local_device_ids_ = local_device_ids;
@@ -304,6 +498,10 @@ StatusOr<Mesh> Mesh::GetMesh(const std::string& name,
 }
 
 StatusOr<int64_t> Mesh::dim_size(absl::string_view name) const {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_8(mht_8_v, 502, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Mesh::dim_size");
+
   for (const auto& mesh_dim : dims()) {
     if (name == mesh_dim.name) {
       return mesh_dim.size;
@@ -319,6 +517,9 @@ StatusOr<int64_t> Mesh::dim_size(absl::string_view name) const {
 }
 
 std::vector<int64_t> Mesh::dim_sizes() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_9(mht_9_v, 520, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Mesh::dim_sizes");
+
   std::vector<int64_t> dim_sizes;
   if (mesh_dims_.empty()) return dim_sizes;
   for (const auto& mesh_dim : mesh_dims_) dim_sizes.push_back(mesh_dim.size);
@@ -329,10 +530,16 @@ bool Mesh::operator==(const Mesh& b) const {
   return protobuf::util::MessageDifferencer::Equals(ToProto(), b.ToProto());
 }
 
-bool Mesh::IsEmpty() const { return global_device_ids_.empty(); }
+bool Mesh::IsEmpty() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_10(mht_10_v, 534, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Mesh::IsEmpty");
+ return global_device_ids_.empty(); }
 
 StatusOr<const std::vector<DeviceNameUtils::ParsedName>> Mesh::ParsedDevices()
     const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_11(mht_11_v, 540, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Mesh::ParsedDevices");
+
   std::vector<DeviceNameUtils::ParsedName> parsed_devices(
       local_devices_.size());
   for (std::size_t i = 0; i < local_devices_.size(); ++i)
@@ -345,11 +552,17 @@ StatusOr<const std::vector<DeviceNameUtils::ParsedName>> Mesh::ParsedDevices()
 
 namespace {
 std::string HostFromParsedDev(const DeviceNameUtils::ParsedName& dev) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_12(mht_12_v, 555, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "HostFromParsedDev");
+
   return "/job:" + dev.job + "/task:" + std::to_string(dev.task);
 }
 }  //  namespace
 
 std::vector<std::string> Mesh::hosts() const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_13(mht_13_v, 563, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Mesh::hosts");
+
   std::vector<std::string> host_list;
   if (IsEmpty()) return host_list;
 
@@ -363,6 +576,9 @@ std::vector<std::string> Mesh::hosts() const {
 }
 
 std::string Mesh::device_type() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_14(mht_14_v, 579, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Mesh::device_type");
+
   if (IsEmpty()) return std::string();
   std::string device;
   if (!global_devices_.empty()) {
@@ -376,12 +592,20 @@ std::string Mesh::device_type() const {
 }
 
 bool Mesh::IsMeshDim(const std::string& dim_name) const {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("dim_name: \"" + dim_name + "\"");
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_15(mht_15_v, 596, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Mesh::IsMeshDim");
+
   for (const auto& mesh_dim : dims())
     if (dim_name == mesh_dim.name) return true;
   return false;
 }
 
 int Mesh::GetMeshDimIndexWithName(const std::string& mesh_name) const {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("mesh_name: \"" + mesh_name + "\"");
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_16(mht_16_v, 606, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Mesh::GetMeshDimIndexWithName");
+
   int mesh_index = -1;
   for (int i = 0; i < dims().size(); ++i) {
     const auto mesh_dim = dim(i);
@@ -391,9 +615,15 @@ int Mesh::GetMeshDimIndexWithName(const std::string& mesh_name) const {
   return mesh_index;
 }
 
-int64 Mesh::rank() const { return mesh_dims_.size(); }
+int64 Mesh::rank() const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_17(mht_17_v, 619, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Mesh::rank");
+ return mesh_dims_.size(); }
 
 int64 Mesh::size() const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_18(mht_18_v, 624, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Mesh::size");
+
   if (mesh_dims_.empty()) return 0;
 
   int64 size = 1;
@@ -401,9 +631,15 @@ int64 Mesh::size() const {
   return size;
 }
 
-Mesh Mesh::Empty() { return Mesh(); }
+Mesh Mesh::Empty() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_19(mht_19_v, 635, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Mesh::Empty");
+ return Mesh(); }
 
 MeshProto Mesh::ToProto() const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_20(mht_20_v, 640, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Mesh::ToProto");
+
   MeshProto mesh_proto;
   mesh_proto.set_name(name());
 
@@ -432,6 +668,9 @@ MeshProto Mesh::ToProto() const {
 }
 
 std::string Mesh::ToString() const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_21(mht_21_v, 671, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Mesh::ToString");
+
   if (Mesh::IsEmpty()) return kEmptyMeshString;
 
   // We use "|" to separate name, mesh dimensions and devices.
@@ -461,6 +700,9 @@ std::string Mesh::ToString() const {
 }
 
 uint64 Mesh::GlobalFingerprint() const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_22(mht_22_v, 703, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Mesh::GlobalFingerprint");
+
   if (Mesh::IsEmpty()) return Fingerprint64(kEmptyMeshString);
 
   std::string mesh_str;
@@ -486,6 +728,10 @@ uint64 Mesh::GlobalFingerprint() const {
 
 namespace {
 MeshDimension StrToMeshDimension(const std::string& str) {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("str: \"" + str + "\"");
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_23(mht_23_v, 732, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "StrToMeshDimension");
+
   MeshDimension mesh_dim;
   if (str.empty()) return mesh_dim;
 
@@ -536,6 +782,10 @@ StatusOr<Mesh> GenerateMeshDevicesForTests(
 
 // static
 StatusOr<Mesh> Mesh::FromString(const std::string& str) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("str: \"" + str + "\"");
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_24(mht_24_v, 786, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Mesh::FromString");
+
   if (str == kEmptyMeshString) return Mesh::Empty();
 
   std::vector<std::string> mesh_parts = absl::StrSplit(str, '|');
@@ -602,9 +852,15 @@ StatusOr<Mesh> Mesh::FromString(const std::string& str) {
   return mesh;
 }
 
-int64 Mesh::num_devices() const { return global_device_ids_.size(); }
+int64 Mesh::num_devices() const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_25(mht_25_v, 856, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Mesh::num_devices");
+ return global_device_ids_.size(); }
 
 StatusOr<const DeviceLocation> Mesh::device_location(int offset) const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_26(mht_26_v, 861, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Mesh::device_location");
+
   if (offset < 0 || offset > size() - 1)
     return errors::InvalidArgument(
         "Mesh offset cannot be negative or exceed Mesh's size. Offset size:",
@@ -622,6 +878,9 @@ StatusOr<const DeviceLocation> Mesh::device_location(int offset) const {
 }
 
 int64 Mesh::GetFlattenedCoordinate(const DeviceLocation& loc) const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_27(mht_27_v, 881, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Mesh::GetFlattenedCoordinate");
+
   const std::vector<int64> mesh_dim_sizes = dim_sizes();
   int64 i = mesh_dim_sizes.size() - 1;
   int64 acc = 1;
@@ -635,6 +894,10 @@ int64 Mesh::GetFlattenedCoordinate(const DeviceLocation& loc) const {
 }
 
 StatusOr<int32> Mesh::idx_for_dim(absl::string_view dim_name) const {
+   std::vector<std::string> mht_28_v;
+   mht_28_v.push_back("dim_name: \"" + std::string(dim_name.data(), dim_name.size()) + "\"");
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_28(mht_28_v, 898, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Mesh::idx_for_dim");
+
   for (int i = 0; i < mesh_dims_.size(); ++i) {
     if (mesh_dims_[i].name == dim_name) return i;
   }
@@ -644,6 +907,9 @@ StatusOr<int32> Mesh::idx_for_dim(absl::string_view dim_name) const {
 
 StatusOr<Layout> Layout::GetLayout(
     const std::vector<std::string>& sharding_spec_strs, const Mesh& mesh) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_29(mht_29_v, 910, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Layout::GetLayout");
+
   // Re-format sharding specs.
   std::vector<ShardingSpec> sharding_specs;
   sharding_specs.reserve(sharding_spec_strs.size());
@@ -657,6 +923,9 @@ StatusOr<Layout> Layout::GetLayout(
 
 StatusOr<Layout> Layout::GetLayout(
     const std::vector<ShardingSpec>& sharding_specs, const Mesh& mesh) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_30(mht_30_v, 926, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Layout::GetLayout");
+
   Layout layout;
   // Append mesh, then check sharding_specs are legal.
   layout.mesh_ = mesh;
@@ -701,14 +970,23 @@ StatusOr<Layout> Layout::GetLayout(
 }
 
 Layout Layout::Empty() {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_31(mht_31_v, 973, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Layout::Empty");
+
   Layout result;
   return result;
 }
 
-bool Layout::IsEmpty() const { return mesh_.IsEmpty(); }
+bool Layout::IsEmpty() const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_32(mht_32_v, 981, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Layout::IsEmpty");
+ return mesh_.IsEmpty(); }
 
 namespace {
 Mesh ReducedAbstractMesh(const Layout* layout) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_33(mht_33_v, 987, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "ReducedAbstractMesh");
+
   const std::vector<std::string>& shard_spec_strs =
       layout->sharding_spec_strs();
   std::vector<MeshDimension> reduced_mesh_dims;
@@ -728,6 +1006,9 @@ Mesh ReducedAbstractMesh(const Layout* layout) {
 }  // namespace
 
 Mesh Layout::ReducedMesh() const {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_34(mht_34_v, 1009, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Layout::ReducedMesh");
+
   // Set replicated mesh dimensions to size 1, and create reduced abstract mesh.
   Mesh reduced_mesh = ReducedAbstractMesh(this);
 
@@ -767,6 +1048,9 @@ Mesh Layout::ReducedMesh() const {
 
 namespace {
 Layout ReducedLayout(const Layout* layout) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_35(mht_35_v, 1051, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "ReducedLayout");
+
   // Change format sharding specs.
   std::vector<ShardingSpec> shard_specs(layout->sharding_specs().size());
   for (size_t i = 0; i < shard_specs.size(); ++i)
@@ -785,6 +1069,9 @@ StatusOr<int> IndexOfMeshDimension(const Mesh& mesh,
 }  // namespace
 
 ShardVector Layout::GetShardVector() const {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_36(mht_36_v, 1072, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Layout::GetShardVector");
+
   // Change format sharding specs.
   std::vector<ShardingSpec> shard_specs(sharding_specs().size());
   for (size_t i = 0; i < shard_specs.size(); ++i) shard_specs[i] = dim(i);
@@ -867,10 +1154,16 @@ std::map<std::string, ShardVector> Layout::HostShardMap() const {
 }
 
 const std::string& Layout::sharding_spec(int idx) const {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_37(mht_37_v, 1157, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Layout::sharding_spec");
+
   return sharding_specs_[idx].sharding_spec();
 }
 
 std::vector<int32> Layout::num_shards() const {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_38(mht_38_v, 1164, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Layout::num_shards");
+
   std::vector<int32> num_shards;
   num_shards.reserve(sharding_specs_.size());
   for (const auto& sharding_spec : sharding_specs_) {
@@ -880,6 +1173,9 @@ std::vector<int32> Layout::num_shards() const {
 }
 
 size_t Layout::num_shards_for_dim(const ShardingSpec& dim) const {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_39(mht_39_v, 1176, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Layout::num_shards_for_dim");
+
   absl::string_view name = dim.sharding_spec();
   if (name == Layout::kUnshardedDim) return 1;
   if (name == Layout::kMatch) return -1;
@@ -888,6 +1184,9 @@ size_t Layout::num_shards_for_dim(const ShardingSpec& dim) const {
 }
 
 bool Layout::IsFullyReplicated() const {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_40(mht_40_v, 1187, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Layout::IsFullyReplicated");
+
   for (const auto& sharding_spec : sharding_specs_) {
     if (num_shards_for_dim(sharding_spec) > 1) {
       return false;
@@ -897,11 +1196,17 @@ bool Layout::IsFullyReplicated() const {
 }
 
 bool Layout::IsLastDimReplicated() const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_41(mht_41_v, 1199, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Layout::IsLastDimReplicated");
+
   return (sharding_specs_.empty()) ||
          (num_shards_for_dim(sharding_specs_.back()) == 1);
 }
 
 bool Layout::IsBatchParallel() const {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_42(mht_42_v, 1207, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Layout::IsBatchParallel");
+
   if (sharding_specs_.empty()) {
     return true;
   }
@@ -917,6 +1222,9 @@ bool Layout::IsBatchParallel() const {
 
 // TODO(samuelslee) Replace this with the IsBatchParallel() everywhere
 bool Layout::IsBatchParallel(int non_batch_rank) const {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_43(mht_43_v, 1225, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Layout::IsBatchParallel");
+
   if (sharding_specs_.empty()) return true;
   for (int i = rank() - non_batch_rank; i < rank(); ++i) {
     if (num_shards_for_dim(sharding_specs_[i]) != 1) return false;
@@ -925,6 +1233,9 @@ bool Layout::IsBatchParallel(int non_batch_rank) const {
 }
 
 LayoutProto Layout::ToProto() const {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_44(mht_44_v, 1236, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Layout::ToProto");
+
   LayoutProto proto;
   *proto.mutable_mesh_config() = mesh_.ToProto();
   for (const auto& dim : sharding_specs_) {
@@ -939,6 +1250,9 @@ bool Layout::operator==(const Layout& b) const {
 
 std::vector<int64_t> Layout::GlobalShapeFromLocalShape(
     const std::vector<int64_t>& local_shape) const {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_45(mht_45_v, 1253, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Layout::GlobalShapeFromLocalShape");
+
   if (IsFullyReplicated()) {
     return local_shape;
   }
@@ -954,6 +1268,9 @@ std::vector<int64_t> Layout::GlobalShapeFromLocalShape(
 
 std::vector<int64_t> Layout::LocalShapeFromGlobalShape(
     absl::Span<const int64_t> global_shape) const {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_46(mht_46_v, 1271, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Layout::LocalShapeFromGlobalShape");
+
   if (IsFullyReplicated()) {
     return std::vector<int64_t>(global_shape.begin(), global_shape.end());
   }
@@ -969,6 +1286,9 @@ std::vector<int64_t> Layout::LocalShapeFromGlobalShape(
 
 PartialTensorShape Layout::LocalShapeFromGlobalShape(
     const PartialTensorShape& global_shape) const {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_47(mht_47_v, 1289, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Layout::LocalShapeFromGlobalShape");
+
   if (IsFullyReplicated() || global_shape.dims() == -1) {
     return global_shape;
   }
@@ -982,6 +1302,9 @@ PartialTensorShape Layout::LocalShapeFromGlobalShape(
 }
 
 StatusOr<Layout> Layout::FromProto(const LayoutProto& proto) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_48(mht_48_v, 1305, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Layout::FromProto");
+
   Layout layout;
   for (const auto& spec : proto.sharding_specs())
     layout.sharding_specs_.push_back(spec);
@@ -993,16 +1316,25 @@ StatusOr<Layout> Layout::FromProto(const LayoutProto& proto) {
 }
 
 Layout Layout::ReplicatedOnMesh(const Mesh& mesh, int rank) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_49(mht_49_v, 1319, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Layout::ReplicatedOnMesh");
+
   std::vector<std::string> specs(rank, kUnshardedDim);
   return Layout::GetLayout(specs, mesh).ValueOrDie();
 }
 
 Layout Layout::AnyOnMesh(const Mesh& mesh, int rank) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_50(mht_50_v, 1327, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Layout::AnyOnMesh");
+
   std::vector<std::string> specs(rank, kAny);
   return Layout::GetLayout(specs, mesh).ValueOrDie();
 }
 
 StatusOr<Layout> Layout::Transposed2D(const Layout& layout) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_51(mht_51_v, 1335, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Layout::Transposed2D");
+
   if (layout.rank() < 2) {
     return errors::InvalidArgument("Transposed2D requires rank to be >= 2");
   }
@@ -1013,6 +1345,10 @@ StatusOr<Layout> Layout::Transposed2D(const Layout& layout) {
 
 // static
 StatusOr<Layout> Layout::FromString(std::string layout_str) {
+   std::vector<std::string> mht_52_v;
+   mht_52_v.push_back("layout_str: \"" + layout_str + "\"");
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_52(mht_52_v, 1349, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Layout::FromString");
+
   if (layout_str == kEmptyLayoutString) return Layout::Empty();
 
   // Print sharding specs.
@@ -1043,6 +1379,9 @@ StatusOr<Layout> Layout::FromString(std::string layout_str) {
 }
 
 std::vector<std::string> Layout::sharding_spec_strs() const {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_53(mht_53_v, 1382, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Layout::sharding_spec_strs");
+
   std::vector<std::string> sharding_spec_strs(sharding_specs().size());
   for (size_t i = 0; i < sharding_specs().size(); ++i)
     sharding_spec_strs[i] = sharding_spec(i);
@@ -1050,6 +1389,9 @@ std::vector<std::string> Layout::sharding_spec_strs() const {
 }
 
 std::string Layout::ToString() const {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_54(mht_54_v, 1392, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Layout::ToString");
+
   if (Layout::IsEmpty()) return kEmptyLayoutString;
 
   std::string layout_str = "sharding_specs:";
@@ -1065,6 +1407,9 @@ std::string Layout::ToString() const {
 
 Layout Layout::GetLayoutWithReducedDims(
     const absl::flat_hash_set<int>& reduced_dims, bool keep_dims) const {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_55(mht_55_v, 1410, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Layout::GetLayoutWithReducedDims");
+
   dtensor::LayoutProto output_layout;
   *output_layout.mutable_mesh_config() = mesh().ToProto();
 
@@ -1081,6 +1426,9 @@ Layout Layout::GetLayoutWithReducedDims(
 }
 
 Layout Layout::Truncate(int64 split_point, bool end) const {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_56(mht_56_v, 1429, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Layout::Truncate");
+
   if ((split_point == 0 && end) || (split_point == rank() && !end))
     return *this;
 
@@ -1101,6 +1449,9 @@ namespace {
 // Adds unsharded sharding specs to layout.
 Layout PadLayout(const int64 rank, const bool is_padding_before,
                  const Layout& layout) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_57(mht_57_v, 1452, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "PadLayout");
+
   if (rank <= layout.rank()) return layout;
 
   // Create list of padding sharding specs.
@@ -1120,6 +1471,9 @@ Layout PadLayout(const int64 rank, const bool is_padding_before,
 }  // namespace
 
 Layout Layout::LeftPad(int64 rank) const {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPStensor_layoutDTcc mht_58(mht_58_v, 1474, "", "./tensorflow/dtensor/cc/tensor_layout.cc", "Layout::LeftPad");
+
   bool is_padding_before = true;
   return PadLayout(rank, is_padding_before, *this);
 }

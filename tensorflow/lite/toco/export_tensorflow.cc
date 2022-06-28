@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,6 +219,10 @@ namespace {
 
 tensorflow::DataType GetTensorFlowDataType(ArrayDataType data_type,
                                            const std::string& error_location) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("error_location: \"" + error_location + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_0(mht_0_v, 223, "", "./tensorflow/lite/toco/export_tensorflow.cc", "GetTensorFlowDataType");
+
   switch (data_type) {
     case ArrayDataType::kBool:
       return tensorflow::DT_BOOL;
@@ -82,11 +254,19 @@ tensorflow::DataType GetTensorFlowDataType(ArrayDataType data_type,
 
 tensorflow::DataType GetTensorFlowDataTypeForOp(ArrayDataType data_type,
                                                 const std::string& op_name) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_1(mht_1_v, 258, "", "./tensorflow/lite/toco/export_tensorflow.cc", "GetTensorFlowDataTypeForOp");
+
   return GetTensorFlowDataType(data_type, "op '" + op_name + "'");
 }
 
 tensorflow::DataType GetTensorFlowDataType(const Model& model,
                                            const std::string& array_name) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("array_name: \"" + array_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_2(mht_2_v, 267, "", "./tensorflow/lite/toco/export_tensorflow.cc", "GetTensorFlowDataType");
+
   return GetTensorFlowDataType(model.GetArray(array_name).data_type,
                                "array '" + array_name + "'");
 }
@@ -108,6 +288,9 @@ enum class LegacyScalarPolicy { kAvoidLegacyScalars, kDoCreateLegacyScalars };
 void ExportFloatArray(const Shape& input_shape, const float* input_data,
                       TensorProto* output_tensor,
                       LegacyScalarPolicy legacy_scalar_policy) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_3(mht_3_v, 291, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ExportFloatArray");
+
   output_tensor->set_dtype(DT_FLOAT);
   const int input_flat_size = RequiredBufferSizeForShape(input_shape);
   auto* shape = output_tensor->mutable_tensor_shape();
@@ -128,6 +311,9 @@ void ExportFloatArray(AxesOrder input_axes_order, const Shape& input_shape,
                       const float* input_data, AxesOrder output_axes_order,
                       TensorProto* output_tensor,
                       LegacyScalarPolicy legacy_scalar_policy) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_4(mht_4_v, 314, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ExportFloatArray");
+
   CHECK_EQ(AxesCount(output_axes_order), AxesCount(input_axes_order));
   output_tensor->set_dtype(DT_FLOAT);
   CHECK_EQ(input_shape.dimensions_count(), AxesCount(input_axes_order));
@@ -146,6 +332,10 @@ void ExportFloatArray(AxesOrder input_axes_order, const Shape& input_shape,
 
 bool HasAlreadyExportedConst(const std::string& name,
                              const GraphDef& tensorflow_graph) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_5(mht_5_v, 336, "", "./tensorflow/lite/toco/export_tensorflow.cc", "HasAlreadyExportedConst");
+
   for (const auto& node : tensorflow_graph.node()) {
     if (node.op() == "Const" && node.name() == name) {
       return true;
@@ -160,6 +350,10 @@ void ConvertFloatTensorConst(const std::string& name, const Shape& input_shape,
                              AxesOrder output_axes_order,
                              GraphDef* tensorflow_graph,
                              LegacyScalarPolicy legacy_scalar_policy) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_6(mht_6_v, 354, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertFloatTensorConst");
+
   if (HasAlreadyExportedConst(name, *tensorflow_graph)) {
     return;
   }
@@ -177,6 +371,10 @@ void ConvertFloatTensorConst(const std::string& name, const Shape& input_shape,
                              AxesOrder input_axes_order,
                              AxesOrder output_axes_order,
                              GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_7(mht_7_v, 375, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertFloatTensorConst");
+
   ConvertFloatTensorConst(name, input_shape, input_data, input_axes_order,
                           output_axes_order, tensorflow_graph,
                           LegacyScalarPolicy::kAvoidLegacyScalars);
@@ -186,6 +384,10 @@ void ConvertFloatTensorConst(const Model& model, const std::string& name,
                              AxesOrder input_axes_order,
                              AxesOrder output_axes_order,
                              GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_8(mht_8_v, 388, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertFloatTensorConst");
+
   if (HasAlreadyExportedConst(name, *tensorflow_graph)) {
     return;
   }
@@ -202,6 +404,10 @@ void ConvertFloatTensorConst(const Model& model, const std::string& name,
 
 void ConvertFloatTensorConst(const Model& model, const std::string& name,
                              GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_9(mht_9_v, 408, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertFloatTensorConst");
+
   if (HasAlreadyExportedConst(name, *tensorflow_graph)) {
     return;
   }
@@ -223,6 +429,10 @@ void ConvertFloatTensorConst(const Model& model, const std::string& name,
 
 void ConvertBoolTensorConst(const Model& model, const std::string& name,
                             GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_10(mht_10_v, 433, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertBoolTensorConst");
+
   if (HasAlreadyExportedConst(name, *tensorflow_graph)) {
     return;
   }
@@ -247,6 +457,10 @@ void ConvertBoolTensorConst(const Model& model, const std::string& name,
 
 void ConvertIntTensorConst(const Model& model, const std::string& name,
                            GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_11(mht_11_v, 461, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertIntTensorConst");
+
   if (HasAlreadyExportedConst(name, *tensorflow_graph)) {
     return;
   }
@@ -273,6 +487,10 @@ void CreateIntTensorConst(const std::string& name,
                           const std::vector<int32>& data,
                           const std::vector<int32>& shape,
                           GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_12(mht_12_v, 491, "", "./tensorflow/lite/toco/export_tensorflow.cc", "CreateIntTensorConst");
+
   if (HasAlreadyExportedConst(name, *tensorflow_graph)) {
     return;
   }
@@ -296,6 +514,10 @@ void CreateIntTensorConst(const std::string& name,
 
 void ConvertComplex64TensorConst(const Model& model, const std::string& name,
                                  GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_13(mht_13_v, 518, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertComplex64TensorConst");
+
   if (HasAlreadyExportedConst(name, *tensorflow_graph)) {
     return;
   }
@@ -321,6 +543,10 @@ void ConvertComplex64TensorConst(const Model& model, const std::string& name,
 
 void CreateMatrixShapeTensorConst(const std::string& name, int rows, int cols,
                                   GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_14(mht_14_v, 547, "", "./tensorflow/lite/toco/export_tensorflow.cc", "CreateMatrixShapeTensorConst");
+
   if (HasAlreadyExportedConst(name, *tensorflow_graph)) {
     return;
   }
@@ -339,6 +565,10 @@ void CreateMatrixShapeTensorConst(const std::string& name, int rows, int cols,
 
 void CreateDummyConcatDimTensorConst(const std::string& name, int dim,
                                      GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_15(mht_15_v, 569, "", "./tensorflow/lite/toco/export_tensorflow.cc", "CreateDummyConcatDimTensorConst");
+
   if (HasAlreadyExportedConst(name, *tensorflow_graph)) {
     return;
   }
@@ -354,6 +584,10 @@ void CreateDummyConcatDimTensorConst(const std::string& name, int dim,
 void CreateReshapeShapeTensorConst(const std::string& name,
                                    const std::vector<int32>& shape,
                                    GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_16(mht_16_v, 588, "", "./tensorflow/lite/toco/export_tensorflow.cc", "CreateReshapeShapeTensorConst");
+
   if (HasAlreadyExportedConst(name, *tensorflow_graph)) {
     return;
   }
@@ -376,6 +610,10 @@ void CreateReshapeShapeTensorConst(const std::string& name,
 }
 
 std::string WalkUpToConstantArray(const Model& model, const std::string& name) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_17(mht_17_v, 614, "", "./tensorflow/lite/toco/export_tensorflow.cc", "WalkUpToConstantArray");
+
   const Array& original_array = model.GetArray(name);
   if (original_array.buffer) {
     return name;
@@ -391,6 +629,9 @@ std::string WalkUpToConstantArray(const Model& model, const std::string& name) {
 
 void ConvertConvOperator(const Model& model, const ConvOperator& src_op,
                          GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_18(mht_18_v, 632, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertConvOperator");
+
   const bool has_bias = src_op.inputs.size() >= 3;
   std::string conv_output = src_op.outputs[0];
   if (has_bias) {
@@ -459,6 +700,9 @@ void ConvertConvOperator(const Model& model, const ConvOperator& src_op,
 void ConvertDepthwiseConvOperator(const Model& model,
                                   const DepthwiseConvOperator& src_op,
                                   GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_19(mht_19_v, 703, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertDepthwiseConvOperator");
+
   const bool has_bias = src_op.inputs.size() >= 3;
   std::string conv_output = src_op.outputs[0];
   if (has_bias) {
@@ -550,6 +794,9 @@ void ConvertDepthwiseConvOperator(const Model& model,
 void ConvertTransposeConvOperator(const Model& model,
                                   const TransposeConvOperator& src_op,
                                   GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_20(mht_20_v, 797, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertTransposeConvOperator");
+
   tensorflow::NodeDef* conv2d_op = tensorflow_graph->add_node();
   conv2d_op->set_op("Conv2DBackpropInput");
   conv2d_op->set_name(src_op.outputs[0]);
@@ -582,6 +829,9 @@ void ConvertTransposeConvOperator(const Model& model,
 void ConvertDepthToSpaceOperator(const Model& model,
                                  const DepthToSpaceOperator& src_op,
                                  GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_21(mht_21_v, 832, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertDepthToSpaceOperator");
+
   tensorflow::NodeDef* op = tensorflow_graph->add_node();
   op->set_op("DepthToSpace");
   op->set_name(src_op.outputs[0]);
@@ -593,6 +843,9 @@ void ConvertDepthToSpaceOperator(const Model& model,
 void ConvertSpaceToDepthOperator(const Model& model,
                                  const SpaceToDepthOperator& src_op,
                                  GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_22(mht_22_v, 846, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertSpaceToDepthOperator");
+
   tensorflow::NodeDef* op = tensorflow_graph->add_node();
   op->set_op("SpaceToDepth");
   op->set_name(src_op.outputs[0]);
@@ -604,6 +857,9 @@ void ConvertSpaceToDepthOperator(const Model& model,
 void ConvertFullyConnectedOperator(const Model& model,
                                    const FullyConnectedOperator& src_op,
                                    GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_23(mht_23_v, 860, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertFullyConnectedOperator");
+
   // Reshape input activations to have the shape expected by the MatMul.
   const std::string reshape_output =
       AvailableArrayName(model, src_op.outputs[0] + "/reshape");
@@ -683,6 +939,9 @@ void ConvertFullyConnectedOperator(const Model& model,
 
 void ConvertAddOperator(const Model& model, const AddOperator& src_op,
                         GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_24(mht_24_v, 942, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertAddOperator");
+
   tensorflow::NodeDef* add_op = tensorflow_graph->add_node();
   add_op->set_op("Add");
   add_op->set_name(src_op.outputs[0]);
@@ -695,6 +954,9 @@ void ConvertAddOperator(const Model& model, const AddOperator& src_op,
 
 void ConvertAddNOperator(const Model& model, const AddNOperator& src_op,
                          GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_25(mht_25_v, 957, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertAddNOperator");
+
   tensorflow::NodeDef* add_op = tensorflow_graph->add_node();
   add_op->set_op("AddN");
   add_op->set_name(src_op.outputs[0]);
@@ -708,6 +970,9 @@ void ConvertAddNOperator(const Model& model, const AddNOperator& src_op,
 
 void ConvertMulOperator(const Model& model, const MulOperator& src_op,
                         GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_26(mht_26_v, 973, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertMulOperator");
+
   tensorflow::NodeDef* mul_op = tensorflow_graph->add_node();
   mul_op->set_op("Mul");
   mul_op->set_name(src_op.outputs[0]);
@@ -720,6 +985,9 @@ void ConvertMulOperator(const Model& model, const MulOperator& src_op,
 
 void ConvertDivOperator(const Model& model, const DivOperator& src_op,
                         GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_27(mht_27_v, 988, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertDivOperator");
+
   tensorflow::NodeDef* div_op = tensorflow_graph->add_node();
   div_op->set_op("Div");
   div_op->set_name(src_op.outputs[0]);
@@ -732,6 +1000,9 @@ void ConvertDivOperator(const Model& model, const DivOperator& src_op,
 
 void ConvertReluOperator(const Model& model, const ReluOperator& src_op,
                          GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_28(mht_28_v, 1003, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertReluOperator");
+
   tensorflow::NodeDef* relu_op = tensorflow_graph->add_node();
   relu_op->set_op("Relu");
   relu_op->set_name(src_op.outputs[0]);
@@ -742,6 +1013,9 @@ void ConvertReluOperator(const Model& model, const ReluOperator& src_op,
 
 void ConvertRelu1Operator(const Relu1Operator& src_op,
                           GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_29(mht_29_v, 1016, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertRelu1Operator");
+
   const std::string max_bounds = src_op.outputs[0] + "/max_bounds";
   const std::string min_bounds = src_op.outputs[0] + "/min_bounds";
   const std::string max_output = src_op.outputs[0] + "/max_output";
@@ -781,6 +1055,9 @@ void ConvertRelu1Operator(const Relu1Operator& src_op,
 
 void ConvertRelu6Operator(const Relu6Operator& src_op,
                           GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_30(mht_30_v, 1058, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertRelu6Operator");
+
   tensorflow::NodeDef* relu_op = tensorflow_graph->add_node();
   relu_op->set_op("Relu6");
   relu_op->set_name(src_op.outputs[0]);
@@ -789,6 +1066,9 @@ void ConvertRelu6Operator(const Relu6Operator& src_op,
 }
 
 void ConvertLogOperator(const LogOperator& src_op, GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_31(mht_31_v, 1069, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertLogOperator");
+
   tensorflow::NodeDef* op = tensorflow_graph->add_node();
   op->set_op("Log");
   op->set_name(src_op.outputs[0]);
@@ -799,6 +1079,9 @@ void ConvertLogOperator(const LogOperator& src_op, GraphDef* tensorflow_graph) {
 
 void ConvertLogisticOperator(const LogisticOperator& src_op,
                              GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_32(mht_32_v, 1082, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertLogisticOperator");
+
   tensorflow::NodeDef* relu_op = tensorflow_graph->add_node();
   relu_op->set_op("Sigmoid");
   relu_op->set_name(src_op.outputs[0]);
@@ -808,6 +1091,9 @@ void ConvertLogisticOperator(const LogisticOperator& src_op,
 
 void ConvertTanhOperator(const TanhOperator& src_op,
                          GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_33(mht_33_v, 1094, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertTanhOperator");
+
   tensorflow::NodeDef* tanh_op = tensorflow_graph->add_node();
   tanh_op->set_op("Tanh");
   tanh_op->set_name(src_op.outputs[0]);
@@ -817,6 +1103,9 @@ void ConvertTanhOperator(const TanhOperator& src_op,
 
 void ConvertSoftmaxOperator(const Model& model, const SoftmaxOperator& src_op,
                             GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_34(mht_34_v, 1106, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertSoftmaxOperator");
+
   std::string softmax_input;
   Operator* providing_op = GetOpWithOutput(model, src_op.inputs[0]);
   if (providing_op != nullptr && providing_op->type == OperatorType::kReshape) {
@@ -858,6 +1147,9 @@ void ConvertSoftmaxOperator(const Model& model, const SoftmaxOperator& src_op,
 void ConvertLogSoftmaxOperator(const Model& model,
                                const LogSoftmaxOperator& src_op,
                                GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_35(mht_35_v, 1150, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertLogSoftmaxOperator");
+
   std::string softmax_input;
   Operator* providing_op = GetOpWithOutput(model, src_op.inputs[0]);
   if (providing_op != nullptr && providing_op->type == OperatorType::kReshape) {
@@ -897,6 +1189,9 @@ void ConvertLogSoftmaxOperator(const Model& model,
 
 void ConvertL2NormalizationOperator(const L2NormalizationOperator& src_op,
                                     GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_36(mht_36_v, 1192, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertL2NormalizationOperator");
+
   const std::string square_output = src_op.outputs[0] + "/square";
   const std::string sum_reduction_indices =
       src_op.outputs[0] + "/reduction_indices";
@@ -948,6 +1243,9 @@ void ConvertL2NormalizationOperator(const L2NormalizationOperator& src_op,
 void ConvertLocalResponseNormalizationOperator(
     const LocalResponseNormalizationOperator& src_op,
     GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_37(mht_37_v, 1246, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertLocalResponseNormalizationOperator");
+
   tensorflow::NodeDef* lrn_op = tensorflow_graph->add_node();
   lrn_op->set_op("LRN");
   lrn_op->set_name(src_op.outputs[0]);
@@ -960,6 +1258,9 @@ void ConvertLocalResponseNormalizationOperator(
 
 void ConvertFakeQuantOperator(const FakeQuantOperator& src_op,
                               GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_38(mht_38_v, 1261, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertFakeQuantOperator");
+
   tensorflow::NodeDef* fakequant_op = tensorflow_graph->add_node();
   fakequant_op->set_op("FakeQuantWithMinMaxArgs");
   fakequant_op->set_name(src_op.outputs[0]);
@@ -978,6 +1279,9 @@ void ConvertFakeQuantOperator(const FakeQuantOperator& src_op,
 
 void ConvertMaxPoolOperator(const MaxPoolOperator& src_op,
                             GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_39(mht_39_v, 1282, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertMaxPoolOperator");
+
   tensorflow::NodeDef* maxpool_op = tensorflow_graph->add_node();
   maxpool_op->set_op("MaxPool");
   maxpool_op->set_name(src_op.outputs[0]);
@@ -1006,6 +1310,9 @@ void ConvertMaxPoolOperator(const MaxPoolOperator& src_op,
 
 void ConvertAveragePoolOperator(const AveragePoolOperator& src_op,
                                 GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_40(mht_40_v, 1313, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertAveragePoolOperator");
+
   tensorflow::NodeDef* avgpool_op = tensorflow_graph->add_node();
   avgpool_op->set_op("AvgPool");
   avgpool_op->set_name(src_op.outputs[0]);
@@ -1035,6 +1342,9 @@ void ConvertAveragePoolOperator(const AveragePoolOperator& src_op,
 void ConvertConcatenationOperator(const Model& model,
                                   const ConcatenationOperator& src_op,
                                   GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_41(mht_41_v, 1345, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertConcatenationOperator");
+
   tensorflow::NodeDef* dc_op = tensorflow_graph->add_node();
   dc_op->set_op("ConcatV2");
   dc_op->set_name(src_op.outputs[0]);
@@ -1053,6 +1363,9 @@ void ConvertConcatenationOperator(const Model& model,
 void ConvertTensorFlowReshapeOperator(const Model& model,
                                       const TensorFlowReshapeOperator& src_op,
                                       GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_42(mht_42_v, 1366, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertTensorFlowReshapeOperator");
+
   tensorflow::NodeDef* reshape_op = tensorflow_graph->add_node();
   reshape_op->set_op("Reshape");
   reshape_op->set_name(src_op.outputs[0]);
@@ -1072,6 +1385,9 @@ void ConvertTensorFlowReshapeOperator(const Model& model,
 
 void ConvertL2PoolOperator(const L2PoolOperator& src_op,
                            GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_43(mht_43_v, 1388, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertL2PoolOperator");
+
   const std::string square_output = src_op.outputs[0] + "/square";
   const std::string avgpool_output = src_op.outputs[0] + "/avgpool";
 
@@ -1117,6 +1433,9 @@ void ConvertL2PoolOperator(const L2PoolOperator& src_op,
 
 void ConvertSquareOperator(const TensorFlowSquareOperator& src_op,
                            GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_44(mht_44_v, 1436, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertSquareOperator");
+
   tensorflow::NodeDef* square_op = tensorflow_graph->add_node();
   square_op->set_op("Square");
   square_op->set_name(src_op.outputs[0]);
@@ -1127,6 +1446,9 @@ void ConvertSquareOperator(const TensorFlowSquareOperator& src_op,
 
 void ConvertSqrtOperator(const TensorFlowSqrtOperator& src_op,
                          GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_45(mht_45_v, 1449, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertSqrtOperator");
+
   tensorflow::NodeDef* sqrt_op = tensorflow_graph->add_node();
   sqrt_op->set_op("Sqrt");
   sqrt_op->set_name(src_op.outputs[0]);
@@ -1138,6 +1460,9 @@ void ConvertSqrtOperator(const TensorFlowSqrtOperator& src_op,
 void ConvertRsqrtOperator(const Model& model,
                           const TensorFlowRsqrtOperator& src_op,
                           GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_46(mht_46_v, 1463, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertRsqrtOperator");
+
   tensorflow::NodeDef* rsqrt_op = tensorflow_graph->add_node();
   rsqrt_op->set_op("Rsqrt");
   rsqrt_op->set_name(src_op.outputs[0]);
@@ -1151,6 +1476,9 @@ void ConvertRsqrtOperator(const Model& model,
 void ConvertSplitOperator(const Model& model,
                           const TensorFlowSplitOperator& src_op,
                           GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_47(mht_47_v, 1479, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertSplitOperator");
+
   tensorflow::NodeDef* split_op = tensorflow_graph->add_node();
   split_op->set_op("Split");
   split_op->set_name(src_op.outputs[0]);
@@ -1174,6 +1502,9 @@ void ConvertSplitOperator(const Model& model,
 void ConvertSplitVOperator(const Model& model,
                            const TensorFlowSplitVOperator& src_op,
                            GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_48(mht_48_v, 1505, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertSplitVOperator");
+
   tensorflow::NodeDef* split_v_op = tensorflow_graph->add_node();
   split_v_op->set_op("SplitV");
   split_v_op->set_name(src_op.outputs[0]);
@@ -1190,6 +1521,9 @@ void ConvertSplitVOperator(const Model& model,
 
 void ConvertCastOperator(const Model& model, const CastOperator& src_op,
                          GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_49(mht_49_v, 1524, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertCastOperator");
+
   tensorflow::NodeDef* cast_op = tensorflow_graph->add_node();
   cast_op->set_op("Cast");
   cast_op->set_name(src_op.outputs[0]);
@@ -1204,6 +1538,9 @@ void ConvertCastOperator(const Model& model, const CastOperator& src_op,
 
 void ConvertFloorOperator(const Model& model, const FloorOperator& src_op,
                           GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_50(mht_50_v, 1541, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertFloorOperator");
+
   tensorflow::NodeDef* floor_op = tensorflow_graph->add_node();
   floor_op->set_op("Floor");
   floor_op->set_name(src_op.outputs[0]);
@@ -1214,6 +1551,9 @@ void ConvertFloorOperator(const Model& model, const FloorOperator& src_op,
 
 void ConvertCeilOperator(const Model& model, const CeilOperator& src_op,
                          GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_51(mht_51_v, 1554, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertCeilOperator");
+
   tensorflow::NodeDef* ceil_op = tensorflow_graph->add_node();
   ceil_op->set_op("Ceil");
   ceil_op->set_name(src_op.outputs[0]);
@@ -1224,6 +1564,9 @@ void ConvertCeilOperator(const Model& model, const CeilOperator& src_op,
 
 void ConvertRoundOperator(const Model& model, const RoundOperator& src_op,
                           GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_52(mht_52_v, 1567, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertRoundOperator");
+
   tensorflow::NodeDef* round_op = tensorflow_graph->add_node();
   round_op->set_op("Round");
   round_op->set_name(src_op.outputs[0]);
@@ -1234,6 +1577,9 @@ void ConvertRoundOperator(const Model& model, const RoundOperator& src_op,
 
 void ConvertGatherOperator(const Model& model, const GatherOperator& src_op,
                            GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_53(mht_53_v, 1580, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertGatherOperator");
+
   tensorflow::NodeDef* gather_op = tensorflow_graph->add_node();
   gather_op->set_op("GatherV2");
   gather_op->set_name(src_op.outputs[0]);
@@ -1263,6 +1609,9 @@ void ConvertGatherOperator(const Model& model, const GatherOperator& src_op,
 
 void ConvertArgMaxOperator(const Model& model, const ArgMaxOperator& src_op,
                            GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_54(mht_54_v, 1612, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertArgMaxOperator");
+
   tensorflow::NodeDef* argmax_op = tensorflow_graph->add_node();
   argmax_op->set_op("ArgMax");
   argmax_op->set_name(src_op.outputs[0]);
@@ -1279,6 +1628,9 @@ void ConvertArgMaxOperator(const Model& model, const ArgMaxOperator& src_op,
 
 void ConvertArgMinOperator(const Model& model, const ArgMinOperator& src_op,
                            GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_55(mht_55_v, 1631, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertArgMinOperator");
+
   tensorflow::NodeDef* argmin_op = tensorflow_graph->add_node();
   argmin_op->set_op("ArgMin");
   argmin_op->set_name(src_op.outputs[0]);
@@ -1296,6 +1648,9 @@ void ConvertArgMinOperator(const Model& model, const ArgMinOperator& src_op,
 void ConvertTransposeOperator(const Model& model,
                               const TransposeOperator& src_op,
                               GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_56(mht_56_v, 1651, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertTransposeOperator");
+
   tensorflow::NodeDef* transpose_op = tensorflow_graph->add_node();
   transpose_op->set_op("Transpose");
   transpose_op->set_name(src_op.outputs[0]);
@@ -1311,6 +1666,9 @@ void ConvertTransposeOperator(const Model& model,
 void ConvertTensorFlowShapeOperator(const Model& model,
                                     const TensorFlowShapeOperator& src_op,
                                     GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_57(mht_57_v, 1669, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertTensorFlowShapeOperator");
+
   tensorflow::NodeDef* shape_op = tensorflow_graph->add_node();
   shape_op->set_op("Shape");
   shape_op->set_name(src_op.outputs[0]);
@@ -1325,6 +1683,9 @@ void ConvertTensorFlowShapeOperator(const Model& model,
 void ConvertRankOperator(const Model& model,
                          const TensorFlowRankOperator& src_op,
                          GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_58(mht_58_v, 1686, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertRankOperator");
+
   tensorflow::NodeDef* rank_op = tensorflow_graph->add_node();
   rank_op->set_op("Rank");
   rank_op->set_name(src_op.outputs[0]);
@@ -1336,6 +1697,9 @@ void ConvertRankOperator(const Model& model,
 
 void ConvertRangeOperator(const Model& model, const RangeOperator& src_op,
                           GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_59(mht_59_v, 1700, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertRangeOperator");
+
   tensorflow::NodeDef* range_op = tensorflow_graph->add_node();
   range_op->set_op("Range");
   range_op->set_name(src_op.outputs[0]);
@@ -1349,6 +1713,9 @@ void ConvertRangeOperator(const Model& model, const RangeOperator& src_op,
 
 void ConvertPackOperator(const Model& model, const PackOperator& src_op,
                          GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_60(mht_60_v, 1716, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertPackOperator");
+
   tensorflow::NodeDef* pack_op = tensorflow_graph->add_node();
   pack_op->set_op("Pack");
   pack_op->set_name(src_op.outputs[0]);
@@ -1363,6 +1730,9 @@ void ConvertPackOperator(const Model& model, const PackOperator& src_op,
 
 void ConvertFillOperator(const Model& model, const FillOperator& src_op,
                          GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_61(mht_61_v, 1733, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertFillOperator");
+
   tensorflow::NodeDef* fill_op = tensorflow_graph->add_node();
   fill_op->set_op("Fill");
   fill_op->set_name(src_op.outputs[0]);
@@ -1377,6 +1747,9 @@ void ConvertFillOperator(const Model& model, const FillOperator& src_op,
 
 void ConvertFloorDivOperator(const Model& model, const FloorDivOperator& src_op,
                              GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_62(mht_62_v, 1750, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertFloorDivOperator");
+
   tensorflow::NodeDef* floor_div_op = tensorflow_graph->add_node();
   floor_div_op->set_op("FloorDiv");
   floor_div_op->set_name(src_op.outputs[0]);
@@ -1389,6 +1762,9 @@ void ConvertFloorDivOperator(const Model& model, const FloorDivOperator& src_op,
 
 void ConvertFloorModOperator(const Model& model, const FloorModOperator& src_op,
                              GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_63(mht_63_v, 1765, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertFloorModOperator");
+
   tensorflow::NodeDef* floor_mod_op = tensorflow_graph->add_node();
   floor_mod_op->set_op("FloorMod");
   floor_mod_op->set_name(src_op.outputs[0]);
@@ -1402,6 +1778,9 @@ void ConvertFloorModOperator(const Model& model, const FloorModOperator& src_op,
 void ConvertExpandDimsOperator(const Model& model,
                                const ExpandDimsOperator& src_op,
                                GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_64(mht_64_v, 1781, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertExpandDimsOperator");
+
   tensorflow::NodeDef* expand_dims_op = tensorflow_graph->add_node();
   expand_dims_op->set_op("ExpandDims");
   expand_dims_op->set_name(src_op.outputs[0]);
@@ -1417,6 +1796,9 @@ void ConvertExpandDimsOperator(const Model& model,
 void ConvertResizeBilinearOperator(const Model& model,
                                    const ResizeBilinearOperator& src_op,
                                    GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_65(mht_65_v, 1799, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertResizeBilinearOperator");
+
   tensorflow::NodeDef* resize_op = tensorflow_graph->add_node();
   resize_op->set_op("ResizeBilinear");
   resize_op->set_name(src_op.outputs[0]);
@@ -1432,6 +1814,9 @@ void ConvertResizeBilinearOperator(const Model& model,
 void ConvertResizeNearestNeighborOperator(
     const Model& model, const ResizeNearestNeighborOperator& src_op,
     GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_66(mht_66_v, 1817, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertResizeNearestNeighborOperator");
+
   tensorflow::NodeDef* resize_op = tensorflow_graph->add_node();
   resize_op->set_op("ResizeNearestNeighbor");
   resize_op->set_name(src_op.outputs[0]);
@@ -1446,6 +1831,9 @@ void ConvertResizeNearestNeighborOperator(
 
 void ConvertOneHotOperator(const Model& model, const OneHotOperator& src_op,
                            GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_67(mht_67_v, 1834, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertOneHotOperator");
+
   tensorflow::NodeDef* onehot_op = tensorflow_graph->add_node();
   onehot_op->set_op("OneHot");
   onehot_op->set_name(src_op.outputs[0]);
@@ -1462,6 +1850,11 @@ namespace {
 // TODO(aselle): Remove when available in absl
 absl::string_view FindLongestCommonPrefix(absl::string_view a,
                                           absl::string_view b) {
+   std::vector<std::string> mht_68_v;
+   mht_68_v.push_back("a: \"" + std::string(a.data(), a.size()) + "\"");
+   mht_68_v.push_back("b: \"" + std::string(b.data(), b.size()) + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_68(mht_68_v, 1855, "", "./tensorflow/lite/toco/export_tensorflow.cc", "FindLongestCommonPrefix");
+
   if (a.empty() || b.empty()) return absl::string_view();
 
   const char* pa = a.data();
@@ -1480,6 +1873,9 @@ absl::string_view FindLongestCommonPrefix(absl::string_view a,
 
 void ConvertLstmCellOperator(const Model& model, const LstmCellOperator& src_op,
                              GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_69(mht_69_v, 1876, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertLstmCellOperator");
+
   // Find the base name
   const std::string base(
       FindLongestCommonPrefix(src_op.outputs[LstmCellOperator::STATE_OUTPUT],
@@ -1650,6 +2046,9 @@ void ConvertLstmCellOperator(const Model& model, const LstmCellOperator& src_op,
 void ConvertSpaceToBatchNDOperator(const Model& model,
                                    const SpaceToBatchNDOperator& src_op,
                                    GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_70(mht_70_v, 2049, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertSpaceToBatchNDOperator");
+
   tensorflow::NodeDef* new_op = tensorflow_graph->add_node();
   new_op->set_op("SpaceToBatchND");
   new_op->set_name(src_op.outputs[0]);
@@ -1667,6 +2066,9 @@ void ConvertSpaceToBatchNDOperator(const Model& model,
 void ConvertBatchToSpaceNDOperator(const Model& model,
                                    const BatchToSpaceNDOperator& src_op,
                                    GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_71(mht_71_v, 2069, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertBatchToSpaceNDOperator");
+
   tensorflow::NodeDef* new_op = tensorflow_graph->add_node();
   new_op->set_op("BatchToSpaceND");
   new_op->set_name(src_op.outputs[0]);
@@ -1683,6 +2085,9 @@ void ConvertBatchToSpaceNDOperator(const Model& model,
 
 void ConvertPadOperator(const Model& model, const PadOperator& src_op,
                         GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_72(mht_72_v, 2088, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertPadOperator");
+
   tensorflow::NodeDef* new_op = tensorflow_graph->add_node();
   new_op->set_op("Pad");
   new_op->set_name(src_op.outputs[0]);
@@ -1714,6 +2119,9 @@ void ConvertPadOperator(const Model& model, const PadOperator& src_op,
 
 void ConvertPadV2Operator(const Model& model, const PadV2Operator& src_op,
                           GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_73(mht_73_v, 2122, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertPadV2Operator");
+
   tensorflow::NodeDef* new_op = tensorflow_graph->add_node();
   new_op->set_op("PadV2");
   new_op->set_name(src_op.outputs[0]);
@@ -1747,6 +2155,10 @@ void ConvertPadV2Operator(const Model& model, const PadV2Operator& src_op,
 void CreateSliceInput(const std::string& input_name,
                       const std::vector<int>& values,
                       GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_74_v;
+   mht_74_v.push_back("input_name: \"" + input_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_74(mht_74_v, 2159, "", "./tensorflow/lite/toco/export_tensorflow.cc", "CreateSliceInput");
+
   tensorflow::NodeDef* params_op = tensorflow_graph->add_node();
   params_op->set_op("Const");
   params_op->set_name(input_name);
@@ -1764,6 +2176,9 @@ void CreateSliceInput(const std::string& input_name,
 void ConvertStridedSliceOperator(const Model& model,
                                  const StridedSliceOperator& src_op,
                                  GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_75(mht_75_v, 2179, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertStridedSliceOperator");
+
   tensorflow::NodeDef* new_op = tensorflow_graph->add_node();
   new_op->set_op("StridedSlice");
   new_op->set_name(src_op.outputs[0]);
@@ -1792,6 +2207,9 @@ void ConvertStridedSliceOperator(const Model& model,
 
 void ConvertSliceOperator(const Model& model, const SliceOperator& src_op,
                           GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_76(mht_76_v, 2210, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertSliceOperator");
+
   tensorflow::NodeDef* new_op = tensorflow_graph->add_node();
   new_op->set_op("Slice");
   new_op->set_name(src_op.outputs[0]);
@@ -1814,6 +2232,10 @@ template <typename T>
 void ConvertReduceOperator(const Model& model, const T& src_op,
                            GraphDef* tensorflow_graph,
                            const std::string& op_name) {
+   std::vector<std::string> mht_77_v;
+   mht_77_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_77(mht_77_v, 2236, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertReduceOperator");
+
   tensorflow::NodeDef* new_op = tensorflow_graph->add_node();
   new_op->set_op(op_name);
   new_op->set_name(src_op.outputs[0]);
@@ -1851,6 +2273,9 @@ void ConvertReduceOperator(const Model& model, const T& src_op,
 
 void ConvertSqueezeOperator(const Model& model, const SqueezeOperator& src_op,
                             GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_78(mht_78_v, 2276, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertSqueezeOperator");
+
   tensorflow::NodeDef* new_op = tensorflow_graph->add_node();
   new_op->set_op("Squeeze");
   new_op->set_name(src_op.outputs[0]);
@@ -1871,6 +2296,9 @@ void ConvertSqueezeOperator(const Model& model, const SqueezeOperator& src_op,
 
 void ConvertSubOperator(const Model& model, const SubOperator& src_op,
                         GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_79(mht_79_v, 2299, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertSubOperator");
+
   tensorflow::NodeDef* sub_op = tensorflow_graph->add_node();
   sub_op->set_op("Sub");
   sub_op->set_name(src_op.outputs[0]);
@@ -1885,6 +2313,9 @@ void ConvertSubOperator(const Model& model, const SubOperator& src_op,
 void ConvertTensorFlowMinimumOperator(const Model& model,
                                       const TensorFlowMinimumOperator& src_op,
                                       GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_80(mht_80_v, 2316, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertTensorFlowMinimumOperator");
+
   tensorflow::NodeDef* min_op = tensorflow_graph->add_node();
   min_op->set_op("Minimum");
   min_op->set_name(src_op.outputs[0]);
@@ -1899,6 +2330,9 @@ void ConvertTensorFlowMinimumOperator(const Model& model,
 void ConvertTensorFlowMaximumOperator(const Model& model,
                                       const TensorFlowMaximumOperator& src_op,
                                       GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_81(mht_81_v, 2333, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertTensorFlowMaximumOperator");
+
   tensorflow::NodeDef* max_op = tensorflow_graph->add_node();
   max_op->set_op("Maximum");
   max_op->set_name(src_op.outputs[0]);
@@ -1912,6 +2346,9 @@ void ConvertTensorFlowMaximumOperator(const Model& model,
 
 void ConvertSelectOperator(const Model& model, const SelectOperator& src_op,
                            GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_82(mht_82_v, 2349, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertSelectOperator");
+
   tensorflow::NodeDef* select_op = tensorflow_graph->add_node();
   select_op->set_op("Select");
   select_op->set_name(src_op.outputs[0]);
@@ -1927,6 +2364,9 @@ void ConvertSelectOperator(const Model& model, const SelectOperator& src_op,
 void ConvertTileOperator(const Model& model,
                          const TensorFlowTileOperator& src_op,
                          GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_83(mht_83_v, 2367, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertTileOperator");
+
   tensorflow::NodeDef* tile_op = tensorflow_graph->add_node();
   tile_op->set_op("Tile");
   tile_op->set_name(src_op.outputs[0]);
@@ -1943,6 +2383,9 @@ void ConvertTileOperator(const Model& model,
 
 void ConvertTopKV2Operator(const Model& model, const TopKV2Operator& src_op,
                            GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_84(mht_84_v, 2386, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertTopKV2Operator");
+
   tensorflow::NodeDef* topk_op = tensorflow_graph->add_node();
   topk_op->set_op("TopKV2");
   topk_op->set_name(src_op.outputs[0]);
@@ -1958,6 +2401,9 @@ void ConvertTopKV2Operator(const Model& model, const TopKV2Operator& src_op,
 void ConvertRandomUniformOperator(const Model& model,
                                   const RandomUniformOperator& src_op,
                                   GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_85(mht_85_v, 2404, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertRandomUniformOperator");
+
   CHECK(tensorflow_graph != nullptr);
   tensorflow::NodeDef* new_op = tensorflow_graph->add_node();
   new_op->set_op("RandomUniform");
@@ -1976,6 +2422,10 @@ void ConvertRandomUniformOperator(const Model& model,
 void ConvertComparisonOperator(const Model& model, const Operator& src_op,
                                const char* op_name,
                                GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_86_v;
+   mht_86_v.push_back("op_name: \"" + (op_name == nullptr ? std::string("nullptr") : std::string((char*)op_name)) + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_86(mht_86_v, 2426, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertComparisonOperator");
+
   tensorflow::NodeDef* comparison_op = tensorflow_graph->add_node();
   comparison_op->set_op(op_name);
   comparison_op->set_name(src_op.outputs[0]);
@@ -1991,6 +2441,10 @@ void ConvertSparseToDenseOperator(const Model& model,
                                   const SparseToDenseOperator& src_op,
                                   const char* op_name,
                                   GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_87_v;
+   mht_87_v.push_back("op_name: \"" + (op_name == nullptr ? std::string("nullptr") : std::string((char*)op_name)) + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_87(mht_87_v, 2445, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertSparseToDenseOperator");
+
   tensorflow::NodeDef* sparse_to_dense_op = tensorflow_graph->add_node();
   sparse_to_dense_op->set_op(op_name);
   sparse_to_dense_op->set_name(src_op.outputs[0]);
@@ -2010,6 +2464,10 @@ void ConvertSparseToDenseOperator(const Model& model,
 
 void ConvertPowOperator(const Model& model, const PowOperator& src_op,
                         const char* op_name, GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_88_v;
+   mht_88_v.push_back("op_name: \"" + (op_name == nullptr ? std::string("nullptr") : std::string((char*)op_name)) + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_88(mht_88_v, 2468, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertPowOperator");
+
   tensorflow::NodeDef* pow_op = tensorflow_graph->add_node();
   pow_op->set_op(op_name);
   pow_op->set_name(src_op.outputs[0]);
@@ -2025,6 +2483,9 @@ void ConvertPowOperator(const Model& model, const PowOperator& src_op,
 void ConvertLogicalAndOperator(const Model& model,
                                const LogicalAndOperator& src_op,
                                GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_89(mht_89_v, 2486, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertLogicalAndOperator");
+
   tensorflow::NodeDef* logical_op = tensorflow_graph->add_node();
   logical_op->set_op("LogicalAnd");
   logical_op->set_name(src_op.outputs[0]);
@@ -2037,6 +2498,9 @@ void ConvertLogicalAndOperator(const Model& model,
 void ConvertLogicalNotOperator(const Model& model,
                                const LogicalNotOperator& src_op,
                                GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_90(mht_90_v, 2501, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertLogicalNotOperator");
+
   tensorflow::NodeDef* logical_op = tensorflow_graph->add_node();
   logical_op->set_op("LogicalNot");
   logical_op->set_name(src_op.outputs[0]);
@@ -2047,6 +2511,10 @@ void ConvertLogicalNotOperator(const Model& model,
 void ConvertLogicalOrOperator(const Model& model,
                               const LogicalOrOperator& src_op,
                               const char* op_name, GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_91_v;
+   mht_91_v.push_back("op_name: \"" + (op_name == nullptr ? std::string("nullptr") : std::string((char*)op_name)) + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_91(mht_91_v, 2515, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertLogicalOrOperator");
+
   tensorflow::NodeDef* logical_or_op = tensorflow_graph->add_node();
   logical_or_op->set_op(op_name);
   logical_or_op->set_name(src_op.outputs[0]);
@@ -2062,6 +2530,10 @@ void ConvertLogicalOrOperator(const Model& model,
 void ConvertCTCBeamSearchDecoderOperator(
     const Model& model, const CTCBeamSearchDecoderOperator& src_op,
     const char* op_name, GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_92_v;
+   mht_92_v.push_back("op_name: \"" + (op_name == nullptr ? std::string("nullptr") : std::string((char*)op_name)) + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_92(mht_92_v, 2534, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertCTCBeamSearchDecoderOperator");
+
   auto* op = tensorflow_graph->add_node();
   op->set_op(op_name);
   op->set_name(src_op.outputs[0]);
@@ -2076,6 +2548,10 @@ void ConvertCTCBeamSearchDecoderOperator(
 
 void ConvertUnpackOperator(const Model& model, const UnpackOperator& src_op,
                            const char* op_name, GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_93_v;
+   mht_93_v.push_back("op_name: \"" + (op_name == nullptr ? std::string("nullptr") : std::string((char*)op_name)) + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_93(mht_93_v, 2552, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertUnpackOperator");
+
   tensorflow::NodeDef* unpack_op = tensorflow_graph->add_node();
   unpack_op->set_op(op_name);
   unpack_op->set_name(src_op.outputs[0]);
@@ -2091,6 +2567,10 @@ void ConvertUnpackOperator(const Model& model, const UnpackOperator& src_op,
 void ConvertZerosLikeOperator(const Model& model,
                               const TensorFlowZerosLikeOperator& src_op,
                               const char* op_name, GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_94_v;
+   mht_94_v.push_back("op_name: \"" + (op_name == nullptr ? std::string("nullptr") : std::string((char*)op_name)) + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_94(mht_94_v, 2571, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertZerosLikeOperator");
+
   tensorflow::NodeDef* zeros_like_op = tensorflow_graph->add_node();
   zeros_like_op->set_op(op_name);
   zeros_like_op->set_name(src_op.outputs[0]);
@@ -2104,6 +2584,10 @@ void ConvertZerosLikeOperator(const Model& model,
 void ConvertReverseV2Operator(const Model& model,
                               const ReverseV2Operator& src_op,
                               const char* op_name, GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_95_v;
+   mht_95_v.push_back("op_name: \"" + (op_name == nullptr ? std::string("nullptr") : std::string((char*)op_name)) + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_95(mht_95_v, 2588, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertReverseV2Operator");
+
   tensorflow::NodeDef* reverse_v2_op = tensorflow_graph->add_node();
   reverse_v2_op->set_op(op_name);
   reverse_v2_op->set_name(src_op.outputs[0]);
@@ -2118,6 +2602,9 @@ void ConvertReverseV2Operator(const Model& model,
 void ConvertReverseSequenceOperator(const Model& model,
                                     const ReverseSequenceOperator& src_op,
                                     GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_96(mht_96_v, 2605, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertReverseSequenceOperator");
+
   tensorflow::NodeDef* reverse_seq_op = tensorflow_graph->add_node();
   reverse_seq_op->set_op("ReverseSequence");
   reverse_seq_op->set_name(src_op.outputs[0]);
@@ -2130,6 +2617,9 @@ void ConvertReverseSequenceOperator(const Model& model,
 
 void ConvertOperator(const Model& model, const Operator& src_op,
                      GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_97(mht_97_v, 2620, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ConvertOperator");
+
   if (src_op.fused_activation_function != FusedActivationFunctionType::kNone) {
     LOG(FATAL)
         << "Unsupported: the input model has a fused activation function";
@@ -2430,6 +2920,10 @@ void ConvertOperator(const Model& model, const Operator& src_op,
 
 void AddPlaceholder(const std::string& name, ArrayDataType type,
                     GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_98_v;
+   mht_98_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_98(mht_98_v, 2924, "", "./tensorflow/lite/toco/export_tensorflow.cc", "AddPlaceholder");
+
   tensorflow::NodeDef* placeholder = tensorflow_graph->add_node();
   placeholder->set_op("Placeholder");
   switch (type) {
@@ -2465,6 +2959,10 @@ void AddPlaceholder(const std::string& name, ArrayDataType type,
 
 void AddPlaceholderForRNNState(const Model& model, const std::string& name,
                                int size, GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_99_v;
+   mht_99_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_99(mht_99_v, 2963, "", "./tensorflow/lite/toco/export_tensorflow.cc", "AddPlaceholderForRNNState");
+
   tensorflow::NodeDef* placeholder = tensorflow_graph->add_node();
   placeholder->set_op("Placeholder");
   placeholder->set_name(name);
@@ -2486,6 +2984,9 @@ void AddPlaceholderForRNNState(const Model& model, const std::string& name,
 
 void ExportTensorFlowGraphDefImplementation(const Model& model,
                                             GraphDef* tensorflow_graph) {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_100(mht_100_v, 2987, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ExportTensorFlowGraphDefImplementation");
+
   for (const auto& input_array : model.flags.input_arrays()) {
     AddPlaceholder(input_array.name(),
                    model.GetArray(input_array.name()).data_type,
@@ -2528,6 +3029,9 @@ void ExportTensorFlowGraphDefImplementation(const Model& model,
 }  // namespace
 
 void EncodeConstantArraysMinMaxByWrappingThemInFakeQuantNodes(Model* model) {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_101(mht_101_v, 3032, "", "./tensorflow/lite/toco/export_tensorflow.cc", "EncodeConstantArraysMinMaxByWrappingThemInFakeQuantNodes");
+
   for (const auto& array_kv : model->GetArrayMap()) {
     const std::string& array_name = array_kv.first;
     Array& array = *array_kv.second;
@@ -2553,6 +3057,9 @@ void EncodeConstantArraysMinMaxByWrappingThemInFakeQuantNodes(Model* model) {
 
 void ExportTensorFlowGraphDef(const Model& model,
                               std::string* output_file_contents) {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSexport_tensorflowDTcc mht_102(mht_102_v, 3060, "", "./tensorflow/lite/toco/export_tensorflow.cc", "ExportTensorFlowGraphDef");
+
   CHECK(output_file_contents->empty());
   GraphDef tensorflow_graph;
   ExportTensorFlowGraphDefImplementation(model, &tensorflow_graph);

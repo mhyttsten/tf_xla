@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
@@ -129,6 +297,9 @@ static const int64_t kMinComputeOp = 1;
 namespace {
 
 std::string GetDataFormat(const OpInfo& op_info) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_0(mht_0_v, 300, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "GetDataFormat");
+
   std::string data_format = "NHWC";  // Default format.
   if (op_info.attr().find("data_format") != op_info.attr().end()) {
     data_format = op_info.attr().at("data_format").s();
@@ -137,6 +308,9 @@ std::string GetDataFormat(const OpInfo& op_info) {
 }
 
 std::string GetFilterFormat(const OpInfo& op_info) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_1(mht_1_v, 311, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "GetFilterFormat");
+
   std::string filter_format = "HWIO";  // Default format.
   if (op_info.attr().find("filter_format") != op_info.attr().end()) {
     filter_format = op_info.attr().at("filter_format").s();
@@ -145,6 +319,9 @@ std::string GetFilterFormat(const OpInfo& op_info) {
 }
 
 Padding GetPadding(const OpInfo& op_info) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_2(mht_2_v, 322, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "GetPadding");
+
   if (op_info.attr().find("padding") != op_info.attr().end() &&
       op_info.attr().at("padding").s() == "VALID") {
     return Padding::VALID;
@@ -153,6 +330,9 @@ Padding GetPadding(const OpInfo& op_info) {
 }
 
 bool IsTraining(const OpInfo& op_info) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_3(mht_3_v, 333, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "IsTraining");
+
   if (op_info.attr().find("is_training") != op_info.attr().end() &&
       op_info.attr().at("is_training").b()) {
     return true;
@@ -189,6 +369,9 @@ std::vector<int64_t> GetKernelSize(const OpInfo& op_info) {
 
 int64_t GetOutputSize(const int64_t input, const int64_t filter,
                       const int64_t stride, const Padding& padding) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_4(mht_4_v, 372, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "GetOutputSize");
+
   // Logic for calculating output shape is from GetWindowedOutputSizeVerbose()
   // function in third_party/tensorflow/core/framework/common_shape_fns.cc.
   if (padding == Padding::VALID) {
@@ -201,6 +384,9 @@ int64_t GetOutputSize(const int64_t input, const int64_t filter,
 // Return the output element count of a multi-input element-wise op considering
 // broadcasting.
 int64_t CwiseOutputElementCount(const OpInfo& op_info) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_5(mht_5_v, 387, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "CwiseOutputElementCount");
+
   int max_rank = 1;
   for (const OpInfo::TensorProperties& input_properties : op_info.inputs()) {
     max_rank = std::max(max_rank, input_properties.shape().dim_size());
@@ -238,6 +424,10 @@ int64_t CwiseOutputElementCount(const OpInfo& op_info) {
 // Helper function for determining whether there are repeated indices in the
 // input Einsum equation.
 bool CheckRepeatedDimensions(const absl::string_view dim_str) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("dim_str: \"" + std::string(dim_str.data(), dim_str.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_6(mht_6_v, 428, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "CheckRepeatedDimensions");
+
   int str_size = dim_str.size();
   for (int idx = 0; idx < str_size - 1; idx++) {
     if (dim_str.find(dim_str[idx], idx + 1) != std::string::npos) {
@@ -250,6 +440,9 @@ bool CheckRepeatedDimensions(const absl::string_view dim_str) {
 // Auxiliary function for determining whether OpLevelCostEstimator is compatible
 // with a given Einsum.
 bool IsEinsumCorrectlyFormed(const OpContext& einsum_context) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_7(mht_7_v, 443, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "IsEinsumCorrectlyFormed");
+
   const auto& op_info = einsum_context.op_info;
 
   auto it = op_info.attr().find("equation");
@@ -322,6 +515,9 @@ bool IsEinsumCorrectlyFormed(const OpContext& einsum_context) {
 // shape.
 TensorShapeProto MaybeGetMinimumShape(const TensorShapeProto& original_shape,
                                       int rank, bool* found_unknown_shapes) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_8(mht_8_v, 518, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "MaybeGetMinimumShape");
+
   auto shape = original_shape;
   bool is_scalar = !shape.unknown_rank() && shape.dim_size() == 0;
 
@@ -356,6 +552,9 @@ TensorShapeProto MaybeGetMinimumShape(const TensorShapeProto& original_shape,
 }
 
 OpLevelCostEstimator::OpLevelCostEstimator() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_9(mht_9_v, 555, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::OpLevelCostEstimator");
+
   // Syntactic sugar to build and return a lambda that takes an OpInfo and
   // returns a cost.
   typedef Status (OpLevelCostEstimator::*CostImpl)(const OpContext& op_context,
@@ -363,6 +562,9 @@ OpLevelCostEstimator::OpLevelCostEstimator() {
   auto wrap = [this](CostImpl impl)
       -> std::function<Status(const OpContext&, NodeCosts*)> {
     return [this, impl](const OpContext& op_context, NodeCosts* node_costs) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_10(mht_10_v, 565, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "lambda");
+
       return (this->*impl)(op_context, node_costs);
     };
   };
@@ -649,6 +851,9 @@ OpLevelCostEstimator::OpLevelCostEstimator() {
 }
 
 Costs OpLevelCostEstimator::PredictCosts(const OpContext& op_context) const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_11(mht_11_v, 854, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictCosts");
+
   Costs costs;
   NodeCosts node_costs;
   if (PredictNodeCosts(op_context, &node_costs).ok()) {
@@ -696,6 +901,9 @@ Costs OpLevelCostEstimator::PredictCosts(const OpContext& op_context) const {
 
 Status OpLevelCostEstimator::PredictNodeCosts(const OpContext& op_context,
                                               NodeCosts* node_costs) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_12(mht_12_v, 904, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictNodeCosts");
+
   const auto& op_info = op_context.op_info;
   auto it = device_cost_impl_.find(op_info.op());
   if (it != device_cost_impl_.end()) {
@@ -721,6 +929,9 @@ Status OpLevelCostEstimator::PredictNodeCosts(const OpContext& op_context,
 // through PCIe. To define device info more precisely, override this method.
 DeviceInfo OpLevelCostEstimator::GetDeviceInfo(
     const DeviceProperties& device) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_13(mht_13_v, 932, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::GetDeviceInfo");
+
   double gflops = -1;
   double gb_per_sec = -1;
 
@@ -783,6 +994,9 @@ DeviceInfo OpLevelCostEstimator::GetDeviceInfo(
 
 Status OpLevelCostEstimator::PredictCwiseOp(const OpContext& op_context,
                                             NodeCosts* node_costs) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_14(mht_14_v, 997, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictCwiseOp");
+
   const auto& op_info = op_context.op_info;
   bool found_unknown_shapes = false;
   // For element-wise operations, op count is the element count of any input. We
@@ -815,6 +1029,9 @@ Status OpLevelCostEstimator::PredictCwiseOp(const OpContext& op_context,
 
 Status OpLevelCostEstimator::PredictCostOfAnUnknownOp(
     const OpContext& op_context, NodeCosts* node_costs) const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_15(mht_15_v, 1032, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictCostOfAnUnknownOp");
+
   // Don't assume the operation is cwise, return cost based on input/output size
   // and admit that it is inaccurate...
   bool found_unknown_shapes = false;
@@ -825,6 +1042,9 @@ Status OpLevelCostEstimator::PredictCostOfAnUnknownOp(
 
 Costs OpLevelCostEstimator::PredictOpCountBasedCost(
     double operations, const OpInfo& op_info) const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_16(mht_16_v, 1045, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictOpCountBasedCost");
+
   bool unknown_shapes = false;
   const double input_size = CalculateInputSize(op_info, &unknown_shapes);
   const double output_size = CalculateOutputSize(op_info, &unknown_shapes);
@@ -839,6 +1059,9 @@ Costs OpLevelCostEstimator::PredictOpCountBasedCost(
 Costs OpLevelCostEstimator::PredictOpCountBasedCost(
     double operations, double input_io_bytes, double output_io_bytes,
     const OpInfo& op_info) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_17(mht_17_v, 1062, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictOpCountBasedCost");
+
   double total_io_bytes = input_io_bytes + output_io_bytes;
   const DeviceInfo device_info = GetDeviceInfo(op_info.device());
   if (device_info.gigaops <= 0 || device_info.gb_per_sec <= 0 ||
@@ -893,6 +1116,9 @@ Costs OpLevelCostEstimator::PredictOpCountBasedCost(
 
 int64_t OpLevelCostEstimator::CountConv2DOperations(
     const OpInfo& op_info, bool* found_unknown_shapes) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_18(mht_18_v, 1119, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::CountConv2DOperations");
+
   return CountConv2DOperations(op_info, nullptr, found_unknown_shapes);
 }
 
@@ -903,6 +1129,9 @@ OpLevelCostEstimator::ConvolutionDimensionsFromInputs(
     const TensorShapeProto& original_image_shape,
     const TensorShapeProto& original_filter_shape, const OpInfo& op_info,
     bool* found_unknown_shapes) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_19(mht_19_v, 1132, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::ConvolutionDimensionsFromInputs");
+
   VLOG(2) << "op features: " << op_info.DebugString();
   VLOG(2) << "Original image shape: " << original_image_shape.DebugString();
   VLOG(2) << "Original filter shape: " << original_filter_shape.DebugString();
@@ -1006,6 +1235,9 @@ OpLevelCostEstimator::ConvolutionDimensionsFromInputs(
 int64_t OpLevelCostEstimator::CountConv2DOperations(
     const OpInfo& op_info, ConvolutionDimensions* conv_info,
     bool* found_unknown_shapes) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_20(mht_20_v, 1238, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::CountConv2DOperations");
+
   DCHECK(op_info.op() == kConv2d || op_info.op() == kDepthwiseConv2dNative)
       << "Invalid Operation: not Conv2D nor DepthwiseConv2dNative";
 
@@ -1044,6 +1276,9 @@ int64_t OpLevelCostEstimator::CountConv2DOperations(
 
 int64_t OpLevelCostEstimator::CountMatMulOperations(
     const OpInfo& op_info, bool* found_unknown_shapes) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_21(mht_21_v, 1279, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::CountMatMulOperations");
+
   return CountMatMulOperations(op_info, nullptr, found_unknown_shapes);
 }
 
@@ -1051,6 +1286,9 @@ int64_t OpLevelCostEstimator::CountMatMulOperations(
 int64_t OpLevelCostEstimator::CountMatMulOperations(
     const OpInfo& op_info, MatMulDimensions* mat_mul,
     bool* found_unknown_shapes) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_22(mht_22_v, 1289, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::CountMatMulOperations");
+
   double ops = 0;
 
   if (op_info.inputs_size() < 2) {
@@ -1122,6 +1360,9 @@ int64_t OpLevelCostEstimator::CountMatMulOperations(
 bool OpLevelCostEstimator::GenerateBatchMatmulContextFromEinsum(
     const OpContext& einsum_context, OpContext* batch_matmul_context,
     bool* found_unknown_shapes) const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_23(mht_23_v, 1363, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::GenerateBatchMatmulContextFromEinsum");
+
   // This auxiliary function transforms an einsum OpContext into its equivalent
   // Batch Matmul OpContext. The function returns a boolean, which determines
   // whether it was successful in generating the output OpContext or not.
@@ -1245,12 +1486,18 @@ bool OpLevelCostEstimator::GenerateBatchMatmulContextFromEinsum(
 
 int64_t OpLevelCostEstimator::CountBatchMatMulOperations(
     const OpInfo& op_info, bool* found_unknown_shapes) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_24(mht_24_v, 1489, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::CountBatchMatMulOperations");
+
   return CountBatchMatMulOperations(op_info, nullptr, found_unknown_shapes);
 }
 
 int64_t OpLevelCostEstimator::CountBatchMatMulOperations(
     const OpInfo& op_info, BatchMatMulDimensions* batch_mat_mul,
     bool* found_unknown_shapes) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_25(mht_25_v, 1498, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::CountBatchMatMulOperations");
+
   if (op_info.op() != kBatchMatMul && op_info.op() != kBatchMatMulV2) {
     LOG(ERROR) << "Invalid Operation: " << op_info.op();
     // TODO(pcma): Try to separate invalid inputs from unknown shapes
@@ -1373,6 +1620,9 @@ int64_t OpLevelCostEstimator::CountBatchMatMulOperations(
 
 bool GetTensorShapeProtoFromTensorProto(const TensorProto& tensor_proto,
                                         TensorShapeProto* tensor_shape_proto) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_26(mht_26_v, 1623, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "GetTensorShapeProtoFromTensorProto");
+
   tensor_shape_proto->Clear();
   // First convert TensorProto into Tensor class so that it correctly parses
   // data values within TensorProto (whether it's in int_val, int64_val,
@@ -1425,6 +1675,9 @@ bool GetTensorShapeProtoFromTensorProto(const TensorProto& tensor_proto,
 int64_t OpLevelCostEstimator::CountConv2DBackpropInputOperations(
     const OpInfo& op_info, ConvolutionDimensions* returned_conv_dims,
     bool* found_unknown_shapes) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_27(mht_27_v, 1678, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::CountConv2DBackpropInputOperations");
+
   int64_t ops = 0;
 
   DCHECK(op_info.op() == kConv2dBackpropInput ||
@@ -1483,6 +1736,9 @@ int64_t OpLevelCostEstimator::CountConv2DBackpropInputOperations(
 int64_t OpLevelCostEstimator::CountConv2DBackpropFilterOperations(
     const OpInfo& op_info, ConvolutionDimensions* returned_conv_dims,
     bool* found_unknown_shapes) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_28(mht_28_v, 1739, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::CountConv2DBackpropFilterOperations");
+
   int64_t ops = 0;
 
   DCHECK(op_info.op() == kConv2dBackpropFilter ||
@@ -1538,6 +1794,9 @@ int64_t OpLevelCostEstimator::CountConv2DBackpropFilterOperations(
 
 int64_t OpLevelCostEstimator::CalculateTensorElementCount(
     const OpInfo::TensorProperties& tensor, bool* found_unknown_shapes) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_29(mht_29_v, 1797, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::CalculateTensorElementCount");
+
   VLOG(2) << "   with " << DataTypeString(tensor.dtype()) << " tensor of shape "
           << tensor.shape().DebugString();
   int64_t tensor_size = 1;
@@ -1559,6 +1818,9 @@ int64_t OpLevelCostEstimator::CalculateTensorElementCount(
 
 int64_t OpLevelCostEstimator::CalculateTensorSize(
     const OpInfo::TensorProperties& tensor, bool* found_unknown_shapes) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_30(mht_30_v, 1821, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::CalculateTensorSize");
+
   int64_t count = CalculateTensorElementCount(tensor, found_unknown_shapes);
   int size = DataTypeSize(BaseType(tensor.dtype()));
   VLOG(2) << "Count: " << count << " DataTypeSize: " << size;
@@ -1573,6 +1835,9 @@ int64_t OpLevelCostEstimator::CalculateTensorSize(
 
 int64_t OpLevelCostEstimator::CalculateInputSize(const OpInfo& op_info,
                                                  bool* found_unknown_shapes) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_31(mht_31_v, 1838, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::CalculateInputSize");
+
   int64_t total_input_size = 0;
   for (auto& input : op_info.inputs()) {
     int64_t input_size = CalculateTensorSize(input, found_unknown_shapes);
@@ -1585,6 +1850,9 @@ int64_t OpLevelCostEstimator::CalculateInputSize(const OpInfo& op_info,
 
 std::vector<int64_t> OpLevelCostEstimator::CalculateInputTensorSize(
     const OpInfo& op_info, bool* found_unknown_shapes) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_32(mht_32_v, 1853, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::CalculateInputTensorSize");
+
   std::vector<int64_t> input_tensor_size;
   input_tensor_size.reserve(op_info.inputs().size());
   for (auto& input : op_info.inputs()) {
@@ -1596,6 +1864,9 @@ std::vector<int64_t> OpLevelCostEstimator::CalculateInputTensorSize(
 
 int64_t OpLevelCostEstimator::CalculateLargestInputCount(
     const OpInfo& op_info, bool* found_unknown_shapes) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_33(mht_33_v, 1867, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::CalculateLargestInputCount");
+
   int64_t largest_input_count = 0;
   for (auto& input : op_info.inputs()) {
     int64_t input_count =
@@ -1611,6 +1882,9 @@ int64_t OpLevelCostEstimator::CalculateLargestInputCount(
 
 int64_t OpLevelCostEstimator::CalculateOutputSize(const OpInfo& op_info,
                                                   bool* found_unknown_shapes) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_34(mht_34_v, 1885, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::CalculateOutputSize");
+
   int64_t total_output_size = 0;
   // Use float as default for calculations.
   for (const auto& output : op_info.outputs()) {
@@ -1639,6 +1913,9 @@ int64_t OpLevelCostEstimator::CalculateOutputSize(const OpInfo& op_info,
 
 std::vector<int64_t> OpLevelCostEstimator::CalculateOutputTensorSize(
     const OpInfo& op_info, bool* found_unknown_shapes) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_35(mht_35_v, 1916, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::CalculateOutputTensorSize");
+
   std::vector<int64_t> output_tensor_size;
   output_tensor_size.reserve(op_info.outputs().size());
   // Use float as default for calculations.
@@ -1660,6 +1937,9 @@ std::vector<int64_t> OpLevelCostEstimator::CalculateOutputTensorSize(
 Status OpLevelCostEstimator::PredictDefaultNodeCosts(
     const int64_t num_compute_ops, const OpContext& op_context,
     bool* found_unknown_shapes, NodeCosts* node_costs) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_36(mht_36_v, 1940, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictDefaultNodeCosts");
+
   const auto& op_info = op_context.op_info;
   node_costs->num_compute_ops = num_compute_ops;
   node_costs->num_input_bytes_accessed =
@@ -1675,6 +1955,9 @@ Status OpLevelCostEstimator::PredictDefaultNodeCosts(
 }
 
 bool HasZeroDim(const OpInfo& op_info) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_37(mht_37_v, 1958, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "HasZeroDim");
+
   for (int i = 0; i < op_info.inputs_size(); ++i) {
     const auto& input = op_info.inputs(i);
     for (int j = 0; j < input.shape().dim_size(); ++j) {
@@ -1691,6 +1974,9 @@ bool HasZeroDim(const OpInfo& op_info) {
 
 Status OpLevelCostEstimator::PredictConv2D(const OpContext& op_context,
                                            NodeCosts* node_costs) const {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_38(mht_38_v, 1977, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictConv2D");
+
   const auto& op_info = op_context.op_info;
   if (HasZeroDim(op_info)) {
     node_costs->num_nodes_with_unknown_shapes = 1;
@@ -1706,6 +1992,9 @@ Status OpLevelCostEstimator::PredictConv2D(const OpContext& op_context,
 
 Status OpLevelCostEstimator::PredictConv2DBackpropInput(
     const OpContext& op_context, NodeCosts* node_costs) const {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_39(mht_39_v, 1995, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictConv2DBackpropInput");
+
   const auto& op_info = op_context.op_info;
   if (HasZeroDim(op_info)) {
     node_costs->num_nodes_with_unknown_shapes = 1;
@@ -1722,6 +2011,9 @@ Status OpLevelCostEstimator::PredictConv2DBackpropInput(
 
 Status OpLevelCostEstimator::PredictConv2DBackpropFilter(
     const OpContext& op_context, NodeCosts* node_costs) const {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_40(mht_40_v, 2014, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictConv2DBackpropFilter");
+
   const auto& op_info = op_context.op_info;
   if (HasZeroDim(op_info)) {
     node_costs->num_nodes_with_unknown_shapes = 1;
@@ -1738,6 +2030,9 @@ Status OpLevelCostEstimator::PredictConv2DBackpropFilter(
 
 Status OpLevelCostEstimator::PredictFusedConv2DBiasActivation(
     const OpContext& op_context, NodeCosts* node_costs) const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_41(mht_41_v, 2033, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictFusedConv2DBiasActivation");
+
   // FusedConv2DBiasActivation computes a fused kernel which implements:
   // 2D convolution, adds side input with separate scaling on convolution and
   // side inputs, then adds bias, and finally applies the ReLU activation
@@ -1824,6 +2119,9 @@ Status OpLevelCostEstimator::PredictFusedConv2DBiasActivation(
 
 Status OpLevelCostEstimator::PredictMatMul(const OpContext& op_context,
                                            NodeCosts* node_costs) const {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_42(mht_42_v, 2122, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictMatMul");
+
   const auto& op_info = op_context.op_info;
   bool found_unknown_shapes = false;
   int64_t num_compute_ops =
@@ -1834,6 +2132,9 @@ Status OpLevelCostEstimator::PredictMatMul(const OpContext& op_context,
 
 Status OpLevelCostEstimator::PredictEinsum(const OpContext& op_context,
                                            NodeCosts* node_costs) const {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_43(mht_43_v, 2135, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictEinsum");
+
   const auto& op_info = op_context.op_info;
 
   auto it = op_info.attr().find("equation");
@@ -1858,6 +2159,9 @@ Status OpLevelCostEstimator::PredictEinsum(const OpContext& op_context,
 
 Status OpLevelCostEstimator::PredictSparseTensorDenseMatMul(
     const OpContext& op_context, NodeCosts* node_costs) const {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_44(mht_44_v, 2162, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictSparseTensorDenseMatMul");
+
   const auto& op_info = op_context.op_info;
   bool found_unknown_shapes = false;
   // input[0]: indices in sparse matrix a
@@ -1901,6 +2205,9 @@ Status OpLevelCostEstimator::PredictSparseTensorDenseMatMul(
 
 Status OpLevelCostEstimator::PredictNoOp(const OpContext& op_context,
                                          NodeCosts* node_costs) const {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_45(mht_45_v, 2208, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictNoOp");
+
   const auto& op_info = op_context.op_info;
   VLOG(1) << "Op:" << op_info.op() << " Execution Time 0 (ns)";
   // By default, NodeCosts is initialized to zero ops and bytes.
@@ -1909,6 +2216,9 @@ Status OpLevelCostEstimator::PredictNoOp(const OpContext& op_context,
 
 Status OpLevelCostEstimator::PredictPureMemoryOp(const OpContext& op_context,
                                                  NodeCosts* node_costs) const {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_46(mht_46_v, 2219, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictPureMemoryOp");
+
   // Each output element is a copy of some element from input, with no required
   // computation, so just compute memory costs.
   bool found_unknown_shapes = false;
@@ -1919,6 +2229,9 @@ Status OpLevelCostEstimator::PredictPureMemoryOp(const OpContext& op_context,
 
 Status OpLevelCostEstimator::PredictIdentity(const OpContext& op_context,
                                              NodeCosts* node_costs) const {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_47(mht_47_v, 2232, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictIdentity");
+
   const auto& op_info = op_context.op_info;
   VLOG(1) << "Op:" << op_info.op() << " Minimum cost for Identity";
   node_costs->minimum_cost_op = true;
@@ -1938,6 +2251,9 @@ Status OpLevelCostEstimator::PredictIdentity(const OpContext& op_context,
 
 Status OpLevelCostEstimator::PredictVariable(const OpContext& op_context,
                                              NodeCosts* node_costs) const {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_48(mht_48_v, 2254, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictVariable");
+
   const auto& op_info = op_context.op_info;
   VLOG(1) << "Op:" << op_info.op() << " Minimum cost for Variable";
   node_costs->minimum_cost_op = true;
@@ -1957,6 +2273,9 @@ Status OpLevelCostEstimator::PredictVariable(const OpContext& op_context,
 
 Status OpLevelCostEstimator::PredictBatchMatMul(const OpContext& op_context,
                                                 NodeCosts* node_costs) const {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_49(mht_49_v, 2276, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictBatchMatMul");
+
   const auto& op_info = op_context.op_info;
   bool found_unknown_shapes = false;
   int64_t num_compute_ops =
@@ -1967,6 +2286,9 @@ Status OpLevelCostEstimator::PredictBatchMatMul(const OpContext& op_context,
 
 Status OpLevelCostEstimator::PredictMetadata(const OpContext& op_context,
                                              NodeCosts* node_costs) const {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_50(mht_50_v, 2289, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictMetadata");
+
   const auto& op_info = op_context.op_info;
   node_costs->minimum_cost_op = true;
   node_costs->num_compute_ops = kMinComputeOp;
@@ -1983,6 +2305,9 @@ Status OpLevelCostEstimator::PredictMetadata(const OpContext& op_context,
 
 Status OpLevelCostEstimator::PredictGatherOrSlice(const OpContext& op_context,
                                                   NodeCosts* node_costs) const {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_51(mht_51_v, 2308, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictGatherOrSlice");
+
   // Gather & Slice ops can have a very large input, but only access a small
   // part of it. For these op the size of the output determines the memory cost.
   const auto& op_info = op_context.op_info;
@@ -2036,6 +2361,9 @@ Status OpLevelCostEstimator::PredictGatherOrSlice(const OpContext& op_context,
 
 Status OpLevelCostEstimator::PredictScatter(const OpContext& op_context,
                                             NodeCosts* node_costs) const {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_52(mht_52_v, 2364, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictScatter");
+
   // Scatter ops sparsely access a reference input and output tensor.
   const auto& op_info = op_context.op_info;
   bool found_unknown_shapes = false;
@@ -2086,6 +2414,9 @@ Status OpLevelCostEstimator::PredictFusedOp(
     const OpContext& op_context,
     const std::vector<OpContext>& fused_op_contexts,
     NodeCosts* node_costs) const {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_53(mht_53_v, 2417, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictFusedOp");
+
   // Note that PredictDefaultNodeCosts will get the correct memory costs from
   // the node's inputs and outputs; but we don't want to have to re-implement
   // the logic for computing the operation count of each of our component
@@ -2118,6 +2449,10 @@ OpContext OpLevelCostEstimator::FusedChildContext(
     const OpContext& parent, const std::string& op_name,
     const OpInfo::TensorProperties& output,
     const std::vector<OpInfo::TensorProperties>& inputs) {
+   std::vector<std::string> mht_54_v;
+   mht_54_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_54(mht_54_v, 2453, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::FusedChildContext");
+
   // Setup the base parameters of our new context.
   OpContext new_context;
   new_context.name = op_name;
@@ -2141,6 +2476,9 @@ OpContext OpLevelCostEstimator::FusedChildContext(
 /* static */
 OpInfo::TensorProperties OpLevelCostEstimator::DescribeTensor(
     DataType type, const std::vector<int64_t>& dims) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_55(mht_55_v, 2479, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::DescribeTensor");
+
   OpInfo::TensorProperties ret;
   ret.set_dtype(type);
 
@@ -2157,6 +2495,9 @@ StatusOr<OpLevelCostEstimator::ConvolutionDimensions>
 OpLevelCostEstimator::OpDimensionsFromInputs(
     const TensorShapeProto& original_image_shape, const OpInfo& op_info,
     bool* found_unknown_shapes) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_56(mht_56_v, 2498, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::OpDimensionsFromInputs");
+
   VLOG(2) << "op features: " << op_info.DebugString();
   VLOG(2) << "Original image shape: " << original_image_shape.DebugString();
   auto image_shape =
@@ -2208,6 +2549,9 @@ OpLevelCostEstimator::OpDimensionsFromInputs(
 
 Status OpLevelCostEstimator::PredictMaxPool(const OpContext& op_context,
                                             NodeCosts* node_costs) const {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_57(mht_57_v, 2552, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictMaxPool");
+
   bool found_unknown_shapes = false;
   const auto& op_info = op_context.op_info;
   // x: op_info.inputs(0)
@@ -2244,6 +2588,9 @@ Status OpLevelCostEstimator::PredictMaxPool(const OpContext& op_context,
 
 Status OpLevelCostEstimator::PredictMaxPoolGrad(const OpContext& op_context,
                                                 NodeCosts* node_costs) const {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_58(mht_58_v, 2591, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictMaxPoolGrad");
+
   bool found_unknown_shapes = false;
   const auto& op_info = op_context.op_info;
   // x: op_info.inputs(0)
@@ -2300,6 +2647,9 @@ Status OpLevelCostEstimator::PredictMaxPoolGrad(const OpContext& op_context,
  * enough to compute the cost */
 Status OpLevelCostEstimator::PredictAssignVariableOps(
     const OpContext& op_context, NodeCosts* node_costs) const {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_59(mht_59_v, 2650, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictAssignVariableOps");
+
   bool found_unknown_shapes = false;
   const auto& op_info = op_context.op_info;
   /* First input of these ops are reference to the assignee. */
@@ -2328,6 +2678,9 @@ Status OpLevelCostEstimator::PredictAssignVariableOps(
 
 Status OpLevelCostEstimator::PredictAvgPool(const OpContext& op_context,
                                             NodeCosts* node_costs) const {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_60(mht_60_v, 2681, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictAvgPool");
+
   bool found_unknown_shapes = false;
   const auto& op_info = op_context.op_info;
   // x: op_info.inputs(0)
@@ -2365,6 +2718,9 @@ Status OpLevelCostEstimator::PredictAvgPool(const OpContext& op_context,
 
 Status OpLevelCostEstimator::PredictAvgPoolGrad(const OpContext& op_context,
                                                 NodeCosts* node_costs) const {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_61(mht_61_v, 2721, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictAvgPoolGrad");
+
   bool found_unknown_shapes = false;
   const auto& op_info = op_context.op_info;
   // x's shape: op_info.inputs(0)
@@ -2411,6 +2767,9 @@ Status OpLevelCostEstimator::PredictAvgPoolGrad(const OpContext& op_context,
 
 Status OpLevelCostEstimator::PredictFusedBatchNorm(
     const OpContext& op_context, NodeCosts* node_costs) const {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_62(mht_62_v, 2770, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictFusedBatchNorm");
+
   bool found_unknown_shapes = false;
   const auto& op_info = op_context.op_info;
   // x: op_info.inputs(0)
@@ -2462,6 +2821,9 @@ Status OpLevelCostEstimator::PredictFusedBatchNorm(
 
 Status OpLevelCostEstimator::PredictFusedBatchNormGrad(
     const OpContext& op_context, NodeCosts* node_costs) const {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_63(mht_63_v, 2824, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictFusedBatchNormGrad");
+
   bool found_unknown_shapes = false;
   const auto& op_info = op_context.op_info;
   // y_backprop: op_info.inputs(0)
@@ -2500,6 +2862,9 @@ Status OpLevelCostEstimator::PredictFusedBatchNormGrad(
 
 Status OpLevelCostEstimator::PredictNaryOp(const OpContext& op_context,
                                            NodeCosts* node_costs) const {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_64(mht_64_v, 2865, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictNaryOp");
+
   const auto& op_info = op_context.op_info;
   bool found_unknown_shapes = false;
   // Calculate the largest known tensor size across all inputs and output.
@@ -2530,6 +2895,9 @@ Status OpLevelCostEstimator::PredictNaryOp(const OpContext& op_context,
 // softmax[i, j] = exp(logits[i, j]) / sum_j(exp(logits[i, j]))
 Status OpLevelCostEstimator::PredictSoftmax(const OpContext& op_context,
                                             NodeCosts* node_costs) const {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_65(mht_65_v, 2898, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictSoftmax");
+
   bool found_unknown_shapes = false;
   const int64_t logits_size = CalculateTensorElementCount(
       op_context.op_info.inputs(0), &found_unknown_shapes);
@@ -2558,6 +2926,9 @@ Status OpLevelCostEstimator::PredictSoftmax(const OpContext& op_context,
 
 Status OpLevelCostEstimator::PredictResizeBilinear(
     const OpContext& op_context, NodeCosts* node_costs) const {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_66(mht_66_v, 2929, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictResizeBilinear");
+
   bool found_unknown_shapes = false;
 
   if (op_context.op_info.outputs().empty() ||
@@ -2652,6 +3023,9 @@ Status OpLevelCostEstimator::PredictResizeBilinear(
 
 Status OpLevelCostEstimator::PredictCropAndResize(const OpContext& op_context,
                                                   NodeCosts* node_costs) const {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimatorDTcc mht_67(mht_67_v, 3026, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator.cc", "OpLevelCostEstimator::PredictCropAndResize");
+
   bool found_unknown_shapes = false;
 
   const auto method = op_context.op_info.attr().find("method");

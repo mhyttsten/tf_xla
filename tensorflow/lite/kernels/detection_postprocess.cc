@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -101,6 +269,10 @@ struct OpData {
 };
 
 void* Init(TfLiteContext* context, const char* buffer, size_t length) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc mht_0(mht_0_v, 273, "", "./tensorflow/lite/kernels/detection_postprocess.cc", "Init");
+
   auto* op_data = new OpData;
   const uint8_t* buffer_t = reinterpret_cast<const uint8_t*>(buffer);
   const flexbuffers::Map& m = flexbuffers::GetRoot(buffer_t, length).AsMap();
@@ -129,11 +301,17 @@ void* Init(TfLiteContext* context, const char* buffer, size_t length) {
 }
 
 void Free(TfLiteContext* context, void* buffer) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc mht_1(mht_1_v, 304, "", "./tensorflow/lite/kernels/detection_postprocess.cc", "Free");
+
   delete static_cast<OpData*>(buffer);
 }
 
 TfLiteStatus SetTensorSizes(TfLiteContext* context, TfLiteTensor* tensor,
                             std::initializer_list<int> values) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc mht_2(mht_2_v, 312, "", "./tensorflow/lite/kernels/detection_postprocess.cc", "SetTensorSizes");
+
   TfLiteIntArray* size = TfLiteIntArrayCreate(values.size());
   int index = 0;
   for (const auto& v : values) {
@@ -144,6 +322,9 @@ TfLiteStatus SetTensorSizes(TfLiteContext* context, TfLiteTensor* tensor,
 }
 
 TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc mht_3(mht_3_v, 325, "", "./tensorflow/lite/kernels/detection_postprocess.cc", "Prepare");
+
   auto* op_data = static_cast<OpData*>(node->user_data);
   // Inputs: box_encodings, scores, anchors
   TF_LITE_ENSURE_EQ(context, NumInputs(node), 3);
@@ -228,7 +409,10 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
 class Dequantizer {
  public:
   Dequantizer(int zero_point, float scale)
-      : zero_point_(zero_point), scale_(scale) {}
+      : zero_point_(zero_point), scale_(scale) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc mht_4(mht_4_v, 413, "", "./tensorflow/lite/kernels/detection_postprocess.cc", "Dequantizer");
+}
   float operator()(uint8 x) {
     return (static_cast<float>(x) - zero_point_) * scale_;
   }
@@ -242,6 +426,9 @@ void DequantizeBoxEncodings(const TfLiteTensor* input_box_encodings, int idx,
                             float quant_zero_point, float quant_scale,
                             int length_box_encoding,
                             CenterSizeEncoding* box_centersize) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc mht_5(mht_5_v, 429, "", "./tensorflow/lite/kernels/detection_postprocess.cc", "DequantizeBoxEncodings");
+
   const uint8* boxes =
       GetTensorData<uint8>(input_box_encodings) + length_box_encoding * idx;
   Dequantizer dequantize(quant_zero_point, quant_scale);
@@ -258,18 +445,27 @@ void DequantizeBoxEncodings(const TfLiteTensor* input_box_encodings, int idx,
 
 template <class T>
 T ReInterpretTensor(const TfLiteTensor* tensor) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc mht_6(mht_6_v, 448, "", "./tensorflow/lite/kernels/detection_postprocess.cc", "ReInterpretTensor");
+
   const float* tensor_base = GetTensorData<float>(tensor);
   return reinterpret_cast<T>(tensor_base);
 }
 
 template <class T>
 T ReInterpretTensor(TfLiteTensor* tensor) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc mht_7(mht_7_v, 457, "", "./tensorflow/lite/kernels/detection_postprocess.cc", "ReInterpretTensor");
+
   float* tensor_base = GetTensorData<float>(tensor);
   return reinterpret_cast<T>(tensor_base);
 }
 
 TfLiteStatus DecodeCenterSizeBoxes(TfLiteContext* context, TfLiteNode* node,
                                    OpData* op_data) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc mht_8(mht_8_v, 466, "", "./tensorflow/lite/kernels/detection_postprocess.cc", "DecodeCenterSizeBoxes");
+
   // Parse input tensor boxencodings
   const TfLiteTensor* input_box_encodings;
   TF_LITE_ENSURE_OK(context,
@@ -353,6 +549,9 @@ TfLiteStatus DecodeCenterSizeBoxes(TfLiteContext* context, TfLiteNode* node,
 
 void DecreasingPartialArgSort(const float* values, int num_values,
                               int num_to_sort, int* indices) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc mht_9(mht_9_v, 552, "", "./tensorflow/lite/kernels/detection_postprocess.cc", "DecreasingPartialArgSort");
+
   if (num_to_sort == 1) {
     indices[0] = optimized_ops::ArgMaxVector(values, num_values);
   } else {
@@ -364,6 +563,9 @@ void DecreasingPartialArgSort(const float* values, int num_values,
 }
 
 void DecreasingArgSort(const float* values, int num_values, int* indices) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc mht_10(mht_10_v, 566, "", "./tensorflow/lite/kernels/detection_postprocess.cc", "DecreasingArgSort");
+
   std::iota(indices, indices + num_values, 0);
 
   // We want here a stable sort, in order to get completely defined output.
@@ -377,6 +579,9 @@ void SelectDetectionsAboveScoreThreshold(const std::vector<float>& values,
                                          const float threshold,
                                          std::vector<float>* keep_values,
                                          std::vector<int>* keep_indices) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc mht_11(mht_11_v, 582, "", "./tensorflow/lite/kernels/detection_postprocess.cc", "SelectDetectionsAboveScoreThreshold");
+
   for (int i = 0; i < values.size(); i++) {
     if (values[i] >= threshold) {
       keep_values->emplace_back(values[i]);
@@ -386,6 +591,9 @@ void SelectDetectionsAboveScoreThreshold(const std::vector<float>& values,
 }
 
 bool ValidateBoxes(const TfLiteTensor* decoded_boxes, const int num_boxes) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc mht_12(mht_12_v, 594, "", "./tensorflow/lite/kernels/detection_postprocess.cc", "ValidateBoxes");
+
   for (int i = 0; i < num_boxes; ++i) {
     auto& box = ReInterpretTensor<const BoxCornerEncoding*>(decoded_boxes)[i];
     // Note: `ComputeIntersectionOverUnion` properly handles degenerated boxes
@@ -400,6 +608,9 @@ bool ValidateBoxes(const TfLiteTensor* decoded_boxes, const int num_boxes) {
 
 float ComputeIntersectionOverUnion(const TfLiteTensor* decoded_boxes,
                                    const int i, const int j) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc mht_13(mht_13_v, 611, "", "./tensorflow/lite/kernels/detection_postprocess.cc", "ComputeIntersectionOverUnion");
+
   auto& box_i = ReInterpretTensor<const BoxCornerEncoding*>(decoded_boxes)[i];
   auto& box_j = ReInterpretTensor<const BoxCornerEncoding*>(decoded_boxes)[j];
   const float area_i = (box_i.ymax - box_i.ymin) * (box_i.xmax - box_i.xmin);
@@ -425,6 +636,9 @@ TfLiteStatus NonMaxSuppressionSingleClassHelper(
     TfLiteContext* context, TfLiteNode* node, OpData* op_data,
     const std::vector<float>& scores, int max_detections,
     std::vector<int>* selected) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc mht_14(mht_14_v, 639, "", "./tensorflow/lite/kernels/detection_postprocess.cc", "NonMaxSuppressionSingleClassHelper");
+
   const TfLiteTensor* input_box_encodings;
   TF_LITE_ENSURE_OK(context,
                     GetInputSafe(context, node, kInputTensorBoxEncodings,
@@ -515,6 +729,9 @@ struct NMSTaskParam {
 
 void InplaceMergeBoxInfo(std::vector<BoxInfo>& boxes, int mid_index,
                          int end_index) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc mht_15(mht_15_v, 732, "", "./tensorflow/lite/kernels/detection_postprocess.cc", "InplaceMergeBoxInfo");
+
   std::inplace_merge(
       boxes.begin(), boxes.begin() + mid_index, boxes.begin() + end_index,
       [](const BoxInfo& a, const BoxInfo& b) { return a.score >= b.score; });
@@ -523,6 +740,9 @@ void InplaceMergeBoxInfo(std::vector<BoxInfo>& boxes, int mid_index,
 TfLiteStatus ComputeNMSResult(const NMSTaskParam& nms_task_param, int col_begin,
                               int col_end, int& sorted_indices_size,
                               std::vector<BoxInfo>& resulted_sorted_box_info) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc mht_16(mht_16_v, 743, "", "./tensorflow/lite/kernels/detection_postprocess.cc", "ComputeNMSResult");
+
   std::vector<float> class_scores(nms_task_param.num_boxes);
   std::vector<int> selected;
   selected.reserve(nms_task_param.num_detections_per_class);
@@ -573,8 +793,14 @@ struct NonMaxSuppressionWorkerTask : cpu_backend_threadpool::Task {
       : nms_task_param(nms_task_param),
         next_col(next_col),
         col_begin(col_begin),
-        sorted_indices_size(0) {}
+        sorted_indices_size(0) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc mht_17(mht_17_v, 797, "", "./tensorflow/lite/kernels/detection_postprocess.cc", "NonMaxSuppressionWorkerTask");
+}
   void Run() override {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc mht_18(mht_18_v, 801, "", "./tensorflow/lite/kernels/detection_postprocess.cc", "Run");
+
     sorted_box_info.resize(nms_task_param.num_detections_per_class +
                            nms_task_param.max_detections);
     for (int col = col_begin; col < nms_task_param.num_classes;
@@ -605,6 +831,9 @@ TfLiteStatus NonMaxSuppressionMultiClassRegularHelper(TfLiteContext* context,
                                                       TfLiteNode* node,
                                                       OpData* op_data,
                                                       const float* scores) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc mht_19(mht_19_v, 834, "", "./tensorflow/lite/kernels/detection_postprocess.cc", "NonMaxSuppressionMultiClassRegularHelper");
+
   const TfLiteTensor* input_box_encodings;
   TF_LITE_ENSURE_OK(context,
                     GetInputSafe(context, node, kInputTensorBoxEncodings,
@@ -744,6 +973,9 @@ TfLiteStatus NonMaxSuppressionMultiClassFastHelper(TfLiteContext* context,
                                                    TfLiteNode* node,
                                                    OpData* op_data,
                                                    const float* scores) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc mht_20(mht_20_v, 976, "", "./tensorflow/lite/kernels/detection_postprocess.cc", "NonMaxSuppressionMultiClassFastHelper");
+
   const TfLiteTensor* input_box_encodings;
   TF_LITE_ENSURE_OK(context,
                     GetInputSafe(context, node, kInputTensorBoxEncodings,
@@ -830,6 +1062,9 @@ void DequantizeClassPredictions(const TfLiteTensor* input_class_predictions,
                                 const int num_boxes,
                                 const int num_classes_with_background,
                                 TfLiteTensor* scores) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc mht_21(mht_21_v, 1065, "", "./tensorflow/lite/kernels/detection_postprocess.cc", "DequantizeClassPredictions");
+
   float quant_zero_point =
       static_cast<float>(input_class_predictions->params.zero_point);
   float quant_scale = static_cast<float>(input_class_predictions->params.scale);
@@ -844,6 +1079,9 @@ void DequantizeClassPredictions(const TfLiteTensor* input_class_predictions,
 
 TfLiteStatus NonMaxSuppressionMultiClass(TfLiteContext* context,
                                          TfLiteNode* node, OpData* op_data) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc mht_22(mht_22_v, 1082, "", "./tensorflow/lite/kernels/detection_postprocess.cc", "NonMaxSuppressionMultiClass");
+
   // Get the input tensors
   const TfLiteTensor* input_box_encodings;
   TF_LITE_ENSURE_OK(context,
@@ -890,6 +1128,9 @@ TfLiteStatus NonMaxSuppressionMultiClass(TfLiteContext* context,
 }
 
 TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc mht_23(mht_23_v, 1131, "", "./tensorflow/lite/kernels/detection_postprocess.cc", "Eval");
+
   // TODO(b/177068051):  Generalize for any batch size.
   TF_LITE_ENSURE(context, (kBatchSize == 1));
   auto* op_data = static_cast<OpData*>(node->user_data);
@@ -914,6 +1155,9 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
 }  // namespace detection_postprocess
 
 TfLiteRegistration* Register_DETECTION_POSTPROCESS() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc mht_24(mht_24_v, 1158, "", "./tensorflow/lite/kernels/detection_postprocess.cc", "Register_DETECTION_POSTPROCESS");
+
   static TfLiteRegistration r = {
       detection_postprocess::Init, detection_postprocess::Free,
       detection_postprocess::Prepare, detection_postprocess::Eval};
@@ -924,6 +1168,9 @@ TfLiteRegistration* Register_DETECTION_POSTPROCESS() {
 // tool will assume the register function is named
 // "Register_TFLITE_DETECTION_POST_PROCESS".
 TfLiteRegistration* Register_TFLITE_DETECTION_POST_PROCESS() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSdetection_postprocessDTcc mht_25(mht_25_v, 1171, "", "./tensorflow/lite/kernels/detection_postprocess.cc", "Register_TFLITE_DETECTION_POST_PROCESS");
+
   return Register_DETECTION_POSTPROCESS();
 }
 

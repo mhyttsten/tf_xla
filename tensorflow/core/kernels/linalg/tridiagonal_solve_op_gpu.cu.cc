@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSlinalgPStridiagonal_solve_op_gpuDTcuDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlinalgPStridiagonal_solve_op_gpuDTcuDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSlinalgPStridiagonal_solve_op_gpuDTcuDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -45,6 +213,9 @@ __global__ void SolveForSizeOneOrTwoKernel(const int m,
                                            const Scalar* __restrict__ rhs,
                                            const int num_rhs,
                                            Scalar* __restrict__ x) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlinalgPStridiagonal_solve_op_gpuDTcuDTcc mht_0(mht_0_v, 216, "", "./tensorflow/core/kernels/linalg/tridiagonal_solve_op_gpu.cu.cc", "SolveForSizeOneOrTwoKernel");
+
   const Scalar nan = Eigen::NumTraits<Scalar>::quiet_NaN();
   if (m == 1) {
     bool singular = diags[1] == Scalar(0);
@@ -74,6 +245,9 @@ se::DeviceMemory<Scalar> AsDeviceMemory(const Scalar* cuda_memory) {
 template <typename Scalar>
 void CopyDeviceToDevice(OpKernelContext* context, const Scalar* src,
                         Scalar* dst, const int num_elements) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlinalgPStridiagonal_solve_op_gpuDTcuDTcc mht_1(mht_1_v, 248, "", "./tensorflow/core/kernels/linalg/tridiagonal_solve_op_gpu.cu.cc", "CopyDeviceToDevice");
+
   auto src_device_mem = AsDeviceMemory(src);
   auto dst_device_mem = AsDeviceMemory(dst);
   auto* stream = context->op_device_context()->stream();
@@ -96,6 +270,9 @@ class TridiagonalSolveOpGpuLinalg : public LinearAlgebraOp<Scalar> {
 
   explicit TridiagonalSolveOpGpuLinalg(OpKernelConstruction* context)
       : Base(context) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlinalgPStridiagonal_solve_op_gpuDTcuDTcc mht_2(mht_2_v, 273, "", "./tensorflow/core/kernels/linalg/tridiagonal_solve_op_gpu.cu.cc", "TridiagonalSolveOpGpuLinalg");
+
     OP_REQUIRES_OK(context, context->GetAttr("partial_pivoting", &pivoting_));
     perturb_singular_ = false;
     if (context->HasAttr("perturb_singular")) {
@@ -111,6 +288,9 @@ class TridiagonalSolveOpGpuLinalg : public LinearAlgebraOp<Scalar> {
   void ValidateInputMatrixShapes(
       OpKernelContext* context,
       const TensorShapes& input_matrix_shapes) const final {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlinalgPStridiagonal_solve_op_gpuDTcuDTcc mht_3(mht_3_v, 291, "", "./tensorflow/core/kernels/linalg/tridiagonal_solve_op_gpu.cu.cc", "ValidateInputMatrixShapes");
+
     auto num_inputs = input_matrix_shapes.size();
     OP_REQUIRES(context, num_inputs == 2,
                 errors::InvalidArgument("Expected two input matrices, got ",
@@ -131,15 +311,24 @@ class TridiagonalSolveOpGpuLinalg : public LinearAlgebraOp<Scalar> {
                                         num_rows1, " and ", num_rows2, "."));
   }
 
-  bool EnableInputForwarding() const final { return false; }
+  bool EnableInputForwarding() const final {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlinalgPStridiagonal_solve_op_gpuDTcuDTcc mht_4(mht_4_v, 315, "", "./tensorflow/core/kernels/linalg/tridiagonal_solve_op_gpu.cu.cc", "EnableInputForwarding");
+ return false; }
 
   TensorShapes GetOutputMatrixShapes(
       const TensorShapes& input_matrix_shapes) const final {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlinalgPStridiagonal_solve_op_gpuDTcuDTcc mht_5(mht_5_v, 321, "", "./tensorflow/core/kernels/linalg/tridiagonal_solve_op_gpu.cu.cc", "GetOutputMatrixShapes");
+
     return TensorShapes({input_matrix_shapes[1]});
   }
 
   void ComputeMatrix(OpKernelContext* context, const ConstMatrixMaps& inputs,
                      MatrixMaps* outputs) final {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlinalgPStridiagonal_solve_op_gpuDTcuDTcc mht_6(mht_6_v, 329, "", "./tensorflow/core/kernels/linalg/tridiagonal_solve_op_gpu.cu.cc", "ComputeMatrix");
+
     const auto diagonals = inputs[0];
     // Superdiagonal elements, first is ignored.
     const auto& superdiag = diagonals.row(0);
@@ -193,6 +382,9 @@ class TridiagonalSolveOpGpuLinalg : public LinearAlgebraOp<Scalar> {
                          const std::unique_ptr<GpuSolver>& cublas_solver,
                          const Scalar* src, Scalar* dst, const int src_rows,
                          const int src_cols) const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlinalgPStridiagonal_solve_op_gpuDTcuDTcc mht_7(mht_7_v, 385, "", "./tensorflow/core/kernels/linalg/tridiagonal_solve_op_gpu.cu.cc", "TransposeWithGeam");
+
     const Scalar zero(0), one(1);
     OP_REQUIRES_OK(context,
                    cublas_solver->Geam(CUBLAS_OP_T, CUBLAS_OP_N, src_rows,
@@ -206,6 +398,9 @@ class TridiagonalSolveOpGpuLinalg : public LinearAlgebraOp<Scalar> {
                      const Scalar* superdiag, const Scalar* diag,
                      const Scalar* subdiag, Scalar* rhs, const int num_eqs,
                      const int num_rhs) const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlinalgPStridiagonal_solve_op_gpuDTcuDTcc mht_8(mht_8_v, 401, "", "./tensorflow/core/kernels/linalg/tridiagonal_solve_op_gpu.cu.cc", "SolveWithGtsv");
+
     auto buffer_function = pivoting_
                                ? &GpuSparse::Gtsv2BufferSizeExt<Scalar>
                                : &GpuSparse::Gtsv2NoPivotBufferSizeExt<Scalar>;
@@ -228,6 +423,9 @@ class TridiagonalSolveOpGpuLinalg : public LinearAlgebraOp<Scalar> {
 
   void SolveForSizeOneOrTwo(OpKernelContext* context, const Scalar* diagonals,
                             const Scalar* rhs, Scalar* output, int m, int k) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlinalgPStridiagonal_solve_op_gpuDTcuDTcc mht_9(mht_9_v, 426, "", "./tensorflow/core/kernels/linalg/tridiagonal_solve_op_gpu.cu.cc", "SolveForSizeOneOrTwo");
+
     const Eigen::GpuDevice& device = context->eigen_device<Eigen::GpuDevice>();
     GpuLaunchConfig cfg = GetGpuLaunchConfig(
         /*work_element_count=*/1, device, &SolveForSizeOneOrTwoKernel<Scalar>,
@@ -248,10 +446,16 @@ class TridiagonalSolveOpGpu : public OpKernel {
  public:
   explicit TridiagonalSolveOpGpu(OpKernelConstruction* context)
       : OpKernel(context), linalgOp_(context) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlinalgPStridiagonal_solve_op_gpuDTcuDTcc mht_10(mht_10_v, 449, "", "./tensorflow/core/kernels/linalg/tridiagonal_solve_op_gpu.cu.cc", "TridiagonalSolveOpGpu");
+
     OP_REQUIRES_OK(context, context->GetAttr("partial_pivoting", &pivoting_));
   }
 
   void Compute(OpKernelContext* context) final {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlinalgPStridiagonal_solve_op_gpuDTcuDTcc mht_11(mht_11_v, 456, "", "./tensorflow/core/kernels/linalg/tridiagonal_solve_op_gpu.cu.cc", "Compute");
+
     const Tensor& lhs = context->input(0);
     const Tensor& rhs = context->input(1);
     const int ndims = lhs.dims();
@@ -282,6 +486,9 @@ class TridiagonalSolveOpGpu : public OpKernel {
 
   void ComputeWithGtsvBatched(OpKernelContext* context, const Tensor& lhs,
                               const Tensor& rhs, const int batch_size) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlinalgPStridiagonal_solve_op_gpuDTcuDTcc mht_12(mht_12_v, 489, "", "./tensorflow/core/kernels/linalg/tridiagonal_solve_op_gpu.cu.cc", "ComputeWithGtsvBatched");
+
     const Scalar* rhs_data = rhs.flat<Scalar>().data();
     const int ndims = lhs.dims();
 
@@ -328,6 +535,9 @@ class TridiagonalSolveOpGpu : public OpKernel {
 
   void TransposeLhsForGtsvBatched(OpKernelContext* context, const Tensor& lhs,
                                   Tensor& lhs_transposed) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlinalgPStridiagonal_solve_op_gpuDTcuDTcc mht_13(mht_13_v, 538, "", "./tensorflow/core/kernels/linalg/tridiagonal_solve_op_gpu.cu.cc", "TransposeLhsForGtsvBatched");
+
     const int ndims = lhs.dims();
 
     // Permutation of indices, transforming [..., 3, M] into [3, ..., M].

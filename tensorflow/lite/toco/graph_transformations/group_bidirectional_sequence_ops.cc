@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSgroup_bidirectional_sequence_opsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSgroup_bidirectional_sequence_opsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSgroup_bidirectional_sequence_opsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,6 +197,9 @@ namespace {
 
 std::vector<std::unique_ptr<Operator>>::iterator FindOperator(
     Model* model, const Operator& op) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSgroup_bidirectional_sequence_opsDTcc mht_0(mht_0_v, 200, "", "./tensorflow/lite/toco/graph_transformations/group_bidirectional_sequence_ops.cc", "FindOperator");
+
   return std::find_if(
       model->operators.begin(), model->operators.end(),
       [&op](const std::unique_ptr<Operator>& ptr) { return ptr.get() == &op; });
@@ -36,6 +207,9 @@ std::vector<std::unique_ptr<Operator>>::iterator FindOperator(
 
 bool MatchTwoUnpackOps(const Operator& op, const Model& model,
                        Operator** fw_output, Operator** bw_output) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSgroup_bidirectional_sequence_opsDTcc mht_1(mht_1_v, 210, "", "./tensorflow/lite/toco/graph_transformations/group_bidirectional_sequence_ops.cc", "MatchTwoUnpackOps");
+
   if (op.inputs.size() != 2) {
     return false;
   }
@@ -59,6 +233,9 @@ bool MatchTwoUnpackOps(const Operator& op, const Model& model,
 bool MatchDynamicBidirectionalSequenceOutputs(Operator* op, const Model& model,
                                               Operator** fw_output,
                                               Operator** bw_output) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSgroup_bidirectional_sequence_opsDTcc mht_2(mht_2_v, 236, "", "./tensorflow/lite/toco/graph_transformations/group_bidirectional_sequence_ops.cc", "MatchDynamicBidirectionalSequenceOutputs");
+
   if (op->inputs.size() != 2) {
     return false;
   }
@@ -84,6 +261,9 @@ bool FindUnidirectionalSequenceOp(const Model& model, const Operator& output_op,
                                   OperatorType operator_type,
                                   std::stack<Operator*>* sequence_ops,
                                   Operator** input_op) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSgroup_bidirectional_sequence_opsDTcc mht_3(mht_3_v, 264, "", "./tensorflow/lite/toco/graph_transformations/group_bidirectional_sequence_ops.cc", "FindUnidirectionalSequenceOp");
+
   Operator* op_it = nullptr;
   op_it = GetOpWithOutput(model, output_op.inputs[0]);
   if (op_it == nullptr) {
@@ -108,6 +288,9 @@ bool CheckTwoUnidirectionalSequenceOpsAreValid(
     std::stack<Operator*> bw_unidirectional_sequence_ops,
     const Operator* first_fw_sequence_op_input,
     const Operator* first_bw_sequence_op_input, bool is_dynamic_rnn) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSgroup_bidirectional_sequence_opsDTcc mht_4(mht_4_v, 291, "", "./tensorflow/lite/toco/graph_transformations/group_bidirectional_sequence_ops.cc", "CheckTwoUnidirectionalSequenceOpsAreValid");
+
   if (fw_unidirectional_sequence_ops.size() !=
           bw_unidirectional_sequence_ops.size() ||
       fw_unidirectional_sequence_ops.empty()) {
@@ -189,6 +372,9 @@ bool CheckTwoUnidirectionalSequenceOpsAreValid(
 void ConstructBidirectionalSequenceOp(
     const Operator& fw_lstm_op, const Operator& bw_lstm_op, Model* model,
     BidirectionalSequenceLstmOperator** bi_op) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSgroup_bidirectional_sequence_opsDTcc mht_5(mht_5_v, 375, "", "./tensorflow/lite/toco/graph_transformations/group_bidirectional_sequence_ops.cc", "ConstructBidirectionalSequenceOp");
+
   // TODO(renjieliu): Check the shapes & configurations are equal.
   constexpr int kBidirectionalSequenceLstmInputsCount = 47;
   constexpr int kFwLstmInputsStartIndex = 1;
@@ -254,6 +440,9 @@ void ConstructBidirectionalSequenceOp(
 void ConstructBidirectionalSequenceOp(
     const Operator& fw_rnn_op, const Operator& bw_rnn_op, Model* model,
     BidirectionalSequenceRnnOperator** bi_op) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSgroup_bidirectional_sequence_opsDTcc mht_6(mht_6_v, 443, "", "./tensorflow/lite/toco/graph_transformations/group_bidirectional_sequence_ops.cc", "ConstructBidirectionalSequenceOp");
+
   // TODO(renjieliu): Check the shapes & configurations are equal.
   constexpr int kBidirectionalSequenceRnnInputsCount = 12;
   constexpr int kFwInputsStartIndex = 1;
@@ -303,6 +492,9 @@ template <typename T>
 void GroupFwBwSequenceOps(Model* model, std::stack<Operator*> fw_sequence_ops,
                           std::stack<Operator*> bw_sequence_ops,
                           std::vector<T*>* bidirectional_sequence_ops) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSgroup_bidirectional_sequence_opsDTcc mht_7(mht_7_v, 495, "", "./tensorflow/lite/toco/graph_transformations/group_bidirectional_sequence_ops.cc", "GroupFwBwSequenceOps");
+
   while (!fw_sequence_ops.empty()) {
     Operator* fw_sequence_op = fw_sequence_ops.top();
     Operator* bw_sequence_op = bw_sequence_ops.top();
@@ -321,6 +513,10 @@ void RewireBidirectionalSequenceSequenceOpsConnections(
     OperatorType operator_type, const std::string& input_array_name,
     const std::vector<T*>& bidirectional_sequence_ops,
     std::vector<std::unique_ptr<Operator>>::iterator* op_it, Model* model) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("input_array_name: \"" + input_array_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSgroup_bidirectional_sequence_opsDTcc mht_8(mht_8_v, 517, "", "./tensorflow/lite/toco/graph_transformations/group_bidirectional_sequence_ops.cc", "RewireBidirectionalSequenceSequenceOpsConnections");
+
   int aux_input_index = -1;
   switch (operator_type) {
     case OperatorType::kBidirectionalSequenceLstm:
@@ -365,6 +561,9 @@ template <typename T>
 void RewireFinalUnpackOutputs(const UnpackOperator& original_unpack_operator,
                               UnpackOperator** final_unpack_operator,
                               T** final_bidi_sequence_operator, Model* model) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSgroup_bidirectional_sequence_opsDTcc mht_9(mht_9_v, 564, "", "./tensorflow/lite/toco/graph_transformations/group_bidirectional_sequence_ops.cc", "RewireFinalUnpackOutputs");
+
   (*final_unpack_operator)
       ->inputs.push_back((*final_bidi_sequence_operator)->outputs[0]);
   (*final_unpack_operator)->axis = original_unpack_operator.axis;
@@ -392,6 +591,9 @@ void RewireFinalUnpackOutputs(const UnpackOperator& original_unpack_operator,
 
 void RemoveUnidirectionalSequenceOps(std::stack<Operator*> uni_sequence_ops,
                                      Model* model) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSgroup_bidirectional_sequence_opsDTcc mht_10(mht_10_v, 594, "", "./tensorflow/lite/toco/graph_transformations/group_bidirectional_sequence_ops.cc", "RemoveUnidirectionalSequenceOps");
+
   while (!uni_sequence_ops.empty()) {
     Operator* uni_sequence_op = uni_sequence_ops.top();
     DeleteOpAndArrays(model, uni_sequence_op);
@@ -403,6 +605,9 @@ template <typename T>
 ::tensorflow::Status GroupDynamicSequenceOps(Model* model, std::size_t op_index,
                                              OperatorType operator_type,
                                              bool* modified) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSgroup_bidirectional_sequence_opsDTcc mht_11(mht_11_v, 608, "", "./tensorflow/lite/toco/graph_transformations/group_bidirectional_sequence_ops.cc", "GroupDynamicSequenceOps");
+
   *modified = false;
 
   // We assume there's a concatenation right after the bidirectional sequence
@@ -477,6 +682,9 @@ template <typename T>
 ::tensorflow::Status GroupBidirectionalSequenceLstm::Run(Model* model,
                                                          std::size_t op_index,
                                                          bool* modified) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSgroup_bidirectional_sequence_opsDTcc mht_12(mht_12_v, 685, "", "./tensorflow/lite/toco/graph_transformations/group_bidirectional_sequence_ops.cc", "GroupBidirectionalSequenceLstm::Run");
+
   *modified = false;
   // Bidirectional sequence lstm will generate two separate unidirectional
   // sequence lstm ops, for static bidirectional sequence lstm, there will be
@@ -554,6 +762,9 @@ template <typename T>
 ::tensorflow::Status GroupBidirectionalSequenceRnn::Run(Model* model,
                                                         std::size_t op_index,
                                                         bool* modified) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSgroup_bidirectional_sequence_opsDTcc mht_13(mht_13_v, 765, "", "./tensorflow/lite/toco/graph_transformations/group_bidirectional_sequence_ops.cc", "GroupBidirectionalSequenceRnn::Run");
+
   *modified = false;
   // Bidirectional sequence rnn will generate two separate unidirectional
   // sequence rnn ops, for static bidirectional sequence rnn, there will be
@@ -628,12 +839,18 @@ template <typename T>
 
 ::tensorflow::Status GroupDynamicBidirectionalSequenceRnn::Run(
     Model* model, std::size_t op_index, bool* modified) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSgroup_bidirectional_sequence_opsDTcc mht_14(mht_14_v, 842, "", "./tensorflow/lite/toco/graph_transformations/group_bidirectional_sequence_ops.cc", "GroupDynamicBidirectionalSequenceRnn::Run");
+
   return GroupDynamicSequenceOps<BidirectionalSequenceRnnOperator*>(
       model, op_index, OperatorType::kBidirectionalSequenceRnn, modified);
 }
 
 ::tensorflow::Status GroupDynamicBidirectionalSequenceLstm::Run(
     Model* model, std::size_t op_index, bool* modified) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSgroup_bidirectional_sequence_opsDTcc mht_15(mht_15_v, 851, "", "./tensorflow/lite/toco/graph_transformations/group_bidirectional_sequence_ops.cc", "GroupDynamicBidirectionalSequenceLstm::Run");
+
   return GroupDynamicSequenceOps<BidirectionalSequenceLstmOperator*>(
       model, op_index, OperatorType::kBidirectionalSequenceLstm, modified);
 }

@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_PLATFORM_RAM_FILE_SYSTEM_H_
 #define TENSORFLOW_CORE_PLATFORM_RAM_FILE_SYSTEM_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 // Implementation of an in-memory TF filesystem for simple prototyping (e.g.
 // via Colab). The TPU TF server does not have local filesystem access, which
@@ -45,16 +213,30 @@ namespace tensorflow {
 class RamRandomAccessFile : public RandomAccessFile, public WritableFile {
  public:
   RamRandomAccessFile(std::string name, std::shared_ptr<std::string> cord)
-      : name_(name), data_(cord) {}
-  ~RamRandomAccessFile() override {}
+      : name_(name), data_(cord) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh mht_0(mht_0_v, 218, "", "./tensorflow/core/platform/ram_file_system.h", "RamRandomAccessFile");
+}
+  ~RamRandomAccessFile() override {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh mht_1(mht_1_v, 222, "", "./tensorflow/core/platform/ram_file_system.h", "~RamRandomAccessFile");
+}
 
   Status Name(StringPiece* result) const override {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh mht_2(mht_2_v, 227, "", "./tensorflow/core/platform/ram_file_system.h", "Name");
+
     *result = name_;
     return Status::OK();
   }
 
   Status Read(uint64 offset, size_t n, StringPiece* result,
               char* scratch) const override {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("scratch: \"" + (scratch == nullptr ? std::string("nullptr") : std::string((char*)scratch)) + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh mht_3(mht_3_v, 237, "", "./tensorflow/core/platform/ram_file_system.h", "Read");
+
     if (offset >= data_->size()) {
       return errors::OutOfRange("");
     }
@@ -75,6 +257,9 @@ class RamRandomAccessFile : public RandomAccessFile, public WritableFile {
   }
 
   Status Append(StringPiece data) override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh mht_4(mht_4_v, 260, "", "./tensorflow/core/platform/ram_file_system.h", "Append");
+
     data_->append(data.data(), data.size());
     return Status::OK();
   }
@@ -87,10 +272,19 @@ class RamRandomAccessFile : public RandomAccessFile, public WritableFile {
 #endif
 
   Status Close() override { return Status::OK(); }
-  Status Flush() override { return Status::OK(); }
-  Status Sync() override { return Status::OK(); }
+  Status Flush() override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh mht_5(mht_5_v, 276, "", "./tensorflow/core/platform/ram_file_system.h", "Flush");
+ return Status::OK(); }
+  Status Sync() override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh mht_6(mht_6_v, 280, "", "./tensorflow/core/platform/ram_file_system.h", "Sync");
+ return Status::OK(); }
 
   Status Tell(int64_t* position) override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh mht_7(mht_7_v, 285, "", "./tensorflow/core/platform/ram_file_system.h", "Tell");
+
     *position = -1;
     return errors::Unimplemented("This filesystem does not support Tell()");
   }
@@ -108,6 +302,10 @@ class RamFileSystem : public FileSystem {
   Status NewRandomAccessFile(
       const std::string& fname_, TransactionToken* token,
       std::unique_ptr<RandomAccessFile>* result) override {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("fname_: \"" + fname_ + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh mht_8(mht_8_v, 306, "", "./tensorflow/core/platform/ram_file_system.h", "NewRandomAccessFile");
+
     mutex_lock m(mu_);
     auto fname = StripRamFsPrefix(fname_);
 
@@ -124,6 +322,10 @@ class RamFileSystem : public FileSystem {
 
   Status NewWritableFile(const std::string& fname_, TransactionToken* token,
                          std::unique_ptr<WritableFile>* result) override {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("fname_: \"" + fname_ + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh mht_9(mht_9_v, 326, "", "./tensorflow/core/platform/ram_file_system.h", "NewWritableFile");
+
     mutex_lock m(mu_);
     auto fname = StripRamFsPrefix(fname_);
 
@@ -140,6 +342,10 @@ class RamFileSystem : public FileSystem {
 
   Status NewAppendableFile(const std::string& fname_, TransactionToken* token,
                            std::unique_ptr<WritableFile>* result) override {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("fname_: \"" + fname_ + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh mht_10(mht_10_v, 346, "", "./tensorflow/core/platform/ram_file_system.h", "NewAppendableFile");
+
     mutex_lock m(mu_);
     auto fname = StripRamFsPrefix(fname_);
 
@@ -157,11 +363,19 @@ class RamFileSystem : public FileSystem {
   Status NewReadOnlyMemoryRegionFromFile(
       const std::string& fname, TransactionToken* token,
       std::unique_ptr<ReadOnlyMemoryRegion>* result) override {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh mht_11(mht_11_v, 367, "", "./tensorflow/core/platform/ram_file_system.h", "NewReadOnlyMemoryRegionFromFile");
+
     return errors::Unimplemented("");
   }
 
   Status FileExists(const std::string& fname_,
                     TransactionToken* token) override {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("fname_: \"" + fname_ + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh mht_12(mht_12_v, 376, "", "./tensorflow/core/platform/ram_file_system.h", "FileExists");
+
     FileStatistics stat;
     auto fname = StripRamFsPrefix(fname_);
 
@@ -170,6 +384,10 @@ class RamFileSystem : public FileSystem {
 
   Status GetChildren(const std::string& dir_, TransactionToken* token,
                      std::vector<std::string>* result) override {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("dir_: \"" + dir_ + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh mht_13(mht_13_v, 388, "", "./tensorflow/core/platform/ram_file_system.h", "GetChildren");
+
     mutex_lock m(mu_);
     auto dir = StripRamFsPrefix(dir_);
 
@@ -188,6 +406,10 @@ class RamFileSystem : public FileSystem {
 
   Status GetMatchingPaths(const std::string& pattern_, TransactionToken* token,
                           std::vector<std::string>* results) override {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("pattern_: \"" + pattern_ + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh mht_14(mht_14_v, 410, "", "./tensorflow/core/platform/ram_file_system.h", "GetMatchingPaths");
+
     mutex_lock m(mu_);
     auto pattern = StripRamFsPrefix(pattern_);
 
@@ -202,6 +424,10 @@ class RamFileSystem : public FileSystem {
 
   Status Stat(const std::string& fname_, TransactionToken* token,
               FileStatistics* stat) override {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("fname_: \"" + fname_ + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh mht_15(mht_15_v, 428, "", "./tensorflow/core/platform/ram_file_system.h", "Stat");
+
     mutex_lock m(mu_);
     auto fname = StripRamFsPrefix(fname_);
 
@@ -225,6 +451,10 @@ class RamFileSystem : public FileSystem {
 
   Status DeleteFile(const std::string& fname_,
                     TransactionToken* token) override {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("fname_: \"" + fname_ + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh mht_16(mht_16_v, 455, "", "./tensorflow/core/platform/ram_file_system.h", "DeleteFile");
+
     mutex_lock m(mu_);
     auto fname = StripRamFsPrefix(fname_);
 
@@ -238,6 +468,10 @@ class RamFileSystem : public FileSystem {
 
   Status CreateDir(const std::string& dirname_,
                    TransactionToken* token) override {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("dirname_: \"" + dirname_ + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh mht_17(mht_17_v, 472, "", "./tensorflow/core/platform/ram_file_system.h", "CreateDir");
+
     mutex_lock m(mu_);
     auto dirname = StripRamFsPrefix(dirname_);
 
@@ -253,6 +487,10 @@ class RamFileSystem : public FileSystem {
 
   Status RecursivelyCreateDir(const std::string& dirname_,
                               TransactionToken* token) override {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("dirname_: \"" + dirname_ + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh mht_18(mht_18_v, 491, "", "./tensorflow/core/platform/ram_file_system.h", "RecursivelyCreateDir");
+
     auto dirname = StripRamFsPrefix(dirname_);
 
     std::vector<std::string> dirs = StrSplit(dirname, "/");
@@ -269,6 +507,10 @@ class RamFileSystem : public FileSystem {
 
   Status DeleteDir(const std::string& dirname_,
                    TransactionToken* token) override {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("dirname_: \"" + dirname_ + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh mht_19(mht_19_v, 511, "", "./tensorflow/core/platform/ram_file_system.h", "DeleteDir");
+
     mutex_lock m(mu_);
     auto dirname = StripRamFsPrefix(dirname_);
 
@@ -286,6 +528,10 @@ class RamFileSystem : public FileSystem {
 
   Status GetFileSize(const std::string& fname_, TransactionToken* token,
                      uint64* file_size) override {
+   std::vector<std::string> mht_20_v;
+   mht_20_v.push_back("fname_: \"" + fname_ + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh mht_20(mht_20_v, 532, "", "./tensorflow/core/platform/ram_file_system.h", "GetFileSize");
+
     mutex_lock m(mu_);
     auto fname = StripRamFsPrefix(fname_);
 
@@ -301,6 +547,11 @@ class RamFileSystem : public FileSystem {
 
   Status RenameFile(const std::string& src_, const std::string& target_,
                     TransactionToken* token) override {
+   std::vector<std::string> mht_21_v;
+   mht_21_v.push_back("src_: \"" + src_ + "\"");
+   mht_21_v.push_back("target_: \"" + target_ + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh mht_21(mht_21_v, 552, "", "./tensorflow/core/platform/ram_file_system.h", "RenameFile");
+
     mutex_lock m(mu_);
     auto src = StripRamFsPrefix(src_);
     auto target = StripRamFsPrefix(target_);
@@ -313,8 +564,14 @@ class RamFileSystem : public FileSystem {
     return errors::NotFound("");
   }
 
-  RamFileSystem() {}
-  ~RamFileSystem() override {}
+  RamFileSystem() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh mht_22(mht_22_v, 568, "", "./tensorflow/core/platform/ram_file_system.h", "RamFileSystem");
+}
+  ~RamFileSystem() override {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh mht_23(mht_23_v, 572, "", "./tensorflow/core/platform/ram_file_system.h", "~RamFileSystem");
+}
 
  private:
   mutex mu_;
@@ -332,10 +589,20 @@ class RamFileSystem : public FileSystem {
   }
 
   bool StartsWith(std::string s, std::string prefix) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("s: \"" + s + "\"");
+   mht_24_v.push_back("prefix: \"" + prefix + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh mht_24(mht_24_v, 594, "", "./tensorflow/core/platform/ram_file_system.h", "StartsWith");
+
     return s.find(prefix) == 0;
   }
 
   string StripPrefix(std::string s, std::string prefix) {
+   std::vector<std::string> mht_25_v;
+   mht_25_v.push_back("s: \"" + s + "\"");
+   mht_25_v.push_back("prefix: \"" + prefix + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh mht_25(mht_25_v, 603, "", "./tensorflow/core/platform/ram_file_system.h", "StripPrefix");
+
     if (s.find(prefix) == 0) {
       return s.erase(0, prefix.size());
     }
@@ -343,6 +610,10 @@ class RamFileSystem : public FileSystem {
   }
 
   string StripRamFsPrefix(std::string name) {
+   std::vector<std::string> mht_26_v;
+   mht_26_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSram_file_systemDTh mht_26(mht_26_v, 614, "", "./tensorflow/core/platform/ram_file_system.h", "StripRamFsPrefix");
+
     std::string s = StripPrefix(name, "ram://");
     if (*(s.rbegin()) == '/') {
       s.pop_back();

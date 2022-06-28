@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,6 +210,9 @@ constexpr float kFlopsPerSecond = 1000;
 constexpr float kTranscendentalsPerSecond = 10;
 
 int64_t ShapeSize(const Shape& shape) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_0(mht_0_v, 213, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "ShapeSize");
+
   return ShapeUtil::ByteSizeOf(shape, kPointerSize);
 }
 
@@ -108,10 +279,16 @@ class MemorySpaceAssignmentTest : public HloTestBase,
       PrefetchIntervalPicker* prefetch_interval_picker,
       absl::optional<Options> memory_space_assignment_options = absl::nullopt) {
     auto size_fn = [](const BufferValue& buffer) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_1(mht_1_v, 282, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "lambda");
+
       return ShapeUtil::ByteSizeOf(buffer.shape(), /*pointer_size=*/8);
     };
 
     auto is_allowed_in_alternate_mem = [](const HloValue& value) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_2(mht_2_v, 289, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "lambda");
+
       // Check if the value belongs to the entry computation.
       HloInstruction* instruction = value.instruction();
       HloComputation* computation = instruction->parent();
@@ -175,6 +352,9 @@ class MemorySpaceAssignmentTest : public HloTestBase,
   }
 
   void CheckPresetAssignments(const PresetAssignments* preset_assignments) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_3(mht_3_v, 355, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "CheckPresetAssignments");
+
     // Ensure that the exported preset assignments point to layouts in the
     // alternate memory.  Also ensure that the positions are unique. Note that
     // we're using a std::set instead of absl::flat_hash_set because we can make
@@ -194,6 +374,9 @@ class MemorySpaceAssignmentTest : public HloTestBase,
   }
 
   void CheckParametersInDefaultMemory(const HloModule* module) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_4(mht_4_v, 377, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "CheckParametersInDefaultMemory");
+
     // Check that all the entry parameter subshapes are placed in default
     // memory.
     const HloComputation* entry_computation = module->entry_computation();
@@ -219,6 +402,9 @@ class MemorySpaceAssignmentTest : public HloTestBase,
 
   /*static*/ OutstandingAsyncCopies CountMaximumOutstandingAsyncCopies(
       const HloModule& module) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_5(mht_5_v, 405, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "CountMaximumOutstandingAsyncCopies");
+
     OutstandingAsyncCopies copies{0, 0, 0};
     int64_t current_copies = 0;
     int64_t current_prefetches = 0;
@@ -352,6 +538,9 @@ class FakeMemorySpaceAssignmentCostAnalysis
 
   float GetInstructionElapsed(
       const HloInstruction& instruction) const override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_6(mht_6_v, 541, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "GetInstructionElapsed");
+
     if (get_instruction_elapsed_override_) {
       return get_instruction_elapsed_override_(instruction);
     }
@@ -363,6 +552,9 @@ class FakeMemorySpaceAssignmentCostAnalysis
       absl::Span<const std::pair<int64_t, ShapeIndex>>
           operands_in_alternate_mem,
       absl::Span<const ShapeIndex> outputs_in_alternate_mem) const override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_7(mht_7_v, 555, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "GetInstructionElapsedInAlternateMemory");
+
     if (get_instruction_elapsed_in_alternate_memory_override_) {
       return get_instruction_elapsed_in_alternate_memory_override_(
           instruction, operands_in_alternate_mem, outputs_in_alternate_mem);
@@ -375,6 +567,9 @@ class FakeMemorySpaceAssignmentCostAnalysis
   }
 
   float GetAsyncCopyElapsed(const Shape& shape) const override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_8(mht_8_v, 570, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "GetAsyncCopyElapsed");
+
     if (get_async_copy_elapsed_override_) {
       return get_async_copy_elapsed_override_(shape);
     }
@@ -385,6 +580,9 @@ class FakeMemorySpaceAssignmentCostAnalysis
   // return.
   void SetOverrideForGetInstructionElapsed(
       std::function<float(const HloInstruction&)> function) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_9(mht_9_v, 583, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "SetOverrideForGetInstructionElapsed");
+
     get_instruction_elapsed_override_ = function;
   }
   void SetOverrideForGetInstructionElapsedInAlternateMemory(
@@ -392,10 +590,16 @@ class FakeMemorySpaceAssignmentCostAnalysis
                           absl::Span<const std::pair<int64_t, ShapeIndex>>,
                           absl::Span<const ShapeIndex>)>
           function) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_10(mht_10_v, 593, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "SetOverrideForGetInstructionElapsedInAlternateMemory");
+
     get_instruction_elapsed_in_alternate_memory_override_ = function;
   }
   void SetOverrideForGetAsyncCopyElapsed(
       std::function<float(const Shape&)> function) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_11(mht_11_v, 600, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "SetOverrideForGetAsyncCopyElapsed");
+
     get_async_copy_elapsed_override_ = function;
   }
 
@@ -407,7 +611,10 @@ class FakeMemorySpaceAssignmentCostAnalysis
       std::unique_ptr<CallGraph> call_graph)
       : MemorySpaceAssignmentCostAnalysis(
             cost_analysis, options, std::move(alias_analysis),
-            std::move(hlo_live_range), std::move(call_graph)) {}
+            std::move(hlo_live_range), std::move(call_graph)) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_12(mht_12_v, 615, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "FakeMemorySpaceAssignmentCostAnalysis");
+}
 
  private:
   std::function<float(const HloInstruction&)>
@@ -1430,6 +1637,9 @@ TEST_P(MemorySpaceAssignmentTest, WhileAllocationBug) {
   MemorySpaceAssignment::BufferIntervalCompare buffer_interval_compare =
       [](const MemorySpaceAssignment::BufferInterval& a,
          const MemorySpaceAssignment::BufferInterval& b) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_13(mht_13_v, 1640, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "lambda");
+
         bool a_is_mul =
             a.buffer->defining_instruction()->opcode() == HloOpcode::kMultiply;
         bool b_is_mul =
@@ -3917,7 +4127,13 @@ TEST_P(MemorySpaceAssignmentTest, PendingChunkMemoryCorruptionBug) {
   MemorySpaceAssignment::BufferIntervalCompare buffer_interval_compare =
       [](const MemorySpaceAssignment::BufferInterval& a,
          const MemorySpaceAssignment::BufferInterval& b) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_14(mht_14_v, 4130, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "lambda");
+
         auto get_opcode_priority = [](const HloOpcode& opcode) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_15(mht_15_v, 4134, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "lambda");
+
           switch (opcode) {
             case HloOpcode::kSin:
               return 0;
@@ -4016,7 +4232,13 @@ TEST_P(MemorySpaceAssignmentTest, DisallowedUseBug) {
   MemorySpaceAssignment::BufferIntervalCompare buffer_interval_compare =
       [](const MemorySpaceAssignment::BufferInterval& a,
          const MemorySpaceAssignment::BufferInterval& b) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_16(mht_16_v, 4235, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "lambda");
+
         auto get_opcode_priority = [](const HloOpcode& opcode) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_17(mht_17_v, 4239, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "lambda");
+
           switch (opcode) {
             case HloOpcode::kSin:
               return 0;
@@ -4041,6 +4263,9 @@ TEST_P(MemorySpaceAssignmentTest, DisallowedUseBug) {
   options.alignment_in_bytes = 8;
   options.verify = true;
   options.is_use_allowed_in_alternate_mem_fn = [](const HloUse& use) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_18(mht_18_v, 4266, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "lambda");
+
     return use.instruction->opcode() != HloOpcode::kTanh;
   };
   AssignMemorySpace(module.get(), /*max_outstanding_async_copies=*/-1,
@@ -4108,6 +4333,9 @@ TEST_P(MemorySpaceAssignmentTest, DisallowedUseBugInWhile) {
   options.alignment_in_bytes = 8;
   options.verify = true;
   options.is_use_allowed_in_alternate_mem_fn = [](const HloUse& use) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_19(mht_19_v, 4336, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "lambda");
+
     return use.instruction->opcode() != HloOpcode::kTanh;
   };
   AssignMemorySpace(module.get(), /*max_outstanding_async_copies=*/-1,
@@ -5106,6 +5334,9 @@ ENTRY entry {
   // Make instruction c reserve 64 bytes in the alternate memory. This should
   // prevent both b and c to put their outputs in the alternate memory.
   options.reserved_scoped_memory_fn = [&](const HloInstruction* instruction) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_20(mht_20_v, 5337, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "lambda");
+
     if (instruction->name() == "c") {
       return 100;
     }
@@ -5115,6 +5346,10 @@ ENTRY entry {
                     /*max_prefetch_interval=*/10, /*min_prefetch_interval=*/2,
                     options);
   auto get_memory_space = [&](absl::string_view instruction_name) {
+   std::vector<std::string> mht_21_v;
+   mht_21_v.push_back("instruction_name: \"" + std::string(instruction_name.data(), instruction_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_21(mht_21_v, 5350, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "lambda");
+
     return module->entry_computation()
         ->GetInstructionWithName(instruction_name)
         ->shape()
@@ -5204,7 +5439,10 @@ class FakeMemorySpaceAssignmentRepacker : public MemorySpaceAssignmentRepacker {
       : MemorySpaceAssignmentRepacker(/*max_size=*/128, /*alignment=*/8),
         repack_map_(repack_map),
         check_fun_(check_fun),
-        always_return_modified_(always_return_modified) {}
+        always_return_modified_(always_return_modified) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_22(mht_22_v, 5443, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "FakeMemorySpaceAssignmentRepacker");
+}
 
   StatusOr<bool> Repack(absl::Span<AllocationBlock*> allocations) override {
     bool modified = false;
@@ -5326,7 +5564,13 @@ TEST_P(MemorySpaceAssignmentTest, Repack) {
   MemorySpaceAssignment::BufferIntervalCompare buffer_interval_compare =
       [](const MemorySpaceAssignment::BufferInterval& a,
          const MemorySpaceAssignment::BufferInterval& b) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_23(mht_23_v, 5567, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "lambda");
+
         auto get_opcode_priority = [](const HloOpcode& opcode) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_24(mht_24_v, 5571, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "lambda");
+
           switch (opcode) {
             case HloOpcode::kSin:
               return 0;
@@ -5437,7 +5681,13 @@ TEST_P(MemorySpaceAssignmentTest, RepackExportsAliasedOffsets) {
   MemorySpaceAssignment::BufferIntervalCompare buffer_interval_compare =
       [](const MemorySpaceAssignment::BufferInterval& a,
          const MemorySpaceAssignment::BufferInterval& b) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_25(mht_25_v, 5684, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "lambda");
+
         auto get_opcode_priority = [](const HloOpcode& opcode) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_26(mht_26_v, 5688, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "lambda");
+
           switch (opcode) {
             case HloOpcode::kSin:
               return 0;
@@ -5464,6 +5714,9 @@ TEST_P(MemorySpaceAssignmentTest, RepackExportsAliasedOffsets) {
   auto check_fun =
       [](absl::Span<MemorySpaceAssignmentRepacker::AllocationBlock*>
              allocations) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_27(mht_27_v, 5717, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "lambda");
+
         EXPECT_TRUE(allocations.at(0)->colocations.size() == 1 ||
                     allocations.at(0)->colocations.size() == 3);
         EXPECT_EQ(allocations.at(1)->colocations.size(), 3);
@@ -5508,6 +5761,9 @@ ENTRY entry {
   options.max_repacks = 1;
   // Make two instructions reserve scoped memory.
   options.reserved_scoped_memory_fn = [&](const HloInstruction* instruction) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_28(mht_28_v, 5764, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "lambda");
+
     if (instruction->name() == "c" || instruction->name() == "d") {
       return 100;
     }
@@ -5522,6 +5778,9 @@ ENTRY entry {
   auto check_fun =
       [&](absl::Span<MemorySpaceAssignmentRepacker::AllocationBlock*>
               allocations) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_29(mht_29_v, 5781, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "lambda");
+
         EXPECT_EQ(allocations.at(0)->colocations.size(), 2);
         EXPECT_EQ(allocations.at(1)->colocations.size(), 2);
         repacker_ran = true;
@@ -6528,6 +6787,9 @@ TEST_P(MemorySpaceAssignmentTest, CrossProgramPrefetchNoReuse) {
   // Expect that there are two prefetches that use this value, one is the
   // cross-program prefetch, the other is the end-of-program prefetch.
   auto is_cross_program_prefetch = [](const HloUse& use) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_30(mht_30_v, 6790, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "lambda");
+
     return use.instruction->opcode() == HloOpcode::kCopyStart &&
            use.instruction->is_cross_program_prefetch();
   };
@@ -6535,6 +6797,9 @@ TEST_P(MemorySpaceAssignmentTest, CrossProgramPrefetchNoReuse) {
                              is_cross_program_prefetch),
             1);
   auto is_end_of_program_prefetch = [](const HloUse& use) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_31(mht_31_v, 6800, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "lambda");
+
     return use.instruction->opcode() == HloOpcode::kCopyStart &&
            !use.instruction->is_cross_program_prefetch();
   };
@@ -6607,6 +6872,9 @@ TEST_P(MemorySpaceAssignmentTest, CrossProgramPrefetchTupleNoReuse) {
   // Expect that there are two prefetches that use this value, one is the
   // cross-program prefetch, the other is the end-of-program prefetch.
   auto is_cross_program_prefetch = [](const HloUse& use) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_32(mht_32_v, 6875, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "lambda");
+
     return use.instruction->opcode() == HloOpcode::kCopyStart &&
            use.instruction->is_cross_program_prefetch();
   };
@@ -6614,6 +6882,9 @@ TEST_P(MemorySpaceAssignmentTest, CrossProgramPrefetchTupleNoReuse) {
                              is_cross_program_prefetch),
             1);
   auto is_end_of_program_prefetch = [](const HloUse& use) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_33(mht_33_v, 6885, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "lambda");
+
     return use.instruction->opcode() == HloOpcode::kCopyStart &&
            !use.instruction->is_cross_program_prefetch();
   };
@@ -6686,6 +6957,9 @@ TEST_P(MemorySpaceAssignmentTest, CrossProgramPrefetchReuse) {
   // Expect that there is one prefetch that use this value, the cross-program
   // prefetch. There shouldn't be an end-of-program prefetch.
   auto is_cross_program_prefetch = [](const HloUse& use) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_34(mht_34_v, 6960, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "lambda");
+
     return use.instruction->opcode() == HloOpcode::kCopyStart &&
            use.instruction->is_cross_program_prefetch();
   };
@@ -6693,6 +6967,9 @@ TEST_P(MemorySpaceAssignmentTest, CrossProgramPrefetchReuse) {
                              is_cross_program_prefetch),
             1);
   auto is_end_of_program_prefetch = [](const HloUse& use) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_35(mht_35_v, 6970, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "lambda");
+
     return use.instruction->opcode() == HloOpcode::kCopyStart &&
            !use.instruction->is_cross_program_prefetch();
   };
@@ -6746,6 +7023,9 @@ TEST_P(MemorySpaceAssignmentTest, CrossProgramPrefetchTupleReuse) {
   // Expect that there is one prefetch that use this value, the cross-program
   // prefetch. There shouldn't be an end-of-program prefetch.
   auto is_cross_program_prefetch = [](const HloUse& use) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_36(mht_36_v, 7026, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "lambda");
+
     return use.instruction->opcode() == HloOpcode::kCopyStart &&
            use.instruction->is_cross_program_prefetch();
   };
@@ -6753,6 +7033,9 @@ TEST_P(MemorySpaceAssignmentTest, CrossProgramPrefetchTupleReuse) {
                              is_cross_program_prefetch),
             1);
   auto is_end_of_program_prefetch = [](const HloUse& use) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSmemory_space_assignment_testDTcc mht_37(mht_37_v, 7036, "", "./tensorflow/compiler/xla/service/memory_space_assignment_test.cc", "lambda");
+
     return use.instruction->opcode() == HloOpcode::kCopyStart &&
            !use.instruction->is_cross_program_prefetch();
   };

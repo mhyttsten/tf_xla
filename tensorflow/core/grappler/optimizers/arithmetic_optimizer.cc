@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -73,6 +241,9 @@ constexpr char kMinimizeBroadcastsTag[] =
 // Extract values from a Const op to `values`. Returns true if succeeds.
 template <typename T>
 bool ValuesFromConstNode(const NodeDef& node, std::vector<T>* values) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_0(mht_0_v, 244, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "ValuesFromConstNode");
+
   if (node.op() != "Const") {
     return false;
   }
@@ -116,6 +287,10 @@ bool ValuesFromConstNode(const NodeDef& node, std::vector<T>* values) {
 
 bool MaybeAddControlInput(const string& new_input, NodeDef* node,
                           GraphDef* graph, NodeMap* node_map) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("new_input: \"" + new_input + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_1(mht_1_v, 291, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "MaybeAddControlInput");
+
   bool already_exists = false;
   for (const string& input : node->input()) {
     if (input == new_input || AsControlDependency(input) == new_input) {
@@ -133,13 +308,23 @@ bool MaybeAddControlInput(const string& new_input, NodeDef* node,
 }
 
 void SetDataTypeToAttr(DataType dtype, const string& attr_name, NodeDef* node) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("attr_name: \"" + attr_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_2(mht_2_v, 312, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "SetDataTypeToAttr");
+
   (*node->mutable_attr())[attr_name].set_type(dtype);
 }
 
 NodeDef* GetTailOfValuePreservingChain(
     const NodeDef& node, const NodeMap& node_map,
     const std::unordered_set<string>& nodes_to_preserve) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_3(mht_3_v, 321, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "GetTailOfValuePreservingChain");
+
   auto is_value_preserving_non_branching = [&](const NodeDef& node) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_4(mht_4_v, 325, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "lambda");
+
     return nodes_to_preserve.find(node.name()) == nodes_to_preserve.end() &&
            IsValuePreserving(node) && NumNonControlOutputs(node, node_map) == 1;
   };
@@ -150,7 +335,13 @@ NodeDef* GetTailOfValuePreservingChain(
 NodeDef* GetTailOfIdempotentChain(
     const NodeDef& node, const NodeMap& node_map,
     const std::unordered_set<string>& nodes_to_preserve) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_5(mht_5_v, 338, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "GetTailOfIdempotentChain");
+
   auto is_idempotent_non_branching = [&](const NodeDef& node) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_6(mht_6_v, 342, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "lambda");
+
     return nodes_to_preserve.find(node.name()) == nodes_to_preserve.end() &&
            IsIdempotent(node) && NumNonControlOutputs(node, node_map) == 1;
   };
@@ -163,6 +354,9 @@ NodeDef* GetTailOfIdempotentChain(
 // types, so it's unexhaustive.
 bool GetElementUnexhaustive(const Tensor& t, int i, const std::set<int>& dtypes,
                             complex128* element) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_7(mht_7_v, 357, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "GetElementUnexhaustive");
+
   if (dtypes.find(t.dtype()) == dtypes.end()) return false;
   switch (t.dtype()) {
     case DT_BFLOAT16:
@@ -195,6 +389,9 @@ bool GetElementUnexhaustive(const Tensor& t, int i, const std::set<int>& dtypes,
 }
 
 bool NodeIsOnCpu(const NodeDef& node) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_8(mht_8_v, 392, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "NodeIsOnCpu");
+
   string task;
   string device;
   return DeviceNameUtils::SplitDeviceName(node.device(), &task, &device) &&
@@ -204,6 +401,9 @@ bool NodeIsOnCpu(const NodeDef& node) {
 // True if all regular (non-control) inputs reference the same node or if there
 // are no non-control inputs
 bool AllRegularInputsEqual(const NodeDef& node) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_9(mht_9_v, 404, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "AllRegularInputsEqual");
+
   if (!HasRegularInputs(node)) return true;
   for (int i = 1; i < node.input_size(); ++i) {
     if (IsControlInput(node.input(i))) {
@@ -218,6 +418,9 @@ bool AllRegularInputsEqual(const NodeDef& node) {
 
 // Replace a node with NoOp and reset shape inference results for it..
 void ReplaceWithNoOp(NodeDef* node, const GraphOptimizerContext& ctx) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_10(mht_10_v, 421, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "ReplaceWithNoOp");
+
   ctx.node_map->RemoveInputs(node->name());
   ctx.graph_properties->ClearInputProperties(node->name());
   ctx.graph_properties->ClearOutputProperties(node->name());
@@ -229,7 +432,10 @@ void ReplaceWithNoOp(NodeDef* node, const GraphOptimizerContext& ctx) {
 // Graph optimizer context extension specific to ArithmeticOptimizer.
 struct ArithmeticOptimizerContext {
   explicit ArithmeticOptimizerContext(SetVector<NodeDef*>* nodes_to_simplify)
-      : nodes_to_simplify(nodes_to_simplify) {}
+      : nodes_to_simplify(nodes_to_simplify) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_11(mht_11_v, 436, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "ArithmeticOptimizerContext");
+}
   SetVector<NodeDef*>* nodes_to_simplify;
 };
 
@@ -241,7 +447,11 @@ class ArithmeticOptimizerStage : public GraphOptimizerStage<string> {
                                     const GraphOptimizerContext& ctx,
                                     const ArithmeticOptimizerContext ctx_ext)
       : GraphOptimizerStage("ArithmeticOptimizer", name, ctx),
-        ctx_ext_(ctx_ext) {}
+        ctx_ext_(ctx_ext) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_12(mht_12_v, 452, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "ArithmeticOptimizerStage");
+}
   ~ArithmeticOptimizerStage() override = default;
 
  protected:
@@ -249,11 +459,18 @@ class ArithmeticOptimizerStage : public GraphOptimizerStage<string> {
   // to final simplified node, they can be also added to the arithmetic
   // optimizer queue for further optimization.
   void AddToOptimizationQueue(NodeDef* node) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_13(mht_13_v, 462, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "AddToOptimizationQueue");
+
     ctx_ext_.nodes_to_simplify->PushBack(node);
   }
 
   // Update consumers of node to take new_input as input instead.
   Status UpdateConsumers(NodeDef* node, const string& new_input) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("new_input: \"" + new_input + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_14(mht_14_v, 471, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "UpdateConsumers");
+
     const auto consumers = ctx().node_map->GetOutputs(node->name());
     if (consumers.empty()) return Status::OK();
     const TensorId new_tensor = ParseTensorName(new_input);
@@ -290,6 +507,9 @@ class ArithmeticOptimizerStage : public GraphOptimizerStage<string> {
   // optimizations will be migrated to stages
   void ForwardControlDependencies(
       NodeDef* target_node, const std::vector<const NodeDef*>& src_nodes) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_15(mht_15_v, 510, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "ForwardControlDependencies");
+
     for (const auto& src : src_nodes) {
       for (int i = src->input_size() - 1; i >= 0; --i) {
         if (IsControlInput(src->input(i))) {
@@ -305,6 +525,9 @@ class ArithmeticOptimizerStage : public GraphOptimizerStage<string> {
   }
 
   bool IsReallyConstant(const NodeDef& node) const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_16(mht_16_v, 528, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsReallyConstant");
+
     if (!IsConstant(node)) {
       return false;
     }
@@ -313,12 +536,18 @@ class ArithmeticOptimizerStage : public GraphOptimizerStage<string> {
   }
 
   bool IsInPreserveSet(const NodeDef& node) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_17(mht_17_v, 539, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsInPreserveSet");
+
     return ctx().nodes_to_preserve->find(node.name()) !=
            ctx().nodes_to_preserve->end();
   }
 
   // TODO(ezhulenev): move to GraphOptimizerStage?
   bool IsDrivenByControlDependency(const NodeDef& node) const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_18(mht_18_v, 548, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsDrivenByControlDependency");
+
     return std::any_of(
         node.input().begin(), node.input().end(),
         [](const string& input) { return IsControlInput(input); });
@@ -326,6 +555,9 @@ class ArithmeticOptimizerStage : public GraphOptimizerStage<string> {
 
   // TODO(ezhulenev): move to GraphOptimizerStage?
   bool DrivesControlDependency(const NodeDef& node) const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_19(mht_19_v, 558, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "DrivesControlDependency");
+
     for (const NodeDef* output : ctx().node_map->GetOutputs(node.name())) {
       for (int i = 0; i < output->input_size(); ++i) {
         const TensorId tensor = ParseTensorName(output->input(i));
@@ -339,6 +571,10 @@ class ArithmeticOptimizerStage : public GraphOptimizerStage<string> {
 
   bool GetTensorFromConstNode(const string& node_name_or_input,
                               Tensor* tensor) {
+   std::vector<std::string> mht_20_v;
+   mht_20_v.push_back("node_name_or_input: \"" + node_name_or_input + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_20(mht_20_v, 575, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "GetTensorFromConstNode");
+
     const NodeDef* node = ctx().node_map->GetNode(node_name_or_input);
     return node != nullptr && IsReallyConstant(*node) &&
            CheckAttrExists(*node, "value").ok() &&
@@ -364,13 +600,21 @@ class ArithmeticNodesGroupOptimizerStage : public ArithmeticOptimizerStage {
   explicit ArithmeticNodesGroupOptimizerStage(
       const string& name, const GraphOptimizerContext& ctx,
       const ArithmeticOptimizerContext ctx_ext)
-      : ArithmeticOptimizerStage(name, ctx, ctx_ext) {}
+      : ArithmeticOptimizerStage(name, ctx, ctx_ext) {
+   std::vector<std::string> mht_21_v;
+   mht_21_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_21(mht_21_v, 605, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "ArithmeticNodesGroupOptimizerStage");
+}
   ~ArithmeticNodesGroupOptimizerStage() override = default;
 
   // Input name with a statically inferred shape from GraphProperties
   struct InputAndShape {
     InputAndShape(const string& input, const TensorShapeProto& shape)
-        : input(input), shape(shape) {}
+        : input(input), shape(shape) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("input: \"" + input + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_22(mht_22_v, 615, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "InputAndShape");
+}
     string input;
     TensorShapeProto shape;
   };
@@ -388,6 +632,9 @@ class ArithmeticNodesGroupOptimizerStage : public ArithmeticOptimizerStage {
   };
 
   Status TrySimplify(NodeDef* node, string* simplified_node_name) override {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_23(mht_23_v, 635, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     TF_RETURN_IF_ERROR(EnsureNodeIsSupported(node));
 
     OptimizedNodesGroup group;
@@ -411,6 +658,10 @@ class ArithmeticNodesGroupOptimizerStage : public ArithmeticOptimizerStage {
 
   Status AbsorbInputByOptimizedNodesGroup(const string& input,
                                           OptimizedNodesGroup* group) const {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("input: \"" + input + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_24(mht_24_v, 662, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "AbsorbInputByOptimizedNodesGroup");
+
     std::deque<const string*> input_tensors;
     input_tensors.push_front(&input);
 
@@ -443,6 +694,9 @@ class ArithmeticNodesGroupOptimizerStage : public ArithmeticOptimizerStage {
 
   Status CreateOptimizedNodesGroup(NodeDef* root_node,
                                    OptimizedNodesGroup* group) const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_25(mht_25_v, 697, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "CreateOptimizedNodesGroup");
+
     const OpInfo::TensorProperties* root_node_output_properties;
     TF_RETURN_IF_ERROR(
         GetTensorProperties(root_node->name(), &root_node_output_properties));
@@ -465,7 +719,14 @@ class ArithmeticNodesGroupOptimizerStage : public ArithmeticOptimizerStage {
   // TODO(ezhulenev): move to GraphOptimizerStage?
   bool HasAllInputsBroadcastableToShape(
       const NodeDef& node, const OpInfo::TensorProperties& properties) const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_26(mht_26_v, 722, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "HasAllInputsBroadcastableToShape");
+
     auto is_broadcastable = [this, &properties](const string& input) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("input: \"" + input + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_27(mht_27_v, 727, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "lambda");
+
       const OpInfo::TensorProperties* input_props;
       Status has_input_properties = GetTensorProperties(input, &input_props);
       return has_input_properties.ok() &&
@@ -476,6 +737,9 @@ class ArithmeticNodesGroupOptimizerStage : public ArithmeticOptimizerStage {
   }
 
   string ShapeSignature(const TensorShapeProto& shape) const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_28(mht_28_v, 740, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "ShapeSignature");
+
     string signature = strings::StrCat("rank:", shape.dim_size(), ":dim");
     for (int i = 0; i < shape.dim_size(); ++i)
       strings::StrAppend(&signature, ":", shape.dim(i).size());
@@ -483,11 +747,17 @@ class ArithmeticNodesGroupOptimizerStage : public ArithmeticOptimizerStage {
   }
 
   void MarkWithTag(const StringPiece tag, NodeDef* node) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_29(mht_29_v, 750, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "MarkWithTag");
+
     AddNodeAttr(tag, true, node);
   }
 
   void MarkAllMembersWithTag(const OptimizedNodesGroup& group,
                              const StringPiece tag) const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_30(mht_30_v, 758, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "MarkAllMembersWithTag");
+
     AddNodeAttr(tag, true, group.root_node);
     for (NodeDef* optimized_node : group.optimized_nodes) {
       AddNodeAttr(tag, true, optimized_node);
@@ -496,20 +766,32 @@ class ArithmeticNodesGroupOptimizerStage : public ArithmeticOptimizerStage {
 
   bool IsOnTheSameDevice(const OptimizedNodesGroup& group,
                          const NodeDef& node) const {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_31(mht_31_v, 769, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsOnTheSameDevice");
+
     return group.root_node->device() == node.device();
   }
 
   bool IsInPreserveSet(const NodeDef& node) const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_32(mht_32_v, 776, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsInPreserveSet");
+
     return ctx().nodes_to_preserve->find(node.name()) !=
            ctx().nodes_to_preserve->end();
   }
 
   bool IsMarkedWithTag(const NodeDef& node, const StringPiece tag) const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_33(mht_33_v, 784, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsMarkedWithTag");
+
     return HasNodeAttr(node, tag);
   }
 
   bool IsMarkedWithAnyTag(const NodeDef& node, const StringPiece tag1,
                           const StringPiece tag2) const {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_34(mht_34_v, 792, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsMarkedWithAnyTag");
+
     return IsMarkedWithTag(node, tag1) || IsMarkedWithTag(node, tag2);
   }
 };
@@ -545,11 +827,17 @@ class AddOpsRewriteStage : public ArithmeticNodesGroupOptimizerStage {
  public:
   explicit AddOpsRewriteStage(const GraphOptimizerContext& ctx,
                               const ArithmeticOptimizerContext& ctx_ext)
-      : ArithmeticNodesGroupOptimizerStage("AddOpsRewrite", ctx, ctx_ext) {}
+      : ArithmeticNodesGroupOptimizerStage("AddOpsRewrite", ctx, ctx_ext) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_35(mht_35_v, 831, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "AddOpsRewriteStage");
+}
   ~AddOpsRewriteStage() override = default;
 
   // Check if a node can become a root of AddOpsGroup
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_36(mht_36_v, 838, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     if (!CanOptimize(*node)) return false;
 
     // shape must be symbolically defined and all inputs compatible with it
@@ -563,6 +851,9 @@ class AddOpsRewriteStage : public ArithmeticNodesGroupOptimizerStage {
   // Check if a node can be absorbed by current OptimizedNodesGroup
   bool IsAbsorbableByOptimizedNodesGroup(const OptimizedNodesGroup& group,
                                          const NodeDef& node) const override {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_37(mht_37_v, 854, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsAbsorbableByOptimizedNodesGroup");
+
     if (!CanOptimize(node)) return false;
 
     if (!IsOnTheSameDevice(group, node)) {
@@ -583,6 +874,9 @@ class AddOpsRewriteStage : public ArithmeticNodesGroupOptimizerStage {
 
   // Node requirements both for a root node and an absorbed node
   bool CanOptimize(const NodeDef& node) const {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_38(mht_38_v, 877, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "CanOptimize");
+
     // TODO(ezhulenev): check if AccumulateNV2 can be supported too
     if (!IsAdd(node) && !IsAddN(node)) {
       return false;
@@ -599,6 +893,9 @@ class AddOpsRewriteStage : public ArithmeticNodesGroupOptimizerStage {
   // symbolically equal. If not, create AddN for equal shapes first, and then
   // build an Add tree, minimizing the cost of broadcasts.
   string RewriteOptimizedNodesGroup(const OptimizedNodesGroup& group) override {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_39(mht_39_v, 896, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "RewriteOptimizedNodesGroup");
+
     VLOG(2) << "Collapse Add/AddN: root=" << group.root_node->name()
             << " op=" << group.root_node->op()
             << " num_optimized_nodes=" << group.optimized_nodes.size()
@@ -648,11 +945,17 @@ class AddOpsRewriteStage : public ArithmeticNodesGroupOptimizerStage {
 
     // optimized name for leaf AddN nodes
     auto leaf_node_name = [&root_scope_and_name, this](int i) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_40(mht_40_v, 948, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "lambda");
+
       return UniqueOptimizedNodeName(root_scope_and_name,
                                      strings::StrCat("Leaf_", i));
     };
     // optimized name for internal nodes of a tree built up from AddN leaves
     auto internal_node_name = [&root_scope_and_name, this](int i) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_41(mht_41_v, 956, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "lambda");
+
       return UniqueOptimizedNodeName(root_scope_and_name,
                                      strings::StrCat("Internal_", i));
     };
@@ -690,6 +993,10 @@ class AddOpsRewriteStage : public ArithmeticNodesGroupOptimizerStage {
   InputAndShape AddInputsOfSymbolicallyEqualShape(
       const NodeDef& root_node, const string& node_name,
       const std::vector<InputAndShape>& inputs) {
+   std::vector<std::string> mht_42_v;
+   mht_42_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_42(mht_42_v, 997, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "AddInputsOfSymbolicallyEqualShape");
+
     CHECK(!inputs.empty()) << "Inputs must be non-empty";
 
     // Do not create redundant AddN nodes
@@ -724,6 +1031,10 @@ class AddOpsRewriteStage : public ArithmeticNodesGroupOptimizerStage {
                                     const string& node_name,
                                     const InputAndShape& left,
                                     const InputAndShape& right) {
+   std::vector<std::string> mht_43_v;
+   mht_43_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_43(mht_43_v, 1035, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "AddAggregatedInputs");
+
     // copy attributes from a root node
     DataType dtype = root_node.attr().at("T").type();
 
@@ -764,15 +1075,24 @@ class HoistCommonFactorOutOfAggregation : public ArithmeticOptimizerStage {
   explicit HoistCommonFactorOutOfAggregation(
       const GraphOptimizerContext& ctx,
       const ArithmeticOptimizerContext& ctx_ext)
-      : ArithmeticOptimizerStage("HoistCommonFactor", ctx, ctx_ext) {}
+      : ArithmeticOptimizerStage("HoistCommonFactor", ctx, ctx_ext) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_44(mht_44_v, 1079, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "HoistCommonFactorOutOfAggregation");
+}
   ~HoistCommonFactorOutOfAggregation() override = default;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_45(mht_45_v, 1085, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     return IsAggregate(*node) && NumNonControlInputs(*node) > 1 &&
            !IsRewritten(node);
   }
 
   Status TrySimplify(NodeDef* node, string* simplified_node_name) override {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_46(mht_46_v, 1093, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     TF_RETURN_IF_ERROR(EnsureNodeIsSupported(node));
 
     bool common_factor_is_denominator = false;
@@ -839,6 +1159,9 @@ class HoistCommonFactorOutOfAggregation : public ArithmeticOptimizerStage {
  private:
   // Get a name for new outer node
   string OuterNodeName(const NodeDef* node, bool is_div) const {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_47(mht_47_v, 1162, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "OuterNodeName");
+
     auto scope_and_name = ParseNodeScopeAndName(node->name());
     return is_div ? OptimizedNodeName(scope_and_name, "Div")
                   : OptimizedNodeName(scope_and_name, "Mul");
@@ -846,6 +1169,9 @@ class HoistCommonFactorOutOfAggregation : public ArithmeticOptimizerStage {
 
   // Get a name new inner Add node
   string InnerAddNodeName(const NodeDef* node) const {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_48(mht_48_v, 1172, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "InnerAddNodeName");
+
     auto scope_and_name = ParseNodeScopeAndName(node->name());
     return OptimizedNodeName(scope_and_name, "AddV2");
   }
@@ -855,6 +1181,9 @@ class HoistCommonFactorOutOfAggregation : public ArithmeticOptimizerStage {
   Status GetCommonFactors(const NodeDef* node, std::set<string>* common_factors,
                           bool* common_factor_is_denominator,
                           std::vector<string>* ctrl_deps) const {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_49(mht_49_v, 1184, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "GetCommonFactors");
+
     CHECK(common_factors->empty());
     CHECK_NOTNULL(common_factor_is_denominator);
     *common_factor_is_denominator = false;
@@ -928,6 +1257,10 @@ class HoistCommonFactorOutOfAggregation : public ArithmeticOptimizerStage {
                           const bool common_factor_is_denominator,
                           bool* shapes_match,
                           std::vector<string>* unique_factors) const {
+   std::vector<std::string> mht_50_v;
+   mht_50_v.push_back("common_factor: \"" + common_factor + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_50(mht_50_v, 1261, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "GetUniqueFactors");
+
     *shapes_match = true;
     unique_factors->reserve(node->input_size());
 
@@ -955,6 +1288,9 @@ class HoistCommonFactorOutOfAggregation : public ArithmeticOptimizerStage {
   }
 
   bool IsRewritten(const NodeDef* node) const {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_51(mht_51_v, 1291, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsRewritten");
+
     // if graph rewrite happens in multiple passes without graph pruning between
     // them, it's possible that rewritten node already exists in a graph
     return rewritten_nodes_.find(node->name()) != rewritten_nodes_.end() ||
@@ -984,10 +1320,16 @@ class MinimizeBroadcasts : public ArithmeticNodesGroupOptimizerStage {
   explicit MinimizeBroadcasts(const GraphOptimizerContext& ctx,
                               const ArithmeticOptimizerContext& ctx_ext)
       : ArithmeticNodesGroupOptimizerStage("MinimizeBroadcasts", ctx, ctx_ext) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_52(mht_52_v, 1323, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "MinimizeBroadcasts");
+
   }
   ~MinimizeBroadcasts() override = default;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_53(mht_53_v, 1330, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     if (!IsBinaryAssociative(*node)) return false;
 
     if (IsMarkedWithAnyTag(*node, kMinimizeBroadcastsTag, kAddOpsRewriteTag))
@@ -1002,16 +1344,25 @@ class MinimizeBroadcasts : public ArithmeticNodesGroupOptimizerStage {
 
  protected:
   bool IsBinaryAssociative(const NodeDef& node) const {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_54(mht_54_v, 1347, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsBinaryAssociative");
+
     return IsMul(node) || IsAdd(node);
   }
 
   bool IsSameOp(const OptimizedNodesGroup& group, const NodeDef& node) const {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_55(mht_55_v, 1354, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSameOp");
+
     return group.root_node->op() == node.op();
   }
 
   // Check if a node can be absorbed by current OptimizedNodesGroup
   bool IsAbsorbableByOptimizedNodesGroup(const OptimizedNodesGroup& group,
                                          const NodeDef& node) const override {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_56(mht_56_v, 1363, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsAbsorbableByOptimizedNodesGroup");
+
     if (!IsSameOp(group, node)) {
       return false;
     }
@@ -1041,6 +1392,9 @@ class MinimizeBroadcasts : public ArithmeticNodesGroupOptimizerStage {
   }
 
   std::size_t CountUniqueShapes(const std::vector<InputAndShape>& inputs) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_57(mht_57_v, 1395, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "CountUniqueShapes");
+
     std::set<string> sigs;
     for (const auto& ias : inputs) {
       sigs.insert(ShapeSignature(ias.shape));
@@ -1049,6 +1403,9 @@ class MinimizeBroadcasts : public ArithmeticNodesGroupOptimizerStage {
   }
 
   string RewriteOptimizedNodesGroup(const OptimizedNodesGroup& group) override {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_58(mht_58_v, 1406, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "RewriteOptimizedNodesGroup");
+
     VLOG(2) << "Minimize broadcast: root=" << group.root_node->name()
             << " op=" << group.root_node->op()
             << " num_optimized_nodes=" << group.optimized_nodes.size();
@@ -1146,6 +1503,11 @@ class MinimizeBroadcasts : public ArithmeticNodesGroupOptimizerStage {
 
   InputAndShape UpdateInputs(const string& input_0, const string& input_1,
                              NodeDef* node) {
+   std::vector<std::string> mht_59_v;
+   mht_59_v.push_back("input_0: \"" + input_0 + "\"");
+   mht_59_v.push_back("input_1: \"" + input_1 + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_59(mht_59_v, 1508, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "UpdateInputs");
+
     string old_input_0 = node->input(0);
     string old_input_1 = node->input(1);
 
@@ -1175,14 +1537,23 @@ class RemoveIdentityTranspose : public ArithmeticOptimizerStage {
  public:
   explicit RemoveIdentityTranspose(const GraphOptimizerContext& ctx,
                                    const ArithmeticOptimizerContext& ctx_ext)
-      : ArithmeticOptimizerStage("RemoveIdentityTranspose", ctx, ctx_ext) {}
+      : ArithmeticOptimizerStage("RemoveIdentityTranspose", ctx, ctx_ext) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_60(mht_60_v, 1541, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "RemoveIdentityTranspose");
+}
   ~RemoveIdentityTranspose() override = default;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_61(mht_61_v, 1547, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     return IsTranspose(*node) || IsConjugateTranspose(*node);
   }
 
   Status TrySimplify(NodeDef* node, string* simplified_node_name) override {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_62(mht_62_v, 1554, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     TF_RETURN_IF_ERROR(EnsureNodeIsSupported(node));
     NodeDef* tail = node;
     tail = GetTailOfIdempotentChain(*tail, *ctx().node_map,
@@ -1246,6 +1617,9 @@ class RemoveIdentityTranspose : public ArithmeticOptimizerStage {
  private:
   Status GetPermutation(const NodeDef& node_perm,
                         std::vector<int64_t>* perm64) const {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_63(mht_63_v, 1620, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "GetPermutation");
+
     std::vector<int> perm32;
     if (ValuesFromConstNode(node_perm, &perm32)) {
       perm64->reserve(perm32.size());
@@ -1263,6 +1637,9 @@ class RemoveIdentityTranspose : public ArithmeticOptimizerStage {
 
   bool AreInversePermutations(const std::vector<int64_t>& a,
                               const std::vector<int64_t>& b) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_64(mht_64_v, 1640, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "AreInversePermutations");
+
     if (a.size() != b.size()) {
       return false;
     }
@@ -1275,6 +1652,9 @@ class RemoveIdentityTranspose : public ArithmeticOptimizerStage {
   }
 
   bool IsIdentityPermutation(const std::vector<int64_t>& perm) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_65(mht_65_v, 1655, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsIdentityPermutation");
+
     for (int64_t i = 0, end = perm.size(); i < end; ++i) {
       if (i != perm[i]) {
         return false;
@@ -1294,14 +1674,23 @@ class RemoveInvolution : public ArithmeticOptimizerStage {
  public:
   explicit RemoveInvolution(const GraphOptimizerContext& ctx,
                             const ArithmeticOptimizerContext& ctx_ext)
-      : ArithmeticOptimizerStage("RemoveInvolution", ctx, ctx_ext) {}
+      : ArithmeticOptimizerStage("RemoveInvolution", ctx, ctx_ext) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_66(mht_66_v, 1678, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "RemoveInvolution");
+}
   ~RemoveInvolution() override = default;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_67(mht_67_v, 1684, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     return IsInvolution(*node);
   }
 
   Status TrySimplify(NodeDef* node, string* simplified_node_name) override {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_68(mht_68_v, 1691, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     NodeDef* tail = GetTailOfValuePreservingChain(*node, *ctx().node_map,
                                                   *ctx().nodes_to_preserve);
 
@@ -1333,14 +1722,23 @@ class RemoveRedundantBitcastStage : public ArithmeticOptimizerStage {
   explicit RemoveRedundantBitcastStage(
       const GraphOptimizerContext& ctx,
       const ArithmeticOptimizerContext& ctx_ext)
-      : ArithmeticOptimizerStage("RemoveRedundantBitcast", ctx, ctx_ext) {}
+      : ArithmeticOptimizerStage("RemoveRedundantBitcast", ctx, ctx_ext) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_69(mht_69_v, 1726, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "RemoveRedundantBitcastStage");
+}
   ~RemoveRedundantBitcastStage() override = default;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_70(mht_70_v, 1732, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     return IsBitcast(*node);
   }
 
   Status TrySimplify(NodeDef* node, string* simplified_node_name) override {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_71(mht_71_v, 1739, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     TF_RETURN_IF_ERROR(EnsureNodeIsSupported(node));
 
     // Bypass Bitcast whose source type and destination type are equal.
@@ -1381,14 +1779,23 @@ class RemoveRedundantCastStage : public ArithmeticOptimizerStage {
  public:
   explicit RemoveRedundantCastStage(const GraphOptimizerContext& ctx,
                                     const ArithmeticOptimizerContext& ctx_ext)
-      : ArithmeticOptimizerStage("RemoveRedundantCast", ctx, ctx_ext) {}
+      : ArithmeticOptimizerStage("RemoveRedundantCast", ctx, ctx_ext) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_72(mht_72_v, 1783, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "RemoveRedundantCastStage");
+}
   ~RemoveRedundantCastStage() override = default;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_73(mht_73_v, 1789, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     return IsCast(*node) && !IsInPreserveSet(*node);
   }
 
   Status TrySimplify(NodeDef* node, string* simplified_node_name) override {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_74(mht_74_v, 1796, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     TF_RETURN_IF_ERROR(EnsureNodeIsSupported(node));
 
     // Bypass Cast whose source type and destination type are equal.
@@ -1408,14 +1815,23 @@ class RemoveNegationStage : public ArithmeticOptimizerStage {
  public:
   explicit RemoveNegationStage(const GraphOptimizerContext& ctx,
                                const ArithmeticOptimizerContext& ctx_ext)
-      : ArithmeticOptimizerStage("RemoveNegation", ctx, ctx_ext) {}
+      : ArithmeticOptimizerStage("RemoveNegation", ctx, ctx_ext) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_75(mht_75_v, 1819, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "RemoveNegationStage");
+}
   ~RemoveNegationStage() override = default;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_76(mht_76_v, 1825, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     return (IsAdd(*node) || IsSub(*node)) && !IsInPreserveSet(*node);
   }
 
   Status TrySimplify(NodeDef* node, string* simplified_node_name) override {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_77(mht_77_v, 1832, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     NodeDef* x;
     NodeDef* y;
     TF_RETURN_IF_ERROR(GetInputNode(node->input(0), &x));
@@ -1448,14 +1864,23 @@ class RemoveLogicalNotStage : public ArithmeticOptimizerStage {
  public:
   explicit RemoveLogicalNotStage(const GraphOptimizerContext& ctx,
                                  const ArithmeticOptimizerContext& ctx_ext)
-      : ArithmeticOptimizerStage("RemoveLogicalNot", ctx, ctx_ext) {}
+      : ArithmeticOptimizerStage("RemoveLogicalNot", ctx, ctx_ext) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_78(mht_78_v, 1868, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "RemoveLogicalNotStage");
+}
   ~RemoveLogicalNotStage() override = default;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_79(mht_79_v, 1874, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     return IsLogicalNot(*node) && !IsInPreserveSet(*node);
   }
 
   Status TrySimplify(NodeDef* node, string* simplified_node_name) override {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_80(mht_80_v, 1881, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     const string node_name = node->name();
     NodeDef* input;
     TF_RETURN_IF_ERROR(GetInputNode(node->input(0), &input));
@@ -1503,19 +1928,28 @@ class HoistCWiseUnaryChainsStage : public ArithmeticOptimizerStage {
  public:
   explicit HoistCWiseUnaryChainsStage(const GraphOptimizerContext& ctx,
                                       const ArithmeticOptimizerContext& ctx_ext)
-      : ArithmeticOptimizerStage("", ctx, ctx_ext) {}
+      : ArithmeticOptimizerStage("", ctx, ctx_ext) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_81(mht_81_v, 1932, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "HoistCWiseUnaryChainsStage");
+}
 
   ~HoistCWiseUnaryChainsStage() override = default;
 
   struct ChainLink {
     ChainLink() = default;
     ChainLink(NodeDef* _node, int _port_origin)
-        : node(_node), port_origin(_port_origin) {}
+        : node(_node), port_origin(_port_origin) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_82(mht_82_v, 1942, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "ChainLink");
+}
     NodeDef* node;    // Node in a chain.
     int port_origin;  // Port on concat/split node from which this chain
                       // originates.
 
     bool operator<(const ChainLink& other) const {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_83(mht_83_v, 1950, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "operator<");
+
       if (port_origin < other.port_origin) {
         return true;
       } else if (port_origin > other.port_origin) {
@@ -1531,6 +1965,9 @@ class HoistCWiseUnaryChainsStage : public ArithmeticOptimizerStage {
   using ChainLinkSet = std::set<ChainLink>;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_84(mht_84_v, 1968, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     if (IsInPreserveSet(*node)) return false;
     if (IsConcat(*node) && node->attr().count("N") != 0) {
       const int n = node->attr().at("N").i();
@@ -1554,6 +1991,9 @@ class HoistCWiseUnaryChainsStage : public ArithmeticOptimizerStage {
   }
 
   Status TrySimplify(NodeDef* node, string* simplified_node_name) override {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_85(mht_85_v, 1994, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     node_is_concat_ = IsConcat(*node);
     int prefix_length;
     std::set<string> ctrl_inputs;
@@ -1569,6 +2009,9 @@ class HoistCWiseUnaryChainsStage : public ArithmeticOptimizerStage {
 
  private:
   bool FirstNInputsAreUnique(const NodeDef& node, int n) const {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_86(mht_86_v, 2012, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "FirstNInputsAreUnique");
+
     if (n > node.input_size()) return false;
     absl::flat_hash_set<string> unique_inputs;
     const int start = node.op() == "Concat" ? 1 : 0;
@@ -1585,6 +2028,9 @@ class HoistCWiseUnaryChainsStage : public ArithmeticOptimizerStage {
   Status FindCommonUnaryOpChain(const NodeDef& root_node, int* prefix_length,
                                 ChainLinkSet* tails,
                                 std::set<string>* ctrl_inputs) const {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_87(mht_87_v, 2031, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "FindCommonUnaryOpChain");
+
     *prefix_length = 0;
     // Follow the chains starting at each concat input or split output as long
     // as all the following conditions hold:
@@ -1615,6 +2061,9 @@ class HoistCWiseUnaryChainsStage : public ArithmeticOptimizerStage {
   // control inputs gathered from them to the concat or split node.
   Status HoistUnaryOpChain(const int prefix_length, const ChainLinkSet& tails,
                            std::set<string>* ctrl_inputs, NodeDef* root_node) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_88(mht_88_v, 2064, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "HoistUnaryOpChain");
+
     VLOG(3) << "Hoist unary op chain:"
             << " root=" << root_node->DebugString()
             << " prefix_length=" << prefix_length << " ctrl_inputs=["
@@ -1635,6 +2084,9 @@ class HoistCWiseUnaryChainsStage : public ArithmeticOptimizerStage {
 
   void GatherControlInputs(std::set<string>* ctrl_inputs,
                            const ChainLinkSet& ops) const {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_89(mht_89_v, 2087, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "GatherControlInputs");
+
     for (const auto& link : ops) {
       const NodeDef* node = link.node;
       for (int i = node->input_size() - 1; i >= 0; --i) {
@@ -1647,6 +2099,9 @@ class HoistCWiseUnaryChainsStage : public ArithmeticOptimizerStage {
 
   void AddControlInputs(std::set<string>* new_ctrl_inputs,
                         NodeDef* node) const {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_90(mht_90_v, 2102, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "AddControlInputs");
+
     for (int i = node->input_size() - 1; i >= 0; --i) {
       const string& existing_input = node->input(i);
       if (!IsControlInput(existing_input)) break;
@@ -1659,6 +2114,9 @@ class HoistCWiseUnaryChainsStage : public ArithmeticOptimizerStage {
   }
 
   Status InitializeChains(const NodeDef& node, ChainLinkSet* tails) const {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_91(mht_91_v, 2117, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "InitializeChains");
+
     if (node_is_concat_) {
       // Handle concat nodes by looking backwards in the graph.
       TF_RETURN_IF_ERROR(CheckAttrExists(node, "N"));
@@ -1704,6 +2162,9 @@ class HoistCWiseUnaryChainsStage : public ArithmeticOptimizerStage {
 
   bool OpsAreSafeToHoist(const NodeDef& root_node,
                          const ChainLinkSet& ops) const {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_92(mht_92_v, 2165, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "OpsAreSafeToHoist");
+
     if (ops.empty()) return true;
     const NodeDef* op0 = ops.begin()->node;
     if (ModifiesFrameInfo(*op0) || !IsUnaryElementWise(*op0)) return false;
@@ -1734,6 +2195,9 @@ class HoistCWiseUnaryChainsStage : public ArithmeticOptimizerStage {
 
   Status AdvanceTails(const ChainLinkSet& tails, ChainLinkSet* new_tails,
                       bool* stop) const {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_93(mht_93_v, 2198, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "AdvanceTails");
+
     *stop = true;
     new_tails->clear();
     for (const auto& link : tails) {
@@ -1766,6 +2230,9 @@ class HoistCWiseUnaryChainsStage : public ArithmeticOptimizerStage {
 
   Status HoistChainForConcat(const int prefix_length, const ChainLinkSet& tails,
                              NodeDef* concat_node) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_94(mht_94_v, 2233, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "HoistChainForConcat");
+
     const string& concat_name = concat_node->name();
     const int first_input = concat_node->op() == "Concat" ? 1 : 0;
     for (const auto& link : tails) {
@@ -1794,6 +2261,9 @@ class HoistCWiseUnaryChainsStage : public ArithmeticOptimizerStage {
   Status HoistChainForSplit(const int prefix_length, const ChainLinkSet& tails,
                             std::set<string>* ctrl_inputs,
                             NodeDef* split_node) {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_95(mht_95_v, 2264, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "HoistChainForSplit");
+
     // Create a new chain before the split node to process the input tensor.
     const string& split_name = split_node->name();
     auto root_scope_and_name = ParseNodeScopeAndName(split_name);
@@ -1843,6 +2313,9 @@ class HoistCWiseUnaryChainsStage : public ArithmeticOptimizerStage {
   }
 
   bool IsAlreadyOptimized(const NodeDef& node) const {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_96(mht_96_v, 2316, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsAlreadyOptimized");
+
     return optimized_nodes_.find(node.name()) != optimized_nodes_.end();
   }
 
@@ -1855,15 +2328,24 @@ class RemoveIdempotentStage : public ArithmeticOptimizerStage {
  public:
   explicit RemoveIdempotentStage(const GraphOptimizerContext& ctx,
                                  const ArithmeticOptimizerContext& ctx_ext)
-      : ArithmeticOptimizerStage("RemoveIdempotent", ctx, ctx_ext) {}
+      : ArithmeticOptimizerStage("RemoveIdempotent", ctx, ctx_ext) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_97(mht_97_v, 2332, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "RemoveIdempotentStage");
+}
   ~RemoveIdempotentStage() override = default;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_98(mht_98_v, 2338, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     return node->input_size() == 1 && IsIdempotent(*node) &&
            !IsInPreserveSet(*node);
   }
 
   Status TrySimplify(NodeDef* node, string* simplified_node_name) override {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_99(mht_99_v, 2346, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     NodeDef* input;
     TF_RETURN_IF_ERROR(GetInputNode(node->input(0), &input));
     if (input->op() == node->op() && input->device() == node->device()) {
@@ -1880,16 +2362,25 @@ class SqrtDivToRsqrtMulStage : public ArithmeticOptimizerStage {
  public:
   explicit SqrtDivToRsqrtMulStage(const GraphOptimizerContext& ctx,
                                   const ArithmeticOptimizerContext& ctx_ext)
-      : ArithmeticOptimizerStage("SqrtDivToRsqrtMul", ctx, ctx_ext) {}
+      : ArithmeticOptimizerStage("SqrtDivToRsqrtMul", ctx, ctx_ext) {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_100(mht_100_v, 2366, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "SqrtDivToRsqrtMulStage");
+}
   ~SqrtDivToRsqrtMulStage() override = default;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_101(mht_101_v, 2372, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     // Note: div_no_nan(a, sqrt(b)) => mul_no_nan(a, rsqrt(b))
     // for b == 0 would result in a / Inf instead of 0.
     return IsAnyDiv(*node) && !IsDivNoNan(*node) && !IsFloorDiv(*node);
   }
 
   Status TrySimplify(NodeDef* node, string* simplified_node_name) override {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_102(mht_102_v, 2381, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     NodeDef* y;
     TF_RETURN_IF_ERROR(GetInputNode(node->input(1), &y));
     // Optimize only if divisor is a Sqrt whose output is not being consumed
@@ -1918,14 +2409,23 @@ class FuseSquaredDiffStage : public ArithmeticOptimizerStage {
  public:
   explicit FuseSquaredDiffStage(const GraphOptimizerContext& ctx,
                                 const ArithmeticOptimizerContext& ctx_ext)
-      : ArithmeticOptimizerStage("FuseSquaredDiffStage", ctx, ctx_ext) {}
+      : ArithmeticOptimizerStage("FuseSquaredDiffStage", ctx, ctx_ext) {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_103(mht_103_v, 2413, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "FuseSquaredDiffStage");
+}
   ~FuseSquaredDiffStage() override = default;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_104(mht_104_v, 2419, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     return IsSquare(*node);
   }
 
   Status TrySimplify(NodeDef* node, string* simplified_node_name) override {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_105(mht_105_v, 2426, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     NodeDef* b;
     TF_RETURN_IF_ERROR(GetInputNode(node->input(0), &b));
     // Optimize only if base is a Sub whose output is not being consumed
@@ -1952,12 +2452,21 @@ class LogSoftmaxStage : public ArithmeticOptimizerStage {
  public:
   explicit LogSoftmaxStage(const GraphOptimizerContext& ctx,
                            const ArithmeticOptimizerContext& ctx_ext)
-      : ArithmeticOptimizerStage("LogSoftmaxStage", ctx, ctx_ext) {}
+      : ArithmeticOptimizerStage("LogSoftmaxStage", ctx, ctx_ext) {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_106(mht_106_v, 2456, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "LogSoftmaxStage");
+}
   ~LogSoftmaxStage() override = default;
 
-  bool IsSupported(const NodeDef* node) const override { return IsLog(*node); }
+  bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_107(mht_107_v, 2462, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+ return IsLog(*node); }
 
   Status TrySimplify(NodeDef* node, string* simplified_node_name) override {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_108(mht_108_v, 2467, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     NodeDef* x;
     TF_RETURN_IF_ERROR(GetInputNode(node->input(0), &x));
     // Optimize only if arg is a Softmax whose output is not being consumed
@@ -1993,15 +2502,24 @@ class RemoveRedundantReshapeOrBroadcastTo : public ArithmeticOptimizerStage {
       const GraphOptimizerContext& ctx,
       const ArithmeticOptimizerContext& ctx_ext)
       : ArithmeticOptimizerStage("RemoveRedundantReshapeOrBroadcastTo", ctx,
-                                 ctx_ext) {}
+                                 ctx_ext) {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_109(mht_109_v, 2506, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "RemoveRedundantReshapeOrBroadcastTo");
+}
   ~RemoveRedundantReshapeOrBroadcastTo() override = default;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_110(mht_110_v, 2512, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     return IsReshape(*node) || IsBroadcastTo(*node);
   }
 
   // TODO(rmlarsen): Handle unary ops with multiple outputs.
   Status TrySimplify(NodeDef* node, string* simplified_node_name) override {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_111(mht_111_v, 2520, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     // 1. If the reshape is a no-op, forward its input to its consumers, unless
     // it anchors a control dependency since we want to make sure that control
     // dependency is triggered.
@@ -2018,6 +2536,9 @@ class RemoveRedundantReshapeOrBroadcastTo : public ArithmeticOptimizerStage {
       gtl::InlinedVector<const NodeDef*, 4> nodes_in_chain;
       const auto predicate_fn = [this, node, &skip,
                                  &nodes_in_chain](const NodeDef& input) {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_112(mht_112_v, 2539, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "lambda");
+
         nodes_in_chain.push_back(&input);
         if ((input.name() != node->name() &&
              NumNonControlOutputs(input, *ctx().node_map) > 1) ||
@@ -2070,6 +2591,9 @@ class RemoveRedundantReshapeOrBroadcastTo : public ArithmeticOptimizerStage {
  private:
   // Returns whether `reshape` is an identity op.
   bool InputMatchesTargetShape(const NodeDef& reshape) {
+   std::vector<std::string> mht_113_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_113(mht_113_v, 2594, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "InputMatchesTargetShape");
+
     const OpInfo::TensorProperties* reshape_props;
     const OpInfo::TensorProperties* input_props;
     if (!GetTensorProperties(reshape.name(), &reshape_props).ok() ||
@@ -2105,16 +2629,25 @@ class ReorderCastLikeAndValuePreserving : public ArithmeticOptimizerStage {
       const GraphOptimizerContext& ctx,
       const ArithmeticOptimizerContext& ctx_ext)
       : ArithmeticOptimizerStage("ReorderCastLikeAndValuePreserving", ctx,
-                                 ctx_ext) {}
+                                 ctx_ext) {
+   std::vector<std::string> mht_114_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_114(mht_114_v, 2633, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "ReorderCastLikeAndValuePreserving");
+}
   ~ReorderCastLikeAndValuePreserving() override = default;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_115(mht_115_v, 2639, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     return (IsValuePreserving(*node) || IsCastLike(*node)) &&
            !IsCheckNumerics(*node) && NodeIsOnCpuOrGpu(node) &&
            !IsControlFlow(*node) && !IsInPreserveSet(*node);
   }
 
   Status TrySimplify(NodeDef* consumer, string* simplified_node_name) override {
+   std::vector<std::string> mht_116_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_116(mht_116_v, 2648, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     NodeDef* producer;
 
     if (consumer->input_size() < 1) {
@@ -2199,6 +2732,9 @@ class ReorderCastLikeAndValuePreserving : public ArithmeticOptimizerStage {
  private:
   // Sets the type of the first input to dtype.
   Status SetInputType(DataType dtype, NodeDef* node) {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_117(mht_117_v, 2735, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "SetInputType");
+
     const OpDef* op_def = nullptr;
     TF_RETURN_IF_ERROR(OpRegistry::Global()->LookUpOpDef(node->op(), &op_def));
     const OpDef::ArgDef& input_arg = op_def->input_arg(0);
@@ -2220,6 +2756,9 @@ class ReorderCastLikeAndValuePreserving : public ArithmeticOptimizerStage {
   // GPU. The transpose might not be implemented for image.type, or
   // might be slower with image.type than with cast_dst_type.
   bool NodeIsOnCpuOrGpu(const NodeDef* node) const {
+   std::vector<std::string> mht_118_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_118(mht_118_v, 2759, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "NodeIsOnCpuOrGpu");
+
     using absl::StrContains;
 
     string task;
@@ -2230,6 +2769,9 @@ class ReorderCastLikeAndValuePreserving : public ArithmeticOptimizerStage {
   }
 
   bool IsFixedSizeType(DataType dtype) {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_119(mht_119_v, 2772, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsFixedSizeType");
+
     return dtype != DT_STRING && dtype != DT_VARIANT && dtype != DT_RESOURCE &&
            !kQuantizedTypes.Contains(dtype);
   }
@@ -2260,14 +2802,23 @@ class FoldMultiplyIntoConv : public ArithmeticOptimizerStage {
  public:
   explicit FoldMultiplyIntoConv(const GraphOptimizerContext& ctx,
                                 const ArithmeticOptimizerContext& ctx_ext)
-      : ArithmeticOptimizerStage("FoldMultiplyIntoConv", ctx, ctx_ext) {}
+      : ArithmeticOptimizerStage("FoldMultiplyIntoConv", ctx, ctx_ext) {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_120(mht_120_v, 2806, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "FoldMultiplyIntoConv");
+}
   ~FoldMultiplyIntoConv() override = default;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_121(mht_121_v, 2812, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     return IsConv2D(*node) || IsConv3D(*node);
   }
 
   Status TrySimplify(NodeDef* node, string* simplified_node_name) override {
+   std::vector<std::string> mht_122_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_122(mht_122_v, 2819, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
 #define TF_RETURN_IF_TRUE(...) \
   if ((__VA_ARGS__)) return Status::OK()
 
@@ -2371,14 +2922,23 @@ class FoldTransposeIntoMatMul : public ArithmeticOptimizerStage {
  public:
   explicit FoldTransposeIntoMatMul(const GraphOptimizerContext& ctx,
                                    const ArithmeticOptimizerContext& ctx_ext)
-      : ArithmeticOptimizerStage("FoldTransposeIntoMatMul", ctx, ctx_ext) {}
+      : ArithmeticOptimizerStage("FoldTransposeIntoMatMul", ctx, ctx_ext) {
+   std::vector<std::string> mht_123_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_123(mht_123_v, 2926, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "FoldTransposeIntoMatMul");
+}
   ~FoldTransposeIntoMatMul() override = default;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_124_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_124(mht_124_v, 2932, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     return IsAnyMatMul(*node) && !IsInPreserveSet(*node);
   }
 
   Status TrySimplify(NodeDef* node, string* simplified_node_name) override {
+   std::vector<std::string> mht_125_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_125(mht_125_v, 2939, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     const NodeScopeAndName matmul = ParseNodeScopeAndName(node->name());
     const string optimized_node_name = OptimizedNodeName(matmul);
     if (ctx().node_map->NodeExists(optimized_node_name)) return Status::OK();
@@ -2437,6 +2997,10 @@ class FoldTransposeIntoMatMul : public ArithmeticOptimizerStage {
 
  private:
   void FlipBooleanAttr(const string& attr_name, NodeDef* node) {
+   std::vector<std::string> mht_126_v;
+   mht_126_v.push_back("attr_name: \"" + attr_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_126(mht_126_v, 3001, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "FlipBooleanAttr");
+
     const bool old_value =
         !node->attr().count(attr_name) ? false : node->attr().at(attr_name).b();
     (*node->mutable_attr())[attr_name].set_b(!old_value);
@@ -2444,6 +3008,9 @@ class FoldTransposeIntoMatMul : public ArithmeticOptimizerStage {
 
   template <typename T>
   bool IsInnerMatrixTranspose(const std::vector<T>& perm) {
+   std::vector<std::string> mht_127_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_127(mht_127_v, 3011, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsInnerMatrixTranspose");
+
     const T n = perm.size();
     if (n < 2) {
       return false;
@@ -2458,6 +3025,9 @@ class FoldTransposeIntoMatMul : public ArithmeticOptimizerStage {
 
   bool IsInnerMatrixTransposeNode(const NodeDef& transpose_node,
                                   const NodeMap* node_map) {
+   std::vector<std::string> mht_128_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_128(mht_128_v, 3028, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsInnerMatrixTransposeNode");
+
     if (transpose_node.op() != "Transpose" &&
         transpose_node.op() != "ConjugateTranspose") {
       return false;
@@ -2479,14 +3049,23 @@ class FoldConjugateIntoTranspose : public ArithmeticOptimizerStage {
  public:
   explicit FoldConjugateIntoTranspose(const GraphOptimizerContext& ctx,
                                       const ArithmeticOptimizerContext& ctx_ext)
-      : ArithmeticOptimizerStage("FoldConjugateIntoTranspose", ctx, ctx_ext) {}
+      : ArithmeticOptimizerStage("FoldConjugateIntoTranspose", ctx, ctx_ext) {
+   std::vector<std::string> mht_129_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_129(mht_129_v, 3053, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "FoldConjugateIntoTranspose");
+}
   ~FoldConjugateIntoTranspose() override = default;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_130_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_130(mht_130_v, 3059, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     return IsConj(*node) || IsTranspose(*node) || IsConjugateTranspose(*node);
   }
 
   Status TrySimplify(NodeDef* node, string* simplified_node_name) override {
+   std::vector<std::string> mht_131_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_131(mht_131_v, 3066, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     const NodeScopeAndName matmul = ParseNodeScopeAndName(node->name());
     const string optimized_node_name = OptimizedNodeName(matmul);
     if (ctx().node_map->NodeExists(optimized_node_name)) return Status::OK();
@@ -2520,10 +3099,16 @@ class ReplaceMulWithSquare : public ArithmeticOptimizerStage {
  public:
   explicit ReplaceMulWithSquare(const GraphOptimizerContext& ctx,
                                 const ArithmeticOptimizerContext& ctx_ext)
-      : ArithmeticOptimizerStage("ReplaceMulWithSquare", ctx, ctx_ext) {}
+      : ArithmeticOptimizerStage("ReplaceMulWithSquare", ctx, ctx_ext) {
+   std::vector<std::string> mht_132_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_132(mht_132_v, 3103, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "ReplaceMulWithSquare");
+}
   ~ReplaceMulWithSquare() override = default;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_133_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_133(mht_133_v, 3109, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     if (!node || node->input_size() < 2) {
       // Invalid node
       return false;
@@ -2533,6 +3118,9 @@ class ReplaceMulWithSquare : public ArithmeticOptimizerStage {
   }
 
   Status TrySimplify(NodeDef* node, string* simplified_node_name) override {
+   std::vector<std::string> mht_134_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_134(mht_134_v, 3121, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     const NodeScopeAndName mul = ParseNodeScopeAndName(node->name());
     const string optimized_node_name = OptimizedNodeName(mul);
     if (ctx().node_map->NodeExists(optimized_node_name)) return Status::OK();
@@ -2571,14 +3159,23 @@ class ReplaceMulWithBroadcastByTile : public ArithmeticOptimizerStage {
       const GraphOptimizerContext& ctx,
       const ArithmeticOptimizerContext& ctx_ext)
       : ArithmeticOptimizerStage("ReplaceMulWithBroadcastByTile", ctx,
-                                 ctx_ext) {}
+                                 ctx_ext) {
+   std::vector<std::string> mht_135_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_135(mht_135_v, 3163, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "ReplaceMulWithBroadcastByTile");
+}
   ~ReplaceMulWithBroadcastByTile() override = default;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_136_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_136(mht_136_v, 3169, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     return IsMul(*node) && !IsInPreserveSet(*node);
   }
 
   Status TrySimplify(NodeDef* node, string* simplified_node_name) override {
+   std::vector<std::string> mht_137_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_137(mht_137_v, 3176, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     NodeDef *input, *ones;
     TF_RETURN_IF_ERROR(GetInputNode(node->input(0), &input));
     TF_RETURN_IF_ERROR(GetInputNode(node->input(1), &ones));
@@ -2659,6 +3256,9 @@ class ReplaceMulWithBroadcastByTile : public ArithmeticOptimizerStage {
 
  protected:
   bool IsOnes(const NodeDef& node) const {
+   std::vector<std::string> mht_138_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_138(mht_138_v, 3259, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsOnes");
+
     if (!IsReallyConstant(node)) return false;
     if (node.attr().at("dtype").type() != DT_FLOAT) return false;
 
@@ -2697,14 +3297,23 @@ class ReduceUpsamplingDims : public ArithmeticOptimizerStage {
  public:
   explicit ReduceUpsamplingDims(const GraphOptimizerContext& ctx,
                                 const ArithmeticOptimizerContext& ctx_ext)
-      : ArithmeticOptimizerStage("ReduceUpsamplingDims", ctx, ctx_ext) {}
+      : ArithmeticOptimizerStage("ReduceUpsamplingDims", ctx, ctx_ext) {
+   std::vector<std::string> mht_139_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_139(mht_139_v, 3301, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "ReduceUpsamplingDims");
+}
   ~ReduceUpsamplingDims() override = default;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_140_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_140(mht_140_v, 3307, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     return IsReshape(*node) && !IsInPreserveSet(*node);
   }
 
   Status TrySimplify(NodeDef* node, string* simplified_node_name) override {
+   std::vector<std::string> mht_141_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_141(mht_141_v, 3314, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     NodeDef* tile;
     TF_RETURN_IF_ERROR(GetInputNode(node->input(0), &tile));
     if (!IsTile(*tile) || IsInPreserveSet(*tile)) {
@@ -2796,6 +3405,9 @@ class ReduceUpsamplingDims : public ArithmeticOptimizerStage {
 
  private:
   bool CreateUpdatedMultiplesProto(const NodeDef* node, TensorProto* proto) {
+   std::vector<std::string> mht_142_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_142(mht_142_v, 3408, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "CreateUpdatedMultiplesProto");
+
     Tensor multiples;
     if (!GetTensorFromConstNode(node->name(), &multiples)) {
       return false;
@@ -2823,6 +3435,9 @@ class ReduceUpsamplingDims : public ArithmeticOptimizerStage {
   }
 
   bool CreateUpdatedShapeProto(const NodeDef* node, TensorProto* proto) {
+   std::vector<std::string> mht_143_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_143(mht_143_v, 3438, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "CreateUpdatedShapeProto");
+
     Tensor shape;
     if (!GetTensorFromConstNode(node->name(), &shape)) {
       return false;
@@ -2851,6 +3466,11 @@ class ReduceUpsamplingDims : public ArithmeticOptimizerStage {
 
   void CopyReshapeWithInput(const NodeDef* reshape, NodeDef* new_reshape,
                             const string& input, const string& shape) {
+   std::vector<std::string> mht_144_v;
+   mht_144_v.push_back("input: \"" + input + "\"");
+   mht_144_v.push_back("shape: \"" + shape + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_144(mht_144_v, 3471, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "CopyReshapeWithInput");
+
     new_reshape->set_op("Reshape");
     new_reshape->set_device(reshape->device());
     SetDataTypeToAttr(GetDataTypeFromAttr(*reshape, "T"), "T", new_reshape);
@@ -2867,6 +3487,11 @@ class ReduceUpsamplingDims : public ArithmeticOptimizerStage {
 
   void CopyTileWithInput(const NodeDef* tile, NodeDef* new_tile,
                          const string& input, const string& multiples) {
+   std::vector<std::string> mht_145_v;
+   mht_145_v.push_back("input: \"" + input + "\"");
+   mht_145_v.push_back("multiples: \"" + multiples + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_145(mht_145_v, 3492, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "CopyTileWithInput");
+
     new_tile->set_op("Tile");
     new_tile->set_device(tile->device());
     SetDataTypeToAttr(GetDataTypeFromAttr(*tile, "T"), "T", new_tile);
@@ -2899,15 +3524,24 @@ class ReplacePackWithTileReshape : public ArithmeticOptimizerStage {
  public:
   explicit ReplacePackWithTileReshape(const GraphOptimizerContext& ctx,
                                       const ArithmeticOptimizerContext& ctx_ext)
-      : ArithmeticOptimizerStage("ReplacePackWithTileReshape", ctx, ctx_ext) {}
+      : ArithmeticOptimizerStage("ReplacePackWithTileReshape", ctx, ctx_ext) {
+   std::vector<std::string> mht_146_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_146(mht_146_v, 3528, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "ReplacePackWithTileReshape");
+}
   ~ReplacePackWithTileReshape() override = default;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_147_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_147(mht_147_v, 3534, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     return IsPack(*node) && NumNonControlInputs(*node) > 1 &&
            !IsInPreserveSet(*node);
   }
 
   Status TrySimplify(NodeDef* node, string* simplified_node_name) override {
+   std::vector<std::string> mht_148_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_148(mht_148_v, 3542, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     // 1. traverse the chain of Pack ops to get the original input
     NodeDef* input = node;
     std::vector<const NodeDef*> chain;
@@ -3018,6 +3652,9 @@ class ReplacePackWithTileReshape : public ArithmeticOptimizerStage {
  protected:
   Status CalculateMultiplesFromChain(const std::vector<const NodeDef*>& chain,
                                      Tensor* multiples) {
+   std::vector<std::string> mht_149_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_149(mht_149_v, 3655, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "CalculateMultiplesFromChain");
+
     // Keep track of how the multiples correspond to each shape dimension.
     // For example, given Stack([x, x], axis=1) with rank(x) = 3, we start with
     //    multiples=[1, 1, 1] , dims=[0, 1, 2]
@@ -3073,16 +3710,25 @@ class SimplifyAggregation : public ArithmeticOptimizerStage {
  public:
   explicit SimplifyAggregation(const GraphOptimizerContext& ctx,
                                const ArithmeticOptimizerContext& ctx_ext)
-      : ArithmeticOptimizerStage("SimplifyAggregation", ctx, ctx_ext) {}
+      : ArithmeticOptimizerStage("SimplifyAggregation", ctx, ctx_ext) {
+   std::vector<std::string> mht_150_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_150(mht_150_v, 3714, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "SimplifyAggregation");
+}
   ~SimplifyAggregation() override = default;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_151_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_151(mht_151_v, 3720, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     return IsAggregate(*node) && HasRegularInputs(*node) &&
            GetDataTypeFromAttr(*node, "T") !=
                DT_VARIANT;  // TODO(b/119787146): Enable for variants.
   }
 
   Status TrySimplify(NodeDef* node, string* simplified_node_name) override {
+   std::vector<std::string> mht_152_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_152(mht_152_v, 3729, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     // 1. Discard aggregate nodes with a single input and no control deps.
     if (node->input_size() == 1) {
       *simplified_node_name = node->input(0);
@@ -3165,15 +3811,24 @@ class ConvertPowStage : public ArithmeticOptimizerStage {
  public:
   explicit ConvertPowStage(const GraphOptimizerContext& ctx,
                            const ArithmeticOptimizerContext& ctx_ext)
-      : ArithmeticOptimizerStage("ConvertPow", ctx, ctx_ext) {}
+      : ArithmeticOptimizerStage("ConvertPow", ctx, ctx_ext) {
+   std::vector<std::string> mht_153_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_153(mht_153_v, 3815, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "ConvertPowStage");
+}
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_154_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_154(mht_154_v, 3820, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     return IsPow(*node) &&
            ctx().graph_properties->HasOutputProperties(node->name()) &&
            ctx().graph_properties->HasInputProperties(node->name());
   }
 
   Status TrySimplify(NodeDef* node, string* simplified_node_name) override {
+   std::vector<std::string> mht_155_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_155(mht_155_v, 3829, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     Tensor pow;
     if (!GetTensorFromConstNode(node->input(1), &pow)) return Status::OK();
     complex128 prev, curr;
@@ -3271,6 +3926,9 @@ class ConvertPowStage : public ArithmeticOptimizerStage {
 
  private:
   Status SetElementToOne(int i, Tensor* t) {
+   std::vector<std::string> mht_156_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_156(mht_156_v, 3929, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "SetElementToOne");
+
     switch (t->dtype()) {
       case DT_INT32:
         t->flat<int32>()(i) = 1;
@@ -3300,12 +3958,21 @@ class ConvertLog1pStage : public ArithmeticOptimizerStage {
  public:
   explicit ConvertLog1pStage(const GraphOptimizerContext& ctx,
                              const ArithmeticOptimizerContext& ctx_ext)
-      : ArithmeticOptimizerStage("ConvertLog1p", ctx, ctx_ext) {}
+      : ArithmeticOptimizerStage("ConvertLog1p", ctx, ctx_ext) {
+   std::vector<std::string> mht_157_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_157(mht_157_v, 3962, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "ConvertLog1pStage");
+}
   ~ConvertLog1pStage() override = default;
 
-  bool IsSupported(const NodeDef* node) const override { return IsLog(*node); }
+  bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_158_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_158(mht_158_v, 3968, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+ return IsLog(*node); }
 
   Status TrySimplify(NodeDef* node, string* simplified_node_name) override {
+   std::vector<std::string> mht_159_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_159(mht_159_v, 3973, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     NodeDef* input;
     TF_RETURN_IF_ERROR(GetInputNode(node->input(0), &input));
     if (!IsAdd(*input)) {
@@ -3330,6 +3997,9 @@ class ConvertLog1pStage : public ArithmeticOptimizerStage {
  private:
   Status TrySimplifyInternal(NodeDef* node, NodeDef* add_node, int i, int j,
                              bool* modified) {
+   std::vector<std::string> mht_160_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_160(mht_160_v, 4000, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplifyInternal");
+
     const auto& t =
         ctx().graph_properties->GetInputProperties(add_node->name())[i];
     const auto& c =
@@ -3391,10 +4061,16 @@ class ConvertExpm1Stage : public ArithmeticOptimizerStage {
  public:
   explicit ConvertExpm1Stage(const GraphOptimizerContext& ctx,
                              const ArithmeticOptimizerContext& ctx_ext)
-      : ArithmeticOptimizerStage("ConvertExpm1", ctx, ctx_ext) {}
+      : ArithmeticOptimizerStage("ConvertExpm1", ctx, ctx_ext) {
+   std::vector<std::string> mht_161_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_161(mht_161_v, 4065, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "ConvertExpm1Stage");
+}
   ~ConvertExpm1Stage() override = default;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_162_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_162(mht_162_v, 4071, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     if (!IsSub(*node)) return false;
 
     NodeDef* input;
@@ -3404,6 +4080,9 @@ class ConvertExpm1Stage : public ArithmeticOptimizerStage {
   }
 
   Status TrySimplify(NodeDef* node, string* simplified_node_name) override {
+   std::vector<std::string> mht_163_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_163(mht_163_v, 4083, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     if (ctx().graph_properties->GetInputProperties(node->name()).size() < 2) {
       return Status::OK();
     }
@@ -3464,16 +4143,25 @@ class OptimizeMaxOrMinOfMonotonicStage : public ArithmeticOptimizerStage {
       const GraphOptimizerContext& ctx,
       const ArithmeticOptimizerContext& ctx_ext)
       : ArithmeticOptimizerStage("OptimizeMaxOrMinOfMonotonicStage", ctx,
-                                 ctx_ext) {}
+                                 ctx_ext) {
+   std::vector<std::string> mht_164_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_164(mht_164_v, 4147, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "OptimizeMaxOrMinOfMonotonicStage");
+}
   ~OptimizeMaxOrMinOfMonotonicStage() override = default;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_165_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_165(mht_165_v, 4153, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     return IsAnyMax(*node) || IsAnyMin(*node) || IsAnyMaxPool(*node) ||
            IsArgMax(*node) || IsArgMin(*node);
   }
 
   Status TrySimplify(NodeDef* reduction_node,
                      string* simplified_node_name) override {
+   std::vector<std::string> mht_166_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_166(mht_166_v, 4162, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     if (IsInPreserveSet(*reduction_node)) {
       return Status::OK();
     }
@@ -3542,6 +4230,9 @@ class OptimizeMaxOrMinOfMonotonicStage : public ArithmeticOptimizerStage {
 
  private:
   string FlipMinMax(const NodeDef& node) {
+   std::vector<std::string> mht_167_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_167(mht_167_v, 4233, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "FlipMinMax");
+
     const string& op = node.op();
     if (IsAnyMax(node) || IsArgMax(node)) {
       return str_util::StringReplace(op, "Max", "Min", false);
@@ -3560,6 +4251,9 @@ class UnaryOpsComposition : public ArithmeticOptimizerStage {
   explicit UnaryOpsComposition(const GraphOptimizerContext& ctx,
                                const ArithmeticOptimizerContext& ctx_ext)
       : ArithmeticOptimizerStage("UnaryOpsComposition", ctx, ctx_ext) {
+   std::vector<std::string> mht_168_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_168(mht_168_v, 4254, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "UnaryOpsComposition");
+
     // WARN: This should be consistent with unary_ops_composition.cc.
     // clang-format off
     supported_ops_ = {// Ops defined via Eigen scalar ops.
@@ -3601,6 +4295,9 @@ class UnaryOpsComposition : public ArithmeticOptimizerStage {
   ~UnaryOpsComposition() override = default;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_169_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_169(mht_169_v, 4298, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     return CanOptimize(*node) &&
            // Check that this node was not already a root of a fused chain. If
            // graph optimization runs twice without pruning in between,
@@ -3609,6 +4306,9 @@ class UnaryOpsComposition : public ArithmeticOptimizerStage {
   }
 
   Status TrySimplify(NodeDef* root, string* simplified_node_name) override {
+   std::vector<std::string> mht_170_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_170(mht_170_v, 4309, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     TF_RETURN_IF_ERROR(CheckAttrExists(*root, "T"));
     DataType dtype = root->attr().at("T").type();
 
@@ -3618,6 +4318,9 @@ class UnaryOpsComposition : public ArithmeticOptimizerStage {
 
     // Check if we should follow input(0) while building an op composition.
     const auto predicate_fn = [&](const NodeDef& input) {
+   std::vector<std::string> mht_171_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_171(mht_171_v, 4321, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "lambda");
+
       if (input.name() == root->name()) return true;
 
       bool follow_input_node =
@@ -3670,6 +4373,9 @@ class UnaryOpsComposition : public ArithmeticOptimizerStage {
 
  private:
   bool CanOptimize(const NodeDef& node) const {
+   std::vector<std::string> mht_172_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_172(mht_172_v, 4376, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "CanOptimize");
+
     DataType dtype = GetDataTypeFromAttr(node, "T");
     if (!IsSupported(node.op(), dtype)) {
       return false;
@@ -3688,17 +4394,31 @@ class UnaryOpsComposition : public ArithmeticOptimizerStage {
   }
 
   bool NodeIsAlreadyFused(const NodeDef& node) const {
+   std::vector<std::string> mht_173_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_173(mht_173_v, 4397, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "NodeIsAlreadyFused");
+
     return fused_nodes_.count(node.name()) > 0;
   }
 
   string OptimizedNodeName(const NodeDef& node) const {
+   std::vector<std::string> mht_174_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_174(mht_174_v, 4404, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "OptimizedNodeName");
+
     return strings::StrCat(node.name(), "/unary_ops_composition");
   }
 
-  void AddToFusedNodes(const string& name) { fused_nodes_.insert(name); }
+  void AddToFusedNodes(const string& name) {
+   std::vector<std::string> mht_175_v;
+   mht_175_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_175(mht_175_v, 4412, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "AddToFusedNodes");
+ fused_nodes_.insert(name); }
 
   // Check if an op is supported by the _UnaryOpsComposition for the given type.
   bool IsSupported(const string& op_name, DataType dtype) const {
+   std::vector<std::string> mht_176_v;
+   mht_176_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_176(mht_176_v, 4419, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     const auto it = supported_ops_.find(op_name);
     return it != supported_ops_.end() && it->second.count(dtype) > 0;
   }
@@ -3731,14 +4451,23 @@ class RemoveStackSliceSameAxis : public ArithmeticOptimizerStage {
   explicit RemoveStackSliceSameAxis(const GraphOptimizerContext& ctx,
                                     const ArithmeticOptimizerContext& ctx_ext)
       : ArithmeticOptimizerStage("RemoveStackStridedSliceSameAxis", ctx,
-                                 ctx_ext) {}
+                                 ctx_ext) {
+   std::vector<std::string> mht_177_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_177(mht_177_v, 4455, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "RemoveStackSliceSameAxis");
+}
   ~RemoveStackSliceSameAxis() override = default;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_178_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_178(mht_178_v, 4461, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     return (IsStridedSlice(*node) || IsSlice(*node)) && !IsInPreserveSet(*node);
   }
 
   Status TrySimplify(NodeDef* node, string* simplified_node_name) override {
+   std::vector<std::string> mht_179_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_179(mht_179_v, 4468, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     // *node is a StridedSlice NodeDef.
     NodeDef* pack;
 
@@ -3769,6 +4498,9 @@ class RemoveStackSliceSameAxis : public ArithmeticOptimizerStage {
   Status CheckInputs(const NodeDef* node, const NodeDef* pack,
                      PartialTensorShape* pack_output_shape, int* pack_axis,
                      bool* return_early) {
+   std::vector<std::string> mht_180_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_180(mht_180_v, 4501, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "CheckInputs");
+
     *return_early = true;
     TF_RETURN_IF_ERROR(CheckAttrExists(*pack, "axis"));
 
@@ -3797,6 +4529,9 @@ class RemoveStackSliceSameAxis : public ArithmeticOptimizerStage {
                       const PartialTensorShape& pack_output_shape,
                       int pack_axis, int64_t* slice_start_value, bool* found,
                       bool* must_expand_dims) {
+   std::vector<std::string> mht_181_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_181(mht_181_v, 4532, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "GetSliceAxis");
+
     *found = false;
     if (IsSlice(*node)) {
       *must_expand_dims = true;
@@ -3812,6 +4547,9 @@ class RemoveStackSliceSameAxis : public ArithmeticOptimizerStage {
                             const PartialTensorShape& pack_output_shape,
                             int pack_axis, int64_t* slice_start_value,
                             bool* found) {
+   std::vector<std::string> mht_182_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_182(mht_182_v, 4550, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "GetSimpleSliceAxis");
+
     NodeDef* slice_begin;
     NodeDef* slice_size;
     TF_RETURN_IF_ERROR(GetInputNode(node->input(1), &slice_begin));
@@ -3833,6 +4571,9 @@ class RemoveStackSliceSameAxis : public ArithmeticOptimizerStage {
 
     auto copy_tensor_values_to_vector =
         [node](const Tensor& t, gtl::InlinedVector<int64, 4>* vec) {
+   std::vector<std::string> mht_183_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_183(mht_183_v, 4574, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "lambda");
+
           if (t.dtype() == DT_INT32) {
             auto t_flat = t.flat<int32>();
             vec->assign(&t_flat(0), &t_flat(t.NumElements()));
@@ -3903,6 +4644,9 @@ class RemoveStackSliceSameAxis : public ArithmeticOptimizerStage {
                              const PartialTensorShape& pack_output_shape,
                              int pack_axis, int64_t* slice_start_value,
                              bool* found, bool* must_expand_dims) {
+   std::vector<std::string> mht_184_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_184(mht_184_v, 4647, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "GetStridedSliceAxis");
+
     TF_RETURN_IF_ERROR(
         CheckAttrsExist(*node, {"begin_mask", "end_mask", "ellipsis_mask",
                                 "new_axis_mask", "shrink_axis_mask"}));
@@ -4032,6 +4776,9 @@ class RemoveStackSliceSameAxis : public ArithmeticOptimizerStage {
   Status RewriteGraph(const NodeDef* node, const NodeDef* pack,
                       int64_t slice_start_value, int pack_axis,
                       bool must_expand_dims, string* simplified_node_name) {
+   std::vector<std::string> mht_185_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_185(mht_185_v, 4779, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "RewriteGraph");
+
     const string& input_slice = pack->input(slice_start_value);
 
     const OpInfo::TensorProperties* input_slice_properties;
@@ -4110,15 +4857,24 @@ class SimplifyEmbeddingLookupStage : public ArithmeticOptimizerStage {
       const GraphOptimizerContext& ctx,
       const ArithmeticOptimizerContext& ctx_ext)
       : ArithmeticOptimizerStage("SimplifyEmbeddingLookupStage", ctx, ctx_ext) {
+   std::vector<std::string> mht_186_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_186(mht_186_v, 4860, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "SimplifyEmbeddingLookupStage");
+
   }
   ~SimplifyEmbeddingLookupStage() override = default;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_187_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_187(mht_187_v, 4867, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     return IsAnySparseSegmentReduction(*node);
   }
 
   Status TrySimplify(NodeDef* reduction_node,
                      string* simplified_node_name) override {
+   std::vector<std::string> mht_188_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_188(mht_188_v, 4875, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     if (IsInPreserveSet(*reduction_node)) return Status::OK();
 
     // Input 0 (data) of the reduction node must be a tf.gather() on the 0th
@@ -4211,6 +4967,9 @@ class SimplifyEmbeddingLookupStage : public ArithmeticOptimizerStage {
 
  private:
   bool IsAxis0(const NodeDef& node, int axis_input) {
+   std::vector<std::string> mht_189_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_189(mht_189_v, 4970, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsAxis0");
+
     Tensor axis_tensor;
     if (!GetTensorFromConstNode(node.input(axis_input), &axis_tensor))
       return false;
@@ -4237,15 +4996,24 @@ class RemoveCastIntoSegmentReductionStage : public ArithmeticOptimizerStage {
       const GraphOptimizerContext& ctx,
       const ArithmeticOptimizerContext& ctx_ext)
       : ArithmeticOptimizerStage("RemoveCastIntoSegmentReductionStage", ctx,
-                                 ctx_ext) {}
+                                 ctx_ext) {
+   std::vector<std::string> mht_190_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_190(mht_190_v, 5000, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "RemoveCastIntoSegmentReductionStage");
+}
   ~RemoveCastIntoSegmentReductionStage() override = default;
 
   bool IsSupported(const NodeDef* node) const override {
+   std::vector<std::string> mht_191_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_191(mht_191_v, 5006, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsSupported");
+
     return IsAnySparseSegmentReduction(*node);
   }
 
   Status TrySimplify(NodeDef* reduction_node,
                      string* simplified_node_name) override {
+   std::vector<std::string> mht_192_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_192(mht_192_v, 5014, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "TrySimplify");
+
     if (IsInPreserveSet(*reduction_node)) return Status::OK();
 
     bool optimized = false;
@@ -4278,6 +5046,9 @@ class RemoveCastIntoSegmentReductionStage : public ArithmeticOptimizerStage {
 
  private:
   bool IsCastFromSupportedType(const NodeDef& node, DataType* out_input_type) {
+   std::vector<std::string> mht_193_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_193(mht_193_v, 5049, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "IsCastFromSupportedType");
+
     if (!IsCast(node)) return false;
     if (!GetNodeAttr(node, "SrcT", out_input_type).ok()) return false;
     return *out_input_type == DT_INT32 || *out_input_type == DT_INT64;
@@ -4287,6 +5058,9 @@ class RemoveCastIntoSegmentReductionStage : public ArithmeticOptimizerStage {
 }  // namespace
 
 Status ArithmeticOptimizer::SimplifyArithmeticOps(bool can_use_shapes) {
+   std::vector<std::string> mht_194_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_194(mht_194_v, 5061, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "ArithmeticOptimizer::SimplifyArithmeticOps");
+
   SetVector<NodeDef*> nodes_to_simplify;
   nodes_to_simplify.Reserve(optimized_graph_->node_size());
   for (int i = 0; i < optimized_graph_->node_size(); ++i) {
@@ -4300,7 +5074,11 @@ Status ArithmeticOptimizer::SimplifyArithmeticOps(bool can_use_shapes) {
 
   // Stop pipeline after first stage returning non-empty simplified tensor
   // name.
-  const auto stop = [](const string& result) { return !result.empty(); };
+  const auto stop = [](const string& result) {
+   std::vector<std::string> mht_195_v;
+   mht_195_v.push_back("result: \"" + result + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_195(mht_195_v, 5079, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "lambda");
+ return !result.empty(); };
   GraphOptimizerStagePipeline<string> pipeline(stop);
   const bool is_aggressive = opt_level_ == RewriterConfig::AGGRESSIVE;
 
@@ -4420,6 +5198,9 @@ Status ArithmeticOptimizer::SimplifyArithmeticOps(bool can_use_shapes) {
 Status ArithmeticOptimizer::Optimize(Cluster* /*cluster*/,
                                      const GrapplerItem& item,
                                      GraphDef* optimized_graph) {
+   std::vector<std::string> mht_196_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSarithmetic_optimizerDTcc mht_196(mht_196_v, 5201, "", "./tensorflow/core/grappler/optimizers/arithmetic_optimizer.cc", "ArithmeticOptimizer::Optimize");
+
   // Set up helper data structures.
   nodes_to_preserve_ = item.NodesToPreserve();
   fetch_nodes_known_ = !item.fetch.empty();

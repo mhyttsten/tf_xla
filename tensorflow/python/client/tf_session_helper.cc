@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -45,6 +213,9 @@ static const char* kFeedDictErrorMsg =
 
 TF_Session* TF_NewSessionRef(TF_Graph* graph, const TF_SessionOptions* opts,
                              TF_Status* status) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc mht_0(mht_0_v, 216, "", "./tensorflow/python/client/tf_session_helper.cc", "TF_NewSessionRef");
+
   TF_Session* tf_session = TF_NewSession(graph, opts, status);
   if (tf_session == nullptr) {
     return nullptr;
@@ -62,6 +233,10 @@ void TF_Run_wrapper_helper(TF_DeprecatedSession* session, const char* handle,
                            const NameVector& target_nodes,
                            TF_Status* out_status, PyObjectVector* out_values,
                            TF_Buffer* run_outputs) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("handle: \"" + (handle == nullptr ? std::string("nullptr") : std::string((char*)handle)) + "\"");
+   MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc mht_1(mht_1_v, 237, "", "./tensorflow/python/client/tf_session_helper.cc", "TF_Run_wrapper_helper");
+
   // 1. Convert the feed inputs to the appropriate form for TF_Run.
   if (!PyDict_Check(feed_dict)) {
     Set_TF_Status_from_Status(out_status,
@@ -165,6 +340,9 @@ void TF_Run_wrapper(TF_DeprecatedSession* session, const TF_Buffer* run_options,
                     PyObject* feed_dict, const NameVector& output_names,
                     const NameVector& target_nodes, TF_Status* out_status,
                     PyObjectVector* out_values, TF_Buffer* run_outputs) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc mht_2(mht_2_v, 343, "", "./tensorflow/python/client/tf_session_helper.cc", "TF_Run_wrapper");
+
   TF_Run_wrapper_helper(session, nullptr, run_options, feed_dict, output_names,
                         target_nodes, out_status, out_values, run_outputs);
   ClearDecrefCache();
@@ -174,6 +352,9 @@ namespace {
 void MakeCallableHelper(tensorflow::Session* session,
                         const TF_Buffer* callable_options, int64_t* out_handle,
                         TF_Status* out_status) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc mht_3(mht_3_v, 355, "", "./tensorflow/python/client/tf_session_helper.cc", "MakeCallableHelper");
+
   tensorflow::CallableOptions callable_options_proto;
   if (callable_options != nullptr &&
       !callable_options_proto.ParseFromArray(callable_options->data,
@@ -196,11 +377,17 @@ void MakeCallableHelper(tensorflow::Session* session,
 void TF_DeprecatedSessionMakeCallable(TF_DeprecatedSession* session,
                                       const TF_Buffer* callable_options,
                                       int64_t* out_handle, TF_Status* status) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc mht_4(mht_4_v, 380, "", "./tensorflow/python/client/tf_session_helper.cc", "TF_DeprecatedSessionMakeCallable");
+
   MakeCallableHelper(session->session, callable_options, out_handle, status);
 }
 void TF_SessionMakeCallable(TF_Session* session,
                             const TF_Buffer* callable_options,
                             int64_t* out_handle, TF_Status* status) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc mht_5(mht_5_v, 388, "", "./tensorflow/python/client/tf_session_helper.cc", "TF_SessionMakeCallable");
+
   MakeCallableHelper(session->session, callable_options, out_handle, status);
 }
 
@@ -208,6 +395,9 @@ namespace {
 void RunCallableHelper(tensorflow::Session* session, int64_t handle,
                        PyObject* feed_values, TF_Status* out_status,
                        PyObjectVector* out_values, TF_Buffer* run_metadata) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc mht_6(mht_6_v, 398, "", "./tensorflow/python/client/tf_session_helper.cc", "RunCallableHelper");
+
   // Convert feed values to a vector of tensorflow::Tensor objects.
   std::vector<Tensor> input_tensors;
   Status s;
@@ -288,6 +478,9 @@ void TF_DeprecatedSessionRunCallable(TF_DeprecatedSession* session,
                                      PyObjectVector* out_values,
                                      TF_Buffer* run_metadata,
                                      TF_Status* status) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc mht_7(mht_7_v, 481, "", "./tensorflow/python/client/tf_session_helper.cc", "TF_DeprecatedSessionRunCallable");
+
   RunCallableHelper(session->session, handle, feed_values, status, out_values,
                     run_metadata);
   ClearDecrefCache();
@@ -295,6 +488,9 @@ void TF_DeprecatedSessionRunCallable(TF_DeprecatedSession* session,
 void TF_SessionRunCallable(TF_Session* session, int64_t handle,
                            PyObject* feed_values, PyObjectVector* out_values,
                            TF_Buffer* run_metadata, TF_Status* status) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc mht_8(mht_8_v, 491, "", "./tensorflow/python/client/tf_session_helper.cc", "TF_SessionRunCallable");
+
   RunCallableHelper(session->session, handle, feed_values, status, out_values,
                     run_metadata);
   ClearDecrefCache();
@@ -302,10 +498,16 @@ void TF_SessionRunCallable(TF_Session* session, int64_t handle,
 
 void TF_DeprecatedSessionReleaseCallable(TF_DeprecatedSession* session,
                                          int64_t handle, TF_Status* status) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc mht_9(mht_9_v, 501, "", "./tensorflow/python/client/tf_session_helper.cc", "TF_DeprecatedSessionReleaseCallable");
+
   Set_TF_Status_from_Status(status, session->session->ReleaseCallable(handle));
 }
 void TF_SessionReleaseCallable(TF_Session* session, int64_t handle,
                                TF_Status* status) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc mht_10(mht_10_v, 508, "", "./tensorflow/python/client/tf_session_helper.cc", "TF_SessionReleaseCallable");
+
   Set_TF_Status_from_Status(status, session->session->ReleaseCallable(handle));
 }
 
@@ -316,6 +518,9 @@ void TF_PRunSetup_wrapper(TF_DeprecatedSession* session,
                           const NameVector& output_names,
                           const NameVector& target_nodes, TF_Status* out_status,
                           const char** out_handle) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc mht_11(mht_11_v, 521, "", "./tensorflow/python/client/tf_session_helper.cc", "TF_PRunSetup_wrapper");
+
   Py_BEGIN_ALLOW_THREADS;
   TF_PRunSetup(
       session, const_cast<const char**>(input_names.data()), input_names.size(),
@@ -331,6 +536,10 @@ void TF_PRunSetup_wrapper(TF_DeprecatedSession* session,
 void TF_PRun_wrapper(TF_DeprecatedSession* session, const char* handle,
                      PyObject* feed_dict, const NameVector& output_names,
                      TF_Status* out_status, PyObjectVector* out_values) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("handle: \"" + (handle == nullptr ? std::string("nullptr") : std::string((char*)handle)) + "\"");
+   MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc mht_12(mht_12_v, 540, "", "./tensorflow/python/client/tf_session_helper.cc", "TF_PRun_wrapper");
+
   TF_Run_wrapper_helper(session, handle, nullptr, feed_dict, output_names,
                         NameVector(), out_status, out_values, nullptr);
   ClearDecrefCache();
@@ -339,6 +548,9 @@ void TF_PRun_wrapper(TF_DeprecatedSession* session, const char* handle,
 // Wrapper for TF_Reset that converts the string vectors to character arrays.
 void TF_Reset_wrapper(const TF_SessionOptions* opt,
                       const NameVector& containers, TF_Status* status) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc mht_13(mht_13_v, 551, "", "./tensorflow/python/client/tf_session_helper.cc", "TF_Reset_wrapper");
+
   TF_Reset(opt, const_cast<const char**>(containers.data()), containers.size(),
            status);
 }
@@ -352,6 +564,10 @@ void TF_SessionRun_wrapper_helper(TF_Session* session, const char* handle,
                                   TF_Buffer* run_metadata,
                                   TF_Status* out_status,
                                   std::vector<PyObject*>* py_outputs) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("handle: \"" + (handle == nullptr ? std::string("nullptr") : std::string((char*)handle)) + "\"");
+   MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc mht_14(mht_14_v, 568, "", "./tensorflow/python/client/tf_session_helper.cc", "TF_SessionRun_wrapper_helper");
+
   DCHECK_EQ(inputs.size(), input_ndarrays.size());
   DCHECK(py_outputs != nullptr);
   DCHECK(py_outputs->empty());
@@ -438,6 +654,9 @@ void TF_SessionRun_wrapper(TF_Session* session, const TF_Buffer* run_options,
                            const std::vector<TF_Operation*>& targets,
                            TF_Buffer* run_metadata, TF_Status* out_status,
                            std::vector<PyObject*>* py_outputs) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc mht_15(mht_15_v, 657, "", "./tensorflow/python/client/tf_session_helper.cc", "TF_SessionRun_wrapper");
+
   TF_SessionRun_wrapper_helper(session, nullptr, run_options, inputs,
                                input_ndarrays, outputs, targets, run_metadata,
                                out_status, py_outputs);
@@ -447,6 +666,11 @@ void TF_SessionRun_wrapper(TF_Session* session, const TF_Buffer* run_options,
 }
 
 string EqualGraphDefWrapper(const string& actual, const string& expected) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("actual: \"" + actual + "\"");
+   mht_16_v.push_back("expected: \"" + expected + "\"");
+   MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc mht_16(mht_16_v, 671, "", "./tensorflow/python/client/tf_session_helper.cc", "EqualGraphDefWrapper");
+
   GraphDef actual_def;
   if (!actual_def.ParseFromString(actual)) {
     return "actual is not a valid serialized GraphDef";
@@ -460,6 +684,11 @@ string EqualGraphDefWrapper(const string& actual, const string& expected) {
 }
 
 string EqualAttrValueWrapper(const string& actual, const string& expected) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("actual: \"" + actual + "\"");
+   mht_17_v.push_back("expected: \"" + expected + "\"");
+   MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc mht_17(mht_17_v, 689, "", "./tensorflow/python/client/tf_session_helper.cc", "EqualAttrValueWrapper");
+
   AttrValue actual_attr_value;
   if (!actual_attr_value.ParseFromString(actual)) {
     return "actual is not a valid serialized AttrValue";
@@ -513,6 +742,9 @@ void TF_SessionPRunSetup_wrapper(TF_Session* session,
                                  const std::vector<TF_Operation*>& targets,
                                  const char** out_handle,
                                  TF_Status* out_status) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc mht_18(mht_18_v, 745, "", "./tensorflow/python/client/tf_session_helper.cc", "TF_SessionPRunSetup_wrapper");
+
   // Call TF_SessionPRunSetup() (and release GIL during execution)
   Py_BEGIN_ALLOW_THREADS;
   TF_SessionPRunSetup(session, inputs.data(), inputs.size(), outputs.data(),
@@ -527,6 +759,10 @@ void TF_SessionPRun_wrapper(TF_Session* session, const char* handle,
                             const std::vector<TF_Output>& outputs,
                             TF_Status* out_status,
                             std::vector<PyObject*>* py_outputs) {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("handle: \"" + (handle == nullptr ? std::string("nullptr") : std::string((char*)handle)) + "\"");
+   MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc mht_19(mht_19_v, 763, "", "./tensorflow/python/client/tf_session_helper.cc", "TF_SessionPRun_wrapper");
+
   const std::vector<TF_Operation*> targets;
   TF_SessionRun_wrapper_helper(session, handle,
                                nullptr,  // run_options
@@ -583,6 +819,11 @@ TF_Function* TF_GraphToFunction_wrapper(
     const std::vector<TF_Operation*>* control_outputs,
     const NameVector& control_output_names, const TF_FunctionOptions* opts,
     const char* description, TF_Status* out_status) {
+   std::vector<std::string> mht_20_v;
+   mht_20_v.push_back("fn_name: \"" + (fn_name == nullptr ? std::string("nullptr") : std::string((char*)fn_name)) + "\"");
+   mht_20_v.push_back("description: \"" + (description == nullptr ? std::string("nullptr") : std::string((char*)description)) + "\"");
+   MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc mht_20(mht_20_v, 824, "", "./tensorflow/python/client/tf_session_helper.cc", "TF_GraphToFunction_wrapper");
+
   if (!output_names.empty() && output_names.size() != outputs.size()) {
     Set_TF_Status_from_Status(
         out_status,
@@ -623,6 +864,9 @@ void TF_GraphSetOutputHandleShapesAndTypes_wrapper(
     const std::vector<std::vector<int64_t>>& shapes,
     const std::vector<int>& ranks, const std::vector<TF_DataType>& types,
     TF_Status* status) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc mht_21(mht_21_v, 867, "", "./tensorflow/python/client/tf_session_helper.cc", "TF_GraphSetOutputHandleShapesAndTypes_wrapper");
+
   std::vector<const int64_t*> shapes_pointers(shapes.size());
   for (int i = 0; i < shapes.size(); ++i) {
     shapes_pointers[i] = ranks[i] <= 0 ? nullptr : &shapes[i][0];
@@ -634,6 +878,9 @@ void TF_GraphSetOutputHandleShapesAndTypes_wrapper(
 
 void CreatePlaceholder(TF_Graph* graph, TF_Status* s, string&& name,
                        TF_DataType dtype, TF_Output* output) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc mht_22(mht_22_v, 881, "", "./tensorflow/python/client/tf_session_helper.cc", "CreatePlaceholder");
+
   TF_OperationDescription* desc =
       TF_NewOperation(graph, "Placeholder", name.data());
   TF_SetAttrType(desc, "dtype", dtype);
@@ -677,6 +924,9 @@ std::vector<TF_Output> TF_CreatePlaceholders(TF_Graph* graph, PyObject* dtypes,
 void TF_GraphSetTensorShape_wrapper(TF_Graph* graph, TF_Output output,
                                     const std::vector<int64_t>& dims,
                                     bool unknown_shape, TF_Status* status) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc mht_23(mht_23_v, 927, "", "./tensorflow/python/client/tf_session_helper.cc", "TF_GraphSetTensorShape_wrapper");
+
   if (unknown_shape) {
     TF_GraphSetTensorShape(graph, output, nullptr, -1, status);
     return;
@@ -700,6 +950,9 @@ std::vector<string> TF_ImportGraphDefResultsMissingUnusedInputMappings_wrapper(
 
 PyObject* TF_TryEvaluateConstant_wrapper(TF_Graph* graph, TF_Output output,
                                          TF_Status* status) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSpythonPSclientPStf_session_helperDTcc mht_24(mht_24_v, 953, "", "./tensorflow/python/client/tf_session_helper.cc", "TF_TryEvaluateConstant_wrapper");
+
   TF_Tensor* result_tensor;
   bool evaluated =
       TF_TryEvaluateConstant(graph, output, &result_tensor, status);

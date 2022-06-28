@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_GRAPPLER_GRAPH_VIEW_H_
 #define TENSORFLOW_CORE_GRAPPLER_GRAPH_VIEW_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_viewDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_viewDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_viewDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <unordered_map>
 #include <unordered_set>
@@ -69,8 +237,14 @@ template <typename GraphDefT, typename NodeDefT>
 class GraphViewInternal {
  public:
   struct Port {
-    Port() : node(nullptr), port_id(0) {}
-    Port(NodeDefT* n, int port) : node(n), port_id(port) {}
+    Port() : node(nullptr), port_id(0) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_viewDTh mht_0(mht_0_v, 241, "", "./tensorflow/core/grappler/graph_view.h", "Port");
+}
+    Port(NodeDefT* n, int port) : node(n), port_id(port) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_viewDTh mht_1(mht_1_v, 245, "", "./tensorflow/core/grappler/graph_view.h", "Port");
+}
 
     bool operator==(const Port& other) const {
       return node == other.node && port_id == other.port_id;
@@ -78,6 +252,9 @@ class GraphViewInternal {
 
     template <typename H>
     friend H AbslHashValue(H h, const Port& p) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_viewDTh mht_2(mht_2_v, 255, "", "./tensorflow/core/grappler/graph_view.h", "AbslHashValue");
+
       return H::combine(std::move(h), p.node, p.port_id);
     }
 
@@ -94,7 +271,10 @@ class GraphViewInternal {
   };
 
   struct Edge {
-    Edge(OutputPort s, InputPort d) : src(s), dst(d) {}
+    Edge(OutputPort s, InputPort d) : src(s), dst(d) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_viewDTh mht_3(mht_3_v, 275, "", "./tensorflow/core/grappler/graph_view.h", "Edge");
+}
 
     bool operator==(const Edge& other) const {
       return src == other.src && dst == other.dst;
@@ -102,6 +282,9 @@ class GraphViewInternal {
 
     template <typename H>
     friend H AbslHashValue(H h, const Edge& e) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_viewDTh mht_4(mht_4_v, 285, "", "./tensorflow/core/grappler/graph_view.h", "AbslHashValue");
+
       return H::combine(std::move(h), e.src, e.dst);
     }
 
@@ -109,15 +292,26 @@ class GraphViewInternal {
     InputPort dst;
   };
 
-  GraphDefT* graph() const { return graph_; }
+  GraphDefT* graph() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_viewDTh mht_5(mht_5_v, 296, "", "./tensorflow/core/grappler/graph_view.h", "graph");
+ return graph_; }
 
   // Finds a node by name or return `nullptr` if it's not in the graph view.
   NodeDefT* GetNode(absl::string_view node_name) const {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_viewDTh mht_6(mht_6_v, 303, "", "./tensorflow/core/grappler/graph_view.h", "GetNode");
+
     return gtl::FindWithDefault(nodes_, node_name, nullptr);
   }
 
   // Checks if a node by name is in the graph view.
   bool HasNode(absl::string_view node_name) const {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_viewDTh mht_7(mht_7_v, 312, "", "./tensorflow/core/grappler/graph_view.h", "HasNode");
+
     return GetNode(node_name) != nullptr;
   }
 
@@ -125,6 +319,10 @@ class GraphViewInternal {
   // used to access the controlling nodes (i.e. the nodes connected to node_name
   // through an incoming control dependency).
   InputPort GetInputPort(absl::string_view node_name, int port_id) const {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_viewDTh mht_8(mht_8_v, 323, "", "./tensorflow/core/grappler/graph_view.h", "GetInputPort");
+
     return InputPort(GetNode(node_name), port_id);
   }
 
@@ -132,12 +330,19 @@ class GraphViewInternal {
   // used to access the controlled nodes (i.e. the nodes connected to node_name
   // through an outgoing control dependency).
   OutputPort GetOutputPort(absl::string_view node_name, int port_id) const {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_viewDTh mht_9(mht_9_v, 334, "", "./tensorflow/core/grappler/graph_view.h", "GetOutputPort");
+
     return OutputPort(GetNode(node_name), port_id);
   }
 
   // Gets the input port(s) in the immediate fanout of an output port.
   const absl::flat_hash_set<InputPort>& GetFanout(
       const OutputPort& port) const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_viewDTh mht_10(mht_10_v, 343, "", "./tensorflow/core/grappler/graph_view.h", "GetFanout");
+
     return gtl::FindWithDefault(fanouts_, port, fanout_not_found_value_);
   }
 
@@ -168,6 +373,9 @@ class GraphViewInternal {
   // fanin. If port.port_id is out of range or is a control dependency, then an
   // empty OutputPort is returned.
   const OutputPort GetRegularFanin(const InputPort& port) const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_viewDTh mht_11(mht_11_v, 376, "", "./tensorflow/core/grappler/graph_view.h", "GetRegularFanin");
+
     if (port.port_id < 0 ||
         port.port_id >
             gtl::FindWithDefault(max_regular_input_port_, port.node, -1)) {
@@ -180,6 +388,9 @@ class GraphViewInternal {
 
   // Checks if a tensor id is a fanin of the node.
   bool HasFanin(const NodeDefT& node, const TensorId& fanin) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_viewDTh mht_12(mht_12_v, 391, "", "./tensorflow/core/grappler/graph_view.h", "HasFanin");
+
     int end = node.input_size();
     if (end == 0 || fanin.index() < -1) {
       return false;
@@ -244,6 +455,9 @@ class GraphViewInternal {
   // Gets the number of ports in the immediate fanin of a node. Count the
   // controlling nodes iff include_controlling_nodes is true.
   int NumFanins(const NodeDefT& node, bool include_controlling_nodes) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_viewDTh mht_13(mht_13_v, 458, "", "./tensorflow/core/grappler/graph_view.h", "NumFanins");
+
     if (include_controlling_nodes) {
       return node.input_size();
     }
@@ -253,6 +467,9 @@ class GraphViewInternal {
   // Gets the number of ports in the immediate fanout of a node. Count the
   // controlled nodes iff include_controlled_nodes is true.
   int NumFanouts(const NodeDefT& node, bool include_controlled_nodes) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_viewDTh mht_14(mht_14_v, 470, "", "./tensorflow/core/grappler/graph_view.h", "NumFanouts");
+
     int count = 0;
 
     OutputPort port;
@@ -316,9 +533,15 @@ class GraphViewInternal {
   }
 
  protected:
-  explicit GraphViewInternal(GraphDefT* graph) : graph_(graph) {}
+  explicit GraphViewInternal(GraphDefT* graph) : graph_(graph) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_viewDTh mht_15(mht_15_v, 537, "", "./tensorflow/core/grappler/graph_view.h", "GraphViewInternal");
+}
 
   Status AddUniqueNode(NodeDefT* node) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_viewDTh mht_16(mht_16_v, 542, "", "./tensorflow/core/grappler/graph_view.h", "AddUniqueNode");
+
     auto inserted = nodes_.emplace(node->name(), node);
     return inserted.second
                ? Status::OK()
@@ -328,6 +551,9 @@ class GraphViewInternal {
 
   // TODO(ezhulenev): Remove this function.
   void AddUniqueNodeOrDie(NodeDefT* node) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_viewDTh mht_17(mht_17_v, 554, "", "./tensorflow/core/grappler/graph_view.h", "AddUniqueNodeOrDie");
+
     Status st = AddUniqueNode(node);
     CHECK(st.ok()) << st.error_message();
   }
@@ -335,6 +561,9 @@ class GraphViewInternal {
   // TODO(lyandy): Checks for self loops, Switch control dependencies, fanins
   // exist, and all regular fanins come before controlling fanins.
   void AddFanouts(NodeDefT* node) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_viewDTh mht_18(mht_18_v, 564, "", "./tensorflow/core/grappler/graph_view.h", "AddFanouts");
+
     int max_input_port = -1;
     for (int i = 0; i < node->input_size(); ++i) {
       TensorId tensor_id = ParseTensorName(node->input(i));
@@ -358,6 +587,9 @@ class GraphViewInternal {
   absl::flat_hash_map<absl::string_view, NodeDefT*>& nodes() { return nodes_; }
 
   absl::flat_hash_map<OutputPort, absl::flat_hash_set<InputPort>>& fanouts() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_viewDTh mht_19(mht_19_v, 590, "", "./tensorflow/core/grappler/graph_view.h", "fanouts");
+
     return fanouts_;
   }
 
@@ -401,6 +633,9 @@ class GraphView
     : public internal::GraphViewInternal<const GraphDef, const NodeDef> {
  public:
   explicit GraphView(const GraphDef* graph) : GraphViewInternal(graph) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_viewDTh mht_20(mht_20_v, 636, "", "./tensorflow/core/grappler/graph_view.h", "GraphView");
+
     for (const NodeDef& node : graph->node()) AddUniqueNodeOrDie(&node);
     for (const NodeDef& node : graph->node()) AddFanouts(&node);
   }

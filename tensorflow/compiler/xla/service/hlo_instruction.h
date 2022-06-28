@@ -20,6 +20,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_HLO_INSTRUCTION_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_HLO_INSTRUCTION_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <functional>
 #include <iosfwd>
@@ -100,9 +268,15 @@ class HloPrintOptions {
         print_ids_(true),
         canonicalize_computations_(false),
         print_extra_attributes_(true),
-        syntax_sugar_async_ops_(true) {}
+        syntax_sugar_async_ops_(true) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_0(mht_0_v, 272, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "HloPrintOptions");
+}
 
   static HloPrintOptions ShortParsable() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_1(mht_1_v, 277, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "ShortParsable");
+
     return HloPrintOptions()
         .set_print_large_constants(true)
         .set_print_subcomputation_mode(PrintSubcomputationMode::kNameOnly)
@@ -118,6 +292,9 @@ class HloPrintOptions {
   // Options to produce the canonical string representing an isomorphic
   // computation graph.
   static HloPrintOptions Canonical() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_2(mht_2_v, 295, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "Canonical");
+
     return HloPrintOptions()
         .set_print_subcomputation_mode(PrintSubcomputationMode::kFullBodies)
         .set_print_metadata(false)
@@ -138,6 +315,9 @@ class HloPrintOptions {
   // Options to produce a fingerprint of an HLO instruction.
   // Based on Canonical() with some important changes commented below.
   static HloPrintOptions Fingerprint() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_3(mht_3_v, 318, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "Fingerprint");
+
     return Canonical()
         // Exclude because they do not affect HLO optimizations.
         .set_print_infeed_outfeed_config(false)
@@ -156,6 +336,9 @@ class HloPrintOptions {
   // Options to produce a fingerprint of an HLO module and computation.
   // Shorter (and therefore faster) than Fingerprint().
   static HloPrintOptions ModuleFingerprint() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_4(mht_4_v, 339, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "ModuleFingerprint");
+
     return Fingerprint()
         // Operand shapes can be inferred from output shapes and canonicalized
         // names when we have an entire computation.
@@ -164,90 +347,135 @@ class HloPrintOptions {
 
   // If true, large constants will be printed out.
   HloPrintOptions& set_print_large_constants(bool value) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_5(mht_5_v, 350, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_print_large_constants");
+
     print_large_constants_ = value;
     return *this;
   }
 
   // If true, only integer, all-zero, are all-one constants will be printed out.
   HloPrintOptions& set_print_only_essential_constants(bool value) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_6(mht_6_v, 359, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_print_only_essential_constants");
+
     print_only_essential_constants_ = value;
     return *this;
   }
 
   HloPrintOptions& set_print_subcomputation_mode(
       PrintSubcomputationMode value) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_7(mht_7_v, 368, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_print_subcomputation_mode");
+
     print_subcomputation_mode_ = value;
     return *this;
   }
 
   // If true, metadata will be printed.
   HloPrintOptions& set_print_metadata(bool value) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_8(mht_8_v, 377, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_print_metadata");
+
     print_metadata_ = value;
     return *this;
   }
 
   // If true, backend_config will be printed.
   HloPrintOptions& set_print_backend_config(bool value) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_9(mht_9_v, 386, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_print_backend_config");
+
     print_backend_config_ = value;
     return *this;
   }
 
   // If true, infeed_config and outfeed_config will be printed.
   HloPrintOptions& set_print_infeed_outfeed_config(bool value) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_10(mht_10_v, 395, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_print_infeed_outfeed_config");
+
     print_infeed_outfeed_config_ = value;
     return *this;
   }
 
   // If true, result shapes will be printed.
   HloPrintOptions& set_print_result_shape(bool value) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_11(mht_11_v, 404, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_print_result_shape");
+
     print_result_shape_ = value;
     return *this;
   }
 
   // If true, operands' shapes will be printed.
   HloPrintOptions& set_print_operand_shape(bool value) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_12(mht_12_v, 413, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_print_operand_shape");
+
     print_operand_shape_ = value;
     return *this;
   }
 
   // If true, operands' shapes will be printed.
   HloPrintOptions& set_print_operand_index_annotation_interval(int64_t value) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_13(mht_13_v, 422, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_print_operand_index_annotation_interval");
+
     print_operand_index_annotation_interval_ = value;
     return *this;
   }
 
   // If true, the operand names will be printed.
   HloPrintOptions& set_print_operand_names(bool value) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_14(mht_14_v, 431, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_print_operand_names");
+
     print_operand_names_ = value;
     return *this;
   }
 
   // If true, all printed names include unique identifiers.
   HloPrintOptions& set_print_ids(bool value) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_15(mht_15_v, 440, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_print_ids");
+
     print_ids_ = value;
     return *this;
   }
 
   // If true, the HLO includes its attributes.
   HloPrintOptions& set_print_extra_attributes(bool value) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_16(mht_16_v, 449, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_print_extra_attributes");
+
     print_extra_attributes_ = value;
     return *this;
   }
 
   // If true, program shape of hlo computations will be printed.
   HloPrintOptions& set_print_program_shape(bool value) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_17(mht_17_v, 458, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_print_program_shape");
+
     print_program_shape_ = value;
     return *this;
   }
 
   // If true, names will be printed with prefix '%'.
   HloPrintOptions& set_print_percent(bool value) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_18(mht_18_v, 467, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_print_percent");
+
     print_percent_ = value;
     return *this;
   }
 
   // If true, control dependencies will be printed.
   HloPrintOptions& set_print_control_dependencies(bool value) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_19(mht_19_v, 476, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_print_control_dependencies");
+
     print_control_dependencies_ = value;
     return *this;
   }
@@ -293,6 +521,9 @@ class HloPrintOptions {
   //                                                    custom_call_target="foo"
   // }
   HloPrintOptions& set_syntax_sugar_async_op(bool value) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_20(mht_20_v, 524, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_syntax_sugar_async_op");
+
     syntax_sugar_async_ops_ = value;
     return *this;
   }
@@ -300,6 +531,9 @@ class HloPrintOptions {
   // If true, only a part of operands will be printed out (note that in this
   // case the text will not be parsable).
   HloPrintOptions& set_compact_operands(bool value) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_21(mht_21_v, 534, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_compact_operands");
+
     compact_operands_ = value;
     return *this;
   }
@@ -307,6 +541,9 @@ class HloPrintOptions {
   // If true, include the layout in any shapes that are printed (instruction
   // and operands).
   HloPrintOptions& set_include_layout_in_shapes(bool value) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_22(mht_22_v, 544, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_include_layout_in_shapes");
+
     include_layout_in_shapes_ = value;
     return *this;
   }
@@ -314,18 +551,27 @@ class HloPrintOptions {
   // If true, canonicalizes instructions' name. Instead of using "%foo.1" as
   // the name of an instruction, we use "%tmp_1", "%tmp_2" etc.
   HloPrintOptions& set_canonicalize_instruction_names(bool value) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_23(mht_23_v, 554, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_canonicalize_instruction_names");
+
     canonicalize_instruction_names_ = value;
     return *this;
   }
 
   // If true, canonicalizes computations, sorting by computations' names.
   HloPrintOptions& set_canonicalize_computations(bool value) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_24(mht_24_v, 563, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_canonicalize_computations");
+
     canonicalize_computations_ = value;
     return *this;
   }
 
   // The indent of the hlo text block.
   HloPrintOptions& set_indent_amount(int value) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_25(mht_25_v, 572, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_indent_amount");
+
     indent_amount_ = value;
     return *this;
   }
@@ -333,44 +579,113 @@ class HloPrintOptions {
   // If true, indicates the instruction being printed is inside a nested
   // computation.
   HloPrintOptions& set_is_in_nested_computation(bool value) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_26(mht_26_v, 582, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_is_in_nested_computation");
+
     is_in_nested_computation_ = value;
     return *this;
   }
 
-  bool print_large_constants() const { return print_large_constants_; }
+  bool print_large_constants() const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_27(mht_27_v, 590, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "print_large_constants");
+ return print_large_constants_; }
   bool print_only_essential_constants() const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_28(mht_28_v, 594, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "print_only_essential_constants");
+
     return print_only_essential_constants_;
   }
   PrintSubcomputationMode print_subcomputation_mode() const {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_29(mht_29_v, 600, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "print_subcomputation_mode");
+
     return print_subcomputation_mode_;
   }
-  bool print_metadata() const { return print_metadata_; }
-  bool print_backend_config() const { return print_backend_config_; }
+  bool print_metadata() const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_30(mht_30_v, 606, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "print_metadata");
+ return print_metadata_; }
+  bool print_backend_config() const {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_31(mht_31_v, 610, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "print_backend_config");
+ return print_backend_config_; }
   bool print_infeed_outfeed_config() const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_32(mht_32_v, 614, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "print_infeed_outfeed_config");
+
     return print_infeed_outfeed_config_;
   }
-  bool compact_operands() const { return compact_operands_; }
-  bool include_layout_in_shapes() const { return include_layout_in_shapes_; }
-  bool print_result_shape() const { return print_result_shape_; }
-  bool print_operand_shape() const { return print_operand_shape_; }
-  bool print_operand_names() const { return print_operand_names_; }
+  bool compact_operands() const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_33(mht_33_v, 620, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "compact_operands");
+ return compact_operands_; }
+  bool include_layout_in_shapes() const {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_34(mht_34_v, 624, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "include_layout_in_shapes");
+ return include_layout_in_shapes_; }
+  bool print_result_shape() const {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_35(mht_35_v, 628, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "print_result_shape");
+ return print_result_shape_; }
+  bool print_operand_shape() const {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_36(mht_36_v, 632, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "print_operand_shape");
+ return print_operand_shape_; }
+  bool print_operand_names() const {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_37(mht_37_v, 636, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "print_operand_names");
+ return print_operand_names_; }
   int64_t print_operand_index_annotation_interval() const {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_38(mht_38_v, 640, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "print_operand_index_annotation_interval");
+
     return print_operand_index_annotation_interval_;
   }
-  bool print_ids() const { return print_ids_; }
-  bool print_program_shape() const { return print_program_shape_; }
-  bool print_percent() const { return print_percent_; }
+  bool print_ids() const {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_39(mht_39_v, 646, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "print_ids");
+ return print_ids_; }
+  bool print_program_shape() const {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_40(mht_40_v, 650, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "print_program_shape");
+ return print_program_shape_; }
+  bool print_percent() const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_41(mht_41_v, 654, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "print_percent");
+ return print_percent_; }
   bool print_control_dependencies() const {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_42(mht_42_v, 658, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "print_control_dependencies");
+
     return print_control_dependencies_;
   }
-  bool print_extra_attributes() const { return print_extra_attributes_; }
-  bool syntax_sugar_async_ops() const { return syntax_sugar_async_ops_; }
+  bool print_extra_attributes() const {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_43(mht_43_v, 664, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "print_extra_attributes");
+ return print_extra_attributes_; }
+  bool syntax_sugar_async_ops() const {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_44(mht_44_v, 668, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "syntax_sugar_async_ops");
+ return syntax_sugar_async_ops_; }
   bool canonicalize_instruction_names() const {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_45(mht_45_v, 672, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "canonicalize_instruction_names");
+
     return canonicalize_instruction_names_;
   }
-  bool canonicalize_computations() const { return canonicalize_computations_; }
-  int indent_amount() const { return indent_amount_; }
-  int is_in_nested_computation() const { return is_in_nested_computation_; }
+  bool canonicalize_computations() const {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_46(mht_46_v, 678, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "canonicalize_computations");
+ return canonicalize_computations_; }
+  int indent_amount() const {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_47(mht_47_v, 682, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "indent_amount");
+ return indent_amount_; }
+  int is_in_nested_computation() const {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_48(mht_48_v, 686, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "is_in_nested_computation");
+ return is_in_nested_computation_; }
 
  private:
   bool print_large_constants_;
@@ -405,6 +720,10 @@ class HloPrintOptions {
 class CanonicalNameMap {
  public:
   const std::string& LookupOrInsert(const std::string& name) {
+   std::vector<std::string> mht_49_v;
+   mht_49_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_49(mht_49_v, 724, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "LookupOrInsert");
+
     std::string& canonical_name = canonical_name_map_[name];
     if (canonical_name.empty()) {
       absl::StrAppend(&canonical_name, "tmp_", canonical_name_map_.size() - 1);
@@ -504,7 +823,10 @@ class HloInstruction {
     kCustom,
   };
 
-  virtual ~HloInstruction() { DetachFromOperandsAndUsers(); }
+  virtual ~HloInstruction() {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_50(mht_50_v, 827, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "~HloInstruction");
+ DetachFromOperandsAndUsers(); }
 
   // Detaches an instruction from its operands and users. That is, remove the
   // instruction from each operand's user set and user's operand set.
@@ -1157,14 +1479,23 @@ class HloInstruction {
       HloInstruction* data_operand, HloInstruction* token_operand);
 
   // Returns the opcode for this instruction.
-  HloOpcode opcode() const { return opcode_; }
-  HloOpcode* mutable_opcode() { return &opcode_; }
+  HloOpcode opcode() const {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_51(mht_51_v, 1483, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "opcode");
+ return opcode_; }
+  HloOpcode* mutable_opcode() {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_52(mht_52_v, 1487, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "mutable_opcode");
+ return &opcode_; }
 
   // Returns whether this instruction is the root of its parent computation.
   bool IsRoot() const;
 
   // Does this instruction have no users.
-  bool IsDead() const { return users_.empty() && !IsRoot(); }
+  bool IsDead() const {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_53(mht_53_v, 1496, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "IsDead");
+ return users_.empty() && !IsRoot(); }
 
   // Returns true if this instruction has a side effect, irrespective of whether
   // any called computations may contain an instruction with side effects.
@@ -1179,7 +1510,10 @@ class HloInstruction {
   const Shape& shape() const;
 
   // Returns the (mutable) result shape of this instruction.
-  Shape* mutable_shape() { return &shape_; }
+  Shape* mutable_shape() {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_54(mht_54_v, 1514, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "mutable_shape");
+ return &shape_; }
 
   // Returns the ith operand to this instruction.
   const HloInstruction* operand(int64_t i) const;
@@ -1188,12 +1522,21 @@ class HloInstruction {
   HloInstruction* mutable_operand(int64_t i);
 
   // Returns the number of operands to this instruction.
-  int64_t operand_count() const { return operands_.size(); }
+  int64_t operand_count() const {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_55(mht_55_v, 1526, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "operand_count");
+ return operands_.size(); }
 
   // Returns the vector of operands of this instruction.
   using InstructionVector = absl::InlinedVector<HloInstruction*, 2>;
-  const InstructionVector& operands() const { return operands_; }
-  InstructionVector mutable_operands() { return operands_; }
+  const InstructionVector& operands() const {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_56(mht_56_v, 1533, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "operands");
+ return operands_; }
+  InstructionVector mutable_operands() {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_57(mht_57_v, 1537, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "mutable_operands");
+ return operands_; }
 
   // Returns the vector of unique operands, in the same order they are found
   // within the operand vector.
@@ -1204,10 +1547,16 @@ class HloInstruction {
   int64_t operand_index(const HloInstruction* target) const;
 
   // Returns the number of users of this instruction.
-  int64_t user_count() const { return users_.size(); }
+  int64_t user_count() const {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_58(mht_58_v, 1551, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "user_count");
+ return users_.size(); }
 
   // Returns the users of this instruction.
-  const std::vector<HloInstruction*>& users() const { return users_; }
+  const std::vector<HloInstruction*>& users() const {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_59(mht_59_v, 1557, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "users");
+ return users_; }
 
   // Returns the index of the user in the users() vector.
   //
@@ -1216,6 +1565,9 @@ class HloInstruction {
 
   // Returns true if this instruction is a user of 'instruction'.
   bool IsUserOf(const HloInstruction* instruction) const {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_60(mht_60_v, 1568, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "IsUserOf");
+
     return ContainsKey(instruction->user_map_, this);
   }
 
@@ -1250,9 +1602,15 @@ class HloInstruction {
   // instruction. Control predecessors (successors) must execute before (after)
   // the current instruction.
   const std::vector<HloInstruction*>& control_predecessors() const {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_61(mht_61_v, 1605, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "control_predecessors");
+
     return control_predecessors_;
   }
   const std::vector<HloInstruction*>& control_successors() const {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_62(mht_62_v, 1611, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "control_successors");
+
     return control_successors_;
   }
 
@@ -1264,6 +1622,9 @@ class HloInstruction {
       const std::function<bool(const HloComputation*, const HloComputation*)>&
           eq_computations = std::equal_to<const HloComputation*>(),
       bool layout_sensitive = true) const {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_63(mht_63_v, 1625, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "Identical");
+
     return IdenticalInternal(other, eq_operands, eq_computations,
                              layout_sensitive,
                              /*ignore_channel_id_values=*/false);
@@ -1278,6 +1639,9 @@ class HloInstruction {
       const std::function<bool(const HloComputation*, const HloComputation*)>&
           eq_computations = std::equal_to<const HloComputation*>(),
       bool layout_sensitive = true) const {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_64(mht_64_v, 1642, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "IdenticalIgnoringChannelIdValues");
+
     return IdenticalInternal(other, eq_operands, eq_computations,
                              layout_sensitive,
                              /*ignore_channel_id_values=*/true);
@@ -1290,6 +1654,9 @@ class HloInstruction {
   // TODO(majnemer): Make the comment here more crisp & accurate.
   template <typename H>
   friend H AbslHashValue(H h, const HloInstruction& hlo) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_65(mht_65_v, 1657, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "AbslHashValue");
+
     h = H::combine(std::move(h), hlo.opcode(), hlo.shape());
 
     if (!hlo.IsCrossModuleAllReduce()) {
@@ -1368,6 +1735,9 @@ class HloInstruction {
                 bool ignore_control_predecessors = false);
   Status Accept(ConstDfsHloVisitor* visitor, bool call_finish_visit = true,
                 bool ignore_control_predecessors = false) const {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_66(mht_66_v, 1738, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "Accept");
+
     return const_cast<HloInstruction*>(this)->Accept(
         visitor, call_finish_visit, ignore_control_predecessors);
   }
@@ -1401,6 +1771,9 @@ class HloInstruction {
   const HloInstruction* LatestNonGteAncestor() const;
 
   HloInstruction* LatestNonGteAncestor() {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_67(mht_67_v, 1774, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "LatestNonGteAncestor");
+
     return const_cast<HloInstruction*>(
         const_cast<const HloInstruction*>(this)->LatestNonGteAncestor());
   }
@@ -1458,7 +1831,10 @@ class HloInstruction {
   // TODO(b/73348663): Make ToString() adaptive to the size of the string by
   // default, backing off on providing full information for very large strings,
   // or provide a different name for a ToString-like function that does that.
-  std::string ToString() const { return ToString(HloPrintOptions()); }
+  std::string ToString() const {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_68(mht_68_v, 1835, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "ToString");
+ return ToString(HloPrintOptions()); }
   std::string ToString(const HloPrintOptions& options) const;
 
   // Components of the ToString() representation:
@@ -1513,6 +1889,9 @@ class HloInstruction {
   // Returns the sharding applied to this operator.
   // REQUIRES: has_sharding() is true.
   const HloSharding& sharding() const {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_69(mht_69_v, 1892, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "sharding");
+
     CHECK(has_sharding());
     return *sharding_;
   }
@@ -1520,6 +1899,9 @@ class HloInstruction {
 
   // Returns the sharding applied to this operator, or default_ if none exists.
   const HloSharding& sharding_or_default(const HloSharding& default_) const {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_70(mht_70_v, 1902, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "sharding_or_default");
+
     return sharding_ ? *sharding_ : default_;
   }
   // Returns the sharding unique device, if any.
@@ -1532,23 +1914,41 @@ class HloInstruction {
   // Sets the sharding of this operator. Should only be called by HloModule or
   // HloComputation methods.
   void set_sharding(const HloSharding& sharding) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_71(mht_71_v, 1917, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_sharding");
+
     sharding_ = std::make_shared<const HloSharding>(sharding);
   }
   void set_sharding(std::shared_ptr<const HloSharding> sharding) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_72(mht_72_v, 1923, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_sharding");
+
     sharding_ = std::move(sharding);
   }
   void set_single_sharding(const HloSharding& sharding);
   // Sets a sharding that assigns the current instruction to device.
   void set_device_sharding(int64_t device) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_73(mht_73_v, 1931, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_device_sharding");
+
     set_single_sharding(HloSharding::AssignDevice(device));
   }
   // Remove any sharding from this operator.
-  void clear_sharding() { sharding_ = nullptr; }
+  void clear_sharding() {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_74(mht_74_v, 1938, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "clear_sharding");
+ sharding_ = nullptr; }
   // Return true if this operator has a sharding assigned.
-  bool has_sharding() const { return sharding_ != nullptr; }
+  bool has_sharding() const {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_75(mht_75_v, 1943, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "has_sharding");
+ return sharding_ != nullptr; }
   // Checks whether the instruction has compatible sharding with the other
   // instruction.
   bool has_compatible_sharding(const HloInstruction* other) const {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_76(mht_76_v, 1949, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "has_compatible_sharding");
+
     if (!has_sharding()) {
       return !other->has_sharding();
     }
@@ -1583,6 +1983,9 @@ class HloInstruction {
 
   // Returns the computations this instruction directly calls (if any).
   const std::vector<HloComputation*>& called_computations() const {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_77(mht_77_v, 1986, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "called_computations");
+
     return called_computations_;
   }
 
@@ -1591,6 +1994,9 @@ class HloInstruction {
   // to the newly cloned nodes.
   void ReplaceCalledComputations(
       std::function<HloComputation*(HloComputation*)> map_function) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_78(mht_78_v, 1997, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "ReplaceCalledComputations");
+
     for (int64_t i = 0; i < called_computations_.size(); ++i) {
       called_computations_[i] = map_function(called_computations_[i]);
     }
@@ -1604,7 +2010,10 @@ class HloInstruction {
   // clearing out the computations, we reflect the fact that all side-effecting
   // properties have been reflected in the caller, and make the call HLO
   // removable.
-  virtual void ClearCalledComputations() { called_computations_.clear(); }
+  virtual void ClearCalledComputations() {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_79(mht_79_v, 2014, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "ClearCalledComputations");
+ called_computations_.clear(); }
 
   // Returns true if this instruction performs an elementwise operation on
   // `operand_idx`-th operand. An instruction is elementwise on an operand iff,
@@ -1649,7 +2058,10 @@ class HloInstruction {
   ReshapeMerelyInsertsOrDeletes1SizedDimensions() const;
 
   // Gets the string identifier for this instruction.
-  const std::string& name() const { return name_; }
+  const std::string& name() const {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_80(mht_80_v, 2062, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "name");
+ return name_; }
 
   // Sets the string identifier for this instruction. Name will be sanitized to
   // match the regexp "[a-zA-Z_][a-zA-Z0-9_.-]*".
@@ -1657,6 +2069,10 @@ class HloInstruction {
   // See also HloModule::SetAndUniquifyInstrName(), which does this plus
   // UniqufyName().
   void SetAndSanitizeName(absl::string_view name) {
+   std::vector<std::string> mht_81_v;
+   mht_81_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_81(mht_81_v, 2073, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "SetAndSanitizeName");
+
     name_ = NameUniquer::GetSanitizedName(name);
   }
 
@@ -1669,10 +2085,16 @@ class HloInstruction {
 
   // Clear the unique ID of the instruction so that it can be re-assigned, such
   // as for the purpose of compacting the instruction unique IDs.
-  void ClearUniqueIdInternal() { unique_id_ = -1; }
+  void ClearUniqueIdInternal() {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_82(mht_82_v, 2089, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "ClearUniqueIdInternal");
+ unique_id_ = -1; }
 
   // Set the unique id for this instruction to "id"
   void SetUniqueId(int id) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_83(mht_83_v, 2095, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "SetUniqueId");
+
     CHECK_EQ(unique_id_, -1);  // Should not be assigned already
     CHECK_GE(id, 0);
     unique_id_ = id;
@@ -1680,7 +2102,10 @@ class HloInstruction {
 
   // Return the unique ID assigned to this node via SetUniqueId (or -1
   // if no id has been assigned yet).
-  int unique_id() const { return unique_id_; }
+  int unique_id() const {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_84(mht_84_v, 2106, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "unique_id");
+ return unique_id_; }
 
   template <typename T>
   using EnableIfProto = typename std::enable_if_t<
@@ -1702,42 +2127,76 @@ class HloInstruction {
   }
 
   Status set_backend_config(const tensorflow::protobuf::Message& proto) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_85(mht_85_v, 2130, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_backend_config");
+
     backend_config_ = proto;
     return Status::OK();
   }
 
-  bool has_backend_config() const { return !backend_config_.empty(); }
+  bool has_backend_config() const {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_86(mht_86_v, 2138, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "has_backend_config");
+ return !backend_config_.empty(); }
 
-  void clear_backend_config() { backend_config_.clear(); }
+  void clear_backend_config() {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_87(mht_87_v, 2143, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "clear_backend_config");
+ backend_config_.clear(); }
 
   void CopyBackendConfigFrom(const HloInstruction* other) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_88(mht_88_v, 2148, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "CopyBackendConfigFrom");
+
     backend_config_ = other->backend_config_.Clone();
   }
 
   void set_frontend_attributes(FrontendAttributes frontend_attributes) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_89(mht_89_v, 2155, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_frontend_attributes");
+
     frontend_attributes_ = std::move(frontend_attributes);
   }
 
   void add_frontend_attributes(FrontendAttributes frontend_attributes) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_90(mht_90_v, 2162, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "add_frontend_attributes");
+
     frontend_attributes_.mutable_map()->insert(
         frontend_attributes.map().begin(), frontend_attributes.map().end());
   }
 
   const FrontendAttributes& frontend_attributes() const {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_91(mht_91_v, 2170, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "frontend_attributes");
+
     return frontend_attributes_;
   }
 
   // Getter/setter for raw JSON-encoded backend config.  Prefer the
   // functions above that deal in proto Messages where possible.
   const std::string& raw_backend_config_string() const {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_92(mht_92_v, 2179, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "raw_backend_config_string");
+
     return backend_config_.GetRawString();
   }
   void set_raw_backend_config_string(std::string config_str) {
+   std::vector<std::string> mht_93_v;
+   mht_93_v.push_back("config_str: \"" + config_str + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_93(mht_93_v, 2186, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_raw_backend_config_string");
+
     backend_config_ = std::move(config_str);
   }
 
-  bool is_default_config() const { return is_default_config_; }
-  void set_default_config() { is_default_config_ = true; }
+  bool is_default_config() const {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_94(mht_94_v, 2193, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "is_default_config");
+ return is_default_config_; }
+  void set_default_config() {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_95(mht_95_v, 2197, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_default_config");
+ is_default_config_ = true; }
 
   // Returns a string representation of a proto in the format used by
   // raw_backend_config_string.
@@ -1765,36 +2224,67 @@ class HloInstruction {
   // Sets the debug metadata for this instruction, excluding creation_pass_id,
   // which should never be copied anywhere.
   void set_metadata(const OpMetadata& metadata) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_96(mht_96_v, 2227, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_metadata");
+
     int64_t creation_pass_id = metadata_.creation_pass_id();
     metadata_ = metadata;
     metadata_.set_creation_pass_id(creation_pass_id);
   }
 
   void set_size_of_generated_code_in_bytes(int64_t code_size_in_bytes) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_97(mht_97_v, 2236, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_size_of_generated_code_in_bytes");
+
     metadata_.set_size_of_generated_code_in_bytes(code_size_in_bytes);
   }
   void set_size_of_memory_working_set_in_bytes(
       int64_t working_set_size_in_bytes) {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_98(mht_98_v, 2243, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_size_of_memory_working_set_in_bytes");
+
     metadata_.set_size_of_memory_working_set_in_bytes(
         working_set_size_in_bytes);
   }
   void set_creation_pass_id(int64_t pass_id) {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_99(mht_99_v, 2250, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_creation_pass_id");
+
     metadata_.set_creation_pass_id(pass_id);
   }
   void set_metadata_op_name(const std::string& name) {
+   std::vector<std::string> mht_100_v;
+   mht_100_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_100(mht_100_v, 2257, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_metadata_op_name");
+
     metadata_.set_op_name(name);
   }
   void set_logical_creation_pass_id(int64_t pass_id) {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_101(mht_101_v, 2263, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_logical_creation_pass_id");
+
     metadata_.set_logical_creation_pass_id(pass_id);
   }
-  const OpMetadata& metadata() const { return metadata_; }
+  const OpMetadata& metadata() const {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_102(mht_102_v, 2269, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "metadata");
+ return metadata_; }
 
   // Set/get the computation containing this instruction. set_parent should only
   // be called by HloComputation methods which add/remove instructions to
   // computations.
-  void set_parent(HloComputation* computation) { parent_ = computation; }
-  const HloComputation* parent() const { return parent_; }
-  HloComputation* parent() { return parent_; }
+  void set_parent(HloComputation* computation) {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_103(mht_103_v, 2277, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_parent");
+ parent_ = computation; }
+  const HloComputation* parent() const {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_104(mht_104_v, 2281, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "parent");
+ return parent_; }
+  HloComputation* parent() {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_105(mht_105_v, 2285, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "parent");
+ return parent_; }
 
   // Returns the module for this instruction.
   HloModule* GetModule() const;
@@ -1806,6 +2296,9 @@ class HloInstruction {
   // TODO(b/62783254) Replace these methods with a more general way to
   // annotate HLOs with backend-specific information.
   const std::vector<int64_t>& outer_dimension_partitions() const {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_106(mht_106_v, 2299, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "outer_dimension_partitions");
+
     return outer_dimension_partitions_;
   }
   void set_outer_dimension_partitions(
@@ -1835,9 +2328,15 @@ class HloInstruction {
     LOG(FATAL) << "Unimplemented method.";
   }
 
-  int64_t dimensions(int64_t index) const { return dimensions()[index]; }
+  int64_t dimensions(int64_t index) const {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_107(mht_107_v, 2332, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "dimensions");
+ return dimensions()[index]; }
 
   virtual std::vector<int64_t>* mutable_dimensions() {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_108(mht_108_v, 2337, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "mutable_dimensions");
+
     LOG(FATAL) << "Unimplemented method.";
   }
 
@@ -1988,16 +2487,25 @@ class HloInstruction {
   // Returns data on the window in a windowed operation such as
   // convolution.
   virtual const Window& window() const {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_109(mht_109_v, 2490, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "window");
+
     LOG(FATAL) << "Unimplemented method.";
   }
 
   // Sets the window data in a windowed operation such as convolution.
   virtual void set_window(const Window& window) {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_110(mht_110_v, 2498, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_window");
+
     LOG(FATAL) << "Unimplemented method.";
   }
 
   // Returns the unique_indices field.
-  virtual bool unique_indices() const { LOG(FATAL) << "Unimplemented method."; }
+  virtual bool unique_indices() const {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_111(mht_111_v, 2506, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "unique_indices");
+ LOG(FATAL) << "Unimplemented method."; }
 
   // Returns data on the dimension numbers used for a convolution operation,
   // which may be a kConvolution instruction or a kCustomCall that implements a
@@ -2106,9 +2614,15 @@ class HloInstruction {
   // by factory methods.
   HloInstruction(HloOpcode opcode, const Shape& shape);
 
-  void RemoveAllOperands() { operands_.clear(); }
+  void RemoveAllOperands() {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_112(mht_112_v, 2618, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "RemoveAllOperands");
+ operands_.clear(); }
 
   void RemoveOperandAt(int index) {
+   std::vector<std::string> mht_113_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_113(mht_113_v, 2623, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "RemoveOperandAt");
+
     operands_.erase(operands_.begin() + index);
   }
 
@@ -2117,12 +2631,21 @@ class HloInstruction {
       absl::Span<const int> ascending_indices);
 
   void AppendComputation(HloComputation* computation) {
+   std::vector<std::string> mht_114_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_114(mht_114_v, 2634, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "AppendComputation");
+
     called_computations_.push_back(computation);
   }
 
-  void DetachFrom(HloInstruction* usee) { usee->RemoveUser(this); }
+  void DetachFrom(HloInstruction* usee) {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_115(mht_115_v, 2641, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "DetachFrom");
+ usee->RemoveUser(this); }
 
   void set_called_computation(int index, HloComputation* computation) {
+   std::vector<std::string> mht_116_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_116(mht_116_v, 2646, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "set_called_computation");
+
     called_computations_[index] = computation;
   }
   // Indices of computations in called_computations_ for instructions which call
@@ -2147,6 +2670,9 @@ class HloInstruction {
   class BackendConfigRep {
    public:
     const tensorflow::protobuf::Message* GetProtoPtr() const {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_117(mht_117_v, 2673, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "GetProtoPtr");
+
       return proto_.get();
     }
 
@@ -2159,9 +2685,15 @@ class HloInstruction {
       return !(*this == other);
     }
 
-    bool empty() const { return proto_ == nullptr && raw_string_.empty(); }
+    bool empty() const {
+   std::vector<std::string> mht_118_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_118(mht_118_v, 2689, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "empty");
+ return proto_ == nullptr && raw_string_.empty(); }
 
     void clear() {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_119(mht_119_v, 2694, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "clear");
+
       proto_.reset();
       raw_string_.clear();
     }
@@ -2233,11 +2765,17 @@ class HloInstruction {
   Status GetBackendConfigInternal(tensorflow::protobuf::Message* proto) const;
 
   // Mark this instruction as dead. Accessed by friend class HloInstruction.
-  void MarkAsDead() { marked_as_dead_ = true; }
+  void MarkAsDead() {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_120(mht_120_v, 2769, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "MarkAsDead");
+ marked_as_dead_ = true; }
 
   // Has this instruction been marked as dead? Accessed by friend class
   // HloInstruction.
-  bool IsMarkedAsDead() const { return marked_as_dead_; }
+  bool IsMarkedAsDead() const {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTh mht_121(mht_121_v, 2776, "", "./tensorflow/compiler/xla/service/hlo_instruction.h", "IsMarkedAsDead");
+ return marked_as_dead_; }
 
   int unique_id_;  // Unique to this HloInstruction within a HloModule
 

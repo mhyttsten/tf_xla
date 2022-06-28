@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -64,6 +232,9 @@ struct TFInlinerInterface : public DialectInlinerInterface {
   // Allow all call operations to be inlined.
   bool isLegalToInline(Operation* call, Operation* callable,
                        bool wouldBeCloned) const final {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_0(mht_0_v, 235, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "isLegalToInline");
+
     return true;
   }
 
@@ -71,12 +242,18 @@ struct TFInlinerInterface : public DialectInlinerInterface {
   // attached to a TF Device operation.
   bool isLegalToInline(Region* dest, Region* src, bool wouldBeCloned,
                        BlockAndValueMapping& valueMapping) const final {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_1(mht_1_v, 245, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "isLegalToInline");
+
     return true;
   }
 
   // Defines the legality of inlining TF Device operations.
   bool isLegalToInline(Operation*, Region*, bool,
                        BlockAndValueMapping&) const final {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_2(mht_2_v, 254, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "isLegalToInline");
+
     // For now, enable inlining all operations.
     return true;
   }
@@ -94,6 +271,9 @@ struct TFInlinerInterface : public DialectInlinerInterface {
   Operation* materializeCallConversion(OpBuilder& builder, Value input,
                                        Type result_type,
                                        Location conversion_loc) const final {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_3(mht_3_v, 274, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "materializeCallConversion");
+
     if (!result_type.isa<TensorType>() || !input.getType().isa<TensorType>())
       return nullptr;
     return builder.create<TF::CastOp>(conversion_loc, result_type, input,
@@ -104,6 +284,9 @@ struct TFInlinerInterface : public DialectInlinerInterface {
 // Checks if a block wraps a single operation and the single operation results
 // are perfectly forwarded to the block's terminator.
 bool BlockWrapsSingleOp(Block* block) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_4(mht_4_v, 287, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "BlockWrapsSingleOp");
+
   auto body = block->without_terminator();
   if (!hasSingleElement(body)) return false;
 
@@ -119,6 +302,9 @@ bool BlockWrapsSingleOp(Block* block) {
 TensorFlowDeviceDialect::TensorFlowDeviceDialect(MLIRContext* context)
     : Dialect(/*name=*/"tf_device", context,
               TypeID::get<TensorFlowDeviceDialect>()) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_5(mht_5_v, 305, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "TensorFlowDeviceDialect::TensorFlowDeviceDialect");
+
   addOperations<
 #define GET_OP_LIST
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc.inc"
@@ -133,13 +319,19 @@ TensorFlowDeviceDialect::TensorFlowDeviceDialect(MLIRContext* context)
 
 // Checks if a tf_device.launch wraps a single operation and the single
 // operation results are perfectly forwarded to the launch return.
-bool LaunchOp::WrapsSingleOp() { return BlockWrapsSingleOp(&GetBody()); }
+bool LaunchOp::WrapsSingleOp() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_6(mht_6_v, 323, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "LaunchOp::WrapsSingleOp");
+ return BlockWrapsSingleOp(&GetBody()); }
 
 //===----------------------------------------------------------------------===//
 // tf_device.parallel_execute
 //===----------------------------------------------------------------------===//
 
 LogicalResult ParallelExecuteOp::verify() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_7(mht_7_v, 332, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "ParallelExecuteOp::verify");
+
   ParallelExecuteOp op = *this;
   const auto& regions = op.getOperation()->getRegions();
   if (regions.size() < 2) {
@@ -177,6 +369,9 @@ LogicalResult ParallelExecuteOp::verify() {
 // static
 void ParallelExecuteOp::build(OpBuilder& builder, OperationState& state,
                               int num_regions, TypeRange output_types) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_8(mht_8_v, 372, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "ParallelExecuteOp::build");
+
   DCHECK_GE(num_regions, 2);
   for (int i = 0; i < num_regions; ++i) {
     Region* region = state.addRegion();
@@ -186,11 +381,17 @@ void ParallelExecuteOp::build(OpBuilder& builder, OperationState& state,
 }
 
 Block& ParallelExecuteOp::GetRegionBlockWithIndex(unsigned index) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_9(mht_9_v, 384, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "ParallelExecuteOp::GetRegionBlockWithIndex");
+
   return getOperation()->getRegion(index).front();
 }
 
 Operation::result_range ParallelExecuteOp::GetRegionOutputs(
     unsigned region_index) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_10(mht_10_v, 392, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "ParallelExecuteOp::GetRegionOutputs");
+
   int num_region_results =
       GetRegionBlockWithIndex(region_index).getTerminator()->getNumOperands();
 
@@ -203,6 +404,9 @@ Operation::result_range ParallelExecuteOp::GetRegionOutputs(
 }
 
 bool ParallelExecuteOp::RegionWrapsSingleOp(unsigned index) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_11(mht_11_v, 407, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "ParallelExecuteOp::RegionWrapsSingleOp");
+
   return BlockWrapsSingleOp(&GetRegionBlockWithIndex(index));
 }
 
@@ -218,6 +422,9 @@ ParseResult ParseReplicateOpOperands(
     llvm::SmallVectorImpl<OpAsmParser::UnresolvedOperand>* packed_inputs,
     llvm::SmallVectorImpl<OpAsmParser::UnresolvedOperand>* region_args,
     llvm::SmallVectorImpl<Type>* region_arg_types) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_12(mht_12_v, 425, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "ParseReplicateOpOperands");
+
   // No operands or empty operand list.
   bool parsed_l_paren = succeeded(parser->parseOptionalLParen());
   if (!parsed_l_paren || succeeded(parser->parseOptionalRParen()))
@@ -278,6 +485,9 @@ ParseResult SetReplicateOpOperands(
         replicated_inputs,
     llvm::ArrayRef<OpAsmParser::UnresolvedOperand> packed_inputs,
     llvm::ArrayRef<Type> region_arg_types, int32_t* n) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_13(mht_13_v, 488, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "SetReplicateOpOperands");
+
   for (const auto& attr : state->attributes)
     if (attr.getName().strref() == "n")
       if (auto n_attr = attr.getValue().dyn_cast<IntegerAttr>())
@@ -323,6 +533,9 @@ ParseResult SetReplicateOpOperands(
 static constexpr char kOperandSegmentSizesAttr[] = "operand_segment_sizes";
 
 ParseResult ReplicateOp::parse(OpAsmParser& parser, OperationState& result) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_14(mht_14_v, 536, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "ReplicateOp::parse");
+
   llvm::SMLoc loc = parser.getCurrentLocation();
 
   // Parse operands, attributes, and region of op.
@@ -373,6 +586,9 @@ ParseResult ReplicateOp::parse(OpAsmParser& parser, OperationState& result) {
 }
 
 void ReplicateOp::print(OpAsmPrinter& p) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_15(mht_15_v, 589, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "ReplicateOp::print");
+
   // Print comma separated operands of the following format:
   //   replicated_input
   //     [%a, ...] as %block_arg0: type
@@ -418,6 +634,9 @@ namespace {
 // Checks if two types are compatible (compatible shapes and same elemental
 // type).
 LogicalResult VerifyCompatibleTypes(Type a, Type b) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_16(mht_16_v, 637, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "VerifyCompatibleTypes");
+
   if (failed(verifyCompatibleShape(a, b)) ||
       getElementTypeOrSelf(a) != getElementTypeOrSelf(b))
     return failure();
@@ -430,6 +649,9 @@ void BuildReplicateOp(
     llvm::Optional<DictionaryAttr> devices,
     llvm::ArrayRef<std::pair<ValueRange, Type>> replicated_inputs,
     ValueRange packed_inputs, TypeRange replica_output_types) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_17(mht_17_v, 652, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "BuildReplicateOp");
+
   DCHECK_GE(n, 2);
   state->addAttribute("n", builder->getI32IntegerAttr(n));
 
@@ -469,6 +691,9 @@ void BuildReplicateOp(
 }  // anonymous namespace
 
 LogicalResult ReplicateOp::verify() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_18(mht_18_v, 694, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "ReplicateOp::verify");
+
   ReplicateOp op = *this;
   int32_t n = op.n();
 
@@ -567,6 +792,9 @@ void ReplicateOp::build(
         devices,
     llvm::ArrayRef<std::pair<ValueRange, Type>> replicated_inputs,
     ValueRange packed_inputs, TypeRange replica_output_types) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_19(mht_19_v, 795, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "ReplicateOp::build");
+
   llvm::Optional<DictionaryAttr> devices_attr;
   if (!devices.empty()) {
     llvm::SmallVector<mlir::NamedAttribute, 1> device_list;
@@ -589,40 +817,61 @@ void ReplicateOp::build(
     llvm::Optional<DictionaryAttr> devices,
     llvm::ArrayRef<std::pair<ValueRange, Type>> replicated_inputs,
     ValueRange packed_inputs, TypeRange replica_output_types) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_20(mht_20_v, 820, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "ReplicateOp::build");
+
   BuildReplicateOp(&builder, &state, n, devices, replicated_inputs,
                    packed_inputs, replica_output_types);
 }
 
 // Returns the number of packed block arguments.
 unsigned ReplicateOp::GetNumPackedBlockArguments() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_21(mht_21_v, 829, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "ReplicateOp::GetNumPackedBlockArguments");
+
   return packed_inputs().size();
 }
 
 // Returns the number of replicated block arguments.
 unsigned ReplicateOp::GetNumReplicatedBlockArguments() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_22(mht_22_v, 837, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "ReplicateOp::GetNumReplicatedBlockArguments");
+
   return GetBody().getNumArguments() - GetNumPackedBlockArguments();
 }
 
 // Returns the replicated block arguments. A copy should be made if the
 // replicate op is being modified.
 llvm::ArrayRef<BlockArgument> ReplicateOp::GetReplicatedBlockArguments() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_23(mht_23_v, 846, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "ReplicateOp::GetReplicatedBlockArguments");
+
   return GetBody().getArguments().drop_back(GetNumPackedBlockArguments());
 }
 
 // Returns the packed block arguments. A copy should be made if the replicate op
 // is being modified.
 llvm::ArrayRef<BlockArgument> ReplicateOp::GetPackedBlockArguments() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_24(mht_24_v, 855, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "ReplicateOp::GetPackedBlockArguments");
+
   return GetBody().getArguments().take_back(GetNumPackedBlockArguments());
 }
 
 // Checks if a block argument is replicated (forwarding replicated inputs).
 bool ReplicateOp::IsReplicatedBlockArgument(BlockArgument block_arg) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_25(mht_25_v, 863, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "ReplicateOp::IsReplicatedBlockArgument");
+
   assert(block_arg.getOwner() == &GetBody());
   return block_arg.getArgNumber() < GetNumReplicatedBlockArguments();
 }
 
 // Checks if a block argument is packed (forwarding a packed input).
 bool ReplicateOp::IsPackedBlockArgument(BlockArgument block_arg) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_26(mht_26_v, 872, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "ReplicateOp::IsPackedBlockArgument");
+
   return !IsReplicatedBlockArgument(block_arg);
 }
 
@@ -631,6 +880,9 @@ bool ReplicateOp::IsPackedBlockArgument(BlockArgument block_arg) {
 // block argument (of the replicate op) and a valid replica is provided.
 unsigned ReplicateOp::GetReplicaOperandIndexForBlockArgument(
     BlockArgument block_arg, unsigned replica) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_27(mht_27_v, 883, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "ReplicateOp::GetReplicaOperandIndexForBlockArgument");
+
   MutableArrayRef<OpOperand> operands = GetOperandsForBlockArgument(block_arg);
   if (operands.size() == 1) return operands.front().getOperandNumber();
 
@@ -642,6 +894,9 @@ unsigned ReplicateOp::GetReplicaOperandIndexForBlockArgument(
 // and a valid replica is provided.
 Value ReplicateOp::GetReplicaOperandForBlockArgument(BlockArgument block_arg,
                                                      unsigned replica) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_28(mht_28_v, 897, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "ReplicateOp::GetReplicaOperandForBlockArgument");
+
   MutableArrayRef<OpOperand> operands = GetOperandsForBlockArgument(block_arg);
   if (operands.size() == 1) return operands.front().get();
 
@@ -655,6 +910,9 @@ Value ReplicateOp::GetReplicaOperandForBlockArgument(BlockArgument block_arg,
 // Requires that block argument is of this replicate op.
 MutableArrayRef<OpOperand> ReplicateOp::GetOperandsForBlockArgument(
     BlockArgument block_arg) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_29(mht_29_v, 913, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "ReplicateOp::GetOperandsForBlockArgument");
+
   assert(block_arg.getOwner() == &GetBody());
 
   unsigned arg_number = block_arg.getArgNumber();
@@ -674,7 +932,10 @@ MutableArrayRef<OpOperand> ReplicateOp::GetOperandsForBlockArgument(
 
 // Checks if a tf_device.replicate wraps a single operation and the single
 // operation results are perfectly forwarded to the replicate return.
-bool ReplicateOp::WrapsSingleOp() { return BlockWrapsSingleOp(&GetBody()); }
+bool ReplicateOp::WrapsSingleOp() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_30(mht_30_v, 936, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "ReplicateOp::WrapsSingleOp");
+ return BlockWrapsSingleOp(&GetBody()); }
 
 //===----------------------------------------------------------------------===//
 // Canonicalization patterns
@@ -690,6 +951,9 @@ namespace {
 // defined outside. cluster op can be rewritten to remove those results.
 static LogicalResult EliminatePassThroughResults(ClusterOp op,
                                                  PatternRewriter& rewriter) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_31(mht_31_v, 954, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "EliminatePassThroughResults");
+
   mlir::Block& body = op.GetBody();
   Operation* return_op = body.getTerminator();
   int num_results = return_op->getNumOperands();
@@ -760,6 +1024,9 @@ static LogicalResult EliminatePassThroughResults(ClusterOp op,
 
 void ClusterOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                             MLIRContext* context) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_32(mht_32_v, 1027, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "ClusterOp::getCanonicalizationPatterns");
+
   results.add(EliminatePassThroughResults);
 }
 
@@ -775,6 +1042,9 @@ struct DropEmptyLaunch : public OpRewritePattern<LaunchOp> {
 
   LogicalResult matchAndRewrite(LaunchOp op,
                                 PatternRewriter& rewriter) const override {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_33(mht_33_v, 1045, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "matchAndRewrite");
+
     Block& block = op.GetBody();
     // Check if launch only has a return.
     if (&block.front() != &block.back()) return failure();
@@ -789,6 +1059,9 @@ struct DropEmptyLaunch : public OpRewritePattern<LaunchOp> {
 
 void LaunchOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                            MLIRContext* context) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_deviceDTcc mht_34(mht_34_v, 1062, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_device.cc", "LaunchOp::getCanonicalizationPatterns");
+
   results.add<DropEmptyLaunch>(context);
 }
 

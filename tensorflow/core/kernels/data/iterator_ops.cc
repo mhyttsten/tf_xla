@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -77,7 +245,10 @@ const char kOutputShapes[] = "output_shapes";
 const char kOutputTypes[] = "output_types";
 
 // Safely subtracts x from y avoiding underflow.
-inline uint64 safe_sub(uint64 x, uint64 y) { return x >= y ? x - y : 0; }
+inline uint64 safe_sub(uint64 x, uint64 y) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_0(mht_0_v, 249, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "safe_sub");
+ return x >= y ? x - y : 0; }
 
 }  // namespace
 
@@ -102,16 +273,25 @@ IteratorResource::IteratorResource(
       // is a heuristic to avoid collecting metrics for device-side iterators
       // created by the multi-device iterator mechanism.
       collect_metrics_(flr->device()->device_type() == DEVICE_CPU) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_1(mht_1_v, 276, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "IteratorResource::IteratorResource");
+
   VLOG(2) << "creating iterator resource";
 }
 
 IteratorResource::~IteratorResource() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_2(mht_2_v, 283, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "IteratorResource::~IteratorResource");
+
   VLOG(2) << "destroying iterator resource";
 }
 
 Status IteratorResource::GetNext(OpKernelContext* ctx,
                                  std::vector<Tensor>* out_tensors,
                                  bool* end_of_sequence) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_3(mht_3_v, 292, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "IteratorResource::GetNext");
+
   std::shared_ptr<State> captured_state;
   {
     tf_shared_lock l(mu_);
@@ -176,6 +356,9 @@ Status IteratorResource::GetNext(OpKernelContext* ctx,
 
 Status IteratorResource::Save(SerializationContext* ctx,
                               IteratorStateWriter* writer) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_4(mht_4_v, 359, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "IteratorResource::Save");
+
   std::shared_ptr<State> captured_state;
   {
     tf_shared_lock l(mu_);
@@ -193,6 +376,9 @@ Status IteratorResource::Save(SerializationContext* ctx,
 
 Status IteratorResource::Restore(OpKernelContext* ctx,
                                  IteratorStateReader* reader) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_5(mht_5_v, 379, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "IteratorResource::Restore");
+
   const DatasetBase* dataset;
   std::shared_ptr<State> new_state;
   const DatasetBase* input_dataset;
@@ -242,6 +428,9 @@ Status IteratorResource::Restore(OpKernelContext* ctx,
 
 Status IteratorResource::SetIteratorFromDataset(OpKernelContext* ctx,
                                                 const DatasetBase* dataset) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_6(mht_6_v, 431, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "IteratorResource::SetIteratorFromDataset");
+
   std::shared_ptr<State> new_state;
   {
     tf_shared_lock l(mu_);
@@ -318,8 +507,14 @@ namespace {
 // match IteratorStateVariant::TypeName().
 class IteratorStateVariant {
  public:
-  IteratorStateVariant() : data_(nullptr) {}
+  IteratorStateVariant() : data_(nullptr) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_7(mht_7_v, 511, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "IteratorStateVariant");
+}
   IteratorStateVariant(const IteratorStateVariant& other) : data_(nullptr) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_8(mht_8_v, 515, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "IteratorStateVariant");
+
     if (other.data_) {
       Decode(*other.data_);
     }
@@ -329,13 +524,25 @@ class IteratorStateVariant {
 
   // Initializes `this` from a VariantTensorData object.
   Status InitializeFromVariantData(std::unique_ptr<VariantTensorData> d) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_9(mht_9_v, 527, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "InitializeFromVariantData");
+
     data_ = std::move(d);
     return Status::OK();
   }
 
-  string TypeName() const { return kIteratorVariantTypeName; }
-  void Encode(VariantTensorData* data) const { *data = *data_; }
+  string TypeName() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_10(mht_10_v, 535, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "TypeName");
+ return kIteratorVariantTypeName; }
+  void Encode(VariantTensorData* data) const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_11(mht_11_v, 539, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "Encode");
+ *data = *data_; }
   bool Decode(VariantTensorData data) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_12(mht_12_v, 543, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "Decode");
+
     if (data.type_name() != TypeName()) {
       return false;
     }
@@ -346,9 +553,15 @@ class IteratorStateVariant {
   }
 
   // Returns a borrowed pointer to the underlying VariantTensorData.
-  const VariantTensorData* GetData() const { return data_.get(); }
+  const VariantTensorData* GetData() const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_13(mht_13_v, 557, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "GetData");
+ return data_.get(); }
 
   string DebugString() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_14(mht_14_v, 562, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "DebugString");
+
     if (data_) {
       return strings::StrCat("IteratorStateVariant<", data_->DebugString(),
                              ">");
@@ -385,12 +598,18 @@ REGISTER_UNARY_VARIANT_DECODE_FUNCTION(IteratorStateVariant,
 //   iterator_resource->Restore(ctx, reader);
 class IteratorVariantSerializer {
  public:
-  IteratorVariantSerializer() {}
+  IteratorVariantSerializer() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_15(mht_15_v, 602, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "IteratorVariantSerializer");
+}
 
   // Calls `Save` on the iterator_resource to build up the list of
   // IteratorStateVariant objects.
   Status InitializeFromIterator(SerializationContext* serialization_ctx,
                                 IteratorResource* iterator_resource) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_16(mht_16_v, 610, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "InitializeFromIterator");
+
     VariantTensorDataWriter writer;
     TF_RETURN_IF_ERROR(iterator_resource->Save(serialization_ctx, &writer));
     std::vector<std::unique_ptr<VariantTensorData>> data;
@@ -409,6 +628,9 @@ class IteratorVariantSerializer {
 
   // Initializes `this` from `serialized_t` while restoring the iterator state.
   Status InitFromTensor(const Tensor* serialized_t) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_17(mht_17_v, 631, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "InitFromTensor");
+
     int64_t num_tensors = serialized_t->dim_size(0);
     auto serialized_vec = serialized_t->vec<Variant>();
     std::vector<const VariantTensorData*> data;
@@ -428,11 +650,17 @@ class IteratorVariantSerializer {
     return Status::OK();
   }
 
-  int64_t NumTensors() { return num_tensors_; }
+  int64_t NumTensors() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_18(mht_18_v, 654, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "NumTensors");
+ return num_tensors_; }
 
   // Stores the IteratorStateVariant list into a pre-allocated tensor. Expects
   // that InitializeFromIterator was called before.
   Status Serialize(Tensor* serialized) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_19(mht_19_v, 661, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "Serialize");
+
     if (!can_serialize_) {
       return errors::InvalidArgument(
           "Please call InitializeFromIterator before calling Serialize.");
@@ -450,7 +678,10 @@ class IteratorVariantSerializer {
 
   // Returns an IteratorStateReader to restore iterator state. Expects that
   // InitFromTensor was called before.
-  IteratorStateReader* GetReader() { return reader_.get(); }
+  IteratorStateReader* GetReader() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_20(mht_20_v, 682, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "GetReader");
+ return reader_.get(); }
 
  private:
   bool can_serialize_ = false;
@@ -466,6 +697,9 @@ class IteratorVariantSerializer {
 // resource containers with AnonymousIteratorHandleOp instead.
 IteratorHandleOp::IteratorHandleOp(OpKernelConstruction* ctx)
     : OpKernel(ctx), graph_def_version_(ctx->graph_def_version()) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_21(mht_21_v, 700, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "IteratorHandleOp::IteratorHandleOp");
+
   OP_REQUIRES_OK(ctx, ctx->GetAttr(kOutputTypes, &output_dtypes_));
   OP_REQUIRES_OK(ctx, ctx->GetAttr(kOutputShapes, &output_shapes_));
   OP_REQUIRES_OK(ctx, ctx->GetAttr("shared_name", &name_));
@@ -475,6 +709,9 @@ IteratorHandleOp::IteratorHandleOp(OpKernelConstruction* ctx)
 // to kernel. Ideally the resource should be deleted when it is no longer held
 // by anyone, but it would break backward compatibility.
 IteratorHandleOp::~IteratorHandleOp() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_22(mht_22_v, 712, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "IteratorHandleOp::~IteratorHandleOp");
+
   if (resource_ != nullptr) {
     resource_->Unref();
     if (cinfo_.resource_is_private_to_kernel()) {
@@ -541,6 +778,9 @@ void IteratorHandleOp::Compute(OpKernelContext* context)
 }
 
 Status IteratorHandleOp::VerifyResource(IteratorResource* resource) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_23(mht_23_v, 781, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "IteratorHandleOp::VerifyResource");
+
   TF_RETURN_IF_ERROR(
       VerifyTypesMatch(output_dtypes_, resource->output_dtypes()));
   TF_RETURN_IF_ERROR(
@@ -552,6 +792,9 @@ FunctionLibraryRuntime* IteratorHandleOp::CreatePrivateFLR(
     OpKernelContext* ctx, std::unique_ptr<DeviceMgr>* device_mgr,
     std::unique_ptr<FunctionLibraryDefinition>* flib_def,
     std::unique_ptr<ProcessFunctionLibraryRuntime>* pflr) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_24(mht_24_v, 795, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "IteratorHandleOp::CreatePrivateFLR");
+
   // Wrap the existing device in order to see any captured resources
   // in its resource manager. The existing device will outlive the
   // IteratorResource, because we are storing the IteratorResource
@@ -590,16 +833,25 @@ AnonymousIteratorHandleOp::AnonymousIteratorHandleOp(
           /* return_deleter */
           context->def().op() == kAnonymousIteratorV2),
       graph_def_version_(context->graph_def_version()) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_25(mht_25_v, 836, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "AnonymousIteratorHandleOp::AnonymousIteratorHandleOp");
+
   OP_REQUIRES_OK(context, context->GetAttr(kOutputTypes, &output_dtypes_));
   OP_REQUIRES_OK(context, context->GetAttr(kOutputShapes, &output_shapes_));
 }
 
-string AnonymousIteratorHandleOp::name() { return kAnonymousIterator; }
+string AnonymousIteratorHandleOp::name() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_26(mht_26_v, 844, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "AnonymousIteratorHandleOp::name");
+ return kAnonymousIterator; }
 
 Status AnonymousIteratorHandleOp::CreateResource(
     OpKernelContext* ctx, std::unique_ptr<FunctionLibraryDefinition> flib_def,
     std::unique_ptr<ProcessFunctionLibraryRuntime> pflr,
     FunctionLibraryRuntime* lib, IteratorResource** resource) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_27(mht_27_v, 852, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "AnonymousIteratorHandleOp::CreateResource");
+
   std::unique_ptr<DeviceMgr> device_mgr(nullptr);
   *resource = new IteratorResource(ctx->env(), output_dtypes_, output_shapes_,
                                    std::move(device_mgr), std::move(flib_def),
@@ -610,10 +862,17 @@ Status AnonymousIteratorHandleOp::CreateResource(
 HybridAsyncOpKernel::HybridAsyncOpKernel(OpKernelConstruction* ctx,
                                          const char* background_worker_name)
     : AsyncOpKernel(ctx),
-      background_worker_(ctx->env(), background_worker_name) {}
+      background_worker_(ctx->env(), background_worker_name) {
+   std::vector<std::string> mht_28_v;
+   mht_28_v.push_back("background_worker_name: \"" + (background_worker_name == nullptr ? std::string("nullptr") : std::string((char*)background_worker_name)) + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_28(mht_28_v, 867, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "HybridAsyncOpKernel::HybridAsyncOpKernel");
+}
 
 void HybridAsyncOpKernel::ComputeAsync(OpKernelContext* ctx,
                                        DoneCallback done) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_29(mht_29_v, 873, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "HybridAsyncOpKernel::ComputeAsync");
+
   background_worker_.Schedule([this, ctx, done = std::move(done)]() {
     ctx->SetStatus(DoCompute(ctx));
     done();
@@ -621,10 +880,16 @@ void HybridAsyncOpKernel::ComputeAsync(OpKernelContext* ctx,
 }
 
 void HybridAsyncOpKernel::Compute(OpKernelContext* ctx) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_30(mht_30_v, 883, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "HybridAsyncOpKernel::Compute");
+
   ctx->SetStatus(DoCompute(ctx));
 }
 
 Status MakeIteratorOp::DoCompute(OpKernelContext* ctx) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_31(mht_31_v, 890, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "MakeIteratorOp::DoCompute");
+
   tensorflow::ResourceTagger tag(kTFDataResourceTag,
                                  ctx->op_kernel().type_string());
   DatasetBase* dataset;
@@ -637,6 +902,9 @@ Status MakeIteratorOp::DoCompute(OpKernelContext* ctx) {
 }
 
 Status DeleteIteratorOp::DoCompute(OpKernelContext* ctx) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_32(mht_32_v, 905, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "DeleteIteratorOp::DoCompute");
+
   tensorflow::ResourceTagger tag(kTFDataResourceTag,
                                  ctx->op_kernel().type_string());
   const ResourceHandle& handle = ctx->input(0).flat<ResourceHandle>()(0);
@@ -653,11 +921,17 @@ class ToSingleElementOp : public AsyncOpKernel {
   explicit ToSingleElementOp(OpKernelConstruction* ctx)
       : AsyncOpKernel(ctx),
         unbounded_threadpool_(ctx->env(), "tf_data_to_single_element") {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_33(mht_33_v, 924, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "ToSingleElementOp");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("output_types", &output_types_));
     OP_REQUIRES_OK(ctx, ctx->GetAttr("output_shapes", &output_shapes_));
   }
 
   void ComputeAsync(OpKernelContext* ctx, DoneCallback done) override {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_34(mht_34_v, 932, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "ComputeAsync");
+
     unbounded_threadpool_.Schedule([this, ctx, done = std::move(done)]() {
       ctx->SetStatus(DoCompute(ctx));
       done();
@@ -665,11 +939,17 @@ class ToSingleElementOp : public AsyncOpKernel {
   }
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_35(mht_35_v, 942, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "Compute");
+
     ctx->SetStatus(DoCompute(ctx));
   }
 
  private:
   Status DoCompute(OpKernelContext* ctx) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_36(mht_36_v, 950, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "DoCompute");
+
     profiler::TraceMe traceme(
         [&] {
           return profiler::TraceMeEncode("ToSingleElementOp::DoCompute",
@@ -730,6 +1010,9 @@ class OneShotIteratorOp : public AsyncOpKernel {
         graph_def_version_(ctx->graph_def_version())
 
   {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_37(mht_37_v, 1013, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "OneShotIteratorOp");
+
     string shared_name;
     OP_REQUIRES_OK(ctx, ctx->GetAttr("shared_name", &shared_name));
     OP_REQUIRES(ctx, shared_name.empty(),
@@ -742,6 +1025,9 @@ class OneShotIteratorOp : public AsyncOpKernel {
   }
 
   ~OneShotIteratorOp() override {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_38(mht_38_v, 1028, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "~OneShotIteratorOp");
+
     if (iterator_resource_ != nullptr) {
       iterator_resource_->Unref();
       if (!cinfo_.resource_manager()
@@ -761,6 +1047,9 @@ class OneShotIteratorOp : public AsyncOpKernel {
   // running the initialization function, we must implement this
   // kernel as an async kernel.
   void ComputeAsync(OpKernelContext* ctx, DoneCallback done) override {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_39(mht_39_v, 1050, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "ComputeAsync");
+
     tensorflow::ResourceTagger tag(kTFDataResourceTag,
                                    ctx->op_kernel().type_string());
     {
@@ -783,6 +1072,9 @@ class OneShotIteratorOp : public AsyncOpKernel {
 
  private:
   void Init(OpKernelContext* ctx, const DoneCallback& done) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_40(mht_40_v, 1075, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "Init");
+
     IteratorResource* iterator = nullptr;
     ContainerInfo cinfo;
     Status s = TryInit(ctx, &iterator, &cinfo);
@@ -806,6 +1098,9 @@ class OneShotIteratorOp : public AsyncOpKernel {
 
   Status TryInit(OpKernelContext* ctx, IteratorResource** iterator,
                  ContainerInfo* cinfo) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_41(mht_41_v, 1101, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "TryInit");
+
     TF_RETURN_IF_ERROR(cinfo->Init(ctx->resource_manager(), def()));
 
     FunctionLibraryRuntime* flr;
@@ -868,6 +1163,9 @@ class OneShotIteratorOp : public AsyncOpKernel {
   }
 
   void ProduceOutput(OpKernelContext* ctx, const DoneCallback& done) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_42(mht_42_v, 1166, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "ProduceOutput");
+
     Tensor* handle;
     OP_REQUIRES_OK_ASYNC(ctx, ctx->allocate_output(0, TensorShape({}), &handle),
                          done);
@@ -905,11 +1203,17 @@ class OneShotIteratorOp : public AsyncOpKernel {
 }  // namespace
 
 AsyncOpKernel* IteratorGetNextOp::AsAsync() {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_43(mht_43_v, 1206, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "IteratorGetNextOp::AsAsync");
+
   return type_string() == "IteratorGetNextSync" ? nullptr : this;
 }
 
 void RecordElementSize(const std::vector<Tensor> element,
                        profiler::TraceMe* traceme) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_44(mht_44_v, 1214, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "RecordElementSize");
+
   traceme->AppendMetadata([&]() {
     int64_t element_size = 0;
     for (const auto& component : element) {
@@ -920,6 +1224,9 @@ void RecordElementSize(const std::vector<Tensor> element,
 }
 
 Status IteratorGetNextOp::DoCompute(OpKernelContext* ctx) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_45(mht_45_v, 1227, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "IteratorGetNextOp::DoCompute");
+
   VLOG(3) << "IteratorGetNextOp enter. iter_id=" << ctx->frame_iter().iter_id;
   auto cleanup = gtl::MakeCleanup([ctx] {
     VLOG(3) << "IteratorGetNextOp exit. iter_id=" << ctx->frame_iter().iter_id;
@@ -953,6 +1260,9 @@ Status IteratorGetNextOp::DoCompute(OpKernelContext* ctx) {
 }
 
 Status IteratorGetNextAsOptionalOp::DoCompute(OpKernelContext* ctx) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_46(mht_46_v, 1263, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "IteratorGetNextAsOptionalOp::DoCompute");
+
   VLOG(3) << "IteratorGetNextAsOptionalOp exit. iter_id="
           << ctx->frame_iter().iter_id;
   auto cleanup = gtl::MakeCleanup([ctx] {
@@ -1001,6 +1311,9 @@ Status IteratorGetNextAsOptionalOp::DoCompute(OpKernelContext* ctx) {
 }
 
 void IteratorToStringHandleOp::Compute(OpKernelContext* ctx) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_47(mht_47_v, 1314, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "IteratorToStringHandleOp::Compute");
+
   const Tensor& resource_handle_t = ctx->input(0);
   OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(resource_handle_t.shape()),
               errors::InvalidArgument("resource_handle must be a scalar"));
@@ -1022,6 +1335,9 @@ void IteratorToStringHandleOp::Compute(OpKernelContext* ctx) {
 IteratorFromStringHandleOp::IteratorFromStringHandleOp(
     OpKernelConstruction* ctx)
     : OpKernel(ctx) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_48(mht_48_v, 1338, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "IteratorFromStringHandleOp::IteratorFromStringHandleOp");
+
   OP_REQUIRES_OK(ctx, ctx->GetAttr(kOutputTypes, &output_dtypes_));
   OP_REQUIRES_OK(ctx, ctx->GetAttr(kOutputShapes, &output_shapes_));
   OP_REQUIRES(
@@ -1033,6 +1349,9 @@ IteratorFromStringHandleOp::IteratorFromStringHandleOp(
 }
 
 void IteratorFromStringHandleOp::Compute(OpKernelContext* ctx) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_49(mht_49_v, 1352, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "IteratorFromStringHandleOp::Compute");
+
   const Tensor& string_handle_t = ctx->input(0);
   OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(string_handle_t.shape()),
               errors::InvalidArgument("string_handle must be a scalar"));
@@ -1073,6 +1392,9 @@ void IteratorFromStringHandleOp::Compute(OpKernelContext* ctx) {
 
 SerializeIteratorOp::SerializeIteratorOp(OpKernelConstruction* ctx)
     : OpKernel(ctx) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_50(mht_50_v, 1395, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "SerializeIteratorOp::SerializeIteratorOp");
+
   if (ctx->HasAttr(kExternalStatePolicy)) {
     int64_t state_change_option;
     OP_REQUIRES_OK(ctx,
@@ -1083,6 +1405,9 @@ SerializeIteratorOp::SerializeIteratorOp(OpKernelConstruction* ctx)
 }
 
 void SerializeIteratorOp::Compute(OpKernelContext* ctx) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_51(mht_51_v, 1408, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "SerializeIteratorOp::Compute");
+
   tensorflow::ResourceTagger tag(kTFDataResourceTag,
                                  ctx->op_kernel().type_string());
   const Tensor& resource_handle_t = ctx->input(0);
@@ -1108,6 +1433,9 @@ void SerializeIteratorOp::Compute(OpKernelContext* ctx) {
 }
 
 void DeserializeIteratorOp::Compute(OpKernelContext* ctx) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSiterator_opsDTcc mht_52(mht_52_v, 1436, "", "./tensorflow/core/kernels/data/iterator_ops.cc", "DeserializeIteratorOp::Compute");
+
   tensorflow::ResourceTagger tag(kTFDataResourceTag,
                                  ctx->op_kernel().type_string());
   // Validate that the handle corresponds to a real resource, and

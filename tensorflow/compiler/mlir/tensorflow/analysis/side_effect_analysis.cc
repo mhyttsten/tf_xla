@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -58,6 +226,9 @@ using ResourceIdSet = llvm::SmallSet<ResourceId, 8>;
 // Note that we cannot simply define a `static const llvm::SmallSet` here
 // because of missing `initializer_list` support for `llvm::SmallSet`.
 const ResourceIdSet& UnknownResourceSet() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_0(mht_0_v, 229, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "UnknownResourceSet");
+
   // clang-format off
   static auto* id_set = new ResourceIdSet();
   id_set->insert(kUnknownResourceId);
@@ -68,6 +239,9 @@ const ResourceIdSet& UnknownResourceSet() {
 const ResourceIdSet& GetResourceUniqueIdsOrUnknown(
     Value value,
     const ResourceAliasAnalysis::Info& alias_analysis) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_1(mht_1_v, 242, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "GetResourceUniqueIdsOrUnknown");
+
   if (!getElementTypeOrSelf(value.getType()).isa<TF::ResourceType>() ||
       alias_analysis.IsUnknownResource(value)) return UnknownResourceSet();
   return alias_analysis.GetResourceUniqueIds(value);
@@ -83,21 +257,63 @@ class SideEffects {
   };
 
  public:
-  bool IsAlloc() const { return effects_.test(kAlloc); }
-  bool IsFree() const { return effects_.test(kFree); }
-  bool IsRead() const { return effects_.test(kRead); }
-  bool IsWrite() const { return effects_.test(kWrite); }
-  bool IsAllocOnly() const { return IsAlloc() && effects_.count() == 1; }
-  bool IsReadOnly() const { return IsRead() && effects_.count() == 1; }
-  ResourceId GetResourceId() const { return resource_id_; }
+  bool IsAlloc() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_2(mht_2_v, 261, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "IsAlloc");
+ return effects_.test(kAlloc); }
+  bool IsFree() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_3(mht_3_v, 265, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "IsFree");
+ return effects_.test(kFree); }
+  bool IsRead() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_4(mht_4_v, 269, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "IsRead");
+ return effects_.test(kRead); }
+  bool IsWrite() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_5(mht_5_v, 273, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "IsWrite");
+ return effects_.test(kWrite); }
+  bool IsAllocOnly() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_6(mht_6_v, 277, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "IsAllocOnly");
+ return IsAlloc() && effects_.count() == 1; }
+  bool IsReadOnly() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_7(mht_7_v, 281, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "IsReadOnly");
+ return IsRead() && effects_.count() == 1; }
+  ResourceId GetResourceId() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_8(mht_8_v, 285, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "GetResourceId");
+ return resource_id_; }
 
-  void SetAlloc() { effects_.set(kAlloc); }
-  void SetFree() { effects_.set(kFree); }
-  void SetRead() { effects_.set(kRead); }
-  void SetWrite() { effects_.set(kWrite); }
-  void SetUnknownEffect() { effects_.set(); }
-  void SetResourceId(ResourceId resource_id) { resource_id_ = resource_id; }
+  void SetAlloc() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_9(mht_9_v, 290, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "SetAlloc");
+ effects_.set(kAlloc); }
+  void SetFree() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_10(mht_10_v, 294, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "SetFree");
+ effects_.set(kFree); }
+  void SetRead() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_11(mht_11_v, 298, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "SetRead");
+ effects_.set(kRead); }
+  void SetWrite() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_12(mht_12_v, 302, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "SetWrite");
+ effects_.set(kWrite); }
+  void SetUnknownEffect() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_13(mht_13_v, 306, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "SetUnknownEffect");
+ effects_.set(); }
+  void SetResourceId(ResourceId resource_id) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_14(mht_14_v, 310, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "SetResourceId");
+ resource_id_ = resource_id; }
   void AddEffects(const SideEffects& other_effects) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_15(mht_15_v, 314, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "AddEffects");
+
     effects_ |= other_effects.effects_;
   }
 
@@ -119,6 +335,9 @@ using OpSideEffectMap = std::unordered_map<Operation*, SideEffectsByResourceId>;
 void UpdateSideEffectsByResourceId(
     const SideEffects& side_effects,
     SideEffectsByResourceId& side_effects_by_resource_id) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_16(mht_16_v, 338, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "UpdateSideEffectsByResourceId");
+
   ResourceId id = side_effects.GetResourceId();
   auto iter = side_effects_by_resource_id.find(id);
   if (iter == side_effects_by_resource_id.end()) {
@@ -129,6 +348,9 @@ void UpdateSideEffectsByResourceId(
 }
 
 bool MayHaveSideEffect(Operation* op) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_17(mht_17_v, 351, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "MayHaveSideEffect");
+
   if (isa_and_nonnull<TF::TensorFlowDialect>(op->getDialect()))
     return TensorFlowDialect::CanHaveSideEffects(op);
 
@@ -139,6 +361,9 @@ bool MayHaveSideEffect(Operation* op) {
 
 bool ShouldUseResourceAliasAnalysis(
     const MemoryEffects::EffectInstance& effect) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_18(mht_18_v, 364, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "ShouldUseResourceAliasAnalysis");
+
   Value value = effect.getValue();
   if (value && getElementTypeOrSelf(value.getType()).isa<ResourceType>()) {
     // For value-based effects on resource values we can use resource alias
@@ -156,6 +381,9 @@ bool ShouldUseResourceAliasAnalysis(
 
 SideEffects GetSideEffectsFromEffectInstance(
     const MemoryEffects::EffectInstance& effect_instance, Operation* op) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_19(mht_19_v, 384, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "GetSideEffectsFromEffectInstance");
+
   mlir::SideEffects::Effect* effect = effect_instance.getEffect();
   SideEffects side_effects;
   if (isa<MemoryEffects::Allocate>(effect)) {
@@ -179,6 +407,9 @@ SideEffectsByResourceId CollectSideEffectsByResourceId(
     Operation* op,
     const SideEffectsByResourceId& op_side_effects,
     const TF::ResourceAliasAnalysis::Info& alias_analysis) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_20(mht_20_v, 410, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "CollectSideEffectsByResourceId");
+
   SideEffectsByResourceId side_effects_by_resource_id;
   if (!MayHaveSideEffect(op)) return side_effects_by_resource_id;
 
@@ -212,6 +443,9 @@ SideEffectsByResourceId CollectSideEffectsByResourceId(
   }
 
   auto add_remaining_effects = [&](auto resource_values) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_21(mht_21_v, 446, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "lambda");
+
     for (Value resource_value : resource_values) {
       // If we already processed this value before, skip it.
       if (processed_values.count(resource_value) > 0) continue;
@@ -262,6 +496,9 @@ class OpSideEffectCollector {
   // Recursively collects op-based side effects for all ops in module and
   // populates `op_side_effect_map_`.
   explicit OpSideEffectCollector(ModuleOp module) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_22(mht_22_v, 499, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "OpSideEffectCollector");
+
     symbol_table_collection_.getSymbolTable(module);
     for (auto func : module.getOps<FuncOp>()) {
       CollectOpSideEffects(func);
@@ -270,6 +507,9 @@ class OpSideEffectCollector {
 
   // Returns op-based side effects by resource ID for `op`.
   const SideEffectsByResourceId& GetSideEffectsForOp(Operation* op) const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_23(mht_23_v, 510, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "GetSideEffectsForOp");
+
     auto iter = op_side_effect_map_.find(op);
     if (iter != op_side_effect_map_.end()) return iter->second;
     return empty_side_effects_map_;
@@ -279,6 +519,9 @@ class OpSideEffectCollector {
   // Adds op-based side effects from all ops in `region` to `op` side effects.
   // Collects side effects for ops that weren't visited before.
   void AddRegionSideEffectsForOp(Region& region, Operation* op) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_24(mht_24_v, 522, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "AddRegionSideEffectsForOp");
+
     for (Block& block : region) {
       for (Operation& curr_op : block) {
         if (op_side_effect_map_.count(&curr_op) == 0) {
@@ -293,6 +536,9 @@ class OpSideEffectCollector {
 
   // Collects op-based side effects for `op` in `op_side_effect_map_[op]`.
   void CollectOpSideEffects(Operation* op) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_25(mht_25_v, 539, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "CollectOpSideEffects");
+
     if (!MayHaveSideEffect(op)) return;
     // Skip following ops to avoid that every island, graph and function is
     // classified as unknown side-effecting.
@@ -378,6 +624,10 @@ class OpSideEffectCollector {
 
   // Get internal op resource ID from MLIR type ID and instance ID.
   ResourceId GetOpResourceId(TypeID type_id, std::string instance_str) {
+   std::vector<std::string> mht_26_v;
+   mht_26_v.push_back("instance_str: \"" + instance_str + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_26(mht_26_v, 628, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "GetOpResourceId");
+
     auto emplace_result = type_instance_str_to_op_resource_id_.try_emplace(
         std::make_pair(type_id.getAsOpaquePointer(), instance_str),
         next_op_resource_id_);
@@ -414,6 +664,9 @@ class OpSideEffectCollector {
 void SideEffectAnalysisInfo::AddPredecessorsForAccess(ResourceId resource_id,
                                                       Operation* op,
                                                       bool read_only) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_27(mht_27_v, 667, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "SideEffectAnalysisInfo::AddPredecessorsForAccess");
+
   VLOG(2) << "    Adding predecessors for resource " << resource_id;
   auto it = per_resource_access_info_.find(resource_id);
   if (it == per_resource_access_info_.end()) return;
@@ -438,6 +691,9 @@ void SideEffectAnalysisInfo::AddPredecessorsForAccess(ResourceId resource_id,
 void SideEffectAnalysisInfo::UpdateAccess(ResourceId resource_id,
                                           Operation* op,
                                           bool read_only) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_28(mht_28_v, 694, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "SideEffectAnalysisInfo::UpdateAccess");
+
   VLOG(2) << "    Updating access for resource " << resource_id;
   op_to_resource_ids_[op].push_back({resource_id, read_only});
   if (resource_id == kUnknownResourceId) {
@@ -470,6 +726,9 @@ void SideEffectAnalysisInfo::UpdateAccess(ResourceId resource_id,
 }
 
 void SideEffectAnalysisInfo::AnalyzeFunction(FuncOp func_op) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_29(mht_29_v, 729, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "SideEffectAnalysisInfo::AnalyzeFunction");
+
   // AnalyzeRegion() recursively analyzes the function body, and only populates
   // control_predecessors_.
   AnalyzeRegion(&func_op.getBody());
@@ -511,6 +770,9 @@ void SideEffectAnalysisInfo::AnalyzeFunction(FuncOp func_op) {
 }
 
 void SideEffectAnalysisInfo::AnalyzeRegion(Region* region) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_30(mht_30_v, 773, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "SideEffectAnalysisInfo::AnalyzeRegion");
+
   // We explicitly iterate through the regions and blocks in order to handle
   // different nested regions separately.
   for (Block& block : *region) {
@@ -530,6 +792,9 @@ void SideEffectAnalysisInfo::AnalyzeRegion(Region* region) {
 }
 
 void SideEffectAnalysisInfo::AnalyzeOp(Operation* op) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_31(mht_31_v, 795, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "SideEffectAnalysisInfo::AnalyzeOp");
+
   VLOG(2) << "Processing op " << mlir::debugString(*op);
   SideEffectsByResourceId side_effects_by_resource_id =
       CollectSideEffectsByResourceId(
@@ -596,6 +861,9 @@ void SideEffectAnalysisInfo::AnalyzeOp(Operation* op) {
 
 bool SideEffectAnalysisInfo::IsUnknownAccessIndirectlyTrackedByResource(
     ResourceId resource_id, bool read_only) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_32(mht_32_v, 864, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "SideEffectAnalysisInfo::IsUnknownAccessIndirectlyTrackedByResource");
+
   auto it = per_resource_access_info_.find(resource_id);
   if (it == per_resource_access_info_.end()) return false;
   auto access_info = it->getSecond();
@@ -660,6 +928,9 @@ SideEffectAnalysisInfo::GetResourceIds(Operation* op) const {
 
 SideEffectAnalysis::SideEffectAnalysis(ModuleOp module)
     : alias_analysis_(module) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSside_effect_analysisDTcc mht_33(mht_33_v, 931, "", "./tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.cc", "SideEffectAnalysis::SideEffectAnalysis");
+
   // Analyze entire module for alias analysis info.
   detail::OpSideEffectCollector op_side_effect_collector(module);
 

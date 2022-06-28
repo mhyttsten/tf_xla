@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -125,6 +293,9 @@ struct SparseSlice {
 
   SparseSlice(int nrows, int ncols, int bsize)
       : num_rows(nrows), num_cols(ncols), block_size(bsize) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_0(mht_0_v, 296, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "SparseSlice");
+
     DCHECK_LE(nrows, 256);
     DCHECK_LE(block_size, 256);
   }
@@ -161,11 +332,17 @@ bool IsZero(T v);
 
 template <>
 ALWAYS_INLINE bool IsZero(bfloat16 v) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_1(mht_1_v, 335, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "IsZero");
+
   return !static_cast<bool>(v);
 }
 
 template <>
 ALWAYS_INLINE bool IsZero(float v) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_2(mht_2_v, 343, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "IsZero");
+
   return v == 0.0f;
 }
 
@@ -173,6 +350,9 @@ template <typename T>
 template <bool Transpose>
 void SparseSlice<T>::Initialize(
     const typename SparseSlice<T>::ConstMatrixMap& mat, int col_offset) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_3(mht_3_v, 353, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "SparseSlice<T>::Initialize");
+
   const int mat_rows = Transpose ? mat.dimension(1) : mat.dimension(0);
   const int mat_cols = Transpose ? mat.dimension(0) : mat.dimension(1);
   DCHECK_LE(num_rows, mat_rows);
@@ -259,6 +439,9 @@ void SparseSlice<T>::Initialize(
 
 template <typename T>
 void SparseSlice<T>::Clear() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_4(mht_4_v, 442, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "SparseSlice<T>::Clear");
+
   index3_offset.clear();
   index3.clear();
   data3.clear();
@@ -278,6 +461,9 @@ const int kNumOperands = (sizeof(Packet) / sizeof(float));
 #define FMA(a, b, c, d) d = Eigen::internal::pmadd<Packet>(a, b, c);
 
 ALWAYS_INLINE float ConvertBfloat16ToFloat(const bfloat16* src) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_5(mht_5_v, 464, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "ConvertBfloat16ToFloat");
+
   float out = 0;
   auto tmp = reinterpret_cast<bfloat16*>(&out);
 #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
@@ -289,16 +475,25 @@ ALWAYS_INLINE float ConvertBfloat16ToFloat(const bfloat16* src) {
 }
 
 ALWAYS_INLINE Packet ConvertFourBfloat16ToFloat(const bfloat16* src) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_6(mht_6_v, 478, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "ConvertFourBfloat16ToFloat");
+
   return Eigen::internal::pload4bf16<Packet>(
       reinterpret_cast<const float*>(src));
 }
 
 ALWAYS_INLINE Packet ConvertTwoBfloat16ToFloat(const bfloat16* src) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_7(mht_7_v, 486, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "ConvertTwoBfloat16ToFloat");
+
   return Eigen::internal::pload2bf16<Packet>(
       reinterpret_cast<const float*>(src));
 }
 
 ALWAYS_INLINE void ScalarMulAdd(const float a, const float** inp, float** out) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_8(mht_8_v, 494, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "ScalarMulAdd");
+
   **out += a * **inp;
   ++*inp;
   ++*out;
@@ -306,6 +501,9 @@ ALWAYS_INLINE void ScalarMulAdd(const float a, const float** inp, float** out) {
 
 ALWAYS_INLINE void ScalarMulAdd(const float a, const bfloat16** inp,
                                 float** out) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_9(mht_9_v, 504, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "ScalarMulAdd");
+
   float inp_f = ConvertBfloat16ToFloat(*inp);
   **out += a * inp_f;
   ++*inp;
@@ -315,6 +513,9 @@ ALWAYS_INLINE void ScalarMulAdd3Way(const float a1, const float a2,
                                     const float a3, const bfloat16** inp1,
                                     const bfloat16** inp2,
                                     const bfloat16** inp3, float** out) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_10(mht_10_v, 516, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "ScalarMulAdd3Way");
+
   float inp1_f = ConvertBfloat16ToFloat(*inp1);
   float inp2_f = ConvertBfloat16ToFloat(*inp2);
   float inp3_f = ConvertBfloat16ToFloat(*inp3);
@@ -329,6 +530,9 @@ ALWAYS_INLINE void ScalarMulAdd3Way(const float a1, const float a2,
                                     const float a3, const float** inp1,
                                     const float** inp2, const float** inp3,
                                     float** out) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_11(mht_11_v, 533, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "ScalarMulAdd3Way");
+
   **out += a1 * **inp1 + a2 * **inp2 + a3 * **inp3;
   ++*out;
   ++*inp1;
@@ -337,6 +541,9 @@ ALWAYS_INLINE void ScalarMulAdd3Way(const float a1, const float a2,
 }
 
 ALWAYS_INLINE void LoadSingleScalar(const bfloat16** data, Packet* l) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_12(mht_12_v, 544, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "LoadSingleScalar");
+
   auto tmp = ConvertBfloat16ToFloat(*data);
   *l = Eigen::internal::pset1<Packet>(tmp);
   ++*data;
@@ -344,6 +551,9 @@ ALWAYS_INLINE void LoadSingleScalar(const bfloat16** data, Packet* l) {
 
 ALWAYS_INLINE void LoadTwoScalars(const bfloat16** data, Packet* l1,
                                   Packet* l2) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_13(mht_13_v, 554, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "LoadTwoScalars");
+
   if (kNumOperands >= 2) {
     auto tmp = ConvertTwoBfloat16ToFloat(*data);
     *l1 = Eigen::internal::pbroadcast_first<Packet>(tmp);
@@ -357,6 +567,9 @@ ALWAYS_INLINE void LoadTwoScalars(const bfloat16** data, Packet* l1,
 
 ALWAYS_INLINE void LoadFourScalars(const bfloat16** data, Packet* l1,
                                    Packet* l2, Packet* l3, Packet* l4) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_14(mht_14_v, 570, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "LoadFourScalars");
+
   if (kNumOperands >= 4) {
     auto tmp = ConvertFourBfloat16ToFloat(*data);
     *l1 = Eigen::internal::pbroadcast_first<Packet>(tmp);
@@ -371,17 +584,26 @@ ALWAYS_INLINE void LoadFourScalars(const bfloat16** data, Packet* l1,
 }
 
 ALWAYS_INLINE void LoadSingleScalar(const float** data, Packet* l) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_15(mht_15_v, 587, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "LoadSingleScalar");
+
   *l = Eigen::internal::pload1<Packet>(*data);
   ++(*data);
 }
 
 ALWAYS_INLINE void LoadTwoScalars(const float** data, Packet* l1, Packet* l2) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_16(mht_16_v, 595, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "LoadTwoScalars");
+
   LoadSingleScalar(data, l1);
   LoadSingleScalar(data, l2);
 }
 
 ALWAYS_INLINE void LoadFourScalars(const float** data, Packet* l1, Packet* l2,
                                    Packet* l3, Packet* l4) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_17(mht_17_v, 604, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "LoadFourScalars");
+
   LoadTwoScalars(data, l1, l2);
   LoadTwoScalars(data, l3, l4);
 }
@@ -389,6 +611,9 @@ ALWAYS_INLINE void LoadFourScalars(const float** data, Packet* l1, Packet* l2,
 template <typename T>
 ALWAYS_INLINE void LoadThreeScalars(const T** data, Packet* l1, Packet* l2,
                                     Packet* l3) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_18(mht_18_v, 614, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "LoadThreeScalars");
+
   LoadTwoScalars(data, l1, l2);
   LoadSingleScalar(data, l3);
 }
@@ -397,12 +622,18 @@ template <typename T>
 ALWAYS_INLINE void LoadSixScalars(const T** data, Packet* l1, Packet* l2,
                                   Packet* l3, Packet* l4, Packet* l5,
                                   Packet* l6) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_19(mht_19_v, 625, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "LoadSixScalars");
+
   LoadFourScalars(data, l1, l2, l3, l4);
   LoadTwoScalars(data, l5, l6);
 }
 
 // Vectorized version of ScalarMulAdd.
 ALWAYS_INLINE void MulAdd(const Packet a, const bfloat16** binp, float** out) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_20(mht_20_v, 634, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "MulAdd");
+
   auto inp = reinterpret_cast<const float*>(*binp);
   const auto b = LOAD(inp);
   EXPAND_BFLOAT_L(b, b_0);
@@ -421,6 +652,9 @@ ALWAYS_INLINE void MulAdd(const Packet a, const bfloat16** binp, float** out) {
 ALWAYS_INLINE void MulAdd3Way(const Packet a1, const Packet a2, const Packet a3,
                               const bfloat16** binp1, const bfloat16** binp2,
                               const bfloat16** binp3, float** out) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_21(mht_21_v, 655, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "MulAdd3Way");
+
   auto inp1 = reinterpret_cast<const float*>(*binp1);
   auto inp2 = reinterpret_cast<const float*>(*binp2);
   auto inp3 = reinterpret_cast<const float*>(*binp3);
@@ -454,6 +688,9 @@ ALWAYS_INLINE void TwoMulAdd3Way(const Packet a1, const Packet a2,
                                  const Packet a3, const bfloat16** binp1,
                                  const bfloat16** binp2, const bfloat16** binp3,
                                  float** out) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_22(mht_22_v, 691, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "TwoMulAdd3Way");
+
   auto inp1 = reinterpret_cast<const float*>(*binp1);
   auto inp2 = reinterpret_cast<const float*>(*binp2);
   auto inp3 = reinterpret_cast<const float*>(*binp3);
@@ -509,6 +746,9 @@ ALWAYS_INLINE void MulAdd3Way128(const Packet a1, const Packet a2,
                                  const Packet a3, const bfloat16** inp1,
                                  const bfloat16** inp2, const bfloat16** inp3,
                                  float** out) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_23(mht_23_v, 749, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "MulAdd3Way128");
+
   for (int k = 0; k < 128 / (8 * kNumOperands); ++k) {
     TwoMulAdd3Way(a1, a2, a3, inp1, inp2, inp3, out);
     TwoMulAdd3Way(a1, a2, a3, inp1, inp2, inp3, out);
@@ -517,6 +757,9 @@ ALWAYS_INLINE void MulAdd3Way128(const Packet a1, const Packet a2,
 
 // Vectorized version of ScalarMulAdd
 ALWAYS_INLINE void MulAdd(const Packet a, const float** inp, float** out) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_24(mht_24_v, 760, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "MulAdd");
+
   const auto b = LOAD(*inp);
   *inp += kNumOperands;
   auto c = LOAD(*out);
@@ -529,6 +772,9 @@ ALWAYS_INLINE void MulAdd(const Packet a, const float** inp, float** out) {
 ALWAYS_INLINE void MulAdd3Way(const Packet a1, const Packet a2, const Packet a3,
                               const float** inp1, const float** inp2,
                               const float** inp3, float** out) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_25(mht_25_v, 775, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "MulAdd3Way");
+
   auto c = LOAD(*out);
   const auto b1 = LOAD(*inp1);
   *inp1 += kNumOperands;
@@ -548,6 +794,9 @@ ALWAYS_INLINE void TwoMulAdd3Way(const Packet a1, const Packet a2,
                                  const Packet a3, const float** inp1,
                                  const float** inp2, const float** inp3,
                                  float** out) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_26(mht_26_v, 797, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "TwoMulAdd3Way");
+
   auto c1 = LOAD(*out);
   const auto b1 = LOAD(*inp1);
   const auto b2 = LOAD(*inp2);
@@ -577,6 +826,9 @@ ALWAYS_INLINE void FourMulAdd3Way(const Packet a1, const Packet a2,
                                   const Packet a3, const float** inp1,
                                   const float** inp2, const float** inp3,
                                   float** out) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_27(mht_27_v, 829, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "FourMulAdd3Way");
+
   TwoMulAdd3Way(a1, a2, a3, inp1, inp2, inp3, out);
   TwoMulAdd3Way(a1, a2, a3, inp1, inp2, inp3, out);
 }
@@ -586,6 +838,9 @@ ALWAYS_INLINE void MulAdd3Way128(const Packet a1, const Packet a2,
                                  const Packet a3, const float** inp1,
                                  const float** inp2, const float** inp3,
                                  float** out) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_28(mht_28_v, 841, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "MulAdd3Way128");
+
   if (kNumOperands == 8) {
     FourMulAdd3Way(a1, a2, a3, inp1, inp2, inp3, out);
     FourMulAdd3Way(a1, a2, a3, inp1, inp2, inp3, out);
@@ -890,7 +1145,10 @@ class LibxsmmSparseMatMul {
                   std::unique_ptr<TensorInfoCacheEntry>>
         entries TF_GUARDED_BY(lock);
 
-    TensorInfoCache() : lock(), entries() {}
+    TensorInfoCache() : lock(), entries() {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_29(mht_29_v, 1149, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "TensorInfoCache");
+}
     // Look up and remove first entry with these parameters, creating one if
     // there isn't one
     std::unique_ptr<TensorInfoCacheEntry> take_cache_entry(int M, int K, int N,
@@ -920,6 +1178,9 @@ class LibxsmmSparseMatMul {
       entries.insert(std::make_pair(key, std::move(e)));
     }
     ~TensorInfoCache() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_30(mht_30_v, 1181, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "~TensorInfoCache");
+
       tensorflow::mutex_lock ml(lock);
       for (auto& p : entries) {
         libxsmm_spmdm_destroy(&p.second->handle);
@@ -953,6 +1214,9 @@ class SparseMatMulOp : public OpKernel {
 
  public:
   explicit SparseMatMulOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_31(mht_31_v, 1217, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "SparseMatMulOp");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("transpose_a", &transpose_a_));
     OP_REQUIRES_OK(ctx, ctx->GetAttr("transpose_b", &transpose_b_));
     OP_REQUIRES_OK(ctx, ctx->GetAttr("a_is_sparse", &a_is_sparse_));
@@ -960,6 +1224,9 @@ class SparseMatMulOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_32(mht_32_v, 1227, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "Compute");
+
     const Tensor& a = ctx->input(0);
     const Tensor& b = ctx->input(1);
     OP_REQUIRES(ctx, TensorShapeUtils::IsMatrix(a.shape()),
@@ -1160,6 +1427,9 @@ SparseMatMul<TL, TR>::CreateSparseSlices(
   auto work = [counter, transpose](SparseSlice<TL>* sparse_slice,
                                    SparseMatMul<TL, TR>::ConstMatrixMapL* slice,
                                    int col_offset) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_33(mht_33_v, 1430, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "lambda");
+
     if (transpose) {
       sparse_slice->template Initialize<true>(*slice, col_offset);
     } else {
@@ -1221,6 +1491,9 @@ ALWAYS_INLINE void CopyAndMayBeInterleaveBfloat16(void* bdst, const void* bsrc,
 template <typename T>
 ALWAYS_INLINE void CopyAndMayBeInterleave(void* dst, const void* src,
                                           int num_elements) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_34(mht_34_v, 1494, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "CopyAndMayBeInterleave");
+
   if (std::is_same<T, float>::value || kNumOperands < 8) {
     memcpy(dst, src, num_elements * sizeof(T));
   } else if (std::is_same<T, bfloat16>::value) {
@@ -1253,6 +1526,9 @@ inline BlockingCounter* SparseMatMul<TL, TR>::ShuffleMatrix(
   DCHECK_EQ(N, buffer->dimension(1));
   auto shuffle_work = [&mat, slice_row_start, slice_num_rows, slice_col_start,
                        slice_num_cols, N, buffer, counter](int s, int e) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_35(mht_35_v, 1529, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "lambda");
+
     const int row_start = s % slice_num_rows + slice_row_start;
     const int col_start = s / slice_num_rows * N + slice_col_start;
     auto* out_start = &(*buffer)(s, 0);
@@ -1398,6 +1674,10 @@ void wrapper_libxsmm_spmdm_createSparseSlice_generic_thread(
     empty_type_wrapper<float>, const libxsmm_spmdm_handle* handle, char transA,
     const float* A, libxsmm_CSR_sparseslice* libxsmm_output_csr_a, int block_id,
     int tid, int nthreads) {
+   std::vector<std::string> mht_36_v;
+   mht_36_v.push_back("transA: '" + std::string(1, transA) + "'");
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_36(mht_36_v, 1678, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "wrapper_libxsmm_spmdm_createSparseSlice_generic_thread");
+
   return libxsmm_spmdm_createSparseSlice_fp32_thread(
       handle, transA, A, libxsmm_output_csr_a, block_id, tid, nthreads);
 }
@@ -1406,6 +1686,10 @@ void wrapper_libxsmm_spmdm_createSparseSlice_generic_thread(
     char transA, const bfloat16* A,
     libxsmm_CSR_sparseslice* libxsmm_output_csr_a, int block_id, int tid,
     int nthreads) {
+   std::vector<std::string> mht_37_v;
+   mht_37_v.push_back("transA: '" + std::string(1, transA) + "'");
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_37(mht_37_v, 1690, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "wrapper_libxsmm_spmdm_createSparseSlice_generic_thread");
+
   return libxsmm_spmdm_createSparseSlice_bfloat16_thread(
       handle, transA, reinterpret_cast<const libxsmm_bfloat16*>(A),
       libxsmm_output_csr_a, block_id, tid, nthreads);
@@ -1416,6 +1700,12 @@ void wrapper_libxsmm_spmdm_compute_generic_thread(
     char transA, char transB, const bfloat16* alpha,
     libxsmm_CSR_sparseslice* A_sparse, const bfloat16* B, char transC,
     const bfloat16* beta, float* C, int block_id, int tid, int nthreads) {
+   std::vector<std::string> mht_38_v;
+   mht_38_v.push_back("transA: '" + std::string(1, transA) + "'");
+   mht_38_v.push_back("transB: '" + std::string(1, transB) + "'");
+   mht_38_v.push_back("transC: '" + std::string(1, transC) + "'");
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_38(mht_38_v, 1706, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "wrapper_libxsmm_spmdm_compute_generic_thread");
+
   return libxsmm_spmdm_compute_bfloat16_thread(
       handle, transA, transB, reinterpret_cast<const libxsmm_bfloat16*>(alpha),
       A_sparse, reinterpret_cast<const libxsmm_bfloat16*>(B), transC,
@@ -1427,6 +1717,12 @@ void wrapper_libxsmm_spmdm_compute_generic_thread(
     char transB, const float* alpha, libxsmm_CSR_sparseslice* A_sparse,
     const float* B, char transC, const float* beta, float* C, int block_id,
     int tid, int nthreads) {
+   std::vector<std::string> mht_39_v;
+   mht_39_v.push_back("transA: '" + std::string(1, transA) + "'");
+   mht_39_v.push_back("transB: '" + std::string(1, transB) + "'");
+   mht_39_v.push_back("transC: '" + std::string(1, transC) + "'");
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_matmul_opDTcc mht_39(mht_39_v, 1723, "", "./tensorflow/core/kernels/sparse_matmul_op.cc", "wrapper_libxsmm_spmdm_compute_generic_thread");
+
   return libxsmm_spmdm_compute_fp32_thread(handle, transA, transB, alpha,
                                            A_sparse, B, transC, beta, C,
                                            block_id, tid, nthreads);

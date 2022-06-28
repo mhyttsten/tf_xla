@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,6 +205,13 @@ std::string GenerateUploadByThreads(const std::string& local_ptr_name,
                                     const std::string& lid_name,
                                     int total_work_items,
                                     int elements_to_upload) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("local_ptr_name: \"" + local_ptr_name + "\"");
+   mht_0_v.push_back("name: \"" + name + "\"");
+   mht_0_v.push_back("global_offset_name: \"" + global_offset_name + "\"");
+   mht_0_v.push_back("lid_name: \"" + lid_name + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_0(mht_0_v, 212, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "GenerateUploadByThreads");
+
   std::string c;
   std::string offset =
       global_offset_name.empty() ? "" : global_offset_name + " + ";
@@ -65,6 +240,12 @@ std::string GenerateAsyncUpload(const std::string& local_ptr_name,
                                 const std::string& global_ptr_name,
                                 const std::string& global_offset_name,
                                 int elements_to_upload) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("local_ptr_name: \"" + local_ptr_name + "\"");
+   mht_1_v.push_back("global_ptr_name: \"" + global_ptr_name + "\"");
+   mht_1_v.push_back("global_offset_name: \"" + global_offset_name + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_1(mht_1_v, 246, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "GenerateAsyncUpload");
+
   std::string c;
   std::string offset =
       global_offset_name.empty() ? "" : " + " + global_offset_name;
@@ -77,6 +258,9 @@ std::string GenerateBlockCoords(const int4& block_size,
                                 const int3& work_group_launch_order,
                                 bool linear_spatial, bool linear_all,
                                 bool need_depth) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_2(mht_2_v, 261, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "GenerateBlockCoords");
+
   std::string c;
   int3 launch_remap;
   launch_remap[work_group_launch_order.x] = 0;
@@ -179,6 +363,9 @@ ConvPowerVR::ConvPowerVR(const OperationDef& definition,
       kernel_size_(attr.weights.shape.w, attr.weights.shape.h, 1, 1),
       dilation_(attr.dilations.w, attr.dilations.h, 1, 1),
       conv_params_(GuessBestParams(gpu_info, definition, attr, dst_shape)) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_3(mht_3_v, 366, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "ConvPowerVR::ConvPowerVR");
+
   const int src_slices = DivideRoundUp(attr.weights.shape.i, 4);
   const int dst_slices = DivideRoundUp(attr.weights.shape.o, 4);
   if (attr.groups != 1) {
@@ -206,7 +393,10 @@ ConvPowerVR::ConvPowerVR(const OperationDef& definition,
       kernel_size_(weights_shape.w, weights_shape.h, 1, 1),
       dilation_(attr.dilations.w, attr.dilations.h, 1, 1),
       conv_params_(GuessBestParams(gpu_info, definition, attr, weights_shape,
-                                   dst_shape)) {}
+                                   dst_shape)) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_4(mht_4_v, 397, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "ConvPowerVR::ConvPowerVR");
+}
 
 ConvPowerVR::ConvPowerVR(const OperationDef& definition,
                          const FullyConnectedAttributes& attr,
@@ -216,14 +406,20 @@ ConvPowerVR::ConvPowerVR(const OperationDef& definition,
       padding_(0, 0, 0, 0),
       kernel_size_(1, 1, 1, 1),
       dilation_(1, 1, 1, 1),
-      conv_params_(GuessBestParams(gpu_info, definition, attr, dst_shape)) {}
+      conv_params_(GuessBestParams(gpu_info, definition, attr, dst_shape)) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_5(mht_5_v, 410, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "ConvPowerVR::ConvPowerVR");
+}
 
 ConvPowerVR::ConvPowerVR(const OperationDef& definition)
     : GPUOperation(definition),
       stride_(1, 1, 1, 1),
       padding_(0, 0, 0, 0),
       kernel_size_(1, 1, 1, 1),
-      dilation_(1, 1, 1, 1) {}
+      dilation_(1, 1, 1, 1) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_6(mht_6_v, 420, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "ConvPowerVR::ConvPowerVR");
+}
 
 ConvPowerVR::ConvPowerVR(ConvPowerVR&& operation)
     : GPUOperation(std::move(operation)),
@@ -231,7 +427,10 @@ ConvPowerVR::ConvPowerVR(ConvPowerVR&& operation)
       padding_(operation.padding_),
       kernel_size_(operation.kernel_size_),
       dilation_(operation.dilation_),
-      conv_params_(operation.conv_params_) {}
+      conv_params_(operation.conv_params_) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_7(mht_7_v, 431, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "ConvPowerVR::ConvPowerVR");
+}
 
 ConvPowerVR::ConvPowerVR(const OperationDef& definition,
                          const Convolution3DAttributes& attr,
@@ -243,9 +442,15 @@ ConvPowerVR::ConvPowerVR(const OperationDef& definition,
       kernel_size_(attr.weights.shape.w, attr.weights.shape.h,
                    attr.weights.shape.d, 1),
       dilation_(attr.dilations.w, attr.dilations.h, attr.dilations.d, 1),
-      conv_params_(GuessBestParams(gpu_info, definition, attr, dst_shape)) {}
+      conv_params_(GuessBestParams(gpu_info, definition, attr, dst_shape)) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_8(mht_8_v, 446, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "ConvPowerVR::ConvPowerVR");
+}
 
 ConvPowerVR& ConvPowerVR::operator=(ConvPowerVR&& operation) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_9(mht_9_v, 451, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "=");
+
   if (this != &operation) {
     std::swap(stride_, operation.stride_);
     std::swap(padding_, operation.padding_);
@@ -258,6 +463,9 @@ ConvPowerVR& ConvPowerVR::operator=(ConvPowerVR&& operation) {
 }
 
 void ConvPowerVR::GenerateCode(const GpuInfo& gpu_info) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_10(mht_10_v, 466, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "ConvPowerVR::GenerateCode");
+
   if (conv_params_.linear_all) {
     grid_dimension_ = 1;
   } else if (conv_params_.linear_spatial) {
@@ -327,6 +535,9 @@ void ConvPowerVR::GenerateCode(const GpuInfo& gpu_info) {
 }
 
 absl::Status ConvPowerVR::BindArguments(ArgumentsBinder* args) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_11(mht_11_v, 538, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "ConvPowerVR::BindArguments");
+
   if (!conv_params_.x_kernel_is_1) {
     RETURN_IF_ERROR(args->SetInt("stride_x", stride_.x));
     RETURN_IF_ERROR(args->SetInt("padding_x", padding_.x * src_[0]->Batch()));
@@ -360,6 +571,9 @@ absl::Status ConvPowerVR::BindArguments(ArgumentsBinder* args) {
 }
 
 int3 ConvPowerVR::GetGridSize() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_12(mht_12_v, 574, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "ConvPowerVR::GetGridSize");
+
   const int task_size_x = DivideRoundUp(dst_[0]->Width() * dst_[0]->Batch(),
                                         conv_params_.block_size.x);
   const int task_size_y =
@@ -382,6 +596,9 @@ int3 ConvPowerVR::GetGridSize() const {
 void ConvPowerVR::GetPossibleKernelWorkGroups(
     TuningType tuning_type, const GpuInfo& gpu_info,
     const KernelInfo& kernel_info, std::vector<int3>* work_groups) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_13(mht_13_v, 599, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "ConvPowerVR::GetPossibleKernelWorkGroups");
+
   if (conv_params_.weights_upload_type ==
           WeightsUploadType::LOCAL_MEM_ASYNC_SUBGROUP ||
       conv_params_.weights_upload_type ==
@@ -398,10 +615,19 @@ std::string ConvPowerVR::GenerateConv(const GpuInfo& gpu_info,
                                       const OperationDef& op_def,
                                       bool stride_correction,
                                       const ConvParams& conv_params) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_14(mht_14_v, 618, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "ConvPowerVR::GenerateConv");
+
   const auto& src_def = op_def.src_tensors[0];
 
   auto generate_id = [&](const std::string& x, const std::string& y,
                          const std::string& z) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("x: \"" + x + "\"");
+   mht_15_v.push_back("y: \"" + y + "\"");
+   mht_15_v.push_back("z: \"" + z + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_15(mht_15_v, 628, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "lambda");
+
     std::string id;
     if (src_def.HasAxis(Axis::WIDTH)) {
       id += "_w" + x;
@@ -417,11 +643,24 @@ std::string ConvPowerVR::GenerateConv(const GpuInfo& gpu_info,
 
   auto generate_id_full = [&](const std::string& x, const std::string& y,
                               const std::string& z, const std::string& s) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("x: \"" + x + "\"");
+   mht_16_v.push_back("y: \"" + y + "\"");
+   mht_16_v.push_back("z: \"" + z + "\"");
+   mht_16_v.push_back("s: \"" + s + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_16(mht_16_v, 650, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "lambda");
+
     return generate_id(x, y, z) + "_s" + s;
   };
 
   auto generate_check = [&](const std::string& x, const std::string& y,
                             const std::string& z) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("x: \"" + x + "\"");
+   mht_17_v.push_back("y: \"" + y + "\"");
+   mht_17_v.push_back("z: \"" + z + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_17(mht_17_v, 661, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "lambda");
+
     std::string check;
     const std::vector<Axis> axes{Axis::WIDTH, Axis::HEIGHT, Axis::DEPTH};
     const std::vector<std::string> names{"in_x", "in_y", "in_z"};
@@ -780,6 +1019,9 @@ std::string ConvPowerVR::GenerateConv(const GpuInfo& gpu_info,
   }
 
   auto declare_src = [&]() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_18(mht_18_v, 1022, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "lambda");
+
     for (int z = 0; z < block_size.z; ++z) {
       const std::string zind = std::to_string(z);
       for (int y = 0; y < block_size.y; ++y) {
@@ -794,6 +1036,9 @@ std::string ConvPowerVR::GenerateConv(const GpuInfo& gpu_info,
   };
   const bool conditional_read = gpu_info.IsMali();
   auto read_src = [&]() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_19(mht_19_v, 1039, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "lambda");
+
     const std::string cl_type = ToCLDataType(conv_params.weights_data_type);
     for (int z = 0; z < block_size.z; ++z) {
       const std::string zind = std::to_string(z);
@@ -850,6 +1095,9 @@ std::string ConvPowerVR::GenerateConv(const GpuInfo& gpu_info,
       !(op_def.precision == CalculationsPrecision::F32_F16 &&
         conv_params.weights_data_type == DataType::FLOAT16);
   auto conv_core = [&](int shared_offset) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_20(mht_20_v, 1098, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "lambda");
+
     const std::string channels[] = {"x", "y", "z", "w"};
     for (int s = 0; s < block_size.w; ++s) {
       const std::string sind = std::to_string(s);
@@ -1086,6 +1334,9 @@ std::string ConvPowerVR::GenerateConv(const GpuInfo& gpu_info,
   }
 
   auto generate_dst_check = [&](int x, int y, int z) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_21(mht_21_v, 1337, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "lambda");
+
     std::string check;
     const std::vector<Axis> axes{Axis::WIDTH, Axis::HEIGHT, Axis::DEPTH};
     const std::vector<std::string> names{"Width()", "Height()", "Depth()"};
@@ -1150,6 +1401,9 @@ ConvPowerVR::ConvParams ConvPowerVR::GuessBestParams(
     const GpuInfo& gpu_info, const OperationDef& definition, int src_depth,
     int dst_depth, bool x_kernel_is_1, bool y_kernel_is_1,
     bool different_weights_for_height, const BHWC* dst_shape) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_22(mht_22_v, 1404, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "ConvPowerVR::GuessBestParams");
+
   ConvParams conv_params;
   conv_params.linear_spatial = false;
   conv_params.linear_all = false;
@@ -1282,6 +1536,9 @@ ConvPowerVR::ConvParams ConvPowerVR::GuessBestParams(
       conv_params.block_size = int4(4, 4, 1, 1);
     }
     auto reduce_block_size_wzyx = [](int4* block_size) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_23(mht_23_v, 1539, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "lambda");
+
       if (block_size->w % 2 == 0) {
         block_size->w /= 2;
       } else if (block_size->z % 2 == 0) {
@@ -1500,6 +1757,9 @@ ConvPowerVR::ConvParams ConvPowerVR::GuessBestParams(
 ConvPowerVR::ConvParams ConvPowerVR::GuessBestParams(
     const GpuInfo& gpu_info, const OperationDef& definition,
     const Convolution2DAttributes& attr, const BHWC* dst_shape) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_24(mht_24_v, 1760, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "ConvPowerVR::GuessBestParams");
+
   const int dst_depth = DivideRoundUp(attr.weights.shape.o, 4);
   const int src_depth = DivideRoundUp(attr.weights.shape.i, 4);
   const bool x_kernel_is_1 = attr.weights.shape.w == 1 && attr.strides.w == 1 &&
@@ -1517,6 +1777,9 @@ ConvPowerVR::ConvParams ConvPowerVR::GuessBestParams(
 ConvPowerVR::ConvParams ConvPowerVR::GuessBestParams(
     const GpuInfo& gpu_info, const OperationDef& definition,
     const Convolution3DAttributes& attr, const BHWDC* dst_shape) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_25(mht_25_v, 1780, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "ConvPowerVR::GuessBestParams");
+
   const int dst_depth = DivideRoundUp(attr.weights.shape.o, 4);
   const int src_depth = DivideRoundUp(attr.weights.shape.i, 4);
   const bool x_kernel_is_1 = attr.weights.shape.w == 1 && attr.strides.w == 1 &&
@@ -1553,6 +1816,9 @@ ConvPowerVR::ConvParams ConvPowerVR::GuessBestParams(
     const GpuInfo& gpu_info, const OperationDef& definition,
     const Convolution2DAttributes& attr, const BHWC& weights_shape,
     const BHWC* dst_shape) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_26(mht_26_v, 1819, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "ConvPowerVR::GuessBestParams");
+
   const int dst_depth = DivideRoundUp(weights_shape.b, 4);
   const int src_depth = DivideRoundUp(weights_shape.c, 4);
   const bool x_kernel_is_1 =
@@ -1568,6 +1834,9 @@ ConvPowerVR::ConvParams ConvPowerVR::GuessBestParams(
 ConvPowerVR::ConvParams ConvPowerVR::GuessBestParams(
     const GpuInfo& gpu_info, const OperationDef& definition,
     const FullyConnectedAttributes& attr, const BHWC* dst_shape) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_27(mht_27_v, 1837, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "ConvPowerVR::GuessBestParams");
+
   const int dst_depth = DivideRoundUp(attr.weights.shape.o, 4);
   const int src_depth = DivideRoundUp(attr.weights.shape.i, 4);
   ConvPowerVR::ConvParams params = GuessBestParams(
@@ -1582,6 +1851,9 @@ ConvPowerVR::ConvParams ConvPowerVR::GuessBestParams(
 ConvPowerVR::ConvParams ConvPowerVR::GuessBestParamsWinograd(
     const GpuInfo& gpu_info, const OperationDef& definition,
     const Convolution2DAttributes& attr, const BHWC* dst_shape) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_28(mht_28_v, 1854, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "ConvPowerVR::GuessBestParamsWinograd");
+
   const int dst_depth = DivideRoundUp(attr.weights.shape.o, 4);
   const int src_depth = DivideRoundUp(attr.weights.shape.i, 4);
   ConvPowerVR::ConvParams params = GuessBestParams(
@@ -1595,6 +1867,9 @@ ConvPowerVR CreateConvPowerVR(const GpuInfo& gpu_info,
                               const OperationDef& definition,
                               const Convolution2DAttributes& attr,
                               const BHWC* dst_shape) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_29(mht_29_v, 1870, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "CreateConvPowerVR");
+
   ConvPowerVR result(definition, attr, gpu_info, dst_shape);
   result.GenerateCode(gpu_info);
   result.UploadData(attr.weights, attr.bias);
@@ -1605,6 +1880,9 @@ ConvPowerVR CreateConvPowerVR(const GpuInfo& gpu_info,
                               const OperationDef& definition,
                               const FullyConnectedAttributes& attr,
                               const BHWC* dst_shape) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_30(mht_30_v, 1883, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "CreateConvPowerVR");
+
   ConvPowerVR result(definition, attr, gpu_info, dst_shape);
   result.GenerateCode(gpu_info);
   result.UploadData(attr.weights, attr.bias);
@@ -1616,6 +1894,9 @@ ConvPowerVR CreateConvPowerVRDynamicWeights(const GpuInfo& gpu_info,
                                             const Convolution2DAttributes& attr,
                                             const BHWC& weights_shape,
                                             const BHWC* dst_shape) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_31(mht_31_v, 1897, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "CreateConvPowerVRDynamicWeights");
+
   ConvPowerVR result(definition, attr, weights_shape, gpu_info, dst_shape);
   result.GenerateCode(gpu_info);
   result.UploadBias(attr.bias);
@@ -1626,6 +1907,9 @@ ConvPowerVR CreateConvPowerVRWino4x4To6x6(const GpuInfo& gpu_info,
                                           const OperationDef& definition,
                                           const Convolution2DAttributes& attr,
                                           const BHWC* dst_shape) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_32(mht_32_v, 1910, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "CreateConvPowerVRWino4x4To6x6");
+
   ConvPowerVR result(definition);
   result.conv_params_ =
       result.GuessBestParamsWinograd(gpu_info, definition, attr, dst_shape);
@@ -1638,6 +1922,9 @@ ConvPowerVR CreateConvPowerVR3D(const GpuInfo& gpu_info,
                                 const OperationDef& definition,
                                 const Convolution3DAttributes& attr,
                                 const BHWDC* dst_shape) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSconv_powervrDTcc mht_33(mht_33_v, 1925, "", "./tensorflow/lite/delegates/gpu/common/tasks/conv_powervr.cc", "CreateConvPowerVR3D");
+
   ConvPowerVR result(definition, attr, gpu_info, dst_shape);
   result.GenerateCode(gpu_info);
   result.UploadWeights(attr.weights);

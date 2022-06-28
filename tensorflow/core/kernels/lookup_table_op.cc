@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,6 +200,10 @@ namespace tensorflow {
 namespace lookup {
 
 std::string UniqueNodeName(const std::string& base) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("base: \"" + base + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_0(mht_0_v, 204, "", "./tensorflow/core/kernels/lookup_table_op.cc", "UniqueNodeName");
+
   static std::atomic<int64_t> counter(0);
   return strings::StrCat(base, "/", counter.fetch_add(1), "/", random::New64());
 }
@@ -53,15 +225,24 @@ std::string UniqueNodeName(const std::string& base) {
 template <class K, class V>
 class MutableHashTableOfScalars final : public LookupInterface {
  public:
-  MutableHashTableOfScalars(OpKernelContext* ctx, OpKernel* kernel) {}
+  MutableHashTableOfScalars(OpKernelContext* ctx, OpKernel* kernel) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_1(mht_1_v, 229, "", "./tensorflow/core/kernels/lookup_table_op.cc", "MutableHashTableOfScalars");
+}
 
   size_t size() const override {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_2(mht_2_v, 234, "", "./tensorflow/core/kernels/lookup_table_op.cc", "size");
+
     tf_shared_lock l(mu_);
     return table_.size();
   }
 
   Status Find(OpKernelContext* ctx, const Tensor& key, Tensor* value,
               const Tensor& default_value) override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_3(mht_3_v, 243, "", "./tensorflow/core/kernels/lookup_table_op.cc", "Find");
+
     const auto key_values = key.flat<K>();
     auto value_values = value->flat<V>();
     const auto default_flat = default_value.flat<V>();
@@ -87,6 +268,9 @@ class MutableHashTableOfScalars final : public LookupInterface {
   }
 
   Status DoInsert(bool clear, const Tensor& keys, const Tensor& values) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_4(mht_4_v, 271, "", "./tensorflow/core/kernels/lookup_table_op.cc", "DoInsert");
+
     const auto key_values = keys.flat<K>();
     const auto value_values = values.flat<V>();
 
@@ -103,10 +287,16 @@ class MutableHashTableOfScalars final : public LookupInterface {
 
   Status Insert(OpKernelContext* ctx, const Tensor& keys,
                 const Tensor& values) override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_5(mht_5_v, 290, "", "./tensorflow/core/kernels/lookup_table_op.cc", "Insert");
+
     return DoInsert(false, keys, values);
   }
 
   Status Remove(OpKernelContext* ctx, const Tensor& keys) override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_6(mht_6_v, 297, "", "./tensorflow/core/kernels/lookup_table_op.cc", "Remove");
+
     const auto key_values = keys.flat<K>();
 
     mutex_lock l(mu_);
@@ -118,10 +308,16 @@ class MutableHashTableOfScalars final : public LookupInterface {
 
   Status ImportValues(OpKernelContext* ctx, const Tensor& keys,
                       const Tensor& values) override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_7(mht_7_v, 311, "", "./tensorflow/core/kernels/lookup_table_op.cc", "ImportValues");
+
     return DoInsert(true, keys, values);
   }
 
   Status ExportValues(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_8(mht_8_v, 318, "", "./tensorflow/core/kernels/lookup_table_op.cc", "ExportValues");
+
     tf_shared_lock l(mu_);
     int64_t size = table_.size();
 
@@ -135,15 +331,30 @@ class MutableHashTableOfScalars final : public LookupInterface {
     return Status::OK();
   }
 
-  DataType key_dtype() const override { return DataTypeToEnum<K>::v(); }
+  DataType key_dtype() const override {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_9(mht_9_v, 335, "", "./tensorflow/core/kernels/lookup_table_op.cc", "key_dtype");
+ return DataTypeToEnum<K>::v(); }
 
-  DataType value_dtype() const override { return DataTypeToEnum<V>::v(); }
+  DataType value_dtype() const override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_10(mht_10_v, 340, "", "./tensorflow/core/kernels/lookup_table_op.cc", "value_dtype");
+ return DataTypeToEnum<V>::v(); }
 
-  TensorShape key_shape() const final { return TensorShape(); }
+  TensorShape key_shape() const final {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_11(mht_11_v, 345, "", "./tensorflow/core/kernels/lookup_table_op.cc", "key_shape");
+ return TensorShape(); }
 
-  TensorShape value_shape() const override { return TensorShape(); }
+  TensorShape value_shape() const override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_12(mht_12_v, 350, "", "./tensorflow/core/kernels/lookup_table_op.cc", "value_shape");
+ return TensorShape(); }
 
   int64_t MemoryUsed() const override {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_13(mht_13_v, 355, "", "./tensorflow/core/kernels/lookup_table_op.cc", "MemoryUsed");
+
     int64_t ret = 0;
     tf_shared_lock l(mu_);
     for (unsigned i = 0; i < table_.bucket_count(); ++i) {
@@ -158,6 +369,9 @@ class MutableHashTableOfScalars final : public LookupInterface {
   }
 
   Status AsGraphDef(GraphDefBuilder* builder, Node** out) const override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_14(mht_14_v, 372, "", "./tensorflow/core/kernels/lookup_table_op.cc", "AsGraphDef");
+
     tf_shared_lock l(mu_);
     int64_t size = table_.size();
     Tensor keys(key_dtype(), TensorShape({size}));
@@ -218,6 +432,9 @@ template <class K, class V>
 class MutableHashTableOfTensors final : public LookupInterface {
  public:
   MutableHashTableOfTensors(OpKernelContext* ctx, OpKernel* kernel) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_15(mht_15_v, 435, "", "./tensorflow/core/kernels/lookup_table_op.cc", "MutableHashTableOfTensors");
+
     OP_REQUIRES_OK(ctx,
                    GetNodeAttr(kernel->def(), "value_shape", &value_shape_));
     OP_REQUIRES(
@@ -227,12 +444,18 @@ class MutableHashTableOfTensors final : public LookupInterface {
   }
 
   size_t size() const override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_16(mht_16_v, 447, "", "./tensorflow/core/kernels/lookup_table_op.cc", "size");
+
     tf_shared_lock l(mu_);
     return table_.size();
   }
 
   Status Find(OpKernelContext* ctx, const Tensor& key, Tensor* value,
               const Tensor& default_value) override {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_17(mht_17_v, 456, "", "./tensorflow/core/kernels/lookup_table_op.cc", "Find");
+
     const auto default_flat = default_value.flat_inner_dims<V, 2>();
     const auto key_values = key.flat<K>();
     auto value_values = value->flat_inner_dims<V, 2>();
@@ -268,6 +491,9 @@ class MutableHashTableOfTensors final : public LookupInterface {
   }
 
   Status DoInsert(bool clear, const Tensor& keys, const Tensor& values) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_18(mht_18_v, 494, "", "./tensorflow/core/kernels/lookup_table_op.cc", "DoInsert");
+
     const auto key_values = keys.flat<K>();
     const auto value_values = values.flat_inner_dims<V, 2>();
     int64_t value_dim = value_shape_.dim_size(0);
@@ -290,10 +516,16 @@ class MutableHashTableOfTensors final : public LookupInterface {
 
   Status Insert(OpKernelContext* ctx, const Tensor& keys,
                 const Tensor& values) override {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_19(mht_19_v, 519, "", "./tensorflow/core/kernels/lookup_table_op.cc", "Insert");
+
     return DoInsert(false, keys, values);
   }
 
   Status Remove(OpKernelContext* ctx, const Tensor& keys) override {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_20(mht_20_v, 526, "", "./tensorflow/core/kernels/lookup_table_op.cc", "Remove");
+
     const auto key_values = keys.flat<K>();
 
     mutex_lock l(mu_);
@@ -305,10 +537,16 @@ class MutableHashTableOfTensors final : public LookupInterface {
 
   Status ImportValues(OpKernelContext* ctx, const Tensor& keys,
                       const Tensor& values) override {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_21(mht_21_v, 540, "", "./tensorflow/core/kernels/lookup_table_op.cc", "ImportValues");
+
     return DoInsert(true, keys, values);
   }
 
   Status ExportValues(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_22(mht_22_v, 547, "", "./tensorflow/core/kernels/lookup_table_op.cc", "ExportValues");
+
     tf_shared_lock l(mu_);
     int64_t size = table_.size();
     int64_t value_dim = value_shape_.dim_size(0);
@@ -323,15 +561,30 @@ class MutableHashTableOfTensors final : public LookupInterface {
     return Status::OK();
   }
 
-  DataType key_dtype() const override { return DataTypeToEnum<K>::v(); }
+  DataType key_dtype() const override {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_23(mht_23_v, 565, "", "./tensorflow/core/kernels/lookup_table_op.cc", "key_dtype");
+ return DataTypeToEnum<K>::v(); }
 
-  DataType value_dtype() const override { return DataTypeToEnum<V>::v(); }
+  DataType value_dtype() const override {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_24(mht_24_v, 570, "", "./tensorflow/core/kernels/lookup_table_op.cc", "value_dtype");
+ return DataTypeToEnum<V>::v(); }
 
-  TensorShape key_shape() const final { return TensorShape(); }
+  TensorShape key_shape() const final {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_25(mht_25_v, 575, "", "./tensorflow/core/kernels/lookup_table_op.cc", "key_shape");
+ return TensorShape(); }
 
-  TensorShape value_shape() const override { return value_shape_; }
+  TensorShape value_shape() const override {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_26(mht_26_v, 580, "", "./tensorflow/core/kernels/lookup_table_op.cc", "value_shape");
+ return value_shape_; }
 
   int64_t MemoryUsed() const override {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_27(mht_27_v, 585, "", "./tensorflow/core/kernels/lookup_table_op.cc", "MemoryUsed");
+
     int64_t ret = 0;
     tf_shared_lock l(mu_);
     for (unsigned i = 0; i < table_.bucket_count(); ++i) {
@@ -346,6 +599,9 @@ class MutableHashTableOfTensors final : public LookupInterface {
   }
 
   Status AsGraphDef(GraphDefBuilder* builder, Node** out) const override {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_28(mht_28_v, 602, "", "./tensorflow/core/kernels/lookup_table_op.cc", "AsGraphDef");
+
     tf_shared_lock l(mu_);
     int64_t size = table_.size();
     Tensor keys(key_dtype(), TensorShape({size}));
@@ -412,13 +668,23 @@ namespace {
 
 template <typename T>
 inline uint64 HashScalar(const T& key) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_29(mht_29_v, 671, "", "./tensorflow/core/kernels/lookup_table_op.cc", "HashScalar");
+
   return static_cast<uint64>(key);
 }
 
-inline uint64 HashScalar(const tstring& key) { return Hash64(key); }
+inline uint64 HashScalar(const tstring& key) {
+   std::vector<std::string> mht_30_v;
+   mht_30_v.push_back("key: \"" + (std::string)key + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_30(mht_30_v, 679, "", "./tensorflow/core/kernels/lookup_table_op.cc", "HashScalar");
+ return Hash64(key); }
 
 // If the given shape is a scalar return {1} instead. Otherwise leave it alone.
 TensorShape MaybeVectorizeShape(const TensorShape& shape) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_31(mht_31_v, 685, "", "./tensorflow/core/kernels/lookup_table_op.cc", "MaybeVectorizeShape");
+
   if (shape.dims() == 0) {
     return TensorShape({1});
   }
@@ -432,6 +698,9 @@ template <class K, class V>
 class MutableDenseHashTable final : public LookupInterface {
  public:
   MutableDenseHashTable(OpKernelContext* ctx, OpKernel* kernel) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_32(mht_32_v, 701, "", "./tensorflow/core/kernels/lookup_table_op.cc", "MutableDenseHashTable");
+
     OP_REQUIRES_OK(
         ctx, GetNodeAttr(kernel->def(), "max_load_factor", &max_load_factor_));
     OP_REQUIRES(ctx, max_load_factor_ > 0 && max_load_factor_ < 1,
@@ -635,6 +904,9 @@ class MutableDenseHashTable final : public LookupInterface {
 
   Status CheckKeyAndValueTensorsForImport(const Tensor& keys,
                                           const Tensor& values) override {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_33(mht_33_v, 907, "", "./tensorflow/core/kernels/lookup_table_op.cc", "CheckKeyAndValueTensorsForImport");
+
     TF_RETURN_IF_ERROR(CheckKeyAndValueTypes(keys, values));
     TF_RETURN_IF_ERROR(CheckKeyShape(keys.shape()));
 
@@ -658,13 +930,25 @@ class MutableDenseHashTable final : public LookupInterface {
     return Status::OK();
   }
 
-  DataType key_dtype() const override { return DataTypeToEnum<K>::v(); }
+  DataType key_dtype() const override {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_34(mht_34_v, 934, "", "./tensorflow/core/kernels/lookup_table_op.cc", "key_dtype");
+ return DataTypeToEnum<K>::v(); }
 
-  DataType value_dtype() const override { return DataTypeToEnum<V>::v(); }
+  DataType value_dtype() const override {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_35(mht_35_v, 939, "", "./tensorflow/core/kernels/lookup_table_op.cc", "value_dtype");
+ return DataTypeToEnum<V>::v(); }
 
-  TensorShape key_shape() const override { return key_shape_; }
+  TensorShape key_shape() const override {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_36(mht_36_v, 944, "", "./tensorflow/core/kernels/lookup_table_op.cc", "key_shape");
+ return key_shape_; }
 
-  TensorShape value_shape() const override { return value_shape_; }
+  TensorShape value_shape() const override {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_37(mht_37_v, 949, "", "./tensorflow/core/kernels/lookup_table_op.cc", "value_shape");
+ return value_shape_; }
 
   int64_t MemoryUsed() const override TF_LOCKS_EXCLUDED(mu_) {
     tf_shared_lock l(mu_);
@@ -676,6 +960,9 @@ class MutableDenseHashTable final : public LookupInterface {
   Status DoInsert(OpKernelContext* ctx, const Tensor& key, const Tensor& value,
                   bool ignore_empty_and_deleted_key)
       TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_38(mht_38_v, 963, "", "./tensorflow/core/kernels/lookup_table_op.cc", "DoInsert");
+
     const int64_t num_elements = (key.dims() == 0) ? 1 : key.dim_size(0);
     const int64_t value_size = value_shape_.num_elements();
     const int64_t key_size = key_shape_.num_elements();
@@ -745,6 +1032,9 @@ class MutableDenseHashTable final : public LookupInterface {
 
   Status DoRemove(OpKernelContext* ctx, const Tensor& key)
       TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_39(mht_39_v, 1035, "", "./tensorflow/core/kernels/lookup_table_op.cc", "DoRemove");
+
     const int64_t num_elements = key.dim_size(0);
     const int64_t key_size = key_shape_.num_elements();
     const auto key_matrix = key.shaped<K, 2>({num_elements, key_size});
@@ -796,6 +1086,9 @@ class MutableDenseHashTable final : public LookupInterface {
 
   Status AllocateBuckets(OpKernelContext* ctx, int64_t new_num_buckets)
       TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_40(mht_40_v, 1089, "", "./tensorflow/core/kernels/lookup_table_op.cc", "AllocateBuckets");
+
     if (new_num_buckets < 4 ||
         ((new_num_buckets & (new_num_buckets - 1)) != 0)) {
       return errors::InvalidArgument(
@@ -834,6 +1127,9 @@ class MutableDenseHashTable final : public LookupInterface {
 
   Status Rebucket(OpKernelContext* ctx, int64_t num_new_buckets)
       TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_41(mht_41_v, 1130, "", "./tensorflow/core/kernels/lookup_table_op.cc", "Rebucket");
+
     Tensor old_key_buckets = key_buckets_;
     Tensor old_value_buckets = value_buckets_;
     TF_RETURN_IF_ERROR(AllocateBuckets(ctx, num_new_buckets));
@@ -841,6 +1137,9 @@ class MutableDenseHashTable final : public LookupInterface {
   }
 
   uint64 HashKey(typename TTypes<K>::ConstMatrix key, int64_t index) const {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_42(mht_42_v, 1140, "", "./tensorflow/core/kernels/lookup_table_op.cc", "HashKey");
+
     if (key_shape_.num_elements() == 1) {
       return HashScalar(key(index, 0));
     }
@@ -856,6 +1155,9 @@ class MutableDenseHashTable final : public LookupInterface {
   template <typename MT2>
   bool IsEqualKey(typename TTypes<K>::Matrix tensor1, int64_t index1,
                   MT2 tensor2, int64_t index2) const {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_43(mht_43_v, 1158, "", "./tensorflow/core/kernels/lookup_table_op.cc", "IsEqualKey");
+
     for (int64_t i = 0; i < key_shape_.num_elements(); ++i) {
       if (tensor1(index1, i) != tensor2(index2, i)) {
         return false;
@@ -886,10 +1188,16 @@ class LookupTableOpKernel : public OpKernel {
   explicit LookupTableOpKernel(OpKernelConstruction* ctx)
       : OpKernel(ctx),
         expected_input_0_(ctx->input_type(0) == DT_RESOURCE ? DT_RESOURCE
-                                                            : DT_STRING_REF) {}
+                                                            : DT_STRING_REF) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_44(mht_44_v, 1192, "", "./tensorflow/core/kernels/lookup_table_op.cc", "LookupTableOpKernel");
+}
 
  protected:
   Status GetTable(OpKernelContext* ctx, lookup::LookupInterface** table) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_45(mht_45_v, 1198, "", "./tensorflow/core/kernels/lookup_table_op.cc", "GetTable");
+
     if (expected_input_0_ == DT_RESOURCE) {
       return GetResourceLookupTable("table_handle", ctx, table);
     } else {
@@ -907,6 +1215,9 @@ class LookupTableFindOp : public LookupTableOpKernel {
   using LookupTableOpKernel::LookupTableOpKernel;
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_46(mht_46_v, 1218, "", "./tensorflow/core/kernels/lookup_table_op.cc", "Compute");
+
     lookup::LookupInterface* table;
     OP_REQUIRES_OK(ctx, GetTable(ctx, &table));
     core::ScopedUnref unref_me(table);
@@ -941,6 +1252,9 @@ class LookupTableInsertOp : public LookupTableOpKernel {
   using LookupTableOpKernel::LookupTableOpKernel;
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_47(mht_47_v, 1255, "", "./tensorflow/core/kernels/lookup_table_op.cc", "Compute");
+
     lookup::LookupInterface* table;
     OP_REQUIRES_OK(ctx, GetTable(ctx, &table));
     core::ScopedUnref unref_me(table);
@@ -976,6 +1290,9 @@ class LookupTableRemoveOp : public LookupTableOpKernel {
   using LookupTableOpKernel::LookupTableOpKernel;
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_48(mht_48_v, 1293, "", "./tensorflow/core/kernels/lookup_table_op.cc", "Compute");
+
     lookup::LookupInterface* table;
     OP_REQUIRES_OK(ctx, GetTable(ctx, &table));
     core::ScopedUnref unref_me(table);
@@ -1007,6 +1324,9 @@ class LookupTableSizeOp : public LookupTableOpKernel {
   using LookupTableOpKernel::LookupTableOpKernel;
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_49(mht_49_v, 1327, "", "./tensorflow/core/kernels/lookup_table_op.cc", "Compute");
+
     lookup::LookupInterface* table;
     OP_REQUIRES_OK(ctx, GetTable(ctx, &table));
     core::ScopedUnref unref_me(table);
@@ -1028,6 +1348,9 @@ class LookupTableExportOp : public LookupTableOpKernel {
   using LookupTableOpKernel::LookupTableOpKernel;
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_50(mht_50_v, 1351, "", "./tensorflow/core/kernels/lookup_table_op.cc", "Compute");
+
     lookup::LookupInterface* table;
     OP_REQUIRES_OK(ctx, GetTable(ctx, &table));
     core::ScopedUnref unref_me(table);
@@ -1047,6 +1370,9 @@ class LookupTableImportOp : public LookupTableOpKernel {
   using LookupTableOpKernel::LookupTableOpKernel;
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSlookup_table_opDTcc mht_51(mht_51_v, 1373, "", "./tensorflow/core/kernels/lookup_table_op.cc", "Compute");
+
     lookup::LookupInterface* table;
     OP_REQUIRES_OK(ctx, GetTable(ctx, &table));
     core::ScopedUnref unref_me(table);

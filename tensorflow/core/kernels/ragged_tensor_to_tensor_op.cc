@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSragged_tensor_to_tensor_opDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_tensor_to_tensor_opDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSragged_tensor_to_tensor_opDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -60,6 +228,9 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
 
   explicit RaggedTensorToTensorBaseOp(OpKernelConstruction* context)
       : OpKernel(context) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_tensor_to_tensor_opDTcc mht_0(mht_0_v, 231, "", "./tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc", "RaggedTensorToTensorBaseOp");
+
     OP_REQUIRES_OK(context, GetRowPartitionTypes<OpKernelConstruction>(
                                 context, &row_partition_types_));
     ragged_rank_ = GetRaggedRank(row_partition_types_);
@@ -67,6 +238,9 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
 
   // Returns the relationship between dimension and dimension + 1.
   RowPartitionType GetRowPartitionTypeByDimension(int dimension) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_tensor_to_tensor_opDTcc mht_1(mht_1_v, 241, "", "./tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc", "GetRowPartitionTypeByDimension");
+
     if (row_partition_types_[0] == RowPartitionType::FIRST_DIM_SIZE) {
       return row_partition_types_[dimension + 1];
     } else {
@@ -76,6 +250,9 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
 
   // Returns the relationship between dimension and dimension + 1.
   RowPartitionTensor GetRowPartitionTensor(OpKernelContext* c, int dimension) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_tensor_to_tensor_opDTcc mht_2(mht_2_v, 253, "", "./tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc", "GetRowPartitionTensor");
+
     if (row_partition_types_[0] == RowPartitionType::FIRST_DIM_SIZE) {
       return c->input(dimension + 1 + kFirstPartitionInputIndex)
           .flat<INDEX_TYPE>();
@@ -85,6 +262,9 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
   }
 
   Status GetMaxWidth(OpKernelContext* c, int dimension, INDEX_TYPE* result) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_tensor_to_tensor_opDTcc mht_3(mht_3_v, 265, "", "./tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc", "GetMaxWidth");
+
     const RowPartitionTensor row_partition_tensor =
         GetRowPartitionTensor(c, dimension - 1);
     switch (GetRowPartitionTypeByDimension(dimension - 1)) {
@@ -103,6 +283,9 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
   }
 
   static INDEX_TYPE GetMaxWidthRowSplit(const RowPartitionTensor& row_split) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_tensor_to_tensor_opDTcc mht_4(mht_4_v, 286, "", "./tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc", "GetMaxWidthRowSplit");
+
     const INDEX_TYPE tensor_length = row_split.size();
     if (tensor_length == 0 || tensor_length == 1) {
       return 0;
@@ -119,6 +302,9 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
 
   static INDEX_TYPE GetMaxWidthValueRowID(
       const RowPartitionTensor& value_rowids) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_tensor_to_tensor_opDTcc mht_5(mht_5_v, 305, "", "./tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc", "GetMaxWidthValueRowID");
+
     const INDEX_TYPE index_length = value_rowids.size();
     if (index_length == 0) {
       return 0;
@@ -139,6 +325,9 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
 
   Status CalculateOutputSize(INDEX_TYPE first_dim, OpKernelContext* c,
                              vector<INDEX_TYPE>* result) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_tensor_to_tensor_opDTcc mht_6(mht_6_v, 328, "", "./tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc", "CalculateOutputSize");
+
     TensorShapeProto value_shape_proto;
     c->input(kValueInputIndex).shape().AsProto(&value_shape_proto);
 
@@ -193,6 +382,9 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
                                        INDEX_TYPE output_index_multiplier,
                                        INDEX_TYPE first_dimension_output,
                                        vector<INDEX_TYPE>* result) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_tensor_to_tensor_opDTcc mht_7(mht_7_v, 385, "", "./tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc", "CalculateFirstParentOutputIndex");
+
     const INDEX_TYPE min_dimension =
         std::min(first_dimension, first_dimension_output);
     result->reserve(first_dimension);
@@ -212,6 +404,9 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
       const vector<INDEX_TYPE>& parent_output_index,
       INDEX_TYPE output_index_multiplier, INDEX_TYPE output_size,
       vector<INDEX_TYPE>* result) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_tensor_to_tensor_opDTcc mht_8(mht_8_v, 407, "", "./tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc", "CalculateOutputIndexRowSplit");
+
     INDEX_TYPE row_split_size = row_split.size();
     if (row_split_size > 0) {
       result->reserve(row_split(row_split_size - 1));
@@ -265,6 +460,9 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
       const vector<INDEX_TYPE>& parent_output_index,
       INDEX_TYPE output_index_multiplier, INDEX_TYPE output_size,
       vector<INDEX_TYPE>* result) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_tensor_to_tensor_opDTcc mht_9(mht_9_v, 463, "", "./tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc", "CalculateOutputIndexValueRowID");
+
     const INDEX_TYPE index_size = value_rowids.size();
     result->reserve(index_size);
     if (index_size == 0) {
@@ -320,6 +518,9 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
                               INDEX_TYPE output_index_multiplier,
                               INDEX_TYPE output_size,
                               vector<INDEX_TYPE>* result) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_tensor_to_tensor_opDTcc mht_10(mht_10_v, 521, "", "./tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc", "CalculateOutputIndex");
+
     const RowPartitionTensor row_partition_tensor =
         GetRowPartitionTensor(context, dimension);
     auto partition_type = GetRowPartitionTypeByDimension(dimension);
@@ -346,6 +547,9 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
   }
 
   Status GetFirstDimensionSize(OpKernelContext* context, INDEX_TYPE* result) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_tensor_to_tensor_opDTcc mht_11(mht_11_v, 550, "", "./tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc", "GetFirstDimensionSize");
+
     const Tensor first_partition_tensor =
         context->input(kFirstPartitionInputIndex);
     if (row_partition_types_.empty()) {
@@ -370,6 +574,9 @@ class RaggedTensorToTensorBaseOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_tensor_to_tensor_opDTcc mht_12(mht_12_v, 577, "", "./tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc", "Compute");
+
     INDEX_TYPE first_dimension;
     const Tensor first_partition_tensor =
         context->input(kFirstPartitionInputIndex);
@@ -467,11 +674,17 @@ template <typename VALUE_TYPE, typename INDEX_TYPE>
 class RaggedTensorToTensorOp : public RaggedTensorToTensorBaseOp<INDEX_TYPE> {
  public:
   explicit RaggedTensorToTensorOp(OpKernelConstruction* context)
-      : RaggedTensorToTensorBaseOp<INDEX_TYPE>(context) {}
+      : RaggedTensorToTensorBaseOp<INDEX_TYPE>(context) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_tensor_to_tensor_opDTcc mht_13(mht_13_v, 678, "", "./tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc", "RaggedTensorToTensorOp");
+}
 
   void SetOutput(OpKernelContext* context, int ragged_rank,
                  const vector<INDEX_TYPE>& output_index,
                  Tensor* output_tensor) override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSragged_tensor_to_tensor_opDTcc mht_14(mht_14_v, 685, "", "./tensorflow/core/kernels/ragged_tensor_to_tensor_op.cc", "SetOutput");
+
     // Note: it's ok to use OP_REQUIRES_OK (rather than TF_RETURN_IF_ERROR)
     // in this function, but only because it's the last thing we do before
     // returning from Compute().

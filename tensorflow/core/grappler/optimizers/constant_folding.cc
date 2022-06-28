@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -65,6 +233,9 @@ const int64_t kMaxConstantSize = 100 * 1024;
 namespace {
 template <typename T>
 bool AllValuesAre(const TensorProto& proto, const T& value) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_0(mht_0_v, 236, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "AllValuesAre");
+
   Tensor tensor;
   if (!tensor.FromProto(proto)) {
     return false;
@@ -83,6 +254,10 @@ bool AllValuesAre(const TensorProto& proto, const T& value) {
 // clean up code that should be using them.
 bool MaybeAddControlInput(const string& ctrl_input, NodeDef* node,
                           GraphDef* graph, NodeMap* node_map) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("ctrl_input: \"" + ctrl_input + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_1(mht_1_v, 258, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "MaybeAddControlInput");
+
   bool already_exists = false;
   for (const string& input : node->input()) {
     if (input == ctrl_input || AsControlDependency(input) == ctrl_input) {
@@ -102,6 +277,10 @@ bool MaybeAddControlInput(const string& ctrl_input, NodeDef* node,
 // Remove old_input as a control input to node.
 bool MaybeRemoveControlInput(const string& old_input, NodeDef* node,
                              GraphDef* graph, NodeMap* node_map) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("old_input: \"" + old_input + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_2(mht_2_v, 281, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "MaybeRemoveControlInput");
+
   bool removed_input = false;
   bool update_node_map = true;
   const string old_input_ctrl_dep = AsControlDependency(NodeName(old_input));
@@ -126,6 +305,9 @@ bool MaybeRemoveControlInput(const string& old_input, NodeDef* node,
 }
 
 bool HasTPUAttributes(const NodeDef& node) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_3(mht_3_v, 308, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "HasTPUAttributes");
+
   AttrSlice attrs(node);
   for (const auto& attr : attrs) {
     if (attr.first.find("_tpu_") != attr.first.npos) {
@@ -137,20 +319,32 @@ bool HasTPUAttributes(const NodeDef& node) {
 
 template <typename T>
 bool PackedValuesNotEqual(T a, T b) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_4(mht_4_v, 322, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "PackedValuesNotEqual");
+
   return a != b;
 }
 
 template <>
 bool PackedValuesNotEqual(float a, float b) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_5(mht_5_v, 330, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "PackedValuesNotEqual");
+
   return reinterpret_cast<int32_t&>(a) != reinterpret_cast<int32_t&>(b);
 }
 
 template <>
 bool PackedValuesNotEqual(double a, double b) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_6(mht_6_v, 338, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "PackedValuesNotEqual");
+
   return reinterpret_cast<int64_t&>(a) != reinterpret_cast<int64_t&>(b);
 }
 
 float QuantizedTypeMinAsFloat(DataType data_type) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_7(mht_7_v, 345, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "QuantizedTypeMinAsFloat");
+
   switch (data_type) {
     case DT_QINT8:
       return Eigen::NumTraits<qint8>::lowest();
@@ -168,6 +362,9 @@ float QuantizedTypeMinAsFloat(DataType data_type) {
 }
 
 float QuantizedTypeMaxAsFloat(DataType data_type) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_8(mht_8_v, 365, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "QuantizedTypeMaxAsFloat");
+
   switch (data_type) {
     case DT_QINT8:
       return Eigen::NumTraits<qint8>::highest();
@@ -195,6 +392,9 @@ ConstantFolding::ConstantFolding(RewriterConfig::Toggle opt_level,
       disable_compressed_tensor_optimization_(
           disable_compressed_tensor_optimization),
       fold_quantization_emulation_(fold_quantization_emulation) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_9(mht_9_v, 395, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::ConstantFolding");
+
   resource_mgr_.reset(new ResourceMgr());
 }
 
@@ -203,12 +403,19 @@ ConstantFolding::ConstantFolding(DeviceBase* cpu_device,
                                  bool fold_quantization_ops)
     : ConstantFolding(RewriterConfig::ON, cpu_device,
                       disable_compressed_tensor_optimization,
-                      fold_quantization_ops) {}
+                      fold_quantization_ops) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_10(mht_10_v, 407, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::ConstantFolding");
+}
 
 // static
 string ConstantFolding::AddControlDependency(const string& input_name,
                                              GraphDef* graph,
                                              NodeMap* node_map) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("input_name: \"" + input_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_11(mht_11_v, 416, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::AddControlDependency");
+
   if (IsControlInput(input_name)) {
     return input_name;
   }
@@ -261,6 +468,9 @@ string ConstantFolding::AddControlDependency(const string& input_name,
 // on node.
 bool ConstantFolding::ForwardInputs(NodeDef* node,
                                     absl::Span<const int> inputs_to_forward) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_12(mht_12_v, 471, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::ForwardInputs");
+
   for (int input_idx : inputs_to_forward) {
     if (input_idx < 0 || input_idx >= node->input_size()) {
       return false;
@@ -324,6 +534,9 @@ bool ConstantFolding::ForwardInputs(NodeDef* node,
 // Puts the given value into the tensor at the given "flat" index.
 static Status PutValueIntoTensor(const int64_t value, const DataType& type,
                                  const int index, Tensor* tensor) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_13(mht_13_v, 537, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "PutValueIntoTensor");
+
   if (type == DT_INT32) {
     if (value >= INT_MAX) {
       return Status(error::INVALID_ARGUMENT, "int32 overflow");
@@ -340,6 +553,10 @@ static Status PutValueIntoTensor(const int64_t value, const DataType& type,
 static Status ConvertShapeToConstant(const string& op, const DataType& type,
                                      const PartialTensorShape& shp,
                                      Tensor* tensor) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("op: \"" + op + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_14(mht_14_v, 557, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConvertShapeToConstant");
+
   if (op == "Shape" || op == "ShapeN") {
     *tensor = Tensor(type, TensorShape({shp.dims()}));
     for (int i = 0; i < shp.dims(); ++i) {
@@ -363,16 +580,25 @@ static Status ConvertShapeToConstant(const string& op, const DataType& type,
 // TODO(rmlarsen): Perhaps we should move this to the GraphOptimizer base class.
 bool ConstantFolding::OptimizedNodeExists(const NodeDef& node,
                                           StringPiece suffix) const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_15(mht_15_v, 583, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::OptimizedNodeExists");
+
   return node_map_->NodeExists(OptimizedNodeName(node, suffix));
 }
 
 string ConstantFolding::OptimizedNodeName(const NodeDef& node,
                                           StringPiece suffix) const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_16(mht_16_v, 591, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::OptimizedNodeName");
+
   return AddPrefixToNodeName(strings::StrCat(node.name(), suffix),
                              kConstantFoldingConst);
 }
 
 bool ConstantFolding::IsReallyConstant(const NodeDef& node) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_17(mht_17_v, 599, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::IsReallyConstant");
+
   if (!IsConstant(node)) {
     return false;
   }
@@ -383,6 +609,10 @@ bool ConstantFolding::IsReallyConstant(const NodeDef& node) const {
 // TODO(rmlarsen): Refactor to shared util.
 bool ConstantFolding::GetTensorFromConstNode(const string& node_name_or_input,
                                              Tensor* tensor) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("node_name_or_input: \"" + node_name_or_input + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_18(mht_18_v, 613, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::GetTensorFromConstNode");
+
   const NodeDef* node = node_map_->GetNode(node_name_or_input);
   return node != nullptr && IsReallyConstant(*node) &&
          CheckAttrExists(*node, "value").ok() &&
@@ -391,6 +621,9 @@ bool ConstantFolding::GetTensorFromConstNode(const string& node_name_or_input,
 
 // Materialize the shapes using constants whenever possible.
 Status ConstantFolding::MaterializeShapes(const GraphProperties& properties) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_19(mht_19_v, 624, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::MaterializeShapes");
+
   // We may add some nodes to the graph to encode control dependencies and hold
   // the materialized shapes: there is no need to process these added nodes, so
   // only iterate over the nodes of the input graph.
@@ -565,6 +798,9 @@ Status ConstantFolding::MaterializeShapes(const GraphProperties& properties) {
 namespace {
 bool ExtractShape(const NodeDef& shape_node, const GraphProperties& properties,
                   BCast::Vec* shape, int64_t* min_id) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_20(mht_20_v, 801, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ExtractShape");
+
   if (shape_node.op() == "Shape") {
     const std::vector<OpInfo::TensorProperties>& prop1 =
         properties.GetInputProperties(shape_node.name());
@@ -605,6 +841,9 @@ bool ExtractShape(const NodeDef& shape_node, const GraphProperties& properties,
 
 Status ConstantFolding::MaterializeBroadcastGradientArgs(
     const NodeDef& node, const GraphProperties& properties) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_21(mht_21_v, 844, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::MaterializeBroadcastGradientArgs");
+
   const NodeDef* shape_node1 = node_map_->GetNode(node.input(0));
   const NodeDef* shape_node2 = node_map_->GetNode(node.input(1));
   if (shape_node1 == nullptr ||
@@ -728,6 +967,9 @@ Status ConstantFolding::MaterializeBroadcastGradientArgs(
 
 Status ConstantFolding::MaterializeReductionIndices(
     NodeDef* node, const GraphProperties& properties) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_22(mht_22_v, 970, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::MaterializeReductionIndices");
+
   if (node->input_size() < 2) {
     return Status::OK();
   }
@@ -832,6 +1074,9 @@ Status ConstantFolding::MaterializeReductionIndices(
 
 Status ConstantFolding::MaterializeConstantValuedNode(
     NodeDef* node, const GraphProperties& properties) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_23(mht_23_v, 1077, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::MaterializeConstantValuedNode");
+
   if (disable_compressed_tensor_optimization_) {
     return Status::OK();
   }
@@ -900,6 +1145,9 @@ Status ConstantFolding::MaterializeConstantValuedNode(
 // Materialize output values inferred by the shape inference.
 Status ConstantFolding::MaterializeOutputValues(
     NodeDef* node, const GraphProperties& properties) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_24(mht_24_v, 1148, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::MaterializeOutputValues");
+
   const std::vector<OpInfo::TensorProperties>& output =
       properties.GetOutputProperties(node->name());
   if (output.size() != 1 || !output[0].has_value() ||
@@ -927,6 +1175,9 @@ Status ConstantFolding::MaterializeOutputValues(
 
 Status ConstantFolding::MaterializeConstants(
     const GraphProperties& properties) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_25(mht_25_v, 1178, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::MaterializeConstants");
+
   const int node_count = graph_->node_size();
   for (int i = 0; i < node_count; ++i) {
     NodeDef& node = *graph_->mutable_node(i);
@@ -946,6 +1197,9 @@ Status ConstantFolding::MaterializeConstants(
 
 bool ConstantFolding::IsFoldable(const NodeDef& node,
                                  const GraphProperties* properties) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_26(mht_26_v, 1200, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::IsFoldable");
+
   string key = strings::StrCat(node.name(), "/", node.op());
   auto it = maybe_foldable_nodes_.find(key);
   if (it == maybe_foldable_nodes_.end()) {
@@ -962,6 +1216,9 @@ bool ConstantFolding::IsFoldable(const NodeDef& node,
 
 bool ConstantFolding::IsFoldableUncached(
     const NodeDef& node, const GraphProperties* properties) const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_27(mht_27_v, 1219, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::IsFoldableUncached");
+
   // Folding not applicable to ops with no inputs.
   if (node.input().empty()) {
     return false;
@@ -1041,6 +1298,9 @@ bool ConstantFolding::IsFoldableUncached(
 
 bool ConstantFolding::MaybeFoldable(const NodeDef& node,
                                     const GraphProperties* properties) const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_28(mht_28_v, 1301, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::MaybeFoldable");
+
   // Skip constants, they're already folded
   if (IsConstant(node)) {
     return false;
@@ -1138,6 +1398,9 @@ namespace {
 Status CreateConstantTensorAttrValue(DataType type, double value,
                                      const TensorShapeProto& shape,
                                      AttrValue* attr_tensor) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_29(mht_29_v, 1401, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "CreateConstantTensorAttrValue");
+
   TensorProto* t = attr_tensor->mutable_tensor();
   t->set_dtype(type);
   *t->mutable_tensor_shape() = shape;
@@ -1199,6 +1462,10 @@ DataType GetDataTypeFromNodeOrProps(const NodeDef& node,
 bool IsValidConstShapeForMulConvPushDown(
     const string& data_format, const TensorShapeProto& filter_shape,
     const TensorShapeProto& mul_const_input_shape) {
+   std::vector<std::string> mht_30_v;
+   mht_30_v.push_back("data_format: \"" + data_format + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_30(mht_30_v, 1466, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "IsValidConstShapeForMulConvPushDown");
+
   // If the const is a scalar, or it has fewer or same number of dimensions
   // than the filter and it only has single element, the optimization should
   // work.
@@ -1237,6 +1504,10 @@ bool IsValidConstShapeForMulConvPushDown(
 Status ConstantFolding::CreateNodeDef(const string& name,
                                       const TensorValue& tensor, NodeDef* node,
                                       size_t original_size) {
+   std::vector<std::string> mht_31_v;
+   mht_31_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_31(mht_31_v, 1508, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::CreateNodeDef");
+
   node->set_name(name);
   node->set_op("Const");
 
@@ -1326,6 +1597,9 @@ Status ConstantFolding::CreateNodeDef(const string& name,
 Status ConstantFolding::EvaluateNode(const NodeDef& node,
                                      const TensorVector& inputs,
                                      TensorVector* output) const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_32(mht_32_v, 1600, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::EvaluateNode");
+
   return ::tensorflow::grappler::EvaluateNode(node, inputs, cpu_device_,
                                               resource_mgr_.get(), output);
 }
@@ -1333,6 +1607,9 @@ Status ConstantFolding::EvaluateNode(const NodeDef& node,
 Status ConstantFolding::EvaluateOneFoldable(const NodeDef& node,
                                             std::vector<NodeDef>* outputs,
                                             bool* result_too_large) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_33(mht_33_v, 1610, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::EvaluateOneFoldable");
+
   TensorVector inputs;
   TensorVector output_tensors;
   auto inputs_cleanup = gtl::MakeCleanup([&inputs, &output_tensors] {
@@ -1412,6 +1689,9 @@ Status ConstantFolding::EvaluateOneFoldable(const NodeDef& node,
 }
 
 Status ConstantFolding::FoldMergeNode(NodeDef* node, GraphDef* output_graph) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_34(mht_34_v, 1692, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::FoldMergeNode");
+
   // Merge nodes are special, in the sense that they execute as soon as one of
   // their input is ready. We can therefore fold a merge node iff it has at
   // least one constant input without control dependency.
@@ -1505,6 +1785,9 @@ Status ConstantFolding::FoldMergeNode(NodeDef* node, GraphDef* output_graph) {
 
 Status ConstantFolding::FoldNode(NodeDef* node, GraphDef* output_graph,
                                  bool* result_too_large) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_35(mht_35_v, 1788, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::FoldNode");
+
   *result_too_large = false;
   if (IsMerge(*node)) {
     return FoldMergeNode(node, output_graph);
@@ -1632,6 +1915,9 @@ Status ConstantFolding::FoldNode(NodeDef* node, GraphDef* output_graph,
 Status ConstantFolding::FoldGraph(
     const GraphProperties& properties, GraphDef* optimized_graph,
     absl::flat_hash_set<string>* nodes_to_not_simplify) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_36(mht_36_v, 1918, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::FoldGraph");
+
   // We build a new optimized_graph by inserting the folded nodes into it, then
   // copy other nodes that might be needed at the end of this function.
   absl::flat_hash_set<string> processed_nodes;
@@ -1696,6 +1982,9 @@ Status ConstantFolding::FoldGraph(
 
 Status ConstantFolding::IsSimplifiableReshape(
     const NodeDef& node, const GraphProperties& properties) const {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_37(mht_37_v, 1985, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::IsSimplifiableReshape");
+
   if (!IsReshape(node)) {
     return errors::Internal("Node ", node.name(), " is not a Reshape node");
   }
@@ -1819,6 +2108,9 @@ bool ConstantFolding::IsOnes(const NodeDef& node) const {
 }
 
 bool ConstantFolding::IsZeros(const NodeDef& node) const {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_38(mht_38_v, 2111, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::IsZeros");
+
   if (feed_nodes_.find(node.name()) != feed_nodes_.end()) {
     return false;
   }
@@ -1860,6 +2152,9 @@ bool ConstantFolding::IsZeros(const NodeDef& node) const {
 bool ConstantFolding::ReplaceOperationWithBroadcastTo(
     int input_to_broadcast, const GraphProperties& properties, NodeDef* node,
     GraphDef* graph) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_39(mht_39_v, 2155, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::ReplaceOperationWithBroadcastTo");
+
   const DataType dtype = GetDataTypeFromNodeOrProps(*node, properties);
   if (dtype == DT_INVALID) {
     return false;
@@ -1926,6 +2221,9 @@ bool ConstantFolding::ReplaceOperationWithBroadcastTo(
 void ConstantFolding::ReplaceOperationWithIdentity(
     int input_to_forward, const GraphProperties& properties, NodeDef* node,
     GraphDef* graph) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_40(mht_40_v, 2224, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::ReplaceOperationWithIdentity");
+
   if (input_to_forward < 0 || input_to_forward >= node->input_size()) return;
   const DataType dtype = GetDataTypeFromNodeOrProps(*node, properties);
   if (dtype == DT_INVALID) return;
@@ -1951,6 +2249,9 @@ void ConstantFolding::ReplaceOperationWithIdentity(
 void ConstantFolding::ReplaceOperationWithSnapshot(
     int input_to_forward, const GraphProperties& properties, NodeDef* node,
     GraphDef* graph) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_41(mht_41_v, 2252, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::ReplaceOperationWithSnapshot");
+
   // If the graph contains no ops that mutate their inputs, we can
   // use Identity instead of Snapshot.
   if (!graph_contains_assign_or_inplace_op_) {
@@ -1984,6 +2285,9 @@ void ConstantFolding::ReplaceOperationWithSnapshot(
 void ConstantFolding::ReplaceOperationWithNoOp(NodeDef* node,
                                                GraphProperties* properties,
                                                GraphDef* graph) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_42(mht_42_v, 2288, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::ReplaceOperationWithNoOp");
+
   if (HasRegularOutputs(*node, *node_map_)) return;
   node->set_op("NoOp");
   EraseRegularNodeAttributes(node);
@@ -2007,6 +2311,9 @@ void ConstantFolding::ReplaceOperationWithNoOp(NodeDef* node,
 void ConstantFolding::ReplaceBinaryOperationWithBroadcastTo(
     int input_to_broadcast, const GraphProperties& properties, NodeDef* node,
     GraphDef* graph) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_43(mht_43_v, 2314, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::ReplaceBinaryOperationWithBroadcastTo");
+
   if (!ReplaceOperationWithBroadcastTo(input_to_broadcast, properties, node,
                                        graph)) {
     return;
@@ -2016,6 +2323,9 @@ void ConstantFolding::ReplaceBinaryOperationWithBroadcastTo(
 
 void ConstantFolding::ReplaceDivisionOfOnesByReciprocal(NodeDef* node,
                                                         GraphDef* graph) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_44(mht_44_v, 2326, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::ReplaceDivisionOfOnesByReciprocal");
+
   node->set_op("Reciprocal");
   node->mutable_input()->SwapElements(0, 1);
   const string ctrl_dep =
@@ -2027,6 +2337,9 @@ void ConstantFolding::ReplaceDivisionOfOnesByReciprocal(NodeDef* node,
 
 void ConstantFolding::ReplaceSubtractionFromZeroByNegation(NodeDef* node,
                                                            GraphDef* graph) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_45(mht_45_v, 2340, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::ReplaceSubtractionFromZeroByNegation");
+
   node->set_op("Neg");
   node->mutable_input()->SwapElements(0, 1);
   const string ctrl_dep =
@@ -2040,6 +2353,9 @@ Status ConstantFolding::ReplaceOperationWithConstantTensor(DataType dtype,
                                                            TensorProto* value,
                                                            NodeDef* node,
                                                            GraphDef* graph) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_46(mht_46_v, 2356, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::ReplaceOperationWithConstantTensor");
+
   if (dtype == DT_VARIANT) return Status::OK();
   node->set_op("Const");
   EraseRegularNodeAttributes(node);
@@ -2063,6 +2379,9 @@ Status ConstantFolding::ReplaceOperationWithConstantTensor(DataType dtype,
 Status ConstantFolding::ReplaceOperationWithConstant(
     double value, const GraphProperties& properties,
     const TensorShapeProto& shape, NodeDef* node, GraphDef* graph) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_47(mht_47_v, 2382, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::ReplaceOperationWithConstant");
+
   const DataType dtype = GetDataTypeFromNodeOrProps(*node, properties);
   if (dtype == DT_VARIANT) return Status::OK();
   AttrValue tensor_attr;
@@ -2081,6 +2400,9 @@ Status ConstantFolding::ReplaceOperationWithConstant(
 Status ConstantFolding::SimplifyGraph(
     GraphDef* optimized_graph, GraphProperties* properties,
     absl::flat_hash_set<string>* nodes_to_not_simplify) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_48(mht_48_v, 2403, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::SimplifyGraph");
+
   for (int i = 0; i < optimized_graph->node_size(); ++i) {
     NodeDef* node = optimized_graph->mutable_node(i);
     // TODO(lyandy): Move nodes to not simplify check into SimplifyNode and
@@ -2169,6 +2491,9 @@ Status ConstantFolding::SimplifyNode(NodeDef* node, GraphDef* optimized_graph,
 void ConstantFolding::RemoveSplitOrSplitV(const GraphProperties& properties,
                                           GraphDef* optimized_graph,
                                           NodeDef* node) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_49(mht_49_v, 2494, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::RemoveSplitOrSplitV");
+
   if (node->attr().count("num_split") == 0) return;
   if (IsSplit(*node) && node->attr().at("num_split").i() == 1) {
     ReplaceOperationWithIdentity(1, properties, node, optimized_graph);
@@ -2181,6 +2506,9 @@ void ConstantFolding::RemoveSplitOrSplitV(const GraphProperties& properties,
 Status ConstantFolding::RemoveShuffleOrTranspose(
     const GraphProperties& properties, bool use_shape_info,
     GraphDef* optimized_graph, NodeDef* node) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_50(mht_50_v, 2509, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::RemoveShuffleOrTranspose");
+
   if (!use_shape_info || !(IsShuffle(*node) || IsTranspose(*node)))
     return Status::OK();
   Tensor permutation_tensor;
@@ -2218,6 +2546,9 @@ void ConstantFolding::RemoveRandomShuffle(const GraphProperties& properties,
                                           bool use_shape_info,
                                           GraphDef* optimized_graph,
                                           NodeDef* node) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_51(mht_51_v, 2549, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::RemoveRandomShuffle");
+
   if (use_shape_info && IsRandomShuffle(*node) &&
       !properties.GetInputProperties(node->name()).empty()) {
     const auto& shape = properties.GetInputProperties(node->name())[0].shape();
@@ -2234,6 +2565,9 @@ Status ConstantFolding::RemoveReverse(const GraphProperties& properties,
                                       bool use_shape_info,
                                       GraphDef* optimized_graph,
                                       NodeDef* node) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_52(mht_52_v, 2568, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::RemoveReverse");
+
   if (!use_shape_info || node->op() != "ReverseV2") return Status::OK();
   Tensor axis;
   if (properties.HasInputProperties(node->name()) &&
@@ -2272,6 +2606,9 @@ Status ConstantFolding::SimplifySlice(const GraphProperties& properties,
                                       bool use_shape_info,
                                       GraphDef* optimized_graph,
                                       NodeDef* node) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_53(mht_53_v, 2609, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::SimplifySlice");
+
   if (!use_shape_info || !IsSlice(*node)) return Status::OK();
   Tensor begin;
   Tensor size;
@@ -2307,6 +2644,9 @@ Status ConstantFolding::SimplifyStridedSlice(const GraphProperties& properties,
                                              bool use_shape_info,
                                              GraphDef* optimized_graph,
                                              NodeDef* node) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_54(mht_54_v, 2647, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::SimplifyStridedSlice");
+
   if (use_shape_info && IsStridedSlice(*node) &&
       properties.GetInputProperties(node->name()).size() == 4) {
     TF_RETURN_IF_ERROR(
@@ -2398,6 +2738,9 @@ Status ConstantFolding::SimplifyStridedSlice(const GraphProperties& properties,
 Status ConstantFolding::SimplifyTile(const GraphProperties& properties,
                                      bool use_shape_info,
                                      GraphDef* optimized_graph, NodeDef* node) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_55(mht_55_v, 2741, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::SimplifyTile");
+
   Tensor multiplies;
   if (use_shape_info && IsTile(*node) &&
       GetTensorFromConstNode(node->input(1), &multiplies)) {
@@ -2423,6 +2766,9 @@ Status ConstantFolding::SimplifyTile(const GraphProperties& properties,
 Status ConstantFolding::SimplifyPad(const GraphProperties& properties,
                                     bool use_shape_info,
                                     GraphDef* optimized_graph, NodeDef* node) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_56(mht_56_v, 2769, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::SimplifyPad");
+
   if (!use_shape_info || !IsPad(*node)) return Status::OK();
 
   Tensor paddings;
@@ -2451,6 +2797,9 @@ void ConstantFolding::SimplifySqueeze(const GraphProperties& properties,
                                       bool use_shape_info,
                                       GraphDef* optimized_graph,
                                       NodeDef* node) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_57(mht_57_v, 2800, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::SimplifySqueeze");
+
   if (use_shape_info && IsSqueeze(*node) &&
       !properties.GetInputProperties(node->name()).empty()) {
     // https://www.tensorflow.org/api_docs/python/tf/squeeze mentions it's
@@ -2470,6 +2819,9 @@ void ConstantFolding::SimplifySqueeze(const GraphProperties& properties,
 }
 
 bool ConstantFolding::SimplifyPack(GraphDef* optimized_graph, NodeDef* node) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_58(mht_58_v, 2822, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::SimplifyPack");
+
   const string axis_node_name = OptimizedNodeName(*node, "_const_axis");
   if (!IsPack(*node) || NumNonControlInputs(*node) != 1 ||
       node_map_->NodeExists(axis_node_name)) {
@@ -2518,6 +2870,9 @@ bool ConstantFolding::SimplifyPack(GraphDef* optimized_graph, NodeDef* node) {
 }
 
 bool ConstantFolding::SimplifyCase(GraphDef* optimized_graph, NodeDef* node) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_59(mht_59_v, 2873, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::SimplifyCase");
+
   if (node->op() != "Case") return false;
   const NodeDef* output_idx_node = node_map_->GetNode(node->input(0));
   if (output_idx_node == nullptr ||
@@ -2560,6 +2915,9 @@ bool ConstantFolding::SimplifyCase(GraphDef* optimized_graph, NodeDef* node) {
 
 bool ConstantFolding::SimplifySelect(const GraphProperties& properties,
                                      GraphDef* optimized_graph, NodeDef* node) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_60(mht_60_v, 2918, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::SimplifySelect");
+
   if (!IsSelect(*node)) return false;
   const std::vector<OpInfo::TensorProperties>& input_props =
       properties.GetInputProperties(node->name());
@@ -2595,6 +2953,9 @@ bool ConstantFolding::SimplifySelect(const GraphProperties& properties,
 
 void ConstantFolding::RemoveRedundantVariableUpdates(
     GraphProperties* properties, GraphDef* optimized_graph, NodeDef* node) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_61(mht_61_v, 2956, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::RemoveRedundantVariableUpdates");
+
   static const absl::flat_hash_set<string>* kVariableReadOps =
       new absl::flat_hash_set<string>{"AssignAddVariableOp",
                                       "AssignSubVariableOp",
@@ -2639,6 +3000,9 @@ void ConstantFolding::RemoveRedundantVariableUpdates(
 
 bool ConstantFolding::MoveConstantsPastEnter(GraphDef* optimized_graph,
                                              NodeDef* node) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_62(mht_62_v, 3003, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::MoveConstantsPastEnter");
+
   if (!IsEnter(*node) || node->input_size() == 0 ||
       node->attr().count("is_constant") == 0 ||
       !node->attr().at("is_constant").b()) {
@@ -2686,6 +3050,9 @@ bool ConstantFolding::MoveConstantsPastEnter(GraphDef* optimized_graph,
 }
 
 bool ConstantFolding::SimplifySwitch(GraphDef* optimized_graph, NodeDef* node) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_63(mht_63_v, 3053, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::SimplifySwitch");
+
   if (node->op() == "Switch" && node->input(0) == node->input(1) &&
       !OptimizedNodeExists(*node, "_const_false") &&
       !OptimizedNodeExists(*node, "_const_true")) {
@@ -2774,6 +3141,9 @@ bool ConstantFolding::SimplifySwitch(GraphDef* optimized_graph, NodeDef* node) {
 
 bool ConstantFolding::IsReductionWithConstantIndices(
     const NodeDef& node, bool* indices_is_empty) const {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_64(mht_64_v, 3144, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::IsReductionWithConstantIndices");
+
   // Ensure its an appropriate Reduce node.
   if (!IsReduction(node) || node.input_size() < 2) {
     return false;
@@ -2794,6 +3164,9 @@ bool ConstantFolding::IsReductionCandidateForSimplification(
     const NodeDef& node, const GraphProperties& properties,
     TensorShapeProto* input_tensor_shape, TensorShapeProto* output_tensor_shape,
     bool* is_single_element_op) const {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_65(mht_65_v, 3167, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::IsReductionCandidateForSimplification");
+
   // Get the properties of the input & output tensors and check if they both
   // contain a single element.
   if (!properties.HasInputProperties(node.name()) ||
@@ -2830,6 +3203,9 @@ bool ConstantFolding::IsReductionCandidateForSimplification(
 bool ConstantFolding::IsReductionSimplifiableToIdentity(
     const NodeDef& node, const TensorShapeProto& input_shape, bool keep_dims,
     const TensorVector& reduction_indices_vector) const {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_66(mht_66_v, 3206, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::IsReductionSimplifiableToIdentity");
+
   int output_size = reduction_indices_vector[0]->NumElements();
   if (output_size == 0) {
     return true;
@@ -2859,6 +3235,9 @@ bool ConstantFolding::IsReductionSimplifiableToIdentity(
 }
 
 bool ConstantFolding::ReplaceReductionWithIdentity(NodeDef* node) const {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_67(mht_67_v, 3238, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::ReplaceReductionWithIdentity");
+
   // Replace the reduction node with an identity node, that can be further
   // optimized by other passes.
   DataType output_type;
@@ -2879,6 +3258,9 @@ bool ConstantFolding::ReplaceReductionWithIdentity(NodeDef* node) const {
 bool ConstantFolding::SimplifyReduction(GraphDef* optimized_graph,
                                         const GraphProperties& properties,
                                         NodeDef* node) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_68(mht_68_v, 3261, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::SimplifyReduction");
+
   bool indices_is_empty = false;
   if (!IsReductionWithConstantIndices(*node, &indices_is_empty)) {
     return false;
@@ -2954,6 +3336,9 @@ bool ConstantFolding::SimplifyReduction(GraphDef* optimized_graph,
 
 bool ConstantFolding::SimplifyReshape(const GraphProperties& properties,
                                       bool use_shape_info, NodeDef* node) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_69(mht_69_v, 3339, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::SimplifyReshape");
+
   if (!use_shape_info || node->attr().count("T") == 0 ||
       !IsSimplifiableReshape(*node, properties).ok()) {
     return false;
@@ -2969,6 +3354,9 @@ bool ConstantFolding::SimplifyReshape(const GraphProperties& properties,
 Status ConstantFolding::SimplifyArithmeticOperations(
     const GraphProperties& properties, bool use_shape_info,
     GraphDef* optimized_graph, NodeDef* node) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_70(mht_70_v, 3357, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::SimplifyArithmeticOperations");
+
   const bool is_mul = IsAnyMul(*node) || IsLogicalAnd(*node);
   const bool is_matmul = IsAnyMatMul(*node);
   const bool is_add = IsAdd(*node) || IsBiasAdd(*node) || IsLogicalOr(*node);
@@ -3094,6 +3482,9 @@ Status ConstantFolding::SimplifyArithmeticOperations(
 
 bool ConstantFolding::ReduceDivToReciprocalMul(GraphDef* optimized_graph,
                                                NodeDef* node) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_71(mht_71_v, 3485, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::ReduceDivToReciprocalMul");
+
   // Strength reduce floating point division by a constant Div(x, const) to
   // multiplication by the reciprocal Mul(x, Reciprocal(const)). This in turn
   // will be constant folded to Mul(x, 1.0/const).
@@ -3143,6 +3534,9 @@ bool ConstantFolding::ReduceDivToReciprocalMul(GraphDef* optimized_graph,
 bool ConstantFolding::PrepareConstantPushDown(
     const NodeDef& parent, const GraphProperties& properties,
     bool must_have_properties, ConstantPushDownContext* ctx) const {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_72(mht_72_v, 3537, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::PrepareConstantPushDown");
+
   if (ctx == nullptr || !has_fetch_ || NumNonControlInputs(parent) != 2) {
     return false;
   }
@@ -3231,6 +3625,9 @@ bool ConstantFolding::PrepareConstantPushDown(
 bool ConstantFolding::ConstantPushDownBiasAdd(GraphProperties* properties,
                                               GraphDef* optimized_graph,
                                               NodeDef* node) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_73(mht_73_v, 3628, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::ConstantPushDownBiasAdd");
+
   // This implements constant push-down for BiasAdd. In the following "CV" is a
   // constant vector (tensor of rank 1), "V" is a (possibly) non-constant
   // vector, "CM" is a matrix (tensor of rank >= 2), "M" is a (possibly)
@@ -3341,6 +3738,9 @@ bool ConstantFolding::ConstantPushDownBiasAdd(GraphProperties* properties,
 bool ConstantFolding::ConstantPushDown(GraphProperties* properties,
                                        GraphDef* optimized_graph,
                                        NodeDef* node) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_74(mht_74_v, 3741, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::ConstantPushDown");
+
   // Consider the transformation
   //
   //                      +                +       = parent
@@ -3495,6 +3895,9 @@ bool ConstantFolding::ConstantPushDown(GraphProperties* properties,
 
 bool ConstantFolding::MulConvPushDown(GraphDef* optimized_graph, NodeDef* node,
                                       const GraphProperties& properties) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_75(mht_75_v, 3898, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::MulConvPushDown");
+
   // Push down multiplication on ConvND.
   //                       *                  ConvND
   //                     /   \                /    \
@@ -3616,6 +4019,9 @@ bool ConstantFolding::MulConvPushDown(GraphDef* optimized_graph, NodeDef* node,
 }
 
 bool ConstantFolding::PartialConstPropThroughIdentityN(NodeDef* node) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_76(mht_76_v, 4022, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::PartialConstPropThroughIdentityN");
+
   // Partial constant propagation through IdentityN.
   if (!(IsIdentityN(*node) || IsIdentityNSingleInput(*node)) ||
       !HasRegularInputs(*node))
@@ -3644,6 +4050,9 @@ bool ConstantFolding::PartialConstPropThroughIdentityN(NodeDef* node) {
 bool ConstantFolding::PartialAssocOpConstFolding(GraphDef* optimized_graph,
                                                  GraphProperties* properties,
                                                  NodeDef* node) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_77(mht_77_v, 4053, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::PartialAssocOpConstFolding");
+
   // Partial constant folding for associative operators:
   // Split AddN/AccumulateNV2 to enable partial
   // folding of ops when more than one but not all inputs are constant.
@@ -3721,6 +4130,9 @@ bool ConstantFolding::PartialAssocOpConstFolding(GraphDef* optimized_graph,
 bool ConstantFolding::PartialConcatConstFolding(GraphDef* optimized_graph,
                                                 GraphProperties* properties,
                                                 NodeDef* node) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_78(mht_78_v, 4133, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::PartialConcatConstFolding");
+
   // Partial constant folding for Concat which is not commutative, so
   // we have to preserve order and can only push consecutive runs of constant
   // inputs into sub-nodes.
@@ -3819,6 +4231,9 @@ bool ConstantFolding::PartialConcatConstFolding(GraphDef* optimized_graph,
 }
 
 bool ConstantFolding::GetConcatAxis(const NodeDef& node, int* axis) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_79(mht_79_v, 4234, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::GetConcatAxis");
+
   if (node.op() != "ConcatV2") {
     return false;
   }
@@ -3842,6 +4257,9 @@ bool ConstantFolding::GetConcatAxis(const NodeDef& node, int* axis) {
 bool ConstantFolding::MergeConcat(bool use_shape_info,
                                   GraphProperties* properties,
                                   GraphDef* optimized_graph, NodeDef* node) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_80(mht_80_v, 4260, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::MergeConcat");
+
   // We only optimize for ConcatV2.
   int axis;
   if (!use_shape_info || !GetConcatAxis(*node, &axis) ||
@@ -3924,8 +4342,15 @@ bool ConstantFolding::MergeConcat(bool use_shape_info,
 
 Status ConstantFolding::AddQuantizedMatMulMinMaxOutConstNodes(
     NodeDef* node, GraphDef* optimized_graph) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_81(mht_81_v, 4345, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::AddQuantizedMatMulMinMaxOutConstNodes");
+
   auto add_quantized_out = [this, node, optimized_graph](
                                const string& out_const_name, int index) {
+   std::vector<std::string> mht_82_v;
+   mht_82_v.push_back("out_const_name: \"" + out_const_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_82(mht_82_v, 4351, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "lambda");
+
     NodeDef* out_node = optimized_graph->add_node();
     graph_modified_ = true;
     Tensor value(DT_FLOAT, TensorShape({}));
@@ -3986,6 +4411,9 @@ Status ConstantFolding::RunOptimizationPass(Cluster* cluster,
                                             GrapplerItem* item,
                                             GraphProperties* properties,
                                             GraphDef* optimized_graph) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_83(mht_83_v, 4414, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::RunOptimizationPass");
+
   optimized_graph->Clear();
   graph_ = &item->graph;
   node_map_.reset(new NodeMap(graph_));
@@ -4023,6 +4451,9 @@ Status ConstantFolding::RunOptimizationPass(Cluster* cluster,
 
 Status ConstantFolding::Optimize(Cluster* cluster, const GrapplerItem& item,
                                  GraphDef* optimized_graph) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSconstant_foldingDTcc mht_84(mht_84_v, 4454, "", "./tensorflow/core/grappler/optimizers/constant_folding.cc", "ConstantFolding::Optimize");
+
   // TensorFlow flushes denormals to zero and rounds to nearest, so we do
   // the same here.
   port::ScopedFlushDenormal flush;

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -70,6 +238,10 @@ class FileSystemRegistryImpl : public FileSystemRegistry {
 
 Status FileSystemRegistryImpl::Register(const std::string& scheme,
                                         FileSystemRegistry::Factory factory) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("scheme: \"" + scheme + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_0(mht_0_v, 242, "", "./tensorflow/core/platform/env.cc", "FileSystemRegistryImpl::Register");
+
   mutex_lock lock(mu_);
   if (!registry_.emplace(scheme, std::unique_ptr<FileSystem>(factory()))
            .second) {
@@ -81,6 +253,10 @@ Status FileSystemRegistryImpl::Register(const std::string& scheme,
 
 Status FileSystemRegistryImpl::Register(
     const std::string& scheme, std::unique_ptr<FileSystem> filesystem) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("scheme: \"" + scheme + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_1(mht_1_v, 257, "", "./tensorflow/core/platform/env.cc", "FileSystemRegistryImpl::Register");
+
   mutex_lock lock(mu_);
   if (!registry_.emplace(scheme, std::move(filesystem)).second) {
     return errors::AlreadyExists("File system for ", scheme,
@@ -90,6 +266,10 @@ Status FileSystemRegistryImpl::Register(
 }
 
 FileSystem* FileSystemRegistryImpl::Lookup(const std::string& scheme) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("scheme: \"" + scheme + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_2(mht_2_v, 270, "", "./tensorflow/core/platform/env.cc", "FileSystemRegistryImpl::Lookup");
+
   mutex_lock lock(mu_);
   const auto found = registry_.find(scheme);
   if (found == registry_.end()) {
@@ -100,6 +280,9 @@ FileSystem* FileSystemRegistryImpl::Lookup(const std::string& scheme) {
 
 Status FileSystemRegistryImpl::GetRegisteredFileSystemSchemes(
     std::vector<std::string>* schemes) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_3(mht_3_v, 283, "", "./tensorflow/core/platform/env.cc", "FileSystemRegistryImpl::GetRegisteredFileSystemSchemes");
+
   mutex_lock lock(mu_);
   for (const auto& e : registry_) {
     schemes->push_back(e.first);
@@ -107,10 +290,17 @@ Status FileSystemRegistryImpl::GetRegisteredFileSystemSchemes(
   return Status::OK();
 }
 
-Env::Env() : file_system_registry_(new FileSystemRegistryImpl) {}
+Env::Env() : file_system_registry_(new FileSystemRegistryImpl) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_4(mht_4_v, 294, "", "./tensorflow/core/platform/env.cc", "Env::Env");
+}
 
 Status Env::GetFileSystemForFile(const std::string& fname,
                                  FileSystem** result) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_5(mht_5_v, 301, "", "./tensorflow/core/platform/env.cc", "Env::GetFileSystemForFile");
+
   StringPiece scheme, host, path;
   io::ParseURI(fname, &scheme, &host, &path);
   FileSystem* file_system = file_system_registry_->Lookup(std::string(scheme));
@@ -127,21 +317,38 @@ Status Env::GetFileSystemForFile(const std::string& fname,
 }
 
 Status Env::GetRegisteredFileSystemSchemes(std::vector<std::string>* schemes) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_6(mht_6_v, 320, "", "./tensorflow/core/platform/env.cc", "Env::GetRegisteredFileSystemSchemes");
+
   return file_system_registry_->GetRegisteredFileSystemSchemes(schemes);
 }
 
 Status Env::RegisterFileSystem(const std::string& scheme,
                                FileSystemRegistry::Factory factory) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("scheme: \"" + scheme + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_7(mht_7_v, 329, "", "./tensorflow/core/platform/env.cc", "Env::RegisterFileSystem");
+
   return file_system_registry_->Register(scheme, std::move(factory));
 }
 
 Status Env::RegisterFileSystem(const std::string& scheme,
                                std::unique_ptr<FileSystem> filesystem) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("scheme: \"" + scheme + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_8(mht_8_v, 338, "", "./tensorflow/core/platform/env.cc", "Env::RegisterFileSystem");
+
   return file_system_registry_->Register(scheme, std::move(filesystem));
 }
 
 Status Env::SetOption(const std::string& scheme, const std::string& key,
                       const std::string& value) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("scheme: \"" + scheme + "\"");
+   mht_9_v.push_back("key: \"" + key + "\"");
+   mht_9_v.push_back("value: \"" + value + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_9(mht_9_v, 349, "", "./tensorflow/core/platform/env.cc", "Env::SetOption");
+
   FileSystem* file_system = file_system_registry_->Lookup(scheme);
   if (!file_system) {
     return errors::Unimplemented("File system scheme '", scheme,
@@ -152,6 +359,11 @@ Status Env::SetOption(const std::string& scheme, const std::string& key,
 
 Status Env::SetOption(const std::string& scheme, const std::string& key,
                       const std::vector<string>& values) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("scheme: \"" + scheme + "\"");
+   mht_10_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_10(mht_10_v, 364, "", "./tensorflow/core/platform/env.cc", "Env::SetOption");
+
   FileSystem* file_system = file_system_registry_->Lookup(scheme);
   if (!file_system) {
     return errors::Unimplemented("File system scheme '", scheme,
@@ -162,6 +374,11 @@ Status Env::SetOption(const std::string& scheme, const std::string& key,
 
 Status Env::SetOption(const std::string& scheme, const std::string& key,
                       const std::vector<int64_t>& values) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("scheme: \"" + scheme + "\"");
+   mht_11_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_11(mht_11_v, 379, "", "./tensorflow/core/platform/env.cc", "Env::SetOption");
+
   FileSystem* file_system = file_system_registry_->Lookup(scheme);
   if (!file_system) {
     return errors::Unimplemented("File system scheme '", scheme,
@@ -172,6 +389,11 @@ Status Env::SetOption(const std::string& scheme, const std::string& key,
 
 Status Env::SetOption(const std::string& scheme, const std::string& key,
                       const std::vector<double>& values) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("scheme: \"" + scheme + "\"");
+   mht_12_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_12(mht_12_v, 394, "", "./tensorflow/core/platform/env.cc", "Env::SetOption");
+
   FileSystem* file_system = file_system_registry_->Lookup(scheme);
   if (!file_system) {
     return errors::Unimplemented("File system scheme '", scheme,
@@ -181,6 +403,9 @@ Status Env::SetOption(const std::string& scheme, const std::string& key,
 }
 
 Status Env::FlushFileSystemCaches() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_13(mht_13_v, 406, "", "./tensorflow/core/platform/env.cc", "Env::FlushFileSystemCaches");
+
   std::vector<string> schemes;
   TF_RETURN_IF_ERROR(GetRegisteredFileSystemSchemes(&schemes));
   for (const string& scheme : schemes) {
@@ -194,6 +419,10 @@ Status Env::FlushFileSystemCaches() {
 
 Status Env::NewRandomAccessFile(const string& fname,
                                 std::unique_ptr<RandomAccessFile>* result) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_14(mht_14_v, 423, "", "./tensorflow/core/platform/env.cc", "Env::NewRandomAccessFile");
+
   FileSystem* fs;
   TF_RETURN_IF_ERROR(GetFileSystemForFile(fname, &fs));
   return fs->NewRandomAccessFile(fname, result);
@@ -201,6 +430,10 @@ Status Env::NewRandomAccessFile(const string& fname,
 
 Status Env::NewReadOnlyMemoryRegionFromFile(
     const string& fname, std::unique_ptr<ReadOnlyMemoryRegion>* result) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_15(mht_15_v, 434, "", "./tensorflow/core/platform/env.cc", "Env::NewReadOnlyMemoryRegionFromFile");
+
   FileSystem* fs;
   TF_RETURN_IF_ERROR(GetFileSystemForFile(fname, &fs));
   return fs->NewReadOnlyMemoryRegionFromFile(fname, result);
@@ -208,6 +441,10 @@ Status Env::NewReadOnlyMemoryRegionFromFile(
 
 Status Env::NewWritableFile(const string& fname,
                             std::unique_ptr<WritableFile>* result) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_16(mht_16_v, 445, "", "./tensorflow/core/platform/env.cc", "Env::NewWritableFile");
+
   FileSystem* fs;
   TF_RETURN_IF_ERROR(GetFileSystemForFile(fname, &fs));
   return fs->NewWritableFile(fname, result);
@@ -215,12 +452,20 @@ Status Env::NewWritableFile(const string& fname,
 
 Status Env::NewAppendableFile(const string& fname,
                               std::unique_ptr<WritableFile>* result) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_17(mht_17_v, 456, "", "./tensorflow/core/platform/env.cc", "Env::NewAppendableFile");
+
   FileSystem* fs;
   TF_RETURN_IF_ERROR(GetFileSystemForFile(fname, &fs));
   return fs->NewAppendableFile(fname, result);
 }
 
 Status Env::FileExists(const string& fname) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_18(mht_18_v, 466, "", "./tensorflow/core/platform/env.cc", "Env::FileExists");
+
   FileSystem* fs;
   TF_RETURN_IF_ERROR(GetFileSystemForFile(fname, &fs));
   return fs->FileExists(fname);
@@ -228,6 +473,9 @@ Status Env::FileExists(const string& fname) {
 
 bool Env::FilesExist(const std::vector<string>& files,
                      std::vector<Status>* status) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_19(mht_19_v, 476, "", "./tensorflow/core/platform/env.cc", "Env::FilesExist");
+
   std::unordered_map<string, std::vector<string>> files_per_fs;
   for (const auto& file : files) {
     StringPiece scheme, host, path;
@@ -273,6 +521,10 @@ bool Env::FilesExist(const std::vector<string>& files,
 }
 
 Status Env::GetChildren(const string& dir, std::vector<string>* result) {
+   std::vector<std::string> mht_20_v;
+   mht_20_v.push_back("dir: \"" + dir + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_20(mht_20_v, 525, "", "./tensorflow/core/platform/env.cc", "Env::GetChildren");
+
   FileSystem* fs;
   TF_RETURN_IF_ERROR(GetFileSystemForFile(dir, &fs));
   return fs->GetChildren(dir, result);
@@ -280,48 +532,80 @@ Status Env::GetChildren(const string& dir, std::vector<string>* result) {
 
 Status Env::GetMatchingPaths(const string& pattern,
                              std::vector<string>* results) {
+   std::vector<std::string> mht_21_v;
+   mht_21_v.push_back("pattern: \"" + pattern + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_21(mht_21_v, 536, "", "./tensorflow/core/platform/env.cc", "Env::GetMatchingPaths");
+
   FileSystem* fs;
   TF_RETURN_IF_ERROR(GetFileSystemForFile(pattern, &fs));
   return fs->GetMatchingPaths(pattern, results);
 }
 
 Status Env::DeleteFile(const string& fname) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_22(mht_22_v, 546, "", "./tensorflow/core/platform/env.cc", "Env::DeleteFile");
+
   FileSystem* fs;
   TF_RETURN_IF_ERROR(GetFileSystemForFile(fname, &fs));
   return fs->DeleteFile(fname);
 }
 
 Status Env::RecursivelyCreateDir(const string& dirname) {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("dirname: \"" + dirname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_23(mht_23_v, 556, "", "./tensorflow/core/platform/env.cc", "Env::RecursivelyCreateDir");
+
   FileSystem* fs;
   TF_RETURN_IF_ERROR(GetFileSystemForFile(dirname, &fs));
   return fs->RecursivelyCreateDir(dirname);
 }
 
 Status Env::CreateDir(const string& dirname) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("dirname: \"" + dirname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_24(mht_24_v, 566, "", "./tensorflow/core/platform/env.cc", "Env::CreateDir");
+
   FileSystem* fs;
   TF_RETURN_IF_ERROR(GetFileSystemForFile(dirname, &fs));
   return fs->CreateDir(dirname);
 }
 
 Status Env::DeleteDir(const string& dirname) {
+   std::vector<std::string> mht_25_v;
+   mht_25_v.push_back("dirname: \"" + dirname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_25(mht_25_v, 576, "", "./tensorflow/core/platform/env.cc", "Env::DeleteDir");
+
   FileSystem* fs;
   TF_RETURN_IF_ERROR(GetFileSystemForFile(dirname, &fs));
   return fs->DeleteDir(dirname);
 }
 
 Status Env::Stat(const string& fname, FileStatistics* stat) {
+   std::vector<std::string> mht_26_v;
+   mht_26_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_26(mht_26_v, 586, "", "./tensorflow/core/platform/env.cc", "Env::Stat");
+
   FileSystem* fs;
   TF_RETURN_IF_ERROR(GetFileSystemForFile(fname, &fs));
   return fs->Stat(fname, stat);
 }
 
 Status Env::IsDirectory(const string& fname) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_27(mht_27_v, 596, "", "./tensorflow/core/platform/env.cc", "Env::IsDirectory");
+
   FileSystem* fs;
   TF_RETURN_IF_ERROR(GetFileSystemForFile(fname, &fs));
   return fs->IsDirectory(fname);
 }
 
 Status Env::HasAtomicMove(const string& path, bool* has_atomic_move) {
+   std::vector<std::string> mht_28_v;
+   mht_28_v.push_back("path: \"" + path + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_28(mht_28_v, 606, "", "./tensorflow/core/platform/env.cc", "Env::HasAtomicMove");
+
   FileSystem* fs;
   TF_RETURN_IF_ERROR(GetFileSystemForFile(path, &fs));
   return fs->HasAtomicMove(path, has_atomic_move);
@@ -329,18 +613,31 @@ Status Env::HasAtomicMove(const string& path, bool* has_atomic_move) {
 
 Status Env::DeleteRecursively(const string& dirname, int64_t* undeleted_files,
                               int64_t* undeleted_dirs) {
+   std::vector<std::string> mht_29_v;
+   mht_29_v.push_back("dirname: \"" + dirname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_29(mht_29_v, 617, "", "./tensorflow/core/platform/env.cc", "Env::DeleteRecursively");
+
   FileSystem* fs;
   TF_RETURN_IF_ERROR(GetFileSystemForFile(dirname, &fs));
   return fs->DeleteRecursively(dirname, undeleted_files, undeleted_dirs);
 }
 
 Status Env::GetFileSize(const string& fname, uint64* file_size) {
+   std::vector<std::string> mht_30_v;
+   mht_30_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_30(mht_30_v, 627, "", "./tensorflow/core/platform/env.cc", "Env::GetFileSize");
+
   FileSystem* fs;
   TF_RETURN_IF_ERROR(GetFileSystemForFile(fname, &fs));
   return fs->GetFileSize(fname, file_size);
 }
 
 Status Env::RenameFile(const string& src, const string& target) {
+   std::vector<std::string> mht_31_v;
+   mht_31_v.push_back("src: \"" + src + "\"");
+   mht_31_v.push_back("target: \"" + target + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_31(mht_31_v, 638, "", "./tensorflow/core/platform/env.cc", "Env::RenameFile");
+
   FileSystem* src_fs;
   FileSystem* target_fs;
   TF_RETURN_IF_ERROR(GetFileSystemForFile(src, &src_fs));
@@ -353,6 +650,11 @@ Status Env::RenameFile(const string& src, const string& target) {
 }
 
 Status Env::CopyFile(const string& src, const string& target) {
+   std::vector<std::string> mht_32_v;
+   mht_32_v.push_back("src: \"" + src + "\"");
+   mht_32_v.push_back("target: \"" + target + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_32(mht_32_v, 655, "", "./tensorflow/core/platform/env.cc", "Env::CopyFile");
+
   FileSystem* src_fs;
   FileSystem* target_fs;
   TF_RETURN_IF_ERROR(GetFileSystemForFile(src, &src_fs));
@@ -364,6 +666,9 @@ Status Env::CopyFile(const string& src, const string& target) {
 }
 
 string Env::GetExecutablePath() {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_33(mht_33_v, 669, "", "./tensorflow/core/platform/env.cc", "Env::GetExecutablePath");
+
   char exe_path[PATH_MAX] = {0};
 #ifdef __APPLE__
   uint32_t buffer_size(0U);
@@ -419,6 +724,9 @@ string Env::GetExecutablePath() {
 }
 
 bool Env::LocalTempFilename(string* filename) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_34(mht_34_v, 727, "", "./tensorflow/core/platform/env.cc", "Env::LocalTempFilename");
+
   std::vector<string> dirs;
   GetLocalTempDirectories(&dirs);
 
@@ -434,6 +742,10 @@ bool Env::LocalTempFilename(string* filename) {
 }
 
 bool Env::CreateUniqueFileName(string* prefix, const string& suffix) {
+   std::vector<std::string> mht_35_v;
+   mht_35_v.push_back("suffix: \"" + suffix + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_35(mht_35_v, 746, "", "./tensorflow/core/platform/env.cc", "Env::CreateUniqueFileName");
+
   int32_t tid = GetCurrentThreadId();
   int32_t pid = GetProcessId();
   long long now_microsec = NowMicros();  // NOLINT
@@ -453,6 +765,9 @@ bool Env::CreateUniqueFileName(string* prefix, const string& suffix) {
 }
 
 int32 Env::GetProcessId() {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_36(mht_36_v, 768, "", "./tensorflow/core/platform/env.cc", "Env::GetProcessId");
+
 #ifdef PLATFORM_WINDOWS
   return static_cast<int32>(GetCurrentProcessId());
 #else
@@ -460,11 +775,21 @@ int32 Env::GetProcessId() {
 #endif
 }
 
-Thread::~Thread() {}
+Thread::~Thread() {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_37(mht_37_v, 779, "", "./tensorflow/core/platform/env.cc", "Thread::~Thread");
+}
 
-EnvWrapper::~EnvWrapper() {}
+EnvWrapper::~EnvWrapper() {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_38(mht_38_v, 784, "", "./tensorflow/core/platform/env.cc", "EnvWrapper::~EnvWrapper");
+}
 
 Status ReadFileToString(Env* env, const string& fname, string* data) {
+   std::vector<std::string> mht_39_v;
+   mht_39_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_39(mht_39_v, 790, "", "./tensorflow/core/platform/env.cc", "ReadFileToString");
+
   uint64 file_size;
   Status s = env->GetFileSize(fname, &file_size);
   if (!s.ok()) {
@@ -495,6 +820,10 @@ Status ReadFileToString(Env* env, const string& fname, string* data) {
 
 Status WriteStringToFile(Env* env, const string& fname,
                          const StringPiece& data) {
+   std::vector<std::string> mht_40_v;
+   mht_40_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_40(mht_40_v, 824, "", "./tensorflow/core/platform/env.cc", "WriteStringToFile");
+
   std::unique_ptr<WritableFile> file;
   Status s = env->NewWritableFile(fname, &file);
   if (!s.ok()) {
@@ -509,6 +838,11 @@ Status WriteStringToFile(Env* env, const string& fname,
 
 Status FileSystemCopyFile(FileSystem* src_fs, const string& src,
                           FileSystem* target_fs, const string& target) {
+   std::vector<std::string> mht_41_v;
+   mht_41_v.push_back("src: \"" + src + "\"");
+   mht_41_v.push_back("target: \"" + target + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_41(mht_41_v, 843, "", "./tensorflow/core/platform/env.cc", "FileSystemCopyFile");
+
   std::unique_ptr<RandomAccessFile> src_file;
   TF_RETURN_IF_ERROR(src_fs->NewRandomAccessFile(src, &src_file));
 
@@ -542,17 +876,35 @@ Status FileSystemCopyFile(FileSystem* src_fs, const string& src,
 namespace {
 class FileStream : public protobuf::io::ZeroCopyInputStream {
  public:
-  explicit FileStream(RandomAccessFile* file) : file_(file), pos_(0) {}
+  explicit FileStream(RandomAccessFile* file) : file_(file), pos_(0) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_42(mht_42_v, 880, "", "./tensorflow/core/platform/env.cc", "FileStream");
+}
 
-  void BackUp(int count) override { pos_ -= count; }
+  void BackUp(int count) override {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_43(mht_43_v, 885, "", "./tensorflow/core/platform/env.cc", "BackUp");
+ pos_ -= count; }
   bool Skip(int count) override {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_44(mht_44_v, 889, "", "./tensorflow/core/platform/env.cc", "Skip");
+
     pos_ += count;
     return true;
   }
-  int64_t ByteCount() const override { return pos_; }
-  Status status() const { return status_; }
+  int64_t ByteCount() const override {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_45(mht_45_v, 896, "", "./tensorflow/core/platform/env.cc", "ByteCount");
+ return pos_; }
+  Status status() const {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_46(mht_46_v, 900, "", "./tensorflow/core/platform/env.cc", "status");
+ return status_; }
 
   bool Next(const void** data, int* size) override {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_47(mht_47_v, 905, "", "./tensorflow/core/platform/env.cc", "Next");
+
     StringPiece result;
     Status s = file_->Read(pos_, kBufSize, &result, scratch_);
     if (result.empty()) {
@@ -578,6 +930,10 @@ class FileStream : public protobuf::io::ZeroCopyInputStream {
 
 Status WriteBinaryProto(Env* env, const string& fname,
                         const protobuf::MessageLite& proto) {
+   std::vector<std::string> mht_48_v;
+   mht_48_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_48(mht_48_v, 934, "", "./tensorflow/core/platform/env.cc", "WriteBinaryProto");
+
   string serialized;
   proto.AppendToString(&serialized);
   return WriteStringToFile(env, fname, serialized);
@@ -585,6 +941,10 @@ Status WriteBinaryProto(Env* env, const string& fname,
 
 Status ReadBinaryProto(Env* env, const string& fname,
                        protobuf::MessageLite* proto) {
+   std::vector<std::string> mht_49_v;
+   mht_49_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_49(mht_49_v, 945, "", "./tensorflow/core/platform/env.cc", "ReadBinaryProto");
+
   std::unique_ptr<RandomAccessFile> file;
   TF_RETURN_IF_ERROR(env->NewRandomAccessFile(fname, &file));
   std::unique_ptr<FileStream> stream(new FileStream(file.get()));
@@ -600,6 +960,10 @@ Status ReadBinaryProto(Env* env, const string& fname,
 
 Status WriteTextProto(Env* env, const string& fname,
                       const protobuf::Message& proto) {
+   std::vector<std::string> mht_50_v;
+   mht_50_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_50(mht_50_v, 964, "", "./tensorflow/core/platform/env.cc", "WriteTextProto");
+
   string serialized;
   if (!protobuf::TextFormat::PrintToString(proto, &serialized)) {
     return errors::FailedPrecondition("Unable to convert proto to text.");
@@ -608,6 +972,10 @@ Status WriteTextProto(Env* env, const string& fname,
 }
 
 Status ReadTextProto(Env* env, const string& fname, protobuf::Message* proto) {
+   std::vector<std::string> mht_51_v;
+   mht_51_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_51(mht_51_v, 976, "", "./tensorflow/core/platform/env.cc", "ReadTextProto");
+
   std::unique_ptr<RandomAccessFile> file;
   TF_RETURN_IF_ERROR(env->NewRandomAccessFile(fname, &file));
   std::unique_ptr<FileStream> stream(new FileStream(file.get()));
@@ -621,6 +989,10 @@ Status ReadTextProto(Env* env, const string& fname, protobuf::Message* proto) {
 
 Status ReadTextOrBinaryProto(Env* env, const string& fname,
                              protobuf::Message* proto) {
+   std::vector<std::string> mht_52_v;
+   mht_52_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_52(mht_52_v, 993, "", "./tensorflow/core/platform/env.cc", "ReadTextOrBinaryProto");
+
   if (ReadTextProto(env, fname, proto).ok()) {
     return Status::OK();
   }
@@ -629,6 +1001,10 @@ Status ReadTextOrBinaryProto(Env* env, const string& fname,
 
 Status ReadTextOrBinaryProto(Env* env, const string& fname,
                              protobuf::MessageLite* proto) {
+   std::vector<std::string> mht_53_v;
+   mht_53_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSenvDTcc mht_53(mht_53_v, 1005, "", "./tensorflow/core/platform/env.cc", "ReadTextOrBinaryProto");
+
   return ReadBinaryProto(env, fname, proto);
 }
 

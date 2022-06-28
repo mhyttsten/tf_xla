@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSconfigure_tpu_embedding_rewrite_passDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSconfigure_tpu_embedding_rewrite_passDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSconfigure_tpu_embedding_rewrite_passDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -57,6 +225,10 @@ Status AddSynchronizationNode(
     const std::vector<DistributedTPURewriteHelpers::OutputDependency>
         output_dependencies,
     Graph* graph) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSconfigure_tpu_embedding_rewrite_passDTcc mht_0(mht_0_v, 229, "", "./tensorflow/core/tpu/graph_rewrite/configure_tpu_embedding_rewrite_pass.cc", "AddSynchronizationNode");
+
   NodeDef sync_def;
   sync_def.set_name(sync_node_def.name());
   sync_def.set_op(kNoOp);
@@ -85,6 +257,11 @@ Status AddPartitionerEmbeddingNode(const string& configuration_device_name,
                                    const string& config,
                                    const std::vector<Node*>& input_dependencies,
                                    Graph* graph, Node** partitioner_node) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("configuration_device_name: \"" + configuration_device_name + "\"");
+   mht_1_v.push_back("config: \"" + config + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSconfigure_tpu_embedding_rewrite_passDTcc mht_1(mht_1_v, 262, "", "./tensorflow/core/tpu/graph_rewrite/configure_tpu_embedding_rewrite_pass.cc", "AddPartitionerEmbeddingNode");
+
   NodeDef partitioner_def;
   partitioner_def.set_name(graph->NewName("execute_embedding_partitioner"));
   partitioner_def.set_op(kExecuteEmbeddingPartitionerOp);
@@ -105,6 +282,11 @@ Status AddMemoryConfigurationEmbeddingNode(const string& host_device_name,
                                            const string& config,
                                            Node* partitioner_node, Graph* graph,
                                            Node** embedding_node) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("host_device_name: \"" + host_device_name + "\"");
+   mht_2_v.push_back("config: \"" + config + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSconfigure_tpu_embedding_rewrite_passDTcc mht_2(mht_2_v, 287, "", "./tensorflow/core/tpu/graph_rewrite/configure_tpu_embedding_rewrite_pass.cc", "AddMemoryConfigurationEmbeddingNode");
+
   NodeDef embedding_def;
   embedding_def.set_name(graph->NewName("configure_tpu_embedding_memory"));
   embedding_def.set_op(kConfigureEmbeddingMemoryOp);
@@ -122,6 +304,11 @@ Status AddHostConfigurationEmbeddingNode(const string& host_device_name,
                                          Node* partitioner_node,
                                          const std::vector<Node*>& memory_nodes,
                                          Graph* graph, Node** embedding_node) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("host_device_name: \"" + host_device_name + "\"");
+   mht_3_v.push_back("config: \"" + config + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSconfigure_tpu_embedding_rewrite_passDTcc mht_3(mht_3_v, 309, "", "./tensorflow/core/tpu/graph_rewrite/configure_tpu_embedding_rewrite_pass.cc", "AddHostConfigurationEmbeddingNode");
+
   NodeDef embedding_def;
   embedding_def.set_name(graph->NewName("configure_host_embedding"));
   embedding_def.set_op(kConfigureEmbeddingOp);
@@ -145,6 +332,12 @@ Status AddHostConfigurationEmbeddingNode(const string& host_device_name,
 Status AddSetupPropagationEmbeddingNode(
     const string& device_name, const string& node_name, const string& op_name,
     const std::vector<Node*>& embedding_nodes, Graph* graph, Node** node) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("device_name: \"" + device_name + "\"");
+   mht_4_v.push_back("node_name: \"" + node_name + "\"");
+   mht_4_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSconfigure_tpu_embedding_rewrite_passDTcc mht_4(mht_4_v, 338, "", "./tensorflow/core/tpu/graph_rewrite/configure_tpu_embedding_rewrite_pass.cc", "AddSetupPropagationEmbeddingNode");
+
   NodeDef node_def;
   node_def.set_name(node_name);
   node_def.set_op(op_name);
@@ -166,6 +359,10 @@ Status AddSetupPropagationEmbeddingNode(
 Status AddConnectEmbeddingNode(const string& host_device_name,
                                const std::vector<Node*>& embedding_nodes,
                                Graph* graph, Node** connect_node) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("host_device_name: \"" + host_device_name + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSconfigure_tpu_embedding_rewrite_passDTcc mht_5(mht_5_v, 363, "", "./tensorflow/core/tpu/graph_rewrite/configure_tpu_embedding_rewrite_pass.cc", "AddConnectEmbeddingNode");
+
   return AddSetupPropagationEmbeddingNode(
       host_device_name, graph->NewName("connect_tpu_embedding_hosts"),
       kConnectEmbeddingHostsOp, embedding_nodes, graph, connect_node);
@@ -174,6 +371,10 @@ Status AddConnectEmbeddingNode(const string& host_device_name,
 Status AddFinalizeEmbeddingNode(const string& configuration_device_name,
                                 const std::vector<Node*>& embedding_nodes,
                                 Graph* graph, Node** finalize_node) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("configuration_device_name: \"" + configuration_device_name + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSconfigure_tpu_embedding_rewrite_passDTcc mht_6(mht_6_v, 375, "", "./tensorflow/core/tpu/graph_rewrite/configure_tpu_embedding_rewrite_pass.cc", "AddFinalizeEmbeddingNode");
+
   return AddSetupPropagationEmbeddingNode(
       configuration_device_name, graph->NewName("finalize_host_embedding"),
       kFinalizeEmbeddingOp, embedding_nodes, graph, finalize_node);
@@ -183,6 +384,9 @@ Status AddFinalizeEmbeddingNode(const string& configuration_device_name,
 
 Status ConfigureTPUEmbeddingRewritePass::Run(
     const GraphOptimizationPassOptions& options) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSconfigure_tpu_embedding_rewrite_passDTcc mht_7(mht_7_v, 387, "", "./tensorflow/core/tpu/graph_rewrite/configure_tpu_embedding_rewrite_pass.cc", "ConfigureTPUEmbeddingRewritePass::Run");
+
   VLOG(1) << "ConfigureTPUEmbeddingRewritePass::Run";
 
   Graph* graph = options.graph->get();

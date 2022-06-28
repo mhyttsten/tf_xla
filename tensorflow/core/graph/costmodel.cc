@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,6 +200,9 @@ const Microseconds kMinTimeEstimate(1);
 }  // namespace
 
 void CostModel::SuppressInfrequent() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_0(mht_0_v, 203, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::SuppressInfrequent");
+
   // Find the median of the non-zero counts, and use half of its value
   // as the cutoff for a "normal" execution mode node.
   if (count_.empty()) return;
@@ -53,6 +224,9 @@ void CostModel::SuppressInfrequent() {
 }
 
 void CostModel::MergeFromLocal(const Graph& g, const CostModel& cm) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_1(mht_1_v, 227, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::MergeFromLocal");
+
   CHECK(is_global_);
   CHECK(!cm.is_global());
   for (const Node* n : g.nodes()) {
@@ -77,6 +251,9 @@ void CostModel::MergeFromLocal(const Graph& g, const CostModel& cm) {
 }
 
 void CostModel::MergeFromGlobal(const CostModel& cm) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_2(mht_2_v, 254, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::MergeFromGlobal");
+
   CHECK(is_global_);
   CHECK_EQ(true, cm.is_global());
   const int num_nodes = cm.count_.size();
@@ -100,6 +277,9 @@ void CostModel::MergeFromGlobal(const CostModel& cm) {
 
 void CostModel::MergeFromStats(const NodeNameToCostIdMap& map,
                                const StepStats& ss) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_3(mht_3_v, 280, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::MergeFromStats");
+
   CHECK(is_global_);
   for (auto& ds : ss.dev_stats()) {
     for (auto& ns : ds.node_stats()) {
@@ -126,6 +306,9 @@ void CostModel::MergeFromStats(const NodeNameToCostIdMap& map,
 }
 
 void CostModel::Ensure(int id, int num_outputs) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_4(mht_4_v, 309, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::Ensure");
+
   if (slot_bytes_.size() <= static_cast<size_t>(id)) {
     slot_bytes_.resize(id + 1);
     count_.resize(id + 1);
@@ -154,6 +337,9 @@ void CostModel::Ensure(int id, int num_outputs) {
 }
 
 void CostModel::SetNumOutputs(const Node* node, int num_outputs) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_5(mht_5_v, 340, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::SetNumOutputs");
+
   const int id = Id(node);
   if (id < 0) return;
   // Do not resize the number of slots before checking its existing number of
@@ -168,6 +354,9 @@ void CostModel::SetNumOutputs(const Node* node, int num_outputs) {
 }
 
 void CostModel::RecordCount(const Node* node, int count) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_6(mht_6_v, 357, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::RecordCount");
+
   const int id = Id(node);
   if (id < 0) return;
   CHECK_LT(id, slot_bytes_.size());
@@ -175,12 +364,18 @@ void CostModel::RecordCount(const Node* node, int count) {
 }
 
 int32 CostModel::TotalCount(const Node* node) const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_7(mht_7_v, 367, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::TotalCount");
+
   const int id = Id(node);
   if (id < 0) return 0;
   return (static_cast<size_t>(id) < slot_bytes_.size()) ? count_[id] : 0;
 }
 
 void CostModel::RecordSize(const Node* node, int slot, Bytes bytes) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_8(mht_8_v, 376, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::RecordSize");
+
   const int id = Id(node);
   if (id < 0) return;
   CHECK_LT(id, slot_bytes_.size());
@@ -195,6 +390,9 @@ void CostModel::RecordSize(const Node* node, int slot, Bytes bytes) {
 }
 
 Bytes CostModel::TotalBytes(const Node* node, int slot) const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_9(mht_9_v, 393, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::TotalBytes");
+
   const int id = Id(node);
   if (id < 0 || static_cast<size_t>(id) >= slot_bytes_.size() ||
       slot_bytes_[id].size() <= static_cast<size_t>(slot)) {
@@ -204,12 +402,18 @@ Bytes CostModel::TotalBytes(const Node* node, int slot) const {
 }
 
 Bytes CostModel::SizeEstimate(const Node* node, int slot) const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_10(mht_10_v, 405, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::SizeEstimate");
+
   int32_t count = TotalCount(node);
   if (count < min_count_) return Bytes(0);
   return TotalBytes(node, slot) / std::max(1, TotalCount(node));
 }
 
 void CostModel::RecordTime(const Node* node, Microseconds time) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_11(mht_11_v, 414, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::RecordTime");
+
   const int id = Id(node);
   if (id < 0) return;
   DCHECK(node->IsOp()) << node->DebugString();
@@ -218,6 +422,9 @@ void CostModel::RecordTime(const Node* node, Microseconds time) {
 }
 
 Microseconds CostModel::TotalTime(const Node* node) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_12(mht_12_v, 425, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::TotalTime");
+
   DCHECK(node->IsOp()) << node->DebugString();
   const int id = Id(node);
   if (id < 0 || static_cast<size_t>(id) >= time_.size() ||
@@ -228,12 +435,18 @@ Microseconds CostModel::TotalTime(const Node* node) const {
 }
 
 Microseconds CostModel::TimeEstimate(const Node* node) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_13(mht_13_v, 438, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::TimeEstimate");
+
   int32_t count = TotalCount(node);
   if (count <= min_count_) return kMinTimeEstimate;
   return std::max(kMinTimeEstimate, TotalTime(node) / std::max(1, count));
 }
 
 void CostModel::CheckInitialized(const Graph& graph) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_14(mht_14_v, 447, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::CheckInitialized");
+
   for (const Node* n : graph.op_nodes()) {
     CHECK(static_cast<size_t>(n->id()) < time_.size() &&
           time_[n->id()] >= Microseconds(0))
@@ -253,6 +466,9 @@ void CostModel::RecordMaxMemorySize(const Node* node, int output_slot,
                                     Bytes bytes,
                                     const TensorShapeProto& tensor_shape,
                                     const DataType& dtype) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_15(mht_15_v, 469, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::RecordMaxMemorySize");
+
   const int id = Id(node);
   if (id < 0) return;
   if (output_slot >= node->num_outputs()) {
@@ -276,6 +492,9 @@ void CostModel::RecordMaxMemorySize(const Node* node, int output_slot,
 }
 
 Bytes CostModel::MaxMemorySize(const Node* node, int slot) const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_16(mht_16_v, 495, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::MaxMemorySize");
+
   const int id = Id(node);
   if (id < 0 || static_cast<size_t>(id) >= max_mem_usage_.size() ||
       max_mem_usage_[id].output_port_mem.size() <= static_cast<size_t>(slot)) {
@@ -286,6 +505,9 @@ Bytes CostModel::MaxMemorySize(const Node* node, int slot) const {
 
 const TensorShapeProto& CostModel::MaxMemoryShape(const Node* node,
                                                   int slot) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_17(mht_17_v, 508, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::MaxMemoryShape");
+
   const int id = Id(node);
   if (id < 0 || static_cast<size_t>(id) >= max_mem_usage_.size() ||
       max_mem_usage_[id].output_port_shape.size() <=
@@ -296,6 +518,9 @@ const TensorShapeProto& CostModel::MaxMemoryShape(const Node* node,
 }
 
 DataType CostModel::MaxMemoryType(const Node* node, int slot) const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_18(mht_18_v, 521, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::MaxMemoryType");
+
   const int id = Id(node);
   if (id < 0 || static_cast<size_t>(id) >= max_mem_usage_.size() ||
       max_mem_usage_[id].output_port_type.size() <= static_cast<size_t>(slot)) {
@@ -305,6 +530,9 @@ DataType CostModel::MaxMemoryType(const Node* node, int slot) const {
 }
 
 Bytes CostModel::TempMemorySize(const Node* node) const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_19(mht_19_v, 533, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::TempMemorySize");
+
   const int id = Id(node);
   if (id < 0) {
     return Bytes(0);
@@ -313,6 +541,9 @@ Bytes CostModel::TempMemorySize(const Node* node) const {
 }
 
 Bytes CostModel::PersistentMemorySize(const Node* node) const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_20(mht_20_v, 544, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::PersistentMemorySize");
+
   const int id = Id(node);
   if (id < 0) {
     return Bytes(0);
@@ -322,6 +553,9 @@ Bytes CostModel::PersistentMemorySize(const Node* node) const {
 
 void CostModel::RecordMemoryStats(const Node* node,
                                   const MemoryStats& memory_stats) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_21(mht_21_v, 556, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::RecordMemoryStats");
+
   const int id = Id(node);
   if (id < 0) return;
   max_mem_usage_[id].temp_memory_size = memory_stats.temp_memory_size();
@@ -335,6 +569,9 @@ void CostModel::RecordMemoryStats(const Node* node,
 }
 
 void CostModel::RecordMaxExecutionTime(const Node* node, Microseconds time) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_22(mht_22_v, 572, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::RecordMaxExecutionTime");
+
   const int id = Id(node);
   if (id < 0) return;
   Ensure(id, node->num_outputs());
@@ -342,6 +579,9 @@ void CostModel::RecordMaxExecutionTime(const Node* node, Microseconds time) {
 }
 
 Microseconds CostModel::MaxExecutionTime(const Node* node) const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_23(mht_23_v, 582, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::MaxExecutionTime");
+
   const int id = Id(node);
   if (id < 0 || static_cast<size_t>(id) >= max_exec_time_.size()) {
     return Microseconds(0);
@@ -351,6 +591,9 @@ Microseconds CostModel::MaxExecutionTime(const Node* node) const {
 
 void CostModel::RecordAllocationId(const Node* node, int output_slot,
                                    int64_t alloc_id) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_24(mht_24_v, 594, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::RecordAllocationId");
+
   const int id = Id(node);
   if (id < 0) return;
   Ensure(id, node->num_outputs());
@@ -358,6 +601,9 @@ void CostModel::RecordAllocationId(const Node* node, int output_slot,
 }
 
 int64_t CostModel::AllocationId(const Node* node, int slot) const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_25(mht_25_v, 604, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::AllocationId");
+
   const int id = Id(node);
   if (id < 0 || static_cast<size_t>(id) >= output_port_alloc_ids_.size() ||
       output_port_alloc_ids_[id].size() <= static_cast<size_t>(slot)) {
@@ -367,6 +613,9 @@ int64_t CostModel::AllocationId(const Node* node, int slot) const {
 }
 
 bool CostModel::IsPersistentTensor(const Node* node, int64_t alloc_id) const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_26(mht_26_v, 616, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::IsPersistentTensor");
+
   if (persistent_alloc_ids_.count(alloc_id) > 0) {
     return true;
   }
@@ -380,6 +629,9 @@ bool CostModel::IsPersistentTensor(const Node* node, int64_t alloc_id) const {
 
 Microseconds CostModel::CopyTimeEstimate(Bytes b, double network_latency_millis,
                                          double estimated_gbps) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_27(mht_27_v, 632, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::CopyTimeEstimate");
+
   // TODO(jeff,sanjay): estimate cost based on bandwidth along the
   // communication path and the type of transport we are using between
   // devices.
@@ -394,6 +646,9 @@ Microseconds CostModel::CopyTimeEstimate(Bytes b, double network_latency_millis,
 }
 
 Microseconds CostModel::ComputationTimeEstimate(int64_t math_ops) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_28(mht_28_v, 649, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::ComputationTimeEstimate");
+
   // TODO(jeff,sanjay): Eventually we should pass in the type of device
   // (GPU vs. CPU) and use that to affect the estimate.
 
@@ -403,9 +658,15 @@ Microseconds CostModel::ComputationTimeEstimate(int64_t math_ops) {
   return Microseconds(math_ops / 1000);
 }
 
-void CostModel::IncrementUpdateTimes() { update_times_++; }
+void CostModel::IncrementUpdateTimes() {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_29(mht_29_v, 662, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::IncrementUpdateTimes");
+ update_times_++; }
 
-int32 CostModel::GetUpdateTimes() const { return update_times_; }
+int32 CostModel::GetUpdateTimes() const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_30(mht_30_v, 667, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::GetUpdateTimes");
+ return update_times_; }
 
 // ----------------------------------------------------------------------------
 // InitCostModel
@@ -414,6 +675,9 @@ int32 CostModel::GetUpdateTimes() const { return update_times_; }
 namespace {
 
 static void AddNodesToCostModel(const Graph& g, CostModel* cost_model) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_31(mht_31_v, 678, "", "./tensorflow/core/graph/costmodel.cc", "AddNodesToCostModel");
+
   for (Node* n : g.nodes()) {
     const int num_outputs = n->num_outputs();
     cost_model->SetNumOutputs(n, num_outputs);
@@ -425,6 +689,9 @@ static void AddNodesToCostModel(const Graph& g, CostModel* cost_model) {
 }
 
 static void AssignSizes(const Graph& g, CostModel* cost_model) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_32(mht_32_v, 692, "", "./tensorflow/core/graph/costmodel.cc", "AssignSizes");
+
   for (const Edge* e : g.edges()) {
     // Skip if it is a control edge.
     if (e->IsControlEdge()) {
@@ -445,6 +712,9 @@ static void AssignSizes(const Graph& g, CostModel* cost_model) {
 // giving them 0 costs.  So, this is not of much consequence except perhaps
 // in tests.
 static Microseconds TimeEstimateForNode(CostModel* cost_model, Node* n) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_33(mht_33_v, 715, "", "./tensorflow/core/graph/costmodel.cc", "TimeEstimateForNode");
+
   CHECK(n->IsOp());
   VLOG(2) << "Node " << n->id() << ": " << n->name()
           << " type_string: " << n->type_string();
@@ -455,6 +725,9 @@ static Microseconds TimeEstimateForNode(CostModel* cost_model, Node* n) {
 }
 
 static void EstimateComputationCosts(const Graph& g, CostModel* cost_model) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_34(mht_34_v, 728, "", "./tensorflow/core/graph/costmodel.cc", "EstimateComputationCosts");
+
   for (Node* n : g.nodes()) {
     if (!n->IsOp()) continue;
     cost_model->RecordTime(n, TimeEstimateForNode(cost_model, n));
@@ -464,6 +737,9 @@ static void EstimateComputationCosts(const Graph& g, CostModel* cost_model) {
 }  // namespace
 
 void CostModel::InitFromGraph(const Graph& g) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_35(mht_35_v, 740, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::InitFromGraph");
+
   const int num_node_ids = g.num_node_ids();
   slot_bytes_.reserve(num_node_ids);
   count_.reserve(num_node_ids);
@@ -480,6 +756,9 @@ void CostModel::InitFromGraph(const Graph& g) {
 
 void CostModel::AddToCostGraphDef(const Graph* graph,
                                   CostGraphDef* cost_graph) const {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_36(mht_36_v, 759, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::AddToCostGraphDef");
+
   std::vector<const Edge*> inputs;
   std::vector<const Edge*> control_inputs;
   int offset = cost_graph->node_size();
@@ -547,6 +826,9 @@ void CostModel::AddToCostGraphDef(const Graph* graph,
 }
 
 void CostModel::WriteSummaryToLog() const {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_37(mht_37_v, 829, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::WriteSummaryToLog");
+
   LOG(INFO) << " min_count_=" << min_count_;
   for (size_t i = 0; i < count_.size(); ++i) {
     LOG(INFO) << "Node " << i << " count " << count_[i] << " total time "
@@ -557,6 +839,9 @@ void CostModel::WriteSummaryToLog() const {
 
 Bytes CostModel::MinTensorMemoryUsage(const TensorShapeProto& tensor_shape,
                                       const DataType& dtype) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSgraphPScostmodelDTcc mht_38(mht_38_v, 842, "", "./tensorflow/core/graph/costmodel.cc", "CostModel::MinTensorMemoryUsage");
+
   if (tensor_shape.unknown_rank()) {
     return Bytes(-1);
   }

@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_KERNELS_EIGEN_CUBOID_CONVOLUTION_H_
 #define TENSORFLOW_CORE_KERNELS_EIGEN_CUBOID_CONVOLUTION_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 
@@ -103,6 +271,9 @@ class TensorContractionInputMapper<
       const nocontract_t&, const nocontract_t&, const contract_t&,
       const contract_t&)
       : m_impl(tensor.impl().impl()) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_0(mht_0_v, 274, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "TensorContractionInputMapper");
+
     if (internal::traits<ArgType>::Layout == ColMajor) {
       m_patch_depth = tensor.impl().dimensions()[0];
       m_patch_planes = tensor.impl().dimensions()[1];
@@ -206,6 +377,9 @@ class TensorContractionInputMapper<
   EIGEN_DEVICE_FUNC
   TensorContractionInputMapper(const TensorContractionInputMapper& base_mapper)
       : m_impl(base_mapper.m_impl) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_1(mht_1_v, 380, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "TensorContractionInputMapper");
+
     m_patch_depth = base_mapper.m_patch_depth;
     m_patch_planes = base_mapper.m_patch_planes;
     m_patch_rows = base_mapper.m_patch_rows;
@@ -275,6 +449,9 @@ class TensorContractionInputMapper<
   // inflations in the input.
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE bool nonStandardPatches() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_2(mht_2_v, 452, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "nonStandardPatches");
+
     return m_in_plane_strides != 1 || m_in_row_strides != 1 ||
            m_in_col_strides != 1 || m_patch_plane_inflate_strides != 1 ||
            m_patch_row_inflate_strides != 1 || m_patch_col_inflate_strides != 1;
@@ -282,11 +459,17 @@ class TensorContractionInputMapper<
 
   EIGEN_DEVICE_FUNC
   EIGEN_STRONG_INLINE SubMapper getSubMapper(Index i, Index j) const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_3(mht_3_v, 462, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "getSubMapper");
+
     return SubMapper(*this, i, j);
   }
 
   EIGEN_DEVICE_FUNC
   EIGEN_STRONG_INLINE LinearMapper getLinearMapper(Index i, Index j) const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_4(mht_4_v, 470, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "getLinearMapper");
+
     return LinearMapper(*this, i, j);
   }
 
@@ -309,6 +492,9 @@ class TensorContractionInputMapper<
 
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE Packet loadPacket(Index row) const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_5(mht_5_v, 495, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "loadPacket");
+
     Index planeIndex, rowIndex, colIndex, otherIndex;
     computeBaseIndices(0, planeIndex, rowIndex, colIndex, otherIndex);
     return loadPacket(row, planeIndex, rowIndex, colIndex, otherIndex);
@@ -318,6 +504,9 @@ class TensorContractionInputMapper<
   // m_colIndex, m_otherIndex. This is currently only used by the gpu code.
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE Packet loadPacket(Index row, Index patchIndex) const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_6(mht_6_v, 507, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "loadPacket");
+
     Index planeIndex, rowIndex, colIndex, otherIndex;
     computeBaseIndices(patchIndex, planeIndex, rowIndex, colIndex, otherIndex);
     return loadPacket(row, planeIndex, rowIndex, colIndex, otherIndex);
@@ -329,13 +518,25 @@ class TensorContractionInputMapper<
   }
 
   EIGEN_DEVICE_FUNC
-  EIGEN_ALWAYS_INLINE Index patchDepth() const { return m_planeInputStride; }
+  EIGEN_ALWAYS_INLINE Index patchDepth() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_7(mht_7_v, 522, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "patchDepth");
+ return m_planeInputStride; }
   EIGEN_DEVICE_FUNC
-  EIGEN_ALWAYS_INLINE Index patchPlanes() const { return m_rowStride; }
+  EIGEN_ALWAYS_INLINE Index patchPlanes() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_8(mht_8_v, 527, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "patchPlanes");
+ return m_rowStride; }
   EIGEN_DEVICE_FUNC
-  EIGEN_ALWAYS_INLINE Index patchRows() const { return m_patch_rows; }
+  EIGEN_ALWAYS_INLINE Index patchRows() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_9(mht_9_v, 532, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "patchRows");
+ return m_patch_rows; }
   EIGEN_DEVICE_FUNC
-  EIGEN_ALWAYS_INLINE Index patchCols() const { return m_patch_cols; }
+  EIGEN_ALWAYS_INLINE Index patchCols() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_10(mht_10_v, 537, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "patchCols");
+ return m_patch_cols; }
 
  private:
   friend class TensorContractionSubMapper<
@@ -353,6 +554,9 @@ class TensorContractionInputMapper<
   EIGEN_STRONG_INLINE Scalar loadCoeff(Index patchId, Index planeIndex,
                                        Index rowIndex, Index colIndex,
                                        Index otherIndex) const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_11(mht_11_v, 557, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "loadCoeff");
+
     // Find the offset of the element wrt the location of the first element.
     const Index patchOffset = patchId / m_fastDimZero;
 
@@ -402,6 +606,9 @@ class TensorContractionInputMapper<
   EIGEN_STRONG_INLINE Scalar loadCoeffStandard(Index patchId, Index planeIndex,
                                                Index rowIndex, Index colIndex,
                                                Index otherIndex) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_12(mht_12_v, 609, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "loadCoeffStandard");
+
     eigen_assert(!nonStandardPatches());
 
     // Find the offset of the element wrt the location of the first element.
@@ -437,6 +644,9 @@ class TensorContractionInputMapper<
   EIGEN_ALWAYS_INLINE Packet loadPacket(Index patchId, Index planeIndex,
                                         Index rowIndex, Index colIndex,
                                         Index otherIndex) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_13(mht_13_v, 647, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "loadPacket");
+
     const Index packetSize = internal::unpacket_traits<Packet>::size;
 
     EIGEN_STATIC_ASSERT(packetSize > 1, YOU_MADE_A_PROGRAMMING_MISTAKE)
@@ -465,6 +675,9 @@ class TensorContractionInputMapper<
       Index planeIndex, Index rowIndex, Index colIndex, Index otherIndex,
       Index patchId, const Index span[], const Index patchOffsets[],
       Index colOffset, Index rowOffset) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_14(mht_14_v, 678, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "loadPartialPacketStandard");
+
     const Index inputCol = colIndex + colOffset;
     const Index inputRow = rowIndex + rowOffset;
     const Index planeOffsets[2] = {
@@ -514,6 +727,9 @@ class TensorContractionInputMapper<
       Index patchId, Index planeIndex, Index rowIndex, Index colIndex,
       Index otherIndex, const Index patchOffsets[], const Index colOffsets[],
       const Index rowOffsets[]) const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_15(mht_15_v, 730, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "loadPacketStandardFromSingleColumnTwoRows");
+
     eigen_assert(colOffsets[1] == colOffsets[0] &&
                  rowOffsets[1] == rowOffsets[0] + 1);
     const Index packetSize = internal::unpacket_traits<Packet>::size;
@@ -556,6 +772,9 @@ class TensorContractionInputMapper<
       Index otherIndex, const Index patchOffsets[], const Index colOffsets[],
       const Index rowOffsets[], const Index inputCols[],
       const Index inputRows[]) const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_16(mht_16_v, 775, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "loadPacketStandardFromSingleColumnSingleRow");
+
     eigen_assert(colOffsets[1] == colOffsets[0] &&
                  rowOffsets[1] == rowOffsets[0]);
     const Index planeOffsets[2] = {
@@ -592,6 +811,9 @@ class TensorContractionInputMapper<
       PacketT>::type
   loadPacketStandard(Index patchId, Index planeIndex, Index rowIndex,
                      Index colIndex, Index otherIndex) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_17(mht_17_v, 814, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "loadPacketStandard");
+
     const Index packetSize = internal::unpacket_traits<Packet>::size;
     EIGEN_STATIC_ASSERT(packetSize > 1, YOU_MADE_A_PROGRAMMING_MISTAKE)
     eigen_assert(patchId <
@@ -659,6 +881,9 @@ class TensorContractionInputMapper<
       PacketT>::type
   loadPacketStandard(Index patchId, Index planeIndex, Index rowIndex,
                      Index colIndex, Index otherIndex) const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_18(mht_18_v, 884, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "loadPacketStandard");
+
     const Index packetSize = internal::unpacket_traits<Packet>::size;
     EIGEN_STATIC_ASSERT(packetSize > 1, YOU_MADE_A_PROGRAMMING_MISTAKE)
     eigen_assert(patchId <
@@ -718,6 +943,9 @@ class TensorContractionInputMapper<
   EIGEN_ALWAYS_INLINE Packet loadPacketFast(Index patchId, Index planeIndex,
                                             Index rowIndex, Index colIndex,
                                             Index otherIndex) const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_19(mht_19_v, 946, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "loadPacketFast");
+
     const Index packetSize = internal::unpacket_traits<Packet>::size;
     EIGEN_STATIC_ASSERT(packetSize > 1, YOU_MADE_A_PROGRAMMING_MISTAKE)
     eigen_assert(patchId <
@@ -756,6 +984,9 @@ class TensorContractionInputMapper<
   EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE Packet
   packetWithPossibleZero(Index patchId, Index planeIndex, Index rowIndex,
                          Index colIndex, Index otherIndex) const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_20(mht_20_v, 987, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "packetWithPossibleZero");
+
     const int packetSize = internal::unpacket_traits<Packet>::size;
     EIGEN_ALIGN_MAX
     typename internal::remove_const<Scalar>::type values[packetSize];
@@ -772,6 +1003,9 @@ class TensorContractionInputMapper<
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void computeBaseIndices(
       Index patchIndex, Index& planeIndex, Index& rowIndex, Index& colIndex,
       Index& otherIndex) const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_21(mht_21_v, 1006, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "computeBaseIndices");
+
     const size_t NumInputDims = array_size<
         typename TensorEvaluator<ArgType, Device>::Dimensions>::value;
 
@@ -911,6 +1145,9 @@ class TensorContractionSubMapper<
       : m_base_mapper(base_mapper),
         m_depth_offset(vert_offset),
         m_col_offset(horiz_offset) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_22(mht_22_v, 1148, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "TensorContractionSubMapper");
+
     m_base_mapper.computeBaseIndices(m_col_offset, m_planeIndex, m_rowIndex,
                                      m_colIndex, m_otherIndex);
   }
@@ -919,6 +1156,9 @@ class TensorContractionSubMapper<
       : m_base_mapper(base_mapper.m_base_mapper),
         m_depth_offset(vert_offset + base_mapper.m_depth_offset),
         m_col_offset(horiz_offset + base_mapper.m_col_offset) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_23(mht_23_v, 1159, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "TensorContractionSubMapper");
+
     m_base_mapper.computeBaseIndices(m_col_offset, m_planeIndex, m_rowIndex,
                                      m_colIndex, m_otherIndex);
   }
@@ -932,38 +1172,59 @@ class TensorContractionSubMapper<
   }
 
   EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE Packet loadPacket(Index i) const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_24(mht_24_v, 1175, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "loadPacket");
+
     return m_base_mapper.loadPacket(i + m_depth_offset, m_planeIndex,
                                     m_rowIndex, m_colIndex, m_otherIndex);
   }
   EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE Packet loadPacket(Index i,
                                                           Index j) const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_25(mht_25_v, 1183, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "loadPacket");
+
     return m_base_mapper.template loadPacket<Alignment>(i + m_depth_offset,
                                                         j + m_col_offset);
   }
 
   EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE Scalar
   loadCoeffStandard(Index i) const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_26(mht_26_v, 1192, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "loadCoeffStandard");
+
     return m_base_mapper.loadCoeffStandard(
         i + m_depth_offset, m_planeIndex, m_rowIndex, m_colIndex, m_otherIndex);
   }
 
   EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE Packet loadPacketFast(Index i) const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_27(mht_27_v, 1200, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "loadPacketFast");
+
     return m_base_mapper.loadPacketFast(i + m_depth_offset, m_planeIndex,
                                         m_rowIndex, m_colIndex, m_otherIndex);
   }
   EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE Packet
   loadPacketStandard(Index i) const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_28(mht_28_v, 1208, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "loadPacketStandard");
+
     typedef decltype(m_base_mapper.m_impl) TensorEvaluatorT;
     return m_base_mapper.template loadPacketStandard<Packet, TensorEvaluatorT>(
         i + m_depth_offset, m_planeIndex, m_rowIndex, m_colIndex, m_otherIndex);
   }
   template <typename Packet>
   EIGEN_DEVICE_FUNC bool aligned(Index) const {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_29(mht_29_v, 1217, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "aligned");
+
     return false;
   }
 
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE bool nonStandardPatches() const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_30(mht_30_v, 1225, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "nonStandardPatches");
+
     return m_base_mapper.nonStandardPatches();
   }
 
@@ -973,6 +1234,9 @@ class TensorContractionSubMapper<
 
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE Index maxCol(const Index peeled_k) const {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_31(mht_31_v, 1237, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "maxCol");
+
     const Index max_col =
         fastPatchColStride().divide(m_depth_offset + peeled_k);
     return std::min<Index>(1 + max_col, patchCols());
@@ -981,6 +1245,9 @@ class TensorContractionSubMapper<
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE Index maxRow(const Index peeled_k,
                                    const Index col) const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_32(mht_32_v, 1248, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "maxRow");
+
     const Index max_row = fastPatchRowStride().divide(
         m_depth_offset + peeled_k - col * patchColStride());
     return std::min<Index>(1 + max_row, patchRows());
@@ -989,6 +1256,9 @@ class TensorContractionSubMapper<
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE Index maxPlane(const Index peeled_k, const Index col,
                                      const Index row) const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_33(mht_33_v, 1259, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "maxPlane");
+
     const Index max_plane = fastPatchPlaneStride().divide(
         m_depth_offset + peeled_k - col * patchColStride() -
         row * patchRowStride());
@@ -999,6 +1269,9 @@ class TensorContractionSubMapper<
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE Index maxDepth(const Index num_elements,
                                      const Index start_depth) const {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_34(mht_34_v, 1272, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "maxDepth");
+
     return std::min<Index>(start_depth + num_elements, patchDepth());
   }
 
@@ -1012,6 +1285,9 @@ class TensorContractionSubMapper<
 
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE Index patchDepth() const {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_35(mht_35_v, 1288, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "patchDepth");
+
     eigen_assert(m_base_mapper.m_patch_depth ==
                      m_base_mapper.m_planeInputStride &&
                  "Patch depth must be equal to plane input stride.");
@@ -1020,80 +1296,125 @@ class TensorContractionSubMapper<
 
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE Index patchPlanes() const {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_36(mht_36_v, 1299, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "patchPlanes");
+
     eigen_assert(m_base_mapper.m_patch_planes == m_base_mapper.m_rowStride &&
                  "Patch planes must be equal to row stride.");
     return m_base_mapper.m_rowStride;
   }
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE Index patchRows() const {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_37(mht_37_v, 1308, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "patchRows");
+
     return m_base_mapper.m_patch_rows;
   }
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE Index patchCols() const {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_38(mht_38_v, 1315, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "patchCols");
+
     return m_base_mapper.m_patch_cols;
   }
 
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE Index patchPlaneStride() const {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_39(mht_39_v, 1323, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "patchPlaneStride");
+
     eigen_assert(patchDepth() == m_base_mapper.m_patch_plane_stride &&
                  "Patch depth must be equal to patch plane stride.");
     return patchDepth();
   }
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE Index patchRowStride() const {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_40(mht_40_v, 1332, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "patchRowStride");
+
     return m_base_mapper.m_patch_row_stride;
   }
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE Index patchColStride() const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_41(mht_41_v, 1339, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "patchColStride");
+
     return m_base_mapper.m_patch_col_stride;
   }
 
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE IndexDivisor fastPatchPlaneStride() const {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_42(mht_42_v, 1347, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "fastPatchPlaneStride");
+
     eigen_assert(patchDepth() == m_base_mapper.m_patch_plane_stride &&
                  "Patch depth must be equal to patch plane stride.");
     return m_base_mapper.m_fastDimZero;  // patch_depth
   }
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE IndexDivisor fastPatchRowStride() const {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_43(mht_43_v, 1356, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "fastPatchRowStride");
+
     return m_base_mapper.m_fastPatchRowStride;
   }
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE IndexDivisor fastPatchColStride() const {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_44(mht_44_v, 1363, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "fastPatchColStride");
+
     return m_base_mapper.m_fastPatchColStride;
   }
 
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE Packet packetNoPadding(const Index depth,
                                              const Index baseIndex) const {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_45(mht_45_v, 1372, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "packetNoPadding");
+
     const Index inputIndex = depth + baseIndex;
     return m_base_mapper.m_impl.template packet<Unaligned>(inputIndex);
   }
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE Scalar coeffNoPadding(const Index depth,
                                             const Index baseIndex) const {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_46(mht_46_v, 1381, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "coeffNoPadding");
+
     const Index inputIndex = depth + baseIndex;
     return m_base_mapper.m_impl.coeff(inputIndex);
   }
 
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE bool padPlane(const Index plane) const {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_47(mht_47_v, 1390, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "padPlane");
+
     const Index p = m_planeIndex + plane;
     return p < 0 || p >= m_base_mapper.m_inputPlanes;
   }
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE bool padRow(const Index row) const {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_48(mht_48_v, 1398, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "padRow");
+
     const Index r = m_rowIndex + row;
     return r < 0 || r >= m_base_mapper.m_inputRows;
   }
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE bool padCol(const Index col) const {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_49(mht_49_v, 1406, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "padCol");
+
     const Index c = m_colIndex + col;
     return c < 0 || c >= m_base_mapper.m_inputCols;
   }
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE Index baseIndex(const Index plane, const Index row,
                                       const Index col) const {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_50(mht_50_v, 1415, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "baseIndex");
+
     const Index p = m_planeIndex + plane;
     const Index r = m_rowIndex + row;
     const Index c = m_colIndex + col;
@@ -1104,6 +1425,9 @@ class TensorContractionSubMapper<
 
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE Index planeOffset() const {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_51(mht_51_v, 1428, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "planeOffset");
+
     const Index patchOffset = m_depth_offset / m_base_mapper.m_fastDimZero;
     const Index colOffset = patchOffset / m_base_mapper.m_fastColStride;
     const Index rowOffset =
@@ -1117,6 +1441,9 @@ class TensorContractionSubMapper<
 
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE Index rowOffset() const {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_52(mht_52_v, 1444, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "rowOffset");
+
     const Index patchOffset = m_depth_offset / m_base_mapper.m_fastDimZero;
     const Index colOffset = patchOffset / m_base_mapper.m_fastColStride;
     const Index rowOffset =
@@ -1127,6 +1454,9 @@ class TensorContractionSubMapper<
 
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE Index colOffset() const {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_53(mht_53_v, 1457, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "colOffset");
+
     const Index patchOffset = m_depth_offset / m_base_mapper.m_fastDimZero;
     const Index colOffset = patchOffset / m_base_mapper.m_fastColStride;
     return colOffset;
@@ -1134,11 +1464,17 @@ class TensorContractionSubMapper<
 
   EIGEN_DEVICE_FUNC
   EIGEN_ALWAYS_INLINE Index depthOffset() const {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_54(mht_54_v, 1467, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "depthOffset");
+
     return m_depth_offset % patchDepth();
   }
 
   EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE LinearMapper
   getLinearMapper(Index i, Index j) const {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_55(mht_55_v, 1475, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "getLinearMapper");
+
     return LinearMapper(m_base_mapper, i + m_depth_offset, j + m_col_offset);
   }
 
@@ -1701,6 +2037,9 @@ struct gemm_pack_colmajor_block<
                                                const DataMapper& rhs,
                                                StorageIndex rows,
                                                StorageIndex cols) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_56(mht_56_v, 2040, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "packStandardPatches");
+
     eigen_assert(!rhs.nonStandardPatches());
 
     // Give vectorized_rows the name used in all other gemm_pack_rhs above.
@@ -1842,6 +2181,9 @@ CuboidConvolution(const Input& input, const Kernel& kernel,
                   const Index stridePlanes = 1, const Index strideRows = 1,
                   const Index strideCols = 1,
                   const PaddingType padding_type = PADDING_SAME) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSeigen_cuboid_convolutionDTh mht_57(mht_57_v, 2184, "", "./tensorflow/core/kernels/eigen_cuboid_convolution.h", "CuboidConvolution");
+
   typedef typename internal::traits<Input>::Index TensorIndex;
   TensorRef<Tensor<typename internal::traits<Input>::Scalar,
                    internal::traits<Input>::NumDimensions,

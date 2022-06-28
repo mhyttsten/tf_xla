@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,18 +205,30 @@ namespace tensorflow {
 namespace {
 
 inline bool PyIsInstance(PyObject* obj, PyTypeObject* t) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_0(mht_0_v, 208, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "PyIsInstance");
+
   return PyObject_IsInstance(obj, reinterpret_cast<PyObject*>(t));
 }
 
 inline PyObject* PyType(PyObject* obj) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_1(mht_1_v, 215, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "PyType");
+
   return reinterpret_cast<PyObject*>(obj->ob_type);
 }
 
 bool IsPyString(PyObject* obj) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_2(mht_2_v, 222, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "IsPyString");
+
   return PyBytes_Check(obj) || PyUnicode_Check(obj);
 }
 
 bool IsPyInt(PyObject* obj) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_3(mht_3_v, 229, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "IsPyInt");
+
 #if PY_MAJOR_VERSION >= 3
   return PyLong_Check(obj) ||
          PyIsInstance(obj, &PyIntegerArrType_Type);  // NumPy integers
@@ -59,14 +239,23 @@ bool IsPyInt(PyObject* obj) {
 }
 
 bool IsPyDouble(PyObject* obj) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_4(mht_4_v, 242, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "IsPyDouble");
+
   return PyIsInstance(obj, &PyDoubleArrType_Type);  // NumPy double type.
 }
 
 bool IsNumpyHalf(PyObject* obj) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_5(mht_5_v, 249, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "IsNumpyHalf");
+
   return PyIsInstance(obj, &PyHalfArrType_Type);
 }
 
 bool IsPyFloat(PyObject* obj) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_6(mht_6_v, 256, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "IsPyFloat");
+
   return PyFloat_Check(obj) ||
          PyIsInstance(obj, &PyFloatingArrType_Type);  // NumPy float types
 }
@@ -86,13 +275,19 @@ struct ConverterState {
   PyTypeObject* last_zerodim_type;
   bool last_zerodim_check;
 
-  ConverterState() : inferred_dtype(DT_INVALID), last_zerodim_type(nullptr) {}
+  ConverterState() : inferred_dtype(DT_INVALID), last_zerodim_type(nullptr) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_7(mht_7_v, 279, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "ConverterState");
+}
 };
 
 // If the input is a zero dimensional PyArray return it converted to a scalar.
 // Otherwise return the input and increment its reference count.
 // Users must Py_DECREF the output of this method.
 PyObject* ZeroDimArrayToScalar(PyObject* obj, ConverterState* state) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_8(mht_8_v, 288, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "ZeroDimArrayToScalar");
+
   auto type = Py_TYPE(obj);
   auto pyarray_obj = reinterpret_cast<PyArrayObject*>(obj);
   if (type != state->last_zerodim_type) {
@@ -113,6 +308,9 @@ PyObject* ZeroDimArrayToScalar(PyObject* obj, ConverterState* state) {
 // Sets *elem to a NEW reference to an element in seq on success.
 // REQUIRES: PySequence_Check(seq) && PySequence_Length(seq) > 0.
 Status SampleElementFromSequence(PyObject* seq, PyObject** elem) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_9(mht_9_v, 311, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "SampleElementFromSequence");
+
   *elem = PySequence_GetItem(seq, 0);
   if (*elem != nullptr) return Status::OK();
   // seq may implement the sequence protocol (i.e., implement __getitem__)
@@ -149,6 +347,9 @@ tstring PyRepr(PyObject* obj);
 bool IsPyDimension(PyObject* obj);
 
 Status InferShapeAndType(PyObject* obj, ConverterState* state) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_10(mht_10_v, 350, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "InferShapeAndType");
+
   std::vector<Safe_PyObjectPtr> refs_to_clean;
   while (true) {
     // Convert any zero dimensional numpy arrays to scalars first of all.
@@ -246,6 +447,9 @@ template <class T>
 struct Converter {
   static const char* Helper(PyObject* obj, int depth, ConverterState* state,
                             T** buf) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_11(mht_11_v, 450, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "Helper");
+
     if (TF_PREDICT_FALSE(obj == nullptr)) {
       return ErrorConverting;
     }
@@ -280,6 +484,9 @@ struct Converter {
 
   static Status Convert(TFE_Context* ctx, PyObject* obj, ConverterState* state,
                         TFE_TensorHandle** h, const char** error) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_12(mht_12_v, 487, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "Convert");
+
     // TODO(josh11b): Allocator & attributes
     AbstractTensorInterface* t;
     if (state->inferred_shape.empty()) { /* Scalar case */
@@ -318,15 +525,24 @@ template <>
 struct ConverterTraits<int64_t> {
   static AbstractTensorInterface* CreateScalar(TFE_Context* ctx,
                                                int64_t value) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_13(mht_13_v, 528, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "CreateScalar");
+
     return tensorflow::unwrap(ctx)->CreateInt64Scalar(value);
   }
 
   static AbstractTensorInterface* CreateTensor(
       TFE_Context* ctx, absl::Span<const int64_t> dim_sizes) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_14(mht_14_v, 536, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "CreateTensor");
+
     return tensorflow::unwrap(ctx)->CreateTensor(DT_INT64, dim_sizes);
   }
 
   static const char* ConvertScalar(PyObject* v, int64_t* out) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_15(mht_15_v, 543, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "ConvertScalar");
+
 #if PY_MAJOR_VERSION < 3
     if (TF_PREDICT_TRUE(PyInt_Check(v))) {
       *out = PyInt_AS_LONG(v);
@@ -358,15 +574,24 @@ typedef Converter<int64_t> Int64Converter;
 template <>
 struct ConverterTraits<uint64> {
   static AbstractTensorInterface* CreateScalar(TFE_Context* ctx, uint64 value) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_16(mht_16_v, 577, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "CreateScalar");
+
     return tensorflow::unwrap(ctx)->CreateUint64Scalar(value);
   }
 
   static AbstractTensorInterface* CreateTensor(
       TFE_Context* ctx, absl::Span<const int64_t> dim_sizes) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_17(mht_17_v, 585, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "CreateTensor");
+
     return tensorflow::unwrap(ctx)->CreateTensor(DT_UINT64, dim_sizes);
   }
 
   static const char* ConvertScalar(PyObject* v, uint64* out) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_18(mht_18_v, 592, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "ConvertScalar");
+
 #if PY_MAJOR_VERSION < 3
     if (TF_PREDICT_TRUE(PyInt_Check(v))) {
       *out = PyInt_AsUnsignedLongLongMask(v);
@@ -396,15 +621,24 @@ template <>
 struct ConverterTraits<int32> {
   static AbstractTensorInterface* CreateScalar(TFE_Context* ctx,
                                                int32_t value) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_19(mht_19_v, 624, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "CreateScalar");
+
     return tensorflow::unwrap(ctx)->CreateInt32Scalar(value);
   }
 
   static AbstractTensorInterface* CreateTensor(
       TFE_Context* ctx, absl::Span<const int64_t> dim_sizes) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_20(mht_20_v, 632, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "CreateTensor");
+
     return tensorflow::unwrap(ctx)->CreateTensor(DT_INT32, dim_sizes);
   }
 
   static const char* ConvertScalar(PyObject* v, int32* out) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_21(mht_21_v, 639, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "ConvertScalar");
+
     int64_t i;
 #if PY_MAJOR_VERSION < 3
     if (TF_PREDICT_TRUE(PyInt_Check(v))) {
@@ -442,6 +676,9 @@ typedef Converter<int32> Int32Converter;
 // Returns `true` if `out` overflows when converted from `as_double`.
 template <class T>
 static inline bool CheckForOverflow(double as_double, T* out) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_22(mht_22_v, 679, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "CheckForOverflow");
+
   return (sizeof(T) < sizeof(double) && std::isinf(*out) &&
           std::isfinite(as_double));
 }
@@ -450,11 +687,17 @@ static inline bool CheckForOverflow(double as_double, T* out) {
 // provides `Eigen::numext::isinf` instead.
 template <>
 inline bool CheckForOverflow<Eigen::half>(double as_double, Eigen::half* out) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_23(mht_23_v, 690, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "CheckForOverflow<Eigen::half>");
+
   return (Eigen::numext::isinf(*out) && std::isfinite(as_double));
 }
 
 template <class T>
 static const char* ConvertOneFloat(PyObject* v, T* out) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_24(mht_24_v, 698, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "ConvertOneFloat");
+
   if (PyErr_Occurred()) {
     return nullptr;
   }
@@ -502,15 +745,24 @@ static const char* ConvertOneFloat(PyObject* v, T* out) {
 template <>
 struct ConverterTraits<float> {
   static AbstractTensorInterface* CreateScalar(TFE_Context* ctx, float value) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_25(mht_25_v, 748, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "CreateScalar");
+
     return tensorflow::unwrap(ctx)->CreateFloatScalar(value);
   }
 
   static AbstractTensorInterface* CreateTensor(
       TFE_Context* ctx, absl::Span<const int64_t> dim_sizes) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_26(mht_26_v, 756, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "CreateTensor");
+
     return tensorflow::unwrap(ctx)->CreateTensor(DT_FLOAT, dim_sizes);
   }
 
   static const char* ConvertScalar(PyObject* v, float* out) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_27(mht_27_v, 763, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "ConvertScalar");
+
     return ConvertOneFloat<float>(v, out);
   }
 };
@@ -518,15 +770,24 @@ struct ConverterTraits<float> {
 template <>
 struct ConverterTraits<double> {
   static AbstractTensorInterface* CreateScalar(TFE_Context* ctx, double value) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_28(mht_28_v, 773, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "CreateScalar");
+
     return tensorflow::unwrap(ctx)->CreateDoubleScalar(value);
   }
 
   static AbstractTensorInterface* CreateTensor(
       TFE_Context* ctx, absl::Span<const int64_t> dim_sizes) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_29(mht_29_v, 781, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "CreateTensor");
+
     return tensorflow::unwrap(ctx)->CreateTensor(DT_DOUBLE, dim_sizes);
   }
 
   static const char* ConvertScalar(PyObject* v, double* out) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_30(mht_30_v, 788, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "ConvertScalar");
+
     return ConvertOneFloat<double>(v, out);
   }
 };
@@ -538,15 +799,24 @@ template <>
 struct ConverterTraits<Eigen::half> {
   static AbstractTensorInterface* CreateScalar(TFE_Context* ctx,
                                                Eigen::half value) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_31(mht_31_v, 802, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "CreateScalar");
+
     return tensorflow::unwrap(ctx)->CreateHalfScalar(value);
   }
 
   static AbstractTensorInterface* CreateTensor(
       TFE_Context* ctx, absl::Span<const int64_t> dim_sizes) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_32(mht_32_v, 810, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "CreateTensor");
+
     return tensorflow::unwrap(ctx)->CreateTensor(DT_HALF, dim_sizes);
   }
 
   static const char* ConvertScalar(PyObject* v, Eigen::half* out) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_33(mht_33_v, 817, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "ConvertScalar");
+
     return ConvertOneFloat<Eigen::half>(v, out);
   }
 };
@@ -559,15 +829,25 @@ template <>
 struct ConverterTraits<tstring> {
   static AbstractTensorInterface* CreateScalar(TFE_Context* ctx,
                                                tstring value) {
+   std::vector<std::string> mht_34_v;
+   mht_34_v.push_back("value: \"" + (std::string)value + "\"");
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_34(mht_34_v, 833, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "CreateScalar");
+
     return tensorflow::unwrap(ctx)->CreateStringScalar(value);
   }
 
   static AbstractTensorInterface* CreateTensor(
       TFE_Context* ctx, absl::Span<const int64_t> dim_sizes) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_35(mht_35_v, 841, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "CreateTensor");
+
     return tensorflow::unwrap(ctx)->CreateTensor(DT_STRING, dim_sizes);
   }
 
   static const char* ConvertScalar(PyObject* v, tstring* out) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_36(mht_36_v, 848, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "ConvertScalar");
+
     if (PyBytes_Check(v)) {
       out->assign(PyBytes_AS_STRING(v), PyBytes_GET_SIZE(v));
       return nullptr;
@@ -597,6 +877,9 @@ typedef Converter<tstring> StringConverter;
 // C++ string in *out.  Returns nullptr on success, or a message on error.
 // Defined below, but forward declared here for use in PyRepr.
 tstring PyRepr(PyObject* obj) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_37(mht_37_v, 880, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "PyRepr");
+
   if (obj == nullptr) {
     return "<null>";
   }
@@ -612,6 +895,9 @@ tstring PyRepr(PyObject* obj) {
 }
 
 bool IsPyDimension(PyObject* obj) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_38(mht_38_v, 898, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "IsPyDimension");
+
   const char* tp_name = obj->ob_type->tp_name;
   if (strcmp(tp_name, "Dimension") != 0) return false;
   bool ret = str_util::EndsWith(
@@ -626,15 +912,24 @@ template <>
 struct ConverterTraits<complex128> {
   static AbstractTensorInterface* CreateScalar(TFE_Context* ctx,
                                                complex128 value) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_39(mht_39_v, 915, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "CreateScalar");
+
     return tensorflow::unwrap(ctx)->CreateComplex128Scalar(value);
   }
 
   static AbstractTensorInterface* CreateTensor(
       TFE_Context* ctx, absl::Span<const int64_t> dim_sizes) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_40(mht_40_v, 923, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "CreateTensor");
+
     return tensorflow::unwrap(ctx)->CreateTensor(DT_COMPLEX128, dim_sizes);
   }
 
   static const char* ConvertScalar(PyObject* v, complex128* out) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_41(mht_41_v, 930, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "ConvertScalar");
+
     if (PyComplex_Check(v)) {
       *out = complex128(PyComplex_RealAsDouble(v), PyComplex_ImagAsDouble(v));
       return nullptr;
@@ -658,15 +953,24 @@ typedef Converter<complex128> Complex128Converter;
 template <>
 struct ConverterTraits<bool> {
   static AbstractTensorInterface* CreateScalar(TFE_Context* ctx, bool value) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_42(mht_42_v, 956, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "CreateScalar");
+
     return tensorflow::unwrap(ctx)->CreateBoolScalar(value);
   }
 
   static AbstractTensorInterface* CreateTensor(
       TFE_Context* ctx, absl::Span<const int64_t> dim_sizes) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_43(mht_43_v, 964, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "CreateTensor");
+
     return tensorflow::unwrap(ctx)->CreateTensor(DT_BOOL, dim_sizes);
   }
 
   static const char* ConvertScalar(PyObject* v, bool* out) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_44(mht_44_v, 971, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "ConvertScalar");
+
     if (v == Py_True) {
       *out = true;
     } else if (v == Py_False) {
@@ -686,6 +990,9 @@ typedef Converter<bool> BoolConverter;
 // The two may share underlying storage so changes to one may reflect in the
 // other.
 TFE_TensorHandle* NumpyToTFE_TensorHandle(TFE_Context* ctx, PyObject* obj) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_45(mht_45_v, 993, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "NumpyToTFE_TensorHandle");
+
   Safe_TF_TensorPtr tf_tensor = make_safe(static_cast<TF_Tensor*>(nullptr));
   Status status = tensorflow::NdarrayToTensor(ctx, obj, &tf_tensor);
 
@@ -709,6 +1016,9 @@ TFE_TensorHandle* NumpyToTFE_TensorHandle(TFE_Context* ctx, PyObject* obj) {
 // TODO(b/147828820): Handle Tensors properly.
 TFE_TensorHandle* PySeqToTFE_TensorHandle(TFE_Context* ctx, PyObject* obj,
                                           DataType dtype) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSpythonPSlibPScorePSpy_seq_tensorDTcc mht_46(mht_46_v, 1019, "", "./tensorflow/python/lib/core/py_seq_tensor.cc", "PySeqToTFE_TensorHandle");
+
   // Shortcut: __array__ objects (such as Pandas data frames).
   // These objects are efficiently handled by Numpy. We transform them into
   // Numpy arrays and handle them in the Numpy case below. Note that Tensors

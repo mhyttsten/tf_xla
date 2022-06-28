@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,15 +212,24 @@ TpuDevice::TpuDevice(int id, int process_index,
     : id_(id),
       process_index_(process_index),
       coords_(coords),
-      core_on_chip_(core_on_chip) {}
+      core_on_chip_(core_on_chip) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_0(mht_0_v, 216, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "TpuDevice::TpuDevice");
+}
 
 std::string TpuDevice::DebugString() const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_1(mht_1_v, 221, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "TpuDevice::DebugString");
+
   return absl::StrFormat("TPU_%i(host=%i,(%i,%i,%i,%i))", id(), process_index(),
                          coords_[0], coords_[1], coords_[2], core_on_chip_);
 }
 
 xla::StatusOr<std::vector<std::shared_ptr<xla::PjRtDevice>>>
 TpuDevice::GetTpuDevices(const tpu_driver::SystemInfo& system_info) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_2(mht_2_v, 230, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "TpuDevice::GetTpuDevices");
+
   std::vector<std::shared_ptr<PjRtDevice>> devices;
   for (const auto& chip : system_info.tpu_chip()) {
     auto& coord = chip.chip_coord();
@@ -70,6 +247,10 @@ TpuDevice::GetTpuDevices(const tpu_driver::SystemInfo& system_info) {
 
 StatusOr<std::shared_ptr<PyTpuClient>> PyTpuClient::Get(
     const std::string& worker) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("worker: \"" + worker + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_3(mht_3_v, 251, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "PyTpuClient::Get");
+
   tpu_driver::TpuDriverConfig driver_config;
   driver_config.set_worker(worker);
   auto client_status = tpu_driver::TpuDriverRegistry::Open(driver_config);
@@ -99,6 +280,10 @@ PyTpuClient::PyTpuClient(std::string platform_name,
       driver_(std::move(driver)),
       devices_(std::move(devices)),
       process_index_(process_index) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("platform_name: \"" + platform_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_4(mht_4_v, 284, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "PyTpuClient::PyTpuClient");
+
   for (const std::shared_ptr<PjRtDevice>& device : devices_) {
     tensorflow::down_cast<TpuDevice*>(device.get())->set_tpu_client(this);
     CHECK(id_to_device_.insert({device->id(), device}).second)
@@ -128,16 +313,25 @@ PyTpuClient::PyTpuClient(std::string platform_name,
 
 Status PyTpuClient::TransferToInfeed(const LiteralSlice& literal,
                                      int device_id) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_5(mht_5_v, 316, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "PyTpuClient::TransferToInfeed");
+
   return Unimplemented("Infeed not implemented.");
 }
 
 StatusOr<Literal> PyTpuClient::TransferFromOutfeed(const Shape& shape,
                                                    int device_id) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_6(mht_6_v, 324, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "PyTpuClient::TransferFromOutfeed");
+
   return Unimplemented("Outfeed not implemented.");
 }
 
 StatusOr<DeviceAssignment> PyTpuClient::GetDefaultDeviceAssignment(
     int num_replicas, int num_partitions) const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_7(mht_7_v, 332, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "PyTpuClient::GetDefaultDeviceAssignment");
+
   if (num_partitions > 1) {
     return InvalidArgument("Num partitions greater than 1, is not supported.");
   }
@@ -158,6 +352,10 @@ StatusOr<DeviceAssignment> PyTpuClient::GetDefaultDeviceAssignment(
 
 Status PyTpuClient::CheckDeviceId(int device_id,
                                   absl::string_view caller_name) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("caller_name: \"" + std::string(caller_name.data(), caller_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_8(mht_8_v, 356, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "PyTpuClient::CheckDeviceId");
+
   if (device_id < 0 || device_id >= device_count()) {
     return InvalidArgument("%s got bad device_id: %d (num_devices=%d).",
                            caller_name, device_id, device_count());
@@ -166,6 +364,9 @@ Status PyTpuClient::CheckDeviceId(int device_id,
 }
 
 static Status CheckDataType(xla::PrimitiveType dtype) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_9(mht_9_v, 367, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "CheckDataType");
+
   if (dtype == xla::PrimitiveType::F64 || dtype == xla::PrimitiveType::S64 ||
       dtype == xla::PrimitiveType::U64) {
     return InvalidArgument(
@@ -180,6 +381,9 @@ StatusOr<std::unique_ptr<PyTpuBuffer>> PyTpuBuffer::FromLiterals(
     std::vector<BorrowingLiteral> leaves, const Shape& tuple_shape,
     std::shared_ptr<void> leaves_references,
     std::shared_ptr<PyTpuClient> client, std::shared_ptr<PjRtDevice> device) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_10(mht_10_v, 384, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "PyTpuBuffer::FromLiterals");
+
   tensorflow::profiler::TraceMe traceme("PyTpuBuffer::FromLiterals");
   VLOG(1) << "PyTpuBuffer::FromLiterals: shape: " << tuple_shape.DebugString()
           << " device: " << device->DebugString();
@@ -236,6 +440,9 @@ StatusOr<std::unique_ptr<PyTpuBuffer>> PyTpuBuffer::FromLiterals(
 StatusOr<std::unique_ptr<PyTpuBuffer>> PyTpuBuffer::MakeTuple(
     absl::Span<PyTpuBuffer* const> buffers, std::shared_ptr<PyTpuClient> client,
     std::shared_ptr<PjRtDevice> device) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_11(mht_11_v, 443, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "PyTpuBuffer::MakeTuple");
+
   std::vector<Shape> child_shapes;
   std::vector<std::shared_ptr<TpuSharedBuffer>> child_device_buffers;
   std::vector<tpu_driver::BufferHandle*> child_handle_ptrs;
@@ -276,9 +483,15 @@ PyTpuBuffer::PyTpuBuffer(
       on_host_shape_(std::move(on_host_shape)),
       device_(device_buffer->device),
       device_buffer_(std::move(device_buffer)),
-      child_buffers_(std::move(child_buffers)) {}
+      child_buffers_(std::move(child_buffers)) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_12(mht_12_v, 487, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "PyTpuBuffer::PyTpuBuffer");
+}
 
 void PyTpuBuffer::Delete() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_13(mht_13_v, 492, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "PyTpuBuffer::Delete");
+
   absl::MutexLock lock(&mu_);
   device_buffer_ = nullptr;
   child_buffers_.clear();
@@ -286,6 +499,9 @@ void PyTpuBuffer::Delete() {
 }
 
 Status PyTpuBuffer::CopyToHostAsync() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_14(mht_14_v, 502, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "PyTpuBuffer::CopyToHostAsync");
+
   std::vector<std::shared_ptr<tpu_driver::Event>> transfer_events;
   std::shared_ptr<HostValue> host_value = std::make_shared<HostValue>();
 
@@ -348,6 +564,9 @@ Status PyTpuBuffer::CopyToHostAsync() {
 }
 
 StatusOr<std::shared_ptr<Literal>> PyTpuBuffer::ToLiteral() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_15(mht_15_v, 567, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "PyTpuBuffer::ToLiteral");
+
   tensorflow::profiler::TraceMe traceme("PyTpuBuffer::ToLiteral");
   TF_RETURN_IF_ERROR(CopyToHostAsync());
 
@@ -364,12 +583,18 @@ StatusOr<std::shared_ptr<Literal>> PyTpuBuffer::ToLiteral() {
 }
 
 std::shared_ptr<TpuSharedBuffer> PyTpuBuffer::DeviceBuffer() const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_16(mht_16_v, 586, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "PyTpuBuffer::DeviceBuffer");
+
   absl::MutexLock lock(&mu_);
   return device_buffer_;
 }
 
 StatusOr<std::vector<std::unique_ptr<PyTpuBuffer>>>
 PyTpuBuffer::DestructureTuple() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_17(mht_17_v, 595, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "PyTpuBuffer::DestructureTuple");
+
   tensorflow::profiler::TraceMe traceme("PyTpuBuffer::DestructureTuple");
   if (!on_host_shape_.IsTuple()) {
     return InvalidArgument(
@@ -395,6 +620,9 @@ PyTpuBuffer::DestructureTuple() {
 
 StatusOr<std::unique_ptr<PyTpuBuffer>> PyTpuBuffer::CopyToDevice(
     std::shared_ptr<PjRtDevice> dst_device) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_18(mht_18_v, 623, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "PyTpuBuffer::CopyToDevice");
+
   tensorflow::profiler::TraceMe traceme("PyTpuBuffer::CopyToDevice");
   if (on_host_shape_.IsTuple()) {
     return Unimplemented("CopyToDevice for tuples is not supported.");
@@ -432,6 +660,9 @@ StatusOr<std::unique_ptr<PyTpuBuffer>> PyTpuBuffer::CopyToDevice(
 }
 
 Status PyTpuBuffer::BlockHostUntilReady() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_19(mht_19_v, 663, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "PyTpuBuffer::BlockHostUntilReady");
+
   tensorflow::profiler::TraceMe traceme("PyTpuBuffer::BlockHostUntilReady");
   std::shared_ptr<TpuSharedBuffer> device_buffer = DeviceBuffer();
   if (!device_buffer) {
@@ -445,6 +676,9 @@ Status PyTpuBuffer::BlockHostUntilReady() {
 StatusOr<std::unique_ptr<PyTpuBuffer>> PyTpuBuffer::AllocateBuffer(
     const Shape& shape, std::shared_ptr<PyTpuClient> client,
     std::shared_ptr<PjRtDevice> device) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_20(mht_20_v, 679, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "PyTpuBuffer::AllocateBuffer");
+
   tensorflow::profiler::TraceMe traceme("PyTpuBuffer::AllocateBuffer");
   VLOG(1) << "PyTpuBuffer::AllocateBuffer: shape: " << shape.DebugString()
           << " device: " << device->DebugString();
@@ -477,6 +711,9 @@ StatusOr<std::unique_ptr<PyTpuBuffer>> PyTpuBuffer::AllocateBuffer(
 StatusOr<std::unique_ptr<PyTpuBuffer>> PyTpuBuffer::CreateBuffer(
     const Shape& non_tuple_shape, absl::optional<BufferInitializer> initializer,
     std::shared_ptr<PyTpuClient> client, std::shared_ptr<PjRtDevice> device) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_21(mht_21_v, 714, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "PyTpuBuffer::CreateBuffer");
+
   tensorflow::profiler::TraceMe traceme("PyTpuBuffer::CreateBuffer");
   VLOG(1) << "PyTpuBuffer::CreateBuffer: shape: "
           << non_tuple_shape.DebugString()
@@ -520,6 +757,9 @@ PyTpuExecutable::PyTpuExecutable(
       device_assignment_(std::move(device_assignment)),
       tuple_arguments_(tuple_arguments),
       result_shape_(std::move(result_shape)) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_22(mht_22_v, 760, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "PyTpuExecutable::PyTpuExecutable");
+
   VLOG(1) << "DeviceAssignment. " << device_assignment_.ToString();
   const int num_replicas = device_assignment_.replica_count();
   const int num_partitions = device_assignment_.computation_count();
@@ -551,6 +791,9 @@ PyTpuExecutable::ExecuteResult PyTpuExecutable::ExecuteHelper(
     absl::Span<const std::vector<PyTpuBuffer*>> maybe_tupled_args,
     absl::Span<PyTpuBuffer* const> this_core_arguments, int replica,
     int partition, const RunId& run_id) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_23(mht_23_v, 794, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "PyTpuExecutable::ExecuteHelper");
+
   const int device_id = device_assignment_(replica, partition);
   std::shared_ptr<PjRtDevice> device = LookupDevice(*client_, device_id);
   CHECK_EQ(device->process_index(), client_->process_index());
@@ -602,6 +845,9 @@ static const absl::Duration kWarnExecutionDelay = absl::Seconds(10);
 static const absl::Duration kMaxExecutionDelay = absl::Minutes(60);
 
 Status WaitForExecuteEvent(tpu_driver::Event* event) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_24(mht_24_v, 848, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "WaitForExecuteEvent");
+
   absl::optional<Status> opt_status;
   auto start_time = absl::Now();
 
@@ -626,6 +872,9 @@ Status WaitForExecuteEvent(tpu_driver::Event* event) {
 
 StatusOr<std::vector<std::unique_ptr<PyTpuBuffer>>> PyTpuExecutable::Execute(
     absl::Span<PyTpuBuffer* const> argument_handles) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_25(mht_25_v, 875, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "PyTpuExecutable::Execute");
+
   if (num_replicas() != 1) {
     return InvalidArgument(
         "Attempted to execute computation with %d replicas using Execute().",
@@ -671,6 +920,9 @@ StatusOr<std::vector<std::unique_ptr<PyTpuBuffer>>> PyTpuExecutable::Execute(
 StatusOr<std::vector<std::vector<std::unique_ptr<PyTpuBuffer>>>>
 PyTpuExecutable::ExecuteOnLocalDevices(
     absl::Span<const std::vector<PyTpuBuffer*>> argument_handles) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_26(mht_26_v, 923, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "PyTpuExecutable::ExecuteOnLocalDevices");
+
   tensorflow::profiler::TraceMe traceme(
       "PyTpuExecutable::ExecuteOnLocalDevices");
 
@@ -759,6 +1011,9 @@ PyTpuExecutable::ExecuteOnLocalDevices(
 StatusOr<std::vector<std::vector<std::unique_ptr<PyTpuBuffer>>>>
 PyTpuExecutable::ExecuteShardedOnLocalDevices(
     absl::Span<const std::vector<PyTpuBuffer*>> args) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_27(mht_27_v, 1014, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "PyTpuExecutable::ExecuteShardedOnLocalDevices");
+
   std::vector<std::vector<std::unique_ptr<PyTpuBuffer>>> output_buffers;
   TF_RET_CHECK(!args.empty());
   int num_computations = args.front().size();
@@ -801,6 +1056,9 @@ PyTpuExecutable::ExecuteShardedOnLocalDevices(
     absl::optional<std::vector<Shape>> argument_layouts,
     const ExecutableBuildOptions* build_options,
     std::shared_ptr<PyTpuClient> client, bool tuple_arguments) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_28(mht_28_v, 1059, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "PyTpuExecutable::Compile");
+
   tensorflow::profiler::TraceMe traceme("PyTpuExecutable::Compile");
 
   VLOG(1) << "Compile: "
@@ -874,6 +1132,9 @@ PyTpuExecutable::CompileMlir(
     mlir::ModuleOp module, absl::optional<std::vector<Shape>> argument_layouts,
     const ExecutableBuildOptions* build_options,
     std::shared_ptr<PyTpuClient> client, bool tuple_arguments) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSclientPStpu_clientDTcc mht_29(mht_29_v, 1135, "", "./tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.cc", "PyTpuExecutable::CompileMlir");
+
   XlaComputation xla_computation;
   TF_RETURN_IF_ERROR(MlirToXlaComputation(module, xla_computation,
                                           /*use_tuple_args=*/tuple_arguments,

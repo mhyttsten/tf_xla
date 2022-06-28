@@ -14,6 +14,174 @@ limitations under the License.
 ==============================================================================*/
 #ifndef TENSORFLOW_LITE_TOCO_MODEL_H_
 #define TENSORFLOW_LITE_TOCO_MODEL_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <complex>
 #include <functional>
@@ -311,7 +479,10 @@ struct GenericBuffer {
 
   // We need a virtual destructor so we can store pointers-to-Buffer
   // in containers and have the containers call the right subclass destructor.
-  virtual ~GenericBuffer() {}
+  virtual ~GenericBuffer() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_0(mht_0_v, 483, "", "./tensorflow/lite/toco/model.h", "~GenericBuffer");
+}
 
   virtual int Length() const = 0;
 
@@ -319,15 +490,24 @@ struct GenericBuffer {
 
  protected:
   // Constructor used by subclasses for specific ArrayDataType's.
-  explicit GenericBuffer(ArrayDataType t) : type(t) {}
+  explicit GenericBuffer(ArrayDataType t) : type(t) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_1(mht_1_v, 494, "", "./tensorflow/lite/toco/model.h", "GenericBuffer");
+}
 };
 
 // Type-specific buffer, containing type-specific storage.
 template <ArrayDataType A>
 struct Buffer : GenericBuffer {
-  Buffer() : GenericBuffer(A) {}
+  Buffer() : GenericBuffer(A) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_2(mht_2_v, 503, "", "./tensorflow/lite/toco/model.h", "Buffer");
+}
 
-  int Length() const override { return data.size(); }
+  int Length() const override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_3(mht_3_v, 508, "", "./tensorflow/lite/toco/model.h", "Length");
+ return data.size(); }
 
   std::vector<DataType<A>> data;
 };
@@ -344,16 +524,31 @@ class Shape {
   Shape(std::initializer_list<int> dim_list) : dims_(dim_list) {}
 
   void ReplaceDims(std::initializer_list<int> dim_list) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_4(mht_4_v, 527, "", "./tensorflow/lite/toco/model.h", "ReplaceDims");
+
     dims_ = std::vector<int>(dim_list);
   }
 
-  const std::vector<int>& dims() const { return dims_; }
-  std::vector<int>* mutable_dims() { return &dims_; }
-  const int dimensions_count() const { return dims_.size(); }
+  const std::vector<int>& dims() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_5(mht_5_v, 534, "", "./tensorflow/lite/toco/model.h", "dims");
+ return dims_; }
+  std::vector<int>* mutable_dims() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_6(mht_6_v, 538, "", "./tensorflow/lite/toco/model.h", "mutable_dims");
+ return &dims_; }
+  const int dimensions_count() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_7(mht_7_v, 542, "", "./tensorflow/lite/toco/model.h", "dimensions_count");
+ return dims_.size(); }
 
   // We still have that one convenience accessor to avoid
   // the awkward double bracket issue:  shape.dims()[i].
   int dims(int i) const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_8(mht_8_v, 549, "", "./tensorflow/lite/toco/model.h", "dims");
+
     // Always check for out-of-bounds accesses, even in optimized builds where
     // standard assertions are disabled. Out-of-bounds access here is a common
     // occurrence.
@@ -385,7 +580,10 @@ struct Operator {
 
   // We need a virtual destructor so we can store pointers-to-Operator
   // in containers and have the containers call the right subclass destructor.
-  virtual ~Operator() {}
+  virtual ~Operator() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_9(mht_9_v, 584, "", "./tensorflow/lite/toco/model.h", "~Operator");
+}
 
   // The specific type of operator. Corresponds 1:1 to subclasses.
   const OperatorType type;
@@ -422,7 +620,10 @@ struct Operator {
   // Constructor used by subclasses for specific OperatorType's.
   explicit Operator(OperatorType t)
       : type(t),
-        fused_activation_function(FusedActivationFunctionType::kNone) {}
+        fused_activation_function(FusedActivationFunctionType::kNone) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_10(mht_10_v, 624, "", "./tensorflow/lite/toco/model.h", "Operator");
+}
 };
 
 // Padding types for Conv-like operators. This is how padding is typically
@@ -444,6 +645,9 @@ struct FixedPadding {
 // The latter is resolved during the PropagateFixedSizes pass.
 struct Padding {
   FixedPadding& GetOrCreateFixedPadding() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_11(mht_11_v, 648, "", "./tensorflow/lite/toco/model.h", "GetOrCreateFixedPadding");
+
     if (!fixed) {
       FixedPadding* ptr = new FixedPadding;
       fixed = std::unique_ptr<FixedPadding>(ptr);
@@ -451,7 +655,10 @@ struct Padding {
     return *fixed;
   }
 
-  Padding() : type(PaddingType::kNone) {}
+  Padding() : type(PaddingType::kNone) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_12(mht_12_v, 659, "", "./tensorflow/lite/toco/model.h", "Padding");
+}
   PaddingType type;
   std::unique_ptr<FixedPadding> fixed;
 };
@@ -472,7 +679,10 @@ struct Padding {
 //
 // TensorFlow equivalent: Conv2D
 struct ConvOperator : Operator {
-  ConvOperator() : Operator(OperatorType::kConv) {}
+  ConvOperator() : Operator(OperatorType::kConv) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_13(mht_13_v, 683, "", "./tensorflow/lite/toco/model.h", "ConvOperator");
+}
   Padding padding;
   int stride_width = 0;
   int stride_height = 0;
@@ -499,7 +709,10 @@ struct ConvOperator : Operator {
 // TensorFlow equivalent: CTCBeamSearchDecoder
 struct CTCBeamSearchDecoderOperator : Operator {
   CTCBeamSearchDecoderOperator()
-      : Operator(OperatorType::kCTCBeamSearchDecoder) {}
+      : Operator(OperatorType::kCTCBeamSearchDecoder) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_14(mht_14_v, 713, "", "./tensorflow/lite/toco/model.h", "CTCBeamSearchDecoderOperator");
+}
   int beam_width;
   int top_paths;
   bool merge_repeated = true;
@@ -515,7 +728,10 @@ struct CTCBeamSearchDecoderOperator : Operator {
 //
 // TensorFlow equivalent: DepthwiseConv2dNative
 struct DepthwiseConvOperator : Operator {
-  DepthwiseConvOperator() : Operator(OperatorType::kDepthwiseConv) {}
+  DepthwiseConvOperator() : Operator(OperatorType::kDepthwiseConv) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_15(mht_15_v, 732, "", "./tensorflow/lite/toco/model.h", "DepthwiseConvOperator");
+}
   Padding padding;
   int stride_height = 0;
   int stride_width = 0;
@@ -534,7 +750,10 @@ struct DepthwiseConvOperator : Operator {
 //
 // TensorFlow equivalent: DepthToSpace
 struct DepthToSpaceOperator : Operator {
-  DepthToSpaceOperator() : Operator(OperatorType::kDepthToSpace) {}
+  DepthToSpaceOperator() : Operator(OperatorType::kDepthToSpace) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_16(mht_16_v, 754, "", "./tensorflow/lite/toco/model.h", "DepthToSpaceOperator");
+}
   int block_size = 0;
 };
 
@@ -545,7 +764,10 @@ struct DepthToSpaceOperator : Operator {
 //
 // TensorFlow equivalent: SpaceToDepth
 struct SpaceToDepthOperator : Operator {
-  SpaceToDepthOperator() : Operator(OperatorType::kSpaceToDepth) {}
+  SpaceToDepthOperator() : Operator(OperatorType::kSpaceToDepth) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_17(mht_17_v, 768, "", "./tensorflow/lite/toco/model.h", "SpaceToDepthOperator");
+}
   int block_size = 0;
 };
 
@@ -560,7 +782,10 @@ struct SpaceToDepthOperator : Operator {
 // TensorFlow equivalent: a pair consisting of a Reshape node reshaping the
 // input activations as a matrix, followed by a MatMul node.
 struct FullyConnectedOperator : Operator {
-  FullyConnectedOperator() : Operator(OperatorType::kFullyConnected) {}
+  FullyConnectedOperator() : Operator(OperatorType::kFullyConnected) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_18(mht_18_v, 786, "", "./tensorflow/lite/toco/model.h", "FullyConnectedOperator");
+}
   FullyConnectedWeightsFormat weights_format =
       FullyConnectedWeightsFormat::kDefault;
 
@@ -593,7 +818,10 @@ struct FullyConnectedOperator : Operator {
 //
 // TensorFlow equivalent: Dequantize
 struct DequantizeOperator : Operator {
-  DequantizeOperator() : Operator(OperatorType::kDequantize) {}
+  DequantizeOperator() : Operator(OperatorType::kDequantize) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_19(mht_19_v, 822, "", "./tensorflow/lite/toco/model.h", "DequantizeOperator");
+}
 };
 
 // Numeric verification operator, converting a quantized array of integers with
@@ -608,7 +836,10 @@ struct DequantizeOperator : Operator {
 //
 // TensorFlow equivalent: Dequantize
 struct NumericVerifyOperator : Operator {
-  NumericVerifyOperator() : Operator(OperatorType::kNumericVerify) {}
+  NumericVerifyOperator() : Operator(OperatorType::kNumericVerify) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_20(mht_20_v, 840, "", "./tensorflow/lite/toco/model.h", "NumericVerifyOperator");
+}
 };
 
 // Batch-normalization operator.
@@ -630,7 +861,10 @@ struct NumericVerifyOperator : Operator {
 struct BatchNormalizationOperator : Operator {
   BatchNormalizationOperator()
       : Operator(OperatorType::kBatchNormalization),
-        global_normalization(false) {}
+        global_normalization(false) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_21(mht_21_v, 865, "", "./tensorflow/lite/toco/model.h", "BatchNormalizationOperator");
+}
   bool global_normalization;
 };
 
@@ -645,7 +879,10 @@ struct BatchNormalizationOperator : Operator {
 // sub-graphs
 // and replace them by L2NormalizationOperator's. See IdentifyL2Normalization.
 struct L2NormalizationOperator : Operator {
-  L2NormalizationOperator() : Operator(OperatorType::kL2Normalization) {}
+  L2NormalizationOperator() : Operator(OperatorType::kL2Normalization) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_22(mht_22_v, 883, "", "./tensorflow/lite/toco/model.h", "L2NormalizationOperator");
+}
 };
 
 // LSTM Cell operator.
@@ -684,25 +921,37 @@ struct LstmCellOperator : Operator {
   };
 
   LstmCellOperator()
-      : Operator(OperatorType::kLstmCell), kernel_type(KERNEL_BASIC) {}
+      : Operator(OperatorType::kLstmCell), kernel_type(KERNEL_BASIC) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_23(mht_23_v, 925, "", "./tensorflow/lite/toco/model.h", "LstmCellOperator");
+}
 
   KernelType kernel_type;
 };
 
 struct UnidirectionalSequenceLstmOperator : Operator {
   UnidirectionalSequenceLstmOperator()
-      : Operator(OperatorType::kUnidirectionalSequenceLstm) {}
+      : Operator(OperatorType::kUnidirectionalSequenceLstm) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_24(mht_24_v, 935, "", "./tensorflow/lite/toco/model.h", "UnidirectionalSequenceLstmOperator");
+}
 };
 
 struct BidirectionalSequenceLstmOperator : Operator {
   BidirectionalSequenceLstmOperator()
-      : Operator(OperatorType::kBidirectionalSequenceLstm) {}
+      : Operator(OperatorType::kBidirectionalSequenceLstm) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_25(mht_25_v, 943, "", "./tensorflow/lite/toco/model.h", "BidirectionalSequenceLstmOperator");
+}
   bool merge_outputs;
 };
 
 struct BidirectionalSequenceRnnOperator : Operator {
   BidirectionalSequenceRnnOperator()
-      : Operator(OperatorType::kBidirectionalSequenceRnn) {}
+      : Operator(OperatorType::kBidirectionalSequenceRnn) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_26(mht_26_v, 952, "", "./tensorflow/lite/toco/model.h", "BidirectionalSequenceRnnOperator");
+}
   bool merge_outputs;
 };
 
@@ -714,7 +963,10 @@ struct BidirectionalSequenceRnnOperator : Operator {
 //
 // TensorFlow equivalent: Mul
 struct MulOperator : Operator {
-  MulOperator() : Operator(OperatorType::kMul) {}
+  MulOperator() : Operator(OperatorType::kMul) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_27(mht_27_v, 967, "", "./tensorflow/lite/toco/model.h", "MulOperator");
+}
 };
 
 // Element-wise Abs operator:
@@ -725,7 +977,10 @@ struct MulOperator : Operator {
 //
 // TensorFlow equivalent: abs
 struct AbsOperator : Operator {
-  AbsOperator() : Operator(OperatorType::kAbs) {}
+  AbsOperator() : Operator(OperatorType::kAbs) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_28(mht_28_v, 981, "", "./tensorflow/lite/toco/model.h", "AbsOperator");
+}
 };
 
 // Element-wise HardSwish operator:
@@ -736,7 +991,10 @@ struct AbsOperator : Operator {
 //
 // TensorFlow equivalent: hard_swish
 struct HardSwishOperator : Operator {
-  HardSwishOperator() : Operator(OperatorType::kHardSwish) {}
+  HardSwishOperator() : Operator(OperatorType::kHardSwish) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_29(mht_29_v, 995, "", "./tensorflow/lite/toco/model.h", "HardSwishOperator");
+}
 };
 
 // Elu
@@ -747,7 +1005,10 @@ struct HardSwishOperator : Operator {
 //
 // TensorFlow equivalent: Elu
 struct EluOperator : Operator {
-  EluOperator() : Operator(OperatorType::kElu) {}
+  EluOperator() : Operator(OperatorType::kElu) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_30(mht_30_v, 1009, "", "./tensorflow/lite/toco/model.h", "EluOperator");
+}
 };
 
 // Element-wise Relu operator:
@@ -758,7 +1019,10 @@ struct EluOperator : Operator {
 //
 // TensorFlow equivalent: Relu
 struct ReluOperator : Operator {
-  ReluOperator() : Operator(OperatorType::kRelu) {}
+  ReluOperator() : Operator(OperatorType::kRelu) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_31(mht_31_v, 1023, "", "./tensorflow/lite/toco/model.h", "ReluOperator");
+}
 };
 
 // Element-wise Relu1 operator:
@@ -770,7 +1034,10 @@ struct ReluOperator : Operator {
 // TensorFlow equivalent: none. We can construct the operator with Minimum
 // and Maximum operations
 struct Relu1Operator : Operator {
-  Relu1Operator() : Operator(OperatorType::kRelu1) {}
+  Relu1Operator() : Operator(OperatorType::kRelu1) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_32(mht_32_v, 1038, "", "./tensorflow/lite/toco/model.h", "Relu1Operator");
+}
 };
 
 // Element-wise Relu6 operator:
@@ -781,7 +1048,10 @@ struct Relu1Operator : Operator {
 //
 // TensorFlow equivalent: Relu6
 struct Relu6Operator : Operator {
-  Relu6Operator() : Operator(OperatorType::kRelu6) {}
+  Relu6Operator() : Operator(OperatorType::kRelu6) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_33(mht_33_v, 1052, "", "./tensorflow/lite/toco/model.h", "Relu6Operator");
+}
 };
 
 // PRelu
@@ -793,7 +1063,10 @@ struct Relu6Operator : Operator {
 //
 // Equivalent to keras.layers.PReLU.
 struct PReluOperator : Operator {
-  PReluOperator() : Operator(OperatorType::kPRelu) {}
+  PReluOperator() : Operator(OperatorType::kPRelu) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_34(mht_34_v, 1067, "", "./tensorflow/lite/toco/model.h", "PReluOperator");
+}
 };
 
 // LeakyRelu
@@ -804,7 +1077,10 @@ struct PReluOperator : Operator {
 //
 // TensorFlow equivalent: LeakyRelu
 struct LeakyReluOperator : Operator {
-  LeakyReluOperator() : Operator(OperatorType::kLeakyRelu) {}
+  LeakyReluOperator() : Operator(OperatorType::kLeakyRelu) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_35(mht_35_v, 1081, "", "./tensorflow/lite/toco/model.h", "LeakyReluOperator");
+}
 
   float alpha = 0.2f;  // 0.2 matches the default value for the TF op attribute.
 };
@@ -817,7 +1093,10 @@ struct LeakyReluOperator : Operator {
 //
 // TensorFlow equivalent: Sigmoid
 struct LogisticOperator : Operator {
-  LogisticOperator() : Operator(OperatorType::kLogistic) {}
+  LogisticOperator() : Operator(OperatorType::kLogistic) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_36(mht_36_v, 1097, "", "./tensorflow/lite/toco/model.h", "LogisticOperator");
+}
 };
 
 // Element-wise natural log operator:
@@ -828,7 +1107,10 @@ struct LogisticOperator : Operator {
 //
 // TensorFlow equivalent: Log
 struct LogOperator : Operator {
-  LogOperator() : Operator(OperatorType::kLog) {}
+  LogOperator() : Operator(OperatorType::kLog) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_37(mht_37_v, 1111, "", "./tensorflow/lite/toco/model.h", "LogOperator");
+}
 };
 
 // Element-wise Tanh operator:
@@ -839,7 +1121,10 @@ struct LogOperator : Operator {
 //
 // TensorFlow equivalent: Tanh
 struct TanhOperator : Operator {
-  TanhOperator() : Operator(OperatorType::kTanh) {}
+  TanhOperator() : Operator(OperatorType::kTanh) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_38(mht_38_v, 1125, "", "./tensorflow/lite/toco/model.h", "TanhOperator");
+}
 };
 
 // Element-wise Sin operator:
@@ -850,7 +1135,10 @@ struct TanhOperator : Operator {
 //
 // TensorFlow equivalent: Sin
 struct SinOperator : Operator {
-  SinOperator() : Operator(OperatorType::kSin) {}
+  SinOperator() : Operator(OperatorType::kSin) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_39(mht_39_v, 1139, "", "./tensorflow/lite/toco/model.h", "SinOperator");
+}
 };
 
 // Element-wise addition operator.
@@ -861,7 +1149,10 @@ struct SinOperator : Operator {
 //
 // TensorFlow equivalent: Add
 struct AddOperator : Operator {
-  AddOperator() : Operator(OperatorType::kAdd) {}
+  AddOperator() : Operator(OperatorType::kAdd) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_40(mht_40_v, 1153, "", "./tensorflow/lite/toco/model.h", "AddOperator");
+}
 };
 
 // Element-wise addition operator for N inputs.
@@ -871,7 +1162,10 @@ struct AddOperator : Operator {
 //
 // TensorFlow equivalent: AddN
 struct AddNOperator : Operator {
-  AddNOperator() : Operator(OperatorType::kAddN) {}
+  AddNOperator() : Operator(OperatorType::kAddN) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_41(mht_41_v, 1166, "", "./tensorflow/lite/toco/model.h", "AddNOperator");
+}
 };
 
 // Concatenation operator: concatenates its inputs
@@ -882,7 +1176,10 @@ struct AddNOperator : Operator {
 //
 // TensorFlow equivalent: Concat.
 struct ConcatenationOperator : Operator {
-  ConcatenationOperator() : Operator(OperatorType::kConcatenation) {}
+  ConcatenationOperator() : Operator(OperatorType::kConcatenation) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_42(mht_42_v, 1180, "", "./tensorflow/lite/toco/model.h", "ConcatenationOperator");
+}
   int axis = 0;
 };
 
@@ -894,7 +1191,10 @@ struct ConcatenationOperator : Operator {
 //
 // TensorFlow equivalent: none. This is only useful to convert between formats.
 struct ReorderAxesOperator : Operator {
-  ReorderAxesOperator() : Operator(OperatorType::kReorderAxes) {}
+  ReorderAxesOperator() : Operator(OperatorType::kReorderAxes) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_43(mht_43_v, 1195, "", "./tensorflow/lite/toco/model.h", "ReorderAxesOperator");
+}
   AxesOrder input_axes_order;
   AxesOrder output_axes_order;
 };
@@ -906,7 +1206,10 @@ struct ReorderAxesOperator : Operator {
 //
 // TensorFlow equivalent: AveragePool
 struct AveragePoolOperator : Operator {
-  AveragePoolOperator() : Operator(OperatorType::kAveragePool) {}
+  AveragePoolOperator() : Operator(OperatorType::kAveragePool) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_44(mht_44_v, 1210, "", "./tensorflow/lite/toco/model.h", "AveragePoolOperator");
+}
   Padding padding;
   int stride_height = 0;
   int stride_width = 0;
@@ -922,7 +1225,10 @@ struct AveragePoolOperator : Operator {
 // TensorFlow equivalent: LRN
 struct LocalResponseNormalizationOperator : Operator {
   LocalResponseNormalizationOperator()
-      : Operator(OperatorType::kLocalResponseNormalization) {}
+      : Operator(OperatorType::kLocalResponseNormalization) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_45(mht_45_v, 1229, "", "./tensorflow/lite/toco/model.h", "LocalResponseNormalizationOperator");
+}
 
   int range = 0;
   float bias = 0.f;
@@ -937,7 +1243,10 @@ struct LocalResponseNormalizationOperator : Operator {
 //
 // TensorFlow equivalent: MaxPool
 struct MaxPoolOperator : Operator {
-  MaxPoolOperator() : Operator(OperatorType::kMaxPool) {}
+  MaxPoolOperator() : Operator(OperatorType::kMaxPool) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_46(mht_46_v, 1247, "", "./tensorflow/lite/toco/model.h", "MaxPoolOperator");
+}
   Padding padding;
   int stride_height = 0;
   int stride_width = 0;
@@ -952,7 +1261,10 @@ struct MaxPoolOperator : Operator {
 //
 // TensorFlow equivalent: none. Can be shimmed by squaring+avgpool+sqrt.
 struct L2PoolOperator : Operator {
-  L2PoolOperator() : Operator(OperatorType::kL2Pool) {}
+  L2PoolOperator() : Operator(OperatorType::kL2Pool) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_47(mht_47_v, 1265, "", "./tensorflow/lite/toco/model.h", "L2PoolOperator");
+}
   Padding padding;
   int stride_height = 0;
   int stride_width = 0;
@@ -993,7 +1305,10 @@ inline bool operator!=(const MinMax& m1, const MinMax& m2) {
 //
 // TensorFlow equivalent: FakeQuantWithMinMaxVars, FakeQuantWithMinMaxArgs.
 struct FakeQuantOperator : Operator {
-  FakeQuantOperator() : Operator(OperatorType::kFakeQuant) {}
+  FakeQuantOperator() : Operator(OperatorType::kFakeQuant) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_48(mht_48_v, 1309, "", "./tensorflow/lite/toco/model.h", "FakeQuantOperator");
+}
   std::unique_ptr<MinMax> minmax;
   int num_bits = 8;
   bool narrow_range = false;
@@ -1007,7 +1322,10 @@ struct FakeQuantOperator : Operator {
 //
 // TensorFlow equivalent: Div
 struct DivOperator : Operator {
-  DivOperator() : Operator(OperatorType::kDiv) {}
+  DivOperator() : Operator(OperatorType::kDiv) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_49(mht_49_v, 1326, "", "./tensorflow/lite/toco/model.h", "DivOperator");
+}
 };
 
 // Element-wise identity (x->x) operator.
@@ -1017,7 +1335,10 @@ struct DivOperator : Operator {
 //
 // TensorFlow equivalent: Identity
 struct TensorFlowIdentityOperator : Operator {
-  TensorFlowIdentityOperator() : Operator(OperatorType::kIdentity) {}
+  TensorFlowIdentityOperator() : Operator(OperatorType::kIdentity) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_50(mht_50_v, 1339, "", "./tensorflow/lite/toco/model.h", "TensorFlowIdentityOperator");
+}
 };
 
 // Batch matrix multiplication operator. This comes from a tf.matmul where one
@@ -1029,7 +1350,10 @@ struct TensorFlowIdentityOperator : Operator {
 //
 // TensorFlow equivalent: MatMul
 struct BatchMatMulOperator : Operator {
-  BatchMatMulOperator() : Operator(OperatorType::kBatchMatMul) {}
+  BatchMatMulOperator() : Operator(OperatorType::kBatchMatMul) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_51(mht_51_v, 1354, "", "./tensorflow/lite/toco/model.h", "BatchMatMulOperator");
+}
   bool adj_x = false;
   bool adj_y = false;
 };
@@ -1044,7 +1368,10 @@ struct BatchMatMulOperator : Operator {
 //
 // TensorFlow equivalent: MatMul
 struct TensorFlowMatMulOperator : Operator {
-  TensorFlowMatMulOperator() : Operator(OperatorType::kMatMul) {}
+  TensorFlowMatMulOperator() : Operator(OperatorType::kMatMul) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_52(mht_52_v, 1372, "", "./tensorflow/lite/toco/model.h", "TensorFlowMatMulOperator");
+}
   bool transpose_a = false;
   bool transpose_b = false;
 };
@@ -1064,7 +1391,10 @@ struct TensorFlowMatMulOperator : Operator {
 //
 // TensorFlow equivalent: Pad
 struct PadOperator : Operator {
-  PadOperator() : Operator(OperatorType::kPad) {}
+  PadOperator() : Operator(OperatorType::kPad) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_53(mht_53_v, 1395, "", "./tensorflow/lite/toco/model.h", "PadOperator");
+}
 
   std::vector<int> left_padding;
   std::vector<int> right_padding;
@@ -1087,7 +1417,10 @@ struct PadOperator : Operator {
 //
 // TensorFlow equivalent: PadV2
 struct PadV2Operator : Operator {
-  PadV2Operator() : Operator(OperatorType::kPadV2) {}
+  PadV2Operator() : Operator(OperatorType::kPadV2) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_54(mht_54_v, 1421, "", "./tensorflow/lite/toco/model.h", "PadV2Operator");
+}
 
   std::vector<int> left_padding;
   std::vector<int> right_padding;
@@ -1103,7 +1436,10 @@ struct PadV2Operator : Operator {
 //
 // TensorFlow equivalent: StridedSlice
 struct StridedSliceOperator : Operator {
-  StridedSliceOperator() : Operator(OperatorType::kStridedSlice) {}
+  StridedSliceOperator() : Operator(OperatorType::kStridedSlice) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_55(mht_55_v, 1440, "", "./tensorflow/lite/toco/model.h", "StridedSliceOperator");
+}
 
   std::vector<int> start_indices;
   std::vector<int> stop_indices;
@@ -1117,6 +1453,9 @@ struct StridedSliceOperator : Operator {
 
   StridedSliceOperator(const StridedSliceOperator& other)
       : Operator(OperatorType::kStridedSlice) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_56(mht_56_v, 1456, "", "./tensorflow/lite/toco/model.h", "StridedSliceOperator");
+
     inputs = other.inputs;
     outputs = other.outputs;
 
@@ -1132,6 +1471,9 @@ struct StridedSliceOperator : Operator {
   }
 
   void PadIndices(int dim_count) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_57(mht_57_v, 1474, "", "./tensorflow/lite/toco/model.h", "PadIndices");
+
     // Add indices and mask bits to fully include extra dimensions
     CHECK_GE(dim_count, start_indices.size());
     CHECK_EQ(start_indices.size(), stop_indices.size());
@@ -1147,6 +1489,9 @@ struct StridedSliceOperator : Operator {
   }
 
   void ReverseIndices() {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_58(mht_58_v, 1492, "", "./tensorflow/lite/toco/model.h", "ReverseIndices");
+
     CHECK_EQ(start_indices.size(), stop_indices.size());
     CHECK_EQ(stop_indices.size(), strides.size());
 
@@ -1181,7 +1526,10 @@ struct StridedSliceOperator : Operator {
 // TensorFlow equivalent: Reshape --- except that we only support a special case
 // here, where the output shape is a matrix (2D) shape.
 struct TensorFlowReshapeOperator : Operator {
-  TensorFlowReshapeOperator() : Operator(OperatorType::kReshape) {}
+  TensorFlowReshapeOperator() : Operator(OperatorType::kReshape) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_59(mht_59_v, 1530, "", "./tensorflow/lite/toco/model.h", "TensorFlowReshapeOperator");
+}
   std::vector<int> shape;
 };
 
@@ -1193,7 +1541,10 @@ struct TensorFlowReshapeOperator : Operator {
 //
 // TensorFlow equivalent: Squeeze
 struct SqueezeOperator : Operator {
-  SqueezeOperator() : Operator(OperatorType::kSqueeze) {}
+  SqueezeOperator() : Operator(OperatorType::kSqueeze) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_60(mht_60_v, 1545, "", "./tensorflow/lite/toco/model.h", "SqueezeOperator");
+}
 
   std::vector<int> squeeze_dims;
 };
@@ -1219,7 +1570,10 @@ struct TransposeConvOperator : Operator {
     BIAS = 3,
   };
 
-  TransposeConvOperator() : Operator(OperatorType::kTransposeConv) {}
+  TransposeConvOperator() : Operator(OperatorType::kTransposeConv) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_61(mht_61_v, 1574, "", "./tensorflow/lite/toco/model.h", "TransposeConvOperator");
+}
   Padding padding;
   int stride_width = 0;
   int stride_height = 0;
@@ -1235,7 +1589,10 @@ struct TransposeConvOperator : Operator {
 //
 // TensorFlow equivalent: Exp
 struct ExpOperator : Operator {
-  ExpOperator() : Operator(OperatorType::kExp) {}
+  ExpOperator() : Operator(OperatorType::kExp) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_62(mht_62_v, 1593, "", "./tensorflow/lite/toco/model.h", "ExpOperator");
+}
 };
 
 // Given a tensor input, this operation calculates element-wise exponential
@@ -1246,7 +1603,10 @@ struct ExpOperator : Operator {
 //
 // TensorFlow equivalent: Cos
 struct CosOperator : Operator {
-  CosOperator() : Operator(OperatorType::kCos) {}
+  CosOperator() : Operator(OperatorType::kCos) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_63(mht_63_v, 1607, "", "./tensorflow/lite/toco/model.h", "CosOperator");
+}
 };
 
 // Given a tensor input, this operation inserts a dimension of 1 at the
@@ -1261,7 +1621,10 @@ struct CosOperator : Operator {
 //
 // TensorFlow equivalent: ExpandDims
 struct ExpandDimsOperator : Operator {
-  ExpandDimsOperator() : Operator(OperatorType::kExpandDims) {}
+  ExpandDimsOperator() : Operator(OperatorType::kExpandDims) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_64(mht_64_v, 1625, "", "./tensorflow/lite/toco/model.h", "ExpandDimsOperator");
+}
 };
 
 // Creates a tensor of shape dims and fills it with the given scalar value.
@@ -1273,7 +1636,10 @@ struct ExpandDimsOperator : Operator {
 //
 // TensorFlow equivalent: Fill
 struct FillOperator : Operator {
-  FillOperator() : Operator(OperatorType::kFill) {}
+  FillOperator() : Operator(OperatorType::kFill) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_65(mht_65_v, 1640, "", "./tensorflow/lite/toco/model.h", "FillOperator");
+}
 };
 
 // Element-wise floor division operator.
@@ -1284,7 +1650,10 @@ struct FillOperator : Operator {
 //
 // TensorFlow equivalent: FloorDiv
 struct FloorDivOperator : Operator {
-  FloorDivOperator() : Operator(OperatorType::kFloorDiv) {}
+  FloorDivOperator() : Operator(OperatorType::kFloorDiv) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_66(mht_66_v, 1654, "", "./tensorflow/lite/toco/model.h", "FloorDivOperator");
+}
 };
 
 // Element-wise floor mod operator.
@@ -1295,11 +1664,17 @@ struct FloorDivOperator : Operator {
 //
 // TensorFlow equivalent: FloorMod
 struct FloorModOperator : Operator {
-  FloorModOperator() : Operator(OperatorType::kFloorMod) {}
+  FloorModOperator() : Operator(OperatorType::kFloorMod) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_67(mht_67_v, 1668, "", "./tensorflow/lite/toco/model.h", "FloorModOperator");
+}
 };
 
 struct RandomUniformOperator : Operator {
-  RandomUniformOperator() : Operator(OperatorType::kRandomUniform) {}
+  RandomUniformOperator() : Operator(OperatorType::kRandomUniform) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_68(mht_68_v, 1675, "", "./tensorflow/lite/toco/model.h", "RandomUniformOperator");
+}
   ArrayDataType dtype = ArrayDataType::kNone;
   int64_t seed;
   int64_t seed2;
@@ -1318,7 +1693,10 @@ struct RandomUniformOperator : Operator {
 //
 // TensorFlow equivalent: Range
 struct RangeOperator : Operator {
-  RangeOperator() : Operator(OperatorType::kRange) {}
+  RangeOperator() : Operator(OperatorType::kRange) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_69(mht_69_v, 1697, "", "./tensorflow/lite/toco/model.h", "RangeOperator");
+}
   ArrayDataType dtype = ArrayDataType::kNone;
 };
 
@@ -1331,7 +1709,10 @@ struct RangeOperator : Operator {
 //
 // TensorFlow equivalent: Rank.
 struct TensorFlowRankOperator : Operator {
-  TensorFlowRankOperator() : Operator(OperatorType::kRank) {}
+  TensorFlowRankOperator() : Operator(OperatorType::kRank) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_70(mht_70_v, 1713, "", "./tensorflow/lite/toco/model.h", "TensorFlowRankOperator");
+}
   ArrayDataType output_data_type = ArrayDataType::kInt32;
 };
 
@@ -1342,7 +1723,10 @@ struct TensorFlowRankOperator : Operator {
 //
 // TensorFlow equivalent: Neg
 struct NegOperator : Operator {
-  NegOperator() : Operator(OperatorType::kNeg) {}
+  NegOperator() : Operator(OperatorType::kNeg) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_71(mht_71_v, 1727, "", "./tensorflow/lite/toco/model.h", "NegOperator");
+}
 };
 
 // Element-wise select operator choosing elements from inputs[1] or input[2]
@@ -1354,7 +1738,10 @@ struct NegOperator : Operator {
 //
 //  TensorFlow equivalent: Select
 struct SelectOperator : Operator {
-  SelectOperator() : Operator(OperatorType::kSelect) {}
+  SelectOperator() : Operator(OperatorType::kSelect) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_72(mht_72_v, 1742, "", "./tensorflow/lite/toco/model.h", "SelectOperator");
+}
 };
 
 // Element-wise reciprocal-square-root (x^-0.5) operator.
@@ -1364,7 +1751,10 @@ struct SelectOperator : Operator {
 //
 // TensorFlow equivalent: Rsqrt
 struct TensorFlowRsqrtOperator : Operator {
-  TensorFlowRsqrtOperator() : Operator(OperatorType::kRsqrt) {}
+  TensorFlowRsqrtOperator() : Operator(OperatorType::kRsqrt) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_73(mht_73_v, 1755, "", "./tensorflow/lite/toco/model.h", "TensorFlowRsqrtOperator");
+}
 };
 
 // Stacks a list of rank-R tensors into one rank-(R+1) tensor.
@@ -1378,7 +1768,10 @@ struct TensorFlowRsqrtOperator : Operator {
 //
 // TensorFlow equivalent: Pack
 struct PackOperator : Operator {
-  PackOperator() : Operator(OperatorType::kPack) {}
+  PackOperator() : Operator(OperatorType::kPack) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_74(mht_74_v, 1772, "", "./tensorflow/lite/toco/model.h", "PackOperator");
+}
   int values_count;
   int axis = 0;
   ArrayDataType dtype = ArrayDataType::kNone;
@@ -1394,7 +1787,10 @@ struct PackOperator : Operator {
 //
 // TensorFlow equivalent: Shape.
 struct TensorFlowShapeOperator : Operator {
-  TensorFlowShapeOperator() : Operator(OperatorType::kShape) {}
+  TensorFlowShapeOperator() : Operator(OperatorType::kShape) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_75(mht_75_v, 1791, "", "./tensorflow/lite/toco/model.h", "TensorFlowShapeOperator");
+}
   ArrayDataType output_data_type = ArrayDataType::kInt32;
 };
 
@@ -1405,7 +1801,10 @@ struct TensorFlowShapeOperator : Operator {
 //
 // TensorFlow equivalent: Sqrt
 struct TensorFlowSqrtOperator : Operator {
-  TensorFlowSqrtOperator() : Operator(OperatorType::kSqrt) {}
+  TensorFlowSqrtOperator() : Operator(OperatorType::kSqrt) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_76(mht_76_v, 1805, "", "./tensorflow/lite/toco/model.h", "TensorFlowSqrtOperator");
+}
 };
 
 // Element-wise square (x*x) operator.
@@ -1415,7 +1814,10 @@ struct TensorFlowSqrtOperator : Operator {
 //
 // TensorFlow equivalent: Square
 struct TensorFlowSquareOperator : Operator {
-  TensorFlowSquareOperator() : Operator(OperatorType::kSquare) {}
+  TensorFlowSquareOperator() : Operator(OperatorType::kSquare) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_77(mht_77_v, 1818, "", "./tensorflow/lite/toco/model.h", "TensorFlowSquareOperator");
+}
 };
 
 // Element-wise squared difference ((x-y)*(x-y)) operator.
@@ -1426,7 +1828,10 @@ struct TensorFlowSquareOperator : Operator {
 //
 // TensorFlow equivalent: SquaredDifference
 struct SquaredDifferenceOperator : Operator {
-  SquaredDifferenceOperator() : Operator(OperatorType::kSquaredDifference) {}
+  SquaredDifferenceOperator() : Operator(OperatorType::kSquaredDifference) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_78(mht_78_v, 1832, "", "./tensorflow/lite/toco/model.h", "SquaredDifferenceOperator");
+}
 };
 
 // Transposes a tensor.
@@ -1439,7 +1844,10 @@ struct SquaredDifferenceOperator : Operator {
 //
 // TensorFlow equivalent: Transpose
 struct TransposeOperator : Operator {
-  TransposeOperator() : Operator(OperatorType::kTranspose) {}
+  TransposeOperator() : Operator(OperatorType::kTranspose) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_79(mht_79_v, 1848, "", "./tensorflow/lite/toco/model.h", "TransposeOperator");
+}
   std::vector<int> perm;
 };
 
@@ -1451,7 +1859,10 @@ struct TransposeOperator : Operator {
 //
 // TensorFlow equivalent: Sub
 struct SubOperator : Operator {
-  SubOperator() : Operator(OperatorType::kSub) {}
+  SubOperator() : Operator(OperatorType::kSub) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_80(mht_80_v, 1863, "", "./tensorflow/lite/toco/model.h", "SubOperator");
+}
 };
 
 // Sum reduction: computes the sum of all of entries across the axes.
@@ -1461,7 +1872,10 @@ struct SubOperator : Operator {
 //
 // TensorFlow equivalent: Sum
 struct TensorFlowSumOperator : Operator {
-  TensorFlowSumOperator() : Operator(OperatorType::kSum) {}
+  TensorFlowSumOperator() : Operator(OperatorType::kSum) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_81(mht_81_v, 1876, "", "./tensorflow/lite/toco/model.h", "TensorFlowSumOperator");
+}
   std::vector<int> axis;
   bool keep_dims = false;
 };
@@ -1473,7 +1887,10 @@ struct TensorFlowSumOperator : Operator {
 //
 // TensorFlow equivalent: Prod
 struct TensorFlowProdOperator : Operator {
-  TensorFlowProdOperator() : Operator(OperatorType::kReduceProd) {}
+  TensorFlowProdOperator() : Operator(OperatorType::kReduceProd) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_82(mht_82_v, 1891, "", "./tensorflow/lite/toco/model.h", "TensorFlowProdOperator");
+}
   std::vector<int> axis;
   bool keep_dims = false;
 };
@@ -1484,12 +1901,18 @@ struct TensorFlowProdOperator : Operator {
 //   inputs[0]: required: the input array
 //   inputs[1]: required: int array with length of rank(input[0])
 struct TensorFlowTileOperator : Operator {
-  TensorFlowTileOperator() : Operator(OperatorType::kTile) {}
+  TensorFlowTileOperator() : Operator(OperatorType::kTile) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_83(mht_83_v, 1905, "", "./tensorflow/lite/toco/model.h", "TensorFlowTileOperator");
+}
 };
 
 // TensorFlow Slice equivalent. Refer to TensorFlow documentation for details.
 struct SliceOperator : Operator {
-  SliceOperator() : Operator(OperatorType::kSlice) {}
+  SliceOperator() : Operator(OperatorType::kSlice) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_84(mht_84_v, 1913, "", "./tensorflow/lite/toco/model.h", "SliceOperator");
+}
 
   std::vector<int> begin;
   std::vector<int> size;
@@ -1499,13 +1922,19 @@ struct SliceOperator : Operator {
 // Not fully supported, just a placeholder to handle TensorFlow graphs and
 // support graph transformations to other operator types by matching sub-graphs.
 struct TensorFlowSplitOperator : Operator {
-  TensorFlowSplitOperator() : Operator(OperatorType::kSplit) {}
+  TensorFlowSplitOperator() : Operator(OperatorType::kSplit) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_85(mht_85_v, 1926, "", "./tensorflow/lite/toco/model.h", "TensorFlowSplitOperator");
+}
   int num_split = 0;
 };
 
 // TensorFlow SplitV equivalent. Refer to TensorFlow documentation for details.
 struct TensorFlowSplitVOperator : Operator {
-  TensorFlowSplitVOperator() : Operator(OperatorType::kSplitV) {}
+  TensorFlowSplitVOperator() : Operator(OperatorType::kSplitV) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_86(mht_86_v, 1935, "", "./tensorflow/lite/toco/model.h", "TensorFlowSplitVOperator");
+}
   int num_split = 0;
 };
 
@@ -1516,7 +1945,10 @@ struct TensorFlowSplitVOperator : Operator {
 // dimension then we can change this op into a DepthConcatenation op.
 // Otherwise, we hope for some other graph transformation to drop this node.
 struct TensorFlowConcatOperator : Operator {
-  TensorFlowConcatOperator() : Operator(OperatorType::kConcat) {}
+  TensorFlowConcatOperator() : Operator(OperatorType::kConcat) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_87(mht_87_v, 1949, "", "./tensorflow/lite/toco/model.h", "TensorFlowConcatOperator");
+}
 };
 
 // TensorFlow ConcatV2 equivalent. Refer to TensorFlow documentation for
@@ -1527,7 +1959,10 @@ struct TensorFlowConcatOperator : Operator {
 // dimension then we can change this op into a DepthConcatenation op.
 // Otherwise, we hope for some other graph transformation to drop this node.
 struct TensorFlowConcatV2Operator : Operator {
-  TensorFlowConcatV2Operator() : Operator(OperatorType::kConcatV2) {}
+  TensorFlowConcatV2Operator() : Operator(OperatorType::kConcatV2) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_88(mht_88_v, 1963, "", "./tensorflow/lite/toco/model.h", "TensorFlowConcatV2Operator");
+}
 };
 
 // TensorFlow Merge equivalent. Refer to TensorFlow documentation for details.
@@ -1543,7 +1978,10 @@ struct TensorFlowConcatV2Operator : Operator {
 // control flow that can be resolved at tooling time (independently of input
 // activations).
 struct TensorFlowMergeOperator : Operator {
-  TensorFlowMergeOperator() : Operator(OperatorType::kMerge) {}
+  TensorFlowMergeOperator() : Operator(OperatorType::kMerge) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_89(mht_89_v, 1982, "", "./tensorflow/lite/toco/model.h", "TensorFlowMergeOperator");
+}
 };
 
 // TensorFlow Switch equivalent. Refer to TensorFlow documentation for details.
@@ -1566,7 +2004,10 @@ struct TensorFlowMergeOperator : Operator {
 // control flow that can be resolved at tooling time (independently of input
 // activations).
 struct TensorFlowSwitchOperator : Operator {
-  TensorFlowSwitchOperator() : Operator(OperatorType::kSwitch) {}
+  TensorFlowSwitchOperator() : Operator(OperatorType::kSwitch) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_90(mht_90_v, 2008, "", "./tensorflow/lite/toco/model.h", "TensorFlowSwitchOperator");
+}
 };
 
 // TensorFlow All equivalent. Refer to TensorFlow documentation for details.
@@ -1575,7 +2016,10 @@ struct TensorFlowSwitchOperator : Operator {
 // Typically, this is only used as an input to an Assert node, so can be
 // removed as an unused node as we drop Assert nodes.
 struct TensorFlowAllOperator : Operator {
-  TensorFlowAllOperator() : Operator(OperatorType::kAll) {}
+  TensorFlowAllOperator() : Operator(OperatorType::kAll) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_91(mht_91_v, 2020, "", "./tensorflow/lite/toco/model.h", "TensorFlowAllOperator");
+}
 };
 
 // TensorFlow Assert equivalent. Refer to TensorFlow documentation for details.
@@ -1583,7 +2027,10 @@ struct TensorFlowAllOperator : Operator {
 // support graph transformations to other operator types by matching sub-graphs.
 // Typically, we just drop Assert nodes.
 struct TensorFlowAssertOperator : Operator {
-  TensorFlowAssertOperator() : Operator(OperatorType::kAssert) {}
+  TensorFlowAssertOperator() : Operator(OperatorType::kAssert) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_92(mht_92_v, 2031, "", "./tensorflow/lite/toco/model.h", "TensorFlowAssertOperator");
+}
 };
 
 // TensorFlow Less equivalent. Refer to TensorFlow documentation for details.
@@ -1592,7 +2039,10 @@ struct TensorFlowAssertOperator : Operator {
 // Typically, this is only used as an input to an Assert node, so can be
 // removed as an unused node as we drop Assert nodes.
 struct TensorFlowLessOperator : Operator {
-  TensorFlowLessOperator() : Operator(OperatorType::kLess) {}
+  TensorFlowLessOperator() : Operator(OperatorType::kLess) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_93(mht_93_v, 2043, "", "./tensorflow/lite/toco/model.h", "TensorFlowLessOperator");
+}
 };
 
 // TensorFlow LessEqual equivalent. Refer to TensorFlow documentation for
@@ -1602,7 +2052,10 @@ struct TensorFlowLessOperator : Operator {
 // Typically, this is only used as an input to an Assert node, so can be
 // removed as an unused node as we drop Assert nodes.
 struct TensorFlowLessEqualOperator : Operator {
-  TensorFlowLessEqualOperator() : Operator(OperatorType::kLessEqual) {}
+  TensorFlowLessEqualOperator() : Operator(OperatorType::kLessEqual) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_94(mht_94_v, 2056, "", "./tensorflow/lite/toco/model.h", "TensorFlowLessEqualOperator");
+}
 };
 
 // TensorFlow Less equivalent. Refer to TensorFlow documentation for details.
@@ -1611,7 +2064,10 @@ struct TensorFlowLessEqualOperator : Operator {
 // Typically, this is only used as an input to an Assert node, so can be
 // removed as an unused node as we drop Assert nodes.
 struct TensorFlowGreaterOperator : Operator {
-  TensorFlowGreaterOperator() : Operator(OperatorType::kGreater) {}
+  TensorFlowGreaterOperator() : Operator(OperatorType::kGreater) {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_95(mht_95_v, 2068, "", "./tensorflow/lite/toco/model.h", "TensorFlowGreaterOperator");
+}
 };
 
 // TensorFlow GreaterEqual equivalent. Refer to TensorFlow documentation for
@@ -1621,7 +2077,10 @@ struct TensorFlowGreaterOperator : Operator {
 // Typically, this is only used as an input to an Assert node, so can be
 // removed as an unused node as we drop Assert nodes.
 struct TensorFlowGreaterEqualOperator : Operator {
-  TensorFlowGreaterEqualOperator() : Operator(OperatorType::kGreaterEqual) {}
+  TensorFlowGreaterEqualOperator() : Operator(OperatorType::kGreaterEqual) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_96(mht_96_v, 2081, "", "./tensorflow/lite/toco/model.h", "TensorFlowGreaterEqualOperator");
+}
 };
 
 // TensorFlow Equal equivalent. Refer to TensorFlow documentation for
@@ -1631,13 +2090,19 @@ struct TensorFlowGreaterEqualOperator : Operator {
 // Typically, this is only used as an input to an Assert node, so can be
 // removed as an unused node as we drop Assert nodes.
 struct TensorFlowEqualOperator : Operator {
-  TensorFlowEqualOperator() : Operator(OperatorType::kEqual) {}
+  TensorFlowEqualOperator() : Operator(OperatorType::kEqual) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_97(mht_97_v, 2094, "", "./tensorflow/lite/toco/model.h", "TensorFlowEqualOperator");
+}
 };
 
 // TensorFlow Not Equal equivalent. Refer to TensorFlow documentation for
 // details.
 struct TensorFlowNotEqualOperator : Operator {
-  TensorFlowNotEqualOperator() : Operator(OperatorType::kNotEqual) {}
+  TensorFlowNotEqualOperator() : Operator(OperatorType::kNotEqual) {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_98(mht_98_v, 2103, "", "./tensorflow/lite/toco/model.h", "TensorFlowNotEqualOperator");
+}
 };
 
 // Max reduction: computes the max of all of entries across the axes.
@@ -1647,7 +2112,10 @@ struct TensorFlowNotEqualOperator : Operator {
 //
 // TensorFlow equivalent: Max
 struct TensorFlowMaxOperator : Operator {
-  TensorFlowMaxOperator() : Operator(OperatorType::kReduceMax) {}
+  TensorFlowMaxOperator() : Operator(OperatorType::kReduceMax) {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_99(mht_99_v, 2116, "", "./tensorflow/lite/toco/model.h", "TensorFlowMaxOperator");
+}
   std::vector<int> axis;
   bool keep_dims = false;
 };
@@ -1659,7 +2127,10 @@ struct TensorFlowMaxOperator : Operator {
 //
 // TensorFlow equivalent: Min
 struct TensorFlowMinOperator : Operator {
-  TensorFlowMinOperator() : Operator(OperatorType::kReduceMin) {}
+  TensorFlowMinOperator() : Operator(OperatorType::kReduceMin) {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_100(mht_100_v, 2131, "", "./tensorflow/lite/toco/model.h", "TensorFlowMinOperator");
+}
   std::vector<int> axis;
   bool keep_dims = false;
 };
@@ -1673,7 +2144,10 @@ struct TensorFlowMinOperator : Operator {
 //
 // TensorFlow equivalent: Maximum
 struct TensorFlowMaximumOperator : Operator {
-  TensorFlowMaximumOperator() : Operator(OperatorType::kMaximum) {}
+  TensorFlowMaximumOperator() : Operator(OperatorType::kMaximum) {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_101(mht_101_v, 2148, "", "./tensorflow/lite/toco/model.h", "TensorFlowMaximumOperator");
+}
 };
 
 // Element-wise minimum operator. Currently it only supports scalar as
@@ -1685,13 +2159,19 @@ struct TensorFlowMaximumOperator : Operator {
 //
 // TensorFlow equivalent: Minimum
 struct TensorFlowMinimumOperator : Operator {
-  TensorFlowMinimumOperator() : Operator(OperatorType::kMinimum) {}
+  TensorFlowMinimumOperator() : Operator(OperatorType::kMinimum) {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_102(mht_102_v, 2163, "", "./tensorflow/lite/toco/model.h", "TensorFlowMinimumOperator");
+}
 };
 
 // General TF operation, unsupported by tf.mini. Expected to be dropped by
 // graph transformations.
 struct TensorFlowUnsupportedOperator : Operator {
-  TensorFlowUnsupportedOperator() : Operator(OperatorType::kUnsupported) {}
+  TensorFlowUnsupportedOperator() : Operator(OperatorType::kUnsupported) {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_103(mht_103_v, 2172, "", "./tensorflow/lite/toco/model.h", "TensorFlowUnsupportedOperator");
+}
 
   // The original TF operation type. Used for diagnostic purposes.
   std::string tensorflow_op;
@@ -1713,7 +2193,10 @@ struct TensorFlowUnsupportedOperator : Operator {
 //
 // TensorFlow equivalent: Softmax
 struct SoftmaxOperator : Operator {
-  SoftmaxOperator() : Operator(OperatorType::kSoftmax) {}
+  SoftmaxOperator() : Operator(OperatorType::kSoftmax) {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_104(mht_104_v, 2197, "", "./tensorflow/lite/toco/model.h", "SoftmaxOperator");
+}
   float beta = 0.f;
 };
 
@@ -1724,7 +2207,10 @@ struct SoftmaxOperator : Operator {
 //
 // TensorFlow equivalent: LogSoftmax
 struct LogSoftmaxOperator : Operator {
-  LogSoftmaxOperator() : Operator(OperatorType::kLogSoftmax) {}
+  LogSoftmaxOperator() : Operator(OperatorType::kLogSoftmax) {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_105(mht_105_v, 2211, "", "./tensorflow/lite/toco/model.h", "LogSoftmaxOperator");
+}
 
   // LogSoftmax can in principal have very large negative output, depending on
   // the input size.  However, input x_i that is less than x_max-10 is
@@ -1743,7 +2229,10 @@ struct LogSoftmaxOperator : Operator {
 //
 // TensorFlow equivalent: Cast
 struct CastOperator : Operator {
-  CastOperator() : Operator(OperatorType::kCast) {}
+  CastOperator() : Operator(OperatorType::kCast) {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_106(mht_106_v, 2233, "", "./tensorflow/lite/toco/model.h", "CastOperator");
+}
   ArrayDataType src_data_type = ArrayDataType::kNone;
   ArrayDataType dst_data_type = ArrayDataType::kNone;
 };
@@ -1755,7 +2244,10 @@ struct CastOperator : Operator {
 //
 // TensorFlow equivalent: Floor
 struct FloorOperator : Operator {
-  FloorOperator() : Operator(OperatorType::kFloor) {}
+  FloorOperator() : Operator(OperatorType::kFloor) {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_107(mht_107_v, 2248, "", "./tensorflow/lite/toco/model.h", "FloorOperator");
+}
 };
 
 // Ceil operator.
@@ -1765,7 +2257,10 @@ struct FloorOperator : Operator {
 //
 // TensorFlow equivalent: Ceil
 struct CeilOperator : Operator {
-  CeilOperator() : Operator(OperatorType::kCeil) {}
+  CeilOperator() : Operator(OperatorType::kCeil) {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_108(mht_108_v, 2261, "", "./tensorflow/lite/toco/model.h", "CeilOperator");
+}
 };
 
 // Round operator.
@@ -1775,7 +2270,10 @@ struct CeilOperator : Operator {
 //
 // TensorFlow equivalent: Round
 struct RoundOperator : Operator {
-  RoundOperator() : Operator(OperatorType::kRound) {}
+  RoundOperator() : Operator(OperatorType::kRound) {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_109(mht_109_v, 2274, "", "./tensorflow/lite/toco/model.h", "RoundOperator");
+}
 };
 
 // Gather operator. It gathers slices from params according to indices.
@@ -1788,7 +2286,10 @@ struct RoundOperator : Operator {
 //
 // TensorFlow equivalent: Gather
 struct GatherOperator : Operator {
-  GatherOperator() : Operator(OperatorType::kGather) {}
+  GatherOperator() : Operator(OperatorType::kGather) {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_110(mht_110_v, 2290, "", "./tensorflow/lite/toco/model.h", "GatherOperator");
+}
   // Axis is populated explicitly or implicitly from the axis input by
   // ResolveGatherAttributes. An empty axis indicates that the axis has not yet
   // be resolved.
@@ -1807,7 +2308,10 @@ struct GatherOperator : Operator {
 //
 // TensorFlow equivalent: GatherNd
 struct GatherNdOperator : Operator {
-  GatherNdOperator() : Operator(OperatorType::kGatherNd) {}
+  GatherNdOperator() : Operator(OperatorType::kGatherNd) {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_111(mht_111_v, 2312, "", "./tensorflow/lite/toco/model.h", "GatherNdOperator");
+}
 };
 
 // ArgMax operator. It returns the index of the maximum value along axis.
@@ -1818,7 +2322,10 @@ struct GatherNdOperator : Operator {
 //
 // TensorFlow equivalent: ArgMax
 struct ArgMaxOperator : Operator {
-  ArgMaxOperator() : Operator(OperatorType::kArgMax) {}
+  ArgMaxOperator() : Operator(OperatorType::kArgMax) {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_112(mht_112_v, 2326, "", "./tensorflow/lite/toco/model.h", "ArgMaxOperator");
+}
   ArrayDataType output_data_type = ArrayDataType::kInt64;
 };
 
@@ -1830,7 +2337,10 @@ struct ArgMaxOperator : Operator {
 //
 // TensorFlow equivalent: ArgMin
 struct ArgMinOperator : Operator {
-  ArgMinOperator() : Operator(OperatorType::kArgMin) {}
+  ArgMinOperator() : Operator(OperatorType::kArgMin) {
+   std::vector<std::string> mht_113_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_113(mht_113_v, 2341, "", "./tensorflow/lite/toco/model.h", "ArgMinOperator");
+}
   ArrayDataType output_data_type = ArrayDataType::kInt64;
 };
 
@@ -1843,7 +2353,10 @@ struct ArgMinOperator : Operator {
 //
 // TensorFlow equivalent: ResizeBilinear
 struct ResizeBilinearOperator : Operator {
-  ResizeBilinearOperator() : Operator(OperatorType::kResizeBilinear) {}
+  ResizeBilinearOperator() : Operator(OperatorType::kResizeBilinear) {
+   std::vector<std::string> mht_114_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_114(mht_114_v, 2357, "", "./tensorflow/lite/toco/model.h", "ResizeBilinearOperator");
+}
 
   bool align_corners = false;
   bool half_pixel_centers = false;
@@ -1859,7 +2372,10 @@ struct ResizeBilinearOperator : Operator {
 // TensorFlow equivalent: ResizeNearestNeighbor
 struct ResizeNearestNeighborOperator : Operator {
   ResizeNearestNeighborOperator()
-      : Operator(OperatorType::kResizeNearestNeighbor) {}
+      : Operator(OperatorType::kResizeNearestNeighbor) {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_115(mht_115_v, 2376, "", "./tensorflow/lite/toco/model.h", "ResizeNearestNeighborOperator");
+}
 
   bool align_corners = false;
   bool half_pixel_centers = false;
@@ -1876,7 +2392,10 @@ struct ResizeNearestNeighborOperator : Operator {
 //
 // TensorFlow equivalent: SpaceToBatchND
 struct SpaceToBatchNDOperator : Operator {
-  SpaceToBatchNDOperator() : Operator(OperatorType::kSpaceToBatchND) {}
+  SpaceToBatchNDOperator() : Operator(OperatorType::kSpaceToBatchND) {
+   std::vector<std::string> mht_116_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_116(mht_116_v, 2396, "", "./tensorflow/lite/toco/model.h", "SpaceToBatchNDOperator");
+}
 
   std::vector<int> block_shape;
   std::vector<int> before_paddings;
@@ -1893,7 +2412,10 @@ struct SpaceToBatchNDOperator : Operator {
 //
 // TensorFlow equivalent: BatchToSpaceND
 struct BatchToSpaceNDOperator : Operator {
-  BatchToSpaceNDOperator() : Operator(OperatorType::kBatchToSpaceND) {}
+  BatchToSpaceNDOperator() : Operator(OperatorType::kBatchToSpaceND) {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_117(mht_117_v, 2416, "", "./tensorflow/lite/toco/model.h", "BatchToSpaceNDOperator");
+}
 
   std::vector<int> block_shape;
   std::vector<int> before_crops;
@@ -1907,7 +2429,10 @@ struct BatchToSpaceNDOperator : Operator {
 //
 // TensorFlow equivalent: Mean
 struct MeanOperator : Operator {
-  MeanOperator() : Operator(OperatorType::kMean) {}
+  MeanOperator() : Operator(OperatorType::kMean) {
+   std::vector<std::string> mht_118_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_118(mht_118_v, 2433, "", "./tensorflow/lite/toco/model.h", "MeanOperator");
+}
 
   std::vector<int> axis;
   bool keep_dims = false;
@@ -1921,7 +2446,10 @@ struct MeanOperator : Operator {
 //   inputs[2]: required: weights_time
 //   inputs[3]: optional: bias
 struct SvdfOperator : Operator {
-  SvdfOperator() : Operator(OperatorType::kSvdf) {}
+  SvdfOperator() : Operator(OperatorType::kSvdf) {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_119(mht_119_v, 2450, "", "./tensorflow/lite/toco/model.h", "SvdfOperator");
+}
   int rank;
 };
 
@@ -1930,7 +2458,10 @@ struct SvdfOperator : Operator {
 // Inputs:
 //    input tensor and top_k scalar.
 struct TopKV2Operator : Operator {
-  TopKV2Operator() : Operator(OperatorType::kTopK_V2) {}
+  TopKV2Operator() : Operator(OperatorType::kTopK_V2) {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_120(mht_120_v, 2462, "", "./tensorflow/lite/toco/model.h", "TopKV2Operator");
+}
 };
 
 // DynamicPartition operator:
@@ -1941,7 +2472,10 @@ struct TopKV2Operator : Operator {
 //
 // TensorFlow equivalent: DynamicPartition
 struct DynamicPartitionOperator : Operator {
-  DynamicPartitionOperator() : Operator(OperatorType::kDynamicPartition) {}
+  DynamicPartitionOperator() : Operator(OperatorType::kDynamicPartition) {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_121(mht_121_v, 2476, "", "./tensorflow/lite/toco/model.h", "DynamicPartitionOperator");
+}
   int num_partitions;
 };
 
@@ -1953,7 +2487,10 @@ struct DynamicPartitionOperator : Operator {
 //
 // TensorFlow equivalent: DynamicStitch/ParallelDynamicStitch
 struct DynamicStitchOperator : Operator {
-  DynamicStitchOperator() : Operator(OperatorType::kDynamicStitch) {}
+  DynamicStitchOperator() : Operator(OperatorType::kDynamicStitch) {
+   std::vector<std::string> mht_122_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_122(mht_122_v, 2491, "", "./tensorflow/lite/toco/model.h", "DynamicStitchOperator");
+}
   int num_partitions;
 };
 
@@ -1966,7 +2503,10 @@ struct DynamicStitchOperator : Operator {
 //
 // TensorFlow equivalent: SparseToDense.
 struct SparseToDenseOperator : Operator {
-  SparseToDenseOperator() : Operator(OperatorType::kSparseToDense) {}
+  SparseToDenseOperator() : Operator(OperatorType::kSparseToDense) {
+   std::vector<std::string> mht_123_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_123(mht_123_v, 2507, "", "./tensorflow/lite/toco/model.h", "SparseToDenseOperator");
+}
   bool validate_indices;
 };
 
@@ -1978,7 +2518,10 @@ struct SparseToDenseOperator : Operator {
 //
 // TensorFlow equivalent: Pow.
 struct PowOperator : Operator {
-  PowOperator() : Operator(OperatorType::kPow) {}
+  PowOperator() : Operator(OperatorType::kPow) {
+   std::vector<std::string> mht_124_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_124(mht_124_v, 2522, "", "./tensorflow/lite/toco/model.h", "PowOperator");
+}
 };
 
 // Any operator:
@@ -1989,7 +2532,10 @@ struct PowOperator : Operator {
 //
 // TensorFlow equivalent: tf.reduce_any.
 struct TensorFlowAnyOperator : Operator {
-  TensorFlowAnyOperator() : Operator(OperatorType::kAny) {}
+  TensorFlowAnyOperator() : Operator(OperatorType::kAny) {
+   std::vector<std::string> mht_125_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_125(mht_125_v, 2536, "", "./tensorflow/lite/toco/model.h", "TensorFlowAnyOperator");
+}
   std::vector<int> axis;
   bool keep_dims = false;
 };
@@ -2002,7 +2548,10 @@ struct TensorFlowAnyOperator : Operator {
 //
 // TensorFlow equivalent: tf.logical_and.
 struct LogicalAndOperator : Operator {
-  LogicalAndOperator() : Operator(OperatorType::kLogicalAnd) {}
+  LogicalAndOperator() : Operator(OperatorType::kLogicalAnd) {
+   std::vector<std::string> mht_126_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_126(mht_126_v, 2552, "", "./tensorflow/lite/toco/model.h", "LogicalAndOperator");
+}
 };
 
 // LogicalNot operator:
@@ -2012,7 +2561,10 @@ struct LogicalAndOperator : Operator {
 //
 // TensorFlow equivalent: tf.logical_not.
 struct LogicalNotOperator : Operator {
-  LogicalNotOperator() : Operator(OperatorType::kLogicalNot) {}
+  LogicalNotOperator() : Operator(OperatorType::kLogicalNot) {
+   std::vector<std::string> mht_127_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_127(mht_127_v, 2565, "", "./tensorflow/lite/toco/model.h", "LogicalNotOperator");
+}
 };
 
 // OneHot operator:
@@ -2032,7 +2584,10 @@ struct OneHotOperator : Operator {
     OFF_VALUE_INPUT = 3,
   };
 
-  OneHotOperator() : Operator(OperatorType::kOneHot) {}
+  OneHotOperator() : Operator(OperatorType::kOneHot) {
+   std::vector<std::string> mht_128_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_128(mht_128_v, 2588, "", "./tensorflow/lite/toco/model.h", "OneHotOperator");
+}
   int axis = -1;
 };
 
@@ -2044,7 +2599,10 @@ struct OneHotOperator : Operator {
 //
 // TensorFlow equivalent: LogicalOr.
 struct LogicalOrOperator : Operator {
-  LogicalOrOperator() : Operator(OperatorType::kLogicalOr) {}
+  LogicalOrOperator() : Operator(OperatorType::kLogicalOr) {
+   std::vector<std::string> mht_129_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_129(mht_129_v, 2603, "", "./tensorflow/lite/toco/model.h", "LogicalOrOperator");
+}
 };
 
 // Unpack operator:
@@ -2055,7 +2613,10 @@ struct LogicalOrOperator : Operator {
 //
 // TensorFlow equivalent: tf.unstack.
 struct UnpackOperator : Operator {
-  UnpackOperator() : Operator(OperatorType::kUnpack) {}
+  UnpackOperator() : Operator(OperatorType::kUnpack) {
+   std::vector<std::string> mht_130_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_130(mht_130_v, 2617, "", "./tensorflow/lite/toco/model.h", "UnpackOperator");
+}
   int num;
   int axis;
   ArrayDataType dtype = ArrayDataType::kNone;
@@ -2068,7 +2629,10 @@ struct UnpackOperator : Operator {
 //
 // TensorFlow equivalent: tf.zeros_like
 struct TensorFlowZerosLikeOperator : Operator {
-  TensorFlowZerosLikeOperator() : Operator(OperatorType::kZerosLike) {}
+  TensorFlowZerosLikeOperator() : Operator(OperatorType::kZerosLike) {
+   std::vector<std::string> mht_131_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_131(mht_131_v, 2633, "", "./tensorflow/lite/toco/model.h", "TensorFlowZerosLikeOperator");
+}
 };
 
 // ReverseV2 operator:
@@ -2078,7 +2642,10 @@ struct TensorFlowZerosLikeOperator : Operator {
 //
 // TensorFlow equivalent: ReverseV2.
 struct ReverseV2Operator : Operator {
-  ReverseV2Operator() : Operator(OperatorType::kReverseV2) {}
+  ReverseV2Operator() : Operator(OperatorType::kReverseV2) {
+   std::vector<std::string> mht_132_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_132(mht_132_v, 2646, "", "./tensorflow/lite/toco/model.h", "ReverseV2Operator");
+}
 };
 
 enum class MirrorPadMode { kNone, kSymmetric, kReflect };
@@ -2093,7 +2660,10 @@ enum class MirrorPadMode { kNone, kSymmetric, kReflect };
 //
 // TensorFlow equivalent: MirrorPad.
 struct MirrorPadOperator : Operator {
-  MirrorPadOperator() : Operator(OperatorType::kMirrorPad) {}
+  MirrorPadOperator() : Operator(OperatorType::kMirrorPad) {
+   std::vector<std::string> mht_133_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_133(mht_133_v, 2664, "", "./tensorflow/lite/toco/model.h", "MirrorPadOperator");
+}
   // mode is either SYMMETRIC or REFLECT.
   MirrorPadMode mode;
 };
@@ -2106,7 +2676,10 @@ struct MirrorPadOperator : Operator {
 //
 // TensorFlow equivalent: tf.reverse_sequence.
 struct ReverseSequenceOperator : Operator {
-  ReverseSequenceOperator() : Operator(OperatorType::kReverseSequence) {}
+  ReverseSequenceOperator() : Operator(OperatorType::kReverseSequence) {
+   std::vector<std::string> mht_134_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_134(mht_134_v, 2680, "", "./tensorflow/lite/toco/model.h", "ReverseSequenceOperator");
+}
   int seq_dim;
   int batch_dim = 0;
 };
@@ -2118,13 +2691,19 @@ struct ReverseSequenceOperator : Operator {
 //
 // TensorFlow equivalent: Unique
 struct UniqueOperator : Operator {
-  UniqueOperator() : Operator(OperatorType::kUnique) {}
+  UniqueOperator() : Operator(OperatorType::kUnique) {
+   std::vector<std::string> mht_135_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_135(mht_135_v, 2695, "", "./tensorflow/lite/toco/model.h", "UniqueOperator");
+}
   ArrayDataType idx_out_type = ArrayDataType::kInt32;
 };
 
 struct UnidirectionalSequenceRnnOperator : Operator {
   UnidirectionalSequenceRnnOperator()
-      : Operator(OperatorType::kUnidirectionalSequenceRnn) {}
+      : Operator(OperatorType::kUnidirectionalSequenceRnn) {
+   std::vector<std::string> mht_136_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_136(mht_136_v, 2704, "", "./tensorflow/lite/toco/model.h", "UnidirectionalSequenceRnnOperator");
+}
   bool time_major;
   FusedActivationFunctionType fused_activation_function;
 };
@@ -2138,7 +2717,10 @@ struct UnidirectionalSequenceRnnOperator : Operator {
 //
 //  TensorFlow equivalent: Where
 struct WhereOperator : Operator {
-  WhereOperator() : Operator(OperatorType::kWhere) {}
+  WhereOperator() : Operator(OperatorType::kWhere) {
+   std::vector<std::string> mht_137_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_137(mht_137_v, 2721, "", "./tensorflow/lite/toco/model.h", "WhereOperator");
+}
 };
 
 // Matrix Diag Operator:
@@ -2146,7 +2728,10 @@ struct WhereOperator : Operator {
 // Inputs: A tensor of values that will be on the diagonal of the returned
 //         tensor.
 struct MatrixDiagOperator : Operator {
-  MatrixDiagOperator() : Operator(OperatorType::kMatrixDiag) {}
+  MatrixDiagOperator() : Operator(OperatorType::kMatrixDiag) {
+   std::vector<std::string> mht_138_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_138(mht_138_v, 2732, "", "./tensorflow/lite/toco/model.h", "MatrixDiagOperator");
+}
 };
 
 // Matrix Diag Operator V2:
@@ -2154,7 +2739,10 @@ struct MatrixDiagOperator : Operator {
 // Not fully supported, contains 4 extra inputs compared to MatrixDiag. Behave
 // like MatrixDiag when default parameters are used.
 struct MatrixDiagV2Operator : Operator {
-  MatrixDiagV2Operator() : Operator(OperatorType::kMatrixDiagV2) {}
+  MatrixDiagV2Operator() : Operator(OperatorType::kMatrixDiagV2) {
+   std::vector<std::string> mht_139_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_139(mht_139_v, 2743, "", "./tensorflow/lite/toco/model.h", "MatrixDiagV2Operator");
+}
 };
 
 // Matrix Diag Operator V3:
@@ -2166,7 +2754,10 @@ struct MatrixDiagV2Operator : Operator {
 // The alignment in V2 contradicts with the default alignment in V3 so V2 is
 // skipped. (It has never been, and should never be, exposed in the public API.)
 struct MatrixDiagV3Operator : Operator {
-  MatrixDiagV3Operator() : Operator(OperatorType::kMatrixDiagV3) {}
+  MatrixDiagV3Operator() : Operator(OperatorType::kMatrixDiagV3) {
+   std::vector<std::string> mht_140_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_140(mht_140_v, 2758, "", "./tensorflow/lite/toco/model.h", "MatrixDiagV3Operator");
+}
 };
 
 // Matrix Set Diag Operator:
@@ -2176,7 +2767,10 @@ struct MatrixDiagV3Operator : Operator {
 // of the returned output. Output is rank k+1.
 //         tensor.
 struct MatrixSetDiagOperator : Operator {
-  MatrixSetDiagOperator() : Operator(OperatorType::kMatrixSetDiag) {}
+  MatrixSetDiagOperator() : Operator(OperatorType::kMatrixSetDiag) {
+   std::vector<std::string> mht_141_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_141(mht_141_v, 2771, "", "./tensorflow/lite/toco/model.h", "MatrixSetDiagOperator");
+}
 };
 
 // Matrix Set Diag Operator V2:
@@ -2184,7 +2778,10 @@ struct MatrixSetDiagOperator : Operator {
 // Not fully supported, contains 1 extra inputs compared to MatrixSetDiag.
 // Behave like MatrixSetDiag when default parameters are used.
 struct MatrixSetDiagV2Operator : Operator {
-  MatrixSetDiagV2Operator() : Operator(OperatorType::kMatrixSetDiagV2) {}
+  MatrixSetDiagV2Operator() : Operator(OperatorType::kMatrixSetDiagV2) {
+   std::vector<std::string> mht_142_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_142(mht_142_v, 2782, "", "./tensorflow/lite/toco/model.h", "MatrixSetDiagV2Operator");
+}
 };
 
 // Matrix Set Diag Operator V3:
@@ -2196,15 +2793,24 @@ struct MatrixSetDiagV2Operator : Operator {
 // The alignment in V2 contradicts with the default alignment in V3 so V2 is
 // skipped. (It has never been, and should never be, exposed in the public API.)
 struct MatrixSetDiagV3Operator : Operator {
-  MatrixSetDiagV3Operator() : Operator(OperatorType::kMatrixSetDiagV3) {}
+  MatrixSetDiagV3Operator() : Operator(OperatorType::kMatrixSetDiagV3) {
+   std::vector<std::string> mht_143_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_143(mht_143_v, 2797, "", "./tensorflow/lite/toco/model.h", "MatrixSetDiagV3Operator");
+}
 };
 
 struct ScatterNdOperator : Operator {
-  ScatterNdOperator() : Operator(OperatorType::kScatterNd) {}
+  ScatterNdOperator() : Operator(OperatorType::kScatterNd) {
+   std::vector<std::string> mht_144_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_144(mht_144_v, 2804, "", "./tensorflow/lite/toco/model.h", "ScatterNdOperator");
+}
 };
 
 struct SegmentSumOperator : Operator {
-  SegmentSumOperator() : Operator(OperatorType::kSegmentSum) {}
+  SegmentSumOperator() : Operator(OperatorType::kSegmentSum) {
+   std::vector<std::string> mht_145_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_145(mht_145_v, 2811, "", "./tensorflow/lite/toco/model.h", "SegmentSumOperator");
+}
 };
 
 // Alloc's are used for transient arrays only. An Alloc specifies which interval
@@ -2217,6 +2823,9 @@ struct Alloc {
 };
 
 inline bool operator<(const Alloc& a, const Alloc& b) {
+   std::vector<std::string> mht_146_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_146(mht_146_v, 2826, "", "./tensorflow/lite/toco/model.h", "operator<");
+
   return a.start < b.start;
 }
 
@@ -2225,12 +2834,18 @@ inline bool operator<(const Alloc& a, const Alloc& b) {
 struct Array {
   template <ArrayDataType A>
   const Buffer<A>& GetBuffer() const {
+   std::vector<std::string> mht_147_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_147(mht_147_v, 2837, "", "./tensorflow/lite/toco/model.h", "GetBuffer");
+
     DCHECK(buffer);
     DCHECK(buffer->type == A);
     return *static_cast<const Buffer<A>*>(buffer.get());
   }
   template <ArrayDataType A>
   Buffer<A>& GetMutableBuffer() {
+   std::vector<std::string> mht_148_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_148(mht_148_v, 2846, "", "./tensorflow/lite/toco/model.h", "GetMutableBuffer");
+
     if (!buffer) {
       Buffer<A>* ptr = new Buffer<A>;
       buffer = std::unique_ptr<GenericBuffer>(ptr);
@@ -2240,22 +2855,34 @@ struct Array {
     return *static_cast<Buffer<A>*>(buffer.get());
   }
   Alloc& GetOrCreateAlloc() {
+   std::vector<std::string> mht_149_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_149(mht_149_v, 2858, "", "./tensorflow/lite/toco/model.h", "GetOrCreateAlloc");
+
     if (!alloc) {
       alloc = std::unique_ptr<Alloc>(new Alloc);
     }
     return *alloc;
   }
   MinMax& GetOrCreateMinMax() {
+   std::vector<std::string> mht_150_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_150(mht_150_v, 2867, "", "./tensorflow/lite/toco/model.h", "GetOrCreateMinMax");
+
     if (!minmax) {
       minmax = std::unique_ptr<MinMax>(new MinMax);
     }
     return *minmax;
   }
   MinMax& GetMinMax() const {
+   std::vector<std::string> mht_151_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_151(mht_151_v, 2876, "", "./tensorflow/lite/toco/model.h", "GetMinMax");
+
     DCHECK(minmax);
     return *minmax;
   }
   QuantizationParams& GetOrCreateQuantizationParams() {
+   std::vector<std::string> mht_152_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_152(mht_152_v, 2883, "", "./tensorflow/lite/toco/model.h", "GetOrCreateQuantizationParams");
+
     if (!quantization_params) {
       quantization_params =
           std::unique_ptr<QuantizationParams>(new QuantizationParams);
@@ -2263,6 +2890,9 @@ struct Array {
     return *quantization_params;
   }
   QuantizationParams& GetQuantizationParams() const {
+   std::vector<std::string> mht_153_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_153(mht_153_v, 2893, "", "./tensorflow/lite/toco/model.h", "GetQuantizationParams");
+
     DCHECK(quantization_params);
     return *quantization_params;
   }
@@ -2299,19 +2929,34 @@ struct Array {
   //     then explicitly convert between different conventions.
 
   // Proto-style accessors
-  bool has_shape() const { return array_shape != nullptr; }
+  bool has_shape() const {
+   std::vector<std::string> mht_154_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_154(mht_154_v, 2933, "", "./tensorflow/lite/toco/model.h", "has_shape");
+ return array_shape != nullptr; }
   const Shape& shape() const {
+   std::vector<std::string> mht_155_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_155(mht_155_v, 2937, "", "./tensorflow/lite/toco/model.h", "shape");
+
     CHECK(has_shape());
     return *array_shape;
   }
   Shape* mutable_shape() {
+   std::vector<std::string> mht_156_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_156(mht_156_v, 2944, "", "./tensorflow/lite/toco/model.h", "mutable_shape");
+
     if (!array_shape) {
       array_shape.reset(new Shape);
     }
     return array_shape.get();
   }
-  void copy_shape(const Shape& src_shape) { *mutable_shape() = src_shape; }
-  void clear_shape() { array_shape = nullptr; }
+  void copy_shape(const Shape& src_shape) {
+   std::vector<std::string> mht_157_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_157(mht_157_v, 2953, "", "./tensorflow/lite/toco/model.h", "copy_shape");
+ *mutable_shape() = src_shape; }
+  void clear_shape() {
+   std::vector<std::string> mht_158_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_158(mht_158_v, 2957, "", "./tensorflow/lite/toco/model.h", "clear_shape");
+ array_shape = nullptr; }
 
   // The constant buffer backing this array. This is non-null if and only if
   // this is a constant parameter array. Conversely, this is null for
@@ -2397,13 +3042,25 @@ class Model {
   using ArrayMap = std::unordered_map<std::string, std::unique_ptr<Array>>;
 
   bool HasArray(const std::string& name) const {
+   std::vector<std::string> mht_159_v;
+   mht_159_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_159(mht_159_v, 3046, "", "./tensorflow/lite/toco/model.h", "HasArray");
+
     return arrays.count(name) > 0;
   }
   Array& GetArray(const std::string& name) const {
+   std::vector<std::string> mht_160_v;
+   mht_160_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_160(mht_160_v, 3053, "", "./tensorflow/lite/toco/model.h", "GetArray");
+
     DCHECK(HasArray(name)) << "Array not found: " << name;
     return *arrays.at(name);
   }
   Array& GetOrCreateArray(const std::string& name) {
+   std::vector<std::string> mht_161_v;
+   mht_161_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_161(mht_161_v, 3061, "", "./tensorflow/lite/toco/model.h", "GetOrCreateArray");
+
     // Make sure name is not used by an optional array
     DCHECK(!optional_arrays.count(name));
     if (!HasArray(name)) {
@@ -2414,16 +3071,31 @@ class Model {
     return result;
   }
   void CreateOptionalArray(const std::string& name) {
+   std::vector<std::string> mht_162_v;
+   mht_162_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_162(mht_162_v, 3075, "", "./tensorflow/lite/toco/model.h", "CreateOptionalArray");
+
     DCHECK(!arrays.count(name) && !optional_arrays.count(name));
     optional_arrays.insert(name);
   }
   bool IsOptionalArray(const std::string& name) const {
+   std::vector<std::string> mht_163_v;
+   mht_163_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_163(mht_163_v, 3083, "", "./tensorflow/lite/toco/model.h", "IsOptionalArray");
+
     return optional_arrays.count(name);
   }
 
   // Note that this invalidates all array iterators.
-  void EraseArray(const std::string& name) { arrays.erase(name); }
+  void EraseArray(const std::string& name) {
+   std::vector<std::string> mht_164_v;
+   mht_164_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_164(mht_164_v, 3092, "", "./tensorflow/lite/toco/model.h", "EraseArray");
+ arrays.erase(name); }
   void EraseArrays(std::function<bool(const std::string&)> discardable) {
+   std::vector<std::string> mht_165_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_165(mht_165_v, 3096, "", "./tensorflow/lite/toco/model.h", "EraseArrays");
+
     for (auto it = arrays.begin(); it != arrays.end();) {
       if (discardable(it->first)) {
         it = arrays.erase(it);
@@ -2432,16 +3104,32 @@ class Model {
       }
     }
   }
-  const ArrayMap& GetArrayMap() const { return arrays; }
-  ArrayMap& GetMutableArrayMap() { return arrays; }
+  const ArrayMap& GetArrayMap() const {
+   std::vector<std::string> mht_166_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_166(mht_166_v, 3108, "", "./tensorflow/lite/toco/model.h", "GetArrayMap");
+ return arrays; }
+  ArrayMap& GetMutableArrayMap() {
+   std::vector<std::string> mht_167_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_167(mht_167_v, 3112, "", "./tensorflow/lite/toco/model.h", "GetMutableArrayMap");
+ return arrays; }
 
-  int64_t ArithmeticOpsCount() const { return ops_count; }
+  int64_t ArithmeticOpsCount() const {
+   std::vector<std::string> mht_168_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_168(mht_168_v, 3117, "", "./tensorflow/lite/toco/model.h", "ArithmeticOpsCount");
+ return ops_count; }
 
   void AddInvalidInputArray(std::string invalid_input_array) {
+   std::vector<std::string> mht_169_v;
+   mht_169_v.push_back("invalid_input_array: \"" + invalid_input_array + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_169(mht_169_v, 3123, "", "./tensorflow/lite/toco/model.h", "AddInvalidInputArray");
+
     invalid_input_arrays_.insert(invalid_input_array);
   }
 
   const std::unordered_set<std::string>& GetInvalidInputArrays() const {
+   std::vector<std::string> mht_170_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSmodelDTh mht_170(mht_170_v, 3130, "", "./tensorflow/lite/toco/model.h", "GetInvalidInputArrays");
+
     return invalid_input_arrays_;
   }
 

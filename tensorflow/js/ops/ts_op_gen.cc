@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSjsPSopsPSts_op_genDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSjsPSopsPSts_op_genDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSjsPSopsPSts_op_genDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,13 +194,19 @@ namespace tensorflow {
 namespace {
 
 static bool IsListAttr(const OpDef_ArgDef& arg) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSjsPSopsPSts_op_genDTcc mht_0(mht_0_v, 197, "", "./tensorflow/js/ops/ts_op_gen.cc", "IsListAttr");
+
   return !arg.type_list_attr().empty() || !arg.number_attr().empty();
 }
 
 // Struct to hold a combo OpDef and ArgDef for a given Op argument:
 struct ArgDefs {
   ArgDefs(const OpDef::ArgDef& op_def_arg, const ApiDef::Arg& api_def_arg)
-      : op_def_arg(op_def_arg), api_def_arg(api_def_arg) {}
+      : op_def_arg(op_def_arg), api_def_arg(api_def_arg) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSjsPSopsPSts_op_genDTcc mht_1(mht_1_v, 207, "", "./tensorflow/js/ops/ts_op_gen.cc", "ArgDefs");
+}
 
   const OpDef::ArgDef& op_def_arg;
   const ApiDef::Arg& api_def_arg;
@@ -41,7 +215,10 @@ struct ArgDefs {
 // Struct to hold a combo OpDef::AttrDef and ApiDef::Attr for an Op.
 struct OpAttrs {
   OpAttrs(const OpDef::AttrDef& op_def_attr, const ApiDef::Attr& api_def_attr)
-      : op_def_attr(op_def_attr), api_def_attr(api_def_attr) {}
+      : op_def_attr(op_def_attr), api_def_attr(api_def_attr) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSjsPSopsPSts_op_genDTcc mht_2(mht_2_v, 219, "", "./tensorflow/js/ops/ts_op_gen.cc", "OpAttrs");
+}
 
   const OpDef::AttrDef& op_def_attr;
   const ApiDef::Attr& api_def_attr;
@@ -87,11 +264,20 @@ class GenTypeScriptOp {
 };
 
 GenTypeScriptOp::GenTypeScriptOp(const OpDef& op_def, const ApiDef& api_def)
-    : op_def_(op_def), api_def_(api_def), num_outputs_(0) {}
+    : op_def_(op_def), api_def_(api_def), num_outputs_(0) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSjsPSopsPSts_op_genDTcc mht_3(mht_3_v, 268, "", "./tensorflow/js/ops/ts_op_gen.cc", "GenTypeScriptOp::GenTypeScriptOp");
+}
 
-GenTypeScriptOp::~GenTypeScriptOp() {}
+GenTypeScriptOp::~GenTypeScriptOp() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSjsPSopsPSts_op_genDTcc mht_4(mht_4_v, 273, "", "./tensorflow/js/ops/ts_op_gen.cc", "GenTypeScriptOp::~GenTypeScriptOp");
+}
 
 string GenTypeScriptOp::Code() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSjsPSopsPSts_op_genDTcc mht_5(mht_5_v, 278, "", "./tensorflow/js/ops/ts_op_gen.cc", "GenTypeScriptOp::Code");
+
   ProcessArgs();
   ProcessAttrs();
 
@@ -105,6 +291,9 @@ string GenTypeScriptOp::Code() {
 }
 
 void GenTypeScriptOp::ProcessArgs() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSjsPSopsPSts_op_genDTcc mht_6(mht_6_v, 294, "", "./tensorflow/js/ops/ts_op_gen.cc", "GenTypeScriptOp::ProcessArgs");
+
   for (int i = 0; i < api_def_.arg_order_size(); i++) {
     auto op_def_arg = FindInputArg(api_def_.arg_order(i), op_def_);
     if (op_def_arg == nullptr) {
@@ -136,12 +325,19 @@ void GenTypeScriptOp::ProcessArgs() {
 }
 
 void GenTypeScriptOp::ProcessAttrs() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSjsPSopsPSts_op_genDTcc mht_7(mht_7_v, 328, "", "./tensorflow/js/ops/ts_op_gen.cc", "GenTypeScriptOp::ProcessAttrs");
+
   for (int i = 0; i < op_def_.attr_size(); i++) {
     op_attrs_.push_back(OpAttrs(op_def_.attr(i), api_def_.attr(i)));
   }
 }
 
 void GenTypeScriptOp::AddAttrForArg(const string& attr, int arg_index) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("attr: \"" + attr + "\"");
+   MHTracer_DTPStensorflowPSjsPSopsPSts_op_genDTcc mht_8(mht_8_v, 338, "", "./tensorflow/js/ops/ts_op_gen.cc", "GenTypeScriptOp::AddAttrForArg");
+
   // Keep track of attributes-to-arguments by name. These will be used for
   // construction Op attributes that require information about the inputs.
   auto iter = attr_arg_idx_map_.find(attr);
@@ -153,6 +349,9 @@ void GenTypeScriptOp::AddAttrForArg(const string& attr, int arg_index) {
 }
 
 string GenTypeScriptOp::InputForAttr(const OpDef::AttrDef& op_def_attr) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSjsPSopsPSts_op_genDTcc mht_9(mht_9_v, 352, "", "./tensorflow/js/ops/ts_op_gen.cc", "GenTypeScriptOp::InputForAttr");
+
   string inputs;
   auto arg_list = attr_arg_idx_map_.find(op_def_attr.name());
   if (arg_list != attr_arg_idx_map_.end()) {
@@ -165,6 +364,9 @@ string GenTypeScriptOp::InputForAttr(const OpDef::AttrDef& op_def_attr) {
 }
 
 void GenTypeScriptOp::AddMethodSignature() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSjsPSopsPSts_op_genDTcc mht_10(mht_10_v, 367, "", "./tensorflow/js/ops/ts_op_gen.cc", "GenTypeScriptOp::AddMethodSignature");
+
   strings::StrAppend(&result_, "export function ", api_def_.endpoint(0).name(),
                      "(");
 
@@ -194,6 +396,9 @@ void GenTypeScriptOp::AddMethodSignature() {
 }
 
 void GenTypeScriptOp::AddOpAttrs() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSjsPSopsPSts_op_genDTcc mht_11(mht_11_v, 399, "", "./tensorflow/js/ops/ts_op_gen.cc", "GenTypeScriptOp::AddOpAttrs");
+
   strings::StrAppend(&result_, "  const opAttrs = [\n");
 
   bool is_first = true;
@@ -223,15 +428,24 @@ void GenTypeScriptOp::AddOpAttrs() {
 }
 
 void GenTypeScriptOp::AddMethodReturnAndClose() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSjsPSopsPSts_op_genDTcc mht_12(mht_12_v, 431, "", "./tensorflow/js/ops/ts_op_gen.cc", "GenTypeScriptOp::AddMethodReturnAndClose");
+
   strings::StrAppend(&result_, "  return null;\n}\n");
 }
 
 void WriteTSOp(const OpDef& op_def, const ApiDef& api_def, WritableFile* ts) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSjsPSopsPSts_op_genDTcc mht_13(mht_13_v, 438, "", "./tensorflow/js/ops/ts_op_gen.cc", "WriteTSOp");
+
   GenTypeScriptOp ts_op(op_def, api_def);
   TF_CHECK_OK(ts->Append(GenTypeScriptOp(op_def, api_def).Code()));
 }
 
 void StartFile(WritableFile* ts_file) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSjsPSopsPSts_op_genDTcc mht_14(mht_14_v, 446, "", "./tensorflow/js/ops/ts_op_gen.cc", "StartFile");
+
   const string header =
       R"header(/**
  * @license
@@ -264,6 +478,10 @@ import {createTensorsTypeOpAttr, nodeBackend} from './op_utils';
 
 void WriteTSOps(const OpList& ops, const ApiDefMap& api_def_map,
                 const string& ts_filename) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("ts_filename: \"" + ts_filename + "\"");
+   MHTracer_DTPStensorflowPSjsPSopsPSts_op_genDTcc mht_15(mht_15_v, 482, "", "./tensorflow/js/ops/ts_op_gen.cc", "WriteTSOps");
+
   Env* env = Env::Default();
 
   std::unique_ptr<WritableFile> ts_file = nullptr;

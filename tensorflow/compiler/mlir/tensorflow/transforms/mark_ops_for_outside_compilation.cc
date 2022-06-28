@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSmark_ops_for_outside_compilationDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSmark_ops_for_outside_compilationDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSmark_ops_for_outside_compilationDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -59,6 +227,9 @@ struct MarkOpsForOutsideCompilation
 // remove this.
 void AddCanonicalizationPatterns(MLIRContext* context,
                                  RewritePatternSet* patterns) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSmark_ops_for_outside_compilationDTcc mht_0(mht_0_v, 230, "", "./tensorflow/compiler/mlir/tensorflow/transforms/mark_ops_for_outside_compilation.cc", "AddCanonicalizationPatterns");
+
   for (auto op : context->getRegisteredOperations())
     op.getCanonicalizationPatterns(*patterns, context);
 }
@@ -72,6 +243,9 @@ void AddCanonicalizationPatterns(MLIRContext* context,
 // and shape inference through the computation on the host side.
 void AddSupportedOpsUsingFolding(MLIRContext* context,
                                  llvm::DenseSet<OperationName>* supported_ops) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSmark_ops_for_outside_compilationDTcc mht_1(mht_1_v, 246, "", "./tensorflow/compiler/mlir/tensorflow/transforms/mark_ops_for_outside_compilation.cc", "AddSupportedOpsUsingFolding");
+
   llvm::SmallDenseSet<OperationName, 8> allowlist_ops = {
       OperationName(TF::BroadcastArgsOp::getOperationName(), context),
       OperationName(TF::BroadcastGradientArgsOp::getOperationName(), context),
@@ -94,6 +268,9 @@ void AddSupportedOpsUsingFolding(MLIRContext* context,
 // on MLIR bridge.
 void AddSupportedOpsUsingDynamicPadder(
     MLIRContext* context, llvm::DenseSet<OperationName>* supported_ops) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSmark_ops_for_outside_compilationDTcc mht_2(mht_2_v, 271, "", "./tensorflow/compiler/mlir/tensorflow/transforms/mark_ops_for_outside_compilation.cc", "AddSupportedOpsUsingDynamicPadder");
+
   llvm::SmallDenseSet<OperationName, 8> allowlist_ops = {
       OperationName(TF::WhereOp::getOperationName(), context),
       OperationName(TF::UniqueOp::getOperationName(), context),
@@ -108,6 +285,9 @@ void AddSupportedOpsUsingDynamicPadder(
 // added.
 void AddSupportedFunctionalOps(MLIRContext* context,
                                llvm::DenseSet<OperationName>* supported_ops) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSmark_ops_for_outside_compilationDTcc mht_3(mht_3_v, 288, "", "./tensorflow/compiler/mlir/tensorflow/transforms/mark_ops_for_outside_compilation.cc", "AddSupportedFunctionalOps");
+
   supported_ops->insert(
       OperationName(TF::CaseRegionOp::getOperationName(), context));
   supported_ops->insert(
@@ -143,6 +323,9 @@ void AddSupportedFunctionalOps(MLIRContext* context,
 // These embedding ops are rewritten when running TPUCompileOp.
 void AddRewrittenEmbeddingOps(MLIRContext* context,
                               llvm::DenseSet<OperationName>* supported_ops) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSmark_ops_for_outside_compilationDTcc mht_4(mht_4_v, 326, "", "./tensorflow/compiler/mlir/tensorflow/transforms/mark_ops_for_outside_compilation.cc", "AddRewrittenEmbeddingOps");
+
   supported_ops->insert(OperationName(
       TF::RecvTPUEmbeddingActivationsOp::getOperationName(), context));
   supported_ops->insert(OperationName(
@@ -155,6 +338,9 @@ void AddRewrittenEmbeddingOps(MLIRContext* context,
 // list of supported ops.
 void AddRewrittenCompositeOps(MLIRContext* context,
                               llvm::DenseSet<OperationName>* supported_ops) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSmark_ops_for_outside_compilationDTcc mht_5(mht_5_v, 341, "", "./tensorflow/compiler/mlir/tensorflow/transforms/mark_ops_for_outside_compilation.cc", "AddRewrittenCompositeOps");
+
 #define GET_OPERATION_NAME(op) OperationName(op::getOperationName(), context)
   llvm::SmallDenseSet<OperationName, 32> allowlist_ops = {
       // Stack ops.
@@ -191,6 +377,9 @@ void AddRewrittenCompositeOps(MLIRContext* context,
 }
 
 bool IsStringType(Type type) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSmark_ops_for_outside_compilationDTcc mht_6(mht_6_v, 380, "", "./tensorflow/compiler/mlir/tensorflow/transforms/mark_ops_for_outside_compilation.cc", "IsStringType");
+
   if (type.isa<TF::StringType>()) return true;
 
   auto sub_type = type.dyn_cast<TF::TensorFlowTypeWithSubtype>();
@@ -203,6 +392,9 @@ bool IsStringType(Type type) {
 }
 
 bool HasStringOperand(Operation& op) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSmark_ops_for_outside_compilationDTcc mht_7(mht_7_v, 395, "", "./tensorflow/compiler/mlir/tensorflow/transforms/mark_ops_for_outside_compilation.cc", "HasStringOperand");
+
   for (auto operand : op.getOperands()) {
     auto operand_type = getElementTypeOrSelf(operand);
     if (IsStringType(operand_type)) return true;
@@ -211,6 +403,9 @@ bool HasStringOperand(Operation& op) {
 }
 
 bool HasStringResult(Operation& op) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSmark_ops_for_outside_compilationDTcc mht_8(mht_8_v, 406, "", "./tensorflow/compiler/mlir/tensorflow/transforms/mark_ops_for_outside_compilation.cc", "HasStringResult");
+
   for (auto result : op.getResults()) {
     auto result_type = getElementTypeOrSelf(result);
     if (IsStringType(result_type)) return true;
@@ -220,6 +415,9 @@ bool HasStringResult(Operation& op) {
 
 bool MatchesPattern(Operation& op,
                     const llvm::DenseSet<OperationName>& supported_ops) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSmark_ops_for_outside_compilationDTcc mht_9(mht_9_v, 418, "", "./tensorflow/compiler/mlir/tensorflow/transforms/mark_ops_for_outside_compilation.cc", "MatchesPattern");
+
   return (supported_ops.contains(op.getName()));
 }
 
@@ -228,6 +426,9 @@ bool MatchesPattern(Operation& op,
 bool IsSupportedOp(Operation& op,
                    const llvm::DenseSet<OperationName>& supported_ops,
                    const Dialect* tf_dialect) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSmark_ops_for_outside_compilationDTcc mht_10(mht_10_v, 429, "", "./tensorflow/compiler/mlir/tensorflow/transforms/mark_ops_for_outside_compilation.cc", "IsSupportedOp");
+
   if (op.getDialect() != tf_dialect)
     return true;
   // Assert has a legalization that later removes it so we don't want to outside
@@ -240,6 +441,9 @@ bool IsSupportedOp(Operation& op,
 
 // Checks all regions of `op` for captured string operands.
 bool HasCapturedStringOperand(Operation* op) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSmark_ops_for_outside_compilationDTcc mht_11(mht_11_v, 444, "", "./tensorflow/compiler/mlir/tensorflow/transforms/mark_ops_for_outside_compilation.cc", "HasCapturedStringOperand");
+
   bool string_operand = false;
   for (auto& region : op->getRegions()) {
     mlir::visitUsedValuesDefinedAbove(
@@ -253,10 +457,16 @@ bool HasCapturedStringOperand(Operation* op) {
 }
 
 bool IsVariant(Value value) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSmark_ops_for_outside_compilationDTcc mht_12(mht_12_v, 460, "", "./tensorflow/compiler/mlir/tensorflow/transforms/mark_ops_for_outside_compilation.cc", "IsVariant");
+
   return getElementTypeOrSelf(value.getType()).isa<TF::VariantType>();
 }
 
 bool HasOutsideCompiledAncestor(Operation* op) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSmark_ops_for_outside_compilationDTcc mht_13(mht_13_v, 467, "", "./tensorflow/compiler/mlir/tensorflow/transforms/mark_ops_for_outside_compilation.cc", "HasOutsideCompiledAncestor");
+
   Operation* parent = op->getParentOp();
   while (parent) {
     if (parent->getAttrOfType<StringAttr>(kXlaOutsideCompilationAttr))
@@ -270,6 +480,9 @@ bool HasOutsideCompiledAncestor(Operation* op) {
 // Operation, `op`, mark  them for outside compilation unless they are already
 // marks with outside compilation attribute.
 void MarkVariantInputsOutputs(tf_device::ClusterOp tpu_cluster) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSmark_ops_for_outside_compilationDTcc mht_14(mht_14_v, 483, "", "./tensorflow/compiler/mlir/tensorflow/transforms/mark_ops_for_outside_compilation.cc", "MarkVariantInputsOutputs");
+
   std::queue<Operation*> outside_compiled_ops;
   tpu_cluster.walk([&](Operation* op) {
     if (op->hasAttrOfType<StringAttr>(kXlaOutsideCompilationAttr))
@@ -316,6 +529,9 @@ void MarkVariantInputsOutputs(tf_device::ClusterOp tpu_cluster) {
 LogicalResult MarkUncompilableOps(
     const Dialect* tf_dialect, Block* block,
     llvm::DenseSet<OperationName>& supported_ops) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSmark_ops_for_outside_compilationDTcc mht_15(mht_15_v, 532, "", "./tensorflow/compiler/mlir/tensorflow/transforms/mark_ops_for_outside_compilation.cc", "MarkUncompilableOps");
+
   // Automatically marked ops for outside compilation have
   // `_xla_outside_compilation` attribute value of "auto" plus
   // an increasing counter.  Manually marked ops for outside compilation only
@@ -347,6 +563,9 @@ LogicalResult MarkUncompilableOps(
 // marked for outside compilation.
 bool ContainsUncompilableOps(const Dialect* tf_dialect, Block* block,
                              llvm::DenseSet<OperationName>& supported_ops) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSmark_ops_for_outside_compilationDTcc mht_16(mht_16_v, 566, "", "./tensorflow/compiler/mlir/tensorflow/transforms/mark_ops_for_outside_compilation.cc", "ContainsUncompilableOps");
+
   int uncompilable_op_count = 0;
   // Check if op or any parent is already marked for outside compilation.
   block->walk([&](Operation* op) {
@@ -371,6 +590,9 @@ bool ContainsUncompilableOps(const Dialect* tf_dialect, Block* block,
 // marked for outside compilation since the child will be extracted
 // anyways.
 void UnmarkChildren(Block* block) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSmark_ops_for_outside_compilationDTcc mht_17(mht_17_v, 593, "", "./tensorflow/compiler/mlir/tensorflow/transforms/mark_ops_for_outside_compilation.cc", "UnmarkChildren");
+
   block->walk([&](Operation* op) {
     if (!op->getAttrOfType<StringAttr>(kXlaOutsideCompilationAttr)) return;
     Operation* iter_op = op;
@@ -387,6 +609,9 @@ void UnmarkChildren(Block* block) {
 }
 
 void MarkOpsForOutsideCompilation::runOnOperation() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSmark_ops_for_outside_compilationDTcc mht_18(mht_18_v, 612, "", "./tensorflow/compiler/mlir/tensorflow/transforms/mark_ops_for_outside_compilation.cc", "MarkOpsForOutsideCompilation::runOnOperation");
+
   auto module = getOperation();
   const Dialect* tf_dialect = getContext().getLoadedDialect("tf");
   if (!tf_dialect) {

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSdebugPSdebug_graph_utilsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_graph_utilsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSdebugPSdebug_graph_utilsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,6 +197,10 @@ namespace {
 
 // TODO(cais): Switch to safe_strtob when available.
 Status ParseBoolString(const string& bool_str, bool* bool_val) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("bool_str: \"" + bool_str + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_graph_utilsDTcc mht_0(mht_0_v, 201, "", "./tensorflow/core/debug/debug_graph_utils.cc", "ParseBoolString");
+
   const string lower_bool_str = absl::AsciiStrToLower(bool_str);
   if (lower_bool_str == "false" || lower_bool_str == "f" ||
       lower_bool_str == "0") {
@@ -48,6 +220,9 @@ Status ParseBoolString(const string& bool_str, bool* bool_val) {
 Status DebugNodeInserter::InsertNodes(
     const protobuf::RepeatedPtrField<DebugTensorWatch>& watches, Graph* graph,
     Device* device) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_graph_utilsDTcc mht_1(mht_1_v, 223, "", "./tensorflow/core/debug/debug_graph_utils.cc", "DebugNodeInserter::InsertNodes");
+
   // TODO(cais): This method is getting too large in size.
   // Refactor it with helpers.
 
@@ -254,6 +429,9 @@ Status DebugNodeInserter::InsertNodes(
 }
 
 void DebugNodeInserter::DeparallelizeWhileLoops(Graph* graph, Device* device) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_graph_utilsDTcc mht_2(mht_2_v, 432, "", "./tensorflow/core/debug/debug_graph_utils.cc", "DebugNodeInserter::DeparallelizeWhileLoops");
+
   bool deparallelized_a_loop = false;
   for (Node* node : graph->nodes()) {
     if (node->IsEnter()) {
@@ -279,6 +457,10 @@ void DebugNodeInserter::DeparallelizeWhileLoops(Graph* graph, Device* device) {
 // static
 const string DebugNodeInserter::GetCopyNodeName(const string& node_name,
                                                 const int output_slot) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_graph_utilsDTcc mht_3(mht_3_v, 461, "", "./tensorflow/core/debug/debug_graph_utils.cc", "DebugNodeInserter::GetCopyNodeName");
+
   // For example, if the watched node is named "node1" and the output slot
   // is 0, the debug node will be called: __copy_node1_0
   return strings::StrCat("__copy_", node_name, "_", output_slot);
@@ -288,6 +470,11 @@ const string DebugNodeInserter::GetCopyNodeName(const string& node_name,
 const string DebugNodeInserter::GetDebugNodeName(const string& tensor_name,
                                                  const int debug_op_num,
                                                  const string& debug_op_name) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("tensor_name: \"" + tensor_name + "\"");
+   mht_4_v.push_back("debug_op_name: \"" + debug_op_name + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_graph_utilsDTcc mht_4(mht_4_v, 475, "", "./tensorflow/core/debug/debug_graph_utils.cc", "DebugNodeInserter::GetDebugNodeName");
+
   // For example, if the watched node is named "node1" and the debug op that
   // watches the output slot of node1 is of the type "DebugNanCount", the
   // debug node will be called: __dbg_node1_0_0_DebugNanCount.
@@ -301,6 +488,11 @@ Status DebugNodeInserter::CreateCopyNode(
     const string& src_node_name, const int src_output, const DataType src_dt,
     const string& tensor_name, const std::vector<string>& debug_ops,
     const std::vector<string>& debug_urls, Node** copy_node) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("src_node_name: \"" + src_node_name + "\"");
+   mht_5_v.push_back("tensor_name: \"" + tensor_name + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_graph_utilsDTcc mht_5(mht_5_v, 493, "", "./tensorflow/core/debug/debug_graph_utils.cc", "DebugNodeInserter::CreateCopyNode");
+
   const string kGatedGrpcAttributeKey = "gated_grpc";
 
   NodeDef node_def;
@@ -361,6 +553,10 @@ Status DebugNodeInserter::CreateCopyNode(
 Status DebugNodeInserter::ParseDebugOpName(
     const string& debug_op_name, string* debug_op_name_proper,
     std::unordered_map<string, string>* attributes) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("debug_op_name: \"" + debug_op_name + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_graph_utilsDTcc mht_6(mht_6_v, 557, "", "./tensorflow/core/debug/debug_graph_utils.cc", "DebugNodeInserter::ParseDebugOpName");
+
   const size_t l_index = debug_op_name.find('(');
   const size_t r_index = debug_op_name.find(')');
   if (l_index == string::npos && r_index == string::npos) {
@@ -412,6 +608,9 @@ Status DebugNodeInserter::ParseDebugOpName(
 // static
 Status DebugNodeInserter::SetDebugNodeAttributes(
     Node* debug_node, const std::unordered_map<string, string>& attributes) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_graph_utilsDTcc mht_7(mht_7_v, 611, "", "./tensorflow/core/debug/debug_graph_utils.cc", "DebugNodeInserter::SetDebugNodeAttributes");
+
   std::unordered_set<string> unfulfilled_keys;
   for (const auto& item : attributes) {
     unfulfilled_keys.insert(item.first);
@@ -473,6 +672,12 @@ Status DebugNodeInserter::CreateDebugNode(
     const DataType src_dt, const string& tensor_name,
     const std::vector<string>& debug_urls, const int debug_op_num,
     const string& debug_op_name, Node** debug_node) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("src_copy_node_name: \"" + src_copy_node_name + "\"");
+   mht_8_v.push_back("tensor_name: \"" + tensor_name + "\"");
+   mht_8_v.push_back("debug_op_name: \"" + debug_op_name + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_graph_utilsDTcc mht_8(mht_8_v, 678, "", "./tensorflow/core/debug/debug_graph_utils.cc", "DebugNodeInserter::CreateDebugNode");
+
   NodeDef node_def;
   const KernelDef* kdef;
 

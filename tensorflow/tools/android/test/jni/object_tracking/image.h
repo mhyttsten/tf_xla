@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_EXAMPLES_ANDROID_JNI_OBJECT_TRACKING_IMAGE_H_
 #define TENSORFLOW_EXAMPLES_ANDROID_JNI_OBJECT_TRACKING_IMAGE_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <stdint.h>
 
@@ -53,15 +221,24 @@ template <typename T>
 class RowData {
  public:
   RowData(T* const row_data, const int max_col)
-      : row_data_(row_data), max_col_(max_col) {}
+      : row_data_(row_data), max_col_(max_col) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageDTh mht_0(mht_0_v, 225, "", "./tensorflow/tools/android/test/jni/object_tracking/image.h", "RowData");
+}
 
   inline T& operator[](const int col) const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageDTh mht_1(mht_1_v, 230, "", "./tensorflow/tools/android/test/jni/object_tracking/image.h", "lambda");
+
     SCHECK(InRange(col, 0, max_col_),
           "Column out of range: %d (%d max)", col, max_col_);
     return row_data_[col];
   }
 
   inline operator T*() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageDTh mht_2(mht_2_v, 239, "", "./tensorflow/tools/android/test/jni/object_tracking/image.h", "*");
+
     return row_data_;
   }
 
@@ -124,8 +301,14 @@ class Image {
   Image<T>* Crop(
       const int left, const int top, const int right, const int bottom) const;
 
-  inline int GetWidth() const { return width_; }
-  inline int GetHeight() const { return height_; }
+  inline int GetWidth() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageDTh mht_3(mht_3_v, 305, "", "./tensorflow/tools/android/test/jni/object_tracking/image.h", "GetWidth");
+ return width_; }
+  inline int GetHeight() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageDTh mht_4(mht_4_v, 309, "", "./tensorflow/tools/android/test/jni/object_tracking/image.h", "GetHeight");
+ return height_; }
 
   // Bilinearly sample a value between pixels.  Values must be within the image.
   inline float GetPixelInterp(const float x, const float y) const;
@@ -150,6 +333,9 @@ class Image {
   inline bool Contains(const BoundingBox& bounding_box) const;
 
   inline T GetMedianValue() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageDTh mht_5(mht_5_v, 336, "", "./tensorflow/tools/android/test/jni/object_tracking/image.h", "GetMedianValue");
+
     qsort(image_data_, data_size_, sizeof(image_data_[0]), Comp<T>);
     return image_data_[data_size_ >> 1];
   }
@@ -161,38 +347,59 @@ class Image {
 
   // Safe lookup with boundary enforcement.
   inline T GetPixelClipped(const int x, const int y) const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageDTh mht_6(mht_6_v, 350, "", "./tensorflow/tools/android/test/jni/object_tracking/image.h", "GetPixelClipped");
+
     return (*this)[Clip(y, ZERO, height_less_one_)]
                   [Clip(x, ZERO, width_less_one_)];
   }
 
 #ifdef SANITY_CHECKS
   inline RowData<T> operator[](const int row) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageDTh mht_7(mht_7_v, 359, "", "./tensorflow/tools/android/test/jni/object_tracking/image.h", "lambda");
+
     SCHECK(InRange(row, 0, height_less_one_),
           "Row out of range: %d (%d max)", row, height_less_one_);
     return RowData<T>(image_data_ + row * stride_, width_less_one_);
   }
 
   inline const RowData<T> operator[](const int row) const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageDTh mht_8(mht_8_v, 368, "", "./tensorflow/tools/android/test/jni/object_tracking/image.h", "lambda");
+
     SCHECK(InRange(row, 0, height_less_one_),
           "Row out of range: %d (%d max)", row, height_less_one_);
     return RowData<T>(image_data_ + row * stride_, width_less_one_);
   }
 #else
   inline T* operator[](const int row) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageDTh mht_9(mht_9_v, 377, "", "./tensorflow/tools/android/test/jni/object_tracking/image.h", "lambda");
+
     return image_data_ + row * stride_;
   }
 
   inline const T* operator[](const int row) const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageDTh mht_10(mht_10_v, 384, "", "./tensorflow/tools/android/test/jni/object_tracking/image.h", "lambda");
+
     return image_data_ + row * stride_;
   }
 #endif
 
   const T* data() const { return image_data_; }
 
-  inline int stride() const { return stride_; }
+  inline int stride() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageDTh mht_11(mht_11_v, 394, "", "./tensorflow/tools/android/test/jni/object_tracking/image.h", "stride");
+ return stride_; }
 
   // Clears image to a single value.
   inline void Clear(const T& val) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageDTh mht_12(mht_12_v, 400, "", "./tensorflow/tools/android/test/jni/object_tracking/image.h", "Clear");
+
     memset(image_data_, val, sizeof(*image_data_) * data_size_);
   }
 
@@ -215,6 +422,9 @@ class Image {
   // Naive downsampler that reduces image size by factor by averaging pixels in
   // blocks of size factor x factor.
   inline void DownsampleAveraged(const Image<T>& original, const int factor) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageDTh mht_13(mht_13_v, 425, "", "./tensorflow/tools/android/test/jni/object_tracking/image.h", "DownsampleAveraged");
+
     DownsampleAveraged(original.data(), original.GetWidth(), factor);
   }
 
@@ -260,6 +470,9 @@ class Image {
   inline void ScharrY(const Image<U>& original);
 
   static inline T HalfDiff(int32_t first, int32_t second) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageDTh mht_14(mht_14_v, 473, "", "./tensorflow/tools/android/test/jni/object_tracking/image.h", "HalfDiff");
+
     return (second - first) / 2;
   }
 
@@ -290,6 +503,9 @@ class Image {
 
   // Copy the image back out to an appropriately sized data array.
   inline void ToArray(T* const pixels) const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageDTh mht_15(mht_15_v, 506, "", "./tensorflow/tools/android/test/jni/object_tracking/image.h", "ToArray");
+
     // If not subsampling, memcpy should be faster.
     memcpy(pixels, this->image_data_, data_size_ * sizeof(T));
   }
@@ -305,6 +521,9 @@ class Image {
 
  private:
   inline void Allocate() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageDTh mht_16(mht_16_v, 524, "", "./tensorflow/tools/android/test/jni/object_tracking/image.h", "Allocate");
+
     image_data_ = new T[data_size_];
     if (image_data_ == NULL) {
       LOGE("Couldn't allocate image data!");
@@ -327,6 +546,9 @@ class Image {
 
 template <typename t>
 inline std::ostream& operator<<(std::ostream& stream, const Image<t>& image) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageDTh mht_17(mht_17_v, 549, "", "./tensorflow/tools/android/test/jni/object_tracking/image.h", "operator<<");
+
   for (int y = 0; y < image.GetHeight(); ++y) {
     for (int x = 0; x < image.GetWidth(); ++x) {
       stream << image[y][x] << " ";

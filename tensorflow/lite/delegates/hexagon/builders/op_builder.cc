@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSdelegatesPShexagonPSbuildersPSop_builderDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPShexagonPSbuildersPSop_builderDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSdelegatesPShexagonPSbuildersPSop_builderDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +194,9 @@ namespace hexagon {
 namespace {
 // Farmhash Fingerprint
 inline uint64_t CombineFingerprints(uint64_t l, uint64_t h) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPShexagonPSbuildersPSop_builderDTcc mht_0(mht_0_v, 197, "", "./tensorflow/lite/delegates/hexagon/builders/op_builder.cc", "CombineFingerprints");
+
   // Murmur-inspired hashing.
   const uint64_t kMul = 0x9ddfea08eb382d69ULL;
   uint64_t a = (l ^ h) * kMul;
@@ -40,6 +211,10 @@ inline uint64_t CombineFingerprints(uint64_t l, uint64_t h) {
 
 inline uint64_t ComputeHash(const int shape[], const char* data,
                             const int data_len) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("data: \"" + (data == nullptr ? std::string("nullptr") : std::string((char*)data)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPShexagonPSbuildersPSop_builderDTcc mht_1(mht_1_v, 215, "", "./tensorflow/lite/delegates/hexagon/builders/op_builder.cc", "ComputeHash");
+
   return CombineFingerprints(
       ::util::Fingerprint64(data, data_len),
       ::util::Fingerprint64(reinterpret_cast<const char*>(shape),
@@ -48,6 +223,9 @@ inline uint64_t ComputeHash(const int shape[], const char* data,
 
 inline uint64_t ComputeHash(const TfLiteTensor& tensor, const int shape[],
                             int int8_to_uint8) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPShexagonPSbuildersPSop_builderDTcc mht_2(mht_2_v, 226, "", "./tensorflow/lite/delegates/hexagon/builders/op_builder.cc", "ComputeHash");
+
   auto data_hash = ComputeHash(shape, tensor.data.raw_const, tensor.bytes);
   auto int8_to_uint8_hash = ::util::Fingerprint64(
       reinterpret_cast<char*>(&int8_to_uint8), sizeof(int8_to_uint8));
@@ -55,6 +233,9 @@ inline uint64_t ComputeHash(const TfLiteTensor& tensor, const int shape[],
 }
 
 int GetElementSize(TfLiteType type) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPShexagonPSbuildersPSop_builderDTcc mht_3(mht_3_v, 236, "", "./tensorflow/lite/delegates/hexagon/builders/op_builder.cc", "GetElementSize");
+
   switch (type) {
     case kTfLiteFloat32:
       return sizeof(float);
@@ -74,6 +255,9 @@ int GetElementSize(TfLiteType type) {
 
 OpBuilder* GraphBuilder::CreateOpBuilderFromTfLiteOp(int op_type,
                                                      TfLiteNode* node) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPShexagonPSbuildersPSop_builderDTcc mht_4(mht_4_v, 258, "", "./tensorflow/lite/delegates/hexagon/builders/op_builder.cc", "GraphBuilder::CreateOpBuilderFromTfLiteOp");
+
   switch (op_type) {
     case kTfLiteBuiltinAdd:
       return CreateArithmeticBuilder(this, OP_QuantizedAdd_8p8to8);
@@ -170,17 +354,27 @@ OpBuilder* GraphBuilder::CreateOpBuilderFromTfLiteOp(int op_type,
 }
 
 OpBuilder* GraphBuilder::LookupConstData(uint64_t cache_key) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPShexagonPSbuildersPSop_builderDTcc mht_5(mht_5_v, 357, "", "./tensorflow/lite/delegates/hexagon/builders/op_builder.cc", "GraphBuilder::LookupConstData");
+
   auto lookup_result = cache_.find(cache_key);
   if (lookup_result != cache_.end()) return lookup_result->second;
   return nullptr;
 }
 
 void GraphBuilder::AddToCache(uint64_t cache_key, OpBuilder* value) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPShexagonPSbuildersPSop_builderDTcc mht_6(mht_6_v, 366, "", "./tensorflow/lite/delegates/hexagon/builders/op_builder.cc", "GraphBuilder::AddToCache");
+
   cache_[cache_key] = value;
 }
 
 OpBuilder* GraphBuilder::AddConstNodeWithData(const int shape[], char* data,
                                               int data_size) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("data: \"" + (data == nullptr ? std::string("nullptr") : std::string((char*)data)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPShexagonPSbuildersPSop_builderDTcc mht_7(mht_7_v, 375, "", "./tensorflow/lite/delegates/hexagon/builders/op_builder.cc", "GraphBuilder::AddConstNodeWithData");
+
   auto cache_key = ComputeHash(shape, data, data_size);
   if (auto lookup_result = LookupConstData(cache_key)) return lookup_result;
   builders_.emplace_back(new OpBuilder(this, OP_Const));
@@ -201,6 +395,9 @@ OpBuilder* GraphBuilder::AddConstNodeWithData(const int shape[], char* data,
 OpBuilder* GraphBuilder::AddConstNodeWithData(int tensor_id,
                                               const TfLiteTensor& tensor,
                                               bool int8_to_uint8) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPShexagonPSbuildersPSop_builderDTcc mht_8(mht_8_v, 398, "", "./tensorflow/lite/delegates/hexagon/builders/op_builder.cc", "GraphBuilder::AddConstNodeWithData");
+
   // Fetch shape of tensor and pad 1's so it is always 4D.
   int batch_size, height_size, width_size, depth_size;
   GetDims(&batch_size, &height_size, &width_size, &depth_size, tensor.dims);
@@ -249,6 +446,9 @@ OpBuilder* GraphBuilder::AddConstNodeWithData(int tensor_id,
 TfLiteStatus GraphBuilder::AddCastOp(TfLiteContext* context, int op_type,
                                      int tensor_id,
                                      OpBuilder** cast_op_builder) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPShexagonPSbuildersPSop_builderDTcc mht_9(mht_9_v, 449, "", "./tensorflow/lite/delegates/hexagon/builders/op_builder.cc", "GraphBuilder::AddCastOp");
+
   // Create a new OpBuilder for casting the tensor.
   OpBuilder* cast_builder = CreateCastBuilder(this, op_type);
   builders_.emplace_back(cast_builder);
@@ -269,6 +469,9 @@ TfLiteStatus GraphBuilder::AddCastOp(TfLiteContext* context, int op_type,
 
 TfLiteStatus GraphBuilder::AddInputTensors(const TfLiteIntArray* input_tensors,
                                            TfLiteContext* context) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPShexagonPSbuildersPSop_builderDTcc mht_10(mht_10_v, 472, "", "./tensorflow/lite/delegates/hexagon/builders/op_builder.cc", "GraphBuilder::AddInputTensors");
+
   auto* input_op = AddNode();
   input_op->SetOpType(OP_INPUT);
 
@@ -294,6 +497,9 @@ TfLiteStatus GraphBuilder::AddInputTensors(const TfLiteIntArray* input_tensors,
 
 TfLiteStatus GraphBuilder::AddOutputTensors(
     const TfLiteIntArray* output_tensors, TfLiteContext* context) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPShexagonPSbuildersPSop_builderDTcc mht_11(mht_11_v, 500, "", "./tensorflow/lite/delegates/hexagon/builders/op_builder.cc", "GraphBuilder::AddOutputTensors");
+
   std::vector<OpBuilder::TensorID> hexagon_output_ids;
   hexagon_output_ids.reserve(output_tensors->size);
 
@@ -320,6 +526,9 @@ TfLiteStatus GraphBuilder::AddOutputTensors(
 
 OpBuilder::TensorID OpBuilder::AddOutput(const TfLiteIntArray* dims,
                                          int element_size) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPShexagonPSbuildersPSop_builderDTcc mht_12(mht_12_v, 529, "", "./tensorflow/lite/delegates/hexagon/builders/op_builder.cc", "OpBuilder::AddOutput");
+
   op_node_.outputs.push_back(hexagon_nn_output());
   op_node_.outputs.back().elementsize = element_size;
   op_node_.outputs.back().rank = 4;
@@ -340,6 +549,9 @@ OpBuilder::TensorID OpBuilder::AddOutput(const TfLiteIntArray* dims,
 
 OpBuilder::TensorID OpBuilder::AddOutput(int elementsize, int rank,
                                          const int* max_sizes_vect) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPShexagonPSbuildersPSop_builderDTcc mht_13(mht_13_v, 552, "", "./tensorflow/lite/delegates/hexagon/builders/op_builder.cc", "OpBuilder::AddOutput");
+
   op_node_.outputs.push_back(hexagon_nn_output());
   op_node_.outputs.back().elementsize = elementsize;
   op_node_.outputs.back().rank = rank;
@@ -355,10 +567,16 @@ OpBuilder::TensorID OpBuilder::AddOutput(int elementsize, int rank,
 
 OpBuilder::TensorID OpBuilder::AddOutput(
     int elementsize, int rank, const std::vector<int>& max_sizes_vect) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPShexagonPSbuildersPSop_builderDTcc mht_14(mht_14_v, 570, "", "./tensorflow/lite/delegates/hexagon/builders/op_builder.cc", "OpBuilder::AddOutput");
+
   return AddOutput(elementsize, rank, max_sizes_vect.data());
 }
 
 const OpNode* OpBuilder::Build() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPShexagonPSbuildersPSop_builderDTcc mht_15(mht_15_v, 577, "", "./tensorflow/lite/delegates/hexagon/builders/op_builder.cc", "OpBuilder::Build");
+
   for (const auto& id : input_ids_) {
     op_node_.inputs.push_back(hexagon_nn_input());
     op_node_.inputs.back().src_id = id.first;
@@ -369,6 +587,9 @@ const OpNode* OpBuilder::Build() {
 
 TfLiteStatus OpBuilder::ComputeAndAddMinAndMax(TfLiteContext* context,
                                                const TfLiteTensor& tensor) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPShexagonPSbuildersPSop_builderDTcc mht_16(mht_16_v, 590, "", "./tensorflow/lite/delegates/hexagon/builders/op_builder.cc", "OpBuilder::ComputeAndAddMinAndMax");
+
   float tensor_min, tensor_max;
   TF_LITE_ENSURE_STATUS(
       ComputeMinAndMaxQuantValues(tensor, &tensor_min, &tensor_max));
@@ -386,6 +607,9 @@ TfLiteStatus OpBuilder::ComputeAndAddMinAndMax(TfLiteContext* context,
 constexpr int OpBuilder::kScalarShape[];
 
 OpBuilder* GraphBuilder::AddNode(int tflite_node_index) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPShexagonPSbuildersPSop_builderDTcc mht_17(mht_17_v, 610, "", "./tensorflow/lite/delegates/hexagon/builders/op_builder.cc", "GraphBuilder::AddNode");
+
   OpBuilder* op = new OpBuilder(this, OP_Nop);
   builders_.emplace_back(op);
   op->SetNodeId(builders_.size());
@@ -395,6 +619,9 @@ OpBuilder* GraphBuilder::AddNode(int tflite_node_index) {
 
 OpBuilder* GraphBuilder::AddNodeFromTfLiteOp(int op_type, TfLiteNode* node,
                                              int tflite_node_index) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPShexagonPSbuildersPSop_builderDTcc mht_18(mht_18_v, 622, "", "./tensorflow/lite/delegates/hexagon/builders/op_builder.cc", "GraphBuilder::AddNodeFromTfLiteOp");
+
   OpBuilder* op = CreateOpBuilderFromTfLiteOp(op_type, node);
   builders_.emplace_back(op);
   op->SetNodeId(builders_.size());
@@ -407,6 +634,9 @@ OpBuilder* GraphBuilder::AddNodeFromTfLiteOp(int op_type, TfLiteNode* node,
 void GraphBuilder::AddBatchSeqConfig(int max_size_for_batch,
                                      TfLiteIntArray* input_batch_dimensions,
                                      TfLiteIntArray* output_batch_dimensions) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPShexagonPSbuildersPSop_builderDTcc mht_19(mht_19_v, 637, "", "./tensorflow/lite/delegates/hexagon/builders/op_builder.cc", "GraphBuilder::AddBatchSeqConfig");
+
   OpBuilder* batch_seq_node =
       CreateBatchSeqBuilder(this, OP_BatchSeqConfig, max_size_for_batch,
                             input_batch_dimensions, output_batch_dimensions);

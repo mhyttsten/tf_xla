@@ -14,6 +14,174 @@ limitations under the License.
 ==============================================================================*/
 #ifndef TENSORFLOW_CORE_FRAMEWORK_DATASET_H_
 #define TENSORFLOW_CORE_FRAMEWORK_DATASET_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <deque>
 #include <memory>
@@ -94,6 +262,9 @@ class DatasetBase;
 class SerializationContext;
 
 inline bool IsTFDataFunction(const FunctionDef& func) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_0(mht_0_v, 265, "", "./tensorflow/core/framework/dataset.h", "IsTFDataFunction");
+
   auto iter = func.attr().find(data::kTFDataFunction);
   return (iter != func.attr().end() && iter->second.b());
 }
@@ -128,7 +299,10 @@ class IteratorStateReader {
   virtual Status ReadTensor(FunctionLibraryRuntime* flr, StringPiece name,
                             StringPiece key, Tensor* val) const = 0;
 
-  virtual ~IteratorStateReader() {}
+  virtual ~IteratorStateReader() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_1(mht_1_v, 303, "", "./tensorflow/core/framework/dataset.h", "~IteratorStateReader");
+}
 };
 
 // Interface for writing values to a key-value store.
@@ -157,7 +331,10 @@ class IteratorStateWriter {
   virtual Status WriteTensor(StringPiece name, StringPiece key,
                              const Tensor& val) = 0;
 
-  virtual ~IteratorStateWriter() {}
+  virtual ~IteratorStateWriter() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_2(mht_2_v, 335, "", "./tensorflow/core/framework/dataset.h", "~IteratorStateWriter");
+}
 };
 
 // Generates a full name key for iterator checkpointing. All keys generated for
@@ -167,7 +344,10 @@ std::string FullName(const std::string& prefix, const std::string& name);
 // Wrapper around GraphDefBuilder. Used to serialize Dataset graph.
 class GraphDefBuilderWrapper {
  public:
-  explicit GraphDefBuilderWrapper(GraphDefBuilder* b) : b_(b) {}
+  explicit GraphDefBuilderWrapper(GraphDefBuilder* b) : b_(b) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_3(mht_3_v, 348, "", "./tensorflow/core/framework/dataset.h", "GraphDefBuilderWrapper");
+}
 
   // Adds a Const node with scalar value to the Graph.
   // `*output` contains a pointer to the output `Node`. It is guaranteed to be
@@ -175,6 +355,9 @@ class GraphDefBuilderWrapper {
   // The returned Node pointer is owned by the backing Graph of GraphDefBuilder.
   template <typename T>
   Status AddScalar(const T& val, Node** output) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_4(mht_4_v, 358, "", "./tensorflow/core/framework/dataset.h", "AddScalar");
+
     Tensor val_t = Tensor(DataTypeToEnum<T>::v(), TensorShape({}));
     val_t.scalar<T>()() = val;
     AddTensorInternal(val_t, output);
@@ -191,6 +374,9 @@ class GraphDefBuilderWrapper {
   // TODO(shivaniagrawal): Consider changing to gtl::ArraySlice?
   template <typename T>
   Status AddVector(const std::vector<T>& val, Node** output) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_5(mht_5_v, 377, "", "./tensorflow/core/framework/dataset.h", "AddVector");
+
     Tensor val_t = Tensor(DataTypeToEnum<T>::v(),
                           TensorShape({static_cast<int64_t>(val.size())}));
     for (size_t i = 0; i < val.size(); i++) {
@@ -204,6 +390,9 @@ class GraphDefBuilderWrapper {
   }
 
   Status AddVector(const std::vector<string>& val, Node** output) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_6(mht_6_v, 393, "", "./tensorflow/core/framework/dataset.h", "AddVector");
+
     Tensor val_t = Tensor(DataTypeToEnum<tstring>::v(),
                           TensorShape({static_cast<int64_t>(val.size())}));
     for (size_t i = 0; i < val.size(); i++) {
@@ -222,6 +411,9 @@ class GraphDefBuilderWrapper {
   // non-null if the method returns with an OK status. The returned `Node`
   // pointer is owned by the backing graph of `GraphDefBuilder`.
   Status AddTensor(const Tensor& val, Node** output) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_7(mht_7_v, 414, "", "./tensorflow/core/framework/dataset.h", "AddTensor");
+
     AddTensorInternal(val, output);
     if (*output == nullptr) {
       return errors::Internal("AddTensor: Failed to build Const op.");
@@ -235,6 +427,9 @@ class GraphDefBuilderWrapper {
   // non-null if the method returns with an OK status. The returned `Node`
   // pointer is owned by the backing graph of `GraphDefBuilder`.
   Status AddPlaceholder(const Tensor& val, Node** output) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_8(mht_8_v, 430, "", "./tensorflow/core/framework/dataset.h", "AddPlaceholder");
+
     AddPlaceholderInternal(val, output);
     if (*output == nullptr) {
       return errors::Internal(
@@ -291,18 +486,27 @@ class GraphDefBuilderWrapper {
 
   template <typename T>
   void BuildAttrValue(const T& value, AttrValue* attr) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_9(mht_9_v, 489, "", "./tensorflow/core/framework/dataset.h", "BuildAttrValue");
+
     SetAttrValue(value, attr);
   }
 
   template <typename T>
   AttrValue BuildAttrValue(const T& value) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_10(mht_10_v, 497, "", "./tensorflow/core/framework/dataset.h", "BuildAttrValue");
+
     AttrValue attr;
     SetAttrValue(value, &attr);
     return attr;
   }
 
  protected:
-  GraphDefBuilder* builder() { return b_; }
+  GraphDefBuilder* builder() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_11(mht_11_v, 507, "", "./tensorflow/core/framework/dataset.h", "builder");
+ return b_; }
 
  private:
   void AddPlaceholderInternal(const Tensor& val, Node** output);
@@ -310,6 +514,10 @@ class GraphDefBuilderWrapper {
   bool HasAttr(const string& op_type_name, const string& attr_name) const;
 
   bool HasAttr(const OpDef* op_def, const string& attr_name) const {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("attr_name: \"" + attr_name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_12(mht_12_v, 518, "", "./tensorflow/core/framework/dataset.h", "HasAttr");
+
     for (const auto& attr : op_def->attr()) {
       if (attr.name() == attr_name) {
         return true;
@@ -321,6 +529,9 @@ class GraphDefBuilderWrapper {
   Status AddAttrFunctions(SerializationContext* ctx,
                           const AttrValue& attr_value,
                           const FunctionLibraryDefinition& lib_def) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_13(mht_13_v, 532, "", "./tensorflow/core/framework/dataset.h", "AddAttrFunctions");
+
     if (attr_value.has_func()) {
       TF_RETURN_IF_ERROR(AddFunction(ctx, attr_value.func().name(), lib_def));
     } else if (attr_value.has_list()) {
@@ -340,7 +551,10 @@ class StatsAggregator;
 // `tensorflow::data` symbol on the stack.
 class Runner {
  public:
-  virtual ~Runner() {}
+  virtual ~Runner() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_14(mht_14_v, 555, "", "./tensorflow/core/framework/dataset.h", "~Runner");
+}
 
   // Runs the given function.
   virtual void Run(const std::function<void()>& f) = 0;
@@ -361,7 +575,10 @@ class Runner {
 // provided by the split provider.
 class SplitProvider {
  public:
-  virtual ~SplitProvider() {}
+  virtual ~SplitProvider() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_15(mht_15_v, 579, "", "./tensorflow/core/framework/dataset.h", "~SplitProvider");
+}
   // Stores the next split in `*split`, setting `*end_of_splits` to indicate
   // whether there were any splits left.
   virtual Status GetNext(Tensor* split, bool* end_of_splits) = 0;
@@ -409,16 +626,25 @@ class IteratorContext {
           split_providers(ctx->split_providers()),
           stats_aggregator(ctx->stats_aggregator()),
           thread_factory(ctx->thread_factory()),
-          thread_pool(ctx->thread_pool()) {}
+          thread_pool(ctx->thread_pool()) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_16(mht_16_v, 630, "", "./tensorflow/core/framework/dataset.h", "Params");
+}
 
     explicit Params(OpKernelContext* ctx)
         : collective_executor(ctx->collective_executor()),
           env(ctx->env()),
           flr(ctx->function_library()) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_17(mht_17_v, 638, "", "./tensorflow/core/framework/dataset.h", "Params");
+
       // NOTE: need reinterpret_cast because function.h forward-declares Device.
       DeviceBase* device =
           reinterpret_cast<DeviceBase*>(ctx->function_library()->device());
       allocator_getter = [device](AllocatorAttributes attrs) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_18(mht_18_v, 645, "", "./tensorflow/core/framework/dataset.h", "lambda");
+
         return device->GetAllocator(attrs);
       };
 
@@ -499,13 +725,25 @@ class IteratorContext {
     thread::ThreadPoolInterface* thread_pool = nullptr;
   };
 
-  explicit IteratorContext(IteratorContext* ctx) : params_(Params{ctx}) {}
+  explicit IteratorContext(IteratorContext* ctx) : params_(Params{ctx}) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_19(mht_19_v, 729, "", "./tensorflow/core/framework/dataset.h", "IteratorContext");
+}
 
-  explicit IteratorContext(OpKernelContext* ctx) : params_(Params{ctx}) {}
+  explicit IteratorContext(OpKernelContext* ctx) : params_(Params{ctx}) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_20(mht_20_v, 734, "", "./tensorflow/core/framework/dataset.h", "IteratorContext");
+}
 
-  explicit IteratorContext(Params params) : params_(std::move(params)) {}
+  explicit IteratorContext(Params params) : params_(std::move(params)) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_21(mht_21_v, 739, "", "./tensorflow/core/framework/dataset.h", "IteratorContext");
+}
 
   Allocator* allocator(AllocatorAttributes attrs) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_22(mht_22_v, 744, "", "./tensorflow/core/framework/dataset.h", "allocator");
+
     return params_.allocator_getter(attrs);
   }
 
@@ -514,36 +752,69 @@ class IteratorContext {
   }
 
   CancellationManager* cancellation_manager() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_23(mht_23_v, 755, "", "./tensorflow/core/framework/dataset.h", "cancellation_manager");
+
     return params_.cancellation_manager;
   }
 
   CollectiveExecutor* collective_executor() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_24(mht_24_v, 762, "", "./tensorflow/core/framework/dataset.h", "collective_executor");
+
     return params_.collective_executor;
   }
 
-  Env* env() const { return params_.env; }
+  Env* env() const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_25(mht_25_v, 769, "", "./tensorflow/core/framework/dataset.h", "env");
+ return params_.env; }
 
-  FunctionLibraryRuntime* flr() { return params_.flr; }
+  FunctionLibraryRuntime* flr() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_26(mht_26_v, 774, "", "./tensorflow/core/framework/dataset.h", "flr");
+ return params_.flr; }
 
   FunctionHandleCache* function_handle_cache() {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_27(mht_27_v, 779, "", "./tensorflow/core/framework/dataset.h", "function_handle_cache");
+
     return params_.function_handle_cache;
   }
 
-  int64 interleave_depth() { return params_.interleave_depth; }
+  int64 interleave_depth() {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_28(mht_28_v, 786, "", "./tensorflow/core/framework/dataset.h", "interleave_depth");
+ return params_.interleave_depth; }
 
-  bool is_restoring() { return params_.is_restoring; }
+  bool is_restoring() {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_29(mht_29_v, 791, "", "./tensorflow/core/framework/dataset.h", "is_restoring");
+ return params_.is_restoring; }
 
-  const std::shared_ptr<model::Model>& model() { return params_.model; }
+  const std::shared_ptr<model::Model>& model() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_30(mht_30_v, 796, "", "./tensorflow/core/framework/dataset.h", "model");
+ return params_.model; }
 
-  const Options* options() { return params_.options; }
+  const Options* options() {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_31(mht_31_v, 801, "", "./tensorflow/core/framework/dataset.h", "options");
+ return params_.options; }
 
-  ResourceMgr* resource_mgr() { return params_.resource_mgr; }
+  ResourceMgr* resource_mgr() {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_32(mht_32_v, 806, "", "./tensorflow/core/framework/dataset.h", "resource_mgr");
+ return params_.resource_mgr; }
 
   std::function<void(std::function<void()>)>* runner() {
     return &params_.runner;
   }
 
-  int32 runner_threadpool_size() { return params_.runner_threadpool_size; }
+  int32 runner_threadpool_size() {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_33(mht_33_v, 815, "", "./tensorflow/core/framework/dataset.h", "runner_threadpool_size");
+ return params_.runner_threadpool_size; }
 
   std::vector<std::shared_ptr<SplitProvider>> split_providers() {
     return params_.split_providers;
@@ -554,10 +825,16 @@ class IteratorContext {
   }
 
   const std::shared_ptr<ThreadFactory>& thread_factory() {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_34(mht_34_v, 828, "", "./tensorflow/core/framework/dataset.h", "thread_factory");
+
     return params_.thread_factory;
   }
 
-  thread::ThreadPoolInterface* thread_pool() { return params_.thread_pool; }
+  thread::ThreadPoolInterface* thread_pool() {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_35(mht_35_v, 835, "", "./tensorflow/core/framework/dataset.h", "thread_pool");
+ return params_.thread_pool; }
 
   std::unique_ptr<thread::ThreadPool> CreateThreadPool(const string& name,
                                                        int num_threads) {
@@ -606,6 +883,9 @@ class SerializationContext {
   // Handles the CheckExternalState status according to the external state
   // policy.
   Status HandleCheckExternalStateStatus(Status s) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_36(mht_36_v, 886, "", "./tensorflow/core/framework/dataset.h", "HandleCheckExternalStateStatus");
+
     if (s.ok()) {
       return s;
     }
@@ -623,11 +903,17 @@ class SerializationContext {
   }
 
   struct Params {
-    explicit Params() {}
+    explicit Params() {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_37(mht_37_v, 907, "", "./tensorflow/core/framework/dataset.h", "Params");
+}
 
     explicit Params(OpKernelContext* ctx)
         : resource_mgr(ctx->resource_manager()),
-          device_name(ctx->device()->attributes().name()) {}
+          device_name(ctx->device()->attributes().name()) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_38(mht_38_v, 914, "", "./tensorflow/core/framework/dataset.h", "Params");
+}
 
     std::vector<std::pair<string, Tensor>>* input_list = nullptr;  // Not owned.
 
@@ -660,21 +946,36 @@ class SerializationContext {
     std::string device_name;
   };
 
-  explicit SerializationContext(Params params) : params_(params) {}
+  explicit SerializationContext(Params params) : params_(params) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_39(mht_39_v, 950, "", "./tensorflow/core/framework/dataset.h", "SerializationContext");
+}
 
   std::vector<std::pair<string, Tensor>>* input_list() {
     return params_.input_list;
   }
 
   ExternalStatePolicy external_state_policy() const {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_40(mht_40_v, 959, "", "./tensorflow/core/framework/dataset.h", "external_state_policy");
+
     return params_.external_state_policy;
   }
 
-  bool is_graph_rewrite() const { return params_.is_graph_rewrite; }
+  bool is_graph_rewrite() const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_41(mht_41_v, 966, "", "./tensorflow/core/framework/dataset.h", "is_graph_rewrite");
+ return params_.is_graph_rewrite; }
 
-  const ResourceMgr* resource_mgr() const { return params_.resource_mgr; }
+  const ResourceMgr* resource_mgr() const {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_42(mht_42_v, 971, "", "./tensorflow/core/framework/dataset.h", "resource_mgr");
+ return params_.resource_mgr; }
 
-  const std::string& device_name() const { return params_.device_name; }
+  const std::string& device_name() const {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_43(mht_43_v, 976, "", "./tensorflow/core/framework/dataset.h", "device_name");
+ return params_.device_name; }
 
  private:
   Params params_;
@@ -688,6 +989,9 @@ class SerializationContext {
 class IteratorBase {
  public:
   virtual ~IteratorBase() {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_44(mht_44_v, 992, "", "./tensorflow/core/framework/dataset.h", "~IteratorBase");
+
     for (auto rit = cleanup_fns_.rbegin(); rit != cleanup_fns_.rend(); ++rit) {
       (*rit)();
     }
@@ -721,6 +1025,9 @@ class IteratorBase {
 
   Status GetNext(IteratorContext&& ctx, std::vector<Tensor>* out_tensors,
                  bool* end_of_sequence) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_45(mht_45_v, 1028, "", "./tensorflow/core/framework/dataset.h", "GetNext");
+
     return GetNext(&ctx, out_tensors, end_of_sequence);
   }
 
@@ -736,6 +1043,9 @@ class IteratorBase {
 
   virtual Status Skip(IteratorContext&& ctx, int num_to_skip,
                       bool* end_of_sequence, int* num_skipped) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_46(mht_46_v, 1046, "", "./tensorflow/core/framework/dataset.h", "Skip");
+
     return Skip(&ctx, num_to_skip, end_of_sequence, num_skipped);
   }
 
@@ -755,13 +1065,19 @@ class IteratorBase {
 
   // Performs initialization that needs to happen outside of a constructor to
   // properly propagate errors.
-  virtual Status Initialize(IteratorContext* ctx) { return Status::OK(); }
+  virtual Status Initialize(IteratorContext* ctx) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_47(mht_47_v, 1069, "", "./tensorflow/core/framework/dataset.h", "Initialize");
+ return Status::OK(); }
 
   // Performs initialization of the base iterator.
   Status InitializeBase(IteratorContext* ctx, const IteratorBase* parent);
 
   // Saves the state of this iterator.
   virtual Status Save(SerializationContext* ctx, IteratorStateWriter* writer) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_48(mht_48_v, 1078, "", "./tensorflow/core/framework/dataset.h", "Save");
+
     int64_t start_us = EnvTime::NowMicros();
     TF_RETURN_IF_ERROR(SaveInternal(ctx, writer));
     VLOG(1) << "Saved " << prefix() << " in "
@@ -776,6 +1092,9 @@ class IteratorBase {
 
   // Restores the state of this iterator.
   virtual Status Restore(IteratorContext* ctx, IteratorStateReader* reader) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_49(mht_49_v, 1095, "", "./tensorflow/core/framework/dataset.h", "Restore");
+
     int64_t start_us = EnvTime::NowMicros();
     TF_RETURN_IF_ERROR(RestoreInternal(ctx, reader));
     VLOG(1) << "Restored " << prefix() << " in "
@@ -787,6 +1106,9 @@ class IteratorBase {
   // `SaveInternal` on their input iterators.
   Status SaveInput(SerializationContext* ctx, IteratorStateWriter* writer,
                    const std::unique_ptr<IteratorBase>& input) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_50(mht_50_v, 1109, "", "./tensorflow/core/framework/dataset.h", "SaveInput");
+
     return input->Save(ctx, writer);
   }
 
@@ -794,11 +1116,17 @@ class IteratorBase {
   // `RestoreInternal` on their input iterators.
   Status RestoreInput(IteratorContext* ctx, IteratorStateReader* reader,
                       const std::unique_ptr<IteratorBase>& input) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_51(mht_51_v, 1119, "", "./tensorflow/core/framework/dataset.h", "RestoreInput");
+
     return input->Restore(ctx, reader);
   }
 
   Status RestoreInput(IteratorContext&& ctx, IteratorStateReader* reader,
                       const std::unique_ptr<IteratorBase>& input) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_52(mht_52_v, 1127, "", "./tensorflow/core/framework/dataset.h", "RestoreInput");
+
     return RestoreInput(&ctx, reader, input);
   }
 
@@ -827,6 +1155,9 @@ class IteratorBase {
 
   // Returns the number of elements produced by this iterator.
   int64_t num_elements() const {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_53(mht_53_v, 1158, "", "./tensorflow/core/framework/dataset.h", "num_elements");
+
     if (node_) return node_->num_elements();
     return 0;
   }
@@ -852,15 +1183,27 @@ class DatasetContext {
                          // identifying the dataset in the graph.
   };
 
-  explicit DatasetContext(Params params) : params_(std::move(params)) {}
+  explicit DatasetContext(Params params) : params_(std::move(params)) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_54(mht_54_v, 1187, "", "./tensorflow/core/framework/dataset.h", "DatasetContext");
+}
 
   explicit DatasetContext(OpKernelContext* ctx) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_55(mht_55_v, 1192, "", "./tensorflow/core/framework/dataset.h", "DatasetContext");
+
     params_.type_string = ctx->op_kernel().type_string();
     params_.node_name = ctx->op_kernel().name();
   }
 
-  const string& type_string() const { return params_.type_string; }
-  const string& node_name() const { return params_.node_name; }
+  const string& type_string() const {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_56(mht_56_v, 1200, "", "./tensorflow/core/framework/dataset.h", "type_string");
+ return params_.type_string; }
+  const string& node_name() const {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_57(mht_57_v, 1204, "", "./tensorflow/core/framework/dataset.h", "node_name");
+ return params_.node_name; }
 
  private:
   Params params_;
@@ -900,23 +1243,41 @@ class DatasetBase : public core::RefCounted {
   TF_EXPORT static const char kDatasetGraphOutputNodeKey[];
 
   explicit DatasetBase(DatasetContext&& ctx)
-      : type_string_(ctx.type_string()), node_name_(ctx.node_name()) {}
+      : type_string_(ctx.type_string()), node_name_(ctx.node_name()) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_58(mht_58_v, 1247, "", "./tensorflow/core/framework/dataset.h", "DatasetBase");
+}
 
   // Op type name of this dataset.
-  const string& type_string() const { return type_string_; }
+  const string& type_string() const {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_59(mht_59_v, 1253, "", "./tensorflow/core/framework/dataset.h", "type_string");
+ return type_string_; }
 
   // Graph node name of this dataset op, uniquely identifying the dataset in
   // the graph.
-  const string& node_name() const { return node_name_; }
+  const string& node_name() const {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_60(mht_60_v, 1260, "", "./tensorflow/core/framework/dataset.h", "node_name");
+ return node_name_; }
 
   // Initializes the dataset.
   void Initialize(const Metadata& metadata);
 
-  const Metadata& metadata() const { return metadata_; }
+  const Metadata& metadata() const {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_61(mht_61_v, 1268, "", "./tensorflow/core/framework/dataset.h", "metadata");
+ return metadata_; }
 
-  const Options& options() const { return options_; }
+  const Options& options() const {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_62(mht_62_v, 1273, "", "./tensorflow/core/framework/dataset.h", "options");
+ return options_; }
 
-  int64_t num_sources() const { return num_sources_; }
+  int64_t num_sources() const {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_63(mht_63_v, 1278, "", "./tensorflow/core/framework/dataset.h", "num_sources");
+ return num_sources_; }
 
   // Returns a new iterator for iterating over the range of elements in
   // this dataset.
@@ -935,6 +1296,10 @@ class DatasetBase : public core::RefCounted {
   Status MakeIterator(IteratorContext&& ctx, const IteratorBase* parent,
                       const string& output_prefix,
                       std::unique_ptr<IteratorBase>* iterator) const {
+   std::vector<std::string> mht_64_v;
+   mht_64_v.push_back("output_prefix: \"" + output_prefix + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_64(mht_64_v, 1300, "", "./tensorflow/core/framework/dataset.h", "MakeIterator");
+
     return MakeIterator(&ctx, parent, output_prefix, iterator);
   }
 
@@ -943,6 +1308,10 @@ class DatasetBase : public core::RefCounted {
       IteratorContext* ctx, const string& output_prefix,
       IteratorStateReader* reader,
       std::unique_ptr<IteratorBase>* iterator) const {
+   std::vector<std::string> mht_65_v;
+   mht_65_v.push_back("output_prefix: \"" + output_prefix + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_65(mht_65_v, 1312, "", "./tensorflow/core/framework/dataset.h", "MakeIteratorFromCheckpoint");
+
     std::unique_ptr<IteratorBase> it;
     IteratorContext::Params params(ctx);
     params.is_restoring = true;
@@ -958,6 +1327,10 @@ class DatasetBase : public core::RefCounted {
       IteratorContext&& ctx, const string& output_prefix,
       IteratorStateReader* reader,
       std::unique_ptr<IteratorBase>* iterator) const {
+   std::vector<std::string> mht_66_v;
+   mht_66_v.push_back("output_prefix: \"" + output_prefix + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_66(mht_66_v, 1331, "", "./tensorflow/core/framework/dataset.h", "MakeIteratorFromCheckpoint");
+
     return MakeIteratorFromCheckpoint(&ctx, output_prefix, reader, iterator);
   }
 
@@ -978,10 +1351,16 @@ class DatasetBase : public core::RefCounted {
   virtual const std::vector<PartialTensorShape>& output_shapes() const = 0;
 
   // Returns the number of bytes allocated for tensors of this dataset.
-  virtual int64_t AllocatedBytes() const { return 0; }
+  virtual int64_t AllocatedBytes() const {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_67(mht_67_v, 1355, "", "./tensorflow/core/framework/dataset.h", "AllocatedBytes");
+ return 0; }
 
   // Returns the estimated number of bytes used for tensors of this dataset.
-  virtual int64_t TotalBytes() const { return 0; }
+  virtual int64_t TotalBytes() const {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_68(mht_68_v, 1361, "", "./tensorflow/core/framework/dataset.h", "TotalBytes");
+ return 0; }
 
   // Returns the cardinality of this dataset.
   // TODO(shilpakrish): Remove this overload once all callers are migrated
@@ -1000,6 +1379,9 @@ class DatasetBase : public core::RefCounted {
 
   // Internal implementation of cardinality for a dataset based on the options.
   virtual int64_t CardinalityInternal(CardinalityOptions options) const {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_69(mht_69_v, 1382, "", "./tensorflow/core/framework/dataset.h", "CardinalityInternal");
+
     return kUnknownCardinality;
   }
 
@@ -1039,7 +1421,10 @@ class DatasetBase : public core::RefCounted {
   class DatasetGraphDefBuilder : public GraphDefBuilderWrapper {
    public:
     explicit DatasetGraphDefBuilder(GraphDefBuilder* b)
-        : GraphDefBuilderWrapper(b) {}
+        : GraphDefBuilderWrapper(b) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_70(mht_70_v, 1425, "", "./tensorflow/core/framework/dataset.h", "DatasetGraphDefBuilder");
+}
     Status AddInputDataset(SerializationContext* ctx,
                            const DatasetBase* dataset, Node** output);
     Status AddDatasetOrTensor(SerializationContext* ctx, const Tensor& val,
@@ -1075,7 +1460,10 @@ class DatasetBase : public core::RefCounted {
   virtual std::unique_ptr<IteratorBase> MakeIteratorInternal(
       const string& prefix) const = 0;
 
-  void set_options(const Options& options) { options_ = options; }
+  void set_options(const Options& options) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_71(mht_71_v, 1464, "", "./tensorflow/core/framework/dataset.h", "set_options");
+ options_ = options; }
 
  private:
   // Computes and stores the cardinality of a given dataset.
@@ -1120,17 +1508,29 @@ class DatasetBaseIterator : public IteratorBase {
 
   ~DatasetBaseIterator() override;
 
-  virtual const DatasetBase* dataset() const { return params_.dataset; }
+  virtual const DatasetBase* dataset() const {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_72(mht_72_v, 1512, "", "./tensorflow/core/framework/dataset.h", "dataset");
+ return params_.dataset; }
 
   const DataTypeVector& output_dtypes() const override {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_73(mht_73_v, 1517, "", "./tensorflow/core/framework/dataset.h", "output_dtypes");
+
     return params_.dataset->output_dtypes();
   }
 
   const std::vector<PartialTensorShape>& output_shapes() const override {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_74(mht_74_v, 1524, "", "./tensorflow/core/framework/dataset.h", "output_shapes");
+
     return params_.dataset->output_shapes();
   }
 
-  const string& prefix() const override { return params_.prefix; }
+  const string& prefix() const override {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_75(mht_75_v, 1531, "", "./tensorflow/core/framework/dataset.h", "prefix");
+ return params_.prefix; }
 
   // Returns a name to be used for the TraceMe event.
   //
@@ -1143,6 +1543,9 @@ class DatasetBaseIterator : public IteratorBase {
 
   Status GetNext(IteratorContext&& ctx, std::vector<Tensor>* out_tensors,
                  bool* end_of_sequence) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_76(mht_76_v, 1546, "", "./tensorflow/core/framework/dataset.h", "GetNext");
+
     return GetNext(&ctx, out_tensors, end_of_sequence);
   }
 
@@ -1150,6 +1553,9 @@ class DatasetBaseIterator : public IteratorBase {
               int* num_skipped) final;
 
   Status Save(SerializationContext* ctx, IteratorStateWriter* writer) final {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_77(mht_77_v, 1556, "", "./tensorflow/core/framework/dataset.h", "Save");
+
     VLOG(2) << "Attempting to save checkpoints on iterator (prefix: "
             << prefix() << ") from " << dataset()->DebugString();
     return IteratorBase::Save(ctx, writer);
@@ -1157,6 +1563,9 @@ class DatasetBaseIterator : public IteratorBase {
 
  protected:
   Status Restore(IteratorContext* ctx, IteratorStateReader* reader) final {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_78(mht_78_v, 1566, "", "./tensorflow/core/framework/dataset.h", "Restore");
+
     VLOG(2) << "Attempting to restore checkpoints on iterator (prefix: "
             << prefix() << ") from " << dataset()->DebugString();
     return IteratorBase::Restore(ctx, reader);
@@ -1176,11 +1585,18 @@ class DatasetBaseIterator : public IteratorBase {
                               bool* end_of_sequence, int* num_skipped);
 
   string full_name(const string& name) const {
+   std::vector<std::string> mht_79_v;
+   mht_79_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_79(mht_79_v, 1589, "", "./tensorflow/core/framework/dataset.h", "full_name");
+
     return FullName(params_.prefix, name);
   }
 
   // Returns a map of key-value pairs to included in the TraceMe string.
-  virtual TraceMeMetadata GetTraceMeMetadata() const { return {}; }
+  virtual TraceMeMetadata GetTraceMeMetadata() const {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_80(mht_80_v, 1597, "", "./tensorflow/core/framework/dataset.h", "GetTraceMeMetadata");
+ return {}; }
 
   // By default we model iterators using an unknown node, which acts as
   // pass-through with respect to performance modeling.
@@ -1192,6 +1608,9 @@ class DatasetBaseIterator : public IteratorBase {
   // When modeling is enabled, this method disables autotuning for the given
   // iterator (and the transitive closure of its inputs).
   void DisableAutotune(IteratorContext* ctx, IteratorBase* iterator) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_81(mht_81_v, 1611, "", "./tensorflow/core/framework/dataset.h", "DisableAutotune");
+
     if (iterator->node_) {
       iterator->node_->set_autotune(false);
     }
@@ -1200,6 +1619,9 @@ class DatasetBaseIterator : public IteratorBase {
   // When modeling is enabled, this method enables autotuning for the given
   // iterator (and the transitive closure of its inputs).
   void EnableAutotune(IteratorContext* ctx, IteratorBase* iterator) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_82(mht_82_v, 1622, "", "./tensorflow/core/framework/dataset.h", "EnableAutotune");
+
     if (iterator->node_) {
       iterator->node_->set_autotune(true);
     }
@@ -1209,6 +1631,9 @@ class DatasetBaseIterator : public IteratorBase {
   // has dequeued an element from an internal buffer.
   void RecordBufferDequeue(IteratorContext* ctx,
                            const std::vector<Tensor>& element) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_83(mht_83_v, 1634, "", "./tensorflow/core/framework/dataset.h", "RecordBufferDequeue");
+
     if (collect_resource_usage(ctx)) {
       node_->record_buffer_event(-GetAllocatedBytes(element), -1);
 
@@ -1220,6 +1645,9 @@ class DatasetBaseIterator : public IteratorBase {
   // has enqueued an element in an internal buffer.
   void RecordBufferEnqueue(IteratorContext* ctx,
                            const std::vector<Tensor>& element) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_84(mht_84_v, 1648, "", "./tensorflow/core/framework/dataset.h", "RecordBufferEnqueue");
+
     if (collect_resource_usage(ctx)) {
       node_->record_buffer_event(GetAllocatedBytes(element), 1);
     }
@@ -1228,6 +1656,9 @@ class DatasetBaseIterator : public IteratorBase {
   // When modeling is enabled, this method records the fact that this iterator
   // has produced an element and its size in bytes.
   void RecordElement(IteratorContext* ctx, std::vector<Tensor>* out_tensors) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_85(mht_85_v, 1659, "", "./tensorflow/core/framework/dataset.h", "RecordElement");
+
     if (collect_resource_usage(ctx)) {
       int64_t num_bytes = GetAllocatedBytes(*out_tensors);
       node_->record_element();
@@ -1241,6 +1672,9 @@ class DatasetBaseIterator : public IteratorBase {
   // When modeling is enabled, this method records the fact that a thread of
   // this iterator has started work.
   void RecordStart(IteratorContext* ctx) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_86(mht_86_v, 1675, "", "./tensorflow/core/framework/dataset.h", "RecordStart");
+
     if (collect_resource_usage(ctx)) {
       int64_t now_nanos = EnvTime::NowNanos();
       node_->record_start(now_nanos);
@@ -1250,6 +1684,9 @@ class DatasetBaseIterator : public IteratorBase {
   // When modeling is enabled, this method records the fact that a thread of
   // this iterator has stopped work.
   void RecordStop(IteratorContext* ctx) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_87(mht_87_v, 1687, "", "./tensorflow/core/framework/dataset.h", "RecordStop");
+
     if (collect_resource_usage(ctx)) {
       int64_t now_nanos = EnvTime::NowNanos();
       node_->record_stop(now_nanos);
@@ -1259,11 +1696,17 @@ class DatasetBaseIterator : public IteratorBase {
   // Returns whether work is currently being recorded, i.e. whether we are
   // currently between a `RecordStart` and a `RecordStop`.
   bool IsRecording(IteratorContext* ctx) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_88(mht_88_v, 1699, "", "./tensorflow/core/framework/dataset.h", "IsRecording");
+
     return node_ && node_->is_recording();
   }
 
  private:
   bool collect_resource_usage(IteratorContext* ctx) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_89(mht_89_v, 1707, "", "./tensorflow/core/framework/dataset.h", "collect_resource_usage");
+
     return ctx->model() && node_;
   }
 
@@ -1286,10 +1729,16 @@ class DatasetIterator : public DatasetBaseIterator {
 
   explicit DatasetIterator(const Params& params)
       : DatasetBaseIterator({params.dataset, params.prefix}),
-        typed_dataset_(params.dataset) {}
+        typed_dataset_(params.dataset) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_90(mht_90_v, 1733, "", "./tensorflow/core/framework/dataset.h", "DatasetIterator");
+}
 
   // The dataset from which this iterator was created.
-  const DatasetType* dataset() const final { return typed_dataset_; }
+  const DatasetType* dataset() const final {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_91(mht_91_v, 1739, "", "./tensorflow/core/framework/dataset.h", "dataset");
+ return typed_dataset_; }
 
  private:
   const DatasetType* const typed_dataset_;  // Not owned.
@@ -1298,6 +1747,9 @@ class DatasetIterator : public DatasetBaseIterator {
 template <typename T>
 Status ParseScalarArgument(OpKernelContext* ctx,
                            const StringPiece& argument_name, T* output) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_92(mht_92_v, 1750, "", "./tensorflow/core/framework/dataset.h", "ParseScalarArgument");
+
   const Tensor* argument_t;
   TF_RETURN_IF_ERROR(ctx->input(argument_name, &argument_t));
   if (!TensorShapeUtils::IsScalar(argument_t->shape())) {
@@ -1311,6 +1763,9 @@ template <typename T>
 Status ParseVectorArgument(OpKernelContext* ctx,
                            const StringPiece& argument_name,
                            std::vector<T>* output) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_93(mht_93_v, 1766, "", "./tensorflow/core/framework/dataset.h", "ParseVectorArgument");
+
   const Tensor* argument_t;
   TF_RETURN_IF_ERROR(ctx->input(argument_name, &argument_t));
   if (!TensorShapeUtils::IsVector(argument_t->shape())) {
@@ -1329,6 +1784,9 @@ Status ParseVectorArgument(OpKernelContext* ctx,
 class DatasetOpKernel : public OpKernel {
  public:
   explicit DatasetOpKernel(OpKernelConstruction* ctx) : OpKernel(ctx) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_94(mht_94_v, 1787, "", "./tensorflow/core/framework/dataset.h", "DatasetOpKernel");
+
     if (ctx->HasAttr(kMetadata)) {
       std::string serialized_metadata;
       OP_REQUIRES_OK(ctx, ctx->GetAttr(kMetadata, &serialized_metadata));
@@ -1363,7 +1821,10 @@ class DatasetOpKernel : public OpKernel {
 class UnaryDatasetOpKernel : public DatasetOpKernel {
  public:
   explicit UnaryDatasetOpKernel(OpKernelConstruction* ctx)
-      : DatasetOpKernel(ctx) {}
+      : DatasetOpKernel(ctx) {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_95(mht_95_v, 1825, "", "./tensorflow/core/framework/dataset.h", "UnaryDatasetOpKernel");
+}
 
  protected:
   void MakeDataset(OpKernelContext* ctx, DatasetBase** output) final;
@@ -1376,7 +1837,10 @@ class UnaryDatasetOpKernel : public DatasetOpKernel {
 class BinaryDatasetOpKernel : public DatasetOpKernel {
  public:
   explicit BinaryDatasetOpKernel(OpKernelConstruction* ctx)
-      : DatasetOpKernel(ctx) {}
+      : DatasetOpKernel(ctx) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSdatasetDTh mht_96(mht_96_v, 1841, "", "./tensorflow/core/framework/dataset.h", "BinaryDatasetOpKernel");
+}
 
  protected:
   void MakeDataset(OpKernelContext* ctx, DatasetBase** output) final;

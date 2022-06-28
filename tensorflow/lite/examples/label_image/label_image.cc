@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSexamplesPSlabel_imagePSlabel_imageDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSexamplesPSlabel_imagePSlabel_imageDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSexamplesPSlabel_imagePSlabel_imageDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,7 +217,10 @@ limitations under the License.
 namespace tflite {
 namespace label_image {
 
-double get_us(struct timeval t) { return (t.tv_sec * 1000000 + t.tv_usec); }
+double get_us(struct timeval t) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSexamplesPSlabel_imagePSlabel_imageDTcc mht_0(mht_0_v, 221, "", "./tensorflow/lite/examples/label_image/label_image.cc", "get_us");
+ return (t.tv_sec * 1000000 + t.tv_usec); }
 
 using TfLiteDelegatePtr = tflite::Interpreter::TfLiteDelegatePtr;
 using ProvidedDelegateList = tflite::tools::ProvidedDelegateList;
@@ -57,6 +228,9 @@ using ProvidedDelegateList = tflite::tools::ProvidedDelegateList;
 class DelegateProviders {
  public:
   DelegateProviders() : delegate_list_util_(&params_) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSexamplesPSlabel_imagePSlabel_imageDTcc mht_1(mht_1_v, 231, "", "./tensorflow/lite/examples/label_image/label_image.cc", "DelegateProviders");
+
     delegate_list_util_.AddAllDelegateParams();
     delegate_list_util_.AppendCmdlineFlags(flags_);
 
@@ -69,6 +243,9 @@ class DelegateProviders {
   // and remove the matching arguments from (*argc, argv). Returns true if all
   // recognized arg values are parsed correctly.
   bool InitFromCmdlineArgs(int* argc, const char** argv) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSexamplesPSlabel_imagePSlabel_imageDTcc mht_2(mht_2_v, 246, "", "./tensorflow/lite/examples/label_image/label_image.cc", "InitFromCmdlineArgs");
+
     // Note if '--help' is in argv, the Flags::Parse return false,
     // see the return expression in Flags::Parse.
     return Flags::Parse(argc, argv, flags_);
@@ -78,6 +255,9 @@ class DelegateProviders {
   // parameters that are defined by various delegate execution providers. See
   // lite/tools/delegates/README.md for the full list of parameters defined.
   void MergeSettingsIntoParams(const Settings& s) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSexamplesPSlabel_imagePSlabel_imageDTcc mht_3(mht_3_v, 258, "", "./tensorflow/lite/examples/label_image/label_image.cc", "MergeSettingsIntoParams");
+
     // Parse settings related to GPU delegate.
     // Note that GPU delegate does support OpenCL. 'gl_backend' was introduced
     // when the GPU delegate only supports OpenGL. Therefore, we consider
@@ -139,6 +319,10 @@ class DelegateProviders {
   }
 
   std::string GetHelpMessage(const std::string& cmdline) const {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("cmdline: \"" + cmdline + "\"");
+   MHTracer_DTPStensorflowPSlitePSexamplesPSlabel_imagePSlabel_imageDTcc mht_4(mht_4_v, 323, "", "./tensorflow/lite/examples/label_image/label_image.cc", "GetHelpMessage");
+
     return Flags::Usage(cmdline, flags_);
   }
 
@@ -160,6 +344,10 @@ class DelegateProviders {
 TfLiteStatus ReadLabelsFile(const string& file_name,
                             std::vector<string>* result,
                             size_t* found_label_count) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("file_name: \"" + file_name + "\"");
+   MHTracer_DTPStensorflowPSlitePSexamplesPSlabel_imagePSlabel_imageDTcc mht_5(mht_5_v, 348, "", "./tensorflow/lite/examples/label_image/label_image.cc", "ReadLabelsFile");
+
   std::ifstream file(file_name);
   if (!file) {
     LOG(ERROR) << "Labels file " << file_name << " not found";
@@ -181,6 +369,9 @@ TfLiteStatus ReadLabelsFile(const string& file_name,
 void PrintProfilingInfo(const profiling::ProfileEvent* e,
                         uint32_t subgraph_index, uint32_t op_index,
                         TfLiteRegistration registration) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSexamplesPSlabel_imagePSlabel_imageDTcc mht_6(mht_6_v, 372, "", "./tensorflow/lite/examples/label_image/label_image.cc", "PrintProfilingInfo");
+
   // output something like
   // time (ms) , Node xxx, OpCode xxx, symbolic name
   //      5.352, Node   5, OpCode   4, DEPTHWISE_CONV_2D
@@ -197,6 +388,9 @@ void PrintProfilingInfo(const profiling::ProfileEvent* e,
 
 void RunInference(Settings* settings,
                   const DelegateProviders& delegate_providers) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSexamplesPSlabel_imagePSlabel_imageDTcc mht_7(mht_7_v, 391, "", "./tensorflow/lite/examples/label_image/label_image.cc", "RunInference");
+
   if (!settings->model_name.c_str()) {
     LOG(ERROR) << "no model file name";
     exit(-1);
@@ -400,6 +594,9 @@ void RunInference(Settings* settings,
 }
 
 void display_usage(const DelegateProviders& delegate_providers) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSexamplesPSlabel_imagePSlabel_imageDTcc mht_8(mht_8_v, 597, "", "./tensorflow/lite/examples/label_image/label_image.cc", "display_usage");
+
   LOG(INFO)
       << "\n"
       << delegate_providers.GetHelpMessage("label_image")
@@ -424,6 +621,9 @@ void display_usage(const DelegateProviders& delegate_providers) {
 }
 
 int Main(int argc, char** argv) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSexamplesPSlabel_imagePSlabel_imageDTcc mht_9(mht_9_v, 624, "", "./tensorflow/lite/examples/label_image/label_image.cc", "Main");
+
   DelegateProviders delegate_providers;
   bool parse_result = delegate_providers.InitFromCmdlineArgs(
       &argc, const_cast<const char**>(argv));
@@ -547,5 +747,8 @@ int Main(int argc, char** argv) {
 }  // namespace tflite
 
 int main(int argc, char** argv) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSexamplesPSlabel_imagePSlabel_imageDTcc mht_10(mht_10_v, 750, "", "./tensorflow/lite/examples/label_image/label_image.cc", "main");
+
   return tflite::label_image::Main(argc, argv);
 }

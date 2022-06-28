@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_KERNELS_GPU_UTILS_H_
 #define TENSORFLOW_CORE_KERNELS_GPU_UTILS_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSgpu_utilsDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSgpu_utilsDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSgpu_utilsDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
@@ -91,6 +259,9 @@ class AutotuneMap {
 
  public:
   bool Find(const Parameters& params, Config* config) const {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSgpu_utilsDTh mht_0(mht_0_v, 262, "", "./tensorflow/core/kernels/gpu_utils.h", "Find");
+
     mutex_lock lock(mu_);
     auto iter = params_config_map_.find(params);
     if (iter == params_config_map_.end() ||
@@ -102,6 +273,9 @@ class AutotuneMap {
     return true;
   }
   void Insert(const Parameters& params, const Config& config) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSgpu_utilsDTh mht_1(mht_1_v, 276, "", "./tensorflow/core/kernels/gpu_utils.h", "Insert");
+
     mutex_lock lock(mu_);
     auto iter = params_config_map_.find(params);
     int new_score = 0;
@@ -167,6 +341,9 @@ class AutotuneMap {
 
   // Only for testing
   void ClearMap() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSgpu_utilsDTh mht_2(mht_2_v, 344, "", "./tensorflow/core/kernels/gpu_utils.h", "ClearMap");
+
     mutex_lock lock(mu_);
     params_config_map_.clear();
   }
@@ -179,6 +356,10 @@ class AutotuneMap {
     int32 count;
   };
   AutotuneMap(const std::string& name) : name_(name) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSgpu_utilsDTh mht_3(mht_3_v, 360, "", "./tensorflow/core/kernels/gpu_utils.h", "AutotuneMap");
+
     min_score_threshold_ = 1;
     int min_warmup_iterations = 10;
     const char* threshold_str = getenv("TF_AUTOTUNE_THRESHOLD");
@@ -203,6 +384,9 @@ class AutotuneMap {
 
   std::string GetActionSummary(StringPiece action, const Parameters& params,
                                const Config& config) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSgpu_utilsDTh mht_4(mht_4_v, 387, "", "./tensorflow/core/kernels/gpu_utils.h", "GetActionSummary");
+
     return strings::Printf("autotune_map %s %s: %s -> (%s)", name_.c_str(),
                            string(action).c_str(), params.ToString().c_str(),
                            config.ToString().c_str());
@@ -230,6 +414,9 @@ class AutotuneSingleton {
  public:
   typedef AutotuneMap<Parameters, Config> AutotuneType;
   static AutotuneType* GetInstance() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSgpu_utilsDTh mht_5(mht_5_v, 417, "", "./tensorflow/core/kernels/gpu_utils.h", "GetInstance");
+
     static AutotuneType* instance = new AutotuneType(Group::name());
     return instance;
   }
@@ -268,16 +455,25 @@ void LogFusedConvForwardAutotuneResults(
 template <typename Op>
 class AutotuneEntry {
  public:
-  AutotuneEntry() : is_algorithm_config_(true) {}
+  AutotuneEntry() : is_algorithm_config_(true) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSgpu_utilsDTh mht_6(mht_6_v, 459, "", "./tensorflow/core/kernels/gpu_utils.h", "AutotuneEntry");
+}
 
   // Initialize with legacy-API AlgorithmConfig; used for the ROCm backend only.
   explicit AutotuneEntry(se::dnn::AlgorithmConfig config)
-      : is_algorithm_config_(true), algorithm_config_(std::move(config)) {}
+      : is_algorithm_config_(true), algorithm_config_(std::move(config)) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSgpu_utilsDTh mht_7(mht_7_v, 466, "", "./tensorflow/core/kernels/gpu_utils.h", "AutotuneEntry");
+}
 
   AutotuneEntry(std::shared_ptr<se::dnn::LazyOpRunner<Op>> primary,
                 std::shared_ptr<se::dnn::LazyOpRunner<Op>> no_scratch_fallback)
       : is_algorithm_config_(false),
-        op_runners_{std::move(primary), std::move(no_scratch_fallback)} {}
+        op_runners_{std::move(primary), std::move(no_scratch_fallback)} {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSgpu_utilsDTh mht_8(mht_8_v, 474, "", "./tensorflow/core/kernels/gpu_utils.h", "AutotuneEntry");
+}
 
   // Initialize from config data, without pre-cached runners, such as when
   // loading AoT autotuning maps.
@@ -287,7 +483,10 @@ class AutotuneEntry {
                       no_scratch_fallback
                           ? std::make_shared<se::dnn::LazyOpRunner<Op>>(
                                 *no_scratch_fallback)
-                          : nullptr) {}
+                          : nullptr) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSgpu_utilsDTh mht_9(mht_9_v, 487, "", "./tensorflow/core/kernels/gpu_utils.h", "AutotuneEntry");
+}
 
   // Initialize with pre-cached OpRunners, such as during autotuning.
   static StatusOr<AutotuneEntry> FromOpRunners(
@@ -315,7 +514,10 @@ class AutotuneEntry {
     OpRunners(std::shared_ptr<se::dnn::LazyOpRunner<Op>> primary_,
               std::shared_ptr<se::dnn::LazyOpRunner<Op>> no_scratch_fallback_)
         : primary(std::move(primary_)),
-          no_scratch_fallback(std::move(no_scratch_fallback_)) {}
+          no_scratch_fallback(std::move(no_scratch_fallback_)) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSgpu_utilsDTh mht_10(mht_10_v, 518, "", "./tensorflow/core/kernels/gpu_utils.h", "OpRunners");
+}
 
     // Null iff this 'OpRunners' is default-constructed as part of the
     // fake-variant in AutotuneEntry; users outside gpu_utils.h itself should
@@ -331,14 +533,23 @@ class AutotuneEntry {
     }
   };
 
-  bool is_algorithm_config() const { return is_algorithm_config_; }
+  bool is_algorithm_config() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSgpu_utilsDTh mht_11(mht_11_v, 537, "", "./tensorflow/core/kernels/gpu_utils.h", "is_algorithm_config");
+ return is_algorithm_config_; }
 
   const se::dnn::AlgorithmConfig& GetAlgorithmConfig() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSgpu_utilsDTh mht_12(mht_12_v, 542, "", "./tensorflow/core/kernels/gpu_utils.h", "GetAlgorithmConfig");
+
     DCHECK(is_algorithm_config_);
     return algorithm_config_;
   }
 
   const OpRunners& GetOpRunners() const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSgpu_utilsDTh mht_13(mht_13_v, 550, "", "./tensorflow/core/kernels/gpu_utils.h", "GetOpRunners");
+
     DCHECK(!is_algorithm_config_);
     return op_runners_;
   }
@@ -360,6 +571,9 @@ class AutotuneEntry {
   }
 
   std::string ToString() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSgpu_utilsDTh mht_14(mht_14_v, 574, "", "./tensorflow/core/kernels/gpu_utils.h", "ToString");
+
     if (is_algorithm_config_) {
       return algorithm_config_.ToString();
     }

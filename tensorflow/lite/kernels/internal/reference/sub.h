@@ -14,6 +14,174 @@ limitations under the License.
 ==============================================================================*/
 #ifndef TENSORFLOW_LITE_KERNELS_INTERNAL_REFERENCE_SUB_H_
 #define TENSORFLOW_LITE_KERNELS_INTERNAL_REFERENCE_SUB_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSsubDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSsubDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSsubDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <stdint.h>
 
@@ -36,6 +204,9 @@ inline void SubNonBroadcast(const ArithmeticParams& params,
                             const float* input2_data,
                             const RuntimeShape& output_shape,
                             float* output_data) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSsubDTh mht_0(mht_0_v, 207, "", "./tensorflow/lite/kernels/internal/reference/sub.h", "SubNonBroadcast");
+
   const int flat_size =
       MatchingElementsSize(input1_shape, input2_shape, output_shape);
   for (int i = 0; i < flat_size; ++i) {
@@ -52,6 +223,9 @@ inline void SubNonBroadcast(const ArithmeticParams& params,
                             const int32_t* input2_data,
                             const RuntimeShape& output_shape,
                             int32_t* output_data) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSsubDTh mht_1(mht_1_v, 226, "", "./tensorflow/lite/kernels/internal/reference/sub.h", "SubNonBroadcast");
+
   const int flat_size =
       MatchingElementsSize(input1_shape, input2_shape, output_shape);
   for (int i = 0; i < flat_size; ++i) {
@@ -96,6 +270,9 @@ inline void BroadcastSubSlow(const ArithmeticParams& params,
   // nesting loops such that the innermost loop has the smallest stride for the
   // best cache behavior.
   auto sub_func = [&](int indexes[N]) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSsubDTh mht_2(mht_2_v, 273, "", "./tensorflow/lite/kernels/internal/reference/sub.h", "lambda");
+
     output_data[SubscriptToIndex(output_desc, indexes)] =
         ActivationFunctionWithMinMax(
             input1_data[SubscriptToIndex(desc1, indexes)] -
@@ -136,6 +313,9 @@ inline void BroadcastSubSlow(const ArithmeticParams& params,
   // nesting loops such that the innermost loop has the smallest stride for the
   // best cache behavior.
   auto sub_func = [&](int indexes[N]) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSsubDTh mht_3(mht_3_v, 316, "", "./tensorflow/lite/kernels/internal/reference/sub.h", "lambda");
+
     output_data[SubscriptToIndex(output_desc, indexes)] =
         ActivationFunctionWithMinMax(
             input1_data[SubscriptToIndex(desc1, indexes)] -
@@ -175,6 +355,9 @@ void BroadcastSubSlow(const ArithmeticParams& params,
   // nesting loops such that the innermost loop has the smallest stride for the
   // best cache behavior.
   auto sub_func = [&](int indexes[N]) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSsubDTh mht_4(mht_4_v, 358, "", "./tensorflow/lite/kernels/internal/reference/sub.h", "lambda");
+
     output_data[SubscriptToIndex(output_desc, indexes)] =
         ActivationFunctionWithMinMax(
             input1_data[SubscriptToIndex(desc1, indexes)] -
@@ -212,6 +395,9 @@ void BroadcastSubSlow(const ArithmeticParams& params,
   // nesting loops such that the innermost loop has the smallest stride for the
   // best cache behavior.
   auto sub_func = [&](int indexes[N]) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSsubDTh mht_5(mht_5_v, 398, "", "./tensorflow/lite/kernels/internal/reference/sub.h", "lambda");
+
     output_data[SubscriptToIndex(output_desc, indexes)] =
         ActivationFunctionWithMinMax(
             input1_data[SubscriptToIndex(desc1, indexes)] -
@@ -249,6 +435,9 @@ inline void BroadcastSub16POTSlow(const ArithmeticParams& params,
   // nesting loops such that the innermost loop has the smallest stride for the
   // best cache behavior.
   auto sub_func = [&](int indexes[N]) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSsubDTh mht_6(mht_6_v, 438, "", "./tensorflow/lite/kernels/internal/reference/sub.h", "lambda");
+
     const int32_t input1_val = input1_data[SubscriptToIndex(desc1, indexes)];
     const int32_t input2_val = input2_data[SubscriptToIndex(desc2, indexes)];
     const int32_t scaled_input1_val =
@@ -295,6 +484,9 @@ void BroadcastQuantSubSlow(const ArithmeticParams& params,
   // nesting loops such that the innermost loop has the smallest stride for the
   // best cache behavior.
   auto sub_func = [&](int indexes[N]) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSsubDTh mht_7(mht_7_v, 487, "", "./tensorflow/lite/kernels/internal/reference/sub.h", "lambda");
+
     const int32_t input1_val =
         params.input1_offset + input1_data[SubscriptToIndex(desc1, indexes)];
     const int32_t input2_val =
@@ -327,6 +519,9 @@ template <typename T>
 inline void SubElementwise(int size, const ArithmeticParams& params,
                            const T* input1_data, const T* input2_data,
                            T* output_data) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSsubDTh mht_8(mht_8_v, 522, "", "./tensorflow/lite/kernels/internal/reference/sub.h", "SubElementwise");
+
   for (int i = 0; i < size; ++i) {
     const int32_t input1_val = params.input1_offset + input1_data[i];
     const int32_t input2_val = params.input2_offset + input2_data[i];
@@ -354,6 +549,9 @@ inline void Sub(const ArithmeticParams& params,
                 const RuntimeShape& input1_shape, const uint8_t* input1_data,
                 const RuntimeShape& input2_shape, const uint8_t* input2_data,
                 const RuntimeShape& output_shape, uint8_t* output_data) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSsubDTh mht_9(mht_9_v, 552, "", "./tensorflow/lite/kernels/internal/reference/sub.h", "Sub");
+
   TFLITE_DCHECK_LE(params.quantized_activation_min,
                    params.quantized_activation_max);
   const int flat_size =
@@ -370,6 +568,9 @@ inline void Sub(const ArithmeticParams& params,
                 const RuntimeShape& input1_shape, const int8_t* input1_data,
                 const RuntimeShape& input2_shape, const int8_t* input2_data,
                 const RuntimeShape& output_shape, int8_t* output_data) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSsubDTh mht_10(mht_10_v, 571, "", "./tensorflow/lite/kernels/internal/reference/sub.h", "Sub");
+
   TFLITE_DCHECK_LE(params.quantized_activation_min,
                    params.quantized_activation_max);
 
@@ -389,6 +590,9 @@ inline void Sub(const ArithmeticParams& params,
                 const RuntimeShape& input1_shape, const int16_t* input1_data,
                 const RuntimeShape& input2_shape, const int16_t* input2_data,
                 const RuntimeShape& output_shape, int16_t* output_data) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSsubDTh mht_11(mht_11_v, 593, "", "./tensorflow/lite/kernels/internal/reference/sub.h", "Sub");
+
   TFLITE_DCHECK_LE(params.quantized_activation_min,
                    params.quantized_activation_max);
 
@@ -405,6 +609,9 @@ void Sub(const ArithmeticParams& params, const RuntimeShape& input1_shape,
          const T* input1_data, const RuntimeShape& input2_shape,
          const T* input2_data, const RuntimeShape& output_shape,
          T* output_data) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSsubDTh mht_12(mht_12_v, 612, "", "./tensorflow/lite/kernels/internal/reference/sub.h", "Sub");
+
   NdArrayDesc<4> desc1;
   NdArrayDesc<4> desc2;
   NdArrayDescsForElementwiseBroadcast(input1_shape, input2_shape, &desc1,
@@ -439,12 +646,18 @@ void Sub(const ArithmeticParams& params, const RuntimeShape& input1_shape,
 inline void SetActivationMinMax(const ArithmeticParams& params,
                                 int32_t* activation_min,
                                 int32_t* activation_max) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSsubDTh mht_13(mht_13_v, 649, "", "./tensorflow/lite/kernels/internal/reference/sub.h", "SetActivationMinMax");
+
   *activation_min = params.quantized_activation_min;
   *activation_max = params.quantized_activation_max;
 }
 
 inline void SetActivationMinMax(const ArithmeticParams& params,
                                 float* activation_min, float* activation_max) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSsubDTh mht_14(mht_14_v, 658, "", "./tensorflow/lite/kernels/internal/reference/sub.h", "SetActivationMinMax");
+
   *activation_min = params.float_activation_min;
   *activation_max = params.float_activation_max;
 }
@@ -452,6 +665,9 @@ inline void SetActivationMinMax(const ArithmeticParams& params,
 inline void SetActivationMinMax(const ArithmeticParams& params,
                                 int64_t* activation_min,
                                 int64_t* activation_max) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSsubDTh mht_15(mht_15_v, 668, "", "./tensorflow/lite/kernels/internal/reference/sub.h", "SetActivationMinMax");
+
   *activation_min = params.int64_activation_min;
   *activation_max = params.int64_activation_max;
 }
@@ -461,6 +677,9 @@ inline void SubWithActivation(
     const ArithmeticParams& params, const RuntimeShape& input1_shape,
     const T* input1_data, const RuntimeShape& input2_shape,
     const T* input2_data, const RuntimeShape& output_shape, T* output_data) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSsubDTh mht_16(mht_16_v, 680, "", "./tensorflow/lite/kernels/internal/reference/sub.h", "SubWithActivation");
+
   ruy::profiler::ScopeLabel label("SubWithActivation");
   const int flat_size =
       MatchingElementsSize(input1_shape, input2_shape, output_shape);

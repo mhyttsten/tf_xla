@@ -14,6 +14,174 @@ limitations under the License.
 ==============================================================================*/
 #ifndef TENSORFLOW_CORE_PLATFORM_STATUS_MATCHERS_H_
 #define TENSORFLOW_CORE_PLATFORM_STATUS_MATCHERS_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSplatformPSstatus_matchersDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSplatformPSstatus_matchersDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSplatformPSstatus_matchersDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <ostream>
 #include <string>
@@ -102,6 +270,9 @@ namespace tensorflow {
 
 template <typename T>
 void PrintTo(const StatusOr<T>& status_or, std::ostream* os) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSstatus_matchersDTh mht_0(mht_0_v, 273, "", "./tensorflow/core/platform/status_matchers.h", "PrintTo");
+
   *os << ::testing::PrintToString(status_or.status());
   if (status_or.ok()) {
     *os << ": " << ::testing::PrintToString(status_or.ValueOrDie());
@@ -110,6 +281,9 @@ void PrintTo(const StatusOr<T>& status_or, std::ostream* os) {
 
 namespace error {
 inline void PrintTo(const tensorflow::error::Code code, std::ostream* os) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSstatus_matchersDTh mht_1(mht_1_v, 284, "", "./tensorflow/core/platform/status_matchers.h", "PrintTo");
+
   *os << Code_Name(code);
 }
 }  // namespace error
@@ -117,10 +291,16 @@ inline void PrintTo(const tensorflow::error::Code code, std::ostream* os) {
 namespace testing {
 namespace internal_status {
 
-inline const Status& GetStatus(const Status& status) { return status; }
+inline const Status& GetStatus(const Status& status) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSstatus_matchersDTh mht_2(mht_2_v, 295, "", "./tensorflow/core/platform/status_matchers.h", "GetStatus");
+ return status; }
 
 template <typename T>
 inline const Status& GetStatus(const StatusOr<T>& status) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSstatus_matchersDTh mht_3(mht_3_v, 301, "", "./tensorflow/core/platform/status_matchers.h", "GetStatus");
+
   return status.status();
 }
 
@@ -139,14 +319,23 @@ class IsOkAndHoldsMatcherImpl
   template <typename InnerMatcher>
   explicit IsOkAndHoldsMatcherImpl(InnerMatcher&& inner_matcher)
       : inner_matcher_(::testing::SafeMatcherCast<const value_type&>(
-            std::forward<InnerMatcher>(inner_matcher))) {}
+            std::forward<InnerMatcher>(inner_matcher))) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSstatus_matchersDTh mht_4(mht_4_v, 323, "", "./tensorflow/core/platform/status_matchers.h", "IsOkAndHoldsMatcherImpl");
+}
 
   void DescribeTo(std::ostream* os) const override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSstatus_matchersDTh mht_5(mht_5_v, 328, "", "./tensorflow/core/platform/status_matchers.h", "DescribeTo");
+
     *os << "is OK and has a value that ";
     inner_matcher_.DescribeTo(os);
   }
 
   void DescribeNegationTo(std::ostream* os) const override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSstatus_matchersDTh mht_6(mht_6_v, 336, "", "./tensorflow/core/platform/status_matchers.h", "DescribeNegationTo");
+
     *os << "isn't OK or has a value that ";
     inner_matcher_.DescribeNegationTo(os);
   }
@@ -154,6 +343,9 @@ class IsOkAndHoldsMatcherImpl
   bool MatchAndExplain(
       StatusOrType actual_value,
       ::testing::MatchResultListener* result_listener) const override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSstatus_matchersDTh mht_7(mht_7_v, 346, "", "./tensorflow/core/platform/status_matchers.h", "MatchAndExplain");
+
     if (!actual_value.ok()) {
       *result_listener << "which has status " << actual_value.status();
       return false;
@@ -180,12 +372,18 @@ template <typename InnerMatcher>
 class IsOkAndHoldsMatcher {
  public:
   explicit IsOkAndHoldsMatcher(InnerMatcher inner_matcher)
-      : inner_matcher_(std::move(inner_matcher)) {}
+      : inner_matcher_(std::move(inner_matcher)) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSstatus_matchersDTh mht_8(mht_8_v, 376, "", "./tensorflow/core/platform/status_matchers.h", "IsOkAndHoldsMatcher");
+}
 
   // Converts this polymorphic matcher to a monomorphic matcher of the given
   // type. StatusOrType can be either StatusOr<T> or a reference to StatusOr<T>.
   template <typename StatusOrType>
-  operator ::testing::Matcher<StatusOrType>() const {  // NOLINT
+  operator ::testing::Matcher<StatusOrType>() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSstatus_matchersDTh mht_9(mht_9_v, 384, "", "./tensorflow/core/platform/status_matchers.h", "::testing::Matcher<StatusOrType>");
+  // NOLINT
     return ::testing::Matcher<StatusOrType>(
         new IsOkAndHoldsMatcherImpl<const StatusOrType&>(inner_matcher_));
   }
@@ -207,7 +405,10 @@ class StatusIsMatcherCommonImpl {
       ::testing::Matcher<const tensorflow::error::Code> code_matcher,
       ::testing::Matcher<const std::string&> message_matcher)
       : code_matcher_(std::move(code_matcher)),
-        message_matcher_(std::move(message_matcher)) {}
+        message_matcher_(std::move(message_matcher)) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSstatus_matchersDTh mht_10(mht_10_v, 409, "", "./tensorflow/core/platform/status_matchers.h", "StatusIsMatcherCommonImpl");
+}
 
   void DescribeTo(std::ostream* os) const;
 
@@ -227,19 +428,31 @@ template <typename T>
 class MonoStatusIsMatcherImpl : public ::testing::MatcherInterface<T> {
  public:
   explicit MonoStatusIsMatcherImpl(StatusIsMatcherCommonImpl common_impl)
-      : common_impl_(std::move(common_impl)) {}
+      : common_impl_(std::move(common_impl)) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSstatus_matchersDTh mht_11(mht_11_v, 432, "", "./tensorflow/core/platform/status_matchers.h", "MonoStatusIsMatcherImpl");
+}
 
   void DescribeTo(std::ostream* os) const override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSstatus_matchersDTh mht_12(mht_12_v, 437, "", "./tensorflow/core/platform/status_matchers.h", "DescribeTo");
+
     common_impl_.DescribeTo(os);
   }
 
   void DescribeNegationTo(std::ostream* os) const override {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSstatus_matchersDTh mht_13(mht_13_v, 444, "", "./tensorflow/core/platform/status_matchers.h", "DescribeNegationTo");
+
     common_impl_.DescribeNegationTo(os);
   }
 
   bool MatchAndExplain(
       T actual_value,
       ::testing::MatchResultListener* result_listener) const override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSstatus_matchersDTh mht_14(mht_14_v, 453, "", "./tensorflow/core/platform/status_matchers.h", "MatchAndExplain");
+
     return common_impl_.MatchAndExplain(GetStatus(actual_value),
                                         result_listener);
   }
@@ -256,12 +469,18 @@ class StatusIsMatcher {
       ::testing::Matcher<const std::string&> message_matcher)
       : common_impl_(
             ::testing::MatcherCast<const tensorflow::error::Code>(code_matcher),
-            ::testing::MatcherCast<const std::string&>(message_matcher)) {}
+            ::testing::MatcherCast<const std::string&>(message_matcher)) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSstatus_matchersDTh mht_15(mht_15_v, 473, "", "./tensorflow/core/platform/status_matchers.h", "StatusIsMatcher");
+}
 
   // Converts this polymorphic matcher to a monomorphic matcher of the given
   // type. T can be StatusOr<>, Status, or a reference to either of them.
   template <typename T>
-  operator ::testing::Matcher<T>() const {  // NOLINT
+  operator ::testing::Matcher<T>() const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSstatus_matchersDTh mht_16(mht_16_v, 481, "", "./tensorflow/core/platform/status_matchers.h", "::testing::Matcher<T>");
+  // NOLINT
     return ::testing::MakeMatcher(new MonoStatusIsMatcherImpl<T>(common_impl_));
   }
 
@@ -274,12 +493,21 @@ class StatusIsMatcher {
 template <typename T>
 class MonoIsOkMatcherImpl : public ::testing::MatcherInterface<T> {
  public:
-  void DescribeTo(std::ostream* os) const override { *os << "is OK"; }
+  void DescribeTo(std::ostream* os) const override {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSstatus_matchersDTh mht_17(mht_17_v, 497, "", "./tensorflow/core/platform/status_matchers.h", "DescribeTo");
+ *os << "is OK"; }
   void DescribeNegationTo(std::ostream* os) const override {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSstatus_matchersDTh mht_18(mht_18_v, 501, "", "./tensorflow/core/platform/status_matchers.h", "DescribeNegationTo");
+
     *os << "is not OK";
   }
   bool MatchAndExplain(T actual_value,
                        ::testing::MatchResultListener*) const override {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSstatus_matchersDTh mht_19(mht_19_v, 508, "", "./tensorflow/core/platform/status_matchers.h", "MatchAndExplain");
+
     return GetStatus(actual_value).ok();
   }
 };
@@ -288,7 +516,10 @@ class MonoIsOkMatcherImpl : public ::testing::MatcherInterface<T> {
 class IsOkMatcher {
  public:
   template <typename T>
-  operator ::testing::Matcher<T>() const {  // NOLINT
+  operator ::testing::Matcher<T>() const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSstatus_matchersDTh mht_20(mht_20_v, 520, "", "./tensorflow/core/platform/status_matchers.h", "::testing::Matcher<T>");
+  // NOLINT
     return ::testing::Matcher<T>(new MonoIsOkMatcherImpl<const T&>());
   }
 };
@@ -309,6 +540,9 @@ IsOkAndHolds(InnerMatcher&& inner_matcher) {
 template <typename CodeMatcher, typename MessageMatcher>
 internal_status::StatusIsMatcher StatusIs(CodeMatcher code_matcher,
                                           MessageMatcher message_matcher) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSstatus_matchersDTh mht_21(mht_21_v, 543, "", "./tensorflow/core/platform/status_matchers.h", "StatusIs");
+
   return internal_status::StatusIsMatcher(std::move(code_matcher),
                                           std::move(message_matcher));
 }
@@ -317,11 +551,17 @@ internal_status::StatusIsMatcher StatusIs(CodeMatcher code_matcher,
 // matches code_matcher.
 template <typename CodeMatcher>
 internal_status::StatusIsMatcher StatusIs(CodeMatcher code_matcher) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSstatus_matchersDTh mht_22(mht_22_v, 554, "", "./tensorflow/core/platform/status_matchers.h", "StatusIs");
+
   return StatusIs(std::move(code_matcher), ::testing::_);
 }
 
 // Returns a matcher that matches a Status or StatusOr<> which is OK.
 inline internal_status::IsOkMatcher IsOk() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSstatus_matchersDTh mht_23(mht_23_v, 562, "", "./tensorflow/core/platform/status_matchers.h", "IsOk");
+
   return internal_status::IsOkMatcher();
 }
 

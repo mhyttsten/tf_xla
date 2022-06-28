@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,6 +220,9 @@ namespace {
 // TODO(jlebar): Duplicating instructions when we have a variable called "may
 // duplicate" that's equal to false is not pretty.
 bool IsAlwaysDuplicable(const HloInstruction& instruction) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc mht_0(mht_0_v, 223, "", "./tensorflow/compiler/xla/service/instruction_fusion.cc", "IsAlwaysDuplicable");
+
   // We are always willing to duplicate a widening type-conversion instruction
   // if it means we can fuse the convert into a consumer.  This allows the
   // consumer to read less memory, which is almost always a performance win.
@@ -63,6 +234,9 @@ bool IsAlwaysDuplicable(const HloInstruction& instruction) {
 
 /*static*/ bool InstructionFusion::IsExpensive(
     const HloInstruction& instruction) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc mht_1(mht_1_v, 237, "", "./tensorflow/compiler/xla/service/instruction_fusion.cc", "InstructionFusion::IsExpensive");
+
   namespace m = match;
 
   switch (instruction.opcode()) {
@@ -211,6 +385,9 @@ bool IsAlwaysDuplicable(const HloInstruction& instruction) {
 // We use "has a smaller true rank than the output" as a heuristic
 // for "negligible" memory usage.
 bool InstructionFusion::EffectivelyAtMostUnary(HloInstruction* hlo) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc mht_2(mht_2_v, 388, "", "./tensorflow/compiler/xla/service/instruction_fusion.cc", "InstructionFusion::EffectivelyAtMostUnary");
+
   int64_t output_rank = 0;
   ShapeUtil::ForEachSubshape(
       hlo->shape(),
@@ -239,6 +416,9 @@ bool InstructionFusion::CanFuseOnAllPaths(
     const HloReachabilityMap& reachability,
     absl::flat_hash_map<std::pair<HloInstruction*, HloInstruction*>, bool>*
         result_cache) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc mht_3(mht_3_v, 419, "", "./tensorflow/compiler/xla/service/instruction_fusion.cc", "InstructionFusion::CanFuseOnAllPaths");
+
   if (consumer == producer) {
     return true;
   }
@@ -280,6 +460,9 @@ InstructionFusion::HloInstructionSet
 InstructionFusion::ComputeGloballyUnfusible(
     absl::Span<HloInstruction* const> post_order,
     const HloReachabilityMap& reachability) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc mht_4(mht_4_v, 463, "", "./tensorflow/compiler/xla/service/instruction_fusion.cc", "InstructionFusion::ComputeGloballyUnfusible");
+
   // Forbid fusion of producers that:
   // a) Need to be duplicated, unless they can be fused into all consumers
   //    via all paths.
@@ -308,6 +491,9 @@ InstructionFusion::ComputeGloballyUnfusible(
     // memory traffic. In that case, we do not forbid fusion of the operation
     // here.
     auto total_size = [](const Shape& shape) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc mht_5(mht_5_v, 494, "", "./tensorflow/compiler/xla/service/instruction_fusion.cc", "lambda");
+
       int64_t size = 0;
       ShapeUtil::ForEachSubshape(
           shape, [&size](const Shape& subshape, const ShapeIndex& shape_index) {
@@ -367,6 +553,9 @@ namespace {
 class ReversePostOrderFusionQueue : public FusionQueue {
  public:
   explicit ReversePostOrderFusionQueue(HloComputation* computation) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc mht_6(mht_6_v, 556, "", "./tensorflow/compiler/xla/service/instruction_fusion.cc", "ReversePostOrderFusionQueue");
+
     post_order_ = computation->MakeInstructionPostOrder();
 
     for (size_t i = 0; i < post_order_.size(); ++i) {
@@ -459,6 +648,9 @@ class ReversePostOrderFusionQueue : public FusionQueue {
   void OnFusingInstruction(HloInstruction* fusion,
                            HloInstruction* original_producer,
                            HloInstruction* original_consumer) override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc mht_7(mht_7_v, 651, "", "./tensorflow/compiler/xla/service/instruction_fusion.cc", "OnFusingInstruction");
+
     // Fusing an instruction into a fusion instruction can change the operand
     // set of the fusion instruction. For simplicity just re-enqueue the
     // instruction and reconsider it for further fusion in the next iteration.
@@ -467,11 +659,17 @@ class ReversePostOrderFusionQueue : public FusionQueue {
   }
 
   void RemoveInstruction(HloInstruction* instruction) override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc mht_8(mht_8_v, 662, "", "./tensorflow/compiler/xla/service/instruction_fusion.cc", "RemoveInstruction");
+
     post_order_[FindOrDie(post_order_index_, instruction)] = nullptr;
     post_order_index_.erase(instruction);
   }
 
   const std::vector<bool>* FusionConfiguration() override {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc mht_9(mht_9_v, 670, "", "./tensorflow/compiler/xla/service/instruction_fusion.cc", "FusionConfiguration");
+
     return &fusion_config_;
   }
 
@@ -485,16 +683,25 @@ class ReversePostOrderFusionQueue : public FusionQueue {
 
 std::vector<HloComputation*> InstructionFusion::GetFusionComputations(
     HloModule* module) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc mht_10(mht_10_v, 686, "", "./tensorflow/compiler/xla/service/instruction_fusion.cc", "InstructionFusion::GetFusionComputations");
+
   // Use sorted computations because fusion configuration is order-sensitive.
   return module->MakeNonfusionComputationsSorted();
 }
 
 std::unique_ptr<FusionQueue> InstructionFusion::GetFusionQueue(
     HloComputation* computation) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc mht_11(mht_11_v, 695, "", "./tensorflow/compiler/xla/service/instruction_fusion.cc", "InstructionFusion::GetFusionQueue");
+
   return absl::make_unique<ReversePostOrderFusionQueue>(computation);
 }
 
 StatusOr<bool> InstructionFusion::Run(HloModule* module) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc mht_12(mht_12_v, 702, "", "./tensorflow/compiler/xla/service/instruction_fusion.cc", "InstructionFusion::Run");
+
   bool changed = false;
   int64_t fuse_count = 0;
   std::vector<std::vector<bool>>* fusion_config = nullptr;
@@ -704,6 +911,9 @@ StatusOr<bool> InstructionFusion::Run(HloModule* module) {
 HloInstruction* InstructionFusion::AddFusionInstruction(
     HloInstruction* producer, HloInstruction* consumer,
     HloComputation* computation) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc mht_13(mht_13_v, 914, "", "./tensorflow/compiler/xla/service/instruction_fusion.cc", "InstructionFusion::AddFusionInstruction");
+
   HloInstruction* fusion_instruction;
   auto kind = ChooseKind(producer, consumer);
   if (consumer->opcode() == HloOpcode::kFusion) {
@@ -721,11 +931,17 @@ HloInstruction* InstructionFusion::AddFusionInstruction(
 
 HloInstruction* InstructionFusion::FuseInstruction(
     HloInstruction* fusion_instruction, HloInstruction* producer) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc mht_14(mht_14_v, 934, "", "./tensorflow/compiler/xla/service/instruction_fusion.cc", "InstructionFusion::FuseInstruction");
+
   return fusion_instruction->FuseInstruction(producer);
 }
 
 void InstructionFusion::UpdateReusedOperandsForFusion(
     HloInstruction* producer, HloInstruction* fusion_instruction) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc mht_15(mht_15_v, 942, "", "./tensorflow/compiler/xla/service/instruction_fusion.cc", "InstructionFusion::UpdateReusedOperandsForFusion");
+
   // Find or compute the existing fusion reused operands. Note these reflect the
   // state *before* the current fusion has taken place, although if we have
   // replaced the consumer with a new single-element fusion, we will compute
@@ -749,6 +965,9 @@ void InstructionFusion::UpdateReusedOperandsForFusion(
 HloInstruction* InstructionFusion::Fuse(HloInstruction* producer,
                                         HloInstruction* consumer,
                                         HloComputation* computation) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc mht_16(mht_16_v, 968, "", "./tensorflow/compiler/xla/service/instruction_fusion.cc", "InstructionFusion::Fuse");
+
   VLOG(2) << "Fusing " << producer->ToString() << " into "
           << consumer->ToString();
   HloInstruction* fusion_instruction =
@@ -764,6 +983,9 @@ HloInstruction* InstructionFusion::Fuse(HloInstruction* producer,
 HloInstruction* InstructionFusion::FuseIntoMultiOutput(
     HloInstruction* producer, HloInstruction* consumer,
     HloComputation* computation) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc mht_17(mht_17_v, 986, "", "./tensorflow/compiler/xla/service/instruction_fusion.cc", "InstructionFusion::FuseIntoMultiOutput");
+
   VLOG(2) << "Multi-output fusing " << producer->ToString() << " into "
           << consumer->ToString();
   HloInstruction* fusion_instruction =
@@ -776,6 +998,9 @@ HloInstruction* InstructionFusion::FuseIntoMultiOutput(
 bool InstructionFusion::MultiOutputFusionCreatesCycle(
     HloInstruction* producer, HloInstruction* consumer,
     const HloReachabilityMap& reachability) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc mht_18(mht_18_v, 1001, "", "./tensorflow/compiler/xla/service/instruction_fusion.cc", "InstructionFusion::MultiOutputFusionCreatesCycle");
+
   absl::flat_hash_set<int> operands;
   for (const HloInstruction* operand : consumer->operands()) {
     if (operand == producer) {
@@ -820,6 +1045,9 @@ namespace {
 const HloInstruction* ExtractInstruction(
     const HloInstruction* hlo,
     const std::function<bool(const HloInstruction*)>& filter) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc mht_19(mht_19_v, 1048, "", "./tensorflow/compiler/xla/service/instruction_fusion.cc", "ExtractInstruction");
+
   if (filter(hlo)) {
     return hlo;
   }
@@ -842,6 +1070,9 @@ const HloInstruction* ExtractInstruction(
 
 const HloInstruction* ExtractInstruction(const HloInstruction* hlo,
                                          HloOpcode opcode) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc mht_20(mht_20_v, 1073, "", "./tensorflow/compiler/xla/service/instruction_fusion.cc", "ExtractInstruction");
+
   return ExtractInstruction(hlo, [opcode](const HloInstruction* inst) {
     return inst->opcode() == opcode;
   });
@@ -851,6 +1082,9 @@ const HloInstruction* ExtractInstruction(const HloInstruction* hlo,
 
 /*static*/ FusionDecision InstructionFusion::ShouldFuseInPlaceOp(
     const HloInstruction* producer, const HloInstruction* consumer) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc mht_21(mht_21_v, 1085, "", "./tensorflow/compiler/xla/service/instruction_fusion.cc", "InstructionFusion::ShouldFuseInPlaceOp");
+
   // Don't fuse if the producer is a non-elementwise op that has the same
   // operand as an in-place operand of the consumer. The consumer will modify
   // the buffer in-place, which will cause producer's operand to change if we
@@ -871,6 +1105,9 @@ const HloInstruction* ExtractInstruction(const HloInstruction* hlo,
                  "an in-place consumer";
       auto get_real_operand = [](const HloInstruction* op,
                                  const HloInstruction* operand) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc mht_22(mht_22_v, 1108, "", "./tensorflow/compiler/xla/service/instruction_fusion.cc", "lambda");
+
         if (op->opcode() == HloOpcode::kFusion &&
             operand->opcode() == HloOpcode::kParameter) {
           return op->operand(operand->parameter_number());
@@ -937,6 +1174,9 @@ const HloInstruction* ExtractInstruction(const HloInstruction* hlo,
 
 FusionDecision InstructionFusion::ShouldFuse(HloInstruction* consumer,
                                              int64_t operand_index) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc mht_23(mht_23_v, 1177, "", "./tensorflow/compiler/xla/service/instruction_fusion.cc", "InstructionFusion::ShouldFuse");
+
   HloInstruction* producer = consumer->mutable_operand(operand_index);
 
   // Don't fuse across a root instruction.
@@ -961,11 +1201,17 @@ FusionDecision InstructionFusion::ShouldFuse(HloInstruction* consumer,
 
 HloInstruction::FusionKind InstructionFusion::ChooseKind(
     const HloInstruction* producer, const HloInstruction* consumer) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc mht_24(mht_24_v, 1204, "", "./tensorflow/compiler/xla/service/instruction_fusion.cc", "InstructionFusion::ChooseKind");
+
   return HloInstruction::FusionKind::kLoop;
 }
 
 absl::flat_hash_set<const HloInstruction*>& InstructionFusion::ReusedOperandsOf(
     const HloInstruction* instruction) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc mht_25(mht_25_v, 1212, "", "./tensorflow/compiler/xla/service/instruction_fusion.cc", "InstructionFusion::ReusedOperandsOf");
+
   std::unique_ptr<absl::flat_hash_set<const HloInstruction*>>& reused_operands =
       reused_fusion_operands_[instruction];
   if (reused_operands != nullptr) {
@@ -987,6 +1233,9 @@ absl::flat_hash_set<const HloInstruction*>& InstructionFusion::ReusedOperandsOf(
 
 bool InstructionFusion::ReusesOperandElements(const HloInstruction* consumer,
                                               int64_t operand_index) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSinstruction_fusionDTcc mht_26(mht_26_v, 1236, "", "./tensorflow/compiler/xla/service/instruction_fusion.cc", "InstructionFusion::ReusesOperandElements");
+
   auto operand = consumer->operand(operand_index);
   return ReusedOperandsOf(consumer).contains(operand);
 }

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,6 +210,9 @@ namespace {
 // Assumes tensor_index is a valid index (in bounds)
 inline TfLiteTensor* GetTensorAtIndex(const TfLiteContext* context,
                                       int tensor_index) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc mht_0(mht_0_v, 213, "", "./tensorflow/lite/kernels/kernel_util.cc", "GetTensorAtIndex");
+
   if (context->tensors != nullptr) {
     return &context->tensors[tensor_index];
   } else {
@@ -54,6 +225,9 @@ inline TfLiteStatus ValidateTensorIndexingSafe(const TfLiteContext* context,
                                                int index, int max_size,
                                                const int* tensor_indices,
                                                int* tensor_index) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc mht_1(mht_1_v, 228, "", "./tensorflow/lite/kernels/kernel_util.cc", "ValidateTensorIndexingSafe");
+
   if (index < 0 || index >= max_size) {
     TF_LITE_KERNEL_LOG(const_cast<TfLiteContext*>(context),
                        "Invalid tensor index %d (not in [0, %d))\n", index,
@@ -75,6 +249,9 @@ inline TfLiteStatus ValidateTensorIndexingSafe(const TfLiteContext* context,
 // error.
 inline int ValidateTensorIndexing(const TfLiteContext* context, int index,
                                   int max_size, const int* tensor_indices) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc mht_2(mht_2_v, 252, "", "./tensorflow/lite/kernels/kernel_util.cc", "ValidateTensorIndexing");
+
   if (index >= 0 && index < max_size) {
     const int tensor_index = tensor_indices[index];
     if (tensor_index != kTfLiteOptionalTensor) {
@@ -86,6 +263,9 @@ inline int ValidateTensorIndexing(const TfLiteContext* context, int index,
 
 inline TfLiteTensor* GetMutableInput(const TfLiteContext* context,
                                      const TfLiteNode* node, int index) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc mht_3(mht_3_v, 266, "", "./tensorflow/lite/kernels/kernel_util.cc", "GetMutableInput");
+
   const int tensor_index = ValidateTensorIndexing(
       context, index, node->inputs->size, node->inputs->data);
   if (tensor_index < 0) {
@@ -97,6 +277,9 @@ inline TfLiteTensor* GetMutableInput(const TfLiteContext* context,
 inline TfLiteStatus GetMutableInputSafe(const TfLiteContext* context,
                                         const TfLiteNode* node, int index,
                                         const TfLiteTensor** tensor) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc mht_4(mht_4_v, 280, "", "./tensorflow/lite/kernels/kernel_util.cc", "GetMutableInputSafe");
+
   int tensor_index;
   TF_LITE_ENSURE_OK(
       context, ValidateTensorIndexingSafe(context, index, node->inputs->size,
@@ -109,16 +292,25 @@ inline TfLiteStatus GetMutableInputSafe(const TfLiteContext* context,
 
 const TfLiteTensor* GetInput(const TfLiteContext* context,
                              const TfLiteNode* node, int index) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc mht_5(mht_5_v, 295, "", "./tensorflow/lite/kernels/kernel_util.cc", "GetInput");
+
   return GetMutableInput(context, node, index);
 }
 
 TfLiteStatus GetInputSafe(const TfLiteContext* context, const TfLiteNode* node,
                           int index, const TfLiteTensor** tensor) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc mht_6(mht_6_v, 303, "", "./tensorflow/lite/kernels/kernel_util.cc", "GetInputSafe");
+
   return GetMutableInputSafe(context, node, index, tensor);
 }
 
 TfLiteTensor* GetVariableInput(TfLiteContext* context, const TfLiteNode* node,
                                int index) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc mht_7(mht_7_v, 311, "", "./tensorflow/lite/kernels/kernel_util.cc", "GetVariableInput");
+
   TfLiteTensor* tensor = GetMutableInput(context, node, index);
   if (tensor == nullptr) return nullptr;
   return tensor->is_variable ? tensor : nullptr;
@@ -126,6 +318,9 @@ TfLiteTensor* GetVariableInput(TfLiteContext* context, const TfLiteNode* node,
 
 TfLiteTensor* GetOutput(TfLiteContext* context, const TfLiteNode* node,
                         int index) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc mht_8(mht_8_v, 321, "", "./tensorflow/lite/kernels/kernel_util.cc", "GetOutput");
+
   const int tensor_index = ValidateTensorIndexing(
       context, index, node->outputs->size, node->outputs->data);
   if (tensor_index < 0) {
@@ -136,6 +331,9 @@ TfLiteTensor* GetOutput(TfLiteContext* context, const TfLiteNode* node,
 
 TfLiteStatus GetOutputSafe(const TfLiteContext* context, const TfLiteNode* node,
                            int index, TfLiteTensor** tensor) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc mht_9(mht_9_v, 334, "", "./tensorflow/lite/kernels/kernel_util.cc", "GetOutputSafe");
+
   int tensor_index;
   TF_LITE_ENSURE_OK(
       context, ValidateTensorIndexingSafe(context, index, node->outputs->size,
@@ -146,6 +344,9 @@ TfLiteStatus GetOutputSafe(const TfLiteContext* context, const TfLiteNode* node,
 
 const TfLiteTensor* GetOptionalInputTensor(const TfLiteContext* context,
                                            const TfLiteNode* node, int index) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc mht_10(mht_10_v, 347, "", "./tensorflow/lite/kernels/kernel_util.cc", "GetOptionalInputTensor");
+
   return GetInput(context, node, index);
 }
 
@@ -163,6 +364,9 @@ TfLiteTensor* GetTemporary(TfLiteContext* context, const TfLiteNode* node,
 TfLiteStatus GetTemporarySafe(const TfLiteContext* context,
                               const TfLiteNode* node, int index,
                               TfLiteTensor** tensor) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc mht_11(mht_11_v, 367, "", "./tensorflow/lite/kernels/kernel_util.cc", "GetTemporarySafe");
+
   int tensor_index;
   TF_LITE_ENSURE_OK(context, ValidateTensorIndexingSafe(
                                  context, index, node->temporaries->size,
@@ -173,6 +377,9 @@ TfLiteStatus GetTemporarySafe(const TfLiteContext* context,
 
 const TfLiteTensor* GetIntermediates(TfLiteContext* context,
                                      const TfLiteNode* node, int index) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc mht_12(mht_12_v, 380, "", "./tensorflow/lite/kernels/kernel_util.cc", "GetIntermediates");
+
   const int tensor_index = ValidateTensorIndexing(
       context, index, node->intermediates->size, node->intermediates->data);
   if (tensor_index < 0) {
@@ -184,6 +391,9 @@ const TfLiteTensor* GetIntermediates(TfLiteContext* context,
 TfLiteStatus GetIntermediatesSafe(const TfLiteContext* context,
                                   const TfLiteNode* node, int index,
                                   TfLiteTensor** tensor) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc mht_13(mht_13_v, 394, "", "./tensorflow/lite/kernels/kernel_util.cc", "GetIntermediatesSafe");
+
   int tensor_index;
   TF_LITE_ENSURE_OK(context, ValidateTensorIndexingSafe(
                                  context, index, node->intermediates->size,
@@ -216,6 +426,9 @@ TfLiteStatus PopulateConvolutionQuantizationParams(
     int32_t* output_activation_min, int32_t* output_activation_max,
     int32_t* per_channel_multiplier, int32_t* per_channel_shift,
     int num_channels) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc mht_14(mht_14_v, 429, "", "./tensorflow/lite/kernels/kernel_util.cc", "PopulateConvolutionQuantizationParams");
+
   TF_LITE_ENSURE_EQ(context, input->quantization.type,
                     kTfLiteAffineQuantization);
   TF_LITE_ENSURE_EQ(context, filter->quantization.type,
@@ -291,6 +504,9 @@ TfLiteStatus GetQuantizedConvolutionMultipler(TfLiteContext* context,
                                               const TfLiteTensor* bias,
                                               TfLiteTensor* output,
                                               double* multiplier) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc mht_15(mht_15_v, 507, "", "./tensorflow/lite/kernels/kernel_util.cc", "GetQuantizedConvolutionMultipler");
+
   const double input_product_scale = static_cast<double>(input->params.scale) *
                                      static_cast<double>(filter->params.scale);
   // The following conditions must be guaranteed by the training pipeline.
@@ -327,6 +543,9 @@ TfLiteStatus GetQuantizedConvolutionMultipler(TfLiteContext* context,
                                               const TfLiteTensor* filter,
                                               TfLiteTensor* output,
                                               double* multiplier) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc mht_16(mht_16_v, 546, "", "./tensorflow/lite/kernels/kernel_util.cc", "GetQuantizedConvolutionMultipler");
+
   const double input_product_scale =
       static_cast<double>(input->params.scale * filter->params.scale);
   TF_LITE_ENSURE(context, input_product_scale >= 0);
@@ -339,6 +558,9 @@ namespace {
 
 inline TfLiteStatus Quantize(TfLiteContext* context, float scale,
                              int32_t zero_point, float f, int32_t& q) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc mht_17(mht_17_v, 561, "", "./tensorflow/lite/kernels/kernel_util.cc", "Quantize");
+
   const float tmp = TfLiteRound(f / scale);
   const bool no_integer_overflow_from_quantization =
       (tmp >= static_cast<float>(std::numeric_limits<int32_t>::min()) &&
@@ -351,6 +573,9 @@ inline TfLiteStatus Quantize(TfLiteContext* context, float scale,
 TfLiteStatus CalculateActivationRangeQuantizedImpl(
     TfLiteContext* context, TfLiteFusedActivation activation, int32_t qmin,
     int32_t qmax, TfLiteTensor* output, int32_t* act_min, int32_t* act_max) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc mht_18(mht_18_v, 576, "", "./tensorflow/lite/kernels/kernel_util.cc", "CalculateActivationRangeQuantizedImpl");
+
   const auto scale = output->params.scale;
   const auto zero_point = output->params.zero_point;
 
@@ -387,6 +612,9 @@ TfLiteStatus CalculateActivationRangeQuantized(TfLiteContext* context,
                                                TfLiteTensor* output,
                                                int32_t* act_min,
                                                int32_t* act_max) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc mht_19(mht_19_v, 615, "", "./tensorflow/lite/kernels/kernel_util.cc", "CalculateActivationRangeQuantized");
+
   int32_t qmin = 0;
   int32_t qmax = 0;
   if (output->type == kTfLiteUInt8) {
@@ -407,6 +635,9 @@ TfLiteStatus CalculateActivationRangeQuantized(TfLiteContext* context,
 }
 
 bool HaveSameShapes(const TfLiteTensor* input1, const TfLiteTensor* input2) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc mht_20(mht_20_v, 638, "", "./tensorflow/lite/kernels/kernel_util.cc", "HaveSameShapes");
+
   return TfLiteIntArrayEqual(input1->dims, input2->dims);
 }
 
@@ -436,6 +667,9 @@ TfLiteStatus GetOutputShapeFromInput(TfLiteContext* context,
 // unsused function, the string library that gets pulled in is not dropped,
 // resulting in the increased binary size.
 const std::string GetShapeDebugString(const TfLiteIntArray* shape) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc mht_21(mht_21_v, 670, "", "./tensorflow/lite/kernels/kernel_util.cc", "GetShapeDebugString");
+
   std::string str;
   for (int d = 0; d < shape->size; ++d) {
     if (str.empty())
@@ -457,6 +691,9 @@ TfLiteStatus CalculateShapeForBroadcast(TfLiteContext* context,
                                         const TfLiteTensor* input1,
                                         const TfLiteTensor* input2,
                                         TfLiteIntArray** output_shape) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc mht_22(mht_22_v, 694, "", "./tensorflow/lite/kernels/kernel_util.cc", "CalculateShapeForBroadcast");
+
   const int dims1 = NumDimensions(input1);
   const int dims2 = NumDimensions(input2);
   const int out_dims = std::max(dims1, dims2);
@@ -489,6 +726,9 @@ TfLiteStatus CalculateShapeForBroadcast(TfLiteContext* context,
                                         const TfLiteTensor* input2,
                                         const TfLiteTensor* input3,
                                         TfLiteIntArray** output_shape) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc mht_23(mht_23_v, 729, "", "./tensorflow/lite/kernels/kernel_util.cc", "CalculateShapeForBroadcast");
+
   const int dims1 = NumDimensions(input1);
   const int dims2 = NumDimensions(input2);
   const int dims3 = NumDimensions(input3);
@@ -569,6 +809,9 @@ int TfLiteTypeGetSize(TfLiteType type) {
 }
 
 bool IsMobilePlatform() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc mht_24(mht_24_v, 812, "", "./tensorflow/lite/kernels/kernel_util.cc", "IsMobilePlatform");
+
 #if defined(ANDROID) || defined(__ANDROID__)
   return true;
 #elif defined(__APPLE__)
@@ -580,6 +823,9 @@ bool IsMobilePlatform() {
 }
 
 bool HasUnspecifiedDimension(const TfLiteTensor* tensor) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSkernel_utilDTcc mht_25(mht_25_v, 826, "", "./tensorflow/lite/kernels/kernel_util.cc", "HasUnspecifiedDimension");
+
 #ifndef TF_LITE_STATIC_MEMORY
   if (tensor->dims_signature) {
     for (int i : TfLiteIntArrayView(tensor->dims_signature)) {

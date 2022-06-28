@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlmhlo_to_gpuPSkernel_ops_patternDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlmhlo_to_gpuPSkernel_ops_patternDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlmhlo_to_gpuPSkernel_ops_patternDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 // Copyright 2020 The TensorFlow Runtime Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -91,9 +259,15 @@ struct RewriteData {
 }  // namespace
 
 static llvm::Error MakeError(llvm::StringRef message) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlmhlo_to_gpuPSkernel_ops_patternDTcc mht_0(mht_0_v, 262, "", "./tensorflow/compiler/mlir/tfrt/transforms/lmhlo_to_gpu/kernel_ops_pattern.cc", "MakeError");
+
   return llvm::createStringError(llvm::inconvertibleErrorCode(), message);
 }
 static llvm::Error MakeError(xla::Status status) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlmhlo_to_gpuPSkernel_ops_patternDTcc mht_1(mht_1_v, 268, "", "./tensorflow/compiler/mlir/tfrt/transforms/lmhlo_to_gpu/kernel_ops_pattern.cc", "MakeError");
+
   return MakeError(status.error_message());
 }
 
@@ -261,7 +435,10 @@ static llvm::Expected<RewriteData> Match(Operation* op) {
   if (!llvm::all_of(*thunks, [](const auto& thunk) {
         Thunk::Kind kinds[] = {Thunk::kKernel, Thunk::kCopy,
                                Thunk::kMemset32BitValue, Thunk::kMemzero};
-        auto equal = [&](Thunk::Kind kind) { return thunk->kind() == kind; };
+        auto equal = [&](Thunk::Kind kind) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlmhlo_to_gpuPSkernel_ops_patternDTcc mht_2(mht_2_v, 439, "", "./tensorflow/compiler/mlir/tfrt/transforms/lmhlo_to_gpu/kernel_ops_pattern.cc", "lambda");
+ return thunk->kind() == kind; };
         return llvm::any_of(kinds, equal);
       })) {
     return MakeError("Expected only kernel, copy, memset, and memzero thunks");
@@ -286,6 +463,9 @@ static void Rewrite(Operation* op, mlir::PatternRewriter& rewriter,
                     mlir::SymbolTable& symbol_table, ArrayRef<Value> arguments,
                     ThunkSequence* thunks, ArrayRef<ConstantInfo> constants,
                     mlir::StringRef gpu_module_data) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlmhlo_to_gpuPSkernel_ops_patternDTcc mht_3(mht_3_v, 466, "", "./tensorflow/compiler/mlir/tfrt/transforms/lmhlo_to_gpu/kernel_ops_pattern.cc", "Rewrite");
+
   mlir::OpBuilder::InsertionGuard guard(rewriter);
   auto loc = op->getLoc();
 
@@ -321,6 +501,9 @@ static void Rewrite(Operation* op, mlir::PatternRewriter& rewriter,
       const auto* copy_thunk =
           static_cast<const DeviceToDeviceCopyThunk*>(thunk.get());
       auto get_argument = [&](const xla::BufferAllocation::Slice& slice) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlmhlo_to_gpuPSkernel_ops_patternDTcc mht_4(mht_4_v, 504, "", "./tensorflow/compiler/mlir/tfrt/transforms/lmhlo_to_gpu/kernel_ops_pattern.cc", "lambda");
+
         assert(slice.offset() == 0 && slice.size() == copy_thunk->size_bytes());
         return arguments[slice.index()];
       };
@@ -334,6 +517,9 @@ static void Rewrite(Operation* op, mlir::PatternRewriter& rewriter,
 
     auto rewrite_memset = [&](const xla::BufferAllocation::Slice& slice,
                               uint32_t memset_value) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlmhlo_to_gpuPSkernel_ops_patternDTcc mht_5(mht_5_v, 520, "", "./tensorflow/compiler/mlir/tfrt/transforms/lmhlo_to_gpu/kernel_ops_pattern.cc", "lambda");
+
       assert(slice.offset() == 0);
       Value buffer_arg = arguments[slice.index()];
       auto element_type =
@@ -374,10 +560,16 @@ static void Rewrite(Operation* op, mlir::PatternRewriter& rewriter,
 
     rewriter.setInsertionPoint(op);
     auto make_const_idx = [&](int64_t value) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlmhlo_to_gpuPSkernel_ops_patternDTcc mht_6(mht_6_v, 563, "", "./tensorflow/compiler/mlir/tfrt/transforms/lmhlo_to_gpu/kernel_ops_pattern.cc", "lambda");
+
       auto attr = rewriter.getIndexAttr(value);
       return rewriter.create<mlir::arith::ConstantOp>(loc, attr).getResult();
     };
     auto make_kernel_dim3 = [&](const auto& dim3) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlmhlo_to_gpuPSkernel_ops_patternDTcc mht_7(mht_7_v, 570, "", "./tensorflow/compiler/mlir/tfrt/transforms/lmhlo_to_gpu/kernel_ops_pattern.cc", "lambda");
+
       return mlir::gpu::KernelDim3{make_const_idx(dim3.x),
                                    make_const_idx(dim3.y),
                                    make_const_idx(dim3.z)};
@@ -396,10 +588,16 @@ static void Rewrite(Operation* op, mlir::PatternRewriter& rewriter,
 
 mlir::LogicalResult KernelOpsPattern::matchAndRewrite(
     mlir::ModuleOp module_op, mlir::PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlmhlo_to_gpuPSkernel_ops_patternDTcc mht_8(mht_8_v, 591, "", "./tensorflow/compiler/mlir/tfrt/transforms/lmhlo_to_gpu/kernel_ops_pattern.cc", "KernelOpsPattern::matchAndRewrite");
+
   SmallVector<RewriteData, 4> rewrites;
 
   // Get data to rewrite kernel ops without changing the IR.
   auto walk = [&](auto concrete_op) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlmhlo_to_gpuPSkernel_ops_patternDTcc mht_9(mht_9_v, 598, "", "./tensorflow/compiler/mlir/tfrt/transforms/lmhlo_to_gpu/kernel_ops_pattern.cc", "lambda");
+
     return module_op.walk([&](decltype(concrete_op) op) -> mlir::WalkResult {
       auto data = Match(op);
       if (!data)
@@ -436,6 +634,9 @@ mlir::LogicalResult KernelOpsPattern::matchAndRewrite(
 }
 
 void populateKernelOpsPattern(mlir::RewritePatternSet& patterns) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlmhlo_to_gpuPSkernel_ops_patternDTcc mht_10(mht_10_v, 637, "", "./tensorflow/compiler/mlir/tfrt/transforms/lmhlo_to_gpu/kernel_ops_pattern.cc", "populateKernelOpsPattern");
+
   patterns.add<KernelOpsPattern>(patterns.getContext());
 }
 

@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_COMPILER_XLA_LITERAL_H_
 #define TENSORFLOW_COMPILER_XLA_LITERAL_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <algorithm>
 #include <functional>
@@ -66,7 +234,10 @@ class LiteralBase {
   bool operator!=(const LiteralBase& other) const { return !(*this == other); }
 
   // Returns the shape of the literal.
-  const Shape& shape() const { return root_piece().subshape(); }
+  const Shape& shape() const {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_0(mht_0_v, 238, "", "./tensorflow/compiler/xla/literal.h", "shape");
+ return root_piece().subshape(); }
 
   // Serialize to proto.
   LiteralProto ToProto() const;
@@ -153,6 +324,9 @@ class LiteralBase {
                            std::is_same<T, bfloat16>::value),
                           bool>::type
   IsEqualAt(absl::Span<const int64_t> multi_index, T value) const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_1(mht_1_v, 327, "", "./tensorflow/compiler/xla/literal.h", "IsEqualAt");
+
     if (auto as_s64 = GetIntegralAsS64(multi_index)) {
       return *as_s64 == value;
     }
@@ -162,6 +336,9 @@ class LiteralBase {
 
   bool IsEqualAt(absl::Span<const int64_t> multi_index,
                  complex128 value) const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_2(mht_2_v, 339, "", "./tensorflow/compiler/xla/literal.h", "IsEqualAt");
+
     if (auto as_s64 = GetIntegralAsS64(multi_index)) {
       return *as_s64 == value.real() && value.imag() == 0;
     }
@@ -270,6 +447,9 @@ class LiteralBase {
   // Compute a hash for this literal.
   template <typename H>
   friend H AbslHashValue(H state, const LiteralBase& value) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_3(mht_3_v, 450, "", "./tensorflow/compiler/xla/literal.h", "AbslHashValue");
+
     return LiteralBase::Hash(std::move(state), value);
   }
 
@@ -456,25 +636,47 @@ class LiteralBase {
     void AllocateBuffers();
     void DeallocateBuffers();
     // Gets/sets the buffer holding the array data.
-    char* buffer() const { return buffer_; }
-    void set_buffer(char* buffer) { buffer_ = buffer; }
+    char* buffer() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_4(mht_4_v, 640, "", "./tensorflow/compiler/xla/literal.h", "buffer");
+ return buffer_; }
+    void set_buffer(char* buffer) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_5(mht_5_v, 645, "", "./tensorflow/compiler/xla/literal.h", "set_buffer");
+ buffer_ = buffer; }
 
     // Gets/sets the buffer holding dynamic sizes.
     int32_t* dynamic_size_buffer() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_6(mht_6_v, 651, "", "./tensorflow/compiler/xla/literal.h", "dynamic_size_buffer");
+
       return reinterpret_cast<int32_t*>(buffer_ + size_bytes());
     }
 
     int64_t dynamic_size_buffer_bytes() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_7(mht_7_v, 658, "", "./tensorflow/compiler/xla/literal.h", "dynamic_size_buffer_bytes");
+
       return subshape().dimensions_size() * sizeof(int32_t);
     }
 
     // Gets or sets the subshape of this piece. This reference points to a
     // subshape within the shape in the containing Literal (Literal::shape_).
-    const Shape& subshape() const { return *subshape_; }
-    void set_subshape(const Shape* subshape) { subshape_ = subshape; }
+    const Shape& subshape() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_8(mht_8_v, 667, "", "./tensorflow/compiler/xla/literal.h", "subshape");
+ return *subshape_; }
+    void set_subshape(const Shape* subshape) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_9(mht_9_v, 671, "", "./tensorflow/compiler/xla/literal.h", "set_subshape");
+ subshape_ = subshape; }
 
     // Returns the size in bytes of the buffer holding the array data.
-    int64_t size_bytes() const { return ShapeUtil::ByteSizeOf(subshape()); }
+    int64_t size_bytes() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_10(mht_10_v, 677, "", "./tensorflow/compiler/xla/literal.h", "size_bytes");
+ return ShapeUtil::ByteSizeOf(subshape()); }
 
     // Total size in bytes, including the dynamic size addition.
     //
@@ -482,28 +684,46 @@ class LiteralBase {
     // over-allocate the margin for the dynamic shape description in case we
     // need it.
     int64_t total_bytes() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_11(mht_11_v, 687, "", "./tensorflow/compiler/xla/literal.h", "total_bytes");
+
       return size_bytes() + dynamic_size_buffer_bytes();
     }
 
     // Returns the number of elements in this piece's array.
-    int64_t element_count() const { return ShapeUtil::ElementsIn(subshape()); }
+    int64_t element_count() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_12(mht_12_v, 695, "", "./tensorflow/compiler/xla/literal.h", "element_count");
+ return ShapeUtil::ElementsIn(subshape()); }
 
     // Returns the child piece at 'index' of this piece.
-    Piece& child(int64_t index) { return children_[index]; }
+    Piece& child(int64_t index) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_13(mht_13_v, 701, "", "./tensorflow/compiler/xla/literal.h", "child");
+ return children_[index]; }
 
     // Adds a child piece to this piece's children.
     void emplace_back(Piece child_piece) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_14(mht_14_v, 707, "", "./tensorflow/compiler/xla/literal.h", "emplace_back");
+
       children_.emplace_back(std::move(child_piece));
     }
 
     // Returns the size of children pieces of this piece.
-    int64_t children_size() { return children_.size(); }
+    int64_t children_size() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_15(mht_15_v, 715, "", "./tensorflow/compiler/xla/literal.h", "children_size");
+ return children_.size(); }
 
     // Visitor functions that recursively traverses the piece and calls the
     // given function at each child piece. The function has the type:
     //    void (const ShapeIndex& index, const Piece& piece)
     template <typename Fn>
     void ForEachSubpiece(const Fn& func) const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_16(mht_16_v, 724, "", "./tensorflow/compiler/xla/literal.h", "ForEachSubpiece");
+
       ShapeIndex index;
       return ForEachHelper(
                  [&func](const ShapeIndex& index, const Piece& piece) {
@@ -518,6 +738,9 @@ class LiteralBase {
     // The first non-OK return value is returned by the function.
     template <typename Fn>
     Status ForEachSubpieceWithStatus(const Fn& func) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_17(mht_17_v, 741, "", "./tensorflow/compiler/xla/literal.h", "ForEachSubpieceWithStatus");
+
       ShapeIndex index;
       return ForEachHelper(func, *this, &index);
     }
@@ -526,6 +749,9 @@ class LiteralBase {
     // The first non-true return value is returned by the function.
     template <typename Fn>
     bool ForEachSubpieceWithBool(const Fn& func) const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_18(mht_18_v, 752, "", "./tensorflow/compiler/xla/literal.h", "ForEachSubpieceWithBool");
+
       ShapeIndex index;
       return ForEachHelperBool(func, *this, &index);
     }
@@ -533,6 +759,9 @@ class LiteralBase {
     //    Void (const ShapeIndex& index, Piece& piece)
     template <typename Fn>
     void ForEachMutableSubpiece(const Fn& func) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_19(mht_19_v, 762, "", "./tensorflow/compiler/xla/literal.h", "ForEachMutableSubpiece");
+
       ShapeIndex index;
       return ForEachMutableHelper(
                  [&func](const ShapeIndex& index, Piece* piece) {
@@ -547,6 +776,9 @@ class LiteralBase {
     // The first non-OK return value is returned by the function.
     template <typename Fn>
     Status ForEachMutableSubpieceWithStatus(const Fn& func) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_20(mht_20_v, 779, "", "./tensorflow/compiler/xla/literal.h", "ForEachMutableSubpieceWithStatus");
+
       ShapeIndex index;
       return ForEachMutableHelper(
           func, const_cast<xla::LiteralBase::Piece*>(this), &index);
@@ -595,6 +827,9 @@ class LiteralBase {
     template <typename Fn>
     Status ForEachHelper(const Fn& func, const Piece& piece,
                          ShapeIndex* index) const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_21(mht_21_v, 830, "", "./tensorflow/compiler/xla/literal.h", "ForEachHelper");
+
       TF_RETURN_IF_ERROR(func(*index, piece));
       for (int64_t i = 0; i < piece.children_.size(); ++i) {
         index->push_back(i);
@@ -606,6 +841,9 @@ class LiteralBase {
     template <typename Fn>
     bool ForEachHelperBool(const Fn& func, const Piece& piece,
                            ShapeIndex* index) const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_22(mht_22_v, 844, "", "./tensorflow/compiler/xla/literal.h", "ForEachHelperBool");
+
       if (!func(*index, piece)) {
         return false;
       }
@@ -621,6 +859,9 @@ class LiteralBase {
     template <typename Fn>
     Status ForEachMutableHelper(const Fn& func, Piece* piece,
                                 ShapeIndex* index) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_23(mht_23_v, 862, "", "./tensorflow/compiler/xla/literal.h", "ForEachMutableHelper");
+
       TF_RETURN_IF_ERROR(func(*index, piece));
       for (int64_t i = 0; i < piece->children_.size(); ++i) {
         index->push_back(i);
@@ -654,6 +895,9 @@ class LiteralBase {
   };  // class Piece
 
   const Piece& piece(const ShapeIndex& shape_index) const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_24(mht_24_v, 898, "", "./tensorflow/compiler/xla/literal.h", "piece");
+
     Piece* piece = &const_cast<Piece&>(root_piece());
     for (const auto i : shape_index) {
       DCHECK_GE(i, 0);
@@ -693,7 +937,10 @@ class MutableLiteralBase : public LiteralBase {
 
   // TODO(b/67651157): Remove this accessor. Literal users should not be able to
   // mutate the shape as this can produce malformed Literals.
-  Shape* mutable_shape_do_not_use() { return shape_.get(); }
+  Shape* mutable_shape_do_not_use() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_25(mht_25_v, 941, "", "./tensorflow/compiler/xla/literal.h", "mutable_shape_do_not_use");
+ return shape_.get(); }
 
   // Set the dynamic size on dim_index in the literal at the given shape_index.
   void SetDynamicSize(int64_t dim_index, const ShapeIndex& shape_index,
@@ -819,10 +1066,16 @@ class MutableLiteralBase : public LiteralBase {
  protected:
   // Returns the piece at the given ShapeIndex.
   Piece& piece(const ShapeIndex& shape_index) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_26(mht_26_v, 1069, "", "./tensorflow/compiler/xla/literal.h", "piece");
+
     return const_cast<Piece&>(LiteralBase::piece(shape_index));
   }
 
-  Piece& root_piece() const override { return *root_piece_; };
+  Piece& root_piece() const override {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_27(mht_27_v, 1076, "", "./tensorflow/compiler/xla/literal.h", "root_piece");
+ return *root_piece_; };
 
   // Internal template helper for the Literal::CopySliceFrom(), matching its
   // arguments one by one.
@@ -872,7 +1125,10 @@ std::ostream& operator<<(std::ostream& out, const Literal& literal);
 // The underlying buffer and shape is always owned by this class.
 class Literal : public MutableLiteralBase {
  public:
-  Literal() : Literal(ShapeUtil::MakeNil()) {}
+  Literal() : Literal(ShapeUtil::MakeNil()) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_28(mht_28_v, 1129, "", "./tensorflow/compiler/xla/literal.h", "Literal");
+}
 
   // Create a literal of the given shape. The literal is allocated sufficient
   // memory to hold the shape. Memory is uninitialized.
@@ -935,7 +1191,10 @@ class MutableBorrowingLiteral : public MutableLiteralBase {
  public:
   virtual ~MutableBorrowingLiteral();
 
-  MutableBorrowingLiteral() : MutableLiteralBase() {}
+  MutableBorrowingLiteral() : MutableLiteralBase() {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_29(mht_29_v, 1195, "", "./tensorflow/compiler/xla/literal.h", "MutableBorrowingLiteral");
+}
 
   MutableBorrowingLiteral(const MutableBorrowingLiteral& literal);
   MutableBorrowingLiteral& operator=(const MutableBorrowingLiteral& literal);
@@ -962,14 +1221,20 @@ class MutableBorrowingLiteral : public MutableLiteralBase {
 // literal buffers always owned by others.
 class LiteralSlice : public LiteralBase {
  public:
-  LiteralSlice() : LiteralBase() {}
+  LiteralSlice() : LiteralBase() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_30(mht_30_v, 1225, "", "./tensorflow/compiler/xla/literal.h", "LiteralSlice");
+}
 
   // Implicit conversion constructors.
   LiteralSlice(const LiteralBase& literal);
   LiteralSlice(const LiteralBase& literal, const ShapeIndex& view_root);
 
  private:
-  const Piece& root_piece() const override { return *root_piece_; };
+  const Piece& root_piece() const override {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_31(mht_31_v, 1235, "", "./tensorflow/compiler/xla/literal.h", "root_piece");
+ return *root_piece_; };
 
   const Piece* root_piece_;  // Not owned.
 };
@@ -978,7 +1243,10 @@ class LiteralSlice : public LiteralBase {
 // class.
 class BorrowingLiteral : public LiteralBase {
  public:
-  BorrowingLiteral() : LiteralBase() {}
+  BorrowingLiteral() : LiteralBase() {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_32(mht_32_v, 1247, "", "./tensorflow/compiler/xla/literal.h", "BorrowingLiteral");
+}
 
   // 'src_buf_ptr' is not owned by this class and must outlive the
   // lifetime of this class. It points to an appropriately sized buffer with
@@ -996,7 +1264,10 @@ class BorrowingLiteral : public LiteralBase {
   void BuildPieceSubtree(const Shape& shape, Piece* piece);
 
   // Accessor for the root piece of this literal.
-  const Piece& root_piece() const override { return root_piece_; };
+  const Piece& root_piece() const override {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_33(mht_33_v, 1268, "", "./tensorflow/compiler/xla/literal.h", "root_piece");
+ return root_piece_; };
   Piece root_piece_;
 
   // Shape of this literal. Stored as unique_ptr such that the (default) move
@@ -1007,6 +1278,9 @@ class BorrowingLiteral : public LiteralBase {
 
 template <typename NativeT>
 absl::Span<const NativeT> LiteralBase::Piece::data() const {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_34(mht_34_v, 1281, "", "./tensorflow/compiler/xla/literal.h", "LiteralBase::Piece::data");
+
   DCHECK(subshape().IsArray()) << ShapeUtil::HumanString(subshape());
   DCHECK_EQ(subshape().element_type(),
             primitive_util::NativeToPrimitiveType<NativeT>())
@@ -1020,6 +1294,9 @@ absl::Span<const NativeT> LiteralBase::Piece::data() const {
 
 template <typename NativeT>
 absl::Span<NativeT> LiteralBase::Piece::data() {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_35(mht_35_v, 1297, "", "./tensorflow/compiler/xla/literal.h", "LiteralBase::Piece::data");
+
   DCHECK(subshape().IsArray()) << ShapeUtil::HumanString(subshape());
   DCHECK_EQ(subshape().element_type(),
             primitive_util::NativeToPrimitiveType<NativeT>())
@@ -1033,6 +1310,9 @@ absl::Span<NativeT> LiteralBase::Piece::data() {
 
 template <typename NativeT>
 NativeT LiteralBase::Piece::Get(absl::Span<const int64_t> multi_index) const {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_36(mht_36_v, 1313, "", "./tensorflow/compiler/xla/literal.h", "LiteralBase::Piece::Get");
+
   CHECK(LayoutUtil::IsDenseArray(subshape())) << subshape();
   return data<NativeT>()[IndexUtil::MultidimensionalIndexToLinearIndex(
       subshape(), multi_index)];
@@ -1041,6 +1321,9 @@ NativeT LiteralBase::Piece::Get(absl::Span<const int64_t> multi_index) const {
 template <typename NativeT>
 void LiteralBase::Piece::Set(absl::Span<const int64_t> multi_index,
                              NativeT value) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_37(mht_37_v, 1324, "", "./tensorflow/compiler/xla/literal.h", "LiteralBase::Piece::Set");
+
   CHECK(LayoutUtil::IsDenseArray(subshape()));
   data<NativeT>()[IndexUtil::MultidimensionalIndexToLinearIndex(
       subshape(), multi_index)] = value;
@@ -1049,22 +1332,34 @@ void LiteralBase::Piece::Set(absl::Span<const int64_t> multi_index,
 template <typename NativeT>
 absl::Span<const NativeT> LiteralBase::data(
     const ShapeIndex& shape_index) const {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_38(mht_38_v, 1335, "", "./tensorflow/compiler/xla/literal.h", "LiteralBase::data");
+
   return piece(shape_index).data<NativeT>();
 }
 
 template <typename NativeT>
 absl::Span<NativeT> MutableLiteralBase::data(const ShapeIndex& shape_index) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_39(mht_39_v, 1343, "", "./tensorflow/compiler/xla/literal.h", "MutableLiteralBase::data");
+
   return piece(shape_index).data<NativeT>();
 }
 
 template <typename NativeT>
 inline NativeT LiteralBase::Get(absl::Span<const int64_t> multi_index,
                                 const ShapeIndex& shape_index) const {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_40(mht_40_v, 1352, "", "./tensorflow/compiler/xla/literal.h", "LiteralBase::Get");
+
   return piece(shape_index).Get<NativeT>(multi_index);
 }
 
 template <typename NativeT>
 inline NativeT LiteralBase::Get(absl::Span<const int64_t> multi_index) const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_41(mht_41_v, 1360, "", "./tensorflow/compiler/xla/literal.h", "LiteralBase::Get");
+
   return root_piece().Get<NativeT>(multi_index);
 }
 
@@ -1072,17 +1367,26 @@ template <typename NativeT>
 inline void MutableLiteralBase::Set(absl::Span<const int64_t> multi_index,
                                     const ShapeIndex& shape_index,
                                     NativeT value) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_42(mht_42_v, 1370, "", "./tensorflow/compiler/xla/literal.h", "MutableLiteralBase::Set");
+
   return piece(shape_index).Set<NativeT>(multi_index, value);
 }
 
 template <typename NativeT>
 inline void MutableLiteralBase::Set(absl::Span<const int64_t> multi_index,
                                     NativeT value) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_43(mht_43_v, 1379, "", "./tensorflow/compiler/xla/literal.h", "MutableLiteralBase::Set");
+
   return root_piece().Set<NativeT>(multi_index, value);
 }
 
 template <typename NativeT>
 NativeT LiteralBase::GetFirstElement() const {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_44(mht_44_v, 1387, "", "./tensorflow/compiler/xla/literal.h", "LiteralBase::GetFirstElement");
+
   return data<NativeT>().at(0);
 }
 
@@ -1090,6 +1394,9 @@ template <typename NativeT>
 void LiteralBase::EachCell(
     std::function<void(absl::Span<const int64_t> indices, NativeT value)>
         per_cell) const {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_45(mht_45_v, 1397, "", "./tensorflow/compiler/xla/literal.h", "LiteralBase::EachCell");
+
   if (ShapeUtil::IsZeroElementArray(shape())) {
     return;
   }
@@ -1108,6 +1415,9 @@ template <typename NativeT>
 void MutableLiteralBase::MutableEachCell(
     std::function<NativeT(absl::Span<const int64_t> indices, NativeT value)>
         per_cell) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_46(mht_46_v, 1418, "", "./tensorflow/compiler/xla/literal.h", "MutableLiteralBase::MutableEachCell");
+
   if (ShapeUtil::IsZeroElementArray(shape())) {
     return;
   }
@@ -1123,6 +1433,9 @@ void MutableLiteralBase::MutableEachCell(
 
 template <typename NativeT>
 inline void MutableLiteralBase::PopulateR1(absl::Span<const NativeT> values) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_47(mht_47_v, 1436, "", "./tensorflow/compiler/xla/literal.h", "MutableLiteralBase::PopulateR1");
+
   CHECK(shape().IsArray());
   CHECK_EQ(shape().rank(), 1);
   CHECK_EQ(ShapeUtil::ElementsIn(shape()), values.size());
@@ -1135,6 +1448,9 @@ inline void MutableLiteralBase::PopulateR1(absl::Span<const NativeT> values) {
 template <typename NativeT>
 void MutableLiteralBase::PopulateR2(
     std::initializer_list<std::initializer_list<NativeT>> values) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_48(mht_48_v, 1451, "", "./tensorflow/compiler/xla/literal.h", "MutableLiteralBase::PopulateR2");
+
   CHECK(shape().IsArray());
   CHECK_EQ(shape().rank(), 2);
   CHECK_EQ(shape().element_type(),
@@ -1159,6 +1475,9 @@ void MutableLiteralBase::PopulateR2(
 
 template <typename NativeT>
 void MutableLiteralBase::PopulateFromArray(const Array<NativeT>& values) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_49(mht_49_v, 1478, "", "./tensorflow/compiler/xla/literal.h", "MutableLiteralBase::PopulateFromArray");
+
   CHECK(shape().IsArray());
   CHECK_EQ(shape().element_type(),
            primitive_util::NativeToPrimitiveType<NativeT>());
@@ -1173,16 +1492,25 @@ void MutableLiteralBase::PopulateFromArray(const Array<NativeT>& values) {
 
 template <typename NativeT>
 void MutableLiteralBase::PopulateR2FromArray2D(const Array2D<NativeT>& values) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_50(mht_50_v, 1495, "", "./tensorflow/compiler/xla/literal.h", "MutableLiteralBase::PopulateR2FromArray2D");
+
   PopulateFromArray(values);
 }
 
 template <typename NativeT>
 void MutableLiteralBase::PopulateR3FromArray3D(const Array3D<NativeT>& values) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_51(mht_51_v, 1503, "", "./tensorflow/compiler/xla/literal.h", "MutableLiteralBase::PopulateR3FromArray3D");
+
   PopulateFromArray(values);
 }
 
 template <typename NativeT>
 void MutableLiteralBase::PopulateR4FromArray4D(const Array4D<NativeT>& values) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_52(mht_52_v, 1511, "", "./tensorflow/compiler/xla/literal.h", "MutableLiteralBase::PopulateR4FromArray4D");
+
   PopulateFromArray(values);
 }
 
@@ -1206,6 +1534,9 @@ Status MutableLiteralBase::PopulateInternal(const FnType& generator,
         ShapeUtil::GetDimension(this_shape, stride_config.minor_dimension);
 
     auto init_function = [&](absl::Span<const int64_t> indexes) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_53(mht_53_v, 1537, "", "./tensorflow/compiler/xla/literal.h", "lambda");
+
       DimensionVector minor_scan_indexes(rank, 0);
       const int64_t index =
           IndexUtil::MultidimensionalIndexToLinearIndex(shape(), indexes);
@@ -1246,6 +1577,9 @@ Status MutableLiteralBase::PopulateParallel(const FnType& generator) {
 
 template <typename NativeT>
 void MutableLiteralBase::PopulateWithValue(NativeT value) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_54(mht_54_v, 1580, "", "./tensorflow/compiler/xla/literal.h", "MutableLiteralBase::PopulateWithValue");
+
   CHECK(shape().IsArray());
   CHECK_EQ(shape().element_type(),
            primitive_util::NativeToPrimitiveType<NativeT>());
@@ -1256,6 +1590,9 @@ void MutableLiteralBase::PopulateWithValue(NativeT value) {
 
 template <typename NativeT>
 Literal LiteralBase::Replicate(int64_t times) const {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTh mht_55(mht_55_v, 1593, "", "./tensorflow/compiler/xla/literal.h", "LiteralBase::Replicate");
+
   DimensionVector bounds = {times};
   bounds.reserve(shape().dimensions_size() + 1);
   for (int64_t bound : shape().dimensions()) {

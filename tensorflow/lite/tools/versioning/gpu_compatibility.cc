@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePStoolsPSversioningPSgpu_compatibilityDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePStoolsPSversioningPSgpu_compatibilityDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePStoolsPSversioningPSgpu_compatibilityDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,6 +195,9 @@ namespace tflite {
 namespace {
 
 const std::string GetOpName(const OpSignature& op_sig) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSversioningPSgpu_compatibilityDTcc mht_0(mht_0_v, 198, "", "./tensorflow/lite/tools/versioning/gpu_compatibility.cc", "GetOpName");
+
   if (op_sig.op == tflite::BuiltinOperator_CUSTOM) {
     return op_sig.custom_name;
   }
@@ -34,6 +205,9 @@ const std::string GetOpName(const OpSignature& op_sig) {
 }
 
 int NumElements(const std::vector<int32_t>& dims) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSversioningPSgpu_compatibilityDTcc mht_1(mht_1_v, 208, "", "./tensorflow/lite/tools/versioning/gpu_compatibility.cc", "NumElements");
+
   int count = 1;
   for (int i = 0; i < dims.size(); ++i) {
     count *= dims.at(i);
@@ -53,6 +227,9 @@ int NumElements(const std::vector<int32_t>& dims) {
 template <typename ParamsT>
 absl::Status RetrieveBuiltinData(const OpSignature& op_sig,
                                  const ParamsT** tf_options) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSversioningPSgpu_compatibilityDTcc mht_2(mht_2_v, 230, "", "./tensorflow/lite/tools/versioning/gpu_compatibility.cc", "RetrieveBuiltinData");
+
   *tf_options = static_cast<const ParamsT*>(op_sig.builtin_data);
   if (!*tf_options) {
     return absl::InternalError("Unable to retrieve builtin_data.");
@@ -63,6 +240,9 @@ absl::Status RetrieveBuiltinData(const OpSignature& op_sig,
 template <typename ParamsT>
 absl::Status RetrieveCustomInitialData(const OpSignature& op_sig,
                                        const ParamsT** tf_options) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSversioningPSgpu_compatibilityDTcc mht_3(mht_3_v, 243, "", "./tensorflow/lite/tools/versioning/gpu_compatibility.cc", "RetrieveCustomInitialData");
+
   *tf_options = static_cast<const ParamsT*>(op_sig.custom_initial_data);
   if (!*tf_options) {
     return absl::InternalError("Unable to retrieve custom_initial_data.");
@@ -71,6 +251,9 @@ absl::Status RetrieveCustomInitialData(const OpSignature& op_sig,
 }
 
 absl::Status IsActivationSupported(TfLiteFusedActivation fused_activation) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSversioningPSgpu_compatibilityDTcc mht_4(mht_4_v, 254, "", "./tensorflow/lite/tools/versioning/gpu_compatibility.cc", "IsActivationSupported");
+
   switch (fused_activation) {
     case kTfLiteActNone:
     case kTfLiteActRelu:
@@ -91,6 +274,9 @@ absl::Status IsActivationSupported(TfLiteFusedActivation fused_activation) {
 // Returns the number of runtime inputs of the given OpSignature.
 // runtime inputs are input tensors which are not constant or optional tensors.
 int GetNumberOfRuntimeInputs(const OpSignature& op_sig) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSversioningPSgpu_compatibilityDTcc mht_5(mht_5_v, 277, "", "./tensorflow/lite/tools/versioning/gpu_compatibility.cc", "GetNumberOfRuntimeInputs");
+
   int number_of_runtime_inputs = 0;
   for (auto& input : op_sig.inputs) {
     if (!input.is_const && input.type != kTfLiteNoType) {
@@ -106,6 +292,9 @@ int GetNumberOfRuntimeInputs(const OpSignature& op_sig) {
 absl::Status CheckInputsOutputs(const OpSignature& op_sig,
                                 const int required_runtime_inputs,
                                 const int required_outputs) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSversioningPSgpu_compatibilityDTcc mht_6(mht_6_v, 295, "", "./tensorflow/lite/tools/versioning/gpu_compatibility.cc", "CheckInputsOutputs");
+
   const int runtime_inputs_from_model = GetNumberOfRuntimeInputs(op_sig);
   if (runtime_inputs_from_model != required_runtime_inputs) {
     return absl::InternalError(
@@ -130,6 +319,9 @@ absl::Status CheckInputsConstsOutputs(const OpSignature& op_sig,
                                       int required_runtime_inputs,
                                       int required_const_inputs,
                                       int required_outputs) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSversioningPSgpu_compatibilityDTcc mht_7(mht_7_v, 322, "", "./tensorflow/lite/tools/versioning/gpu_compatibility.cc", "CheckInputsConstsOutputs");
+
   int const_inputs_from_model = 0;
   for (auto& input : op_sig.inputs) {
     if (input.is_const) {
@@ -146,6 +338,9 @@ absl::Status CheckInputsConstsOutputs(const OpSignature& op_sig,
 }
 
 absl::Status CheckTensorIsAvailable(const OpSignature& op_sig, int idx) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSversioningPSgpu_compatibilityDTcc mht_8(mht_8_v, 341, "", "./tensorflow/lite/tools/versioning/gpu_compatibility.cc", "CheckTensorIsAvailable");
+
   // If tensor id is in range, it's guaranteed that it'll be available.
   if (idx >= op_sig.inputs.size()) {
     return absl::OutOfRangeError(
@@ -159,6 +354,9 @@ absl::Status CheckTensorIsAvailable(const OpSignature& op_sig, int idx) {
 // convolution operators. The number of input should be either 2 runtime inputs
 // or 1 runtime and 1 constant input. The number of output should be one.
 absl::Status CheckConvoultionInputOutput(const OpSignature& op_sig) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSversioningPSgpu_compatibilityDTcc mht_9(mht_9_v, 357, "", "./tensorflow/lite/tools/versioning/gpu_compatibility.cc", "CheckConvoultionInputOutput");
+
   const int runtime_inputs = GetNumberOfRuntimeInputs(op_sig);
   if (runtime_inputs > 2) {
     return absl::InternalError(
@@ -178,6 +376,9 @@ absl::Status CheckConvoultionInputOutput(const OpSignature& op_sig) {
 }
 
 absl::Status CheckStrides(int strides_h, int strides_w) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSversioningPSgpu_compatibilityDTcc mht_10(mht_10_v, 379, "", "./tensorflow/lite/tools/versioning/gpu_compatibility.cc", "CheckStrides");
+
   if (strides_h <= 0 || strides_w <= 0) {
     return absl::InvalidArgumentError(
         absl::StrCat("Incorrect stride values: stride_height = ", strides_h,
@@ -187,6 +388,9 @@ absl::Status CheckStrides(int strides_h, int strides_w) {
 }
 
 absl::Status CheckDilation(int dilation_h, int dilation_w) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSversioningPSgpu_compatibilityDTcc mht_11(mht_11_v, 391, "", "./tensorflow/lite/tools/versioning/gpu_compatibility.cc", "CheckDilation");
+
   if (dilation_h <= 0 || dilation_w <= 0) {
     return absl::InvalidArgumentError(absl::StrCat(
         "Incorrect dilation values: dilation_height = ", dilation_h,
@@ -197,12 +401,18 @@ absl::Status CheckDilation(int dilation_h, int dilation_w) {
 
 absl::Status CheckStridesAndDilation(int strides_h, int strides_w,
                                      int dilation_h, int dilation_w) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSversioningPSgpu_compatibilityDTcc mht_12(mht_12_v, 404, "", "./tensorflow/lite/tools/versioning/gpu_compatibility.cc", "CheckStridesAndDilation");
+
   RETURN_IF_ERROR(CheckStrides(strides_h, strides_w));
   RETURN_IF_ERROR(CheckDilation(dilation_h, dilation_w));
   return absl::OkStatus();
 }
 
 absl::Status CheckKernels(int kernel_h, int kernel_w) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSversioningPSgpu_compatibilityDTcc mht_13(mht_13_v, 413, "", "./tensorflow/lite/tools/versioning/gpu_compatibility.cc", "CheckKernels");
+
   if (kernel_h <= 0 || kernel_w <= 0) {
     return absl::InvalidArgumentError(
         absl::StrCat("Incorrect kernel values: kernel_height = ", kernel_h,
@@ -213,6 +423,9 @@ absl::Status CheckKernels(int kernel_h, int kernel_w) {
 
 absl::Status CheckKernelsAndStrides(int kernel_h, int kernel_w, int strides_h,
                                     int strides_w) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSversioningPSgpu_compatibilityDTcc mht_14(mht_14_v, 426, "", "./tensorflow/lite/tools/versioning/gpu_compatibility.cc", "CheckKernelsAndStrides");
+
   RETURN_IF_ERROR(CheckKernels(kernel_h, kernel_w));
   RETURN_IF_ERROR(CheckStrides(strides_h, strides_w));
   return absl::OkStatus();
@@ -220,6 +433,9 @@ absl::Status CheckKernelsAndStrides(int kernel_h, int kernel_w, int strides_h,
 
 // Checks if the axes tensor at the given index is a integer32 constant tensor.
 absl::Status CheckAxesAreInt32Const(const OpSignature& op_sig, int idx) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSversioningPSgpu_compatibilityDTcc mht_15(mht_15_v, 436, "", "./tensorflow/lite/tools/versioning/gpu_compatibility.cc", "CheckAxesAreInt32Const");
+
   auto axes = op_sig.inputs.at(idx);
   if (!axes.is_const) {
     return absl::UnimplementedError(GetOpName(op_sig) +
@@ -234,6 +450,9 @@ absl::Status CheckAxesAreInt32Const(const OpSignature& op_sig, int idx) {
 }
 
 absl::Status CheckPooling2DGpuDelegateCompatibility(const OpSignature& op_sig) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSversioningPSgpu_compatibilityDTcc mht_16(mht_16_v, 453, "", "./tensorflow/lite/tools/versioning/gpu_compatibility.cc", "CheckPooling2DGpuDelegateCompatibility");
+
   const TfLitePoolParams* tf_options;
   if (op_sig.custom_initial_data) {  // custom case with indices as a second
                                      // output
@@ -255,6 +474,9 @@ absl::Status CheckPooling2DGpuDelegateCompatibility(const OpSignature& op_sig) {
 
 absl::Status CheckDepthwiseConvGpuDelegateCompatibility(
     const OpSignature& op_sig) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSversioningPSgpu_compatibilityDTcc mht_17(mht_17_v, 477, "", "./tensorflow/lite/tools/versioning/gpu_compatibility.cc", "CheckDepthwiseConvGpuDelegateCompatibility");
+
   RETURN_IF_ERROR(CheckConvoultionInputOutput(op_sig));
   const TfLiteDepthwiseConvParams* tf_options;
   RETURN_IF_ERROR(RetrieveBuiltinData(op_sig, &tf_options));
@@ -298,6 +520,9 @@ absl::Status CheckDepthwiseConvGpuDelegateCompatibility(
 }
 
 absl::Status CheckCustomOpsGpuDelegateCompatibility(const OpSignature& op_sig) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSversioningPSgpu_compatibilityDTcc mht_18(mht_18_v, 523, "", "./tensorflow/lite/tools/versioning/gpu_compatibility.cc", "CheckCustomOpsGpuDelegateCompatibility");
+
   if (op_sig.custom_name == "Convolution2DTransposeBias") {
     RETURN_IF_ERROR(CheckTensorIsAvailable(op_sig, 1));
     const TfLiteTransposeConvParams* tf_options;
@@ -335,6 +560,9 @@ absl::Status CheckCustomOpsGpuDelegateCompatibility(const OpSignature& op_sig) {
 // of tensorflow/lite/delegates/gpu/common/model_builder.cc but they're all
 // migrated into here.
 absl::Status CheckGpuDelegateCompatibility(const OpSignature& op_sig) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSversioningPSgpu_compatibilityDTcc mht_19(mht_19_v, 563, "", "./tensorflow/lite/tools/versioning/gpu_compatibility.cc", "CheckGpuDelegateCompatibility");
+
   TfLiteBuiltinOperator opcode = static_cast<TfLiteBuiltinOperator>(op_sig.op);
   switch (opcode) {
     case kTfLiteBuiltinAdd: {
@@ -798,6 +1026,9 @@ absl::Status CheckGpuDelegateCompatibility(const OperatorCode* op_code,
                                            const Operator* op,
                                            const SubGraph* subgraph,
                                            const Model* model) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSversioningPSgpu_compatibilityDTcc mht_20(mht_20_v, 1029, "", "./tensorflow/lite/tools/versioning/gpu_compatibility.cc", "CheckGpuDelegateCompatibility");
+
   OpSignature op_sig = GetOpSignature(op_code, op, subgraph, model);
   auto status = CheckGpuDelegateCompatibility(op_sig);
   if (op_sig.builtin_data) {
@@ -809,6 +1040,9 @@ absl::Status CheckGpuDelegateCompatibility(const OperatorCode* op_code,
 absl::Status CheckGpuDelegateCompatibility(
     const TfLiteContext* context, const TfLiteNode* node,
     const TfLiteRegistration* registration) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSversioningPSgpu_compatibilityDTcc mht_21(mht_21_v, 1043, "", "./tensorflow/lite/tools/versioning/gpu_compatibility.cc", "CheckGpuDelegateCompatibility");
+
   return CheckGpuDelegateCompatibility(
       GetOpSignature(context, node, registration));
 }

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,19 +206,34 @@ namespace {
 class TestOpLevelCostEstimator : public OpLevelCostEstimator {
  public:
   TestOpLevelCostEstimator() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_0(mht_0_v, 209, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "TestOpLevelCostEstimator");
+
     compute_memory_overlap_ = true;
     device_info_ = DeviceInfo();
   }
-  ~TestOpLevelCostEstimator() override {}
+  ~TestOpLevelCostEstimator() override {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_1(mht_1_v, 216, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "~TestOpLevelCostEstimator");
+}
 
   void SetDeviceInfo(const DeviceInfo& device_info) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_2(mht_2_v, 221, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "SetDeviceInfo");
+
     device_info_ = device_info;
   }
 
-  void SetComputeMemoryOverlap(bool value) { compute_memory_overlap_ = value; }
+  void SetComputeMemoryOverlap(bool value) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_3(mht_3_v, 228, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "SetComputeMemoryOverlap");
+ compute_memory_overlap_ = value; }
 
  protected:
   DeviceInfo GetDeviceInfo(const DeviceProperties& device) const override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_4(mht_4_v, 234, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "GetDeviceInfo");
+
     return device_info_;
   }
 
@@ -58,6 +241,9 @@ class TestOpLevelCostEstimator : public OpLevelCostEstimator {
 };
 
 void ExpectZeroCost(const Costs& cost) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_5(mht_5_v, 244, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "ExpectZeroCost");
+
   EXPECT_TRUE(cost.inaccurate);
   EXPECT_EQ(cost.compute_time, Costs::Duration::zero());
   EXPECT_EQ(cost.execution_time, Costs::Duration::zero());
@@ -66,6 +252,9 @@ void ExpectZeroCost(const Costs& cost) {
 
 // Wrangles the minimum number of proto fields to set up a matrix.
 void DescribeMatrix(int rows, int columns, OpInfo* op_info) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_6(mht_6_v, 255, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "DescribeMatrix");
+
   auto input = op_info->add_inputs();
   auto shape = input->mutable_shape();
   auto shape_rows = shape->add_dim();
@@ -76,6 +265,9 @@ void DescribeMatrix(int rows, int columns, OpInfo* op_info) {
 }
 
 void SetCpuDevice(OpInfo* op_info) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_7(mht_7_v, 268, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "SetCpuDevice");
+
   auto device = op_info->mutable_device();
   device->set_type("CPU");
   device->set_num_cores(10);
@@ -85,6 +277,9 @@ void SetCpuDevice(OpInfo* op_info) {
 
 // Returns an OpInfo for MatMul with the minimum set of fields set up.
 OpContext DescribeMatMul(int m, int n, int l, int k) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_8(mht_8_v, 280, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "DescribeMatMul");
+
   OpContext op_context;
   SetCpuDevice(&op_context.op_info);
   op_context.op_info.set_op("MatMul");
@@ -98,6 +293,9 @@ OpContext DescribeMatMul(int m, int n, int l, int k) {
 // arbitrary rank and type.
 void DescribeArbitraryRankInput(const std::vector<int>& dims, DataType dtype,
                                 OpInfo* op_info) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_9(mht_9_v, 296, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "DescribeArbitraryRankInput");
+
   auto input = op_info->add_inputs();
   input->set_dtype(dtype);
   auto shape = input->mutable_shape();
@@ -110,6 +308,9 @@ void DescribeArbitraryRankInput(const std::vector<int>& dims, DataType dtype,
 // arbitrary rank and type.
 void DescribeArbitraryRankOutput(const std::vector<int>& dims, DataType dtype,
                                  OpInfo* op_info) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_10(mht_10_v, 311, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "DescribeArbitraryRankOutput");
+
   auto output = op_info->add_outputs();
   output->set_dtype(dtype);
   auto shape = output->mutable_shape();
@@ -122,6 +323,9 @@ void DescribeArbitraryRankOutput(const std::vector<int>& dims, DataType dtype,
 OpContext DescribeSparseTensorDenseMatMul(const int nnz_a,
                                           const std::vector<int>& dims_b,
                                           const std::vector<int>& dims_out) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_11(mht_11_v, 326, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "DescribeSparseTensorDenseMatMul");
+
   OpContext op_context;
   SetCpuDevice(&op_context.op_info);
   op_context.op_info.set_op("SparseTensorDenseMatMul");
@@ -138,6 +342,10 @@ OpContext DescribeSparseTensorDenseMatMul(const int nnz_a,
 OpContext DescribeXlaEinsum(const std::vector<int>& dims_a,
                             const std::vector<int>& dims_b,
                             const string& equation) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("equation: \"" + equation + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_12(mht_12_v, 346, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "DescribeXlaEinsum");
+
   OpContext op_context;
   SetCpuDevice(&op_context.op_info);
   op_context.op_info.set_op("XlaEinsum");
@@ -155,18 +363,28 @@ OpContext DescribeXlaEinsum(const std::vector<int>& dims_a,
 OpContext DescribeEinsum(const std::vector<int>& dims_a,
                          const std::vector<int>& dims_b,
                          const string& equation) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("equation: \"" + equation + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_13(mht_13_v, 367, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "DescribeEinsum");
+
   OpContext op_context = DescribeXlaEinsum(dims_a, dims_b, equation);
   op_context.op_info.set_op("Einsum");
   return op_context;
 }
 
 void DescribeDummyTensor(OpInfo::TensorProperties* tensor) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_14(mht_14_v, 376, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "DescribeDummyTensor");
+
   // Intentionally leave the tensor shape and type information missing.
 }
 
 // Wrangles the minimum number of proto fields to set up a 1D Tensor for cost
 // estimation purposes.
 void DescribeTensor1D(int dim0, OpInfo::TensorProperties* tensor) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_15(mht_15_v, 385, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "DescribeTensor1D");
+
   auto shape = tensor->mutable_shape();
   shape->add_dim()->set_size(dim0);
   tensor->set_dtype(DT_FLOAT);
@@ -176,6 +394,9 @@ void DescribeTensor1D(int dim0, OpInfo::TensorProperties* tensor) {
 // estimation purposes.
 void DescribeTensor4D(int dim0, int dim1, int dim2, int dim3,
                       OpInfo::TensorProperties* tensor) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_16(mht_16_v, 397, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "DescribeTensor4D");
+
   auto shape = tensor->mutable_shape();
   shape->add_dim()->set_size(dim0);
   shape->add_dim()->set_size(dim1);
@@ -188,6 +409,9 @@ void DescribeTensor4D(int dim0, int dim1, int dim2, int dim3,
 // estimation purposes.
 void DescribeTensor5D(int dim0, int dim1, int dim2, int dim3, int dim4,
                       OpInfo::TensorProperties* tensor) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_17(mht_17_v, 412, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "DescribeTensor5D");
+
   auto shape = tensor->mutable_shape();
   shape->add_dim()->set_size(dim0);
   shape->add_dim()->set_size(dim1);
@@ -202,6 +426,9 @@ void DescribeTensor5D(int dim0, int dim1, int dim2, int dim3, int dim4,
 // (kx, ky, iz2, oz).
 OpContext DescribeConvolution(int batch, int ix, int iy, int iz1, int iz2,
                               int kx, int ky, int oz) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_18(mht_18_v, 429, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "DescribeConvolution");
+
   OpContext op_context;
   SetCpuDevice(&op_context.op_info);
   op_context.op_info.set_op("Conv2D");
@@ -219,6 +446,9 @@ OpContext DescribeConvolution(int batch, int ix, int iy, int iz1, int iz2,
 
 OpContext DescribeDepthwiseConv2dNative(int batch, int ix, int iy, int iz1,
                                         int iz2, int kx, int ky, int cm) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_19(mht_19_v, 449, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "DescribeDepthwiseConv2dNative");
+
   OpContext op_context;
   SetCpuDevice(&op_context.op_info);
   op_context.op_info.set_op("DepthwiseConv2dNative");
@@ -245,6 +475,11 @@ OpContext DescribeFusedConv2DBiasActivation(int batch, int ix, int iy, int iz1,
                                             int oy, int oz, bool has_side_input,
                                             const string& data_format,
                                             const string& filter_format) {
+   std::vector<std::string> mht_20_v;
+   mht_20_v.push_back("data_format: \"" + data_format + "\"");
+   mht_20_v.push_back("filter_format: \"" + filter_format + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_20(mht_20_v, 480, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "DescribeFusedConv2DBiasActivation");
+
   const int kVecWidth = 4;
   OpContext op_context;
   SetCpuDevice(&op_context.op_info);
@@ -302,6 +537,10 @@ OpContext DescribeFusedConv2DBiasActivation(int batch, int ix, int iy, int iz1,
 // DescribeUnaryOp constructs an OpContext for the given operation applied to
 // a 4-tensor with shape (size1, 1, 1, 1).
 OpContext DescribeUnaryOp(const string& op, int size1) {
+   std::vector<std::string> mht_21_v;
+   mht_21_v.push_back("op: \"" + op + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_21(mht_21_v, 541, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "DescribeUnaryOp");
+
   OpContext op_context;
   SetCpuDevice(&op_context.op_info);
   op_context.op_info.set_op(op);
@@ -320,6 +559,10 @@ OpContext DescribeUnaryOp(const string& op, int size1) {
 // cost model for applying elementwise operations to tensors with unequal
 // dimension values.
 OpContext DescribeBinaryOp(const string& op, int size1, int size2) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("op: \"" + op + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_22(mht_22_v, 563, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "DescribeBinaryOp");
+
   OpContext op_context;
   SetCpuDevice(&op_context.op_info);
   op_context.op_info.set_op(op);
@@ -336,6 +579,9 @@ OpContext DescribeBinaryOp(const string& op, int size1, int size2) {
 // according to the constraint that the bias must be 1D with size equal to that
 // of the last dimension of the input value.
 OpContext DescribeBiasAdd(int size1, int size2) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_23(mht_23_v, 582, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "DescribeBiasAdd");
+
   OpContext op_context;
   SetCpuDevice(&op_context.op_info);
   op_context.op_info.set_op("BiasAdd");
@@ -349,6 +595,10 @@ OpContext DescribeBiasAdd(int size1, int size2) {
 
 int GetOutputSize(const int x, const int k, const int s,
                   const string& padding) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("padding: \"" + padding + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_24(mht_24_v, 599, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "GetOutputSize");
+
   if (padding == "SAME") {
     return (x + s - 1) / s;
   } else {
@@ -397,6 +647,9 @@ std::vector<int> GetPoolingOutputSize(const std::vector<int>& input,
 void GetTensorProto(const DataType dtype, const std::vector<int64_t>& shape,
                     const std::vector<int64_t> values,
                     const bool tensor_content, TensorProto* tensor_proto) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_25(mht_25_v, 650, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "GetTensorProto");
+
   tensor_proto->Clear();
   TensorProto temp_tensor_proto;
   temp_tensor_proto.set_dtype(dtype);
@@ -430,6 +683,12 @@ OpContext DescribePoolingOp(const string& op_name, const std::vector<int>& x,
                             const std::vector<int>& ksize,
                             const std::vector<int>& strides,
                             const string& data_format, const string& padding) {
+   std::vector<std::string> mht_26_v;
+   mht_26_v.push_back("op_name: \"" + op_name + "\"");
+   mht_26_v.push_back("data_format: \"" + data_format + "\"");
+   mht_26_v.push_back("padding: \"" + padding + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_26(mht_26_v, 689, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "DescribePoolingOp");
+
   OpContext op_context;
   auto& op_info = op_context.op_info;
   SetCpuDevice(&op_info);
@@ -467,6 +726,10 @@ OpContext DescribePoolingOp(const string& op_name, const std::vector<int>& x,
 OpContext DescribeFusedBatchNorm(const bool is_training, const bool is_grad,
                                  const std::vector<int>& x,
                                  const string& data_format) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("data_format: \"" + data_format + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_27(mht_27_v, 730, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "DescribeFusedBatchNorm");
+
   // First, get MaxPool op info with unit stride and unit window.
   OpContext op_context = DescribePoolingOp("MaxPool", x, {1, 1, 1, 1},
                                            {1, 1, 1, 1}, data_format, "SAME");
@@ -514,27 +777,42 @@ class OpLevelCostEstimatorTest : public ::testing::Test {
   using BatchMatMulDimensions = OpLevelCostEstimator::BatchMatMulDimensions;
 
   Costs PredictCosts(const OpContext& op_context) const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_28(mht_28_v, 780, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "PredictCosts");
+
     return estimator_.PredictCosts(op_context);
   }
 
   int64_t CountMatMulOperations(const OpInfo& op_info,
                                 bool* found_unknown_shapes) const {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_29(mht_29_v, 788, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "CountMatMulOperations");
+
     return estimator_.CountMatMulOperations(op_info, found_unknown_shapes);
   }
 
   int64_t CountBatchMatMulOperations(const OpInfo& op_info,
                                      bool* found_unknown_shapes) const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_30(mht_30_v, 796, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "CountBatchMatMulOperations");
+
     return estimator_.CountBatchMatMulOperations(op_info, found_unknown_shapes);
   }
 
   int64_t CountBatchMatMulOperations(const OpInfo& op_info,
                                      BatchMatMulDimensions* batch_mat_mul,
                                      bool* found_unknown_shapes) const {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_31(mht_31_v, 805, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "CountBatchMatMulOperations");
+
     return estimator_.CountBatchMatMulOperations(op_info, batch_mat_mul,
                                                  found_unknown_shapes);
   }
 
   void SetComputeMemoryOverlap(bool value) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_32(mht_32_v, 813, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "SetComputeMemoryOverlap");
+
     estimator_.compute_memory_overlap_ = value;
   }
 
@@ -543,6 +821,11 @@ class OpLevelCostEstimatorTest : public ::testing::Test {
                                       const int sx, const int sy,
                                       const string& data_format,
                                       const string& padding) {
+   std::vector<std::string> mht_33_v;
+   mht_33_v.push_back("data_format: \"" + data_format + "\"");
+   mht_33_v.push_back("padding: \"" + padding + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_33(mht_33_v, 826, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "ValidateOpDimensionsFromInputs");
+
     OpContext op_context;
     int ho;
     int wo;
@@ -625,6 +908,9 @@ class OpLevelBatchMatMulCostEstimatorTest
   // Returns an OpInfo for a BatchMatMul
   OpContext DescribeBatchMatMul(const std::vector<int>& dims_a,
                                 const std::vector<int>& dims_b) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_34(mht_34_v, 911, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "DescribeBatchMatMul");
+
     OpContext op_context;
     SetCpuDevice(&op_context.op_info);
     op_context.op_info.set_op(GetParam());
@@ -636,12 +922,18 @@ class OpLevelBatchMatMulCostEstimatorTest
 
   int64_t CountBatchMatMulOperations(const OpInfo& op_info,
                                      bool* found_unknown_shapes) const {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_35(mht_35_v, 925, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "CountBatchMatMulOperations");
+
     return OpLevelCostEstimatorTest::CountBatchMatMulOperations(
         op_info, found_unknown_shapes);
   }
 
   int64_t CountBatchMatMulDimProduct(const OpInfo& op_info,
                                      bool* found_unknown_shapes) const {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_36(mht_36_v, 934, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "CountBatchMatMulDimProduct");
+
     BatchMatMulDimensions batch_mat_mul;
 
     batch_mat_mul.matmul_dims.n = 0;
@@ -1337,6 +1629,9 @@ TEST_F(OpLevelCostEstimatorTest, SparseTensorDenseMatMul) {
 
 void ExpectTensorShape(const std::vector<int64_t>& expected,
                        const TensorShapeProto& tensor_shape_proto) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSop_level_cost_estimator_testDTcc mht_37(mht_37_v, 1632, "", "./tensorflow/core/grappler/costs/op_level_cost_estimator_test.cc", "ExpectTensorShape");
+
   TensorShape tensor_shape_expected(expected);
   TensorShape tensor_shape(tensor_shape_proto);
 

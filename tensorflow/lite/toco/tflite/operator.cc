@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,6 +210,9 @@ namespace tflite {
 // LINT.IfChange
 
 TfLiteType GetTensorType(const ArrayDataType type) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_0(mht_0_v, 213, "", "./tensorflow/lite/toco/tflite/operator.cc", "GetTensorType");
+
   const std::map<ArrayDataType, TfLiteType> tensor_type_map = {
       {ArrayDataType::kBool, kTfLiteBool},
       {ArrayDataType::kFloat, kTfLiteFloat32},
@@ -68,6 +239,9 @@ TfLiteType GetTensorType(const ArrayDataType type) {
 
 ::tflite::OpSignature GetVersioningOpSig(
     const ::tflite::BuiltinOperator op, const OperatorSignature& op_signature) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_1(mht_1_v, 242, "", "./tensorflow/lite/toco/tflite/operator.cc", "GetVersioningOpSig");
+
   std::vector<::tflite::OpSignatureTensorSpec> inputs, outputs;
   for (const auto& input_name : op_signature.op->inputs) {
     ::tflite::OpSignatureTensorSpec tensor = {kTfLiteNoType};
@@ -113,6 +287,9 @@ class AveragePool
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_2(mht_2_v, 290, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->padding.type = Padding::Deserialize(options.padding());
     op->stride_width = options.stride_w();
     op->stride_height = options.stride_h();
@@ -143,6 +320,9 @@ class Convolution
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_3(mht_3_v, 323, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->padding.type = Padding::Deserialize(options.padding());
     op->stride_width = options.stride_w();
     op->stride_height = options.stride_h();
@@ -174,6 +354,9 @@ class DepthwiseConvolution
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_4(mht_4_v, 357, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->padding.type = Padding::Deserialize(options.padding());
     op->stride_width = options.stride_w();
     op->stride_height = options.stride_h();
@@ -185,6 +368,9 @@ class DepthwiseConvolution
   }
 
   int GetVersion(const OperatorSignature& op_signature) const override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_5(mht_5_v, 371, "", "./tensorflow/lite/toco/tflite/operator.cc", "GetVersion");
+
     const auto& conv_op =
         static_cast<const DepthwiseConvOperator&>(*op_signature.op);
     ::tflite::OpSignature op_sig =
@@ -213,6 +399,9 @@ class Add : public BuiltinOperator<AddOperator, ::tflite::AddOptions,
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_6(mht_6_v, 402, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->fused_activation_function =
         ActivationFunction::Deserialize(options.fused_activation_function());
   }
@@ -230,7 +419,10 @@ class AddN : public BuiltinOperator<AddNOperator, ::tflite::AddNOptions,
   }
 
   void ReadOptions(const TfLiteOptions& options,
-                   TocoOperator* op) const override {}
+                   TocoOperator* op) const override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_7(mht_7_v, 423, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+}
 };
 
 class SpaceToBatchND
@@ -247,9 +439,15 @@ class SpaceToBatchND
   }
 
   void ReadOptions(const TfLiteOptions& options,
-                   TocoOperator* op) const override {}
+                   TocoOperator* op) const override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_8(mht_8_v, 443, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+}
 
   int GetVersion(const OperatorSignature& op_signature) const override {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_9(mht_9_v, 448, "", "./tensorflow/lite/toco/tflite/operator.cc", "GetVersion");
+
     ::tflite::OpSignature op_sig =
         GetVersioningOpSig(builtin_op(), op_signature);
     return ::tflite::GetBuiltinOperatorVersion(op_sig);
@@ -271,11 +469,17 @@ class Sub : public BuiltinOperator<SubOperator, ::tflite::SubOptions,
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_10(mht_10_v, 472, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->fused_activation_function =
         ActivationFunction::Deserialize(options.fused_activation_function());
   }
 
   int GetVersion(const OperatorSignature& op_signature) const override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_11(mht_11_v, 480, "", "./tensorflow/lite/toco/tflite/operator.cc", "GetVersion");
+
     ::tflite::OpSignature op_sig =
         GetVersioningOpSig(builtin_op(), op_signature);
     return ::tflite::GetBuiltinOperatorVersion(op_sig);
@@ -297,11 +501,17 @@ class Div : public BuiltinOperator<DivOperator, ::tflite::DivOptions,
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_12(mht_12_v, 504, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->fused_activation_function =
         ActivationFunction::Deserialize(options.fused_activation_function());
   }
 
   int GetVersion(const OperatorSignature& op_signature) const override {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_13(mht_13_v, 512, "", "./tensorflow/lite/toco/tflite/operator.cc", "GetVersion");
+
     ::tflite::OpSignature op_sig =
         GetVersioningOpSig(builtin_op(), op_signature);
     return ::tflite::GetBuiltinOperatorVersion(op_sig);
@@ -322,9 +532,15 @@ class BatchToSpaceND
   }
 
   void ReadOptions(const TfLiteOptions& options,
-                   TocoOperator* op) const override {}
+                   TocoOperator* op) const override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_14(mht_14_v, 536, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+}
 
   int GetVersion(const OperatorSignature& op_signature) const override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_15(mht_15_v, 541, "", "./tensorflow/lite/toco/tflite/operator.cc", "GetVersion");
+
     ::tflite::OpSignature op_sig =
         GetVersioningOpSig(builtin_op(), op_signature);
     return ::tflite::GetBuiltinOperatorVersion(op_sig);
@@ -345,6 +561,9 @@ class Cast : public BuiltinOperator<CastOperator, ::tflite::CastOptions,
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_16(mht_16_v, 564, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->src_data_type = DataType::Deserialize(options.in_data_type());
     op->dst_data_type = DataType::Deserialize(options.out_data_type());
   }
@@ -364,6 +583,9 @@ class Concatenation
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_17(mht_17_v, 586, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->axis = options.axis();
   }
 };
@@ -382,6 +604,9 @@ class DepthToSpace
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_18(mht_18_v, 607, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->block_size = options.block_size();
   }
 };
@@ -399,6 +624,9 @@ class FakeQuant
   }
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_19(mht_19_v, 627, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     auto* minmax = new MinMax;
     minmax->min = options.min();
     minmax->max = options.max();
@@ -407,6 +635,9 @@ class FakeQuant
     op->narrow_range = options.narrow_range();
   }
   int GetVersion(const OperatorSignature& op_signature) const override {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_20(mht_20_v, 638, "", "./tensorflow/lite/toco/tflite/operator.cc", "GetVersion");
+
     const auto& fq_op = static_cast<const FakeQuantOperator&>(*op_signature.op);
     ::tflite::OpSignature op_sig =
         GetVersioningOpSig(builtin_op(), op_signature);
@@ -426,6 +657,9 @@ class FullyConnected
 
   ::tflite::FullyConnectedOptionsWeightsFormat GetWeightFormat(
       FullyConnectedWeightsFormat fmt) const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_21(mht_21_v, 660, "", "./tensorflow/lite/toco/tflite/operator.cc", "GetWeightFormat");
+
     switch (fmt) {
       case FullyConnectedWeightsFormat::kDefault:
         return ::tflite::FullyConnectedOptionsWeightsFormat_DEFAULT;
@@ -448,6 +682,9 @@ class FullyConnected
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_22(mht_22_v, 685, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->fused_activation_function =
         ActivationFunction::Deserialize(options.fused_activation_function());
     switch (options.weights_format()) {
@@ -464,6 +701,9 @@ class FullyConnected
   }
 
   int GetVersion(const OperatorSignature& op_signature) const override {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_23(mht_23_v, 704, "", "./tensorflow/lite/toco/tflite/operator.cc", "GetVersion");
+
     const auto& fc_op =
         static_cast<const FullyConnectedOperator&>(*op_signature.op);
     ::tflite::OpSignature op_sig =
@@ -491,6 +731,9 @@ class Gather : public BuiltinOperator<GatherOperator, ::tflite::GatherOptions,
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_24(mht_24_v, 734, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->axis = {options.axis()};
   }
 };
@@ -508,7 +751,10 @@ class GatherNd
   }
 
   void ReadOptions(const TfLiteOptions& options,
-                   TocoOperator* op) const override {}
+                   TocoOperator* op) const override {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_25(mht_25_v, 755, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+}
 };
 
 class Svdf : public BuiltinOperator<SvdfOperator, ::tflite::SVDFOptions,
@@ -525,6 +771,9 @@ class Svdf : public BuiltinOperator<SvdfOperator, ::tflite::SVDFOptions,
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_26(mht_26_v, 774, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->fused_activation_function =
         ActivationFunction::Deserialize(options.fused_activation_function());
     op->rank = options.rank();
@@ -546,6 +795,9 @@ class L2Normalization
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_27(mht_27_v, 798, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->fused_activation_function =
         ActivationFunction::Deserialize(options.fused_activation_function());
   }
@@ -568,6 +820,9 @@ class L2Pool : public BuiltinOperator<L2PoolOperator, ::tflite::Pool2DOptions,
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_28(mht_28_v, 823, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->padding.type = Padding::Deserialize(options.padding());
     op->stride_width = options.stride_w();
     op->stride_height = options.stride_h();
@@ -594,6 +849,9 @@ class LocalResponseNormalization
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_29(mht_29_v, 852, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->range = options.radius();
     op->bias = options.bias();
     op->alpha = options.alpha();
@@ -618,6 +876,9 @@ class MaxPool : public BuiltinOperator<MaxPoolOperator, ::tflite::Pool2DOptions,
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_30(mht_30_v, 879, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->padding.type = Padding::Deserialize(options.padding());
     op->stride_width = options.stride_w();
     op->stride_height = options.stride_h();
@@ -643,11 +904,17 @@ class Mul : public BuiltinOperator<MulOperator, ::tflite::MulOptions,
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_31(mht_31_v, 907, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->fused_activation_function =
         ActivationFunction::Deserialize(options.fused_activation_function());
   }
 
   int GetVersion(const OperatorSignature& op_signature) const override {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_32(mht_32_v, 915, "", "./tensorflow/lite/toco/tflite/operator.cc", "GetVersion");
+
     const std::string& input1_name = op_signature.op->inputs[0];
     const std::string& input2_name = op_signature.op->inputs[1];
     const std::string& output_name = op_signature.op->outputs[0];
@@ -681,7 +948,10 @@ class Pad : public BuiltinOperator<PadOperator, ::tflite::PadOptions,
   }
 
   void ReadOptions(const TfLiteOptions& options,
-                   TocoOperator* op) const override {}
+                   TocoOperator* op) const override {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_33(mht_33_v, 952, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+}
 };
 
 class Tile
@@ -696,7 +966,10 @@ class Tile
   }
 
   void ReadOptions(const TfLiteOptions& options,
-                   TocoOperator* op) const override {}
+                   TocoOperator* op) const override {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_34(mht_34_v, 970, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+}
 };
 
 class PadV2 : public BuiltinOperator<PadV2Operator, ::tflite::PadV2Options,
@@ -711,7 +984,10 @@ class PadV2 : public BuiltinOperator<PadV2Operator, ::tflite::PadV2Options,
   }
 
   void ReadOptions(const TfLiteOptions& options,
-                   TocoOperator* op) const override {}
+                   TocoOperator* op) const override {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_35(mht_35_v, 988, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+}
 };
 
 class Reshape
@@ -730,6 +1006,9 @@ class Reshape
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_36(mht_36_v, 1009, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->shape.insert(op->shape.end(), options.new_shape()->begin(),
                      options.new_shape()->end());
   }
@@ -748,6 +1027,9 @@ class Softmax
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_37(mht_37_v, 1030, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->beta = options.beta();
   }
 };
@@ -766,6 +1048,9 @@ class SpaceToDepth
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_38(mht_38_v, 1051, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->block_size = options.block_size();
   }
 };
@@ -782,7 +1067,10 @@ class Transpose
   }
 
   void ReadOptions(const TfLiteOptions& options,
-                   TocoOperator* op) const override {}
+                   TocoOperator* op) const override {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_39(mht_39_v, 1071, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+}
 };
 
 class Lstm : public BuiltinOperator<LstmCellOperator, ::tflite::LSTMOptions,
@@ -792,6 +1080,9 @@ class Lstm : public BuiltinOperator<LstmCellOperator, ::tflite::LSTMOptions,
 
   ::tflite::LSTMKernelType GetKernelType(
       LstmCellOperator::KernelType type) const {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_40(mht_40_v, 1083, "", "./tensorflow/lite/toco/tflite/operator.cc", "GetKernelType");
+
     switch (type) {
       case LstmCellOperator::KERNEL_BASIC:
         return ::tflite::LSTMKernelType_BASIC;
@@ -819,6 +1110,9 @@ class Lstm : public BuiltinOperator<LstmCellOperator, ::tflite::LSTMOptions,
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_41(mht_41_v, 1113, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     // Only support tanh activation, so check that tflite type is tanh.
     CHECK(options.fused_activation_function() ==
           ::tflite::ActivationFunctionType_TANH);
@@ -834,6 +1128,9 @@ class Lstm : public BuiltinOperator<LstmCellOperator, ::tflite::LSTMOptions,
   }
 
   int GetVersion(const OperatorSignature& op_signature) const override {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_42(mht_42_v, 1131, "", "./tensorflow/lite/toco/tflite/operator.cc", "GetVersion");
+
     const auto& lstm_op =
         static_cast<const LstmCellOperator&>(*op_signature.op);
     ::tflite::OpSignature op_sig =
@@ -887,6 +1184,9 @@ class UnidirectionalSequenceLstm
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_43(mht_43_v, 1187, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     // Only support tanh activation, so check that tflite type is tanh.
     DCHECK(options.fused_activation_function() ==
            ::tflite::ActivationFunctionType_TANH);
@@ -923,6 +1223,9 @@ class BidirectionalSequenceLstm
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_44(mht_44_v, 1226, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     // Only support tanh activation, so check that tflite type is tanh.
     DCHECK(options.fused_activation_function() ==
            ::tflite::ActivationFunctionType_TANH);
@@ -964,6 +1267,9 @@ class BidirectionalSequenceRnn
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_45(mht_45_v, 1270, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     // Only support tanh activation, so check that tflite type is tanh.
     DCHECK(options.fused_activation_function() ==
            ::tflite::ActivationFunctionType_TANH);
@@ -993,6 +1299,9 @@ class Mean : public BuiltinOperator<MeanOperator, ::tflite::ReducerOptions,
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_46(mht_46_v, 1302, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->keep_dims = options.keep_dims();
   }
 };
@@ -1010,6 +1319,9 @@ class Sum
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_47(mht_47_v, 1322, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->keep_dims = options.keep_dims();
   }
 };
@@ -1027,6 +1339,9 @@ class ReduceMax
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_48(mht_48_v, 1342, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->keep_dims = options.keep_dims();
   }
 };
@@ -1044,6 +1359,9 @@ class ReduceMin
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_49(mht_49_v, 1362, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->keep_dims = options.keep_dims();
   }
 };
@@ -1061,6 +1379,9 @@ class ReduceProd
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_50(mht_50_v, 1382, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->keep_dims = options.keep_dims();
   }
 };
@@ -1078,6 +1399,9 @@ class ReduceAny
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_51(mht_51_v, 1402, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->keep_dims = options.keep_dims();
   }
 };
@@ -1097,11 +1421,17 @@ class ResizeBilinear
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_52(mht_52_v, 1424, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->align_corners = options.align_corners();
     op->half_pixel_centers = options.half_pixel_centers();
   }
 
   int GetVersion(const OperatorSignature& op_signature) const override {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_53(mht_53_v, 1432, "", "./tensorflow/lite/toco/tflite/operator.cc", "GetVersion");
+
     const auto& resize_bilinear_op =
         static_cast<const ResizeBilinearOperator&>(*op_signature.op);
     ::tflite::OpSignature op_sig =
@@ -1130,11 +1460,17 @@ class ResizeNearestNeighbor
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_54(mht_54_v, 1463, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->align_corners = options.align_corners();
     op->half_pixel_centers = options.half_pixel_centers();
   }
 
   int GetVersion(const OperatorSignature& op_signature) const override {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_55(mht_55_v, 1471, "", "./tensorflow/lite/toco/tflite/operator.cc", "GetVersion");
+
     const auto& resize_nn_op =
         static_cast<const ResizeNearestNeighborOperator&>(*op_signature.op);
     ::tflite::OpSignature op_sig =
@@ -1164,6 +1500,9 @@ class Squeeze
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_56(mht_56_v, 1503, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->squeeze_dims.insert(op->squeeze_dims.end(),
                             options.squeeze_dims()->begin(),
                             options.squeeze_dims()->end());
@@ -1184,6 +1523,9 @@ class Split
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_57(mht_57_v, 1526, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->num_split = options.num_splits();
   }
 };
@@ -1202,6 +1544,9 @@ class SplitV
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_58(mht_58_v, 1547, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->num_split = options.num_splits();
   }
 };
@@ -1222,6 +1567,9 @@ class StridedSlice
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_59(mht_59_v, 1570, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->begin_mask = options.begin_mask();
     op->end_mask = options.end_mask();
     op->ellipsis_mask = options.ellipsis_mask();
@@ -1230,6 +1578,9 @@ class StridedSlice
   }
 
   int GetVersion(const OperatorSignature& op_signature) const override {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_60(mht_60_v, 1581, "", "./tensorflow/lite/toco/tflite/operator.cc", "GetVersion");
+
     const auto& ss_op =
         static_cast<const StridedSliceOperator&>(*op_signature.op);
     ::tflite::OpSignature op_sig =
@@ -1254,7 +1605,10 @@ class TopK_V2 : public BuiltinOperator<TopKV2Operator, ::tflite::TopKV2Options,
   }
 
   void ReadOptions(const TfLiteOptions& options,
-                   TocoOperator* op) const override {}
+                   TocoOperator* op) const override {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_61(mht_61_v, 1609, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+}
 };
 
 class ArgMax : public BuiltinOperator<ArgMaxOperator, ::tflite::ArgMaxOptions,
@@ -1270,6 +1624,9 @@ class ArgMax : public BuiltinOperator<ArgMaxOperator, ::tflite::ArgMaxOptions,
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_62(mht_62_v, 1627, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->output_data_type = DataType::Deserialize(options.output_type());
   }
 };
@@ -1287,6 +1644,9 @@ class ArgMin : public BuiltinOperator<ArgMinOperator, ::tflite::ArgMinOptions,
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_63(mht_63_v, 1647, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->output_data_type = DataType::Deserialize(options.output_type());
   }
 };
@@ -1308,6 +1668,9 @@ class TransposeConv
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_64(mht_64_v, 1671, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->padding.type = Padding::Deserialize(options.padding());
     op->stride_width = options.stride_w();
     op->stride_height = options.stride_h();
@@ -1329,6 +1692,9 @@ class SparseToDense
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_65(mht_65_v, 1695, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->validate_indices = options.validate_indices();
   }
 };
@@ -1346,7 +1712,10 @@ class ExpandDims
   }
 
   void ReadOptions(const TfLiteOptions& options,
-                   TocoOperator* op) const override {}
+                   TocoOperator* op) const override {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_66(mht_66_v, 1716, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+}
 };
 
 class Pack : public BuiltinOperator<PackOperator, ::tflite::PackOptions,
@@ -1362,6 +1731,9 @@ class Pack : public BuiltinOperator<PackOperator, ::tflite::PackOptions,
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_67(mht_67_v, 1734, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->values_count = options.values_count();
     op->axis = options.axis();
   }
@@ -1381,6 +1753,9 @@ class Shape
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_68(mht_68_v, 1756, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->output_data_type = DataType::Deserialize(options.out_type());
   }
 };
@@ -1396,6 +1771,9 @@ class OneHot : public BuiltinOperator<OneHotOperator, ::tflite::OneHotOptions,
   }
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_69(mht_69_v, 1774, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->axis = options.axis();
   }
 };
@@ -1407,18 +1785,27 @@ class CTCBeamSearchDecoder
 
   void WriteOptions(const TocoOperator& op,
                     flexbuffers::Builder* fbb) const override {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_70(mht_70_v, 1788, "", "./tensorflow/lite/toco/tflite/operator.cc", "WriteOptions");
+
     fbb->Int("beam_width", op.beam_width);
     fbb->Int("top_paths", op.top_paths);
     fbb->Bool("merge_repeated", op.merge_repeated);
   }
 
   void ReadOptions(const flexbuffers::Map& m, TocoOperator* op) const override {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_71(mht_71_v, 1797, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->beam_width = m["beam_width"].AsInt32();
     op->top_paths = m["top_paths"].AsInt32();
     op->merge_repeated = m["merge_repeated"].AsBool();
   }
 
   int GetVersion(const OperatorSignature& op_signature) const override {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_72(mht_72_v, 1806, "", "./tensorflow/lite/toco/tflite/operator.cc", "GetVersion");
+
     return 1;
   }
 };
@@ -1434,11 +1821,17 @@ class Unpack : public BuiltinOperator<UnpackOperator, ::tflite::UnpackOptions,
   }
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_73(mht_73_v, 1824, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->num = options.num();
     op->axis = options.axis();
   }
 
   int GetVersion(const OperatorSignature& op_signature) const override {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_74(mht_74_v, 1832, "", "./tensorflow/lite/toco/tflite/operator.cc", "GetVersion");
+
     const std::string& input_name = op_signature.op->inputs[0];
     const Array& input_array = op_signature.model->GetArray(input_name);
     // If the op take int8/uint8 input, it is version 2.
@@ -1466,6 +1859,9 @@ class LeakyRelu
   }
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_75(mht_75_v, 1862, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->alpha = options.alpha();
   }
 };
@@ -1484,7 +1880,10 @@ class SquaredDifference
   }
 
   void ReadOptions(const TfLiteOptions& options,
-                   TocoOperator* op) const override {}
+                   TocoOperator* op) const override {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_76(mht_76_v, 1884, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+}
 };
 
 class MirrorPad
@@ -1502,6 +1901,9 @@ class MirrorPad
   }
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_77(mht_77_v, 1904, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->mode = options.mode() == ::tflite::MirrorPadMode::MirrorPadMode_REFLECT
                    ? MirrorPadMode::kReflect
                    : MirrorPadMode::kSymmetric;
@@ -1523,6 +1925,9 @@ class Unique : public BuiltinOperator<UniqueOperator, ::tflite::UniqueOptions,
   }
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_78(mht_78_v, 1928, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     UniqueOperator* unique_op = static_cast<UniqueOperator*>(op);
     unique_op->idx_out_type =
         options.idx_out_type() == ::tflite::TensorType_INT64
@@ -1547,6 +1952,9 @@ class UnidirectionalSequenceRnn
   }
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_79(mht_79_v, 1955, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     // Only support tanh activation, so check that tflite type is tanh.
     DCHECK(options.fused_activation_function() ==
            ::tflite::ActivationFunctionType_TANH);
@@ -1572,7 +1980,10 @@ class Where : public BuiltinOperator<WhereOperator, ::tflite::WhereOptions,
   }
 
   void ReadOptions(const TfLiteOptions& options,
-                   TocoOperator* op) const override {}
+                   TocoOperator* op) const override {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_80(mht_80_v, 1984, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+}
 };
 
 std::unique_ptr<flexbuffers::Builder> WriteFlexOpOptions(
@@ -1598,10 +2009,17 @@ class TensorFlowUnsupported : public BaseOperator {
  public:
   TensorFlowUnsupported(const std::string& name, OperatorType type,
                         bool enable_select_tf_ops)
-      : BaseOperator(name, type), enable_select_tf_ops_(enable_select_tf_ops) {}
+      : BaseOperator(name, type), enable_select_tf_ops_(enable_select_tf_ops) {
+   std::vector<std::string> mht_81_v;
+   mht_81_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_81(mht_81_v, 2014, "", "./tensorflow/lite/toco/tflite/operator.cc", "TensorFlowUnsupported");
+}
 
   Options Serialize(const Operator& op,
                     flatbuffers::FlatBufferBuilder* builder) const override {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_82(mht_82_v, 2020, "", "./tensorflow/lite/toco/tflite/operator.cc", "Serialize");
+
     auto fbb =
         WriteOptions(static_cast<const TensorFlowUnsupportedOperator&>(op));
     if (fbb) {
@@ -1716,6 +2134,9 @@ class TensorFlowUnsupported : public BaseOperator {
 
   void ReadOptions(const flexbuffers::Map& m,
                    TensorFlowUnsupportedOperator* op) const {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_83(mht_83_v, 2137, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     ::tensorflow::NodeDef node_def;
     auto attr = node_def.mutable_attr();
 
@@ -1777,6 +2198,9 @@ class TensorFlowUnsupported : public BaseOperator {
   }
 
   int GetVersion(const OperatorSignature& op_signature) const override {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_84(mht_84_v, 2201, "", "./tensorflow/lite/toco/tflite/operator.cc", "GetVersion");
+
     // TODO(ycling): Design and implement a way to plumb the version of
     // custom ops.
     return 1;
@@ -1799,7 +2223,10 @@ class Dequantize
   }
 
   void ReadOptions(const TfLiteOptions& options,
-                   TocoOperator* op) const override {}
+                   TocoOperator* op) const override {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_85(mht_85_v, 2227, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+}
 };
 
 class ReverseSequence
@@ -1818,6 +2245,9 @@ class ReverseSequence
 
   void ReadOptions(const TfLiteOptions& options,
                    TocoOperator* op) const override {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_86(mht_86_v, 2248, "", "./tensorflow/lite/toco/tflite/operator.cc", "ReadOptions");
+
     op->seq_dim = options.seq_dim();
     op->batch_dim = options.batch_dim();
   }
@@ -2110,6 +2540,10 @@ std::map<std::string, std::unique_ptr<BaseOperator>> BuildOperatorByNameMap(
 
 bool ShouldExportAsFlexOp(bool enable_select_tf_ops,
                           const std::string& tensorflow_op_name) {
+   std::vector<std::string> mht_87_v;
+   mht_87_v.push_back("tensorflow_op_name: \"" + tensorflow_op_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStflitePSoperatorDTcc mht_87(mht_87_v, 2544, "", "./tensorflow/lite/toco/tflite/operator.cc", "ShouldExportAsFlexOp");
+
   // If Flex ops aren't allow at all, simply return false.
   if (!enable_select_tf_ops) {
     return false;

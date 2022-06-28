@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSutilPSexample_proto_helperDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_helperDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSutilPSexample_proto_helperDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,6 +196,9 @@ limitations under the License.
 namespace tensorflow {
 
 Status CheckValidType(const DataType& dtype) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_helperDTcc mht_0(mht_0_v, 199, "", "./tensorflow/core/util/example_proto_helper.cc", "CheckValidType");
+
   switch (dtype) {
     case DT_INT64:
     case DT_FLOAT:
@@ -41,6 +212,9 @@ Status CheckValidType(const DataType& dtype) {
 
 Status CheckTypesMatch(const Feature& feature, const DataType& dtype,
                        bool* match) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_helperDTcc mht_1(mht_1_v, 215, "", "./tensorflow/core/util/example_proto_helper.cc", "CheckTypesMatch");
+
   switch (dtype) {
     case DT_INT64:
       *match = (feature.kind_case() == Feature::kInt64List);
@@ -62,6 +236,11 @@ Status FeatureDenseCopy(const std::size_t out_index, const string& name,
                         const string& key, const DataType& dtype,
                         const TensorShape& shape, const Feature& feature,
                         Tensor* out) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("name: \"" + name + "\"");
+   mht_2_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_helperDTcc mht_2(mht_2_v, 241, "", "./tensorflow/core/util/example_proto_helper.cc", "FeatureDenseCopy");
+
   const std::size_t num_elements = shape.num_elements();
   const std::size_t offset = out_index * num_elements;
 
@@ -115,6 +294,10 @@ Status FeatureDenseCopy(const std::size_t out_index, const string& name,
 
 Tensor FeatureSparseCopy(const std::size_t batch, const string& key,
                          const DataType& dtype, const Feature& feature) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_helperDTcc mht_3(mht_3_v, 298, "", "./tensorflow/core/util/example_proto_helper.cc", "FeatureSparseCopy");
+
   switch (dtype) {
     case DT_INT64: {
       const Int64List& values = feature.int64_list();
@@ -150,6 +333,9 @@ Tensor FeatureSparseCopy(const std::size_t batch, const string& key,
 int64_t CopyIntoSparseTensor(const Tensor& in, const int batch,
                              const int64_t offset, Tensor* indices,
                              Tensor* values) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_helperDTcc mht_4(mht_4_v, 336, "", "./tensorflow/core/util/example_proto_helper.cc", "CopyIntoSparseTensor");
+
   const int64_t num_elements = in.shape().num_elements();
   const DataType& dtype = in.dtype();
   CHECK_EQ(dtype, values->dtype());
@@ -190,6 +376,9 @@ int64_t CopyIntoSparseTensor(const Tensor& in, const int batch,
 
 void RowDenseCopy(const std::size_t& out_index, const DataType& dtype,
                   const Tensor& in, Tensor* out) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_helperDTcc mht_5(mht_5_v, 379, "", "./tensorflow/core/util/example_proto_helper.cc", "RowDenseCopy");
+
   const std::size_t num_elements = in.shape().num_elements();
   const std::size_t offset = out_index * num_elements;
 
@@ -221,6 +410,10 @@ Status SingleExampleProtoToTensors(
     const std::vector<VarLenFeature>& var_len_features,
     std::vector<Tensor*>* output_dense_values_tensor,
     std::vector<std::vector<Tensor>>* output_sparse_values_tmp) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("example_name: \"" + example_name + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_helperDTcc mht_6(mht_6_v, 414, "", "./tensorflow/core/util/example_proto_helper.cc", "SingleExampleProtoToTensors");
+
   const Features& features = example.features();
   const auto& feature_dict = features.feature();
 
@@ -302,6 +495,9 @@ Status GetSparseTensorShapes(const VarLenFeature& var_len_feature,
                              const std::vector<Tensor>& sparse_values_tmp,
                              const int batch_size,
                              VarLenFeatureBatchShapes* output_shapes) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_helperDTcc mht_7(mht_7_v, 498, "", "./tensorflow/core/util/example_proto_helper.cc", "GetSparseTensorShapes");
+
   int64_t total_num_features = 0;
   int64_t max_num_features = 0;
   for (int b = 0; b < batch_size; ++b) {
@@ -326,6 +522,9 @@ Status BatchExampleProtoToTensors(
     std::vector<Tensor>* output_sparse_indices_tensor,
     std::vector<Tensor>* output_sparse_values_tensor,
     std::vector<Tensor>* output_sparse_shapes_tensor) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_helperDTcc mht_8(mht_8_v, 525, "", "./tensorflow/core/util/example_proto_helper.cc", "BatchExampleProtoToTensors");
+
   const int batch_size = examples.size();
 
   const bool has_names = (!names.empty());
@@ -406,6 +605,9 @@ Status BatchExampleProtoToTensors(
 }
 
 Status ParseExampleAttrs::FinishInit(int op_version) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_helperDTcc mht_9(mht_9_v, 608, "", "./tensorflow/core/util/example_proto_helper.cc", "ParseExampleAttrs::FinishInit");
+
   switch (op_version) {
     case 1:
       num_ragged = 0;
@@ -456,6 +658,9 @@ Status ParseExampleAttrs::FinishInit(int op_version) {
 }
 
 Status ParseSingleExampleAttrs::FinishInit() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_helperDTcc mht_10(mht_10_v, 661, "", "./tensorflow/core/util/example_proto_helper.cc", "ParseSingleExampleAttrs::FinishInit");
+
   if (sparse_keys.size() != sparse_types.size()) {
     return errors::InvalidArgument("len(sparse_keys) != len(sparse_types)");
   }
@@ -475,6 +680,9 @@ Status ParseSingleExampleAttrs::FinishInit() {
 }
 
 Status ParseSequenceExampleAttrs::FinishInit(int op_version) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_helperDTcc mht_11(mht_11_v, 683, "", "./tensorflow/core/util/example_proto_helper.cc", "ParseSequenceExampleAttrs::FinishInit");
+
   switch (op_version) {
     case 1:
       num_context_ragged = 0;
@@ -592,6 +800,9 @@ Status ParseSequenceExampleAttrs::FinishInit(int op_version) {
 }
 
 Status ParseSingleSequenceExampleAttrs::FinishInit() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_helperDTcc mht_12(mht_12_v, 803, "", "./tensorflow/core/util/example_proto_helper.cc", "ParseSingleSequenceExampleAttrs::FinishInit");
+
   if (static_cast<size_t>(num_context_sparse) != context_sparse_types.size()) {
     return errors::InvalidArgument(
         "len(context_sparse_keys) != len(context_sparse_types)");
@@ -633,6 +844,9 @@ Status ParseSingleSequenceExampleAttrs::FinishInit() {
 Status GetDenseShapes(const std::vector<PartialTensorShape>& dense_shapes,
                       std::vector<bool>* variable_length,
                       std::vector<std::size_t>* elements_per_stride) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_helperDTcc mht_13(mht_13_v, 847, "", "./tensorflow/core/util/example_proto_helper.cc", "GetDenseShapes");
+
   // Temporary check until we start allowing a variable length outer
   // dimension.
   for (int i = 0; i < dense_shapes.size(); ++i) {

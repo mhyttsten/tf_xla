@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -59,6 +227,9 @@ const char* const kTPUPartitionedInput = "TPUPartitionedInput";
 
 // Finds the `index` of an _Arg or _Retval node.
 Status GetIndexAttr(const Node& n, int num_args, int* index) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_0(mht_0_v, 230, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "GetIndexAttr");
+
   TF_RETURN_IF_ERROR(GetNodeAttr(n.attrs(), "index", index));
   if (*index < 0 || *index >= num_args) {
     return errors::InvalidArgument("Invalid ", n.type_string(), " number ",
@@ -79,9 +250,15 @@ Status RewriteSubgraph(const std::vector<OutputTensor>& arg_source_tensors,
                        std::vector<int>* input_permutation,
                        std::vector<int>* output_permutation,
                        NodeDef* call_def) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_1(mht_1_v, 253, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "RewriteSubgraph");
+
   // Replicated inputs have TPUReplicatedInput nodes as predecessors in the
   // input graph.
   auto is_replicated_input = [&](const Node& n, bool* is_packed = nullptr) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_2(mht_2_v, 259, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "lambda");
+
     CHECK_EQ("_Arg", n.type_string());
     int index;
     TF_CHECK_OK(GetIndexAttr(n, arg_source_tensors.size(), &index));
@@ -98,6 +275,9 @@ Status RewriteSubgraph(const std::vector<OutputTensor>& arg_source_tensors,
   };
 
   auto get_replicated_input_index = [&](const Node& n) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_3(mht_3_v, 278, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "lambda");
+
     CHECK_EQ("_Arg", n.type_string());
     int index;
     TF_CHECK_OK(GetIndexAttr(n, arg_source_tensors.size(), &index));
@@ -113,6 +293,9 @@ Status RewriteSubgraph(const std::vector<OutputTensor>& arg_source_tensors,
   };
 
   auto is_guaranteed_constant = [&](const Node& n) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_4(mht_4_v, 296, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "lambda");
+
     bool guaranteed_constant = false;
     if (!GetNodeAttr(n.attrs(), "_is_guaranteed_constant", &guaranteed_constant)
              .ok()) {
@@ -257,11 +440,17 @@ Status RewriteSubgraph(const std::vector<OutputTensor>& arg_source_tensors,
 }
 
 DataType EdgeType(const Edge* edge) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_5(mht_5_v, 443, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "EdgeType");
+
   return edge->dst()->input_type(edge->dst_input());
 }
 
 // Adds the control inputs of `node` to `*deps`.
 void AddControlInputs(const Node& node, gtl::FlatSet<Node*>* deps) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_6(mht_6_v, 451, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "AddControlInputs");
+
   for (const Edge* edge : node.in_edges()) {
     if (edge->IsControlEdge()) {
       deps->insert(edge->src());
@@ -271,6 +460,9 @@ void AddControlInputs(const Node& node, gtl::FlatSet<Node*>* deps) {
 
 // Adds the control outputs of `node` to `*deps`.
 void AddControlOutputs(const Node& node, gtl::FlatSet<Node*>* deps) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_7(mht_7_v, 463, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "AddControlOutputs");
+
   for (const Edge* edge : node.out_edges()) {
     if (edge->IsControlEdge()) {
       deps->insert(edge->dst());
@@ -281,6 +473,9 @@ void AddControlOutputs(const Node& node, gtl::FlatSet<Node*>* deps) {
 // We add Identity nodes for _Arg/_Retval in XLA computation. Remove those
 // Identity nodes to simplify furthur processing.
 Status RemoveIdentityNodesForArgRetval(Graph* g) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_8(mht_8_v, 476, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "RemoveIdentityNodesForArgRetval");
+
   // Collect Identity nodes for _Arg/_Retval.
   std::vector<Node*> identity_nodes;
   for (Node* n : g->nodes()) {
@@ -322,6 +517,9 @@ Status RemoveIdentityNodesForArgRetval(Graph* g) {
 // 'additional_per_replicate_inputs' are added to the inputs of `xla_node`.
 Status UpdateMirroredVariableIndices(int additional_per_replica_inputs,
                                      Node* xla_node) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_9(mht_9_v, 520, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "UpdateMirroredVariableIndices");
+
   std::vector<int> mirrored_variable_indices;
   if (xla_node->attrs().Find(TPUREPLICATE_MIRRORED_VAR_INDICES_ATTR) !=
       nullptr) {
@@ -349,6 +547,12 @@ Status MoveHeadOutsideCompilationToHost(
     const string& outside_compilation_attr_name, const string& xla_func_name,
     const std::string& cluster_name, Graph* g, Graph* xla_graph, Node* xla_node,
     Node* pivot_node) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("outside_compilation_attr_name: \"" + outside_compilation_attr_name + "\"");
+   mht_10_v.push_back("xla_func_name: \"" + xla_func_name + "\"");
+   mht_10_v.push_back("cluster_name: \"" + cluster_name + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_10(mht_10_v, 553, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "MoveHeadOutsideCompilationToHost");
+
   // Find outside compilation nodes that only have _Arg or other outside
   // compilation nodes as input. These nodes will be moved to host graph.
   std::vector<Node*> oc_nodes_at_head;
@@ -745,6 +949,10 @@ Status MoveHeadOutsideCompilationToHost(
 // `xla_graph` and remove corresponding input edge in host graph `g`.
 Status RemoveUnusedXlaInput(const string& xla_func_name, Graph* g,
                             Graph* xla_graph, Node* xla_node) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("xla_func_name: \"" + xla_func_name + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_11(mht_11_v, 953, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "RemoveUnusedXlaInput");
+
   // Find unused _Arg nodes, and remove them.
   std::vector<DataType> input_types;
   TF_RETURN_IF_ERROR(GetNodeAttr(xla_node->def(), "Tinputs", &input_types));
@@ -985,6 +1193,12 @@ Status MoveTailOutsideCompilationToHost(
     const string& outside_compilation_attr_name, const string& xla_func_name,
     const std::string& cluster_name, Graph* g, Graph* xla_graph, Node* xla_node,
     Node* pivot_node) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("outside_compilation_attr_name: \"" + outside_compilation_attr_name + "\"");
+   mht_12_v.push_back("xla_func_name: \"" + xla_func_name + "\"");
+   mht_12_v.push_back("cluster_name: \"" + cluster_name + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_12(mht_12_v, 1199, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "MoveTailOutsideCompilationToHost");
+
   // Find outside compilation nodes that only have _Retval or other outside
   // compilation nodes as output. These nodes will be moved to host graph.
   std::vector<Node*> oc_nodes_at_tail;
@@ -1220,6 +1434,11 @@ Status MoveTailOutsideCompilationToHost(
 Status ReplaceArgUsedByOutsideCompilationWithPlaceholder(
     const string& outside_compilation_attr_name, const string& xla_func_name,
     Graph* g, Graph* xla_graph, Node* xla_node) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("outside_compilation_attr_name: \"" + outside_compilation_attr_name + "\"");
+   mht_13_v.push_back("xla_func_name: \"" + xla_func_name + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_13(mht_13_v, 1439, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "ReplaceArgUsedByOutsideCompilationWithPlaceholder");
+
   std::vector<DataType> input_types;
   TF_RETURN_IF_ERROR(GetNodeAttr(xla_node->attrs(), "Tinputs", &input_types));
   int num_distributed_vars;
@@ -1343,6 +1562,10 @@ Status ReplaceArgUsedByOutsideCompilationWithPlaceholder(
 // output edge in host graph `g`.
 Status RemoveUnusedXlaOutput(const string& xla_func_name, Graph* g,
                              Graph* xla_graph, Node* xla_node) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("xla_func_name: \"" + xla_func_name + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_14(mht_14_v, 1566, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "RemoveUnusedXlaOutput");
+
   // Find unused _Retval nodes, and remove them.
   std::vector<DataType> output_types;
   TF_RETURN_IF_ERROR(
@@ -1454,6 +1677,10 @@ Status RemoveUnusedXlaOutput(const string& xla_func_name, Graph* g,
 // replicated inputs.
 Status RemoveEdgesBetweenArgAndRetval(const string& xla_func_name, Graph* g,
                                       Graph* xla_graph, Node* xla_node) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("xla_func_name: \"" + xla_func_name + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_15(mht_15_v, 1681, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "RemoveEdgesBetweenArgAndRetval");
+
   // Collect data edges between _Arg and _Retval.
   int num_replicas;
   TF_RETURN_IF_ERROR(
@@ -1552,6 +1779,9 @@ Status RemoveEdgesBetweenArgAndRetval(const string& xla_func_name, Graph* g,
 // Remove any TPUReplicatedInput nodes with no output edges. Those nodes are
 // usually TPUMirroredVariable handles which are not used by any computations.
 void RemoveUnusedTPUReplicatedInputs(Graph* graph) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_16(mht_16_v, 1782, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "RemoveUnusedTPUReplicatedInputs");
+
   for (Node* n : graph->nodes()) {
     if (n->type_string() == kTPUReplicatedInput) {
       bool has_output = false;
@@ -1583,6 +1813,9 @@ void RemoveUnusedTPUReplicatedInputs(Graph* graph) {
 // containing tpu_strategy.run() is called multiple times with
 // the same inputs. Find clusters with duplicated names and rename them.
 Status RenameClustersWithDuplicatedNames(Graph* g) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_17(mht_17_v, 1816, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "RenameClustersWithDuplicatedNames");
+
   // Find all TPU clusters by finding all TPUReplicateMetadata nodes.
   std::unordered_map<string, std::vector<Node*>> cluster_name_to_metadata_nodes;
   std::unordered_set<string> cluster_names;
@@ -1856,6 +2089,9 @@ Status LiftOutsideCompilationOnlyArgsAndReplaceFunctionDef(
     const FunctionBody& fbody, FunctionLibraryRuntime* flr,
     FunctionLibraryDefinition* fld, int* lifted_arg_count,
     absl::optional<string> new_func_name, bool* rewritten) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_18(mht_18_v, 2092, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "LiftOutsideCompilationOnlyArgsAndReplaceFunctionDef");
+
   *rewritten = false;
   TF_RETURN_IF_ERROR(LiftOutsideCompilationOnlyArgs(
       fbody.graph, flr, fld, lifted_arg_count, rewritten));
@@ -1881,6 +2117,9 @@ Status MakeIdentityNodesForArgsToLift(
     const int arg_to_input_edge_offset, Graph* g, Node* n,
     absl::flat_hash_map<int, string>* lifted_arg_index_to_oc_cluster_name,
     int* lifted_arg_count) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_19(mht_19_v, 2120, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "MakeIdentityNodesForArgsToLift");
+
   int num_input = n->num_inputs();
   for (int arg_index = 0; arg_index < num_input; ++arg_index) {
     if (!args_to_lift.contains(arg_index)) continue;
@@ -1917,6 +2156,9 @@ Status RemoveArgsToLiftFromFunctionBody(
     const absl::flat_hash_map<int, string>& lifted_arg_index_to_oc_cluster_name,
     const absl::flat_hash_map<int, int>& index_mapping,
     const FunctionBody* fbody) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_20(mht_20_v, 2159, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "RemoveArgsToLiftFromFunctionBody");
+
   for (int i = 0; i < fbody->arg_nodes.size(); ++i) {
     Node* arg_node = fbody->arg_nodes[i];
 
@@ -1967,6 +2209,9 @@ Status RemoveArgsToLiftFromFunctionBody(
 
 Status CleanUpInEdges(const absl::flat_hash_map<int, int>& index_mapping,
                       const int arg_to_input_edge_offset, Graph* g, Node* n) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_21(mht_21_v, 2212, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "CleanUpInEdges");
+
   int num_inputs = n->num_inputs();
   for (int i = 0; i < num_inputs; ++i) {
     if (i < arg_to_input_edge_offset) continue;
@@ -1995,6 +2240,10 @@ Status CleanUpInEdges(const absl::flat_hash_map<int, int>& index_mapping,
 Status UpdateTypeAttribute(const absl::flat_hash_map<int, int>& index_mapping,
                            const string& type_attr_name,
                            const std::vector<DataType>& dtypes, Node* n) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("type_attr_name: \"" + type_attr_name + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_22(mht_22_v, 2244, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "UpdateTypeAttribute");
+
   std::vector<DataType> new_dtypes;
   new_dtypes.reserve(index_mapping.size());
   for (int i = 0; i < dtypes.size(); ++i) {
@@ -2012,6 +2261,9 @@ Status UpdateTypeAttribute(const absl::flat_hash_map<int, int>& index_mapping,
 // While V2 always creates Identity node for each While node output, which is
 // not necessary for XLA computation. Remove those Identity nodes.
 void RemoveOutputIdentityNodesForWhileV2(Graph* g, Node* while_node) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_23(mht_23_v, 2264, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "RemoveOutputIdentityNodesForWhileV2");
+
   std::vector<const Edge*> edges_to_identity_node;
   for (const Edge* e : while_node->out_edges()) {
     if (!e->IsControlEdge() && e->dst()->IsIdentity()) {
@@ -2040,6 +2292,9 @@ void RemoveOutputIdentityNodesForWhileV2(Graph* g, Node* while_node) {
 // instead.
 Status ReplaceOutputEdgesWithInputEdgeSourceForWhile(
     const absl::flat_hash_set<int>& args_to_lift, Graph* g, Node* while_node) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_24(mht_24_v, 2295, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "ReplaceOutputEdgesWithInputEdgeSourceForWhile");
+
   std::vector<const Edge*> edges_to_replace;
   for (const Edge* e : while_node->out_edges()) {
     if (args_to_lift.contains(e->src_output())) {
@@ -2077,6 +2332,9 @@ absl::flat_hash_map<int, int> ArgIndexMapping(
 void CleanUpRetvalsForWhileBody(
     const absl::flat_hash_map<int, int>& index_mapping,
     const std::vector<DataType>& dtypes, FunctionBody* fbody) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_25(mht_25_v, 2335, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "CleanUpRetvalsForWhileBody");
+
   for (int i = 0; i < fbody->ret_nodes.size(); i++) {
     Node* ret_node = fbody->ret_nodes[i];
     if (index_mapping.contains(i)) {
@@ -2094,6 +2352,9 @@ void CleanUpRetvalsForWhileBody(
 Status LiftOutsideCompilationOnlyArgsFromWhileNode(
     Graph* g, Node* while_node, FunctionLibraryDefinition* fld,
     int* lifted_arg_count, bool* rewritten) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_26(mht_26_v, 2355, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "LiftOutsideCompilationOnlyArgsFromWhileNode");
+
   *rewritten = false;
 
   TF_ASSIGN_OR_RETURN(absl::flat_hash_set<int> args_to_lift,
@@ -2167,6 +2428,9 @@ Status LiftOutsideCompilationOnlyArgsFromIfNode(Graph* g, Node* if_node,
                                                 FunctionLibraryDefinition* fld,
                                                 int* lifted_arg_count,
                                                 bool* rewritten) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_27(mht_27_v, 2431, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "LiftOutsideCompilationOnlyArgsFromIfNode");
+
   *rewritten = false;
   TF_ASSIGN_OR_RETURN(absl::flat_hash_set<int> args_to_lift,
                       FindArgsToLiftForIfNode(*if_node, fld));
@@ -2236,6 +2500,9 @@ Status LiftOutsideCompilationOnlyArgsFromIfNode(Graph* g, Node* if_node,
 Status LiftOutsideCompilationOnlyArgsFromCallNode(
     Graph* g, Node* call_node, FunctionLibraryRuntime* flr,
     FunctionLibraryDefinition* fld, int* lifted_arg_count, bool* rewritten) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_28(mht_28_v, 2503, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "LiftOutsideCompilationOnlyArgsFromCallNode");
+
   *rewritten = false;
 
   // Instantiate the function.
@@ -2323,6 +2590,9 @@ Status LiftOutsideCompilationOnlyArgsFromCallNode(
 Status LiftOutsideCompilationOnlyArgs(Graph* g, FunctionLibraryRuntime* flr,
                                       FunctionLibraryDefinition* fld,
                                       int* lifted_arg_count, bool* rewritten) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_29(mht_29_v, 2593, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "LiftOutsideCompilationOnlyArgs");
+
   *rewritten = false;
 
   // Handle deeper functional nodes first.
@@ -2473,6 +2743,9 @@ Status LiftOutsideCompilationOnlyArgs(Graph* g, FunctionLibraryRuntime* flr,
 
 /*static*/ Status EncapsulateTPUComputationsPass::Encapsulate(
     std::unique_ptr<Graph>* graph, FunctionLibraryDefinition* flib_def) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_30(mht_30_v, 2746, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "EncapsulateTPUComputationsPass::Encapsulate");
+
   // Check for undeclared outputs before Encapsulation, so we can give a better
   // error message.
   // TODO(phawkins): merge this with the encapsulation code to avoid the extra
@@ -2511,6 +2784,9 @@ Status LiftOutsideCompilationOnlyArgs(Graph* g, FunctionLibraryRuntime* flr,
 
 /*static*/ Status EncapsulateTPUComputationsPass::BuildTPUReplicateOps(
     Graph* graph) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_31(mht_31_v, 2787, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "EncapsulateTPUComputationsPass::BuildTPUReplicateOps");
+
   // Finds all of the replicate function calls, to avoid mutating the graph
   // while iterating.
   std::vector<Node*> replicate_nodes;
@@ -2828,6 +3104,9 @@ Status LiftOutsideCompilationOnlyArgs(Graph* g, FunctionLibraryRuntime* flr,
 
 Status EncapsulateTPUComputationsPass::Run(
     const GraphOptimizationPassOptions& options) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_32(mht_32_v, 3107, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "EncapsulateTPUComputationsPass::Run");
+
   VLOG(1) << "EncapsulateTPUComputations(): "
           << DumpGraphToFile("encapsulate_tpu_computations_before",
                              **options.graph, options.flib_def);
@@ -2848,6 +3127,10 @@ Status ExtractOutsideCompilationPass::ProcessHeadTailOutsideCompilation(
     const string& outside_compilation_attr_name, int* lifted_arg_count,
     std::unordered_map<string, XlaClusterInfo>* clusters, Graph* g,
     FunctionLibraryRuntime* flr, FunctionLibraryDefinition* fld) {
+   std::vector<std::string> mht_33_v;
+   mht_33_v.push_back("outside_compilation_attr_name: \"" + outside_compilation_attr_name + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_33(mht_33_v, 3131, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "ExtractOutsideCompilationPass::ProcessHeadTailOutsideCompilation");
+
   // Gather a list of pivots by cluster so we can easily look them up.
   absl::node_hash_map<string, Node*> pivots;
   string cluster_name;
@@ -2924,6 +3207,9 @@ Status ExtractOutsideCompilationPass::ProcessHeadTailOutsideCompilation(
 
 Status ExtractOutsideCompilationPass::Run(
     const GraphOptimizationPassOptions& options) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSencapsulate_tpu_computations_passDTcc mht_34(mht_34_v, 3210, "", "./tensorflow/core/tpu/graph_rewrite/encapsulate_tpu_computations_pass.cc", "ExtractOutsideCompilationPass::Run");
+
   const auto* config =
       (options.session_options ? &options.session_options->config : nullptr);
   std::unique_ptr<ProcessFunctionLibraryRuntime> pflr(

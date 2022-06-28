@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSpythonPSprofilerPSinternalPSpython_hooksDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSpythonPSprofilerPSinternalPSpython_hooksDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSpythonPSprofilerPSinternalPSpython_hooksDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,17 +199,26 @@ namespace py = ::pybind11;
 namespace {
 
 void SysSetProfileNone() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSpythonPSprofilerPSinternalPSpython_hooksDTcc mht_0(mht_0_v, 202, "", "./tensorflow/python/profiler/internal/python_hooks.cc", "SysSetProfileNone");
+
   py::object setprofile = py::module::import("sys").attr("setprofile");
   setprofile(py::none());
 }
 
 void ThreadingSetProfile(const py::object& callback) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSpythonPSprofilerPSinternalPSpython_hooksDTcc mht_1(mht_1_v, 210, "", "./tensorflow/python/profiler/internal/python_hooks.cc", "ThreadingSetProfile");
+
   py::object setprofile = py::module::import("threading").attr("setprofile");
   setprofile(callback);
 }
 
 std::string GetEventName(PyObject* co_filename, PyObject* co_name,
                          int co_firstlineno) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSpythonPSprofilerPSinternalPSpython_hooksDTcc mht_2(mht_2_v, 219, "", "./tensorflow/python/profiler/internal/python_hooks.cc", "GetEventName");
+
   string filename(py::reinterpret_borrow<py::str>(co_filename));
   string function;
   if (co_name == nullptr) {
@@ -55,6 +232,9 @@ std::string GetEventName(PyObject* co_filename, PyObject* co_name,
 }
 
 string GetEventName(PyMethodDef* method, PyObject* module) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSpythonPSprofilerPSinternalPSpython_hooksDTcc mht_3(mht_3_v, 235, "", "./tensorflow/python/profiler/internal/python_hooks.cc", "GetEventName");
+
   // Python stack does not have a filename/line_no for native calls.
   // Use module name and function/method name instead.
   string filename;
@@ -75,6 +255,9 @@ string GetEventName(PyMethodDef* method, PyObject* module) {
 
 void AddEventToXLine(const PythonTraceEntry& event, XLineBuilder* line,
                      XPlaneBuilder* plane) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSpythonPSprofilerPSinternalPSpython_hooksDTcc mht_4(mht_4_v, 258, "", "./tensorflow/python/profiler/internal/python_hooks.cc", "AddEventToXLine");
+
   // TODO(jiesun): maybe add full filename as event stats.
   auto xevent = line->AddEvent(*plane->GetOrCreateEventMetadata(event.Name()));
   xevent.SetTimestampNs(event.start_time_ns);
@@ -83,6 +266,9 @@ void AddEventToXLine(const PythonTraceEntry& event, XLineBuilder* line,
 
 template <typename ForEachThreadFunc>
 void ForEachThread(PyThreadState* curr_thread, ForEachThreadFunc&& callback) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSpythonPSprofilerPSinternalPSpython_hooksDTcc mht_5(mht_5_v, 269, "", "./tensorflow/python/profiler/internal/python_hooks.cc", "ForEachThread");
+
   // Note: PyThreadState's interp is not accessible in open source due to
   // Py_LIMITED_API definition nuances. We can not iterate all threads through
   // that PyInterpreterState.
@@ -101,6 +287,9 @@ void ForEachThread(PyThreadState* curr_thread, ForEachThreadFunc&& callback) {
 /*static*/ PythonHookContext* PythonHooks::e2e_context_ = nullptr;
 
 std::string PythonTraceEntry::Name() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSpythonPSprofilerPSinternalPSpython_hooksDTcc mht_6(mht_6_v, 290, "", "./tensorflow/python/profiler/internal/python_hooks.cc", "PythonTraceEntry::Name");
+
   std::string event_name;
   if (co_filename) {
     return GetEventName(co_filename, co_name, co_firstlineno);
@@ -111,11 +300,17 @@ std::string PythonTraceEntry::Name() const {
 }
 
 PythonHooks* PythonHooks::GetSingleton() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSpythonPSprofilerPSinternalPSpython_hooksDTcc mht_7(mht_7_v, 303, "", "./tensorflow/python/profiler/internal/python_hooks.cc", "PythonHooks::GetSingleton");
+
   static PythonHooks* singleton = new PythonHooks;
   return singleton;
 }
 
 void PythonHookContext::Start(const PythonHooksOptions& options) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSpythonPSprofilerPSinternalPSpython_hooksDTcc mht_8(mht_8_v, 311, "", "./tensorflow/python/profiler/internal/python_hooks.cc", "PythonHookContext::Start");
+
   if (!Py_IsInitialized()) return;
 
 #if PY_MAJOR_VERSION < 3 || (PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION < 7)
@@ -164,6 +359,9 @@ void PythonHookContext::Start(const PythonHooksOptions& options) {
 }
 
 void PythonHookContext::Stop() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSpythonPSprofilerPSinternalPSpython_hooksDTcc mht_9(mht_9_v, 362, "", "./tensorflow/python/profiler/internal/python_hooks.cc", "PythonHookContext::Stop");
+
   if (!Py_IsInitialized()) return;
   if (options_.enable_python_traceme || options_.enable_trace_python_function) {
     PyGILState_STATE gil_state = PyGILState_Ensure();
@@ -178,6 +376,9 @@ void PythonHookContext::Stop() {
 }
 
 void PythonHookContext::CollectData(XPlane* raw_plane) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSpythonPSprofilerPSinternalPSpython_hooksDTcc mht_10(mht_10_v, 379, "", "./tensorflow/python/profiler/internal/python_hooks.cc", "PythonHookContext::CollectData");
+
   if (raw_plane == nullptr) {
     end_to_end_xplane_.emplace();
     raw_plane = &*end_to_end_xplane_;
@@ -209,6 +410,9 @@ void PythonHookContext::CollectData(XPlane* raw_plane) {
 }
 
 void PythonHookContext::Finalize(XSpace* space) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSpythonPSprofilerPSinternalPSpython_hooksDTcc mht_11(mht_11_v, 413, "", "./tensorflow/python/profiler/internal/python_hooks.cc", "PythonHookContext::Finalize");
+
   if (space && options_.enable_trace_python_function) {
     XPlane* plane =
         FindOrAddMutablePlaneWithName(space, kPythonTracerPlaneName);
@@ -228,12 +432,19 @@ void PythonHookContext::Finalize(XSpace* space) {
 
 /*static*/ int PythonHooks::ProfileFunction(PyObject* obj, PyFrameObject* frame,
                                             int what, PyObject* arg) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSpythonPSprofilerPSinternalPSpython_hooksDTcc mht_12(mht_12_v, 435, "", "./tensorflow/python/profiler/internal/python_hooks.cc", "PythonHooks::ProfileFunction");
+
   GetSingleton()->ProfileFast(frame, what, arg);
   return 0;
 }
 
 void PythonHooks::ProfileSlow(const py::object& frame, const string& event,
                               const py::object& arg) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("event: \"" + event + "\"");
+   MHTracer_DTPStensorflowPSpythonPSprofilerPSinternalPSpython_hooksDTcc mht_13(mht_13_v, 445, "", "./tensorflow/python/profiler/internal/python_hooks.cc", "PythonHooks::ProfileSlow");
+
   int what;
   absl::string_view event_name(event);
 
@@ -264,6 +475,9 @@ void PythonHooks::ProfileSlow(const py::object& frame, const string& event,
 
 void PythonHookContext::ProfileFast(PyFrameObject* frame, int what,
                                     PyObject* arg) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSpythonPSprofilerPSinternalPSpython_hooksDTcc mht_14(mht_14_v, 478, "", "./tensorflow/python/profiler/internal/python_hooks.cc", "PythonHookContext::ProfileFast");
+
   const int64_t thread_id = Env::Default()->GetCurrentThreadId();
   uint64 now = GetCurrentTimeNanos();
   auto& thread_traces = entries_[thread_id];
@@ -319,6 +533,9 @@ void PythonHookContext::ProfileFast(PyFrameObject* frame, int what,
 }
 
 /*static*/ void PythonHookContext::SetProfilerInAllThreads() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSpythonPSprofilerPSinternalPSpython_hooksDTcc mht_15(mht_15_v, 536, "", "./tensorflow/python/profiler/internal/python_hooks.cc", "PythonHookContext::SetProfilerInAllThreads");
+
   // We also want any new threads started to use our profiler.
   // NOTE: threading does not provide a C API equivalent to
   // `threading.setprofile` so we are forced to go via Python to setup the
@@ -348,6 +565,9 @@ void PythonHookContext::ProfileFast(PyFrameObject* frame, int what,
 }
 
 /*static*/ void PythonHookContext::ClearProfilerInAllThreads() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSpythonPSprofilerPSinternalPSpython_hooksDTcc mht_16(mht_16_v, 568, "", "./tensorflow/python/profiler/internal/python_hooks.cc", "PythonHookContext::ClearProfilerInAllThreads");
+
   PyThreadState* curr_thread = PyThreadState_Get();
   ForEachThread(curr_thread, [](PyThreadState* thread) {
     VLOG(1) << "Clearing profiler in " << thread->thread_id;
@@ -360,6 +580,9 @@ void PythonHookContext::ProfileFast(PyFrameObject* frame, int what,
 }
 
 /*static*/ void PythonHookContext::EnableTraceMe(bool enable) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSpythonPSprofilerPSinternalPSpython_hooksDTcc mht_17(mht_17_v, 583, "", "./tensorflow/python/profiler/internal/python_hooks.cc", "PythonHookContext::EnableTraceMe");
+
   const char* kModuleName =
       "tensorflow.python.profiler.trace";
   try {

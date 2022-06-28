@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -63,7 +231,10 @@ struct MklBatchNormFwdParams {
         training(training),
         data_format(data_format),
         activation_mode(activation_mode),
-        src_md(src_md) {}
+        src_md(src_md) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_0(mht_0_v, 235, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "MklBatchNormFwdParams");
+}
 };
 
 template <typename T, typename U>
@@ -71,10 +242,16 @@ class MklFusedBatchNormFwdPrimitive : public MklPrimitive {
  public:
   explicit MklFusedBatchNormFwdPrimitive(const MklBatchNormFwdParams& fwdParams)
       : MklPrimitive(engine(engine::kind::cpu, 0)) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_1(mht_1_v, 245, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "MklFusedBatchNormFwdPrimitive");
+
     if (context_.bn_fwd == nullptr) Setup(fwdParams);
   }
 
-  ~MklFusedBatchNormFwdPrimitive() {}
+  ~MklFusedBatchNormFwdPrimitive() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_2(mht_2_v, 252, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "~MklFusedBatchNormFwdPrimitive");
+}
 
   // BatchNormalization forward execute
   //   src_data:     input data buffer of src
@@ -85,6 +262,9 @@ class MklFusedBatchNormFwdPrimitive : public MklPrimitive {
   void Execute(const T* src_data, const U* weights_data, T* dst_data,
                U* mean_data, U* variance_data,
                std::shared_ptr<stream> fwd_stream, U* workspace_data) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_3(mht_3_v, 265, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "Execute");
+
 #ifdef DNNL_AARCH64_USE_ACL
     mutex_lock lock(primitive_execution_mu_);
 #endif
@@ -148,7 +328,10 @@ class MklFusedBatchNormFwdPrimitive : public MklPrimitive {
     }
   }
 
-  memory::desc GetDstPd() const { return context_.dst_mem->get_desc(); }
+  memory::desc GetDstPd() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_4(mht_4_v, 332, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "GetDstPd");
+ return context_.dst_mem->get_desc(); }
 
   std::shared_ptr<BatchNormFwdPd> GetBatchNormFwdPd() const {
     return context_.fwd_pd;
@@ -189,10 +372,16 @@ class MklFusedBatchNormFwdPrimitive : public MklPrimitive {
           mean_mem(nullptr),
           variance_mem(nullptr),
           ws_mem(nullptr),
-          bn_fwd(nullptr) {}
+          bn_fwd(nullptr) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_5(mht_5_v, 376, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "BatchNormFwdContext");
+}
   };
 
   void Setup(const MklBatchNormFwdParams& fwdParams) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_6(mht_6_v, 382, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "Setup");
+
     context_.flags =
         fwdParams.training
             ? GET_FLAG(use_scale_shift)
@@ -353,15 +542,27 @@ class MklFusedBatchNormFwdPrimitiveFactory : public MklPrimitiveFactory<T> {
   }
 
   static MklFusedBatchNormFwdPrimitiveFactory& GetInstance() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_7(mht_7_v, 545, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "GetInstance");
+
     static MklFusedBatchNormFwdPrimitiveFactory instance_;
     return instance_;
   }
 
  private:
-  MklFusedBatchNormFwdPrimitiveFactory() {}
-  ~MklFusedBatchNormFwdPrimitiveFactory() {}
+  MklFusedBatchNormFwdPrimitiveFactory() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_8(mht_8_v, 554, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "MklFusedBatchNormFwdPrimitiveFactory");
+}
+  ~MklFusedBatchNormFwdPrimitiveFactory() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_9(mht_9_v, 558, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "~MklFusedBatchNormFwdPrimitiveFactory");
+}
 
   static string CreateKey(const MklBatchNormFwdParams& fwdParams) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_10(mht_10_v, 563, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "CreateKey");
+
     string prefix = "bn_fwd";
     FactoryKeyCreator key_creator;
     key_creator.AddAsKey(prefix);
@@ -377,12 +578,18 @@ class MklFusedBatchNormFwdPrimitiveFactory : public MklPrimitiveFactory<T> {
   }
 
   MklPrimitive* GetBatchNormFwd(const MklBatchNormFwdParams& fwdParams) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_11(mht_11_v, 581, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "GetBatchNormFwd");
+
     string key = CreateKey(fwdParams);
     return this->GetOp(key);
   }
 
   void SetBatchNormFwd(const MklBatchNormFwdParams& fwdParams,
                        MklPrimitive* op) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_12(mht_12_v, 590, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "SetBatchNormFwd");
+
     string key = CreateKey(fwdParams);
     this->SetOp(key, op);
   }
@@ -409,7 +616,10 @@ struct MklBatchNormBwdParams {
         training(training),
         data_format(data_format),
         src_md(src_md),
-        diff_dst_md(diff_dst_md) {}
+        diff_dst_md(diff_dst_md) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_13(mht_13_v, 620, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "MklBatchNormBwdParams");
+}
 };
 
 template <typename T, typename U>
@@ -417,10 +627,16 @@ class MklFusedBatchNormBwdPrimitive : public MklPrimitive {
  public:
   explicit MklFusedBatchNormBwdPrimitive(const MklBatchNormBwdParams& bwdParams)
       : MklPrimitive(engine(engine::kind::cpu, 0)) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_14(mht_14_v, 630, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "MklFusedBatchNormBwdPrimitive");
+
     if (context_.bn_bwd == nullptr) Setup(bwdParams);
   }
 
-  ~MklFusedBatchNormBwdPrimitive() {}
+  ~MklFusedBatchNormBwdPrimitive() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_15(mht_15_v, 637, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "~MklFusedBatchNormBwdPrimitive");
+}
 
   // BatchNormalization backward execute
   //   src_data:       input data buffer of src
@@ -438,6 +654,9 @@ class MklFusedBatchNormBwdPrimitive : public MklPrimitive {
                const T* diff_dst_data, const U* weights_data, T* diff_src_data,
                U* diff_weights_data, U* res_space_data,
                std::shared_ptr<stream> bwd_stream) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_16(mht_16_v, 657, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "Execute");
+
 #ifdef DNNL_AARCH64_USE_ACL
     mutex_lock lock(primitive_execution_mu_);
 #endif
@@ -500,7 +719,10 @@ class MklFusedBatchNormBwdPrimitive : public MklPrimitive {
     return context_.bwd_pd;
   }
 
-  memory::desc GetDiffSrcPd() { return context_.diff_src_mem->get_desc(); }
+  memory::desc GetDiffSrcPd() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_17(mht_17_v, 723, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "GetDiffSrcPd");
+ return context_.diff_src_mem->get_desc(); }
 
  private:
   struct BatchNormBwdContext {
@@ -532,10 +754,16 @@ class MklFusedBatchNormBwdPrimitive : public MklPrimitive {
           diff_dst_mem(nullptr),
           weights_mem(nullptr),
           diff_weights_mem(nullptr),
-          diff_src_mem(nullptr) {}
+          diff_src_mem(nullptr) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_18(mht_18_v, 758, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "BatchNormBwdContext");
+}
   };
 
   void Setup(const MklBatchNormBwdParams& bwdParams) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_19(mht_19_v, 764, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "Setup");
+
     context_.flags =
         bwdParams.training
             ? GET_FLAG(use_scale_shift)
@@ -620,15 +848,27 @@ class MklFusedBatchNormBwdPrimitiveFactory : public MklPrimitiveFactory<T> {
   }
 
   static MklFusedBatchNormBwdPrimitiveFactory& GetInstance() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_20(mht_20_v, 851, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "GetInstance");
+
     static MklFusedBatchNormBwdPrimitiveFactory instance_;
     return instance_;
   }
 
  private:
-  MklFusedBatchNormBwdPrimitiveFactory() {}
-  ~MklFusedBatchNormBwdPrimitiveFactory() {}
+  MklFusedBatchNormBwdPrimitiveFactory() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_21(mht_21_v, 860, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "MklFusedBatchNormBwdPrimitiveFactory");
+}
+  ~MklFusedBatchNormBwdPrimitiveFactory() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_22(mht_22_v, 864, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "~MklFusedBatchNormBwdPrimitiveFactory");
+}
 
   static string CreateKey(const MklBatchNormBwdParams& bwdParams) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_23(mht_23_v, 869, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "CreateKey");
+
     string prefix = "bn_bwd";
     FactoryKeyCreator key_creator;
     key_creator.AddAsKey(prefix);
@@ -644,12 +884,18 @@ class MklFusedBatchNormBwdPrimitiveFactory : public MklPrimitiveFactory<T> {
   }
 
   MklPrimitive* GetBatchNormBwd(const MklBatchNormBwdParams& bwdParams) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_24(mht_24_v, 887, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "GetBatchNormBwd");
+
     string key = CreateKey(bwdParams);
     return this->GetOp(key);
   }
 
   void SetBatchNormBwd(const MklBatchNormBwdParams& bwdParams,
                        MklPrimitive* op) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_25(mht_25_v, 896, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "SetBatchNormBwd");
+
     string key = CreateKey(bwdParams);
     this->SetOp(key, op);
   }
@@ -664,6 +910,9 @@ class MklFusedBatchNormOp : public OpKernel {
  public:
   explicit MklFusedBatchNormOp(OpKernelConstruction* context)
       : OpKernel(context) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_26(mht_26_v, 913, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "MklFusedBatchNormOp");
+
     float epsilon;
     OP_REQUIRES_OK(context, context->GetAttr("epsilon", &epsilon));
     epsilon_ = epsilon;
@@ -699,6 +948,9 @@ class MklFusedBatchNormOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_27(mht_27_v, 951, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "Compute");
+
     try {
       const size_t kSrcIndex = 0;       // index of src input tensor
       const size_t kScaleIndex = 1;     // index of scale tensor
@@ -988,11 +1240,17 @@ class MklFusedBatchNormOp : public OpKernel {
   engine cpu_engine_ = engine(engine::kind::cpu, 0);
 
   void ExtractParams(OpKernelContext* context) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_28(mht_28_v, 1243, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "ExtractParams");
+
     const Tensor& input = MklGetInput(context, 0);
     depth_ = static_cast<int>(GetTensorDim(input, tensor_format_, 'C'));
   }
 
   void SetMeanVariance(const Tensor& mean, const Tensor& variance) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_29(mht_29_v, 1251, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "SetMeanVariance");
+
     mean_values_ = reinterpret_cast<U*>(const_cast<U*>(mean.flat<U>().data()));
     variance_values_ =
         reinterpret_cast<U*>(const_cast<U*>(variance.flat<U>().data()));
@@ -1001,6 +1259,9 @@ class MklFusedBatchNormOp : public OpKernel {
   void HandleEmptyInput(OpKernelContext* context, TensorShape tf_shape_src,
                         TensorShape workspace_tf_shape,
                         TensorShape tf_shape_scale, Tensor** dst_tensor) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_30(mht_30_v, 1262, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "HandleEmptyInput");
+
     DCHECK(dst_tensor);
 
     const size_t kDstIndex = 0;
@@ -1030,6 +1291,9 @@ class MklFusedBatchNormOp : public OpKernel {
                          Tensor** saved_mean_tensor,
                          Tensor** saved_variance_tensor,
                          Tensor** reserved_space_tensor) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_31(mht_31_v, 1294, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "AllocateTFOutputs");
+
     DCHECK(batch_mean_tensor);
     DCHECK(batch_variance_tensor);
     DCHECK(saved_mean_tensor);
@@ -1109,6 +1373,9 @@ class MklFusedBatchNormGradOp : public OpKernel {
  public:
   explicit MklFusedBatchNormGradOp(OpKernelConstruction* context)
       : OpKernel(context) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_32(mht_32_v, 1376, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "MklFusedBatchNormGradOp");
+
     float epsilon;
     OP_REQUIRES_OK(context, context->GetAttr("epsilon", &epsilon));
     epsilon_ = epsilon;
@@ -1121,6 +1388,9 @@ class MklFusedBatchNormGradOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_33(mht_33_v, 1391, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "Compute");
+
     try {
       const size_t kDiffDstIndex = 0;        // index of diff_dst tensor
       const size_t kSrcIndex = 1;            // index of src input tensor
@@ -1402,6 +1672,9 @@ class MklFusedBatchNormGradOp : public OpKernel {
   engine cpu_engine_ = engine(engine::kind::cpu, 0);
 
   void ExtractParams(OpKernelContext* context) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_34(mht_34_v, 1675, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "ExtractParams");
+
     const Tensor& input = MklGetInput(context, 0);
     depth_ = static_cast<int>(GetTensorDim(input, tensor_format_, 'C'));
   }
@@ -1409,6 +1682,9 @@ class MklFusedBatchNormGradOp : public OpKernel {
   void HandleEmptyInput(OpKernelContext* context, TensorShape tf_shape_src,
                         TensorShape tf_shape_scale_shift,
                         Tensor** diff_src_tensor) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_35(mht_35_v, 1685, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "HandleEmptyInput");
+
     const size_t kDiffSrcIndex = 0;
 
     MklDnnShape dnn_shape_diff_src;
@@ -1429,6 +1705,9 @@ class MklFusedBatchNormGradOp : public OpKernel {
                          TensorShape tf_shape_scale_shift,
                          Tensor** diff_scale_tensor,
                          Tensor** diff_shift_tensor) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_36(mht_36_v, 1708, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "AllocateTFOutputs");
+
     DCHECK(diff_scale_tensor);
     DCHECK(diff_shift_tensor);
 
@@ -1475,7 +1754,10 @@ class MklFusedBatchNormGradOp : public OpKernel {
                 static_cast<U>(0));
   }
 
-  memory::dims GetMeanVarianceDims() { return memory::dims({1, depth_}); }
+  memory::dims GetMeanVarianceDims() {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_opDTcc mht_37(mht_37_v, 1758, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op.cc", "GetMeanVarianceDims");
+ return memory::dims({1, depth_}); }
 };
 
 #define REGISTER_MKL_FUSED_BATCHNORM_CPU(T)                    \

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_op_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_op_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_op_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -59,6 +227,9 @@ class CommonTestUtilities : public OpsTestBase {
  public:
   void PerformConversion(DataType dtype, const Tensor& tensor,
                          const Tensor& mkl_meta_tensor, Tensor* output) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_op_testDTcc mht_0(mht_0_v, 230, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op_test.cc", "PerformConversion");
+
     // Create an MKL to TF conversion node and execute it
     TF_EXPECT_OK(NodeDefBuilder("mkl_to_tf_op", "_MklToTf")
                      .Input(FakeInput(dtype))     // Input
@@ -75,11 +246,17 @@ class CommonTestUtilities : public OpsTestBase {
     *output = *GetOutput(0);
   }
 
-  void TestBody() {}
+  void TestBody() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_op_testDTcc mht_1(mht_1_v, 250, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op_test.cc", "TestBody");
+}
 
   static void VerifyTensorsClose(const float exponential_avg_factor,
                                  const bool is_training, const GraphRunner& run,
                                  const GraphRunner& run_mkl) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_op_testDTcc mht_2(mht_2_v, 257, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op_test.cc", "VerifyTensorsClose");
+
     int batch = 1;
     int height = 10;
     int width = 10;
@@ -129,6 +306,9 @@ class CommonTestUtilities : public OpsTestBase {
   static void VerifyTensorsCloseForGrad(const float epsilon,
                                         const GraphRunnerGrad& run,
                                         const GraphRunnerGrad& run_mkl) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_op_testDTcc mht_3(mht_3_v, 309, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op_test.cc", "VerifyTensorsCloseForGrad");
+
     int batch = 2;
     int height = 8;
     int width = 8;
@@ -190,11 +370,17 @@ class CommonTestUtilities : public OpsTestBase {
 
 template <typename T>
 class Conv2DOpTest : public OpsTestBase {
-  void TestBody() {}
+  void TestBody() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_op_testDTcc mht_4(mht_4_v, 374, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op_test.cc", "TestBody");
+}
 
  public:
   void RunConv2D(const Tensor& input, const Tensor& filter, Tensor* output,
                  Tensor* meta_output) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_op_testDTcc mht_5(mht_5_v, 381, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op_test.cc", "RunConv2D");
+
     DataType dtype = DataTypeToEnum<T>::v();
 
     TF_EXPECT_OK(NodeDefBuilder("MklConv2D", "_MklConv2D")
@@ -224,12 +410,18 @@ class FusedBatchNormOpTest : public OpsTestBase {
  protected:
   void VerifyFusedBatchNorm(const float exponential_avg_factor,
                             const bool is_training) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_op_testDTcc mht_6(mht_6_v, 413, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op_test.cc", "VerifyFusedBatchNorm");
+
     const GraphRunner run = [this](const Tensor& input, const Tensor& scale,
                                    const Tensor& offset, const Tensor& mean,
                                    const Tensor& variance,
                                    const float exponential_avg_factor,
                                    const bool is_training, Tensor* output,
                                    Tensor* batch_mean, Tensor* batch_var) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_op_testDTcc mht_7(mht_7_v, 422, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op_test.cc", "lambda");
+
       auto root = tensorflow::Scope::NewRootScope();
       auto input_op =
           ops::Const(root.WithOpName("input"), Input::Initializer(input));
@@ -276,6 +468,9 @@ class FusedBatchNormOpTest : public OpsTestBase {
                                        const float exponential_avg_factor,
                                        const bool is_training, Tensor* output,
                                        Tensor* batch_mean, Tensor* batch_var) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_op_testDTcc mht_8(mht_8_v, 471, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op_test.cc", "lambda");
+
       DataType dtype = DataTypeToEnum<T>::v();
       if (!NativeFormatEnabled()) {
         TF_EXPECT_OK(NodeDefBuilder("MklFusedBatchNorm", "_MklFusedBatchNorm")
@@ -345,6 +540,9 @@ class FusedBatchNormOpTest : public OpsTestBase {
   }
 
   void VerifyFusedBatchNormGradWithConv2D(const float epsilon) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_op_testDTcc mht_9(mht_9_v, 543, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op_test.cc", "VerifyFusedBatchNormGradWithConv2D");
+
 #ifdef ENABLE_MKL
     // This test only runs with MKL blocked format.
     const GraphRunnerGrad run =
@@ -354,6 +552,9 @@ class FusedBatchNormOpTest : public OpsTestBase {
                const Tensor& res_sp3, Tensor* x_backprop_tensor,
                Tensor* scale_backprop_tensor, Tensor* offset_backprop_tensor,
                const float epsilon) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_op_testDTcc mht_10(mht_10_v, 555, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op_test.cc", "lambda");
+
           auto root = tensorflow::Scope::NewRootScope();
 
           auto input_op =
@@ -415,6 +616,9 @@ class FusedBatchNormOpTest : public OpsTestBase {
                const Tensor& res_sp3, Tensor* x_backprop_tensor,
                Tensor* scale_backprop_tensor, Tensor* offset_backprop_tensor,
                const float epsilon) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_fused_batch_norm_op_testDTcc mht_11(mht_11_v, 619, "", "./tensorflow/core/kernels/mkl/mkl_fused_batch_norm_op_test.cc", "lambda");
+
           Tensor conv2d_output, conv2d_meta_output;
           Conv2DOpTest<T> conv2d_test;
           conv2d_test.RunConv2D(input, filter, &conv2d_output,

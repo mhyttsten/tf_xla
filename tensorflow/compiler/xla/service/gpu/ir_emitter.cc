@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,6 +218,9 @@ limitations under the License.
 // IR for AMDGPU target, as its kernel variables are in address space 5
 // instead of the default address space.
 static llvm::Value* AddrCastToDefault(llvm::Value* arg, llvm::IRBuilder<>& b) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_0(mht_0_v, 221, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "AddrCastToDefault");
+
   llvm::Type* arg_type = arg->getType();
   CHECK(arg_type->isPointerTy());
   if (arg_type->getPointerAddressSpace() != 0) {
@@ -75,12 +246,21 @@ IrEmitter::IrEmitter(const HloModuleConfig& hlo_module_config,
       module_(ir_emitter_context->llvm_module()),
       b_(module_->getContext()),
       bindings_(&b_, module_, is_nested),
-      hlo_module_config_(hlo_module_config) {}
+      hlo_module_config_(hlo_module_config) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_1(mht_1_v, 250, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::IrEmitter");
+}
 
 Status IrEmitter::DefaultAction(HloInstruction* hlo) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_2(mht_2_v, 255, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::DefaultAction");
+
   ElementalIrEmitter::HloToElementGeneratorMap operand_to_generator;
   for (const HloInstruction* operand : hlo->operands()) {
     operand_to_generator[operand] = [=](const llvm_ir::IrArray::Index& index) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_3(mht_3_v, 261, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "lambda");
+
       return GetIrArray(*operand, *hlo)
           .EmitReadArrayElement(index, &b_, operand->name());
     };
@@ -92,10 +272,16 @@ Status IrEmitter::DefaultAction(HloInstruction* hlo) {
 }
 
 Status IrEmitter::HandleConstant(HloInstruction* constant) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_4(mht_4_v, 275, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::HandleConstant");
+
   return Status::OK();
 }
 
 Status IrEmitter::HandleAddDependency(HloInstruction* add_dependency) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_5(mht_5_v, 282, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::HandleAddDependency");
+
   VLOG(2) << "HandleAddDependency: " << add_dependency->ToString();
   const HloInstruction* operand = add_dependency->operand(0);
   // Add_Dependency is a no-op, but we still want to bind it to an llvm::Value
@@ -108,6 +294,9 @@ Status IrEmitter::HandleAddDependency(HloInstruction* add_dependency) {
 }
 
 Status IrEmitter::HandleGetTupleElement(HloInstruction* get_tuple_element) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_6(mht_6_v, 297, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::HandleGetTupleElement");
+
   auto operand = get_tuple_element->operand(0);
   CHECK(bindings_.BoundToIrValue(*operand));
   bindings_.BindHloToIrValue(
@@ -121,26 +310,44 @@ Status IrEmitter::HandleGetTupleElement(HloInstruction* get_tuple_element) {
 }
 
 Status IrEmitter::HandleSend(HloInstruction*) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_7(mht_7_v, 313, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::HandleSend");
+
   return Unimplemented("Send is not implemented on GPU");
 }
 
 Status IrEmitter::HandleSendDone(HloInstruction*) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_8(mht_8_v, 320, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::HandleSendDone");
+
   return Unimplemented("Send-Done is not implemented on GPU");
 }
 
 Status IrEmitter::HandleRecv(HloInstruction*) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_9(mht_9_v, 327, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::HandleRecv");
+
   return Unimplemented("Recv is not implemented on GPU");
 }
 
 Status IrEmitter::HandleRecvDone(HloInstruction*) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_10(mht_10_v, 334, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::HandleRecvDone");
+
   return Unimplemented("Recv-done is not implemented on GPU");
 }
 
 Status IrEmitter::HandleScatter(HloInstruction*) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_11(mht_11_v, 341, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::HandleScatter");
+
   return Unimplemented("Scatter is not implemented on GPUs.");
 }
 
 Status IrEmitter::HandleTuple(HloInstruction* tuple) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_12(mht_12_v, 348, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::HandleTuple");
+
   std::vector<llvm::Value*> base_ptrs;
   for (const HloInstruction* operand : tuple->operands()) {
     base_ptrs.push_back(GetBasePointer(*operand));
@@ -152,6 +359,9 @@ Status IrEmitter::HandleTuple(HloInstruction* tuple) {
 Status IrEmitter::EmitCallToNestedComputation(
     const HloComputation& nested_computation,
     absl::Span<llvm::Value* const> operands, llvm::Value* output) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_13(mht_13_v, 362, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::EmitCallToNestedComputation");
+
   TF_RET_CHECK(nested_computation.num_parameters() > 0);
   llvm::Function*& emitted_function =
       computation_to_ir_function_[&nested_computation];
@@ -183,6 +393,9 @@ Status IrEmitter::EmitCallToNestedComputation(
 bool IrEmitter::MaybeEmitDirectAtomicOperation(
     const HloComputation& computation, llvm::Value* output_address,
     llvm::Value* source_address) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_14(mht_14_v, 396, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::MaybeEmitDirectAtomicOperation");
+
   CHECK_EQ(2, computation.num_parameters());
 
   HloOpcode root_opcode = computation.root_instruction()->opcode();
@@ -329,6 +542,9 @@ bool IrEmitter::MaybeEmitDirectAtomicOperation(
 Status IrEmitter::EmitAtomicOperationUsingCAS(const HloComputation& computation,
                                               llvm::Value* output_address,
                                               llvm::Value* source_address) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_15(mht_15_v, 545, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::EmitAtomicOperationUsingCAS");
+
   llvm::PointerType* output_address_type =
       llvm::dyn_cast<llvm::PointerType>(output_address->getType());
   CHECK_NE(output_address_type, nullptr);
@@ -443,6 +659,9 @@ Status IrEmitter::EmitAtomicOperationUsingCAS(const HloComputation& computation,
 Status IrEmitter::EmitAtomicOperationForNestedComputation(
     const HloComputation& computation, llvm::Value* output_address,
     llvm::Value* source_address) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_16(mht_16_v, 662, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::EmitAtomicOperationForNestedComputation");
+
   if (computation.num_parameters() != 2) {
     // TODO(b/30258929): We only accept binary computations so far.
     return Unimplemented(
@@ -461,12 +680,18 @@ Status IrEmitter::EmitAtomicOperationForNestedComputation(
 }
 
 bool IrEmitter::IsEmittingForAMDGPU() const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_17(mht_17_v, 683, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::IsEmittingForAMDGPU");
+
   llvm::Triple target_triple = llvm::Triple(module_->getTargetTriple());
   return target_triple.isAMDGPU();
 }
 
 void IrEmitter::EmitAMDGPUAtomicAdd(llvm::Value* output_address,
                                     llvm::Value* source) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_18(mht_18_v, 692, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::EmitAMDGPUAtomicAdd");
+
   CHECK(IsEmittingForAMDGPU());
   auto output_address_type =
       llvm::dyn_cast<llvm::PointerType>(output_address->getType());
@@ -491,12 +716,18 @@ void IrEmitter::EmitAMDGPUAtomicAdd(llvm::Value* output_address,
 }
 
 llvm::SyncScope::ID IrEmitter::DetermineSyncScope() const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_19(mht_19_v, 719, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::DetermineSyncScope");
+
   return (IsEmittingForAMDGPU())
              ? b_.getContext().getOrInsertSyncScopeID("agent")
              : llvm::SyncScope::System;
 }
 
 Status IrEmitter::HandleTupleSelect(HloInstruction* tuple_select) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_20(mht_20_v, 728, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::HandleTupleSelect");
+
   return InternalError(
       "Dynamic selection of tuples is not supported. Please file a bug against "
       "XLA/GPU if you need it");
@@ -504,10 +735,16 @@ Status IrEmitter::HandleTupleSelect(HloInstruction* tuple_select) {
 
 namespace {
 llvm::Value* Real(llvm::Value* x, llvm::IRBuilder<>* b) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_21(mht_21_v, 738, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "Real");
+
   return b->CreateExtractValue(x, {0});
 }
 
 llvm::Value* Imag(llvm::Value* x, llvm::IRBuilder<>* b) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_22(mht_22_v, 745, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "Imag");
+
   return b->CreateExtractValue(x, {1});
 }
 
@@ -529,6 +766,9 @@ std::pair<llvm::Value*, llvm::Value*> MultiplyComplex(llvm::Value* lhs_value,
 }  // namespace
 
 Status IrEmitter::HandleConvolution(HloInstruction* convolution) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_23(mht_23_v, 769, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::HandleConvolution");
+
   if (ShapeUtil::IsZeroElementArray(convolution->shape())) {
     // Emit no code for an empty output.
     return Status::OK();
@@ -539,6 +779,9 @@ Status IrEmitter::HandleConvolution(HloInstruction* convolution) {
 }
 
 Status IrEmitter::HandleFft(HloInstruction* fft) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_24(mht_24_v, 782, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::HandleFft");
+
   if (ShapeUtil::IsZeroElementArray(fft->shape())) {
     // Emit no code for an empty output.
     return Status::OK();
@@ -547,15 +790,24 @@ Status IrEmitter::HandleFft(HloInstruction* fft) {
 }
 
 Status IrEmitter::HandleAllReduce(HloInstruction* crs) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_25(mht_25_v, 793, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::HandleAllReduce");
+
   return Unimplemented(
       "AllReduce cannot be nested inside of fusion, map, etc.");
 }
 
 Status IrEmitter::HandleParameter(HloInstruction* parameter) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_26(mht_26_v, 801, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::HandleParameter");
+
   return Status::OK();
 }
 
 Status IrEmitter::HandleFusion(HloInstruction* fusion) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_27(mht_27_v, 808, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::HandleFusion");
+
   // kFusion for library calls should be handled by
   // IrEmitterUnnested::HandleFusion.
   CHECK_EQ(HloInstruction::FusionKind::kLoop, fusion->fusion_kind());
@@ -569,6 +821,9 @@ Status IrEmitter::HandleFusion(HloInstruction* fusion) {
 }
 
 Status IrEmitter::HandleCall(HloInstruction* call) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_28(mht_28_v, 824, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::HandleCall");
+
   std::vector<llvm::Value*> operand_addresses;
   for (HloInstruction* operand : call->operands()) {
     operand_addresses.push_back(GetBasePointer(*operand));
@@ -578,20 +833,32 @@ Status IrEmitter::HandleCall(HloInstruction* call) {
 }
 
 Status IrEmitter::HandleCustomCall(HloInstruction*) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_29(mht_29_v, 836, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::HandleCustomCall");
+
   return Unimplemented("custom-call");
 }
 
 Status IrEmitter::HandleInfeed(HloInstruction*) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_30(mht_30_v, 843, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::HandleInfeed");
+
   // TODO(b/30467474): Implement infeed on GPU.
   return Unimplemented("Infeed is not supported on GPU.");
 }
 
 Status IrEmitter::HandleOutfeed(HloInstruction*) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_31(mht_31_v, 851, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::HandleOutfeed");
+
   // TODO(b/34359662): Implement outfeed on GPU.
   return Unimplemented("Outfeed is not supported on GPU.");
 }
 
 Status IrEmitter::HandleBatchNormInference(HloInstruction*) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_32(mht_32_v, 859, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::HandleBatchNormInference");
+
   return Unimplemented(
       "The GPU backend does not implement BatchNormInference directly.  It "
       "should be lowered before IR emission to HLO-soup using "
@@ -599,6 +866,9 @@ Status IrEmitter::HandleBatchNormInference(HloInstruction*) {
 }
 
 Status IrEmitter::HandleBatchNormTraining(HloInstruction*) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_33(mht_33_v, 869, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::HandleBatchNormTraining");
+
   return Unimplemented(
       "The GPU backend does not implement BatchNormTraining directly.  It "
       "should be lowered before IR emission to HLO-soup using "
@@ -606,6 +876,9 @@ Status IrEmitter::HandleBatchNormTraining(HloInstruction*) {
 }
 
 Status IrEmitter::HandleBatchNormGrad(HloInstruction*) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_34(mht_34_v, 879, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::HandleBatchNormGrad");
+
   return Unimplemented(
       "The GPU backend does not implement BatchNormGrad directly.  It should "
       "be lowered before IR emission to HLO-soup using BatchNormRewriter.");
@@ -614,6 +887,9 @@ Status IrEmitter::HandleBatchNormGrad(HloInstruction*) {
 StatusOr<std::vector<llvm::Value*>> IrEmitter::ComputeNestedElement(
     const HloComputation& computation,
     absl::Span<llvm::Value* const> parameter_elements) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_35(mht_35_v, 890, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::ComputeNestedElement");
+
   std::vector<llvm::Value*> parameter_buffers;
   for (llvm::Value* parameter_element : parameter_elements) {
     parameter_buffers.push_back(llvm_ir::EmitAllocaAtFunctionEntry(
@@ -627,6 +903,9 @@ StatusOr<std::vector<llvm::Value*>> IrEmitter::ComputeNestedElement(
 StatusOr<std::vector<llvm::Value*>> IrEmitter::ComputeNestedElementFromAddrs(
     const HloComputation& computation,
     absl::Span<llvm::Value* const> parameter_elements_addrs) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_36(mht_36_v, 906, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::ComputeNestedElementFromAddrs");
+
   const Shape& return_shape = computation.root_instruction()->shape();
   llvm::Value* return_buffer = llvm_ir::EmitAllocaAtFunctionEntry(
       llvm_ir::ShapeToIrType(return_shape, module_), "return_buffer", &b_);
@@ -655,6 +934,9 @@ StatusOr<std::vector<llvm::Value*>> IrEmitter::ComputeNestedElementFromAddrs(
 
 std::vector<llvm_ir::IrArray> IrEmitter::ConstructIrArrayForOutputs(
     const HloInstruction& hlo) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_37(mht_37_v, 937, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::ConstructIrArrayForOutputs");
+
   std::vector<llvm_ir::IrArray> output_arrays;
   if (hlo.shape().IsTuple()) {
     int64_t num_outputs = ShapeUtil::TupleElementCount(hlo.shape());
@@ -670,6 +952,9 @@ std::vector<llvm_ir::IrArray> IrEmitter::ConstructIrArrayForOutputs(
 
 void IrEmitter::BindFusionArguments(const HloInstruction* fusion,
                                     FusedIrEmitter* fused_emitter) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitterDTcc mht_38(mht_38_v, 955, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter.cc", "IrEmitter::BindFusionArguments");
+
   for (int i = 0; i < fusion->operand_count(); i++) {
     const HloInstruction* operand = fusion->operand(i);
     fused_emitter->BindGenerator(

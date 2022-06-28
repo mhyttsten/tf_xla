@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_FRAMEWORK_FUNCTION_H_
 #define TENSORFLOW_CORE_FRAMEWORK_FUNCTION_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <vector>
 
@@ -102,10 +270,16 @@ class FunctionDefHelper {
   struct AttrValueWrapper {
     AttrValue proto;
 
-    AttrValueWrapper() {}
+    AttrValueWrapper() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh mht_0(mht_0_v, 274, "", "./tensorflow/core/framework/function.h", "AttrValueWrapper");
+}
 
     template <typename T>
-    AttrValueWrapper(T val) {  // NOLINT(runtime/explicit)
+    AttrValueWrapper(T val) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh mht_1(mht_1_v, 280, "", "./tensorflow/core/framework/function.h", "AttrValueWrapper");
+  // NOLINT(runtime/explicit)
       SetAttrValue(val, &proto);
     }
 
@@ -118,6 +292,10 @@ class FunctionDefHelper {
       const std::string& name,
       gtl::ArraySlice<std::pair<string, AttrValueWrapper>> attrs);
   static AttrValueWrapper FunctionRef(const std::string& name) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh mht_2(mht_2_v, 296, "", "./tensorflow/core/framework/function.h", "FunctionRef");
+
     return FunctionRef(name, {});
   }
 
@@ -144,6 +322,9 @@ class FunctionDefHelper {
     std::string name;
 
     std::string GetName() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh mht_3(mht_3_v, 325, "", "./tensorflow/core/framework/function.h", "GetName");
+
       if (!name.empty()) return name;
       CHECK(!ret.empty());
       return ret[0];
@@ -194,6 +375,10 @@ class FunctionDefHelper {
   // Helpers to construct a constant scalar.
   template <typename T>
   static Node Const(const std::string& name, const T& val) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh mht_4(mht_4_v, 379, "", "./tensorflow/core/framework/function.h", "Const");
+
     Node n = {{name}, "Const"};
     const DataType dtype = DataTypeToEnum<T>::value;
     n.attr.push_back({"dtype", dtype});
@@ -205,6 +390,10 @@ class FunctionDefHelper {
 
   template <typename T>
   static Node Const(const std::string& name, gtl::ArraySlice<T> vals) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh mht_5(mht_5_v, 394, "", "./tensorflow/core/framework/function.h", "Const");
+
     Node n = {{name}, "Const"};
     const DataType dtype = DataTypeToEnum<T>::value;
     n.attr.push_back({"dtype", dtype});
@@ -220,17 +409,28 @@ class FunctionDefHelper {
 
 template <>
 inline FunctionDefHelper::AttrValueWrapper::AttrValueWrapper(const char* val) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("val: \"" + (val == nullptr ? std::string("nullptr") : std::string((char*)val)) + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh mht_6(mht_6_v, 413, "", "./tensorflow/core/framework/function.h", "FunctionDefHelper::AttrValueWrapper::AttrValueWrapper");
+
   InitFromString(val);
 }
 
 template <>
 inline FunctionDefHelper::AttrValueWrapper::AttrValueWrapper(
     const std::string& val) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("val: \"" + val + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh mht_7(mht_7_v, 423, "", "./tensorflow/core/framework/function.h", "FunctionDefHelper::AttrValueWrapper::AttrValueWrapper");
+
   InitFromString(val);
 }
 
 template <>
 inline FunctionDefHelper::AttrValueWrapper::AttrValueWrapper(StringPiece val) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh mht_8(mht_8_v, 431, "", "./tensorflow/core/framework/function.h", "FunctionDefHelper::AttrValueWrapper::AttrValueWrapper");
+
   InitFromString(val);
 }
 
@@ -288,7 +488,10 @@ uint64 FunctionDefHash(const FunctionDef& fdef);
 
 class CallFrameInterface {
  public:
-  virtual ~CallFrameInterface() {}
+  virtual ~CallFrameInterface() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh mht_9(mht_9_v, 492, "", "./tensorflow/core/framework/function.h", "~CallFrameInterface");
+}
 
   virtual size_t num_args() const = 0;
   virtual size_t num_retvals() const = 0;
@@ -301,10 +504,16 @@ class CallFrameInterface {
   //
   // REQUIRES: `this->CanConsumeArg(index) == true`.
   virtual void ConsumeArg(int index, Tensor* val) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh mht_10(mht_10_v, 507, "", "./tensorflow/core/framework/function.h", "ConsumeArg");
+
     LOG(ERROR) << "This `CallFrameInterface` implementation does not support "
                   "consuming arguments.";
   }
-  virtual bool CanConsumeArg(int index) const { return false; }
+  virtual bool CanConsumeArg(int index) const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh mht_11(mht_11_v, 514, "", "./tensorflow/core/framework/function.h", "CanConsumeArg");
+ return false; }
 
   virtual Status SetRetval(int index, const Tensor& val) = 0;
 };
@@ -328,8 +537,14 @@ class FunctionCallFrame : public CallFrameInterface {
   // false it will fail if any of the retvals do not have a value.
   Status ConsumeRetvals(std::vector<Tensor>* rets, bool allow_dead_tensors);
 
-  size_t num_args() const override { return arg_types_.size(); }
-  size_t num_retvals() const override { return ret_types_.size(); }
+  size_t num_args() const override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh mht_12(mht_12_v, 541, "", "./tensorflow/core/framework/function.h", "num_args");
+ return arg_types_.size(); }
+  size_t num_retvals() const override {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh mht_13(mht_13_v, 545, "", "./tensorflow/core/framework/function.h", "num_retvals");
+ return ret_types_.size(); }
 
   // Callee methods.
   Status GetArg(int index, const Tensor** val) override;
@@ -362,7 +577,10 @@ class AbstractStackTrace {
     bool drop_internal_frames = false;
   };
 
-  virtual ~AbstractStackTrace() {}
+  virtual ~AbstractStackTrace() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh mht_14(mht_14_v, 581, "", "./tensorflow/core/framework/function.h", "~AbstractStackTrace");
+}
 
   // The returned span is alive as long as the AbstractStackTrace is alive.
   virtual absl::Span<StackFrame const> ToFrames() const = 0;
@@ -510,6 +728,9 @@ class FunctionLibraryDefinition : public OpRegistryInterface {
   FunctionDefLibrary ToProto() const TF_LOCKS_EXCLUDED(mu_);
 
   size_t num_functions() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh mht_15(mht_15_v, 731, "", "./tensorflow/core/framework/function.h", "num_functions");
+
     tf_shared_lock l(mu_);
     return function_defs_.size();
   }
@@ -518,9 +739,15 @@ class FunctionLibraryDefinition : public OpRegistryInterface {
   std::vector<string> ListFunctionNames() const TF_LOCKS_EXCLUDED(mu_);
 
   const OpRegistryInterface* default_registry() const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh mht_16(mht_16_v, 742, "", "./tensorflow/core/framework/function.h", "default_registry");
+
     return default_registry_;
   }
   void set_default_registry(const OpRegistryInterface* registry) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh mht_17(mht_17_v, 748, "", "./tensorflow/core/framework/function.h", "set_default_registry");
+
     default_registry_ = registry;
   }
 
@@ -543,6 +770,10 @@ class FunctionLibraryDefinition : public OpRegistryInterface {
   // Returns graph with debug stack traces for the given function, or `nullptr`
   // if none found.
   const StackTracesMap& GetStackTraces(const std::string& func_name) const {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("func_name: \"" + func_name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh mht_18(mht_18_v, 774, "", "./tensorflow/core/framework/function.h", "GetStackTraces");
+
     tf_shared_lock l(mu_);
     std::shared_ptr<FunctionDefAndOpRegistration> entry = FindHelper(func_name);
     if (entry) {
@@ -619,9 +850,15 @@ class DeviceMgr;
 
 // Index of an _Arg node.
 struct FunctionArgIndex {
-  explicit FunctionArgIndex(const int index) : index(index) {}
+  explicit FunctionArgIndex(const int index) : index(index) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh mht_19(mht_19_v, 854, "", "./tensorflow/core/framework/function.h", "FunctionArgIndex");
+}
   FunctionArgIndex(const int index, const int sub_index)
-      : index(index), sub_index(sub_index) {}
+      : index(index), sub_index(sub_index) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh mht_20(mht_20_v, 859, "", "./tensorflow/core/framework/function.h", "FunctionArgIndex");
+}
 
   // The value of the attribute "Index" of the _Arg node.
   int index;
@@ -633,7 +870,10 @@ struct FunctionArgIndex {
 
 class FunctionLibraryRuntime {
  public:
-  virtual ~FunctionLibraryRuntime() {}
+  virtual ~FunctionLibraryRuntime() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh mht_21(mht_21_v, 874, "", "./tensorflow/core/framework/function.h", "~FunctionLibraryRuntime");
+}
 
   // Instantiate a function with the given "attrs".
   //
@@ -799,6 +1039,10 @@ class FunctionLibraryRuntime {
                              Handle* handle) = 0;
   Status Instantiate(const std::string& function_name, AttrSlice attrs,
                      Handle* handle) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("function_name: \"" + function_name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh mht_22(mht_22_v, 1043, "", "./tensorflow/core/framework/function.h", "Instantiate");
+
     auto opts = absl::make_unique<InstantiateOptions>();
     return Instantiate(function_name, attrs, *opts, handle);
   }
@@ -827,8 +1071,14 @@ class FunctionLibraryRuntime {
   // In the cross-process scenario, runner isn't used for making the Async
   // RPC calls.
   struct Options {
-    Options() {}
-    explicit Options(const int64_t step_id) : step_id(step_id) {}
+    Options() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh mht_23(mht_23_v, 1075, "", "./tensorflow/core/framework/function.h", "Options");
+}
+    explicit Options(const int64_t step_id) : step_id(step_id) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh mht_24(mht_24_v, 1079, "", "./tensorflow/core/framework/function.h", "Options");
+}
     // Choose a step ID that is guaranteed not to clash with any
     // Session-generated step ID. DirectSession only generates
     // non-negative step IDs (contiguous, starting from 0), and
@@ -993,7 +1243,10 @@ const FunctionLibraryRuntime::LocalHandle kInvalidLocalHandle = -1;
 
 class CustomKernelCreator {
  public:
-  virtual ~CustomKernelCreator() {}
+  virtual ~CustomKernelCreator() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh mht_25(mht_25_v, 1247, "", "./tensorflow/core/framework/function.h", "~CustomKernelCreator");
+}
 
   // Given a NodeDef 'node_def' and the function library runtime 'flr',
   // validate if the class supports creating such a kernel.
@@ -1023,7 +1276,10 @@ typedef absl::variant<Tensor, TensorShape> FunctionRet;
 // Used to instantiate and run functions in a distributed system.
 class DistributedFunctionLibraryRuntime {
  public:
-  virtual ~DistributedFunctionLibraryRuntime() {}
+  virtual ~DistributedFunctionLibraryRuntime() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTh mht_26(mht_26_v, 1280, "", "./tensorflow/core/framework/function.h", "~DistributedFunctionLibraryRuntime");
+}
 
   // Instantiate a function on a remote target specified in `options.target`, by
   // sending the name and definition of the function to the remote worker. The

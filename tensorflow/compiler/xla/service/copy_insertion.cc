@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,6 +219,9 @@ namespace {
 using absl::StrAppend;
 
 bool IsReadonlyEntryParameterValue(const HloValue& value) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_0(mht_0_v, 222, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "IsReadonlyEntryParameterValue");
+
   const HloComputation* computation = value.defining_instruction()->parent();
   return value.defining_instruction()->opcode() == HloOpcode::kParameter &&
          computation == computation->parent()->entry_computation() &&
@@ -59,10 +230,16 @@ bool IsReadonlyEntryParameterValue(const HloValue& value) {
 }
 
 bool IsConstantValue(const HloValue& value) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_1(mht_1_v, 233, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "IsConstantValue");
+
   return value.defining_instruction()->opcode() == HloOpcode::kConstant;
 }
 
 bool ValueIsReadOnly(const HloValue& value) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_2(mht_2_v, 240, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "ValueIsReadOnly");
+
   return IsConstantValue(value) || IsReadonlyEntryParameterValue(value);
 }
 
@@ -80,6 +257,9 @@ struct SpecialCaseCopyPolicy {
 SpecialCaseCopyPolicy GetSpecialCaseCopyPolicy(const CallGraphNode& node,
                                                HloModule* module,
                                                HloComputation* computation) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_3(mht_3_v, 260, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "GetSpecialCaseCopyPolicy");
+
   SpecialCaseCopyPolicy policy;
   if (computation == module->entry_computation()) {
     policy.copy_parameters_and_constants = true;
@@ -90,6 +270,9 @@ SpecialCaseCopyPolicy GetSpecialCaseCopyPolicy(const CallGraphNode& node,
 
 bool ShouldCopyRootValue(const HloValue& value,
                          const SpecialCaseCopyPolicy& policy) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_4(mht_4_v, 273, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "ShouldCopyRootValue");
+
   if (policy.copy_parameters_and_constants) {
     return ValueIsReadOnly(value);
   }
@@ -177,6 +360,9 @@ DeepCopyAndAddControlEdges(HloInstruction* from, HloInstruction* to,
 bool IndicesToCopyForWhile(const HloDataflowAnalysis& dataflow,
                            const HloInstruction* xla_while,
                            ShapeTree<bool>* indices_to_copy) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_5(mht_5_v, 363, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "IndicesToCopyForWhile");
+
   DCHECK(ShapeUtil::Compatible(indices_to_copy->shape(), xla_while->shape()));
 
   bool any_copies = false;
@@ -205,6 +391,9 @@ bool IndicesToCopyForWhile(const HloDataflowAnalysis& dataflow,
 bool IndicesToCopyForConditional(const HloDataflowAnalysis& dataflow,
                                  const HloInstruction* xla_conditional,
                                  ShapeTree<bool>* indices_to_copy) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_6(mht_6_v, 394, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "IndicesToCopyForConditional");
+
   DCHECK(ShapeUtil::Compatible(indices_to_copy->shape(),
                                xla_conditional->shape()));
 
@@ -287,6 +476,9 @@ bool IndicesToCopyForConditional(const HloDataflowAnalysis& dataflow,
 // constructed by HloInstruction::DeepCopyInstruction.
 Status AddCopiesForWhile(const HloAliasAnalysis& alias_analysis,
                          HloInstruction* xla_while) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_7(mht_7_v, 479, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "AddCopiesForWhile");
+
   VLOG(2) << "Adding copies for kWhile instruction " << xla_while->name();
   TF_RET_CHECK(xla_while->opcode() == HloOpcode::kWhile);
 
@@ -346,6 +538,9 @@ Status AddCopiesForWhile(const HloAliasAnalysis& alias_analysis,
 Status AddCopiesForInPlaceOperation(const HloAliasAnalysis& alias_analysis,
                                     HloInstruction* in_place_op,
                                     int64_t operand_number) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_8(mht_8_v, 541, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "AddCopiesForInPlaceOperation");
+
   VLOG(2) << "Adding copies for in-place operation " << in_place_op->name();
   HloInstruction* operand = in_place_op->mutable_operand(operand_number);
   TF_ASSIGN_OR_RETURN(HloInstruction * deep_copy,
@@ -359,6 +554,9 @@ Status AddCopiesForInPlaceOperation(const HloAliasAnalysis& alias_analysis,
 // buffer. We later rely on RemoveUnnecessaryCopies to drop the unnecessary
 // ones.
 Status AddCopiesForAliasedInputOutputs(HloModule* module) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_9(mht_9_v, 557, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "AddCopiesForAliasedInputOutputs");
+
   HloComputation* entry = module->entry_computation();
   HloInstruction* root = entry->root_instruction();
 
@@ -441,6 +639,9 @@ Status AddCopiesForAliasedInputOutputs(HloModule* module) {
 
 // Removes any control dependencies to or from the given instruction.
 Status StripControlDependenciesFrom(HloInstruction* instruction) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_10(mht_10_v, 642, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "StripControlDependenciesFrom");
+
   while (!instruction->control_successors().empty()) {
     TF_RETURN_IF_ERROR(instruction->RemoveControlDependencyTo(
         instruction->control_successors().front()));
@@ -458,7 +659,10 @@ Status StripControlDependenciesFrom(HloInstruction* instruction) {
 class LiveRangeRegions {
  public:
   struct InstructionInfo {
-    InstructionInfo() : value_definition(nullptr), is_definition(false) {}
+    InstructionInfo() : value_definition(nullptr), is_definition(false) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_11(mht_11_v, 663, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "InstructionInfo");
+}
 
     // The instruction that defines the value being used. It basically saves
     // the defining instruction of each HloValue.
@@ -487,6 +691,9 @@ class LiveRangeRegions {
       ComputationMap;
 
   InstructionMap& operator[](const HloComputation* computation) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_12(mht_12_v, 694, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "lambda");
+
     if (computation_map_.find(computation) == computation_map_.end()) {
       computation_vector_.push_back(computation);
     }
@@ -494,23 +701,44 @@ class LiveRangeRegions {
   }
 
   const InstructionMap& operator[](const HloComputation* computation) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_13(mht_13_v, 704, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "lambda");
+
     ComputationMap::const_iterator p = computation_map_.find(computation);
     CHECK(p != computation_map_.end());
     return p->second;
   }
   ComputationMap::const_iterator begin() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_14(mht_14_v, 712, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "begin");
+
     return computation_map_.begin();
   }
-  ComputationMap::const_iterator end() const { return computation_map_.end(); }
+  ComputationMap::const_iterator end() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_15(mht_15_v, 718, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "end");
+ return computation_map_.end(); }
   int64_t size() const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_16(mht_16_v, 722, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "size");
+
     CHECK_EQ(computation_vector_.size(), computation_map_.size());
     return computation_vector_.size();
   }
-  bool empty() const { return size() == 0; }
+  bool empty() const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_17(mht_17_v, 729, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "empty");
+ return size() == 0; }
   const HloComputation* Computation(int64_t index) const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_18(mht_18_v, 733, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "Computation");
+
     return computation_vector_[index];
   }
   bool contains(const HloInstruction* instr) const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_19(mht_19_v, 739, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "contains");
+
     CHECK_NE(instr, nullptr);
     auto* computation = instr->parent();
     auto p = computation_map_.find(computation);
@@ -554,13 +782,22 @@ class Relation {
     // some common instructions.
     kBeforeOrAfterOrOverlap = kBeforeStart | kAfterEnd | kSameInstr,
   };
-  Relation() : intercept_def_use_(false) {}
+  Relation() : intercept_def_use_(false) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_20(mht_20_v, 786, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "Relation");
+}
   explicit Relation(RuntimeOrder order, bool intercept_def_use = false)
       : intercept_def_use_(intercept_def_use) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_21(mht_21_v, 791, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "Relation");
+
     orders_.push_back(order);
   }
   Relation(const Relation& that)
-      : intercept_def_use_(that.intercept_def_use_), orders_(that.orders_) {}
+      : intercept_def_use_(that.intercept_def_use_), orders_(that.orders_) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_22(mht_22_v, 798, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "Relation");
+}
   bool operator==(const Relation& that) const {
     return intercept_def_use_ == that.intercept_def_use_ &&
            absl::c_equal(orders_, that.orders_);
@@ -569,24 +806,39 @@ class Relation {
   // Return whether the runtime ordering may imply interception, assuming it
   // models the relation between a modifying and a use instruction.
   bool UseImpliesInterception() const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_23(mht_23_v, 809, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "UseImpliesInterception");
+
     CHECK_EQ(orders_.size(), 1);
     return UseImpliesInterception(orders_[0]);
   }
   // Return whether the runtime ordering may imply interception, assuming it
   // models the relation between a modifying and a definition instruction.
   bool DefinitionImpliesInterception() const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_24(mht_24_v, 818, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "DefinitionImpliesInterception");
+
     CHECK_EQ(orders_.size(), 1);
     return DefinitionImpliesInterception(orders_[0]);
   }
   // Return whether the current relation models a modifying instruction that
   // intercepts the dataflow of another live range region.
-  bool InterceptDefUse() const { return intercept_def_use_; }
+  bool InterceptDefUse() const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_25(mht_25_v, 827, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "InterceptDefUse");
+ return intercept_def_use_; }
   // Update interception state to the given value.
   void UpdateInterception(bool value) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_26(mht_26_v, 832, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "UpdateInterception");
+
     CHECK_EQ(orders_.size(), 1);
     intercept_def_use_ = value;
   }
   Relation::RuntimeOrder GetRuntimeOrder() const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_27(mht_27_v, 839, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "GetRuntimeOrder");
+
     if (orders_.empty()) {
       return Relation::kNoOverlap;
     }
@@ -595,35 +847,62 @@ class Relation {
   }
   // Return whether the current relation implies two overlapping regions.
   bool RuntimeOrderOverlap() const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_28(mht_28_v, 850, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "RuntimeOrderOverlap");
+
     return absl::c_any_of(orders_, ImpliesOverlap);
   }
   bool RuntimeOrderIsUnordered() const {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_29(mht_29_v, 856, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "RuntimeOrderIsUnordered");
+
     return orders_.size() == 1 && orders_[0] == kBeforeStartOrAfterEnd;
   }
   bool RuntimeOrderIsNoOverlap() const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_30(mht_30_v, 862, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "RuntimeOrderIsNoOverlap");
+
     return orders_.empty() || (orders_.size() == 1 && orders_[0] == kNoOverlap);
   }
   bool RuntimeOrderIsRunBefore() const {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_31(mht_31_v, 868, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "RuntimeOrderIsRunBefore");
+
     return orders_.size() == 1 && orders_[0] == kBeforeStart;
   }
   bool RuntimeOrderIsRunAfter() const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_32(mht_32_v, 874, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "RuntimeOrderIsRunAfter");
+
     return orders_.size() == 1 && orders_[0] == kAfterEnd;
   }
   std::string ToString() const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_33(mht_33_v, 880, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "ToString");
+
     return absl::StrCat("Interception = ", intercept_def_use_, ";",
                         absl::StrJoin(orders_, ","));
   }
 
   static bool DefinitionImpliesInterception(RuntimeOrder definition) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_34(mht_34_v, 888, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "DefinitionImpliesInterception");
+
     return (definition == kAfterEnd || definition == kBeforeStartOrAfterEnd);
   }
   static bool UseImpliesInterception(RuntimeOrder use) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_35(mht_35_v, 894, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "UseImpliesInterception");
+
     return (use == kBeforeStart || use == kBeforeStartOrAfterEnd);
   }
 
   // Summarize additional relations into a single runtime ordering, assuming
   // both relations are modeling constraints of the same source instruction.
   void UnionRelationFromSameSource(const Relation& rel) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_36(mht_36_v, 903, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "UnionRelationFromSameSource");
+
     CHECK_LE(orders_.size(), 1);
     CHECK_EQ(rel.orders_.size(), 1);
     if (orders_.empty()) {
@@ -637,6 +916,9 @@ class Relation {
   // Summarize additional relations into disjoint runtime orderings, assuming
   // the relations are modeling constraints of different source instructions.
   void UnionRelationFromDifferentSource(const Relation& rel) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_37(mht_37_v, 919, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "UnionRelationFromDifferentSource");
+
     if (rel.orders_.empty()) {
       return;
     }
@@ -651,6 +933,9 @@ class Relation {
   }
 
   static Relation::RuntimeOrder ReverseRuntimeOrder(RuntimeOrder order) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_38(mht_38_v, 936, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "ReverseRuntimeOrder");
+
     switch (order) {
       case kNoOverlap:
       case kSameInstr:
@@ -676,19 +961,31 @@ class Relation {
   absl::InlinedVector<RuntimeOrder, 4> orders_;
 
   static RuntimeOrder Union(RuntimeOrder o1, RuntimeOrder o2) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_39(mht_39_v, 964, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "Union");
+
     return static_cast<Relation::RuntimeOrder>(o1 | o2);
   }
   static bool ImpliesOverlap(RuntimeOrder o) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_40(mht_40_v, 970, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "ImpliesOverlap");
+
     return o >= RuntimeOrder::kBeforeStartOrAfterEnd;
   }
   // Returns whether ordering constraint o1 includes o2 as a subset, when they
   // represent runtime orderings (interleavings) of two different regions.
   static bool Subsume(RuntimeOrder o1, RuntimeOrder o2) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_41(mht_41_v, 978, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "Subsume");
+
     return Union(o1, o2) == o1;
   }
   // Overwrites o1 with o2 if o2 subsumes o1 (as defined above by the Subsume
   // function). Return whether o2 is subsumed by the new value in o1.
   static bool OverwriteIfSubsume(RuntimeOrder o2, RuntimeOrder* o1) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_42(mht_42_v, 986, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "OverwriteIfSubsume");
+
     if (*o1 == o2) {
       return true;
     }
@@ -712,6 +1009,9 @@ class ComputeRelativeLocation {
   typedef LiveRangeRegions::InstructionEntry InstructionEntry;
   explicit ComputeRelativeLocation(HloOrdering* ordering)
       : ordering_(ordering) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_43(mht_43_v, 1012, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "ComputeRelativeLocation");
+
     VLOG(3) << "New analysis\n";
   }
 
@@ -721,6 +1021,9 @@ class ComputeRelativeLocation {
   // can intercept the def-use data flow of entry1.
   Relation Compute(const InstructionEntry& entry1,
                    const InstructionEntry& entry2, bool instr2_can_modify) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_44(mht_44_v, 1024, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "Compute");
+
     auto def = entry1.second.value_definition;
     auto use = entry1.first;
     Relation::RuntimeOrder order =
@@ -759,6 +1062,9 @@ class ComputeRelativeLocation {
   // instructions in range1. Return kNoOverlap if range2 is outside of range1.
   Relation Compute(const LiveRangeRegions& range1,
                    const LiveRangeRegions& range2) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_45(mht_45_v, 1065, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "Compute");
+
     Relation dir_src_dest;
     for (int64_t index = 0; index < range1.size(); index++) {
       auto* computation1 = range1.Computation(index);
@@ -807,6 +1113,9 @@ class ComputeRelativeLocation {
 
   // Return whether control dependences, if exist, are added successfully.
   bool AddControlDependenceForUnorderedOps() {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_46(mht_46_v, 1116, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "AddControlDependenceForUnorderedOps");
+
     if (ctrl_deps_.empty()) {
       return true;
     }
@@ -851,6 +1160,9 @@ class ComputeRelativeLocation {
   bool ForceRuntimeOrder(absl::Span<const InstructionEntry> unordered_ops,
                          const InstructionEntry entry2,
                          Relation::RuntimeOrder desired_relation) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_47(mht_47_v, 1163, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "ForceRuntimeOrder");
+
     if (unordered_ops.empty()) {
       return true;
     }
@@ -859,6 +1171,9 @@ class ComputeRelativeLocation {
       return false;
     }
     auto ModifiesNonCopy = [](HloInstruction* instr, const HloInstruction* op) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_48(mht_48_v, 1174, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "lambda");
+
       auto in_place = HloDataflowAnalysis::GetInPlaceInputOutputPairs(instr);
       if (in_place.empty()) {
         return false;
@@ -899,6 +1214,9 @@ class ComputeRelativeLocation {
   }
 
   static bool AlwaysForceInterception(HloInstruction* instr) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_49(mht_49_v, 1217, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "AlwaysForceInterception");
+
     // The following communication operations can have some unexpected side
     // effects, when synchronizing across processes. Therefore, we
     // conservatively try provide dedicated buffers to these operations instead
@@ -931,6 +1249,9 @@ class ComputeRelativeLocation {
   // targeting buffer.
   bool InstructionCanIntercept(const InstructionEntry& entry,
                                const LiveRangeRegions& region) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_50(mht_50_v, 1252, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "InstructionCanIntercept");
+
     auto instr = entry.first;
     if (!entry.second.is_definition) {
       // If the instruction only uses the value, it can intercept only if it
@@ -971,6 +1292,9 @@ class ComputeRelativeLocation {
   }
 
   SavedRelation AlreadyComputed(HloInstruction* op1, HloInstruction* op2) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_51(mht_51_v, 1295, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "AlreadyComputed");
+
     auto p2 = saved_relations_.find(op2);
     if (p2 != saved_relations_.end()) {
       auto p1 = (*p2).second.find(op1);
@@ -992,6 +1316,9 @@ class ComputeRelativeLocation {
   Relation::RuntimeOrder Save(HloInstruction* entry1, HloInstruction* entry2,
                               const Relation::RuntimeOrder relation,
                               bool is_unordered_originally = false) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_52(mht_52_v, 1319, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "Save");
+
     CHECK_EQ(AlreadyComputed(entry1, entry2).first, kNotComputed);
     // Do not save unordered relations.
     CHECK_NE(relation, Relation::kBeforeStartOrAfterEnd);
@@ -1029,6 +1356,9 @@ class ComputeRelativeLocation {
   // Compute the runtime ordering constraints between two instructions.
   Relation::RuntimeOrder ComputeRuntimeOrdering(HloInstruction* instr1,
                                                 HloInstruction* instr2) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_53(mht_53_v, 1359, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "ComputeRuntimeOrdering");
+
     auto saved_relation = AlreadyComputed(instr1, instr2);
     if (saved_relation.first != kNotComputed) {
       VLOG(3) << "Already computed between " << instr1->ToString() << "\n vs "
@@ -1054,6 +1384,9 @@ class ComputeRelativeLocation {
         }
         auto ControlDependenceBefore = [&](HloInstruction* op1,
                                            HloInstruction* op2) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_54(mht_54_v, 1387, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "lambda");
+
           auto constraint = ComputeRuntimeOrdering(op1, op2);
           if (constraint == Relation::kBeforeStart ||
               constraint == Relation::kSameInstr ||
@@ -1122,7 +1455,10 @@ class CopyRemover {
   // being spliced. std::list requires a reference to the list object to
   // splice.
   struct ValueNode {
-    explicit ValueNode(const HloValue* v) : value(v) {}
+    explicit ValueNode(const HloValue* v) : value(v) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_55(mht_55_v, 1459, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "ValueNode");
+}
 
     const HloValue* value;
 
@@ -1140,6 +1476,9 @@ class CopyRemover {
   CopyRemover(const HloModule& module, const HloAliasAnalysis& alias_analysis,
               HloOrdering* ordering, bool check_live_range_ordering)
       : dataflow_(alias_analysis.dataflow_analysis()), ordering_(ordering) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_56(mht_56_v, 1479, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "CopyRemover");
+
     // Construct a list for each HLO buffer in the alias analysis. Maintain a
     // map from HloValue to the respective list element representing that
     // value. The map is used to construct the copy info map below.
@@ -1202,6 +1541,9 @@ class CopyRemover {
   void AddValueList(
       absl::Span<const HloValue* const> values,
       absl::flat_hash_map<const HloValue*, ValueNode*>* value_to_node) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_57(mht_57_v, 1544, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "AddValueList");
+
     ValueNode* tail = nullptr;
     ValueNode* head = nullptr;
     for (const HloValue* value : values) {
@@ -1238,6 +1580,9 @@ class CopyRemover {
   void CreateCopyMap(
       const HloModule& module,
       const absl::flat_hash_map<const HloValue*, ValueNode*>& value_to_node) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_58(mht_58_v, 1583, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "CreateCopyMap");
+
     for (HloComputation* computation : module.MakeNonfusionComputations()) {
       for (HloInstruction* instruction : computation->instructions()) {
         // Add copies with unambiguous source values to the map. Copies with
@@ -1257,6 +1602,9 @@ class CopyRemover {
   }
 
   ~CopyRemover() {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_59(mht_59_v, 1605, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "~CopyRemover");
+
     for (const ValueNode* head : value_lists_) {
       const ValueNode* p = head;
       do {
@@ -1269,6 +1617,9 @@ class CopyRemover {
 
   // Verify invariants within the linked lists.
   Status Verify() const {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_60(mht_60_v, 1620, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "Verify");
+
     for (const ValueNode* head : value_lists_) {
       const ValueNode* p = head;
       do {
@@ -1296,9 +1647,15 @@ class CopyRemover {
   // Compute the set of instructions where values are alive and organize these
   // instructions by separating them into their respective computations.
   LiveRangeRegions ComputeLiveRangeRegions(const ValueNode* head) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_61(mht_61_v, 1650, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "ComputeLiveRangeRegions");
+
     LiveRangeRegions live_range;
 
     auto VisitValueNode = [&](const ValueNode* node) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_62(mht_62_v, 1656, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "lambda");
+
       HloInstruction* def_op = node->value->instruction();
       HloComputation* def_parent = def_op->parent();
       live_range[def_parent][def_op].is_definition = true;
@@ -1318,6 +1675,9 @@ class CopyRemover {
   // and true is returned. Returns false otherwise.
   bool TryElideCopy(const HloInstruction* copy,
                     int64_t* region_analysis_limit) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_63(mht_63_v, 1678, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "TryElideCopy");
+
     VLOG(2) << "Trying to remove " << copy->name();
     CHECK_NE(region_analysis_limit, nullptr);
 
@@ -1355,6 +1715,9 @@ class CopyRemover {
     VLOG(3) << "Dest buffer values: " << ValueListToString(copy_node.dest);
     // Checks whether the live range at src is before that defined by dest.
     auto CheckLiveRangeBefore = [&](ValueNode* src, ValueNode* dest) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_64(mht_64_v, 1718, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "lambda");
+
       for (ValueNode* next_dest = dest; next_dest != nullptr;
            next_dest = Next(*next_dest)) {
         for (ValueNode* prev_src = src; prev_src != nullptr;
@@ -1370,6 +1733,9 @@ class CopyRemover {
     };
     auto CheckLiveRangeInterference = [&](ValueNode* src, ValueNode* dest,
                                           const CombineLiveRangeOption option) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_65(mht_65_v, 1736, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "lambda");
+
       CHECK_NE(src, nullptr);
       CHECK_NE(dest, nullptr);
       if (!use_region_analysis) {
@@ -1519,6 +1885,9 @@ class CopyRemover {
   // instruction. This should be called after splicing the value lists of the
   // source and destination buffers together.
   void RemoveCopyValue(ValueNode* copy_value_node) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_66(mht_66_v, 1888, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "RemoveCopyValue");
+
     CHECK_EQ(copy_value_node->value->defining_instruction()->opcode(),
              HloOpcode::kCopy);
     ValueNode* operand_node = copy_value_node->prev;
@@ -1563,6 +1932,9 @@ class CopyRemover {
   // to directly drive copy elision, use_is_always_before_def_in_same_instr is
   // set to false.
   bool LiveRangeBefore(const ValueNode& a, const ValueNode& b) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_67(mht_67_v, 1935, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "LiveRangeBefore");
+
     if (a.uses.empty()) {
       VLOG(2) << "Empty uses for " << *a.value;
       return ordering_->IsDefinedBefore(*a.value, *b.value);
@@ -1584,17 +1956,26 @@ class CopyRemover {
 
   // Returns whether 'node' is the last node in its list.
   bool IsTail(const ValueNode& node) const {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_68(mht_68_v, 1959, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "IsTail");
+
     return ContainsKey(value_lists_, node.next);
   }
 
   // Returns whether 'node' is the first node in its list.
   bool IsHead(const ValueNode& node) const {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_69(mht_69_v, 1967, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "IsHead");
+
     return ContainsKey(value_lists_, &node);
   }
 
   // Returns the next node in the list after 'node'. If 'node' is the
   // tail, then nullptr is returned.
   ValueNode* Next(const ValueNode& node) const {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_70(mht_70_v, 1976, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "Next");
+
     if (IsTail(node)) {
       return nullptr;
     } else {
@@ -1605,6 +1986,9 @@ class CopyRemover {
   // Returns the previous node in the list before 'node'. If 'node'
   // is the head, then nullptr is returned.
   ValueNode* Prev(const ValueNode& node) const {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_71(mht_71_v, 1989, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "Prev");
+
     if (IsHead(node)) {
       return nullptr;
     } else {
@@ -1615,6 +1999,9 @@ class CopyRemover {
   // Splices the entire linked list with 'head' as its head right after the
   // node 'insert_after' in another linked list.
   void SpliceAfter(ValueNode* head, ValueNode* insert_after) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_72(mht_72_v, 2002, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "SpliceAfter");
+
     DCHECK(IsHead(*head));
     value_lists_.erase(head);
 
@@ -1637,6 +2024,9 @@ class CopyRemover {
   // the buffer in src.
   bool ValuesInterfere(const ValueNode* src, const ValueNode* dest,
                        CombineLiveRangeOption merge_location) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_73(mht_73_v, 2027, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "ValuesInterfere");
+
     // Get the entire range of values sharing the buffers in src and dest.
     auto src_live_range = ComputeLiveRangeRegions(src);
     auto dest_live_range = ComputeLiveRangeRegions(dest);
@@ -1690,6 +2080,9 @@ class CopyRemover {
   // The ordering is important for live range region analysis.
   void ForEachValueInRange(const ValueNode* element,
                            std::function<void(const ValueNode*)> visitor) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_74(mht_74_v, 2083, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "ForEachValueInRange");
+
     const ValueNode* head = element;
     std::vector<const ValueNode*> values;
     for (const ValueNode* p = head; p != nullptr; p = Next(*p)) {
@@ -1704,8 +2097,14 @@ class CopyRemover {
   }
 
   std::string ValueListToString(const ValueNode* element) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_75(mht_75_v, 2100, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "ValueListToString");
+
     std::string result = "{";
     auto VisitValueNode = [&](const ValueNode* node) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_76(mht_76_v, 2105, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "lambda");
+
       if (result == "{") {
         result = node->value->ToShortString();
       } else {
@@ -1719,6 +2118,9 @@ class CopyRemover {
   }
 
   std::string ToString() const {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_77(mht_77_v, 2121, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "ToString");
+
     std::string out = absl::StrCat("CopyRemover:\n");
     StrAppend(&out, "  Def-use chains in each buffer:\n");
     for (const ValueNode* head : value_lists_) {
@@ -1776,6 +2178,9 @@ class CopyRemover {
 // RemoveUnnecessaryCopies to drop the unnecessary ones.
 Status CopyInsertion::AddCopiesForConditional(
     const HloAliasAnalysis& alias_analysis, HloInstruction* conditional) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_78(mht_78_v, 2181, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "CopyInsertion::AddCopiesForConditional");
+
   VLOG(2) << "Adding copies for kConditional instruction "
           << conditional->name();
   ShapeTree<bool> indices_to_copy(conditional->shape());
@@ -1805,6 +2210,9 @@ Status CopyInsertion::AddCopiesForConditional(
 // live-range interference. Generally interference can only occur around kWhile
 // instructions which have update-in-place semantics.
 Status CopyInsertion::AddCopiesToResolveInterference(HloModule* module) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_79(mht_79_v, 2213, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "CopyInsertion::AddCopiesToResolveInterference");
+
   TF_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
                       HloAliasAnalysis::Run(module, can_share_buffer_));
 
@@ -1840,12 +2248,18 @@ Status CopyInsertion::AddCopiesToResolveInterference(HloModule* module) {
 }
 
 Status CopyInsertion::AddSpecialCaseCopies(HloModule* module) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_80(mht_80_v, 2251, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "CopyInsertion::AddSpecialCaseCopies");
+
   std::unique_ptr<CallGraph> call_graph = CallGraph::Build(module);
   return AddSpecialCaseCopies(*call_graph, module);
 }
 
 Status CopyInsertion::AddSpecialCaseCopies(const CallGraph& call_graph,
                                            HloModule* module) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_81(mht_81_v, 2260, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "CopyInsertion::AddSpecialCaseCopies");
+
   TF_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
                       HloAliasAnalysis::Run(module, can_share_buffer_));
 
@@ -1854,6 +2268,9 @@ Status CopyInsertion::AddSpecialCaseCopies(const CallGraph& call_graph,
   HloInstructionMap<ShapeTree<bool>> instructions_to_copy;
   auto add_index_to_copy = [&instructions_to_copy](HloInstruction* instruction,
                                                    const ShapeIndex& index) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_82(mht_82_v, 2271, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "lambda");
+
     auto it = instructions_to_copy.find(instruction);
     if (it == instructions_to_copy.end()) {
       auto it_added = instructions_to_copy.emplace(
@@ -1996,6 +2413,9 @@ Status CopyInsertion::AddSpecialCaseCopies(const CallGraph& call_graph,
 }
 
 static int64_t GetNumExistingCopies(const HloModule* module) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_83(mht_83_v, 2416, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "GetNumExistingCopies");
+
   int64_t num_existing_copies = 0;
   for (HloComputation* computation : module->computations()) {
     for (HloInstruction* instruction : computation->instructions()) {
@@ -2010,6 +2430,9 @@ static int64_t GetNumExistingCopies(const HloModule* module) {
 Status CopyInsertion::RemoveUnnecessaryCopies(HloOrdering* ordering,
                                               HloModule* module,
                                               bool check_live_range_ordering) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_84(mht_84_v, 2433, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "CopyInsertion::RemoveUnnecessaryCopies");
+
   XLA_VLOG_LINES(4, module->ToString());
   TF_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
                       HloAliasAnalysis::Run(module, can_share_buffer_));
@@ -2072,6 +2495,9 @@ Status CopyInsertion::RemoveUnnecessaryCopies(HloOrdering* ordering,
 }
 
 StatusOr<bool> CopyInsertion::Run(HloModule* module) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScopy_insertionDTcc mht_85(mht_85_v, 2498, "", "./tensorflow/compiler/xla/service/copy_insertion.cc", "CopyInsertion::Run");
+
   // Copy insertion is performed in three steps:
   //
   // (1) Add copies conservatively to guarantee that there is no live-range

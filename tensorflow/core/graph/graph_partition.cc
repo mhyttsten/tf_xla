@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,11 +215,17 @@ namespace tensorflow {
 namespace {
 
 inline bool IsMerge(const NodeDef& node_def) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_0(mht_0_v, 218, "", "./tensorflow/core/graph/graph_partition.cc", "IsMerge");
+
   return node_def.op() == "Merge" || node_def.op() == "RefMerge" ||
          node_def.op() == "_XlaMerge";
 }
 
 inline bool IsNextIteration(const NodeDef& node_def) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_1(mht_1_v, 226, "", "./tensorflow/core/graph/graph_partition.cc", "IsNextIteration");
+
   return node_def.op() == "NextIteration" ||
          node_def.op() == "RefNextIteration";
 }
@@ -64,6 +238,9 @@ struct DupRecvKey {
 
   template <typename H>
   friend H AbslHashValue(H h, const DupRecvKey& c) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_2(mht_2_v, 241, "", "./tensorflow/core/graph/graph_partition.cc", "AbslHashValue");
+
     return H::combine(std::move(h), c.src_node_id, c.src_output_slot,
                       reinterpret_cast<std::uintptr_t>(c.dst_graph),
                       c.recv_output_on_host);
@@ -99,6 +276,9 @@ struct NodePort {
 
   template <typename H>
   friend H AbslHashValue(H h, const NodePort& c) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_3(mht_3_v, 279, "", "./tensorflow/core/graph/graph_partition.cc", "AbslHashValue");
+
     return H::combine(std::move(h), c.node_id, c.index);
   }
 };
@@ -115,6 +295,9 @@ struct GraphInfo {
 };
 
 DataType EdgeType(const Edge* e) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_4(mht_4_v, 298, "", "./tensorflow/core/graph/graph_partition.cc", "EdgeType");
+
   if (e->IsControlEdge()) {
     return DT_FLOAT;
   } else {
@@ -124,6 +307,9 @@ DataType EdgeType(const Edge* e) {
 
 // Return true iff we need to add the same device send/recv for 'edge'.
 bool NeedSameDeviceSendRecv(const Edge* edge, const GraphInfo& info) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_5(mht_5_v, 310, "", "./tensorflow/core/graph/graph_partition.cc", "NeedSameDeviceSendRecv");
+
   if (edge->IsControlEdge()) {
     return false;
   }
@@ -146,6 +332,9 @@ bool NeedSameDeviceSendRecv(const Edge* edge, const GraphInfo& info) {
 
 // Return true iff (dst, dst_input) is specified on host memory.
 bool IsDstInputOnHost(const Edge* edge, const GraphInfo& info) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_6(mht_6_v, 335, "", "./tensorflow/core/graph/graph_partition.cc", "IsDstInputOnHost");
+
   const Node* dst = edge->dst();
   int dst_port = edge->dst_input();
   if (info.device_types[dst->id()] != DEVICE_CPU) {
@@ -160,6 +349,9 @@ bool IsDstInputOnHost(const Edge* edge, const GraphInfo& info) {
 // Add an input to dst that comes from the "src_slot" output of the
 // node named by "src_name".
 void AddInput(NodeDef* dst, StringPiece src_name, int src_slot) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_7(mht_7_v, 352, "", "./tensorflow/core/graph/graph_partition.cc", "AddInput");
+
   if (src_slot == Graph::kControlSlot) {
     dst->add_input(strings::StrCat("^", src_name));
   } else if (src_slot == 0) {
@@ -172,6 +364,9 @@ void AddInput(NodeDef* dst, StringPiece src_name, int src_slot) {
 // Add a control edge from each input to each recv.
 void AddReadControl(const std::vector<NodeDef*>& recvs,
                     const std::vector<string>& inputs) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_8(mht_8_v, 367, "", "./tensorflow/core/graph/graph_partition.cc", "AddReadControl");
+
   for (NodeDef* recv : recvs) {
     for (const string& input : inputs) {
       recv->add_input(strings::StrCat("^", input));
@@ -181,6 +376,10 @@ void AddReadControl(const std::vector<NodeDef*>& recvs,
 
 void SetSendRecvAttrs(const PartitionOptions& opts, const Edge* edge,
                       const string& tensor_name_attr, NodeDefBuilder* builder) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("tensor_name_attr: \"" + tensor_name_attr + "\"");
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_9(mht_9_v, 380, "", "./tensorflow/core/graph/graph_partition.cc", "SetSendRecvAttrs");
+
   builder->Attr("tensor_name", tensor_name_attr);
   builder->Attr("send_device", edge->src()->assigned_device_name());
   builder->Attr("send_device_incarnation",
@@ -196,6 +395,10 @@ NodeDef* AddSend(const PartitionOptions& opts, const GraphInfo& g_info,
                  GraphDef* gdef, const Edge* edge,
                  NodeDefBuilder::NodeOut send_from, int64_t start_time,
                  const string& tensor_name_attr, Status* status) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("tensor_name_attr: \"" + tensor_name_attr + "\"");
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_10(mht_10_v, 399, "", "./tensorflow/core/graph/graph_partition.cc", "AddSend");
+
   const DataType dtype = send_from.data_type;
   const DataType cast_dtype = opts.should_cast ? opts.should_cast(edge) : dtype;
   const Node* src = edge->src();
@@ -253,6 +456,10 @@ NodeDef* AddSend(const PartitionOptions& opts, const GraphInfo& g_info,
 NodeDef* AddRecv(const PartitionOptions& opts, const GraphInfo& g_info,
                  GraphDef* gdef, const Edge* edge, NodeDef** real_recv,
                  const string& tensor_name_attr, Status* status) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("tensor_name_attr: \"" + tensor_name_attr + "\"");
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_11(mht_11_v, 460, "", "./tensorflow/core/graph/graph_partition.cc", "AddRecv");
+
   const DataType dtype = EdgeType(edge);
   const Node* src = edge->src();
   const Node* dst = edge->dst();
@@ -336,6 +543,9 @@ NodeDef* AddRecv(const PartitionOptions& opts, const GraphInfo& g_info,
 
 NodeDef* AddDummyConst(const PartitionOptions& opts, GraphDef* gdef,
                        const Edge* edge, Status* status) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_12(mht_12_v, 546, "", "./tensorflow/core/graph/graph_partition.cc", "AddDummyConst");
+
   const Node* src = edge->src();
   Tensor tensor(DT_FLOAT, TensorShape({0}));
   NodeDef* result = gdef->add_node();
@@ -351,6 +561,10 @@ NodeDef* AddDummyConst(const PartitionOptions& opts, GraphDef* gdef,
 NodeDef* AddControlTrigger(const PartitionOptions& opts, GraphDef* gdef,
                            const string& assigned_device_name, int64_t epoch,
                            int64_t starttime, Status* status) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("assigned_device_name: \"" + assigned_device_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_13(mht_13_v, 565, "", "./tensorflow/core/graph/graph_partition.cc", "AddControlTrigger");
+
   NodeDef* result = gdef->add_node();
   *status = NodeDefBuilder(opts.new_name(strings::StrCat("synch_", epoch)),
                            "ControlTrigger")
@@ -368,7 +582,13 @@ NodeDef* AddControlTrigger(const PartitionOptions& opts, GraphDef* gdef,
 // the GraphDef for these nodes. Ideally, the placer would enforce the
 // colocation to render this unnecessary.
 void OptimizeControlFlowColocation(Graph* graph) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_14(mht_14_v, 585, "", "./tensorflow/core/graph/graph_partition.cc", "OptimizeControlFlowColocation");
+
   auto visit = [](Node* node) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_15(mht_15_v, 589, "", "./tensorflow/core/graph/graph_partition.cc", "lambda");
+
     if (IsSwitch(node)) {
       for (const Edge* in_edge : node->in_edges()) {
         if (in_edge->dst_input() == 0) {
@@ -409,10 +629,17 @@ void OptimizeControlFlowColocation(Graph* graph) {
 }
 
 string ControlLoopName(const string& name) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_16(mht_16_v, 633, "", "./tensorflow/core/graph/graph_partition.cc", "ControlLoopName");
+
   return strings::StrCat("_cloop", name);
 }
 
 bool IsControlLoop(const Node* node) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_17(mht_17_v, 640, "", "./tensorflow/core/graph/graph_partition.cc", "IsControlLoop");
+
   const string& name = node->name();
   return absl::StartsWith(name, "_cloop");
 }
@@ -421,6 +648,12 @@ bool IsControlLoop(const Node* node) {
 Node* AddControlEnter(Graph* g, const string& node_name,
                       const string& device_name, const string& frame_name,
                       const int parallel_iterations, Status* status) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("node_name: \"" + node_name + "\"");
+   mht_18_v.push_back("device_name: \"" + device_name + "\"");
+   mht_18_v.push_back("frame_name: \"" + frame_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_18(mht_18_v, 654, "", "./tensorflow/core/graph/graph_partition.cc", "AddControlEnter");
+
   NodeBuilder node_builder(node_name, "Enter", g->op_registry());
   node_builder.Input({"dummy", 0, DT_FLOAT});
   node_builder.Attr("frame_name", frame_name);
@@ -436,6 +669,13 @@ Node* AddControlEnter(Graph* g, const string& node_name,
 Node* AddControlMerge(const string& in_name1, const string& in_name2, Graph* g,
                       const string& node_name, const string& device_name,
                       Status* status) {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("in_name1: \"" + in_name1 + "\"");
+   mht_19_v.push_back("in_name2: \"" + in_name2 + "\"");
+   mht_19_v.push_back("node_name: \"" + node_name + "\"");
+   mht_19_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_19(mht_19_v, 676, "", "./tensorflow/core/graph/graph_partition.cc", "AddControlMerge");
+
   NodeBuilder node_builder(node_name, "Merge", g->op_registry());
   node_builder.Input({{in_name1, 0, DT_FLOAT}, {in_name2, 0, DT_FLOAT}});
   Node* res_node;
@@ -449,6 +689,10 @@ Node* AddControlMerge(const string& in_name1, const string& in_name2, Graph* g,
 Node* AddControlSwitch(NodeBuilder::NodeOut input1, NodeBuilder::NodeOut input2,
                        const string& device_name,
                        const GraphDefBuilder::Options& bopts) {
+   std::vector<std::string> mht_20_v;
+   mht_20_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_20(mht_20_v, 693, "", "./tensorflow/core/graph/graph_partition.cc", "AddControlSwitch");
+
   Node* res_node =
       ops::BinaryOp("Switch", std::move(input1), std::move(input2), bopts);
   if (bopts.HaveError()) return nullptr;
@@ -459,6 +703,10 @@ Node* AddControlSwitch(NodeBuilder::NodeOut input1, NodeBuilder::NodeOut input2,
 // A next_iteration node for control flow.
 Node* AddControlNext(NodeBuilder::NodeOut input, const string& device_name,
                      const GraphDefBuilder::Options& bopts) {
+   std::vector<std::string> mht_21_v;
+   mht_21_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_21(mht_21_v, 707, "", "./tensorflow/core/graph/graph_partition.cc", "AddControlNext");
+
   Node* res_node = ops::UnaryOp("NextIteration", std::move(input), bopts);
   if (bopts.HaveError()) return nullptr;
   res_node->set_assigned_device_name(device_name);
@@ -466,6 +714,9 @@ Node* AddControlNext(NodeBuilder::NodeOut input, const string& device_name,
 }
 
 Node* EmptyConst(const GraphDefBuilder::Options& options) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_22(mht_22_v, 717, "", "./tensorflow/core/graph/graph_partition.cc", "EmptyConst");
+
   if (options.HaveError()) return nullptr;
   NodeBuilder node_builder(options.GetNameForOp("Const"), "Const",
                            options.op_registry());
@@ -481,6 +732,10 @@ Node* EmptyConst(const GraphDefBuilder::Options& options) {
 // A dummy const node for control flow.
 Node* AddControlConst(const string& device_name,
                       const GraphDefBuilder::Options& bopts) {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_23(mht_23_v, 736, "", "./tensorflow/core/graph/graph_partition.cc", "AddControlConst");
+
   Node* res_node = EmptyConst(bopts);
   if (bopts.HaveError()) return nullptr;
   res_node->set_assigned_device_name(device_name);
@@ -499,6 +754,9 @@ struct ControlLoop {
 // The new node has the same control flow info as src.
 void AddControlFlowInfo(const Node* node, const Node* src,
                         std::vector<ControlFlowInfo>* cf_info) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_24(mht_24_v, 757, "", "./tensorflow/core/graph/graph_partition.cc", "AddControlFlowInfo");
+
   int id = node->id();
   if (static_cast<size_t>(id) >= cf_info->size()) {
     cf_info->resize(id + 1);
@@ -520,6 +778,9 @@ Status AddControlLoop(const PartitionOptions& opts, Graph* g, const Node* src,
                       const Edge* edge, Node* loop_cond,
                       std::vector<ControlFlowInfo>* cf_info,
                       ControlLoop* loop) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_25(mht_25_v, 781, "", "./tensorflow/core/graph/graph_partition.cc", "AddControlLoop");
+
   Status status;
   GraphDefBuilder::Options bopts(g, &status);
   const ControlFlowInfo& src_info = (*cf_info)[src->id()];
@@ -573,6 +834,9 @@ Status AddControlLoop(const PartitionOptions& opts, Graph* g, const Node* src,
 // TODO(yuanbyu): It might be simpler if we convert MemoryType to
 // DeviceType for the inputs/outputs of each node.
 Status BuildMemoryDeviceInfo(const Graph& g, GraphInfo* info) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_26(mht_26_v, 837, "", "./tensorflow/core/graph/graph_partition.cc", "BuildMemoryDeviceInfo");
+
   MemoryTypeVector input_memory_types;
   MemoryTypeVector output_memory_types;
 
@@ -603,6 +867,9 @@ Status BuildMemoryDeviceInfo(const Graph& g, GraphInfo* info) {
 
 const Node* InputFrame(const Node* node,
                        const std::vector<ControlFlowInfo>& cf_info) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_27(mht_27_v, 870, "", "./tensorflow/core/graph/graph_partition.cc", "InputFrame");
+
   // An input is in the same frame as the node except for Enter nodes.
   // The input of Enter is in the parent frame of the Enter node.
   if (!node->IsEnter()) {
@@ -613,6 +880,9 @@ const Node* InputFrame(const Node* node,
 
 const Node* OutputFrame(const Node* node,
                         const std::vector<ControlFlowInfo>& cf_info) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_28(mht_28_v, 883, "", "./tensorflow/core/graph/graph_partition.cc", "OutputFrame");
+
   // An output is in the same frame as the node except for Exit nodes.
   // The output of Exit is in the parent frame of the Exit node.
   if (!node->IsExit()) {
@@ -633,6 +903,9 @@ const Node* OutputFrame(const Node* node,
 // it wrong many times so it would be nice to write a proof to be sure.
 Status AddControlFlow(const PartitionOptions& opts, Graph* g,
                       GraphInfo* g_info) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_29(mht_29_v, 906, "", "./tensorflow/core/graph/graph_partition.cc", "AddControlFlow");
+
   Status status;
   GraphDefBuilder::Options bopts(g, &status);
   std::vector<ControlFlowInfo>& cf_info = g_info->cf_info;
@@ -782,7 +1055,10 @@ Status AddControlFlow(const PartitionOptions& opts, Graph* g,
 
 struct PriorityTopoSortNode {
   PriorityTopoSortNode(const NodeDef* n, int64_t st)
-      : node(n), start_time(st) {}
+      : node(n), start_time(st) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_30(mht_30_v, 1059, "", "./tensorflow/core/graph/graph_partition.cc", "PriorityTopoSortNode");
+}
 
   const NodeDef* node;
   int64_t start_time;
@@ -812,12 +1088,18 @@ Status TopologicalSortNodesWithTimePriority(
     const GraphDef* gdef,
     std::vector<std::pair<const NodeDef*, int64_t>>* nodes,
     std::unordered_map<const NodeDef*, int64_t>* node_to_start_time_out) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_31(mht_31_v, 1091, "", "./tensorflow/core/graph/graph_partition.cc", "TopologicalSortNodesWithTimePriority");
+
   // Queue of nodes to process; lowest start time is returned first.
   std::priority_queue<PriorityTopoSortNode, std::vector<PriorityTopoSortNode>,
                       PriorityTopoSortNodeGreater>
       q;
   std::unordered_map<const NodeDef*, int64_t> node_to_start_time;
   auto enqueue = [&q, &node_to_start_time](const NodeDef* node) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_32(mht_32_v, 1100, "", "./tensorflow/core/graph/graph_partition.cc", "lambda");
+
     const int64_t start_time = node_to_start_time[node];
     q.emplace(node, start_time);
   };
@@ -885,6 +1167,9 @@ Status TopologicalSortNodesWithTimePriority(
 
 Status AddControlEdges(const PartitionOptions& opts,
                        std::unordered_map<string, GraphDef>* partitions) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_33(mht_33_v, 1170, "", "./tensorflow/core/graph/graph_partition.cc", "AddControlEdges");
+
   Status status;
   // TODO(yuanbyu): Very naive for now. To be improved.
   const int num_epochs = 100;
@@ -946,6 +1231,9 @@ Status AddControlEdges(const PartitionOptions& opts,
 // If 'ndef' is a Send or Recv, fills its attr send_device_incarnation
 // if possible.
 void SetIncarnation(const PartitionOptions& opts, NodeDef* ndef) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_34(mht_34_v, 1234, "", "./tensorflow/core/graph/graph_partition.cc", "SetIncarnation");
+
   StringPiece op(ndef->op());
   if (op != "_Send" && op != "_Recv") {
     // Not related to send/recv.
@@ -968,6 +1256,9 @@ void SetIncarnation(const PartitionOptions& opts, NodeDef* ndef) {
 // Sets attribute send_device_incarnation of all Send/Recv nodes in
 // 'gdef', if possible.
 void SetIncarnation(const PartitionOptions& opts, GraphDef* gdef) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_35(mht_35_v, 1259, "", "./tensorflow/core/graph/graph_partition.cc", "SetIncarnation");
+
   for (NodeDef& ndef : *gdef->mutable_node()) {
     SetIncarnation(opts, &ndef);
   }
@@ -980,6 +1271,9 @@ void SetIncarnation(const PartitionOptions& opts, GraphDef* gdef) {
 
 Status Partition(const PartitionOptions& opts, Graph* g,
                  std::unordered_map<string, GraphDef>* partitions) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_partitionDTcc mht_36(mht_36_v, 1274, "", "./tensorflow/core/graph/graph_partition.cc", "Partition");
+
   Status status;
   partitions->clear();
 

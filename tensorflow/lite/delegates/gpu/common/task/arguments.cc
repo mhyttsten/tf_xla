@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,11 +202,20 @@ namespace tflite {
 namespace gpu {
 namespace {
 bool IsWordSymbol(char symbol) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("symbol: '" + std::string(1, symbol) + "'");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_0(mht_0_v, 206, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "IsWordSymbol");
+
   return absl::ascii_isalnum(symbol) || symbol == '_';
 }
 
 void ReplaceAllWords(const std::string& old_word, const std::string& new_word,
                      std::string* str) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("old_word: \"" + old_word + "\"");
+   mht_1_v.push_back("new_word: \"" + new_word + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_1(mht_1_v, 216, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "ReplaceAllWords");
+
   size_t position = str->find(old_word);
   while (position != std::string::npos) {
     char prev = position == 0 ? '.' : (*str)[position - 1];
@@ -55,6 +232,10 @@ void ReplaceAllWords(const std::string& old_word, const std::string& new_word,
 }
 
 std::string GetNextWord(const std::string& code, size_t first_position) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("code: \"" + code + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_2(mht_2_v, 236, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "GetNextWord");
+
   size_t pos = first_position;
   char t = code[pos];
   while (IsWordSymbol(t)) {
@@ -65,6 +246,11 @@ std::string GetNextWord(const std::string& code, size_t first_position) {
 }
 
 bool HasWord(const std::string& word, const std::string& text) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("word: \"" + word + "\"");
+   mht_3_v.push_back("text: \"" + text + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_3(mht_3_v, 251, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "HasWord");
+
   size_t pos = text.find(word);
   while (pos != std::string::npos) {
     char prev = pos == 0 ? '.' : text[pos - 1];
@@ -79,6 +265,11 @@ bool HasWord(const std::string& word, const std::string& text) {
 
 std::string RenameArg(const std::vector<std::string>& object_names,
                       const std::string& postfix, const std::string& arg_name) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("postfix: \"" + postfix + "\"");
+   mht_4_v.push_back("arg_name: \"" + arg_name + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_4(mht_4_v, 270, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "RenameArg");
+
   for (const auto& object_name : object_names) {
     if (absl::StartsWith(arg_name, object_name) &&
         arg_name.size() > object_name.size() &&
@@ -93,6 +284,11 @@ std::string RenameArg(const std::vector<std::string>& object_names,
 
 size_t FindEnclosingBracket(const std::string& text, size_t first_pos,
                             char bracket) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("text: \"" + text + "\"");
+   mht_5_v.push_back("bracket: '" + std::string(1, bracket) + "'");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_5(mht_5_v, 289, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "FindEnclosingBracket");
+
   const std::map<char, char> brackets = {
       {'(', ')'},
       {'{', '}'},
@@ -127,6 +323,10 @@ absl::Status ParseArgsInsideBrackets(const std::string& text,
                                      size_t open_bracket_pos,
                                      size_t* close_bracket_pos,
                                      std::vector<std::string>* args) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("text: \"" + text + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_6(mht_6_v, 327, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "ParseArgsInsideBrackets");
+
   *close_bracket_pos =
       FindEnclosingBracket(text, open_bracket_pos + 1, text[open_bracket_pos]);
   if (*close_bracket_pos == -1) {
@@ -147,6 +347,9 @@ absl::Status ParseArgsInsideBrackets(const std::string& text,
 
 std::string DataTypeToGlType(DataType data_type, int vec_size,
                              bool explicit_f16) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_7(mht_7_v, 350, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "DataTypeToGlType");
+
   if (data_type == DataType::FLOAT32) {
     if (vec_size == 1) {
       return "float";
@@ -183,6 +386,10 @@ absl::Status BufferToKernelLanguage(const GpuInfo& gpu_info,
                                     const std::string& buffer_name,
                                     const BufferDescriptor* buffer_desc,
                                     std::string* result) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("buffer_name: \"" + buffer_name + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_8(mht_8_v, 390, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "BufferToKernelLanguage");
+
   if (buffer_desc->element_size != 1) {
     return absl::UnimplementedError("No support of vector types.");
   }
@@ -254,16 +461,32 @@ absl::Status BufferToKernelLanguage(const GpuInfo& gpu_info,
 constexpr char Arguments::kArgsPrefix[];
 
 void Arguments::AddFloat(const std::string& name, float value) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_9(mht_9_v, 465, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "Arguments::AddFloat");
+
   float_values_[name].value = value;
 }
 void Arguments::AddHalf(const std::string& name, half value) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_10(mht_10_v, 472, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "Arguments::AddHalf");
+
   half_values_[name].value = value;
 }
 void Arguments::AddInt(const std::string& name, int value) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_11(mht_11_v, 479, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "Arguments::AddInt");
+
   int_values_[name].value = value;
 }
 
 absl::Status Arguments::SetInt(const std::string& name, int value) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_12(mht_12_v, 487, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "Arguments::SetInt");
+
   auto it = int_values_.find(name);
   if (it == int_values_.end()) {
     return absl::NotFoundError(
@@ -273,6 +496,10 @@ absl::Status Arguments::SetInt(const std::string& name, int value) {
   return absl::OkStatus();
 }
 absl::Status Arguments::SetFloat(const std::string& name, float value) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_13(mht_13_v, 500, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "Arguments::SetFloat");
+
   auto it = float_values_.find(name);
   if (it == float_values_.end()) {
     return absl::NotFoundError(
@@ -283,6 +510,10 @@ absl::Status Arguments::SetFloat(const std::string& name, float value) {
 }
 
 absl::Status Arguments::SetHalf(const std::string& name, half value) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_14(mht_14_v, 514, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "Arguments::SetHalf");
+
   auto it = half_values_.find(name);
   if (it == half_values_.end()) {
     return absl::NotFoundError(
@@ -294,18 +525,30 @@ absl::Status Arguments::SetHalf(const std::string& name, half value) {
 
 void Arguments::AddObjectRef(const std::string& name, AccessType access_type,
                              GPUObjectDescriptorPtr&& descriptor_ptr) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_15(mht_15_v, 529, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "Arguments::AddObjectRef");
+
   descriptor_ptr->SetAccess(access_type);
   object_refs_[name] = {std::move(descriptor_ptr)};
 }
 
 void Arguments::AddObject(const std::string& name,
                           GPUObjectDescriptorPtr&& descriptor_ptr) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_16(mht_16_v, 539, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "Arguments::AddObject");
+
   descriptor_ptr->SetAccess(AccessType::READ);
   objects_[name] = {std::move(descriptor_ptr)};
 }
 
 void Arguments::RenameArgs(const std::string& postfix,
                            std::string* code) const {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("postfix: \"" + postfix + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_17(mht_17_v, 549, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "Arguments::RenameArgs");
+
   size_t next_position = code->find(kArgsPrefix);
   while (next_position != std::string::npos) {
     size_t arg_pos = next_position + strlen(kArgsPrefix);
@@ -317,6 +560,10 @@ void Arguments::RenameArgs(const std::string& postfix,
 
 absl::Status Arguments::Merge(Arguments&& args, const std::string& postfix,
                               const std::vector<std::string>& exception_names) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("postfix: \"" + postfix + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_18(mht_18_v, 564, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "Arguments::Merge");
+
   std::vector<std::string> object_names;
   object_names.reserve(args.object_refs_.size() + args.objects_.size());
   for (auto& v : args.object_refs_) {
@@ -359,6 +606,10 @@ absl::Status Arguments::Merge(Arguments&& args, const std::string& postfix,
 
 absl::Status Arguments::GetDescriptor(const std::string& name,
                                       GPUObjectDescriptor** descriptor) const {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_19(mht_19_v, 610, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "Arguments::GetDescriptor");
+
   auto it_ref = object_refs_.find(name);
   if (it_ref != object_refs_.end()) {
     *descriptor = it_ref->second.get();
@@ -373,12 +624,19 @@ absl::Status Arguments::GetDescriptor(const std::string& name,
 }
 
 void Arguments::ReleaseCPURepresentation() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_20(mht_20_v, 627, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "Arguments::ReleaseCPURepresentation");
+
   for (auto& t : objects_) {
     t.second->Release();
   }
 }
 
 void Arguments::GetActiveArguments(const std::string& code) {
+   std::vector<std::string> mht_21_v;
+   mht_21_v.push_back("code: \"" + code + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_21(mht_21_v, 637, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "Arguments::GetActiveArguments");
+
   for (auto& float_val : float_values_) {
     float_val.second.active = HasWord(kArgsPrefix + float_val.first, code);
   }
@@ -391,6 +649,9 @@ void Arguments::GetActiveArguments(const std::string& code) {
 }
 
 int Arguments::GetReadTexturesCount(const GpuInfo& gpu_info) const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_22(mht_22_v, 652, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "Arguments::GetReadTexturesCount");
+
   int counter = 0;
   for (auto& t : objects_) {
     counter += t.second->GetGPUResources(gpu_info).GetReadImagesCount();
@@ -402,6 +663,9 @@ int Arguments::GetReadTexturesCount(const GpuInfo& gpu_info) const {
 }
 
 int Arguments::GetWriteTexturesCount(const GpuInfo& gpu_info) const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_23(mht_23_v, 666, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "Arguments::GetWriteTexturesCount");
+
   int counter = 0;
   for (auto& t : objects_) {
     counter += t.second->GetGPUResources(gpu_info).GetWriteImagesCount();
@@ -414,6 +678,11 @@ int Arguments::GetWriteTexturesCount(const GpuInfo& gpu_info) const {
 
 void Arguments::SetStateValueForAllObjects(const std::string& key,
                                            const std::string& value) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("key: \"" + key + "\"");
+   mht_24_v.push_back("value: \"" + value + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_24(mht_24_v, 683, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "Arguments::SetStateValueForAllObjects");
+
   for (auto& obj : object_refs_) {
     obj.second->SetStateVar(key, value);
   }
@@ -425,6 +694,9 @@ void Arguments::SetStateValueForAllObjects(const std::string& key,
 absl::Status Arguments::Compile(
     const GpuInfo& gpu_info,
     const std::map<std::string, std::string>& linkables, std::string* code) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_25(mht_25_v, 697, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "Arguments::Compile");
+
   RETURN_IF_ERROR(AddObjectsScalarArgs(gpu_info));
   RETURN_IF_ERROR(ResolveConstExprPass(gpu_info, code));
   RETURN_IF_ERROR(ResolveSelectorsPass(gpu_info, linkables, code));
@@ -435,6 +707,9 @@ absl::Status Arguments::Compile(
 
 absl::Status Arguments::ResolveConstExprPass(const GpuInfo& gpu_info,
                                              std::string* code) const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_26(mht_26_v, 710, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "Arguments::ResolveConstExprPass");
+
   std::string result;
   size_t position = 0;
   size_t next_position = code->find(kArgsPrefix);
@@ -469,6 +744,11 @@ absl::Status Arguments::ResolveConstExpr(const GpuInfo& gpu_info,
                                          const std::string& object_name,
                                          const std::string& const_expr,
                                          std::string* result) const {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("object_name: \"" + object_name + "\"");
+   mht_27_v.push_back("const_expr: \"" + const_expr + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_27(mht_27_v, 749, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "Arguments::ResolveConstExpr");
+
   tflite::gpu::GPUObjectDescriptor* desc_ptr;
   RETURN_IF_ERROR(GetDescriptor(object_name, &desc_ptr));
   RETURN_IF_ERROR(desc_ptr->PerformConstExpr(gpu_info, const_expr, result));
@@ -479,6 +759,9 @@ absl::Status Arguments::ResolveSelectorsPass(
     const GpuInfo& gpu_info,
     const std::map<std::string, std::string>& linkables,
     std::string* code) const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_28(mht_28_v, 762, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "Arguments::ResolveSelectorsPass");
+
   std::string result;
   size_t position = 0;
   size_t next_position = code->find(kArgsPrefix);
@@ -531,6 +814,11 @@ absl::Status Arguments::ResolveSelector(
     const std::string& object_name, const std::string& selector,
     const std::vector<std::string>& function_args,
     const std::vector<std::string>& template_args, std::string* result) const {
+   std::vector<std::string> mht_29_v;
+   mht_29_v.push_back("object_name: \"" + object_name + "\"");
+   mht_29_v.push_back("selector: \"" + selector + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_29(mht_29_v, 819, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "Arguments::ResolveSelector");
+
   GPUObjectDescriptor* desc_ptr;
   RETURN_IF_ERROR(GetDescriptor(object_name, &desc_ptr));
   auto names = desc_ptr->GetGPUResources(gpu_info).GetNames();
@@ -571,6 +859,10 @@ absl::Status Arguments::ResolveSelector(
 void Arguments::ResolveObjectNames(const std::string& object_name,
                                    const std::vector<std::string>& member_names,
                                    std::string* code) const {
+   std::vector<std::string> mht_30_v;
+   mht_30_v.push_back("object_name: \"" + object_name + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_30(mht_30_v, 863, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "Arguments::ResolveObjectNames");
+
   for (const auto& member_name : member_names) {
     const std::string new_name = kArgsPrefix + object_name + "_" + member_name;
     ReplaceAllWords(member_name, new_name, code);
@@ -578,6 +870,9 @@ void Arguments::ResolveObjectNames(const std::string& object_name,
 }
 
 absl::Status Arguments::AddObjectsScalarArgs(const GpuInfo& gpu_info) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_31(mht_31_v, 873, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "Arguments::AddObjectsScalarArgs");
+
   for (auto& t : objects_) {
     const auto resources = t.second->GetGPUResources(gpu_info);
     for (const auto& r : resources.ints) {
@@ -600,6 +895,9 @@ absl::Status Arguments::AddObjectsScalarArgs(const GpuInfo& gpu_info) {
 }
 
 void Arguments::ResolveArgsPass(std::string* code) const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_32(mht_32_v, 898, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "Arguments::ResolveArgsPass");
+
   size_t position = 0;
   size_t next_position = code->find(kArgsPrefix);
   while (next_position != std::string::npos) {
@@ -615,6 +913,9 @@ void Arguments::ResolveArgsPass(std::string* code) const {
 
 absl::Status Arguments::ResolveKernelGlobalSpaceBuffers(const GpuInfo& gpu_info,
                                                         std::string* code) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPSargumentsDTcc mht_33(mht_33_v, 916, "", "./tensorflow/lite/delegates/gpu/common/task/arguments.cc", "Arguments::ResolveKernelGlobalSpaceBuffers");
+
   for (auto it = objects_.begin(); it != objects_.end();) {
     const auto* buffer_desc =
         dynamic_cast<const BufferDescriptor*>(it->second.get());

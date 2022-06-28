@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -60,6 +228,9 @@ namespace stream_executor {
 namespace gpu {
 
 static GpuEvent* AsGpuEvent(Event* event) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_0(mht_0_v, 231, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "AsGpuEvent");
+
   DCHECK(event != nullptr);
   return static_cast<GpuEvent*>(event->implementation());
 }
@@ -67,6 +238,9 @@ static GpuEvent* AsGpuEvent(Event* event) {
 // Given a platform-independent timer datatype, returns the internal ROCM
 // platform implementation pointer.
 static GpuTimer* AsGpuTimer(Timer* timer) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_1(mht_1_v, 241, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "AsGpuTimer");
+
   DCHECK(timer != nullptr);
   return static_cast<GpuTimer*>(timer->implementation());
 }
@@ -78,25 +252,40 @@ static GpuTimer* AsGpuTimer(Timer* timer) {
 // librocm APIs, so the caller should take care to only pass the result of const
 // GPU memory conversions to librocm functions which will honor constness.
 static hipDeviceptr_t AsROCmDevicePtr(const DeviceMemoryBase& gpu_mem) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_2(mht_2_v, 255, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "AsROCmDevicePtr");
+
   return const_cast<hipDeviceptr_t>(gpu_mem.opaque());
 }
 
 // See description on const version above.
 static hipDeviceptr_t AsROCmDevicePtr(DeviceMemoryBase* gpu_mem) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_3(mht_3_v, 263, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "AsROCmDevicePtr");
+
   return AsROCmDevicePtr(*gpu_mem);
 }
 
 static GpuContext* GetGpuContext(Stream* stream) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_4(mht_4_v, 270, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GetGpuContext");
+
   return static_cast<GpuExecutor*>(stream->parent()->implementation())
       ->gpu_context();
 }
 
 GpuContext* ExtractGpuContext(GpuExecutor* rocm_exec) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_5(mht_5_v, 278, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "ExtractGpuContext");
+
   CHECK(rocm_exec != nullptr);
   return rocm_exec->gpu_context();
 }
 
 GpuExecutor::~GpuExecutor() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_6(mht_6_v, 286, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::~GpuExecutor");
+
   for (auto& it : disk_modules_) {
     GpuDriver::UnloadModule(context_, it.second);
   }
@@ -110,6 +299,9 @@ GpuExecutor::~GpuExecutor() {
   CHECK(gpu_binary_to_module_.empty()) << "GpuExecutor has loaded modules.";
 }
 bool GpuExecutor::UnloadModule(ModuleHandle module_handle) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_7(mht_7_v, 302, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::UnloadModule");
+
   const char* gpu_binary = reinterpret_cast<const char*>(module_handle.id());
   absl::MutexLock lock{&in_memory_modules_mu_};
   return UnloadGpuBinary(gpu_binary);
@@ -118,10 +310,16 @@ bool GpuExecutor::UnloadModule(ModuleHandle module_handle) {
 port::StatusOr<std::shared_ptr<DeviceMemoryBase>>
 GpuExecutor::CreateOrShareConstant(Stream* stream,
                                    const std::vector<uint8_t>& content) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_8(mht_8_v, 313, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::CreateOrShareConstant");
+
   return port::UnimplementedError("Not implemented for ROCm");
 }
 
 bool GpuExecutor::UnloadGpuBinary(const void* gpu_binary) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_9(mht_9_v, 320, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::UnloadGpuBinary");
+
   auto module_it = gpu_binary_to_module_.find(gpu_binary);
   if (gpu_binary_to_module_.end() == module_it) {
     VLOG(3) << "No loaded  HSACO module for " << gpu_binary;
@@ -144,6 +342,9 @@ bool GpuExecutor::UnloadGpuBinary(const void* gpu_binary) {
 }
 
 void GpuExecutor::UnloadKernel(const KernelBase* kernel) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_10(mht_10_v, 345, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::UnloadKernel");
+
   VLOG(3) << "Unloading kernel " << kernel << " : " << kernel->name();
 
   absl::MutexLock lock{&in_memory_modules_mu_};
@@ -161,6 +362,9 @@ void GpuExecutor::UnloadKernel(const KernelBase* kernel) {
 
 port::Status GpuExecutor::Init(int device_ordinal,
                                DeviceOptions device_options) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_11(mht_11_v, 365, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::Init");
+
   device_ordinal_ = device_ordinal;
 
   auto status = GpuDriver::Init();
@@ -185,6 +389,11 @@ port::Status GpuExecutor::Init(int device_ordinal,
 bool GpuExecutor::FindOnDiskForComputeCapability(
     absl::string_view filename, absl::string_view canonical_suffix,
     string* found_filename) const {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("filename: \"" + std::string(filename.data(), filename.size()) + "\"");
+   mht_12_v.push_back("canonical_suffix: \"" + std::string(canonical_suffix.data(), canonical_suffix.size()) + "\"");
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_12(mht_12_v, 394, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::FindOnDiskForComputeCapability");
+
   LOG(FATAL) << "Feature not supported on ROCM platform "
                 "(FindOnDiskForComputeCapability)";
   return false;
@@ -193,6 +402,11 @@ bool GpuExecutor::FindOnDiskForComputeCapability(
 bool GpuExecutor::FindOnDiskForISAVersion(absl::string_view filename,
                                           absl::string_view canonical_suffix,
                                           string* found_filename) const {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("filename: \"" + std::string(filename.data(), filename.size()) + "\"");
+   mht_13_v.push_back("canonical_suffix: \"" + std::string(canonical_suffix.data(), canonical_suffix.size()) + "\"");
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_13(mht_13_v, 407, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::FindOnDiskForISAVersion");
+
   if (version_ == 0) {
     return false;
   }
@@ -222,6 +436,9 @@ bool GpuExecutor::FindOnDiskForISAVersion(absl::string_view filename,
 //                 returned string. Example: calling this from /usr/bin/foo
 //                 would return /usr/bin.
 static string GetBinaryDir(bool strip_exe) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_14(mht_14_v, 439, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GetBinaryDir");
+
   char exe_path[PATH_MAX] = {0};
   PCHECK(readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1) != -1);
   // Make sure it's null-terminated:
@@ -239,6 +456,9 @@ static string GetBinaryDir(bool strip_exe) {
 
 port::Status GpuExecutor::GetKernel(const MultiKernelLoaderSpec& spec,
                                     KernelBase* kernel) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_15(mht_15_v, 459, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::GetKernel");
+
   GpuKernel* rocm_kernel = AsGpuKernel(kernel);
   hipModule_t module = nullptr;
   const string* kernelname;
@@ -286,6 +506,9 @@ port::Status GpuExecutor::GetKernel(const MultiKernelLoaderSpec& spec,
 
 port::Status GpuExecutor::GetKernelMetadata(GpuKernel* rocm_kernel,
                                             KernelMetadata* kernel_metadata) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_16(mht_16_v, 509, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::GetKernelMetadata");
+
   int value = 0;
   // TODO(ROCm) implement this feature in HIP
   kernel_metadata->set_registers_per_thread(value);
@@ -299,6 +522,9 @@ port::Status GpuExecutor::Launch(Stream* stream, const ThreadDim& thread_dims,
                                  const BlockDim& block_dims,
                                  const KernelBase& kernel,
                                  const KernelArgsArrayBase& args) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_17(mht_17_v, 525, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::Launch");
+
   CHECK_EQ(kernel.Arity(), args.number_of_arguments());
   GpuStreamHandle hipstream = AsGpuStreamValue(stream);
   const GpuKernel* rocm_kernel = AsGpuKernel(&kernel);
@@ -352,6 +578,9 @@ int GpuExecutor::CalculateOccupancy(const DeviceDescription& device_description,
                                     uint64_t shared_memory_per_block,
                                     const ThreadDim& thread_dims,
                                     GpuFunctionHandle func) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_18(mht_18_v, 581, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::CalculateOccupancy");
+
   LOG(FATAL) << "Feature not supported on ROCM platform (CalculateOccupancy)";
   return 0;
 }
@@ -362,12 +591,18 @@ int GpuExecutor::CompareOccupancy(int* initial_blocks,
                                   uint64_t shared_memory_per_block,
                                   const ThreadDim& thread_dims,
                                   GpuFunctionHandle func) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_19(mht_19_v, 594, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::CompareOccupancy");
+
   LOG(FATAL) << "Feature not supported on ROCM platform (CompareOccupancy)";
   return 0;
 }
 
 port::Status GpuExecutor::LoadModule(const MultiModuleLoaderSpec& spec,
                                      ModuleHandle* module_handle) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_20(mht_20_v, 603, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::LoadModule");
+
   // In GpuExecutor we store the pointer to the  HSACO binary  as
   // ModuleHandle::id().
   hipModule_t hip_module = nullptr;
@@ -387,16 +622,28 @@ port::Status GpuExecutor::LoadModule(const MultiModuleLoaderSpec& spec,
 
 port::Status GpuExecutor::LoadModuleFromCuBin(const char* cubin,
                                               hipModule_t* module) {
+   std::vector<std::string> mht_21_v;
+   mht_21_v.push_back("cubin: \"" + (cubin == nullptr ? std::string("nullptr") : std::string((char*)cubin)) + "\"");
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_21(mht_21_v, 626, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::LoadModuleFromCuBin");
+
   LOG(FATAL) << "Feature not supported on ROCM platform (LoadModuleFromCuBin)";
 }
 
 port::Status GpuExecutor::LoadModuleFromPtx(const char* ptx,
                                             hipModule_t* module) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("ptx: \"" + (ptx == nullptr ? std::string("nullptr") : std::string((char*)ptx)) + "\"");
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_22(mht_22_v, 635, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::LoadModuleFromPtx");
+
   LOG(FATAL) << "Feature not supported on ROCM platform (LoadModuleFromPtx)";
 }
 
 port::Status GpuExecutor::LoadModuleFromHsaco(const char* hsaco,
                                               hipModule_t* module) {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("hsaco: \"" + (hsaco == nullptr ? std::string("nullptr") : std::string((char*)hsaco)) + "\"");
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_23(mht_23_v, 644, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::LoadModuleFromHsaco");
+
   uint64_t module_refcount;
   std::tie(*module, module_refcount) = gpu_binary_to_module_[hsaco];
 
@@ -421,25 +668,40 @@ port::Status GpuExecutor::LoadModuleFromHsaco(const char* hsaco,
 void GpuExecutor::VlogOccupancyInfo(const KernelBase& kernel,
                                     const ThreadDim& thread_dims,
                                     const BlockDim& block_dims) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_24(mht_24_v, 671, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::VlogOccupancyInfo");
+
   // TODO(ROCm) implement this feature in HIP
 }
 
 DeviceMemoryBase GpuExecutor::Allocate(uint64_t size, int64_t memory_space) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_25(mht_25_v, 678, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::Allocate");
+
   CHECK_EQ(memory_space, 0);
   return DeviceMemoryBase(GpuDriver::DeviceAllocate(context_, size), size);
 }
 
 void* GpuExecutor::GetSubBuffer(DeviceMemoryBase* mem, uint64_t offset_bytes,
                                 uint64_t size_bytes) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_26(mht_26_v, 687, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::GetSubBuffer");
+
   // offset and size are in bytes, so char* works as the pointer type.
   return reinterpret_cast<char*>(mem->opaque()) + offset_bytes;
 }
 
 void GpuExecutor::Deallocate(DeviceMemoryBase* mem) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_27(mht_27_v, 695, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::Deallocate");
+
   GpuDriver::DeviceDeallocate(context_, mem->opaque());
 }
 
 bool GpuExecutor::HostMemoryRegister(void* location, uint64_t size) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_28(mht_28_v, 702, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::HostMemoryRegister");
+
   if (location == nullptr || size == 0) {
     LOG(WARNING) << "attempting to register null or zero-sized memory: "
                  << location << "; size " << size;
@@ -449,16 +711,25 @@ bool GpuExecutor::HostMemoryRegister(void* location, uint64_t size) {
 }
 
 bool GpuExecutor::HostMemoryUnregister(void* location) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_29(mht_29_v, 714, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::HostMemoryUnregister");
+
   VLOG(2) << "unregistering " << location;
   return GpuDriver::HostUnregister(context_, location);
 }
 
 bool GpuExecutor::SynchronizeAllActivity() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_30(mht_30_v, 722, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::SynchronizeAllActivity");
+
   return GpuDriver::SynchronizeContext(context_);
 }
 
 port::Status GpuExecutor::SynchronousMemZero(DeviceMemoryBase* location,
                                              uint64_t size) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_31(mht_31_v, 730, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::SynchronousMemZero");
+
   if (reinterpret_cast<uintptr_t>(location->opaque()) % 4 == 0 &&
       size % 4 == 0) {
     return GpuDriver::SynchronousMemsetUint32(
@@ -470,6 +741,9 @@ port::Status GpuExecutor::SynchronousMemZero(DeviceMemoryBase* location,
 
 port::Status GpuExecutor::SynchronousMemSet(DeviceMemoryBase* location,
                                             int value, uint64_t size) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_32(mht_32_v, 744, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::SynchronousMemSet");
+
   if (reinterpret_cast<uintptr_t>(location->opaque()) % 4 == 0 &&
       size % 4 == 0) {
     // hipMemset reinterprets "value" as a uint8.
@@ -486,6 +760,9 @@ port::Status GpuExecutor::SynchronousMemSet(DeviceMemoryBase* location,
 port::Status GpuExecutor::SynchronousMemcpy(DeviceMemoryBase* gpu_dst,
                                             const void* host_src,
                                             uint64_t size) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_33(mht_33_v, 763, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::SynchronousMemcpy");
+
   return GpuDriver::SynchronousMemcpyH2D(context_, AsROCmDevicePtr(gpu_dst),
                                          host_src, size);
 }
@@ -493,18 +770,27 @@ port::Status GpuExecutor::SynchronousMemcpy(DeviceMemoryBase* gpu_dst,
 port::Status GpuExecutor::SynchronousMemcpy(void* host_dst,
                                             const DeviceMemoryBase& gpu_src,
                                             uint64_t size) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_34(mht_34_v, 773, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::SynchronousMemcpy");
+
   return GpuDriver::SynchronousMemcpyD2H(context_, host_dst,
                                          AsROCmDevicePtr(gpu_src), size);
 }
 
 port::Status GpuExecutor::SynchronousMemcpyDeviceToDevice(
     DeviceMemoryBase* gpu_dst, const DeviceMemoryBase& gpu_src, uint64_t size) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_35(mht_35_v, 782, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::SynchronousMemcpyDeviceToDevice");
+
   return GpuDriver::SynchronousMemcpyD2D(context_, AsROCmDevicePtr(gpu_dst),
                                          AsROCmDevicePtr(gpu_src), size);
 }
 
 port::Status GpuExecutor::MemZero(Stream* stream, DeviceMemoryBase* location,
                                   uint64_t size) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_36(mht_36_v, 791, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::MemZero");
+
   if (reinterpret_cast<uintptr_t>(location->opaque()) % 4 == 0 &&
       size % 4 == 0) {
     return Memset32(stream, location, 0x0, size);
@@ -515,6 +801,9 @@ port::Status GpuExecutor::MemZero(Stream* stream, DeviceMemoryBase* location,
 
 port::Status GpuExecutor::Memset(Stream* stream, DeviceMemoryBase* location,
                                  uint8 pattern, uint64_t size) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_37(mht_37_v, 804, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::Memset");
+
   VLOG(2) << "enqueueing memset8 operation onto stream " << stream
           << " at location " << location << " with size " << size
           << " and pattern " << std::hex << pattern;
@@ -525,6 +814,9 @@ port::Status GpuExecutor::Memset(Stream* stream, DeviceMemoryBase* location,
 
 port::Status GpuExecutor::Memset32(Stream* stream, DeviceMemoryBase* location,
                                    uint32 pattern, uint64_t size) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_38(mht_38_v, 817, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::Memset32");
+
   VLOG(2) << "enqueueing memset32 operation onto stream " << stream
           << " at location " << location << " with size " << size
           << " and pattern " << std::hex << pattern;
@@ -537,6 +829,9 @@ port::Status GpuExecutor::Memset32(Stream* stream, DeviceMemoryBase* location,
 
 bool GpuExecutor::Memcpy(Stream* stream, void* host_dst,
                          const DeviceMemoryBase& gpu_src, uint64_t size) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_39(mht_39_v, 832, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::Memcpy");
+
   return GpuDriver::AsynchronousMemcpyD2H(context_, host_dst,
                                           AsROCmDevicePtr(gpu_src), size,
                                           AsGpuStreamValue(stream));
@@ -544,6 +839,9 @@ bool GpuExecutor::Memcpy(Stream* stream, void* host_dst,
 
 bool GpuExecutor::Memcpy(Stream* stream, DeviceMemoryBase* gpu_dst,
                          const void* host_src, uint64_t size) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_40(mht_40_v, 842, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::Memcpy");
+
   return GpuDriver::AsynchronousMemcpyH2D(context_, AsROCmDevicePtr(gpu_dst),
                                           host_src, size,
                                           AsGpuStreamValue(stream));
@@ -553,6 +851,9 @@ bool GpuExecutor::MemcpyDeviceToDevice(Stream* stream,
                                        DeviceMemoryBase* gpu_dst,
                                        const DeviceMemoryBase& gpu_src,
                                        uint64_t size) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_41(mht_41_v, 854, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::MemcpyDeviceToDevice");
+
   return GpuDriver::AsynchronousMemcpyD2D(context_, AsROCmDevicePtr(gpu_dst),
                                           AsROCmDevicePtr(gpu_src), size,
                                           AsGpuStreamValue(stream));
@@ -560,6 +861,9 @@ bool GpuExecutor::MemcpyDeviceToDevice(Stream* stream,
 
 bool GpuExecutor::HostCallback(Stream* stream,
                                std::function<port::Status()> callback) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_42(mht_42_v, 864, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::HostCallback");
+
   auto callback_ptr = new std::function<void()>([callback]() {
     port::Status s = callback();
     if (!s.ok()) {
@@ -573,6 +877,9 @@ bool GpuExecutor::HostCallback(Stream* stream,
 /* static */ void GpuExecutor::InternalHostCallback(GpuStreamHandle stream,
                                                     hipError_t status,
                                                     void* data) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_43(mht_43_v, 880, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::InternalHostCallback");
+
   std::function<void()>* callback =
       reinterpret_cast<std::function<void()>*>(data);
   (*callback)();
@@ -580,18 +887,30 @@ bool GpuExecutor::HostCallback(Stream* stream,
 }
 
 port::Status GpuExecutor::AllocateEvent(Event* event) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_44(mht_44_v, 890, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::AllocateEvent");
+
   return AsGpuEvent(event)->Init();
 }
 
 port::Status GpuExecutor::DeallocateEvent(Event* event) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_45(mht_45_v, 897, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::DeallocateEvent");
+
   return AsGpuEvent(event)->Destroy();
 }
 
 port::Status GpuExecutor::RecordEvent(Stream* stream, Event* event) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_46(mht_46_v, 904, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::RecordEvent");
+
   return AsGpuEvent(event)->Record(AsGpuStream(stream));
 }
 
 port::Status GpuExecutor::WaitForEvent(Stream* stream, Event* event) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_47(mht_47_v, 911, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::WaitForEvent");
+
   if (GpuDriver::WaitStreamOnEvent(context_, AsGpuStream(stream)->gpu_stream(),
                                    AsGpuEvent(event)->gpu_event())) {
     return port::Status::OK();
@@ -604,14 +923,23 @@ port::Status GpuExecutor::WaitForEvent(Stream* stream, Event* event) {
 }
 
 Event::Status GpuExecutor::PollForEventStatus(Event* event) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_48(mht_48_v, 926, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::PollForEventStatus");
+
   return AsGpuEvent(event)->PollForStatus();
 }
 
 bool GpuExecutor::AllocateStream(Stream* stream) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_49(mht_49_v, 933, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::AllocateStream");
+
   return AsGpuStream(stream)->Init();
 }
 
 void GpuExecutor::DeallocateStream(Stream* stream) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_50(mht_50_v, 940, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::DeallocateStream");
+
   GpuStream* rocm_stream = AsGpuStream(stream);
   if (!rocm_stream->IsIdle()) {
     LOG(ERROR) << "Deallocating stream with pending work";
@@ -620,14 +948,23 @@ void GpuExecutor::DeallocateStream(Stream* stream) {
 }
 
 bool GpuExecutor::AllocateTimer(Timer* timer) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_51(mht_51_v, 951, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::AllocateTimer");
+
   return AsGpuTimer(timer)->Init();
 }
 
 void GpuExecutor::DeallocateTimer(Timer* timer) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_52(mht_52_v, 958, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::DeallocateTimer");
+
   AsGpuTimer(timer)->Destroy();
 }
 
 bool GpuExecutor::CreateStreamDependency(Stream* dependent, Stream* other) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_53(mht_53_v, 965, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::CreateStreamDependency");
+
   GpuEventHandle other_completed_event = *AsGpuStream(other)->completed_event();
   bool ok = GpuDriver::RecordEvent(context_, other_completed_event,
                                    AsGpuStreamValue(other))
@@ -643,18 +980,30 @@ bool GpuExecutor::CreateStreamDependency(Stream* dependent, Stream* other) {
 }
 
 bool GpuExecutor::StartTimer(Stream* stream, Timer* timer) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_54(mht_54_v, 983, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::StartTimer");
+
   return AsGpuTimer(timer)->Start(AsGpuStream(stream));
 }
 
 bool GpuExecutor::StopTimer(Stream* stream, Timer* timer) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_55(mht_55_v, 990, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::StopTimer");
+
   return AsGpuTimer(timer)->Stop(AsGpuStream(stream));
 }
 
 port::Status GpuExecutor::BlockHostUntilDone(Stream* stream) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_56(mht_56_v, 997, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::BlockHostUntilDone");
+
   return GpuDriver::SynchronizeStream(context_, AsGpuStreamValue(stream));
 }
 
 blas::BlasSupport* GpuExecutor::CreateBlas() {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_57(mht_57_v, 1004, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::CreateBlas");
+
   PluginRegistry* registry = PluginRegistry::Instance();
   port::StatusOr<PluginRegistry::BlasFactory> status =
       registry->GetFactory<PluginRegistry::BlasFactory>(rocm::kROCmPlatformId,
@@ -669,6 +1018,9 @@ blas::BlasSupport* GpuExecutor::CreateBlas() {
 }
 
 dnn::DnnSupport* GpuExecutor::CreateDnn() {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_58(mht_58_v, 1021, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::CreateDnn");
+
   PluginRegistry* registry = PluginRegistry::Instance();
   port::StatusOr<PluginRegistry::DnnFactory> status =
       registry->GetFactory<PluginRegistry::DnnFactory>(rocm::kROCmPlatformId,
@@ -683,6 +1035,9 @@ dnn::DnnSupport* GpuExecutor::CreateDnn() {
 }
 
 fft::FftSupport* GpuExecutor::CreateFft() {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_59(mht_59_v, 1038, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::CreateFft");
+
   PluginRegistry* registry = PluginRegistry::Instance();
   port::StatusOr<PluginRegistry::FftFactory> status =
       registry->GetFactory<PluginRegistry::FftFactory>(rocm::kROCmPlatformId,
@@ -697,6 +1052,9 @@ fft::FftSupport* GpuExecutor::CreateFft() {
 }
 
 rng::RngSupport* GpuExecutor::CreateRng() {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_60(mht_60_v, 1055, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::CreateRng");
+
   PluginRegistry* registry = PluginRegistry::Instance();
   port::StatusOr<PluginRegistry::RngFactory> status =
       registry->GetFactory<PluginRegistry::RngFactory>(rocm::kROCmPlatformId,
@@ -711,25 +1069,41 @@ rng::RngSupport* GpuExecutor::CreateRng() {
 }
 
 // TODO(rspringer): Remove in b/18544742.
-bool GpuExecutor::SupportsDnn() const { return true; }
+bool GpuExecutor::SupportsDnn() const {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_61(mht_61_v, 1073, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::SupportsDnn");
+ return true; }
 
 bool GpuExecutor::CanEnablePeerAccessTo(StreamExecutorInterface* other) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_62(mht_62_v, 1078, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::CanEnablePeerAccessTo");
+
   GpuExecutor* rocm_other = static_cast<GpuExecutor*>(other);
   return GpuDriver::CanEnablePeerAccess(context_, rocm_other->context_);
 }
 
 port::Status GpuExecutor::EnablePeerAccessTo(StreamExecutorInterface* other) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_63(mht_63_v, 1086, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::EnablePeerAccessTo");
+
   GpuExecutor* rocm_other = static_cast<GpuExecutor*>(other);
   return GpuDriver::EnablePeerAccess(context_, rocm_other->context_);
 }
 
 bool GpuExecutor::DeviceMemoryUsage(int64_t* free, int64_t* total) const {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_64(mht_64_v, 1094, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::DeviceMemoryUsage");
+
   return GpuDriver::GetDeviceMemoryInfo(context_, free, total);
 }
 
 bool GpuExecutor::GetSymbol(const string& symbol_name,
                             ModuleHandle module_handle, void** mem,
                             size_t* bytes) {
+   std::vector<std::string> mht_65_v;
+   mht_65_v.push_back("symbol_name: \"" + symbol_name + "\"");
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_65(mht_65_v, 1104, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::GetSymbol");
+
   absl::MutexLock lock{&in_memory_modules_mu_};
   if (static_cast<bool>(module_handle)) {
     auto it = gpu_binary_to_module_.find(module_handle.id());
@@ -754,6 +1128,9 @@ bool GpuExecutor::GetSymbol(const string& symbol_name,
 }
 
 bool FillBlockDimLimit(GpuDeviceHandle device, BlockDim* block_dim_limit) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_66(mht_66_v, 1131, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "FillBlockDimLimit");
+
   // The BlockDim name is a mismatch against these GRID_DIM_* queries because
   // we use BlockDims to express the dimensions of blocks within a grid
   // (as opposed to ThreadDim which expresses the dimensions of threads
@@ -769,35 +1146,62 @@ bool FillBlockDimLimit(GpuDeviceHandle device, BlockDim* block_dim_limit) {
   return true;
 }
 
-bool GpuExecutor::SupportsBlas() const { return true; }
+bool GpuExecutor::SupportsBlas() const {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_67(mht_67_v, 1150, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::SupportsBlas");
+ return true; }
 
-bool GpuExecutor::SupportsFft() const { return true; }
+bool GpuExecutor::SupportsFft() const {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_68(mht_68_v, 1155, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::SupportsFft");
+ return true; }
 
-bool GpuExecutor::SupportsRng() const { return true; }
+bool GpuExecutor::SupportsRng() const {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_69(mht_69_v, 1160, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::SupportsRng");
+ return true; }
 
 std::unique_ptr<internal::EventInterface>
 GpuExecutor::CreateEventImplementation() {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_70(mht_70_v, 1166, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::CreateEventImplementation");
+
   return std::unique_ptr<internal::EventInterface>(new GpuEvent(this));
 }
 
 std::unique_ptr<internal::KernelInterface>
 GpuExecutor::CreateKernelImplementation() {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_71(mht_71_v, 1174, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::CreateKernelImplementation");
+
   return std::unique_ptr<internal::KernelInterface>(new GpuKernel());
 }
 
 std::unique_ptr<internal::StreamInterface>
 GpuExecutor::GetStreamImplementation() {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_72(mht_72_v, 1182, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::GetStreamImplementation");
+
   return std::unique_ptr<internal::StreamInterface>(new GpuStream(this));
 }
 
 std::unique_ptr<internal::TimerInterface>
 GpuExecutor::GetTimerImplementation() {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_73(mht_73_v, 1190, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::GetTimerImplementation");
+
   return std::unique_ptr<internal::TimerInterface>(new GpuTimer(this));
 }
 
-void* GpuExecutor::GpuContextHack() { return context_; }
+void* GpuExecutor::GpuContextHack() {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_74(mht_74_v, 1197, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::GpuContextHack");
+ return context_; }
 
-GpuContext* GpuExecutor::gpu_context() { return context_; }
+GpuContext* GpuExecutor::gpu_context() {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_75(mht_75_v, 1202, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::gpu_context");
+ return context_; }
 
 // Attempts to read the NUMA node corresponding to the GPU device's PCI bus out
 // of SysFS. Returns -1 if it cannot.
@@ -805,6 +1209,10 @@ GpuContext* GpuExecutor::gpu_context() { return context_; }
 // For anything more complicated/prod-focused than this, you'll likely want to
 // turn to gsys' topology modeling.
 static int TryToReadNumaNode(const string& pci_bus_id, int device_ordinal) {
+   std::vector<std::string> mht_76_v;
+   mht_76_v.push_back("pci_bus_id: \"" + pci_bus_id + "\"");
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_76(mht_76_v, 1213, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "TryToReadNumaNode");
+
   VLOG(2) << "trying to read NUMA node for device ordinal: " << device_ordinal;
   static const int kUnknownNumaNode = -1;
 
@@ -856,6 +1264,9 @@ static int TryToReadNumaNode(const string& pci_bus_id, int device_ordinal) {
 
 port::StatusOr<std::unique_ptr<DeviceDescription>>
 GpuExecutor::CreateDeviceDescription(int device_ordinal) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPSstream_executorPSrocmPSrocm_gpu_executorDTcc mht_77(mht_77_v, 1267, "", "./tensorflow/stream_executor/rocm/rocm_gpu_executor.cc", "GpuExecutor::CreateDeviceDescription");
+
   GpuDeviceHandle device;
   auto status = GpuDriver::GetDevice(device_ordinal, &device);
   if (!status.ok()) {

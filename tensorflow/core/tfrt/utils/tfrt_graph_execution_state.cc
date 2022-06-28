@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePStfrtPSutilsPStfrt_graph_execution_stateDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePStfrtPSutilsPStfrt_graph_execution_stateDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePStfrtPSutilsPStfrt_graph_execution_stateDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -63,6 +231,9 @@ absl::flat_hash_set<std::string> FindFunctionsToOptimize(
       function_to_ops;
 
   auto build_map = [&](const auto& node_defs) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSutilsPStfrt_graph_execution_stateDTcc mht_0(mht_0_v, 234, "", "./tensorflow/core/tfrt/utils/tfrt_graph_execution_state.cc", "lambda");
+
     for (const auto& node_def : node_defs) {
       for (const auto& p : node_def.attr()) {
         const AttrValue& attr_value = p.second;
@@ -121,6 +292,9 @@ StatusOr<std::unique_ptr<TfrtGraphExecutionState>>
 TfrtGraphExecutionState::Create(tensorflow::GraphDef graph_def,
                                 const FallbackState& fallback_state,
                                 bool run_placer_grappler_on_functions) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSutilsPStfrt_graph_execution_stateDTcc mht_1(mht_1_v, 295, "", "./tensorflow/core/tfrt/utils/tfrt_graph_execution_state.cc", "TfrtGraphExecutionState::Create");
+
   TF_ASSIGN_OR_RETURN(
       auto functions_to_optimize,
       PreprocessGraph(graph_def, run_placer_grappler_on_functions));
@@ -143,6 +317,9 @@ CallableOptions PopulateCallableOptions(
     absl::Span<const std::string> feed_tensor_names,
     absl::Span<const std::string> fetch_tensor_names,
     absl::Span<const std::string> target_tensor_names) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSutilsPStfrt_graph_execution_stateDTcc mht_2(mht_2_v, 320, "", "./tensorflow/core/tfrt/utils/tfrt_graph_execution_state.cc", "PopulateCallableOptions");
+
   // Configure pruning with the feed/fetch/target tensor names.
   callable_options.mutable_feed()->Reserve(feed_tensor_names.size());
   for (const auto& feed : feed_tensor_names) {
@@ -163,6 +340,9 @@ CallableOptions PopulateCallableOptions(
 tensorflow::GraphDef CreateGraphDefFromGraphAndFlibDef(
     const tensorflow::Graph& graph,
     const tensorflow::FunctionLibraryDefinition& flib_def) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSutilsPStfrt_graph_execution_stateDTcc mht_3(mht_3_v, 343, "", "./tensorflow/core/tfrt/utils/tfrt_graph_execution_state.cc", "CreateGraphDefFromGraphAndFlibDef");
+
   tensorflow::GraphDef graph_def;
   graph.ToGraphDef(&graph_def);
   *graph_def.mutable_library() = flib_def.ToProto();
@@ -208,6 +388,11 @@ StatusOr<std::unique_ptr<tensorflow::Graph>> CreatePrunedGraph(
 NodeDef CreateNewIdentityNode(const NodeDef& node,
                               const std::string& input_name,
                               const std::string& identity_name) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("input_name: \"" + input_name + "\"");
+   mht_4_v.push_back("identity_name: \"" + identity_name + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSutilsPStfrt_graph_execution_stateDTcc mht_4(mht_4_v, 393, "", "./tensorflow/core/tfrt/utils/tfrt_graph_execution_state.cc", "CreateNewIdentityNode");
+
   NodeDef identity;
   identity.set_name(identity_name);
   identity.set_op("Identity");
@@ -227,6 +412,9 @@ NodeDef CreateNewIdentityNode(const NodeDef& node,
 StatusOr<TfrtGraphExecutionState::OptimizationResult>
 TfrtGraphExecutionState::CreateOptimizedGraph(
     const tensorflow::GraphImportConfig& graph_import_config) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSutilsPStfrt_graph_execution_stateDTcc mht_5(mht_5_v, 415, "", "./tensorflow/core/tfrt/utils/tfrt_graph_execution_state.cc", "TfrtGraphExecutionState::CreateOptimizedGraph");
+
   OptimizationResult result;
 
   tensorflow::BuildGraphOptions build_graph_options;
@@ -293,6 +481,9 @@ TfrtGraphExecutionState::CreateOptimizedGraph(
 }
 
 Status TfrtGraphExecutionState::Extend(const GraphDef& graph) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSutilsPStfrt_graph_execution_stateDTcc mht_6(mht_6_v, 484, "", "./tensorflow/core/tfrt/utils/tfrt_graph_execution_state.cc", "TfrtGraphExecutionState::Extend");
+
   std::unique_ptr<GraphExecutionState> new_state;
   absl::MutexLock lock(&graph_execution_state_mu_);
   TF_RETURN_IF_ERROR(graph_execution_state_->Extend(graph, &new_state));
@@ -353,6 +544,9 @@ StatusOr<const NodeDef*> FindLoopCondFromExitNode(
 
 Status PruneGraphDef(GraphDef& graph_def,
                      const CallableOptions& callable_options) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSutilsPStfrt_graph_execution_stateDTcc mht_7(mht_7_v, 547, "", "./tensorflow/core/tfrt/utils/tfrt_graph_execution_state.cc", "PruneGraphDef");
+
   // Gather node names and create a map from names to NodeDefs.
   absl::flat_hash_map<std::string, NodeDef*> name_to_node;
   // All exit nodes in order to track all while loops.
@@ -484,6 +678,9 @@ Status PruneGraphDef(GraphDef& graph_def,
 }
 
 Status EliminateRefVariablesFromV1ControlFlow(tensorflow::GraphDef& graph_def) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSutilsPStfrt_graph_execution_stateDTcc mht_8(mht_8_v, 681, "", "./tensorflow/core/tfrt/utils/tfrt_graph_execution_state.cc", "EliminateRefVariablesFromV1ControlFlow");
+
   auto* op_factory = OpRegistry::Global();
 
   absl::flat_hash_set<std::string> ref_nodes;
@@ -561,6 +758,9 @@ Status EliminateRefVariablesFromV1ControlFlow(tensorflow::GraphDef& graph_def) {
 }
 
 void RemoveInputShapesInFunctions(tensorflow::GraphDef& graph_def) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSutilsPStfrt_graph_execution_stateDTcc mht_9(mht_9_v, 761, "", "./tensorflow/core/tfrt/utils/tfrt_graph_execution_state.cc", "RemoveInputShapesInFunctions");
+
   for (tensorflow::FunctionDef& function_def :
        *graph_def.mutable_library()->mutable_function()) {
     function_def.mutable_attr()->erase("_input_shapes");
@@ -577,6 +777,9 @@ Status OptimizeFunctions(
     FunctionDefLibrary& flib_proto, const FunctionLibraryDefinition& flib,
     const FallbackState& fallback_state,
     const absl::flat_hash_set<std::string>& functions_to_optimize) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSutilsPStfrt_graph_execution_stateDTcc mht_10(mht_10_v, 780, "", "./tensorflow/core/tfrt/utils/tfrt_graph_execution_state.cc", "OptimizeFunctions");
+
   for (FunctionDef& fdef : *flib_proto.mutable_function()) {
     if (!functions_to_optimize.contains(fdef.signature().name())) {
       continue;
@@ -648,6 +851,9 @@ StatusOr<std::unique_ptr<tensorflow::Graph>>
 TfrtGraphExecutionState::OptimizeGraph(
     const tensorflow::Graph& graph,
     const tensorflow::BuildGraphOptions& build_graph_options) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSutilsPStfrt_graph_execution_stateDTcc mht_11(mht_11_v, 854, "", "./tensorflow/core/tfrt/utils/tfrt_graph_execution_state.cc", "TfrtGraphExecutionState::OptimizeGraph");
+
   std::unique_ptr<tensorflow::Graph> optimized_graph;
   std::unique_ptr<tensorflow::FunctionLibraryDefinition> optimized_flib;
 

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSmake_deterministicDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSmake_deterministicDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSmake_deterministicDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -90,6 +258,10 @@ constexpr std::array<const char*, 13> kDeterministicStatefulOpsWhenAsync = {
     "SampleDistortedBoundingBoxV2"};
 
 bool IsDeterministicWhenRunInParallel(const std::string& stateful_op) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("stateful_op: \"" + stateful_op + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSmake_deterministicDTcc mht_0(mht_0_v, 262, "", "./tensorflow/core/grappler/optimizers/data/make_deterministic.cc", "IsDeterministicWhenRunInParallel");
+
   for (auto op_in_array : kDeterministicStatefulOps) {
     if (data::MatchesAnyVersion(op_in_array, stateful_op)) {
       return true;
@@ -99,6 +271,10 @@ bool IsDeterministicWhenRunInParallel(const std::string& stateful_op) {
 }
 
 bool IsDeterministicWhenRunAsynchronously(const std::string& stateful_op) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("stateful_op: \"" + stateful_op + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSmake_deterministicDTcc mht_1(mht_1_v, 275, "", "./tensorflow/core/grappler/optimizers/data/make_deterministic.cc", "IsDeterministicWhenRunAsynchronously");
+
   for (auto op_in_array : kDeterministicStatefulOps) {
     if (data::MatchesAnyVersion(op_in_array, stateful_op)) {
       return true;
@@ -113,35 +289,63 @@ bool IsDeterministicWhenRunAsynchronously(const std::string& stateful_op) {
 }
 
 bool IsParallelInterleave(const std::string& op) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("op: \"" + op + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSmake_deterministicDTcc mht_2(mht_2_v, 293, "", "./tensorflow/core/grappler/optimizers/data/make_deterministic.cc", "IsParallelInterleave");
+
   return data::MatchesAnyVersion(kParallelInterleaveOp, op) ||
          op == kLegacyParallelInterleaveOp;
 }
 
 bool IsParallelMap(const std::string& op) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("op: \"" + op + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSmake_deterministicDTcc mht_3(mht_3_v, 302, "", "./tensorflow/core/grappler/optimizers/data/make_deterministic.cc", "IsParallelMap");
+
   return data::MatchesAnyVersion(kParallelMapOp, op);
 }
 
 bool IsParallelBatch(const std::string& op) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("op: \"" + op + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSmake_deterministicDTcc mht_4(mht_4_v, 310, "", "./tensorflow/core/grappler/optimizers/data/make_deterministic.cc", "IsParallelBatch");
+
   return data::MatchesAnyVersion(kParallelBatchOp, op);
 }
 
 bool IsMapAndBatch(const std::string& op) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("op: \"" + op + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSmake_deterministicDTcc mht_5(mht_5_v, 318, "", "./tensorflow/core/grappler/optimizers/data/make_deterministic.cc", "IsMapAndBatch");
+
   return data::MatchesAnyVersion(kMapAndBatchOp, op);
 }
 
 bool IsPrefetch(const std::string& op) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("op: \"" + op + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSmake_deterministicDTcc mht_6(mht_6_v, 326, "", "./tensorflow/core/grappler/optimizers/data/make_deterministic.cc", "IsPrefetch");
+
   return data::MatchesAnyVersion(kPrefetchOp, op);
 }
 
 // Returns whether the op is a dataset op which runs a function multiple times
 // in parallel.
 bool IntroducesFunctionParallelism(const std::string& op) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("op: \"" + op + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSmake_deterministicDTcc mht_7(mht_7_v, 336, "", "./tensorflow/core/grappler/optimizers/data/make_deterministic.cc", "IntroducesFunctionParallelism");
+
   return IsParallelInterleave(op) || IsParallelMap(op) || IsMapAndBatch(op);
 }
 
 // Returns whether the op is a dataset op which can cause functions in the input
 // pipeline to run asynchronously.
 bool IntroducesAsynchrony(const std::string& op) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("op: \"" + op + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSmake_deterministicDTcc mht_8(mht_8_v, 346, "", "./tensorflow/core/grappler/optimizers/data/make_deterministic.cc", "IntroducesAsynchrony");
+
   // Currently, every op that introduces parallelism also introduces
   // asynchrony.
   return IntroducesFunctionParallelism(op) || IsPrefetch(op) ||
@@ -159,6 +363,10 @@ absl::flat_hash_map<absl::string_view, const NodeDef*> NameToNode(
 }
 
 NodeDef* GetMutableNode(const string& node_name, MutableGraphView* graph) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSmake_deterministicDTcc mht_9(mht_9_v, 367, "", "./tensorflow/core/grappler/optimizers/data/make_deterministic.cc", "GetMutableNode");
+
   int index = graph_utils::FindGraphNodeWithName(node_name, *graph->graph());
   DCHECK_NE(index, -1) << "Failed to find node " << node_name
                        << " in the optimized graph.";
@@ -169,6 +377,10 @@ NodeDef* GetMutableNode(const string& node_name, MutableGraphView* graph) {
 // non-parallel version, to make it deterministic.
 Status ConvertMapOrInterleave(const string& node_name,
                               MutableGraphView* graph) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSmake_deterministicDTcc mht_10(mht_10_v, 381, "", "./tensorflow/core/grappler/optimizers/data/make_deterministic.cc", "ConvertMapOrInterleave");
+
   NodeDef* node = GetMutableNode(node_name, graph);
 
   auto Targuments = node->attr().find("Targuments");
@@ -260,6 +472,10 @@ Status SplitMap(
     const FunctionLibraryDefinition& library, const string& map_node_name,
     MutableGraphView* graph,
     const absl::flat_hash_set<absl::string_view>& nondeterministic_nodes) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("map_node_name: \"" + map_node_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSmake_deterministicDTcc mht_11(mht_11_v, 476, "", "./tensorflow/core/grappler/optimizers/data/make_deterministic.cc", "SplitMap");
+
   NodeDef* map_node = GetMutableNode(map_node_name, graph);
   NameAttrList func = map_node->attr().at("f").func();
   const FunctionDef* function_def = library.Find(func.name());
@@ -385,6 +601,10 @@ Status SplitMap(
 // Converts a ParallalBatch dataset to a Batch dataset, to make it
 // deterministic.
 Status ConvertBatch(const string& node_name, MutableGraphView* graph) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSmake_deterministicDTcc mht_12(mht_12_v, 605, "", "./tensorflow/core/grappler/optimizers/data/make_deterministic.cc", "ConvertBatch");
+
   NodeDef* node = GetMutableNode(node_name, graph);
   node->set_op(kBatchV2Op);
   std::string num_parallel_calls_input = node->input(2);
@@ -399,6 +619,10 @@ Status ConvertBatch(const string& node_name, MutableGraphView* graph) {
 // TODO(reedwm): Handle 'metadata' attribute. Currently the Map node and Batch
 // node will have an empty 'metadata' attribute.
 Status ConvertMapAndBatch(const string& node_name, MutableGraphView* graph) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSmake_deterministicDTcc mht_13(mht_13_v, 623, "", "./tensorflow/core/grappler/optimizers/data/make_deterministic.cc", "ConvertMapAndBatch");
+
   int index = graph_utils::FindGraphNodeWithName(node_name, *graph->graph());
   DCHECK_NE(index, -1) << "Failed to find node " << node_name
                        << " in the optimized graph.";
@@ -479,6 +703,10 @@ Status ConvertMapAndBatch(const string& node_name, MutableGraphView* graph) {
 // Change the buffer_size of a Prefetch node to zero, effectively disabling it,
 // to make it deterministic.
 Status ConvertPrefetch(const string& node_name, MutableGraphView* graph) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSmake_deterministicDTcc mht_14(mht_14_v, 707, "", "./tensorflow/core/grappler/optimizers/data/make_deterministic.cc", "ConvertPrefetch");
+
   NodeDef* node = GetMutableNode(node_name, graph);
   constexpr int buffer_size_index = 1;
   node->add_input(absl::StrCat("^", node->input(buffer_size_index)));
@@ -495,6 +723,10 @@ enum class NondeterminismType { PARALLELISM, ASYNCHRONY };
 // asynchronously.
 bool IsDeterministicStatefulOp(NondeterminismType type,
                                const std::string& stateful_op) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("stateful_op: \"" + stateful_op + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSmake_deterministicDTcc mht_15(mht_15_v, 727, "", "./tensorflow/core/grappler/optimizers/data/make_deterministic.cc", "IsDeterministicStatefulOp");
+
   return type == NondeterminismType::PARALLELISM
              ? IsDeterministicWhenRunInParallel(stateful_op)
              : IsDeterministicWhenRunAsynchronously(stateful_op);
@@ -518,6 +750,10 @@ bool FunctionMayIntroduceNondeterminism(
     NondeterminismType nondeterminism_type,
     absl::flat_hash_set<std::string>* functions_processed,
     absl::flat_hash_set<absl::string_view>* nondeterministic_nodes) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("function_name: \"" + function_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSmake_deterministicDTcc mht_16(mht_16_v, 754, "", "./tensorflow/core/grappler/optimizers/data/make_deterministic.cc", "FunctionMayIntroduceNondeterminism");
+
   if (functions_processed->contains(function_name)) {
     return false;
   }
@@ -547,6 +783,10 @@ bool FunctionMayIntroduceNondeterminism(
 bool FunctionMayIntroduceNondeterminism(
     const FunctionLibraryDefinition& library, const std::string& function_name,
     NondeterminismType nondeterminism_type) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("function_name: \"" + function_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSmake_deterministicDTcc mht_17(mht_17_v, 787, "", "./tensorflow/core/grappler/optimizers/data/make_deterministic.cc", "FunctionMayIntroduceNondeterminism");
+
   absl::flat_hash_set<string> functions_processed;
   return FunctionMayIntroduceNondeterminism(library, function_name,
                                             nondeterminism_type,
@@ -558,6 +798,9 @@ bool FunctionNodeMayIntroduceNondeterminism(
     const FunctionLibraryDefinition& library, const NodeDef& node_def,
     NondeterminismType nondeterminism_type,
     absl::flat_hash_set<std::string>* functions_processed) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSmake_deterministicDTcc mht_18(mht_18_v, 801, "", "./tensorflow/core/grappler/optimizers/data/make_deterministic.cc", "FunctionNodeMayIntroduceNondeterminism");
+
   const OpRegistrationData* op_reg_data = nullptr;
   Status s = library.LookUp(node_def.op(), &op_reg_data);
   if (!s.ok()) {
@@ -615,6 +858,9 @@ bool FunctionNodeMayIntroduceNondeterminism(
 // nondeterminism when run asynchronously.
 bool NodeMayIntroduceNondeterminismWhenAsync(
     const FunctionLibraryDefinition& library, const NodeDef& node) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSmake_deterministicDTcc mht_19(mht_19_v, 861, "", "./tensorflow/core/grappler/optimizers/data/make_deterministic.cc", "NodeMayIntroduceNondeterminismWhenAsync");
+
   const OpDef* op_def;
   Status s = OpRegistry::Global()->LookUpOpDef(node.op(), &op_def);
   if (s.code() == error::NOT_FOUND) {
@@ -646,6 +892,9 @@ bool NodeMayIntroduceNondeterminismWhenAsync(
 // nondeterminism when run asynchronously.
 bool GraphMayHaveAsyncNondeterminism(const FunctionLibraryDefinition& library,
                                      const GraphDef& graph) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSmake_deterministicDTcc mht_20(mht_20_v, 895, "", "./tensorflow/core/grappler/optimizers/data/make_deterministic.cc", "GraphMayHaveAsyncNondeterminism");
+
   for (const NodeDef& node : graph.node()) {
     if (NodeMayIntroduceNondeterminismWhenAsync(library, node)) {
       return true;
@@ -669,6 +918,9 @@ Status MakeDeterministic::OptimizeAndCollectStats(Cluster* cluster,
                                                   const GrapplerItem& item,
                                                   GraphDef* output,
                                                   OptimizationStats* stats) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSmake_deterministicDTcc mht_21(mht_21_v, 921, "", "./tensorflow/core/grappler/optimizers/data/make_deterministic.cc", "MakeDeterministic::OptimizeAndCollectStats");
+
   *output = item.graph;
   MutableGraphView graph(output);
   FunctionLibraryDefinition function_library(OpRegistry::Global(),

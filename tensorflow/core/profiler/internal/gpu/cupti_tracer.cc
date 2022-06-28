@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -61,11 +229,20 @@ static thread_local int internalCuCall = 0;
 // this class. Used for the API calls that initiated by us.
 class CuptiApiTracingDisabler {
  public:
-  CuptiApiTracingDisabler() { internalCuCall++; }
-  ~CuptiApiTracingDisabler() { internalCuCall--; }
+  CuptiApiTracingDisabler() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_0(mht_0_v, 233, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "CuptiApiTracingDisabler");
+ internalCuCall++; }
+  ~CuptiApiTracingDisabler() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_1(mht_1_v, 237, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "~CuptiApiTracingDisabler");
+ internalCuCall--; }
 };
 
 Status ToStatus(CUptiResult result) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_2(mht_2_v, 243, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "ToStatus");
+
   if (result == CUPTI_SUCCESS) {
     return Status::OK();
   }
@@ -75,6 +252,9 @@ Status ToStatus(CUptiResult result) {
 }
 
 Status ToStatus(CUresult result) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_3(mht_3_v, 255, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "ToStatus");
+
   if (result == CUDA_SUCCESS) {
     return Status::OK();
   }
@@ -84,12 +264,18 @@ Status ToStatus(CUresult result) {
 }
 
 inline void LogIfError(const Status &status) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_4(mht_4_v, 267, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "LogIfError");
+
   if (status.ok()) return;
   LOG(ERROR) << status.error_message();
 }
 
 // Maps an OverheadKind enum to a const string.
 const char *getActivityOverheadKindString(CUpti_ActivityOverheadKind kind) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_5(mht_5_v, 276, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "getActivityOverheadKindString");
+
   switch (kind) {
     case CUPTI_ACTIVITY_OVERHEAD_DRIVER_COMPILER:
       return "COMPILER";
@@ -107,6 +293,9 @@ const char *getActivityOverheadKindString(CUpti_ActivityOverheadKind kind) {
 
 const char *getActivityUnifiedMemoryKindString(
     CUpti_ActivityUnifiedMemoryCounterKind kind) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_6(mht_6_v, 296, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "getActivityUnifiedMemoryKindString");
+
   switch (kind) {
     case CUPTI_ACTIVITY_UNIFIED_MEMORY_COUNTER_KIND_BYTES_TRANSFER_HTOD:
       return "UM_BYTES_TRANSFER_HTOD";
@@ -153,11 +342,17 @@ const char *getActivityUnifiedMemoryKindString(
 size_t Bytes2D(const CUDA_MEMCPY2D *p) { return p->Height * p->WidthInBytes; }
 
 size_t Bytes3D(const CUDA_MEMCPY3D *p) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_7(mht_7_v, 345, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "Bytes3D");
+
   return p->Depth * p->Height * p->WidthInBytes;
 }
 
 template <typename CudaMemcpy>
 CuptiTracerEventType MemcpyKind(const CudaMemcpy *p) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_8(mht_8_v, 353, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "MemcpyKind");
+
   if (p->srcMemoryType == CU_MEMORYTYPE_HOST &&
       p->dstMemoryType == CU_MEMORYTYPE_DEVICE) {
     return CuptiTracerEventType::MemcpyH2D;
@@ -331,6 +526,9 @@ DecodeDriverMemset(CUpti_CallbackId cbid, const void *params) {
 void CUPTIAPI ApiCallback(void *user_data, CUpti_CallbackDomain domain,
                           CUpti_CallbackId cbid,
                           const CUpti_CallbackData *cbdata) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_9(mht_9_v, 529, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "ApiCallback");
+
   CuptiTracer *tracer = reinterpret_cast<CuptiTracer *>(user_data);
   tracer->HandleCallback(domain, cbid, cbdata).IgnoreError();
 }
@@ -341,6 +539,9 @@ void CUPTIAPI ApiCallback(void *user_data, CUpti_CallbackDomain domain,
 // collected.
 void CUPTIAPI RequestCuptiActivityBuffer(uint8_t **buffer, size_t *size,
                                          size_t *maxNumRecords) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_10(mht_10_v, 542, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "RequestCuptiActivityBuffer");
+
   CuptiTracer::GetCuptiTracerSingleton()->RequestActivityBuffer(buffer, size);
   VLOG(3) << "Requested CUPTI Buffer, buffer=" << std::hex
           << reinterpret_cast<uintptr_t>(*buffer) << std::dec
@@ -355,6 +556,9 @@ void CUPTIAPI RequestCuptiActivityBuffer(uint8_t **buffer, size_t *size,
 void CUPTIAPI ProcessCuptiActivityBuffer(CUcontext context, uint32_t stream_id,
                                          uint8_t *buffer, size_t size,
                                          size_t valid_size) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_11(mht_11_v, 559, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "ProcessCuptiActivityBuffer");
+
   VLOG(3) << "Processing CUPTI Buffer, buffer:" << std::hex
           << reinterpret_cast<uintptr_t>(buffer) << std::dec
           << " size: " << size << " valid_size: " << valid_size;
@@ -370,6 +574,9 @@ void CUPTIAPI ProcessCuptiActivityBuffer(CUcontext context, uint32_t stream_id,
 void AddKernelEventUponApiExit(CuptiTraceCollector *collector, uint32 device_id,
                                const CUpti_CallbackData *cbdata,
                                uint64 start_time, uint64 end_time) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_12(mht_12_v, 577, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "AddKernelEventUponApiExit");
+
   CuptiTracerEvent event{};
   event.type = CuptiTracerEventType::Kernel;
   event.source = CuptiTracerEventSource::DriverCallback;
@@ -389,6 +596,9 @@ CuptiTracerEvent PopulateMemcpyCallbackEvent(
     CuptiTracerEventType type, const CUpti_CallbackData *cbdata,
     size_t num_bytes, uint32 src_device, uint32 dst_device, bool async,
     uint64 start_time, uint64 end_time) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_13(mht_13_v, 599, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "PopulateMemcpyCallbackEvent");
+
   CuptiTracerEvent event{};
   event.type = type;
   event.source = CuptiTracerEventSource::DriverCallback;
@@ -412,6 +622,9 @@ void AddNormalMemcpyEventUponApiExit(CuptiTraceCollector *collector,
                                      uint32 device_id, CUpti_CallbackId cbid,
                                      const CUpti_CallbackData *cbdata,
                                      uint64 start_time, uint64 end_time) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_14(mht_14_v, 625, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "AddNormalMemcpyEventUponApiExit");
+
   size_t num_bytes;
   CuptiTracerEventType type;
   bool async;
@@ -429,6 +642,9 @@ void AddCuMemsetEventUponApiExit(CuptiTraceCollector *collector,
                                  uint32 device_id, CUpti_CallbackId cbid,
                                  const CUpti_CallbackData *cbdata,
                                  uint64 start_time, uint64 end_time) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_15(mht_15_v, 645, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "AddCuMemsetEventUponApiExit");
+
   // We are casting all variants of cuMemset to cuMemsetD8 for accessing the
   // first member attribute, a CUdeviceptr.
   const auto *params =
@@ -462,6 +678,9 @@ void AddP2PMemcpyEventUponApiExit(CuptiTraceCollector *collector,
                                   uint32 device_id, CUpti_CallbackId cbid,
                                   const CUpti_CallbackData *cbdata,
                                   uint64 start_time, uint64 end_time) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_16(mht_16_v, 681, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "AddP2PMemcpyEventUponApiExit");
+
   size_t num_bytes;
   CuptiTracerEventType type;
   bool async;
@@ -485,6 +704,9 @@ void AddCuMemAllocEventUponApiExit(CuptiTraceCollector *collector,
                                    uint32 device_id, CUpti_CallbackId cbid,
                                    const CUpti_CallbackData *cbdata,
                                    uint64 start_time, uint64 end_time) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_17(mht_17_v, 707, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "AddCuMemAllocEventUponApiExit");
+
   const auto *params =
       static_cast<const cuMemAlloc_v2_params *>(cbdata->functionParams);
   CuptiTracerEvent event{};
@@ -508,6 +730,9 @@ void AddCuMemAllocPitchEventUponApiExit(CuptiTraceCollector *collector,
                                         uint32 device_id, CUpti_CallbackId cbid,
                                         const CUpti_CallbackData *cbdata,
                                         uint64 start_time, uint64 end_time) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_18(mht_18_v, 733, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "AddCuMemAllocPitchEventUponApiExit");
+
   const auto *params =
       static_cast<const cuMemAllocPitch_v2_params *>(cbdata->functionParams);
   CuptiTracerEvent event{};
@@ -532,6 +757,9 @@ void AddCuMemFreeEventUponApiExit(CuptiTraceCollector *collector,
                                   uint32 device_id, CUpti_CallbackId cbid,
                                   const CUpti_CallbackData *cbdata,
                                   uint64 start_time, uint64 end_time) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_19(mht_19_v, 760, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "AddCuMemFreeEventUponApiExit");
+
   const auto *params =
       static_cast<const cuMemFree_v2_params *>(cbdata->functionParams);
   CuptiTracerEvent event{};
@@ -553,6 +781,9 @@ void AddGenericEventUponApiExit(CuptiTraceCollector *collector,
                                 uint32 device_id, CUpti_CallbackId cbid,
                                 const CUpti_CallbackData *cbdata,
                                 uint64 start_time, uint64 end_time) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_20(mht_20_v, 784, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "AddGenericEventUponApiExit");
+
   CuptiTracerEvent event{};
   event.type = CuptiTracerEventType::Generic;
   event.source = CuptiTracerEventSource::DriverCallback;
@@ -570,6 +801,9 @@ void AddGenericEventUponApiExit(CuptiTraceCollector *collector,
 
 void AddKernelActivityEvent(CuptiTraceCollector *collector,
                             const CuptiActivityKernelTy *kernel) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_21(mht_21_v, 804, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "AddKernelActivityEvent");
+
   CuptiTracerEvent event{};
   event.type = CuptiTracerEventType::Kernel;
   event.source = CuptiTracerEventSource::Activity;
@@ -602,6 +836,9 @@ void AddKernelActivityEvent(CuptiTraceCollector *collector,
 
 void AddMemcpyActivityEvent(CuptiTraceCollector *collector,
                             const CuptiActivityMemcpyTy *memcpy) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_22(mht_22_v, 839, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "AddMemcpyActivityEvent");
+
   CuptiTracerEvent event{};
   switch (memcpy->copyKind) {
     case CUPTI_ACTIVITY_MEMCPY_KIND_HTOD:
@@ -652,6 +889,9 @@ void AddMemcpyActivityEvent(CuptiTraceCollector *collector,
 // Invokes callback upon peer-2-peer memcpy between different GPU devices.
 void AddMemcpyP2PActivityEvent(CuptiTraceCollector *collector,
                                const CuptiActivityMemcpyP2PTy *memcpy) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_23(mht_23_v, 892, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "AddMemcpyP2PActivityEvent");
+
   CuptiTracerEvent event{};
   event.type = CuptiTracerEventType::MemcpyP2P;
   event.name = "MemcpyP2P";
@@ -680,6 +920,9 @@ void AddMemcpyP2PActivityEvent(CuptiTraceCollector *collector,
 
 void AddCuptiOverheadActivityEvent(CuptiTraceCollector *collector,
                                    const CUpti_ActivityOverhead *overhead) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_24(mht_24_v, 923, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "AddCuptiOverheadActivityEvent");
+
   CuptiTracerEvent event{};
   event.type = CuptiTracerEventType::Overhead;
   event.name = getActivityOverheadKindString(overhead->overheadKind);
@@ -716,6 +959,9 @@ void AddCuptiOverheadActivityEvent(CuptiTraceCollector *collector,
 void AddUnifiedMemoryActivityEvent(
     CuptiTraceCollector *collector,
     const CUpti_ActivityUnifiedMemoryCounter2 *record) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_25(mht_25_v, 962, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "AddUnifiedMemoryActivityEvent");
+
   VLOG(3) << "Cuda Unified Memory Activity, kind: " << record->counterKind
           << " src: " << record->srcId << " dst: " << record->dstId;
   CuptiTracerEvent event{};
@@ -761,6 +1007,9 @@ void AddUnifiedMemoryActivityEvent(
 
 void AddMemoryActivityEvent(CuptiTraceCollector *collector,
                             const CUpti_ActivityMemory *memory) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_26(mht_26_v, 1010, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "AddMemoryActivityEvent");
+
   CuptiTracerEvent event{};
   event.name = absl::StrCat("Memory ", GetMemoryKindName(memory->memoryKind));
   event.type = CuptiTracerEventType::MemoryResidency;
@@ -782,6 +1031,9 @@ void AddMemoryActivityEvent(CuptiTraceCollector *collector,
 
 void AddMemsetActivityEvent(CuptiTraceCollector *collector,
                             const CuptiActivityMemsetTy *memset) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_27(mht_27_v, 1034, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "AddMemsetActivityEvent");
+
   auto mem_kind = memset->memoryKind;
   CuptiTracerEvent event{};
   event.type = CuptiTracerEventType::Memset;
@@ -807,6 +1059,9 @@ void AddMemsetActivityEvent(CuptiTraceCollector *collector,
 
 void AddSynchronizationActivityEvent(
     CuptiTraceCollector *collector, const CUpti_ActivitySynchronization *sync) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_28(mht_28_v, 1062, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "AddSynchronizationActivityEvent");
+
   CuptiTracerEvent event{};
   event.type = CuptiTracerEventType::Generic;
   event.source = CuptiTracerEventSource::Activity;
@@ -843,11 +1098,17 @@ class CuptiDriverApiHookWithActivityApi : public CuptiDriverApiHook {
                                     CuptiTraceCollector *collector)
       : option_(option),
         cupti_interface_(cupti_interface),
-        collector_(collector) {}
+        collector_(collector) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_29(mht_29_v, 1102, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "CuptiDriverApiHookWithActivityApi");
+}
 
   Status OnDriverApiEnter(int device_id, CUpti_CallbackDomain domain,
                           CUpti_CallbackId cbid,
                           const CUpti_CallbackData *cbdata) override {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_30(mht_30_v, 1109, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "OnDriverApiEnter");
+
     // Stash away the current Cupti timestamp into cbdata.
     *cbdata->correlationData =
         option_.required_callback_api_events ? CuptiTracer::GetTimestamp() : 0;
@@ -856,6 +1117,9 @@ class CuptiDriverApiHookWithActivityApi : public CuptiDriverApiHook {
   Status OnDriverApiExit(int device_id, CUpti_CallbackDomain domain,
                          CUpti_CallbackId cbid,
                          const CUpti_CallbackData *cbdata) override {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_31(mht_31_v, 1120, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "OnDriverApiExit");
+
     // If we are not collecting CPU events from Callback API, we can return now.
     if (!option_.required_callback_api_events) {
       return Status::OK();
@@ -869,6 +1133,9 @@ class CuptiDriverApiHookWithActivityApi : public CuptiDriverApiHook {
                                      start_tsc, end_tsc, domain, cbid, cbdata);
   }
   Status SyncAndFlush() override {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_32(mht_32_v, 1136, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "SyncAndFlush");
+
     if (option_.sync_devices_before_stop) {
       CuptiApiTracingDisabler disabler;
       absl::MutexLock lock(&mutex_);
@@ -884,6 +1151,9 @@ class CuptiDriverApiHookWithActivityApi : public CuptiDriverApiHook {
 
  private:
   void TrackContext(CUpti_CallbackId cbid, CUcontext ctx) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_33(mht_33_v, 1154, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "TrackContext");
+
     if (!option_.sync_devices_before_stop) return;
     if (ctx == nullptr) return;
     absl::MutexLock lock(&mutex_);
@@ -930,6 +1200,9 @@ struct MemcpyRecord {
 };
 
 Status CreateAndRecordEvent(CUevent *event, CUstream stream) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_34(mht_34_v, 1203, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "CreateAndRecordEvent");
+
   CuptiApiTracingDisabler disabler;
   TF_RETURN_IF_ERROR(ToStatus(cuEventCreate(event, CU_EVENT_DEFAULT)));
   return ToStatus(cuEventRecord(*event, stream));
@@ -941,6 +1214,9 @@ Status CreateAndRecordEvent(CUevent *event, CUstream stream) {
 class ScopedCudaContext {
  public:
   explicit ScopedCudaContext(CUstream stream) : stream_(stream) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_35(mht_35_v, 1217, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "ScopedCudaContext");
+
     CuptiApiTracingDisabler disabler;  // don't trace cuda call in this func.
     CUcontext context;
     if (cuStreamGetCtx(stream, &context) != CUDA_SUCCESS) return;
@@ -951,6 +1227,9 @@ class ScopedCudaContext {
     context_pushed_ = cuCtxPushCurrent(context) == CUDA_SUCCESS;
   }
   ~ScopedCudaContext() {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_36(mht_36_v, 1230, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "~ScopedCudaContext");
+
     if (!context_pushed_) return;
     CuptiApiTracingDisabler disabler;  // don't trace cuda call in this func.
     cuCtxPopCurrent(&*context_);
@@ -980,6 +1259,9 @@ class CudaEventRecorder {
       : cupti_interface_(cupti_interface),
         collector_(collector),
         ordinal_(ordinal) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_37(mht_37_v, 1262, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "CudaEventRecorder");
+
     device_name_ = absl::StrCat("gpu ", ordinal);  // default.
     CUdevice device;
     if (cuDeviceGet(&device, ordinal) == CUDA_SUCCESS) {
@@ -995,6 +1277,10 @@ class CudaEventRecorder {
   template <typename T>
   size_t StartKernel(const char *kernel_name, CUcontext context,
                      uint32 correlation_id, const T *params) {
+   std::vector<std::string> mht_38_v;
+   mht_38_v.push_back("kernel_name: \"" + (kernel_name == nullptr ? std::string("nullptr") : std::string((char*)kernel_name)) + "\"");
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_38(mht_38_v, 1281, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "StartKernel");
+
     CUstream stream = params->hStream;
     KernelRecord record = {kernel_name, context, stream, correlation_id};
     record.details.registers_per_thread = 0;  // unknown.
@@ -1014,6 +1300,9 @@ class CudaEventRecorder {
     return kernel_records_.size() - 1;
   }
   uint64 StopKernel(size_t index) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_39(mht_39_v, 1303, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "StopKernel");
+
     absl::MutexLock lock(&mutex_);
     if (index >= kernel_records_.size()) return 0;
     auto &record = kernel_records_[index];
@@ -1026,6 +1315,9 @@ class CudaEventRecorder {
   size_t StartMemcpy(CuptiTracerEventType type, size_t size_bytes,
                      CUcontext context, CUstream stream, uint32 correlation_id,
                      bool async) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_40(mht_40_v, 1318, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "StartMemcpy");
+
     MemcpyRecord record = {type,   size_bytes,     context,
                            stream, correlation_id, async};
     record.start_timestamp = CuptiTracer::GetTimestamp();
@@ -1036,6 +1328,9 @@ class CudaEventRecorder {
     return memcpy_records_.size() - 1;
   }
   uint64 StopMemcpy(size_t index) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_41(mht_41_v, 1331, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "StopMemcpy");
+
     absl::MutexLock lock(&mutex_);
     if (index >= memcpy_records_.size()) return 0;
     auto &record = memcpy_records_[index];
@@ -1044,6 +1339,9 @@ class CudaEventRecorder {
   }
 
   Status Stop() {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_42(mht_42_v, 1342, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "Stop");
+
     {
       absl::MutexLock lock(&mutex_);
       stopped_ = true;
@@ -1078,6 +1376,9 @@ class CudaEventRecorder {
   }
 
   Status Flush(AnnotationMap *annotation_map) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_43(mht_43_v, 1379, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "Flush");
+
     auto kernel_records = ConsumeKernelRecords();
     auto memcpy_records = ConsumeMemcpyRecords();
     for (const auto &record : kernel_records) {
@@ -1114,6 +1415,9 @@ class CudaEventRecorder {
 
   // Synchronizes all contexts.
   Status Synchronize() const {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_44(mht_44_v, 1418, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "Synchronize");
+
     CuptiApiTracingDisabler disabler;
     for (const auto &pair : context_infos_) {
       TF_RETURN_IF_ERROR(ToStatus(cuCtxSetCurrent(pair.first)));
@@ -1124,6 +1428,9 @@ class CudaEventRecorder {
 
   // Returns element from context_infos_, adding it if not yet present.
   Status GetContextInfo(CUcontext context, ContextInfo **ctx_info_ptr) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_45(mht_45_v, 1431, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "GetContextInfo");
+
     auto it = context_infos_.find(context);
 
     if (it == context_infos_.end()) {
@@ -1142,6 +1449,10 @@ class CudaEventRecorder {
   // if it doesn't match parameter.
   Status AddStreamInfo(CUcontext context, CUstream stream,
                        absl::string_view name) {
+   std::vector<std::string> mht_46_v;
+   mht_46_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_46(mht_46_v, 1453, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "AddStreamInfo");
+
     StreamKey key(context, stream);
     auto it = stream_infos_.find(key);
     if (it != stream_infos_.end()) {
@@ -1171,6 +1482,9 @@ class CudaEventRecorder {
 
   // Returns time in microseconds between events recorded on the GPU.
   static uint64_t GetElapsedTimeUs(CUevent start, CUevent stop) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_47(mht_47_v, 1485, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "GetElapsedTimeUs");
+
     CuptiApiTracingDisabler disabler;
     float elapsed_ms = 0.0f;
     LogIfError(ToStatus(cuEventElapsedTime(&elapsed_ms, start, stop)));
@@ -1180,6 +1494,9 @@ class CudaEventRecorder {
 
   Status SaveRecord(const KernelRecord &record,
                     AnnotationMap *annotation_map) const {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_48(mht_48_v, 1497, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "SaveRecord");
+
     if (!record.start_event || !record.stop_event) {
       return Status::OK();
     }
@@ -1211,6 +1528,9 @@ class CudaEventRecorder {
 
   Status SaveRecord(const MemcpyRecord &record,
                     AnnotationMap *annotation_map) const {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_49(mht_49_v, 1531, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "SaveRecord");
+
     if (!record.start_event || !record.stop_event) {
       return Status::OK();
     }
@@ -1268,6 +1588,9 @@ class CuptiDriverApiHookWithCudaEvent : public CuptiDriverApiHook {
       : option_(option),
         cupti_interface_(cupti_interface),
         collector_(collector) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_50(mht_50_v, 1591, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "CuptiDriverApiHookWithCudaEvent");
+
     int num_gpus = CuptiTracer::NumGpus();
     cuda_event_recorders_.reserve(num_gpus);
     for (int i = 0; i < num_gpus; ++i) {
@@ -1276,12 +1599,18 @@ class CuptiDriverApiHookWithCudaEvent : public CuptiDriverApiHook {
     }
   }
   ~CuptiDriverApiHookWithCudaEvent() {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_51(mht_51_v, 1602, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "~CuptiDriverApiHookWithCudaEvent");
+
     for (auto *callback_context : callback_contexts_) delete callback_context;
   }
 
   Status OnDriverApiEnter(int device_id, CUpti_CallbackDomain domain,
                           CUpti_CallbackId cbid,
                           const CUpti_CallbackData *cbdata) override {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_52(mht_52_v, 1611, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "OnDriverApiEnter");
+
     auto *recorder = cuda_event_recorders_[device_id].get();
     switch (cbid) {
       case CUPTI_DRIVER_TRACE_CBID_cuLaunchKernel: {
@@ -1383,6 +1712,9 @@ class CuptiDriverApiHookWithCudaEvent : public CuptiDriverApiHook {
   Status OnDriverApiExit(int device_id, CUpti_CallbackDomain domain,
                          CUpti_CallbackId cbid,
                          const CUpti_CallbackData *cbdata) override {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_53(mht_53_v, 1715, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "OnDriverApiExit");
+
     auto *recorder = cuda_event_recorders_[device_id].get();
     if (*cbdata->correlationData == static_cast<size_t>(-1))
       return Status::OK();
@@ -1440,6 +1772,9 @@ class CuptiDriverApiHookWithCudaEvent : public CuptiDriverApiHook {
                                      start_tsc, end_tsc, domain, cbid, cbdata);
   }
   Status SyncAndFlush() override {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_54(mht_54_v, 1775, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "SyncAndFlush");
+
     for (auto &recorder : cuda_event_recorders_) {
       TF_RETURN_IF_ERROR(recorder->Stop());
     }
@@ -1454,6 +1789,9 @@ class CuptiDriverApiHookWithCudaEvent : public CuptiDriverApiHook {
   static void StartMemcpy(CuptiTracerEventType type,
                           const CUpti_CallbackData *cbdata,
                           CudaEventRecorder *recorder) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_55(mht_55_v, 1792, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "StartMemcpy");
+
     const auto *params = static_cast<const T *>(cbdata->functionParams);
     *cbdata->correlationData =
         recorder->StartMemcpy(type, params->ByteCount, cbdata->context, nullptr,
@@ -1464,6 +1802,9 @@ class CuptiDriverApiHookWithCudaEvent : public CuptiDriverApiHook {
   static void StartMemcpyAsync(CuptiTracerEventType type,
                                const CUpti_CallbackData *cbdata,
                                CudaEventRecorder *recorder) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_56(mht_56_v, 1805, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "StartMemcpyAsync");
+
     const auto *params = static_cast<const T *>(cbdata->functionParams);
     *cbdata->correlationData = recorder->StartMemcpy(
         type, params->ByteCount, cbdata->context, params->hStream,
@@ -1471,6 +1812,9 @@ class CuptiDriverApiHookWithCudaEvent : public CuptiDriverApiHook {
   }
 
   static CUmemorytype GetMemoryType(CUdeviceptr ptr) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_57(mht_57_v, 1815, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "GetMemoryType");
+
     CuptiApiTracingDisabler disabler;
     CUmemorytype mem_type = CU_MEMORYTYPE_HOST;
     auto status =
@@ -1484,6 +1828,9 @@ class CuptiDriverApiHookWithCudaEvent : public CuptiDriverApiHook {
   }
 
   static CuptiTracerEventType GetMemcpyType(CUdeviceptr src, CUdeviceptr dst) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_58(mht_58_v, 1831, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "GetMemcpyType");
+
     CUmemorytype src_type = GetMemoryType(src);
     CUmemorytype dst_type = GetMemoryType(dst);
     // TODO: handle CU_MEMORYTYPE_ARRAY case
@@ -1507,7 +1854,10 @@ class CuptiDriverApiHookWithCudaEvent : public CuptiDriverApiHook {
   // maintain a on-going API calls to make sure no memory leaks.
   struct CuptiApiCallbackContext {
     explicit CuptiApiCallbackContext(std::vector<uint32> &&r)
-        : record_indices(std::move(r)) {}
+        : record_indices(std::move(r)) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_59(mht_59_v, 1858, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "CuptiApiCallbackContext");
+}
     std::vector<uint32> record_indices;
   };
 
@@ -1520,6 +1870,10 @@ class CuptiDriverApiHookWithCudaEvent : public CuptiDriverApiHook {
 };
 
 /*static*/ std::string ErrorWithHostname(absl::string_view error_message) {
+   std::vector<std::string> mht_60_v;
+   mht_60_v.push_back("error_message: \"" + std::string(error_message.data(), error_message.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_60(mht_60_v, 1874, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "ErrorWithHostname");
+
   return absl::StrCat(port::Hostname(), ": ", error_message);
 }
 
@@ -1530,6 +1884,9 @@ class CuptiDriverApiHookWithCudaEvent : public CuptiDriverApiHook {
     int device_id, uint64 start_tsc, uint64 end_tsc,
     CUpti_CallbackDomain domain, CUpti_CallbackId cbid,
     const CUpti_CallbackData *cbdata) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_61(mht_61_v, 1887, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "CuptiDriverApiHook::AddDriverApiCallbackEvent");
+
   switch (cbid) {
     case CUPTI_DRIVER_TRACE_CBID_cuLaunchKernel:
     case CUPTI_DRIVER_TRACE_CBID_cuLaunchCooperativeKernel:
@@ -1605,6 +1962,9 @@ class CuptiDriverApiHookWithCudaEvent : public CuptiDriverApiHook {
 }
 
 const char *GetTraceEventTypeName(const CuptiTracerEventType &type) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_62(mht_62_v, 1965, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "GetTraceEventTypeName");
+
   // Do not use a default so that this gives a build error when
   // CuptiTracerEventType is extended but this is not.
   switch (type) {
@@ -1642,18 +2002,30 @@ const char *GetTraceEventTypeName(const CuptiTracerEventType &type) {
 CuptiTracer::CuptiTracer(CuptiInterface *cupti_interface)
     : num_gpus_(NumGpus()),
       cupti_interface_(cupti_interface),
-      buffer_pool_(kBufferSizeInBytes) {}
+      buffer_pool_(kBufferSizeInBytes) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_63(mht_63_v, 2006, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "CuptiTracer::CuptiTracer");
+}
 
 /* static */ CuptiTracer *CuptiTracer::GetCuptiTracerSingleton() {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_64(mht_64_v, 2011, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "CuptiTracer::GetCuptiTracerSingleton");
+
   static auto *singleton = new CuptiTracer(GetCuptiInterface());
   return singleton;
 }
 
 bool CuptiTracer::IsAvailable() const {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_65(mht_65_v, 2019, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "CuptiTracer::IsAvailable");
+
   return NumGpus() && !activity_tracing_enabled_ && !api_tracing_enabled_;
 }
 
 int CuptiTracer::NumGpus() {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_66(mht_66_v, 2026, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "CuptiTracer::NumGpus");
+
   static int num_gpus = []() -> int {
     if (cuInit(0) != CUDA_SUCCESS) {
       return 0;
@@ -1670,6 +2042,9 @@ int CuptiTracer::NumGpus() {
 
 void CuptiTracer::Enable(const CuptiTracerOptions &option,
                          CuptiTraceCollector *collector) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_67(mht_67_v, 2045, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "CuptiTracer::Enable");
+
   option_ = option;
   collector_ = collector;
   if (option_->enable_event_based_activity) {
@@ -1692,6 +2067,9 @@ void CuptiTracer::Enable(const CuptiTracerOptions &option,
 }
 
 void CuptiTracer::Disable() {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_68(mht_68_v, 2070, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "CuptiTracer::Disable");
+
   DisableApiTracing().IgnoreError();
   if (option_->enable_activity_api) {
     DisableActivityTracing().IgnoreError();
@@ -1707,6 +2085,9 @@ void CuptiTracer::Disable() {
 }
 
 Status CuptiTracer::EnableApiTracing() {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_69(mht_69_v, 2088, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "CuptiTracer::EnableApiTracing");
+
   if (api_tracing_enabled_) return Status::OK();
 
   VLOG(1) << "Enable subscriber";
@@ -1735,6 +2116,9 @@ Status CuptiTracer::EnableApiTracing() {
 }
 
 Status CuptiTracer::DisableApiTracing() {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_70(mht_70_v, 2119, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "CuptiTracer::DisableApiTracing");
+
   if (!api_tracing_enabled_) return Status::OK();
 
   api_tracing_enabled_ = false;
@@ -1760,6 +2144,9 @@ Status CuptiTracer::DisableApiTracing() {
 }
 
 Status CuptiTracer::EnableActivityTracing() {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_71(mht_71_v, 2147, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "CuptiTracer::EnableActivityTracing");
+
   if (!option_->activities_selected.empty()) {
     // Initialize callback functions for Cupti Activity API.
     VLOG(1) << "Registering CUPTI activity callbacks";
@@ -1781,6 +2168,9 @@ Status CuptiTracer::EnableActivityTracing() {
 }
 
 Status CuptiTracer::DisableActivityTracing() {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_72(mht_72_v, 2171, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "CuptiTracer::DisableActivityTracing");
+
   if (activity_tracing_enabled_) {
     VLOG(1) << "Disabling activity tracing for "
             << option_->activities_selected.size() << " activities";
@@ -1803,6 +2193,9 @@ Status CuptiTracer::DisableActivityTracing() {
 }
 
 Status CuptiTracer::Finalize() {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_73(mht_73_v, 2196, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "CuptiTracer::Finalize");
+
   if (option_->cupti_finalize) {
     VLOG(1) << "CuptiFinalize";
     RETURN_IF_CUPTI_ERROR(cupti_interface_->Finalize());
@@ -1811,6 +2204,9 @@ Status CuptiTracer::Finalize() {
 }
 
 /*static*/ uint64 CuptiTracer::GetTimestamp() {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_74(mht_74_v, 2207, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "CuptiTracer::GetTimestamp");
+
   uint64_t tsc;
   CuptiInterface *cupti_interface = GetCuptiInterface();
   if (cupti_interface && cupti_interface->GetTimestamp(&tsc) == CUPTI_SUCCESS) {
@@ -1823,6 +2219,9 @@ Status CuptiTracer::Finalize() {
 
 Status CuptiTracer::HandleNVTXCallback(CUpti_CallbackId cbid,
                                        const CUpti_CallbackData *cbdata) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_75(mht_75_v, 2222, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "CuptiTracer::HandleNVTXCallback");
+
   const CUpti_NvtxData *pdata =
       reinterpret_cast<const CUpti_NvtxData *>(cbdata);
   if (cbid == CUPTI_CBID_NVTX_nvtxDomainRangePushEx) {
@@ -1843,6 +2242,9 @@ Status CuptiTracer::HandleNVTXCallback(CUpti_CallbackId cbid,
 Status CuptiTracer::HandleCallback(CUpti_CallbackDomain domain,
                                    CUpti_CallbackId cbid,
                                    const CUpti_CallbackData *cbdata) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_76(mht_76_v, 2245, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "CuptiTracer::HandleCallback");
+
   if (!api_tracing_enabled_) return Status::OK();    // already unsubscribed.
   if (!cupti_driver_api_hook_) return Status::OK();  // already unsubscribed.
   if (domain == CUPTI_CB_DOMAIN_NVTX) return HandleNVTXCallback(cbid, cbdata);
@@ -1893,6 +2295,9 @@ Status CuptiTracer::HandleCallback(CUpti_CallbackDomain domain,
 }
 
 void CuptiTracer::ConfigureActivityUnifiedMemoryCounter(bool enable) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_77(mht_77_v, 2298, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "CuptiTracer::ConfigureActivityUnifiedMemoryCounter");
+
   CUpti_ActivityUnifiedMemoryCounterConfig config[2];
   // By experiments, currently only measurements from these two activities are
   // trustworthy. Others like GPU page fault may be problematic.
@@ -1926,6 +2331,9 @@ void CuptiTracer::ConfigureActivityUnifiedMemoryCounter(bool enable) {
 }
 
 void CuptiTracer::RequestActivityBuffer(uint8_t **buffer, size_t *size) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_78(mht_78_v, 2334, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "CuptiTracer::RequestActivityBuffer");
+
   *buffer = buffer_pool_.GetOrCreateBuffer();
   if (*buffer == nullptr) {
     LOG(WARNING)
@@ -1938,6 +2346,9 @@ void CuptiTracer::RequestActivityBuffer(uint8_t **buffer, size_t *size) {
 
 Status CuptiTracer::ProcessActivityBuffer(CUcontext context, uint32_t stream_id,
                                           uint8_t *buffer, size_t size) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_79(mht_79_v, 2349, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "CuptiTracer::ProcessActivityBuffer");
+
   auto buffer_cleanup =
       gtl::MakeCleanup([&]() { buffer_pool_.ReclaimBuffer(buffer); });
   if (size == 0) {
@@ -2014,6 +2425,9 @@ Status CuptiTracer::ProcessActivityBuffer(CUcontext context, uint32_t stream_id,
 }
 
 /*static*/ std::string CuptiTracer::ErrorIfAny() {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPSgpuPScupti_tracerDTcc mht_80(mht_80_v, 2428, "", "./tensorflow/core/profiler/internal/gpu/cupti_tracer.cc", "CuptiTracer::ErrorIfAny");
+
   if (CuptiTracer::NumGpus() == 0) {
     return ErrorWithHostname("No GPU detected.");
   } else if (CuptiTracer::GetCuptiTracerSingleton()->NeedRootAccess()) {

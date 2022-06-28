@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSresource_alias_analysisDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSresource_alias_analysisDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSresource_alias_analysisDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -66,6 +234,9 @@ class BacktrackAnalysisInfo {
   // Returns the value to which the given result number of the region can be
   // backtracked to.
   Value GetValue(int result_index) const {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSresource_alias_analysisDTcc mht_0(mht_0_v, 237, "", "./tensorflow/compiler/mlir/tensorflow/analysis/resource_alias_analysis.cc", "GetValue");
+
     return backtracked_values_[result_index];
   }
 
@@ -102,6 +273,9 @@ class BacktrackAnalysis {
 
   // Returns backtracking analysis for the given region.
   const InfoT& GetAnalysisForRegion(Region& region) const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSresource_alias_analysisDTcc mht_1(mht_1_v, 276, "", "./tensorflow/compiler/mlir/tensorflow/analysis/resource_alias_analysis.cc", "GetAnalysisForRegion");
+
     auto it = info_map_.find(&region);
     assert(it != info_map_.end());
     return it->second;
@@ -109,6 +283,9 @@ class BacktrackAnalysis {
 
   // Returns backtracking analysis for the given function.
   const InfoT& GetAnalysisForFunc(FuncOp func) const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSresource_alias_analysisDTcc mht_2(mht_2_v, 286, "", "./tensorflow/compiler/mlir/tensorflow/analysis/resource_alias_analysis.cc", "GetAnalysisForFunc");
+
     return GetAnalysisForRegion(func.getBody());
   }
 
@@ -119,6 +296,9 @@ class BacktrackAnalysis {
   // Returns the analysis for the given region (analyzing the region if it has
   // not yet been analyzed).
   const InfoT& GetOrCreateAnalysis(Region& region) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSresource_alias_analysisDTcc mht_3(mht_3_v, 299, "", "./tensorflow/compiler/mlir/tensorflow/analysis/resource_alias_analysis.cc", "GetOrCreateAnalysis");
+
     auto it = info_map_.find(&region);
     if (it == info_map_.end()) {
       // Note: Keep object construction and insertion separate. If we use
@@ -157,6 +337,9 @@ class BacktrackAnalysis {
 BacktrackAnalysis::BacktrackAnalysis(
     ModuleOp module, SymbolTableCollection& symbol_table_collection)
     : symbol_table_collection_(symbol_table_collection) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSresource_alias_analysisDTcc mht_4(mht_4_v, 340, "", "./tensorflow/compiler/mlir/tensorflow/analysis/resource_alias_analysis.cc", "BacktrackAnalysis::BacktrackAnalysis");
+
   const CallGraph call_graph(module);
 
   // Visit functions bottom up when doing the analysis. Note that SCC iterator
@@ -189,6 +372,9 @@ BacktrackAnalysis::BacktrackAnalysis(
 // Returns a non-null value and can return `value` if backtracking is not
 // possible.
 Value BacktrackAnalysis::BacktrackValue(Value value) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSresource_alias_analysisDTcc mht_5(mht_5_v, 375, "", "./tensorflow/compiler/mlir/tensorflow/analysis/resource_alias_analysis.cc", "BacktrackAnalysis::BacktrackValue");
+
   while (Operation* op = value.getDefiningOp()) {
     int res_index = value.cast<OpResult>().getResultNumber();
     if (auto graph = dyn_cast<tf_executor::GraphOp>(op)) {
@@ -224,6 +410,9 @@ Value BacktrackAnalysis::BacktrackValue(Value value) {
 BacktrackAnalysisInfo::BacktrackAnalysisInfo(
     Region& region, detail::BacktrackAnalysis& backtrack_analysis)
     : region_(&region) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSresource_alias_analysisDTcc mht_6(mht_6_v, 413, "", "./tensorflow/compiler/mlir/tensorflow/analysis/resource_alias_analysis.cc", "BacktrackAnalysisInfo::BacktrackAnalysisInfo");
+
   if (region.empty()) return;
 
   assert(llvm::hasSingleElement(region.getBlocks()));
@@ -245,6 +434,9 @@ namespace {
 constexpr char kResourceArgUniqueIdAttr[] = "tf._resource_arg_unique_id";
 
 bool IsResourceAllocatingOp(Operation* op) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSresource_alias_analysisDTcc mht_7(mht_7_v, 437, "", "./tensorflow/compiler/mlir/tensorflow/analysis/resource_alias_analysis.cc", "IsResourceAllocatingOp");
+
   auto mem_interface = dyn_cast<MemoryEffectOpInterface>(op);
   if (!mem_interface) return false;
 
@@ -265,6 +457,9 @@ bool IsResourceAllocatingOp(Operation* op) {
 constexpr int64_t ResourceAliasAnalysisInfo::kUnknownResourceId;
 
 void IncrementResourceTypeId(int64_t& resource_type_id) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSresource_alias_analysisDTcc mht_8(mht_8_v, 460, "", "./tensorflow/compiler/mlir/tensorflow/analysis/resource_alias_analysis.cc", "IncrementResourceTypeId");
+
   if (resource_type_id == ResourceAliasAnalysisInfo::kMaxResourceTypeId) {
     // We don't expect this to happen, currently there are 10 resource types in
     // TF dialect. Still, it should be visible if this ever happens.
@@ -283,6 +478,9 @@ void IncrementResourceTypeId(int64_t& resource_type_id) {
 ResourceAliasAnalysisInfo::ResourceAliasAnalysisInfo(
     FuncOp func_op, const BacktrackAnalysis& backtrack_analysis,
     SymbolTableCollection& symbol_table_collection) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSresource_alias_analysisDTcc mht_9(mht_9_v, 481, "", "./tensorflow/compiler/mlir/tensorflow/analysis/resource_alias_analysis.cc", "ResourceAliasAnalysisInfo::ResourceAliasAnalysisInfo");
+
   // This function populates resource_value_to_ids_ and id_to_resource_values_.
 
   // See `ResourceAliasAnalysisInfo` class for ID semantics.
@@ -292,6 +490,9 @@ ResourceAliasAnalysisInfo::ResourceAliasAnalysisInfo(
   // Helper to assign new unique id for all resources in the given list of
   // values.
   auto assign_unique_id_to_all = [&](ValueRange values) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSresource_alias_analysisDTcc mht_10(mht_10_v, 493, "", "./tensorflow/compiler/mlir/tensorflow/analysis/resource_alias_analysis.cc", "lambda");
+
     for (Value value : filter_resources(values)) {
       AddValueUniqueIDMapping(value, next_unique_instance_id++);
     }
@@ -300,6 +501,9 @@ ResourceAliasAnalysisInfo::ResourceAliasAnalysisInfo(
   // Helper to assign new unknown id for all resources in the given list of
   // values.
   auto assign_unknown_id_to_all = [&](ValueRange values) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSresource_alias_analysisDTcc mht_11(mht_11_v, 504, "", "./tensorflow/compiler/mlir/tensorflow/analysis/resource_alias_analysis.cc", "lambda");
+
     for (Value value : filter_resources(values)) {
       AddValueUniqueIDMapping(value, kUnknownResourceId);
     }
@@ -454,6 +658,9 @@ ResourceAliasAnalysisInfo::ResourceAliasAnalysisInfo(
 // if the mapping changed.
 bool ResourceAliasAnalysisInfo::PropagateInputToOutput(const Value& operand,
                                                        const OpResult& result) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSresource_alias_analysisDTcc mht_12(mht_12_v, 661, "", "./tensorflow/compiler/mlir/tensorflow/analysis/resource_alias_analysis.cc", "ResourceAliasAnalysisInfo::PropagateInputToOutput");
+
   auto operand_it = resource_value_to_ids_.find(operand);
   assert(operand_it != resource_value_to_ids_.end() &&
          "A resource-type output does not have the corresponding "
@@ -488,6 +695,9 @@ bool ResourceAliasAnalysisInfo::PropagateInputToOutput(const Value& operand,
 //
 void ResourceAliasAnalysisInfo::AnalyzeWhileLoop(
     Operation* while_op, const BacktrackAnalysisInfo& body_info) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSresource_alias_analysisDTcc mht_13(mht_13_v, 698, "", "./tensorflow/compiler/mlir/tensorflow/analysis/resource_alias_analysis.cc", "ResourceAliasAnalysisInfo::AnalyzeWhileLoop");
+
   // Seed the resource IDs for the results using either the resource ID of the
   // passthrough arg, or unknown. We need to perform further analysis if we
   // find a passthrough arg which is not the same as corresponding the result #.
@@ -533,6 +743,9 @@ template <class CaseOrIfOp>
 void ResourceAliasAnalysisInfo::AnalyzeFunctionalCaseOrIfOp(
     CaseOrIfOp case_or_if_op, llvm::ArrayRef<FuncOp> functions,
     const BacktrackAnalysis& backtrack_analysis) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSresource_alias_analysisDTcc mht_14(mht_14_v, 746, "", "./tensorflow/compiler/mlir/tensorflow/analysis/resource_alias_analysis.cc", "ResourceAliasAnalysisInfo::AnalyzeFunctionalCaseOrIfOp");
+
   llvm::SmallVector<const BacktrackAnalysisInfo*, 2> infos;
   infos.reserve(functions.size());
   for (FuncOp func : functions)
@@ -563,6 +776,9 @@ void ResourceAliasAnalysisInfo::AnalyzeFunctionalCaseOrIfOp(
 
 void ResourceAliasAnalysisInfo::AnalyzeRegionCaseOrIfOp(
     Operation* case_or_if_op, const BacktrackAnalysis& backtrack_analysis) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSresource_alias_analysisDTcc mht_15(mht_15_v, 779, "", "./tensorflow/compiler/mlir/tensorflow/analysis/resource_alias_analysis.cc", "ResourceAliasAnalysisInfo::AnalyzeRegionCaseOrIfOp");
+
   llvm::SmallVector<const BacktrackAnalysisInfo*, 2> infos;
   infos.reserve(case_or_if_op->getNumRegions());
   for (Region& region : case_or_if_op->getRegions())
@@ -583,6 +799,9 @@ void ResourceAliasAnalysisInfo::AnalyzeRegionCaseOrIfOp(
 }
 
 bool ResourceAliasAnalysisInfo::IsUnknownResource(Value resource) const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSresource_alias_analysisDTcc mht_16(mht_16_v, 802, "", "./tensorflow/compiler/mlir/tensorflow/analysis/resource_alias_analysis.cc", "ResourceAliasAnalysisInfo::IsUnknownResource");
+
   auto it = resource_value_to_ids_.find(resource);
   assert(it != resource_value_to_ids_.end() && !it->getSecond().empty());
   // The set is sorted so we only need to check the first element since
@@ -631,6 +850,9 @@ llvm::SmallSetVector<Value, 8> ResourceAliasAnalysisInfo::GetResourceAliases(
 //===----------------------------------------------------------------------===//
 
 ResourceAliasAnalysis::ResourceAliasAnalysis(ModuleOp module) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSanalysisPSresource_alias_analysisDTcc mht_17(mht_17_v, 853, "", "./tensorflow/compiler/mlir/tensorflow/analysis/resource_alias_analysis.cc", "ResourceAliasAnalysis::ResourceAliasAnalysis");
+
   // Create symbol table for module.
   SymbolTableCollection symbol_table_collection;
   symbol_table_collection.getSymbolTable(module);

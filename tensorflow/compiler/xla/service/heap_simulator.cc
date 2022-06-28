@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,6 +206,9 @@ using absl::flat_hash_map;
 using absl::flat_hash_set;
 
 bool HeapSimulator::Chunk::OverlapsWith(Chunk other_chunk) const {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_0(mht_0_v, 209, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "HeapSimulator::Chunk::OverlapsWith");
+
   CHECK_NE(size, 0);
   CHECK_NE(other_chunk.size, 0);
   return offset < other_chunk.chunk_end() && other_chunk.offset < chunk_end();
@@ -47,6 +218,9 @@ bool HeapSimulator::Chunk::OverlapsWith(Chunk other_chunk) const {
 StatusOr<int64_t> HeapSimulator::MinimumMemoryForModule(
     const HloSchedule& schedule,
     const LogicalBuffer::SizeFunction& size_function) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_1(mht_1_v, 221, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "HeapSimulator::MinimumMemoryForModule");
+
   if (schedule.empty()) {
     return 0;
   }
@@ -75,6 +249,9 @@ StatusOr<int64_t> HeapSimulator::MinimumMemoryForComputation(
     const LogicalBuffer::SizeFunction& size_function,
     const absl::flat_hash_map<const HloComputation*, int64_t>*
         memory_by_computation) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_2(mht_2_v, 252, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "HeapSimulator::MinimumMemoryForComputation");
+
   TF_ASSIGN_OR_RETURN(
       HeapSimulator::Result<HloValue> result,
       HeapSimulator::Run(
@@ -89,6 +266,9 @@ StatusOr<int64_t> HeapSimulator::MinimumMemoryForComputation(
     const HloAliasAnalysis& alias_analysis,
     const LogicalBuffer::SizeFunction& size_function,
     const HloSchedule* schedule) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_3(mht_3_v, 269, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "HeapSimulator::MinimumMemoryForComputation");
+
   TF_ASSIGN_OR_RETURN(
       HeapSimulator::Result<HloValue> result,
       HeapSimulator::Run(
@@ -103,6 +283,9 @@ StatusOr<HeapSimulator::Result<HloValue>> HeapSimulator::Run(
     std::unique_ptr<HeapAlgorithm<HloValue>> algorithm, const HloModule& module,
     const HloSchedule& schedule, const HloAliasAnalysis& alias_analysis,
     const BufferValue::SizeFunction& size_fn, const Options& options) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_4(mht_4_v, 286, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "HeapSimulator::Run");
+
   HeapSimulator heap(std::move(algorithm), size_fn, options, &schedule);
   const HloComputation* entry_computation = module.entry_computation();
   const HloInstructionSequence& instruction_sequence =
@@ -125,6 +308,9 @@ StatusOr<HeapSimulator::Result<HloValue>> HeapSimulator::Run(
     const BufferValue::SizeFunction& size_fn, const Options& options,
     const absl::flat_hash_map<const HloComputation*, int64_t>*
         memory_by_computation) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_5(mht_5_v, 311, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "HeapSimulator::Run");
+
   HeapSimulator heap(std::move(algorithm), size_fn, options,
                      /*schedule=*/nullptr, memory_by_computation);
   HloSchedule schedule(computation.parent());
@@ -145,6 +331,9 @@ StatusOr<HeapSimulator::Result<HloValue>> HeapSimulator::Run(
     const HloAliasAnalysis& alias_analysis,
     const BufferValue::SizeFunction& size_fn, const HloSchedule* schedule,
     const Options& options) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_6(mht_6_v, 334, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "HeapSimulator::Run");
+
   HeapSimulator heap(std::move(algorithm), size_fn, options,
                      /*schedule=*/schedule, nullptr);
   TF_ASSIGN_OR_RETURN(
@@ -161,6 +350,9 @@ Status HeapSimulator::RunComputation(
     const HloComputation& computation,
     const HloInstructionSequence& instruction_sequence,
     const HloAliasAnalysis& alias_analysis, HloLiveRange* hlo_live_range) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_7(mht_7_v, 353, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "HeapSimulator::RunComputation");
+
   XLA_VLOG_LINES(1, computation.parent()->ToString());
   XLA_VLOG_LINES(2, computation.ToString());
 
@@ -349,12 +541,21 @@ HeapSimulator::HeapSimulator(
       options_(options),
       schedule_(schedule),
       memory_by_computation_(memory_by_computation) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_8(mht_8_v, 544, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "HeapSimulator::HeapSimulator");
+
   debug_trace_.set_whole_module_simulation(schedule_ != nullptr);
 }
 
-HeapSimulator::~HeapSimulator() {}
+HeapSimulator::~HeapSimulator() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_9(mht_9_v, 551, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "HeapSimulator::~HeapSimulator");
+}
 
 bool HeapSimulator::IgnoreBuffer(const HloValue* buffer) const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_10(mht_10_v, 556, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "HeapSimulator::IgnoreBuffer");
+
   // Buffers for constants are ignored unless the alloc_constants option is
   // set. Also ignore buffers that we're not meant to assign.
   //
@@ -370,6 +571,9 @@ bool HeapSimulator::IgnoreBuffer(const HloValue* buffer) const {
 // Alloc always calls the underlying heap algorithm.
 void HeapSimulator::Alloc(const HloValue* buffer,
                           const HloInstruction* instruction) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_11(mht_11_v, 574, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "HeapSimulator::Alloc");
+
   CHECK(!allocated_buffers_.contains(buffer))
       << "Alloc called on allocated buffer: " << *buffer;
   CHECK(!freed_buffers_.contains(buffer))
@@ -389,6 +593,9 @@ void HeapSimulator::Alloc(const HloValue* buffer,
 // causes Free to be called on the underlying algorithm.
 void HeapSimulator::Free(const HloValue* buffer,
                          const HloInstruction* instruction) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_12(mht_12_v, 596, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "HeapSimulator::Free");
+
   const int64_t size = size_fn_(*buffer);
   algorithm_->Free(buffer, size);
   no_fragmentation_stats_->Free(buffer, size);
@@ -402,6 +609,9 @@ void HeapSimulator::Free(const HloValue* buffer,
 // SharedGroup.
 void HeapSimulator::ShareBuffer(const HloValue* buffer, const HloValue* shared,
                                 const HloInstruction* instruction) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_13(mht_13_v, 612, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "HeapSimulator::ShareBuffer");
+
   algorithm_->ShareWith(buffer, shared, size_fn_(*shared));
   no_fragmentation_stats_->ShareWith(buffer, shared, size_fn_(*shared));
   FillDebugTrace(HeapSimulatorTrace::Event::SHARE_WITH, buffer, instruction,
@@ -409,6 +619,9 @@ void HeapSimulator::ShareBuffer(const HloValue* buffer, const HloValue* shared,
 }
 
 HeapSimulator::Result<HloValue> HeapSimulator::Finish() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_14(mht_14_v, 622, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "HeapSimulator::Finish");
+
   Result<HloValue> result = algorithm_->Finish();
 
   // Post-process the result to add chunks for shared buffers.  An empty chunk
@@ -441,6 +654,9 @@ void HeapSimulator::FillDebugTrace(HeapSimulatorTrace::Event::Kind kind,
                                    const HloValue* buffer,
                                    const HloInstruction* instruction,
                                    const HloValue* share_with_canonical) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_15(mht_15_v, 657, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "HeapSimulator::FillDebugTrace");
+
   HeapSimulatorTrace::Event* event = debug_trace_.add_events();
   event->set_kind(kind);
   event->set_buffer_id(buffer->id());
@@ -457,6 +673,9 @@ void HeapSimulator::FillDebugTrace(HeapSimulatorTrace::Event::Kind kind,
 template <typename BufferType>
 void NoFragmentationStatsHeap<BufferType>::Alloc(const BufferType* buffer,
                                                  int64_t size) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_16(mht_16_v, 676, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "NoFragmentationStatsHeap<BufferType>::Alloc");
+
   current_heap_size_ += size;
   if (current_heap_size_ > max_heap_size_) {
     max_heap_size_ = current_heap_size_;
@@ -468,6 +687,9 @@ void NoFragmentationStatsHeap<BufferType>::AccountForSubcomputationMemory(
     const HloInstruction* instruction, int64_t alloc_size_by_instruction,
     const absl::flat_hash_map<const HloComputation*, int64_t>&
         memory_by_computation) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_17(mht_17_v, 690, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "NoFragmentationStatsHeap<BufferType>::AccountForSubcomputationMemory");
+
   // We only count the memory usage of the largest subcomputation, instead of
   // adding them all, because subcomputations won't execute in parallel.
   int64_t max_subcomputation_bytes = 0;
@@ -495,12 +717,18 @@ void NoFragmentationStatsHeap<BufferType>::AccountForSubcomputationMemory(
 template <typename BufferType>
 void NoFragmentationStatsHeap<BufferType>::Free(const BufferType* buffer,
                                                 int64_t size) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_18(mht_18_v, 720, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "NoFragmentationStatsHeap<BufferType>::Free");
+
   current_heap_size_ -= size;
 }
 
 template <typename BufferType>
 HeapSimulator::Result<BufferType>
 NoFragmentationStatsHeap<BufferType>::Finish() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_19(mht_19_v, 729, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "NoFragmentationStatsHeap<BufferType>::Finish");
+
   // The result.chunk_map is empty, since we only collect stats, and don't
   // actually compute chunk assignments.
   Result result;
@@ -512,6 +740,9 @@ template <typename BufferType>
 GlobalDecreasingSizeBestFitHeap<BufferType>::GlobalDecreasingSizeBestFitHeap(
     int64_t alignment, Type type)
     : alignment_(alignment) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_20(mht_20_v, 743, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "GlobalDecreasingSizeBestFitHeap<BufferType>::GlobalDecreasingSizeBestFitHeap");
+
   if (type == kTemporal) {
     buffer_interval_compare_ = GetTemporalBufferIntervalCompare();
   } else {
@@ -524,7 +755,13 @@ template <typename BufferType>
 typename GlobalDecreasingSizeBestFitHeap<BufferType>::BufferIntervalCompare
 GlobalDecreasingSizeBestFitHeap<BufferType>::GetTemporalBufferIntervalCompare()
     const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_21(mht_21_v, 758, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "GlobalDecreasingSizeBestFitHeap<BufferType>::GetTemporalBufferIntervalCompare");
+
   return [&](const BufferInterval& x, const BufferInterval& y) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_22(mht_22_v, 762, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "lambda");
+
     int64_t x_end = x.end;
     for (auto colocation : GetTransitiveColocations(x)) {
       x_end = std::max(x_end, buffer_intervals_.at(colocation).end);
@@ -550,7 +787,13 @@ template <typename BufferType>
 /*static*/ typename GlobalDecreasingSizeBestFitHeap<
     BufferType>::BufferIntervalCompare
 GlobalDecreasingSizeBestFitHeap<BufferType>::GetSpatialBufferIntervalCompare() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_23(mht_23_v, 790, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "GlobalDecreasingSizeBestFitHeap<BufferType>::GetSpatialBufferIntervalCompare");
+
   return [&](const BufferInterval& x, const BufferInterval& y) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_24(mht_24_v, 794, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "lambda");
+
     if (x.size != y.size) {
       return x.size > y.size;
     }
@@ -564,6 +807,9 @@ GlobalDecreasingSizeBestFitHeap<BufferType>::GetSpatialBufferIntervalCompare() {
 template <typename BufferType>
 void GlobalDecreasingSizeBestFitHeap<BufferType>::Alloc(
     const BufferType* buffer, int64_t size) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_25(mht_25_v, 810, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "GlobalDecreasingSizeBestFitHeap<BufferType>::Alloc");
+
   // Degenerate case: 0-sized buffers are always allocated at offset 0.
   if (size == 0) {
     result_.chunk_map.emplace(buffer, Chunk{0, 0});
@@ -579,6 +825,9 @@ void GlobalDecreasingSizeBestFitHeap<BufferType>::Alloc(
 template <typename BufferType>
 void GlobalDecreasingSizeBestFitHeap<BufferType>::ShareWith(
     const BufferType* buffer, const BufferType* share_with, int64_t size) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_26(mht_26_v, 828, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "GlobalDecreasingSizeBestFitHeap<BufferType>::ShareWith");
+
   // Degenerate case: 0-sized buffers are always allocated at offset 0.
   if (size == 0) {
     result_.chunk_map.emplace(buffer, Chunk{0, 0});
@@ -596,6 +845,9 @@ template <typename BufferType>
 absl::flat_hash_set<const BufferType*>
 GlobalDecreasingSizeBestFitHeap<BufferType>::GetTransitiveColocations(
     const BufferInterval& interval) const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_27(mht_27_v, 848, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "GlobalDecreasingSizeBestFitHeap<BufferType>::GetTransitiveColocations");
+
   absl::flat_hash_set<const BufferType*> result;
   std::vector<const BufferInterval*> worklist = {&interval};
   while (!worklist.empty()) {
@@ -614,6 +866,9 @@ GlobalDecreasingSizeBestFitHeap<BufferType>::GetTransitiveColocations(
 template <typename BufferType>
 void GlobalDecreasingSizeBestFitHeap<BufferType>::Free(const BufferType* buffer,
                                                        int64_t size) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_28(mht_28_v, 869, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "GlobalDecreasingSizeBestFitHeap<BufferType>::Free");
+
   // Degenerate case: 0-sized buffers are always allocated at offset 0.
   if (size == 0) {
     return;
@@ -632,6 +887,9 @@ void GlobalDecreasingSizeBestFitHeap<BufferType>::Free(const BufferType* buffer,
 using Chunk = HeapSimulator::Chunk;
 
 void BufferIntervalTree::Add(int64_t start, int64_t end, const Chunk& chunk) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_29(mht_29_v, 890, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "BufferIntervalTree::Add");
+
   node_storage_.emplace_back(BufferIntervalTreeNode{
       start, end, end, chunk,
       /*left=*/nullptr, /*right=*/nullptr, /*parent=*/nullptr});
@@ -664,6 +922,9 @@ void BufferIntervalTree::Add(int64_t start, int64_t end, const Chunk& chunk) {
 
 bool BufferIntervalTree::Remove(int64_t start, int64_t end,
                                 const Chunk& chunk) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_30(mht_30_v, 925, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "BufferIntervalTree::Remove");
+
   BufferIntervalTreeNode* to_delete = root_;
   while (to_delete != nullptr) {
     if (to_delete->start == start && to_delete->end == end &&
@@ -687,6 +948,9 @@ bool BufferIntervalTree::Remove(int64_t start, int64_t end,
   // std::function declaration.
   std::function<void(BufferIntervalTreeNode*)> fix_up =
       [&](BufferIntervalTreeNode* node) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_31(mht_31_v, 951, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "lambda");
+
         if (node == nullptr) {
           return;
         }
@@ -792,6 +1056,9 @@ bool BufferIntervalTree::Remove(int64_t start, int64_t end,
 
 std::vector<Chunk> BufferIntervalTree::ChunksOverlappingInTime(
     int64_t start, int64_t end) const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_32(mht_32_v, 1059, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "BufferIntervalTree::ChunksOverlappingInTime");
+
   std::vector<Chunk> result;
   if (root_ == nullptr) {
     return result;
@@ -823,6 +1090,9 @@ std::vector<Chunk> BufferIntervalTree::ChunksOverlappingInTime(
 template <typename BufferType>
 HeapSimulator::Result<BufferType>
 GlobalDecreasingSizeBestFitHeap<BufferType>::Finish() {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_33(mht_33_v, 1093, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "GlobalDecreasingSizeBestFitHeap<BufferType>::Finish");
+
   std::vector<BufferInterval> sorted_buffer_intervals =
       GetSortedBufferIntervals();
 
@@ -846,6 +1116,9 @@ template <typename BufferType>
 std::vector<
     typename GlobalDecreasingSizeBestFitHeap<BufferType>::BufferInterval>
 GlobalDecreasingSizeBestFitHeap<BufferType>::GetSortedBufferIntervals() const {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_34(mht_34_v, 1119, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "GlobalDecreasingSizeBestFitHeap<BufferType>::GetSortedBufferIntervals");
+
   std::vector<BufferInterval> sorted_buffer_intervals;
   sorted_buffer_intervals.reserve(buffer_intervals_.size());
   for (auto& entry : buffer_intervals_) {
@@ -861,6 +1134,9 @@ typename GlobalDecreasingSizeBestFitHeap<BufferType>::Chunk
 GlobalDecreasingSizeBestFitHeap<BufferType>::FindChunkCandidate(
     const GlobalDecreasingSizeBestFitHeap::BufferInterval& buffer_interval,
     int64_t preferred_offset) const {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_35(mht_35_v, 1137, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "GlobalDecreasingSizeBestFitHeap<BufferType>::FindChunkCandidate");
+
   VLOG(1) << "Finding chunks for buffer: "
           << buffer_interval.buffer->ToString();
   VLOG(1) << "Size " << buffer_interval.size << ", start "
@@ -893,6 +1169,9 @@ GlobalDecreasingSizeBestFitHeap<BufferType>::FindChunkCandidate(
 
   // Subtract chunks that are in use from the free chunks.
   auto subtract_used_chunks = [&](const std::vector<Chunk>& used_chunks) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_36(mht_36_v, 1172, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "lambda");
+
     for (const Chunk& used_chunk : used_chunks) {
       // Find the free chunks containing the start and end of the used chunk.
       auto it_end = free_chunks.lower_bound(used_chunk.chunk_end());
@@ -959,6 +1238,9 @@ void GlobalDecreasingSizeBestFitHeap<BufferType>::CommitChunk(
     const GlobalDecreasingSizeBestFitHeap<BufferType>::BufferInterval&
         buffer_interval,
     GlobalDecreasingSizeBestFitHeap<BufferType>::Chunk chunk) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_37(mht_37_v, 1241, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "GlobalDecreasingSizeBestFitHeap<BufferType>::CommitChunk");
+
   // Update the maximum heap size according to the one determined by the chunk
   // candidate.
   result_.heap_size = result_.UpdatedHeapSize(chunk);
@@ -976,12 +1258,18 @@ void GlobalDecreasingSizeBestFitHeap<BufferType>::CommitChunk(
 template <typename BufferType>
 void GlobalDecreasingSizeBestFitHeap<BufferType>::AddToChunkMap(
     const BufferType* buffer, Chunk chunk) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_38(mht_38_v, 1261, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "GlobalDecreasingSizeBestFitHeap<BufferType>::AddToChunkMap");
+
   const auto emplace_result = result_.chunk_map.emplace(buffer, chunk);
   DCHECK(emplace_result.second);
 }
 
 HeapSimulator::Result<HloValue>
 ConstrainedGlobalDecreasingSizeBestFitHeap::Finish() {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_39(mht_39_v, 1270, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "ConstrainedGlobalDecreasingSizeBestFitHeap::Finish");
+
   std::vector<BufferInterval> sorted_buffer_vec = GetSortedBufferIntervals();
   // Convert into std::list so that erase() is O(1).
   std::list<BufferInterval> sorted_buffer_intervals(sorted_buffer_vec.begin(),
@@ -1035,6 +1323,9 @@ ConstrainedGlobalDecreasingSizeBestFitHeap::Finish() {
 template <typename BufferType>
 HeapSimulator::Result<BufferType>
 ChooseBestHeapAlgorithm<BufferType>::Finish() {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSheap_simulatorDTcc mht_40(mht_40_v, 1326, "", "./tensorflow/compiler/xla/service/heap_simulator.cc", "ChooseBestHeapAlgorithm<BufferType>::Finish");
+
   DCHECK(!algorithms_.empty());
   std::vector<Result> results(algorithms_.size());
   int64_t min_size = INT64_MAX;

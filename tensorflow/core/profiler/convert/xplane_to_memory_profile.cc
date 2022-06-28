@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_memory_profileDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_memory_profileDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_memory_profileDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -53,16 +221,25 @@ using IndexMetaPair =
     std::pair<int64_t /*index*/, const MemoryActivityMetadata*>;
 
 bool IsMemoryAllocation(int64_t event_type) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_memory_profileDTcc mht_0(mht_0_v, 224, "", "./tensorflow/core/profiler/convert/xplane_to_memory_profile.cc", "IsMemoryAllocation");
+
   return event_type == HostEventType::kMemoryAllocation;
 }
 
 bool IsMemoryDeallocation(int64_t event_type) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_memory_profileDTcc mht_1(mht_1_v, 231, "", "./tensorflow/core/profiler/convert/xplane_to_memory_profile.cc", "IsMemoryDeallocation");
+
   return event_type == HostEventType::kMemoryDeallocation;
 }
 
 void UpdateProfileSummary(const MemoryAggregationStats& stats,
                           int64_t time_offset_ps,
                           MemoryProfileSummary* summary) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_memory_profileDTcc mht_2(mht_2_v, 240, "", "./tensorflow/core/profiler/convert/xplane_to_memory_profile.cc", "UpdateProfileSummary");
+
   // Update the peak memory usage over allocator's lifetime.
   summary->set_peak_bytes_usage_lifetime(stats.peak_bytes_in_use());
   MemoryAggregationStats* peak_stats = summary->mutable_peak_stats();
@@ -82,6 +259,9 @@ void UpdateProfileSummary(const MemoryAggregationStats& stats,
 
 // Generate memory profile proto by processing host trace XPlane.
 MemoryProfile GenerateMemoryProfile(const XPlane* host_trace) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_memory_profileDTcc mht_3(mht_3_v, 262, "", "./tensorflow/core/profiler/convert/xplane_to_memory_profile.cc", "GenerateMemoryProfile");
+
   XPlaneVisitor plane = CreateTfXPlaneVisitor(host_trace);
   MemoryProfile memory_profile;
   // Iterate over all XEvents in the XPlane, and add the XStats to a new
@@ -179,6 +359,9 @@ MemoryProfile GenerateMemoryProfile(const XPlane* host_trace) {
 // 0 for their step ids. Those at the step boundaries or at the end get the
 // previous snapshot's step id + 1.
 void UpdateStepId(PerAllocatorMemoryProfile* memory_profile) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_memory_profileDTcc mht_4(mht_4_v, 362, "", "./tensorflow/core/profiler/convert/xplane_to_memory_profile.cc", "UpdateStepId");
+
   int64_t last_valid_step_id = -1;
   // Snapshots are already sorted in time.
   for (auto& snapshot : *memory_profile->mutable_memory_profile_snapshots()) {
@@ -194,6 +377,9 @@ void UpdateStepId(PerAllocatorMemoryProfile* memory_profile) {
 // Update the MemoryActivityMetadata for each deallocation event by copying from
 // matching allocation.
 void UpdateDeallocation(PerAllocatorMemoryProfile* memory_profile) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_memory_profileDTcc mht_5(mht_5_v, 380, "", "./tensorflow/core/profiler/convert/xplane_to_memory_profile.cc", "UpdateDeallocation");
+
   absl::flat_hash_map<uint64 /*address*/, const MemoryActivityMetadata*>
       addr_metadata_map;
   for (auto& snapshot : *memory_profile->mutable_memory_profile_snapshots()) {
@@ -233,6 +419,9 @@ void UpdateDeallocation(PerAllocatorMemoryProfile* memory_profile) {
 // Return the step id for the peak memory usage data point.
 int64_t GetPeakMemoryStep(int64_t peak_bytes_profile,
                           const PerAllocatorMemoryProfile* memory_profile) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_memory_profileDTcc mht_6(mht_6_v, 422, "", "./tensorflow/core/profiler/convert/xplane_to_memory_profile.cc", "GetPeakMemoryStep");
+
   int64_t peak_bytes_profile_step_id = 0;
   for (const auto& snapshot : memory_profile->memory_profile_snapshots()) {
     // Get the step id of the peak memory usage.
@@ -274,6 +463,9 @@ void InsertSpecialAllocations(int64_t unmapped_allocation_bytes,
                               int64_t step_id,
                               PerAllocatorMemoryProfile* memory_profile,
                               std::vector<IndexMetaPair>* active_allocs) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_memory_profileDTcc mht_7(mht_7_v, 466, "", "./tensorflow/core/profiler/convert/xplane_to_memory_profile.cc", "InsertSpecialAllocations");
+
   int index = 0;
   if (unmapped_allocation_bytes > 0) {
     MemoryActivityMetadata* special_allocation =
@@ -324,6 +516,9 @@ bool operator==(const IndexMetaPair& a, const IndexMetaPair& b) {
 // (within profiling window) and fill each ActiveAllocation proto (i.e. a row).
 void ProcessActiveAllocations(int64_t peak_bytes_profile_step_id,
                               PerAllocatorMemoryProfile* memory_profile) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_memory_profileDTcc mht_8(mht_8_v, 519, "", "./tensorflow/core/profiler/convert/xplane_to_memory_profile.cc", "ProcessActiveAllocations");
+
   int64_t unmapped_allocation_bytes =
       memory_profile->profile_summary().peak_stats().heap_allocated_bytes();
   int64_t unmapped_deallocation_bytes = 0;
@@ -400,6 +595,9 @@ void ProcessActiveAllocations(int64_t peak_bytes_profile_step_id,
 void SaveActiveAllocationSnapshots(
     protobuf::RepeatedPtrField<MemoryProfileSnapshot>* snapshots,
     protobuf::RepeatedPtrField<ActiveAllocation>* active_allocations) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_memory_profileDTcc mht_9(mht_9_v, 598, "", "./tensorflow/core/profiler/convert/xplane_to_memory_profile.cc", "SaveActiveAllocationSnapshots");
+
   std::vector<MemoryProfileSnapshot*> samples;
   // Puts the snapshots referenced by active_allocations in <samples>.
   for (const auto& allocation : *active_allocations) {
@@ -429,6 +627,9 @@ void SaveActiveAllocationSnapshots(
 // profile data.
 void SampleMemoryProfileTimeline(int64_t max_num_snapshots,
                                  PerAllocatorMemoryProfile* memory_profile) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_memory_profileDTcc mht_10(mht_10_v, 630, "", "./tensorflow/core/profiler/convert/xplane_to_memory_profile.cc", "SampleMemoryProfileTimeline");
+
   const protobuf::RepeatedPtrField<MemoryProfileSnapshot>& original_snapshots =
       memory_profile->memory_profile_snapshots();
   protobuf::RepeatedPtrField<MemoryProfileSnapshot>* timeline_snapshots =
@@ -440,6 +641,9 @@ void SampleMemoryProfileTimeline(int64_t max_num_snapshots,
     // <filter_width>, collect <count> samples starting from the <start> index
     // in the original snapshots.
     auto max_box_filter = [&](int filter_width, int count, int start) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_memory_profileDTcc mht_11(mht_11_v, 644, "", "./tensorflow/core/profiler/convert/xplane_to_memory_profile.cc", "lambda");
+
       for (int i = 0; i < count; i++) {
         // Use a max function to get the MemoryProfileSnapshot with the largest
         // memory usage in the box filter.
@@ -485,6 +689,9 @@ void SampleMemoryProfileTimeline(int64_t max_num_snapshots,
 // down peak memory usage for each allocator.
 void ProcessMemoryProfileProto(int64_t max_num_snapshots,
                                MemoryProfile* memory_profile) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_memory_profileDTcc mht_12(mht_12_v, 692, "", "./tensorflow/core/profiler/convert/xplane_to_memory_profile.cc", "ProcessMemoryProfileProto");
+
   memory_profile->set_num_hosts(1);
   // Add sorted memory ids within memory profile data to the selection list.
   for (const auto& id_and_allocator_profile :
@@ -527,6 +734,9 @@ void ProcessMemoryProfileProto(int64_t max_num_snapshots,
 
 template <typename Proto>
 Status ConvertProtoToJson(const Proto& proto_output, std::string* json_output) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_memory_profileDTcc mht_13(mht_13_v, 737, "", "./tensorflow/core/profiler/convert/xplane_to_memory_profile.cc", "ConvertProtoToJson");
+
   protobuf::util::JsonPrintOptions json_options;
   json_options.always_print_primitive_fields = true;
   auto status = protobuf::util::MessageToJsonString(proto_output, json_output,
@@ -546,6 +756,9 @@ Status ConvertProtoToJson(const Proto& proto_output, std::string* json_output) {
 
 MemoryProfile ConvertXPlaneToMemoryProfile(const XPlane& host_plane,
                                            int64_t max_num_snapshots) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_memory_profileDTcc mht_14(mht_14_v, 759, "", "./tensorflow/core/profiler/convert/xplane_to_memory_profile.cc", "ConvertXPlaneToMemoryProfile");
+
   MemoryProfile memory_profile = GenerateMemoryProfile(&host_plane);
   ProcessMemoryProfileProto(max_num_snapshots, &memory_profile);
   // Default version number is 0, set version number to 1 here due to the new
@@ -556,6 +769,9 @@ MemoryProfile ConvertXPlaneToMemoryProfile(const XPlane& host_plane,
 
 Status ConvertXSpaceToMemoryProfileJson(const XSpace& xspace,
                                         std::string* json_output) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_memory_profileDTcc mht_15(mht_15_v, 772, "", "./tensorflow/core/profiler/convert/xplane_to_memory_profile.cc", "ConvertXSpaceToMemoryProfileJson");
+
   if (const XPlane* host_plane =
           FindPlaneWithName(xspace, kHostThreadsPlaneName)) {
     MemoryProfile memory_profile = ConvertXPlaneToMemoryProfile(*host_plane);

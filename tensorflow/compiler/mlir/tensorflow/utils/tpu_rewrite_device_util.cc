@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPStpu_rewrite_device_utilDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPStpu_rewrite_device_utilDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPStpu_rewrite_device_utilDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -63,6 +231,9 @@ namespace {
 // Finds matching devices in `devices` based on pattern `spec`.
 void FindMatchingDevices(Devices devices, const Device& spec,
                          llvm::SmallVectorImpl<Device>* matched_devices) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPStpu_rewrite_device_utilDTcc mht_0(mht_0_v, 234, "", "./tensorflow/compiler/mlir/tensorflow/utils/tpu_rewrite_device_util.cc", "FindMatchingDevices");
+
   for (const auto& device : devices)
     if (DeviceNameUtils::IsCompleteSpecification(spec, device))
       matched_devices->push_back(device);
@@ -71,6 +242,10 @@ void FindMatchingDevices(Devices devices, const Device& spec,
 // Creates error message for a conflicting attribute of a device.
 template <typename T>
 Status MismatchedTPUSystemAttributeErr(absl::string_view attribute, T a, T b) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("attribute: \"" + std::string(attribute.data(), attribute.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPStpu_rewrite_device_utilDTcc mht_1(mht_1_v, 246, "", "./tensorflow/compiler/mlir/tensorflow/utils/tpu_rewrite_device_util.cc", "MismatchedTPUSystemAttributeErr");
+
   return errors::InvalidArgument("found ", kDeviceTPUSystem,
                                  " devices with conflicting ", attribute, "s '",
                                  a, "' and '", b, "'");
@@ -82,6 +257,9 @@ Status MismatchedTPUSystemAttributeErr(absl::string_view attribute, T a, T b) {
 // replicas, a failure will be returned.
 Status GetTPUSystemDevices(Devices devices,
                            llvm::SmallVectorImpl<Device>* matched_devices) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPStpu_rewrite_device_utilDTcc mht_2(mht_2_v, 260, "", "./tensorflow/compiler/mlir/tensorflow/utils/tpu_rewrite_device_util.cc", "GetTPUSystemDevices");
+
   Device spec;
   spec.type = kDeviceTPUSystem;
   spec.has_type = true;
@@ -121,9 +299,15 @@ Status GetTPUSystemDevices(Devices devices,
 Status GetTPUDevices(
     Devices devices, llvm::ArrayRef<Device> system_devices,
     llvm::SmallVectorImpl<llvm::SmallVector<Device, 8>>* tpu_devices) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPStpu_rewrite_device_utilDTcc mht_3(mht_3_v, 302, "", "./tensorflow/compiler/mlir/tensorflow/utils/tpu_rewrite_device_util.cc", "GetTPUDevices");
+
   tpu_devices->reserve(system_devices.size());
 
   auto lookup = [&devices](Device device_spec) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPStpu_rewrite_device_utilDTcc mht_4(mht_4_v, 308, "", "./tensorflow/compiler/mlir/tensorflow/utils/tpu_rewrite_device_util.cc", "lambda");
+
     device_spec.has_type = true;
     device_spec.type = kDeviceTPU;
     // Enumerate all the available TPUs.
@@ -164,6 +348,9 @@ Status GetTPUDevices(
 
 // Finds the compilation device from system device.
 std::string GetTPUCompilationDevice(Device system_device) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPStpu_rewrite_device_utilDTcc mht_5(mht_5_v, 351, "", "./tensorflow/compiler/mlir/tensorflow/utils/tpu_rewrite_device_util.cc", "GetTPUCompilationDevice");
+
   // TODO(b/110910013) GetTPUSystemDevices parses the spec and returns the
   // TPU_SYSTEM device, which we replace with the CPU device. We do this
   // replacement because we want to place the `tf._TPUCompileMlir` explicitly on
@@ -174,6 +361,9 @@ std::string GetTPUCompilationDevice(Device system_device) {
 
 // Finds the host CPU device for a given TPU device.
 std::string GetCPUHostDeviceForTPUDevice(Device tpu_device) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPStpu_rewrite_device_utilDTcc mht_6(mht_6_v, 364, "", "./tensorflow/compiler/mlir/tensorflow/utils/tpu_rewrite_device_util.cc", "GetCPUHostDeviceForTPUDevice");
+
   tpu_device.type = DEVICE_CPU;
   tpu_device.id = 0;
   return DeviceNameUtils::ParsedNameToString(tpu_device);
@@ -217,8 +407,14 @@ StatusOr<TPUDevicesAndHosts> GetFullMeshTPUExecutionDeviceAssignment(
 // Helper struct for keeping track of task and device for an associated TPU
 // device coordinate.
 struct TaskAndDevice {
-  TaskAndDevice() {}
-  TaskAndDevice(int task, int device) : task(task), device(device) {}
+  TaskAndDevice() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPStpu_rewrite_device_utilDTcc mht_7(mht_7_v, 411, "", "./tensorflow/compiler/mlir/tensorflow/utils/tpu_rewrite_device_util.cc", "TaskAndDevice");
+}
+  TaskAndDevice(int task, int device) : task(task), device(device) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPStpu_rewrite_device_utilDTcc mht_8(mht_8_v, 415, "", "./tensorflow/compiler/mlir/tensorflow/utils/tpu_rewrite_device_util.cc", "TaskAndDevice");
+}
 
   int task = -1;
   int device = -1;
@@ -227,6 +423,9 @@ struct TaskAndDevice {
 // Checks if device coordinate is outside of topology mesh shape bounds.
 bool DeviceCoordinateOutOfBound(int x, int y, int z, int core, int bound_x,
                                 int bound_y, int bound_z, int bound_core) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPStpu_rewrite_device_utilDTcc mht_9(mht_9_v, 426, "", "./tensorflow/compiler/mlir/tensorflow/utils/tpu_rewrite_device_util.cc", "DeviceCoordinateOutOfBound");
+
   return x < 0 || x >= bound_x || y < 0 || y >= bound_y || z < 0 ||
          z >= bound_z || core < 0 || core >= bound_core;
 }
@@ -235,6 +434,10 @@ bool DeviceCoordinateOutOfBound(int x, int y, int z, int core, int bound_x,
 Status DeviceCoordinateErrorMsg(absl::string_view attribute, int x, int y,
                                 int z, int core, int bound_x, int bound_y,
                                 int bound_z, int bound_core) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("attribute: \"" + std::string(attribute.data(), attribute.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPStpu_rewrite_device_utilDTcc mht_10(mht_10_v, 438, "", "./tensorflow/compiler/mlir/tensorflow/utils/tpu_rewrite_device_util.cc", "DeviceCoordinateErrorMsg");
+
   return errors::InvalidArgument("device coordinate (", x, ", ", y, ", ", z,
                                  ", ", core, ") in '", attribute,
                                  "' is outside of mesh shape (", bound_x, ", ",
@@ -244,6 +447,10 @@ Status DeviceCoordinateErrorMsg(absl::string_view attribute, int x, int y,
 // Creates error message for a duplicate device coordinate.
 Status DuplicateCoordinateErrorMsg(absl::string_view attribute, int x, int y,
                                    int z, int core) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("attribute: \"" + std::string(attribute.data(), attribute.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPStpu_rewrite_device_utilDTcc mht_11(mht_11_v, 451, "", "./tensorflow/compiler/mlir/tensorflow/utils/tpu_rewrite_device_util.cc", "DuplicateCoordinateErrorMsg");
+
   return errors::InvalidArgument("'", attribute,
                                  "' has duplicate device coordinate (", x, ", ",
                                  y, ", ", z, ", ", core, ")");
@@ -372,6 +579,9 @@ GetGeneralTPUExecutionDeviceAssignment(
   // TPU XLA device ID is determined by its device coordinate, from major to
   // minor coordinates (z, y, x, core).
   auto location_to_id = [&](int x, int y, int z, int core) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPStpu_rewrite_device_utilDTcc mht_12(mht_12_v, 582, "", "./tensorflow/compiler/mlir/tensorflow/utils/tpu_rewrite_device_util.cc", "lambda");
+
     return (x + bound_x * (y + bound_y * z)) * bound_core + core;
   };
 
@@ -483,10 +693,16 @@ StatusOr<TPUDeviceAssignment> GetTPUCompilationAndExecutionDevices(
 }
 
 std::string GetDeviceAliasForLogicalCore(int core_index) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPStpu_rewrite_device_utilDTcc mht_13(mht_13_v, 696, "", "./tensorflow/compiler/mlir/tensorflow/utils/tpu_rewrite_device_util.cc", "GetDeviceAliasForLogicalCore");
+
   return llvm::formatv("{0}_{1}", kTPUReplicatedCore, core_index).str();
 }
 
 bool HasModelParallelism(mlir::tf_device::ClusterOp cluster) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPStpu_rewrite_device_utilDTcc mht_14(mht_14_v, 703, "", "./tensorflow/compiler/mlir/tensorflow/utils/tpu_rewrite_device_util.cc", "HasModelParallelism");
+
   mlir::IntegerAttr num_cores_per_replica_attr =
       cluster->getAttrOfType<mlir::IntegerAttr>(
           tensorflow::kNumCoresPerReplicaAttr);
@@ -497,6 +713,9 @@ bool HasModelParallelism(mlir::tf_device::ClusterOp cluster) {
 mlir::LogicalResult GetHostDeviceOutsideComputation(
     mlir::TF::RuntimeDevices devices, mlir::tf_device::ClusterOp cluster,
     std::string* host_device) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPStpu_rewrite_device_utilDTcc mht_15(mht_15_v, 716, "", "./tensorflow/compiler/mlir/tensorflow/utils/tpu_rewrite_device_util.cc", "GetHostDeviceOutsideComputation");
+
   auto replicate = cluster->getParentOfType<mlir::tf_device::ReplicateOp>();
   if (replicate) {
     *host_device = tensorflow::kTPUReplicatedHost;
@@ -540,6 +759,9 @@ mlir::LogicalResult GetHostDeviceOutsideComputation(
 }
 
 bool IsTPUDevice(llvm::StringRef device) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPStpu_rewrite_device_utilDTcc mht_16(mht_16_v, 762, "", "./tensorflow/compiler/mlir/tensorflow/utils/tpu_rewrite_device_util.cc", "IsTPUDevice");
+
   Device parsed_device;
   if (!DeviceNameUtils::ParseFullName(mlir::StringRefToView(device),
                                       &parsed_device))
@@ -548,6 +770,9 @@ bool IsTPUDevice(llvm::StringRef device) {
 }
 
 bool IsTPUReplicatedCore(llvm::StringRef device) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPStpu_rewrite_device_utilDTcc mht_17(mht_17_v, 773, "", "./tensorflow/compiler/mlir/tensorflow/utils/tpu_rewrite_device_util.cc", "IsTPUReplicatedCore");
+
   Device parsed_device;
   if (!DeviceNameUtils::ParseFullName(mlir::StringRefToView(device),
                                       &parsed_device))

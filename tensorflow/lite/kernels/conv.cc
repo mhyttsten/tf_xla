@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSkernelsPSconvDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconvDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSkernelsPSconvDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -123,6 +291,9 @@ struct OpData {
 };
 
 inline PaddingType RuntimePaddingType(TfLitePadding padding) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconvDTcc mht_0(mht_0_v, 294, "", "./tensorflow/lite/kernels/conv.cc", "RuntimePaddingType");
+
   switch (padding) {
     case TfLitePadding::kTfLitePaddingSame:
       return PaddingType::kSame;
@@ -135,6 +306,10 @@ inline PaddingType RuntimePaddingType(TfLitePadding padding) {
 }
 
 void* Init(TfLiteContext* context, const char* buffer, size_t length) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconvDTcc mht_1(mht_1_v, 310, "", "./tensorflow/lite/kernels/conv.cc", "Init");
+
   // This is a builtin op, so we don't use the contents in 'buffer', if any.
   // Instead, we allocate a new object to use as scratch space for im2col, and
   // to carry information from Prepare() to Eval().
@@ -146,6 +321,9 @@ void* Init(TfLiteContext* context, const char* buffer, size_t length) {
 }
 
 void Free(TfLiteContext* context, void* buffer) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconvDTcc mht_2(mht_2_v, 324, "", "./tensorflow/lite/kernels/conv.cc", "Free");
+
 #if defined(TFLITE_WITH_MULTITHREADED_EIGEN)
   eigen_support::DecrementUsageCounter(context);
 #endif
@@ -156,6 +334,9 @@ void Free(TfLiteContext* context, void* buffer) {
 // cache friendly, but for now it's a one-time cost on first run, and we would
 // prefer to remove the need to do this at all eventually.
 void TransposeFloatTensor(const TfLiteTensor* input, TfLiteTensor* output) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconvDTcc mht_3(mht_3_v, 337, "", "./tensorflow/lite/kernels/conv.cc", "TransposeFloatTensor");
+
   const int rows = output->dims->data[1];
   const int cols = output->dims->data[0];
   const float* input_data = GetTensorData<float>(input);
@@ -174,6 +355,9 @@ void TransposeFloatTensor(const TfLiteTensor* input, TfLiteTensor* output) {
 bool IsIm2ColRequired(const TfLiteTensor* input, TfLiteConvParams* params,
                       const TfLiteTensor* filter, OpData* data, bool is_hybrid,
                       KernelType kernel_type) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconvDTcc mht_4(mht_4_v, 358, "", "./tensorflow/lite/kernels/conv.cc", "IsIm2ColRequired");
+
   // If HWCN weights are required, Im2Col not required
   if (data->need_hwcn_weights) return false;
 
@@ -227,6 +411,9 @@ bool IsIm2ColRequired(const TfLiteTensor* input, TfLiteConvParams* params,
 static TfLiteStatus AllocateTemporaryTensorsIfRequired(
     TfLiteContext* context, TfLiteNode* node, bool is_hybrid,
     bool is_per_channel, KernelType kernel_type, size_t im2col_bytes) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconvDTcc mht_5(mht_5_v, 414, "", "./tensorflow/lite/kernels/conv.cc", "AllocateTemporaryTensorsIfRequired");
+
   auto* params = reinterpret_cast<TfLiteConvParams*>(node->builtin_data);
   OpData* data = reinterpret_cast<OpData*>(node->user_data);
 
@@ -332,6 +519,9 @@ static TfLiteStatus AllocateTemporaryTensorsIfRequired(
 
 TfLiteStatus Prepare(KernelType kernel_type, TfLiteContext* context,
                      TfLiteNode* node) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconvDTcc mht_6(mht_6_v, 522, "", "./tensorflow/lite/kernels/conv.cc", "Prepare");
+
   auto* params = reinterpret_cast<TfLiteConvParams*>(node->builtin_data);
   OpData* data = reinterpret_cast<OpData*>(node->user_data);
 
@@ -645,6 +835,9 @@ TfLiteStatus Prepare(KernelType kernel_type, TfLiteContext* context,
 
 template <KernelType kernel_type>
 TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconvDTcc mht_7(mht_7_v, 838, "", "./tensorflow/lite/kernels/conv.cc", "Prepare");
+
   return Prepare(kernel_type, context, node);
 }
 
@@ -654,6 +847,9 @@ void EvalQuantized(TfLiteContext* context, TfLiteNode* node,
                    const TfLiteTensor* input, const TfLiteTensor* filter,
                    const TfLiteTensor* bias, TfLiteTensor* im2col,
                    TfLiteTensor* output) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconvDTcc mht_8(mht_8_v, 850, "", "./tensorflow/lite/kernels/conv.cc", "EvalQuantized");
+
   auto input_offset = -input->params.zero_point;
   auto filter_offset = -filter->params.zero_point;
   auto output_offset = output->params.zero_point;
@@ -731,6 +927,9 @@ void EvalQuantizedPerChannel(TfLiteContext* context, TfLiteNode* node,
                              const TfLiteTensor* filter,
                              const TfLiteTensor* bias, TfLiteTensor* output,
                              TfLiteTensor* im2col) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconvDTcc mht_9(mht_9_v, 930, "", "./tensorflow/lite/kernels/conv.cc", "EvalQuantizedPerChannel");
+
   ConvParams op_params;
   op_params.input_offset = -input->params.zero_point;
   op_params.output_offset = output->params.zero_point;
@@ -791,6 +990,9 @@ void EvalQuantizedPerChannel16x8(TfLiteContext* context, TfLiteNode* node,
                                  const TfLiteTensor* filter,
                                  const TfLiteTensor* bias, TfLiteTensor* output,
                                  TfLiteTensor* im2col) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconvDTcc mht_10(mht_10_v, 993, "", "./tensorflow/lite/kernels/conv.cc", "EvalQuantizedPerChannel16x8");
+
   ConvParams op_params;
   op_params.input_offset = -input->params.zero_point;
   op_params.output_offset = output->params.zero_point;
@@ -859,6 +1061,9 @@ void EvalFloat(TfLiteContext* context, TfLiteNode* node,
                const TfLiteTensor* input, const TfLiteTensor* filter,
                const TfLiteTensor* bias, TfLiteTensor* im2col,
                TfLiteTensor* hwcn_weights, TfLiteTensor* output) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconvDTcc mht_11(mht_11_v, 1064, "", "./tensorflow/lite/kernels/conv.cc", "EvalFloat");
+
   float output_activation_min, output_activation_max;
   CalculateActivationRange(params->activation, &output_activation_min,
                            &output_activation_max);
@@ -957,6 +1162,9 @@ TfLiteStatus EvalHybridPerChannel(TfLiteContext* context, TfLiteNode* node,
                                   const TfLiteTensor* filter,
                                   const TfLiteTensor* bias,
                                   TfLiteTensor* im2col, TfLiteTensor* output) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconvDTcc mht_12(mht_12_v, 1165, "", "./tensorflow/lite/kernels/conv.cc", "EvalHybridPerChannel");
+
   float output_activation_min, output_activation_max;
   CalculateActivationRange(params->activation, &output_activation_min,
                            &output_activation_max);
@@ -1066,6 +1274,9 @@ TfLiteStatus EvalHybrid(TfLiteContext* context, TfLiteNode* node,
                         const TfLiteTensor* input, const TfLiteTensor* filter,
                         const TfLiteTensor* bias, TfLiteTensor* im2col,
                         TfLiteTensor* accum_scratch, TfLiteTensor* output) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconvDTcc mht_13(mht_13_v, 1277, "", "./tensorflow/lite/kernels/conv.cc", "EvalHybrid");
+
   float output_activation_min, output_activation_max;
   CalculateActivationRange(params->activation, &output_activation_min,
                            &output_activation_max);
@@ -1215,6 +1426,9 @@ TfLiteStatus EvalImpl(TfLiteContext* context, TfLiteNode* node) {
 
 template <KernelType kernel_type>
 TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconvDTcc mht_14(mht_14_v, 1429, "", "./tensorflow/lite/kernels/conv.cc", "Eval");
+
   const TfLiteTensor* input;
   TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, 0, &input));
 
@@ -1237,6 +1451,9 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
 }  // namespace conv
 
 TfLiteRegistration* Register_CONVOLUTION_REF() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconvDTcc mht_15(mht_15_v, 1454, "", "./tensorflow/lite/kernels/conv.cc", "Register_CONVOLUTION_REF");
+
   static TfLiteRegistration r = {conv::Init, conv::Free,
                                  conv::Prepare<conv::kReference>,
                                  conv::Eval<conv::kReference>};
@@ -1244,6 +1461,9 @@ TfLiteRegistration* Register_CONVOLUTION_REF() {
 }
 
 TfLiteRegistration* Register_CONVOLUTION_GENERIC_OPT() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconvDTcc mht_16(mht_16_v, 1464, "", "./tensorflow/lite/kernels/conv.cc", "Register_CONVOLUTION_GENERIC_OPT");
+
   static TfLiteRegistration r = {conv::Init, conv::Free,
                                  conv::Prepare<conv::kGenericOptimized>,
                                  conv::Eval<conv::kGenericOptimized>};
@@ -1251,6 +1471,9 @@ TfLiteRegistration* Register_CONVOLUTION_GENERIC_OPT() {
 }
 
 TfLiteRegistration* Register_CONVOLUTION_GENERIC_OPT_UINT8() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconvDTcc mht_17(mht_17_v, 1474, "", "./tensorflow/lite/kernels/conv.cc", "Register_CONVOLUTION_GENERIC_OPT_UINT8");
+
   static TfLiteRegistration r = {
       conv::Init, conv::Free, conv::Prepare<conv::kGenericOptimized>,
       conv::EvalImpl<conv::kGenericOptimized, kTfLiteUInt8>};
@@ -1258,6 +1481,9 @@ TfLiteRegistration* Register_CONVOLUTION_GENERIC_OPT_UINT8() {
 }
 
 TfLiteRegistration* Register_CONVOLUTION_MULTITHREADED_OPT() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconvDTcc mht_18(mht_18_v, 1484, "", "./tensorflow/lite/kernels/conv.cc", "Register_CONVOLUTION_MULTITHREADED_OPT");
+
   static TfLiteRegistration r = {conv::Init, conv::Free,
                                  conv::Prepare<conv::kMultithreadOptimized>,
                                  conv::Eval<conv::kMultithreadOptimized>};
@@ -1265,6 +1491,9 @@ TfLiteRegistration* Register_CONVOLUTION_MULTITHREADED_OPT() {
 }
 
 TfLiteRegistration* Register_CONVOLUTION_CBLAS_OPT() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconvDTcc mht_19(mht_19_v, 1494, "", "./tensorflow/lite/kernels/conv.cc", "Register_CONVOLUTION_CBLAS_OPT");
+
   static TfLiteRegistration r = {conv::Init, conv::Free,
                                  conv::Prepare<conv::kCblasOptimized>,
                                  conv::Eval<conv::kCblasOptimized>};
@@ -1272,6 +1501,9 @@ TfLiteRegistration* Register_CONVOLUTION_CBLAS_OPT() {
 }
 
 TfLiteRegistration* Register_CONV_2D() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconvDTcc mht_20(mht_20_v, 1504, "", "./tensorflow/lite/kernels/conv.cc", "Register_CONV_2D");
+
 #if defined TFLITE_USE_APPLE_ACCELERATE_FOR_CONV
   return Register_CONVOLUTION_CBLAS_OPT();
 #elif defined TFLITE_WITH_MULTITHREADED_EIGEN
@@ -1285,6 +1517,9 @@ TfLiteRegistration* Register_CONV_2D() {
 // models only need the UINT8 type. TFLite's op registration mechanism doesn't
 // yet allow for more nuanced registration mechanisms.
 TfLiteRegistration* Register_CONV_2D_UINT8() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconvDTcc mht_21(mht_21_v, 1520, "", "./tensorflow/lite/kernels/conv.cc", "Register_CONV_2D_UINT8");
+
 #if defined TFLITE_WITH_RUY
   // TFLITE_WITH_RUY optimizes the generic kernel type.
   return Register_CONVOLUTION_GENERIC_OPT_UINT8();

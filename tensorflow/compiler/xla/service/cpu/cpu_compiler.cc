@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -194,6 +362,9 @@ namespace {
 // Hopefully this will all go away at some point in favor of a better
 // integration.
 void LoadMLIRDialects(mlir::MLIRContext& context) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_0(mht_0_v, 365, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "LoadMLIRDialects");
+
   context.loadDialect<mlir::arith::ArithmeticDialect,
                       mlir::linalg::LinalgDialect, mlir::scf::SCFDialect,
                       mlir::vector::VectorDialect, mlir::func::FuncDialect,
@@ -209,6 +380,9 @@ namespace xla {
 namespace {
 
 bool UseMlirHloLowering(bool use_mlir, HloModule* module) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_1(mht_1_v, 383, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "UseMlirHloLowering");
+
   // TODO(tpopp): The prototype currently does not properly handle constant
   // buffers that are handled by the runtime's buffer assignmen.
   return use_mlir &&
@@ -267,11 +441,21 @@ CpuAotCompilationOptions::CpuAotCompilationOptions(
       cpu_name_(std::move(cpu_name)),
       features_(std::move(features)),
       entry_point_name_(std::move(entry_point_name)),
-      relocation_model_(relocation_model) {}
+      relocation_model_(relocation_model) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("triple: \"" + triple + "\"");
+   mht_2_v.push_back("cpu_name: \"" + cpu_name + "\"");
+   mht_2_v.push_back("features: \"" + features + "\"");
+   mht_2_v.push_back("entry_point_name: \"" + entry_point_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_2(mht_2_v, 449, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "CpuAotCompilationOptions::CpuAotCompilationOptions");
+}
 
 CpuAotCompilationOptions::~CpuAotCompilationOptions() = default;
 
 se::Platform::Id CpuAotCompilationOptions::PlatformId() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_3(mht_3_v, 456, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "CpuAotCompilationOptions::PlatformId");
+
   return se::host::kHostPlatformId;
 }
 
@@ -282,13 +466,22 @@ CpuAotCompilationResult::CpuAotCompilationResult(
     : object_file_data_(std::move(object_file_data)),
       buffer_infos_(std::move(buffer_infos)),
       result_buffer_index_(result_buffer_index),
-      hlo_profile_printer_data_(std::move(hlo_profile_printer_data)) {}
+      hlo_profile_printer_data_(std::move(hlo_profile_printer_data)) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_4(mht_4_v, 470, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "CpuAotCompilationResult::CpuAotCompilationResult");
+}
 
 CpuAotCompilationResult::~CpuAotCompilationResult() = default;
 
 CpuCompiler::CpuCompiler() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_5(mht_5_v, 477, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "CpuCompiler::CpuCompiler");
+
   // Initialize LLVM the first time the CpuCompiler is initialized.
   static bool llvm_initialized = []() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_6(mht_6_v, 482, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "lambda");
+
     InitializeLLVMTarget();
     return true;
   }();
@@ -299,6 +492,9 @@ StatusOr<std::vector<std::unique_ptr<Executable>>> CpuCompiler::Compile(
     std::unique_ptr<HloModuleGroup> module_group,
     std::vector<std::vector<se::StreamExecutor*>> stream_execs,
     const CompileOptions& options) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_7(mht_7_v, 495, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "CpuCompiler::Compile");
+
   for (const std::vector<se::StreamExecutor*>& se_vector : stream_execs) {
     if (se_vector.size() != 1) {
       return Unimplemented(
@@ -309,6 +505,9 @@ StatusOr<std::vector<std::unique_ptr<Executable>>> CpuCompiler::Compile(
 }
 
 /* static */ void CpuCompiler::InitializeLLVMTarget() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_8(mht_8_v, 508, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "CpuCompiler::InitializeLLVMTarget");
+
   // Initialize LLVM's MC layer for the native target.
   llvm::InitializeNativeTarget();
   llvm::InitializeNativeTargetAsmPrinter();
@@ -346,15 +545,24 @@ class CollectProfileCandidates : public DfsHloVisitorWithDefault {
       const absl::flat_hash_map<const HloInstruction*, int64_t>&
           assigned_indices)
       : hlo_to_profile_idx_(hlo_to_profile_idx),
-        assigned_indices_(assigned_indices) {}
+        assigned_indices_(assigned_indices) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_9(mht_9_v, 549, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "CollectProfileCandidates");
+}
 
   Status DefaultAction(HloInstruction* hlo_instruction) override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_10(mht_10_v, 554, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "DefaultAction");
+
     hlo_to_profile_idx_->insert(
         {hlo_instruction, FindOrDie(assigned_indices_, hlo_instruction)});
     return Status::OK();
   }
 
   Status HandleCall(HloInstruction* call) override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_11(mht_11_v, 563, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "HandleCall");
+
     TF_RETURN_IF_ERROR(DefaultAction(call));
     CollectProfileCandidates candidates_for_call(hlo_to_profile_idx_,
                                                  assigned_indices_);
@@ -363,6 +571,9 @@ class CollectProfileCandidates : public DfsHloVisitorWithDefault {
   }
   // Recurse into "conditional" so we can profile inside of it.
   Status HandleConditional(HloInstruction* conditional) override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_12(mht_12_v, 574, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "HandleConditional");
+
     TF_RETURN_IF_ERROR(DefaultAction(conditional));
 
     CollectProfileCandidates candidates_for_true(hlo_to_profile_idx_,
@@ -379,12 +590,21 @@ class CollectProfileCandidates : public DfsHloVisitorWithDefault {
   }
 
   // Skip constants, there is nothing to profile.
-  Status HandleConstant(HloInstruction*) override { return Status::OK(); }
+  Status HandleConstant(HloInstruction*) override {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_13(mht_13_v, 594, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "HandleConstant");
+ return Status::OK(); }
   // Skip parameters, they are a simple load.
-  Status HandleParameter(HloInstruction*) override { return Status::OK(); }
+  Status HandleParameter(HloInstruction*) override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_14(mht_14_v, 599, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "HandleParameter");
+ return Status::OK(); }
   // It is important to recurse for "while" or else we risk overly coarse
   // profiling information.
   Status HandleWhile(HloInstruction* xla_while) override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_15(mht_15_v, 605, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "HandleWhile");
+
     TF_RETURN_IF_ERROR(DefaultAction(xla_while));
 
     CollectProfileCandidates candidates_for_condition(hlo_to_profile_idx_,
@@ -408,6 +628,9 @@ class CollectProfileCandidates : public DfsHloVisitorWithDefault {
 Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     HloModule* module, bool /*is_aot_compile*/,
     LLVMTargetMachineFeatures* target_machine_features, bool is_mlir_compile) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_16(mht_16_v, 631, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "CpuCompiler::RunHloPassesThroughLayoutAssn");
+
   if (module->config().use_spmd_partitioning()) {
     HloPassPipeline spmd_pipeline("spmd-partitioner");
     const int64_t num_partitions = module->config().num_partitions();
@@ -474,6 +697,9 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   // simplified.
   pipeline.AddPass<BatchDotSimplification>();
   auto cost_model = [](HloInstruction* conv) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_17(mht_17_v, 700, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "lambda");
+
     // We need a cost model for CPUs. Currently, do nothing.
     return false;
   };
@@ -481,6 +707,9 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
       /*should_expand=*/[](HloInstruction* conv) { return true; }, cost_model,
       /*convert_batch_groups_only=*/true);
   auto feature_group_should_expand = [](HloInstruction* conv) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_18(mht_18_v, 710, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "lambda");
+
     switch (conv->shape().element_type()) {
       case F16:
       case F32:
@@ -582,6 +811,9 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
 Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     HloModule* module, bool is_aot_compile,
     LLVMTargetMachineFeatures* target_machine_features, bool is_mlir_compile) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_19(mht_19_v, 814, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "CpuCompiler::RunHloPassesAfterLayoutAssn");
+
   HloPassPipeline pipeline("HLO passes after layout assignment");
 
   // CopyInsertion is still needed by BufferAssignment. MLIR passes will handle
@@ -650,6 +882,9 @@ Status CpuCompiler::RunHloPassesAfterLayoutAssn(
 Status CpuCompiler::RunHloPasses(HloModule* module, bool is_aot_compile,
                                  llvm::TargetMachine* target_machine,
                                  bool is_mlir_compile) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_20(mht_20_v, 885, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "CpuCompiler::RunHloPasses");
+
   if (DumpingEnabledForHloModule(*module)) {
     hlo_proto_ = absl::make_unique<HloProto>();
     *hlo_proto_->mutable_hlo_module() = module->ToProto();
@@ -668,11 +903,17 @@ namespace {
 
 // Align buffers to 16-byte boundaries.
 int64_t memory_alignment(LogicalBuffer::Color) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_21(mht_21_v, 906, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "memory_alignment");
+
   return cpu_function_runtime::MinAlign();
 }
 
 llvm::TargetOptions CompilerTargetOptions(
     const HloModuleConfig& module_config) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_22(mht_22_v, 914, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "CompilerTargetOptions");
+
   llvm::TargetOptions target_options;
   // Always allow FMA fusion. This increases precision instead of decreasing it.
   target_options.AllowFPOpFusion = llvm::FPOpFusion::Fast;
@@ -680,6 +921,9 @@ llvm::TargetOptions CompilerTargetOptions(
 }
 
 llvm::CodeGenOpt::Level CodeGenOptLevel(const HloModuleConfig& module_config) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_23(mht_23_v, 924, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "CodeGenOptLevel");
+
   VLOG(2) << "backend_optimization_level: "
           << module_config.debug_options().xla_backend_optimization_level();
   switch (module_config.debug_options().xla_backend_optimization_level()) {
@@ -707,6 +951,9 @@ std::pair<LLVMCompiler::ModuleHook, LLVMCompiler::ModuleHook> GetIRModuleHooks(
   auto hook = [user_pre_optimization_hook, user_post_optimization_hook,
                hlo_module_ptr](bool optimized,
                                const llvm::Module& llvm_module) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_24(mht_24_v, 954, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "lambda");
+
     const auto& user_hook =
         !optimized ? user_pre_optimization_hook : user_post_optimization_hook;
     if (user_hook) {
@@ -715,14 +962,23 @@ std::pair<LLVMCompiler::ModuleHook, LLVMCompiler::ModuleHook> GetIRModuleHooks(
     llvm_ir::DumpIrIfEnabled(*hlo_module_ptr, llvm_module, optimized);
   };
   return {[hook](const llvm::Module& llvm_module) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_25(mht_25_v, 965, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "lambda");
+
             return hook(/*optimized=*/false, llvm_module);
           },
           [hook](const llvm::Module& llvm_module) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_26(mht_26_v, 971, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "lambda");
+
             return hook(/*optimized=*/true, llvm_module);
           }};
 }
 
 Status VerifyLlvmModule(const llvm::Module& llvm_module) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_27(mht_27_v, 979, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "VerifyLlvmModule");
+
   XLA_SCOPED_LOGGING_TIMER("CpuCompiler - Running LLVM verifier");
 
   std::string err;
@@ -745,6 +1001,9 @@ Status CreateHloProfilingArtifacts(
         computation_to_profile_idx,
     std::unique_ptr<HloProfileIndexMap>* hlo_profile_index_map,
     std::unique_ptr<HloProfilePrinterData>* hlo_profile_printer_data) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_28(mht_28_v, 1004, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "CreateHloProfilingArtifacts");
+
   *hlo_profile_index_map = absl::make_unique<HloProfileIndexMap>(module);
   const HloComputation& entry_computation = *module.entry_computation();
 
@@ -755,6 +1014,9 @@ Status CreateHloProfilingArtifacts(
           (*hlo_profile_index_map)->instruction_to_profile_idx()));
 
   auto shape_size_bytes = [](const Shape& shape) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_29(mht_29_v, 1017, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "lambda");
+
     // On the cpu, opaques are pointers.
     if (shape.IsOpaque()) {
       return static_cast<int64_t>(sizeof(void*));
@@ -777,6 +1039,9 @@ Status CreateHloProfilingArtifacts(
 StatusOr<std::unique_ptr<HloModule>> CpuCompiler::RunHloPasses(
     std::unique_ptr<HloModule> module, se::StreamExecutor* /*stream_exec*/,
     const CompileOptions& /*options*/) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_30(mht_30_v, 1042, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "CpuCompiler::RunHloPasses");
+
   std::unique_ptr<llvm::TargetMachine> jit_target_machine =
       SimpleOrcJIT::InferTargetMachineForJIT(
           CompilerTargetOptions(module->config()),
@@ -789,6 +1054,9 @@ StatusOr<std::unique_ptr<HloModule>> CpuCompiler::RunHloPasses(
 
 StatusOr<std::unique_ptr<BufferAssignment>> CpuCompiler::AssignBuffers(
     const HloModule* module) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_31(mht_31_v, 1057, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "CpuCompiler::AssignBuffers");
+
   // Select an order for emitting the HLO instructions for each computation.
   // Using this sequence enables tighter buffer liveness analysis and reduced
   // memory usage (as compared to using DependencyHloOrdering).
@@ -821,6 +1089,9 @@ struct OrcJITPostCompilationHook {
     // std::function out of this struct, we have to wrap it in a shared_ptr.
     auto wrapped = std::make_shared<OrcJITPostCompilationHook>(module);
     return [wrapped](const llvm::object::ObjectFile& obj_file) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_32(mht_32_v, 1092, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "lambda");
+
       (*wrapped)(obj_file);
     };
   }
@@ -828,7 +1099,10 @@ struct OrcJITPostCompilationHook {
   // Constructor can't be private because we want to call it from
   // std::make_shared, but users should call Create() instead.
   explicit OrcJITPostCompilationHook(const HloModule* module)
-      : module(module) {}
+      : module(module) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_33(mht_33_v, 1103, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "OrcJITPostCompilationHook");
+}
 
  private:
   void operator()(const llvm::object::ObjectFile& obj_file) {
@@ -844,12 +1118,18 @@ struct OrcJITPostCompilationHook {
 };
 
 void InitializeLLVMCommandLineOptions(const HloModuleConfig& config) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_34(mht_34_v, 1121, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "InitializeLLVMCommandLineOptions");
+
   llvm_ir::InitializeLLVMCommandLineOptions(
       config.debug_options().xla_backend_extra_options());
 }
 
 Status LowerMLIRModule(mlir::ModuleOp mlir_module,
                        mlir::MLIRContext& mlir_context) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_35(mht_35_v, 1130, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "LowerMLIRModule");
+
   LoadMLIRDialects(mlir_context);
   mlir::PassManager pm(&mlir_context);
   // Resolve all shape constraints (e.g. broadcast constraints that can be
@@ -1032,6 +1312,9 @@ struct ComputationToEmit {
 
   template <typename H>
   friend H AbslHashValue(H h, const ComputationToEmit& c) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_36(mht_36_v, 1315, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "AbslHashValue");
+
     return H::combine(std::move(h), c.computation, c.allow_reassociation);
   }
 };
@@ -1084,6 +1367,9 @@ std::vector<ComputationToEmit> SubcomputationEmissionOrder(
 StatusOr<std::unique_ptr<Executable>> CpuCompiler::RunBackend(
     std::unique_ptr<HloModule> module, se::StreamExecutor* stream_exec,
     const CompileOptions& options) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_37(mht_37_v, 1370, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "CpuCompiler::RunBackend");
+
   VLOG(1) << "Compiling: " << module->name();
   XLA_SCOPED_LOGGING_TIMER(
       absl::StrFormat("Compiling [%s] for CPU using JIT", module->name()));
@@ -1202,6 +1488,9 @@ StatusOr<std::unique_ptr<Executable>> CpuCompiler::RunBackend(
                           /*allow_reassociation=*/false));
 
   std::string function_name = [&]() {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_38(mht_38_v, 1491, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "lambda");
+
     llvm::SmallVector<char, 40> function_name_vector;
     llvm::Mangler::getNameWithPrefix(
         function_name_vector, entry_function->getName(), (*jit)->data_layout());
@@ -1253,6 +1542,9 @@ StatusOr<std::unique_ptr<Executable>> CpuCompiler::RunBackend(
 StatusOr<std::vector<std::unique_ptr<AotCompilationResult>>>
 CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
                                 const AotCompilationOptions& aot_options) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_39(mht_39_v, 1545, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "CpuCompiler::CompileAheadOfTime");
+
   TF_RET_CHECK(!module_group->empty());
   std::vector<std::unique_ptr<HloModule>> modules =
       module_group->ConsumeModules();
@@ -1476,6 +1768,9 @@ CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
     }
 
     auto post_codegen_hook = [&](const llvm::object::ObjectFile& obj_file) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_40(mht_40_v, 1771, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "lambda");
+
       if (!DumpingEnabledForHloModule(*module)) {
         return;
       }
@@ -1507,10 +1802,16 @@ CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
 }
 
 se::Platform::Id CpuCompiler::PlatformId() const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_41(mht_41_v, 1805, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "CpuCompiler::PlatformId");
+
   return se::host::kHostPlatformId;
 }
 
 HloCostAnalysis::ShapeSizeFunction CpuCompiler::ShapeSizeBytesFunction() const {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_42(mht_42_v, 1812, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "CpuCompiler::ShapeSizeBytesFunction");
+
   return CpuExecutable::ShapeSizeBytes;
 }
 
@@ -1518,6 +1819,9 @@ HloCostAnalysis::ShapeSizeFunction CpuCompiler::ShapeSizeBytesFunction() const {
 }  // namespace xla
 
 static bool InitModule() {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_compilerDTcc mht_43(mht_43_v, 1822, "", "./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc", "InitModule");
+
   xla::Compiler::RegisterCompilerFactory(
       stream_executor::host::kHostPlatformId,
       []() { return absl::make_unique<xla::cpu::CpuCompiler>(); });

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -77,6 +245,10 @@ void KernelFallbackEmitError(
     tfrt::AsyncValueRef<tfrt::Chain>* op_chain,
     llvm::MutableArrayRef<tfrt::RCReference<tfrt::AsyncValue>> results,
     const tensorflow::Status& status) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("op_name: \"" + std::string(op_name.data(), op_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_0(mht_0_v, 249, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "KernelFallbackEmitError");
+
   // Set all results to error, with the correct TFRT error code according to the
   // error propagated from runtime fallback execution.
   auto error =
@@ -93,6 +265,9 @@ void KernelFallbackEmitError(
 tensorflow::Device* GetDeviceFromFallbackState(
     const KernelFallbackCompatRequestState& fallback_request_state,
     const OpKernelRunner& kernel_runner) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_1(mht_1_v, 268, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "GetDeviceFromFallbackState");
+
   // Return the user-specified the custom device instead, (eg. to use a custom
   // thread pool).
   //
@@ -120,6 +295,9 @@ Status SetUpKernelFallbackCompatRequestContext(
     tensorflow::thread::ThreadPoolInterface* user_intra_op_threadpool,
     const absl::optional<SessionMetadata>& model_metadata,
     std::function<void(std::function<void()>)>* runner) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_2(mht_2_v, 298, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "SetUpKernelFallbackCompatRequestContext");
+
   DCHECK(builder);
   DCHECK(device_manager);
   DCHECK(pflr);
@@ -145,6 +323,9 @@ Status SetUpKernelFallbackCompatRequestContext(
     tensorflow::EagerContext* eager_context,
     tensorflow::thread::ThreadPoolInterface* user_intra_op_threadpool,
     const absl::optional<SessionMetadata>& model_metadata) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_3(mht_3_v, 326, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "SetUpKernelFallbackCompatRequestContext");
+
   auto* resource_array =
       builder->resource_context()->GetOrCreateResource<FallbackResourceArray>(
           kFallbackResourceArray);
@@ -194,6 +375,10 @@ static Status ValidateInputTypes(
     tfrt::string_view op_name,
     const gtl::InlinedVector<tensorflow::Tensor, 4>& input_tf_tensors,
     const DataTypeVector& input_types) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("op_name: \"" + std::string(op_name.data(), op_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_4(mht_4_v, 379, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "ValidateInputTypes");
+
   const size_t n_inputs = input_tf_tensors.size();
 
   if (input_types.size() != n_inputs) {
@@ -219,6 +404,9 @@ namespace {
 void SetUpParams(const OpKernelRunner& runner,
                  const KernelFallbackCompatRequestState& fallback_request_state,
                  tensorflow::Device* device, OpKernelRunState& run_state) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_5(mht_5_v, 407, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "SetUpParams");
+
   auto& params = run_state.params;
   params.inputs = &run_state.input_tf_tensor_values;
   params.device = device;
@@ -241,6 +429,9 @@ void SetUpParams(const OpKernelRunner& runner,
 // Keep states needed by kernel execution in a thread local storage to avoid
 // repeated reallocation and destruction of them.
 OpKernelRunState& GetThreadLocalOpKernelRunState() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_6(mht_6_v, 432, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "GetThreadLocalOpKernelRunState");
+
   thread_local OpKernelRunState run_state;
   return run_state;
 }
@@ -257,6 +448,9 @@ static void KernelFallbackExecuteCompatAsyncInternal(
     const OpKernelRunner& kernel_runner,
     tfrt::AsyncValueRef<tfrt::Chain>* op_chain,
     llvm::MutableArrayRef<tfrt::RCReference<tfrt::AsyncValue>> results) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_7(mht_7_v, 451, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "KernelFallbackExecuteCompatAsyncInternal");
+
   auto chain =
       tfrt::MakeUnconstructedAsyncValueRef<tfrt::Chain>(exec_ctx.host());
   if (op_chain) *op_chain = chain.CopyRef();
@@ -273,7 +467,10 @@ static void KernelFallbackExecuteCompatAsyncInternal(
   struct AsyncState {
     explicit AsyncState(const OpKernelRunState& rs, int num_outputs)
         : run_state(rs.input_tf_tensor_values, rs.params),
-          context(&run_state.params, num_outputs) {}
+          context(&run_state.params, num_outputs) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_8(mht_8_v, 471, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "AsyncState");
+}
 
     OpKernelRunState run_state;
     OpKernelContext context;
@@ -290,6 +487,9 @@ static void KernelFallbackExecuteCompatAsyncInternal(
   auto* context_ptr = &async_state->context;
 
   auto done_callback = [async_state = std::move(async_state), exec_ctx]() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_9(mht_9_v, 490, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "lambda");
+
     auto& context = async_state->context;
 
     if (!context.status().ok()) {
@@ -329,6 +529,9 @@ static void KernelFallbackExecuteCompatSyncInternal(
     const OpKernelRunner& kernel_runner,
     tfrt::AsyncValueRef<tfrt::Chain>* op_chain,
     llvm::MutableArrayRef<tfrt::RCReference<tfrt::AsyncValue>> results) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_10(mht_10_v, 532, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "KernelFallbackExecuteCompatSyncInternal");
+
   DCHECK_EQ(results.size(), kernel_runner.op_kernel()->num_outputs());
   OpKernelContext context(&run_state->params, results.size());
   kernel_runner.Run(&context);
@@ -348,6 +551,9 @@ static void KernelFallbackExecuteCompatSyncInternal(
 }
 
 static std::string PrintTfrtOpAttrsToString(const tfrt::OpAttrsRef& attrs) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_11(mht_11_v, 554, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "PrintTfrtOpAttrsToString");
+
   std::string str;
   llvm::raw_string_ostream ss(str);
   attrs.Print(ss);
@@ -414,6 +620,10 @@ tfrt::AsyncValueRef<tfrt::Chain> KernelFallbackExecuteCompatCoreRuntimeDispatch(
 }
 
 static absl::string_view StripTfPrefix(tfrt::string_view op_name) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("op_name: \"" + std::string(op_name.data(), op_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_12(mht_12_v, 624, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "StripTfPrefix");
+
   return absl::StripPrefix(ToAbslStringView(op_name), "tf.");
 }
 
@@ -421,6 +631,9 @@ static absl::string_view StripTfPrefix(tfrt::string_view op_name) {
 std::string GetTracingMetadata(llvm::ArrayRef<tfrt::AsyncValue*> args,
                                const tfrt::ExecutionContext& exec_ctx,
                                const OpKernelRunner& kernel_runner) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_13(mht_13_v, 634, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "GetTracingMetadata");
+
   auto request_id = exec_ctx.request_ctx()->id();
   // Get Long Name
   auto debug_info = exec_ctx.location().GetDebugInfo();
@@ -468,26 +681,44 @@ class FallbackKernelAttributeFrame {
  public:
   explicit FallbackKernelAttributeFrame(tfrt::AsyncKernelFrame* frame)
       : frame_(frame) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_14(mht_14_v, 684, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "FallbackKernelAttributeFrame");
+
     DCHECK(frame_);
   }
 
   tfrt::StringAttr device() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_15(mht_15_v, 691, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "device");
+
     return tfrt::StringAttr(frame_->GetAttribute(kDeviceAttrPosition));
   }
 
   tfrt::AggregateAttr op_attr() const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_16(mht_16_v, 698, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "op_attr");
+
     return tfrt::AggregateAttr(frame_->GetAttribute(kOpAttrPosition));
   }
 
   tfrt::AggregateAttr op_func_attr() const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_17(mht_17_v, 705, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "op_func_attr");
+
     return tfrt::AggregateAttr(frame_->GetAttribute(kOpFuncAttrPosition));
   }
 
   tfrt::I64Attr op_key() const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_18(mht_18_v, 712, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "op_key");
+
     return tfrt::I64Attr(frame_->GetAttribute(kOpKeyAttrPosition));
   }
 
   tfrt::StringAttr op_name() const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_19(mht_19_v, 719, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "op_name");
+
     return tfrt::StringAttr(frame_->GetAttribute(kOpNameAttrPosition));
   }
 
@@ -512,6 +743,9 @@ TF_ATTRIBUTE_ALWAYS_INLINE static void KernelFallbackExecuteOpInternal(
     const KernelFallbackCompatRequestState& fallback_request_state,
     const OpKernelRunner& kernel_runner, bool is_async,
     tensorflow::Device* device) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_20(mht_20_v, 746, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "KernelFallbackExecuteOpInternal");
+
   tensorflow::profiler::TraceMe trace_me(
       [&]() { return ToAbslStringView(frame.op_name().GetValue()); });
 
@@ -569,6 +803,9 @@ TF_ATTRIBUTE_ALWAYS_INLINE static void KernelFallbackExecuteOp(
     tfrt::AsyncValueRef<tfrt::Chain>* op_chain,
     const FallbackKernelAttributeFrame& frame,
     const tfrt::ExecutionContext& exec_ctx) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_21(mht_21_v, 806, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "KernelFallbackExecuteOp");
+
   const auto* fallback_request_state =
       exec_ctx.request_ctx()
           ->GetDataIfExists<KernelFallbackCompatRequestState>();
@@ -616,6 +853,9 @@ llvm::Expected<tfrt::Chain> KernelFallbackCreateOp(
 
   auto attr_builder = [op_attr_array, op_func_attr_array](
                           tensorflow::AttrValueMap* attr_value_map) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_22(mht_22_v, 856, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "lambda");
+
     return SetUpAttrValueMap(op_attr_array, op_func_attr_array, attr_value_map);
   };
 
@@ -674,6 +914,9 @@ void FallbackGetResource(tfrt::Argument<tfrt::Chain> in_ch,
                          tfrt::RemainingResults results,
                          tfrt::StringAttr device, tfrt::ArrayAttr indices_attr,
                          const tfrt::ExecutionContext& exec_ctx) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_23(mht_23_v, 917, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "FallbackGetResource");
+
   tensorflow::profiler::TraceMe trace_me("tfrt_fallback_async.get_resource");
   trace_me.AppendMetadata([request_id = exec_ctx.request_ctx()->id()]() {
     return tensorflow::profiler::TraceMeEncode({{"id", request_id}});
@@ -706,6 +949,9 @@ void FallbackGetResource(tfrt::Argument<tfrt::Chain> in_ch,
 // non-side-effecting TF op with the name of `op_name` in fallback. All relevant
 // TF attributes are passed in `op_attr_array`.
 void FallbackAsyncExecuteOp(tfrt::AsyncKernelFrame* frame) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_24(mht_24_v, 952, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "FallbackAsyncExecuteOp");
+
   FallbackKernelAttributeFrame attr_frame(frame);
 #ifndef NDEBUG
   frame->GetExecutionContext()
@@ -723,6 +969,9 @@ void FallbackAsyncExecuteOp(tfrt::AsyncKernelFrame* frame) {
 // TF attributes are passed in `op_attr_array`. `in_op_chain` and `out_op_chain`
 // are used for side-effect visibility.
 void FallbackAsyncExecuteOpSeq(tfrt::AsyncKernelFrame* frame) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_25(mht_25_v, 972, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "FallbackAsyncExecuteOpSeq");
+
   auto all_args = frame->GetArguments();
   DCHECK_GT(all_args.size(), 0);
   tfrt::AsyncValueRef<tfrt::Chain> op_chain(tfrt::FormRef(all_args[0]));
@@ -747,63 +996,105 @@ class DeviceWithCustomAllocator : public tensorflow::Device {
       : Device(device->env(), device->attributes()),
         device_(device),
         allocator_(allocator) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_26(mht_26_v, 999, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "DeviceWithCustomAllocator");
+
     DCHECK(device_);
     DCHECK(allocator_);
   }
 
   Allocator* GetAllocator(AllocatorAttributes attr) override {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_27(mht_27_v, 1007, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "GetAllocator");
+
     return allocator_;
   }
 
   const DeviceBase* UnderlyingDevice() const override {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_28(mht_28_v, 1014, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "UnderlyingDevice");
+
     return device_->UnderlyingDevice();
   }
   DeviceBase* UnderlyingDevice() override {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_29(mht_29_v, 1020, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "UnderlyingDevice");
+
     return device_->UnderlyingDevice();
   }
 
   const CpuWorkerThreads* tensorflow_cpu_worker_threads() const override {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_30(mht_30_v, 1027, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "tensorflow_cpu_worker_threads");
+
     return device_->tensorflow_cpu_worker_threads();
   }
 
   Allocator* GetScopedAllocator(AllocatorAttributes attr,
                                 int64_t step_id) override {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_31(mht_31_v, 1035, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "GetScopedAllocator");
+
     return device_->GetScopedAllocator(attr, step_id);
   }
 
   ScopedAllocatorMgr* GetScopedAllocatorMgr() const override {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_32(mht_32_v, 1042, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "GetScopedAllocatorMgr");
+
     return device_->GetScopedAllocatorMgr();
   }
 
   const Eigen::ThreadPoolDevice* eigen_cpu_device() override {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_33(mht_33_v, 1049, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "eigen_cpu_device");
+
     return device_->eigen_cpu_device();
   }
 
   thread::ThreadPool* tensorflow_device_thread_pool() override {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_34(mht_34_v, 1056, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "tensorflow_device_thread_pool");
+
     return device_->tensorflow_device_thread_pool();
   }
 
   bool has_eigen_cpu_device() const override {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_35(mht_35_v, 1063, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "has_eigen_cpu_device");
+
     return device_->has_eigen_cpu_device();
   }
 
   Status MakeTensorFromProto(const TensorProto& tensor_proto,
                              const AllocatorAttributes alloc_attrs,
                              Tensor* tensor) override {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_36(mht_36_v, 1072, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "MakeTensorFromProto");
+
     return device_->MakeTensorFromProto(tensor_proto, alloc_attrs, tensor);
   }
 
   void CopyTensorInSameDevice(const Tensor* input_tensor, Tensor* output_tensor,
                               const DeviceContext* device_context,
                               StatusCallback done) override {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_37(mht_37_v, 1081, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "CopyTensorInSameDevice");
+
     device_->CopyTensorInSameDevice(input_tensor, output_tensor, device_context,
                                     std::move(done));
   }
 
-  Status Sync() override { return device_->Sync(); }
+  Status Sync() override {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_38(mht_38_v, 1089, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "Sync");
+ return device_->Sync(); }
 
   // Returns the resource manager associated w/ this device.
   ResourceMgr* resource_manager() override {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_39(mht_39_v, 1095, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "resource_manager");
+
     return device_->resource_manager();
   }
 
@@ -818,6 +1109,9 @@ void KernelFallbackExecuteOpCustomAllocatorInternal(
     tfrt::AsyncValueRef<tfrt::Chain>* op_chain,
     const tfrt::ExecutionContext& exec_ctx,
     const FallbackKernelAttributeFrame& attr_frame) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_40(mht_40_v, 1112, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "KernelFallbackExecuteOpCustomAllocatorInternal");
+
   const auto* fallback_request_state =
       exec_ctx.request_ctx()
           ->GetDataIfExists<KernelFallbackCompatRequestState>();
@@ -858,6 +1152,9 @@ void KernelFallbackExecuteOpCustomAllocatorInternal(
 }
 
 void FallbackAsyncExecuteOpWithAllocator(tfrt::AsyncKernelFrame* frame) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_41(mht_41_v, 1155, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "FallbackAsyncExecuteOpWithAllocator");
+
   auto args = frame->GetArguments();
   auto results = frame->GetResults();
   FallbackKernelAttributeFrame attr_frame(frame);
@@ -867,6 +1164,9 @@ void FallbackAsyncExecuteOpWithAllocator(tfrt::AsyncKernelFrame* frame) {
 }
 
 void FallbackAsyncExecuteOpSeqWithAllocator(tfrt::AsyncKernelFrame* frame) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_42(mht_42_v, 1167, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "FallbackAsyncExecuteOpSeqWithAllocator");
+
   auto args = frame->GetArguments();
   DCHECK_GT(args.size(), 0);
   tfrt::AsyncValueRef<tfrt::Chain> op_chain(tfrt::FormRef(args.front()));
@@ -887,6 +1187,9 @@ void FallbackAsyncExecuteOpSeqWithAllocator(tfrt::AsyncKernelFrame* frame) {
 void FallbackCopyTensorIfSmall(
     tfrt::Argument<tensorflow::tfrt_stub::FallbackTensor> arg,
     tfrt::RemainingResults results) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_43(mht_43_v, 1190, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "FallbackCopyTensorIfSmall");
+
   const auto& fallback_tensor = arg.get();
   const auto& tensor = fallback_tensor.tensor();
 
@@ -930,9 +1233,15 @@ llvm::Expected<tensorflow::tfrt_stub::FallbackTensor> ConstTensorProto(
 
 class TestAllocator : public tensorflow::AllocatorWrapper {
  public:
-  TestAllocator() : tensorflow::AllocatorWrapper(tensorflow::cpu_allocator()) {}
+  TestAllocator() : tensorflow::AllocatorWrapper(tensorflow::cpu_allocator()) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_44(mht_44_v, 1237, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "TestAllocator");
+}
 
   void* AllocateRaw(size_t alignment, size_t num_bytes) override {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_45(mht_45_v, 1242, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "AllocateRaw");
+
     std::printf("Using TestAllocator\n");
     fflush(stdout);
     return wrapped()->AllocateRaw(alignment, num_bytes);
@@ -940,6 +1249,9 @@ class TestAllocator : public tensorflow::AllocatorWrapper {
 
   void* AllocateRaw(size_t alignment, size_t num_bytes,
                     const AllocationAttributes& allocation_attr) override {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_46(mht_46_v, 1252, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "AllocateRaw");
+
     std::printf("Using TestAllocator\n");
     fflush(stdout);
     return wrapped()->AllocateRaw(alignment, num_bytes, allocation_attr);
@@ -947,11 +1259,17 @@ class TestAllocator : public tensorflow::AllocatorWrapper {
 };
 
 tensorflow::Allocator* GetTestAllocator() {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_47(mht_47_v, 1262, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "GetTestAllocator");
+
   static auto* const test_allocator = new TestAllocator;
   return test_allocator;
 }
 
 void RegisterKernelFallbackCompatKernels(tfrt::KernelRegistry* registry) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSruntime_fallbackPSkernelPSkernel_fallback_execute_compatDTcc mht_48(mht_48_v, 1270, "", "./tensorflow/core/runtime_fallback/kernel/kernel_fallback_execute_compat.cc", "RegisterKernelFallbackCompatKernels");
+
   registry->AddKernel("tfrt_fallback_async.const_tensor_proto",
                       TFRT_KERNEL(ConstTensorProto));
   registry->AddKernel("tfrt_fallback_async.executeop", FallbackAsyncExecuteOp);

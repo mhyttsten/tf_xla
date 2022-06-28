@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -69,12 +237,18 @@ class TFRInlinerInterface : public DialectInlinerInterface {
   // Allow all call operations to be inlined.
   bool isLegalToInline(Operation *call, Operation *callable,
                        bool wouldBeCloned) const final {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_0(mht_0_v, 240, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "isLegalToInline");
+
     return true;
   }
   // Returns true if the given region 'src' can be inlined into the region
   // 'dest' that is attached to an operation registered to the current dialect.
   bool isLegalToInline(Region *dest, Region *src, bool wouldBeCloned,
                        BlockAndValueMapping &) const final {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_1(mht_1_v, 249, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "isLegalToInline");
+
     return true;
   }
 
@@ -83,6 +257,9 @@ class TFRInlinerInterface : public DialectInlinerInterface {
   // operation registered to the current dialect.
   bool isLegalToInline(Operation *op, Region *dest, bool wouldBeCloned,
                        BlockAndValueMapping &) const final {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_2(mht_2_v, 260, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "isLegalToInline");
+
     return true;
   }
 
@@ -90,6 +267,9 @@ class TFRInlinerInterface : public DialectInlinerInterface {
   // as necessary. Required when the region has only one block.
   void handleTerminator(Operation *op,
                         ArrayRef<Value> valuesToRepl) const final {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_3(mht_3_v, 270, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "handleTerminator");
+
     auto retValOp = dyn_cast<TFRReturnOp>(op);
     if (!retValOp) return;
 
@@ -106,6 +286,9 @@ class TFRInlinerInterface : public DialectInlinerInterface {
   Operation *materializeCallConversion(OpBuilder &builder, Value input,
                                        Type result_type,
                                        Location conversion_loc) const final {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_4(mht_4_v, 289, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "materializeCallConversion");
+
     if (!input.getType().isa<IntegerType>() ||
         !result_type.isa<IntegerType>()) {
       return nullptr;
@@ -129,6 +312,9 @@ class TFRInlinerInterface : public DialectInlinerInterface {
 
 TFRDialect::TFRDialect(MLIRContext *context)
     : Dialect(/*name=*/"tfr", context, TypeID::get<TFRDialect>()) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_5(mht_5_v, 315, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "TFRDialect::TFRDialect");
+
   // TFR depends on TensorFlow for its canonicalization
   context->getOrLoadDialect<TF::TensorFlowDialect>();
 
@@ -143,6 +329,9 @@ TFRDialect::TFRDialect(MLIRContext *context)
 
 Operation *TFRDialect::materializeConstant(OpBuilder &builder, Attribute value,
                                            Type type, Location loc) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_6(mht_6_v, 332, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "TFRDialect::materializeConstant");
+
   if (arith::ConstantOp::isBuildableWith(value, type))
     return builder.create<arith::ConstantOp>(loc, type, value);
   if (func::ConstantOp::isBuildableWith(value, type))
@@ -152,6 +341,9 @@ Operation *TFRDialect::materializeConstant(OpBuilder &builder, Attribute value,
 }
 
 bool TFRType::classof(Type type) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_7(mht_7_v, 344, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "TFRType::classof");
+
   return llvm::isa<TFRDialect>(type.getDialect());
 }
 
@@ -160,6 +352,9 @@ bool TFRType::classof(Type type) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult ConstantTensorOp::verify() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_8(mht_8_v, 355, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "ConstantTensorOp::verify");
+
   ConstantTensorOp op = *this;
   auto input_type = op.arg().getType();
   auto output_type = op.out().getType();
@@ -198,6 +393,9 @@ LogicalResult ConstantTensorOp::verify() {
 }
 
 LogicalResult TFRFuncOp::verify() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_9(mht_9_v, 396, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "TFRFuncOp::verify");
+
   TFRFuncOp func = *this;
   // Collect all attribute names used by the tensor and tensor list arguments
   // and returns. Also, collect the names of all the attribute arguments as the
@@ -354,15 +552,24 @@ LogicalResult TFRFuncOp::verify() {
 }
 
 ParseResult TFRFuncOp::parse(OpAsmParser &parser, OperationState &result) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_10(mht_10_v, 555, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "TFRFuncOp::parse");
+
   auto build_func_type =
       [](Builder &builder, ArrayRef<Type> arg_types, ArrayRef<Type> results,
          function_interface_impl::VariadicFlag,
-         std::string &) { return builder.getFunctionType(arg_types, results); };
+         std::string &) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_11(mht_11_v, 562, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "lambda");
+ return builder.getFunctionType(arg_types, results); };
   return function_interface_impl::parseFunctionOp(
       parser, result, /*allowVariadic=*/false, build_func_type);
 }
 
 void TFRFuncOp::print(OpAsmPrinter &p) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_12(mht_12_v, 570, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "TFRFuncOp::print");
+
   function_interface_impl::printFunctionOp(p, *this, /*isVariadic=*/false);
 }
 
@@ -385,6 +592,9 @@ class ConvertConstToTensorConst : public OpRewritePattern<ConstantTensorOp> {
  public:
   LogicalResult matchAndRewrite(ConstantTensorOp cst_tensor_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_13(mht_13_v, 595, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "matchAndRewrite");
+
     Location loc = cst_tensor_op.getLoc();
     Type out_type = cst_tensor_op.getType();
     Operation *new_cst = nullptr;
@@ -423,6 +633,9 @@ class ConvertConstToTensorConst : public OpRewritePattern<ConstantTensorOp> {
 };
 
 inline bool isQuantizedType(Type type) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_14(mht_14_v, 636, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "isQuantizedType");
+
   auto tensor_type = type.dyn_cast<TensorType>();
   return (tensor_type &&
           tensor_type.getElementType().isa<quant::QuantizedType>());
@@ -434,6 +647,9 @@ class RemoveRedundantCast : public OpRewritePattern<CastOp> {
  public:
   LogicalResult matchAndRewrite(CastOp cast_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_15(mht_15_v, 650, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "matchAndRewrite");
+
     auto preceding_cast =
         llvm::dyn_cast_or_null<CastOp>(cast_op.arg().getDefiningOp());
     if (!preceding_cast) {
@@ -497,6 +713,9 @@ class GetTensorShape : public OpRewritePattern<GetShapeOp> {
  public:
   LogicalResult matchAndRewrite(GetShapeOp shape_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_16(mht_16_v, 716, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "matchAndRewrite");
+
     Operation *preceding_op = shape_op.arg().getDefiningOp();
     if (auto cast_op = llvm::dyn_cast_or_null<CastOp>(preceding_op)) {
       // replace this pair by shape.shape_of, so the folding works.
@@ -513,6 +732,9 @@ class RemoveRedundantGetElement : public OpRewritePattern<GetElementOp> {
  public:
   LogicalResult matchAndRewrite(GetElementOp ge_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_17(mht_17_v, 735, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "matchAndRewrite");
+
     IntegerAttr index;
     if (!matchPattern(ge_op.index(), m_Constant(&index))) {
       return failure();
@@ -540,6 +762,9 @@ class RemoveRedundantGetLength : public OpRewritePattern<GetLengthOp> {
  public:
   LogicalResult matchAndRewrite(GetLengthOp gl_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_18(mht_18_v, 765, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "matchAndRewrite");
+
     auto preceding_build_list = llvm::dyn_cast_or_null<BuildListOp>(
         gl_op.tensor_list().getDefiningOp());
     if (!preceding_build_list) {
@@ -558,6 +783,9 @@ class BuildConstantListAsAttr : public OpRewritePattern<BuildListOp> {
  public:
   LogicalResult matchAndRewrite(BuildListOp bl_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_19(mht_19_v, 786, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "matchAndRewrite");
+
     SmallVector<Attribute, 4> array_list;
     array_list.reserve(bl_op.getNumOperands());
     for (const auto &operand : bl_op.getOperands()) {
@@ -574,6 +802,9 @@ class BuildConstantListAsAttr : public OpRewritePattern<BuildListOp> {
 };
 
 quant::QuantizedType getQuantizedElementType(CastOp cast_op) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_20(mht_20_v, 805, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "getQuantizedElementType");
+
   if (!cast_op || !cast_op.getInputElementType()) {
     return {};
   }
@@ -589,6 +820,9 @@ class RemoveRawDataOp : public OpRewritePattern<TFRQuantRawDataOp> {
  public:
   LogicalResult matchAndRewrite(TFRQuantRawDataOp raw_data_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_21(mht_21_v, 823, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "matchAndRewrite");
+
     auto preceding_op = raw_data_op.input().getDefiningOp();
     if (isa<BuildListOp>(preceding_op)) {
       return rewritePrecedingListOp(raw_data_op, rewriter);
@@ -615,6 +849,9 @@ class RemoveRawDataOp : public OpRewritePattern<TFRQuantRawDataOp> {
 
   LogicalResult rewritePrecedingListOp(TFRQuantRawDataOp raw_data_op,
                                        PatternRewriter &rewriter) const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_22(mht_22_v, 852, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "rewritePrecedingListOp");
+
     llvm::SmallVector<Value> new_list_values;
     auto preceding_list = raw_data_op.input().getDefiningOp<BuildListOp>();
     for (Value operand : preceding_list.tensors()) {
@@ -646,6 +883,9 @@ class RemoveQParamsOp : public OpRewritePattern<TFRQuantQParamsOp> {
  public:
   LogicalResult matchAndRewrite(TFRQuantQParamsOp qparams_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_23(mht_23_v, 886, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "matchAndRewrite");
+
     auto cast_op = dyn_cast<TFR::CastOp>(qparams_op.input().getDefiningOp());
     auto cast_qtype = getQuantizedElementType(cast_op);
     if (!cast_qtype) {
@@ -717,6 +957,9 @@ class RemoveScaleFactorOp : public OpRewritePattern<TFRQuantScaleFactorOp> {
   //     (per-tensor vs per-channel) quantization, given by tf.Const -> tfr.cast
   LogicalResult matchAndRewrite(TFRQuantScaleFactorOp scale_factor_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_24(mht_24_v, 960, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "matchAndRewrite");
+
     auto out_scale_op =
         scale_factor_op.out_scale().getDefiningOp<arith::ConstantOp>();
     if (!out_scale_op) {
@@ -785,6 +1028,9 @@ class RemoveRescaleOp : public OpRewritePattern<TFRQuantRescaleOp> {
   // tf.Cast(tf.Round(tf.Cast(input, f32) * scale) + tf.Cast(zp, f32), i32)
   LogicalResult matchAndRewrite(TFRQuantRescaleOp rescale_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_25(mht_25_v, 1031, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "matchAndRewrite");
+
     Value input = rescale_op.input();
     Value scale = rescale_op.scale();
     Value zp = rescale_op.zp();
@@ -842,55 +1088,88 @@ class RemoveRescaleOp : public OpRewritePattern<TFRQuantRescaleOp> {
 
 void ConstantTensorOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                    MLIRContext *context) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_26(mht_26_v, 1091, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "ConstantTensorOp::getCanonicalizationPatterns");
+
   results.add<ConvertConstToTensorConst>(context);
 }
 
 void CastOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                          MLIRContext *context) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_27(mht_27_v, 1099, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "CastOp::getCanonicalizationPatterns");
+
   results.add<RemoveRedundantCast>(context);
 }
 
 void GetShapeOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                              MLIRContext *context) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_28(mht_28_v, 1107, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "GetShapeOp::getCanonicalizationPatterns");
+
   results.add<GetTensorShape>(context);
 }
 
 void GetElementOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                MLIRContext *context) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_29(mht_29_v, 1115, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "GetElementOp::getCanonicalizationPatterns");
+
   results.add<RemoveRedundantGetElement>(context);
 }
 
 void GetLengthOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                               MLIRContext *context) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_30(mht_30_v, 1123, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "GetLengthOp::getCanonicalizationPatterns");
+
   results.add<RemoveRedundantGetLength>(context);
 }
 
 void BuildListOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                               MLIRContext *context) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_31(mht_31_v, 1131, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "BuildListOp::getCanonicalizationPatterns");
+
   results.add<BuildConstantListAsAttr>(context);
 }
 
 void TFRQuantRawDataOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                     MLIRContext *context) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_32(mht_32_v, 1139, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "TFRQuantRawDataOp::getCanonicalizationPatterns");
+
   results.add<RemoveRawDataOp>(context);
 }
 
 void TFRQuantQParamsOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                     MLIRContext *context) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_33(mht_33_v, 1147, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "TFRQuantQParamsOp::getCanonicalizationPatterns");
+
   results.add<RemoveQParamsOp>(context);
 }
 
 void TFRQuantRescaleOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                     MLIRContext *context) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_34(mht_34_v, 1155, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "TFRQuantRescaleOp::getCanonicalizationPatterns");
+
   results.add<RemoveRescaleOp>(context);
 }
 
 void TFRQuantScaleFactorOp::getCanonicalizationPatterns(
     RewritePatternSet &results, MLIRContext *context) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_35(mht_35_v, 1163, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "TFRQuantScaleFactorOp::getCanonicalizationPatterns");
+
   results.add<RemoveScaleFactorOp>(context);
 }
 
 OpFoldResult TFR::EqualOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_36(mht_36_v, 1170, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "TFR::EqualOp::fold");
+
   assert(operands.size() == 2 && "equal op has two operands");
   auto ctx = getContext();
   if (operands[0] == operands[1]) return BoolAttr::get(ctx, true);
@@ -898,6 +1177,9 @@ OpFoldResult TFR::EqualOp::fold(ArrayRef<Attribute> operands) {
 }
 
 OpFoldResult ConstOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_37(mht_37_v, 1180, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "ConstOp::fold");
+
   assert(operands.empty() && "constant has no operands");
 
   // Return the held attribute value.
@@ -906,11 +1188,17 @@ OpFoldResult ConstOp::fold(ArrayRef<Attribute> operands) {
 
 // CallableOpInterface
 Region *TFRFuncOp::getCallableRegion() {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_38(mht_38_v, 1191, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "TFRFuncOp::getCallableRegion");
+
   return isExternal() ? nullptr : &body().front();
 }
 
 // CallableOpInterface
 ArrayRef<Type> TFRFuncOp::getCallableResults() {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_39(mht_39_v, 1199, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "TFRFuncOp::getCallableResults");
+
   return getFunctionType().getResults();
 }
 
@@ -927,6 +1215,9 @@ ArrayRef<Type> TFRFuncOp::getCallableResults() {
 //                      | `tensor_list<` (string-literal | string_list)  '>'
 //   attr_type ::= `attr`
 Type TFRDialect::parseType(DialectAsmParser &parser) const {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_40(mht_40_v, 1218, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "TFRDialect::parseType");
+
   Location loc = parser.getEncodedSourceLoc(parser.getNameLoc());
   MLIRContext *ctx = loc.getContext();
 
@@ -967,6 +1258,9 @@ Type TFRDialect::parseType(DialectAsmParser &parser) const {
 }
 
 void TFRDialect::printType(Type type, DialectAsmPrinter &os) const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrPSirPStfr_opsDTcc mht_41(mht_41_v, 1261, "", "./tensorflow/compiler/mlir/tfr/ir/tfr_ops.cc", "TFRDialect::printType");
+
   llvm::ArrayRef<StringAttr> attrs;
 
   if (type.isa<TFRAttrType>()) {

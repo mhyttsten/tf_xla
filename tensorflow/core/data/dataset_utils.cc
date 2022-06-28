@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -56,6 +224,9 @@ constexpr char kMessage[] = "msg";
 constexpr char kOutput[] = "output";
 
 static mutex* get_dataset_experiment_registry_lock() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_0(mht_0_v, 227, "", "./tensorflow/core/data/dataset_utils.cc", "get_dataset_experiment_registry_lock");
+
   static mutex dataset_experiment_registry_lock(LINKER_INITIALIZED);
   return &dataset_experiment_registry_lock;
 }
@@ -95,6 +266,9 @@ void DefaultOptimizationGraphRewrites(
     const Options& options, absl::flat_hash_set<tstring>* optimization_enabled,
     absl::flat_hash_set<tstring>* optimization_disabled,
     absl::flat_hash_set<tstring>* optimization_default) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_1(mht_1_v, 269, "", "./tensorflow/core/data/dataset_utils.cc", "DefaultOptimizationGraphRewrites");
+
   const auto& optimization_options = options.optimization_options();
   if (optimization_options.optional_apply_default_optimizations_case() !=
           OptimizationOptions::kApplyDefaultOptimizations ||
@@ -202,6 +376,9 @@ void DefaultOptimizationGraphRewrites(
 // b/65524810. Also looks up the `op_def->name` in the global
 // `AllowlistedStatefulOpRegistry`.
 bool IsOpAllowlisted(const OpDef* op_def) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_2(mht_2_v, 379, "", "./tensorflow/core/data/dataset_utils.cc", "IsOpAllowlisted");
+
   return (op_def->output_arg_size() == 1 &&
           op_def->output_arg(0).type() == DT_VARIANT &&
           (absl::EndsWith(op_def->name(), "Dataset") ||
@@ -221,6 +398,9 @@ std::pair<int64_t, int64_t> MaybeOverrideSeeds(
 
 Status VerifyTypeMatch(const DataType& expected, const DataType& received,
                        int index) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_3(mht_3_v, 401, "", "./tensorflow/core/data/dataset_utils.cc", "VerifyTypeMatch");
+
   if (expected != received) {
     return errors::InvalidArgument("Data type mismatch at component ", index,
                                    ": expected ", DataTypeString(expected),
@@ -231,6 +411,9 @@ Status VerifyTypeMatch(const DataType& expected, const DataType& received,
 
 Status VerifyTypesMatch(const DataTypeVector& expected,
                         const DataTypeVector& received) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_4(mht_4_v, 414, "", "./tensorflow/core/data/dataset_utils.cc", "VerifyTypesMatch");
+
   if (expected.size() != received.size()) {
     return errors::InvalidArgument(
         "Number of components does not match: expected ", expected.size(),
@@ -244,6 +427,9 @@ Status VerifyTypesMatch(const DataTypeVector& expected,
 
 Status VerifyTypesMatch(const DataTypeVector& expected,
                         const std::vector<Tensor>& received) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_5(mht_5_v, 430, "", "./tensorflow/core/data/dataset_utils.cc", "VerifyTypesMatch");
+
   if (expected.size() != received.size()) {
     return errors::InvalidArgument(
         "Number of components does not match: expected ", expected.size(),
@@ -257,6 +443,9 @@ Status VerifyTypesMatch(const DataTypeVector& expected,
 
 Status VerifyShapeCompatible(const PartialTensorShape& expected,
                              const PartialTensorShape& received, int index) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_6(mht_6_v, 446, "", "./tensorflow/core/data/dataset_utils.cc", "VerifyShapeCompatible");
+
   if (!expected.IsCompatibleWith(received)) {
     return errors::InvalidArgument("Incompatible shapes at component ", index,
                                    ": expected ", expected.DebugString(),
@@ -267,6 +456,9 @@ Status VerifyShapeCompatible(const PartialTensorShape& expected,
 
 Status VerifyShapesCompatible(const std::vector<PartialTensorShape>& expected,
                               const std::vector<PartialTensorShape>& received) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_7(mht_7_v, 459, "", "./tensorflow/core/data/dataset_utils.cc", "VerifyShapesCompatible");
+
   if (expected.size() != received.size()) {
     return errors::InvalidArgument(
         "Number of components does not match: expected ", expected.size(),
@@ -281,6 +473,9 @@ Status VerifyShapesCompatible(const std::vector<PartialTensorShape>& expected,
 
 Status VerifyShapesCompatible(const std::vector<PartialTensorShape>& expected,
                               const std::vector<Tensor>& received) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_8(mht_8_v, 476, "", "./tensorflow/core/data/dataset_utils.cc", "VerifyShapesCompatible");
+
   if (expected.size() != received.size()) {
     return errors::InvalidArgument(
         "Number of components does not match: expected ", expected.size(),
@@ -296,6 +491,9 @@ Status VerifyShapesCompatible(const std::vector<PartialTensorShape>& expected,
 
 Status AddToFunctionLibrary(FunctionLibraryDefinition* base,
                             const FunctionLibraryDefinition& to_add) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_9(mht_9_v, 494, "", "./tensorflow/core/data/dataset_utils.cc", "AddToFunctionLibrary");
+
   for (const auto& fn : to_add.ListFunctionNames()) {
     if (auto found = base->Find(fn)) {
       if (!OpDefEqual(found->signature(), to_add.Find(fn)->signature())) {
@@ -311,6 +509,9 @@ Status AddToFunctionLibrary(FunctionLibraryDefinition* base,
 
 Status AddToFunctionLibrary(FunctionLibraryDefinition* base,
                             const FunctionDefLibrary& to_add) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_10(mht_10_v, 512, "", "./tensorflow/core/data/dataset_utils.cc", "AddToFunctionLibrary");
+
   for (const auto& fd : to_add.function()) {
     if (auto found = base->Find(fd.signature().name())) {
       if (!OpDefEqual(found->signature(), fd.signature())) {
@@ -327,6 +528,9 @@ Status AddToFunctionLibrary(FunctionLibraryDefinition* base,
 
 Status IsFunctionStateful(const FunctionLibraryDefinition& library,
                           const FunctionDef& function_def) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_11(mht_11_v, 531, "", "./tensorflow/core/data/dataset_utils.cc", "IsFunctionStateful");
+
   if (!function_def.signature().is_stateful()) {
     return Status::OK();
   }
@@ -339,6 +543,9 @@ Status IsFunctionStateful(const FunctionLibraryDefinition& library,
 
 Status IsNodeStateful(const FunctionLibraryDefinition& library,
                       const NodeDef& node) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_12(mht_12_v, 546, "", "./tensorflow/core/data/dataset_utils.cc", "IsNodeStateful");
+
   const OpDef* op_def;
 
   // TODO(jsimsa): Fix C++ unit tests so that we do not have to ignore
@@ -400,6 +607,10 @@ std::function<void(std::function<void()>)> RunnerWithMaxParallelism(
 
 Status DeterminismPolicy::FromString(const std::string& s,
                                      DeterminismPolicy* out) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("s: \"" + s + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_13(mht_13_v, 611, "", "./tensorflow/core/data/dataset_utils.cc", "DeterminismPolicy::FromString");
+
   DeterminismPolicy::Type type;
   if (s == DeterminismPolicy::kDeterministic) {
     type = DeterminismPolicy::Type::kDeterministic;
@@ -415,6 +626,9 @@ Status DeterminismPolicy::FromString(const std::string& s,
 }
 
 DeterminismPolicy::DeterminismPolicy(bool is_deterministic) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_14(mht_14_v, 629, "", "./tensorflow/core/data/dataset_utils.cc", "DeterminismPolicy::DeterminismPolicy");
+
   if (is_deterministic) {
     determinism_ = DeterminismPolicy::Type::kDeterministic;
   } else {
@@ -423,6 +637,9 @@ DeterminismPolicy::DeterminismPolicy(bool is_deterministic) {
 }
 
 std::string DeterminismPolicy::String() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_15(mht_15_v, 640, "", "./tensorflow/core/data/dataset_utils.cc", "DeterminismPolicy::String");
+
   switch (determinism_) {
     case DeterminismPolicy::Type::kDeterministic:
       return DeterminismPolicy::kDeterministic;
@@ -437,6 +654,9 @@ std::string DeterminismPolicy::String() const {
 }
 
 bool MatchesAnyVersion(StringPiece op_prefix, StringPiece op_to_match) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_16(mht_16_v, 657, "", "./tensorflow/core/data/dataset_utils.cc", "MatchesAnyVersion");
+
   if (!absl::StartsWith(op_to_match, op_prefix)) {
     return false;
   }
@@ -520,6 +740,9 @@ absl::flat_hash_set<string> GetExperiments(
 }
 
 void LogAndRecordExperiments(const absl::flat_hash_set<string>& experiments) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_17(mht_17_v, 743, "", "./tensorflow/core/data/dataset_utils.cc", "LogAndRecordExperiments");
+
   if (!experiments.empty()) {
     constexpr float TEN_MINUTES = 60.0 * 10.0;
     LOG_EVERY_N_SEC(INFO, TEN_MINUTES)
@@ -536,6 +759,9 @@ void GetOptimizations(const Options& options,
                       absl::flat_hash_set<tstring>* optimizations_enabled,
                       absl::flat_hash_set<tstring>* optimizations_disabled,
                       absl::flat_hash_set<tstring>* optimizations_default) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_18(mht_18_v, 762, "", "./tensorflow/core/data/dataset_utils.cc", "GetOptimizations");
+
   DefaultOptimizationGraphRewrites(options, optimizations_enabled,
                                    optimizations_disabled,
                                    optimizations_default);
@@ -554,6 +780,9 @@ void GetOptimizations(const Options& options,
 }
 
 Tensor MaybeCopySubSlice(const Tensor& tensor, int64 index) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_19(mht_19_v, 783, "", "./tensorflow/core/data/dataset_utils.cc", "MaybeCopySubSlice");
+
   Tensor slice = tensor.SubSlice(index);
   if (slice.IsAligned()) {
     return slice;
@@ -563,6 +792,9 @@ Tensor MaybeCopySubSlice(const Tensor& tensor, int64 index) {
 }
 
 void StripDevicePlacement(FunctionDefLibrary* library) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_20(mht_20_v, 795, "", "./tensorflow/core/data/dataset_utils.cc", "StripDevicePlacement");
+
   for (auto& function : (*library->mutable_function())) {
     for (auto& node : (*function.mutable_node_def())) {
       if (!node.device().empty()) {
@@ -574,6 +806,9 @@ void StripDevicePlacement(FunctionDefLibrary* library) {
 
 Status CopyPartialBatch(int64_t num_elements, const Tensor& value,
                         Tensor* output) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_21(mht_21_v, 809, "", "./tensorflow/core/data/dataset_utils.cc", "CopyPartialBatch");
+
   switch (value.dtype()) {
 #define HANDLE_TYPE(type)                                         \
   case DataTypeToEnum<type>::value: {                             \
@@ -596,6 +831,11 @@ Status CopyPartialBatch(int64_t num_elements, const Tensor& value,
 Status ReadBatch(IteratorContext* ctx, IteratorStateReader* reader,
                  int64_t batch_size, const string& iterator_prefix,
                  const string& batch_prefix, std::vector<Tensor>* batch) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("iterator_prefix: \"" + iterator_prefix + "\"");
+   mht_22_v.push_back("batch_prefix: \"" + batch_prefix + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_22(mht_22_v, 836, "", "./tensorflow/core/data/dataset_utils.cc", "ReadBatch");
+
   int64_t output_size;
   TF_RETURN_IF_ERROR(reader->ReadScalar(
       FullName(iterator_prefix,
@@ -629,6 +869,11 @@ Status ReadBatch(IteratorContext* ctx, IteratorStateReader* reader,
 Status WriteBatch(int64_t batch_size, int64_t num_elements,
                   const string& iterator_prefix, const string& batch_prefix,
                   IteratorStateWriter* writer, std::vector<Tensor>* batch) {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("iterator_prefix: \"" + iterator_prefix + "\"");
+   mht_23_v.push_back("batch_prefix: \"" + batch_prefix + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_23(mht_23_v, 874, "", "./tensorflow/core/data/dataset_utils.cc", "WriteBatch");
+
   TF_RETURN_IF_ERROR(writer->WriteScalar(
       FullName(iterator_prefix,
                strings::StrCat(batch_prefix, "_", kOutputSize)),
@@ -653,6 +898,11 @@ Status WriteBatch(int64_t batch_size, int64_t num_elements,
 
 Status ReadStatus(const string& iterator_prefix, const string& prefix,
                   IteratorStateReader* reader, Status* status) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("iterator_prefix: \"" + iterator_prefix + "\"");
+   mht_24_v.push_back("prefix: \"" + prefix + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_24(mht_24_v, 903, "", "./tensorflow/core/data/dataset_utils.cc", "ReadStatus");
+
   int64_t code_int;
   TF_RETURN_IF_ERROR(reader->ReadScalar(
       FullName(iterator_prefix, strings::StrCat(prefix, "_", kCode)),
@@ -673,6 +923,11 @@ Status ReadStatus(const string& iterator_prefix, const string& prefix,
 
 Status WriteStatus(const string& iterator_prefix, const string& prefix,
                    const Status& status, IteratorStateWriter* writer) {
+   std::vector<std::string> mht_25_v;
+   mht_25_v.push_back("iterator_prefix: \"" + iterator_prefix + "\"");
+   mht_25_v.push_back("prefix: \"" + prefix + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_25(mht_25_v, 928, "", "./tensorflow/core/data/dataset_utils.cc", "WriteStatus");
+
   TF_RETURN_IF_ERROR(writer->WriteScalar(
       FullName(iterator_prefix, strings::StrCat(prefix, "_", kCode)),
       static_cast<int64_t>(status.code())));
@@ -688,6 +943,9 @@ Status ProcessBatch(int64_t batch_size, int64_t num_elements,
                     bool drop_remainder, const Status& status,
                     IteratorContext* ctx, std::vector<Tensor>* output,
                     bool* end_of_sequence, std::vector<Tensor>* batch) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_26(mht_26_v, 946, "", "./tensorflow/core/data/dataset_utils.cc", "ProcessBatch");
+
   if (num_elements == 0) {
     if (status.ok() || errors::IsOutOfRange(status)) {
       *end_of_sequence = true;
@@ -732,6 +990,9 @@ Status CopyBatch(CopyBatchParams params,
                  bool parallel_copy,
                  std::function<Status()> allocation_callback,
                  std::vector<Tensor>* out_tensors) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_27(mht_27_v, 993, "", "./tensorflow/core/data/dataset_utils.cc", "CopyBatch");
+
   const size_t num_tuple_components = batch_elements.at(0).size();
   out_tensors->reserve(num_tuple_components);
   const int64_t num_batch_elements = batch_elements.size();
@@ -761,6 +1022,9 @@ Status CopyBatch(CopyBatchParams params,
     // element in the batch.
     auto copy_element_fn = [component_index, &batch_elements, &batch_component,
                             &first_element_shape](int index) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_28(mht_28_v, 1025, "", "./tensorflow/core/data/dataset_utils.cc", "lambda");
+
       if (batch_elements.at(index)[component_index].shape() !=
           first_element_shape) {
         return errors::InvalidArgument(
@@ -850,16 +1114,25 @@ absl::flat_hash_set<tstring> CreateGraphRewriteConfigs(const Options& options) {
 }
 
 bool ShouldConfigureMaxIntraOpParallelism(const Options& options) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_29(mht_29_v, 1117, "", "./tensorflow/core/data/dataset_utils.cc", "ShouldConfigureMaxIntraOpParallelism");
+
   return options.threading_options().optional_max_intra_op_parallelism_case() ==
          ThreadingOptions::kMaxIntraOpParallelism;
 }
 
 bool ShouldUsePrivateThreadPool(const Options& options) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_30(mht_30_v, 1125, "", "./tensorflow/core/data/dataset_utils.cc", "ShouldUsePrivateThreadPool");
+
   return options.threading_options().optional_private_threadpool_size_case() ==
          ThreadingOptions::kPrivateThreadpoolSize;
 }
 
 bool ShouldUseAutotuning(const Options& options) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_31(mht_31_v, 1133, "", "./tensorflow/core/data/dataset_utils.cc", "ShouldUseAutotuning");
+
   return options.autotune_options().optional_enabled_case() !=
              AutotuneOptions::kEnabled ||
          options.autotune_options().enabled();
@@ -869,6 +1142,9 @@ bool ShouldApplyOptimizations(
     const Options& options,
     const absl::flat_hash_set<tstring>& optimizations_enabled,
     const absl::flat_hash_set<tstring>& optimizations_default) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_32(mht_32_v, 1145, "", "./tensorflow/core/data/dataset_utils.cc", "ShouldApplyOptimizations");
+
   return (options.optimization_options()
                   .optional_apply_default_optimizations_case() !=
               OptimizationOptions::kApplyDefaultOptimizations ||
@@ -877,6 +1153,9 @@ bool ShouldApplyOptimizations(
 }
 
 int64 GetAutotuneDefaultParallelism(IteratorContext* ctx) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_33(mht_33_v, 1156, "", "./tensorflow/core/data/dataset_utils.cc", "GetAutotuneDefaultParallelism");
+
   if (GetExperiments().contains("initial_parallelism_value")) {
     return std::min(kAutotuneDefaultParallelism, ctx->runner_threadpool_size());
   }
@@ -886,6 +1165,10 @@ int64 GetAutotuneDefaultParallelism(IteratorContext* ctx) {
 // static
 void DatasetExperimentRegistry::Register(const string& experiment,
                                          int64_t rollout_pct) {
+   std::vector<std::string> mht_34_v;
+   mht_34_v.push_back("experiment: \"" + experiment + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTcc mht_34(mht_34_v, 1169, "", "./tensorflow/core/data/dataset_utils.cc", "DatasetExperimentRegistry::Register");
+
   mutex_lock l(*get_dataset_experiment_registry_lock());
   get_dataset_experiments()->insert(std::make_pair(experiment, rollout_pct));
 }

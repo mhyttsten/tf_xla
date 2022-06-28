@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -62,6 +230,9 @@ struct CanonicalDebugOptions {
         dump_compress_protos(opts.xla_dump_compress_protos()),
         dump_hlo_metadata(!opts.xla_dump_disable_metadata()),
         dump_as_long_text(opts.xla_dump_hlo_as_long_text()) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_0(mht_0_v, 233, "", "./tensorflow/compiler/xla/service/dump.cc", "CanonicalDebugOptions");
+
     // This constructor examines the values in `opts` and turns on other flags
     // based on what we think is the user's intent.  To reduce confusion about
     // what was a user-specified value versus an extrapolated value, within this
@@ -106,13 +277,23 @@ struct CanonicalDebugOptions {
       // resort to this hack.
       std::string pattern = opts.xla_dump_hlo_module_re();
       should_dump_module = [pattern](string_view module_name) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("module_name: \"" + std::string(module_name.data(), module_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_1(mht_1_v, 281, "", "./tensorflow/compiler/xla/service/dump.cc", "lambda");
+
         return RE2::PartialMatch(module_name, pattern);
       };
     } else if (!opts.xla_dump_hlo_pass_re().empty() ||
                !opts.xla_dump_to().empty() || output_format_specified) {
-      should_dump_module = [](string_view) { return true; };
+      should_dump_module = [](string_view) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_2(mht_2_v, 289, "", "./tensorflow/compiler/xla/service/dump.cc", "lambda");
+ return true; };
     } else {
-      should_dump_module = [](string_view) { return false; };
+      should_dump_module = [](string_view) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_3(mht_3_v, 294, "", "./tensorflow/compiler/xla/service/dump.cc", "lambda");
+ return false; };
     }
 
     // Initialize should_dump_pass.  This one is easy: We only dump per-pass
@@ -120,10 +301,17 @@ struct CanonicalDebugOptions {
     if (!opts.xla_dump_hlo_pass_re().empty()) {
       std::string pattern = opts.xla_dump_hlo_pass_re();
       should_dump_pass = [pattern](string_view pass_name) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("pass_name: \"" + std::string(pass_name.data(), pass_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_4(mht_4_v, 305, "", "./tensorflow/compiler/xla/service/dump.cc", "lambda");
+
         return RE2::PartialMatch(pass_name, pattern);
       };
     } else {
-      should_dump_pass = [](string_view) { return false; };
+      should_dump_pass = [](string_view) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_5(mht_5_v, 312, "", "./tensorflow/compiler/xla/service/dump.cc", "lambda");
+ return false; };
     }
 
     // Initialize should_dump_pipeline. If the option was not specified, dump
@@ -132,10 +320,17 @@ struct CanonicalDebugOptions {
     if (!opts.xla_dump_hlo_pipeline_re().empty()) {
       std::string pattern = opts.xla_dump_hlo_pipeline_re();
       should_dump_pipeline = [pattern](string_view pipeline_name) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("pipeline_name: \"" + std::string(pipeline_name.data(), pipeline_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_6(mht_6_v, 324, "", "./tensorflow/compiler/xla/service/dump.cc", "lambda");
+
         return RE2::PartialMatch(pipeline_name, pattern);
       };
     } else {
-      should_dump_pipeline = [](string_view) { return true; };
+      should_dump_pipeline = [](string_view) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_7(mht_7_v, 331, "", "./tensorflow/compiler/xla/service/dump.cc", "lambda");
+ return true; };
     }
 
     // Output dirs "sponge" and "test_undeclared_outputs_dir" (case-insensitive)
@@ -148,14 +343,26 @@ struct CanonicalDebugOptions {
         LOG(ERROR) << "--xla_dump_to=" << opts.xla_dump_to()
                    << ", but environment variable TEST_UNDECLARED_OUTPUTS_DIR "
                       "is not set, so cannot dump anywhere.";
-        should_dump_module = [](string_view) { return false; };
-        should_dump_pass = [](string_view) { return false; };
-        should_dump_pipeline = [](string_view) { return false; };
+        should_dump_module = [](string_view) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_8(mht_8_v, 347, "", "./tensorflow/compiler/xla/service/dump.cc", "lambda");
+ return false; };
+        should_dump_pass = [](string_view) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_9(mht_9_v, 351, "", "./tensorflow/compiler/xla/service/dump.cc", "lambda");
+ return false; };
+        should_dump_pipeline = [](string_view) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_10(mht_10_v, 355, "", "./tensorflow/compiler/xla/service/dump.cc", "lambda");
+ return false; };
       }
     }
   }
 
-  bool dumping_to_stdout() const { return dump_to == "-"; }
+  bool dumping_to_stdout() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_11(mht_11_v, 363, "", "./tensorflow/compiler/xla/service/dump.cc", "dumping_to_stdout");
+ return dump_to == "-"; }
 
   std::string dump_to;
   std::function<bool(string_view module_name)> should_dump_module;
@@ -185,6 +392,9 @@ struct CanonicalDebugOptions {
 class DataProducer {
  public:
   void Append(std::function<std::string()> produce_func) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_12(mht_12_v, 395, "", "./tensorflow/compiler/xla/service/dump.cc", "Append");
+
     produce_funcs_.push(std::move(produce_func));
   }
 
@@ -203,6 +413,10 @@ class DataProducer {
 
 static Status WriteStringToFile(tensorflow::Env* env, const std::string& fname,
                                 DataProducer& data_producer, bool compressed) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_13(mht_13_v, 417, "", "./tensorflow/compiler/xla/service/dump.cc", "WriteStringToFile");
+
   std::unique_ptr<tensorflow::WritableFile> file;
   TF_RETURN_IF_ERROR(env->NewWritableFile(fname, &file));
   if (compressed) {
@@ -225,6 +439,11 @@ static Status WriteStringToFile(tensorflow::Env* env, const std::string& fname,
 
 static Status WriteStringToFile(tensorflow::Env* env, const std::string& fname,
                                 absl::string_view data, bool compressed) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("fname: \"" + fname + "\"");
+   mht_14_v.push_back("data: \"" + std::string(data.data(), data.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_14(mht_14_v, 444, "", "./tensorflow/compiler/xla/service/dump.cc", "WriteStringToFile");
+
   if (!compressed) {
     return tensorflow::WriteStringToFile(env, fname, data);
   }
@@ -369,6 +588,9 @@ static absl::optional<std::string> DumpToFileInDirOrStdoutImpl(
 // Currently skips instructions where the root instruction has only parameters
 // as operands AND is not a fusion.
 static bool IsTrivial(const HloComputation& computation) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_15(mht_15_v, 591, "", "./tensorflow/compiler/xla/service/dump.cc", "IsTrivial");
+
   const HloInstruction* root = computation.root_instruction();
   return absl::c_all_of(root->operands(),
                         [&](const HloInstruction* op) {
@@ -421,6 +643,9 @@ static std::vector<std::string> DumpHloModuleImpl(
   }
 
   auto render_graph = [&](RenderedGraphFormat format) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_16(mht_16_v, 646, "", "./tensorflow/compiler/xla/service/dump.cc", "lambda");
+
     StatusOr<std::string> rendered_graph = RenderGraph(
         *module.entry_computation(),
         /*label=*/filename, module.config().debug_options(), format, profile);
@@ -488,6 +713,9 @@ static std::vector<std::string> DumpHloModuleImpl(
 static void DumpHloModuleMetadata(
     const HloModuleMetadataProto& metadata, const CanonicalDebugOptions& opts,
     absl::flat_hash_set<int64_t>* dumped_module_ids) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_17(mht_17_v, 716, "", "./tensorflow/compiler/xla/service/dump.cc", "DumpHloModuleMetadata");
+
   // Return if metadata for this module has already been dumped.
   if (!dumped_module_ids->insert(metadata.canonical_module_id()).second) {
     return;
@@ -527,6 +755,9 @@ static auto& module_id_to_timestamp ABSL_GUARDED_BY(mu) =
     *new absl::flat_hash_map<int64_t, uint64_t>();
 
 int64_t StepNumberForModule(const HloModule& module) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_18(mht_18_v, 758, "", "./tensorflow/compiler/xla/service/dump.cc", "StepNumberForModule");
+
   absl::MutexLock lock(&mu);
   return module_id_to_step_number[module.unique_id()]++;
 }
@@ -536,6 +767,9 @@ int64_t StepNumberForModule(const HloModule& module) {
 // Get a timestamp which we can use as a filename prefix specific to this
 // module.
 std::string TimestampFor(const HloModule& module) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_19(mht_19_v, 770, "", "./tensorflow/compiler/xla/service/dump.cc", "TimestampFor");
+
   if (!module.config().debug_options().xla_dump_include_timestamp()) {
     return "";
   }
@@ -547,6 +781,12 @@ std::string TimestampFor(const HloModule& module) {
 
 static std::string FilenameFor(int unique_id, string_view module_name,
                                string_view prefix, string_view suffix) {
+   std::vector<std::string> mht_20_v;
+   mht_20_v.push_back("module_name: \"" + std::string(module_name.data(), module_name.size()) + "\"");
+   mht_20_v.push_back("prefix: \"" + std::string(prefix.data(), prefix.size()) + "\"");
+   mht_20_v.push_back("suffix: \"" + std::string(suffix.data(), suffix.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_20(mht_20_v, 787, "", "./tensorflow/compiler/xla/service/dump.cc", "FilenameFor");
+
   std::string filename;
   if (!prefix.empty()) {
     absl::StrAppend(&filename, prefix, ".");
@@ -565,22 +805,44 @@ static std::string FilenameFor(int unique_id, string_view module_name,
 
 std::string FilenameFor(const HloModule& module, string_view prefix,
                         string_view suffix) {
+   std::vector<std::string> mht_21_v;
+   mht_21_v.push_back("prefix: \"" + std::string(prefix.data(), prefix.size()) + "\"");
+   mht_21_v.push_back("suffix: \"" + std::string(suffix.data(), suffix.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_21(mht_21_v, 810, "", "./tensorflow/compiler/xla/service/dump.cc", "FilenameFor");
+
   return FilenameFor(module.unique_id(), module.name(), prefix, suffix);
 }
 
 void DumpToFileInDir(const HloModule& module, string_view file_prefix,
                      string_view file_suffix, string_view contents) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("file_prefix: \"" + std::string(file_prefix.data(), file_prefix.size()) + "\"");
+   mht_22_v.push_back("file_suffix: \"" + std::string(file_suffix.data(), file_suffix.size()) + "\"");
+   mht_22_v.push_back("contents: \"" + std::string(contents.data(), contents.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_22(mht_22_v, 821, "", "./tensorflow/compiler/xla/service/dump.cc", "DumpToFileInDir");
+
   DumpToFileInDir(module.config().debug_options(),
                   FilenameFor(module, file_prefix, file_suffix), contents);
 }
 
 void DumpToFileInDir(const DebugOptions& debug_options,
                      absl::string_view filename, absl::string_view contents) {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("filename: \"" + std::string(filename.data(), filename.size()) + "\"");
+   mht_23_v.push_back("contents: \"" + std::string(contents.data(), contents.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_23(mht_23_v, 832, "", "./tensorflow/compiler/xla/service/dump.cc", "DumpToFileInDir");
+
   DumpToFileInDirImpl(filename, contents, CanonicalDebugOptions(debug_options));
 }
 
 void DumpToFileInDirOrStdout(const HloModule& module, string_view file_prefix,
                              string_view file_suffix, string_view contents) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("file_prefix: \"" + std::string(file_prefix.data(), file_prefix.size()) + "\"");
+   mht_24_v.push_back("file_suffix: \"" + std::string(file_suffix.data(), file_suffix.size()) + "\"");
+   mht_24_v.push_back("contents: \"" + std::string(contents.data(), contents.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_24(mht_24_v, 843, "", "./tensorflow/compiler/xla/service/dump.cc", "DumpToFileInDirOrStdout");
+
   DumpToFileInDirOrStdoutImpl(
       FilenameFor(module, file_prefix, file_suffix), contents,
       CanonicalDebugOptions(module.config().debug_options()));
@@ -589,6 +851,13 @@ void DumpToFileInDirOrStdout(const HloModule& module, string_view file_prefix,
 void DumpToFileInDirOrStdout(const DebugOptions& debug_options, int unique_id,
                              string_view module_name, string_view file_prefix,
                              string_view file_suffix, string_view contents) {
+   std::vector<std::string> mht_25_v;
+   mht_25_v.push_back("module_name: \"" + std::string(module_name.data(), module_name.size()) + "\"");
+   mht_25_v.push_back("file_prefix: \"" + std::string(file_prefix.data(), file_prefix.size()) + "\"");
+   mht_25_v.push_back("file_suffix: \"" + std::string(file_suffix.data(), file_suffix.size()) + "\"");
+   mht_25_v.push_back("contents: \"" + std::string(contents.data(), contents.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_25(mht_25_v, 858, "", "./tensorflow/compiler/xla/service/dump.cc", "DumpToFileInDirOrStdout");
+
   DumpToFileInDirOrStdoutImpl(
       FilenameFor(unique_id, module_name, file_prefix, file_suffix), contents,
       CanonicalDebugOptions(debug_options));
@@ -596,6 +865,10 @@ void DumpToFileInDirOrStdout(const DebugOptions& debug_options, int unique_id,
 
 void DumpToFileInDirOrStdout(const HloModule& module, string_view file_prefix,
                              mlir::Operation* op) {
+   std::vector<std::string> mht_26_v;
+   mht_26_v.push_back("file_prefix: \"" + std::string(file_prefix.data(), file_prefix.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_26(mht_26_v, 869, "", "./tensorflow/compiler/xla/service/dump.cc", "DumpToFileInDirOrStdout");
+
   CanonicalDebugOptions opts(module.config().debug_options());
   if (opts.dumping_to_stdout()) return op->dump();
 
@@ -619,6 +892,10 @@ void DumpToFileInDirOrStdout(const HloModule& module, string_view file_prefix,
 void DumpProtobufToFile(const tensorflow::protobuf::Message& proto,
                         const DebugOptions& debug_options,
                         absl::string_view filename) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("filename: \"" + std::string(filename.data(), filename.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_27(mht_27_v, 896, "", "./tensorflow/compiler/xla/service/dump.cc", "DumpProtobufToFile");
+
   CanonicalDebugOptions opts(debug_options);
   tensorflow::Env* env = tensorflow::Env::Default();
   const std::string& dir = opts.dump_to;
@@ -651,11 +928,19 @@ void DumpPerModuleProtobufToFile(const HloModule& module,
                                  const tensorflow::protobuf::Message& proto,
                                  const DebugOptions& debug_options,
                                  absl::string_view name) {
+   std::vector<std::string> mht_28_v;
+   mht_28_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_28(mht_28_v, 932, "", "./tensorflow/compiler/xla/service/dump.cc", "DumpPerModuleProtobufToFile");
+
   const std::string filename = FilenameFor(module, TimestampFor(module), name);
   DumpProtobufToFile(proto, debug_options, filename);
 }
 
 void DumpHloModuleIfEnabled(const HloModule& module, string_view name) {
+   std::vector<std::string> mht_29_v;
+   mht_29_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_29(mht_29_v, 941, "", "./tensorflow/compiler/xla/service/dump.cc", "DumpHloModuleIfEnabled");
+
   CanonicalDebugOptions opts(module.config().debug_options());
   if (opts.should_dump_module(module.name())) {
     DumpHloModuleImpl(module, /*buffer_assn=*/nullptr, /*profile=*/nullptr,
@@ -666,6 +951,10 @@ void DumpHloModuleIfEnabled(const HloModule& module, string_view name) {
 void DumpHloModuleIfEnabled(const HloModule& module,
                             const BufferAssignment& buffer_assn,
                             string_view name) {
+   std::vector<std::string> mht_30_v;
+   mht_30_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_30(mht_30_v, 955, "", "./tensorflow/compiler/xla/service/dump.cc", "DumpHloModuleIfEnabled");
+
   CanonicalDebugOptions opts(module.config().debug_options());
   if (opts.should_dump_module(module.name())) {
     DumpHloModuleImpl(module, &buffer_assn, /*profile=*/nullptr,
@@ -676,6 +965,10 @@ void DumpHloModuleIfEnabled(const HloModule& module,
 void DumpHloModuleIfEnabled(const HloModule& module,
                             const HloExecutionProfile& profile,
                             string_view name) {
+   std::vector<std::string> mht_31_v;
+   mht_31_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_31(mht_31_v, 969, "", "./tensorflow/compiler/xla/service/dump.cc", "DumpHloModuleIfEnabled");
+
   CanonicalDebugOptions opts(module.config().debug_options());
   if (opts.should_dump_module(module.name())) {
     DumpHloModuleImpl(module, /*buffer_assn=*/nullptr, &profile,
@@ -685,10 +978,17 @@ void DumpHloModuleIfEnabled(const HloModule& module,
 
 bool DumpingEnabledForHloModule(string_view hlo_module_name,
                                 const DebugOptions& opts) {
+   std::vector<std::string> mht_32_v;
+   mht_32_v.push_back("hlo_module_name: \"" + std::string(hlo_module_name.data(), hlo_module_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_32(mht_32_v, 982, "", "./tensorflow/compiler/xla/service/dump.cc", "DumpingEnabledForHloModule");
+
   return CanonicalDebugOptions(opts).should_dump_module(hlo_module_name);
 }
 
 bool DumpingToStdout(const DebugOptions& opts) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_33(mht_33_v, 989, "", "./tensorflow/compiler/xla/service/dump.cc", "DumpingToStdout");
+
   return CanonicalDebugOptions(opts).dumping_to_stdout();
 }
 
@@ -722,6 +1022,11 @@ std::vector<std::string> DumpHloModuleBetweenPassesIfEnabled(
 void DumpHloModuleDuringPassIfEnabled(string_view pass_name,
                                       string_view step_name,
                                       const HloModule& module) {
+   std::vector<std::string> mht_34_v;
+   mht_34_v.push_back("pass_name: \"" + std::string(pass_name.data(), pass_name.size()) + "\"");
+   mht_34_v.push_back("step_name: \"" + std::string(step_name.data(), step_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_34(mht_34_v, 1027, "", "./tensorflow/compiler/xla/service/dump.cc", "DumpHloModuleDuringPassIfEnabled");
+
   CanonicalDebugOptions opts(module.config().debug_options());
   if (!opts.should_dump_module(module.name()) ||
       !opts.should_dump_pass(pass_name)) {
@@ -739,6 +1044,9 @@ void DumpHloModuleDuringPassIfEnabled(string_view pass_name,
 
 void DumpHloSnapshotIfEnabled(const HloModule& module,
                               const HloSnapshot& snapshot) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_35(mht_35_v, 1047, "", "./tensorflow/compiler/xla/service/dump.cc", "DumpHloSnapshotIfEnabled");
+
   CanonicalDebugOptions opts(module.config().debug_options());
   if (!opts.should_dump_module(module.name()) || !opts.dump_snapshots) {
     return;
@@ -772,6 +1080,9 @@ void DumpHloSnapshotIfEnabled(const HloModule& module,
 
 void DumpHloSnapshotIfEnabled(const HloSnapshot& snapshot,
                               const DebugOptions& opts) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_36(mht_36_v, 1083, "", "./tensorflow/compiler/xla/service/dump.cc", "DumpHloSnapshotIfEnabled");
+
   CanonicalDebugOptions canonical_opts(opts);
   std::string name = snapshot.hlo().hlo_module().name();
   if (!canonical_opts.should_dump_module(name) ||
@@ -803,6 +1114,9 @@ void DumpHloSnapshotIfEnabled(const HloSnapshot& snapshot,
 }
 
 void DumpHloModuleMetadataIfEnabled(const std::vector<HloModule*>& modules) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdumpDTcc mht_37(mht_37_v, 1117, "", "./tensorflow/compiler/xla/service/dump.cc", "DumpHloModuleMetadataIfEnabled");
+
   absl::flat_hash_set<int64_t> dumped_module_ids;
   for (const HloModule* module : modules) {
     CanonicalDebugOptions opts(module->config().debug_options());

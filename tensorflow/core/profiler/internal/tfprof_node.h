@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_PROFILER_INTERNAL_TFPROF_NODE_H_
 #define TENSORFLOW_CORE_PROFILER_INTERNAL_TFPROF_NODE_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <map>
 #include <set>
@@ -47,20 +215,35 @@ class CallStack {
    public:
     Trace(const CodeDef::Trace* trace,
           const std::map<int64_t, string>* id_to_string)
-        : trace_(trace), id_to_string_(id_to_string) {}
+        : trace_(trace), id_to_string_(id_to_string) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_0(mht_0_v, 219, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "Trace");
+}
 
-    const int32 lineno() const { return trace_->lineno(); }
+    const int32 lineno() const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_1(mht_1_v, 224, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "lineno");
+ return trace_->lineno(); }
     string file() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_2(mht_2_v, 228, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "file");
+
       // Backward compatible with old proto files.
       if (!trace_->file().empty()) return trace_->file();
       return id_to_string_->at(trace_->file_id());
     }
     string function() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_3(mht_3_v, 236, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "function");
+
       // Backward compatible with old proto files.
       if (!trace_->function().empty()) return trace_->function();
       return id_to_string_->at(trace_->function_id());
     }
-    int32 func_start_line() const { return trace_->func_start_line(); }
+    int32 func_start_line() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_4(mht_4_v, 244, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "func_start_line");
+ return trace_->func_start_line(); }
 
    private:
     const CodeDef::Trace* trace_;
@@ -69,14 +252,23 @@ class CallStack {
 
   CallStack(const CodeDef& def, const std::map<int64_t, string>* id_to_string)
       : def_(def) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_5(mht_5_v, 255, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "CallStack");
+
     traces_.reserve(def.traces_size());
     for (const auto& t : def_.traces()) {
       traces_.emplace_back(&t, id_to_string);
     }
   }
 
-  const CodeDef& code_def() const { return def_; }
-  const std::vector<Trace>& traces() const { return traces_; }
+  const CodeDef& code_def() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_6(mht_6_v, 265, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "code_def");
+ return def_; }
+  const std::vector<Trace>& traces() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_7(mht_7_v, 269, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "traces");
+ return traces_; }
 
  private:
   std::vector<Trace> traces_;
@@ -85,13 +277,19 @@ class CallStack {
 
 class ExecStep {
  public:
-  ExecStep() {}
+  ExecStep() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_8(mht_8_v, 281, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "ExecStep");
+}
 
   void AddTimeStats(const string& dev, const NodeExecStats& step_stat);
 
   void AddMemoryStats(const string& dev, const NodeExecStats& step_stat);
 
-  int64_t run_count() const { return exec_.run_count(); }
+  int64_t run_count() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_9(mht_9_v, 290, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "run_count");
+ return exec_.run_count(); }
   // The execution time of an op. If it runs on accelerator, then it's
   // accelerator_exec_micros(). Otherwise, it's CPU time.
   int64_t exec_micros() const;
@@ -108,9 +306,18 @@ class ExecStep {
       const {
     return cpu_execs_;
   }
-  int64_t all_start_micros() const { return exec_.all_start_micros(); }
-  int64_t latest_end_micros() const { return exec_.latest_end_micros(); }
+  int64_t all_start_micros() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_10(mht_10_v, 310, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "all_start_micros");
+ return exec_.all_start_micros(); }
+  int64_t latest_end_micros() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_11(mht_11_v, 314, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "latest_end_micros");
+ return exec_.latest_end_micros(); }
   int64_t lastest_schedule_end_micros() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_12(mht_12_v, 318, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "lastest_schedule_end_micros");
+
     int64_t ret = 0;
     for (const auto& exec : cpu_execs_) {
       for (const auto& pair : exec.second) {
@@ -120,6 +327,9 @@ class ExecStep {
     return ret;
   }
   int64_t requested_bytes() const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_13(mht_13_v, 330, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "requested_bytes");
+
     int64_t requested_bytes = 0;
     for (const ExecMemory& exec : memory_execs_) {
       requested_bytes += exec.requested_bytes();
@@ -127,6 +337,9 @@ class ExecStep {
     return requested_bytes;
   }
   int64_t peak_bytes() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_14(mht_14_v, 340, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "peak_bytes");
+
     int64_t peak_bytes = 0;
     for (const ExecMemory& exec : memory_execs_) {
       peak_bytes += exec.peak_bytes();
@@ -134,6 +347,9 @@ class ExecStep {
     return peak_bytes;
   }
   int64_t residual_bytes() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_15(mht_15_v, 350, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "residual_bytes");
+
     int64_t residual_bytes = 0;
     for (const ExecMemory& exec : memory_execs_) {
       residual_bytes += exec.residual_bytes();
@@ -141,6 +357,9 @@ class ExecStep {
     return residual_bytes;
   }
   int64_t output_bytes() const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_16(mht_16_v, 360, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "output_bytes");
+
     int64_t output_bytes = 0;
     for (const ExecMemory& exec : memory_execs_) {
       output_bytes += exec.output_bytes();
@@ -148,6 +367,9 @@ class ExecStep {
     return output_bytes;
   }
   int64_t accelerator_temp_bytes() const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_17(mht_17_v, 370, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "accelerator_temp_bytes");
+
     int64_t accelerator_temp_bytes = 0;
     for (const ExecMemory& exec : memory_execs_) {
       accelerator_temp_bytes += exec.accelerator_temp_bytes();
@@ -155,6 +377,9 @@ class ExecStep {
     return accelerator_temp_bytes;
   }
   int64_t host_temp_bytes() const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_18(mht_18_v, 380, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "host_temp_bytes");
+
     int64_t host_temp_bytes = 0;
     for (const ExecMemory& exec : memory_execs_) {
       host_temp_bytes += exec.host_temp_bytes();
@@ -162,6 +387,9 @@ class ExecStep {
     return host_temp_bytes;
   }
   int64_t accelerator_persistent_bytes() const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_19(mht_19_v, 390, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "accelerator_persistent_bytes");
+
     int64_t accelerator_persistent_bytes = 0;
     for (const ExecMemory& exec : memory_execs_) {
       accelerator_persistent_bytes += exec.accelerator_persistent_bytes();
@@ -169,6 +397,9 @@ class ExecStep {
     return accelerator_persistent_bytes;
   }
   int64_t host_persistent_bytes() const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_20(mht_20_v, 400, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "host_persistent_bytes");
+
     int64_t host_persistent_bytes = 0;
     for (const ExecMemory& exec : memory_execs_) {
       host_persistent_bytes += exec.host_persistent_bytes();
@@ -184,10 +415,16 @@ class ExecStep {
   }
 
   const std::vector<AllocationRecord>& allocations() const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_21(mht_21_v, 418, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "allocations");
+
     return allocations_;
   }
 
   const ExecProfile& ToProto() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_22(mht_22_v, 425, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "ToProto");
+
     exec_.mutable_accelerator_execs()->clear();
     for (const auto& e : accelerator_execs_) {
       auto& exec_time = (*exec_.mutable_accelerator_execs())[e.first];
@@ -226,6 +463,9 @@ class ExecStep {
   }
 
   void FromProto(const ExecProfile& exec) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_23(mht_23_v, 466, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "FromProto");
+
     exec_.Clear();
     exec_.MergeFrom(exec);
 
@@ -309,12 +549,18 @@ class TFGraphNode {
   TFGraphNode(const ProfileNode& node, const ProfileProto& profile,
               const std::map<int64_t, string>* id_to_string,
               const std::map<string, std::unique_ptr<TFGraphNode>>* nodes_map) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_24(mht_24_v, 552, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "TFGraphNode");
+
     nodes_map_ = nodes_map;
     FromProto(node, profile, id_to_string);
   }
 
   TFGraphNode(const NodeDef* node, int64_t id,
               const std::map<string, std::unique_ptr<TFGraphNode>>* nodes_map) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_25(mht_25_v, 561, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "TFGraphNode");
+
     nodes_map_ = nodes_map;
     node_.set_id(id);
     node_.set_name(node->name());
@@ -343,31 +589,60 @@ class TFGraphNode {
   }
 
   void AddInput(const string& input, int64_t output_index, int input_idx) {
+   std::vector<std::string> mht_26_v;
+   mht_26_v.push_back("input: \"" + input + "\"");
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_26(mht_26_v, 593, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "AddInput");
+
     inputs_[input_idx] = input;
     src_output_idx_[input] = output_index;
   }
 
-  void AddOpType(const string& op_type) { op_types_.insert(op_type); }
+  void AddOpType(const string& op_type) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("op_type: \"" + op_type + "\"");
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_27(mht_27_v, 602, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "AddOpType");
+ op_types_.insert(op_type); }
 
   void AddStepStat(int64_t step, const string& device,
                    const NodeExecStats& step_stat);
 
-  void AddFloatOps(int64_t float_ops) { node_.set_float_ops(float_ops); }
+  void AddFloatOps(int64_t float_ops) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_28(mht_28_v, 610, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "AddFloatOps");
+ node_.set_float_ops(float_ops); }
 
   // TODO(xpan): This could take a lot of memory.
   void AddCode(const CodeDef& code,
                const std::map<int64_t, string>* id_to_string) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_29(mht_29_v, 617, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "AddCode");
+
     if (!call_stack_) {
       call_stack_.reset(new CallStack(code, id_to_string));
     }
   }
 
-  const string& name() const { return node_.name(); }
-  int64_t id() const { return node_.id(); }
-  const string& op() const { return node_.op(); }
-  const ProfileNode& node() { return node_; }
+  const string& name() const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_30(mht_30_v, 626, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "name");
+ return node_.name(); }
+  int64_t id() const {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_31(mht_31_v, 630, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "id");
+ return node_.id(); }
+  const string& op() const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_32(mht_32_v, 634, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "op");
+ return node_.op(); }
+  const ProfileNode& node() {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_33(mht_33_v, 638, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "node");
+ return node_; }
 
   bool trackable(int64_t step) const {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_34(mht_34_v, 643, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "trackable");
+
     auto exec = execs_.find(step);
     if (exec == execs_.end()) return false;
 
@@ -380,6 +655,9 @@ class TFGraphNode {
 
   const ProfileNode& ToProto(
       const std::map<string, std::unique_ptr<TFGraphNode>>& nodes_map) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_35(mht_35_v, 658, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "ToProto");
+
     node_.clear_shape();
     node_.mutable_shape()->Reserve(shape().size());
     for (int64_t s : shape()) {
@@ -434,6 +712,9 @@ class TFGraphNode {
 
   void FromProto(const ProfileNode& node, const ProfileProto& profile,
                  const std::map<int64_t, string>* id_to_string) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_36(mht_36_v, 715, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "FromProto");
+
     node_.Clear();
     node_.MergeFrom(node);
 
@@ -485,6 +766,9 @@ class TFGraphNode {
   // Number of times the graph node is executed. When step < 0, the
   // average number of times executed across all steps.
   int64_t run_count(int64_t step) const {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_37(mht_37_v, 769, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "run_count");
+
     if (execs_.empty()) {
       return 0;
     }
@@ -504,6 +788,9 @@ class TFGraphNode {
   // This is overall computation time, including both cpu and accelerator.
   // Note, cpu and accelerator might or might not run in parallel.
   int64_t exec_micros(int64_t step) const {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_38(mht_38_v, 791, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "exec_micros");
+
     // Empty when no RunMetadata is provided.
     if (execs_.empty()) {
       return 0;
@@ -526,6 +813,9 @@ class TFGraphNode {
   // This is accelerator computation time of a step, or average of
   // multiple step, when step < 0.
   int64_t accelerator_exec_micros(int64_t step) const {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_39(mht_39_v, 816, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "accelerator_exec_micros");
+
     // Empty when no RunMetadata is provided.
     if (execs_.empty()) {
       return 0;
@@ -548,6 +838,9 @@ class TFGraphNode {
   // This is cpu computation time of a step, or average of
   // multiple step, when step < 0.
   int64_t cpu_exec_micros(int64_t step) const {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_40(mht_40_v, 841, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "cpu_exec_micros");
+
     // Empty when no RunMetadata is provided.
     if (execs_.empty()) {
       return 0;
@@ -567,12 +860,27 @@ class TFGraphNode {
     return total_micros / execs_.size();
   }
 
-  int64_t requested_bytes(int64_t step) const { GRAPH_NODE_BYTES(requested); }
-  int64_t peak_bytes(int64_t step) const { GRAPH_NODE_BYTES(peak); }
-  int64_t residual_bytes(int64_t step) const { GRAPH_NODE_BYTES(residual); }
-  int64_t output_bytes(int64_t step) const { GRAPH_NODE_BYTES(output); }
+  int64_t requested_bytes(int64_t step) const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_41(mht_41_v, 864, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "requested_bytes");
+ GRAPH_NODE_BYTES(requested); }
+  int64_t peak_bytes(int64_t step) const {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_42(mht_42_v, 868, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "peak_bytes");
+ GRAPH_NODE_BYTES(peak); }
+  int64_t residual_bytes(int64_t step) const {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_43(mht_43_v, 872, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "residual_bytes");
+ GRAPH_NODE_BYTES(residual); }
+  int64_t output_bytes(int64_t step) const {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_44(mht_44_v, 876, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "output_bytes");
+ GRAPH_NODE_BYTES(output); }
 
   int64_t all_start_micros(int64_t step) const {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_45(mht_45_v, 881, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "all_start_micros");
+
     auto exec = execs_.find(step);
     if (exec == execs_.end()) {
       return 0;
@@ -581,6 +889,9 @@ class TFGraphNode {
   }
 
   int64_t latest_end_micros(int64_t step) const {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_46(mht_46_v, 892, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "latest_end_micros");
+
     auto exec = execs_.find(step);
     if (exec == execs_.end()) {
       return 0;
@@ -589,6 +900,9 @@ class TFGraphNode {
   }
 
   int64_t lastest_schedule_end_micros(int64_t step) const {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_47(mht_47_v, 903, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "lastest_schedule_end_micros");
+
     auto exec = execs_.find(step);
     if (exec == execs_.end()) {
       return 0;
@@ -616,6 +930,9 @@ class TFGraphNode {
   const std::map<int64_t, ExecStep>& all_op_execs() const { return execs_; }
 
   int64_t accelerator_temp_bytes(int64_t step) const {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_48(mht_48_v, 933, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "accelerator_temp_bytes");
+
     auto exec = execs_.find(step);
     if (exec == execs_.end()) {
       return 0;
@@ -623,6 +940,9 @@ class TFGraphNode {
     return exec->second.accelerator_temp_bytes();
   }
   int64_t host_temp_bytes(int64_t step) const {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_49(mht_49_v, 943, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "host_temp_bytes");
+
     auto exec = execs_.find(step);
     if (exec == execs_.end()) {
       return 0;
@@ -630,6 +950,9 @@ class TFGraphNode {
     return exec->second.host_temp_bytes();
   }
   int64_t accelerator_persistent_bytes() const {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_50(mht_50_v, 953, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "accelerator_persistent_bytes");
+
     int64_t persistent_bytes = 0;
     for (const auto& exec : execs_) {
       persistent_bytes = std::max(persistent_bytes,
@@ -646,6 +969,9 @@ class TFGraphNode {
   }
 
   const std::vector<AllocationRecord>& allocations(int64_t step) const {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_51(mht_51_v, 972, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "allocations");
+
     auto exec = execs_.find(step);
     if (exec == execs_.end()) {
       return empty_allocations_;
@@ -654,6 +980,9 @@ class TFGraphNode {
   }
 
   int64_t parameters() const {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_52(mht_52_v, 983, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "parameters");
+
     if (!shape().empty()) {
       int64_t params = 1;
       bool complete_shape = true;
@@ -675,6 +1004,9 @@ class TFGraphNode {
   }
 
   int64_t float_ops(int64_t step) const {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_53(mht_53_v, 1007, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "float_ops");
+
     // If not run, return static analysis.
     if (execs_.empty()) {
       return node_.float_ops();
@@ -682,12 +1014,28 @@ class TFGraphNode {
     // Otherwise, return dynamic float_ops.
     return node_.float_ops() * run_count(step);
   }
-  const CallStack* call_stack() { return call_stack_.get(); }
-  string canonical_device() const { return node_.canonical_device(); }
-  string host_device() const { return node_.host_device(); }
-  const std::set<string>& op_types() const { return op_types_; }
+  const CallStack* call_stack() {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_54(mht_54_v, 1018, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "call_stack");
+ return call_stack_.get(); }
+  string canonical_device() const {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_55(mht_55_v, 1022, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "canonical_device");
+ return node_.canonical_device(); }
+  string host_device() const {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_56(mht_56_v, 1026, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "host_device");
+ return node_.host_device(); }
+  const std::set<string>& op_types() const {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_57(mht_57_v, 1030, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "op_types");
+ return op_types_; }
 
   const AttrValue* op_attrs(const string& name) const {
+   std::vector<std::string> mht_58_v;
+   mht_58_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_58(mht_58_v, 1036, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "op_attrs");
+
     const auto it = node_.attrs().find(name);
     if (it == node_.attrs().end()) {
       return nullptr;
@@ -695,9 +1043,15 @@ class TFGraphNode {
     return &it->second;
   }
 
-  const std::vector<int64_t>& shape() const { return shape_; }
+  const std::vector<int64_t>& shape() const {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_59(mht_59_v, 1047, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "shape");
+ return shape_; }
 
   const std::map<int, std::vector<int64_t>>& output_shapes() const {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_60(mht_60_v, 1052, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "output_shapes");
+
     return output_shapes_;
   }
 
@@ -769,9 +1123,16 @@ class TFMultiGraphNode {
         residual_bytes_(0),
         output_bytes_(0),
         float_ops_(0),
-        parameters_(0) {}
+        parameters_(0) {
+   std::vector<std::string> mht_61_v;
+   mht_61_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_61(mht_61_v, 1128, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "TFMultiGraphNode");
+}
 
   bool SnapshotNodes(int64_t step, const std::vector<string>& type_regexes) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_62(mht_62_v, 1133, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "SnapshotNodes");
+
     run_count_ = 0;
     exec_micros_ = 0;
     accelerator_exec_micros_ = 0;
@@ -820,9 +1181,15 @@ class TFMultiGraphNode {
     return true;
   }
 
-  int64_t step() const { return step_; }
+  int64_t step() const {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_63(mht_63_v, 1185, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "step");
+ return step_; }
 
   void AddGraphNode(const TFGraphNode* node) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_64(mht_64_v, 1190, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "AddGraphNode");
+
     if (nodes_.find(node->name()) != nodes_.end()) {
       return;
     }
@@ -833,27 +1200,69 @@ class TFMultiGraphNode {
     return snapshot_nodes_;
   }
 
-  const string& name() const { return name_; }
+  const string& name() const {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_65(mht_65_v, 1204, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "name");
+ return name_; }
 
-  int64_t run_count() const { return run_count_; }
-  int64_t exec_micros() const { return exec_micros_; }
-  int64_t accelerator_exec_micros() const { return accelerator_exec_micros_; }
-  int64_t cpu_exec_micros() const { return cpu_exec_micros_; }
+  int64_t run_count() const {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_66(mht_66_v, 1209, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "run_count");
+ return run_count_; }
+  int64_t exec_micros() const {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_67(mht_67_v, 1213, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "exec_micros");
+ return exec_micros_; }
+  int64_t accelerator_exec_micros() const {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_68(mht_68_v, 1217, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "accelerator_exec_micros");
+ return accelerator_exec_micros_; }
+  int64_t cpu_exec_micros() const {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_69(mht_69_v, 1221, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "cpu_exec_micros");
+ return cpu_exec_micros_; }
 
-  int64_t requested_bytes() const { return requested_bytes_; }
-  int64_t peak_bytes() const { return peak_bytes_; }
-  int64_t residual_bytes() const { return residual_bytes_; }
-  int64_t output_bytes() const { return output_bytes_; }
+  int64_t requested_bytes() const {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_70(mht_70_v, 1226, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "requested_bytes");
+ return requested_bytes_; }
+  int64_t peak_bytes() const {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_71(mht_71_v, 1230, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "peak_bytes");
+ return peak_bytes_; }
+  int64_t residual_bytes() const {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_72(mht_72_v, 1234, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "residual_bytes");
+ return residual_bytes_; }
+  int64_t output_bytes() const {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_73(mht_73_v, 1238, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "output_bytes");
+ return output_bytes_; }
 
-  int64_t float_ops() const { return float_ops_; }
+  int64_t float_ops() const {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_74(mht_74_v, 1243, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "float_ops");
+ return float_ops_; }
 
-  int64_t parameters() const { return parameters_; }
+  int64_t parameters() const {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_75(mht_75_v, 1248, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "parameters");
+ return parameters_; }
 
-  const std::set<string>& devices() const { return devices_; }
+  const std::set<string>& devices() const {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_76(mht_76_v, 1253, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "devices");
+ return devices_; }
 
-  const std::set<string>& op_types() const { return op_types_; }
+  const std::set<string>& op_types() const {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_77(mht_77_v, 1258, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "op_types");
+ return op_types_; }
 
-  const std::vector<std::vector<int64_t>>& shapes() const { return shapes_; }
+  const std::vector<std::vector<int64_t>>& shapes() const {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPStfprof_nodeDTh mht_78(mht_78_v, 1263, "", "./tensorflow/core/profiler/internal/tfprof_node.h", "shapes");
+ return shapes_; }
 
  private:
   std::vector<const TFGraphNode*> pick_nodes(

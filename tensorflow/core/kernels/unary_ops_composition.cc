@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSunary_ops_compositionDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSunary_ops_compositionDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSunary_ops_compositionDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,11 +212,19 @@ struct UnaryOpsCompositionBase {
   };
 
   bool HasComputeFn(const string& name) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSunary_ops_compositionDTcc mht_0(mht_0_v, 216, "", "./tensorflow/core/kernels/unary_ops_composition.cc", "HasComputeFn");
+
     return compute_fns.find(name) != compute_fns.end();
   }
 
  protected:
   void RegisterComputeFn(const string& name, ComputeFn compute_fn, int cost) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSunary_ops_compositionDTcc mht_1(mht_1_v, 225, "", "./tensorflow/core/kernels/unary_ops_composition.cc", "RegisterComputeFn");
+
     VLOG(5) << "Register compute fn: name=" << name << " cost=" << cost;
     compute_fns[name] = {compute_fn, cost};
   }
@@ -58,6 +234,9 @@ struct UnaryOpsCompositionBase {
 
   Status ExportComputeFns(const std::vector<string>& op_names,
                           std::vector<ComputeFn>* fns, int* cost) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSunary_ops_compositionDTcc mht_2(mht_2_v, 237, "", "./tensorflow/core/kernels/unary_ops_composition.cc", "ExportComputeFns");
+
     for (const string& op_name : op_names) {
       auto it = compute_fns.find(op_name);
       if (it == compute_fns.end())
@@ -91,6 +270,9 @@ class UnaryOpsComposition : public OpKernel {
 
   explicit UnaryOpsComposition(OpKernelConstruction* context)
       : OpKernel(context) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSunary_ops_compositionDTcc mht_3(mht_3_v, 273, "", "./tensorflow/core/kernels/unary_ops_composition.cc", "UnaryOpsComposition");
+
     OP_REQUIRES_OK(context, context->GetAttr("op_names", &op_names_));
 
     OP_REQUIRES(context, !op_names_.empty(),
@@ -105,6 +287,9 @@ class UnaryOpsComposition : public OpKernel {
   }
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSunary_ops_compositionDTcc mht_4(mht_4_v, 290, "", "./tensorflow/core/kernels/unary_ops_composition.cc", "Compute");
+
     const Tensor& in = ctx->input(0);
     Tensor* out = nullptr;
     OP_REQUIRES_OK(
@@ -116,6 +301,9 @@ class UnaryOpsComposition : public OpKernel {
     const std::size_t num_fns = fns_.size();
     auto compute_fn = [this, &in_flat, &out_flat, &num_fns](int64_t begin,
                                                             int64_t end) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSunary_ops_compositionDTcc mht_5(mht_5_v, 304, "", "./tensorflow/core/kernels/unary_ops_composition.cc", "lambda");
+
       int64_t len = end - begin;
       const InputBuffer in_slice(in_flat.data() + begin, len);
       const InputBuffer scratch_slice(out_flat.data() + begin, len);
@@ -141,6 +329,9 @@ class UnaryOpsComposition : public OpKernel {
       Eigen::internal::unpacket_traits<Packet>::size;
 
   static inline int64_t AlignBlockSize(int64_t block_size) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSunary_ops_compositionDTcc mht_6(mht_6_v, 332, "", "./tensorflow/core/kernels/unary_ops_composition.cc", "AlignBlockSize");
+
     // Align block size to packet size and account for unrolling in run above.
     if (block_size >= 16 * kPacketSize) {
       return (block_size + 4 * kPacketSize - 1) & ~(4 * kPacketSize - 1);
@@ -218,6 +409,9 @@ struct UnaryOpsCompositionSupport<float> : UnaryOpsCompositionBase<float> {
   using T = float;
 
   UnaryOpsCompositionSupport() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSunary_ops_compositionDTcc mht_7(mht_7_v, 412, "", "./tensorflow/core/kernels/unary_ops_composition.cc", "UnaryOpsCompositionSupport");
+
     // UnaryOp functors.
     REGISTER_COMPUTE_FN(Abs);
     REGISTER_COMPUTE_FN(Acos);
@@ -295,6 +489,9 @@ struct UnaryOpsCompositionSupport<Eigen::half>
   using T = Eigen::half;
 
   UnaryOpsCompositionSupport() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSunary_ops_compositionDTcc mht_8(mht_8_v, 492, "", "./tensorflow/core/kernels/unary_ops_composition.cc", "UnaryOpsCompositionSupport");
+
     REGISTER_COMPUTE_FN(Abs);
     REGISTER_COMPUTE_FN(Ceil);
     REGISTER_COMPUTE_FN(Cos);
@@ -349,6 +546,9 @@ struct UnaryOpsCompositionSupport<double> : UnaryOpsCompositionBase<double> {
   using T = double;
 
   UnaryOpsCompositionSupport() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSunary_ops_compositionDTcc mht_9(mht_9_v, 549, "", "./tensorflow/core/kernels/unary_ops_composition.cc", "UnaryOpsCompositionSupport");
+
     REGISTER_COMPUTE_FN(Abs);
     REGISTER_COMPUTE_FN(Acos);
     REGISTER_COMPUTE_FN(Acosh);

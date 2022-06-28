@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -75,14 +243,20 @@ template <>
 struct HandleToObject<ShapeHandle> {
   typedef ShapeHandle Object;
 
-  static ShapeHandle Unknown() { return ShapeHandle(); }
+  static ShapeHandle Unknown() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_0(mht_0_v, 247, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "Unknown");
+ return ShapeHandle(); }
 };
 
 template <>
 struct HandleToObject<DimensionHandle> {
   typedef int64_t Object;
 
-  static int64_t Unknown() { return -1; }
+  static int64_t Unknown() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_1(mht_1_v, 257, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "Unknown");
+ return -1; }
 };
 
 template <typename Handle>
@@ -91,9 +265,15 @@ struct Processor {};
 template <>
 struct Processor<ShapeHandle> {
   // Extract the shape or dim denoted by the handle.
-  void ExtractValue(ShapeHandle h, ShapeHandle* result) { *result = h; }
+  void ExtractValue(ShapeHandle h, ShapeHandle* result) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_2(mht_2_v, 269, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "ExtractValue");
+ *result = h; }
   // Merge the shapes or dims.
   Status Merge(ShapeHandle h1, ShapeHandle h2, ShapeHandle* result) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_3(mht_3_v, 274, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "Merge");
+
     if (InferenceContext::RankKnown(*result)) {
       // The result was initialized in a previous merge to a shape of known
       // rank, make sure we preserve that information.
@@ -113,6 +293,9 @@ struct Processor<DimensionHandle> {
   // Assign a negative id to unknown dimensions, starting at -2 (the -1 id
   // reserved by TensorFlow).
   void ExtractValue(DimensionHandle d, int64_t* result) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_4(mht_4_v, 296, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "ExtractValue");
+
     if (!InferenceContext::ValueKnown(d)) {
       *result = -counter;
       counter++;
@@ -133,6 +316,9 @@ struct Processor<DimensionHandle> {
   // otherwise look for a symbolic shape. If there is no symbolic shape and no
   // known shape, the shape if fully unknown so return -1.
   Status Merge(DimensionHandle d1, DimensionHandle d2, int64_t* result) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_5(mht_5_v, 319, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "Merge");
+
     const int64_t dim1 = InferenceContext::Value(d1);
     const int64_t dim2 = InferenceContext::Value(d2);
 
@@ -157,6 +343,9 @@ struct Processor<DimensionHandle> {
 
  private:
   Status RefineDim(int64_t dim, int64_t* result) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_6(mht_6_v, 346, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "RefineDim");
+
     if (*result >= 0) {
       if (!(*result == dim || dim < 0)) {
         return errors::InvalidArgument("Inconsistent dimensions detected");
@@ -177,8 +366,14 @@ struct Processor<DimensionHandle> {
 template <typename Handle>
 class DisjointSet {
  public:
-  DisjointSet() {}
+  DisjointSet() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_7(mht_7_v, 370, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "DisjointSet");
+}
   ~DisjointSet() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_8(mht_8_v, 374, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "~DisjointSet");
+
     for (auto rep : nodes_) {
       delete rep.second;
     }
@@ -213,6 +408,9 @@ class DisjointSet {
 template <typename Handle>
 const typename HandleToObject<Handle>::Object
 DisjointSet<Handle>::GetMergedValue(Handle value) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_9(mht_9_v, 411, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "DisjointSet<Handle>::GetMergedValue");
+
   Rep* rep = Find(value);
   if (!rep) {
     // We don't know anything about this handle.
@@ -223,6 +421,9 @@ DisjointSet<Handle>::GetMergedValue(Handle value) {
 
 template <typename Handle>
 Status DisjointSet<Handle>::Merge(Handle x, Handle y) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_10(mht_10_v, 424, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "DisjointSet<Handle>::Merge");
+
   Rep* x_root = Find(x);
   Rep* y_root = Find(y);
 
@@ -250,6 +451,9 @@ Status DisjointSet<Handle>::Merge(Handle x, Handle y) {
 
 template <typename Handle>
 typename DisjointSet<Handle>::Rep* DisjointSet<Handle>::Find(Handle value) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_11(mht_11_v, 454, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "DisjointSet<Handle>::Find");
+
   auto it = nodes_.find(value);
   if (it == nodes_.end()) {
     // This is the first time we process this handle, create an entry for it.
@@ -278,16 +482,25 @@ typename DisjointSet<Handle>::Rep* DisjointSet<Handle>::Find(Handle value) {
 // TODO(dyoon): Move many helper functions in this file (including those within
 // SymbolicShapeRefiner class) to shared utils.
 bool IsEnqueue(const NodeDef& n) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_12(mht_12_v, 485, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "IsEnqueue");
+
   return (n.op().find("Enqueue") != string::npos &&
           n.op().find("EnqueueMany") == string::npos);
 }
 
 bool IsDequeue(const NodeDef& n) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_13(mht_13_v, 493, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "IsDequeue");
+
   return (n.op().find("Dequeue") != string::npos &&
           n.op().find("DequeueMany") == string::npos);
 }
 
 bool HasAnyUnknownDimensions(const TensorShapeProto& proto) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_14(mht_14_v, 501, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "HasAnyUnknownDimensions");
+
   if (proto.unknown_rank()) {
     return true;
   }
@@ -306,6 +519,9 @@ void VerboseLogUnknownDimensionSources(
         input_properties_map,
     const absl::flat_hash_map<string, std::vector<OpInfo::TensorProperties>>&
         output_properties_map) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_15(mht_15_v, 522, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "VerboseLogUnknownDimensionSources");
+
   if (!VLOG_IS_ON(2)) {
     return;
   }
@@ -399,6 +615,9 @@ TensorProto MakeTensorProtoFromShape(InferenceContext* ic,
                                      const ShapeHandle& shape,
                                      const ShapeHandle& tensor_as_shape,
                                      const DataType& dtype) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_16(mht_16_v, 618, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "MakeTensorProtoFromShape");
+
   TensorProto tensor_proto;
   tensor_proto.set_dtype(dtype);
   auto* shape_proto = tensor_proto.mutable_tensor_shape();
@@ -421,6 +640,9 @@ TensorProto MakeTensorProtoFromShape(InferenceContext* ic,
 NodeDef MakeConstNodeDefFromTensorProto(InferenceContext* ic,
                                         const TensorProto& tensor_proto,
                                         const DataType& dtype) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_17(mht_17_v, 643, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "MakeConstNodeDefFromTensorProto");
+
   NodeDef const_node;
   const_node.set_name("const_from_shape");
   const_node.set_op("Const");
@@ -437,11 +659,17 @@ NodeDef MakeConstNodeDefFromShape(InferenceContext* ic,
                                   const ShapeHandle& shape,
                                   const ShapeHandle& tensor_as_shape,
                                   const DataType& dtype) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_18(mht_18_v, 662, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "MakeConstNodeDefFromShape");
+
   return MakeConstNodeDefFromTensorProto(
       ic, MakeTensorProtoFromShape(ic, shape, tensor_as_shape, dtype), dtype);
 }
 
 bool IsNumericType(const DataType dtype) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_19(mht_19_v, 670, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "IsNumericType");
+
   static const gtl::FlatSet<DataType>* const kRealNumberTypes =
       CHECK_NOTNULL((new gtl::FlatSet<DataType>{
           // Floating point.
@@ -473,6 +701,9 @@ bool IsNumericType(const DataType dtype) {
 // Returns the number of elements in the input (const) tensor.
 // -1 if the tensor has no shape or unknown rank.
 uint64 NumElementsFromTensorProto(const TensorProto& tensor_proto) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_20(mht_20_v, 704, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "NumElementsFromTensorProto");
+
   if (!tensor_proto.has_tensor_shape()) {
     return -1;
   }
@@ -498,6 +729,9 @@ uint64 NumElementsFromTensorProto(const TensorProto& tensor_proto) {
 bool IsShapeFullyDefinedIntegerVectorOrScalar(
     InferenceContext* ic, const ShapeHandle& shape,
     const ShapeHandle& tensor_as_shape, const DataType& dtype) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_21(mht_21_v, 732, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "IsShapeFullyDefinedIntegerVectorOrScalar");
+
   if (!ic->FullyDefined(shape) || ic->Rank(shape) > 1 ||
       !ic->FullyDefined(tensor_as_shape) ||
       (dtype != DT_INT32 && dtype != DT_INT64)) {
@@ -524,11 +758,20 @@ bool IsShapeFullyDefinedIntegerVectorOrScalar(
 class TopoQueue {
  public:
   explicit TopoQueue(const std::vector<const NodeDef*>& topo_order)
-      : topo_order_(TopoOrder(topo_order)) {}
+      : topo_order_(TopoOrder(topo_order)) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_22(mht_22_v, 762, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "TopoQueue");
+}
 
-  void push(const NodeDef* n) { queue_.emplace(n, topo_order_.at(n)); }
+  void push(const NodeDef* n) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_23(mht_23_v, 767, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "push");
+ queue_.emplace(n, topo_order_.at(n)); }
 
   const NodeDef* pop() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_24(mht_24_v, 772, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "pop");
+
     CHECK(!empty());
     auto it = queue_.begin();
     const NodeDef* n = it->first;
@@ -536,8 +779,14 @@ class TopoQueue {
     return n;
   }
 
-  bool empty() const { return queue_.empty(); }
-  std::size_t size() const { return queue_.size(); }
+  bool empty() const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_25(mht_25_v, 783, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "empty");
+ return queue_.empty(); }
+  std::size_t size() const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_26(mht_26_v, 787, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "size");
+ return queue_.size(); }
 
  private:
   using NodeAndId = std::pair<const NodeDef*, int>;
@@ -566,6 +815,10 @@ class TopoQueue {
 
 
 bool IsAllowListedOpTypeForEvaluateNode(const string& op_type) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("op_type: \"" + op_type + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_27(mht_27_v, 819, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "IsAllowListedOpTypeForEvaluateNode");
+
   static const gtl::FlatSet<string>* const kOpTpeAllowlist =
       CHECK_NOTNULL((new gtl::FlatSet<string>{
           // Unary arithmetic ops
@@ -626,6 +879,9 @@ bool IsAllowListedOpTypeForEvaluateNode(const string& op_type) {
 // -5] really means [x, 5, ?, x]). Before we can output the tensors as shapes,
 // we need to normalize them: mark all values <-1 as "unknown" (-1).
 static void NormalizeShapeForOutput(TensorShapeProto* shape) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_28(mht_28_v, 882, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "NormalizeShapeForOutput");
+
   for (int i = 0; i < shape->dim_size(); i++) {
     if (shape->dim(i).size() < -1) {
       VLOG(2) << "Normalizing dimension: " << i << " from "
@@ -650,11 +906,17 @@ class SymbolicShapeRefiner {
         function_library_(OpRegistry::Global(), graph.graph()->library()),
         fed_ports_(fed_ports),
         aggressive_shape_inference_(aggressive_shape_inference) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_29(mht_29_v, 909, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "SymbolicShapeRefiner");
+
     graph_def_version_ = graph.graph()->versions().producer();
     node_to_context_.reserve(graph.graph()->node_size());
   }
 
-  const GraphView& graph() const { return graph_; }
+  const GraphView& graph() const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_30(mht_30_v, 917, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "graph");
+ return graph_; }
 
   struct NodeContext {
     const OpRegistrationData* op_data;
@@ -675,6 +937,9 @@ class SymbolicShapeRefiner {
     // Similar to DebugString() in InferenceContext, but prints out
     // kUnknownDimFromConst properly.
     std::string StringifyShapeHandle(ShapeHandle s) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_31(mht_31_v, 940, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "StringifyShapeHandle");
+
       auto* ic = inference_context.get();
       if (ic->RankKnown(s)) {
         std::vector<std::string> vals;
@@ -693,6 +958,9 @@ class SymbolicShapeRefiner {
     }
 
     std::string DebugString(const NodeDef& node) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_32(mht_32_v, 961, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "DebugString");
+
       std::string output;
       auto* ic = inference_context.get();
       absl::StrAppend(
@@ -757,6 +1025,9 @@ class SymbolicShapeRefiner {
   };
 
   NodeContext* GetNodeContext(const NodeDef* node) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_33(mht_33_v, 1028, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "GetNodeContext");
+
     auto it = node_to_context_.find(node);
     if (it == node_to_context_.end()) {
       return nullptr;
@@ -765,6 +1036,9 @@ class SymbolicShapeRefiner {
   }
 
   InferenceContext* GetContext(const NodeDef* node) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_34(mht_34_v, 1039, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "GetContext");
+
     auto it = node_to_context_.find(node);
     if (it == node_to_context_.end()) {
       return nullptr;
@@ -783,6 +1057,9 @@ class SymbolicShapeRefiner {
   // In the event of an error, UpdateNode will simply set `function_node`'s
   // output shape to be Unknown.
   Status UpdateFunction(const NodeDef* function_node) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_35(mht_35_v, 1060, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "UpdateFunction");
+
     NameAttrList function;
     TF_RETURN_IF_ERROR(NameAndAttrsFromFunctionCall(*function_node, &function));
     auto it = fun_to_grappler_function_item_.find(function.name());
@@ -987,6 +1264,9 @@ class SymbolicShapeRefiner {
   // Prepares input shapes/values/handles, then runs shape inference, and
   // finally sets output shapes/values/handles.
   Status UpdateNode(const NodeDef* node, bool* refined) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_36(mht_36_v, 1267, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "UpdateNode");
+
     NodeContext* ctx = GetNodeContext(node);
     if (ctx == nullptr) {
       TF_RETURN_IF_ERROR(AddNode(node));
@@ -1130,6 +1410,9 @@ class SymbolicShapeRefiner {
   }
 
   Status SetUnknownShape(const NodeDef* node, int output_port) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_37(mht_37_v, 1413, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "SetUnknownShape");
+
     shape_inference::ShapeHandle shape =
         GetUnknownOutputShape(node, output_port);
     InferenceContext* ctx = GetContext(node);
@@ -1178,6 +1461,9 @@ class SymbolicShapeRefiner {
   // 'port_index' as the union of shape1 and shape2.
   ShapeHandle OutputAsUnion(const NodeDef* node, int port_index,
                             ShapeHandle shape1, ShapeHandle shape2) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_38(mht_38_v, 1464, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "OutputAsUnion");
+
     if (shape1.SameHandle(shape2)) {
       return shape1;
     }
@@ -1202,6 +1488,9 @@ class SymbolicShapeRefiner {
   }
 
   bool EquivalentShapes(ShapeHandle s1, ShapeHandle s2) const {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_39(mht_39_v, 1491, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "EquivalentShapes");
+
     if (s1.SameHandle(s2)) {
       return true;
     }
@@ -1236,6 +1525,9 @@ class SymbolicShapeRefiner {
   // Inferred shape: [-1, 10, 10], annotated shape: [10, 10] -> false.
   bool CompatibleShapes(ShapeHandle inferred_shape,
                         ShapeHandle annotated_shape) const {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_40(mht_40_v, 1528, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "CompatibleShapes");
+
     if (inferred_shape.SameHandle(annotated_shape)) {
       return true;
     }
@@ -1265,6 +1557,9 @@ class SymbolicShapeRefiner {
 
   bool SameShapes(ShapeHandle inferred_shape,
                   ShapeHandle annotated_shape) const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_41(mht_41_v, 1560, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "SameShapes");
+
     if (inferred_shape.SameHandle(annotated_shape)) {
       return true;
     }
@@ -1287,6 +1582,9 @@ class SymbolicShapeRefiner {
 
   bool EquivalentShapesAndTypes(const std::vector<ShapeAndType>& st1,
                                 const std::vector<ShapeAndType>& st2) const {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_42(mht_42_v, 1585, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "EquivalentShapesAndTypes");
+
     if (st1.size() != st2.size()) {
       return false;
     }
@@ -1305,6 +1603,10 @@ class SymbolicShapeRefiner {
 
   Status AddFunction(const NodeDef* function_node,
                      const std::string& function_name) {
+   std::vector<std::string> mht_43_v;
+   mht_43_v.push_back("function_name: \"" + function_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_43(mht_43_v, 1607, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "AddFunction");
+
     auto it = fun_to_grappler_function_item_.find(function_name);
     if (it != fun_to_grappler_function_item_.end()) {
       return Status::OK();
@@ -1350,6 +1652,9 @@ class SymbolicShapeRefiner {
   }
 
   Status AddNode(const NodeDef* node) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_44(mht_44_v, 1655, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "AddNode");
+
     NodeContext& node_ctx = node_to_context_[node];
     NameAttrList function;
     TF_RETURN_IF_ERROR(NameAndAttrsFromFunctionCall(*node, &function));
@@ -1389,6 +1694,9 @@ class SymbolicShapeRefiner {
   // Return the one ShapeHandle used to denote a fully unknown shape for a node
   // output.
   ShapeHandle GetUnknownOutputShape(const NodeDef* node, int index) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_45(mht_45_v, 1697, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "GetUnknownOutputShape");
+
     ShapeId id{node, index};
     auto it = unknown_shapes_.find(id);
     if (it != unknown_shapes_.end()) {
@@ -1403,6 +1711,9 @@ class SymbolicShapeRefiner {
   // node output.
   DimensionHandle GetUnknownOutputDim(const NodeDef* node, int index,
                                       int dim_id) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_46(mht_46_v, 1714, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "GetUnknownOutputDim");
+
     DimId id{node, index, dim_id};
     auto it = unknown_dims_.find(id);
     if (it != unknown_dims_.end()) {
@@ -1416,6 +1727,9 @@ class SymbolicShapeRefiner {
 
   // Returns true if all the output tensors have known values.
   bool AllOutputValuesKnown(NodeContext* c) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_47(mht_47_v, 1730, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "AllOutputValuesKnown");
+
     InferenceContext* ic = c->inference_context.get();
     int c_output_tensors_as_shapes_size = c->output_tensors_as_shapes.size();
     int c_output_tensor_protos_size = c->output_tensor_protos.size();
@@ -1453,6 +1767,9 @@ class SymbolicShapeRefiner {
 
   // Returns true if all the output shapes are known.
   bool AllOutputShapesKnown(NodeContext* c) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_48(mht_48_v, 1770, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "AllOutputShapesKnown");
+
     InferenceContext* ic = c->inference_context.get();
     // Checks if all the output shapes are fully defined.
     for (int i = 0; i < ic->num_outputs(); i++) {
@@ -1466,6 +1783,9 @@ class SymbolicShapeRefiner {
   // Returns true if we can infer output tensors' values -- we know values of
   // all the input tensors.
   bool AllInputValuesKnown(NodeContext* c) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_49(mht_49_v, 1786, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "AllInputValuesKnown");
+
     InferenceContext* ic = c->inference_context.get();
 
     // Check inputs are fully defined and values are known.
@@ -1487,6 +1807,9 @@ class SymbolicShapeRefiner {
   // Returns true if we want to update output shapes and values with running
   // EvaluateNode() for this op, based on op type, data type, and size.
   bool ShouldUpdateOutputShapesAndValues(NodeContext* c, int64_t max_size) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_50(mht_50_v, 1810, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "ShouldUpdateOutputShapesAndValues");
+
     InferenceContext* ic = c->inference_context.get();
 
     // Due to the cost of running EvaluateNode(), we limit only to white listed
@@ -1539,6 +1862,9 @@ class SymbolicShapeRefiner {
   void CreateInputTensors(NodeContext* c,
                           std::vector<Tensor>* input_tensor_vector,
                           TensorVector* inputs) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_51(mht_51_v, 1865, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "CreateInputTensors");
+
     InferenceContext* ic = c->inference_context.get();
     for (int i = 0; i < ic->num_inputs(); i++) {
       if (ic->input_tensor(i)) {
@@ -1580,6 +1906,9 @@ class SymbolicShapeRefiner {
   // Run a node to infer output shapes and values, and add it to the
   // NodeContext.
   Status UpdateOutputShapesAndValues(const NodeDef& node, NodeContext* c) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_52(mht_52_v, 1909, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "UpdateOutputShapesAndValues");
+
     InferenceContext* ic = c->inference_context.get();
 
     // Input to EvaluateNode()
@@ -1636,6 +1965,9 @@ class SymbolicShapeRefiner {
   // TODO(andiryxu): Use annotated shapes in Enter/Merge etc as well.
   Status UpdateOutputShapesUsingAnnotatedInformation(const NodeDef& node,
                                                      NodeContext* c) const {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_53(mht_53_v, 1968, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "UpdateOutputShapesUsingAnnotatedInformation");
+
     const auto& attr = node.attr();
     if (attr.count(kOutputSame) == 0 || !attr.at(kOutputSame).b() ||
         attr.count(kOutputShapes) == 0)
@@ -1697,6 +2029,9 @@ class SymbolicShapeRefiner {
 
   Status MaybeUpdateNodeContextOutput(const NodeDef& node, const bool is_fed,
                                       NodeContext* c) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_54(mht_54_v, 2032, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "MaybeUpdateNodeContextOutput");
+
     // Propagate tensors and shape tensors unless the node is fed.
     // TODO(bsteiner) We should still propagate the shapes to the ports that
     // aren't fed in the case of a ShapeN node.
@@ -1917,6 +2252,9 @@ class SymbolicShapeRefiner {
   }
 
   Status InferShapes(const NodeDef& node, NodeContext* c) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_55(mht_55_v, 2255, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "InferShapes");
+
     // Infer the shapes of output tensors.
     if (!c->op_data || c->op_data->shape_inference_fn == nullptr ||
         !c->inference_context->Run(c->op_data->shape_inference_fn).ok()) {
@@ -1946,6 +2284,9 @@ class SymbolicShapeRefiner {
 
  private:
   bool IsIntegerVector(const Tensor& tensor) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_56(mht_56_v, 2287, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "IsIntegerVector");
+
     if (tensor.dims() == 1 &&
         (tensor.dtype() == DT_INT32 || tensor.dtype() == DT_INT64)) {
       return true;
@@ -1954,6 +2295,9 @@ class SymbolicShapeRefiner {
   }
 
   bool IsIntegerScalar(const Tensor& tensor) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_57(mht_57_v, 2298, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "IsIntegerScalar");
+
     if (tensor.dims() == 0 &&
         (tensor.dtype() == DT_INT32 || tensor.dtype() == DT_INT64) &&
         tensor.NumElements() == 1) {
@@ -1964,6 +2308,9 @@ class SymbolicShapeRefiner {
 
   TensorProto MakeIntegerScalarTensorProto(const DataType dtype,
                                            const int64_t val) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_58(mht_58_v, 2311, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "MakeIntegerScalarTensorProto");
+
     TensorProto tensor_proto;
     tensor_proto.set_dtype(dtype);
     // Scalar TensorProto has an empty tensor_shape; no dim, no dim.size.
@@ -1979,6 +2326,9 @@ class SymbolicShapeRefiner {
   bool MaybeTensorProtoToShape(InferenceContext* ic,
                                const TensorProto& tensor_proto,
                                ShapeHandle* tensors_as_shapes) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_59(mht_59_v, 2329, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "MaybeTensorProtoToShape");
+
     // Skip if dtype is not integer.
     if (tensor_proto.dtype() != DT_INT32 && tensor_proto.dtype() != DT_INT64) {
       return false;
@@ -2002,6 +2352,9 @@ class SymbolicShapeRefiner {
 
   bool MaybeTensorValueToShape(InferenceContext* ic, const Tensor& tensor,
                                ShapeHandle* tensors_as_shapes) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_60(mht_60_v, 2355, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "MaybeTensorValueToShape");
+
     // Integer tensors of rank one can also be interpreted as a shape
     // provided all their values are >= -1.
 
@@ -2067,9 +2420,15 @@ class SymbolicShapeRefiner {
 // dims, and consolidate the information globally.
 class SymbolicShapeManager {
  public:
-  SymbolicShapeManager() {}
+  SymbolicShapeManager() {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_61(mht_61_v, 2424, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "SymbolicShapeManager");
+}
 
   Status Merge(ShapeHandle s1, ShapeHandle s2) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_62(mht_62_v, 2429, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "Merge");
+
     if (!s1.IsSet() || !s2.IsSet()) {
       return Status::OK();
     }
@@ -2084,6 +2443,9 @@ class SymbolicShapeManager {
     return Status::OK();
   }
   Status Merge(DimensionHandle d1, DimensionHandle d2) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_63(mht_63_v, 2446, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "Merge");
+
     if (!d1.IsSet() || !d2.IsSet()) {
       return Status::OK();
     }
@@ -2092,6 +2454,9 @@ class SymbolicShapeManager {
 
   void AsTensorProperties(const ShapeHandle& shape, const DataType& type,
                           OpInfo::TensorProperties* properties) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_64(mht_64_v, 2457, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "AsTensorProperties");
+
     properties->set_dtype(type);
     ShapeHandle actual_shape = shapes_.GetMergedValue(shape);
     if (!InferenceContext::RankKnown(actual_shape)) {
@@ -2108,6 +2473,9 @@ class SymbolicShapeManager {
 
   // Returns merged shape with merged dimensions.
   ShapeHandle GetMergedShape(InferenceContext* ic, ShapeHandle s) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_65(mht_65_v, 2476, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "GetMergedShape");
+
     const auto& actual_shape = shapes_.GetMergedValue(s);
     if (!InferenceContext::RankKnown(actual_shape)) {
       return ic->UnknownShape();
@@ -2138,6 +2506,9 @@ class SymbolicShapeManager {
 Status ValidateSymbolicShapeManager(const GraphDef& graph_def,
                                     SymbolicShapeRefiner* refiner,
                                     SymbolicShapeManager* shape_manager) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_66(mht_66_v, 2509, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "ValidateSymbolicShapeManager");
+
   if (!VLOG_IS_ON(1)) {
     return Status::OK();
   }
@@ -2187,6 +2558,9 @@ Status ValidateSymbolicShapeManager(const GraphDef& graph_def,
 Status VerboseShapeInferenceLogging(const GraphDef& graph_def,
                                     SymbolicShapeRefiner* refiner,
                                     SymbolicShapeManager* shape_manager) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_67(mht_67_v, 2561, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "VerboseShapeInferenceLogging");
+
   // As logging all the nodes would generate too many lines, we by default
   // skip this detailed logging. Users may add nodes of interest to
   // node_names_for_logging to enable detailed logging.
@@ -2196,6 +2570,10 @@ Status VerboseShapeInferenceLogging(const GraphDef& graph_def,
   }
 
   auto should_log = [&node_names_for_logging](std::string node_name) {
+   std::vector<std::string> mht_68_v;
+   mht_68_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_68(mht_68_v, 2574, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "lambda");
+
     return node_names_for_logging.find(node_name) !=
            node_names_for_logging.end();
   };
@@ -2236,6 +2614,9 @@ Status GraphProperties::RelaxEnqueueShapesAndMergeTypes(
     SymbolicShapeRefiner* shape_refiner, const NodeDef* qnode,
     const std::vector<ShapeAndType>& shapes_and_types,
     std::vector<ShapeAndType>* queue_shapes_and_types) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_69(mht_69_v, 2617, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "GraphProperties::RelaxEnqueueShapesAndMergeTypes");
+
   if (shapes_and_types.size() != queue_shapes_and_types->size()) {
     return errors::InvalidArgument(
         "Enqueue nodes mixed number of tensors: ", shapes_and_types.size(),
@@ -2260,6 +2641,9 @@ Status GraphProperties::RelaxEnqueueShapesAndMergeTypes(
 Status GraphProperties::UpdateMerge(SymbolicShapeRefiner* shape_refiner,
                                     const NodeDef* node,
                                     bool* new_shapes) const {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_70(mht_70_v, 2644, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "GraphProperties::UpdateMerge");
+
   InferenceContext* ic = shape_refiner->GetContext(node);
   if (!ic) {
     // Now we can run shape inference
@@ -2312,6 +2696,9 @@ Status GraphProperties::UpdateMerge(SymbolicShapeRefiner* shape_refiner,
 // Manually propagate the input shape for Enter nodes.
 Status GraphProperties::UpdateEnter(SymbolicShapeRefiner* shape_refiner,
                                     const NodeDef* node, bool* new_shapes) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_71(mht_71_v, 2699, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "GraphProperties::UpdateEnter");
+
   InferenceContext* ic = shape_refiner->GetContext(node);
   if (!ic) {
     TF_RETURN_IF_ERROR(shape_refiner->UpdateNode(node, new_shapes));
@@ -2341,6 +2728,9 @@ Status GraphProperties::UpdateShapes(
     SymbolicShapeRefiner* shape_refiner,
     const absl::flat_hash_map<const NodeDef*, const NodeDef*>& resource_handles,
     const NodeDef* n, bool* new_shapes) const {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_72(mht_72_v, 2731, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "GraphProperties::UpdateShapes");
+
   if (IsEnter(*n)) {
     // The Enter shape function always forwards an UnknownShape, so do the right
     // thing here.
@@ -2370,6 +2760,9 @@ Status GraphProperties::PropagateShapes(
     SymbolicShapeRefiner* shape_refiner, TopoQueue* new_shapes,
     const absl::flat_hash_map<const NodeDef*, const NodeDef*>& resource_handles,
     int num_loops) const {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_73(mht_73_v, 2763, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "GraphProperties::PropagateShapes");
+
   // Limit the number of iterations to prevent infinite loops in the presence of
   // incorrect shape functions. The algorithm should converge in at most
   // num_nested_loops^2 * max_rank. We approximate max_rank with the constant 4.
@@ -2421,6 +2814,9 @@ Status GraphProperties::PropagateShapes(
 Status GraphProperties::UpdateQueue(const NodeDef* queue_node,
                                     SymbolicShapeRefiner* shape_refiner,
                                     bool* new_shapes) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_74(mht_74_v, 2817, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "GraphProperties::UpdateQueue");
+
   auto* ctx = shape_refiner->GetNodeContext(queue_node);
   if (!ctx) {
     TF_RETURN_IF_ERROR(shape_refiner->AddNode(queue_node));
@@ -2469,6 +2865,9 @@ Status GraphProperties::UpdateEnqueue(
     const NodeDef* enqueue_node,
     const absl::flat_hash_map<const NodeDef*, const NodeDef*>& resource_handles,
     SymbolicShapeRefiner* shape_refiner, bool* new_shapes) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_75(mht_75_v, 2868, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "GraphProperties::UpdateEnqueue");
+
   auto ctx = shape_refiner->GetNodeContext(enqueue_node);
   if (!ctx) {
     TF_RETURN_IF_ERROR(shape_refiner->AddNode(enqueue_node));
@@ -2516,6 +2915,9 @@ Status GraphProperties::InferStatically(bool assume_valid_feeds,
                                         bool aggressive_shape_inference,
                                         bool include_input_tensor_values,
                                         bool include_output_tensor_values) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_76(mht_76_v, 2918, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "GraphProperties::InferStatically");
+
   FunctionLibraryDefinition function_library(OpRegistry::Global(),
                                              item_.graph.library());
   absl::flat_hash_map<string, absl::flat_hash_set<int>> fed_ports;
@@ -2758,6 +3160,9 @@ Status GraphProperties::InferStatically(bool assume_valid_feeds,
 }
 
 Status GraphProperties::InferDynamically(Cluster* cluster) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_77(mht_77_v, 3163, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "GraphProperties::InferDynamically");
+
   TF_RETURN_IF_ERROR(cluster->Initialize(item_));
 
   // Runs the model once to collect the shapes in the cost model.
@@ -2769,6 +3174,9 @@ Status GraphProperties::InferDynamically(Cluster* cluster) {
 }
 
 Status GraphProperties::AnnotateOutputShapes(GraphDef* output_graph_def) const {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_78(mht_78_v, 3177, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "GraphProperties::AnnotateOutputShapes");
+
   *output_graph_def = item_.graph;
   for (int i = 0; i < output_graph_def->node_size(); i++) {
     auto node = output_graph_def->mutable_node(i);
@@ -2785,6 +3193,9 @@ Status GraphProperties::AnnotateOutputShapes(GraphDef* output_graph_def) const {
 }
 
 Status GraphProperties::InferFromCostGraph(const CostGraphDef& cost_graph) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_79(mht_79_v, 3196, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "GraphProperties::InferFromCostGraph");
+
   if (cost_graph.node_size() == 0) {
     LOG(WARNING) << "cost_graph is empty: nothing can be inferred!";
   }
@@ -2821,15 +3232,27 @@ Status GraphProperties::InferFromCostGraph(const CostGraphDef& cost_graph) {
 }
 
 bool GraphProperties::HasInputProperties(const string& node_name) const {
+   std::vector<std::string> mht_80_v;
+   mht_80_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_80(mht_80_v, 3236, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "GraphProperties::HasInputProperties");
+
   return input_properties_.find(node_name) != input_properties_.end();
 }
 
 bool GraphProperties::HasOutputProperties(const string& node_name) const {
+   std::vector<std::string> mht_81_v;
+   mht_81_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_81(mht_81_v, 3244, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "GraphProperties::HasOutputProperties");
+
   return output_properties_.find(node_name) != output_properties_.end();
 }
 
 const std::vector<OpInfo::TensorProperties>&
 GraphProperties::GetInputProperties(const string& node_name) const {
+   std::vector<std::string> mht_82_v;
+   mht_82_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_82(mht_82_v, 3253, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "GraphProperties::GetInputProperties");
+
   auto it = input_properties_.find(node_name);
   if (it != input_properties_.end()) {
     return it->second;
@@ -2839,6 +3262,10 @@ GraphProperties::GetInputProperties(const string& node_name) const {
 
 const std::vector<OpInfo::TensorProperties>&
 GraphProperties::GetOutputProperties(const string& node_name) const {
+   std::vector<std::string> mht_83_v;
+   mht_83_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_83(mht_83_v, 3266, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "GraphProperties::GetOutputProperties");
+
   auto it = output_properties_.find(node_name);
   if (it != output_properties_.end()) {
     return it->second;
@@ -2847,9 +3274,17 @@ GraphProperties::GetOutputProperties(const string& node_name) const {
 }
 
 void GraphProperties::ClearInputProperties(const string& node_name) {
+   std::vector<std::string> mht_84_v;
+   mht_84_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_84(mht_84_v, 3278, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "GraphProperties::ClearInputProperties");
+
   input_properties_.erase(node_name);
 }
 void GraphProperties::ClearOutputProperties(const string& node_name) {
+   std::vector<std::string> mht_85_v;
+   mht_85_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSgraph_propertiesDTcc mht_85(mht_85_v, 3285, "", "./tensorflow/core/grappler/costs/graph_properties.cc", "GraphProperties::ClearOutputProperties");
+
   output_properties_.erase(node_name);
 }
 

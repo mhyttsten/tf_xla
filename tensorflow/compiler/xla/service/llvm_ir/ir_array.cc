@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSir_arrayDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSir_arrayDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSir_arrayDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,6 +206,9 @@ IrArray::Index::Index(absl::Span<llvm::Value* const> multidim,
                       llvm::Value* linear, const Shape& shape,
                       llvm::Type* index_type)
     : Index(multidim, shape, index_type) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSir_arrayDTcc mht_0(mht_0_v, 209, "", "./tensorflow/compiler/xla/service/llvm_ir/ir_array.cc", "IrArray::Index::Index");
+
   CHECK_NE(linear, nullptr);
   linear_ = linear;
 }
@@ -45,6 +216,9 @@ IrArray::Index::Index(absl::Span<llvm::Value* const> multidim,
 void IrArray::Index::Delinearize(std::vector<llvm::Value*>* multidim,
                                  llvm::Value* linear, const Shape& shape,
                                  llvm::IRBuilder<>* b) const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSir_arrayDTcc mht_1(mht_1_v, 219, "", "./tensorflow/compiler/xla/service/llvm_ir/ir_array.cc", "IrArray::Index::Delinearize");
+
   int64_t divisor = 1;
   const Layout& layout = shape.layout();
   for (int64_t i = 0; i < layout.minor_to_major_size(); ++i) {
@@ -76,6 +250,9 @@ void IrArray::Index::Delinearize(std::vector<llvm::Value*>* multidim,
                                  llvm::Value* linear, const Shape& shape,
                                  absl::Span<llvm::Value*> dynamic_dims,
                                  llvm::IRBuilder<>* b) const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSir_arrayDTcc mht_2(mht_2_v, 253, "", "./tensorflow/compiler/xla/service/llvm_ir/ir_array.cc", "IrArray::Index::Delinearize");
+
   CHECK_EQ(shape.dimensions_size(), dynamic_dims.size());
   CHECK_EQ(multidim_.size(), shape.rank());
   llvm::Value* divisor = GetConstantWithIndexType(1);
@@ -104,6 +281,9 @@ IrArray::Index::Index(llvm::Value* linear, const Shape& shape,
       linear_(linear),
       layout_(shape.layout()),
       dims_(shape.dimensions().begin(), shape.dimensions().end()) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSir_arrayDTcc mht_3(mht_3_v, 284, "", "./tensorflow/compiler/xla/service/llvm_ir/ir_array.cc", "IrArray::Index::Index");
+
   CHECK_NE(linear, nullptr);
   index_type_ = linear->getType();
   CHECK(LayoutUtil::HasLayout(shape))
@@ -119,6 +299,9 @@ IrArray::Index::Index(llvm::Value* linear,
       linear_(linear),
       layout_(shape.layout()),
       dims_(shape.dimensions().begin(), shape.dimensions().end()) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSir_arrayDTcc mht_4(mht_4_v, 302, "", "./tensorflow/compiler/xla/service/llvm_ir/ir_array.cc", "IrArray::Index::Index");
+
   CHECK_NE(linear, nullptr);
   index_type_ = linear->getType();
   CHECK_EQ(multidim.size(), shape.rank());
@@ -145,6 +328,9 @@ IrArray::Index::Index(llvm::Value* linear, const Shape& shape,
       linear_(linear),
       layout_(shape.layout()),
       dims_(shape.dimensions().begin(), shape.dimensions().end()) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSir_arrayDTcc mht_5(mht_5_v, 331, "", "./tensorflow/compiler/xla/service/llvm_ir/ir_array.cc", "IrArray::Index::Index");
+
   CHECK_NE(linear, nullptr);
   index_type_ = linear->getType();
   CHECK(LayoutUtil::HasLayout(shape))
@@ -157,7 +343,10 @@ IrArray::Index::Index(absl::Span<llvm::Value* const> multidim,
                       absl::Span<int64_t const> dimensions,
                       llvm::Type* index_type)
     : Index(multidim, ShapeUtil::MakeShape(/*arbitrary*/ PRED, dimensions),
-            index_type) {}
+            index_type) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSir_arrayDTcc mht_6(mht_6_v, 347, "", "./tensorflow/compiler/xla/service/llvm_ir/ir_array.cc", "IrArray::Index::Index");
+}
 
 IrArray::Index::Index(absl::Span<llvm::Value* const> multidim,
                       const Shape& shape, llvm::Type* index_type)
@@ -166,6 +355,9 @@ IrArray::Index::Index(absl::Span<llvm::Value* const> multidim,
       layout_(shape.layout()),
       dims_(shape.dimensions().begin(), shape.dimensions().end()),
       index_type_(index_type) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSir_arrayDTcc mht_7(mht_7_v, 358, "", "./tensorflow/compiler/xla/service/llvm_ir/ir_array.cc", "IrArray::Index::Index");
+
   CHECK_NE(index_type_, nullptr);
   CHECK_EQ(shape.dimensions_size(), multidim.size());
   for (const auto* dim : multidim) {
@@ -178,6 +370,9 @@ IrArray::Index::Index(absl::Span<llvm::Value* const> multidim,
 
 IrArray::IrArray(llvm::Value* base_ptr, Shape shape)
     : base_ptr_(base_ptr), shape_(std::move(shape)) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSir_arrayDTcc mht_8(mht_8_v, 373, "", "./tensorflow/compiler/xla/service/llvm_ir/ir_array.cc", "IrArray::IrArray");
+
   TF_CHECK_OK(ShapeUtil::ValidateShape(shape));
   CHECK(base_ptr_->getType()->isPointerTy());
   int depth = 0;
@@ -197,6 +392,9 @@ IrArray::IrArray(llvm::Value* base_ptr, Shape shape)
 
 // Returns whether the given linear index is valid on the given shape.
 bool IrArray::Index::LinearValidOnShape(const Shape& a) const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSir_arrayDTcc mht_9(mht_9_v, 395, "", "./tensorflow/compiler/xla/service/llvm_ir/ir_array.cc", "IrArray::Index::LinearValidOnShape");
+
   auto b = ShapeUtil::MakeShape(a.element_type(), dims_);
   *b.mutable_layout() = layout_;
   return linear_ != nullptr &&
@@ -207,6 +405,9 @@ bool IrArray::Index::LinearValidOnShape(const Shape& a) const {
 IrArray::Index IrArray::Index::SourceIndexOfReshape(
     const Shape& output_shape, const Shape& input_shape,
     llvm::IRBuilder<>* builder) const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSir_arrayDTcc mht_10(mht_10_v, 408, "", "./tensorflow/compiler/xla/service/llvm_ir/ir_array.cc", "IrArray::Index::SourceIndexOfReshape");
+
   CHECK_EQ(multidim_.size(), output_shape.rank());
   std::vector<llvm::Value*> source_multidim_index(
       input_shape.rank(), llvm::UndefValue::get(index_type_));
@@ -290,6 +491,9 @@ IrArray::Index IrArray::Index::SourceIndexOfReshape(
 IrArray::Index IrArray::Index::SourceIndexOfSlice(
     const Shape& operand_shape, absl::Span<const int64_t> starts,
     absl::Span<const int64_t> strides, llvm::IRBuilder<>* builder) const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSir_arrayDTcc mht_11(mht_11_v, 494, "", "./tensorflow/compiler/xla/service/llvm_ir/ir_array.cc", "IrArray::Index::SourceIndexOfSlice");
+
   std::vector<llvm::Value*> source_multi_index(multidim_.size());
   for (int i = 0; i < multidim_.size(); ++i) {
     int64_t stride = strides[i];
@@ -308,6 +512,9 @@ IrArray::Index IrArray::Index::SourceIndexOfSlice(
 IrArray::Index IrArray::Index::SourceIndexOfTranspose(
     const Shape& shape, const Shape& operand_shape,
     absl::Span<const int64_t> dimension_mapping) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSir_arrayDTcc mht_12(mht_12_v, 515, "", "./tensorflow/compiler/xla/service/llvm_ir/ir_array.cc", "IrArray::Index::SourceIndexOfTranspose");
+
   std::vector<llvm::Value*> operand_multidim_index =
       PermuteInverse(multidim(), dimension_mapping);
 
@@ -323,6 +530,9 @@ IrArray::Index IrArray::Index::SourceIndexOfTranspose(
 IrArray::Index IrArray::Index::SourceIndexOfBitcast(
     const Shape& shape, const Shape& operand_shape,
     llvm::IRBuilder<>* builder) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSir_arrayDTcc mht_13(mht_13_v, 533, "", "./tensorflow/compiler/xla/service/llvm_ir/ir_array.cc", "IrArray::Index::SourceIndexOfBitcast");
+
   CHECK(LayoutUtil::HasLayout(shape) && LayoutUtil::HasLayout(operand_shape));
 
   // In case the bitcast is just a reshape, we can use SourceIndexOfReshape()
@@ -361,6 +571,9 @@ IrArray::Index IrArray::Index::SourceIndexOfBroadcast(
     const Shape& shape, const Shape& operand_shape,
     absl::Span<const int64_t> dimension_mapping,
     llvm::IRBuilder<>* builder) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSir_arrayDTcc mht_14(mht_14_v, 574, "", "./tensorflow/compiler/xla/service/llvm_ir/ir_array.cc", "IrArray::Index::SourceIndexOfBroadcast");
+
   int64_t rank = operand_shape.rank();
   std::vector<llvm::Value*> source_index(rank);
   for (int64_t i = 0; i < rank; ++i) {
@@ -422,6 +635,9 @@ IrArray::Index IrArray::Index::SourceIndexOfBroadcast(
 
 llvm::Value* IrArray::Index::Linearize(absl::Span<const int64_t> dimensions,
                                        llvm::IRBuilder<>* builder) const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSir_arrayDTcc mht_15(mht_15_v, 638, "", "./tensorflow/compiler/xla/service/llvm_ir/ir_array.cc", "IrArray::Index::Linearize");
+
   // Each dimension is multiplied by the product of the sizes of all
   // earlier dimensions and added to the accumulator logical_linear_index.
   CHECK_EQ(size(), dimensions.size());
@@ -442,6 +658,9 @@ llvm::Value* IrArray::Index::Linearize(absl::Span<const int64_t> dimensions,
 llvm::Value* IrArray::Index::Linearize(
     const std::vector<llvm::Value*>& dynamic_dims,
     llvm::IRBuilder<>* builder) const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSir_arrayDTcc mht_16(mht_16_v, 661, "", "./tensorflow/compiler/xla/service/llvm_ir/ir_array.cc", "IrArray::Index::Linearize");
+
   // Each dimension is multiplied by the product of the sizes of all
   // earlier dimensions and added to the accumulator logical_linear_index.
   CHECK_EQ(size(), dynamic_dims.size());
@@ -465,6 +684,10 @@ llvm::Value* IrArray::EmitArrayElementAddress(const IrArray::Index& index,
                                               llvm::IRBuilder<>* b,
                                               absl::string_view name,
                                               bool use_linear_index) const {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSir_arrayDTcc mht_17(mht_17_v, 688, "", "./tensorflow/compiler/xla/service/llvm_ir/ir_array.cc", "IrArray::EmitArrayElementAddress");
+
   if (ShapeUtil::IsScalar(shape_)) {
     // Special handling of scalars: a scalar pretends to have the same value for
     // every index, thus effectively implementing broadcasting of its value
@@ -513,6 +736,9 @@ llvm::Value* IrArray::EmitArrayElementAddress(const IrArray::Index& index,
 
 void IrArray::AnnotateLoadStoreInstructionWithMetadata(
     llvm::Instruction* instruction) const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSir_arrayDTcc mht_18(mht_18_v, 739, "", "./tensorflow/compiler/xla/service/llvm_ir/ir_array.cc", "IrArray::AnnotateLoadStoreInstructionWithMetadata");
+
   CHECK(llvm::isa<llvm::LoadInst>(instruction) ||
         llvm::isa<llvm::StoreInst>(instruction));
   CHECK(!llvm::isa<llvm::StoreInst>(instruction) || !is_invariant_)
@@ -527,6 +753,10 @@ llvm::Value* IrArray::EmitReadArrayElement(const Index& index,
                                            llvm::IRBuilder<>* b,
                                            absl::string_view name,
                                            bool use_linear_index) const {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSir_arrayDTcc mht_19(mht_19_v, 757, "", "./tensorflow/compiler/xla/service/llvm_ir/ir_array.cc", "IrArray::EmitReadArrayElement");
+
   llvm::Value* element_address =
       EmitArrayElementAddress(index, b, name, use_linear_index);
   llvm::LoadInst* load =
@@ -539,6 +769,9 @@ llvm::Value* IrArray::EmitReadArrayElement(const Index& index,
 void IrArray::EmitWriteArrayElement(const Index& index, llvm::Value* value,
                                     llvm::IRBuilder<>* b,
                                     bool use_linear_index) const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSir_arrayDTcc mht_20(mht_20_v, 772, "", "./tensorflow/compiler/xla/service/llvm_ir/ir_array.cc", "IrArray::EmitWriteArrayElement");
+
   llvm::Value* element_address =
       EmitArrayElementAddress(index, b, "", use_linear_index);
   llvm::StoreInst* store = b->CreateStore(value, element_address);
@@ -547,6 +780,9 @@ void IrArray::EmitWriteArrayElement(const Index& index, llvm::Value* value,
 
 IrArray IrArray::CastToShape(const Shape& new_shape,
                              llvm::IRBuilder<>* b) const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSir_arrayDTcc mht_21(mht_21_v, 783, "", "./tensorflow/compiler/xla/service/llvm_ir/ir_array.cc", "IrArray::CastToShape");
+
   llvm::Module* module = b->GetInsertBlock()->getParent()->getParent();
   llvm::Type* new_ir_type = llvm_ir::ShapeToIrType(new_shape, module);
   IrArray new_irarray(
@@ -556,11 +792,17 @@ IrArray IrArray::CastToShape(const Shape& new_shape,
 }
 
 bool IrArray::Index::ShapeIsCompatible(const Shape& a, const Shape& b) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSir_arrayDTcc mht_22(mht_22_v, 795, "", "./tensorflow/compiler/xla/service/llvm_ir/ir_array.cc", "IrArray::Index::ShapeIsCompatible");
+
   // Compute strides for two sides of the comparison. Sometimes different shapes
   // give the same strides:
   //   [10, 20, 30, 1]{3,2,1,0} vs [10, 20, 1, 30]{3,2,1,0}
   // which should be considered compatible.
   const auto get_strides = [](const Shape& shape) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSir_arrayDTcc mht_23(mht_23_v, 803, "", "./tensorflow/compiler/xla/service/llvm_ir/ir_array.cc", "lambda");
+
     int rank = shape.dimensions().size();
     int64_t stride = 1;
     std::vector<int64_t> strides;

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2022 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -85,6 +253,9 @@ StatusOr<ExecutionFunctions> ABSL_ATTRIBUTE_WEAK PipeliningPartitionerRun(
     const FunctionDef& fdef, const NameAttrList& eager_attributes,
     const std::vector<TensorWithLayout*>& inputs, const DeviceSet& device_set,
     int num_outputs) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_0(mht_0_v, 256, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "PipeliningPartitionerRun");
+
   // The actual definition is in the pipelining package.
   return errors::Unimplemented("DTensor pipelining is unavailable.");
 }
@@ -94,10 +265,17 @@ class DTensorDevice {
   explicit DTensorDevice(absl::string_view name)
       : name_(name),
         same_shape_policy_enabled_(false),
-        cancellation_manager_(absl::make_unique<CancellationManager>()) {}
+        cancellation_manager_(absl::make_unique<CancellationManager>()) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_1(mht_1_v, 270, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "DTensorDevice");
+}
 
   void AddMesh(std::unique_ptr<MeshWithParallelDevice> mesh,
                bool is_host_mesh) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_2(mht_2_v, 276, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "AddMesh");
+
     // TODO(b/168730933): Consider passing a cheaper int64_t mesh identifier.
     if (is_host_mesh) {
       std::string& tpu_host_mesh = Mesh::tpu_host_mesh();
@@ -147,18 +325,37 @@ class DTensorDevice {
   void Execute(const TFE_Op* original_op, int* num_outputs,
                TFE_TensorHandle** outputs, TF_Status* status);
 
-  void SetDefaultLayout(Layout layout) { default_layout_.emplace(layout); }
-  void ClearDefaultLayout() { default_layout_.reset(); }
+  void SetDefaultLayout(Layout layout) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_3(mht_3_v, 329, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "SetDefaultLayout");
+ default_layout_.emplace(layout); }
+  void ClearDefaultLayout() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_4(mht_4_v, 333, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "ClearDefaultLayout");
+ default_layout_.reset(); }
   void SetDefaultMesh(Mesh mesh) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_5(mht_5_v, 337, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "SetDefaultMesh");
+
     default_mesh_ = mesh_to_device_map_.at(mesh).get();
   }
-  void ClearDefaultMesh() { default_mesh_ = global_default_mesh_; }
+  void ClearDefaultMesh() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_6(mht_6_v, 343, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "ClearDefaultMesh");
+ default_mesh_ = global_default_mesh_; }
   void SetSameShapePolicy(bool enabled) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_7(mht_7_v, 347, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "SetSameShapePolicy");
+
     same_shape_policy_enabled_ = enabled;
   }
 
   Status SetTPUCoreIDs(const std::string& mesh_name,
                        const std::vector<int>& tpu_core_ids) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("mesh_name: \"" + mesh_name + "\"");
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_8(mht_8_v, 356, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "SetTPUCoreIDs");
+
     if (VLOG_IS_ON(1)) {
       LOG(INFO) << "Setting TPU core IDs for "
                 << (mesh_name.empty() ? "default mesh" : mesh_name) << ": ";
@@ -177,7 +374,10 @@ class DTensorDevice {
     return Status::OK();
   }
 
-  void ClearTPUCoreIDs() { Mesh::tpu_core_ids().clear(); }
+  void ClearTPUCoreIDs() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_9(mht_9_v, 378, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "ClearTPUCoreIDs");
+ Mesh::tpu_core_ids().clear(); }
 
   std::vector<std::vector<int>> TPUCoreIDsToLocations(
       TFE_Context* context, const std::vector<int>& tpu_core_ids) {
@@ -247,6 +447,9 @@ class DTensorDevice {
 
   // Waits for ops to finish in ALL meshes as we share the cancellation manager.
   void AsyncWait(TFE_Context* context, TF_Status* status) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_10(mht_10_v, 450, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "AsyncWait");
+
     std::unique_ptr<TF_Status, decltype(&TF_DeleteStatus)> first_bad_status(
         nullptr, TF_DeleteStatus);
 
@@ -330,6 +533,9 @@ class DTensorDevice {
       TF_Status* status);
 
   const ExecutionFunctions* GetCachedFunction(tensorflow::Fprint128 cache_key) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_11(mht_11_v, 536, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "GetCachedFunction");
+
     auto iter = function_cache_.find(cache_key);
     if (iter == function_cache_.end()) {
       return nullptr;
@@ -339,6 +545,9 @@ class DTensorDevice {
 
   const ExecutionFunctions* AddCachedFunction(tensorflow::Fprint128 cache_key,
                                               ExecutionFunctions function) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_12(mht_12_v, 548, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "AddCachedFunction");
+
     function_cache_.emplace(cache_key, std::move(function));
     return &function_cache_.find(cache_key)->second;
   }
@@ -422,6 +631,9 @@ class DTensorDevice {
 };
 
 int64_t FingerprintShape(const absl::Span<const int64_t> shape) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_13(mht_13_v, 634, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "FingerprintShape");
+
   int64_t fprint = 0;
   for (int64_t dim : shape) {
     fprint = FingerprintCat64(fprint, dim);
@@ -431,6 +643,9 @@ int64_t FingerprintShape(const absl::Span<const int64_t> shape) {
 
 parallel_device::ParallelTensor* MeshWithParallelDevice::DeviceIDs(
     TFE_Context* context, TF_Status* status) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_14(mht_14_v, 646, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "MeshWithParallelDevice::DeviceIDs");
+
   if (device_ids_tensor_ == nullptr) {
     // Global device IDs sequentially increase.
     //
@@ -492,18 +707,30 @@ parallel_device::ParallelTensor* MeshWithParallelDevice::DeviceIDs(
 }
 
 int TensorWithLayoutNumDims(void* data, TF_Status* status) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_15(mht_15_v, 710, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "TensorWithLayoutNumDims");
+
   return reinterpret_cast<TensorWithLayout*>(data)->global_shape().size();
 }
 
 int64_t TensorWithLayoutDim(void* data, int dim_index, TF_Status* status) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_16(mht_16_v, 717, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "TensorWithLayoutDim");
+
   return reinterpret_cast<TensorWithLayout*>(data)->global_shape()[dim_index];
 }
 
 void TensorWithLayoutDeallocator(void* data) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_17(mht_17_v, 724, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "TensorWithLayoutDeallocator");
+
   delete reinterpret_cast<TensorWithLayout*>(data);
 }
 
 TF_Buffer* TensorWithLayoutSummarize(void* data, TF_Status* status) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_18(mht_18_v, 731, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "TensorWithLayoutSummarize");
+
   std::string summary =
       reinterpret_cast<TensorWithLayout*>(data)->SummarizeValue();
   return TF_NewBufferFromString(summary.data(), summary.size());
@@ -512,6 +739,9 @@ TF_Buffer* TensorWithLayoutSummarize(void* data, TF_Status* status) {
 TFE_TensorHandle* DTensorDevice::MakeLayoutTensorHandle(
     TFE_Context* context, std::unique_ptr<TensorWithLayout> t,
     TF_Status* status) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_19(mht_19_v, 742, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "DTensorDevice::MakeLayoutTensorHandle");
+
   TF_DataType dtype = t->dtype();
   TFE_CustomDeviceTensorHandleMethods handle_methods;
   handle_methods.num_dims = &TensorWithLayoutNumDims;
@@ -524,6 +754,9 @@ TFE_TensorHandle* DTensorDevice::MakeLayoutTensorHandle(
 }
 
 void DTensorDevice::RecordInShapeLayoutCache(const TensorWithLayout& tensor) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_20(mht_20_v, 757, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "DTensorDevice::RecordInShapeLayoutCache");
+
   auto existing = shape_layout_cache_.insert(
       {FingerprintShape(tensor.global_shape()),
        CachedLayout{tensor.layout(), /*is_unique=*/true}});
@@ -538,6 +771,9 @@ void DTensorDevice::RecordInShapeLayoutCache(const TensorWithLayout& tensor) {
 }
 
 bool DTensorDevice::is_remote_mesh(const Mesh& mesh) const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_21(mht_21_v, 774, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "DTensorDevice::is_remote_mesh");
+
   // An empty mesh might be assigned to VarHandleOp during DTensor MLIR lowering
   // pass. Decide whether the empty mesh is remote based on the current default
   // mesh.
@@ -588,6 +824,9 @@ StatusOr<Layout> FetchLayoutFromAttributes(const TFE_OpAttrs* attributes,
 std::string DTensorDevice::FetchLayout(TFE_Context* context,
                                        TFE_TensorHandle* input,
                                        TF_Status* status) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_22(mht_22_v, 827, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "DTensorDevice::FetchLayout");
+
   VLOG(1) << "Checking layout...";
   const char* input_device = TFE_TensorHandleDeviceName(input, status);
   if (input_device != name_) {
@@ -604,6 +843,9 @@ std::string DTensorDevice::FetchLayout(TFE_Context* context,
 std::vector<TFE_TensorHandle*> DTensorDevice::Unpack(TFE_Context* context,
                                                      TFE_TensorHandle* input,
                                                      TF_Status* status) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_23(mht_23_v, 846, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "DTensorDevice::Unpack");
+
   std::vector<TFE_TensorHandle*> outputs;
 
   const char* input_device = TFE_TensorHandleDeviceName(input, status);
@@ -644,6 +886,10 @@ void DTensorDevice::MaybeHandleDTensorCustomOps(
     const TFE_OpAttrs* attributes, TFE_Context* context,
     TFE_TensorHandle** inputs, int* num_outputs, TFE_TensorHandle** outputs,
     bool* is_custom_dtensor_op, TF_Status* status) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("operation_name: \"" + (operation_name == nullptr ? std::string("nullptr") : std::string((char*)operation_name)) + "\"");
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_24(mht_24_v, 890, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "DTensorDevice::MaybeHandleDTensorCustomOps");
+
   *is_custom_dtensor_op = true;
   if (operation_name == std::string("_EagerConst")) {
     // Op-by-op const has no obvious layout. DTensor skips an SPMD expansion and
@@ -673,6 +919,9 @@ void DTensorDevice::CopyToMesh(TFE_Context* context, int num_inputs,
                                const TFE_OpAttrs* attributes,
                                TFE_TensorHandle** outputs, int* num_outputs,
                                TF_Status* status) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_25(mht_25_v, 922, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "DTensorDevice::CopyToMesh");
+
   if (num_inputs != 1) {
     RETURN_STATUS(status, TF_INVALID_ARGUMENT,
                   "DTensor CopyToMesh requires exactly 1 input.");
@@ -753,6 +1002,9 @@ namespace {
 void VerifyPackTensorShapeAndDtype(
     std::vector<parallel_device::TensorHandlePtr>& components,
     std::vector<int64_t>* component_shape, TF_Status* status) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_26(mht_26_v, 1005, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "VerifyPackTensorShapeAndDtype");
+
   TF_DataType dtype = TFE_TensorHandleDataType(components[0].get());
   auto size = TFE_TensorHandleNumDims(components[0].get(), status);
   if (TF_GetCode(status) != TF_OK) return;
@@ -790,6 +1042,9 @@ void VerifyPackTensorShapeAndDtype(
 void VerifyTensorRankAndDType(TFE_TensorHandle** tensors, int num_input,
                               int expected_rank, TF_DataType* expected_dtype,
                               TF_Status* status) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_27(mht_27_v, 1045, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "VerifyTensorRankAndDType");
+
   for (int i = 0; i < num_input; ++i) {
     auto actual_rank = TFE_TensorHandleNumDims(tensors[i], status);
     if (TF_GetCode(status) != TF_OK)
@@ -810,6 +1065,10 @@ TFE_TensorHandle* DTensorDevice::Pack(TFE_Context* context, int num_inputs,
                                       TFE_TensorHandle** inputs,
                                       const std::string& string_layout,
                                       TF_Status* status) {
+   std::vector<std::string> mht_28_v;
+   mht_28_v.push_back("string_layout: \"" + string_layout + "\"");
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_28(mht_28_v, 1069, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "DTensorDevice::Pack");
+
   if (num_inputs < 1) {
     TF_SetStatus(status, TF_INVALID_ARGUMENT,
                  "DTensorPack requires 1 or more inputs");
@@ -919,6 +1178,10 @@ TFE_TensorHandle* DTensorDevice::SparsePack(
     TFE_Context* context, int num_inputs, TFE_TensorHandle** indices,
     TFE_TensorHandle** values, TFE_TensorHandle** shapes,
     const std::string& string_layout, TF_Status* status) {
+   std::vector<std::string> mht_29_v;
+   mht_29_v.push_back("string_layout: \"" + string_layout + "\"");
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_29(mht_29_v, 1182, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "DTensorDevice::SparsePack");
+
   StatusOr<Layout> target_layout = Layout::FromString(string_layout);
   if (!target_layout.ok()) {
     TF_SetStatus(status, TF_INVALID_ARGUMENT,
@@ -1064,6 +1327,9 @@ TFE_TensorHandle* DTensorDevice::SparsePack(
 bool DTensorDevice::IsSparseDTensor(TFE_Context* context,
                                     TFE_TensorHandle* input,
                                     TF_Status* status) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_30(mht_30_v, 1330, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "DTensorDevice::IsSparseDTensor");
+
   const char* input_device = TFE_TensorHandleDeviceName(input, status);
   if (input_device != name_) {
     TF_SetStatus(
@@ -1082,6 +1348,10 @@ void DTensorDevice::UpdateOutputLayoutsWithSameShapePolicy(
     const absl::flat_hash_set<Mesh>& input_meshes, absl::string_view op_name,
     tensorflow::Graph* graph, std::vector<const Layout*>* output_layouts,
     TF_Status* status) {
+   std::vector<std::string> mht_31_v;
+   mht_31_v.push_back("op_name: \"" + std::string(op_name.data(), op_name.size()) + "\"");
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_31(mht_31_v, 1352, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "DTensorDevice::UpdateOutputLayoutsWithSameShapePolicy");
+
   if (!same_shape_policy_enabled_) return;
   // Simply do not hint if inputs span across multiple meshes.
   if (input_meshes.size() > 1) return;
@@ -1168,6 +1438,9 @@ tensorflow::Fprint128 CacheKeyForGraph(
     const DTensorOperation& doperation, const NameAttrList& attributes,
     const std::vector<TensorWithLayout*>& inputs,
     const std::vector<const Layout*>& output_layouts) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_32(mht_32_v, 1441, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "CacheKeyForGraph");
+
   tensorflow::Fprint128 cache_key = tensorflow::Fingerprint128(doperation.name);
   std::string serialized;
   SerializeToStringDeterministic(attributes, &serialized);
@@ -1287,6 +1560,9 @@ StatusOr<std::unique_ptr<Graph>> SelectGraphToExecute(
 Status AddExecutionFunctionDefsToFunctionDefLibrary(
     const absl::flat_hash_set<Node*>& control_ret_nodes, TFE_Context* context,
     const Graph& graph, ExecutionFunctions* execution_functions) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_33(mht_33_v, 1563, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "AddExecutionFunctionDefsToFunctionDefLibrary");
+
   // Note: We use node name instead of node pointer for comparison because
   // node address in the new graph is different with the original graph.
   absl::flat_hash_set<std::string> control_ret_names;
@@ -1344,6 +1620,9 @@ void DTensorDevice::LowerToSPMDFunction(
     const DTensorOperation& doperation, const TFE_OpAttrs* attributes,
     const int num_outputs, const ExecutionFunctions** execution_functions,
     TF_Status* status) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_34(mht_34_v, 1623, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "DTensorDevice::LowerToSPMDFunction");
+
   profiler::TraceMe activity(
       [&] { return "DTensorDevice::LowerToSPMDFunction"; },
       profiler::TraceMeLevel::kInfo);
@@ -1477,6 +1756,9 @@ void DTensorDevice::ExecuteRegularOperation(
     TFE_Context* context, const std::vector<TensorWithLayout*>& inputs,
     const DTensorOperation& doperation, const TFE_OpAttrs* attributes,
     int* num_outputs, TFE_TensorHandle** outputs, TF_Status* status) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_35(mht_35_v, 1759, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "DTensorDevice::ExecuteRegularOperation");
+
   const ExecutionFunctions* execution_functions = nullptr;
 
   LowerToSPMDFunction(context, inputs, doperation, attributes, *num_outputs,
@@ -1737,6 +2019,9 @@ void DTensorDevice::ExecuteRegularOperation(
 
 void DTensorDevice::Execute(const TFE_Op* original_op, int* num_outputs,
                             TFE_TensorHandle** outputs, TF_Status* status) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_36(mht_36_v, 2022, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "DTensorDevice::Execute");
+
   TFE_Context* context = TFE_OpGetContext(original_op, status);
   if (TF_GetCode(status) != TF_OK) return;
   const char* operation_name = TFE_OpGetName(original_op, status);
@@ -1890,17 +2175,26 @@ void DTensorDevice::Execute(const TFE_Op* original_op, int* num_outputs,
 void ExecuteOnDTensorDevice(const TFE_Op* original_op, int* num_outputs,
                             TFE_TensorHandle** outputs, TF_Status* status,
                             void* device_info) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_37(mht_37_v, 2178, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "ExecuteOnDTensorDevice");
+
   DTensorDevice* dev = reinterpret_cast<DTensorDevice*>(device_info);
   dev->Execute(original_op, num_outputs, outputs, status);
 }
 
 void DeleteDTensorDevice(void* device_info) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_38(mht_38_v, 2186, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "DeleteDTensorDevice");
+
   delete static_cast<DTensorDevice*>(device_info);
 }
 
 TFE_TensorHandle* CopyToDTensorDevice(TFE_Context* context,
                                       TFE_TensorHandle* tensor,
                                       TF_Status* status, void* device_info) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_39(mht_39_v, 2195, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "CopyToDTensorDevice");
+
   TF_SetStatus(status, TF_UNIMPLEMENTED,
                "Trying to copy a tensor on to a DTensor mesh without a layout "
                "(use the CopyToMesh op for now).");
@@ -1911,6 +2205,10 @@ TFE_TensorHandle* CopyFromDTensorDevice(TFE_Context* context,
                                         TFE_TensorHandle* tensor,
                                         const char* target_device_name,
                                         TF_Status* status, void* device_info) {
+   std::vector<std::string> mht_40_v;
+   mht_40_v.push_back("target_device_name: \"" + (target_device_name == nullptr ? std::string("nullptr") : std::string((char*)target_device_name)) + "\"");
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_40(mht_40_v, 2209, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "CopyFromDTensorDevice");
+
   TensorWithLayout* typed_input = reinterpret_cast<TensorWithLayout*>(
       TFE_TensorHandleDevicePointer(tensor, status));
   if (!tensorflow::dtensor::Layout(typed_input->layout()).IsFullyReplicated()) {
@@ -1940,6 +2238,10 @@ TFE_TensorHandle* CopyFromDTensorDevice(TFE_Context* context,
 
 void AllocateDTensorDevice(absl::string_view device_name,
                            TFE_CustomDevice* device, void** device_info) {
+   std::vector<std::string> mht_41_v;
+   mht_41_v.push_back("device_name: \"" + std::string(device_name.data(), device_name.size()) + "\"");
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_41(mht_41_v, 2242, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "AllocateDTensorDevice");
+
   device->copy_tensor_to_device = &CopyToDTensorDevice;
   device->copy_tensor_from_device = &CopyFromDTensorDevice;
   device->delete_device = &DeleteDTensorDevice;
@@ -1949,6 +2251,10 @@ void AllocateDTensorDevice(absl::string_view device_name,
 
 void AddMesh(const std::string& serialized_mesh, void* device_info,
              bool is_async, bool is_host_mesh, TF_Status* status) {
+   std::vector<std::string> mht_42_v;
+   mht_42_v.push_back("serialized_mesh: \"" + serialized_mesh + "\"");
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_42(mht_42_v, 2255, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "AddMesh");
+
   auto mesh_config_or_status = Mesh::FromString(serialized_mesh);
   if (!mesh_config_or_status.ok()) {
     TF_SetStatus(status, TF_INTERNAL,
@@ -1982,6 +2288,10 @@ void AddMesh(const std::string& serialized_mesh, void* device_info,
 
 void ExperimentalSetDefaultLayout(const std::string& serialized_layout,
                                   void* device_info, TF_Status* status) {
+   std::vector<std::string> mht_43_v;
+   mht_43_v.push_back("serialized_layout: \"" + serialized_layout + "\"");
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_43(mht_43_v, 2292, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "ExperimentalSetDefaultLayout");
+
   StatusOr<Layout> layout = Layout::FromString(serialized_layout);
   if (!layout.ok()) {
     RETURN_STATUS(status, TF_INTERNAL, layout.status().error_message().c_str());
@@ -1991,12 +2301,19 @@ void ExperimentalSetDefaultLayout(const std::string& serialized_layout,
 }
 
 void ExperimentalClearDefaultLayout(void* device_info, TF_Status* status) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_44(mht_44_v, 2304, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "ExperimentalClearDefaultLayout");
+
   DTensorDevice* device = reinterpret_cast<DTensorDevice*>(device_info);
   device->ClearDefaultLayout();
 }
 
 void ExperimentalSetDefaultMesh(const std::string& serialized_mesh,
                                 void* device_info, TF_Status* status) {
+   std::vector<std::string> mht_45_v;
+   mht_45_v.push_back("serialized_mesh: \"" + serialized_mesh + "\"");
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_45(mht_45_v, 2314, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "ExperimentalSetDefaultMesh");
+
   StatusOr<Mesh> mesh = Mesh::FromString(serialized_mesh);
   if (!mesh.ok()) {
     RETURN_STATUS(status, TF_INTERNAL, mesh.status().error_message().c_str());
@@ -2006,11 +2323,17 @@ void ExperimentalSetDefaultMesh(const std::string& serialized_mesh,
 }
 
 void ExperimentalClearDefaultMesh(void* device_info, TF_Status* status) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_46(mht_46_v, 2326, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "ExperimentalClearDefaultMesh");
+
   DTensorDevice* device = reinterpret_cast<DTensorDevice*>(device_info);
   device->ClearDefaultMesh();
 }
 
 void SetSameShapePolicy(void* device_info, bool enabled) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_47(mht_47_v, 2334, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "SetSameShapePolicy");
+
   DTensorDevice* device = reinterpret_cast<DTensorDevice*>(device_info);
   device->SetSameShapePolicy(enabled);
 }
@@ -2018,12 +2341,19 @@ void SetSameShapePolicy(void* device_info, bool enabled) {
 void SetTPUCoreIDs(const std::string& mesh_name,
                    const std::vector<int>& tpu_core_ids, void* device_info,
                    TF_Status* status) {
+   std::vector<std::string> mht_48_v;
+   mht_48_v.push_back("mesh_name: \"" + mesh_name + "\"");
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_48(mht_48_v, 2345, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "SetTPUCoreIDs");
+
   DTensorDevice* device = reinterpret_cast<DTensorDevice*>(device_info);
   RETURN_C_STATUS_IF_NOT_OK(device->SetTPUCoreIDs(mesh_name, tpu_core_ids),
                             status);
 }
 
 void ClearTPUCoreIDs(void* device_info) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_49(mht_49_v, 2354, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "ClearTPUCoreIDs");
+
   DTensorDevice* device = reinterpret_cast<DTensorDevice*>(device_info);
   device->ClearTPUCoreIDs();
 }
@@ -2047,6 +2377,10 @@ TFE_TensorHandle* Pack(TFE_Context* context, int num_inputs,
                        TFE_TensorHandle** inputs,
                        const std::string& string_layout, void* device_info,
                        TF_Status* status) {
+   std::vector<std::string> mht_50_v;
+   mht_50_v.push_back("string_layout: \"" + string_layout + "\"");
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_50(mht_50_v, 2381, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "Pack");
+
   DTensorDevice* device = reinterpret_cast<DTensorDevice*>(device_info);
   return device->Pack(context, num_inputs, inputs, string_layout, status);
 }
@@ -2060,6 +2394,9 @@ std::vector<TFE_TensorHandle*> Unpack(TFE_Context* context,
 
 std::string FetchLayout(TFE_Context* context, TFE_TensorHandle* input,
                         void* device_info, TF_Status* status) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_51(mht_51_v, 2397, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "FetchLayout");
+
   DTensorDevice* device = reinterpret_cast<DTensorDevice*>(device_info);
   return device->FetchLayout(context, input, status);
 }
@@ -2070,6 +2407,10 @@ TFE_TensorHandle* SparsePack(TFE_Context* context, int num_inputs,
                              TFE_TensorHandle** shapes,
                              const std::string& string_layout,
                              void* device_info, TF_Status* status) {
+   std::vector<std::string> mht_52_v;
+   mht_52_v.push_back("string_layout: \"" + string_layout + "\"");
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_52(mht_52_v, 2411, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "SparsePack");
+
   DTensorDevice* device = reinterpret_cast<DTensorDevice*>(device_info);
   return device->SparsePack(context, num_inputs, indices, values, shapes,
                             string_layout, status);
@@ -2077,6 +2418,9 @@ TFE_TensorHandle* SparsePack(TFE_Context* context, int num_inputs,
 
 bool IsSparseDTensor(TFE_Context* context, TFE_TensorHandle* input,
                      void* device_info, TF_Status* status) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_deviceDTcc mht_53(mht_53_v, 2421, "", "./tensorflow/dtensor/cc/dtensor_device.cc", "IsSparseDTensor");
+
   DTensorDevice* device = reinterpret_cast<DTensorDevice*>(device_info);
   return device->IsSparseDTensor(context, input, status);
 }

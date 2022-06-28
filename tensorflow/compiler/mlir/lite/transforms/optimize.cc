@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -69,6 +237,9 @@ constexpr char kRelu6[] = "RELU6";
 constexpr char kRelu1[] = "RELU_N1_TO_1";
 
 bool L2NormalizeReduceAxis(Value sq_op, DenseElementsAttr axis) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_0(mht_0_v, 240, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "L2NormalizeReduceAxis");
+
   if (axis.getNumElements() == 0) {
     return false;
   }
@@ -95,17 +266,29 @@ using ::llvm::cast;
 class OptimizePass : public PassWrapper<OptimizePass, OperationPass<FuncOp>> {
  public:
   OptimizePass() = default;
-  OptimizePass(const OptimizePass &) {}
+  OptimizePass(const OptimizePass &) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_1(mht_1_v, 270, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "OptimizePass");
+}
   explicit OptimizePass(bool enable_canonicalization) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_2(mht_2_v, 274, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "OptimizePass");
+
     enable_canonicalization_ = enable_canonicalization;
   }
 
   StringRef getArgument() const final {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_3(mht_3_v, 281, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "getArgument");
+
     // This is the argument used to refer to the pass in
     // the textual format (on the commandline for example).
     return "tfl-optimize";
   }
   StringRef getDescription() const final {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_4(mht_4_v, 289, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "getDescription");
+
     // This is a brief description of the pass.
     return "Optimize within the TensorFlow Lite dialect";
   }
@@ -121,6 +304,9 @@ class OptimizePass : public PassWrapper<OptimizePass, OperationPass<FuncOp>> {
 
 // Returns whether the given type `a` is broadcast-compatible with `b`.
 bool IsBroadcastableElementsAttrAndType(Type a, Type b) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_5(mht_5_v, 307, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "IsBroadcastableElementsAttrAndType");
+
   return OpTrait::util::getBroadcastedType(a, b) != Type();
 }
 
@@ -128,6 +314,9 @@ bool IsBroadcastableElementsAttrAndType(Type a, Type b) {
 // operands `a` and `b` matches `expected_output`. Returns false if `a` is not
 // broadcast-compatible with `b`.
 bool OperandsBroadcastToOutputType(Type a, Type b, Type expected_output) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_6(mht_6_v, 317, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "OperandsBroadcastToOutputType");
+
   Type output_element_type =
       expected_output.cast<ShapedType>().getElementType();
   Type broadcasted_type =
@@ -138,6 +327,9 @@ bool OperandsBroadcastToOutputType(Type a, Type b, Type expected_output) {
 // Returns whether if `type1` dimensions are the same as the ending dimensions
 // of `type2`. This is more restricted than broadcastable.
 bool IsTailOfShape(Type type1, Type type2) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_7(mht_7_v, 330, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "IsTailOfShape");
+
   auto tail_type = type1.dyn_cast<ShapedType>();
   auto full_type = type2.dyn_cast<ShapedType>();
   if (!tail_type || !full_type || !tail_type.hasRank() ||
@@ -151,6 +343,9 @@ bool IsTailOfShape(Type type1, Type type2) {
 bool CanFuseConvOrDepthwiseConvShapes(const ArrayRef<int64_t> filter_shape,
                                       const ArrayRef<int64_t> elements_shape,
                                       bool is_depthwise) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_8(mht_8_v, 346, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "CanFuseConvOrDepthwiseConvShapes");
+
   // Also, val tensor must be of rank 1 or 0 (scalar).
   const auto elements_rank = elements_shape.size();
   if (elements_rank != 1 && elements_rank != 0) {
@@ -177,6 +372,9 @@ bool CanFuseConvOrDepthwiseConvShapes(const ArrayRef<int64_t> filter_shape,
 
 bool CanFuseConvOrDepthwiseConv(Value filter, Attribute val,
                                 bool is_depthwise) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_9(mht_9_v, 375, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "CanFuseConvOrDepthwiseConv");
+
   const auto elements = val.dyn_cast<DenseElementsAttr>();
   if (!elements) {
     return false;
@@ -189,6 +387,9 @@ bool CanFuseConvOrDepthwiseConv(Value filter, Attribute val,
 
 bool CanFuseConvOrDepthwiseConv(Attribute filter, Attribute val,
                                 bool is_depthwise) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_10(mht_10_v, 390, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "CanFuseConvOrDepthwiseConv");
+
   if (const auto elements = val.dyn_cast<DenseElementsAttr>()) {
     if (const auto filter_elements = filter.dyn_cast<DenseElementsAttr>()) {
       return CanFuseConvOrDepthwiseConvShapes(
@@ -205,6 +406,9 @@ bool CanFuseConvOrDepthwiseConv(Attribute filter, Attribute val,
 bool CanOptimizeIdentityGatherNdOrScatterNdOp(Value params,
                                               DenseIntElementsAttr indices,
                                               Type output_type) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_11(mht_11_v, 409, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "CanOptimizeIdentityGatherNdOrScatterNdOp");
+
   auto params_type = params.getType().dyn_cast<RankedTensorType>();
   auto indices_type = indices.getType().dyn_cast<RankedTensorType>();
   // Checks the shape of `params` is [n, ...], shape of `indices` is [n, 1]. 2D
@@ -233,6 +437,9 @@ bool CanOptimizeIdentityGatherNdOrScatterNdOp(Value params,
 // all 0s and `size[i]` is equal to either -1 or `input.shape[i]`
 // for each dim i, the output tensor is identical to `input`.
 bool CanOptimizeIdentitySliceOp(Value input, Attribute begin, Attribute size) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_12(mht_12_v, 440, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "CanOptimizeIdentitySliceOp");
+
   // Checks if `begin` and `size` are i32 or i64.
   auto begin_attr = begin.dyn_cast<DenseIntElementsAttr>();
   auto size_attr = size.dyn_cast<DenseIntElementsAttr>();
@@ -276,6 +483,9 @@ bool CanOptimizeIdentitySliceOp(Value input, Attribute begin, Attribute size) {
 // Expand Attribute 'a' to 4D with all 1s except 1 dimension.
 // Which dimension depends on 'is_depthwise' is true or false.
 ElementsAttr ExpandTo4DForConvImpl(Attribute a, bool is_depthwise) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_13(mht_13_v, 486, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "ExpandTo4DForConvImpl");
+
   auto elements = a.dyn_cast<DenseElementsAttr>();
   auto shape = elements.getType().getShape();
   if (!shape.empty()) {
@@ -294,20 +504,32 @@ ElementsAttr ExpandTo4DForConvImpl(Attribute a, bool is_depthwise) {
 }
 
 ElementsAttr ExpandTo4DForConv(Attribute a) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_14(mht_14_v, 507, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "ExpandTo4DForConv");
+
   return ExpandTo4DForConvImpl(a, false);
 }
 
 ElementsAttr ExpandTo4DForDepthwiseConv(Attribute a) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_15(mht_15_v, 514, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "ExpandTo4DForDepthwiseConv");
+
   return ExpandTo4DForConvImpl(a, true);
 }
 
 TypeAttr RescaleQtype(Type input, Attribute factor) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_16(mht_16_v, 521, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "RescaleQtype");
+
   return quant::RescaleQuantizedType(input, factor);
 }
 
 // Returns shape of a ranked tensor.
 // Precondition: output_val's is ranked tensor.
 DenseElementsAttr GetShape(Value output_val) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_17(mht_17_v, 530, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "GetShape");
+
   auto output_type = output_val.getType().cast<RankedTensorType>();
   auto shape_vector = output_type.getShape();
   std::vector<int32_t> shape;
@@ -323,6 +545,9 @@ DenseElementsAttr GetShape(Value output_val) {
 }
 
 static Type GetShapeStrippedType(TypeAttr type_attr) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_18(mht_18_v, 548, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "GetShapeStrippedType");
+
   auto type = type_attr.getValue();
   auto shaped_type = type.dyn_cast<ShapedType>();
   if (shaped_type) {
@@ -337,6 +562,9 @@ static Type GetShapeStrippedType(TypeAttr type_attr) {
 static bool ShapeMatchesReduceWithKeepAxes(Value input,
                                            const mlir::Attribute &axes,
                                            const mlir::Attribute &shape) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_19(mht_19_v, 565, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "ShapeMatchesReduceWithKeepAxes");
+
   RankedTensorType type = input.getType().dyn_cast_or_null<RankedTensorType>();
   if (!type) return false;
 
@@ -367,6 +595,9 @@ static bool ShapeMatchesReduceWithKeepAxes(Value input,
 // Returns `true` if all the `axes` dimensions of `input` are 1.
 static bool AreInputDimensionsOneInAxes(Value input,
                                         const mlir::Attribute &axes) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_20(mht_20_v, 598, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "AreInputDimensionsOneInAxes");
+
   RankedTensorType input_type =
       input.getType().dyn_cast_or_null<RankedTensorType>();
   if (!input_type) return false;
@@ -394,6 +625,9 @@ static bool AreInputDimensionsOneInAxes(Value input,
 }
 
 static bool FloatValueEquals(const Attribute &attr, double value) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_21(mht_21_v, 628, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "FloatValueEquals");
+
   auto fp_attr = attr.dyn_cast_or_null<DenseFPElementsAttr>();
   if (!fp_attr) return false;
 
@@ -407,12 +641,18 @@ static bool FloatValueEquals(const Attribute &attr, double value) {
 
 // Returns true if the value's element type is F32.
 bool IsF32Value(Value value) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_22(mht_22_v, 644, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "IsF32Value");
+
   return value.getType().cast<ShapedType>().getElementType().isF32();
 }
 
 // Returns the number of elements in attr if it is a DenseElementsAttr, 1
 // otherwise, as an unranked int32 Attribute.
 Attribute GetNumElementsOrOne(Attribute attr) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_23(mht_23_v, 653, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "GetNumElementsOrOne");
+
   const auto dense_attr = attr.dyn_cast_or_null<DenseElementsAttr>();
   int32_t num_elements = dense_attr ? dense_attr.getNumElements() : 1;
 
@@ -424,6 +664,9 @@ Attribute GetNumElementsOrOne(Attribute attr) {
 }
 
 bool HasExactlyTwoElements(Attribute attr) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_24(mht_24_v, 667, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "HasExactlyTwoElements");
+
   const auto values = attr.dyn_cast_or_null<ElementsAttr>();
   if (!values) return false;
   return values.getNumElements() == 2;
@@ -431,6 +674,9 @@ bool HasExactlyTwoElements(Attribute attr) {
 
 // Returns true if attr is a DenseIntElementsAttr with the last element equal 1.
 bool IsLastElementEqualsOne(Attribute attr) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_25(mht_25_v, 677, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "IsLastElementEqualsOne");
+
   const auto ints = attr.dyn_cast_or_null<DenseIntElementsAttr>();
   if (!ints) return false;
   if (ints.empty()) return false;
@@ -443,6 +689,9 @@ bool IsLastElementEqualsOne(Attribute attr) {
 // Reshapes value to a given shape.
 Value ReshapeValueDroppingLastDim(OpBuilder &builder, Value value,
                                   Attribute shape) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_26(mht_26_v, 692, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "ReshapeValueDroppingLastDim");
+
   // This function is always guarded with IsLastElementEqualsOne(), so we could
   // cast safely here.
   const auto old_shape = shape.cast<DenseIntElementsAttr>();
@@ -468,6 +717,9 @@ Value ReshapeValueDroppingLastDim(OpBuilder &builder, Value value,
 
 // Returns true if val has a static shape and the last dimension equals 1.
 bool IsLastDimensionEqualOne(Value val) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_27(mht_27_v, 720, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "IsLastDimensionEqualOne");
+
   const auto val_type = val.getType().cast<ShapedType>();
   if (!val_type.hasStaticShape()) return false;
   const auto val_shape = val_type.getShape();
@@ -481,6 +733,9 @@ bool IsLastDimensionEqualOne(Value val) {
 //
 // If such a value is used in an Equal operator, it can be replaced with OneHot.
 bool IsOneHotIndexAttribute(Attribute attr) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_28(mht_28_v, 736, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "IsOneHotIndexAttribute");
+
   const auto dense_attr = attr.dyn_cast_or_null<DenseIntElementsAttr>();
   if (!dense_attr) {
     return false;
@@ -509,6 +764,9 @@ mlir::Value GetFcOutput(OpBuilder *builder,
                         StringAttr fused_activation_function,
                         StringAttr weights_format, BoolAttr keep_num_dims,
                         BoolAttr asymmetric_quantize_inputs) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_29(mht_29_v, 767, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "GetFcOutput");
+
   auto fc_op = builder->create<FullyConnectedOp>(
       result[0].getLoc(), result.getTypes(), input, filter, bias,
       fused_activation_function, weights_format, keep_num_dims,
@@ -519,6 +777,9 @@ mlir::Value GetFcOutput(OpBuilder *builder,
 // Returns true if 'value' represents a const ElementsAttr with all values
 // equals to 0.0.
 bool AllValuesAreZero(mlir::Value value) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_30(mht_30_v, 780, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "AllValuesAreZero");
+
   if (!value) return false;
   DenseElementsAttr vals;
   if (!matchPattern(value, m_Constant(&vals))) return false;
@@ -531,6 +792,9 @@ bool AllValuesAreZero(mlir::Value value) {
 // Attribute holding a single value of float type. If attr has no elements, the
 // result is 0.0f.
 Attribute ConvertSingleElementAttrToFloatAttr(Attribute attr) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_31(mht_31_v, 795, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "ConvertSingleElementAttrToFloatAttr");
+
   const auto dense_fp_attr = attr.dyn_cast_or_null<DenseFPElementsAttr>();
   if (dense_fp_attr) {
     // Already float => return
@@ -566,6 +830,9 @@ struct FuseFullyConnectedAndAdd : public OpRewritePattern<TFL::AddOp> {
 
   LogicalResult matchAndRewrite(TFL::AddOp add_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_32(mht_32_v, 833, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "matchAndRewrite");
+
     // Match Add.
     DenseElementsAttr added_value;
     Value constant_val = add_op.rhs();
@@ -670,6 +937,9 @@ struct FuseAddAndFullyConnected
 
   LogicalResult matchAndRewrite(TFL::FullyConnectedOp fc_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_33(mht_33_v, 940, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "matchAndRewrite");
+
     // This only works with default format.
     if (fc_op.weights_format() != "DEFAULT") return failure();
 
@@ -740,6 +1010,9 @@ struct FuseMulAndFullyConnected
 
   LogicalResult matchAndRewrite(TFL::FullyConnectedOp fc_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_34(mht_34_v, 1013, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "matchAndRewrite");
+
     // This only works with default format.
     if (fc_op.weights_format() != "DEFAULT") return failure();
 
@@ -792,6 +1065,9 @@ struct FuseFullyConnectedAndReluX : public OpRewritePattern<ReluXOp> {
 
   LogicalResult matchAndRewrite(ReluXOp relu_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_35(mht_35_v, 1068, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "matchAndRewrite");
+
     Operation *input = relu_op.getOperand().getDefiningOp();
     if (!isa_and_nonnull<FullyConnectedOp>(input)) return failure();
     auto fully_connected_op = cast<FullyConnectedOp>(input);
@@ -827,6 +1103,9 @@ struct FuseFullyConnectedAndMul : public OpRewritePattern<TFL::MulOp> {
 
   LogicalResult matchAndRewrite(TFL::MulOp mul_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_36(mht_36_v, 1106, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "matchAndRewrite");
+
     // If we are broadcasting on the lhs then don't fold the multiply as it
     // would increase the amount of compute done by the fully connected op.
     if (mul_op.lhs().getType() != mul_op.getType()) return failure();
@@ -932,6 +1211,9 @@ struct FuseAffinOpAndMulWithQDQs : public OpRewritePattern<TFL::MulOp> {
 
   LogicalResult matchAndRewrite(TFL::MulOp mul_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_37(mht_37_v, 1214, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "matchAndRewrite");
+
     // Mul. Required 1-D rhs for batch normalization.
     DenseElementsAttr gamma_cst;
     Value gamma = mul_op.rhs();
@@ -1017,6 +1299,9 @@ struct FuseBinaryOpToFollowingAffineOp : public OpRewritePattern<AffineOpType> {
 
   LogicalResult matchAndRewrite(AffineOpType fc_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_38(mht_38_v, 1302, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "matchAndRewrite");
+
     // Binary op.
     Operation *binary_op = fc_op.input().getDefiningOp();
     if (!binary_op || binary_op->getNumOperands() != 2) return failure();
@@ -1169,6 +1454,9 @@ struct ScalarizeSplatConstantForBroadcastableOps
 
   LogicalResult matchAndRewrite(BinaryOpType binary_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_39(mht_39_v, 1457, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "matchAndRewrite");
+
     DenseElementsAttr splat_elements_attr;
     if (!IsScalarizableSplatConstant(binary_op.rhs(), &splat_elements_attr)) {
       return failure();
@@ -1216,6 +1504,9 @@ struct ScalarizeSplatConstantForBroadcastableOps
   // Also returns the elements attr if this value is indeed a splat constant.
   bool IsScalarizableSplatConstant(mlir::Value value,
                                    DenseElementsAttr *elements_attr) const {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_40(mht_40_v, 1507, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "IsScalarizableSplatConstant");
+
     if (!matchPattern(value, m_Constant(elements_attr))) {
       return false;
     }
@@ -1233,6 +1524,9 @@ struct ScalarizeSplatConstantForBroadcastableOps
 
   // If this type is a scalar shaped type.
   bool IsScalar(mlir::Value value) const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_41(mht_41_v, 1527, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "IsScalar");
+
     auto type = value.getType().dyn_cast<ShapedType>();
     if (!type) {
       return false;
@@ -1245,6 +1539,9 @@ struct ScalarizeSplatConstantForBroadcastableOps
 
   // Returns true if we can fuse an affine op with consuming binary op.
   bool CanFuseAffineOp(Operation *affine_op, Operation *binary_op) const {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_42(mht_42_v, 1542, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "CanFuseAffineOp");
+
     if (!isa_and_nonnull<TFL::Conv2DOp, TFL::DepthwiseConv2DOp,
                          TFL::FullyConnectedOp>(affine_op)) {
       return false;
@@ -1264,6 +1561,9 @@ struct ScalarizeSplatConstantForBroadcastableOps
 
     // We can only fuse F32/BF16.
     auto is_fusable_type = [](Type t) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_43(mht_43_v, 1564, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "lambda");
+
       Type element_type = t;
       if (auto shaped_type = t.dyn_cast<ShapedType>()) {
         element_type = shaped_type.getElementType();
@@ -1295,6 +1595,9 @@ struct ConvertTrivialTransposeOpToReshapeOp
 
   LogicalResult matchAndRewrite(TFL::TransposeOp transpose_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_44(mht_44_v, 1598, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "matchAndRewrite");
+
     auto input_type = transpose_op.input().getType().cast<ShapedType>();
     auto output_type = transpose_op.output().getType().cast<ShapedType>();
     // It's possible to know if the transformation is safe only if the input
@@ -1371,6 +1674,9 @@ struct RemoveReshapeBeforeFullyConnected
 
   LogicalResult matchAndRewrite(TFL::FullyConnectedOp fully_connected_op,
                                 PatternRewriter &) const override {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_45(mht_45_v, 1677, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "matchAndRewrite");
+
     auto input = fully_connected_op.input();
     auto input_ty = input.getType().dyn_cast<ShapedType>();
     auto output_ty = fully_connected_op.output()[0]
@@ -1422,6 +1728,9 @@ struct RemoveReshapeAfterFullyConnected
 
   LogicalResult matchAndRewrite(TFL::ReshapeOp reshape_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_46(mht_46_v, 1731, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "matchAndRewrite");
+
     auto fully_connected_op = llvm::dyn_cast_or_null<TFL::FullyConnectedOp>(
         reshape_op.input().getDefiningOp());
     if (!fully_connected_op || fully_connected_op.getNumResults() != 1 ||
@@ -1479,6 +1788,9 @@ struct FuseUnpackAndConcatToReshape
 
   LogicalResult matchAndRewrite(TFL::ConcatenationOp concat_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_47(mht_47_v, 1791, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "matchAndRewrite");
+
     if (concat_op.fused_activation_function() != "NONE") {
       return failure();
     }
@@ -1580,6 +1892,9 @@ struct OptimizeTopK : public OpRewritePattern<TFL::TopKV2Op> {
 
   LogicalResult matchAndRewrite(TFL::TopKV2Op op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_48(mht_48_v, 1895, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "matchAndRewrite");
+
     auto values = op.values();
     auto indices = op.indices();
     // op.values() and op.indices() cannot be used more than once.
@@ -1643,11 +1958,17 @@ using FuseBinaryOpToFollowingConv2D = FuseBinaryOpToFollowingAffineOp<Conv2DOp>;
 // Adds canonicalization patterns to the list of patterns.
 void AddCanonicalizationPatterns(MLIRContext *context,
                                  RewritePatternSet *patterns) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_49(mht_49_v, 1961, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "AddCanonicalizationPatterns");
+
   for (auto op : context->getRegisteredOperations())
     op.getCanonicalizationPatterns(*patterns, context);
 }
 
 void OptimizePass::runOnOperation() {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSoptimizeDTcc mht_50(mht_50_v, 1969, "", "./tensorflow/compiler/mlir/lite/transforms/optimize.cc", "OptimizePass::runOnOperation");
+
   RewritePatternSet patterns(&getContext());
   auto *ctx = &getContext();
   auto func = getOperation();

@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_GRAPPLER_OPTIMIZERS_GENERIC_LAYOUT_OPTIMIZER_TRANSPOSER_H_
 #define TENSORFLOW_CORE_GRAPPLER_OPTIMIZERS_GENERIC_LAYOUT_OPTIMIZER_TRANSPOSER_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <memory>
 #include <vector>
@@ -59,6 +227,9 @@ struct TransposeContext {
   static Status InitializeTransposeContext(const GrapplerItem& item,
                                            const Cluster* cluster,
                                            TransposeContext* context) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_0(mht_0_v, 230, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "InitializeTransposeContext");
+
     return InitializeTransposeContext(false, item, cluster, context);
   }
 
@@ -91,12 +262,18 @@ struct TransposeContext {
 
 class Transposer {
  public:
-  explicit Transposer() {}
+  explicit Transposer() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_1(mht_1_v, 266, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "Transposer");
+}
 
   Transposer(const Transposer&) = delete;
   Transposer& operator=(const Transposer&) = delete;
 
-  virtual ~Transposer() {}
+  virtual ~Transposer() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_2(mht_2_v, 274, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "~Transposer");
+}
 
   // Returns true iff the node should be processed by this transposer.
   // NodeProcessors may perform additional oprand specific checks before
@@ -201,7 +378,10 @@ class Transposer {
 
 class LayoutSensitiveOpTransposer : public Transposer {
  public:
-  explicit LayoutSensitiveOpTransposer() : Transposer() {}
+  explicit LayoutSensitiveOpTransposer() : Transposer() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_3(mht_3_v, 382, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "LayoutSensitiveOpTransposer");
+}
 
   // Updates attrs data_format, ksize, strides of the given node to dst_format.
   // _output_shape is updated during UpdateOutputEdges.
@@ -213,7 +393,10 @@ class LayoutSensitiveOpTransposer : public Transposer {
 class DefaultLayoutSensitiveOpTransposer : public LayoutSensitiveOpTransposer {
  public:
   explicit DefaultLayoutSensitiveOpTransposer()
-      : LayoutSensitiveOpTransposer() {}
+      : LayoutSensitiveOpTransposer() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_4(mht_4_v, 397, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "DefaultLayoutSensitiveOpTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -221,7 +404,10 @@ class DefaultLayoutSensitiveOpTransposer : public LayoutSensitiveOpTransposer {
 
 class BiasAddTransposer : public LayoutSensitiveOpTransposer {
  public:
-  explicit BiasAddTransposer() : LayoutSensitiveOpTransposer() {}
+  explicit BiasAddTransposer() : LayoutSensitiveOpTransposer() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_5(mht_5_v, 408, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "BiasAddTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -229,7 +415,10 @@ class BiasAddTransposer : public LayoutSensitiveOpTransposer {
 
 class AvgPoolGradTransposer : public LayoutSensitiveOpTransposer {
  public:
-  explicit AvgPoolGradTransposer() : LayoutSensitiveOpTransposer() {}
+  explicit AvgPoolGradTransposer() : LayoutSensitiveOpTransposer() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_6(mht_6_v, 419, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "AvgPoolGradTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -237,7 +426,10 @@ class AvgPoolGradTransposer : public LayoutSensitiveOpTransposer {
 
 class BiasAddGradTransposer : public LayoutSensitiveOpTransposer {
  public:
-  explicit BiasAddGradTransposer() : LayoutSensitiveOpTransposer() {}
+  explicit BiasAddGradTransposer() : LayoutSensitiveOpTransposer() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_7(mht_7_v, 430, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "BiasAddGradTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -245,7 +437,10 @@ class BiasAddGradTransposer : public LayoutSensitiveOpTransposer {
 
 class Conv2DBackpropFilterTransposer : public LayoutSensitiveOpTransposer {
  public:
-  explicit Conv2DBackpropFilterTransposer() : LayoutSensitiveOpTransposer() {}
+  explicit Conv2DBackpropFilterTransposer() : LayoutSensitiveOpTransposer() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_8(mht_8_v, 441, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "Conv2DBackpropFilterTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -253,7 +448,10 @@ class Conv2DBackpropFilterTransposer : public LayoutSensitiveOpTransposer {
 
 class Conv2DBackpropInputTransposer : public LayoutSensitiveOpTransposer {
  public:
-  explicit Conv2DBackpropInputTransposer() : LayoutSensitiveOpTransposer() {}
+  explicit Conv2DBackpropInputTransposer() : LayoutSensitiveOpTransposer() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_9(mht_9_v, 452, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "Conv2DBackpropInputTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -261,7 +459,10 @@ class Conv2DBackpropInputTransposer : public LayoutSensitiveOpTransposer {
 
 class Conv3DTransposer : public LayoutSensitiveOpTransposer {
  public:
-  explicit Conv3DTransposer() : LayoutSensitiveOpTransposer() {}
+  explicit Conv3DTransposer() : LayoutSensitiveOpTransposer() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_10(mht_10_v, 463, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "Conv3DTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -269,7 +470,10 @@ class Conv3DTransposer : public LayoutSensitiveOpTransposer {
 
 class Conv3DBackpropFilterTransposer : public LayoutSensitiveOpTransposer {
  public:
-  explicit Conv3DBackpropFilterTransposer() : LayoutSensitiveOpTransposer() {}
+  explicit Conv3DBackpropFilterTransposer() : LayoutSensitiveOpTransposer() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_11(mht_11_v, 474, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "Conv3DBackpropFilterTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -277,7 +481,10 @@ class Conv3DBackpropFilterTransposer : public LayoutSensitiveOpTransposer {
 
 class Conv3DBackpropInputTransposer : public LayoutSensitiveOpTransposer {
  public:
-  explicit Conv3DBackpropInputTransposer() : LayoutSensitiveOpTransposer() {}
+  explicit Conv3DBackpropInputTransposer() : LayoutSensitiveOpTransposer() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_12(mht_12_v, 485, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "Conv3DBackpropInputTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -285,7 +492,10 @@ class Conv3DBackpropInputTransposer : public LayoutSensitiveOpTransposer {
 
 class FusedBatchNormExTransposer : public LayoutSensitiveOpTransposer {
  public:
-  explicit FusedBatchNormExTransposer() : LayoutSensitiveOpTransposer() {}
+  explicit FusedBatchNormExTransposer() : LayoutSensitiveOpTransposer() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_13(mht_13_v, 496, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "FusedBatchNormExTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -293,7 +503,10 @@ class FusedBatchNormExTransposer : public LayoutSensitiveOpTransposer {
 
 class FusedBatchNormGradTransposer : public LayoutSensitiveOpTransposer {
  public:
-  explicit FusedBatchNormGradTransposer() : LayoutSensitiveOpTransposer() {}
+  explicit FusedBatchNormGradTransposer() : LayoutSensitiveOpTransposer() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_14(mht_14_v, 507, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "FusedBatchNormGradTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -304,7 +517,10 @@ class FusedBatchNormGradTransposer : public LayoutSensitiveOpTransposer {
 
 class MaxPoolV2Transposer : public LayoutSensitiveOpTransposer {
  public:
-  explicit MaxPoolV2Transposer() : LayoutSensitiveOpTransposer() {}
+  explicit MaxPoolV2Transposer() : LayoutSensitiveOpTransposer() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_15(mht_15_v, 521, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "MaxPoolV2Transposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -312,7 +528,10 @@ class MaxPoolV2Transposer : public LayoutSensitiveOpTransposer {
 
 class MaxPoolGradTransposer : public LayoutSensitiveOpTransposer {
  public:
-  explicit MaxPoolGradTransposer() : LayoutSensitiveOpTransposer() {}
+  explicit MaxPoolGradTransposer() : LayoutSensitiveOpTransposer() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_16(mht_16_v, 532, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "MaxPoolGradTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -320,7 +539,10 @@ class MaxPoolGradTransposer : public LayoutSensitiveOpTransposer {
 
 class MaxPoolGradV2Transposer : public LayoutSensitiveOpTransposer {
  public:
-  explicit MaxPoolGradV2Transposer() : LayoutSensitiveOpTransposer() {}
+  explicit MaxPoolGradV2Transposer() : LayoutSensitiveOpTransposer() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_17(mht_17_v, 543, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "MaxPoolGradV2Transposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -330,7 +552,10 @@ class MaxPoolGradV2Transposer : public LayoutSensitiveOpTransposer {
 
 class LayoutAgnosticOpTransposer : public Transposer {
  public:
-  explicit LayoutAgnosticOpTransposer() : Transposer() {}
+  explicit LayoutAgnosticOpTransposer() : Transposer() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_18(mht_18_v, 556, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "LayoutAgnosticOpTransposer");
+}
 
  protected:
   bool IsAfterDstToSrcTransform(const TransposeContext& context,
@@ -343,7 +568,10 @@ class LayoutAgnosticOpTransposer : public Transposer {
 
 class DefaultLayoutAgnosticOpTransposer : public LayoutAgnosticOpTransposer {
  public:
-  explicit DefaultLayoutAgnosticOpTransposer() : LayoutAgnosticOpTransposer() {}
+  explicit DefaultLayoutAgnosticOpTransposer() : LayoutAgnosticOpTransposer() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_19(mht_19_v, 572, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "DefaultLayoutAgnosticOpTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -351,7 +579,10 @@ class DefaultLayoutAgnosticOpTransposer : public LayoutAgnosticOpTransposer {
 
 class AddNTransposer : public LayoutAgnosticOpTransposer {
  public:
-  explicit AddNTransposer() : LayoutAgnosticOpTransposer() {}
+  explicit AddNTransposer() : LayoutAgnosticOpTransposer() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_20(mht_20_v, 583, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "AddNTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -359,7 +590,10 @@ class AddNTransposer : public LayoutAgnosticOpTransposer {
 
 class BinaryOpTransposer : public LayoutAgnosticOpTransposer {
  public:
-  explicit BinaryOpTransposer() : LayoutAgnosticOpTransposer() {}
+  explicit BinaryOpTransposer() : LayoutAgnosticOpTransposer() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_21(mht_21_v, 594, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "BinaryOpTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -385,7 +619,10 @@ class BinaryOpTransposer : public LayoutAgnosticOpTransposer {
 
 class ConcatOpTransposer : public LayoutAgnosticOpTransposer {
  public:
-  explicit ConcatOpTransposer() : LayoutAgnosticOpTransposer() {}
+  explicit ConcatOpTransposer() : LayoutAgnosticOpTransposer() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_22(mht_22_v, 623, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "ConcatOpTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -393,7 +630,10 @@ class ConcatOpTransposer : public LayoutAgnosticOpTransposer {
 
 class FillOpTransposer : public LayoutAgnosticOpTransposer {
  public:
-  explicit FillOpTransposer() : LayoutAgnosticOpTransposer() {}
+  explicit FillOpTransposer() : LayoutAgnosticOpTransposer() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_23(mht_23_v, 634, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "FillOpTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -401,7 +641,10 @@ class FillOpTransposer : public LayoutAgnosticOpTransposer {
 
 class IdentityNTransposer : public LayoutAgnosticOpTransposer {
  public:
-  explicit IdentityNTransposer() : LayoutAgnosticOpTransposer() {}
+  explicit IdentityNTransposer() : LayoutAgnosticOpTransposer() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_24(mht_24_v, 645, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "IdentityNTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -409,7 +652,10 @@ class IdentityNTransposer : public LayoutAgnosticOpTransposer {
 
 class MergeTransposer : public LayoutAgnosticOpTransposer {
  public:
-  explicit MergeTransposer() : LayoutAgnosticOpTransposer() {}
+  explicit MergeTransposer() : LayoutAgnosticOpTransposer() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_25(mht_25_v, 656, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "MergeTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -422,7 +668,10 @@ class MergeTransposer : public LayoutAgnosticOpTransposer {
 
 class PadTransposer : public LayoutAgnosticOpTransposer {
  public:
-  explicit PadTransposer() : LayoutAgnosticOpTransposer() {}
+  explicit PadTransposer() : LayoutAgnosticOpTransposer() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_26(mht_26_v, 672, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "PadTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -430,7 +679,10 @@ class PadTransposer : public LayoutAgnosticOpTransposer {
 
 class ReduceTransposer : public LayoutAgnosticOpTransposer {
  public:
-  explicit ReduceTransposer() : LayoutAgnosticOpTransposer() {}
+  explicit ReduceTransposer() : LayoutAgnosticOpTransposer() {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_27(mht_27_v, 683, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "ReduceTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -444,7 +696,10 @@ class ReduceTransposer : public LayoutAgnosticOpTransposer {
 
 class ReverseV2Transposer : public LayoutAgnosticOpTransposer {
  public:
-  explicit ReverseV2Transposer() : LayoutAgnosticOpTransposer() {}
+  explicit ReverseV2Transposer() : LayoutAgnosticOpTransposer() {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_28(mht_28_v, 700, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "ReverseV2Transposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -452,7 +707,10 @@ class ReverseV2Transposer : public LayoutAgnosticOpTransposer {
 
 class SelectTransposer : public LayoutAgnosticOpTransposer {
  public:
-  explicit SelectTransposer() : LayoutAgnosticOpTransposer() {}
+  explicit SelectTransposer() : LayoutAgnosticOpTransposer() {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_29(mht_29_v, 711, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "SelectTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -464,7 +722,10 @@ class SelectTransposer : public LayoutAgnosticOpTransposer {
 
 class ShapeTransposer : public LayoutAgnosticOpTransposer {
  public:
-  explicit ShapeTransposer() : LayoutAgnosticOpTransposer() {}
+  explicit ShapeTransposer() : LayoutAgnosticOpTransposer() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_30(mht_30_v, 726, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "ShapeTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -472,7 +733,10 @@ class ShapeTransposer : public LayoutAgnosticOpTransposer {
 
 class ShapeNTransposer : public LayoutAgnosticOpTransposer {
  public:
-  explicit ShapeNTransposer() : LayoutAgnosticOpTransposer() {}
+  explicit ShapeNTransposer() : LayoutAgnosticOpTransposer() {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_31(mht_31_v, 737, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "ShapeNTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -480,7 +744,10 @@ class ShapeNTransposer : public LayoutAgnosticOpTransposer {
 
 class SliceTransposer : public LayoutAgnosticOpTransposer {
  public:
-  explicit SliceTransposer() : LayoutAgnosticOpTransposer() {}
+  explicit SliceTransposer() : LayoutAgnosticOpTransposer() {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_32(mht_32_v, 748, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "SliceTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -488,7 +755,10 @@ class SliceTransposer : public LayoutAgnosticOpTransposer {
 
 class SplitTransposer : public LayoutAgnosticOpTransposer {
  public:
-  explicit SplitTransposer() : LayoutAgnosticOpTransposer() {}
+  explicit SplitTransposer() : LayoutAgnosticOpTransposer() {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_33(mht_33_v, 759, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "SplitTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -496,7 +766,10 @@ class SplitTransposer : public LayoutAgnosticOpTransposer {
 
 class SplitVTransposer : public LayoutAgnosticOpTransposer {
  public:
-  explicit SplitVTransposer() : LayoutAgnosticOpTransposer() {}
+  explicit SplitVTransposer() : LayoutAgnosticOpTransposer() {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_34(mht_34_v, 770, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "SplitVTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -504,7 +777,10 @@ class SplitVTransposer : public LayoutAgnosticOpTransposer {
 
 class SqueezeTransposer : public LayoutAgnosticOpTransposer {
  public:
-  explicit SqueezeTransposer() : LayoutAgnosticOpTransposer() {}
+  explicit SqueezeTransposer() : LayoutAgnosticOpTransposer() {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_35(mht_35_v, 781, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "SqueezeTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -522,7 +798,10 @@ class SqueezeTransposer : public LayoutAgnosticOpTransposer {
 
 class StridedSliceTransposer : public LayoutAgnosticOpTransposer {
  public:
-  explicit StridedSliceTransposer() : LayoutAgnosticOpTransposer() {}
+  explicit StridedSliceTransposer() : LayoutAgnosticOpTransposer() {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_36(mht_36_v, 802, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "StridedSliceTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -536,7 +815,10 @@ class StridedSliceTransposer : public LayoutAgnosticOpTransposer {
 
 class SwitchTransposer : public LayoutAgnosticOpTransposer {
  public:
-  explicit SwitchTransposer() : LayoutAgnosticOpTransposer() {}
+  explicit SwitchTransposer() : LayoutAgnosticOpTransposer() {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_37(mht_37_v, 819, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "SwitchTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -544,7 +826,10 @@ class SwitchTransposer : public LayoutAgnosticOpTransposer {
 
 class TernaryOpTransposer : public LayoutAgnosticOpTransposer {
  public:
-  explicit TernaryOpTransposer() : LayoutAgnosticOpTransposer() {}
+  explicit TernaryOpTransposer() : LayoutAgnosticOpTransposer() {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_38(mht_38_v, 830, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "TernaryOpTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -552,7 +837,10 @@ class TernaryOpTransposer : public LayoutAgnosticOpTransposer {
 
 class TileTransposer : public LayoutAgnosticOpTransposer {
  public:
-  explicit TileTransposer() : LayoutAgnosticOpTransposer() {}
+  explicit TileTransposer() : LayoutAgnosticOpTransposer() {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_39(mht_39_v, 841, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "TileTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -560,7 +848,10 @@ class TileTransposer : public LayoutAgnosticOpTransposer {
 
 class UnaryGradTransposer : public LayoutAgnosticOpTransposer {
  public:
-  explicit UnaryGradTransposer() : LayoutAgnosticOpTransposer() {}
+  explicit UnaryGradTransposer() : LayoutAgnosticOpTransposer() {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_40(mht_40_v, 852, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "UnaryGradTransposer");
+}
 
   Status TransposeNode(TransposeContext* context,
                        utils::MutableNodeView* node) override;
@@ -573,6 +864,10 @@ class UnaryGradTransposer : public LayoutAgnosticOpTransposer {
 template <typename T>
 Status PermuteSingle(absl::string_view location,
                      absl::Span<const int> permutation, T* values) {
+   std::vector<std::string> mht_41_v;
+   mht_41_v.push_back("location: \"" + std::string(location.data(), location.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_41(mht_41_v, 868, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "PermuteSingle");
+
   DCHECK(values != nullptr);
   int permutation_size = permutation.size();
   if (values->size() != permutation_size) {
@@ -595,6 +890,10 @@ Status PermuteSingle(absl::string_view location,
 template <typename T>
 Status PermuteDouble(absl::string_view location,
                      absl::Span<const int> permutation, T* values) {
+   std::vector<std::string> mht_42_v;
+   mht_42_v.push_back("location: \"" + std::string(location.data(), location.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTh mht_42(mht_42_v, 894, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.h", "PermuteDouble");
+
   DCHECK(values != nullptr);
   int permutation_size = permutation.size();
   if (values->size() != permutation_size * 2) {

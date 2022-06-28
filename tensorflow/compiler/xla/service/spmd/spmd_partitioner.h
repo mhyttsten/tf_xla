@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_SPMD_SPMD_PARTITIONER_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_SPMD_SPMD_PARTITIONER_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <memory>
 #include <string>
@@ -78,6 +246,10 @@ class SpmdBuilder : public HloComputation::Builder {
  public:
   SpmdBuilder(const std::string& name, HloInstruction* hlo)
       : HloComputation::Builder(name) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTh mht_0(mht_0_v, 250, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.h", "SpmdBuilder");
+
     visiting_hlo_ = hlo;
   }
 
@@ -86,15 +258,24 @@ class SpmdBuilder : public HloComputation::Builder {
 
   const std::vector<HloInstruction*>& derived_instructions(
       HloInstruction* hlo) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTh mht_1(mht_1_v, 261, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.h", "derived_instructions");
+
     return instructions_.at(hlo);
   }
 
   void set_visiting_hlo(HloInstruction* hlo) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTh mht_2(mht_2_v, 268, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.h", "set_visiting_hlo");
+
     visiting_hlo_ = hlo;
     instructions_[hlo];
   }
 
-  HloInstruction* visiting_hlo() const { return visiting_hlo_; }
+  HloInstruction* visiting_hlo() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTh mht_3(mht_3_v, 276, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.h", "visiting_hlo");
+ return visiting_hlo_; }
 
   // Wrapper of queries to broadcast_dims_.
   absl::optional<const absl::flat_hash_set<int64_t>*>
@@ -165,7 +346,10 @@ class SpmdLogger {
  public:
   SpmdLogger(int64_t report_instruction_count, bool disabled)
       : report_instruction_count_(report_instruction_count),
-        disabled_(disabled) {}
+        disabled_(disabled) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTh mht_4(mht_4_v, 350, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.h", "SpmdLogger");
+}
   static std::string ReportBeforePartition(const HloModule& module,
                                            int64_t report_instruction_count);
   static std::string ReportAfterPartition(const HloModule& module,
@@ -208,8 +392,14 @@ class SpmdPartitioner : public HloModulePass {
       : num_partitions_(num_partitions),
         num_replicas_(num_replicas),
         options_(std::move(options)),
-        collective_ops_creator_(std::move(collective_ops_creator)) {}
-  absl::string_view name() const override { return "spmd-partitioning"; }
+        collective_ops_creator_(std::move(collective_ops_creator)) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTh mht_5(mht_5_v, 396, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.h", "SpmdPartitioner");
+}
+  absl::string_view name() const override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTh mht_6(mht_6_v, 400, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.h", "name");
+ return "spmd-partitioning"; }
   StatusOr<bool> Run(HloModule* module) override;
 
   // Transforms the given computation with SPMD instructions, replacing it with
@@ -239,7 +429,10 @@ class SpmdPartitioner : public HloModulePass {
       const SPMDCollectiveOpsCreator& collectives_creator,
       HloComputation* reduction);
 
-  const SpmdPartitionerOptions& options() { return options_; }
+  const SpmdPartitionerOptions& options() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTh mht_7(mht_7_v, 433, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.h", "options");
+ return options_; }
 
  protected:
   virtual std::unique_ptr<SpmdPartitioningVisitor> CreateVisitor(
@@ -266,6 +459,9 @@ class SpmdPartitioner : public HloModulePass {
   // replicated sharding.
   virtual bool CanSideEffectingHaveReplicatedSharding(
       const HloInstruction* hlo) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTh mht_8(mht_8_v, 462, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.h", "CanSideEffectingHaveReplicatedSharding");
+
     return hlo->opcode() == HloOpcode::kInfeed ||
            hlo->opcode() == HloOpcode::kOutfeed;
   }
@@ -325,6 +521,9 @@ class PartitionedHlo {
   };
   PartitionedHlo(HloInstruction* hlo, Shape base_shape, PartitioningState state)
       : hlo_(hlo), base_shape_(base_shape), state_(std::move(state)) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTh mht_9(mht_9_v, 524, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.h", "PartitionedHlo");
+
     CHECK(hlo->has_sharding())
         << "PartitionedHlo is missing sharding:" << hlo->ToString();
     // If the tuple shape instruction does not have a tuple sharding, reassign
@@ -352,15 +551,27 @@ class PartitionedHlo {
                              absl::Span<const int64_t> skipped_dims = {}) const;
 
   // Returns the SPMD instruction.
-  HloInstruction* hlo() const { return hlo_; }
+  HloInstruction* hlo() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTh mht_10(mht_10_v, 555, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.h", "hlo");
+ return hlo_; }
 
   // Returns the sharding of the SPMD instruction.
-  const HloSharding& sharding() const { return hlo_->sharding(); }
+  const HloSharding& sharding() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTh mht_11(mht_11_v, 561, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.h", "sharding");
+ return hlo_->sharding(); }
 
   // Original full shape of the data.
-  const Shape& base_shape() const { return base_shape_; }
+  const Shape& base_shape() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTh mht_12(mht_12_v, 567, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.h", "base_shape");
+ return base_shape_; }
 
-  int64_t NewChannel() const { return (*state_.next_channel_id)++; }
+  int64_t NewChannel() const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTh mht_13(mht_13_v, 572, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.h", "NewChannel");
+ return (*state_.next_channel_id)++; }
 
   // Reshards the HLO to a usable partitioned input for a windowed user. Could
   // only modify the reshard cache.
@@ -368,7 +579,10 @@ class PartitionedHlo {
       const Window& window, const HloSharding& target,
       HloInstruction* pad_value, bool mask_invalid_region = true);
 
-  const PartitioningState& state() const { return state_; }
+  const PartitioningState& state() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTh mht_14(mht_14_v, 583, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.h", "state");
+ return state_; }
 
   // Helper function to replicate the data on all devices. Could only modify
   // the reshard cache.
@@ -378,7 +592,10 @@ class PartitionedHlo {
   HloInstruction* ReplicatePartial(absl::Span<const int64_t> dims);
 
   // Set state of the partitoned HLO.
-  void set_state(PartitioningState state) { state_ = std::move(state); }
+  void set_state(PartitioningState state) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTh mht_15(mht_15_v, 596, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.h", "set_state");
+ state_ = std::move(state); }
 
  private:
   // Same as Reshard except that it does not explicitly modify the reshard
@@ -499,6 +716,9 @@ class SpmdPartitioningVisitor : public DfsHloVisitorWithDefault {
 
   // Returns the PartitionedHlo that corresponds to the original hlo.
   PartitionedHlo& GetPartitionedHlo(const HloInstruction* hlo) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTh mht_16(mht_16_v, 719, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.h", "GetPartitionedHlo");
+
     CHECK_EQ(partitioned_instructions_.count(hlo), 1);
     return partitioned_instructions_.find(hlo)->second;
   }
@@ -506,6 +726,9 @@ class SpmdPartitioningVisitor : public DfsHloVisitorWithDefault {
   // Sets the PartitionedHlo for the original hlo.
   void SetPartitionedHlo(const HloInstruction* hlo,
                          const PartitionedHlo& partitioned_hlo) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTh mht_17(mht_17_v, 729, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.h", "SetPartitionedHlo");
+
     CHECK_EQ(partitioned_instructions_.count(hlo), 0);
     partitioned_instructions_.emplace(hlo, partitioned_hlo);
     changed_ = true;
@@ -515,6 +738,9 @@ class SpmdPartitioningVisitor : public DfsHloVisitorWithDefault {
   // and maps it to the given original hlo.
   void SetPartitionedHlo(const HloInstruction* hlo,
                          const std::function<HloInstruction*()>& func) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTh mht_18(mht_18_v, 741, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.h", "SetPartitionedHlo");
+
     HloInstruction* new_hlo = func();
     new_hlo->set_sharding(hlo->sharding());
     SetPartitionedHlo(
@@ -522,27 +748,42 @@ class SpmdPartitioningVisitor : public DfsHloVisitorWithDefault {
     changed_ = true;
   }
 
-  int64_t NewChannel() { return (*next_channel_id_)++; }
+  int64_t NewChannel() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTh mht_19(mht_19_v, 752, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.h", "NewChannel");
+ return (*next_channel_id_)++; }
 
   PartitionedHlo::PartitioningState MakePartitioningState();
 
-  SpmdBuilder* builder() { return &b_; }
+  SpmdBuilder* builder() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTh mht_20(mht_20_v, 759, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.h", "builder");
+ return &b_; }
 
   virtual StatusOr<bool> DoPartition(HloComputation* computation,
                                      const HloSharding& root_sharding,
                                      const SpmdPartitionerOptions& options);
 
   virtual double GetComputationTimeInMilliSec(HloInstruction* hlo) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTh mht_21(mht_21_v, 768, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.h", "GetComputationTimeInMilliSec");
+
     return 0.0;
   }
 
   virtual double GetCommunicationTimeInMilliSec(
       int64_t bytes, absl::Span<const ReplicaGroup> device_groups) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTh mht_22(mht_22_v, 776, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.h", "GetCommunicationTimeInMilliSec");
+
     return 0.0;
   }
 
   virtual int GetCommunicationMultiplier(
       absl::Span<const ReplicaGroup> device_groups) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTh mht_23(mht_23_v, 784, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.h", "GetCommunicationMultiplier");
+
     return 1;
   }
 

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScPSexperimentalPSsaved_modelPScorePStf_saved_model_apiDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScPSexperimentalPSsaved_modelPScorePStf_saved_model_apiDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScPSexperimentalPSsaved_modelPScorePStf_saved_model_apiDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -78,6 +246,10 @@ const TrackableObjectGraph::TrackableObject::SerializedTensor*
 FindSerializedTensorInTrackable(
     const TrackableObjectGraph::TrackableObject& trackable_object,
     absl::string_view name) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSsaved_modelPScorePStf_saved_model_apiDTcc mht_0(mht_0_v, 250, "", "./tensorflow/c/experimental/saved_model/core/tf_saved_model_api.cc", "FindSerializedTensorInTrackable");
+
   for (const auto& maybe_serialized_tensor : trackable_object.attributes()) {
     if (maybe_serialized_tensor.name() == name) {
       return &maybe_serialized_tensor;
@@ -112,6 +284,10 @@ Status RestoreCheckpoint(SavedModelV2Bundle* bundle,
                          const RevivedObjects& revived_objects,
                          const std::string& directory,
                          ImmediateExecutionContext* context) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("directory: \"" + directory + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSsaved_modelPScorePStf_saved_model_apiDTcc mht_1(mht_1_v, 288, "", "./tensorflow/c/experimental/saved_model/core/tf_saved_model_api.cc", "RestoreCheckpoint");
+
   // TODO(bmzhao): Batch up all the restores into a single restore op per
   // device, following logic in MultiDeviceSaver.
   TF_RETURN_IF_ERROR(bundle->VisitObjectsToRestore(
@@ -164,6 +340,9 @@ Status RestoreCheckpoint(SavedModelV2Bundle* bundle,
 }
 
 Status InitializeAllResources(const RevivedObjects& revived) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSsaved_modelPScorePStf_saved_model_apiDTcc mht_2(mht_2_v, 343, "", "./tensorflow/c/experimental/saved_model/core/tf_saved_model_api.cc", "InitializeAllResources");
+
   for (const auto& node_and_resource : revived.restored_resources) {
     const RestoredResource& resource = node_and_resource.second;
     TF_RETURN_IF_ERROR(resource.Initialize());
@@ -175,6 +354,10 @@ Status InitializeAllResources(const RevivedObjects& revived) {
 
 Status TFSavedModelAPI::GetFunction(const std::string& function_path,
                                     ConcreteFunction** function) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("function_path: \"" + function_path + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSsaved_modelPScorePStf_saved_model_apiDTcc mht_3(mht_3_v, 358, "", "./tensorflow/c/experimental/saved_model/core/tf_saved_model_api.cc", "TFSavedModelAPI::GetFunction");
+
   absl::optional<int> node =
       internal::FindNodeAtPath(function_path, bundle_.saved_object_graph());
   if (!node.has_value()) {
@@ -192,6 +375,9 @@ Status TFSavedModelAPI::GetFunction(const std::string& function_path,
 Status TFSavedModelAPI::GetFunctions(
     int node_id,
     absl::flat_hash_map<std::string, ConcreteFunction*>* functions) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSsaved_modelPScorePStf_saved_model_apiDTcc mht_4(mht_4_v, 378, "", "./tensorflow/c/experimental/saved_model/core/tf_saved_model_api.cc", "TFSavedModelAPI::GetFunctions");
+
   const auto& nodes = bundle_.saved_object_graph().nodes();
   if (node_id >= nodes.size()) {
     return errors::OutOfRange(
@@ -211,6 +397,10 @@ Status TFSavedModelAPI::GetFunctions(
 
 Status TFSavedModelAPI::GetSignatureDefFunction(
     const std::string& signature_def_key, SignatureDefFunction** function) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("signature_def_key: \"" + signature_def_key + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSsaved_modelPScorePStf_saved_model_apiDTcc mht_5(mht_5_v, 401, "", "./tensorflow/c/experimental/saved_model/core/tf_saved_model_api.cc", "TFSavedModelAPI::GetSignatureDefFunction");
+
   auto signatures_iter =
       revived_objects_.signatures_map.find(signature_def_key);
   if (signatures_iter == revived_objects_.signatures_map.end()) {
@@ -232,6 +422,10 @@ Status TFSavedModelAPI::GetSignatureDefFunction(
 
 Status TFSavedModelAPI::GetVariable(const std::string& variable_path,
                                     Variable** variable) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("variable_path: \"" + variable_path + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSsaved_modelPScorePStf_saved_model_apiDTcc mht_6(mht_6_v, 426, "", "./tensorflow/c/experimental/saved_model/core/tf_saved_model_api.cc", "TFSavedModelAPI::GetVariable");
+
   absl::optional<int> node =
       internal::FindNodeAtPath(variable_path, bundle_.saved_object_graph());
   if (!node.has_value()) {
@@ -247,19 +441,30 @@ Status TFSavedModelAPI::GetVariable(const std::string& variable_path,
   return Status();
 }
 
-SavedModelV2Bundle* TFSavedModelAPI::GetBundle() { return &this->bundle_; }
+SavedModelV2Bundle* TFSavedModelAPI::GetBundle() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSsaved_modelPScorePStf_saved_model_apiDTcc mht_7(mht_7_v, 445, "", "./tensorflow/c/experimental/saved_model/core/tf_saved_model_api.cc", "TFSavedModelAPI::GetBundle");
+ return &this->bundle_; }
 
 TFSavedModelAPI::TFSavedModelAPI(const std::string& directory,
                                  SavedModelV2Bundle bundle,
                                  RevivedObjects revived_objects)
     : directory_(directory),
       bundle_(std::move(bundle)),
-      revived_objects_(std::move(revived_objects)) {}
+      revived_objects_(std::move(revived_objects)) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("directory: \"" + directory + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSsaved_modelPScorePStf_saved_model_apiDTcc mht_8(mht_8_v, 456, "", "./tensorflow/c/experimental/saved_model/core/tf_saved_model_api.cc", "TFSavedModelAPI::TFSavedModelAPI");
+}
 
 Status TFSavedModelAPI::Load(
     const std::string& directory,
     const absl::optional<std::unordered_set<std::string>>& tags,
     ImmediateExecutionContext* context, std::unique_ptr<TFSavedModelAPI>* out) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("directory: \"" + directory + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSsaved_modelPScorePStf_saved_model_apiDTcc mht_9(mht_9_v, 465, "", "./tensorflow/c/experimental/saved_model/core/tf_saved_model_api.cc", "TFSavedModelAPI::Load");
+
   // TODO(bmzhao): Add support for loading a TF1 SavedModel.
   if (tags) {
     return errors::Unimplemented(

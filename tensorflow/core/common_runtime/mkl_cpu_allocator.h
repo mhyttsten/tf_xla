@@ -18,6 +18,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_COMMON_RUNTIME_MKL_CPU_ALLOCATOR_H_
 #define TENSORFLOW_CORE_COMMON_RUNTIME_MKL_CPU_ALLOCATOR_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_cpu_allocatorDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_cpu_allocatorDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_cpu_allocatorDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #ifdef INTEL_MKL
 
@@ -41,8 +209,14 @@ static bool mkl_small_allocator_collect_stats = false;
 
 class MklSubAllocator : public BasicCPUAllocator {
  public:
-  MklSubAllocator() : BasicCPUAllocator(port::kNUMANoAffinity, {}, {}) {}
-  ~MklSubAllocator() override {}
+  MklSubAllocator() : BasicCPUAllocator(port::kNUMANoAffinity, {}, {}) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_cpu_allocatorDTh mht_0(mht_0_v, 213, "", "./tensorflow/core/common_runtime/mkl_cpu_allocator.h", "MklSubAllocator");
+}
+  ~MklSubAllocator() override {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_cpu_allocatorDTh mht_1(mht_1_v, 217, "", "./tensorflow/core/common_runtime/mkl_cpu_allocator.h", "~MklSubAllocator");
+}
 };
 
 // CPU allocator that handles small-size allocations by calling
@@ -53,21 +227,37 @@ class MklSmallSizeAllocator : public Allocator {
   MklSmallSizeAllocator(SubAllocator* sub_allocator, size_t total_memory,
                         const string& name)
       : sub_allocator_(sub_allocator), name_(name) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_cpu_allocatorDTh mht_2(mht_2_v, 231, "", "./tensorflow/core/common_runtime/mkl_cpu_allocator.h", "MklSmallSizeAllocator");
+
     stats_.bytes_limit = total_memory;
   }
-  ~MklSmallSizeAllocator() override {}
+  ~MklSmallSizeAllocator() override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_cpu_allocatorDTh mht_3(mht_3_v, 237, "", "./tensorflow/core/common_runtime/mkl_cpu_allocator.h", "~MklSmallSizeAllocator");
+}
 
   TF_DISALLOW_COPY_AND_ASSIGN(MklSmallSizeAllocator);
 
-  inline string Name() override { return name_; }
+  inline string Name() override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_cpu_allocatorDTh mht_4(mht_4_v, 244, "", "./tensorflow/core/common_runtime/mkl_cpu_allocator.h", "Name");
+ return name_; }
 
   void* AllocateRaw(size_t alignment, size_t num_bytes) override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_cpu_allocatorDTh mht_5(mht_5_v, 249, "", "./tensorflow/core/common_runtime/mkl_cpu_allocator.h", "AllocateRaw");
+
     void* ptr = port::AlignedMalloc(num_bytes, alignment);
     if (mkl_small_allocator_collect_stats) IncrementStats(num_bytes);
     return ptr;
   }
 
   void DeallocateRaw(void* ptr) override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_cpu_allocatorDTh mht_6(mht_6_v, 258, "", "./tensorflow/core/common_runtime/mkl_cpu_allocator.h", "DeallocateRaw");
+
     if (ptr == nullptr) {
       LOG(ERROR) << "tried to deallocate nullptr";
       return;
@@ -86,6 +276,9 @@ class MklSmallSizeAllocator : public Allocator {
   }
 
   bool ClearStats() override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_cpu_allocatorDTh mht_7(mht_7_v, 279, "", "./tensorflow/core/common_runtime/mkl_cpu_allocator.h", "ClearStats");
+
     mutex_lock l(mutex_);
     stats_.num_allocs = 0;
     stats_.peak_bytes_in_use = 0;
@@ -137,14 +330,23 @@ class MklCPUAllocator : public Allocator {
   /// Default upper limit on allocator size - 64GB
   static constexpr size_t kDefaultMaxLimit = 64LL << 30;
 
-  MklCPUAllocator() { TF_CHECK_OK(Initialize()); }
+  MklCPUAllocator() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_cpu_allocatorDTh mht_8(mht_8_v, 334, "", "./tensorflow/core/common_runtime/mkl_cpu_allocator.h", "MklCPUAllocator");
+ TF_CHECK_OK(Initialize()); }
 
   ~MklCPUAllocator() override {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_cpu_allocatorDTh mht_9(mht_9_v, 339, "", "./tensorflow/core/common_runtime/mkl_cpu_allocator.h", "~MklCPUAllocator");
+
     delete small_size_allocator_;
     delete large_size_allocator_;
   }
 
   Status Initialize() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_cpu_allocatorDTh mht_10(mht_10_v, 347, "", "./tensorflow/core/common_runtime/mkl_cpu_allocator.h", "Initialize");
+
     VLOG(2) << "MklCPUAllocator: In MklCPUAllocator";
 
     // Set upper bound on memory allocation to physical RAM available on the
@@ -192,7 +394,10 @@ class MklCPUAllocator : public Allocator {
     return Status::OK();
   }
 
-  inline string Name() override { return kName; }
+  inline string Name() override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_cpu_allocatorDTh mht_11(mht_11_v, 398, "", "./tensorflow/core/common_runtime/mkl_cpu_allocator.h", "Name");
+ return kName; }
   inline bool IsSmallSizeAllocation(const void* ptr) const
       TF_LOCKS_EXCLUDED(mutex_) {
     mutex_lock l(mutex_);
@@ -201,6 +406,9 @@ class MklCPUAllocator : public Allocator {
   // AddLargeAllocMap and RemoveLargeAllocMap are always called with a lock held
   inline void AddLargeAllocMap(void* ptr, size_t num_bytes)
       TF_EXCLUSIVE_LOCKS_REQUIRED(mutex_) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_cpu_allocatorDTh mht_12(mht_12_v, 409, "", "./tensorflow/core/common_runtime/mkl_cpu_allocator.h", "AddLargeAllocMap");
+
     if (ptr != nullptr) {
       std::pair<void*, size_t> map_val(ptr, num_bytes);
       large_allocations_map_.insert(map_val);
@@ -208,6 +416,9 @@ class MklCPUAllocator : public Allocator {
   }
   inline void RemoveLargeAllocMap(void* ptr)
       TF_EXCLUSIVE_LOCKS_REQUIRED(mutex_) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_cpu_allocatorDTh mht_13(mht_13_v, 419, "", "./tensorflow/core/common_runtime/mkl_cpu_allocator.h", "RemoveLargeAllocMap");
+
     auto map_iter = large_allocations_map_.find(ptr);
     if (map_iter != large_allocations_map_.end()) {
       large_allocations_map_.erase(map_iter);
@@ -218,6 +429,9 @@ class MklCPUAllocator : public Allocator {
   }
 
   inline void* AllocateRaw(size_t alignment, size_t num_bytes) override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_cpu_allocatorDTh mht_14(mht_14_v, 432, "", "./tensorflow/core/common_runtime/mkl_cpu_allocator.h", "AllocateRaw");
+
     // If the allocation size is less than threshold, call small allocator,
     // otherwise call large-size allocator (BFC). We found that BFC allocator
     // does not deliver good performance for small allocations when
@@ -232,6 +446,9 @@ class MklCPUAllocator : public Allocator {
     }
   }
   inline void DeallocateRaw(void* ptr) override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_cpu_allocatorDTh mht_15(mht_15_v, 449, "", "./tensorflow/core/common_runtime/mkl_cpu_allocator.h", "DeallocateRaw");
+
     // Check if ptr is for "small" allocation. If it is, then call Free
     // directly. Otherwise, call BFC to handle free.
     if (UseSystemAlloc() || IsSmallSizeAllocation(ptr)) {
@@ -262,6 +479,9 @@ class MklCPUAllocator : public Allocator {
   }
 
   bool ClearStats() override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_cpu_allocatorDTh mht_16(mht_16_v, 482, "", "./tensorflow/core/common_runtime/mkl_cpu_allocator.h", "ClearStats");
+
     bool stats_cleared = small_size_allocator_->ClearStats();
     stats_cleared &= large_size_allocator_->ClearStats();
     return stats_cleared;
@@ -270,16 +490,25 @@ class MklCPUAllocator : public Allocator {
  private:
   // Hooks provided by this allocator for memory allocation routines from MKL
   static inline void* MallocHook(size_t size) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_cpu_allocatorDTh mht_17(mht_17_v, 493, "", "./tensorflow/core/common_runtime/mkl_cpu_allocator.h", "MallocHook");
+
     VLOG(3) << "MklCPUAllocator: In MallocHook";
     return cpu_allocator()->AllocateRaw(kAlignment, size);
   }
 
   static inline void FreeHook(void* ptr) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_cpu_allocatorDTh mht_18(mht_18_v, 501, "", "./tensorflow/core/common_runtime/mkl_cpu_allocator.h", "FreeHook");
+
     VLOG(3) << "MklCPUAllocator: In FreeHook";
     cpu_allocator()->DeallocateRaw(ptr);
   }
 
   static inline void* CallocHook(size_t num, size_t size) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_cpu_allocatorDTh mht_19(mht_19_v, 509, "", "./tensorflow/core/common_runtime/mkl_cpu_allocator.h", "CallocHook");
+
     Status s = Status(error::Code::UNIMPLEMENTED,
                       "Unimplemented case for hooking MKL function.");
     TF_CHECK_OK(s);  // way to assert with an error message
@@ -287,6 +516,9 @@ class MklCPUAllocator : public Allocator {
   }
 
   static inline void* ReallocHook(void* ptr, size_t size) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_cpu_allocatorDTh mht_20(mht_20_v, 519, "", "./tensorflow/core/common_runtime/mkl_cpu_allocator.h", "ReallocHook");
+
     Status s = Status(error::Code::UNIMPLEMENTED,
                       "Unimplemented case for hooking MKL function.");
     TF_CHECK_OK(s);  // way to assert with an error message

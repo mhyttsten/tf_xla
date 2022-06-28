@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,6 +201,9 @@ namespace {
 void VectorToKernelBufferDesc(const std::vector<float>& data,
                               DataType data_type,
                               BufferDescriptor* buffer_desc) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc mht_0(mht_0_v, 204, "", "./tensorflow/lite/delegates/gpu/common/tasks/winograd.cc", "VectorToKernelBufferDesc");
+
   buffer_desc->element_type = data_type;
   buffer_desc->element_size = 1;
   buffer_desc->memory_type = MemoryType::CONSTANT;
@@ -49,6 +220,9 @@ void VectorToKernelBufferDesc(const std::vector<float>& data,
   }
 }
 std::string GetKernelWinograd4x4To36(const OperationDef& op_def) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc mht_1(mht_1_v, 223, "", "./tensorflow/lite/delegates/gpu/common/tasks/winograd.cc", "GetKernelWinograd4x4To36");
+
   std::string c;
   const auto src_desc = op_def.src_tensors[0];
   c += R"(
@@ -176,6 +350,9 @@ MAIN_FUNCTION($0) {
 }
 
 std::string GetKernelWinograd36To4x4(const OperationDef& op_def) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc mht_2(mht_2_v, 353, "", "./tensorflow/lite/delegates/gpu/common/tasks/winograd.cc", "GetKernelWinograd36To4x4");
+
   std::string c;
   const auto src_desc = op_def.src_tensors[0];
 
@@ -253,6 +430,9 @@ MAIN_FUNCTION($0) {
 }  // namespace
 
 int3 Winograd4x4To36::GetGridSize() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc mht_3(mht_3_v, 433, "", "./tensorflow/lite/delegates/gpu/common/tasks/winograd.cc", "Winograd4x4To36::GetGridSize");
+
   int new_width =
       src_[0]->Width() + padding_.prepended.w + padding_.appended.w - 2;
   int new_height =
@@ -263,6 +443,9 @@ int3 Winograd4x4To36::GetGridSize() const {
 }
 
 absl::Status Winograd4x4To36::BindArguments(ArgumentsBinder* args) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc mht_4(mht_4_v, 446, "", "./tensorflow/lite/delegates/gpu/common/tasks/winograd.cc", "Winograd4x4To36::BindArguments");
+
   int new_width =
       src_[0]->Width() + padding_.prepended.w + padding_.appended.w - 2;
   int new_height =
@@ -276,6 +459,9 @@ absl::Status Winograd4x4To36::BindArguments(ArgumentsBinder* args) {
 
 Winograd4x4To36 CreateWinograd4x4To36(const OperationDef& definition,
                                       const Padding2D& padding) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc mht_5(mht_5_v, 462, "", "./tensorflow/lite/delegates/gpu/common/tasks/winograd.cc", "CreateWinograd4x4To36");
+
   Winograd4x4To36 desc(definition, padding);
   desc.code_ = GetKernelWinograd4x4To36(definition);
 
@@ -301,6 +487,9 @@ Winograd4x4To36TileX6::Winograd4x4To36TileX6(const OperationDef& definition,
                                              const Padding2D& padding,
                                              const GpuInfo& gpu_info)
     : GPUOperation(definition), padding_(padding) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc mht_6(mht_6_v, 490, "", "./tensorflow/lite/delegates/gpu/common/tasks/winograd.cc", "Winograd4x4To36TileX6::Winograd4x4To36TileX6");
+
   work_group_size_ = int3(32, 1, 1);
   code_ = GetWinograd4x4To36TileX6Code(definition_, gpu_info);
   if (gpu_info.IsAdreno()) {
@@ -314,6 +503,9 @@ Winograd4x4To36TileX6::Winograd4x4To36TileX6(const OperationDef& definition,
 
 std::string Winograd4x4To36TileX6::GetWinograd4x4To36TileX6Code(
     const OperationDef& op_def, const GpuInfo& gpu_info) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc mht_7(mht_7_v, 506, "", "./tensorflow/lite/delegates/gpu/common/tasks/winograd.cc", "Winograd4x4To36TileX6::GetWinograd4x4To36TileX6Code");
+
   std::string c;
   const auto& src_desc = op_def.src_tensors[0];
   AddSrcTensor("src_tensor", op_def.src_tensors[0]);
@@ -345,6 +537,11 @@ std::string Winograd4x4To36TileX6::GetWinograd4x4To36TileX6Code(
   c += "  bt_ar[4] = t1.x;\n";
   c += "  bt_ar[5] = t1.y;\n";
   auto read_src = [&](const std::string& src, const std::string& xs) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("src: \"" + src + "\"");
+   mht_8_v.push_back("xs: \"" + xs + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc mht_8(mht_8_v, 542, "", "./tensorflow/lite/delegates/gpu/common/tasks/winograd.cc", "lambda");
+
     std::string read_statement;
     if (src_desc.IsLinear()) {
       read_statement = "args.src_tensor.Read(src_a_" + xs + " + offset)";
@@ -484,6 +681,9 @@ std::string Winograd4x4To36TileX6::GetWinograd4x4To36TileX6Code(
 }
 
 void Winograd4x4To36TileX6::UploadBt() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc mht_9(mht_9_v, 684, "", "./tensorflow/lite/delegates/gpu/common/tasks/winograd.cc", "Winograd4x4To36TileX6::UploadBt");
+
   tflite::gpu::Tensor<Linear, DataType::FLOAT32> bt_aligned;
   bt_aligned.shape = Linear(6 * 8);
   bt_aligned.data.resize(6 * 8);
@@ -511,6 +711,9 @@ void Winograd4x4To36TileX6::UploadBt() {
 
 int3 Winograd4x4To36TileX6::SelectBestWorkGroup(
     const KernelInfo& kernel_info) const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc mht_10(mht_10_v, 714, "", "./tensorflow/lite/delegates/gpu/common/tasks/winograd.cc", "Winograd4x4To36TileX6::SelectBestWorkGroup");
+
   const std::vector<int3> wgs = {{8, 6, 4}, {8, 6, 2}, {4, 6, 2},
                                  {4, 6, 2}, {2, 6, 2}, {2, 6, 1},
                                  {1, 6, 1}, {1, 3, 1}, {1, 1, 1}};
@@ -518,6 +721,9 @@ int3 Winograd4x4To36TileX6::SelectBestWorkGroup(
 }
 
 absl::Status Winograd4x4To36TileX6::BindArguments(ArgumentsBinder* args) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc mht_11(mht_11_v, 724, "", "./tensorflow/lite/delegates/gpu/common/tasks/winograd.cc", "Winograd4x4To36TileX6::BindArguments");
+
   const int tiles_x = DivideRoundUp(
       src_[0]->Width() + padding_.prepended.w + padding_.appended.w - 2, 4);
   const int tiles_y = DivideRoundUp(
@@ -531,6 +737,9 @@ absl::Status Winograd4x4To36TileX6::BindArguments(ArgumentsBinder* args) {
 }
 
 int3 Winograd4x4To36TileX6::GetGridSize() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc mht_12(mht_12_v, 740, "", "./tensorflow/lite/delegates/gpu/common/tasks/winograd.cc", "Winograd4x4To36TileX6::GetGridSize");
+
   const int grid_x = dst_[0]->Width() * dst_[0]->Batch();
   const int grid_y = 6;
   const int grid_z = dst_[0]->Slices();
@@ -540,6 +749,9 @@ int3 Winograd4x4To36TileX6::GetGridSize() const {
 void Winograd4x4To36TileX6::GetPossibleKernelWorkGroups(
     TuningType tuning_type, const GpuInfo& gpu_info,
     const KernelInfo& kernel_info, std::vector<int3>* work_groups) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc mht_13(mht_13_v, 752, "", "./tensorflow/lite/delegates/gpu/common/tasks/winograd.cc", "Winograd4x4To36TileX6::GetPossibleKernelWorkGroups");
+
   if (gpu_info.IsIntel()) {
     work_groups->push_back(int3(4, 6, 1));
     return;
@@ -559,18 +771,27 @@ void Winograd4x4To36TileX6::GetPossibleKernelWorkGroups(
 Winograd4x4To36TileX6 CreateWinograd4x4To36TileX6(
     const GpuInfo& gpu_info, const OperationDef& definition,
     const Padding2D& padding) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc mht_14(mht_14_v, 774, "", "./tensorflow/lite/delegates/gpu/common/tasks/winograd.cc", "CreateWinograd4x4To36TileX6");
+
   Winograd4x4To36TileX6 result(definition, padding, gpu_info);
   result.UploadBt();
   return result;
 }
 
 int3 Winograd36To4x4::GetGridSize() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc mht_15(mht_15_v, 783, "", "./tensorflow/lite/delegates/gpu/common/tasks/winograd.cc", "Winograd36To4x4::GetGridSize");
+
   return int3(src_[0]->Width(), 1, src_[0]->Slices());
 }
 
 Winograd36To4x4 CreateWinograd36To4x4(
     const OperationDef& definition,
     const tflite::gpu::Tensor<Linear, DataType::FLOAT32>& biases) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc mht_16(mht_16_v, 792, "", "./tensorflow/lite/delegates/gpu/common/tasks/winograd.cc", "CreateWinograd36To4x4");
+
   Winograd36To4x4 desc(definition);
   desc.code_ = GetKernelWinograd36To4x4(definition);
 
@@ -597,6 +818,9 @@ Winograd36To4x4 CreateWinograd36To4x4(
 Winograd36To4x4Tile4x1::Winograd36To4x4Tile4x1(const OperationDef& definition,
                                                const GpuInfo& gpu_info)
     : GPUOperation(definition) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc mht_17(mht_17_v, 821, "", "./tensorflow/lite/delegates/gpu/common/tasks/winograd.cc", "Winograd36To4x4Tile4x1::Winograd36To4x4Tile4x1");
+
   work_group_size_ = int3(32, 1, 1);
   if (definition_.precision == CalculationsPrecision::F16 &&
       gpu_info.IsPowerVR()) {
@@ -607,6 +831,9 @@ Winograd36To4x4Tile4x1::Winograd36To4x4Tile4x1(const OperationDef& definition,
 
 std::string Winograd36To4x4Tile4x1::GetWinograd36To4x4Tile4x1Code(
     const OperationDef& op_def, const GpuInfo& gpu_info) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc mht_18(mht_18_v, 834, "", "./tensorflow/lite/delegates/gpu/common/tasks/winograd.cc", "Winograd36To4x4Tile4x1::GetWinograd36To4x4Tile4x1Code");
+
   std::string c;
 
   AddSrcTensor("src_tensor", op_def.src_tensors[0]);
@@ -709,6 +936,9 @@ std::string Winograd36To4x4Tile4x1::GetWinograd36To4x4Tile4x1Code(
 }
 
 void Winograd36To4x4Tile4x1::UploadAt() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc mht_19(mht_19_v, 939, "", "./tensorflow/lite/delegates/gpu/common/tasks/winograd.cc", "Winograd36To4x4Tile4x1::UploadAt");
+
   tflite::gpu::Tensor<Linear, DataType::FLOAT32> at_aligned;
   at_aligned.shape = Linear(4 * 8);
   at_aligned.data.resize(4 * 8);
@@ -736,6 +966,9 @@ void Winograd36To4x4Tile4x1::UploadAt() {
 
 int3 Winograd36To4x4Tile4x1::SelectBestWorkGroup(
     const KernelInfo& kernel_info) const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc mht_20(mht_20_v, 969, "", "./tensorflow/lite/delegates/gpu/common/tasks/winograd.cc", "Winograd36To4x4Tile4x1::SelectBestWorkGroup");
+
   const std::vector<int3> wgs = {{32, 4, 2}, {16, 4, 2}, {16, 4, 1},
                                  {8, 4, 1},  {4, 4, 1},  {2, 4, 1},
                                  {1, 4, 1},  {1, 2, 1},  {1, 1, 1}};
@@ -743,12 +976,18 @@ int3 Winograd36To4x4Tile4x1::SelectBestWorkGroup(
 }
 
 absl::Status Winograd36To4x4Tile4x1::BindArguments(ArgumentsBinder* args) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc mht_21(mht_21_v, 979, "", "./tensorflow/lite/delegates/gpu/common/tasks/winograd.cc", "Winograd36To4x4Tile4x1::BindArguments");
+
   const int tiles_x = DivideRoundUp(dst_[0]->Width(), 4);
   RETURN_IF_ERROR(args->SetInt("tiles_x", tiles_x));
   return absl::OkStatus();
 }
 
 int3 Winograd36To4x4Tile4x1::GetGridSize() const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc mht_22(mht_22_v, 988, "", "./tensorflow/lite/delegates/gpu/common/tasks/winograd.cc", "Winograd36To4x4Tile4x1::GetGridSize");
+
   const int tiles_x = DivideRoundUp(dst_[0]->Width(), 4);
   const int tiles_y = DivideRoundUp(dst_[0]->Height(), 4);
   const int grid_x = tiles_x * tiles_y * dst_[0]->Batch();
@@ -760,6 +999,9 @@ int3 Winograd36To4x4Tile4x1::GetGridSize() const {
 void Winograd36To4x4Tile4x1::GetPossibleKernelWorkGroups(
     TuningType tuning_type, const GpuInfo& gpu_info,
     const KernelInfo& kernel_info, std::vector<int3>* work_groups) const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc mht_23(mht_23_v, 1002, "", "./tensorflow/lite/delegates/gpu/common/tasks/winograd.cc", "Winograd36To4x4Tile4x1::GetPossibleKernelWorkGroups");
+
   if (gpu_info.IsIntel()) {
     work_groups->push_back(int3(8, 4, 1));
     return;
@@ -779,6 +1021,9 @@ void Winograd36To4x4Tile4x1::GetPossibleKernelWorkGroups(
 Winograd36To4x4Tile4x1 CreateWinograd36To4x4Tile4x1(
     const GpuInfo& gpu_info, const OperationDef& definition,
     const tflite::gpu::Tensor<Linear, DataType::FLOAT32>& biases) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStasksPSwinogradDTcc mht_24(mht_24_v, 1024, "", "./tensorflow/lite/delegates/gpu/common/tasks/winograd.cc", "CreateWinograd36To4x4Tile4x1");
+
   Winograd36To4x4Tile4x1 result(definition, gpu_info);
   TensorLinearDescriptor desc;
   desc.storage_type = LinearStorageType::TEXTURE_2D;

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,6 +203,9 @@ void TestRequantizeMany(Eigen::ThreadPoolDevice* eigen_device, float input_min,
                         float input_max, float output_min, float output_max,
                         const std::vector<qint32>& values_quantized,
                         int tolerance = 1) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_0(mht_0_v, 206, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "TestRequantizeMany");
+
   const int values_count = values_quantized.size();
   std::vector<quint8> expected_values;
   expected_values.reserve(values_count);
@@ -77,6 +248,9 @@ void TestRequantizeMany8To32Bit(float input_min, float input_max,
                                 float output_min, float output_max,
                                 const std::vector<quint8>& values_quantized,
                                 int tolerance = 256) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_1(mht_1_v, 251, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "TestRequantizeMany8To32Bit");
+
   const int values_count = values_quantized.size();
   std::vector<qint32> expected_values;
   expected_values.reserve(values_count);
@@ -112,6 +286,9 @@ void TestRequantizeMany8To32Bit(float input_min, float input_max,
 // If eigen_device is NULL, then the reference implementation is tested.
 void TestRequantizeManyInNewRange32To8Bit(
     Eigen::ThreadPoolDevice* eigen_device) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_2(mht_2_v, 289, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "TestRequantizeManyInNewRange32To8Bit");
+
   if (true) {
     // These are the float values we're going to test the conversions on.
     const size_t values_count = 6;
@@ -172,6 +349,9 @@ void TestRequantizeManyInNewRange32To8Bit(
 }
 
 void TestRequantizeManyInNewRange8To32Bit() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_3(mht_3_v, 352, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "TestRequantizeManyInNewRange8To32Bit");
+
   // These are the float values we're going to test the conversions on.
   const size_t values_count = 6;
   const float values[values_count] = {0.0f, 0.45f, 1.0f, -1.0f, 127.0f, 255.0f};
@@ -338,6 +518,9 @@ void TimeRequantizeManyInNewRange(int64_t num_elements, int64_t iterations,
 template <typename T>
 void TestFloatToQuantizedInPlaceUsingEigen(
     Eigen::ThreadPoolDevice* eigen_device) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_4(mht_4_v, 521, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "TestFloatToQuantizedInPlaceUsingEigen");
+
   // These are the float values we're going to test the conversions on.
   typedef std::pair<float, float> FPair;
   for (FPair min_and_max : std::vector<FPair>{FPair(-255.0f, 255.0f),  //
@@ -382,6 +565,9 @@ void TestFloatToQuantizedInPlaceUsingEigen(
 template <typename T>
 void TestQuantizedToFloatInPlaceUsingEigen(
     Eigen::ThreadPoolDevice* eigen_device) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_5(mht_5_v, 568, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "TestQuantizedToFloatInPlaceUsingEigen");
+
   // These are the float values we're going to test the conversions on.
   typedef std::pair<float, float> FPair;
   for (FPair min_and_max : std::vector<FPair>{
@@ -431,6 +617,9 @@ void TestQuantizedToFloatInPlaceUsingEigen(
 }  // namespace
 
 void TestFloatToQuantized() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_6(mht_6_v, 620, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "TestFloatToQuantized");
+
   EXPECT_EQ(quint8(0), FloatToQuantized<quint8>(0.0f, 0.0f, 1.0f));
   EXPECT_EQ(quint8(0), FloatToQuantized<quint8>(0.0f, 0.0f, 2.0f));
   EXPECT_EQ(quint8(128), FloatToQuantized<quint8>(0.5f, 0.0f, 1.0f));
@@ -455,6 +644,9 @@ void TestFloatToQuantized() {
 }
 
 void TestQuantizedToFloat() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_7(mht_7_v, 647, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "TestQuantizedToFloat");
+
   EXPECT_LT(fabsf(0.0f - QuantizedToFloat<quint8>(0, 0.0f, 1.0f)), 1 / 255.0f);
   EXPECT_LT(fabsf(0.0f - QuantizedToFloat<quint8>(0, 0.0f, 2.0f)), 1 / 255.0f);
   EXPECT_LT(fabsf(0.5f - QuantizedToFloat<quint8>(127, 0.0f, 1.0f)),
@@ -486,6 +678,9 @@ void TestQuantizedToFloat() {
 }
 
 void TestAvoidBias() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_8(mht_8_v, 681, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "TestAvoidBias");
+
   for (int i = 0; i < 256; ++i) {
     const float as_float = QuantizedToFloat<quint8>(i, 0.0f, 2.0f);
     const int back_to_int = FloatToQuantized<quint8>(as_float, 0.0f, 2.0f);
@@ -508,6 +703,9 @@ void TestAvoidBias() {
 }
 
 void TestRequantizeInNewRange() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_9(mht_9_v, 706, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "TestRequantizeInNewRange");
+
   // These are the float values we're going to test the conversions on.
   const size_t values_count = 6;
   const float values[values_count] = {0.0f, 0.5f, 1.0f, -1.0f, 127.0f, 255.0f};
@@ -544,6 +742,9 @@ void TestRequantizeInNewRange() {
 }
 
 void TestRequantizeInNewRangeRealData() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_10(mht_10_v, 745, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "TestRequantizeInNewRangeRealData");
+
   const float input_min = -0.739539f;
   const float input_max = 0.641057f;
   const float output_min = -2381.49f;
@@ -565,6 +766,9 @@ void TestRequantizeInNewRangeRealData() {
 }
 
 void TestRequantizeInNewRange32To8Bit() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_11(mht_11_v, 769, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "TestRequantizeInNewRange32To8Bit");
+
   // These are the float values we're going to test the conversions on.
   const size_t values_count = 6;
   const float values[values_count] = {0.0f, 0.45f, 1.0f, -1.0f, 127.0f, 255.0f};
@@ -601,10 +805,16 @@ void TestRequantizeInNewRange32To8Bit() {
 }
 
 void TestRequantizeManyInNewRange32To8Bit() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_12(mht_12_v, 808, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "TestRequantizeManyInNewRange32To8Bit");
+
   TestRequantizeManyInNewRange32To8Bit(nullptr /* eigen_device */);
 }
 
 void TestRequantizeManyInNewRange32To8BitUsingEigen() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_13(mht_13_v, 815, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "TestRequantizeManyInNewRange32To8BitUsingEigen");
+
   thread::ThreadPool threadpool(Env::Default(), "test", 2 /* num_threads */);
   Eigen::ThreadPoolDevice eigen_device(threadpool.AsEigenThreadPool(),
                                        2 /* num_threads */);
@@ -612,14 +822,23 @@ void TestRequantizeManyInNewRange32To8BitUsingEigen() {
 }
 
 void TestRequantizeManyInNewRange32To8BitEigenVsNonEigen() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_14(mht_14_v, 825, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "TestRequantizeManyInNewRange32To8BitEigenVsNonEigen");
+
   TestRequantizeManyInNewRangeEigenVsNonEigen<qint32, quint8>();
 }
 
 void TestRequantizeManyInNewRange32To8BitSignedEigenVsNonEigen() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_15(mht_15_v, 832, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "TestRequantizeManyInNewRange32To8BitSignedEigenVsNonEigen");
+
   TestRequantizeManyInNewRangeEigenVsNonEigen<qint32, qint8>();
 }
 
 void TestFloatTensorToQuantized() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_16(mht_16_v, 839, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "TestFloatTensorToQuantized");
+
   const int input_width = 3;
   const int input_height = 3;
   const float input_min = 0.0f;
@@ -636,6 +855,9 @@ void TestFloatTensorToQuantized() {
 // Verify that FloatToQuantizedInPlaceUsingEigen is same result as
 // FloatToQuantized.
 void TestFloatToQuantizedInPlaceUsingEigen() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_17(mht_17_v, 858, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "TestFloatToQuantizedInPlaceUsingEigen");
+
   thread::ThreadPool threadpool(Env::Default(), "test", 2 /* num_threads */);
   Eigen::ThreadPoolDevice eigen_device(threadpool.AsEigenThreadPool(),
                                        2 /* num_threads */);
@@ -647,6 +869,9 @@ void TestFloatToQuantizedInPlaceUsingEigen() {
 }
 
 void TestOverflowWithEigen() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_18(mht_18_v, 872, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "TestOverflowWithEigen");
+
   thread::ThreadPool threadpool(Env::Default(), "test", 2 /* num_threads */);
   Eigen::ThreadPoolDevice eigen_device(threadpool.AsEigenThreadPool(),
                                        2 /* num_threads */);
@@ -673,6 +898,9 @@ void TestOverflowWithEigen() {
 }
 
 void TestQuantizedTensorToFloat() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_19(mht_19_v, 901, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "TestQuantizedTensorToFloat");
+
   const int input_width = 3;
   const int input_height = 3;
   const float input_min = -128.0f;
@@ -715,6 +943,9 @@ void TestQuantizedTensorToFloat() {
 // Verify that QuantizedToFloatInPlaceUsingEigen is same result as
 // QuantizedToFloat.
 void TestQuantizedToFloatInPlaceUsingEigen() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_20(mht_20_v, 946, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "TestQuantizedToFloatInPlaceUsingEigen");
+
   thread::ThreadPool threadpool(Env::Default(), "test", 2 /* num_threads */);
   Eigen::ThreadPoolDevice eigen_device(threadpool.AsEigenThreadPool(),
                                        2 /* num_threads */);
@@ -727,6 +958,9 @@ void TestQuantizedToFloatInPlaceUsingEigen() {
 }
 
 void BenchmarkRequantizeManyInNewRange() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_21(mht_21_v, 961, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "BenchmarkRequantizeManyInNewRange");
+
   TimeRequantizeManyInNewRange<qint32, quint8>(1000, 1000, false);
   TimeRequantizeManyInNewRange<qint32, quint8>(1000, 1000, true);
   TimeRequantizeManyInNewRange<qint32, quint8>(100000, 100, false);
@@ -757,6 +991,9 @@ void TestDivide64x2Pow(int64 val, int64 ref) {
 
 template <int POW>
 void TestDivide64x2PowRound(int64 val, int64 ref) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_22(mht_22_v, 994, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "TestDivide64x2PowRound");
+
   const int64x2_t val_64x2 = vmovq_n_s64(val);
   const int64x2_t shifted = Divide64x2PowRound<POW>(val_64x2);
   // TODO(b/70947959) Change back to int64 when possible
@@ -769,6 +1006,9 @@ void TestDivide64x2PowRound(int64 val, int64 ref) {
 }
 
 void TestDivide64x2PowAll() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_23(mht_23_v, 1009, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "TestDivide64x2PowAll");
+
   for (int64 i = 0; i < 1000; ++i) {
     TestDivide64x2PowRound<1>(
         i, static_cast<int64_t>(static_cast<float>(i) / 2.0f + 0.5f));
@@ -811,11 +1051,20 @@ void TestDivide64x2PowAll() {
   }
 }
 
-uint8x8_t To8x8(uint8 val) { return vmov_n_u8(val); }
+uint8x8_t To8x8(uint8 val) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_24(mht_24_v, 1055, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "To8x8");
+ return vmov_n_u8(val); }
 
-int16x8_t To16x8(int16 val) { return vmovq_n_s16(val); }
+int16x8_t To16x8(int16 val) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_25(mht_25_v, 1060, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "To16x8");
+ return vmovq_n_s16(val); }
 
 int32x2_t To32x2(int32 val) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_26(mht_26_v, 1065, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "To32x2");
+
   int32 vals[2];
   vals[0] = val;
   vals[1] = val;
@@ -837,6 +1086,9 @@ T_CALC ComputeRefLerp(T_CALC top_left, T_CALC top_right, T_CALC bottom_left,
 template <int RESOLUTION>
 void TestComputeLerp8x8(uint8 top_left, uint8 top_right, uint8 bottom_left,
                         uint8 bottom_right, int16 x_lerp, int16 y_lerp) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_27(mht_27_v, 1089, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "TestComputeLerp8x8");
+
   uint8x8_t top_left8x8 = To8x8(top_left);
   uint8x8_t top_right8x8 = To8x8(top_right);
   uint8x8_t bottom_left8x8 = To8x8(bottom_left);
@@ -869,6 +1121,9 @@ void TestComputeLerp8x8(uint8 top_left, uint8 top_right, uint8 bottom_left,
 template <int RESOLUTION>
 void TestComputeLerp32x2(int32 top_left, int32 top_right, int32 bottom_left,
                          int32 bottom_right, int32 x_lerp, int32 y_lerp) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_28(mht_28_v, 1124, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "TestComputeLerp32x2");
+
   int32x2_t top_left32x2 = To32x2(top_left);
   int32x2_t top_right32x2 = To32x2(top_right);
   int32x2_t bottom_left32x2 = To32x2(bottom_left);
@@ -891,6 +1146,9 @@ void TestComputeLerp32x2(int32 top_left, int32 top_right, int32 bottom_left,
 }
 
 void TestComputeLerp4xAll() {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utils_testDTcc mht_29(mht_29_v, 1149, "", "./tensorflow/core/kernels/quantization_utils_test.cc", "TestComputeLerp4xAll");
+
   constexpr int32 RESOLUTION_32 = 30;
   constexpr int32 RESOLUTION_MULT_32 = (1 << RESOLUTION_32);
   constexpr int32 HALF_32 = RESOLUTION_MULT_32 / 2;

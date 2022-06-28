@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,6 +219,9 @@ namespace {
 int64_t CalculatePostOrderScheduleHelper(
     const HloComputation* comp, int64_t start_ordinal,
     absl::flat_hash_map<HloInstruction*, int64_t>* ordinal_map) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_0(mht_0_v, 222, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "CalculatePostOrderScheduleHelper");
+
   int64_t ordinal = start_ordinal;
   for (HloInstruction* instruction : comp->MakeInstructionPostOrder()) {
     if (instruction->opcode() == HloOpcode::kCall ||
@@ -94,10 +265,16 @@ HloDataflowAnalysis::HloDataflowAnalysis(const HloModule& module, bool ssa_form,
       ssa_form_(ssa_form),
       bitcast_defines_value_(bitcast_defines_value),
       call_graph_(CallGraph::Build(&module)),
-      can_share_buffer_(can_share_buffer) {}
+      can_share_buffer_(can_share_buffer) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_1(mht_1_v, 269, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::HloDataflowAnalysis");
+}
 
 bool HloDataflowAnalysis::AreTransitiveUsesElementwiseOrTuple(
     const HloInstruction* inst) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_2(mht_2_v, 275, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::AreTransitiveUsesElementwiseOrTuple");
+
   absl::flat_hash_set<const HloInstruction*> visited;
   absl::InlinedVector<const HloInstruction*, 4> stack;
   stack.push_back(inst);
@@ -123,6 +300,9 @@ bool HloDataflowAnalysis::AreTransitiveUsesElementwiseOrTuple(
 
 namespace {
 bool Is1dSliceWithoutStrides(const HloInstruction* instr) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_3(mht_3_v, 303, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "Is1dSliceWithoutStrides");
+
   return instr->opcode() == HloOpcode::kSlice &&
          1 == instr->slice_starts().size() &&
          1 == instr->slice_limits().size() &&
@@ -131,6 +311,9 @@ bool Is1dSliceWithoutStrides(const HloInstruction* instr) {
 }
 
 bool IsSliceInputFusion(const HloInstruction& unnested_hlo) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_4(mht_4_v, 314, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "IsSliceInputFusion");
+
   if (!unnested_hlo.IsInputFusion()) {
     return false;
   }
@@ -223,6 +406,9 @@ absl::optional<ConcatUsageInfo> ConcatIsEffectivelyElementwise(
 bool AreTransitiveUsesEffectivelyElementwise(const HloInstruction* param,
                                              const HloInstruction* root_tuple,
                                              const ShapeIndex& out_shape_idx) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_5(mht_5_v, 409, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "AreTransitiveUsesEffectivelyElementwise");
+
   CHECK_EQ(root_tuple->opcode(), HloOpcode::kTuple);
   CHECK_EQ(out_shape_idx.size(), 1);
   absl::flat_hash_set<const HloInstruction*> visited;
@@ -292,6 +478,9 @@ bool AreTransitiveUsesEffectivelyElementwise(const HloInstruction* param,
 
 bool HloDataflowAnalysis::ValueIsDefinedAt(const HloInstruction* instruction,
                                            const ShapeIndex& index) const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_6(mht_6_v, 481, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::ValueIsDefinedAt");
+
   const HloValueSet& value_set = GetValueSet(instruction, index);
   if (value_set.values().size() != 1) {
     return false;
@@ -301,12 +490,18 @@ bool HloDataflowAnalysis::ValueIsDefinedAt(const HloInstruction* instruction,
 
 const HloValue& HloDataflowAnalysis::GetValueDefinedAt(
     const HloInstruction* instruction, const ShapeIndex& index) const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_7(mht_7_v, 493, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::GetValueDefinedAt");
+
   CHECK(ValueIsDefinedAt(instruction, index)) << instruction->ToString();
   return GetUniqueValueAt(instruction, index);
 }
 
 HloValue& HloDataflowAnalysis::GetValueDefinedAt(
     const HloInstruction* instruction, const ShapeIndex& index) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_8(mht_8_v, 502, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::GetValueDefinedAt");
+
   CHECK(ValueIsDefinedAt(instruction, index));
   return GetUniqueValueAt(instruction, index);
 }
@@ -314,6 +509,9 @@ HloValue& HloDataflowAnalysis::GetValueDefinedAt(
 HloValue* HloDataflowAnalysis::NewHloValue(HloInstruction* instruction,
                                            const ShapeIndex& index,
                                            bool is_phi) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_9(mht_9_v, 512, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::NewHloValue");
+
   const int64_t value_id = next_value_id_++;
   auto result =
       values_.insert({value_id, std::make_unique<HloValue>(
@@ -326,6 +524,9 @@ HloValue* HloDataflowAnalysis::NewHloValue(HloInstruction* instruction,
 }
 
 void HloDataflowAnalysis::MarkValueForDeletion(HloValue::Id value_id) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_10(mht_10_v, 527, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::MarkValueForDeletion");
+
   const HloValue& value = *values_.at(value_id);
   VLOG(4) << "MarkValueForDeletion(" << value.ToShortString() << ")";
 
@@ -333,6 +534,9 @@ void HloDataflowAnalysis::MarkValueForDeletion(HloValue::Id value_id) {
 }
 
 void HloDataflowAnalysis::DeleteMarkedValues() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_11(mht_11_v, 537, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::DeleteMarkedValues");
+
   // Use a set to prevent deleting an id twice.
   absl::flat_hash_set<HloValue::Id> id_set(value_ids_to_delete_.begin(),
                                            value_ids_to_delete_.end());
@@ -361,6 +565,9 @@ void HloDataflowAnalysis::DeleteMarkedValues() {
 }
 
 std::string HloDataflowAnalysis::ToString() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_12(mht_12_v, 568, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::ToString");
+
   std::string out =
       StrCat("HloDataflowAnalysis, module ", module_.name(), "\n");
   StrAppend(&out, "  Instruction value sets:\n");
@@ -399,6 +606,9 @@ std::string HloDataflowAnalysis::ToString() const {
 bool HloDataflowAnalysis::Phi(
     HloInstruction* instruction,
     absl::Span<const InstructionValueSet* const> inputs) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_13(mht_13_v, 609, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::Phi");
+
   CHECK(ssa_form_);
   VLOG(4) << "Phi(" << instruction->name() << ")";
   VLOG(5) << "instruction value set = "
@@ -512,15 +722,24 @@ bool HloDataflowAnalysis::Phi(
 }
 
 const HloValue& HloDataflowAnalysis::GetValue(HloValue::Id value_id) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_14(mht_14_v, 725, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::GetValue");
+
   return *values_.at(value_id);
 }
 
 HloValue& HloDataflowAnalysis::GetValue(HloValue::Id value_id) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_15(mht_15_v, 732, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::GetValue");
+
   return *values_.at(value_id);
 }
 
 HloValueSet HloDataflowAnalysis::GetFlattenedValueSet(
     const HloInstruction* instruction) const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_16(mht_16_v, 740, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::GetFlattenedValueSet");
+
   HloValueSet value_set;
 
   const InstructionValueSet& value_set_tree =
@@ -538,24 +757,39 @@ HloValueSet HloDataflowAnalysis::GetFlattenedValueSet(
 
 const HloValueSet& HloDataflowAnalysis::GetValueSet(
     const HloInstruction* instruction, const ShapeIndex& index) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_17(mht_17_v, 760, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::GetValueSet");
+
   return GetInstructionValueSet(instruction).element(index);
 }
 
 HloValueSet& HloDataflowAnalysis::GetValueSet(const HloInstruction* instruction,
                                               const ShapeIndex& index) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_18(mht_18_v, 768, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::GetValueSet");
+
   return *GetInstructionValueSet(instruction).mutable_element(index);
 }
 
 const HloValueSet& HloDataflowAnalysis::GetValueSet(
     const HloPosition& position) const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_19(mht_19_v, 776, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::GetValueSet");
+
   return GetValueSet(position.instruction, position.index);
 }
 
 HloValueSet& HloDataflowAnalysis::GetValueSet(const HloPosition& position) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_20(mht_20_v, 783, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::GetValueSet");
+
   return GetValueSet(position.instruction, position.index);
 }
 
 bool HloDataflowAnalysis::UpdateBitcastValueSet(HloInstruction* bitcast) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_21(mht_21_v, 790, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::UpdateBitcastValueSet");
+
   CHECK_EQ(bitcast->opcode(), HloOpcode::kBitcast);
   const InstructionValueSet& operand_set =
       GetInstructionValueSet(bitcast->operand(0));
@@ -569,6 +803,9 @@ bool HloDataflowAnalysis::UpdateBitcastValueSet(HloInstruction* bitcast) {
 
 bool HloDataflowAnalysis::UpdateSetDimensionSizeValueSet(
     HloInstruction* set_dimension_size) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_22(mht_22_v, 806, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::UpdateSetDimensionSizeValueSet");
+
   CHECK_EQ(set_dimension_size->opcode(), HloOpcode::kSetDimensionSize);
   const InstructionValueSet& operand_set =
       GetInstructionValueSet(set_dimension_size->operand(0));
@@ -582,6 +819,9 @@ bool HloDataflowAnalysis::UpdateSetDimensionSizeValueSet(
 }
 
 bool HloDataflowAnalysis::UpdateSendValueSet(HloInstruction* send) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_23(mht_23_v, 822, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::UpdateSendValueSet");
+
   CHECK_EQ(send->opcode(), HloOpcode::kSend);
   bool changed = false;
   // Send forwards the operand value to the output tuple at {0}.
@@ -605,6 +845,9 @@ bool HloDataflowAnalysis::UpdateSendValueSet(HloInstruction* send) {
 
 bool HloDataflowAnalysis::UpdateAsyncStartValueSet(
     HloInstruction* async_start) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_24(mht_24_v, 848, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::UpdateAsyncStartValueSet");
+
   CHECK_EQ(async_start->opcode(), HloOpcode::kAsyncStart);
   bool changed = false;
   // AsyncStart forwards the operand values to element {0} of its output.
@@ -632,6 +875,9 @@ bool HloDataflowAnalysis::UpdateAsyncStartValueSet(
 
 bool HloDataflowAnalysis::UpdateAsyncUpdateValueSet(
     HloInstruction* async_update) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_25(mht_25_v, 878, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::UpdateAsyncUpdateValueSet");
+
   CHECK_EQ(async_update->opcode(), HloOpcode::kAsyncUpdate);
   CHECK_EQ(async_update->shape(), async_update->operand(0)->shape());
   bool changed = false;
@@ -656,6 +902,9 @@ bool HloDataflowAnalysis::UpdateAsyncUpdateValueSet(
 }
 
 bool HloDataflowAnalysis::UpdateAsyncDoneValueSet(HloInstruction* async_done) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_26(mht_26_v, 905, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::UpdateAsyncDoneValueSet");
+
   CHECK_EQ(async_done->opcode(), HloOpcode::kAsyncDone);
   bool changed = false;
   // AsyncDone forwards the operand values at {1} to element {} of its output.
@@ -679,6 +928,9 @@ bool HloDataflowAnalysis::UpdateAsyncDoneValueSet(HloInstruction* async_done) {
 }
 
 bool HloDataflowAnalysis::UpdateCopyStartValueSet(HloInstruction* copy_start) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_27(mht_27_v, 931, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::UpdateCopyStartValueSet");
+
   CHECK_EQ(copy_start->opcode(), HloOpcode::kCopyStart);
   bool changed = false;
   // CopyStart forwards the operand value to element {1} of its output.
@@ -692,6 +944,9 @@ bool HloDataflowAnalysis::UpdateCopyStartValueSet(HloInstruction* copy_start) {
 }
 
 bool HloDataflowAnalysis::UpdateCopyDoneValueSet(HloInstruction* copy_done) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_28(mht_28_v, 947, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::UpdateCopyDoneValueSet");
+
   CHECK_EQ(copy_done->opcode(), HloOpcode::kCopyDone);
   bool changed = false;
   // CopyDone forwards the operand value at {0} to element {} of its output.
@@ -706,6 +961,9 @@ bool HloDataflowAnalysis::UpdateCopyDoneValueSet(HloInstruction* copy_done) {
 }
 
 bool HloDataflowAnalysis::UpdateRecvDoneValueSet(HloInstruction* recv_done) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_29(mht_29_v, 964, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::UpdateRecvDoneValueSet");
+
   CHECK_EQ(recv_done->opcode(), HloOpcode::kRecvDone);
   bool changed = false;
   // RecvDone forwards the operand value at {0} to element {0} of its output.
@@ -728,6 +986,9 @@ bool HloDataflowAnalysis::UpdateRecvDoneValueSet(HloInstruction* recv_done) {
 }
 
 bool HloDataflowAnalysis::UpdateCallValueSet(HloInstruction* call) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_30(mht_30_v, 989, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::UpdateCallValueSet");
+
   CHECK_EQ(call->opcode(), HloOpcode::kCall);
   InstructionValueSet& value_set = GetInstructionValueSet(call);
   InstructionValueSet& root_value_set =
@@ -741,6 +1002,9 @@ bool HloDataflowAnalysis::UpdateCallValueSet(HloInstruction* call) {
 
 bool HloDataflowAnalysis::UpdateConditionalValueSet(
     HloInstruction* conditional) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_31(mht_31_v, 1005, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::UpdateConditionalValueSet");
+
   CHECK_EQ(conditional->opcode(), HloOpcode::kConditional);
   std::vector<const InstructionValueSet*> inputs(conditional->branch_count());
   for (int j = 0; j < conditional->branch_count(); ++j) {
@@ -755,6 +1019,9 @@ bool HloDataflowAnalysis::UpdateConditionalValueSet(
 }
 
 bool HloDataflowAnalysis::UpdateCopyValueSet(HloInstruction* copy) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_32(mht_32_v, 1022, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::UpdateCopyValueSet");
+
   CHECK_EQ(copy->opcode(), HloOpcode::kCopy);
   bool changed = false;
   for (auto& pair : GetInstructionValueSet(copy)) {
@@ -777,6 +1044,9 @@ bool HloDataflowAnalysis::UpdateCopyValueSet(HloInstruction* copy) {
 
 bool HloDataflowAnalysis::UpdateOptimizationBarrierValueSet(
     HloInstruction* barrier) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_33(mht_33_v, 1047, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::UpdateOptimizationBarrierValueSet");
+
   // Optimization Barriers just forward their operand. Given that barriers can
   // have a tuple operand, we iterate through its indexes, like for copies.
   // Unlike copies though we also propagate the top-level value.
@@ -795,6 +1065,9 @@ bool HloDataflowAnalysis::UpdateOptimizationBarrierValueSet(
 }
 
 bool HloDataflowAnalysis::UpdateDomainValueSet(HloInstruction* domain) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_34(mht_34_v, 1068, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::UpdateDomainValueSet");
+
   // Domain instructions just forward their operand. Given that domains can have
   // a tuple operand, we iterate through its indexes, like for copies.
   // Unlike copies though we also propagate the top-level value.
@@ -814,6 +1087,9 @@ bool HloDataflowAnalysis::UpdateDomainValueSet(HloInstruction* domain) {
 
 bool HloDataflowAnalysis::UpdateAddDependencyValueSet(
     HloInstruction* add_dependency) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_35(mht_35_v, 1090, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::UpdateAddDependencyValueSet");
+
   // AddDependency just forwards the value of its zero-th operand.
   CHECK_EQ(add_dependency->opcode(), HloOpcode::kAddDependency);
   const InstructionValueSet& operand_set =
@@ -828,6 +1104,9 @@ bool HloDataflowAnalysis::UpdateAddDependencyValueSet(
 }
 
 bool HloDataflowAnalysis::UpdateGetTupleElementValueSet(HloInstruction* gte) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_36(mht_36_v, 1107, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::UpdateGetTupleElementValueSet");
+
   CHECK_EQ(gte->opcode(), HloOpcode::kGetTupleElement);
   bool changed = false;
   // The GetTupleElement instruction forwards the values from the specified
@@ -854,6 +1133,9 @@ bool HloDataflowAnalysis::UpdateGetTupleElementValueSet(HloInstruction* gte) {
 }
 
 bool HloDataflowAnalysis::UpdateParameterValueSet(HloInstruction* parameter) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_37(mht_37_v, 1136, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::UpdateParameterValueSet");
+
   CHECK_EQ(parameter->opcode(), HloOpcode::kParameter);
   const CallGraphNode& call_graph_node =
       call_graph_->GetNode(parameter->parent());
@@ -924,6 +1206,9 @@ bool HloDataflowAnalysis::UpdateParameterValueSet(HloInstruction* parameter) {
 }
 
 bool HloDataflowAnalysis::UpdateTupleSelectValueSet(HloInstruction* select) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_38(mht_38_v, 1209, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::UpdateTupleSelectValueSet");
+
   CHECK_EQ(select->opcode(), HloOpcode::kTupleSelect);
   // A phi value is not defined at a kTupleSelect instruction because
   // kTupleSelect does not create a new value. Rather it forwards a value from
@@ -945,6 +1230,9 @@ bool HloDataflowAnalysis::UpdateTupleSelectValueSet(HloInstruction* select) {
 }
 
 bool HloDataflowAnalysis::UpdateTupleValueSet(HloInstruction* tuple) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_39(mht_39_v, 1233, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::UpdateTupleValueSet");
+
   CHECK_EQ(tuple->opcode(), HloOpcode::kTuple);
   bool changed = false;
   for (int64_t i = 0; i < tuple->operands().size(); ++i) {
@@ -970,6 +1258,9 @@ bool HloDataflowAnalysis::UpdateTupleValueSet(HloInstruction* tuple) {
 }
 
 bool HloDataflowAnalysis::UpdateWhileValueSet(HloInstruction* xla_while) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_40(mht_40_v, 1261, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::UpdateWhileValueSet");
+
   CHECK_EQ(xla_while->opcode(), HloOpcode::kWhile);
   const InstructionValueSet* const inputs[] = {
       &GetInstructionValueSet(xla_while->while_body()->root_instruction()),
@@ -983,6 +1274,9 @@ bool HloDataflowAnalysis::UpdateWhileValueSet(HloInstruction* xla_while) {
 
 bool HloDataflowAnalysis::UpdateAllGatherStartValueSet(
     HloInstruction* all_gather_start) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_41(mht_41_v, 1277, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::UpdateAllGatherStartValueSet");
+
   CHECK_EQ(all_gather_start->opcode(), HloOpcode::kAllGatherStart);
   bool changed = false;
   // AllGatherStart forwards the operand values to element {0} of its output.
@@ -1006,6 +1300,9 @@ bool HloDataflowAnalysis::UpdateAllGatherStartValueSet(
 
 bool HloDataflowAnalysis::UpdateAllGatherDoneValueSet(
     HloInstruction* all_gather_done) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_42(mht_42_v, 1303, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::UpdateAllGatherDoneValueSet");
+
   CHECK_EQ(all_gather_done->opcode(), HloOpcode::kAllGatherDone);
   bool changed = false;
   // AllGatherDone forwards the operand value at {1} to its output.
@@ -1030,6 +1327,9 @@ bool HloDataflowAnalysis::UpdateAllGatherDoneValueSet(
 
 bool HloDataflowAnalysis::UpdateAllReduceDoneValueSet(
     HloInstruction* all_reduce_done) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_43(mht_43_v, 1330, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::UpdateAllReduceDoneValueSet");
+
   CHECK_EQ(all_reduce_done->opcode(), HloOpcode::kAllReduceDone);
   bool changed = false;
   // AllReduceDone forwards its only operand.
@@ -1054,6 +1354,9 @@ bool HloDataflowAnalysis::UpdateAllReduceDoneValueSet(
 
 bool HloDataflowAnalysis::UpdateCollectivePermuteStartValueSet(
     HloInstruction* collective_permute_start) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_44(mht_44_v, 1357, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::UpdateCollectivePermuteStartValueSet");
+
   CHECK_EQ(collective_permute_start->opcode(),
            HloOpcode::kCollectivePermuteStart);
   bool changed = false;
@@ -1085,6 +1388,9 @@ bool HloDataflowAnalysis::UpdateCollectivePermuteStartValueSet(
 
 bool HloDataflowAnalysis::UpdateCollectivePermuteDoneValueSet(
     HloInstruction* collective_permute_done) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_45(mht_45_v, 1391, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::UpdateCollectivePermuteDoneValueSet");
+
   CHECK_EQ(collective_permute_done->opcode(),
            HloOpcode::kCollectivePermuteDone);
   bool changed = false;
@@ -1115,6 +1421,9 @@ bool HloDataflowAnalysis::UpdateCollectivePermuteDoneValueSet(
 
 bool HloDataflowAnalysis::UpdateInstructionValueSet(
     HloInstruction* instruction) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_46(mht_46_v, 1424, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::UpdateInstructionValueSet");
+
   // Recompute from operands.
   switch (instruction->opcode()) {
     case HloOpcode::kAddDependency:
@@ -1175,6 +1484,9 @@ bool HloDataflowAnalysis::UpdateInstructionValueSet(
 }
 
 void HloDataflowAnalysis::Propagate() {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_47(mht_47_v, 1487, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::Propagate");
+
   using Work = std::pair<int64_t, HloInstruction*>;
   // Avoid duplicating work by preferring work items early in the post order
   // schedule. Intuitively, we start from entry parameters and propagate buffers
@@ -1184,6 +1496,9 @@ void HloDataflowAnalysis::Propagate() {
   auto priority_map = CalculatePostOrderSchedule(module_);
   auto add_to_worklist = [&priority_map, &worklist,
                           &workset](HloInstruction* instruction) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_48(mht_48_v, 1499, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "lambda");
+
     if (workset.insert(instruction).second) {
       worklist.emplace(priority_map[instruction], instruction);
     }
@@ -1201,6 +1516,9 @@ void HloDataflowAnalysis::Propagate() {
   while (!worklist.empty()) {
     HloInstruction* instruction = worklist.top().second;
     auto add_to_worklist = [&](HloInstruction* todo) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_49(mht_49_v, 1519, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "lambda");
+
       if (workset.insert(todo).second) {
         VLOG(1) << "  Adding todo : " << todo->name();
         worklist.emplace(priority_map[todo], todo);
@@ -1282,15 +1600,24 @@ void HloDataflowAnalysis::Propagate() {
 
 const InstructionValueSet& HloDataflowAnalysis::GetInstructionValueSet(
     const HloInstruction* instruction) const {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_50(mht_50_v, 1603, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::GetInstructionValueSet");
+
   return *value_sets_.at(instruction);
 }
 
 InstructionValueSet& HloDataflowAnalysis::GetInstructionValueSet(
     const HloInstruction* instruction) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_51(mht_51_v, 1611, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::GetInstructionValueSet");
+
   return *value_sets_.at(instruction);
 }
 
 Status HloDataflowAnalysis::InitializeInstructionValueSets() {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_52(mht_52_v, 1618, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::InitializeInstructionValueSets");
+
   for (const HloComputation* computation : module_.computations()) {
     const CallGraphNode& call_graph_node = call_graph_->GetNode(computation);
     for (HloInstruction* instruction : computation->instructions()) {
@@ -1318,6 +1645,9 @@ Status HloDataflowAnalysis::InitializeInstructionValueSets() {
       // Add a new HloValue to the HloValueSet corresponding to the given index
       // of the instruction shape.
       auto define_value_at = [this, &instruction](const ShapeIndex& index) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_53(mht_53_v, 1648, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "lambda");
+
         HloValue* value = NewHloValue(instruction, index, /*is_phi=*/false);
         GetValueSet(instruction, index).AddValue(value);
       };
@@ -1464,6 +1794,9 @@ Status HloDataflowAnalysis::InitializeInstructionValueSets() {
 }
 
 void HloDataflowAnalysis::OptimizePhiValues() {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_54(mht_54_v, 1797, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::OptimizePhiValues");
+
   // Only applicable to SSA form where phis are defined.
   if (!ssa_form_) {
     return;
@@ -1506,6 +1839,9 @@ void HloDataflowAnalysis::OptimizePhiValues() {
 StatusOr<std::unique_ptr<HloDataflowAnalysis>> HloDataflowAnalysis::Run(
     const HloModule& module, bool ssa_form, bool bitcast_defines_value,
     const CanShareBuffer& can_share_buffer) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_55(mht_55_v, 1842, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::Run");
+
   VLOG(1) << "HloDataflowAnalysis::Run on module " << module.name();
   XLA_VLOG_LINES(2, module.ToString());
 
@@ -1561,6 +1897,9 @@ StatusOr<std::unique_ptr<HloDataflowAnalysis>> HloDataflowAnalysis::Run(
 }
 
 Status HloDataflowAnalysis::Verify() const {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_56(mht_56_v, 1900, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::Verify");
+
   // Verify each HloValue appears in the value sets that the value's positions()
   // indicate.
   for (const HloValue* value : values()) {
@@ -1595,6 +1934,9 @@ Status HloDataflowAnalysis::Verify() const {
 bool HloDataflowAnalysis::DoesNotUseOperandBuffer(
     const HloInstruction* operand, const ShapeIndex& index,
     const HloInstruction* user) const {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_57(mht_57_v, 1937, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::DoesNotUseOperandBuffer");
+
   // Return false if no value at 'operand' and 'index' is used at 'user'.
   for (const HloValue* value : GetValueSet(operand, index).values()) {
     for (const HloUse& use : value->GetUses()) {
@@ -1614,12 +1956,18 @@ bool HloDataflowAnalysis::DoesNotUseOperandBuffer(
 }
 
 /*static*/ bool HloDataflowAnalysis::IsInPlaceOperation(HloOpcode opcode) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_58(mht_58_v, 1959, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::IsInPlaceOperation");
+
   return opcode == HloOpcode::kDynamicUpdateSlice ||
          opcode == HloOpcode::kScatter;
 }
 
 /*static*/ bool HloDataflowAnalysis::IsAsynchronousOperationStart(
     HloOpcode opcode) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_59(mht_59_v, 1968, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::IsAsynchronousOperationStart");
+
   return opcode == HloOpcode::kSend || opcode == HloOpcode::kRecv ||
          opcode == HloOpcode::kCopyStart ||
          opcode == HloOpcode::kAllReduceStart ||
@@ -1630,6 +1978,9 @@ bool HloDataflowAnalysis::DoesNotUseOperandBuffer(
 
 /*static*/ bool HloDataflowAnalysis::IsAsynchronousOperationDone(
     HloOpcode opcode) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_60(mht_60_v, 1981, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::IsAsynchronousOperationDone");
+
   return opcode == HloOpcode::kSendDone || opcode == HloOpcode::kRecvDone ||
          opcode == HloOpcode::kCopyDone ||
          opcode == HloOpcode::kAllReduceDone ||
@@ -1801,6 +2152,9 @@ HloDataflowAnalysis::GetInPlaceInputOutputPairs(HloInstruction* instruction) {
 
 bool HloDataflowAnalysis::HasInPlaceOperations(
     const HloInstruction& instruction) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_61(mht_61_v, 2155, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::HasInPlaceOperations");
+
   // GetInPlaceInputOutputPairs can return non-const pointers to the
   // instruction, so cannot be used with a const pointer. However, this is safe
   // to do if the results are unused (as they are here), hence the const_cast.
@@ -1812,6 +2166,9 @@ bool HloDataflowAnalysis::HasInPlaceOperations(
 bool HloDataflowAnalysis::CanShareOperandBufferWithUser(
     HloInstruction* operand, const ShapeIndex& operand_index,
     HloInstruction* user, const ShapeIndex& user_index) const {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_dataflow_analysisDTcc mht_62(mht_62_v, 2169, "", "./tensorflow/compiler/xla/service/hlo_dataflow_analysis.cc", "HloDataflowAnalysis::CanShareOperandBufferWithUser");
+
   CHECK(user->IsUserOf(operand))
       << "user: " << user->ToString() << " operand: " << operand->ToString();
   if (operand->opcode() == HloOpcode::kConstant) {

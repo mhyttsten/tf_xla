@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSvalidatorDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSvalidatorDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSvalidatorDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -43,7 +211,11 @@ Validator::Validator(const std::string& model_path,
                      const ComputeSettings* compute_settings)
     : model_path_(model_path),
       compute_settings_(compute_settings),
-      delegate_(nullptr, [](TfLiteDelegate*) {}) {}
+      delegate_(nullptr, [](TfLiteDelegate*) {}) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("model_path: \"" + model_path + "\"");
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSvalidatorDTcc mht_0(mht_0_v, 216, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/validator.cc", "Validator::Validator");
+}
 
 Validator::Validator(int model_fd, size_t model_offset, size_t model_size,
                      const ComputeSettings* compute_settings)
@@ -56,10 +228,16 @@ Validator::Validator(int model_fd, size_t model_offset, size_t model_size,
       model_offset_(model_offset),
       model_size_(model_size),
       compute_settings_(compute_settings),
-      delegate_(nullptr, [](TfLiteDelegate*) {}) {
+      delegate_(nullptr, [](TfLiteDelegate*) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSvalidatorDTcc mht_1(mht_1_v, 232, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/validator.cc", "Validator::Validator");
+}) {
 }
 
 Validator::~Validator() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSvalidatorDTcc mht_2(mht_2_v, 238, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/validator.cc", "Validator::~Validator");
+
 #ifndef _WIN32
   if (model_fd_ >= 0) {
     close(model_fd_);
@@ -80,6 +258,9 @@ constexpr int64_t kNanosInMicro = 1000;
 // CLOCK_BOOTTIME is what Android uses for elapsed time. Wallclock on mobile
 // devices can jump due to user actions or network time sync.
 int64_t ElapsedTimeMicros() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSvalidatorDTcc mht_3(mht_3_v, 261, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/validator.cc", "ElapsedTimeMicros");
+
   struct timespec ts;
 #if defined(__ANDROID__)
   int err = clock_gettime(CLOCK_BOOTTIME, &ts);
@@ -101,10 +282,17 @@ class ValidatorProfiler : public ::tflite::Profiler {
     int64_t start_time_us = -1;
     int64_t end_time_us = -1;
   };
-  const std::vector<EventData>& events() { return events_; }
+  const std::vector<EventData>& events() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSvalidatorDTcc mht_4(mht_4_v, 286, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/validator.cc", "events");
+ return events_; }
   uint32_t BeginEvent(const char* tag, EventType event_type,
                       int64_t event_metadata1,
                       int64_t event_metadata2) override {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("tag: \"" + (tag == nullptr ? std::string("nullptr") : std::string((char*)tag)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSvalidatorDTcc mht_5(mht_5_v, 293, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/validator.cc", "BeginEvent");
+
     if (event_type != EventType::DEFAULT) {
       return 0;
     }
@@ -112,6 +300,9 @@ class ValidatorProfiler : public ::tflite::Profiler {
     return events_.size();
   }
   void EndEvent(uint32_t event_handle) override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSvalidatorDTcc mht_6(mht_6_v, 303, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/validator.cc", "EndEvent");
+
     if (event_handle == 0) {
       return;
     }
@@ -126,6 +317,9 @@ class ValidatorProfiler : public ::tflite::Profiler {
 }  // namespace
 
 MinibenchmarkStatus Validator::CheckModel(bool load_only) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSvalidatorDTcc mht_7(mht_7_v, 320, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/validator.cc", "Validator::CheckModel");
+
   if (validation_entrypoint_) {
     // Already done.
     return kMinibenchmarkSuccess;
@@ -220,6 +414,9 @@ MinibenchmarkStatus Validator::CheckModel(bool load_only) {
 }
 
 MinibenchmarkStatus Validator::LoadDelegate() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSvalidatorDTcc mht_8(mht_8_v, 417, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/validator.cc", "Validator::LoadDelegate");
+
   if (!interpreter_ || !compute_settings_) {
     return kMinibenchmarkPreconditionNotMet;
   }
@@ -251,6 +448,9 @@ MinibenchmarkStatus Validator::LoadDelegate() {
 }
 
 MinibenchmarkStatus Validator::ApplyComputeSettings(int* delegate_error_out) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSvalidatorDTcc mht_9(mht_9_v, 451, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/validator.cc", "Validator::ApplyComputeSettings");
+
   if (!delegate_error_out) {
     return kMinibenchmarkPreconditionNotMet;
   }
@@ -299,6 +499,9 @@ MinibenchmarkStatus Validator::ApplyComputeSettings(int* delegate_error_out) {
 }
 
 MinibenchmarkStatus Validator::RunValidation(Results* results_out) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSvalidatorDTcc mht_10(mht_10_v, 502, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/validator.cc", "Validator::RunValidation");
+
   if (!results_out) {
     return kMinibenchmarkPreconditionNotMet;
   }
@@ -363,8 +566,14 @@ MinibenchmarkStatus Validator::RunValidation(Results* results_out) {
   return kMinibenchmarkSuccess;
 }
 
-int64_t Validator::BootTimeMicros() { return ElapsedTimeMicros(); }
+int64_t Validator::BootTimeMicros() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSvalidatorDTcc mht_11(mht_11_v, 570, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/validator.cc", "Validator::BootTimeMicros");
+ return ElapsedTimeMicros(); }
 int64_t Validator::WallTimeMicros() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSvalidatorDTcc mht_12(mht_12_v, 574, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/validator.cc", "Validator::WallTimeMicros");
+
   struct timespec ts;
 #ifndef _WIN32
   int err = clock_gettime(CLOCK_REALTIME, &ts);

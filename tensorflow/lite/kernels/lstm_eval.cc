@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSkernelsPSlstm_evalDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSlstm_evalDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSkernelsPSlstm_evalDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -61,6 +229,9 @@ void ComputeRowSums(
     const int8_t* recurrent_to_output_weights_ptr,
     const int8_t* projection_weights_ptr, bool use_cifg,
     const float* aux_input_ptr) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSlstm_evalDTcc mht_0(mht_0_v, 232, "", "./tensorflow/lite/kernels/lstm_eval.cc", "ComputeRowSums");
+
   // Compute the row sums for dequantization
   if (!use_cifg) {
     tensor_utils::ReductionSumVector(input_to_input_weights_ptr,
@@ -111,6 +282,9 @@ void ComputeRowSums(
 }
 
 inline float GetTensorScale(const TfLiteTensor* tensor) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSlstm_evalDTcc mht_1(mht_1_v, 285, "", "./tensorflow/lite/kernels/lstm_eval.cc", "GetTensorScale");
+
   return tensor == nullptr ? 1.0f : tensor->params.scale;
 }
 
@@ -157,6 +331,9 @@ inline void CalculateLstmGateFloat(
     const int n_output, const int n_cell,
     const TfLiteFusedActivation activation, float* gate,
     const bool is_input_all_zeros, const bool is_aux_input_all_zeros) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSlstm_evalDTcc mht_2(mht_2_v, 334, "", "./tensorflow/lite/kernels/lstm_eval.cc", "CalculateLstmGateFloat");
+
   const bool use_peephole = (cell_to_gate_weights != nullptr);
   const bool use_layer_norm = (layer_norm_coefficients != nullptr);
 
@@ -218,6 +395,9 @@ inline void CalculateLstmGateFloat(
 void UpdateLstmCellFloat(int n_batch, int n_cell, float* cell_state,
                          const float* input_gate, float* forget_gate,
                          const float* cell_gate, bool use_cifg, float clip) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSlstm_evalDTcc mht_3(mht_3_v, 398, "", "./tensorflow/lite/kernels/lstm_eval.cc", "UpdateLstmCellFloat");
+
   tensor_utils::VectorVectorCwiseProduct(forget_gate, cell_state,
                                          n_batch * n_cell, cell_state);
 
@@ -266,6 +446,9 @@ void CalculateLstmOutputFloat(int n_batch, int n_cell, int n_output,
                               const float* projection_bias,
                               const float proj_clip, float* output_state,
                               float* scratch) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSlstm_evalDTcc mht_4(mht_4_v, 449, "", "./tensorflow/lite/kernels/lstm_eval.cc", "CalculateLstmOutputFloat");
+
   tensor_utils::ApplyActivationToVector(cell_state, n_batch * n_cell,
                                         activation, scratch);
   tensor_utils::VectorVectorCwiseProduct(output_gate, scratch, n_batch * n_cell,
@@ -332,6 +515,9 @@ void CalculateLstmGateHybrid(
     float* scratch1,        // size: n_cell, only used if peephole LSTM
     int32_t* accum_scratch  // For MatrixBatchVectorMultiplyAccumulate
 ) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSlstm_evalDTcc mht_5(mht_5_v, 518, "", "./tensorflow/lite/kernels/lstm_eval.cc", "CalculateLstmGateHybrid");
+
   const bool use_peephole = (cell_to_gate_weights != nullptr);
   const bool use_layer_norm = (layer_norm_coefficients != nullptr);
 
@@ -438,6 +624,9 @@ void CalculateLstmOutputHybrid(
     int32_t* projection_weights_row_sums, bool* compute_row_sums,
     CpuBackendContext* context, float* scratch0, int8_t* scratch1,
     float* scratch2, int32_t* scratch3, int32_t* scratch4) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSlstm_evalDTcc mht_6(mht_6_v, 627, "", "./tensorflow/lite/kernels/lstm_eval.cc", "CalculateLstmOutputHybrid");
+
   tensor_utils::ApplyActivationToVector(cell_state, n_batch * n_cell,
                                         activation, scratch0);
   tensor_utils::VectorVectorCwiseProduct(output_gate, scratch0,
@@ -511,6 +700,9 @@ void CalculateLstmGateInteger8x8_16(
     CpuBackendContext* context,
     // Scratch arrays
     int32_t* scratch5) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSlstm_evalDTcc mht_7(mht_7_v, 703, "", "./tensorflow/lite/kernels/lstm_eval.cc", "CalculateLstmGateInteger8x8_16");
+
   const bool use_peephole = (cell_to_gate_weights != nullptr);
   const bool use_layer_norm = (layer_norm_coefficients != nullptr);
 
@@ -572,6 +764,9 @@ void UpdateLstmCellInteger(int n_batch, int n_cell, int16_t* cell_state,
                            int32_t cell_state_scale, const int16_t* input_gate,
                            int16_t* forget_gate, const int16_t* cell_gate,
                            bool use_cifg, int16_t clip) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSlstm_evalDTcc mht_8(mht_8_v, 767, "", "./tensorflow/lite/kernels/lstm_eval.cc", "UpdateLstmCellInteger");
+
   // Use the forget_gate array as scratch, as input_gate array is not allocated
   // in CIFG case. (Be careful not to write to the scratch before reading the
   // forget gate data.)
@@ -622,6 +817,9 @@ void CalculateLstmOutputInteger8x8_16(
     int32_t output_state_zp, int8_t quantized_proj_clip, int8_t* output_state,
     CpuBackendContext* context, int16_t* scratch0, int8_t* scratch1,
     int32_t* scratch2) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSlstm_evalDTcc mht_9(mht_9_v, 820, "", "./tensorflow/lite/kernels/lstm_eval.cc", "CalculateLstmOutputInteger8x8_16");
+
   // Note: unlike float/hybrid, the activation is always Tanh.
   tensor_utils::ApplyTanh(15 + cell_state_scale, cell_state, n_batch, n_cell,
                           scratch0);
@@ -674,6 +872,9 @@ void CalculateLstmGateInteger8x8_8(
     int16_t* gate,
     // Scratch arrays, both sized n_batch*n_cell
     int8_t* scratch0, int8_t* scratch1) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSlstm_evalDTcc mht_10(mht_10_v, 875, "", "./tensorflow/lite/kernels/lstm_eval.cc", "CalculateLstmGateInteger8x8_8");
+
   // Multiply input * input_weights => scratch0
   tensor_utils::MatrixBatchVectorMultiply(
       input, input_zp, input_to_gate_weight, input_to_gate_scale_a,
@@ -727,6 +928,9 @@ void CalculateLstmOutputInteger8x8_8(
     int32_t proj_scale_a, int32_t proj_scale_b, const int32_t* projection_bias,
     int32_t output_state_zp, int32_t quantized_proj_clip, int8_t* output_state,
     int16_t* scratch) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSlstm_evalDTcc mht_11(mht_11_v, 931, "", "./tensorflow/lite/kernels/lstm_eval.cc", "CalculateLstmOutputInteger8x8_8");
+
   // Note: unlike float/hybrid, the activation is always Tanh.
   tensor_utils::ApplyTanhFloat(cell_state, n_batch, n_cell, -15, scratch);
   tensor_utils::CwiseMul(output_gate, scratch, n_batch, n_cell, 15 + 15 - 15,
@@ -832,6 +1036,9 @@ inline void LstmStepFloat(
     int n_aux_input, int n_output, int output_batch_leading_dim,
     float* output_state_ptr, float* cell_state_ptr, float* scratch0,
     float* scratch1, float* scratch2, float* scratch3, float* output_ptr) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSlstm_evalDTcc mht_12(mht_12_v, 1039, "", "./tensorflow/lite/kernels/lstm_eval.cc", "LstmStepFloat");
+
   ruy::profiler::ScopeLabel label("LstmStepFloat");
   // Since we have already checked that weights are all there or none, we can
   // check the existence of only one to the get the condition.
@@ -1033,6 +1240,9 @@ inline void LstmStepHybrid(
     int32_t* output_state_zp, int32_t* row_sums, int row_sums_size,
     bool* compute_row_sums, bool asymmetric_quantize_inputs,
     CpuBackendContext* context) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSlstm_evalDTcc mht_13(mht_13_v, 1243, "", "./tensorflow/lite/kernels/lstm_eval.cc", "LstmStepHybrid");
+
   ruy::profiler::ScopeLabel label("LstmStepHybrid");
   // Since we have already checked that weights are all there or none, we
   // can check the existence of only one to the get the condition.
@@ -1377,6 +1587,9 @@ inline void LstmStepInteger8x8_16(
     int32_t output_state_zp, int16_t* cell_state_ptr, int8_t* output_ptr,
     int16_t* scratch0, int16_t* scratch1, int16_t* scratch2, int16_t* scratch3,
     int8_t* scratch4, int32_t* scratch5, CpuBackendContext* context) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSlstm_evalDTcc mht_14(mht_14_v, 1590, "", "./tensorflow/lite/kernels/lstm_eval.cc", "LstmStepInteger8x8_16");
+
   ruy::profiler::ScopeLabel label("LstmStepInteger8x8_16");
   // Make named scratch buffers for the different gates.
   int16_t* input_gate_scratch = scratch0;
@@ -1623,6 +1836,9 @@ inline void LstmStepInteger8x8_8(
     int8_t* scratch0, int8_t* scratch1, int16_t* scratch2, int16_t* scratch3,
     int16_t* scratch4, int16_t* scratch5, int16_t* scratch6,
     int16_t* scratch7) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSlstm_evalDTcc mht_15(mht_15_v, 1839, "", "./tensorflow/lite/kernels/lstm_eval.cc", "LstmStepInteger8x8_8");
+
   // TODO(b/159066113): scratch5 is unused, remove.
 
   ruy::profiler::ScopeLabel label("LstmStepInteger8x8_8");
@@ -1713,6 +1929,9 @@ TfLiteStatus EvalFloat(
     const TfLiteLSTMParams* params, bool forward_sequence, bool time_major,
     int output_offset, TfLiteTensor* scratch_buffer, TfLiteTensor* output_state,
     TfLiteTensor* cell_state, TfLiteTensor* output) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSlstm_evalDTcc mht_16(mht_16_v, 1932, "", "./tensorflow/lite/kernels/lstm_eval.cc", "EvalFloat");
+
   TF_LITE_ASSERT(input->dims->size >= 2 && input->dims->size <= 3);
   int max_time, n_batch;
   if (input->dims->size == 3) {
@@ -1912,6 +2131,9 @@ TfLiteStatus EvalHybrid(
     TfLiteTensor* input_zp, TfLiteTensor* aux_input_zp,
     TfLiteTensor* output_state_zp, TfLiteTensor* row_sums, int row_sums_size,
     bool* compute_row_sums, CpuBackendContext* context) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSlstm_evalDTcc mht_17(mht_17_v, 2134, "", "./tensorflow/lite/kernels/lstm_eval.cc", "EvalHybrid");
+
   TF_LITE_ASSERT(input->dims->size >= 2 && input->dims->size <= 3);
   const int n_input = input->dims->data[input->dims->size - 1];
   int max_time, n_batch;
@@ -2174,6 +2396,9 @@ TfLiteStatus EvalInteger8x8_16(
     TfLiteTensor* scratch0, TfLiteTensor* scratch1, TfLiteTensor* scratch2,
     TfLiteTensor* scratch3, TfLiteTensor* scratch4, TfLiteTensor* scratch5,
     CpuBackendContext* context) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSlstm_evalDTcc mht_18(mht_18_v, 2399, "", "./tensorflow/lite/kernels/lstm_eval.cc", "EvalInteger8x8_16");
+
   TF_LITE_ASSERT(input->dims->size >= 2 && input->dims->size <= 3);
   const int n_input = input->dims->data[input->dims->size - 1];
   int max_time, n_batch;
@@ -2412,6 +2637,9 @@ TfLiteStatus EvalInteger8x8_8(
     TfLiteTensor* scratch0, TfLiteTensor* scratch1, TfLiteTensor* scratch2,
     TfLiteTensor* scratch3, TfLiteTensor* scratch4, TfLiteTensor* scratch5,
     TfLiteTensor* scratch6, TfLiteTensor* scratch7) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSlstm_evalDTcc mht_19(mht_19_v, 2640, "", "./tensorflow/lite/kernels/lstm_eval.cc", "EvalInteger8x8_8");
+
   TF_LITE_ASSERT(input->dims->size >= 2 && input->dims->size <= 3);
   const int n_input = input->dims->data[input->dims->size - 1];
   int max_time, n_batch;

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -66,6 +234,9 @@ using absl::StrJoin;
 
 HloInstruction* HloInstruction::AddInstruction(
     std::unique_ptr<HloInstruction> derived_instruction) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_0(mht_0_v, 237, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::AddInstruction");
+
   HloInstruction* derived =
       parent()->AddInstruction(std::move(derived_instruction));
   const bool has_prior_sharding = derived->has_sharding();
@@ -83,6 +254,9 @@ StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
     const absl::flat_hash_map<int64_t, HloInstruction*>& instruction_map,
     const absl::flat_hash_map<int64_t, HloComputation*>& computation_map,
     bool prohibit_empty_literal) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_1(mht_1_v, 257, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateFromProto");
+
   TF_RET_CHECK(!proto.opcode().empty());
   HloOpcode opcode;
   auto opcode_or = StringToHloOpcode(proto.opcode());
@@ -117,9 +291,15 @@ StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
 
   std::unique_ptr<HloInstruction> instruction;
   const auto operands = [&instruction_map, &proto](int index) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_2(mht_2_v, 294, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "lambda");
+
     return instruction_map.at(proto.operand_ids(index));
   };
   const auto all_operands = [&instruction_map, &proto]() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_3(mht_3_v, 300, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "lambda");
+
     std::vector<HloInstruction*> result(proto.operand_ids_size());
     std::transform(proto.operand_ids().begin(), proto.operand_ids().end(),
                    result.begin(), [&instruction_map](int64_t operand_id) {
@@ -128,9 +308,15 @@ StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
     return result;
   };
   const auto computations = [&computation_map, &proto](int index) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_4(mht_4_v, 311, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "lambda");
+
     return computation_map.at(proto.called_computation_ids(index));
   };
   const auto all_computations = [&computation_map, &proto]() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_5(mht_5_v, 317, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "lambda");
+
     std::vector<HloComputation*> result(proto.called_computation_ids_size());
     std::transform(proto.called_computation_ids().begin(),
                    proto.called_computation_ids().end(), result.begin(),
@@ -978,34 +1164,54 @@ StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateParameter(
     int64_t parameter_number, const Shape& shape, const std::string& name) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_6(mht_6_v, 1168, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateParameter");
+
   return absl::make_unique<HloParameterInstruction>(parameter_number, shape,
                                                     name);
 }
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateTrace(
     const std::string& tag, HloInstruction* operand) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("tag: \"" + tag + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_7(mht_7_v, 1178, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateTrace");
+
   return absl::make_unique<HloTraceInstruction>(tag, operand);
 }
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateConstant(
     Literal literal) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_8(mht_8_v, 1186, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateConstant");
+
   return absl::make_unique<HloConstantInstruction>(std::move(literal));
 }
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateIota(
     const Shape& shape, int64_t iota_dimension) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_9(mht_9_v, 1194, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateIota");
+
   return absl::make_unique<HloIotaInstruction>(shape, iota_dimension);
 }
 
 /* static */ std::unique_ptr<HloInstruction>
 HloInstruction::CreateGetTupleElement(const Shape& shape,
                                       HloInstruction* operand, int64_t index) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_10(mht_10_v, 1203, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateGetTupleElement");
+
   return absl::make_unique<HloGetTupleElementInstruction>(shape, operand,
                                                           index);
 }
 
 /* static */ std::unique_ptr<HloInstruction>
 HloInstruction::CreateGetTupleElement(HloInstruction* operand, int64_t index) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_11(mht_11_v, 1212, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateGetTupleElement");
+
   return absl::make_unique<HloGetTupleElementInstruction>(
       operand->shape().tuple_shapes(index), operand, index);
 }
@@ -1013,17 +1219,26 @@ HloInstruction::CreateGetTupleElement(HloInstruction* operand, int64_t index) {
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateRng(
     const Shape& shape, RandomDistribution distribution,
     absl::Span<HloInstruction* const> parameters) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_12(mht_12_v, 1222, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateRng");
+
   return absl::make_unique<HloRngInstruction>(shape, distribution, parameters);
 }
 
 /* static */ std::unique_ptr<HloInstruction>
 HloInstruction::CreateRngGetAndUpdateState(const Shape& shape, int64_t delta) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_13(mht_13_v, 1230, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateRngGetAndUpdateState");
+
   return absl::make_unique<HloRngGetAndUpdateStateInstruction>(shape, delta);
 }
 
 /* static */ std::unique_ptr<HloInstruction>
 HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
                                       RandomAlgorithm algorithm) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_14(mht_14_v, 1239, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateRngBitGenerator");
+
   return absl::make_unique<HloRngBitGeneratorInstruction>(shape, state,
                                                           algorithm);
 }
@@ -1031,6 +1246,9 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateNary(
     const Shape& shape, HloOpcode opcode,
     absl::Span<HloInstruction* const> operands) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_15(mht_15_v, 1249, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateNary");
+
   if (opcode == HloOpcode::kCopy) {
     // It is impossible to copy an opaque shape, we don't know how big it is.
     CHECK(!shape.IsOpaque());
@@ -1044,6 +1262,9 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateUnary(
     const Shape& shape, HloOpcode opcode, HloInstruction* operand) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_16(mht_16_v, 1265, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateUnary");
+
   // Only certain opcodes are supported with CreateUnary: opcodes of unary
   // instructions with no auxiliary fields.
   switch (opcode) {
@@ -1088,6 +1309,9 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateBinary(
     const Shape& shape, HloOpcode opcode, HloInstruction* lhs,
     HloInstruction* rhs) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_17(mht_17_v, 1312, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateBinary");
+
   // Only certain opcodes are supported with CreateBinary: opcodes of binary
   // instructions with no auxiliary fields.
   switch (opcode) {
@@ -1118,6 +1342,9 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateTernary(
     const Shape& shape, HloOpcode opcode, HloInstruction* lhs,
     HloInstruction* rhs, HloInstruction* ehs) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_18(mht_18_v, 1345, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateTernary");
+
   // Only certain opcodes are supported with CreateTernary: opcodes of ternary
   // instructions with no auxiliary fields.
   switch (opcode) {
@@ -1135,6 +1362,9 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateVariadic(
     const Shape& shape, HloOpcode opcode,
     absl::Span<HloInstruction* const> operands) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_19(mht_19_v, 1365, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateVariadic");
+
   CHECK_EQ(HloOpcode::kTuple, opcode);
   return CreateNary(shape, opcode, operands);
 }
@@ -1142,6 +1372,9 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateMap(
     const Shape& shape, absl::Span<HloInstruction* const> operands,
     HloComputation* map_computation) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_20(mht_20_v, 1375, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateMap");
+
   return absl::make_unique<HloMapInstruction>(shape, operands, map_computation);
 }
 
@@ -1150,6 +1383,9 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
     int64_t feature_group_count, int64_t batch_group_count,
     const Window& window, const ConvolutionDimensionNumbers& dimension_numbers,
     const PrecisionConfig& precision_config) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_21(mht_21_v, 1386, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateConvolve");
+
   return absl::make_unique<HloConvolutionInstruction>(
       shape, lhs, rhs, feature_group_count, batch_group_count, window,
       dimension_numbers, precision_config);
@@ -1158,6 +1394,9 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateFft(
     const Shape& shape, HloInstruction* operand, FftType fft_type,
     absl::Span<const int64_t> fft_length) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_22(mht_22_v, 1397, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateFft");
+
   return absl::make_unique<HloFftInstruction>(shape, operand, fft_type,
                                               fft_length);
 }
@@ -1165,6 +1404,9 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateAsyncStart(
     const Shape& shape, absl::Span<HloInstruction* const> operands,
     HloComputation* async_computation) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_23(mht_23_v, 1407, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateAsyncStart");
+
   return absl::make_unique<HloAsyncInstruction>(HloOpcode::kAsyncStart, shape,
                                                 operands, async_computation);
 }
@@ -1172,6 +1414,9 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateAsyncUpdate(
     const Shape& shape, HloInstruction* operand,
     HloComputation* async_computation) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_24(mht_24_v, 1417, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateAsyncUpdate");
+
   return absl::make_unique<HloAsyncInstruction>(HloOpcode::kAsyncUpdate, shape,
                                                 operand, async_computation);
 }
@@ -1179,6 +1424,9 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateAsyncDone(
     const Shape& shape, HloInstruction* operand,
     HloComputation* async_computation) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_25(mht_25_v, 1427, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateAsyncDone");
+
   return absl::make_unique<HloAsyncInstruction>(HloOpcode::kAsyncDone, shape,
                                                 operand, async_computation);
 }
@@ -1186,6 +1434,9 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateCopyStart(
     const Shape& shape, HloInstruction* operand,
     bool is_cross_program_prefetch) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_26(mht_26_v, 1437, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateCopyStart");
+
   return absl::make_unique<HloCopyStartInstruction>(shape, operand,
                                                     is_cross_program_prefetch);
 }
@@ -1193,6 +1444,9 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateCompare(
     const Shape& shape, HloInstruction* lhs, HloInstruction* rhs,
     ComparisonDirection direction, absl::optional<Comparison::Type> type) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_27(mht_27_v, 1447, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateCompare");
+
   return absl::make_unique<HloCompareInstruction>(shape, lhs, rhs, direction,
                                                   type);
 }
@@ -1201,11 +1455,17 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
 HloInstruction::CreateTriangularSolve(const Shape& shape, HloInstruction* a,
                                       HloInstruction* b,
                                       const TriangularSolveOptions& options) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_28(mht_28_v, 1458, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateTriangularSolve");
+
   return absl::make_unique<HloTriangularSolveInstruction>(shape, a, b, options);
 }
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateCholesky(
     const Shape& shape, HloInstruction* a, const CholeskyOptions& options) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_29(mht_29_v, 1466, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateCholesky");
+
   return absl::make_unique<HloCholeskyInstruction>(shape, a, options);
 }
 
@@ -1213,6 +1473,9 @@ HloInstruction::CreateTriangularSolve(const Shape& shape, HloInstruction* a,
     const Shape& shape, HloInstruction* lhs, HloInstruction* rhs,
     const DotDimensionNumbers& dimension_numbers,
     const PrecisionConfig& precision_config) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_30(mht_30_v, 1476, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateDot");
+
   return absl::make_unique<HloDotInstruction>(
       shape, lhs, rhs, dimension_numbers, precision_config);
 }
@@ -1222,6 +1485,9 @@ HloInstruction::CreateReducePrecision(const Shape& shape,
                                       HloInstruction* operand,
                                       const int exponent_bits,
                                       const int mantissa_bits) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_31(mht_31_v, 1488, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateReducePrecision");
+
   return absl::make_unique<HloReducePrecisionInstruction>(
       shape, operand, exponent_bits, mantissa_bits);
 }
@@ -1231,6 +1497,9 @@ HloInstruction::CreateReducePrecision(const Shape& shape,
     int64_t all_gather_dimension, absl::Span<const ReplicaGroup> replica_groups,
     bool constrain_layout, const absl::optional<int64_t>& channel_id,
     bool use_global_device_ids) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_32(mht_32_v, 1500, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateAllGather");
+
   return absl::make_unique<HloAllGatherInstruction>(
       HloOpcode::kAllGather, shape, operands, all_gather_dimension,
       replica_groups, constrain_layout, channel_id, use_global_device_ids);
@@ -1242,6 +1511,9 @@ HloInstruction::CreateAllGatherStart(
     int64_t all_gather_dimension, absl::Span<const ReplicaGroup> replica_groups,
     bool constrain_layout, const absl::optional<int64_t>& channel_id,
     bool use_global_device_ids) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_33(mht_33_v, 1514, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateAllGatherStart");
+
   return absl::make_unique<HloAllGatherInstruction>(
       HloOpcode::kAllGatherStart, shape, operands, all_gather_dimension,
       replica_groups, constrain_layout, channel_id, use_global_device_ids);
@@ -1252,6 +1524,9 @@ HloInstruction::CreateAllGatherStart(
     HloComputation* reduce_computation,
     absl::Span<const ReplicaGroup> replica_groups, bool constrain_layout,
     const absl::optional<int64_t>& channel_id, bool use_global_device_ids) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_34(mht_34_v, 1527, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateAllReduce");
+
   return absl::make_unique<HloAllReduceInstruction>(
       HloOpcode::kAllReduce, shape, operands, reduce_computation,
       replica_groups, constrain_layout, channel_id, use_global_device_ids);
@@ -1264,6 +1539,9 @@ HloInstruction::CreateReduceScatter(
     absl::Span<const ReplicaGroup> replica_groups, bool constrain_layout,
     const absl::optional<int64_t>& channel_id, bool use_global_device_ids,
     int64_t scatter_dimension) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_35(mht_35_v, 1542, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateReduceScatter");
+
   return absl::make_unique<HloReduceScatterInstruction>(
       shape, operands, reduce_computation, replica_groups, constrain_layout,
       channel_id, use_global_device_ids, scatter_dimension);
@@ -1275,6 +1553,9 @@ HloInstruction::CreateAllReduceStart(
     HloComputation* reduce_computation,
     absl::Span<const ReplicaGroup> replica_groups, bool constrain_layout,
     const absl::optional<int64_t>& channel_id, bool use_global_device_ids) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_36(mht_36_v, 1556, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateAllReduceStart");
+
   return absl::make_unique<HloAllReduceInstruction>(
       HloOpcode::kAllReduceStart, shape, operands, reduce_computation,
       replica_groups, constrain_layout, channel_id, use_global_device_ids);
@@ -1285,6 +1566,9 @@ HloInstruction::CreateAllReduceStart(
     absl::Span<const ReplicaGroup> replica_groups, bool constrain_layout,
     const absl::optional<int64_t>& channel_id,
     const absl::optional<int64_t>& split_dimension) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_37(mht_37_v, 1569, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateAllToAll");
+
   return absl::make_unique<HloAllToAllInstruction>(
       shape, operands, replica_groups, constrain_layout, channel_id,
       split_dimension);
@@ -1295,6 +1579,9 @@ HloInstruction::CreateCollectivePermute(
     const Shape& shape, HloInstruction* operand,
     const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
     const absl::optional<int64_t>& channel_id) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_38(mht_38_v, 1582, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateCollectivePermute");
+
   return absl::make_unique<HloCollectivePermuteInstruction>(
       HloOpcode::kCollectivePermute, shape, operand, source_target_pairs,
       channel_id);
@@ -1307,6 +1594,9 @@ HloInstruction::CreateCollectivePermute(
     absl::Span<const std::pair<int64_t, int64_t>> source_target_pairs,
     absl::Span<const std::vector<int64_t>> slice_sizes,
     const absl::optional<int64_t>& channel_id) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_39(mht_39_v, 1597, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateCollectivePermute");
+
   return absl::make_unique<HloCollectivePermuteInstruction>(
       HloOpcode::kCollectivePermute, shape, input, output, input_start_indices,
       output_start_indices, source_target_pairs, slice_sizes, channel_id);
@@ -1317,6 +1607,9 @@ HloInstruction::CreateCollectivePermuteStart(
     const Shape& shape, HloInstruction* operand,
     const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
     const absl::optional<int64_t>& channel_id) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_40(mht_40_v, 1610, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateCollectivePermuteStart");
+
   return absl::make_unique<HloCollectivePermuteInstruction>(
       HloOpcode::kCollectivePermuteStart, shape, operand, source_target_pairs,
       channel_id);
@@ -1329,6 +1622,9 @@ HloInstruction::CreateCollectivePermuteStart(
     absl::Span<const std::pair<int64_t, int64_t>> source_target_pairs,
     absl::Span<const std::vector<int64_t>> slice_sizes,
     const absl::optional<int64_t>& channel_id) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_41(mht_41_v, 1625, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateCollectivePermuteStart");
+
   return absl::make_unique<HloCollectivePermuteInstruction>(
       HloOpcode::kCollectivePermuteStart, shape, input, output,
       input_start_indices, output_start_indices, source_target_pairs,
@@ -1337,6 +1633,9 @@ HloInstruction::CreateCollectivePermuteStart(
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateReplicaId(
     const Shape& shape) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_42(mht_42_v, 1636, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateReplicaId");
+
   CHECK(Shape::Equal().IgnoreLayout()(shape, ShapeUtil::MakeShape(U32, {})))
       << "HloInstruction replica-id must have a shape of u32[], but "
       << shape.ToString() << " is specified";
@@ -1345,6 +1644,9 @@ HloInstruction::CreateCollectivePermuteStart(
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreatePartitionId(
     const Shape& shape) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_43(mht_43_v, 1647, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreatePartitionId");
+
   CHECK(Shape::Equal().IgnoreLayout()(shape, ShapeUtil::MakeShape(U32, {})))
       << "HloInstruction partition-id must have a shape of u32[], but "
       << shape.ToString() << " is specified";
@@ -1354,6 +1656,10 @@ HloInstruction::CreateCollectivePermuteStart(
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateInfeed(
     const Shape& infeed_shape, HloInstruction* token_operand,
     const std::string& config) {
+   std::vector<std::string> mht_44_v;
+   mht_44_v.push_back("config: \"" + config + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_44(mht_44_v, 1660, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateInfeed");
+
   return absl::make_unique<HloInfeedInstruction>(infeed_shape, token_operand,
                                                  config);
 }
@@ -1361,6 +1667,10 @@ HloInstruction::CreateCollectivePermuteStart(
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateOutfeed(
     const Shape& outfeed_shape, HloInstruction* operand,
     HloInstruction* token_operand, absl::string_view outfeed_config) {
+   std::vector<std::string> mht_45_v;
+   mht_45_v.push_back("outfeed_config: \"" + std::string(outfeed_config.data(), outfeed_config.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_45(mht_45_v, 1671, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateOutfeed");
+
   return absl::make_unique<HloOutfeedInstruction>(
       outfeed_shape, operand, token_operand, outfeed_config);
 }
@@ -1368,12 +1678,18 @@ HloInstruction::CreateCollectivePermuteStart(
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateSend(
     HloInstruction* operand, HloInstruction* token, int64_t channel_id,
     bool is_host_transfer) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_46(mht_46_v, 1681, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateSend");
+
   return absl::make_unique<HloSendInstruction>(operand, token, channel_id,
                                                is_host_transfer);
 }
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateSendDone(
     HloInstruction* operand, bool is_host_transfer) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_47(mht_47_v, 1690, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateSendDone");
+
   auto send_operand = DynCast<HloSendInstruction>(operand);
   CHECK(send_operand != nullptr)
       << "SendDone must take the context operand from Send";
@@ -1384,12 +1700,18 @@ HloInstruction::CreateCollectivePermuteStart(
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateRecv(
     const Shape& shape, HloInstruction* token, int64_t channel_id,
     bool is_host_transfer) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_48(mht_48_v, 1703, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateRecv");
+
   return absl::make_unique<HloRecvInstruction>(shape, token, channel_id,
                                                is_host_transfer);
 }
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateRecvDone(
     HloInstruction* operand, bool is_host_transfer) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_49(mht_49_v, 1712, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateRecvDone");
+
   auto recv_operand = DynCast<HloRecvInstruction>(operand);
   CHECK(recv_operand != nullptr)
       << "RecvDone must take the context operand from Recv";
@@ -1400,11 +1722,17 @@ HloInstruction::CreateCollectivePermuteStart(
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateReverse(
     const Shape& shape, HloInstruction* operand,
     absl::Span<const int64_t> dimensions) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_50(mht_50_v, 1725, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateReverse");
+
   return absl::make_unique<HloReverseInstruction>(shape, operand, dimensions);
 }
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateAfterAll(
     absl::Span<HloInstruction* const> operands) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_51(mht_51_v, 1733, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateAfterAll");
+
   CHECK(!operands.empty());
   auto instruction = absl::WrapUnique(
       new HloInstruction(HloOpcode::kAfterAll, ShapeUtil::MakeTokenShape()));
@@ -1415,6 +1743,9 @@ HloInstruction::CreateCollectivePermuteStart(
 }
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateToken() {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_52(mht_52_v, 1746, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateToken");
+
   return absl::WrapUnique(
       new HloInstruction(HloOpcode::kAfterAll, ShapeUtil::MakeTokenShape()));
 }
@@ -1422,6 +1753,9 @@ HloInstruction::CreateCollectivePermuteStart(
 /* static */ std::unique_ptr<HloInstruction>
 HloInstruction::CreateAddDependency(HloInstruction* data_operand,
                                     HloInstruction* token_operand) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_53(mht_53_v, 1756, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateAddDependency");
+
   auto instruction = absl::WrapUnique(
       new HloInstruction(HloOpcode::kAddDependency, data_operand->shape()));
   instruction->AppendOperand(data_operand);
@@ -1432,6 +1766,9 @@ HloInstruction::CreateAddDependency(HloInstruction* data_operand,
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateWhile(
     const Shape& shape, HloComputation* condition, HloComputation* body,
     HloInstruction* init) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_54(mht_54_v, 1769, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateWhile");
+
   auto instruction =
       absl::WrapUnique(new HloInstruction(HloOpcode::kWhile, shape));
   instruction->AppendOperand(init);
@@ -1445,6 +1782,9 @@ HloInstruction::CreateAddDependency(HloInstruction* data_operand,
     const Shape& shape, HloInstruction* pred,
     HloInstruction* true_computation_arg, HloComputation* true_computation,
     HloInstruction* false_computation_arg, HloComputation* false_computation) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_55(mht_55_v, 1785, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateConditional");
+
   auto instruction =
       absl::WrapUnique(new HloInstruction(HloOpcode::kConditional, shape));
   instruction->AppendOperand(pred);
@@ -1462,6 +1802,9 @@ HloInstruction::CreateAddDependency(HloInstruction* data_operand,
     const Shape& shape, HloInstruction* branch_index,
     absl::Span<HloComputation* const> branch_computations,
     absl::Span<HloInstruction* const> branch_computation_args) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_56(mht_56_v, 1805, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateConditional");
+
   auto instruction =
       absl::WrapUnique(new HloInstruction(HloOpcode::kConditional, shape));
   instruction->AppendOperand(branch_index);
@@ -1478,6 +1821,9 @@ HloInstruction::CreateAddDependency(HloInstruction* data_operand,
     absl::Span<const int64_t> start_indices,
     absl::Span<const int64_t> limit_indices,
     absl::Span<const int64_t> strides) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_57(mht_57_v, 1824, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateSlice");
+
   return absl::make_unique<HloSliceInstruction>(shape, operand, start_indices,
                                                 limit_indices, strides);
 }
@@ -1486,6 +1832,9 @@ HloInstruction::CreateAddDependency(HloInstruction* data_operand,
     const Shape& shape, HloInstruction* operand,
     absl::Span<HloInstruction* const> start_indices,
     absl::Span<const int64_t> slice_sizes) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_58(mht_58_v, 1835, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateDynamicSlice");
+
   return absl::make_unique<HloDynamicSliceInstruction>(
       shape, operand, start_indices, slice_sizes);
 }
@@ -1494,6 +1843,9 @@ HloInstruction::CreateAddDependency(HloInstruction* data_operand,
 HloInstruction::CreateDynamicUpdateSlice(
     const Shape& shape, HloInstruction* operand, HloInstruction* update,
     absl::Span<HloInstruction* const> start_indices) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_59(mht_59_v, 1846, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateDynamicUpdateSlice");
+
   return absl::make_unique<HloDynamicUpdateSliceInstruction>(
       shape, operand, update, start_indices);
 }
@@ -1501,12 +1853,18 @@ HloInstruction::CreateDynamicUpdateSlice(
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateConcatenate(
     const Shape& shape, absl::Span<HloInstruction* const> operands,
     int64_t dimension) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_60(mht_60_v, 1856, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateConcatenate");
+
   return absl::make_unique<HloConcatenateInstruction>(shape, operands,
                                                       dimension);
 }
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateConvert(
     const Shape& shape, HloInstruction* operand) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_61(mht_61_v, 1865, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateConvert");
+
   auto instruction =
       absl::WrapUnique(new HloInstruction(HloOpcode::kConvert, shape));
   instruction->AppendOperand(operand);
@@ -1516,6 +1874,9 @@ HloInstruction::CreateDynamicUpdateSlice(
 /* static */ std::unique_ptr<HloInstruction>
 HloInstruction::CreateBitcastConvert(const Shape& shape,
                                      HloInstruction* operand) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_62(mht_62_v, 1877, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateBitcastConvert");
+
   auto instruction =
       absl::WrapUnique(new HloInstruction(HloOpcode::kBitcastConvert, shape));
   instruction->AppendOperand(operand);
@@ -1524,6 +1885,9 @@ HloInstruction::CreateBitcastConvert(const Shape& shape,
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateBitcast(
     const Shape& shape, HloInstruction* operand) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_63(mht_63_v, 1888, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateBitcast");
+
   auto instruction =
       absl::WrapUnique(new HloInstruction(HloOpcode::kBitcast, shape));
   instruction->AppendOperand(operand);
@@ -1534,6 +1898,9 @@ HloInstruction::CreateBitcastConvert(const Shape& shape,
     const Shape& shape, HloInstruction* operand, HloInstruction* init_value,
     absl::Span<const int64_t> dimensions_to_reduce,
     HloComputation* reduce_computation) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_64(mht_64_v, 1901, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateReduce");
+
   auto instruction = absl::WrapUnique(new HloReduceInstruction(
       shape, {operand, init_value}, dimensions_to_reduce, reduce_computation));
   return std::move(instruction);
@@ -1544,6 +1911,9 @@ HloInstruction::CreateBitcastConvert(const Shape& shape,
     absl::Span<HloInstruction* const> init_values,
     absl::Span<const int64_t> dimensions_to_reduce,
     HloComputation* reduce_computation) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_65(mht_65_v, 1914, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateReduce");
+
   std::vector<HloInstruction*> all_args;
   all_args.reserve(operands.size() * 2);
   all_args.insert(all_args.end(), operands.begin(), operands.end());
@@ -1557,6 +1927,9 @@ HloInstruction::CreateBitcastConvert(const Shape& shape,
     absl::Span<HloInstruction* const> init_values,
     absl::Span<const int64_t> dimensions_to_reduce,
     HloComputation* reduce_computation) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_66(mht_66_v, 1930, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateReduce");
+
   if (!tuple_of_instructions->shape().IsTuple()) {
     CHECK_EQ(init_values.size(), 1)
         << "The first input has to be a tuple, or the number of init values "
@@ -1579,6 +1952,9 @@ HloInstruction::CreateBitcastConvert(const Shape& shape,
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateReduceWindow(
     const Shape& shape, HloInstruction* operand, HloInstruction* init_value,
     const Window& window, HloComputation* reduce_computation) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_67(mht_67_v, 1955, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateReduceWindow");
+
   return absl::make_unique<HloReduceWindowInstruction>(
       shape, operand, init_value, window, reduce_computation);
 }
@@ -1587,6 +1963,9 @@ HloInstruction::CreateBitcastConvert(const Shape& shape,
     const Shape& shape, absl::Span<HloInstruction* const> operands,
     absl::Span<HloInstruction* const> init_values, const Window& window,
     HloComputation* reduce_computation) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_68(mht_68_v, 1966, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateReduceWindow");
+
   return absl::make_unique<HloReduceWindowInstruction>(
       shape, operands, init_values, window, reduce_computation);
 }
@@ -1596,6 +1975,9 @@ HloInstruction::CreateBatchNormTraining(const Shape& shape,
                                         HloInstruction* scale,
                                         HloInstruction* offset, float epsilon,
                                         int64_t feature_index) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_69(mht_69_v, 1978, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateBatchNormTraining");
+
   return absl::make_unique<HloBatchNormTrainingInstruction>(
       shape, operand, scale, offset, epsilon, feature_index);
 }
@@ -1605,6 +1987,9 @@ HloInstruction::CreateBatchNormInference(
     const Shape& shape, HloInstruction* operand, HloInstruction* scale,
     HloInstruction* offset, HloInstruction* mean, HloInstruction* variance,
     float epsilon, int64_t feature_index) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_70(mht_70_v, 1990, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateBatchNormInference");
+
   return absl::make_unique<HloBatchNormInferenceInstruction>(
       shape, operand, scale, offset, mean, variance, epsilon, feature_index);
 }
@@ -1615,6 +2000,9 @@ HloInstruction::CreateBatchNormGrad(const Shape& shape, HloInstruction* operand,
                                     HloInstruction* variance,
                                     HloInstruction* grad_output, float epsilon,
                                     int64_t feature_index) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_71(mht_71_v, 2003, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateBatchNormGrad");
+
   return absl::make_unique<HloBatchNormGradInstruction>(
       shape, operand, scale, mean, variance, grad_output, epsilon,
       feature_index);
@@ -1625,6 +2013,9 @@ HloInstruction::CreateSelectAndScatter(
     const Shape& shape, HloInstruction* operand, HloComputation* select,
     const Window& window, HloInstruction* source, HloInstruction* init_value,
     HloComputation* scatter) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_72(mht_72_v, 2016, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateSelectAndScatter");
+
   return absl::make_unique<HloSelectAndScatterInstruction>(
       shape, operand, select, window, source, init_value, scatter);
 }
@@ -1632,6 +2023,9 @@ HloInstruction::CreateSelectAndScatter(
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateBroadcast(
     const Shape& shape, HloInstruction* operand,
     absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_73(mht_73_v, 2026, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateBroadcast");
+
   return absl::make_unique<HloBroadcastInstruction>(shape, operand,
                                                     broadcast_dimensions);
 }
@@ -1640,6 +2034,9 @@ HloInstruction::CreateSelectAndScatter(
 HloInstruction::CreateGetDimensionSize(const Shape& shape,
                                        HloInstruction* operand,
                                        int64_t dimension) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_74(mht_74_v, 2037, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateGetDimensionSize");
+
   return absl::make_unique<HloGetDimensionSizeInstruction>(shape, operand,
                                                            dimension);
 }
@@ -1648,6 +2045,9 @@ HloInstruction::CreateGetDimensionSize(const Shape& shape,
 HloInstruction::CreateSetDimensionSize(const Shape& shape,
                                        HloInstruction* operand,
                                        HloInstruction* val, int64_t dimension) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_75(mht_75_v, 2048, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateSetDimensionSize");
+
   return absl::make_unique<HloSetDimensionSizeInstruction>(shape, operand, val,
                                                            dimension);
 }
@@ -1657,6 +2057,9 @@ HloInstruction::CreateBroadcastSequence(
     const Shape& output_shape, HloInstruction* operand,
     const std::function<HloInstruction*(std::unique_ptr<HloInstruction>)>&
         adder) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_76(mht_76_v, 2060, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateBroadcastSequence");
+
   CHECK(ShapeUtil::IsScalar(operand->shape()) ||
         operand->shape().rank() == output_shape.rank());
   Shape broadcast_shape = ShapeUtil::ChangeElementType(
@@ -1710,12 +2113,18 @@ HloInstruction::CreateBroadcastSequence(
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreatePad(
     const Shape& shape, HloInstruction* operand, HloInstruction* padding_value,
     const PaddingConfig& padding_config) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_77(mht_77_v, 2116, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreatePad");
+
   return absl::make_unique<HloPadInstruction>(shape, operand, padding_value,
                                               padding_config);
 }
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateReshape(
     const Shape& shape, HloInstruction* operand, int64_t inferred_dimension) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_78(mht_78_v, 2125, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateReshape");
+
   CHECK_EQ(ShapeUtil::ElementsIn(shape),
            ShapeUtil::ElementsIn(operand->shape()))
       << "shape: " << ShapeUtil::HumanString(shape)
@@ -1729,6 +2138,9 @@ HloInstruction::CreateBroadcastSequence(
 HloInstruction::CreateDynamicReshape(
     const Shape& shape, HloInstruction* data_operand,
     absl::Span<HloInstruction* const> dim_sizes) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_79(mht_79_v, 2141, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateDynamicReshape");
+
   CHECK_EQ(ShapeUtil::ElementsIn(shape),
            ShapeUtil::ElementsIn(data_operand[0].shape()))
       << "shape: " << ShapeUtil::HumanString(shape)
@@ -1741,6 +2153,9 @@ HloInstruction::CreateDynamicReshape(
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateTranspose(
     const Shape& shape, HloInstruction* operand,
     absl::Span<const int64_t> dimensions) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_80(mht_80_v, 2156, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateTranspose");
+
   return absl::make_unique<HloTransposeInstruction>(shape, operand, dimensions);
 }
 
@@ -1748,12 +2163,18 @@ HloInstruction::CreateDynamicReshape(
     const Shape& shape, int64_t dimension,
     absl::Span<HloInstruction* const> operands, HloComputation* compare,
     bool is_stable) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_81(mht_81_v, 2166, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateSort");
+
   return absl::make_unique<HloSortInstruction>(shape, dimension, operands,
                                                compare, is_stable);
 }
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateFusion(
     const Shape& shape, FusionKind fusion_kind, HloInstruction* fused_root) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_82(mht_82_v, 2175, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateFusion");
+
   return absl::make_unique<HloFusionInstruction>(shape, fusion_kind,
                                                  fused_root);
 }
@@ -1762,11 +2183,17 @@ HloInstruction::CreateDynamicReshape(
     const Shape& shape, FusionKind fusion_kind,
     absl::Span<HloInstruction* const> operands,
     HloComputation* fusion_computation) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_83(mht_83_v, 2186, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateFusion");
+
   return absl::make_unique<HloFusionInstruction>(shape, fusion_kind, operands,
                                                  fusion_computation);
 }
 
 void HloInstruction::set_single_sharding(const HloSharding& sharding) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_84(mht_84_v, 2194, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::set_single_sharding");
+
   CHECK(!sharding.IsTuple()) << sharding;
   if (shape().IsTuple()) {
     set_sharding(HloSharding::Tuple(sharding.GetAsShapeTree(shape())));
@@ -1777,6 +2204,9 @@ void HloInstruction::set_single_sharding(const HloSharding& sharding) {
 
 void HloInstruction::SetupDerivedInstruction(
     HloInstruction* derived_instruction) const {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_85(mht_85_v, 2207, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::SetupDerivedInstruction");
+
   if (sharding_ != nullptr &&
       ShapeUtil::CompatibleKind(shape_, derived_instruction->shape())) {
     // Only copy sharding if the tuple tree shape of the two instruction is
@@ -1791,10 +2221,16 @@ void HloInstruction::SetupDerivedInstruction(
 }
 
 bool HloInstruction::IsRoot() const {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_86(mht_86_v, 2224, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::IsRoot");
+
   return parent_ != nullptr && this == parent_->root_instruction();
 }
 
 bool HloInstruction::HasSideEffectNoRecurse() const {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_87(mht_87_v, 2231, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::HasSideEffectNoRecurse");
+
   switch (opcode_) {
     case HloOpcode::kSend:
     case HloOpcode::kSendDone:
@@ -1826,6 +2262,9 @@ bool HloInstruction::HasSideEffectNoRecurse() const {
 }
 
 bool HloInstruction::HasSideEffect() const {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_88(mht_88_v, 2265, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::HasSideEffect");
+
   if (HasSideEffectNoRecurse()) {
     return true;
   }
@@ -1841,6 +2280,9 @@ bool HloInstruction::HasSideEffect() const {
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateCall(
     const Shape& shape, absl::Span<HloInstruction* const> operands,
     HloComputation* computation) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_89(mht_89_v, 2283, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateCall");
+
   std::unique_ptr<HloInstruction> instruction =
       absl::WrapUnique(new HloInstruction(HloOpcode::kCall, shape));
   for (auto operand : operands) {
@@ -1854,6 +2296,11 @@ bool HloInstruction::HasSideEffect() const {
     const Shape& shape, absl::Span<HloInstruction* const> operands,
     absl::string_view custom_call_target, std::string opaque,
     CustomCallApiVersion api_version) {
+   std::vector<std::string> mht_90_v;
+   mht_90_v.push_back("custom_call_target: \"" + std::string(custom_call_target.data(), custom_call_target.size()) + "\"");
+   mht_90_v.push_back("opaque: \"" + opaque + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_90(mht_90_v, 2301, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateCustomCall");
+
   return absl::make_unique<HloCustomCallInstruction>(
       shape, operands, custom_call_target, std::move(opaque), api_version);
 }
@@ -1862,6 +2309,11 @@ bool HloInstruction::HasSideEffect() const {
     const Shape& shape, absl::Span<HloInstruction* const> operands,
     HloComputation* to_apply, absl::string_view custom_call_target,
     std::string opaque, CustomCallApiVersion api_version) {
+   std::vector<std::string> mht_91_v;
+   mht_91_v.push_back("custom_call_target: \"" + std::string(custom_call_target.data(), custom_call_target.size()) + "\"");
+   mht_91_v.push_back("opaque: \"" + opaque + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_91(mht_91_v, 2314, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateCustomCall");
+
   return absl::make_unique<HloCustomCallInstruction>(
       shape, operands, to_apply, custom_call_target, std::move(opaque),
       api_version);
@@ -1872,6 +2324,11 @@ bool HloInstruction::HasSideEffect() const {
     absl::Span<HloComputation* const> called_computations,
     absl::string_view custom_call_target, std::string opaque,
     CustomCallApiVersion api_version) {
+   std::vector<std::string> mht_92_v;
+   mht_92_v.push_back("custom_call_target: \"" + std::string(custom_call_target.data(), custom_call_target.size()) + "\"");
+   mht_92_v.push_back("opaque: \"" + opaque + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_92(mht_92_v, 2329, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateCustomCall");
+
   return absl::make_unique<HloCustomCallInstruction>(
       shape, operands, called_computations, custom_call_target,
       std::move(opaque), api_version);
@@ -1882,6 +2339,11 @@ bool HloInstruction::HasSideEffect() const {
     absl::string_view custom_call_target,
     absl::Span<const Shape> operand_shapes_with_layout, std::string opaque,
     CustomCallApiVersion api_version) {
+   std::vector<std::string> mht_93_v;
+   mht_93_v.push_back("custom_call_target: \"" + std::string(custom_call_target.data(), custom_call_target.size()) + "\"");
+   mht_93_v.push_back("opaque: \"" + opaque + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_93(mht_93_v, 2344, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateCustomCall");
+
   return absl::make_unique<HloCustomCallInstruction>(
       shape, operands, custom_call_target, std::move(opaque),
       operand_shapes_with_layout, api_version);
@@ -1889,6 +2351,9 @@ bool HloInstruction::HasSideEffect() const {
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateTuple(
     absl::Span<HloInstruction* const> elements) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_94(mht_94_v, 2354, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateTuple");
+
   std::vector<Shape> element_shapes;
   element_shapes.reserve(elements.size());
   for (auto element : elements) {
@@ -1902,6 +2367,9 @@ bool HloInstruction::HasSideEffect() const {
     const Shape& shape, HloInstruction* operand, HloInstruction* start_indices,
     const GatherDimensionNumbers& gather_dim_numbers,
     absl::Span<const int64_t> slice_sizes, bool indices_are_sorted) {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_95(mht_95_v, 2370, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateGather");
+
   return absl::make_unique<HloGatherInstruction>(
       shape, operand, start_indices, gather_dim_numbers, slice_sizes,
       indices_are_sorted);
@@ -1913,6 +2381,9 @@ bool HloInstruction::HasSideEffect() const {
     HloComputation* update_computation,
     const ScatterDimensionNumbers& scatter_dim_numbers, bool indices_are_sorted,
     bool unique_indices) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_96(mht_96_v, 2384, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateScatter");
+
   return absl::make_unique<HloScatterInstruction>(
       shape, operand, scatter_indices, updates, update_computation,
       scatter_dim_numbers, indices_are_sorted, unique_indices);
@@ -1922,6 +2393,9 @@ bool HloInstruction::HasSideEffect() const {
     const Shape& shape, HloInstruction* operand,
     std::unique_ptr<DomainMetadata> operand_side_metadata,
     std::unique_ptr<DomainMetadata> user_side_metadata) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_97(mht_97_v, 2396, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CreateDomain");
+
   return absl::make_unique<HloDomainInstruction>(
       shape, operand, std::move(operand_side_metadata),
       std::move(user_side_metadata));
@@ -1930,6 +2404,9 @@ bool HloInstruction::HasSideEffect() const {
 std::unique_ptr<HloInstruction> HloInstruction::CloneWithNewOperands(
     const Shape& shape, absl::Span<HloInstruction* const> new_operands,
     HloCloneContext* context) const {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_98(mht_98_v, 2407, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CloneWithNewOperands");
+
   VLOG(3) << "CloneWithNewOperands:\n  " << ToString();
   VLOG(3) << "  new operands:";
   for (const HloInstruction* new_operand : new_operands) {
@@ -2135,6 +2612,9 @@ std::unique_ptr<HloInstruction> HloInstruction::CloneWithNewOperands(
 }
 
 void HloInstruction::DetachFromOperandsAndUsers() {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_99(mht_99_v, 2615, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::DetachFromOperandsAndUsers");
+
   if (cleaned_up_) {
     return;
   }
@@ -2165,6 +2645,10 @@ void HloInstruction::DetachFromOperandsAndUsers() {
 std::unique_ptr<HloInstruction> HloInstruction::CloneWithNewShape(
     const Shape& shape, const std::string& suffix,
     HloCloneContext* context) const {
+   std::vector<std::string> mht_100_v;
+   mht_100_v.push_back("suffix: \"" + suffix + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_100(mht_100_v, 2649, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CloneWithNewShape");
+
   std::unique_ptr<HloInstruction> clone =
       CloneWithNewOperands(shape, operands_, context);
   if (suffix.empty()) {
@@ -2205,6 +2689,10 @@ std::unique_ptr<HloInstruction> HloInstruction::CloneWithNewShape(
 
 std::unique_ptr<HloInstruction> HloInstruction::Clone(
     const std::string& suffix, HloCloneContext* context) const {
+   std::vector<std::string> mht_101_v;
+   mht_101_v.push_back("suffix: \"" + suffix + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_101(mht_101_v, 2693, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::Clone");
+
   std::unique_ptr<HloInstruction> clone =
       CloneWithNewShape(shape_, suffix, context);
   return clone;
@@ -2226,6 +2714,9 @@ HloInstruction::LatestNonGteAncestorAndIndex() const {
 }
 
 const HloInstruction* HloInstruction::LatestNonGteAncestor() const {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_102(mht_102_v, 2717, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::LatestNonGteAncestor");
+
   const HloInstruction* hlo = this;
   while (hlo->opcode() == HloOpcode::kGetTupleElement) {
     hlo = hlo->operand(0);
@@ -2234,15 +2725,24 @@ const HloInstruction* HloInstruction::LatestNonGteAncestor() const {
 }
 
 const HloInstruction* HloInstruction::operand(int64_t i) const {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_103(mht_103_v, 2728, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::operand");
+
   return operands_.at(i);
 }
 
 HloInstruction* HloInstruction::mutable_operand(int64_t i) {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_104(mht_104_v, 2735, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::mutable_operand");
+
   CHECK(operands_[i] != nullptr);
   return operands_.at(i);
 }
 
 int64_t HloInstruction::operand_index(const HloInstruction* target) const {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_105(mht_105_v, 2743, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::operand_index");
+
   for (int64_t i = 0; i < operand_count(); ++i) {
     if (target == operand(i)) {
       return i;
@@ -2252,6 +2752,9 @@ int64_t HloInstruction::operand_index(const HloInstruction* target) const {
 }
 
 HloInstruction::InstructionVector HloInstruction::unique_operands() const {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_106(mht_106_v, 2755, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::unique_operands");
+
   InstructionVector unique;
   absl::flat_hash_set<const HloInstruction*> seen;
   for (HloInstruction* operand : operands()) {
@@ -2263,6 +2766,9 @@ HloInstruction::InstructionVector HloInstruction::unique_operands() const {
 }
 
 Status HloInstruction::AddControlDependencyTo(HloInstruction* instruction) {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_107(mht_107_v, 2769, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::AddControlDependencyTo");
+
   TF_RET_CHECK(instruction->parent() == parent());
   if (!absl::c_linear_search(control_successors_, instruction)) {
     control_successors_.push_back(instruction);
@@ -2274,6 +2780,9 @@ Status HloInstruction::AddControlDependencyTo(HloInstruction* instruction) {
 }
 
 Status HloInstruction::RemoveControlDependencyTo(HloInstruction* instruction) {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_108(mht_108_v, 2783, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::RemoveControlDependencyTo");
+
   TF_RET_CHECK(instruction->parent() == parent());
   TF_RETURN_IF_ERROR(EraseElementFromVector(&control_successors_, instruction));
   TF_RETURN_IF_ERROR(
@@ -2282,6 +2791,9 @@ Status HloInstruction::RemoveControlDependencyTo(HloInstruction* instruction) {
 }
 
 Status HloInstruction::DropAllControlDeps() {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_109(mht_109_v, 2794, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::DropAllControlDeps");
+
   for (auto* ctrl_succ : control_successors_) {
     TF_RETURN_IF_ERROR(
         EraseElementFromVector(&ctrl_succ->control_predecessors_, this));
@@ -2296,6 +2808,9 @@ Status HloInstruction::DropAllControlDeps() {
 }
 
 Status HloInstruction::CopyAllControlDepsFrom(const HloInstruction* inst) {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_110(mht_110_v, 2811, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::CopyAllControlDepsFrom");
+
   for (auto* ctrl_pred : inst->control_predecessors()) {
     TF_RETURN_IF_ERROR(ctrl_pred->AddControlDependencyTo(this));
   }
@@ -2314,6 +2829,9 @@ bool HloInstruction::IdenticalInternal(
     const std::function<bool(const HloComputation*, const HloComputation*)>&
         eq_computations,
     bool layout_sensitive, bool ignore_channel_id_values) const {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_111(mht_111_v, 2832, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::IdenticalInternal");
+
   // An instruction is always identical to itself.
   if (this == &other) {
     return true;
@@ -2354,6 +2872,9 @@ bool HloInstruction::IdenticalInternal(
 }
 
 void HloInstruction::AppendOperand(HloInstruction* operand) {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_112(mht_112_v, 2875, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::AppendOperand");
+
   if (operand->parent() != nullptr) {
     DCHECK(!operand->parent()->IsMarkedAsDead(operand))
         << "Operand " << operand->name() << " is already marked dead";
@@ -2364,6 +2885,9 @@ void HloInstruction::AppendOperand(HloInstruction* operand) {
 
 void HloInstruction::RemoveOperandsAtAscendingIndices(
     absl::Span<const int> ascending_indices) {
+   std::vector<std::string> mht_113_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_113(mht_113_v, 2888, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::RemoveOperandsAtAscendingIndices");
+
   if (ascending_indices.empty()) {
     return;
   }
@@ -2387,6 +2911,9 @@ void HloInstruction::RemoveOperandsAtAscendingIndices(
 }
 
 void HloInstruction::AddUser(HloInstruction* user) {
+   std::vector<std::string> mht_114_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_114(mht_114_v, 2914, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::AddUser");
+
   if (!ContainsKey(user_map_, user)) {
     user_map_.emplace(user, users_.size());
     users_.push_back(user);
@@ -2394,12 +2921,18 @@ void HloInstruction::AddUser(HloInstruction* user) {
 }
 
 int64_t HloInstruction::UserId(HloInstruction* user) {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_115(mht_115_v, 2924, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::UserId");
+
   auto result = user_map_.find(user);
   CHECK(result != user_map_.end());
   return result->second;
 }
 
 bool HloInstruction::HasConstantOperand() const {
+   std::vector<std::string> mht_116_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_116(mht_116_v, 2933, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::HasConstantOperand");
+
   for (const HloInstruction* operand : operands_) {
     if (operand->IsConstant()) {
       return true;
@@ -2412,6 +2945,9 @@ bool HloInstruction::IdenticalSlowPath(
     const HloInstruction& other,
     const std::function<bool(const HloComputation*, const HloComputation*)>&
         eq_computations) const {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_117(mht_117_v, 2948, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::IdenticalSlowPath");
+
   // Perform opcode specific checks.
   switch (opcode()) {
     // The result of these instructions only depend upon their opcode and
@@ -2559,6 +3095,9 @@ bool HloInstruction::IdenticalSlowPath(
 }
 
 void HloInstruction::RemoveUser(HloInstruction* user) {
+   std::vector<std::string> mht_118_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_118(mht_118_v, 3098, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::RemoveUser");
+
   auto map_it = user_map_.find(user);
   CHECK(map_it != user_map_.end());
 
@@ -2577,6 +3116,9 @@ void HloInstruction::RemoveUser(HloInstruction* user) {
 
 Status HloInstruction::ReplaceUseWith(HloInstruction* user,
                                       HloInstruction* new_producer) {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_119(mht_119_v, 3119, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::ReplaceUseWith");
+
   TF_RET_CHECK(
       ShapeUtil::CompatibleIgnoringFpPrecision(shape(), new_producer->shape()))
       << "this shape: " << ShapeUtil::HumanString(shape())
@@ -2587,6 +3129,9 @@ Status HloInstruction::ReplaceUseWith(HloInstruction* user,
 
 Status HloInstruction::ReplaceUseWithDifferentShape(
     HloInstruction* user, HloInstruction* new_producer) {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_120(mht_120_v, 3132, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::ReplaceUseWithDifferentShape");
+
   VLOG(3) << "Replacing uses of " << name() << " in " << user->name()
           << " with " << new_producer->name();
 
@@ -2606,6 +3151,9 @@ Status HloInstruction::ReplaceUseWithDifferentShape(
 
 Status HloInstruction::ReplaceOperandWith(int64_t operand_num,
                                           HloInstruction* new_operand) {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_121(mht_121_v, 3154, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::ReplaceOperandWith");
+
   auto old_operand = operand(operand_num);
   TF_RET_CHECK(ShapeUtil::CompatibleIgnoringFpPrecision(old_operand->shape(),
                                                         new_operand->shape()))
@@ -2616,6 +3164,9 @@ Status HloInstruction::ReplaceOperandWith(int64_t operand_num,
 
 Status HloInstruction::ReplaceOperandWithDifferentShape(
     int64_t operand_num, HloInstruction* new_operand) {
+   std::vector<std::string> mht_122_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_122(mht_122_v, 3167, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::ReplaceOperandWithDifferentShape");
+
   TF_RET_CHECK(operand_num >= 0);
   TF_RET_CHECK(operand_num < operand_count());
   HloInstruction* old_operand = mutable_operand(operand_num);
@@ -2637,6 +3188,9 @@ Status HloInstruction::ReplaceOperandWithDifferentShape(
 
 Status HloInstruction::ReplaceUsesWith(absl::Span<HloInstruction* const> users,
                                        HloInstruction* new_producer) {
+   std::vector<std::string> mht_123_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_123(mht_123_v, 3191, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::ReplaceUsesWith");
+
   TF_RET_CHECK(
       ShapeUtil::CompatibleIgnoringFpPrecision(shape(), new_producer->shape()))
       << shape() << " is not compatible with " << new_producer->shape();
@@ -2645,6 +3199,9 @@ Status HloInstruction::ReplaceUsesWith(absl::Span<HloInstruction* const> users,
 
 Status HloInstruction::ReplaceAllUsesWithDifferentShape(
     absl::Span<HloInstruction* const> users, HloInstruction* new_producer) {
+   std::vector<std::string> mht_124_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_124(mht_124_v, 3202, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::ReplaceAllUsesWithDifferentShape");
+
   for (HloInstruction* user : users) {
     TF_RETURN_IF_ERROR(ReplaceUseWithDifferentShape(user, new_producer));
   }
@@ -2657,6 +3214,9 @@ Status HloInstruction::ReplaceAllUsesWithDifferentShape(
 }
 
 Status HloInstruction::ReplaceAllUsesWith(HloInstruction* new_producer) {
+   std::vector<std::string> mht_125_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_125(mht_125_v, 3217, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::ReplaceAllUsesWith");
+
   TF_RET_CHECK(
       ShapeUtil::CompatibleIgnoringFpPrecision(shape(), new_producer->shape()))
       << shape() << " is not compatible with " << new_producer->shape();
@@ -2665,6 +3225,9 @@ Status HloInstruction::ReplaceAllUsesWith(HloInstruction* new_producer) {
 
 Status HloInstruction::ReplaceAllUsesWithDifferentShape(
     HloInstruction* new_producer) {
+   std::vector<std::string> mht_126_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_126(mht_126_v, 3228, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::ReplaceAllUsesWithDifferentShape");
+
   bool new_producer_is_user = false;
   for (HloInstruction* user : users()) {
     if (user == new_producer) {
@@ -2697,6 +3260,9 @@ Status HloInstruction::ReplaceAllUsesWithDifferentShape(
 }
 
 bool HloInstruction::IsEffectiveBitcast() const {
+   std::vector<std::string> mht_127_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_127(mht_127_v, 3263, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::IsEffectiveBitcast");
+
   return opcode_ == HloOpcode::kBitcast ||
          (opcode_ == HloOpcode::kTranspose &&
           ShapeUtil::TransposeIsBitcast(operand(0)->shape(), shape(),
@@ -2704,6 +3270,9 @@ bool HloInstruction::IsEffectiveBitcast() const {
 }
 
 HloComputation* HloInstruction::to_apply() const {
+   std::vector<std::string> mht_128_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_128(mht_128_v, 3273, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::to_apply");
+
   switch (opcode_) {
     case HloOpcode::kCall:
     case HloOpcode::kMap:
@@ -2724,6 +3293,9 @@ HloComputation* HloInstruction::to_apply() const {
 }
 
 void HloInstruction::set_to_apply(HloComputation* computation) {
+   std::vector<std::string> mht_129_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_129(mht_129_v, 3296, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::set_to_apply");
+
   // Don't allow changing the computation for fused instructions so we don't
   // have to recompute called_instructions for the entire fusion instruction.
   CHECK(!IsFused());
@@ -2747,16 +3319,25 @@ void HloInstruction::set_to_apply(HloComputation* computation) {
 }
 
 HloComputation* HloInstruction::while_condition() const {
+   std::vector<std::string> mht_130_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_130(mht_130_v, 3322, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::while_condition");
+
   CHECK_EQ(HloOpcode::kWhile, opcode_);
   return called_computations_[kConditionComputationIndex];
 }
 
 HloComputation* HloInstruction::while_body() const {
+   std::vector<std::string> mht_131_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_131(mht_131_v, 3330, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::while_body");
+
   CHECK_EQ(HloOpcode::kWhile, opcode_);
   return called_computations_[kBodyComputationIndex];
 }
 
 void HloInstruction::set_while_condition(HloComputation* computation) {
+   std::vector<std::string> mht_132_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_132(mht_132_v, 3338, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::set_while_condition");
+
   // Don't allow changing the computation for fused instructions so we don't
   // have to recompute called_instructions for the entire fusion instruction.
   CHECK(!IsFused());
@@ -2765,6 +3346,9 @@ void HloInstruction::set_while_condition(HloComputation* computation) {
 }
 
 void HloInstruction::set_while_body(HloComputation* computation) {
+   std::vector<std::string> mht_133_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_133(mht_133_v, 3349, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::set_while_body");
+
   // Don't allow changing the computation for fused instructions so we don't
   // have to recompute called_instructions for the entire fusion instruction.
   CHECK(!IsFused());
@@ -2773,17 +3357,26 @@ void HloInstruction::set_while_body(HloComputation* computation) {
 }
 
 HloInstruction* HloInstruction::while_init() const {
+   std::vector<std::string> mht_134_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_134(mht_134_v, 3360, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::while_init");
+
   CHECK_EQ(HloOpcode::kWhile, opcode_);
   return operands_[0];
 }
 
 HloComputation* HloInstruction::true_computation() const {
+   std::vector<std::string> mht_135_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_135(mht_135_v, 3368, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::true_computation");
+
   CHECK_EQ(HloOpcode::kConditional, opcode_);
   CHECK_EQ(PRED, operand(0)->shape().element_type());
   return called_computations_[kTrueComputationIndex];
 }
 
 HloComputation* HloInstruction::false_computation() const {
+   std::vector<std::string> mht_136_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_136(mht_136_v, 3377, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::false_computation");
+
   CHECK_EQ(HloOpcode::kConditional, opcode_);
   CHECK_EQ(PRED, operand(0)->shape().element_type());
   return called_computations_[kFalseComputationIndex];
@@ -2791,16 +3384,25 @@ HloComputation* HloInstruction::false_computation() const {
 
 const std::vector<HloComputation*>& HloInstruction::branch_computations()
     const {
+   std::vector<std::string> mht_137_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_137(mht_137_v, 3387, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::branch_computations");
+
   CHECK(HloOpcode::kConditional == opcode_);
   return called_computations_;
 }
 
 int HloInstruction::branch_count() const {
+   std::vector<std::string> mht_138_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_138(mht_138_v, 3395, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::branch_count");
+
   CHECK(HloOpcode::kConditional == opcode_);
   return called_computations_.size();
 }
 
 HloComputation* HloInstruction::branch_computation(int b) const {
+   std::vector<std::string> mht_139_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_139(mht_139_v, 3403, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::branch_computation");
+
   CHECK(HloOpcode::kConditional == opcode_);
   CHECK_GE(b, 0);
   CHECK_LT(b, called_computations_.size());
@@ -2809,6 +3411,9 @@ HloComputation* HloInstruction::branch_computation(int b) const {
 
 void HloInstruction::set_branch_computation(int b,
                                             HloComputation* computation) {
+   std::vector<std::string> mht_140_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_140(mht_140_v, 3414, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::set_branch_computation");
+
   // Don't allow changing the computation for fused instructions so we don't
   // have to recompute called_instructions for the entire fusion instruction.
   CHECK(!IsFused());
@@ -2817,6 +3422,9 @@ void HloInstruction::set_branch_computation(int b,
 }
 
 std::string HloInstruction::SignatureString() const {
+   std::vector<std::string> mht_141_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_141(mht_141_v, 3425, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::SignatureString");
+
   std::string operands =
       StrJoin(operands_, ", ", [](std::string* out, HloInstruction* operand) {
         StrAppend(out, ShapeUtil::HumanString(operand->shape()));
@@ -2825,6 +3433,10 @@ std::string HloInstruction::SignatureString() const {
 }
 
 std::string PrintName(const std::string& name, bool print_ids) {
+   std::vector<std::string> mht_142_v;
+   mht_142_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_142(mht_142_v, 3437, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "PrintName");
+
   if (print_ids) {
     return name;
   } else {
@@ -2839,11 +3451,18 @@ using DFSStack = absl::InlinedVector<std::pair<int, HloInstruction*>, 16>;
 
 std::string PrintNameInternal(const std::string& name,
                               const HloPrintOptions& options) {
+   std::vector<std::string> mht_143_v;
+   mht_143_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_143(mht_143_v, 3455, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "PrintNameInternal");
+
   return StrCat(options.print_percent() ? "%" : "",
                 PrintName(name, options.print_ids()));
 }
 
 void PrintCycle(const HloInstruction* child, DFSStack* dfs_stack) {
+   std::vector<std::string> mht_144_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_144(mht_144_v, 3463, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "PrintCycle");
+
   // This set contains HloInstructions from the top of `DFSStack` that might
   // belong to the cycle, i.e. if  DFSStack :=[back,...,child,...,top], then
   // `subgraph` := {child,...,top}.
@@ -2885,11 +3504,17 @@ void PrintCycle(const HloInstruction* child, DFSStack* dfs_stack) {
 }  // namespace
 
 std::string HloInstruction::ToString(const HloPrintOptions& options) const {
+   std::vector<std::string> mht_145_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_145(mht_145_v, 3507, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::ToString");
+
   CanonicalNameMap new_map;
   return ToStringWithCanonicalNameMap(options, &new_map);
 }
 
 bool HloInstruction::IsOpElementwise(HloOpcode opcode) {
+   std::vector<std::string> mht_146_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_146(mht_146_v, 3515, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::IsOpElementwise");
+
   switch (opcode) {
     // Unary elementwise operations.
     case HloOpcode::kAbs:
@@ -2953,6 +3578,9 @@ bool HloInstruction::IsOpElementwise(HloOpcode opcode) {
 
 bool HloInstruction::IsElementwiseImpl(
     const absl::optional<int64_t>& operand_idx) const {
+   std::vector<std::string> mht_147_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_147(mht_147_v, 3581, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::IsElementwiseImpl");
+
   if (opcode_ == HloOpcode::kDynamicUpdateSlice) {
     return operand_idx.has_value() && operand_idx.value() == 0;
   }
@@ -2965,16 +3593,25 @@ bool HloInstruction::IsElementwiseImpl(
 }
 
 bool HloInstruction::IsCrossModuleAllReduce() const {
+   std::vector<std::string> mht_148_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_148(mht_148_v, 3596, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::IsCrossModuleAllReduce");
+
   return opcode() == HloOpcode::kAllReduce && channel_id();
 }
 
 bool HloInstruction::IsCrossReplicaAllReduce() const {
+   std::vector<std::string> mht_149_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_149(mht_149_v, 3603, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::IsCrossReplicaAllReduce");
+
   return opcode() == HloOpcode::kAllReduce && !channel_id();
 }
 
 std::string HloInstruction::ToStringWithCanonicalNameMap(
     const HloPrintOptions& options,
     CanonicalNameMap* canonical_name_map) const {
+   std::vector<std::string> mht_150_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_150(mht_150_v, 3612, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::ToStringWithCanonicalNameMap");
+
   std::string result = "";
 
   // Logic to print the instruction name (e.g. "%foo = ").
@@ -3001,6 +3638,9 @@ std::string HloInstruction::ToStringWithCanonicalNameMap(
   // Print opcode, operand(s).
   if (options.syntax_sugar_async_ops() && HloOpcodeIsAsync(opcode())) {
     std::string suffix = [&]() {
+   std::vector<std::string> mht_151_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_151(mht_151_v, 3641, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "lambda");
+
       switch (opcode()) {
         case HloOpcode::kAsyncStart:
           return "-start";
@@ -3040,6 +3680,9 @@ std::string HloInstruction::ToStringWithCanonicalNameMap(
 
 std::string HloInstruction::OperandsToString(
     const HloPrintOptions& options) const {
+   std::vector<std::string> mht_152_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_152(mht_152_v, 3683, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::OperandsToString");
+
   CanonicalNameMap new_map;
   return OperandsToStringWithCanonicalNameMap(options, &new_map);
 }
@@ -3047,6 +3690,9 @@ std::string HloInstruction::OperandsToString(
 std::string HloInstruction::OperandsToStringWithCanonicalNameMap(
     const HloPrintOptions& options,
     CanonicalNameMap* canonical_name_map) const {
+   std::vector<std::string> mht_153_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_153(mht_153_v, 3693, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::OperandsToStringWithCanonicalNameMap");
+
   std::string operands;
   absl::Span<HloInstruction* const> slice(operands_);
   const int64_t kMaxOperandsToShowIfCompact = 4;
@@ -3098,6 +3744,9 @@ std::string HloInstruction::OperandsToStringWithCanonicalNameMap(
 namespace {
 
 bool IsSequentialCall(HloOpcode opcode) {
+   std::vector<std::string> mht_154_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_154(mht_154_v, 3747, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "IsSequentialCall");
+
   switch (opcode) {
     case HloOpcode::kCall:
     case HloOpcode::kConditional:
@@ -3112,6 +3761,9 @@ bool IsSequentialCall(HloOpcode opcode) {
 
 std::vector<std::string> HloInstruction::ExtraAttributesToString(
     const HloPrintOptions& options) const {
+   std::vector<std::string> mht_155_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_155(mht_155_v, 3764, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::ExtraAttributesToString");
+
   std::vector<std::string> extra = options.print_extra_attributes()
                                        ? ExtraAttributesToStringImpl(options)
                                        : std::vector<std::string>();
@@ -3267,6 +3919,9 @@ std::vector<std::string> HloInstruction::ExtraAttributesToString(
 }
 
 std::string HloInstruction::ToShortString() const {
+   std::vector<std::string> mht_156_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_156(mht_156_v, 3922, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::ToShortString");
+
   return StrCat("%", name(), " = ", HloOpcodeString(opcode()), "(",
                 StrJoin(operands_, ", ",
                         [](std::string* out, HloInstruction* operand) {
@@ -3276,6 +3931,9 @@ std::string HloInstruction::ToShortString() const {
 }
 
 HloInstructionProto HloInstruction::ToProto() const {
+   std::vector<std::string> mht_157_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_157(mht_157_v, 3934, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::ToProto");
+
   HloInstructionProto proto;
   CHECK(unique_id_ != -1)
       << "This instruction does not have a valid id. Please make sure the "
@@ -3314,6 +3972,9 @@ HloInstructionProto HloInstruction::ToProto() const {
 }
 
 std::string HloInstruction::ToCategory() const {
+   std::vector<std::string> mht_158_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_158(mht_158_v, 3975, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::ToCategory");
+
   if (opcode() == HloOpcode::kTranspose || opcode() == HloOpcode::kCopy ||
       opcode() == HloOpcode::kReshape ||
       opcode() == HloOpcode::kDynamicReshape) {
@@ -3327,37 +3988,65 @@ std::string HloInstruction::ToCategory() const {
   return HloOpcodeString(opcode());
 }
 
-HloInstruction* HloInstruction::tracing() const { return trace_instruction_; }
+HloInstruction* HloInstruction::tracing() const {
+   std::vector<std::string> mht_159_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_159(mht_159_v, 3992, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::tracing");
+ return trace_instruction_; }
 
 void HloInstruction::set_tracing(HloInstruction* trace_instruction) {
+   std::vector<std::string> mht_160_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_160(mht_160_v, 3997, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::set_tracing");
+
   trace_instruction_ = trace_instruction;
 }
 
 bool HloInstruction::IsFused() const {
+   std::vector<std::string> mht_161_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_161(mht_161_v, 4004, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::IsFused");
+
   return parent_ != nullptr && parent_->IsFusionComputation();
 }
 
 bool HloInstruction::IsCustomCall(absl::string_view target) const {
+   std::vector<std::string> mht_162_v;
+   mht_162_v.push_back("target: \"" + std::string(target.data(), target.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_162(mht_162_v, 4012, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::IsCustomCall");
+
   return opcode() == HloOpcode::kCustomCall && custom_call_target() == target;
 }
 
 bool HloInstruction::IsInputFusion() const {
+   std::vector<std::string> mht_163_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_163(mht_163_v, 4019, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::IsInputFusion");
+
   return opcode() == HloOpcode::kFusion && fusion_kind() == FusionKind::kInput;
 }
 
 bool HloInstruction::IsLoopFusion() const {
+   std::vector<std::string> mht_164_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_164(mht_164_v, 4026, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::IsLoopFusion");
+
   return opcode() == HloOpcode::kFusion && fusion_kind() == FusionKind::kLoop;
 }
 
 bool HloInstruction::IsOutputFusion() const {
+   std::vector<std::string> mht_165_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_165(mht_165_v, 4033, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::IsOutputFusion");
+
   return opcode() == HloOpcode::kFusion && fusion_kind() == FusionKind::kOutput;
 }
 
 bool HloInstruction::IsCustomFusion() const {
+   std::vector<std::string> mht_166_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_166(mht_166_v, 4040, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::IsCustomFusion");
+
   return opcode() == HloOpcode::kFusion && fusion_kind() == FusionKind::kCustom;
 }
 
 bool HloInstruction::IsFusible() const {
+   std::vector<std::string> mht_167_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_167(mht_167_v, 4047, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::IsFusible");
+
   // Instructions which are traced should not be fused.
   if (tracing()) {
     return false;
@@ -3391,11 +4080,17 @@ HloInstruction::HloInstruction(HloOpcode opcode, const Shape& shape)
       shape_(shape),
       name_(HloOpcodeString(opcode)),
       marked_as_dead_(false) {
+   std::vector<std::string> mht_168_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_168(mht_168_v, 4083, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::HloInstruction");
+
   TF_DCHECK_OK(ShapeUtil::ValidateShapeWithOptionalLayout(shape_));
 }
 
 template <typename HloInstructionPtr>
 Status HloInstruction::Visit(DfsHloVisitorBase<HloInstructionPtr>* visitor) {
+   std::vector<std::string> mht_169_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_169(mht_169_v, 4091, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::Visit");
+
   switch (opcode_) {
     case HloOpcode::kAbs:
       return visitor->HandleAbs(this);
@@ -3649,6 +4344,9 @@ template Status HloInstruction::Visit(ConstDfsHloVisitor* visitor);
 template <typename Visitor>
 inline bool PushDFSChild(Visitor* visitor, DFSStack* dfs_stack,
                          HloInstruction* child) {
+   std::vector<std::string> mht_170_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_170(mht_170_v, 4347, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "PushDFSChild");
+
   CHECK(child != nullptr);
   const int id = child->unique_id();
   CHECK_GE(id, 0) << "instruction may not have a parent computation";
@@ -3673,6 +4371,9 @@ template <typename Visitor>
 static Status PostOrderDFS(HloInstruction* root, Visitor* visitor,
                            const InternalCompareFunction* operand_order,
                            bool ignore_control_predecessors) {
+   std::vector<std::string> mht_171_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_171(mht_171_v, 4374, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "PostOrderDFS");
+
   visitor->ReserveVisitStates(root->parent()->instruction_count());
 
   // dfs_stack holds pairs of <HloInstruction*->unique_id(), HloInstruction*>.
@@ -3751,6 +4452,9 @@ template <typename HloInstructionPtr>
 Status HloInstruction::Accept(DfsHloVisitorBase<HloInstructionPtr>* visitor,
                               bool call_finish_visit,
                               bool ignore_control_predecessors) {
+   std::vector<std::string> mht_172_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_172(mht_172_v, 4455, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::Accept");
+
   VLOG(3) << "HloInstruction::Accept(%" << name() << ")";
   TF_RETURN_IF_ERROR(
       PostOrderDFS(this, visitor, nullptr, ignore_control_predecessors));
@@ -3767,10 +4471,16 @@ template Status HloInstruction::Accept(ConstDfsHloVisitor*, bool, bool);
 Status HloInstruction::AcceptWithOperandOrder(
     DfsHloVisitor* visitor, const CompareFunction& operand_order,
     bool call_finish_visit) {
+   std::vector<std::string> mht_173_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_173(mht_173_v, 4474, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::AcceptWithOperandOrder");
+
   VLOG(2) << "HloInstruction::AcceptWithOperandOrder(%" << name() << ")";
   InternalCompareFunction func = [&operand_order](
                                      std::pair<int, const HloInstruction*> a,
                                      std::pair<int, const HloInstruction*> b) {
+   std::vector<std::string> mht_174_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_174(mht_174_v, 4481, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "lambda");
+
     // Call the client's comparison function on the actual HloInstruction*
     // objects (ignoring the internal ids we also have in our stack entries)
     return operand_order(a.second, b.second);
@@ -3786,7 +4496,10 @@ Status HloInstruction::AcceptWithOperandOrder(
   return Status::OK();
 }
 
-const Shape& HloInstruction::shape() const { return shape_; }
+const Shape& HloInstruction::shape() const {
+   std::vector<std::string> mht_175_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_175(mht_175_v, 4500, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::shape");
+ return shape_; }
 
 absl::InlinedVector<int64_t, 4> HloInstruction::OperandIndices(
     const HloInstruction* operand) const {
@@ -3800,14 +4513,23 @@ absl::InlinedVector<int64_t, 4> HloInstruction::OperandIndices(
 }
 
 bool HloInstruction::IsElementwiseBinary() const {
+   std::vector<std::string> mht_176_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_176(mht_176_v, 4516, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::IsElementwiseBinary");
+
   return IsElementwise() && operand_count() == 2;
 }
 
 bool HloInstruction::IsElementwise() const {
+   std::vector<std::string> mht_177_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_177(mht_177_v, 4523, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::IsElementwise");
+
   return IsElementwiseImpl(absl::nullopt);
 }
 
 bool HloInstruction::IsElementwiseOnOperand(int64_t operand_idx) const {
+   std::vector<std::string> mht_178_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_178(mht_178_v, 4530, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::IsElementwiseOnOperand");
+
   return IsElementwiseImpl(operand_idx);
 }
 
@@ -3823,6 +4545,9 @@ enum class UseKind { kReuse = 0, kUse = 1, kNoUse = 2 };
 class FusionReusesParamElements {
  public:
   static UseKind Compute(int64_t i, const HloInstruction& hlo) {
+   std::vector<std::string> mht_179_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_179(mht_179_v, 4548, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "Compute");
+
     absl::flat_hash_map<const HloInstruction*, UseKind> memoization_cache;
     return ComputeInternal(i, hlo, &memoization_cache);
   }
@@ -3838,6 +4563,9 @@ class FusionReusesParamElements {
 // Returns how this instruction uses elements of its operand at operand_num.
 static UseKind OperandElementUse(const HloInstruction& instr,
                                  int64_t operand_num) {
+   std::vector<std::string> mht_180_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_180(mht_180_v, 4566, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "OperandElementUse");
+
   switch (instr.opcode()) {
     case HloOpcode::kBitcast:
     case HloOpcode::kConcatenate:
@@ -3882,6 +4610,9 @@ static UseKind OperandElementUse(const HloInstruction& instr,
 UseKind FusionReusesParamElements::ComputeInternal(
     int64_t outer_param_num, const HloInstruction& hlo,
     absl::flat_hash_map<const HloInstruction*, UseKind>* cache) {
+   std::vector<std::string> mht_181_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_181(mht_181_v, 4613, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "FusionReusesParamElements::ComputeInternal");
+
   if (auto hlo_param = DynCast<HloParameterInstruction>(&hlo)) {
     if (hlo_param->parameter_number() == outer_param_num) {
       return UseKind::kUse;
@@ -3939,11 +4670,17 @@ UseKind FusionReusesParamElements::ComputeInternal(
 }
 
 bool HloInstruction::ReusesOperandElements(int64_t i) const {
+   std::vector<std::string> mht_182_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_182(mht_182_v, 4673, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::ReusesOperandElements");
+
   return OperandElementUse(*this, i) == UseKind::kReuse;
 }
 
 std::tuple<bool, std::vector<int64_t>, std::vector<int64_t>>
 HloInstruction::ReshapeMerelyInsertsOrDeletes1SizedDimensions() const {
+   std::vector<std::string> mht_183_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_183(mht_183_v, 4681, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::ReshapeMerelyInsertsOrDeletes1SizedDimensions");
+
   if (HloOpcode::kReshape != opcode_) {
     return std::make_tuple(false, std::vector<int64_t>(),
                            std::vector<int64_t>());
@@ -3953,6 +4690,9 @@ HloInstruction::ReshapeMerelyInsertsOrDeletes1SizedDimensions() const {
 }
 
 std::string ToString(HloInstruction::FusionKind kind) {
+   std::vector<std::string> mht_184_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_184(mht_184_v, 4693, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "ToString");
+
   switch (kind) {
     case HloInstruction::FusionKind::kLoop:
       return "kLoop";
@@ -3984,6 +4724,9 @@ StatusOr<HloInstruction::FusionKind> StringToFusionKind(
 
 std::string FrontendAttributesToString(
     const FrontendAttributes& frontend_attributes) {
+   std::vector<std::string> mht_185_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_185(mht_185_v, 4727, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "FrontendAttributesToString");
+
   std::vector<std::pair<std::string, std::string>> sorted_attributes(
       frontend_attributes.map().begin(), frontend_attributes.map().end());
   absl::c_sort(sorted_attributes);
@@ -3991,6 +4734,9 @@ std::string FrontendAttributesToString(
   // e.g., frontend_attributes={name="value_a",type="int32_t"}.
   const auto formatter = [](std::string* out,
                             const std::pair<std::string, std::string>& item) {
+   std::vector<std::string> mht_186_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_186(mht_186_v, 4737, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "lambda");
+
     absl::StrAppend(out, item.first, "=\"", item.second, "\"");
   };
   return absl::StrFormat("{%s}",
@@ -3998,6 +4744,9 @@ std::string FrontendAttributesToString(
 }
 
 std::string PaddingConfigToString(const PaddingConfig& padding) {
+   std::vector<std::string> mht_187_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_187(mht_187_v, 4747, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "PaddingConfigToString");
+
   bool has_interior_padding =
       absl::c_any_of(padding.dimensions(),
                      [](const PaddingConfig::PaddingConfigDimension& dim) {
@@ -4013,27 +4762,45 @@ std::string PaddingConfigToString(const PaddingConfig& padding) {
 }
 
 std::string RandomDistributionToString(const RandomDistribution& distribution) {
+   std::vector<std::string> mht_188_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_188(mht_188_v, 4765, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "RandomDistributionToString");
+
   return absl::AsciiStrToLower(RandomDistribution_Name(distribution));
 }
 std::string RandomAlgorithmToString(const RandomAlgorithm& algorithm) {
+   std::vector<std::string> mht_189_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_189(mht_189_v, 4771, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "RandomAlgorithmToString");
+
   return absl::AsciiStrToLower(RandomAlgorithm_Name(algorithm));
 }
 
 std::string PrecisionToString(const PrecisionConfig::Precision& precision) {
+   std::vector<std::string> mht_190_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_190(mht_190_v, 4778, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "PrecisionToString");
+
   return absl::AsciiStrToLower(PrecisionConfig::Precision_Name(precision));
 }
 
 static std::string CustomCallScheduleToString(
     const CustomCallSchedule& schedule) {
+   std::vector<std::string> mht_191_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_191(mht_191_v, 4786, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "CustomCallScheduleToString");
+
   return absl::AsciiStrToLower(CustomCallSchedule_Name(schedule));
 }
 
 static std::string CustomCallApiVersionToString(
     const CustomCallApiVersion& schedule) {
+   std::vector<std::string> mht_192_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_192(mht_192_v, 4794, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "CustomCallApiVersionToString");
+
   return absl::AsciiStrToLower(CustomCallApiVersion_Name(schedule));
 }
 
 std::string DotDimensionNumbersToString(const DotDimensionNumbers& dnums) {
+   std::vector<std::string> mht_193_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_193(mht_193_v, 4801, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "DotDimensionNumbersToString");
+
   std::vector<std::string> result;
   if (!dnums.lhs_batch_dimensions().empty()) {
     result.push_back(StrCat("lhs_batch_dims={",
@@ -4056,7 +4823,13 @@ std::string DotDimensionNumbersToString(const DotDimensionNumbers& dnums) {
 
 std::string ConvolutionDimensionNumbersToString(
     const ConvolutionDimensionNumbers& dnums) {
+   std::vector<std::string> mht_194_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_194(mht_194_v, 4826, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "ConvolutionDimensionNumbersToString");
+
   auto len_required = [](int64_t a, int64_t b, absl::Span<const int64_t> cs) {
+   std::vector<std::string> mht_195_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_195(mht_195_v, 4830, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "lambda");
+
     return std::max({a, b, cs.empty() ? 0 : *absl::c_max_element(cs)}) + 1;
   };
 
@@ -4101,6 +4874,9 @@ std::string ConvolutionDimensionNumbersToString(
 
 std::string ReplicaGroupsToString(
     absl::Span<const ReplicaGroup> replica_groups) {
+   std::vector<std::string> mht_196_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_196(mht_196_v, 4877, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "ReplicaGroupsToString");
+
   std::vector<std::string> replica_group_str;
   replica_group_str.reserve(replica_groups.size());
   for (const ReplicaGroup& group : replica_groups) {
@@ -4209,6 +4985,9 @@ StatusOr<CustomCallApiVersion> StringToCustomCallApiVersion(
 }
 
 std::ostream& operator<<(std::ostream& os, HloInstruction::FusionKind kind) {
+   std::vector<std::string> mht_197_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_197(mht_197_v, 4988, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "operator<<");
+
   return os << ToString(kind);
 }
 
@@ -4234,6 +5013,9 @@ bool HloPtrComparator::operator()(const HloInstruction* const& lhs,
 
 Status HloInstruction::GetBackendConfigInternal(
     tensorflow::protobuf::Message* proto) const {
+   std::vector<std::string> mht_198_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_198(mht_198_v, 5016, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::GetBackendConfigInternal");
+
   proto->Clear();
 
   if (auto* proto_ptr = backend_config_.GetProtoPtr()) {
@@ -4253,6 +5035,9 @@ Status HloInstruction::GetBackendConfigInternal(
 }
 
 const std::string& HloInstruction::BackendConfigRep::GetRawString() const {
+   std::vector<std::string> mht_199_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_199(mht_199_v, 5038, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::BackendConfigRep::GetRawString");
+
   if (proto_ && raw_string_.empty()) {
     raw_string_ = BackendConfigToRawString(*proto_).ValueOrDie();
   }
@@ -4261,6 +5046,9 @@ const std::string& HloInstruction::BackendConfigRep::GetRawString() const {
 
 HloInstruction::BackendConfigRep HloInstruction::BackendConfigRep::Clone()
     const {
+   std::vector<std::string> mht_200_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_200(mht_200_v, 5049, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::BackendConfigRep::Clone");
+
   // Prefer cloning protobuf, raw_string_ will be lazily generated if accessed.
   BackendConfigRep cloned;
   if (auto* proto = GetProtoPtr()) {
@@ -4273,6 +5061,10 @@ HloInstruction::BackendConfigRep HloInstruction::BackendConfigRep::Clone()
 
 HloInstruction::BackendConfigRep& HloInstruction::BackendConfigRep::operator=(
     std::string raw_string) {
+   std::vector<std::string> mht_201_v;
+   mht_201_v.push_back("raw_string: \"" + raw_string + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_201(mht_201_v, 5065, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "=");
+
   raw_string_ = std::move(raw_string);
   proto_.reset();
   return *this;
@@ -4280,6 +5072,9 @@ HloInstruction::BackendConfigRep& HloInstruction::BackendConfigRep::operator=(
 
 HloInstruction::BackendConfigRep& HloInstruction::BackendConfigRep::operator=(
     const tensorflow::protobuf::Message& proto) {
+   std::vector<std::string> mht_202_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_202(mht_202_v, 5075, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "=");
+
   SetProto(proto);
   raw_string_.clear();
   return *this;
@@ -4287,6 +5082,9 @@ HloInstruction::BackendConfigRep& HloInstruction::BackendConfigRep::operator=(
 
 void HloInstruction::BackendConfigRep::SetProto(
     const tensorflow::protobuf::Message& proto) {
+   std::vector<std::string> mht_203_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_203(mht_203_v, 5085, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::BackendConfigRep::SetProto");
+
   proto_.reset(proto.New());
   proto_->CopyFrom(proto);
 }
@@ -4305,6 +5103,9 @@ bool HloInstruction::BackendConfigRep::operator==(
 
 /* static */ StatusOr<std::string> HloInstruction::BackendConfigToRawString(
     const tensorflow::protobuf::Message& proto) {
+   std::vector<std::string> mht_204_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_204(mht_204_v, 5106, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::BackendConfigToRawString");
+
   std::string ret;
   // Pass ignore_accuracy_loss = true because estimated_cycles field can be
   // INT64_MAX. If ignore_accuracy_loss = false and estimated_cycles =
@@ -4316,6 +5117,9 @@ bool HloInstruction::BackendConfigRep::operator==(
 }
 
 const PrecisionConfig& HloInstruction::precision_config() const {
+   std::vector<std::string> mht_205_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_205(mht_205_v, 5120, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::precision_config");
+
   if (auto* convolution = DynCast<HloConvolutionInstruction>(this)) {
     return convolution->precision_config();
   }
@@ -4330,6 +5134,9 @@ const PrecisionConfig& HloInstruction::precision_config() const {
 }
 
 PrecisionConfig* HloInstruction::mutable_precision_config() {
+   std::vector<std::string> mht_206_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_206(mht_206_v, 5137, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::mutable_precision_config");
+
   if (auto* convolution = DynCast<HloConvolutionInstruction>(this)) {
     return convolution->mutable_precision_config();
   }
@@ -4340,6 +5147,9 @@ PrecisionConfig* HloInstruction::mutable_precision_config() {
 }
 
 HloModule* HloInstruction::GetModule() const {
+   std::vector<std::string> mht_207_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_207(mht_207_v, 5150, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::GetModule");
+
   if (parent_) {
     return parent_->parent();
   }
@@ -4347,37 +5157,61 @@ HloModule* HloInstruction::GetModule() const {
 }
 
 void HloInstruction::UniquifyName(NameUniquer* name_uniquer) {
+   std::vector<std::string> mht_208_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_208(mht_208_v, 5160, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::UniquifyName");
+
   std::string parent_str = parent() == nullptr ? "noparent" : parent()->name();
   name_ = name_uniquer->GetUniqueName(name_);
 }
 
 void HloInstruction::set_outer_dimension_partitions(
     const std::vector<int64_t>& outer_dimension_partitions) {
+   std::vector<std::string> mht_209_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_209(mht_209_v, 5169, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::set_outer_dimension_partitions");
+
   outer_dimension_partitions_ = outer_dimension_partitions;
 }
 
 // TODO(b/80131774): Remove these temporary methods after transition.
 int64_t HloInstruction::feature_index() const {
+   std::vector<std::string> mht_210_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_210(mht_210_v, 5177, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::feature_index");
+
   return Cast<HloBatchNormInstruction>(this)->feature_index();
 }
 
 float HloInstruction::epsilon() const {
+   std::vector<std::string> mht_211_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_211(mht_211_v, 5184, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::epsilon");
+
   return Cast<HloBatchNormInstruction>(this)->epsilon();
 }
 
 FftType HloInstruction::fft_type() const {
+   std::vector<std::string> mht_212_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_212(mht_212_v, 5191, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::fft_type");
+
   return Cast<HloFftInstruction>(this)->fft_type();
 }
 
 const std::vector<int64_t>& HloInstruction::fft_length() const {
+   std::vector<std::string> mht_213_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_213(mht_213_v, 5198, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::fft_length");
+
   return Cast<HloFftInstruction>(this)->fft_length();
 }
 
 int64_t HloInstruction::concatenate_dimension() const {
+   std::vector<std::string> mht_214_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_214(mht_214_v, 5205, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::concatenate_dimension");
+
   return Cast<HloConcatenateInstruction>(this)->concatenate_dimension();
 }
 
 int64_t HloInstruction::dimension() const {
+   std::vector<std::string> mht_215_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_215(mht_215_v, 5212, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::dimension");
+
   if (auto set_size = DynCast<HloSetDimensionSizeInstruction>(this)) {
     return set_size->dimension();
   }
@@ -4385,74 +5219,125 @@ int64_t HloInstruction::dimension() const {
 }
 
 int64_t HloInstruction::inferred_dimension() const {
+   std::vector<std::string> mht_216_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_216(mht_216_v, 5222, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::inferred_dimension");
+
   return Cast<HloReshapeInstruction>(this)->inferred_dimension();
 }
 
 bool HloInstruction::IsRank2Transpose() const {
+   std::vector<std::string> mht_217_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_217(mht_217_v, 5229, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::IsRank2Transpose");
+
   auto transpose = DynCast<HloTransposeInstruction>(this);
   return transpose != nullptr && transpose->IsRank2Transpose();
 }
 
 int64_t HloInstruction::slice_starts(int64_t dimension) const {
+   std::vector<std::string> mht_218_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_218(mht_218_v, 5237, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::slice_starts");
+
   return Cast<HloSliceInstruction>(this)->slice_starts(dimension);
 }
 
 const std::vector<int64_t>& HloInstruction::slice_starts() const {
+   std::vector<std::string> mht_219_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_219(mht_219_v, 5244, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::slice_starts");
+
   return Cast<HloSliceInstruction>(this)->slice_starts();
 }
 
 std::vector<int64_t>* HloInstruction::mutable_slice_starts() {
+   std::vector<std::string> mht_220_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_220(mht_220_v, 5251, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::mutable_slice_starts");
+
   return Cast<HloSliceInstruction>(this)->mutable_slice_starts();
 }
 
 int64_t HloInstruction::slice_limits(int64_t dimension) const {
+   std::vector<std::string> mht_221_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_221(mht_221_v, 5258, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::slice_limits");
+
   return Cast<HloSliceInstruction>(this)->slice_limits(dimension);
 }
 
 const std::vector<int64_t>& HloInstruction::slice_limits() const {
+   std::vector<std::string> mht_222_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_222(mht_222_v, 5265, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::slice_limits");
+
   return Cast<HloSliceInstruction>(this)->slice_limits();
 }
 
 std::vector<int64_t>* HloInstruction::mutable_slice_limits() {
+   std::vector<std::string> mht_223_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_223(mht_223_v, 5272, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::mutable_slice_limits");
+
   return Cast<HloSliceInstruction>(this)->mutable_slice_limits();
 }
 
 int64_t HloInstruction::slice_strides(int64_t dimension) const {
+   std::vector<std::string> mht_224_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_224(mht_224_v, 5279, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::slice_strides");
+
   return Cast<HloSliceInstruction>(this)->slice_strides(dimension);
 }
 
 const std::vector<int64_t>& HloInstruction::slice_strides() const {
+   std::vector<std::string> mht_225_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_225(mht_225_v, 5286, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::slice_strides");
+
   return Cast<HloSliceInstruction>(this)->slice_strides();
 }
 
 std::vector<int64_t>* HloInstruction::mutable_slice_strides() {
+   std::vector<std::string> mht_226_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_226(mht_226_v, 5293, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::mutable_slice_strides");
+
   return Cast<HloSliceInstruction>(this)->mutable_slice_strides();
 }
 
 const Literal& HloInstruction::literal() const {
+   std::vector<std::string> mht_227_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_227(mht_227_v, 5300, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::literal");
+
   return Cast<HloConstantInstruction>(this)->literal();
 }
 
 bool HloInstruction::IsConstant() const {
+   std::vector<std::string> mht_228_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_228(mht_228_v, 5307, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::IsConstant");
+
   return DynCast<HloConstantInstruction>(this) != nullptr;
 }
 
 void HloInstruction::RelayoutConstant(const Layout& new_layout,
                                       const ShapeIndex& shape_index) {
+   std::vector<std::string> mht_229_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_229(mht_229_v, 5315, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::RelayoutConstant");
+
   Cast<HloConstantInstruction>(this)->RelayoutConstant(new_layout, shape_index);
 }
 
 std::string HloInstruction::TracingTag() const {
+   std::vector<std::string> mht_230_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_230(mht_230_v, 5322, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::TracingTag");
+
   return Cast<HloTraceInstruction>(this)->TracingTag();
 }
 
 HloInstruction* HloInstruction::AddFusionOperand(HloInstruction* new_operand) {
+   std::vector<std::string> mht_231_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_231(mht_231_v, 5329, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::AddFusionOperand");
+
   return Cast<HloFusionInstruction>(this)->AddFusionOperand(new_operand);
 }
 
 // Delegates to HloFusionInstruction::MergeFusionInstruction.
 void HloInstruction::MergeFusionInstruction(
     HloInstruction* instruction_to_merge) {
+   std::vector<std::string> mht_232_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_232(mht_232_v, 5338, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::MergeFusionInstruction");
+
   return Cast<HloFusionInstruction>(this)->MergeFusionInstruction(
       Cast<HloFusionInstruction>(instruction_to_merge));
 }
@@ -4460,6 +5345,9 @@ void HloInstruction::MergeFusionInstruction(
 // Delegates to HloFusionInstruction::MergeFusionInstructionIntoMultiOutput.
 void HloInstruction::MergeFusionInstructionIntoMultiOutput(
     HloInstruction* instruction_to_merge) {
+   std::vector<std::string> mht_233_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_233(mht_233_v, 5348, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::MergeFusionInstructionIntoMultiOutput");
+
   return Cast<HloFusionInstruction>(this)
       ->MergeFusionInstructionIntoMultiOutput(
           Cast<HloFusionInstruction>(instruction_to_merge));
@@ -4467,71 +5355,116 @@ void HloInstruction::MergeFusionInstructionIntoMultiOutput(
 
 HloInstruction* HloInstruction::FuseInstruction(
     HloInstruction* instruction_to_fuse) {
+   std::vector<std::string> mht_234_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_234(mht_234_v, 5358, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::FuseInstruction");
+
   return Cast<HloFusionInstruction>(this)->FuseInstruction(instruction_to_fuse);
 }
 
 HloInstruction* HloInstruction::FuseInstructionIntoMultiOutput(
     HloInstruction* instruction_to_fuse) {
+   std::vector<std::string> mht_235_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_235(mht_235_v, 5366, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::FuseInstructionIntoMultiOutput");
+
   return Cast<HloFusionInstruction>(this)->FuseInstructionIntoMultiOutput(
       instruction_to_fuse);
 }
 
 HloComputation* HloInstruction::fused_instructions_computation() const {
+   std::vector<std::string> mht_236_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_236(mht_236_v, 5374, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::fused_instructions_computation");
+
   return Cast<HloFusionInstruction>(this)->fused_instructions_computation();
 }
 
 HloInstruction* HloInstruction::fused_expression_root() const {
+   std::vector<std::string> mht_237_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_237(mht_237_v, 5381, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::fused_expression_root");
+
   return Cast<HloFusionInstruction>(this)->fused_expression_root();
 }
 
 const tensorflow::gtl::iterator_range<UnwrappingIterator<
     std::list<std::unique_ptr<HloInstruction>>::const_iterator>>
 HloInstruction::fused_instructions() const {
+   std::vector<std::string> mht_238_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_238(mht_238_v, 5390, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::fused_instructions");
+
   return Cast<HloFusionInstruction>(this)->fused_instructions();
 }
 
 const tensorflow::gtl::iterator_range<
     UnwrappingIterator<std::list<std::unique_ptr<HloInstruction>>::iterator>>
 HloInstruction::fused_instructions() {
+   std::vector<std::string> mht_239_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_239(mht_239_v, 5399, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::fused_instructions");
+
   return Cast<HloFusionInstruction>(this)->fused_instructions();
 }
 
 int64_t HloInstruction::fused_instruction_count() const {
+   std::vector<std::string> mht_240_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_240(mht_240_v, 5406, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::fused_instruction_count");
+
   return Cast<HloFusionInstruction>(this)->fused_instruction_count();
 }
 
 HloInstruction* HloInstruction::fused_parameter(
     int64_t parameter_number) const {
+   std::vector<std::string> mht_241_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_241(mht_241_v, 5414, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::fused_parameter");
+
   return Cast<HloFusionInstruction>(this)->fused_parameter(parameter_number);
 }
 
 const std::vector<HloInstruction*>& HloInstruction::fused_parameters() const {
+   std::vector<std::string> mht_242_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_242(mht_242_v, 5421, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::fused_parameters");
+
   return Cast<HloFusionInstruction>(this)->fused_parameters();
 }
 
 const bool HloInstruction::IsMultiOutputFusion() const {
+   std::vector<std::string> mht_243_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_243(mht_243_v, 5428, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::IsMultiOutputFusion");
+
   const HloFusionInstruction* fusion = DynCast<HloFusionInstruction>(this);
   return fusion != nullptr && fusion->IsMultiOutputFusion();
 }
 
 HloInstruction::FusionKind HloInstruction::fusion_kind() const {
+   std::vector<std::string> mht_244_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_244(mht_244_v, 5436, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::fusion_kind");
+
   return Cast<HloFusionInstruction>(this)->fusion_kind();
 }
 
 void HloInstruction::set_fusion_kind(FusionKind kind) {
+   std::vector<std::string> mht_245_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_245(mht_245_v, 5443, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::set_fusion_kind");
+
   return Cast<HloFusionInstruction>(this)->set_fusion_kind(kind);
 }
 
 RandomDistribution HloInstruction::random_distribution() const {
+   std::vector<std::string> mht_246_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_246(mht_246_v, 5450, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::random_distribution");
+
   return Cast<HloRngInstruction>(this)->random_distribution();
 }
 
 int64_t HloInstruction::parameter_number() const {
+   std::vector<std::string> mht_247_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_247(mht_247_v, 5457, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::parameter_number");
+
   return Cast<HloParameterInstruction>(this)->parameter_number();
 }
 
 void HloInstruction::set_parameter_replicated_at_leaf_buffers(
     absl::Span<const bool> parameter_replicated_at_leaf_buffers) {
+   std::vector<std::string> mht_248_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_248(mht_248_v, 5465, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::set_parameter_replicated_at_leaf_buffers");
+
   return Cast<HloParameterInstruction>(this)
       ->set_parameter_replicated_at_leaf_buffers(
           parameter_replicated_at_leaf_buffers);
@@ -4539,6 +5472,9 @@ void HloInstruction::set_parameter_replicated_at_leaf_buffers(
 
 void HloInstruction::set_parameter_replicated_at_leaf_buffers(
     const std::vector<bool>& parameter_replicated_at_leaf_buffers) {
+   std::vector<std::string> mht_249_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_249(mht_249_v, 5475, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::set_parameter_replicated_at_leaf_buffers");
+
   return Cast<HloParameterInstruction>(this)
       ->set_parameter_replicated_at_leaf_buffers(
           parameter_replicated_at_leaf_buffers);
@@ -4546,52 +5482,90 @@ void HloInstruction::set_parameter_replicated_at_leaf_buffers(
 
 const absl::optional<std::vector<bool>>&
 HloInstruction::parameter_replicated_at_leaf_buffers() const {
+   std::vector<std::string> mht_250_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_250(mht_250_v, 5485, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::parameter_replicated_at_leaf_buffers");
+
   return Cast<HloParameterInstruction>(this)
       ->parameter_replicated_at_leaf_buffers();
 }
 
 int64_t HloInstruction::tuple_index() const {
+   std::vector<std::string> mht_251_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_251(mht_251_v, 5493, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::tuple_index");
+
   return Cast<HloGetTupleElementInstruction>(this)->tuple_index();
 }
 
 void HloInstruction::set_tuple_index(int64_t new_tuple_index) {
+   std::vector<std::string> mht_252_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_252(mht_252_v, 5500, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::set_tuple_index");
+
   return Cast<HloGetTupleElementInstruction>(this)->set_tuple_index(
       new_tuple_index);
 }
 
 int32_t HloInstruction::exponent_bits() const {
+   std::vector<std::string> mht_253_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_253(mht_253_v, 5508, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::exponent_bits");
+
   return Cast<HloReducePrecisionInstruction>(this)->exponent_bits();
 }
 
 int32_t HloInstruction::mantissa_bits() const {
+   std::vector<std::string> mht_254_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_254(mht_254_v, 5515, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::mantissa_bits");
+
   return Cast<HloReducePrecisionInstruction>(this)->mantissa_bits();
 }
 
 std::string HloInstruction::infeed_config() const {
+   std::vector<std::string> mht_255_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_255(mht_255_v, 5522, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::infeed_config");
+
   return Cast<HloInfeedInstruction>(this)->infeed_config();
 }
 
 void HloInstruction::set_infeed_config(const std::string& config) {
+   std::vector<std::string> mht_256_v;
+   mht_256_v.push_back("config: \"" + config + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_256(mht_256_v, 5530, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::set_infeed_config");
+
   return Cast<HloInfeedInstruction>(this)->set_infeed_config(config);
 }
 
 const Shape& HloInstruction::outfeed_shape() const {
+   std::vector<std::string> mht_257_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_257(mht_257_v, 5537, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::outfeed_shape");
+
   return Cast<HloOutfeedInstruction>(this)->outfeed_shape();
 }
 
 Shape* HloInstruction::mutable_outfeed_shape() {
+   std::vector<std::string> mht_258_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_258(mht_258_v, 5544, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::mutable_outfeed_shape");
+
   return Cast<HloOutfeedInstruction>(this)->mutable_outfeed_shape();
 }
 
 const std::string& HloInstruction::outfeed_config() const {
+   std::vector<std::string> mht_259_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_259(mht_259_v, 5551, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::outfeed_config");
+
   return Cast<HloOutfeedInstruction>(this)->outfeed_config();
 }
 
 void HloInstruction::set_outfeed_config(const std::string& config) {
+   std::vector<std::string> mht_260_v;
+   mht_260_v.push_back("config: \"" + config + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_260(mht_260_v, 5559, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::set_outfeed_config");
+
   return Cast<HloOutfeedInstruction>(this)->set_outfeed_config(config);
 }
 
 const std::vector<ReplicaGroup>& HloInstruction::replica_groups() const {
+   std::vector<std::string> mht_261_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_261(mht_261_v, 5566, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::replica_groups");
+
   return Cast<HloCollectiveInstruction>(this)->replica_groups();
 }
 
@@ -4601,15 +5575,24 @@ HloInstruction::source_target_pairs() const {
 }
 
 absl::optional<int64_t> HloInstruction::channel_id() const {
+   std::vector<std::string> mht_262_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_262(mht_262_v, 5578, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::channel_id");
+
   return Cast<HloChannelInstruction>(this)->channel_id();
 }
 
 void HloInstruction::set_channel_id(const absl::optional<int64_t>& channel_id) {
+   std::vector<std::string> mht_263_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_263(mht_263_v, 5585, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::set_channel_id");
+
   return Cast<HloChannelInstruction>(this)->set_channel_id(channel_id);
 }
 
 const ConvolutionDimensionNumbers&
 HloInstruction::convolution_dimension_numbers() const {
+   std::vector<std::string> mht_264_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_264(mht_264_v, 5593, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::convolution_dimension_numbers");
+
   if (auto convolution = DynCast<HloConvolutionInstruction>(this)) {
     return convolution->convolution_dimension_numbers();
   }
@@ -4621,6 +5604,9 @@ HloInstruction::convolution_dimension_numbers() const {
 
 void HloInstruction::set_convolution_dimension_numbers(
     const ConvolutionDimensionNumbers& dnums) {
+   std::vector<std::string> mht_265_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_265(mht_265_v, 5607, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::set_convolution_dimension_numbers");
+
   if (auto convolution = DynCast<HloConvolutionInstruction>(this)) {
     convolution->set_convolution_dimension_numbers(dnums);
   } else if (auto custom_call = DynCast<HloCustomCallInstruction>(this)) {
@@ -4631,6 +5617,9 @@ void HloInstruction::set_convolution_dimension_numbers(
 }
 
 int64_t HloInstruction::feature_group_count() const {
+   std::vector<std::string> mht_266_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_266(mht_266_v, 5620, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::feature_group_count");
+
   if (auto convolution = DynCast<HloConvolutionInstruction>(this)) {
     return convolution->feature_group_count();
   }
@@ -4638,6 +5627,9 @@ int64_t HloInstruction::feature_group_count() const {
 }
 
 void HloInstruction::set_feature_group_count(int64_t feature_group_count) {
+   std::vector<std::string> mht_267_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_267(mht_267_v, 5630, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::set_feature_group_count");
+
   if (auto convolution = DynCast<HloConvolutionInstruction>(this)) {
     return convolution->set_feature_group_count(feature_group_count);
   }
@@ -4646,6 +5638,9 @@ void HloInstruction::set_feature_group_count(int64_t feature_group_count) {
 }
 
 int64_t HloInstruction::batch_group_count() const {
+   std::vector<std::string> mht_268_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_268(mht_268_v, 5641, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::batch_group_count");
+
   if (auto convolution = DynCast<HloConvolutionInstruction>(this)) {
     return convolution->batch_group_count();
   }
@@ -4653,6 +5648,9 @@ int64_t HloInstruction::batch_group_count() const {
 }
 
 void HloInstruction::set_batch_group_count(int64_t batch_group_count) {
+   std::vector<std::string> mht_269_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_269(mht_269_v, 5651, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::set_batch_group_count");
+
   if (auto convolution = DynCast<HloConvolutionInstruction>(this)) {
     return convolution->set_batch_group_count(batch_group_count);
   }
@@ -4661,86 +5659,147 @@ void HloInstruction::set_batch_group_count(int64_t batch_group_count) {
 }
 
 HloComputation* HloInstruction::select() const {
+   std::vector<std::string> mht_270_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_270(mht_270_v, 5662, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::select");
+
   return Cast<HloSelectAndScatterInstruction>(this)->select();
 }
 
 HloComputation* HloInstruction::scatter() const {
+   std::vector<std::string> mht_271_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_271(mht_271_v, 5669, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::scatter");
+
   return Cast<HloSelectAndScatterInstruction>(this)->scatter();
 }
 
 void HloInstruction::set_select(HloComputation* computation) {
+   std::vector<std::string> mht_272_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_272(mht_272_v, 5676, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::set_select");
+
   return Cast<HloSelectAndScatterInstruction>(this)->set_select(computation);
 }
 
 void HloInstruction::set_scatter(HloComputation* computation) {
+   std::vector<std::string> mht_273_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_273(mht_273_v, 5683, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::set_scatter");
+
   return Cast<HloSelectAndScatterInstruction>(this)->set_scatter(computation);
 }
 
 const std::string& HloInstruction::custom_call_target() const {
+   std::vector<std::string> mht_274_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_274(mht_274_v, 5690, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::custom_call_target");
+
   return Cast<HloCustomCallInstruction>(this)->custom_call_target();
 }
 void HloInstruction::set_custom_call_target(absl::string_view target) {
+   std::vector<std::string> mht_275_v;
+   mht_275_v.push_back("target: \"" + std::string(target.data(), target.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_275(mht_275_v, 5697, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::set_custom_call_target");
+
   Cast<HloCustomCallInstruction>(this)->set_custom_call_target(target);
 }
 
 const PaddingConfig& HloInstruction::padding_config() const {
+   std::vector<std::string> mht_276_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_276(mht_276_v, 5704, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::padding_config");
+
   return Cast<HloPadInstruction>(this)->padding_config();
 }
 
 PaddingType HloInstruction::padding_type() const {
+   std::vector<std::string> mht_277_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_277(mht_277_v, 5711, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::padding_type");
+
   return Cast<HloCustomCallInstruction>(this)->padding_type();
 }
 
 PaddingConfig* HloInstruction::mutable_padding_config() {
+   std::vector<std::string> mht_278_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_278(mht_278_v, 5718, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::mutable_padding_config");
+
   return Cast<HloPadInstruction>(this)->mutable_padding_config();
 }
 
 int64_t HloInstruction::slice_sizes(int64_t dimension) const {
+   std::vector<std::string> mht_279_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_279(mht_279_v, 5725, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::slice_sizes");
+
   return Cast<HloDynamicSliceInstruction>(this)->slice_sizes(dimension);
 }
 
 const std::vector<int64_t>& HloInstruction::dynamic_slice_sizes() const {
+   std::vector<std::string> mht_280_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_280(mht_280_v, 5732, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::dynamic_slice_sizes");
+
   return Cast<HloDynamicSliceInstruction>(this)->dynamic_slice_sizes();
 }
 
 const std::vector<std::vector<int64_t>>&
 HloInstruction::dynamic_slice_sizes_list() const {
+   std::vector<std::string> mht_281_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_281(mht_281_v, 5740, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::dynamic_slice_sizes_list");
+
   return Cast<HloCollectivePermuteInstruction>(this)
       ->dynamic_slice_sizes_list();
 }
 
 const GatherDimensionNumbers& HloInstruction::gather_dimension_numbers() const {
+   std::vector<std::string> mht_282_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_282(mht_282_v, 5748, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::gather_dimension_numbers");
+
   return Cast<HloGatherInstruction>(this)->gather_dimension_numbers();
 }
 
 absl::Span<const int64_t> HloInstruction::gather_slice_sizes() const {
+   std::vector<std::string> mht_283_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_283(mht_283_v, 5755, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::gather_slice_sizes");
+
   return Cast<HloGatherInstruction>(this)->gather_slice_sizes();
 }
 
 const ScatterDimensionNumbers& HloInstruction::scatter_dimension_numbers()
     const {
+   std::vector<std::string> mht_284_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_284(mht_284_v, 5763, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::scatter_dimension_numbers");
+
   return Cast<HloScatterInstruction>(this)->scatter_dimension_numbers();
 }
 
 const DotDimensionNumbers& HloInstruction::dot_dimension_numbers() const {
+   std::vector<std::string> mht_285_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_285(mht_285_v, 5770, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::dot_dimension_numbers");
+
   return Cast<HloDotInstruction>(this)->dot_dimension_numbers();
 }
 
 const DomainMetadata& HloInstruction::operand_side_metadata() const {
+   std::vector<std::string> mht_286_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_286(mht_286_v, 5777, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::operand_side_metadata");
+
   return Cast<HloDomainInstruction>(this)->operand_side_metadata();
 }
 
 const DomainMetadata& HloInstruction::user_side_metadata() const {
+   std::vector<std::string> mht_287_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_287(mht_287_v, 5784, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::user_side_metadata");
+
   return Cast<HloDomainInstruction>(this)->user_side_metadata();
 }
 
 bool HloInstruction::IsAsynchronous() const {
+   std::vector<std::string> mht_288_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_288(mht_288_v, 5791, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::IsAsynchronous");
+
   return opcode() == HloOpcode::kAsyncStart ||
          opcode() == HloOpcode::kAsyncUpdate ||
          opcode() == HloOpcode::kAsyncDone;
 }
 
 HloComputation* HloInstruction::async_wrapped_computation() const {
+   std::vector<std::string> mht_289_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_289(mht_289_v, 5800, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::async_wrapped_computation");
+
   CHECK(IsAsynchronous());
   return called_computations()[0];
 }
@@ -4750,26 +5809,44 @@ HloComputation* HloInstruction::async_wrapped_computation() const {
 // }
 
 HloInstruction* HloInstruction::async_wrapped_instruction() const {
+   std::vector<std::string> mht_290_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_290(mht_290_v, 5812, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::async_wrapped_instruction");
+
   return Cast<HloAsyncInstruction>(this)->async_wrapped_instruction();
 }
 
 HloOpcode HloInstruction::async_wrapped_opcode() const {
+   std::vector<std::string> mht_291_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_291(mht_291_v, 5819, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::async_wrapped_opcode");
+
   return Cast<HloAsyncInstruction>(this)->async_wrapped_opcode();
 }
 
 bool HloInstruction::is_cross_program_prefetch() const {
+   std::vector<std::string> mht_292_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_292(mht_292_v, 5826, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::is_cross_program_prefetch");
+
   return Cast<HloCopyStartInstruction>(this)->is_cross_program_prefetch();
 }
 
 ComparisonDirection HloInstruction::comparison_direction() const {
+   std::vector<std::string> mht_293_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_293(mht_293_v, 5833, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::comparison_direction");
+
   return Cast<HloCompareInstruction>(this)->direction();
 }
 
 const TriangularSolveOptions& HloInstruction::triangular_solve_options() const {
+   std::vector<std::string> mht_294_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_294(mht_294_v, 5840, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::triangular_solve_options");
+
   return Cast<HloTriangularSolveInstruction>(this)->triangular_solve_options();
 }
 
 const CholeskyOptions& HloInstruction::cholesky_options() const {
+   std::vector<std::string> mht_295_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_instructionDTcc mht_295(mht_295_v, 5847, "", "./tensorflow/compiler/xla/service/hlo_instruction.cc", "HloInstruction::cholesky_options");
+
   return Cast<HloCholeskyInstruction>(this)->cholesky_options();
 }
 

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPSmlir_graph_optimization_passDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSmlir_graph_optimization_passDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPSmlir_graph_optimization_passDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -68,6 +236,9 @@ constexpr char kRoundTripSuccess[] = "kRoundTripSuccess";
 constexpr char kRoundTripFailure[] = "kRoundTripFailure";
 
 static inline absl::string_view StringRefToView(llvm::StringRef ref) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSmlir_graph_optimization_passDTcc mht_0(mht_0_v, 239, "", "./tensorflow/compiler/mlir/mlir_graph_optimization_pass.cc", "StringRefToView");
+
   return {ref.data(), ref.size()};
 }
 
@@ -75,6 +246,10 @@ static inline absl::string_view StringRefToView(llvm::StringRef ref) {
 // This require the TF_DUMP_GRAPH_PREFIX to be set to a path that exist (or can
 // be created).
 static void DumpModule(mlir::ModuleOp module, std::string file_prefix) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("file_prefix: \"" + file_prefix + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPSmlir_graph_optimization_passDTcc mht_1(mht_1_v, 250, "", "./tensorflow/compiler/mlir/mlir_graph_optimization_pass.cc", "DumpModule");
+
   std::string prefix = GetDumpDirFromEnvVar();
   if (prefix.empty()) return;
 
@@ -118,11 +293,17 @@ static void DumpModule(mlir::ModuleOp module, std::string file_prefix) {
 }
 
 MlirOptimizationPassRegistry& MlirOptimizationPassRegistry::Global() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSmlir_graph_optimization_passDTcc mht_2(mht_2_v, 296, "", "./tensorflow/compiler/mlir/mlir_graph_optimization_pass.cc", "MlirOptimizationPassRegistry::Global");
+
   static auto* global = new MlirOptimizationPassRegistry();
   return *global;
 }
 
 static void RegisterDialects(mlir::DialectRegistry& registry) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSmlir_graph_optimization_passDTcc mht_3(mht_3_v, 304, "", "./tensorflow/compiler/mlir/mlir_graph_optimization_pass.cc", "RegisterDialects");
+
   // clang-format off
   registry.insert<mlir::arith::ArithmeticDialect,
                   mlir::func::FuncDialect,
@@ -138,6 +319,9 @@ Status MlirFunctionOptimizationPass::Run(
     std::unique_ptr<Graph>* graph, FunctionLibraryDefinition* flib_def,
     std::vector<std::string>* control_ret_node_names,
     bool* control_rets_updated) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSmlir_graph_optimization_passDTcc mht_4(mht_4_v, 322, "", "./tensorflow/compiler/mlir/mlir_graph_optimization_pass.cc", "MlirFunctionOptimizationPass::Run");
+
   //  overall_state equals to:
   //    Enabled if at least one pass is Enabled.
   //    Disabled if all passes are Disabled.
@@ -335,12 +519,18 @@ Status MlirFunctionOptimizationPass::Run(
 
 MlirV1CompatOptimizationPassRegistry&
 MlirV1CompatOptimizationPassRegistry::Global() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSmlir_graph_optimization_passDTcc mht_5(mht_5_v, 522, "", "./tensorflow/compiler/mlir/mlir_graph_optimization_pass.cc", "MlirV1CompatOptimizationPassRegistry::Global");
+
   static auto* global = new MlirV1CompatOptimizationPassRegistry();
   return *global;
 }
 
 Status MlirV1CompatGraphOptimizationPass::Run(
     const GraphOptimizationPassOptions& options) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSmlir_graph_optimization_passDTcc mht_6(mht_6_v, 531, "", "./tensorflow/compiler/mlir/mlir_graph_optimization_pass.cc", "MlirV1CompatGraphOptimizationPass::Run");
+
   // Skip function graphs as MlirOptimizationPassRegistry_ will be used instead.
   // Skip if no underlying pass was registered.
   if (options.is_function_graph || !registry_->pass()) return Status::OK();

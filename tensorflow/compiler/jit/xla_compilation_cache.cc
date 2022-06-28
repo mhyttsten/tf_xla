@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -81,7 +249,10 @@ constexpr char kXlaSerializedCacheKeySeparator[] = "__";
 
 // Functor that converts a Signature's arg to a human readable string.
 struct SignatureHumanStringAppender {
-  explicit SignatureHumanStringAppender(string* dest) : dest(dest) {}
+  explicit SignatureHumanStringAppender(string* dest) : dest(dest) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_0(mht_0_v, 253, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "SignatureHumanStringAppender");
+}
   string* dest;
   void operator()(const Tensor& arg) {
     absl::StrAppend(dest, "; ", arg.DebugString());
@@ -114,7 +285,10 @@ struct SignatureNotEqual {
 // Functor that incrementally computes a Signature's hash given its current hash
 // and one of its args.
 struct SignatureHashCombiner {
-  explicit SignatureHashCombiner(const uint64 h) : h(h) {}
+  explicit SignatureHashCombiner(const uint64 h) : h(h) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_1(mht_1_v, 289, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "SignatureHashCombiner");
+}
   uint64 h;
   uint64 operator()(const Tensor& arg) {
     h = Hash64Combine(h, std::hash<int>()(static_cast<int>(arg.dtype())));
@@ -136,6 +310,9 @@ struct SignatureHashCombiner {
 };
 
 std::string XlaSerializedCacheKeyToString(const XlaSerializedCacheKey& key) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_2(mht_2_v, 313, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "XlaSerializedCacheKeyToString");
+
   return absl::StrCat(
       key.prefix(), key.prefix().empty() ? "" : kXlaSerializedCacheKeySeparator,
       key.signature_fingerprint(), kXlaSerializedCacheKeySeparator,
@@ -158,9 +335,15 @@ XlaCompilationCache::XlaCompilationCache(Config config,
       device_type_(std::move(device_type)),
       disable_strict_signature_checks_(config.disable_strict_signature_checks),
       persistance_prefix_(config.persistance_prefix),
-      persistent_cache_directory_(config.persistent_cache_directory) {}
+      persistent_cache_directory_(config.persistent_cache_directory) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_3(mht_3_v, 339, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "XlaCompilationCache::XlaCompilationCache");
+}
 
 XlaCompilationCache::~XlaCompilationCache() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_4(mht_4_v, 344, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "XlaCompilationCache::~XlaCompilationCache");
+
   // Ensure any use of our programs have completed by waiting for all stream
   // executors to complete.
   for (auto* executor : client_->backend().stream_executors()) {
@@ -185,12 +368,18 @@ XlaCompilationCache::~XlaCompilationCache() {
 }
 
 string XlaCompilationCache::DebugString() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_5(mht_5_v, 371, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "XlaCompilationCache::DebugString");
+
   return "XLA JIT compilation cache";
 }
 
 // Compute a string signature which encodes the shapes of the
 // arguments in the supplied list.
 string XlaCompilationCache::Signature::HumanString() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_6(mht_6_v, 380, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "XlaCompilationCache::Signature::HumanString");
+
   string result = name;
   for (const auto& a : args) {
     absl::visit(SignatureHumanStringAppender(&result), a);
@@ -221,6 +410,9 @@ uint64 XlaCompilationCache::Signature::Hash::operator()(
 StatusOr<XlaCompilationCache::Signature> XlaCompilationCache::BuildSignature(
     const NameAttrList& function,
     absl::Span<const XlaCompiler::Argument> args) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_7(mht_7_v, 413, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "XlaCompilationCache::BuildSignature");
+
   Signature signature;
   signature.name = Canonicalize(function.name(), AttrSlice(&function.attr()));
 
@@ -257,6 +449,9 @@ static std::vector<const xla::Shape*> GetShapePointers(
 static xla::ExecutableBuildOptions GetBuildOptions(
     const XlaCompiler::Options& options,
     const XlaCompiler::CompilationResult& result, int default_device_ordinal) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_8(mht_8_v, 452, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "GetBuildOptions");
+
   xla::ExecutableBuildOptions build_options;
   if (result.collective_info) {
     build_options.set_num_replicas(result.collective_info->group_size);
@@ -279,6 +474,9 @@ Status XlaCompilationCache::BuildExecutable(
     const XlaCompiler::Options& options,
     const XlaCompiler::CompilationResult& result,
     std::unique_ptr<xla::LocalExecutable>* executable) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_9(mht_9_v, 477, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "XlaCompilationCache::BuildExecutable");
+
   VLOG(2) << "Compiling to local executable";
 
   std::vector<const xla::Shape*> argument_layouts =
@@ -297,6 +495,9 @@ StatusOr<std::unique_ptr<xla::AotCompilationResult>>
 XlaCompilationCache::BuildSerializedExecutable(
     const XlaCompiler::Options& options,
     const XlaCompiler::CompilationResult& result) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_10(mht_10_v, 498, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "XlaCompilationCache::BuildSerializedExecutable");
+
   VLOG(2) << "Compiling to local executable";
 
   std::vector<const xla::Shape*> argument_layouts =
@@ -316,6 +517,10 @@ XlaCompilationCache::LoadExecutable(
     const XlaCompiler::Options& options,
     const XlaCompiler::CompilationResult& result,
     const std::string& serialized_aot_result) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("serialized_aot_result: \"" + serialized_aot_result + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_11(mht_11_v, 521, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "XlaCompilationCache::LoadExecutable");
+
   VLOG(2) << "Loading local executable using BEF.";
 
   xla::ExecutableBuildOptions build_options =
@@ -330,6 +535,9 @@ Status XlaCompilationCache::Compile(
     CompileMode compile_mode,
     const XlaCompiler::CompilationResult** out_compilation_result,
     xla::LocalExecutable** out_executable) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_12(mht_12_v, 538, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "XlaCompilationCache::Compile");
+
   return CompileImpl(compile_options, options, function, args,
                      /*ctx=*/nullptr, CompileScope::kFunction, compile_mode,
                      out_compilation_result, out_executable);
@@ -337,6 +545,9 @@ Status XlaCompilationCache::Compile(
 
 static bool ShouldBeMegamorphic(int64_t compile_count,
                                 int64_t execution_count) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_13(mht_13_v, 548, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "ShouldBeMegamorphic");
+
   const int64_t kCompileThreshold = 10;
   const int64_t kMinExecutionsPerCompile = 50;
 
@@ -395,6 +606,9 @@ Status XlaSingleOpToHlo(XlaCompiler* compiler,
                         OpKernelContext* ctx,
                         const XlaCompiler::CompileOptions& compile_options,
                         XlaCompiler::CompilationResult* compilation_result) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_14(mht_14_v, 609, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "XlaSingleOpToHlo");
+
   std::vector<DataType> result_dtypes(ctx->num_outputs());
   for (int i = 0, end = result_dtypes.size(); i < end; ++i) {
     result_dtypes[i] = ctx->expected_output_dtype(i);
@@ -404,6 +618,9 @@ Status XlaSingleOpToHlo(XlaCompiler* compiler,
   TF_ASSIGN_OR_RETURN(auto graph, CreateGraph(node_def, args, result_dtypes));
 
   auto compile_with_old_bridge = [&]() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_15(mht_15_v, 621, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "lambda");
+
     *compilation_result = {};
     return compiler->CompileGraph(compile_options, node_def.name(),
                                   std::move(graph), args, compilation_result);
@@ -454,6 +671,9 @@ Status XlaCompilationCache::CompileSingleOp(
     const XlaCompiler::CompileOptions& compile_options,
     const XlaCompiler::CompilationResult** out_compilation_result,
     xla::LocalExecutable** out_executable) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_16(mht_16_v, 674, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "XlaCompilationCache::CompileSingleOp");
+
   const NodeDef& def = ctx->op_kernel().def();
   NameAttrList name;
   name.set_name(def.op());
@@ -473,6 +693,9 @@ namespace {
 //
 // Prints only once to avoid spamming LOG(INFO).
 void LogOnceXlaCompiledFirstCluster() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_17(mht_17_v, 696, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "LogOnceXlaCompiledFirstCluster");
+
   static absl::once_flag log_once;
   absl::call_once(log_once, [] {
     LOG(INFO) << "Compiled cluster using XLA!  This line is logged at most "
@@ -487,6 +710,9 @@ Status XlaCompilationCache::CompileStrict(
     const XlaCompiler::Options& options,
     const std::vector<XlaCompiler::Argument>& args,
     const NameAttrList& function, OpKernelContext* ctx, CompileScope scope) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_18(mht_18_v, 713, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "XlaCompilationCache::CompileStrict");
+
   tensorflow::Env* env = tensorflow::Env::Default();
   const uint64 compile_start_us = env->NowMicros();
 
@@ -589,6 +815,9 @@ Status XlaCompilationCache::CompileAsynchronous(
     const XlaCompiler::Options& options,
     const std::vector<XlaCompiler::Argument>& args,
     const NameAttrList& function, OpKernelContext* ctx, CompileScope scope) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_19(mht_19_v, 818, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "XlaCompilationCache::CompileAsynchronous");
+
   // Explicitly capture all required data by value for async compilation.
   entry->compile_state = CompileState::kCompiling;
   {
@@ -640,6 +869,9 @@ bool XlaCompilationCache::ShouldCompileCluster(CompileMode compile_mode,
                                                bool is_first_execution,
                                                int64_t current_request_count,
                                                const NameAttrList& function) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_20(mht_20_v, 872, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "XlaCompilationCache::ShouldCompileCluster");
+
   absl::optional<int64_t> compile_threshold;
   if (compile_mode == CompileMode::kLazy) {
     compile_threshold = kDefaultCompilationThreshold;
@@ -693,6 +925,9 @@ Status XlaCompilationCache::CompileImpl(
     CompileScope scope, CompileMode compile_mode,
     const XlaCompiler::CompilationResult** out_compilation_result,
     xla::LocalExecutable** out_executable) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_21(mht_21_v, 928, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "XlaCompilationCache::CompileImpl");
+
   DCHECK_NE(out_executable, nullptr);
   VLOG(2) << "XlaCompilationCache::Compile " << DebugString();
 
@@ -819,6 +1054,9 @@ Status XlaCompilationCache::CompileImpl(
 
 XlaSerializedCacheKey XlaCompilationCache::BuildSerializedCacheKey(
     const Signature& sig, const xla::HloModuleProto& hlo_module) const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_22(mht_22_v, 1057, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "XlaCompilationCache::BuildSerializedCacheKey");
+
   XlaSerializedCacheKey serialized_cache_key;
   serialized_cache_key.set_signature_fingerprint(Signature::Hash()(sig));
   serialized_cache_key.set_cluster_fingerprint(
@@ -831,6 +1069,9 @@ XlaSerializedCacheKey XlaCompilationCache::BuildSerializedCacheKey(
 Status XlaCompilationCache::VerifyLoadedCacheEntry(
     const XlaSerializedCacheKey& key, const xla::HloModuleProto& hlo_module,
     const XlaSerializedCacheEntry& entry) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_23(mht_23_v, 1072, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "XlaCompilationCache::VerifyLoadedCacheEntry");
+
   XLA_SCOPED_LOGGING_TIMER(absl::StrCat("Verifying loaded cache entry: ",
                                         hlo_module.entry_computation_name()));
 
@@ -863,6 +1104,9 @@ Status XlaCompilationCache::VerifyLoadedCacheEntry(
 StatusOr<XlaSerializedCacheEntry> XlaCompilationCache::SerializeEntry(
     const XlaCompiler::Options& options, const Signature& sig,
     const Entry& entry) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_24(mht_24_v, 1107, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "XlaCompilationCache::SerializeEntry");
+
   if (entry.compile_state != CompileState::kCompiled) {
     return errors::FailedPrecondition(
         "Cache entry to serialize is not compiled.");
@@ -894,6 +1138,10 @@ namespace {
 
 std::string GetFilePath(const XlaSerializedCacheKey& key,
                         absl::string_view persistent_cache_directory) {
+   std::vector<std::string> mht_25_v;
+   mht_25_v.push_back("persistent_cache_directory: \"" + std::string(persistent_cache_directory.data(), persistent_cache_directory.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_25(mht_25_v, 1142, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "GetFilePath");
+
   const std::string file_name =
       absl::StrCat(XlaSerializedCacheKeyToString(key), ".pb");
   return io::JoinPath(persistent_cache_directory, file_name);
@@ -903,6 +1151,9 @@ std::string GetFilePath(const XlaSerializedCacheKey& key,
 
 Status XlaCompilationCache::SaveSerializedEntry(
     const XlaSerializedCacheEntry& entry) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_26(mht_26_v, 1154, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "XlaCompilationCache::SaveSerializedEntry");
+
   Env* env = Env::Default();
   TF_RETURN_IF_ERROR(env->RecursivelyCreateDir(persistent_cache_directory_));
   const std::string file_path =
@@ -912,6 +1163,9 @@ Status XlaCompilationCache::SaveSerializedEntry(
 
 StatusOr<absl::optional<XlaSerializedCacheEntry>>
 XlaCompilationCache::TryLoadSerializedEntry(const XlaSerializedCacheKey& key) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_compilation_cacheDTcc mht_27(mht_27_v, 1166, "", "./tensorflow/compiler/jit/xla_compilation_cache.cc", "XlaCompilationCache::TryLoadSerializedEntry");
+
   Env* env = Env::Default();
   const std::string file_path = GetFilePath(key, persistent_cache_directory_);
   if (!env->FileExists(file_path).ok()) {

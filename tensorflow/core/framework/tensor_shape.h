@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_FRAMEWORK_TENSOR_SHAPE_H_
 #define TENSORFLOW_CORE_FRAMEWORK_TENSOR_SHAPE_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <string>
 
@@ -65,7 +233,10 @@ class TensorShapeRep {
   /// We use `int64` and not `size_t` to be compatible with `Eigen::Tensor`
   /// which uses `ptrdiff_t`.  For PartialTensorShape, -1 means not fully
   /// defined.
-  int64_t num_elements() const { return num_elements_; }
+  int64_t num_elements() const {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_0(mht_0_v, 237, "", "./tensorflow/core/framework/tensor_shape.h", "num_elements");
+ return num_elements_; }
 
   /// For error messages.
   std::string DebugString() const;
@@ -105,13 +276,31 @@ class TensorShapeRep {
   static constexpr uint16 kUnknownRep16 = std::numeric_limits<uint16>::max();
   static constexpr uint32 kUnknownRep32 = std::numeric_limits<uint32>::max();
 
-  Rep16* as16() { return reinterpret_cast<Rep16*>(buf()); }
-  Rep32* as32() { return reinterpret_cast<Rep32*>(buf()); }
-  Rep64* as64() { return reinterpret_cast<Rep64*>(buf()); }
+  Rep16* as16() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_1(mht_1_v, 280, "", "./tensorflow/core/framework/tensor_shape.h", "as16");
+ return reinterpret_cast<Rep16*>(buf()); }
+  Rep32* as32() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_2(mht_2_v, 284, "", "./tensorflow/core/framework/tensor_shape.h", "as32");
+ return reinterpret_cast<Rep32*>(buf()); }
+  Rep64* as64() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_3(mht_3_v, 288, "", "./tensorflow/core/framework/tensor_shape.h", "as64");
+ return reinterpret_cast<Rep64*>(buf()); }
 
-  const Rep16* as16() const { return reinterpret_cast<const Rep16*>(buf()); }
-  const Rep32* as32() const { return reinterpret_cast<const Rep32*>(buf()); }
-  const Rep64* as64() const { return reinterpret_cast<const Rep64*>(buf()); }
+  const Rep16* as16() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_4(mht_4_v, 293, "", "./tensorflow/core/framework/tensor_shape.h", "as16");
+ return reinterpret_cast<const Rep16*>(buf()); }
+  const Rep32* as32() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_5(mht_5_v, 297, "", "./tensorflow/core/framework/tensor_shape.h", "as32");
+ return reinterpret_cast<const Rep32*>(buf()); }
+  const Rep64* as64() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_6(mht_6_v, 301, "", "./tensorflow/core/framework/tensor_shape.h", "as64");
+ return reinterpret_cast<const Rep64*>(buf()); }
 
   enum RepTag { REP16 = 0, REP32 = 1, REP_OUT_OF_LINE = 2 };
 
@@ -121,8 +310,14 @@ class TensorShapeRep {
   // an extra word of storage.
   friend class Tensor;
   friend class TensorShapeTestHelper;
-  DataType data_type() const { return static_cast<DataType>(buf()[13]); }
+  DataType data_type() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_7(mht_7_v, 314, "", "./tensorflow/core/framework/tensor_shape.h", "data_type");
+ return static_cast<DataType>(buf()[13]); }
   void set_data_type(DataType dt) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_8(mht_8_v, 318, "", "./tensorflow/core/framework/tensor_shape.h", "set_data_type");
+
     // We only have 8 bits available to store DataType, so make sure it fits
     DCHECK_LT(static_cast<uint32>(dt), 256u);
     buf()[13] = static_cast<uint8>(dt);
@@ -132,20 +327,41 @@ class TensorShapeRep {
   // Bytes [0..13] vary depending on the representation.
   // A value of 255 indicates unknown rank in the PartialTensorShape case.
   static constexpr uint8 kUnknownRank = 255;
-  uint8 ndims_byte() const { return buf()[14]; }
-  void set_ndims_byte(uint8 nd) { buf()[14] = nd; }
+  uint8 ndims_byte() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_9(mht_9_v, 331, "", "./tensorflow/core/framework/tensor_shape.h", "ndims_byte");
+ return buf()[14]; }
+  void set_ndims_byte(uint8 nd) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_10(mht_10_v, 335, "", "./tensorflow/core/framework/tensor_shape.h", "set_ndims_byte");
+ buf()[14] = nd; }
 
-  RepTag tag() const { return static_cast<RepTag>(buf()[15]); }
-  void set_tag(RepTag tag) { buf()[15] = static_cast<uint8>(tag); }
+  RepTag tag() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_11(mht_11_v, 340, "", "./tensorflow/core/framework/tensor_shape.h", "tag");
+ return static_cast<RepTag>(buf()[15]); }
+  void set_tag(RepTag tag) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_12(mht_12_v, 344, "", "./tensorflow/core/framework/tensor_shape.h", "set_tag");
+ buf()[15] = static_cast<uint8>(tag); }
 
-  void set_num_elements(int64_t n) { num_elements_ = n; }
+  void set_num_elements(int64_t n) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_13(mht_13_v, 349, "", "./tensorflow/core/framework/tensor_shape.h", "set_num_elements");
+ num_elements_ = n; }
 
  private:
   void DestructorOutOfLine();
   void SlowCopyFrom(const TensorShapeRep& b);
 
-  uint8* buf() { return &u_.buf[0]; }
-  const uint8* buf() const { return &u_.buf[0]; }
+  uint8* buf() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_14(mht_14_v, 358, "", "./tensorflow/core/framework/tensor_shape.h", "buf");
+ return &u_.buf[0]; }
+  const uint8* buf() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_15(mht_15_v, 362, "", "./tensorflow/core/framework/tensor_shape.h", "buf");
+ return &u_.buf[0]; }
 
   union {
     uint8 buf[16];
@@ -166,7 +382,10 @@ class TensorShapeBase : public TensorShapeRep {
   /// REQUIRES: `dim_sizes[i] >= 0` (or >= -1 for PartialTensorShape)
   explicit TensorShapeBase(gtl::ArraySlice<int64_t> dim_sizes);
   TensorShapeBase(std::initializer_list<int64_t> dim_sizes)
-      : TensorShapeBase(gtl::ArraySlice<int64_t>(dim_sizes)) {}
+      : TensorShapeBase(gtl::ArraySlice<int64_t>(dim_sizes)) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_16(mht_16_v, 386, "", "./tensorflow/core/framework/tensor_shape.h", "TensorShapeBase");
+}
 
   /// Construct an empty TensorShape, or an unknown rank PartialTensorShape
   TensorShapeBase();
@@ -183,6 +402,9 @@ class TensorShapeBase : public TensorShapeRep {
                                      TensorShapeBase* out);
   static Status BuildTensorShapeBase(std::initializer_list<int64_t> dim_sizes,
                                      TensorShapeBase* out) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_17(mht_17_v, 405, "", "./tensorflow/core/framework/tensor_shape.h", "BuildTensorShapeBase");
+
     return BuildTensorShapeBase(gtl::ArraySlice<int64_t>(dim_sizes), out);
   }
   static Status BuildTensorShapeBase(const TensorShapeProto& proto,
@@ -237,6 +459,9 @@ class TensorShapeBase : public TensorShapeRep {
   /// \brief Removes dimension `d` from the `TensorShape`.
   /// REQUIRES: `0 <= d < dims()`
   void RemoveDim(int d) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_18(mht_18_v, 462, "", "./tensorflow/core/framework/tensor_shape.h", "RemoveDim");
+
     CHECK_GE(d, 0);
     RemoveDimRange(d, d + 1);
   }
@@ -244,6 +469,9 @@ class TensorShapeBase : public TensorShapeRep {
   /// Same as `RemoveDim` but returns a `Status`.
   /// Use if unsure is `0 <= d < dims()`, to prevent `CHECK`-crashes.
   Status RemoveDimWithStatus(int64_t d) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_19(mht_19_v, 472, "", "./tensorflow/core/framework/tensor_shape.h", "RemoveDimWithStatus");
+
     if (TF_PREDICT_FALSE(d < 0)) {
       return errors::Internal(
           "Expected dimension index to be non-negative, got ", d);
@@ -254,6 +482,9 @@ class TensorShapeBase : public TensorShapeRep {
   /// \brief Removes last `n` dimensions from the `TensorShape`.
   /// REQUIRES: `0 <= n <= dims()`
   void RemoveLastDims(int n) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_20(mht_20_v, 485, "", "./tensorflow/core/framework/tensor_shape.h", "RemoveLastDims");
+
     CHECK_LE(n, dims());
     RemoveDimRange(dims() - n, dims());
   }
@@ -261,6 +492,9 @@ class TensorShapeBase : public TensorShapeRep {
   /// Same as `RemoveLastDims` but returns a `Status`.
   /// Use if unsure is `0 <= n <= dims()`, to prevent `CHECK`-crashes.
   Status RemoveLastDimsWithStatus(int64_t n) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_21(mht_21_v, 495, "", "./tensorflow/core/framework/tensor_shape.h", "RemoveLastDimsWithStatus");
+
     if (TF_PREDICT_FALSE(n < dims())) {
       return errors::Internal("Expected dimension index to be at most ", dims(),
                               " got ", n);
@@ -282,12 +516,18 @@ class TensorShapeBase : public TensorShapeRep {
 
   /// Return whether the rank is unknown
   bool unknown_rank() const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_22(mht_22_v, 519, "", "./tensorflow/core/framework/tensor_shape.h", "unknown_rank");
+
     return kIsPartial && ndims_byte() == kUnknownRank;
   }
 
   /// Return the number of dimensions in the tensor.
   /// Can be -1 meaning unknown rank for PartialTensorShape.
   int dims() const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_23(mht_23_v, 528, "", "./tensorflow/core/framework/tensor_shape.h", "dims");
+
     uint8 dims = ndims_byte();
     return kIsPartial && dims == kUnknownRank ? -1 : dims;
   }
@@ -304,7 +544,10 @@ class TensorShapeBase : public TensorShapeRep {
 
   /// Return true iff the rank and all of the dimensions are well defined
   // TODO(irving): Rename to is_fully_defined now that it's fast.
-  bool IsFullyDefined() const { return !kIsPartial || num_elements() != -1; }
+  bool IsFullyDefined() const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_24(mht_24_v, 548, "", "./tensorflow/core/framework/tensor_shape.h", "IsFullyDefined");
+ return !kIsPartial || num_elements() != -1; }
 
   /// Fill `*proto` from `*this`.
   void AsProto(TensorShapeProto* proto) const;
@@ -341,6 +584,9 @@ class TensorShapeBase : public TensorShapeRep {
 /// Outputs `TensorShapeBase` to `std::ostream`.
 template <typename Shape>
 std::ostream& operator<<(std::ostream& os, const TensorShapeBase<Shape>& tsb) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_25(mht_25_v, 587, "", "./tensorflow/core/framework/tensor_shape.h", "operator<<");
+
   return os << tsb.DebugString();
 }
 
@@ -363,14 +609,23 @@ class TensorShape : public TensorShapeBase<TensorShape> {
   // The value in `*out` is valid iff the returned value is `Status::OK`.
   static Status BuildTensorShape(gtl::ArraySlice<int64_t> dim_sizes,
                                  TensorShape* out) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_26(mht_26_v, 612, "", "./tensorflow/core/framework/tensor_shape.h", "BuildTensorShape");
+
     return BuildTensorShapeBase(dim_sizes, out);
   }
   static Status BuildTensorShape(std::initializer_list<int64_t> dim_sizes,
                                  TensorShape* out) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_27(mht_27_v, 619, "", "./tensorflow/core/framework/tensor_shape.h", "BuildTensorShape");
+
     return BuildTensorShape(gtl::ArraySlice<int64_t>(dim_sizes), out);
   }
   static Status BuildTensorShape(const TensorShapeProto& proto,
                                  TensorShape* out) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_28(mht_28_v, 626, "", "./tensorflow/core/framework/tensor_shape.h", "BuildTensorShape");
+
     return BuildTensorShapeBase(proto, out);
   }
 
@@ -436,12 +691,18 @@ class TensorShape : public TensorShapeBase<TensorShape> {
 
 /// Outputs `TensorShapeBase` to `std::ostream`.
 inline std::ostream& operator<<(std::ostream& os, const TensorShape& ts) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_29(mht_29_v, 694, "", "./tensorflow/core/framework/tensor_shape.h", "operator<<");
+
   return os << ts.DebugString();
 }
 
 /// Represents the value of one dimension in a TensorShape.
 struct TensorShapeDim {
-  explicit TensorShapeDim(int64_t s) : size(s) {}
+  explicit TensorShapeDim(int64_t s) : size(s) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_30(mht_30_v, 703, "", "./tensorflow/core/framework/tensor_shape.h", "TensorShapeDim");
+}
   int64_t size;
 };
 
@@ -449,7 +710,10 @@ struct TensorShapeDim {
 template <class Shape>
 class TensorShapeIter {
  public:
-  TensorShapeIter(const Shape* shape, int d) : shape_(shape), d_(d) {}
+  TensorShapeIter(const Shape* shape, int d) : shape_(shape), d_(d) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_31(mht_31_v, 714, "", "./tensorflow/core/framework/tensor_shape.h", "TensorShapeIter");
+}
   bool operator==(const TensorShapeIter& rhs) {
     DCHECK(shape_ == rhs.shape_);
     return d_ == rhs.d_;
@@ -459,7 +723,10 @@ class TensorShapeIter {
     return d_ != rhs.d_;
   }
   void operator++() { ++d_; }
-  TensorShapeDim operator*() { return TensorShapeDim(shape_->dim_size(d_)); }
+  TensorShapeDim operator*() {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_32(mht_32_v, 727, "", "./tensorflow/core/framework/tensor_shape.h", "*");
+ return TensorShapeDim(shape_->dim_size(d_)); }
 
  private:
   const Shape* shape_;
@@ -471,21 +738,39 @@ class TensorShapeIter {
 /// predicates on a tensor shape.
 class TensorShapeUtils {
  public:
-  static bool IsScalar(const TensorShape& shape) { return shape.dims() == 0; }
+  static bool IsScalar(const TensorShape& shape) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_33(mht_33_v, 742, "", "./tensorflow/core/framework/tensor_shape.h", "IsScalar");
+ return shape.dims() == 0; }
 
-  static bool IsVector(const TensorShape& shape) { return shape.dims() == 1; }
+  static bool IsVector(const TensorShape& shape) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_34(mht_34_v, 747, "", "./tensorflow/core/framework/tensor_shape.h", "IsVector");
+ return shape.dims() == 1; }
 
   static bool IsVectorOrHigher(const TensorShape& shape) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_35(mht_35_v, 752, "", "./tensorflow/core/framework/tensor_shape.h", "IsVectorOrHigher");
+
     return shape.dims() >= 1;
   }
 
-  static bool IsMatrix(const TensorShape& shape) { return shape.dims() == 2; }
+  static bool IsMatrix(const TensorShape& shape) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_36(mht_36_v, 759, "", "./tensorflow/core/framework/tensor_shape.h", "IsMatrix");
+ return shape.dims() == 2; }
 
   static bool IsSquareMatrix(const TensorShape& shape) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_37(mht_37_v, 764, "", "./tensorflow/core/framework/tensor_shape.h", "IsSquareMatrix");
+
     return shape.dims() == 2 && shape.dim_size(0) == shape.dim_size(1);
   }
 
   static bool IsMatrixOrHigher(const TensorShape& shape) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_38(mht_38_v, 771, "", "./tensorflow/core/framework/tensor_shape.h", "IsMatrixOrHigher");
+
     return shape.dims() >= 2;
   }
 
@@ -523,7 +808,10 @@ class TensorShapeUtils {
 /// Manages the partially known dimensions of a Tensor and their sizes.
 class PartialTensorShape : public TensorShapeBase<PartialTensorShape> {
  public:
-  PartialTensorShape() {}
+  PartialTensorShape() {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_39(mht_39_v, 812, "", "./tensorflow/core/framework/tensor_shape.h", "PartialTensorShape");
+}
   using TensorShapeBase<PartialTensorShape>::TensorShapeBase;
 
   // These factory methods should be used instead of the constructors that take
@@ -532,14 +820,23 @@ class PartialTensorShape : public TensorShapeBase<PartialTensorShape> {
   // The value in `*out` is valid iff the returned value is `Status::OK`.
   static Status BuildPartialTensorShape(gtl::ArraySlice<int64_t> dim_sizes,
                                         PartialTensorShape* out) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_40(mht_40_v, 823, "", "./tensorflow/core/framework/tensor_shape.h", "BuildPartialTensorShape");
+
     return BuildTensorShapeBase(dim_sizes, out);
   }
   static Status BuildPartialTensorShape(
       std::initializer_list<int64_t> dim_sizes, PartialTensorShape* out) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_41(mht_41_v, 830, "", "./tensorflow/core/framework/tensor_shape.h", "BuildPartialTensorShape");
+
     return BuildPartialTensorShape(gtl::ArraySlice<int64_t>(dim_sizes), out);
   }
   static Status BuildPartialTensorShape(const TensorShapeProto& proto,
                                         PartialTensorShape* out) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_42(mht_42_v, 837, "", "./tensorflow/core/framework/tensor_shape.h", "BuildPartialTensorShape");
+
     return BuildTensorShapeBase(proto, out);
   }
 
@@ -591,6 +888,9 @@ class PartialTensorShape : public TensorShapeBase<PartialTensorShape> {
   template <class T>
   static Status MakePartialShape(const T* dims, int n,
                                  PartialTensorShape* out) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_43(mht_43_v, 891, "", "./tensorflow/core/framework/tensor_shape.h", "MakePartialShape");
+
     return TensorShapeUtils::MakeShape(dims, n, out);
   }
 };
@@ -674,6 +974,9 @@ Status TensorShape::AsEigenDSizesWithPaddingWithStatus(
 // ----------------------------------------------------------------------------
 
 inline TensorShapeRep::TensorShapeRep(const TensorShapeRep& b) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_44(mht_44_v, 977, "", "./tensorflow/core/framework/tensor_shape.h", "TensorShapeRep::TensorShapeRep");
+
   num_elements_ = b.num_elements_;
   if (b.tag() != REP_OUT_OF_LINE) {
     memcpy(buf(), b.buf(), sizeof(u_.buf));
@@ -687,6 +990,9 @@ inline TensorShapeRep::TensorShapeRep(const TensorShapeRep& b) {
 }
 
 inline TensorShapeRep::TensorShapeRep(TensorShapeRep&& b) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_45(mht_45_v, 993, "", "./tensorflow/core/framework/tensor_shape.h", "TensorShapeRep::TensorShapeRep");
+
   num_elements_ = b.num_elements_;
   memcpy(buf(), b.buf(), sizeof(u_.buf));
   // memcpy above Implicitly does:
@@ -696,12 +1002,18 @@ inline TensorShapeRep::TensorShapeRep(TensorShapeRep&& b) {
 }
 
 inline TensorShapeRep::~TensorShapeRep() {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_46(mht_46_v, 1005, "", "./tensorflow/core/framework/tensor_shape.h", "TensorShapeRep::~TensorShapeRep");
+
   if (tag() == REP_OUT_OF_LINE) {
     DestructorOutOfLine();
   }
 }
 
 inline void TensorShapeRep::operator=(const TensorShapeRep& b) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_47(mht_47_v, 1014, "", "./tensorflow/core/framework/tensor_shape.h", "=");
+
   num_elements_ = b.num_elements_;
   if (tag() != REP_OUT_OF_LINE && b.tag() != REP_OUT_OF_LINE) {
     memcpy(buf(), b.buf(), sizeof(u_.buf));
@@ -714,6 +1026,9 @@ inline void TensorShapeRep::operator=(const TensorShapeRep& b) {
 }
 
 inline void TensorShapeRep::operator=(TensorShapeRep&& b) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_48(mht_48_v, 1029, "", "./tensorflow/core/framework/tensor_shape.h", "=");
+
   if (tag() == REP_OUT_OF_LINE) {
     DestructorOutOfLine();
   }
@@ -726,6 +1041,9 @@ inline void TensorShapeRep::operator=(TensorShapeRep&& b) {
 }
 
 inline TensorShape::operator const PartialTensorShape&() const {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_49(mht_49_v, 1044, "", "./tensorflow/core/framework/tensor_shape.h", "&");
+
   // Downcast to the shared representation and upcast to PartialTensorShape
   const TensorShapeRep* rep = this;
   return *static_cast<const PartialTensorShape*>(rep);
@@ -733,6 +1051,9 @@ inline TensorShape::operator const PartialTensorShape&() const {
 
 template <class Shape>
 inline TensorShapeBase<Shape>::TensorShapeBase(DataType dt) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shapeDTh mht_50(mht_50_v, 1054, "", "./tensorflow/core/framework/tensor_shape.h", "TensorShapeBase<Shape>::TensorShapeBase");
+
   set_tag(REP16);
   set_data_type(dt);
 

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -79,6 +247,9 @@ constexpr uint64_t kNoMemoryTimestamp = 0;
 // Used for caching nodes to be delegated for a model.
 std::string NnApiBackendId(
     const StatefulNnApiDelegate::Options& delegate_options) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_0(mht_0_v, 250, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "NnApiBackendId");
+
   std::string delegate_id = kNnapiId;
   if (delegate_options.accelerator_name) {
     delegate_id += delegate_options.accelerator_name;
@@ -91,6 +262,9 @@ std::string NnApiBackendId(
 // an message with the unknown code.
 // LINT.IfChange(NnApiErrorDescription)
 std::string NnApiErrorDescription(int error_code) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_1(mht_1_v, 265, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "NnApiErrorDescription");
+
   switch (error_code) {
     case ANEURALNETWORKS_NO_ERROR:
       return "ANEURALNETWORKS_NO_ERROR";
@@ -169,6 +343,9 @@ bool IsFloat(TfLiteType type) {
 }
 
 bool IsFloatOrUInt8(TfLiteType type) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_2(mht_2_v, 346, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "IsFloatOrUInt8");
+
   switch (type) {
     case kTfLiteFloat32:
     case kTfLiteUInt8:
@@ -179,6 +356,9 @@ bool IsFloatOrUInt8(TfLiteType type) {
 }
 
 bool IsQuantized(TfLiteType type) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_3(mht_3_v, 359, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "IsQuantized");
+
   switch (type) {
     case kTfLiteUInt8:
     case kTfLiteInt8:
@@ -190,6 +370,9 @@ bool IsQuantized(TfLiteType type) {
 }
 
 bool IsInt32(TfLiteType type) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_4(mht_4_v, 373, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "IsInt32");
+
   switch (type) {
     case kTfLiteInt32:
       return true;
@@ -199,6 +382,9 @@ bool IsInt32(TfLiteType type) {
 }
 
 bool IsFloatOrQuantized(TfLiteType type) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_5(mht_5_v, 385, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "IsFloatOrQuantized");
+
   switch (type) {
     case kTfLiteFloat32:
     case kTfLiteUInt8:
@@ -210,6 +396,9 @@ bool IsFloatOrQuantized(TfLiteType type) {
 }
 
 bool IsFloatOrInt32(TfLiteType type) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_6(mht_6_v, 399, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "IsFloatOrInt32");
+
   switch (type) {
     case kTfLiteFloat32:
     case kTfLiteInt32:
@@ -220,6 +409,9 @@ bool IsFloatOrInt32(TfLiteType type) {
 }
 
 bool IsFloatQuantizedOrInt32(TfLiteType type) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_7(mht_7_v, 412, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "IsFloatQuantizedOrInt32");
+
   switch (type) {
     case kTfLiteFloat32:
     case kTfLiteUInt8:
@@ -232,6 +424,9 @@ bool IsFloatQuantizedOrInt32(TfLiteType type) {
 }
 
 bool IsScalarInputSupported(int builtin_code) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_8(mht_8_v, 427, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "IsScalarInputSupported");
+
   switch (builtin_code) {
     case kTfLiteBuiltinAdd:
     case kTfLiteBuiltinMul:
@@ -258,6 +453,9 @@ bool IsScalarInputSupported(int builtin_code) {
 // values.
 bool NeedInt8Conversion(const TfLiteContext* context, int builtin_code,
                         const TfLiteNode* node) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_9(mht_9_v, 456, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "NeedInt8Conversion");
+
   const int input_id = node->inputs->data[0];
   const TfLiteType input_type = context->tensors[input_id].type;
   switch (builtin_code) {
@@ -349,16 +547,25 @@ constexpr int kLstmFullKernelNoOptionalParamsInputSize = 20;
 constexpr int kLstmBasicKernelInputSize = 5;
 
 inline bool isLstmBasicKernel(const TfLiteNode* node) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_10(mht_10_v, 550, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "isLstmBasicKernel");
+
   return node->inputs->size == kLstmBasicKernelInputSize;
 }
 
 inline bool isLstmFullKernel(const TfLiteNode* node) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_11(mht_11_v, 557, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "isLstmFullKernel");
+
   return node->inputs->size == kLstmFullKernelInputSize ||
          node->inputs->size == kLstmFullKernelNoOptionalParamsInputSize;
 }
 
 bool IsMeanWithDifferentInputOutputQuantization(const TfLiteContext* context,
                                                 const TfLiteNode* node) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_12(mht_12_v, 566, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "IsMeanWithDifferentInputOutputQuantization");
+
   const auto& input = context->tensors[node->inputs->data[0]];
   const auto& output = context->tensors[node->outputs->data[0]];
   return input.params.scale != output.params.scale ||
@@ -367,6 +574,9 @@ bool IsMeanWithDifferentInputOutputQuantization(const TfLiteContext* context,
 
 bool IsBroadcastBatchMatMul(const TfLiteContext* context,
                             const TfLiteNode* node) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_13(mht_13_v, 577, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "IsBroadcastBatchMatMul");
+
   const auto& input0 = context->tensors[node->inputs->data[0]];
   const auto& input1 = context->tensors[node->inputs->data[1]];
   if (input0.dims->size != input1.dims->size) {
@@ -382,6 +592,9 @@ bool IsBroadcastBatchMatMul(const TfLiteContext* context,
 
 bool IsHybridOperator(const TfLiteContext* context, int builtin_code,
                       const TfLiteNode* node) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_14(mht_14_v, 595, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "IsHybridOperator");
+
   switch (builtin_code) {
     case kTfLiteBuiltinConv2d:
     case kTfLiteBuiltinFullyConnected: {
@@ -430,6 +643,9 @@ bool IsHybridOperator(const TfLiteContext* context, int builtin_code,
 
 bool IsDequantizeConstFloat16(TfLiteContext* context, const TfLiteNode* node,
                               const TfLiteRegistration* registration) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_15(mht_15_v, 646, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "IsDequantizeConstFloat16");
+
   return registration->builtin_code == kTfLiteBuiltinDequantize &&
          context->tensors[node->inputs->data[0]].type ==
              TfLiteType::kTfLiteFloat16 &&
@@ -438,6 +654,9 @@ bool IsDequantizeConstFloat16(TfLiteContext* context, const TfLiteNode* node,
 
 bool IsDequantizeNonConstFloat16(TfLiteContext* context, const TfLiteNode* node,
                                  const TfLiteRegistration* registration) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_16(mht_16_v, 657, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "IsDequantizeNonConstFloat16");
+
   return registration->builtin_code == kTfLiteBuiltinDequantize &&
          context->tensors[node->inputs->data[0]].type ==
              TfLiteType::kTfLiteFloat16 &&
@@ -446,6 +665,9 @@ bool IsDequantizeNonConstFloat16(TfLiteContext* context, const TfLiteNode* node,
 
 bool IsDensifyConstTensor(TfLiteContext* context, const TfLiteNode* node,
                           const TfLiteRegistration* registration) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_17(mht_17_v, 668, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "IsDensifyConstTensor");
+
   return registration->builtin_code == kTfLiteBuiltinDensify &&
          IsConstantTensor(&context->tensors[node->inputs->data[0]]);
 }
@@ -453,6 +675,9 @@ bool IsDensifyConstTensor(TfLiteContext* context, const TfLiteNode* node,
 ANeuralNetworksOperandType ConvertTensorTypeToNNType(
     const TfLiteTensor* tensor, TfLiteType ann_type_equivalent,
     bool use_int8_asymm_signed) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_18(mht_18_v, 678, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "ConvertTensorTypeToNNType");
+
   int32_t nn_type = 0;
   float scale = 0.0f;
   int32_t zero_point = 0;
@@ -530,6 +755,9 @@ ANeuralNetworksOperandType ConvertTensorTypeToNNType(
 constexpr size_t kDefaultByteAlignmentForNNAPI = 64;
 
 static size_t GetNumPaddingBytes(size_t byte_size) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_19(mht_19_v, 758, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "GetNumPaddingBytes");
+
   size_t num_padding_bytes = 0;
   if (byte_size % kDefaultByteAlignmentForNNAPI) {
     num_padding_bytes = kDefaultByteAlignmentForNNAPI -
@@ -539,6 +767,9 @@ static size_t GetNumPaddingBytes(size_t byte_size) {
 }
 
 static size_t GetNNTensorSize(size_t tensor_size, bool allow_padding) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_20(mht_20_v, 770, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "GetNNTensorSize");
+
   size_t padding_bytes = GetNumPaddingBytes(tensor_size);
   size_t nn_tensor_size = tensor_size;
   if (allow_padding) {
@@ -553,6 +784,10 @@ static size_t GetNNTensorSize(size_t tensor_size, bool allow_padding) {
 TfLiteStatus GetDeviceHandle(const NnApi* nnapi, TfLiteContext* context,
                              const char* device_name_ptr,
                              ANeuralNetworksDevice** result, int* nnapi_errno) {
+   std::vector<std::string> mht_21_v;
+   mht_21_v.push_back("device_name_ptr: \"" + (device_name_ptr == nullptr ? std::string("nullptr") : std::string((char*)device_name_ptr)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_21(mht_21_v, 788, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "GetDeviceHandle");
+
   if (!device_name_ptr) return kTfLiteError;
   *result = nullptr;
   std::string device_name(device_name_ptr);
@@ -586,6 +821,9 @@ TfLiteStatus GetDeviceHandle(const NnApi* nnapi, TfLiteContext* context,
 
 // Compute the hash of a TfLiteIntArray.
 uint64_t GetHash(const TfLiteIntArray* int_array, uint64_t combine_with = 0) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_22(mht_22_v, 824, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "GetHash");
+
   constexpr auto kHashConst = 0x9e3779b97f4a7800ULL;
   uint64_t result = combine_with;
   for (auto i : TfLiteIntArrayView(int_array)) {
@@ -595,6 +833,9 @@ uint64_t GetHash(const TfLiteIntArray* int_array, uint64_t combine_with = 0) {
 }
 
 bool HasZeroes(TfLiteIntArrayView array) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_23(mht_23_v, 836, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "HasZeroes");
+
   for (auto value : array) {
     if (value == 0) {
       return true;
@@ -610,6 +851,9 @@ bool HasZeroes(TfLiteIntArrayView array) {
 // and axis tensor are constants.
 int ComputeSplitVUnknownSplitSize(const TfLiteContext* context,
                                   const TfLiteNode* node) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_24(mht_24_v, 854, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "ComputeSplitVUnknownSplitSize");
+
   const auto& input = context->tensors[node->inputs->data[0]];
   const auto& size_splits_tensor = context->tensors[node->inputs->data[1]];
   const auto& axis_tensor = context->tensors[node->inputs->data[2]];
@@ -648,6 +892,9 @@ TfLiteStatus GetTargetFeatureLevel(
     TfLiteContext* context, const NnApi* nnapi,
     const std::vector<ANeuralNetworksDevice*>& device_handles,
     int* target_feature_level, int* nnapi_errno) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_25(mht_25_v, 895, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "GetTargetFeatureLevel");
+
   *target_feature_level = nnapi->nnapi_runtime_feature_level;
   int64_t devices_feature_level = -1;
   for (const auto* device_handle : device_handles) {
@@ -687,6 +934,9 @@ TfLiteStatus GetTargetFeatureLevel(
 bool ShouldUseTargetDevices(StatefulNnApiDelegate::Options delegate_options,
                             const NnApi* nnapi,
                             bool exclude_nnapi_reference = false) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_26(mht_26_v, 937, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "ShouldUseTargetDevices");
+
   const char* device_name_ptr = delegate_options.accelerator_name;
   std::string nnapi_cpu("nnapi-reference");
   bool has_selected_accelerator = device_name_ptr != nullptr;
@@ -713,6 +963,9 @@ bool ShouldUseTargetDevices(StatefulNnApiDelegate::Options delegate_options,
 TfLiteStatus GetTargetDevices(TfLiteContext* context, TfLiteDelegate* delegate,
                               const NnApi* nnapi, int* nnapi_errno,
                               std::vector<ANeuralNetworksDevice*>* result) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_27(mht_27_v, 966, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "GetTargetDevices");
+
   if (nnapi->android_sdk_version < delegate::nnapi::kMinSdkVersionForNNAPI12) {
     return kTfLiteError;
   }
@@ -821,6 +1074,9 @@ NNMemory::~NNMemory() {
 class DequantizeMapping {
  public:
   int DequantizedAnnIndex(int ann_index, TfLiteType type) const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_28(mht_28_v, 1077, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "DequantizedAnnIndex");
+
     for (const auto& element : mapping_) {
       if (ann_index == std::get<0>(element) && type == std::get<1>(element)) {
         return std::get<2>(element);
@@ -830,6 +1086,9 @@ class DequantizeMapping {
   }
 
   void Add(int ann_index, TfLiteType type, int dequantized_ann_index) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_29(mht_29_v, 1089, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "Add");
+
     // This assumes it is not already mapped.
     mapping_.emplace_back(ann_index, type, dequantized_ann_index);
   }
@@ -860,22 +1119,37 @@ class NNAPIOpBuilder {
         allocation_memory_mapping_(allocation_mapping),
         nn_model_(nn_model),
         nnapi_errno_(nnapi_errno),
-        allow_dynamic_dimensions_(allow_dynamic_dimensions) {}
+        allow_dynamic_dimensions_(allow_dynamic_dimensions) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_30(mht_30_v, 1123, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "NNAPIOpBuilder");
+}
 
   TfLiteStatus AddScalarBoolOperand(bool value) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_31(mht_31_v, 1128, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddScalarBoolOperand");
+
     return AddScalarOperand<bool>(value, ANEURALNETWORKS_BOOL);
   }
 
   TfLiteStatus AddScalarInt32Operand(int32_t value) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_32(mht_32_v, 1135, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddScalarInt32Operand");
+
     return AddScalarOperand<int32_t>(value, ANEURALNETWORKS_INT32);
   }
 
   TfLiteStatus AddScalarFloat32Operand(float value) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_33(mht_33_v, 1142, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddScalarFloat32Operand");
+
     return AddScalarOperand<float>(value, ANEURALNETWORKS_FLOAT32);
   }
 
   TfLiteStatus AddVectorInt32Operand(const int32_t* values,
                                      uint32_t num_values) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_34(mht_34_v, 1150, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddVectorInt32Operand");
+
     return AddVectorOperand<int32_t>(values, num_values,
                                      ANEURALNETWORKS_TENSOR_INT32,
                                      /*scale=*/0.f, /*zero_point=*/0);
@@ -883,18 +1157,27 @@ class NNAPIOpBuilder {
 
   TfLiteStatus AddVectorInt32Operand(const int32_t* values, uint32_t num_values,
                                      float scale, int32_t zero_point) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_35(mht_35_v, 1160, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddVectorInt32Operand");
+
     return AddVectorOperand<int32_t>(
         values, num_values, ANEURALNETWORKS_TENSOR_INT32, scale, zero_point);
   }
 
   TfLiteStatus AddVectorInt16Operand(const int16_t* values,
                                      uint32_t num_values) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_36(mht_36_v, 1169, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddVectorInt16Operand");
+
     return AddVectorOperand<int16_t>(values, num_values,
                                      ANEURALNETWORKS_TENSOR_QUANT16_SYMM,
                                      /*scale=*/1.f, /*zero_point=*/0);
   }
 
   TfLiteStatus AddVectorInt8Operand(const int8_t* values, uint32_t num_values) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_37(mht_37_v, 1178, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddVectorInt8Operand");
+
     return AddVectorOperand<int8_t>(values, num_values,
                                     ANEURALNETWORKS_TENSOR_QUANT8_SYMM,
                                     /*scale=*/1.f, /*zero_point=*/0);
@@ -902,11 +1185,17 @@ class NNAPIOpBuilder {
 
   TfLiteStatus AddVectorFloat32Operand(const float* values,
                                        uint32_t num_values) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_38(mht_38_v, 1188, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddVectorFloat32Operand");
+
     return AddVectorOperand<float>(values, num_values,
                                    ANEURALNETWORKS_TENSOR_FLOAT32);
   }
 
   TfLiteStatus AddPoolingParams(void* data) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_39(mht_39_v, 1196, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddPoolingParams");
+
     auto builtin = reinterpret_cast<TfLitePoolParams*>(data);
     AddScalarInt32Operand(builtin->padding);
     AddScalarInt32Operand(builtin->stride_width);
@@ -919,21 +1208,33 @@ class NNAPIOpBuilder {
 
   TfLiteStatus AddTensorInput(int tensor_index, bool hybrid_op,
                               int tensor_flags = 0) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_40(mht_40_v, 1211, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddTensorInput");
+
     return AddTensor(tensor_index, hybrid_op, &augmented_inputs_, tensor_flags);
   }
 
   TfLiteStatus AddTensorOutput(int tensor_index, int tensor_flags = 0) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_41(mht_41_v, 1218, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddTensorOutput");
+
     return AddTensor(tensor_index, /*hybrid_op=*/false, &augmented_outputs_,
                      tensor_flags);
   }
 
   TfLiteStatus AddAdditionalFloat32OutputTensor(uint32_t dimension_count) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_42(mht_42_v, 1226, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddAdditionalFloat32OutputTensor");
+
     std::vector<uint32_t> dims(dimension_count, 0);
     return AddFloat32OutputTensor(dimension_count, dims.data(), nullptr);
   }
 
   TfLiteStatus AddStateFloat32Tensor(int tensor_index,
                                      int* ann_tensor_index_out) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_43(mht_43_v, 1235, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddStateFloat32Tensor");
+
     TfLiteTensor* tensor = &context_->tensors[tensor_index];
     return AddFloat32OutputTensor(
         tensor->dims->size, reinterpret_cast<uint32_t*>(tensor->dims->data),
@@ -942,6 +1243,9 @@ class NNAPIOpBuilder {
 
   TfLiteStatus AddStateInt16Tensor(int tensor_index,
                                    int* ann_tensor_index_out) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_44(mht_44_v, 1246, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddStateInt16Tensor");
+
     TfLiteTensor* tensor = &context_->tensors[tensor_index];
     return AddAdditionalOutputTensor(
         tensor->dims->size, reinterpret_cast<uint32_t*>(tensor->dims->data),
@@ -951,6 +1255,9 @@ class NNAPIOpBuilder {
 
   TfLiteStatus AddStateInt8AsymTensor(int tensor_index,
                                       int* ann_tensor_index_out) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_45(mht_45_v, 1258, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddStateInt8AsymTensor");
+
     TfLiteTensor* tensor = &context_->tensors[tensor_index];
     return AddAdditionalOutputTensor(
         tensor->dims->size, reinterpret_cast<uint32_t*>(tensor->dims->data),
@@ -961,6 +1268,9 @@ class NNAPIOpBuilder {
   // Add a constant tensor with a single element, intended for broadcast capable
   // ops.
   TfLiteStatus AddSingleValueConstantTensor(float value, bool is_quantized) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_46(mht_46_v, 1271, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddSingleValueConstantTensor");
+
     if (!is_quantized) {
       return AddVectorFloat32Operand(&value, 1);
     } else {
@@ -977,6 +1287,9 @@ class NNAPIOpBuilder {
   // min and max. zero_point is clamped to [0, 255].
   TfLiteStatus CalculateQuantizationParams(float min, float max, float* scale,
                                            int* zero_point) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_47(mht_47_v, 1290, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "CalculateQuantizationParams");
+
     if (max < min) return kTfLiteError;
     *scale = (max - min) / 255.f;
     if (min > 0.f) {
@@ -996,6 +1309,9 @@ class NNAPIOpBuilder {
                                                   int lite_output_index,
                                                   bool need_int8_conversion,
                                                   int lite_node_index) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_48(mht_48_v, 1312, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "TransformHardSwishIntoSupportedOps");
+
     const TfLiteTensor& tensor = context_->tensors[lite_input_index];
     float input_scale = tensor.params.scale;
     int input_zero_point = tensor.params.zero_point;
@@ -1122,6 +1438,9 @@ class NNAPIOpBuilder {
                                    uint32_t output_count,
                                    const uint32_t* outputs,
                                    int lite_node_index) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_49(mht_49_v, 1441, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddOperationToModel");
+
     RETURN_TFLITE_ERROR_IF_NN_ERROR(
         context_,
         nnapi_->ANeuralNetworksModel_addOperation(
@@ -1136,6 +1455,9 @@ class NNAPIOpBuilder {
   // exists then it is not added again.
   TfLiteStatus AddDequantize(int nn_input_index, int lite_tensor_index,
                              TfLiteType dequantized_type, int lite_node_index) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_50(mht_50_v, 1458, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddDequantize");
+
     const int ann_index =
         mapping_util_->TfLiteIndexToNnIndex(mapping_util_, lite_tensor_index);
     int dequantized_ann_index =
@@ -1180,6 +1502,9 @@ class NNAPIOpBuilder {
   // dimensions of the TFLite output tensor.
   TfLiteStatus AppendReshape(int nn_input_index, int lite_out_tensor_index,
                              int lite_node_index) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_51(mht_51_v, 1505, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AppendReshape");
+
     augmented_inputs_.push_back(nn_input_index);
     auto& output_tensor = context_->tensors[lite_out_tensor_index];
     TF_LITE_ENSURE_STATUS(
@@ -1197,6 +1522,9 @@ class NNAPIOpBuilder {
   // zero point of the TFLite output tensor.
   TfLiteStatus AppendRequantize(int nn_input_index, int lite_out_tensor_index,
                                 int lite_node_index, int tensor_flags = 0) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_52(mht_52_v, 1525, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AppendRequantize");
+
     augmented_inputs_.push_back(nn_input_index);
     auto& output_tensor = context_->tensors[lite_out_tensor_index];
 
@@ -1223,6 +1551,9 @@ class NNAPIOpBuilder {
   TfLiteStatus TransformPackIntoSupportedOps(int lite_node_index,
                                              TfLiteNode* node,
                                              TfLiteRegistration* reg) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_53(mht_53_v, 1554, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "TransformPackIntoSupportedOps");
+
     // Add input tensors for CONCAT, and calculate the dimensions for the
     // output.
     int concat_output_ann_index = -1;
@@ -1267,6 +1598,9 @@ class NNAPIOpBuilder {
   TfLiteStatus TransformUnpackIntoSupportedOps(int lite_node_index,
                                                TfLiteNode* node,
                                                TfLiteRegistration* reg) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_54(mht_54_v, 1601, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "TransformUnpackIntoSupportedOps");
+
     auto& input_tensor = context_->tensors[node->inputs->data[0]];
 
     auto* builtin = reinterpret_cast<TfLiteUnpackParams*>(node->builtin_data);
@@ -1324,6 +1658,9 @@ class NNAPIOpBuilder {
   TfLiteStatus TransformSplitVIntoSupportedOps(int lite_node_index,
                                                TfLiteNode* node,
                                                TfLiteRegistration* reg) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_55(mht_55_v, 1661, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "TransformSplitVIntoSupportedOps");
+
     auto& input = context_->tensors[node->inputs->data[0]];
     int input_rank = input.dims->size;
 
@@ -1381,6 +1718,9 @@ class NNAPIOpBuilder {
   // Lower SQUARED_DIFFERENCE into SUB and MUL.
   TfLiteStatus TransformSquaredDifferenceIntoSupportedOps(
       int lite_node_index, TfLiteNode* node, TfLiteRegistration* reg) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_56(mht_56_v, 1721, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "TransformSquaredDifferenceIntoSupportedOps");
+
     const TfLiteTensor& lhs = context_->tensors[node->inputs->data[0]];
     const TfLiteTensor& output = context_->tensors[node->outputs->data[0]];
 
@@ -1457,6 +1797,9 @@ class NNAPIOpBuilder {
   // Finish emitting the op (of type `type`) into the NN API.
   TfLiteStatus FinalizeAddOperation(ANeuralNetworksOperationType type,
                                     int lite_node_index) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_57(mht_57_v, 1800, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "FinalizeAddOperation");
+
     // Actually add a NN API operation
     TF_LITE_ENSURE_OK(context_,
                       AddOperationToModel(
@@ -1471,6 +1814,9 @@ class NNAPIOpBuilder {
 
   TfLiteStatus AddSingleValueTensorAsScalarOperand(int tensor_index,
                                                    int nn_type) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_58(mht_58_v, 1817, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddSingleValueTensorAsScalarOperand");
+
     const TfLiteTensor* tensor = &context_->tensors[tensor_index];
     TF_LITE_ENSURE_EQ(context_, NumElements(tensor), 1);
 
@@ -1506,6 +1852,9 @@ class NNAPIOpBuilder {
       int32_t nn_type, TfLiteType type, const TfLiteIntArray* dims,
       const std::vector<T>& tensor_value,
       const TfLiteQuantizationParams& quant_params, int* tensor_index) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_59(mht_59_v, 1855, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddNewInputConstantTensor");
+
     TF_LITE_ENSURE_OK(context_,
                       context_->AddTensors(context_, 1, tensor_index));
 
@@ -1558,6 +1907,9 @@ class NNAPIOpBuilder {
       int32_t nn_type, TfLiteType type, std::initializer_list<int> dims,
       const std::vector<T>& tensor_value,
       const TfLiteQuantizationParams& quant_params, int* tensor_index) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_60(mht_60_v, 1910, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddNewInputConstantTensor");
+
     TfLiteIntArray* dim_array = TfLiteIntArrayCreate(dims.size());
     dim_array->size = dims.size();
     std::copy(dims.begin(), dims.end(), dim_array->data);
@@ -1574,6 +1926,9 @@ class NNAPIOpBuilder {
                                            float scale, int32_t zero_point,
                                            int* ann_index_out,
                                            bool need_int8_conversion = false) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_61(mht_61_v, 1929, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddIntermediateOutputTensor");
+
     int32_t nn_type;
     switch (tfl_type) {
       case kTfLiteFloat32:
@@ -1600,6 +1955,9 @@ class NNAPIOpBuilder {
   }
 
   void ClearInputOuputLists() {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_62(mht_62_v, 1958, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "ClearInputOuputLists");
+
     augmented_inputs_.clear();
     augmented_outputs_.clear();
   }
@@ -1609,6 +1967,9 @@ class NNAPIOpBuilder {
   // provided NN API type.
   TfLiteStatus GetEquivalentToANNType(TfLiteContext* context, int nn_type,
                                       TfLiteType* type) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_63(mht_63_v, 1970, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "GetEquivalentToANNType");
+
     switch (nn_type) {
       case ANEURALNETWORKS_INT32:
         *type = kTfLiteInt32;
@@ -1627,6 +1988,9 @@ class NNAPIOpBuilder {
 
   template <typename T>
   TfLiteStatus AddScalarOperand(T value, int32_t nn_type) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_64(mht_64_v, 1991, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddScalarOperand");
+
     ANeuralNetworksOperandType operand_type{.type = nn_type};
     RETURN_TFLITE_ERROR_IF_NN_ERROR(
         context_,
@@ -1646,6 +2010,9 @@ class NNAPIOpBuilder {
   TfLiteStatus AddVectorOperand(const T* values, uint32_t num_values,
                                 int32_t nn_type, float scale,
                                 int32_t zero_point) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_65(mht_65_v, 2013, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddVectorOperand");
+
     ANeuralNetworksOperandType operand_type{.type = nn_type,
                                             .dimensionCount = 1,
                                             .dimensions = &num_values,
@@ -1670,6 +2037,9 @@ class NNAPIOpBuilder {
   template <typename T>
   TfLiteStatus AddVectorOperand(const T* values, uint32_t num_values,
                                 int32_t nn_type) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_66(mht_66_v, 2040, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddVectorOperand");
+
     return AddVectorOperand(values, num_values, nn_type, /*scale=*/0.f,
                             /*zero_point=*/0);
   }
@@ -1677,6 +2047,9 @@ class NNAPIOpBuilder {
   TfLiteStatus AddFloat32OutputTensor(uint32_t dimension_count,
                                       const uint32_t* dimension_data,
                                       int* ann_index_out) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_67(mht_67_v, 2050, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddFloat32OutputTensor");
+
     return AddAdditionalOutputTensor(
         dimension_count, dimension_data, ANEURALNETWORKS_TENSOR_FLOAT32,
         /*scale=*/0.f, /*zero_point=*/0, ann_index_out);
@@ -1687,6 +2060,9 @@ class NNAPIOpBuilder {
                                          int32_t nn_type, float scale,
                                          int32_t zero_point,
                                          int* ann_index_out) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_68(mht_68_v, 2063, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddAdditionalOutputTensor");
+
     ANeuralNetworksOperandType operand_type{
         .type = nn_type,
         .dimensionCount = dimension_count,
@@ -1710,6 +2086,9 @@ class NNAPIOpBuilder {
   // then the existing one is returned.
   TfLiteStatus AddTensor(int tensor_index, bool hybrid_op,
                          std::vector<uint32_t>* indices, int tensor_flags = 0) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_69(mht_69_v, 2089, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddTensor");
+
     const bool scalar_as_tensor =
         tensor_flags & NN_TENSOR_FLAG_SCALAR_AS_TENSOR;
     const bool need_int8_conversion =
@@ -2047,6 +2426,10 @@ inline void AddValidationFailureFmt(OpValidationContext* val_ctx,
 
 inline bool Expect(bool condition, NNAPIValidationFailureType failure_type,
                    const char* message, OpValidationContext* val_ctx) {
+   std::vector<std::string> mht_70_v;
+   mht_70_v.push_back("message: \"" + (message == nullptr ? std::string("nullptr") : std::string((char*)message)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_70(mht_70_v, 2430, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "Expect");
+
   if (!condition) {
     AddValidationFailure(failure_type, message, val_ctx);
     return false;
@@ -2069,6 +2452,10 @@ inline bool ExpectTypeIn(TfLiteType actual_type,
                          std::initializer_list<TfLiteType> allowed_types,
                          NNAPIValidationFailureType failure_type,
                          const char* msg, OpValidationContext* val_ctx) {
+   std::vector<std::string> mht_71_v;
+   mht_71_v.push_back("msg: \"" + (msg == nullptr ? std::string("nullptr") : std::string((char*)msg)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_71(mht_71_v, 2456, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "ExpectTypeIn");
+
   return Expect(std::find(allowed_types.begin(), allowed_types.end(),
                           actual_type) != allowed_types.end(),
                 failure_type, msg, val_ctx);
@@ -2076,6 +2463,9 @@ inline bool ExpectTypeIn(TfLiteType actual_type,
 
 inline bool ExpectMinAndroidSdkVersion(int curr_version, int min_version,
                                        OpValidationContext* val_ctx) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_72(mht_72_v, 2466, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "ExpectMinAndroidSdkVersion");
+
   return ExpectFmt(curr_version >= min_version, val_ctx,
                    NNAPIValidationFailureType::kUnsupportedAndroidVersion,
                    "Android sdk version less than %d", min_version);
@@ -2083,6 +2473,9 @@ inline bool ExpectMinAndroidSdkVersion(int curr_version, int min_version,
 
 inline bool ExpectMaxOpVersion(int curr_version, int max_version,
                                OpValidationContext* val_ctx) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_73(mht_73_v, 2476, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "ExpectMaxOpVersion");
+
   return ExpectFmt(curr_version <= max_version, val_ctx,
                    NNAPIValidationFailureType::kUnsupportedOperatorVersion,
                    "OP Version higher than %d", max_version);
@@ -2090,6 +2483,9 @@ inline bool ExpectMaxOpVersion(int curr_version, int max_version,
 
 inline bool ExpectOpVersion(int curr_version, int max_version,
                             OpValidationContext* val_ctx) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_74(mht_74_v, 2486, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "ExpectOpVersion");
+
   return ExpectFmt(curr_version <= max_version, val_ctx,
                    NNAPIValidationFailureType::kUnsupportedOperatorVersion,
                    "OP Version different from %d", max_version);
@@ -2098,6 +2494,9 @@ inline bool ExpectOpVersion(int curr_version, int max_version,
 inline bool ExpectIsFloatOperator(const TfLiteContext* context,
                                   const TfLiteNode* node,
                                   OpValidationContext* val_ctx) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_75(mht_75_v, 2497, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "ExpectIsFloatOperator");
+
   const auto input_type = context->tensors[node->inputs->data[0]].type;
   return Expect(IsFloat(input_type),
                 NNAPIValidationFailureType::kUnsupportedInputType,
@@ -2107,6 +2506,9 @@ inline bool ExpectIsFloatOperator(const TfLiteContext* context,
 bool ExpectIsFloatOrUint8Operator(const TfLiteContext* context,
                                   const TfLiteNode* node,
                                   OpValidationContext* val_ctx) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_76(mht_76_v, 2509, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "ExpectIsFloatOrUint8Operator");
+
   const auto input_type = context->tensors[node->inputs->data[0]].type;
   return Expect(IsFloatOrUInt8(input_type),
                 NNAPIValidationFailureType::kUnsupportedInputType,
@@ -2116,6 +2518,9 @@ bool ExpectIsFloatOrUint8Operator(const TfLiteContext* context,
 bool ExpectIsFloatOrQuant8Operator(const TfLiteContext* context,
                                    const TfLiteNode* node,
                                    OpValidationContext* val_ctx) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_77(mht_77_v, 2521, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "ExpectIsFloatOrQuant8Operator");
+
   const auto input_type = context->tensors[node->inputs->data[0]].type;
   return Expect(IsFloatOrQuantized(input_type),
                 NNAPIValidationFailureType::kUnsupportedInputType,
@@ -2125,6 +2530,9 @@ bool ExpectIsFloatOrQuant8Operator(const TfLiteContext* context,
 bool ExpectIsFloatOrInt32Operator(const TfLiteContext* context,
                                   const TfLiteNode* node,
                                   OpValidationContext* val_ctx) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_78(mht_78_v, 2533, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "ExpectIsFloatOrInt32Operator");
+
   const auto input_type = context->tensors[node->inputs->data[0]].type;
   return Expect(IsFloatOrInt32(input_type),
                 NNAPIValidationFailureType::kUnsupportedInputType,
@@ -2134,6 +2542,9 @@ bool ExpectIsFloatOrInt32Operator(const TfLiteContext* context,
 bool ExpectIsFloatQuant8OrInt32Operator(const TfLiteContext* context,
                                         const TfLiteNode* node,
                                         OpValidationContext* val_ctx) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_79(mht_79_v, 2545, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "ExpectIsFloatQuant8OrInt32Operator");
+
   const auto input_type = context->tensors[node->inputs->data[0]].type;
   return Expect(IsFloatQuantizedOrInt32(input_type),
                 NNAPIValidationFailureType::kUnsupportedInputType,
@@ -2149,6 +2560,9 @@ bool ExpectIsFloatQuant8OrInt32Operator(const TfLiteContext* context,
 bool ExpectIsRestrictedScalesCompliant(const TfLiteContext* context,
                                        const TfLiteNode* node,
                                        OpValidationContext* val_ctx) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_80(mht_80_v, 2563, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "ExpectIsRestrictedScalesCompliant");
+
   const int input_id = node->inputs->data[0];
   const int filter_id = node->inputs->data[1];
   const int output_id = node->outputs->data[0];
@@ -2165,6 +2579,9 @@ bool ExpectIsRestrictedScalesCompliant(const TfLiteContext* context,
 void AppendDynamicDimensions(const TfLiteContext* context,
                              const TfLiteIntArray* tensor_indices,
                              std::vector<int>& dynamic_dimensions) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_81(mht_81_v, 2582, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AppendDynamicDimensions");
+
   for (int i : TfLiteIntArrayView(tensor_indices)) {
     if (i == kTfLiteOptionalTensor) continue;
     const auto& tensor = context->tensors[i];
@@ -2183,6 +2600,9 @@ NNAPIExecutionCache::Signature CreateExecutionCacheSignature(
     const StatefulNnApiDelegate::Options& delegate_options,
     const std::vector<StatefulNnApiDelegate::MemoryRegistration>&
         tensor_memory_map) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_82(mht_82_v, 2603, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "CreateExecutionCacheSignature");
+
   // Tensor buffer handle timestamps.
   std::vector<uint64_t> tensor_handle_timestamps(context->tensors_size);
   for (int i = 0; i < tensor_handle_timestamps.size(); i++) {
@@ -2211,6 +2631,9 @@ NNAPIExecutionCache::Signature CreateExecutionCacheSignature(
 
 template <typename T>
 std::size_t HashVector(const std::vector<T>& vec) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_83(mht_83_v, 2634, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "HashVector");
+
   std::size_t seed = vec.size();
   auto hasher = std::hash<T>{};
   for (const auto& i : vec) {
@@ -2233,6 +2656,9 @@ std::size_t NNAPIExecutionCache::Signature::Hasher::operator()(
 }
 
 ANeuralNetworksExecution* NNAPIExecutionCache::Get(const Signature& signature) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_84(mht_84_v, 2659, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "NNAPIExecutionCache::Get");
+
   auto it = lookup_.find(signature);
 
   // Cache miss
@@ -2253,6 +2679,9 @@ ANeuralNetworksExecution* NNAPIExecutionCache::Get(const Signature& signature) {
 
 void NNAPIExecutionCache::Put(const Signature& signature,
                               UniqueExecution execution) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_85(mht_85_v, 2682, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "NNAPIExecutionCache::Put");
+
   // Release the least recently used cache if cache is full.
   if (order_.size() >= max_cache_size_) {
     ReleaseLRU();
@@ -2265,11 +2694,17 @@ void NNAPIExecutionCache::Put(const Signature& signature,
 }
 
 void NNAPIExecutionCache::Clear() {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_86(mht_86_v, 2697, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "NNAPIExecutionCache::Clear");
+
   order_.clear();
   lookup_.clear();
 }
 
 void NNAPIExecutionCache::SetMaxCacheSize(uint32_t max_cache_size) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_87(mht_87_v, 2705, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "NNAPIExecutionCache::SetMaxCacheSize");
+
   max_cache_size_ = max_cache_size;
   while (order_.size() > max_cache_size_) {
     ReleaseLRU();
@@ -2277,6 +2712,9 @@ void NNAPIExecutionCache::SetMaxCacheSize(uint32_t max_cache_size) {
 }
 
 void NNAPIExecutionCache::ReleaseLRU() {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_88(mht_88_v, 2715, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "NNAPIExecutionCache::ReleaseLRU");
+
   lookup_.erase(order_.back());
   order_.pop_back();
 }
@@ -2289,6 +2727,9 @@ bool NNAPIDelegateKernel::Validate(
     int android_sdk_version, const TfLiteNode* node,
     bool is_accelerator_specified, NnapiDelegateVendorPlugin* vendor_plugin,
     std::vector<NNAPIValidationFailure>* map_failures) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_89(mht_89_v, 2730, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "NNAPIDelegateKernel::Validate");
+
   OpValidationContext val_ctx{true, map_failures};
   if (vendor_plugin) {
     if (vendor_plugin->ValidateNode(context, registration, node)) {
@@ -3025,6 +3466,9 @@ bool NNAPIDelegateKernel::Validate(
                "Invalid cell state quantization", &val_ctx);
 
         auto is_const_tensor = [&node, &context](int tensor_idx) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_90(mht_90_v, 3469, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "lambda");
+
           return context->tensors[node->inputs->data[tensor_idx]]
                      .allocation_type == kTfLiteMmapRo;
         };
@@ -3560,6 +4004,9 @@ TfLiteStatus NNAPIDelegateKernel::Map(
     int android_sdk_version, const NNAPIOpMappingArgs& mapping_args,
     ANeuralNetworksOperationType* nn_op_type,
     NnapiDelegateVendorPlugin* vendor_plugin) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_91(mht_91_v, 4007, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "NNAPIDelegateKernel::Map");
+
   auto add_zero_bias = [mapping_args](int input_id, int filter_id,
                                       int num_elements) -> void {
     // NNAPI requires a bias tensor, so we allocate a new tensor to fill
@@ -4462,6 +4909,9 @@ TfLiteStatus NNAPIDelegateKernel::Map(
 TfLiteStatus NNAPIDelegateKernel::Init(TfLiteContext* context,
                                        const TfLiteDelegateParams* params,
                                        int* nnapi_errno) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_92(mht_92_v, 4912, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "NNAPIDelegateKernel::Init");
+
   for (auto node_index : TfLiteIntArrayView(params->nodes_to_replace)) {
     nodes_.push_back(node_index);
   }
@@ -4556,6 +5006,9 @@ TfLiteStatus NNAPIDelegateKernel::Init(TfLiteContext* context,
 
 TfLiteStatus NNAPIDelegateKernel::Prepare(TfLiteContext* context,
                                           TfLiteNode* node, int* nnapi_errno) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_93(mht_93_v, 5009, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "NNAPIDelegateKernel::Prepare");
+
   if (!initialised_) {
     return kTfLiteError;
   }
@@ -4679,6 +5132,9 @@ TfLiteStatus NNAPIDelegateKernel::Prepare(TfLiteContext* context,
 TfLiteStatus NNAPIDelegateKernel::GetOperationsSupportedByTargetNnApiDevices(
     TfLiteContext* context, std::vector<int>* supported_nodes,
     int* nnapi_errno) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_94(mht_94_v, 5135, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "NNAPIDelegateKernel::GetOperationsSupportedByTargetNnApiDevices");
+
   if (!nnapi_->ANeuralNetworksModel_getSupportedOperationsForDevices) {
     return kTfLiteError;
   }
@@ -4737,6 +5193,9 @@ TfLiteStatus NNAPIDelegateKernel::GetOperationsSupportedByTargetNnApiDevices(
 
 TfLiteStatus NNAPIDelegateKernel::Invoke(TfLiteContext* context,
                                          TfLiteNode* node, int* nnapi_errno) {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_95(mht_95_v, 5196, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "NNAPIDelegateKernel::Invoke");
+
   const bool allow_padding =
       nnapi_->nnapi_runtime_feature_level > kMinSdkVersionForNNAPI13 &&
       nnapi_->ANeuralNetworksExecution_enableInputAndOutputPadding != nullptr;
@@ -5194,6 +5653,9 @@ TfLiteStatus NNAPIDelegateKernel::Invoke(TfLiteContext* context,
 void NNAPIDelegateKernel::AddDequantizeOperatorsWhereNeeded(
     const TfLiteContext* context, int builtin_code, const TfLiteNode* node,
     int tflite_node_index, NNAPIOpBuilder* builder, int* nnapi_errno) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_96(mht_96_v, 5656, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "NNAPIDelegateKernel::AddDequantizeOperatorsWhereNeeded");
+
   // Depending on the operator and the input data format, Dequantize
   // operators may need to be added. For example when the input is
   // floating-point but weights are quantized then the weights will first be
@@ -5248,6 +5710,9 @@ void NNAPIDelegateKernel::AddDequantizeOperatorsWhereNeeded(
 TfLiteStatus NNAPIDelegateKernel::DensifyAndDequantizeConstTensor(
     TfLiteContext* context, int densify_node_id, bool should_dequantize,
     NNAPIOpBuilder& builder) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_97(mht_97_v, 5713, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "NNAPIDelegateKernel::DensifyAndDequantizeConstTensor");
+
   TfLiteNode* densify_node;
   TfLiteRegistration* reg;
   TF_LITE_ENSURE_STATUS(context->GetNodeAndRegistration(
@@ -5328,6 +5793,9 @@ TfLiteStatus NNAPIDelegateKernel::DensifyAndDequantizeConstTensor(
 
 TfLiteIntArray* ResizeTfLiteIntArray(TfLiteIntArray* old_array, int new_size,
                                      int init_value) {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_98(mht_98_v, 5796, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "ResizeTfLiteIntArray");
+
   TfLiteIntArray* ret = TfLiteIntArrayCreate(new_size);
   if (ret) {
     int size_to_copy = 0;
@@ -5355,6 +5823,9 @@ class NnapiMappingUtilCInterfaceImpl {
  public:
   static int TfLiteIndexToNnIndex(NnapiMappingUtilCInterface* mapping,
                                   int index) {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_99(mht_99_v, 5826, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "TfLiteIndexToNnIndex");
+
     NnapiMappingContext* mapping_context =
         reinterpret_cast<NnapiMappingContext*>(mapping->context);
     const size_t max_size = mapping_context->lite_tensor_to_ann_tensor_.size();
@@ -5365,6 +5836,9 @@ class NnapiMappingUtilCInterfaceImpl {
   }
 
   static int AddNewNonTensorOperand(NnapiMappingUtilCInterface* mapping) {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_100(mht_100_v, 5839, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddNewNonTensorOperand");
+
     NnapiMappingContext* mapping_context =
         reinterpret_cast<NnapiMappingContext*>(mapping->context);
     return mapping_context->next_ann_tensor_index_++;
@@ -5372,6 +5846,9 @@ class NnapiMappingUtilCInterfaceImpl {
 
   static int AddDelegateGeneratedInputAnnTensorOperand(
       NnapiMappingUtilCInterface* mapping) {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_101(mht_101_v, 5849, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddDelegateGeneratedInputAnnTensorOperand");
+
     NnapiMappingContext* mapping_context =
         reinterpret_cast<NnapiMappingContext*>(mapping->context);
     return mapping_context->next_ann_tensor_index_++;
@@ -5379,6 +5856,9 @@ class NnapiMappingUtilCInterfaceImpl {
 
   static int AddNewNnTensorIndex(NnapiMappingUtilCInterface* mapping,
                                  int tflite_index) {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_102(mht_102_v, 5859, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddNewNnTensorIndex");
+
     NnapiMappingContext* mapping_context =
         reinterpret_cast<NnapiMappingContext*>(mapping->context);
     const size_t current_size =
@@ -5394,6 +5874,9 @@ class NnapiMappingUtilCInterfaceImpl {
 
   static TfLiteType TfLiteIndexToNnTypeConversion(
       NnapiMappingUtilCInterface* mapping, int index) {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_103(mht_103_v, 5877, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "TfLiteIndexToNnTypeConversion");
+
     NnapiMappingContext* mapping_context =
         reinterpret_cast<NnapiMappingContext*>(mapping->context);
     const size_t max_size = mapping_context->index_to_type_conversion_.size();
@@ -5406,6 +5889,9 @@ class NnapiMappingUtilCInterfaceImpl {
 
   static void AddTypeConversion(NnapiMappingUtilCInterface* mapping,
                                 int tflite_index, TfLiteType tflite_type) {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_104(mht_104_v, 5892, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddTypeConversion");
+
     NnapiMappingContext* mapping_context =
         reinterpret_cast<NnapiMappingContext*>(mapping->context);
     const size_t current_size =
@@ -5419,6 +5905,9 @@ class NnapiMappingUtilCInterfaceImpl {
 
   static void AddNnapiToTfliteOpMapping(NnapiMappingUtilCInterface* mapping,
                                         int tflite_node_index) {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_105(mht_105_v, 5908, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "AddNnapiToTfliteOpMapping");
+
     NnapiMappingContext* mapping_context =
         reinterpret_cast<NnapiMappingContext*>(mapping->context);
     mapping_context->nnapi_to_tflite_op_mapping_.push_back(tflite_node_index);
@@ -5427,6 +5916,9 @@ class NnapiMappingUtilCInterfaceImpl {
 
 NnapiMappingUtilCInterface*
 NNAPIDelegateKernel::NnapiMappingUtilCInterfaceCreate() {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_106(mht_106_v, 5919, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "NNAPIDelegateKernel::NnapiMappingUtilCInterfaceCreate");
+
   NnapiMappingUtilCInterface* mapping =
       static_cast<NnapiMappingUtilCInterface*>(
           malloc(sizeof(NnapiMappingUtilCInterface)));
@@ -5450,6 +5942,9 @@ NNAPIDelegateKernel::NnapiMappingUtilCInterfaceCreate() {
 
 TfLiteStatus NNAPIDelegateKernel::AddOpsAndTensors(
     TfLiteContext* context, int* nnapi_errno, bool allow_dynamic_dimensions) {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_107(mht_107_v, 5945, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "NNAPIDelegateKernel::AddOpsAndTensors");
+
   DequantizeMapping dequantize_mapping;
   // The operand builder allows creating a single op. It is created outside
   // the for loop to avoid reallocating the vectors.
@@ -6115,6 +6610,9 @@ TfLiteStatus NNAPIDelegateKernel::BuildGraph(
     const StatefulNnApiDelegate::Options& delegate_options,
     const TfLiteIntArray* input_tensors, const TfLiteIntArray* output_tensors,
     int* nnapi_errno) {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_108(mht_108_v, 6613, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "NNAPIDelegateKernel::BuildGraph");
+
   // Build the ops and tensors.
   TF_LITE_ENSURE_STATUS(AddOpsAndTensors(
       context, nnapi_errno, delegate_options.allow_dynamic_dimensions));
@@ -6220,11 +6718,20 @@ using ::tflite::delegate::nnapi::kMinSdkVersionForNNAPI11;
 using ::tflite::delegate::nnapi::kMinSdkVersionForNNAPI12;
 using ::tflite::delegate::nnapi::NNAPIDelegateKernel;
 
-StatefulNnApiDelegate::Data::Data(const NnApi* nnapi) : nnapi(nnapi) {}
+StatefulNnApiDelegate::Data::Data(const NnApi* nnapi) : nnapi(nnapi) {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_109(mht_109_v, 6722, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "StatefulNnApiDelegate::Data::Data");
+}
 StatefulNnApiDelegate::Data::Data(std::unique_ptr<const NnApi> nnapi)
-    : nnapi(nnapi.get()), owned_nnapi(std::move(nnapi)) {}
+    : nnapi(nnapi.get()), owned_nnapi(std::move(nnapi)) {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_110(mht_110_v, 6727, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "StatefulNnApiDelegate::Data::Data");
+}
 
 StatefulNnApiDelegate::Data::~Data() {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_111(mht_111_v, 6732, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "StatefulNnApiDelegate::Data::~Data");
+
   std::for_each(std::begin(delegate_state_cache),
                 std::end(delegate_state_cache),
                 [](const std::pair<int, NNAPIDelegateKernel*>& entry) {
@@ -6235,12 +6742,18 @@ StatefulNnApiDelegate::Data::~Data() {
 void StatefulNnApiDelegate::Data::CacheDelegateKernel(
     const TfLiteDelegateParams* delegate_params,
     NNAPIDelegateKernel* delegate_state) {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_112(mht_112_v, 6745, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "StatefulNnApiDelegate::Data::CacheDelegateKernel");
+
   const int cache_key = delegate_params->nodes_to_replace->data[0];
   delegate_state_cache.emplace(cache_key, delegate_state);
 }
 
 NNAPIDelegateKernel* StatefulNnApiDelegate::Data::MaybeGetCachedDelegateKernel(
     const TfLiteDelegateParams* delegate_params) {
+   std::vector<std::string> mht_113_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_113(mht_113_v, 6754, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "StatefulNnApiDelegate::Data::MaybeGetCachedDelegateKernel");
+
   const int cache_key = delegate_params->nodes_to_replace->data[0];
   const auto cached_state = delegate_state_cache.find(cache_key);
   if (cached_state != std::end(delegate_state_cache)) {
@@ -6254,6 +6767,9 @@ NNAPIDelegateKernel* StatefulNnApiDelegate::Data::MaybeGetCachedDelegateKernel(
 
 void StatefulNnApiDelegate::StatefulNnApiDelegateConstructorImpl(
     const Options& options) {
+   std::vector<std::string> mht_114_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_114(mht_114_v, 6770, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "StatefulNnApiDelegate::StatefulNnApiDelegateConstructorImpl");
+
   if (options.accelerator_name) {
     delegate_data_.accelerator_name = options.accelerator_name;
   }
@@ -6302,30 +6818,48 @@ void StatefulNnApiDelegate::StatefulNnApiDelegateConstructorImpl(
 }
 
 StatefulNnApiDelegate::StatefulNnApiDelegate(const NnApi* nnapi)
-    : StatefulNnApiDelegate(nnapi, Options()) {}
+    : StatefulNnApiDelegate(nnapi, Options()) {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_115(mht_115_v, 6822, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "StatefulNnApiDelegate::StatefulNnApiDelegate");
+}
 
 StatefulNnApiDelegate::StatefulNnApiDelegate(Options options)
-    : StatefulNnApiDelegate(NnApiImplementation(), options) {}
+    : StatefulNnApiDelegate(NnApiImplementation(), options) {
+   std::vector<std::string> mht_116_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_116(mht_116_v, 6828, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "StatefulNnApiDelegate::StatefulNnApiDelegate");
+}
 
 StatefulNnApiDelegate::StatefulNnApiDelegate(
     const NnApiSLDriverImplFL5* nnapi_support_library_driver, Options options)
     : TfLiteDelegate(TfLiteDelegateCreate()),
       delegate_data_(
           CreateNnApiFromSupportLibrary(nnapi_support_library_driver)) {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_117(mht_117_v, 6837, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "StatefulNnApiDelegate::StatefulNnApiDelegate");
+
   StatefulNnApiDelegateConstructorImpl(options);
 }
 
 StatefulNnApiDelegate::StatefulNnApiDelegate(const NnApi* nnapi,
                                              Options options)
     : TfLiteDelegate(TfLiteDelegateCreate()), delegate_data_(nnapi) {
+   std::vector<std::string> mht_118_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_118(mht_118_v, 6846, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "StatefulNnApiDelegate::StatefulNnApiDelegate");
+
   StatefulNnApiDelegateConstructorImpl(options);
 }
 
 StatefulNnApiDelegate::StatefulNnApiDelegate()
-    : StatefulNnApiDelegate(Options()) {}
+    : StatefulNnApiDelegate(Options()) {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_119(mht_119_v, 6854, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "StatefulNnApiDelegate::StatefulNnApiDelegate");
+}
 
 const StatefulNnApiDelegate::Options StatefulNnApiDelegate::GetOptions(
     TfLiteDelegate* delegate) {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_120(mht_120_v, 6860, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "StatefulNnApiDelegate::GetOptions");
+
   auto delegate_data = reinterpret_cast<Data*>(delegate->data_);
   StatefulNnApiDelegate::Options options;
   options.execution_preference = delegate_data->execution_preference;
@@ -6361,12 +6895,18 @@ const StatefulNnApiDelegate::Options StatefulNnApiDelegate::GetOptions(
 
 const std::vector<StatefulNnApiDelegate::MemoryRegistration>&
 StatefulNnApiDelegate::GetTensorMemoryMap(TfLiteDelegate* delegate) {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_121(mht_121_v, 6898, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "StatefulNnApiDelegate::GetTensorMemoryMap");
+
   auto delegate_data = reinterpret_cast<Data*>(delegate->data_);
   return delegate_data->tensor_memory_map;
 }
 
 delegates::Serialization* StatefulNnApiDelegate::GetCache(
     TfLiteDelegate* delegate) {
+   std::vector<std::string> mht_122_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_122(mht_122_v, 6907, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "StatefulNnApiDelegate::GetCache");
+
   auto delegate_data = reinterpret_cast<Data*>(delegate->data_);
   return delegate_data->cache.get();
 }
@@ -6374,6 +6914,9 @@ delegates::Serialization* StatefulNnApiDelegate::GetCache(
 TfLiteBufferHandle StatefulNnApiDelegate::RegisterNnapiMemory(
     ANeuralNetworksMemory* memory, CopyToHostTensorFnPtr callback,
     void* callback_context) {
+   std::vector<std::string> mht_123_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_123(mht_123_v, 6917, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "StatefulNnApiDelegate::RegisterNnapiMemory");
+
   uint64_t timestamp = delegate_data_.next_buffer_handle_timestamp++;
   int map_size = delegate_data_.tensor_memory_map.size();
   for (int i = 0; i < map_size; i++) {
@@ -6391,6 +6934,9 @@ TfLiteBufferHandle StatefulNnApiDelegate::RegisterNnapiMemory(
 TfLiteStatus StatefulNnApiDelegate::DoCopyFromBufferHandle(
     TfLiteContext* context, TfLiteDelegate* delegate,
     TfLiteBufferHandle buffer_handle, TfLiteTensor* tensor) {
+   std::vector<std::string> mht_124_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_124(mht_124_v, 6937, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "StatefulNnApiDelegate::DoCopyFromBufferHandle");
+
   auto delegate_data = reinterpret_cast<Data*>(delegate->data_);
   if (buffer_handle < 0 ||
       buffer_handle >= delegate_data->tensor_memory_map.size()) {
@@ -6409,12 +6955,18 @@ TfLiteStatus StatefulNnApiDelegate::DoCopyFromBufferHandle(
 TfLiteStatus StatefulNnApiDelegate::DoCopyToBufferHandle(
     TfLiteContext* context, TfLiteDelegate* delegate,
     TfLiteBufferHandle buffer_handle, TfLiteTensor* tensor) {
+   std::vector<std::string> mht_125_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_125(mht_125_v, 6958, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "StatefulNnApiDelegate::DoCopyToBufferHandle");
+
   return kTfLiteError;
 }
 
 void StatefulNnApiDelegate::DoFreeBufferHandle(TfLiteContext* context,
                                                TfLiteDelegate* delegate,
                                                TfLiteBufferHandle* handle) {
+   std::vector<std::string> mht_126_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_126(mht_126_v, 6967, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "StatefulNnApiDelegate::DoFreeBufferHandle");
+
   auto delegate_data = reinterpret_cast<Data*>(delegate->data_);
   if (*handle >= 0 && *handle < delegate_data->tensor_memory_map.size()) {
     delegate_data->tensor_memory_map[*handle] = {nullptr, nullptr, nullptr};
@@ -6423,6 +6975,9 @@ void StatefulNnApiDelegate::DoFreeBufferHandle(TfLiteContext* context,
 }
 
 int StatefulNnApiDelegate::GetNnApiErrno() const {
+   std::vector<std::string> mht_127_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_127(mht_127_v, 6978, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "StatefulNnApiDelegate::GetNnApiErrno");
+
   return delegate_data_.nnapi_errno;
 }
 
@@ -6432,6 +6987,9 @@ TfLiteStatus StatefulNnApiDelegate::GetNodesSupportedByAccelerator(
     const std::vector<int>& supported_nodes,
     std::vector<int>* device_supported_nodes, int* num_partitions,
     TfLiteDelegateParams** params_array, int* nnapi_errno) {
+   std::vector<std::string> mht_128_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_128(mht_128_v, 6990, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "StatefulNnApiDelegate::GetNodesSupportedByAccelerator");
+
   auto* delegate_data = static_cast<Data*>(delegate->data_);
   // The first entry in the array is the element count
 
@@ -6483,6 +7041,9 @@ TfLiteStatus StatefulNnApiDelegate::LimitDelegatedPartitions(
     int max_partitions,
     std::vector<TfLiteDelegateParams> partition_params_array,
     std::vector<int>* nodes_to_delegate) {
+   std::vector<std::string> mht_129_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_129(mht_129_v, 7044, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "StatefulNnApiDelegate::LimitDelegatedPartitions");
+
   int num_partitions = partition_params_array.size();
   if (max_partitions <= 0 || num_partitions <= max_partitions) {
     return kTfLiteOk;
@@ -6554,6 +7115,9 @@ static std::vector<int> GetSupportedOpsWithFp16WeightRemapping(
 
 TfLiteStatus StatefulNnApiDelegate::DoPrepare(TfLiteContext* context,
                                               TfLiteDelegate* delegate) {
+   std::vector<std::string> mht_130_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_130(mht_130_v, 7118, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "StatefulNnApiDelegate::DoPrepare");
+
   auto* delegate_data = static_cast<Data*>(delegate->data_);
   int* nnapi_errno = &(delegate_data->nnapi_errno);
   const NnApi* nnapi = delegate_data->nnapi;
@@ -6825,6 +7389,9 @@ TfLiteStatus StatefulNnApiDelegate::DoPrepare(TfLiteContext* context,
 
 // Returns a singleton NNAPI Delegate that can check for support of ops.
 TfLiteDelegate* NnApiDelegate() {
+   std::vector<std::string> mht_131_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegateDTcc mht_131(mht_131_v, 7392, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate.cc", "NnApiDelegate");
+
   static StatefulNnApiDelegate* delegate = new StatefulNnApiDelegate();
   return delegate;
 }

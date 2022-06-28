@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_DTENSOR_CC_DTENSOR_DEVICE_UTIL_H_
 #define TENSORFLOW_DTENSOR_CC_DTENSOR_DEVICE_UTIL_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <string>
 #include <utility>
@@ -112,12 +280,18 @@ struct ExecutionFunctions {
 // TODO(yujingzhang): move FingerprintCat128 to tensorflow/platform.
 inline tensorflow::Fprint128 FingerprintCat128(const tensorflow::Fprint128& a,
                                                const tensorflow::Fprint128& b) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_0(mht_0_v, 283, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "FingerprintCat128");
+
   return {tensorflow::FingerprintCat64(a.low64, b.low64),
           tensorflow::FingerprintCat64(a.high64, b.high64)};
 }
 
 inline tensorflow::Fprint128 FingerprintCat128(const tensorflow::Fprint128& a,
                                                const int64 b) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_1(mht_1_v, 292, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "FingerprintCat128");
+
   auto x = tensorflow::FingerprintCat64(a.low64, b);
   return {x, tensorflow::FingerprintCat64(a.high64, x)};
 }
@@ -127,7 +301,10 @@ struct DTensorOperation {
   const char* name;
   const FunctionDef* function_def;
 
-  inline bool is_func() const { return function_def != nullptr; }
+  inline bool is_func() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_2(mht_2_v, 305, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "is_func");
+ return function_def != nullptr; }
 };
 
 // Contains a mesh bundled with a parallel device over all of the devices in
@@ -143,7 +320,10 @@ class MeshWithParallelDevice {
         composite_device_name_(composite_device_name),
         // Device IDs are constructed lazily because we don't have a context
         // until we start executing ops.
-        device_ids_tensor_(nullptr) {}
+        device_ids_tensor_(nullptr) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_3(mht_3_v, 324, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "MeshWithParallelDevice");
+}
 
   // A parallel tensor containing scalar integer device IDs for underlying
   // devices, each placed on its corresponding device.
@@ -153,10 +333,16 @@ class MeshWithParallelDevice {
   parallel_device::ParallelTensor* DeviceIDs(TFE_Context* context,
                                              TF_Status* status) const;
   const parallel_device::ParallelDevice& parallel_device() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_4(mht_4_v, 336, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "parallel_device");
+
     return *parallel_device_;
   }
 
-  const dtensor::Mesh& mesh_config() const { return mesh_config_; }
+  const dtensor::Mesh& mesh_config() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_5(mht_5_v, 343, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "mesh_config");
+ return mesh_config_; }
 
   // Creates a CompositeDevice in eager context if it not exists.
   // Called when parallel_device_ contains a subset of global devices, e.g.
@@ -175,7 +361,10 @@ class MeshWithParallelDevice {
     return composite_device_;
   }
 
-  CompositeDevice* composite_device() const { return composite_device_; }
+  CompositeDevice* composite_device() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_6(mht_6_v, 365, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "composite_device");
+ return composite_device_; }
 
  private:
   dtensor::Mesh mesh_config_;
@@ -218,13 +407,25 @@ class TensorWithLayout {
       const std::vector<int64_t>& local_shape, const TF_DataType dtype,
       const MeshWithParallelDevice& mesh, const Layout& layout);
 
-  virtual ~TensorWithLayout() {}
+  virtual ~TensorWithLayout() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_7(mht_7_v, 411, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "~TensorWithLayout");
+}
 
-  virtual const Layout& layout() const { return layout_; }
+  virtual const Layout& layout() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_8(mht_8_v, 416, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "layout");
+ return layout_; }
 
-  virtual TensorType tensor_type() const { return TensorType::kDense; }
+  virtual TensorType tensor_type() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_9(mht_9_v, 421, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "tensor_type");
+ return TensorType::kDense; }
 
   virtual TF_DataType dtype() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_10(mht_10_v, 426, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "dtype");
+
     if (dtype_.has_value()) {
       return dtype_.value();
     } else {
@@ -234,19 +435,31 @@ class TensorWithLayout {
 
   // Small constant value optimization for non-resource-handle tensors.
   virtual void set_const_value(const NodeDef& const_node) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_11(mht_11_v, 438, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "set_const_value");
+
     const_value_.emplace(const_node);
   }
 
   // Clears the cached const value if present.
-  void reset_const_value() { const_value_.reset(); }
+  void reset_const_value() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_12(mht_12_v, 446, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "reset_const_value");
+ const_value_.reset(); }
 
   // Encodes the NodeDef via provided builder, if applicable.
-  virtual void EncodeAttributes(tensorflow::NodeDefBuilder& builder) const {}
+  virtual void EncodeAttributes(tensorflow::NodeDefBuilder& builder) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_13(mht_13_v, 452, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "EncodeAttributes");
+}
 
   virtual tensorflow::Fprint128 CacheKey() const;
 
   // Updates layout for this Tensor.
   virtual void UpdateLayout(const Layout& new_layout, TF_Status* status) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_14(mht_14_v, 460, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "UpdateLayout");
+
     TF_SetStatus(status, TF_INTERNAL,
                  "Attempt to update layout on non-resource-handle");
   }
@@ -254,17 +467,29 @@ class TensorWithLayout {
   // Update shape and dtype.
   virtual void UpdateShapeAndDType(const TensorShapeProto& shape,
                                    const DataType& dtype, TF_Status* status) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_15(mht_15_v, 470, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "UpdateShapeAndDType");
+
     TF_SetStatus(status, TF_INTERNAL,
                  "Attempt to update shape and layout on non-resource-handle");
   }
 
   virtual TFE_TensorHandle* get_tensor(size_t index) const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_16(mht_16_v, 478, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "get_tensor");
+
     return tensor()->tensor(index);
   }
 
-  virtual size_t num_tensors() const { return tensor()->num_tensors(); }
+  virtual size_t num_tensors() const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_17(mht_17_v, 485, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "num_tensors");
+ return tensor()->num_tensors(); }
 
   virtual parallel_device::ParallelTensor* tensor() const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_18(mht_18_v, 490, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "tensor");
+
     return tensor_.get();
   }
 
@@ -275,6 +500,9 @@ class TensorWithLayout {
   virtual std::string DebugString() const;
 
   void set_input_layout_for_shape_op_result(const Layout& layout) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_19(mht_19_v, 503, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "set_input_layout_for_shape_op_result");
+
     input_layout_for_shape_op_result_.emplace(layout);
   }
 
@@ -282,7 +510,10 @@ class TensorWithLayout {
     return input_layout_for_shape_op_result_;
   }
 
-  const MeshWithParallelDevice& mesh() const { return mesh_; }
+  const MeshWithParallelDevice& mesh() const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_20(mht_20_v, 514, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "mesh");
+ return mesh_; }
 
   // Compute global shape from layout & local tensor shape.
   //
@@ -308,7 +539,10 @@ class TensorWithLayout {
         mesh_(mesh),
         const_value_(std::move(const_value)),
         local_shape_(local_shape),
-        dtype_(dtype) {}
+        dtype_(dtype) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_21(mht_21_v, 543, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "TensorWithLayout");
+}
 
   std::unique_ptr<parallel_device::ParallelTensor> tensor_;
 
@@ -346,13 +580,22 @@ class ResourceHandleWithLayout : public TensorWithLayout {
   // The layout of uninitialized resource tensors, or the layout of the tensor
   // contained in an initialized resource.
   const Layout& layout() const override {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_22(mht_22_v, 583, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "layout");
+
     return dereferenced_layout_.has_value() ? dereferenced_layout_.value()
                                             : layout_;
   }
 
-  TensorType tensor_type() const override { return TensorType::kResource; }
+  TensorType tensor_type() const override {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_23(mht_23_v, 591, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "tensor_type");
+ return TensorType::kResource; }
 
   void set_const_value(const NodeDef& const_node) override {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_24(mht_24_v, 596, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "set_const_value");
+
     // Just a no-op for resource handle. Maybe we should error out.
   }
 
@@ -364,21 +607,36 @@ class ResourceHandleWithLayout : public TensorWithLayout {
 
   void UpdateShapeAndDType(const TensorShapeProto& shape, const DataType& dtype,
                            TF_Status* status) override {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_25(mht_25_v, 610, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "UpdateShapeAndDType");
+
     set_dereferenced_shape(shape);
     set_dereferenced_dtype(dtype);
   }
 
   void set_dereferenced_shape(const TensorShapeProto& shape) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_26(mht_26_v, 618, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "set_dereferenced_shape");
+
     dereferenced_shape_.emplace(shape);
   }
   void set_dereferenced_dtype(const DataType& dtype) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_27(mht_27_v, 624, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "set_dereferenced_dtype");
+
     dereferenced_dtype_.emplace(dtype);
   }
 
   const absl::optional<TensorShapeProto>& dereferenced_shape() const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_28(mht_28_v, 631, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "dereferenced_shape");
+
     return dereferenced_shape_;
   }
   const absl::optional<DataType>& dereferenced_dtype() const {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_29(mht_29_v, 637, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "dereferenced_dtype");
+
     return dereferenced_dtype_;
   }
 
@@ -388,7 +646,10 @@ class ResourceHandleWithLayout : public TensorWithLayout {
       const MeshWithParallelDevice& mesh, const Layout& layout,
       std::vector<int64_t> local_shape)
       : TensorWithLayout(std::move(tensor), mesh, layout, local_shape,
-                         TF_RESOURCE) {}
+                         TF_RESOURCE) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_30(mht_30_v, 650, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "ResourceHandleWithLayout");
+}
 
  private:
   // The layout of the tensor pointed to by this handle, if any.
@@ -424,18 +685,30 @@ class SparseTensorWithLayout : public TensorWithLayout {
   }
 
   void set_const_value(const NodeDef& const_node) override {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_31(mht_31_v, 688, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "set_const_value");
+
     // No-op for SparseTensors, consider erroring out.
   }
 
   // Add attribute '_sparse' to the NodeDefBuilder so that the mlir::Value
   // that originate from SparseTensorWithLayout are marked as '_sparse'.
   void EncodeAttributes(tensorflow::NodeDefBuilder& builder) const override {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_32(mht_32_v, 697, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "EncodeAttributes");
+
     builder.Attr("_sparse", true);
   }
 
-  TensorType tensor_type() const override { return TensorType::kSparse; }
+  TensorType tensor_type() const override {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_33(mht_33_v, 704, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "tensor_type");
+ return TensorType::kSparse; }
 
-  size_t num_tensors() const override { return 3 * indices()->num_tensors(); }
+  size_t num_tensors() const override {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_34(mht_34_v, 709, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "num_tensors");
+ return 3 * indices()->num_tensors(); }
 
   TFE_TensorHandle* get_tensor(size_t index) const override;
 
@@ -445,11 +718,20 @@ class SparseTensorWithLayout : public TensorWithLayout {
 
   TF_DataType dtype() const override;
 
-  parallel_device::ParallelTensor* indices() const { return indices_.get(); }
+  parallel_device::ParallelTensor* indices() const {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_35(mht_35_v, 722, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "indices");
+ return indices_.get(); }
 
-  parallel_device::ParallelTensor* values() const { return values_.get(); }
+  parallel_device::ParallelTensor* values() const {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_36(mht_36_v, 727, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "values");
+ return values_.get(); }
 
   parallel_device::ParallelTensor* dense_shapes() const {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_37(mht_37_v, 732, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "dense_shapes");
+
     return dense_shapes_.get();
   }
 
@@ -465,7 +747,10 @@ class SparseTensorWithLayout : public TensorWithLayout {
       : TensorWithLayout(nullptr, mesh, layout, local_shape),
         indices_(std::move(indices)),
         values_(std::move(values)),
-        dense_shapes_(std::move(dense_shapes)) {}
+        dense_shapes_(std::move(dense_shapes)) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_38(mht_38_v, 751, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "SparseTensorWithLayout");
+}
   std::unique_ptr<parallel_device::ParallelTensor> indices_;
   std::unique_ptr<parallel_device::ParallelTensor> values_;
   std::unique_ptr<parallel_device::ParallelTensor> dense_shapes_;
@@ -473,6 +758,9 @@ class SparseTensorWithLayout : public TensorWithLayout {
 
 template <typename T>
 std::string ShapeToDebugString(const std::vector<T> shape_vector) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTh mht_39(mht_39_v, 761, "", "./tensorflow/dtensor/cc/dtensor_device_util.h", "ShapeToDebugString");
+
   std::vector<tensorflow::int64> cast_shape(shape_vector.begin(),
                                             shape_vector.end());
   tensorflow::PartialTensorShape shape;

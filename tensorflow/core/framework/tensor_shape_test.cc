@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,8 +195,14 @@ limitations under the License.
 namespace tensorflow {
 class TensorShapeTestHelper {
  public:
-  static void set_data_type(TensorShape* s, DataType t) { s->set_data_type(t); }
-  static uint8 data_type(const TensorShape* s) { return s->data_type(); }
+  static void set_data_type(TensorShape* s, DataType t) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_0(mht_0_v, 199, "", "./tensorflow/core/framework/tensor_shape_test.cc", "set_data_type");
+ s->set_data_type(t); }
+  static uint8 data_type(const TensorShape* s) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_1(mht_1_v, 203, "", "./tensorflow/core/framework/tensor_shape_test.cc", "data_type");
+ return s->data_type(); }
 };
 
 namespace {
@@ -242,7 +416,10 @@ class TensorShapeOld {
   /// REQUIRES: `dim_sizes[i] >= 0`
   explicit TensorShapeOld(gtl::ArraySlice<int64_t> dim_sizes);
   TensorShapeOld(std::initializer_list<int64_t> dim_sizes)
-      : TensorShapeOld(gtl::ArraySlice<int64_t>(dim_sizes)) {}
+      : TensorShapeOld(gtl::ArraySlice<int64_t>(dim_sizes)) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_2(mht_2_v, 420, "", "./tensorflow/core/framework/tensor_shape_test.cc", "TensorShapeOld");
+}
 
   /// REQUIRES: `IsValid(proto)`
   explicit TensorShapeOld(const TensorShapeProto& proto);
@@ -283,13 +460,19 @@ class TensorShapeOld {
   void RemoveDim(int d);
 
   /// Return the number of dimensions in the tensor.
-  int dims() const { return dim_sizes_.size(); }
+  int dims() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_3(mht_3_v, 464, "", "./tensorflow/core/framework/tensor_shape_test.cc", "dims");
+ return dim_sizes_.size(); }
 
   /// \brief Returns the number of elements in dimension `d`.
   /// REQUIRES: `0 <= d < dims()`
   // TODO(touts): Rename to `dimension()` to match
   // `Eigen::Tensor::dimension()`?
   int64_t dim_size(int d) const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_4(mht_4_v, 473, "", "./tensorflow/core/framework/tensor_shape_test.cc", "dim_size");
+
     DCHECK_GE(d, 0);
     DCHECK_LT(d, dims());
     return dim_sizes_[d];
@@ -302,7 +485,10 @@ class TensorShapeOld {
   ///
   /// We use `int64` and not `size_t` to be compatible with `Eigen::Tensor`
   /// which uses `ptrdiff_t`.
-  int64_t num_elements() const { return num_elements_; }
+  int64_t num_elements() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_5(mht_5_v, 489, "", "./tensorflow/core/framework/tensor_shape_test.cc", "num_elements");
+ return num_elements_; }
 
   /// Returns true if `*this` and `b` have the same sizes. Ignores
   /// dimension names.
@@ -345,14 +531,20 @@ class TensorShapeOld {
 };
 
 struct TensorShapeDimOld {
-  explicit TensorShapeDimOld(int64_t s) : size(s) {}
+  explicit TensorShapeDimOld(int64_t s) : size(s) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_6(mht_6_v, 535, "", "./tensorflow/core/framework/tensor_shape_test.cc", "TensorShapeDimOld");
+}
   int64_t size;
 };
 
 class TensorShapeIterOld {
  public:
   TensorShapeIterOld(const TensorShapeOld* shape, int d)
-      : shape_(shape), d_(d) {}
+      : shape_(shape), d_(d) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_7(mht_7_v, 545, "", "./tensorflow/core/framework/tensor_shape_test.cc", "TensorShapeIterOld");
+}
   bool operator==(const TensorShapeIterOld& rhs) {
     DCHECK(shape_ == rhs.shape_);
     return d_ == rhs.d_;
@@ -363,6 +555,9 @@ class TensorShapeIterOld {
   }
   void operator++() { ++d_; }
   TensorShapeDimOld operator*() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_8(mht_8_v, 558, "", "./tensorflow/core/framework/tensor_shape_test.cc", "*");
+
     return TensorShapeDimOld(shape_->dim_size(d_));
   }
 
@@ -375,6 +570,9 @@ class TensorShapeIterOld {
 static const int64_t kMaxElements = (1LL << 40);
 
 bool TensorShapeOld::IsValid(const TensorShapeProto& proto) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_9(mht_9_v, 573, "", "./tensorflow/core/framework/tensor_shape_test.cc", "TensorShapeOld::IsValid");
+
   int64_t num_elements = 1;
   for (const auto& d : proto.dim()) {
     if (d.size() < 0) return false;
@@ -385,6 +583,9 @@ bool TensorShapeOld::IsValid(const TensorShapeProto& proto) {
 }
 
 Status TensorShapeOld::IsValidShape(const TensorShapeProto& proto) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_10(mht_10_v, 586, "", "./tensorflow/core/framework/tensor_shape_test.cc", "TensorShapeOld::IsValidShape");
+
   int64_t num_elements = 1;
   for (const auto& d : proto.dim()) {
     if (d.size() < 0) {
@@ -403,6 +604,9 @@ Status TensorShapeOld::IsValidShape(const TensorShapeProto& proto) {
 }
 
 TensorShapeOld::TensorShapeOld(const TensorShapeProto& proto) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_11(mht_11_v, 607, "", "./tensorflow/core/framework/tensor_shape_test.cc", "TensorShapeOld::TensorShapeOld");
+
   dim_sizes_.reserve(proto.dim_size());
   num_elements_ = 1;
   for (const auto& d : proto.dim()) {
@@ -411,6 +615,9 @@ TensorShapeOld::TensorShapeOld(const TensorShapeProto& proto) {
 }
 
 TensorShapeOld::TensorShapeOld(gtl::ArraySlice<int64_t> dim_sizes) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_12(mht_12_v, 618, "", "./tensorflow/core/framework/tensor_shape_test.cc", "TensorShapeOld::TensorShapeOld");
+
   dim_sizes_.reserve(dim_sizes.size());
   num_elements_ = 1;
   for (auto s : dim_sizes) {
@@ -418,14 +625,23 @@ TensorShapeOld::TensorShapeOld(gtl::ArraySlice<int64_t> dim_sizes) {
   }
 }
 
-TensorShapeOld::TensorShapeOld() : num_elements_(1) {}
+TensorShapeOld::TensorShapeOld() : num_elements_(1) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_13(mht_13_v, 629, "", "./tensorflow/core/framework/tensor_shape_test.cc", "TensorShapeOld::TensorShapeOld");
+}
 
 void TensorShapeOld::Clear() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_14(mht_14_v, 634, "", "./tensorflow/core/framework/tensor_shape_test.cc", "TensorShapeOld::Clear");
+
   dim_sizes_.clear();
   num_elements_ = 1;
 }
 
 void TensorShapeOld::AddDim(int64_t size) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_15(mht_15_v, 642, "", "./tensorflow/core/framework/tensor_shape_test.cc", "TensorShapeOld::AddDim");
+
   CHECK_GE(size, 0);
   dim_sizes_.push_back(size);
   num_elements_ *= size;
@@ -434,10 +650,16 @@ void TensorShapeOld::AddDim(int64_t size) {
 }
 
 void TensorShapeOld::AppendShape(const TensorShapeOld& shape) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_16(mht_16_v, 653, "", "./tensorflow/core/framework/tensor_shape_test.cc", "TensorShapeOld::AppendShape");
+
   for (auto d : shape) AddDim(d.size);
 }
 
 void TensorShapeOld::InsertDim(int d, int64_t size) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_17(mht_17_v, 660, "", "./tensorflow/core/framework/tensor_shape_test.cc", "TensorShapeOld::InsertDim");
+
   CHECK_GE(d, 0);
   CHECK_LE(d, dims());
   CHECK_GE(size, 0);
@@ -448,6 +670,9 @@ void TensorShapeOld::InsertDim(int d, int64_t size) {
 }
 
 void TensorShapeOld::set_dim(int d, int64_t size) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_18(mht_18_v, 673, "", "./tensorflow/core/framework/tensor_shape_test.cc", "TensorShapeOld::set_dim");
+
   CHECK_GE(d, 0);
   CHECK_LT(d, dims());
   CHECK_GE(size, 0);
@@ -458,6 +683,9 @@ void TensorShapeOld::set_dim(int d, int64_t size) {
 }
 
 void TensorShapeOld::RemoveDim(int d) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_19(mht_19_v, 686, "", "./tensorflow/core/framework/tensor_shape_test.cc", "TensorShapeOld::RemoveDim");
+
   CHECK_GE(d, 0);
   CHECK_LT(d, dims());
 
@@ -468,6 +696,9 @@ void TensorShapeOld::RemoveDim(int d) {
 }
 
 void TensorShapeOld::recompute_dims() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_20(mht_20_v, 699, "", "./tensorflow/core/framework/tensor_shape_test.cc", "TensorShapeOld::recompute_dims");
+
   num_elements_ = 1;
   for (auto s : dim_sizes_) {
     num_elements_ *= s;
@@ -477,6 +708,9 @@ void TensorShapeOld::recompute_dims() {
 }
 
 bool TensorShapeOld::IsSameSize(const TensorShapeOld& b) const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_21(mht_21_v, 711, "", "./tensorflow/core/framework/tensor_shape_test.cc", "TensorShapeOld::IsSameSize");
+
   if (b.dims() != dims()) return false;
   for (int d = 0; d < dims(); d++) {
     if (dim_size(d) != b.dim_size(d)) return false;
@@ -485,6 +719,9 @@ bool TensorShapeOld::IsSameSize(const TensorShapeOld& b) const {
 }
 
 void TensorShapeOld::AsProto(TensorShapeProto* proto) const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_22(mht_22_v, 722, "", "./tensorflow/core/framework/tensor_shape_test.cc", "TensorShapeOld::AsProto");
+
   proto->Clear();
   for (size_t d = 0; d < dim_sizes_.size(); ++d) {
     auto* dim = proto->add_dim();
@@ -493,19 +730,31 @@ void TensorShapeOld::AsProto(TensorShapeProto* proto) const {
 }
 
 TensorShapeIterOld TensorShapeOld::begin() const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_23(mht_23_v, 733, "", "./tensorflow/core/framework/tensor_shape_test.cc", "TensorShapeOld::begin");
+
   return TensorShapeIterOld(this, 0);
 }
 
 TensorShapeIterOld TensorShapeOld::end() const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_24(mht_24_v, 740, "", "./tensorflow/core/framework/tensor_shape_test.cc", "TensorShapeOld::end");
+
   return TensorShapeIterOld(this, dims());
 }
 
 string TensorShapeOld::DebugString() const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_25(mht_25_v, 747, "", "./tensorflow/core/framework/tensor_shape_test.cc", "TensorShapeOld::DebugString");
+
   return strings::StrCat(
       "[", absl::StrJoin(gtl::ArraySlice<int64_t>(dim_sizes_), ","), "]");
 }
 
 string TensorShapeOld::DebugString(const TensorShapeProto& proto) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_26(mht_26_v, 755, "", "./tensorflow/core/framework/tensor_shape_test.cc", "TensorShapeOld::DebugString");
+
   string s = "[";
   bool first = true;
   for (const auto& d : proto.dim()) {
@@ -519,6 +768,9 @@ string TensorShapeOld::DebugString(const TensorShapeProto& proto) {
 // ------------------------------------------------------------------------
 
 static int64_t SkewedSize(random::SimplePhilox* gen, int64_t current_elements) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_27(mht_27_v, 771, "", "./tensorflow/core/framework/tensor_shape_test.cc", "SkewedSize");
+
   int64_t result = 0;
   do {
     if (current_elements < 100) {
@@ -708,6 +960,9 @@ static std::vector<int64_t> MakeSizes(int arg) {
 }
 
 void BM_TensorShape_Init(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_28(mht_28_v, 963, "", "./tensorflow/core/framework/tensor_shape_test.cc", "BM_TensorShape_Init");
+
   const int arg = state.range(0);
 
   auto sizes = MakeSizes(arg);
@@ -719,6 +974,9 @@ void BM_TensorShape_Init(::testing::benchmark::State& state) {
 BENCHMARK(BM_TensorShape_Init)->Arg(0)->Arg(1)->Arg(2)->Arg(3)->Arg(4);
 
 void BM_TensorShape_Assign(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_29(mht_29_v, 977, "", "./tensorflow/core/framework/tensor_shape_test.cc", "BM_TensorShape_Assign");
+
   const int arg = state.range(0);
 
   TensorShape shape(MakeSizes(arg));
@@ -730,6 +988,9 @@ void BM_TensorShape_Assign(::testing::benchmark::State& state) {
 BENCHMARK(BM_TensorShape_Assign)->Arg(0)->Arg(1)->Arg(2)->Arg(3)->Arg(4);
 
 void BM_TensorShape_SetDim(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_shape_testDTcc mht_30(mht_30_v, 991, "", "./tensorflow/core/framework/tensor_shape_test.cc", "BM_TensorShape_SetDim");
+
   const int arg = state.range(0);
 
   TensorShape shape(MakeSizes(arg));

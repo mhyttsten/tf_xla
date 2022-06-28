@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_BACKEND_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_BACKEND_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbackendDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbackendDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbackendDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <map>
 #include <memory>
@@ -84,20 +252,38 @@ class Backend {
   ~Backend();
 
   // Accessors for the various objects.
-  se::Platform* platform() const { return platform_; }
-  Compiler* compiler() const { return compiler_; }
+  se::Platform* platform() const {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbackendDTh mht_0(mht_0_v, 256, "", "./tensorflow/compiler/xla/service/backend.h", "platform");
+ return platform_; }
+  Compiler* compiler() const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbackendDTh mht_1(mht_1_v, 260, "", "./tensorflow/compiler/xla/service/backend.h", "compiler");
+ return compiler_; }
   se::DeviceMemoryAllocator* memory_allocator() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbackendDTh mht_2(mht_2_v, 264, "", "./tensorflow/compiler/xla/service/backend.h", "memory_allocator");
+
     return memory_allocator_.get();
   }
   std::shared_ptr<se::DeviceMemoryAllocator> shared_memory_allocator() const {
     return memory_allocator_;
   }
-  TransferManager* transfer_manager() const { return transfer_manager_; }
-  ComputationPlacer* computation_placer() const { return computation_placer_; }
+  TransferManager* transfer_manager() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbackendDTh mht_3(mht_3_v, 273, "", "./tensorflow/compiler/xla/service/backend.h", "transfer_manager");
+ return transfer_manager_; }
+  ComputationPlacer* computation_placer() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbackendDTh mht_4(mht_4_v, 277, "", "./tensorflow/compiler/xla/service/backend.h", "computation_placer");
+ return computation_placer_; }
 
   // Returns the number of devices of the platform type which are visible. Not
   // all of these devices may be usable by XLA.
-  int device_count() const { return stream_executors_.size(); }
+  int device_count() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbackendDTh mht_5(mht_5_v, 284, "", "./tensorflow/compiler/xla/service/backend.h", "device_count");
+ return stream_executors_.size(); }
 
   // Returns the device ordinal number of the default device.
   int default_device_ordinal() const;
@@ -105,6 +291,9 @@ class Backend {
   // Returns stream executors of all supported devices for this backend. The
   // executors are ordered by the device ordinal.
   const std::vector<se::StreamExecutor*>& stream_executors() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbackendDTh mht_6(mht_6_v, 294, "", "./tensorflow/compiler/xla/service/backend.h", "stream_executors");
+
     return stream_executors_;
   }
 
@@ -115,6 +304,9 @@ class Backend {
   // executor can only be used when the number of computations is 1 (replication
   // can be > 1).
   se::StreamExecutor* default_stream_executor() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbackendDTh mht_7(mht_7_v, 307, "", "./tensorflow/compiler/xla/service/backend.h", "default_stream_executor");
+
     CHECK(!stream_executors_.empty());
     return stream_executors_[0];
   }
@@ -129,17 +321,26 @@ class Backend {
   // Purely for convenience, the caller could rather make this anonymous
   // function itself.
   std::function<StatusOr<StreamPool::Ptr>(int)> StreamBorrower() {
-    return [this](int device_ordinal) { return BorrowStream(device_ordinal); };
+    return [this](int device_ordinal) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbackendDTh mht_8(mht_8_v, 325, "", "./tensorflow/compiler/xla/service/backend.h", "lambda");
+ return BorrowStream(device_ordinal); };
   }
 
   // Returns whether the given device ordinal of the backend is supported.
   bool device_ordinal_supported(int device_ordinal) const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbackendDTh mht_9(mht_9_v, 332, "", "./tensorflow/compiler/xla/service/backend.h", "device_ordinal_supported");
+
     return (device_ordinal >= 0 && device_ordinal < device_count() &&
             stream_executors_[device_ordinal] != nullptr);
   }
 
   // Return a string identifier for the given device, eg: "GPU:3".
   std::string device_name(int device_ordinal) const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbackendDTh mht_10(mht_10_v, 341, "", "./tensorflow/compiler/xla/service/backend.h", "device_name");
+
     return absl::StrCat(platform_->Name(), ":", device_ordinal);
   }
 

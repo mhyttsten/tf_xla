@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_DEVICE_MEMORY_ALLOCATOR_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_DEVICE_MEMORY_ALLOCATOR_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSstream_executorPSdevice_memory_allocatorDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSstream_executorPSdevice_memory_allocatorDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSstream_executorPSdevice_memory_allocatorDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <vector>
 
@@ -47,7 +215,10 @@ class ScopedDeviceMemory {
   // Default construction initializes the internal state to nullptr.  This
   // mirrors the std::unique_ptr<> functionality, where default construction
   // produces a nullptr unique_ptr, which can be assigned later.
-  ScopedDeviceMemory() : device_ordinal_(-1), allocator_(nullptr) {}
+  ScopedDeviceMemory() : device_ordinal_(-1), allocator_(nullptr) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdevice_memory_allocatorDTh mht_0(mht_0_v, 219, "", "./tensorflow/stream_executor/device_memory_allocator.h", "ScopedDeviceMemory");
+}
 
   // Construct a ScopedDeviceMemory from a custom allocator.
   //
@@ -60,6 +231,9 @@ class ScopedDeviceMemory {
   ScopedDeviceMemory(DeviceMemoryBase mem, int device_ordinal,
                      DeviceMemoryAllocator *allocator)
       : wrapped_(mem), device_ordinal_(device_ordinal), allocator_(allocator) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdevice_memory_allocatorDTh mht_1(mht_1_v, 234, "", "./tensorflow/stream_executor/device_memory_allocator.h", "ScopedDeviceMemory");
+
     DCHECK_GE(device_ordinal_, 0);
   }
 
@@ -83,16 +257,25 @@ class ScopedDeviceMemory {
   ScopedDeviceMemory(ScopedDeviceMemory &&other)
       : wrapped_(other.Release()),
         device_ordinal_(other.device_ordinal_),
-        allocator_(other.allocator_) {}
+        allocator_(other.allocator_) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdevice_memory_allocatorDTh mht_2(mht_2_v, 261, "", "./tensorflow/stream_executor/device_memory_allocator.h", "ScopedDeviceMemory");
+}
 
   // Releases the memory that was provided in the constructor, through the
   // "parent" StreamExecutor.
-  ~ScopedDeviceMemory() { TF_CHECK_OK(Free()); }
+  ~ScopedDeviceMemory() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdevice_memory_allocatorDTh mht_3(mht_3_v, 268, "", "./tensorflow/stream_executor/device_memory_allocator.h", "~ScopedDeviceMemory");
+ TF_CHECK_OK(Free()); }
 
   // Moves ownership of the memory from other to this object.
   //
   // Postcondition: other == nullptr.
   ScopedDeviceMemory &operator=(ScopedDeviceMemory &&other) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdevice_memory_allocatorDTh mht_4(mht_4_v, 276, "", "./tensorflow/stream_executor/device_memory_allocator.h", "=");
+
     TF_CHECK_OK(Free());
     wrapped_ = other.Release();
     allocator_ = other.allocator_;
@@ -104,22 +287,37 @@ class ScopedDeviceMemory {
   // DeviceMemory<T> apparent type. This is useful for cases where the
   // DeviceMemory must be passed by const-ref, as the ScopedDeviceMemory doesn't
   // allow copying, for scoped-object-lifetime reasons.
-  const DeviceMemory<ElemT> &cref() const { return wrapped_; }
+  const DeviceMemory<ElemT> &cref() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdevice_memory_allocatorDTh mht_5(mht_5_v, 291, "", "./tensorflow/stream_executor/device_memory_allocator.h", "cref");
+ return wrapped_; }
 
   // Returns a pointer to the DeviceMemory<T> apparent type for use in mutable
   // operations. The value returned should not be used outside the scope of this
   // ScopedDeviceMemory object's lifetime.
-  DeviceMemory<ElemT> *ptr() { return &wrapped_; }
-  const DeviceMemory<ElemT> *ptr() const { return &wrapped_; }
+  DeviceMemory<ElemT> *ptr() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdevice_memory_allocatorDTh mht_6(mht_6_v, 299, "", "./tensorflow/stream_executor/device_memory_allocator.h", "ptr");
+ return &wrapped_; }
+  const DeviceMemory<ElemT> *ptr() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdevice_memory_allocatorDTh mht_7(mht_7_v, 303, "", "./tensorflow/stream_executor/device_memory_allocator.h", "ptr");
+ return &wrapped_; }
 
   // Smart-pointer-like operators for the wrapped DeviceMemory.
   // This reference must not be used outside the lifetime of this
   // ScopedDeviceMemory.
-  const DeviceMemory<ElemT> &operator*() const { return cref(); }
+  const DeviceMemory<ElemT> &operator*() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdevice_memory_allocatorDTh mht_8(mht_8_v, 311, "", "./tensorflow/stream_executor/device_memory_allocator.h", "*");
+ return cref(); }
   DeviceMemory<ElemT> *operator->() { return ptr(); }
   const DeviceMemory<ElemT> *operator->() const { return ptr(); }
 
-  bool is_null() const { return wrapped_.is_null(); }
+  bool is_null() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdevice_memory_allocatorDTh mht_9(mht_9_v, 318, "", "./tensorflow/stream_executor/device_memory_allocator.h", "is_null");
+ return wrapped_.is_null(); }
   bool operator==(std::nullptr_t other) const { return is_null(); }
   bool operator!=(std::nullptr_t other) const { return !is_null(); }
 
@@ -134,9 +332,15 @@ class ScopedDeviceMemory {
   }
 
   // The returned allocator is nonnull iff this object is active.
-  DeviceMemoryAllocator *allocator() const { return allocator_; }
+  DeviceMemoryAllocator *allocator() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdevice_memory_allocatorDTh mht_10(mht_10_v, 336, "", "./tensorflow/stream_executor/device_memory_allocator.h", "allocator");
+ return allocator_; }
 
-  int device_ordinal() const { return device_ordinal_; }
+  int device_ordinal() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdevice_memory_allocatorDTh mht_11(mht_11_v, 341, "", "./tensorflow/stream_executor/device_memory_allocator.h", "device_ordinal");
+ return device_ordinal_; }
 
   // Frees the existing memory, resets the wrapped memory to null.
   port::Status Free();
@@ -161,8 +365,14 @@ class DeviceMemoryAllocator {
   // Parameter platform indicates which platform the allocator allocates memory
   // on. Must be non-null.
   explicit DeviceMemoryAllocator(const Platform* platform)
-      : platform_(platform) {}
-  virtual ~DeviceMemoryAllocator() {}
+      : platform_(platform) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdevice_memory_allocatorDTh mht_12(mht_12_v, 369, "", "./tensorflow/stream_executor/device_memory_allocator.h", "DeviceMemoryAllocator");
+}
+  virtual ~DeviceMemoryAllocator() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdevice_memory_allocatorDTh mht_13(mht_13_v, 373, "", "./tensorflow/stream_executor/device_memory_allocator.h", "~DeviceMemoryAllocator");
+}
 
   // Allocates memory on the device.
   //
@@ -211,11 +421,17 @@ class DeviceMemoryAllocator {
   virtual port::Status Deallocate(int device_ordinal, DeviceMemoryBase mem) = 0;
 
   // Return the platform that the allocator allocates memory on.
-  const Platform* platform() const { return platform_; }
+  const Platform* platform() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdevice_memory_allocatorDTh mht_14(mht_14_v, 425, "", "./tensorflow/stream_executor/device_memory_allocator.h", "platform");
+ return platform_; }
 
   // Can we call Deallocate() as soon as a computation has been scheduled on
   // a stream, or do we have to wait for the computation to complete first?
-  virtual bool AllowsAsynchronousDeallocation() const { return false; }
+  virtual bool AllowsAsynchronousDeallocation() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdevice_memory_allocatorDTh mht_15(mht_15_v, 432, "", "./tensorflow/stream_executor/device_memory_allocator.h", "AllowsAsynchronousDeallocation");
+ return false; }
 
   // Returns a stream pointer on which it is always safe to access memory
   // allocated by this allocator. It is not necessary to use the returned stream
@@ -273,6 +489,9 @@ class StreamExecutorMemoryAllocator : public DeviceMemoryAllocator {
 
 template <typename ElemT>
 port::Status ScopedDeviceMemory<ElemT>::Free() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdevice_memory_allocatorDTh mht_16(mht_16_v, 492, "", "./tensorflow/stream_executor/device_memory_allocator.h", "ScopedDeviceMemory<ElemT>::Free");
+
   if (!wrapped_.is_null()) {
     CHECK(allocator_ != nullptr) << "Owning pointer in inconsistent state";
     TF_RETURN_IF_ERROR(allocator_->Deallocate(device_ordinal_, wrapped_));

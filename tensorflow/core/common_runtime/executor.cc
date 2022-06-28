@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -86,39 +254,63 @@ static const Tensor* const kEmptyTensor = new Tensor;
 
 // Helper routines for collecting step stats.
 namespace nodestats {
-inline int64_t NowInNsec() { return EnvTime::NowNanos(); }
+inline int64_t NowInNsec() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_0(mht_0_v, 258, "", "./tensorflow/core/common_runtime/executor.cc", "NowInNsec");
+ return EnvTime::NowNanos(); }
 
 void SetScheduled(NodeExecStatsInterface* stats, int64_t micros) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_1(mht_1_v, 263, "", "./tensorflow/core/common_runtime/executor.cc", "SetScheduled");
+
   if (!stats) return;
   stats->SetScheduled(micros * EnvTime::kMicrosToNanos);
 }
 
 void SetAllStart(NodeExecStatsInterface* stats) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_2(mht_2_v, 271, "", "./tensorflow/core/common_runtime/executor.cc", "SetAllStart");
+
   if (!stats) return;
   stats->RecordExecutorStarted();
 }
 
 void SetOpStart(NodeExecStatsInterface* stats) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_3(mht_3_v, 279, "", "./tensorflow/core/common_runtime/executor.cc", "SetOpStart");
+
   if (!stats) return;
   stats->RecordComputeStarted();
 }
 
 void SetOpEnd(NodeExecStatsInterface* stats) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_4(mht_4_v, 287, "", "./tensorflow/core/common_runtime/executor.cc", "SetOpEnd");
+
   if (!stats) return;
   stats->RecordComputeEnded();
 }
 
 void SetAllEnd(NodeExecStatsInterface* stats) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_5(mht_5_v, 295, "", "./tensorflow/core/common_runtime/executor.cc", "SetAllEnd");
+
   if (!stats) return;
   stats->RecordExecutorEnded();
 }
 
 void SetOutput(NodeExecStatsInterface* stats, int slot, const Tensor* v) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_6(mht_6_v, 303, "", "./tensorflow/core/common_runtime/executor.cc", "SetOutput");
+
   if (!stats) return;
   stats->SetOutput(slot, v);
 }
 
 void SetMemory(NodeExecStatsInterface* stats, OpKernelContext* ctx) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_7(mht_7_v, 311, "", "./tensorflow/core/common_runtime/executor.cc", "SetMemory");
+
   if (!stats) return;
   stats->SetMemory(ctx);
 }
@@ -131,6 +323,9 @@ struct KernelTimer {
   uint64 start_cycles = profile_utils::CpuUtils::GetCurrentClockCycle();
 
   uint64 ElapsedCycles() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_8(mht_8_v, 326, "", "./tensorflow/core/common_runtime/executor.cc", "ElapsedCycles");
+
     return profile_utils::CpuUtils::GetCurrentClockCycle() - start_cycles;
   }
 };
@@ -141,9 +336,15 @@ typedef gtl::InlinedVector<AllocatorAttributes, 4> AllocatorAttributeVec;
 
 class ExecutorImpl : public Executor {
  public:
-  explicit ExecutorImpl(const LocalExecutorParams& p) : immutable_state_(p) {}
+  explicit ExecutorImpl(const LocalExecutorParams& p) : immutable_state_(p) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_9(mht_9_v, 340, "", "./tensorflow/core/common_runtime/executor.cc", "ExecutorImpl");
+}
 
   Status Initialize(const Graph& graph) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_10(mht_10_v, 345, "", "./tensorflow/core/common_runtime/executor.cc", "Initialize");
+
     TF_RETURN_IF_ERROR(immutable_state_.Initialize(graph));
     kernel_stats_.Initialize(immutable_state_.graph_view());
     return Status::OK();
@@ -161,6 +362,9 @@ class ExecutorImpl : public Executor {
     KernelStats() = default;
 
     void Initialize(const GraphView& gview) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_11(mht_11_v, 365, "", "./tensorflow/core/common_runtime/executor.cc", "Initialize");
+
       is_expensive_.resize(gview.num_nodes());
       cost_estimates_ =
           absl::make_unique<std::atomic_uint_fast64_t[]>(gview.num_nodes());
@@ -177,6 +381,9 @@ class ExecutorImpl : public Executor {
     // executor uses this flag to optimize graph execution, for example
     // by "inlining" inexpensive kernels.
     bool IsExpensive(const NodeItem& node) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_12(mht_12_v, 384, "", "./tensorflow/core/common_runtime/executor.cc", "IsExpensive");
+
       return is_expensive_[node.node_id] &&
              (cost_estimates_[node.node_id].load(std::memory_order_relaxed) >
               kOpIsExpensiveThresholdCycles);
@@ -184,6 +391,9 @@ class ExecutorImpl : public Executor {
 
     // Returns the value of kernel->IsExpensive().
     bool HasExpensiveMarker(const NodeItem& node) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_13(mht_13_v, 394, "", "./tensorflow/core/common_runtime/executor.cc", "HasExpensiveMarker");
+
       return is_expensive_[node.node_id];
     }
 
@@ -192,6 +402,9 @@ class ExecutorImpl : public Executor {
     // the old cost estimate and the latest cost. We only update cost estimates
     // for kernels for which IsExpensive() return true.
     void UpdateCostEstimate(const NodeItem& node, uint64 elapsed_cycles) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_14(mht_14_v, 405, "", "./tensorflow/core/common_runtime/executor.cc", "UpdateCostEstimate");
+
       // N.B. Updates to `cost_estimate` are atomic but unlocked.  Simultaneous
       // updates may result in one or more updates being ignored.  This does not
       // affect correctness but may slow down the update frequency.
@@ -430,6 +643,9 @@ ExecutorState<PropagatorStateType>::ExecutorState(
       run_all_kernels_inline_(args.run_all_kernels_inline),
       propagator_(immutable_state, step_id_, vlog_),
       num_outstanding_ops_(0) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_15(mht_15_v, 646, "", "./tensorflow/core/common_runtime/executor.cc", "ExecutorState<PropagatorStateType>::ExecutorState");
+
   if (args.user_intra_op_threadpool != nullptr) {
     Device* device = immutable_state_.params().device;
     user_device_ = RenamedDevice::NewRenamedDevice(
@@ -439,6 +655,9 @@ ExecutorState<PropagatorStateType>::ExecutorState(
 
 template <class PropagatorStateType>
 ExecutorState<PropagatorStateType>::~ExecutorState() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_16(mht_16_v, 658, "", "./tensorflow/core/common_runtime/executor.cc", "ExecutorState<PropagatorStateType>::~ExecutorState");
+
   if (device_context_) {
     device_context_->Unref();
   }
@@ -448,6 +667,9 @@ ExecutorState<PropagatorStateType>::~ExecutorState() {
 template <class PropagatorStateType>
 template <typename Closure>
 void ExecutorState<PropagatorStateType>::RunTask(Closure&& c) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_17(mht_17_v, 670, "", "./tensorflow/core/common_runtime/executor.cc", "ExecutorState<PropagatorStateType>::RunTask");
+
   // Align the atomic variables at 64 bytes to avoid false-sharing, assuming the
   // cacheline size is 64 bytes or smaller.
   alignas(64) static std::atomic<int64_t> num_enqueue_ops{0};
@@ -471,6 +693,9 @@ void ExecutorState<PropagatorStateType>::RunTask(Closure&& c) {
 
 template <class PropagatorStateType>
 void ExecutorState<PropagatorStateType>::RunAsync(Executor::DoneCallback done) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_18(mht_18_v, 696, "", "./tensorflow/core/common_runtime/executor.cc", "ExecutorState<PropagatorStateType>::RunAsync");
+
   TaggedNodeSeq ready;
 
   // Ask the device to fill in the device context map.
@@ -517,6 +742,9 @@ struct ExecutorState<PropagatorStateType>::AsyncState {
         //   params.eigen_gpu_device = nullptr;
         ctx(ParamsButClearingEigenGPUDevice(&params), item->num_outputs),
         stats(_stats) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_19(mht_19_v, 745, "", "./tensorflow/core/common_runtime/executor.cc", "AsyncState");
+
     params.inputs = &saved_inputs;
     params.input_alloc_attrs = &saved_input_alloc_attrs;
   }
@@ -533,6 +761,9 @@ struct ExecutorState<PropagatorStateType>::AsyncState {
  private:
   OpKernelContext::Params* ParamsButClearingEigenGPUDevice(
       OpKernelContext::Params* p) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_20(mht_20_v, 764, "", "./tensorflow/core/common_runtime/executor.cc", "ParamsButClearingEigenGPUDevice");
+
     // Ensure OpKernelContext constructor will make a new eigen GPU device if
     // necessary.
     p->eigen_gpu_device = nullptr;  // Force allocation
@@ -544,6 +775,9 @@ struct ExecutorState<PropagatorStateType>::AsyncState {
 // collectors. Returns false only if `item` definitely will not be traced.
 bool MightTrace(const tracing::EventCollector* event_collector,
                 bool is_expensive) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_21(mht_21_v, 778, "", "./tensorflow/core/common_runtime/executor.cc", "MightTrace");
+
   // Tracing will only be enabled if either `event_collector` is non null,
   // or `trace_collector` is non-null and enabled for this particular kernel.
   // Although `profiler::TraceMe`, `profiler::ScopedAnnotation`, and
@@ -564,6 +798,9 @@ template <class PropagatorStateType>
 Status ExecutorState<PropagatorStateType>::ProcessSync(
     const NodeItem& item, OpKernelContext::Params* params, EntryVector* outputs,
     NodeExecStatsInterface* stats) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_22(mht_22_v, 801, "", "./tensorflow/core/common_runtime/executor.cc", "ExecutorState<PropagatorStateType>::ProcessSync");
+
   Status s;
   OpKernelContext ctx(params, item.num_outputs);
   nodestats::SetOpStart(stats);
@@ -608,12 +845,18 @@ void ExecutorState<PropagatorStateType>::ProcessAsync(
     const NodeItem& item, const OpKernelContext::Params& params,
     const TaggedNode& tagged_node, Entry* first_input,
     NodeExecStatsInterface* stats) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_23(mht_23_v, 848, "", "./tensorflow/core/common_runtime/executor.cc", "ExecutorState<PropagatorStateType>::ProcessAsync");
+
   AsyncOpKernel* async_kernel = item.kernel->AsAsync();
   DCHECK(async_kernel != nullptr);
   AsyncState* state =
       new AsyncState(params, tagged_node, &item, first_input, stats);
 
   auto done = [this, state]() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_24(mht_24_v, 857, "", "./tensorflow/core/common_runtime/executor.cc", "lambda");
+
     Device* device = immutable_state_.params().device;
     NodeExecStatsInterface* stats = state->stats;  // Shorthand
     Entry* first_input = state->first_input;       // Shorthand
@@ -660,6 +903,9 @@ void ExecutorState<PropagatorStateType>::ProcessAsync(
 template <class PropagatorStateType>
 void ExecutorState<PropagatorStateType>::ProcessNoop(
     NodeExecStatsInterface* stats) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_25(mht_25_v, 906, "", "./tensorflow/core/common_runtime/executor.cc", "ExecutorState<PropagatorStateType>::ProcessNoop");
+
   nodestats::SetOpStart(stats);
   nodestats::SetOpEnd(stats);
 }
@@ -667,6 +913,9 @@ void ExecutorState<PropagatorStateType>::ProcessNoop(
 template <class PropagatorStateType>
 void ExecutorState<PropagatorStateType>::ProcessConstTensor(
     const NodeItem& item, EntryVector* outputs, NodeExecStatsInterface* stats) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_26(mht_26_v, 916, "", "./tensorflow/core/common_runtime/executor.cc", "ExecutorState<PropagatorStateType>::ProcessConstTensor");
+
   nodestats::SetOpStart(stats);
   nodestats::SetOpEnd(stats);
   Entry& output = (*outputs)[0];
@@ -678,6 +927,9 @@ void ExecutorState<PropagatorStateType>::ProcessConstTensor(
 template <class PropagatorStateType>
 void ExecutorState<PropagatorStateType>::Process(TaggedNode tagged_node,
                                                  int64_t scheduled_nsec) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_27(mht_27_v, 930, "", "./tensorflow/core/common_runtime/executor.cc", "ExecutorState<PropagatorStateType>::Process");
+
   profiler::TraceMeConsumer activity(
       // From TraceMeProducer in DirectSession::RunInternal,
       // GraphMgr::ExecuteAsync, or FunctionLibraryRuntime::Run.
@@ -732,10 +984,16 @@ void ExecutorState<PropagatorStateType>::Process(TaggedNode tagged_node,
   params.run_all_kernels_inline = run_all_kernels_inline_;
   params.stats_collector = stats_collector_;
   params.inc_num_deferred_ops_function = [this]() {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_28(mht_28_v, 987, "", "./tensorflow/core/common_runtime/executor.cc", "lambda");
+
     mutex_lock lock(num_deferred_ops_mu_);
     num_deferred_ops_++;
   };
   params.dec_num_deferred_ops_function = [this]() {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_29(mht_29_v, 994, "", "./tensorflow/core/common_runtime/executor.cc", "lambda");
+
     bool finish_when_deferred_ops_done = false;
     {
       mutex_lock lock(num_deferred_ops_mu_);
@@ -872,6 +1130,9 @@ template <class PropagatorStateType>
 Status ExecutorState<PropagatorStateType>::PrepareInputs(
     const NodeItem& item, Entry* first_input, TensorValueVec* inputs,
     AllocatorAttributeVec* input_alloc_attrs, bool* is_input_dead) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_30(mht_30_v, 1133, "", "./tensorflow/core/common_runtime/executor.cc", "ExecutorState<PropagatorStateType>::PrepareInputs");
+
   inputs->resize(item.num_inputs);
   input_alloc_attrs->resize(item.num_inputs);
 
@@ -987,6 +1248,9 @@ template <class PropagatorStateType>
 Status ExecutorState<PropagatorStateType>::ProcessOutputs(
     const NodeItem& item, OpKernelContext* ctx, Entry* outputs,
     NodeExecStatsInterface* stats) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_31(mht_31_v, 1251, "", "./tensorflow/core/common_runtime/executor.cc", "ExecutorState<PropagatorStateType>::ProcessOutputs");
+
   Status s = ctx->status();
   if (!s.ok()) {
     s = AttachDef(s, item.kernel->def());
@@ -1087,6 +1351,9 @@ template <class PropagatorStateType>
 bool ExecutorState<PropagatorStateType>::NodeDone(
     const Status& s, TaggedNodeSeq* ready, NodeExecStatsInterface* stats,
     TaggedNodeReadyQueue* inline_ready) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_32(mht_32_v, 1354, "", "./tensorflow/core/common_runtime/executor.cc", "ExecutorState<PropagatorStateType>::NodeDone");
+
   if (stats) {
     nodestats::SetAllEnd(stats);
     DCHECK_NE(stats_collector_, nullptr);
@@ -1166,6 +1433,9 @@ bool ExecutorState<PropagatorStateType>::NodeDone(
 template <class PropagatorStateType>
 void ExecutorState<PropagatorStateType>::ScheduleReady(
     TaggedNodeSeq* ready, TaggedNodeReadyQueue* inline_ready) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_33(mht_33_v, 1436, "", "./tensorflow/core/common_runtime/executor.cc", "ExecutorState<PropagatorStateType>::ScheduleReady");
+
   DCHECK(!ready->empty());
 
   int64_t scheduled_nsec = 0;
@@ -1229,6 +1499,9 @@ void ExecutorState<PropagatorStateType>::ScheduleReady(
 
 template <class PropagatorStateType>
 void ExecutorState<PropagatorStateType>::ScheduleFinish() {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_34(mht_34_v, 1502, "", "./tensorflow/core/common_runtime/executor.cc", "ExecutorState<PropagatorStateType>::ScheduleFinish");
+
   // Checks condition to decide if needs to invoke Finish(). If there are
   // in-flight deffered ops, wait for `num_deferred_ops_` reaches 0 to invoke
   // Finish(). Otherwise, invoke Finish() directly.
@@ -1249,6 +1522,9 @@ void ExecutorState<PropagatorStateType>::ScheduleFinish() {
 
 template <class PropagatorStateType>
 void ExecutorState<PropagatorStateType>::Finish() {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_35(mht_35_v, 1525, "", "./tensorflow/core/common_runtime/executor.cc", "ExecutorState<PropagatorStateType>::Finish");
+
   mu_.lock();
   auto status = status_;
   auto done_cb = std::move(done_cb_);
@@ -1363,6 +1639,9 @@ void ExecutorState<PropagatorStateType>::Finish() {
 }
 
 void ExecutorImpl::RunAsync(const Args& args, DoneCallback done) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_36(mht_36_v, 1642, "", "./tensorflow/core/common_runtime/executor.cc", "ExecutorImpl::RunAsync");
+
   if (OpOrderDeterminismRequired()) {
     (new ExecutorState<OrderedPropagatorState>(args, immutable_state_,
                                                &kernel_stats_))
@@ -1381,6 +1660,9 @@ void ExecutorImpl::RunAsync(const Args& args, DoneCallback done) {
 
 Status NewLocalExecutor(const LocalExecutorParams& params, const Graph& graph,
                         Executor** executor) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_37(mht_37_v, 1663, "", "./tensorflow/core/common_runtime/executor.cc", "NewLocalExecutor");
+
   ExecutorImpl* impl = new ExecutorImpl(params);
   const Status s = impl->Initialize(graph);
   if (s.ok()) {
@@ -1394,6 +1676,9 @@ Status NewLocalExecutor(const LocalExecutorParams& params, const Graph& graph,
 Status CreateNonCachedKernel(Device* device, FunctionLibraryRuntime* flib,
                              const std::shared_ptr<const NodeProperties>& props,
                              int graph_def_version, OpKernel** kernel) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_38(mht_38_v, 1679, "", "./tensorflow/core/common_runtime/executor.cc", "CreateNonCachedKernel");
+
   const auto device_type = DeviceType(device->attributes().device_type());
   auto allocator = device->GetAllocator(AllocatorAttributes());
   return CreateOpKernel(device_type, device, allocator, flib,
@@ -1401,13 +1686,19 @@ Status CreateNonCachedKernel(Device* device, FunctionLibraryRuntime* flib,
                         kernel);
 }
 
-void DeleteNonCachedKernel(OpKernel* kernel) { delete kernel; }
+void DeleteNonCachedKernel(OpKernel* kernel) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_39(mht_39_v, 1690, "", "./tensorflow/core/common_runtime/executor.cc", "DeleteNonCachedKernel");
+ delete kernel; }
 
 namespace {
 
 class DefaultExecutorRegistrar {
  public:
   DefaultExecutorRegistrar() {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_40(mht_40_v, 1699, "", "./tensorflow/core/common_runtime/executor.cc", "DefaultExecutorRegistrar");
+
     Factory* factory = new Factory;
     ExecutorFactory::Register("", factory);
     ExecutorFactory::Register("DEFAULT", factory);
@@ -1417,6 +1708,9 @@ class DefaultExecutorRegistrar {
   class Factory : public ExecutorFactory {
     Status NewExecutor(const LocalExecutorParams& params, const Graph& graph,
                        std::unique_ptr<Executor>* out_executor) override {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSexecutorDTcc mht_41(mht_41_v, 1711, "", "./tensorflow/core/common_runtime/executor.cc", "NewExecutor");
+
       Executor* ret = nullptr;
       TF_RETURN_IF_ERROR(NewLocalExecutor(params, std::move(graph), &ret));
       out_executor->reset(ret);

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,6 +208,9 @@ const char* const DEVICE_XLA_CPU = "XLA_CPU";
 const char* const DEVICE_XLA_GPU = "XLA_GPU";
 
 static Status LaunchOpHasKernelForDevice(const DeviceType& device_type) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_0(mht_0_v, 211, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "LaunchOpHasKernelForDevice");
+
   const OpDef* op_def;
   TF_RETURN_IF_ERROR(OpRegistry::Global()->LookUpOpDef("XlaLaunch", &op_def));
   NodeDef node_def;
@@ -60,6 +231,9 @@ XlaOpRegistry::~XlaOpRegistry() = default;
 // compatibility if needed by future use cases.
 /* static */ bool XlaOpRegistry::IsCompatible(const OpRegistration& x,
                                               const OpRegistration& y) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_1(mht_1_v, 234, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistry::IsCompatible");
+
   if (x.name != y.name) return true;
   if (x.label != y.label) return true;
   // The registrations refer to the same Op: ensures they are compatible and
@@ -113,6 +287,10 @@ XlaOpRegistry::~XlaOpRegistry() = default;
 
 /* static */ void XlaOpRegistry::RegisterCompilationDevice(
     const string& device_name, const DeviceRegistration& registration) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_2(mht_2_v, 291, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistry::RegisterCompilationDevice");
+
   XlaOpRegistry& registry = Instance();
   mutex_lock lock(registry.mutex_);
   auto result =
@@ -124,6 +302,10 @@ XlaOpRegistry::~XlaOpRegistry() = default;
 /* static */ void XlaOpRegistry::RegisterBackend(
     const string& compilation_device_name,
     absl::Span<const DataType> supported_types, BackendOpFilter op_filter) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("compilation_device_name: \"" + compilation_device_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_3(mht_3_v, 306, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistry::RegisterBackend");
+
   XlaOpRegistry& registry = Instance();
   mutex_lock lock(registry.mutex_);
   auto result = registry.backends_.emplace(compilation_device_name, Backend());
@@ -136,6 +318,10 @@ XlaOpRegistry::~XlaOpRegistry() = default;
 
 /* static */ bool XlaOpRegistry::IsCompilationDevice(
     const string& device_name) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_4(mht_4_v, 322, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistry::IsCompilationDevice");
+
   XlaOpRegistry& registry = Instance();
   mutex_lock lock(registry.mutex_);
   return registry.backends_.find(device_name) != registry.backends_.end();
@@ -143,11 +329,18 @@ XlaOpRegistry::~XlaOpRegistry() = default;
 
 /* static */ bool XlaOpRegistry::GetCompilationDevice(
     const string& device_name, const DeviceRegistration** registration) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_5(mht_5_v, 333, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistry::GetCompilationDevice");
+
   XlaOpRegistry& registry = Instance();
 
   // Lazily register the CPU and GPU JIT devices the first time
   // GetCompilationDevice is called.
   static void* registration_init = [&registry]() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_6(mht_6_v, 341, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "lambda");
+
     MarkForCompilationPassFlags* flags = GetMarkForCompilationPassFlags();
     bool cpu_global_jit = flags->tf_xla_cpu_global_jit;
     VLOG(2) << "tf_xla_cpu_global_jit = " << cpu_global_jit;
@@ -181,6 +374,9 @@ XlaOpRegistry::~XlaOpRegistry() = default;
 }
 
 void XlaOpRegistry::RegisterCompilationKernels() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_7(mht_7_v, 377, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistry::RegisterCompilationKernels");
+
   XlaOpRegistry& registry = Instance();
   mutex_lock lock(registry.mutex_);
 
@@ -339,6 +535,10 @@ void XlaOpRegistry::RegisterCompilationKernels() {
 std::vector<const KernelDef*> XlaOpRegistry::DeviceKernels(
     const string& compilation_device_name,
     bool include_compilation_only_kernels) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("compilation_device_name: \"" + compilation_device_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_8(mht_8_v, 539, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistry::DeviceKernels");
+
   // Ensure compilation kernels registered.
   RegisterCompilationKernels();
   std::vector<const KernelDef*> kernels;
@@ -362,6 +562,9 @@ std::vector<const KernelDef*> XlaOpRegistry::DeviceKernels(
 }
 
 /*static*/ std::vector<string> XlaOpRegistry::GetAllRegisteredOps() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_9(mht_9_v, 565, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistry::GetAllRegisteredOps");
+
   std::vector<string> ops;
   XlaOpRegistry& registry = Instance();
   mutex_lock lock(registry.mutex_);
@@ -374,6 +577,10 @@ std::vector<const KernelDef*> XlaOpRegistry::DeviceKernels(
 
 /*static*/ const std::unordered_set<std::string>*
 XlaOpRegistry::CompileTimeConstantInputArgNames(const string& op) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("op: \"" + op + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_10(mht_10_v, 581, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistry::CompileTimeConstantInputArgNames");
+
   XlaOpRegistry& registry = Instance();
   mutex_lock lock(registry.mutex_);
   auto it = registry.ops_.find(op);
@@ -388,6 +595,9 @@ XlaOpRegistry::CompileTimeConstantInputArgNames(const string& op) {
 /* static */ Status XlaOpRegistry::CompileTimeConstantInputs(
     const NodeDef& node_def, const OpKernel* op_kernel, const OpDef* op_def,
     std::vector<int>* result) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_11(mht_11_v, 598, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistry::CompileTimeConstantInputs");
+
   result->clear();
 
   DCHECK(op_def != nullptr || op_kernel != nullptr);
@@ -444,6 +654,10 @@ XlaOpRegistry::CompileTimeConstantInputArgNames(const string& op) {
 }
 
 /*static*/ bool XlaOpRegistry::IsMetadataOp(const string& op) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("op: \"" + op + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_12(mht_12_v, 658, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistry::IsMetadataOp");
+
   XlaOpRegistry& registry = Instance();
   mutex_lock lock(registry.mutex_);
   auto it = registry.ops_.find(op);
@@ -458,6 +672,9 @@ XlaOpRegistry::CompileTimeConstantInputArgNames(const string& op) {
 }
 
 std::vector<string> XlaOpRegistry::BackendNames() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_13(mht_13_v, 675, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistry::BackendNames");
+
   std::vector<string> names;
   XlaOpRegistry& registry = Instance();
   mutex_lock lock(registry.mutex_);
@@ -468,29 +685,47 @@ std::vector<string> XlaOpRegistry::BackendNames() {
 }
 
 bool XlaOpRegistry::IsBackendRegistered(const string& name) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_14(mht_14_v, 689, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistry::IsBackendRegistered");
+
   XlaOpRegistry& registry = Instance();
   mutex_lock lock(registry.mutex_);
   return registry.backends_.find(name) != registry.backends_.end();
 }
 
 XlaOpRegistry& XlaOpRegistry::Instance() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_15(mht_15_v, 698, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistry::Instance");
+
   static XlaOpRegistry* r = new XlaOpRegistry;
   return *r;
 }
 
 XlaOpRegistrationBuilder::XlaOpRegistrationBuilder(absl::string_view name) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_16(mht_16_v, 707, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistrationBuilder::XlaOpRegistrationBuilder");
+
   registration_.reset(new XlaOpRegistry::OpRegistration);
   registration_->name = string(name);
 }
 
 XlaOpRegistrationBuilder XlaOpRegistrationBuilder::Name(
     absl::string_view name) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_17(mht_17_v, 717, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistrationBuilder::Name");
+
   XlaOpRegistrationBuilder registration(name);
   return registration;
 }
 
 XlaOpRegistrationBuilder& XlaOpRegistrationBuilder::Device(
     absl::Span<const absl::string_view> devices) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_18(mht_18_v, 726, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistrationBuilder::Device");
+
   registration_->has_device_allowlist = true;
   for (absl::string_view device : devices) {
     registration_->device_allowlist.emplace(device);
@@ -500,33 +735,53 @@ XlaOpRegistrationBuilder& XlaOpRegistrationBuilder::Device(
 
 XlaOpRegistrationBuilder& XlaOpRegistrationBuilder::Device(
     absl::string_view device) {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("device: \"" + std::string(device.data(), device.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_19(mht_19_v, 739, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistrationBuilder::Device");
+
   registration_->has_device_allowlist = true;
   registration_->device_allowlist.emplace(device);
   return *this;
 }
 
 XlaOpRegistrationBuilder& XlaOpRegistrationBuilder::CompilationOnly() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_20(mht_20_v, 748, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistrationBuilder::CompilationOnly");
+
   registration_->compilation_only = true;
   return *this;
 }
 
 XlaOpRegistrationBuilder& XlaOpRegistrationBuilder::AllowResourceTypes() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_21(mht_21_v, 756, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistrationBuilder::AllowResourceTypes");
+
   registration_->allow_resource_types = true;
   return *this;
 }
 
 XlaOpRegistrationBuilder& XlaOpRegistrationBuilder::AllowVariantTypes() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_22(mht_22_v, 764, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistrationBuilder::AllowVariantTypes");
+
   registration_->allow_variant_types = true;
   return *this;
 }
 
 XlaOpRegistrationBuilder& XlaOpRegistrationBuilder::AllowStringType() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_23(mht_23_v, 772, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistrationBuilder::AllowStringType");
+
   registration_->allow_string_type = true;
   return *this;
 }
 
 XlaOpRegistrationBuilder& XlaOpRegistrationBuilder::TypeConstraint(
     absl::string_view attr_name, DataType allowed) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("attr_name: \"" + std::string(attr_name.data(), attr_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_24(mht_24_v, 782, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistrationBuilder::TypeConstraint");
+
   std::set<DataType>& types =
       registration_->type_constraints[string(attr_name)];
   types.insert(allowed);
@@ -535,6 +790,10 @@ XlaOpRegistrationBuilder& XlaOpRegistrationBuilder::TypeConstraint(
 
 XlaOpRegistrationBuilder& XlaOpRegistrationBuilder::TypeConstraint(
     absl::string_view attr_name, absl::Span<const DataType> allowed) {
+   std::vector<std::string> mht_25_v;
+   mht_25_v.push_back("attr_name: \"" + std::string(attr_name.data(), attr_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_25(mht_25_v, 794, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistrationBuilder::TypeConstraint");
+
   std::set<DataType>& types =
       registration_->type_constraints[string(attr_name)];
   for (DataType t : allowed) {
@@ -545,28 +804,45 @@ XlaOpRegistrationBuilder& XlaOpRegistrationBuilder::TypeConstraint(
 
 XlaOpRegistrationBuilder& XlaOpRegistrationBuilder::CompileTimeConstantInput(
     absl::string_view input_name) {
+   std::vector<std::string> mht_26_v;
+   mht_26_v.push_back("input_name: \"" + std::string(input_name.data(), input_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_26(mht_26_v, 808, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistrationBuilder::CompileTimeConstantInput");
+
   registration_->compile_time_constant_inputs.emplace(input_name);
   return *this;
 }
 
 XlaOpRegistrationBuilder& XlaOpRegistrationBuilder::IsMetadataOp() {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_27(mht_27_v, 816, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistrationBuilder::IsMetadataOp");
+
   registration_->is_metadata_op = true;
   return *this;
 }
 
 XlaOpRegistrationBuilder& XlaOpRegistrationBuilder::Label(std::string label) {
+   std::vector<std::string> mht_28_v;
+   mht_28_v.push_back("label: \"" + label + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_28(mht_28_v, 825, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistrationBuilder::Label");
+
   registration_->label = label;
   return *this;
 }
 
 std::unique_ptr<XlaOpRegistry::OpRegistration> XlaOpRegistrationBuilder::Build(
     XlaOpRegistry::Factory factory) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_29(mht_29_v, 834, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistrationBuilder::Build");
+
   registration_->factory = factory;
   return std::move(registration_);
 }
 
 XlaOpRegistrar::XlaOpRegistrar(
     std::unique_ptr<XlaOpRegistry::OpRegistration> registration) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_30(mht_30_v, 843, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaOpRegistrar::XlaOpRegistrar");
+
   XlaOpRegistry& registry = XlaOpRegistry::Instance();
   mutex_lock lock(registry.mutex_);
   auto& existing_ops = registry.ops_[registration->name];
@@ -583,6 +859,10 @@ XlaOpRegistrar::XlaOpRegistrar(
 XlaBackendRegistrar::XlaBackendRegistrar(
     absl::string_view name, absl::Span<const DataType> types,
     XlaOpRegistry::BackendOpFilter op_filter) {
+   std::vector<std::string> mht_31_v;
+   mht_31_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_op_registryDTcc mht_31(mht_31_v, 863, "", "./tensorflow/compiler/tf2xla/xla_op_registry.cc", "XlaBackendRegistrar::XlaBackendRegistrar");
+
   XlaOpRegistry& registry = XlaOpRegistry::Instance();
   registry.RegisterBackend(string(name), types, op_filter);
 

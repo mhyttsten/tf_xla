@@ -36,6 +36,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_GRAPH_GRAPH_H_
 #define TENSORFLOW_CORE_GRAPH_GRAPH_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <functional>
 #include <memory>
@@ -83,8 +251,14 @@ enum class ConstructionContext {
 class Node {
  public:
   std::string DebugString() const;
-  int id() const { return id_; }
-  int cost_id() const { return cost_id_; }
+  int id() const {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_0(mht_0_v, 255, "", "./tensorflow/core/graph/graph.h", "id");
+ return id_; }
+  int cost_id() const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_1(mht_1_v, 259, "", "./tensorflow/core/graph/graph.h", "cost_id");
+ return cost_id_; }
   const std::string& name() const;
   void set_name(std::string name);
   const std::string& type_string() const;
@@ -131,9 +305,15 @@ class Node {
   const std::string& assigned_device_name() const;
   void set_assigned_device_name(const std::string& device_name);
   bool has_assigned_device_name() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_2(mht_2_v, 308, "", "./tensorflow/core/graph/graph.h", "has_assigned_device_name");
+
     return assigned_device_name_index_ > 0;
   }
-  int assigned_device_name_index() const { return assigned_device_name_index_; }
+  int assigned_device_name_index() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_3(mht_3_v, 314, "", "./tensorflow/core/graph/graph.h", "assigned_device_name_index");
+ return assigned_device_name_index_; }
   void set_assigned_device_name_index(int index);
 
   // Sets 'original_node_names' field of this node's DebugInfo proto to
@@ -151,75 +331,188 @@ class Node {
   // includes control edges.
   gtl::iterator_range<NeighborIter> in_nodes() const;
   gtl::iterator_range<NeighborIter> out_nodes() const;
-  const EdgeSet& in_edges() const { return in_edges_; }
-  const EdgeSet& out_edges() const { return out_edges_; }
+  const EdgeSet& in_edges() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_4(mht_4_v, 335, "", "./tensorflow/core/graph/graph.h", "in_edges");
+ return in_edges_; }
+  const EdgeSet& out_edges() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_5(mht_5_v, 339, "", "./tensorflow/core/graph/graph.h", "out_edges");
+ return out_edges_; }
 
   // Node type helpers.
-  bool IsSource() const { return id() == 0; }
-  bool IsSink() const { return id() == 1; }
+  bool IsSource() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_6(mht_6_v, 345, "", "./tensorflow/core/graph/graph.h", "IsSource");
+ return id() == 0; }
+  bool IsSink() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_7(mht_7_v, 349, "", "./tensorflow/core/graph/graph.h", "IsSink");
+ return id() == 1; }
   // Anything other than the special Source & Sink nodes.
-  bool IsOp() const { return id() > 1; }
+  bool IsOp() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_8(mht_8_v, 354, "", "./tensorflow/core/graph/graph.h", "IsOp");
+ return id() > 1; }
 
   // Node class helpers
-  bool IsSwitch() const { return class_ == NC_SWITCH; }
-  bool IsMerge() const { return class_ == NC_MERGE; }
-  bool IsEnter() const { return class_ == NC_ENTER; }
-  bool IsExit() const { return class_ == NC_EXIT; }
-  bool IsNextIteration() const { return class_ == NC_NEXT_ITERATION; }
-  bool IsLoopCond() const { return class_ == NC_LOOP_COND; }
-  bool IsControlTrigger() const { return class_ == NC_CONTROL_TRIGGER; }
-  bool IsSend() const { return class_ == NC_SEND || class_ == NC_HOST_SEND; }
-  bool IsRecv() const { return class_ == NC_RECV || class_ == NC_HOST_RECV; }
-  bool IsConstant() const { return class_ == NC_CONSTANT; }
-  bool IsVariable() const { return class_ == NC_VARIABLE; }
-  bool IsIdentity() const { return class_ == NC_IDENTITY; }
-  bool IsGetSessionHandle() const { return class_ == NC_GET_SESSION_HANDLE; }
-  bool IsGetSessionTensor() const { return class_ == NC_GET_SESSION_TENSOR; }
+  bool IsSwitch() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_9(mht_9_v, 360, "", "./tensorflow/core/graph/graph.h", "IsSwitch");
+ return class_ == NC_SWITCH; }
+  bool IsMerge() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_10(mht_10_v, 364, "", "./tensorflow/core/graph/graph.h", "IsMerge");
+ return class_ == NC_MERGE; }
+  bool IsEnter() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_11(mht_11_v, 368, "", "./tensorflow/core/graph/graph.h", "IsEnter");
+ return class_ == NC_ENTER; }
+  bool IsExit() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_12(mht_12_v, 372, "", "./tensorflow/core/graph/graph.h", "IsExit");
+ return class_ == NC_EXIT; }
+  bool IsNextIteration() const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_13(mht_13_v, 376, "", "./tensorflow/core/graph/graph.h", "IsNextIteration");
+ return class_ == NC_NEXT_ITERATION; }
+  bool IsLoopCond() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_14(mht_14_v, 380, "", "./tensorflow/core/graph/graph.h", "IsLoopCond");
+ return class_ == NC_LOOP_COND; }
+  bool IsControlTrigger() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_15(mht_15_v, 384, "", "./tensorflow/core/graph/graph.h", "IsControlTrigger");
+ return class_ == NC_CONTROL_TRIGGER; }
+  bool IsSend() const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_16(mht_16_v, 388, "", "./tensorflow/core/graph/graph.h", "IsSend");
+ return class_ == NC_SEND || class_ == NC_HOST_SEND; }
+  bool IsRecv() const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_17(mht_17_v, 392, "", "./tensorflow/core/graph/graph.h", "IsRecv");
+ return class_ == NC_RECV || class_ == NC_HOST_RECV; }
+  bool IsConstant() const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_18(mht_18_v, 396, "", "./tensorflow/core/graph/graph.h", "IsConstant");
+ return class_ == NC_CONSTANT; }
+  bool IsVariable() const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_19(mht_19_v, 400, "", "./tensorflow/core/graph/graph.h", "IsVariable");
+ return class_ == NC_VARIABLE; }
+  bool IsIdentity() const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_20(mht_20_v, 404, "", "./tensorflow/core/graph/graph.h", "IsIdentity");
+ return class_ == NC_IDENTITY; }
+  bool IsGetSessionHandle() const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_21(mht_21_v, 408, "", "./tensorflow/core/graph/graph.h", "IsGetSessionHandle");
+ return class_ == NC_GET_SESSION_HANDLE; }
+  bool IsGetSessionTensor() const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_22(mht_22_v, 412, "", "./tensorflow/core/graph/graph.h", "IsGetSessionTensor");
+ return class_ == NC_GET_SESSION_TENSOR; }
   bool IsDeleteSessionTensor() const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_23(mht_23_v, 416, "", "./tensorflow/core/graph/graph.h", "IsDeleteSessionTensor");
+
     return class_ == NC_DELETE_SESSION_TENSOR;
   }
   bool IsControlFlow() const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_24(mht_24_v, 422, "", "./tensorflow/core/graph/graph.h", "IsControlFlow");
+
     return (class_ != NC_OTHER) &&  // Fast path
            (IsSwitch() || IsMerge() || IsEnter() || IsExit() ||
             IsNextIteration());
   }
-  bool IsHostSend() const { return class_ == NC_HOST_SEND; }
-  bool IsHostRecv() const { return class_ == NC_HOST_RECV; }
-  bool IsScopedAllocator() const { return class_ == NC_SCOPED_ALLOCATOR; }
-  bool IsCollective() const { return class_ == NC_COLLECTIVE; }
+  bool IsHostSend() const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_25(mht_25_v, 430, "", "./tensorflow/core/graph/graph.h", "IsHostSend");
+ return class_ == NC_HOST_SEND; }
+  bool IsHostRecv() const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_26(mht_26_v, 434, "", "./tensorflow/core/graph/graph.h", "IsHostRecv");
+ return class_ == NC_HOST_RECV; }
+  bool IsScopedAllocator() const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_27(mht_27_v, 438, "", "./tensorflow/core/graph/graph.h", "IsScopedAllocator");
+ return class_ == NC_SCOPED_ALLOCATOR; }
+  bool IsCollective() const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_28(mht_28_v, 442, "", "./tensorflow/core/graph/graph.h", "IsCollective");
+ return class_ == NC_COLLECTIVE; }
 
-  bool IsMetadata() const { return class_ == NC_METADATA; }
-  bool IsFakeParam() const { return class_ == NC_FAKE_PARAM; }
-  bool IsPartitionedCall() const { return class_ == NC_PARTITIONED_CALL; }
+  bool IsMetadata() const {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_29(mht_29_v, 447, "", "./tensorflow/core/graph/graph.h", "IsMetadata");
+ return class_ == NC_METADATA; }
+  bool IsFakeParam() const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_30(mht_30_v, 451, "", "./tensorflow/core/graph/graph.h", "IsFakeParam");
+ return class_ == NC_FAKE_PARAM; }
+  bool IsPartitionedCall() const {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_31(mht_31_v, 455, "", "./tensorflow/core/graph/graph.h", "IsPartitionedCall");
+ return class_ == NC_PARTITIONED_CALL; }
 
   // Returns true if this node is any kind of function call node.
   //
   // NOTE: "function call nodes" include partitioned call ops, symbolic gradient
   // ops, and ops whose type_string is the name of a function ("function ops").
   bool IsFunctionCall() const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_32(mht_32_v, 464, "", "./tensorflow/core/graph/graph.h", "IsFunctionCall");
+
     return class_ == NC_PARTITIONED_CALL || class_ == NC_FUNCTION_OP ||
            class_ == NC_SYMBOLIC_GRADIENT;
   }
 
-  bool IsIfNode() const { return class_ == NC_IF; }
-  bool IsWhileNode() const { return class_ == NC_WHILE; }
-  bool IsCaseNode() const { return class_ == NC_CASE; }
+  bool IsIfNode() const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_33(mht_33_v, 472, "", "./tensorflow/core/graph/graph.h", "IsIfNode");
+ return class_ == NC_IF; }
+  bool IsWhileNode() const {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_34(mht_34_v, 476, "", "./tensorflow/core/graph/graph.h", "IsWhileNode");
+ return class_ == NC_WHILE; }
+  bool IsCaseNode() const {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_35(mht_35_v, 480, "", "./tensorflow/core/graph/graph.h", "IsCaseNode");
+ return class_ == NC_CASE; }
   // Is this node a function input
-  bool IsArg() const { return class_ == NC_ARG; }
+  bool IsArg() const {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_36(mht_36_v, 485, "", "./tensorflow/core/graph/graph.h", "IsArg");
+ return class_ == NC_ARG; }
   // Is this node a function output
-  bool IsRetval() const { return class_ == NC_RETVAL; }
+  bool IsRetval() const {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_37(mht_37_v, 490, "", "./tensorflow/core/graph/graph.h", "IsRetval");
+ return class_ == NC_RETVAL; }
 
   bool IsDistributedCommunication() const {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_38(mht_38_v, 495, "", "./tensorflow/core/graph/graph.h", "IsDistributedCommunication");
+
     return op_def().is_distributed_communication();
   }
 
   template <typename T>
   void AddAttr(const std::string& name, const T& val) {
+   std::vector<std::string> mht_39_v;
+   mht_39_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_39(mht_39_v, 504, "", "./tensorflow/core/graph/graph.h", "AddAttr");
+
     SetAttrValue(val, AddAttrHelper(name));
     UpdateProperties();
   }
 
   void AddAttr(const std::string& name, std::vector<string>&& val) {
+   std::vector<std::string> mht_40_v;
+   mht_40_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_40(mht_40_v, 513, "", "./tensorflow/core/graph/graph.h", "AddAttr");
+
     MoveAttrValue(std::move(val), AddAttrHelper(name));
     UpdateProperties();
   }
@@ -242,8 +535,14 @@ class Node {
   // output tensor of input_node(idx).
   Status input_tensor(int idx, OutputTensor* t) const;
 
-  WhileContext* while_ctx() const { return while_ctx_; }
+  WhileContext* while_ctx() const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_41(mht_41_v, 539, "", "./tensorflow/core/graph/graph.h", "while_ctx");
+ return while_ctx_; }
   void set_while_ctx(WhileContext* while_ctx) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_42(mht_42_v, 543, "", "./tensorflow/core/graph/graph.h", "set_while_ctx");
+
     DCHECK(IsExit());
     DCHECK(while_ctx_ == nullptr);
     while_ctx_ = while_ctx;
@@ -254,11 +553,17 @@ class Node {
   // Sets the stack trace for the node. Assumes that getting and setting the
   // stack trace for a given node will not race.
   void SetStackTrace(const std::shared_ptr<AbstractStackTrace>& stack_trace) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_43(mht_43_v, 556, "", "./tensorflow/core/graph/graph.h", "SetStackTrace");
+
     stack_trace_ = stack_trace;
   }
 
   // Get the stack trace for when the node was instantiated.
   const std::shared_ptr<AbstractStackTrace>& GetStackTrace() const {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_44(mht_44_v, 564, "", "./tensorflow/core/graph/graph.h", "GetStackTrace");
+
     return stack_trace_;
   }
 
@@ -385,8 +690,14 @@ struct InputTensor {
   Node* node;
   int index;
 
-  InputTensor(Node* n, int i) : node(n), index(i) {}
-  InputTensor() : node(nullptr), index(0) {}
+  InputTensor(Node* n, int i) : node(n), index(i) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_45(mht_45_v, 694, "", "./tensorflow/core/graph/graph.h", "InputTensor");
+}
+  InputTensor() : node(nullptr), index(0) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_46(mht_46_v, 698, "", "./tensorflow/core/graph/graph.h", "InputTensor");
+}
 
   // Returns true if this InputTensor is identical to 'other'. Nodes are
   // compared using pointer equality.
@@ -406,8 +717,14 @@ struct OutputTensor {
   Node* node;
   int index;
 
-  OutputTensor(Node* n, int i) : node(n), index(i) {}
-  OutputTensor() : node(nullptr), index(0) {}
+  OutputTensor(Node* n, int i) : node(n), index(i) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_47(mht_47_v, 721, "", "./tensorflow/core/graph/graph.h", "OutputTensor");
+}
+  OutputTensor() : node(nullptr), index(0) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_48(mht_48_v, 725, "", "./tensorflow/core/graph/graph.h", "OutputTensor");
+}
 
   // Returns true if this OutputTensor is identical to 'other'. Nodes are
   // compared using pointer equality.
@@ -422,19 +739,34 @@ struct OutputTensor {
 
 class Edge {
  public:
-  Node* src() const { return src_; }
-  Node* dst() const { return dst_; }
-  int id() const { return id_; }
+  Node* src() const {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_49(mht_49_v, 743, "", "./tensorflow/core/graph/graph.h", "src");
+ return src_; }
+  Node* dst() const {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_50(mht_50_v, 747, "", "./tensorflow/core/graph/graph.h", "dst");
+ return dst_; }
+  int id() const {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_51(mht_51_v, 751, "", "./tensorflow/core/graph/graph.h", "id");
+ return id_; }
 
   // Return the index of the source output that produces the data
   // carried by this edge.  The special value kControlSlot is used
   // for control dependencies.
-  int src_output() const { return src_output_; }
+  int src_output() const {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_52(mht_52_v, 759, "", "./tensorflow/core/graph/graph.h", "src_output");
+ return src_output_; }
 
   // Return the index of the destination input that consumes the data
   // carried by this edge.  The special value kControlSlot is used
   // for control dependencies.
-  int dst_input() const { return dst_input_; }
+  int dst_input() const {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_53(mht_53_v, 767, "", "./tensorflow/core/graph/graph.h", "dst_input");
+ return dst_input_; }
 
   // Return true iff this is an edge that indicates a control-flow
   // (as opposed to a data-flow) dependency.
@@ -443,7 +775,10 @@ class Edge {
   std::string DebugString() const;
 
  private:
-  Edge() {}
+  Edge() {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_54(mht_54_v, 779, "", "./tensorflow/core/graph/graph.h", "Edge");
+}
 
   friend class EdgeSetTest;
   friend class Graph;
@@ -462,7 +797,10 @@ class GraphEdgesIterable {
 
  public:
   explicit GraphEdgesIterable(const std::vector<Edge*>& edges)
-      : edges_(edges) {}
+      : edges_(edges) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_55(mht_55_v, 801, "", "./tensorflow/core/graph/graph.h", "GraphEdgesIterable");
+}
 
   typedef Edge* value_type;
 
@@ -476,6 +814,9 @@ class GraphEdgesIterable {
 
     // Advances iter_ until it reaches a non-null item, or reaches the end.
     void apply_filter() {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_56(mht_56_v, 817, "", "./tensorflow/core/graph/graph.h", "apply_filter");
+
       while (iter_ != end_ && *iter_ == nullptr) {
         ++iter_;
       }
@@ -485,6 +826,9 @@ class GraphEdgesIterable {
     const_iterator(std::vector<value_type>::const_iterator iter,
                    std::vector<value_type>::const_iterator end)
         : iter_(iter), end_(end) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_57(mht_57_v, 829, "", "./tensorflow/core/graph/graph.h", "const_iterator");
+
       apply_filter();
     }
 
@@ -505,13 +849,22 @@ class GraphEdgesIterable {
       return *this;
     }
 
-    value_type operator*() { return *iter_; }
+    value_type operator*() {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_58(mht_58_v, 853, "", "./tensorflow/core/graph/graph.h", "*");
+ return *iter_; }
   };
 
   const_iterator begin() {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_59(mht_59_v, 859, "", "./tensorflow/core/graph/graph.h", "begin");
+
     return const_iterator(edges_.begin(), edges_.end());
   }
-  const_iterator end() { return const_iterator(edges_.end(), edges_.end()); }
+  const_iterator end() {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_60(mht_60_v, 865, "", "./tensorflow/core/graph/graph.h", "end");
+ return const_iterator(edges_.end(), edges_.end()); }
 };
 
 // Thread compatible but not thread safe.
@@ -618,10 +971,16 @@ class Graph {
   // smaller than num_node_ids(). If one needs to create an array of
   // nodes indexed by node ids, num_node_ids() should be used as the
   // array's size.
-  int num_nodes() const { return num_nodes_; }
+  int num_nodes() const {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_61(mht_61_v, 975, "", "./tensorflow/core/graph/graph.h", "num_nodes");
+ return num_nodes_; }
 
   // The number of live nodes in the graph, excluding the Source and Sink nodes.
   int num_op_nodes() const {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_62(mht_62_v, 981, "", "./tensorflow/core/graph/graph.h", "num_op_nodes");
+
     DCHECK_GE(num_nodes_, 2);
     return num_nodes_ - 2;
   }
@@ -632,7 +991,10 @@ class Graph {
   // smaller than num_edge_ids(). If one needs to create an array of
   // edges indexed by edge ids, num_edge_ids() should be used as the
   // array's size.
-  int num_edges() const { return num_edges_; }
+  int num_edges() const {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_63(mht_63_v, 995, "", "./tensorflow/core/graph/graph.h", "num_edges");
+ return num_edges_; }
 
   // Serialize the nodes starting at `from_node_id` to a GraphDef.
   void ToGraphDefSubRange(GraphDef* graph_def, int from_node_id) const;
@@ -659,39 +1021,72 @@ class Graph {
   gtl::iterator_range<NodeIter> op_nodes() const;
 
   // Returns one more than the maximum id assigned to any node.
-  int num_node_ids() const { return nodes_.size(); }
+  int num_node_ids() const {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_64(mht_64_v, 1025, "", "./tensorflow/core/graph/graph.h", "num_node_ids");
+ return nodes_.size(); }
 
   // Returns the node associated with an id, or nullptr if no node
   // with that id (the node with that id was removed and the id has
   // not yet been re-used). *this owns the returned instance.
   // REQUIRES: 0 <= id < num_node_ids().
-  Node* FindNodeId(int id) const { return nodes_[id]; }
+  Node* FindNodeId(int id) const {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_65(mht_65_v, 1034, "", "./tensorflow/core/graph/graph.h", "FindNodeId");
+ return nodes_[id]; }
 
   // Returns one more than the maximum id assigned to any edge.
-  int num_edge_ids() const { return edges_.size(); }
+  int num_edge_ids() const {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_66(mht_66_v, 1040, "", "./tensorflow/core/graph/graph.h", "num_edge_ids");
+ return edges_.size(); }
 
   // Returns the Edge associated with an id, or nullptr if no edge
   // with that id (the edge with that id was removed and the id has
   // not yet been re-used). *this owns the returned instance.
   // REQUIRES: 0 <= id < num_edge_ids().
-  const Edge* FindEdgeId(int id) const { return edges_[id]; }
+  const Edge* FindEdgeId(int id) const {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_67(mht_67_v, 1049, "", "./tensorflow/core/graph/graph.h", "FindEdgeId");
+ return edges_[id]; }
 
   // Access to the set of all edges.  Example usage:
   //   for (const Edge* e : graph.edges()) { ... }
-  GraphEdgesIterable edges() const { return GraphEdgesIterable(edges_); }
+  GraphEdgesIterable edges() const {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_68(mht_68_v, 1056, "", "./tensorflow/core/graph/graph.h", "edges");
+ return GraphEdgesIterable(edges_); }
 
   // The pre-defined nodes.
   enum { kSourceId = 0, kSinkId = 1 };
-  Node* source_node() const { return FindNodeId(kSourceId); }
-  Node* sink_node() const { return FindNodeId(kSinkId); }
+  Node* source_node() const {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_69(mht_69_v, 1063, "", "./tensorflow/core/graph/graph.h", "source_node");
+ return FindNodeId(kSourceId); }
+  Node* sink_node() const {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_70(mht_70_v, 1067, "", "./tensorflow/core/graph/graph.h", "sink_node");
+ return FindNodeId(kSinkId); }
 
-  const OpRegistryInterface* op_registry() const { return &ops_; }
-  const FunctionLibraryDefinition& flib_def() const { return ops_; }
+  const OpRegistryInterface* op_registry() const {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_71(mht_71_v, 1072, "", "./tensorflow/core/graph/graph.h", "op_registry");
+ return &ops_; }
+  const FunctionLibraryDefinition& flib_def() const {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_72(mht_72_v, 1076, "", "./tensorflow/core/graph/graph.h", "flib_def");
+ return ops_; }
 
   // TODO(mdan): This is only used by control_flow_deps_o_chains. Remove?
-  FunctionLibraryDefinition* mutable_flib_def() { return &ops_; }
+  FunctionLibraryDefinition* mutable_flib_def() {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_73(mht_73_v, 1082, "", "./tensorflow/core/graph/graph.h", "mutable_flib_def");
+ return &ops_; }
 
   void CheckDeviceNameIndex(int index) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_74(mht_74_v, 1087, "", "./tensorflow/core/graph/graph.h", "CheckDeviceNameIndex");
+
     DCHECK_GE(index, 0);
     DCHECK_LT(index, static_cast<int>(device_names_.size()));
   }
@@ -699,15 +1094,25 @@ class Graph {
   int InternDeviceName(const std::string& device_name);
 
   const std::string& get_assigned_device_name(const Node& node) const {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_75(mht_75_v, 1097, "", "./tensorflow/core/graph/graph.h", "get_assigned_device_name");
+
     return device_names_[node.assigned_device_name_index()];
   }
 
   void set_assigned_device_name_index(Node* node, int device_name_index) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_76(mht_76_v, 1104, "", "./tensorflow/core/graph/graph.h", "set_assigned_device_name_index");
+
     CheckDeviceNameIndex(device_name_index);
     node->assigned_device_name_index_ = device_name_index;
   }
 
   void set_assigned_device_name(Node* node, const std::string& device_name) {
+   std::vector<std::string> mht_77_v;
+   mht_77_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_77(mht_77_v, 1113, "", "./tensorflow/core/graph/graph.h", "set_assigned_device_name");
+
     node->assigned_device_name_index_ = InternDeviceName(device_name);
   }
 
@@ -736,12 +1141,18 @@ class Graph {
   std::unordered_map<string, Node*> BuildNodeNameIndex() const;
 
   absl::optional<std::vector<bool>>& GetConstArgIndicesCache() const {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_78(mht_78_v, 1144, "", "./tensorflow/core/graph/graph.h", "GetConstArgIndicesCache");
+
     return const_arg_indices_cache_;
   }
 
   // TODO(kkb): Add to the constructor when it becomes managable.
   // Sets the graph construction context.
   void SetConstructionContext(ConstructionContext construction_context) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_79(mht_79_v, 1153, "", "./tensorflow/core/graph/graph.h", "SetConstructionContext");
+
     construction_context_ = construction_context;
   }
 
@@ -749,6 +1160,9 @@ class Graph {
   // making this stable and make it available widely.
   // Returns the graph construction context. It's `kUnknown` if not set.
   ConstructionContext GetConstructionContextInternal() const {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_80(mht_80_v, 1163, "", "./tensorflow/core/graph/graph.h", "GetConstructionContextInternal");
+
     return construction_context_;
   }
 
@@ -840,41 +1254,107 @@ class Graph {
 
 // Helper routines
 
-inline bool IsSource(const Node* node) { return node->IsSource(); }
-inline bool IsSink(const Node* node) { return node->IsSink(); }
-inline bool IsSwitch(const Node* node) { return node->IsSwitch(); }
-inline bool IsMerge(const Node* node) { return node->IsMerge(); }
-inline bool IsEnter(const Node* node) { return node->IsEnter(); }
-inline bool IsExit(const Node* node) { return node->IsExit(); }
-inline bool IsNextIteration(const Node* n) { return n->IsNextIteration(); }
-inline bool IsLoopCond(const Node* node) { return node->IsLoopCond(); }
-inline bool IsControlTrigger(const Node* n) { return n->IsControlTrigger(); }
-inline bool IsSend(const Node* node) { return node->IsSend(); }
-inline bool IsRecv(const Node* node) { return node->IsRecv(); }
-inline bool IsHostSend(const Node* node) { return node->IsHostSend(); }
-inline bool IsHostRecv(const Node* node) { return node->IsHostRecv(); }
+inline bool IsSource(const Node* node) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_81(mht_81_v, 1258, "", "./tensorflow/core/graph/graph.h", "IsSource");
+ return node->IsSource(); }
+inline bool IsSink(const Node* node) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_82(mht_82_v, 1262, "", "./tensorflow/core/graph/graph.h", "IsSink");
+ return node->IsSink(); }
+inline bool IsSwitch(const Node* node) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_83(mht_83_v, 1266, "", "./tensorflow/core/graph/graph.h", "IsSwitch");
+ return node->IsSwitch(); }
+inline bool IsMerge(const Node* node) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_84(mht_84_v, 1270, "", "./tensorflow/core/graph/graph.h", "IsMerge");
+ return node->IsMerge(); }
+inline bool IsEnter(const Node* node) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_85(mht_85_v, 1274, "", "./tensorflow/core/graph/graph.h", "IsEnter");
+ return node->IsEnter(); }
+inline bool IsExit(const Node* node) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_86(mht_86_v, 1278, "", "./tensorflow/core/graph/graph.h", "IsExit");
+ return node->IsExit(); }
+inline bool IsNextIteration(const Node* n) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_87(mht_87_v, 1282, "", "./tensorflow/core/graph/graph.h", "IsNextIteration");
+ return n->IsNextIteration(); }
+inline bool IsLoopCond(const Node* node) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_88(mht_88_v, 1286, "", "./tensorflow/core/graph/graph.h", "IsLoopCond");
+ return node->IsLoopCond(); }
+inline bool IsControlTrigger(const Node* n) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_89(mht_89_v, 1290, "", "./tensorflow/core/graph/graph.h", "IsControlTrigger");
+ return n->IsControlTrigger(); }
+inline bool IsSend(const Node* node) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_90(mht_90_v, 1294, "", "./tensorflow/core/graph/graph.h", "IsSend");
+ return node->IsSend(); }
+inline bool IsRecv(const Node* node) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_91(mht_91_v, 1298, "", "./tensorflow/core/graph/graph.h", "IsRecv");
+ return node->IsRecv(); }
+inline bool IsHostSend(const Node* node) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_92(mht_92_v, 1302, "", "./tensorflow/core/graph/graph.h", "IsHostSend");
+ return node->IsHostSend(); }
+inline bool IsHostRecv(const Node* node) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_93(mht_93_v, 1306, "", "./tensorflow/core/graph/graph.h", "IsHostRecv");
+ return node->IsHostRecv(); }
 
 // True for Nodes that mediate the transfer of values between processes.
-inline bool IsTransferNode(const Node* n) { return IsSend(n) || IsRecv(n); }
+inline bool IsTransferNode(const Node* n) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_94(mht_94_v, 1312, "", "./tensorflow/core/graph/graph.h", "IsTransferNode");
+ return IsSend(n) || IsRecv(n); }
 
-inline bool IsConstant(const Node* node) { return node->IsConstant(); }
-inline bool IsVariable(const Node* node) { return node->IsVariable(); }
-inline bool IsIdentity(const Node* node) { return node->IsIdentity(); }
+inline bool IsConstant(const Node* node) {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_95(mht_95_v, 1317, "", "./tensorflow/core/graph/graph.h", "IsConstant");
+ return node->IsConstant(); }
+inline bool IsVariable(const Node* node) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_96(mht_96_v, 1321, "", "./tensorflow/core/graph/graph.h", "IsVariable");
+ return node->IsVariable(); }
+inline bool IsIdentity(const Node* node) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_97(mht_97_v, 1325, "", "./tensorflow/core/graph/graph.h", "IsIdentity");
+ return node->IsIdentity(); }
 
 // Returns true iff 'n' is a control flow node.
-inline bool IsControlFlow(const Node* n) { return n->IsControlFlow(); }
+inline bool IsControlFlow(const Node* n) {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_98(mht_98_v, 1331, "", "./tensorflow/core/graph/graph.h", "IsControlFlow");
+ return n->IsControlFlow(); }
 
 // Returns true if the node only depends on its input's metadata
 // (shape).  Specifically, returns true for "Size", "Shape" and "Rank" ops.
-inline bool IsMetadata(const Node* n) { return n->IsMetadata(); }
+inline bool IsMetadata(const Node* n) {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_99(mht_99_v, 1338, "", "./tensorflow/core/graph/graph.h", "IsMetadata");
+ return n->IsMetadata(); }
 
-inline bool IsScopedAllocator(const Node* n) { return n->IsScopedAllocator(); }
+inline bool IsScopedAllocator(const Node* n) {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_100(mht_100_v, 1343, "", "./tensorflow/core/graph/graph.h", "IsScopedAllocator");
+ return n->IsScopedAllocator(); }
 
 inline bool IsHostMemoryPreserving(const Node* node) {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_101(mht_101_v, 1348, "", "./tensorflow/core/graph/graph.h", "IsHostMemoryPreserving");
+
   return IsIdentity(node) || IsControlFlow(node);
 }
 
 inline bool IsDistributedCommunication(const Node* n) {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_102(mht_102_v, 1355, "", "./tensorflow/core/graph/graph.h", "IsDistributedCommunication");
+
   return n->IsDistributedCommunication();
 }
 
@@ -919,7 +1399,10 @@ class NeighborIter
 // IMPLEMENTATION DETAILS, PLEASE IGNORE
 
 inline NodeIter::NodeIter(const Graph* graph, int id)
-    : graph_(graph), id_(id) {}
+    : graph_(graph), id_(id) {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_103(mht_103_v, 1403, "", "./tensorflow/core/graph/graph.h", "NodeIter::NodeIter");
+}
 
 inline bool NodeIter::operator==(const NodeIter& rhs) const {
   DCHECK(graph_ == rhs.graph_);
@@ -940,12 +1423,18 @@ inline void NodeIter::operator++() {
   }
 }
 
-inline Node* NodeIter::operator*() const { return graph_->FindNodeId(id_); }
+inline Node* NodeIter::operator*() const {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_104(mht_104_v, 1427, "", "./tensorflow/core/graph/graph.h", "*");
+ return graph_->FindNodeId(id_); }
 
 inline Node* NodeIter::operator->() const { return graph_->FindNodeId(id_); }
 
 inline NeighborIter::NeighborIter(EdgeSet::const_iterator iter, bool incoming)
-    : iter_(iter), incoming_(incoming) {}
+    : iter_(iter), incoming_(incoming) {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_105(mht_105_v, 1435, "", "./tensorflow/core/graph/graph.h", "NeighborIter::NeighborIter");
+}
 
 inline bool NeighborIter::operator==(const NeighborIter& rhs) const {
   return iter_ == rhs.iter_ && incoming_ == rhs.incoming_;
@@ -958,6 +1447,9 @@ inline bool NeighborIter::operator!=(const NeighborIter& rhs) const {
 inline void NeighborIter::operator++() { ++iter_; }
 
 inline Node* NeighborIter::operator*() const {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_106(mht_106_v, 1450, "", "./tensorflow/core/graph/graph.h", "*");
+
   const Edge* e = *iter_;
   return incoming_ ? e->src() : e->dst();
 }
@@ -968,18 +1460,27 @@ inline Node* NeighborIter::operator->() const {
 }
 
 inline bool Edge::IsControlEdge() const {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_107(mht_107_v, 1463, "", "./tensorflow/core/graph/graph.h", "Edge::IsControlEdge");
+
   // Note that if either src_output_ or dst_input_ is kControlSlot,
   // so is the other one (AddEdge checks this).
   return src_output_ == Graph::kControlSlot;
 }
 
 inline gtl::iterator_range<NodeIter> Graph::nodes() const {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_108(mht_108_v, 1472, "", "./tensorflow/core/graph/graph.h", "Graph::nodes");
+
   // Note that NodeId 0 is always valid since we don't let the source
   // node be removed from the graph.
   return gtl::make_range(NodeIter(this, 0), NodeIter(this, num_node_ids()));
 }
 
 inline gtl::iterator_range<NodeIter> Graph::op_nodes() const {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_109(mht_109_v, 1481, "", "./tensorflow/core/graph/graph.h", "Graph::op_nodes");
+
   // Note that NodeId 0 is always valid since we don't let the source
   // node be removed from the graph.
   //
@@ -998,15 +1499,25 @@ inline gtl::iterator_range<NodeIter> Graph::op_nodes() const {
 }
 
 inline void Node::set_assigned_device_name_index(int index) {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_110(mht_110_v, 1502, "", "./tensorflow/core/graph/graph.h", "Node::set_assigned_device_name_index");
+
   graph_->CheckDeviceNameIndex(index);
   assigned_device_name_index_ = index;
 }
 
 inline void Node::set_assigned_device_name(const std::string& device_name) {
+   std::vector<std::string> mht_111_v;
+   mht_111_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_111(mht_111_v, 1511, "", "./tensorflow/core/graph/graph.h", "Node::set_assigned_device_name");
+
   graph_->set_assigned_device_name(this, device_name);
 }
 
 inline const std::string& Node::assigned_device_name() const {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraphDTh mht_112(mht_112_v, 1518, "", "./tensorflow/core/graph/graph.h", "Node::assigned_device_name");
+
   return graph_->get_assigned_device_name(*this);
 }
 

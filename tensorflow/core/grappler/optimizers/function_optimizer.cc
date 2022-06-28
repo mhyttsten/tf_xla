@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -76,12 +244,18 @@ constexpr const char* const kGrapplerSpecializedFuncAttr =
 
 // Check if func_node.op() matches the name in FunctionDef signature.
 bool IsDirectFunctionCall(const FunctionDef& func, const NodeDef& func_node) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_0(mht_0_v, 247, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "IsDirectFunctionCall");
+
   return func_node.op() == func.signature().name();
 }
 
 // Check if func_node has function attribute with a function name matching
 // FunctionDef signature.
 bool IsIndirectFunctionCall(const FunctionDef& func, const NodeDef& func_node) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_1(mht_1_v, 256, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "IsIndirectFunctionCall");
+
   if (!IsPartitionedCall(func_node) && !IsStatefulPartitionedCall(func_node)) {
     return false;
   }
@@ -93,6 +267,9 @@ bool IsIndirectFunctionCall(const FunctionDef& func, const NodeDef& func_node) {
 
 AttrSlice FunctionInstantiationAttributes(const FunctionDef& func,
                                           const NodeDef& func_node) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_2(mht_2_v, 270, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "FunctionInstantiationAttributes");
+
   if (IsDirectFunctionCall(func, func_node)) {
     return AttrSlice(func_node);
 
@@ -112,12 +289,27 @@ AttrSlice FunctionInstantiationAttributes(const FunctionDef& func,
 // Placer.
 class FakeDevice : public Device {
  public:
-  FakeDevice(Env* env, const string& device) : Device(env, attr(device)) {}
-  explicit FakeDevice(const string& device) : FakeDevice(nullptr, device) {}
-  Status Sync() override { return Status::OK(); }
+  FakeDevice(Env* env, const string& device) : Device(env, attr(device)) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("device: \"" + device + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_3(mht_3_v, 294, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "FakeDevice");
+}
+  explicit FakeDevice(const string& device) : FakeDevice(nullptr, device) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("device: \"" + device + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_4(mht_4_v, 299, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "FakeDevice");
+}
+  Status Sync() override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_5(mht_5_v, 303, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "Sync");
+ return Status::OK(); }
 
  private:
   static DeviceAttributes attr(const string& device) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("device: \"" + device + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_6(mht_6_v, 310, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "attr");
+
     DeviceNameUtils::ParsedName parsed_name;
     bool parsed = DeviceNameUtils::ParseFullName(device, &parsed_name);
     DCHECK(parsed) << "Failed to parse full device name: " << device;
@@ -146,6 +338,9 @@ class FakeDevice : public Device {
 // into the function body, and remove unused outputs/inputs.
 
 bool MarkedNoSpecialize(const FunctionDef& fdef) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_7(mht_7_v, 341, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "MarkedNoSpecialize");
+
   const auto attr = AttrSlice(&fdef.attr());
   bool nospecialize = false;
   return TryGetNodeAttr(attr, kNoSpecializeAttr, &nospecialize) && nospecialize;
@@ -193,6 +388,9 @@ struct FunctionSpecializationSignature {
 
   template <typename H>
   friend H AbslHashValue(H h, const FunctionSpecializationSignature& s) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_8(mht_8_v, 391, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "AbslHashValue");
+
     H base = H::combine(std::move(h), s.func_name, s.is_in_fetch_set);
 
     // First pre-compute hashes for all values in collections with
@@ -263,27 +461,55 @@ class FunctionOptimizerContext {
         opt_level_(opt_level),
         function_library_(OpRegistry::Global(), graph.library()),
         truly_const_nodes_(InferTrulyConstNodes(item, graph)),
-        graph_view_(&graph) {}
+        graph_view_(&graph) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_9(mht_9_v, 465, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "FunctionOptimizerContext");
+}
 
-  const GrapplerItem& item() const { return *item_; }
+  const GrapplerItem& item() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_10(mht_10_v, 470, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "item");
+ return *item_; }
 
-  const int graph_version() const { return item_->graph.versions().producer(); }
+  const int graph_version() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_11(mht_11_v, 475, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "graph_version");
+ return item_->graph.versions().producer(); }
 
-  RewriterConfig::Toggle opt_level() const { return opt_level_; }
+  RewriterConfig::Toggle opt_level() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_12(mht_12_v, 480, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "opt_level");
+ return opt_level_; }
 
   const FunctionLibraryDefinition& function_library() const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_13(mht_13_v, 485, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "function_library");
+
     return function_library_;
   }
-  FunctionLibraryDefinition& function_library() { return function_library_; }
+  FunctionLibraryDefinition& function_library() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_14(mht_14_v, 491, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "function_library");
+ return function_library_; }
 
   const absl::flat_hash_map<SafeTensorId, SafeTensorId, SafeTensorId::Hasher>&
   tensor_mapping() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_15(mht_15_v, 497, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "tensor_mapping");
+
     return tensor_mapping_;
   }
 
-  const GraphView& graph_view() const { return graph_view_; }
+  const GraphView& graph_view() const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_16(mht_16_v, 504, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "graph_view");
+ return graph_view_; }
 
   bool IsFeedNode(const string& node_name) const {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_17(mht_17_v, 510, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "IsFeedNode");
+
     return absl::c_any_of(
         item_->feed, [&](const std::pair<std::string, Tensor>& feed) {
           return ParseTensorName(feed.first).node() == node_name;
@@ -291,30 +517,51 @@ class FunctionOptimizerContext {
   }
 
   bool IsFetchNode(const string& node_name) const {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_18(mht_18_v, 521, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "IsFetchNode");
+
     return absl::c_any_of(item_->fetch, [&](const string& fetch) {
       return ParseTensorName(fetch).node() == node_name;
     });
   }
 
   bool IsTrulyConst(const string& name) const {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_19(mht_19_v, 531, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "IsTrulyConst");
+
     return TrulyConstNode(name) != nullptr;
   }
 
   const NodeDef* TrulyConstNode(const string& name) const {
+   std::vector<std::string> mht_20_v;
+   mht_20_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_20(mht_20_v, 539, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "TrulyConstNode");
+
     return gtl::FindWithDefault(truly_const_nodes_, name, nullptr);
   }
 
   const FunctionSpecialization* FindFunctionSpecialization(
       const FunctionSpecializationSignature& sig) const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_21(mht_21_v, 547, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "FindFunctionSpecialization");
+
     return gtl::FindOrNull(specialized_functions_, sig);
   }
 
   void AddSpecializedFunction(const FunctionSpecializationSignature& sig,
                               const FunctionSpecialization& specialized_func) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_22(mht_22_v, 555, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "AddSpecializedFunction");
+
     specialized_functions_.emplace(sig, specialized_func);
   }
 
   void AddTensorMapping(const SafeTensorId& from, const SafeTensorId& to) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_23(mht_23_v, 562, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "AddTensorMapping");
+
     DCHECK(from.index() != Graph::kControlSlot)
         << "Tensor mapping must be from regular tensor";
     DCHECK(to.index() != Graph::kControlSlot)
@@ -328,6 +575,10 @@ class FunctionOptimizerContext {
 
   void AddTensorMapping(const string& func_node,
                         const FunctionSpecialization& specialized_func) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("func_node: \"" + func_node + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_24(mht_24_v, 579, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "AddTensorMapping");
+
     for (const auto& pair : specialized_func.output_mapping) {
       int from_idx = pair.first;
       int to_idx = pair.second;
@@ -389,6 +640,9 @@ class FunctionOptimizerContext {
 // indeed a function call. Otherwise returns nullptr.
 const FunctionDef* FindFunctionCall(const FunctionOptimizerContext& ctx,
                                     const NodeDef& node) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_25(mht_25_v, 643, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "FindFunctionCall");
+
   // Check if a node does indirect function call via PartitionedCallOp.
   if (IsPartitionedCall(node) || IsStatefulPartitionedCall(node)) {
     const AttrValue* func_attr = AttrSlice(node).Find("f");
@@ -427,7 +681,14 @@ absl::flat_hash_set<int> GetActiveOutputs(const NodeDef& node,
 
 bool HasTrulyConstInputs(const NodeDef& node,
                          const FunctionOptimizerContext& ctx) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_26(mht_26_v, 684, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "HasTrulyConstInputs");
+
   const auto is_truly_const = [&ctx](const string& input) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("input: \"" + input + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_27(mht_27_v, 689, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "lambda");
+
     return ctx.IsTrulyConst(NodeName(input));
   };
   return absl::c_any_of(node.input(), is_truly_const);
@@ -435,6 +696,9 @@ bool HasTrulyConstInputs(const NodeDef& node,
 
 bool HasUnusedOutputs(const NodeDef& func_node, const FunctionDef& func,
                       const FunctionOptimizerContext& ctx) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_28(mht_28_v, 699, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "HasUnusedOutputs");
+
   // Functions with tensor list outputs are not supported right now, so the
   // number of output args is the same as number of possible function caller
   // node outputs.
@@ -449,6 +713,9 @@ bool HasUnusedOutputs(const NodeDef& func_node, const FunctionDef& func,
 // the optimized graph.
 FunctionDefLibrary PruneFunctionLibrary(const FunctionLibraryDefinition& flib,
                                         const GraphDef& optimized_graph) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_29(mht_29_v, 716, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "PruneFunctionLibrary");
+
   FunctionLibraryDefinition pruned_flib =
       flib.ReachableDefinitions(optimized_graph);
 
@@ -467,8 +734,14 @@ Status PushDownConstInputs(const NodeDef& func_node,
                            GrapplerFunctionItem* item,
                            absl::flat_hash_set<string>* const_inputs,
                            absl::flat_hash_set<string>* control_deps) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_30(mht_30_v, 737, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "PushDownConstInputs");
+
   // Record node control dependencies in the control_deps set.
   const auto record_control_deps = [&](const NodeDef* const_input) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_31(mht_31_v, 742, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "lambda");
+
     for (int i = const_input->input_size() - 1; i >= 0; --i) {
       const string& input = const_input->input(i);
       if (IsControlInput(input))
@@ -499,6 +772,9 @@ Status PushDownConstInputs(const NodeDef& func_node,
 // control dependencies to the function caller node.
 void RemovePushedDownConstInputs(const FunctionSpecialization& specialization,
                                  NodeDef* specialized_func_node) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_32(mht_32_v, 775, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "RemovePushedDownConstInputs");
+
   // Nothing to do if it was no const inputs to the function node.
   if (specialization.const_inputs.empty()) return;
 
@@ -534,6 +810,9 @@ void RemovePushedDownConstInputs(const FunctionSpecialization& specialization,
 void RemovePushedDownConstInputTypes(
     const FunctionSpecialization& specialization, const NodeDef& func_node,
     NodeDef* specialized_func_node) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_33(mht_33_v, 813, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "RemovePushedDownConstInputTypes");
+
   // Nothing to do if it was no const inputs to the function node.
   if (specialization.const_inputs.empty()) return;
 
@@ -561,6 +840,9 @@ void RemovePushedDownConstInputTypes(
 void RemoveUnusedOutputsTypes(const FunctionSpecialization& specialization,
                               const NodeDef& func_node,
                               NodeDef* specialized_func_node) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_34(mht_34_v, 843, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "RemoveUnusedOutputsTypes");
+
   // Make sure that original function caller has Tout attribute.
   const AttrValue* tout = AttrSlice(func_node).Find("Tout");
   if (tout == nullptr || !tout->has_list()) return;
@@ -586,6 +868,10 @@ Status UpdateSpecializedFunctionCallSite(const FunctionDef& func,
                                          const NodeDef& func_node,
                                          const string& specialized_func_name,
                                          NodeDef* specialized_func_node) {
+   std::vector<std::string> mht_35_v;
+   mht_35_v.push_back("specialized_func_name: \"" + specialized_func_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_35(mht_35_v, 872, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "UpdateSpecializedFunctionCallSite");
+
   if (IsDirectFunctionCall(func, func_node)) {
     specialized_func_node->set_op(specialized_func_name);
 
@@ -608,6 +894,9 @@ Status UpdateSpecializedFunctionNode(
     const FunctionDef& func, const NodeDef& func_node,
     const FunctionSpecialization& specialization,
     NodeDef* specialized_func_node) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_36(mht_36_v, 897, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "UpdateSpecializedFunctionNode");
+
   // Function called indirectly via custom kernel (e.g. PartitionedCallOp).
   bool is_indirect_call = IsIndirectFunctionCall(func, func_node);
 
@@ -644,6 +933,9 @@ Status InitializeFunctionSpecializationSignature(
     const NodeDef& func_node, const FunctionDef& func,
     const AttrSlice& func_instantiation_attr,
     const FunctionOptimizerContext& ctx, FunctionSpecializationSignature* sig) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_37(mht_37_v, 936, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "InitializeFunctionSpecializationSignature");
+
   DCHECK(sig->const_inputs.empty());
   DCHECK(sig->active_outputs.empty());
 
@@ -675,6 +967,9 @@ Status InitializeFunctionSpecializationSignature(
 string SpecializedFunctionName(const FunctionOptimizerContext& ctx,
                                const FunctionDef& func,
                                const NodeDef& func_node) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_38(mht_38_v, 970, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "SpecializedFunctionName");
+
   return absl::Substitute(
       "$0_specialized_for_$1_at_$2", func.signature().name(),
       absl::StrReplaceAll(func_node.name(), {{"/", "_"}}), ctx.item().id);
@@ -683,6 +978,9 @@ string SpecializedFunctionName(const FunctionOptimizerContext& ctx,
 Status SpecializeFunction(const NodeDef& func_node, const FunctionDef& func,
                           FunctionOptimizerContext* ctx,
                           GraphDef* optimized_graph) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_39(mht_39_v, 981, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "SpecializeFunction");
+
   VLOG(2) << "Specialize function call: " << SummarizeNodeDef(func_node);
 
   const AttrSlice func_instantiation_attr =
@@ -798,6 +1096,10 @@ using OutputControlSource = InlineFunctionBodyOptions::OutputControlSource;
 
 // Checks if boolean attribute is defined and its value is 'true'.
 bool CheckBoolAttr(const Node* n, absl::string_view attr_name) {
+   std::vector<std::string> mht_40_v;
+   mht_40_v.push_back("attr_name: \"" + std::string(attr_name.data(), attr_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_40(mht_40_v, 1100, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "CheckBoolAttr");
+
   bool match;
   bool found = TryGetNodeAttr(n->attrs(), attr_name, &match);
   return found && match;
@@ -805,19 +1107,32 @@ bool CheckBoolAttr(const Node* n, absl::string_view attr_name) {
 
 // Checks if string attribute is defined and it's not empty.
 bool CheckStringAttr(const Node* n, absl::string_view attr_name) {
+   std::vector<std::string> mht_41_v;
+   mht_41_v.push_back("attr_name: \"" + std::string(attr_name.data(), attr_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_41(mht_41_v, 1111, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "CheckStringAttr");
+
   const string& value = GetNodeAttrString(n->attrs(), attr_name);
   return !value.empty();
 }
 
 bool LowerUsingSwitchMergeIsOn(const Node* n) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_42(mht_42_v, 1119, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "LowerUsingSwitchMergeIsOn");
+
   return CheckBoolAttr(n, kLowerUsingSwitchMergeAttr);
 }
 
 bool LowerAsMultiDeviceFunctionIsOn(const Node* n) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_43(mht_43_v, 1126, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "LowerAsMultiDeviceFunctionIsOn");
+
   return CheckBoolAttr(n, kLowerAsMultiDeviceFunctionAttr);
 }
 
 bool MarkedForXlaCompilation(const NodeDef& n) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_44(mht_44_v, 1133, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "MarkedForXlaCompilation");
+
   auto is_enabled = [&](std::string attr_name) -> bool {
     auto it = n.attr().find(attr_name);
     return it != n.attr().end() && (!it->second.s().empty() || it->second.b());
@@ -827,6 +1142,10 @@ bool MarkedForXlaCompilation(const NodeDef& n) {
 }
 
 const bool IsExemptFromSideEffectsExecutionValidation(const string& op) {
+   std::vector<std::string> mht_45_v;
+   mht_45_v.push_back("op: \"" + op + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_45(mht_45_v, 1146, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "IsExemptFromSideEffectsExecutionValidation");
+
   static const auto* exemption = new absl::flat_hash_set<string>(
       {// LINT.IfChange
        // Op types that should not run in program order, e.g. because they need
@@ -882,6 +1201,9 @@ Status ValidateSideEffectsExecution(
     const FunctionBody& fbody, OutputControlSource output_control_source,
     bool has_outgoing_control_edges,
     bool validate_outgoing_control_edge = true) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_46(mht_46_v, 1204, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "ValidateSideEffectsExecution");
+
   // Find all nodes that can produce side effects in the function body graph. We
   // use 'is_stateful()' bit as an approximation of "has side effects" property.
   std::vector<const Node*> fbody_side_effects;
@@ -947,6 +1269,9 @@ Status ValidateSideEffectsExecution(
 // Validates that no dead tensor can reach function output.
 Status ValidateNoDeadOutputs(const FunctionLibraryDefinition& flib_def,
                              const FunctionBody& fbody) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_47(mht_47_v, 1272, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "ValidateNoDeadOutputs");
+
   absl::flat_hash_set<const Node*> output_nodes = {fbody.ret_nodes.begin(),
                                                    fbody.ret_nodes.end()};
 
@@ -1013,6 +1338,9 @@ Status ValidateNoDeadOutputs(const FunctionLibraryDefinition& flib_def,
 Status MakeFunctionBodyForInlining(const Node& node,
                                    const FunctionLibraryDefinition& flib_def,
                                    std::unique_ptr<FunctionBody>* fbody) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_48(mht_48_v, 1341, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "MakeFunctionBodyForInlining");
+
   VLOG(3) << "Make function body for inlining: " << SummarizeNode(node);
 
   // Finds a FunctionDef in a library and verifies that it exists.
@@ -1106,6 +1434,9 @@ Status MakeFunctionBodyForInlining(const Node& node,
 // V2, however we have to guarantee that graphs constructed with Tensorflow V1
 // will produce correct results.
 void AddStrictInputSemantics(Node* caller, Graph* g) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_49(mht_49_v, 1437, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "AddStrictInputSemantics");
+
   absl::flat_hash_set<const Node*> existing_control_sources;
   for (const Edge* edge : caller->in_edges()) {
     if (edge->IsControlEdge()) {
@@ -1158,6 +1489,9 @@ void AddStrictInputSemantics(Node* caller, Graph* g) {
 // While loop (see control_flow.h for the 'frame' node explanation).
 void AddFrameForwardingControlEdge(const std::vector<ControlFlowInfo>& info,
                                    Node* caller, Graph* g) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_50(mht_50_v, 1492, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "AddFrameForwardingControlEdge");
+
   // All nodes added to the graph by v2 control flow lowering and function
   // inlining are guaranteed to have control edges to nested function calls.
   int info_size = info.size();
@@ -1210,6 +1544,9 @@ Status InlineFunctionCalls(const GrapplerItem& item,
                            const RewriterConfig::Toggle opt_level,
                            const bool lower_control_flow,
                            GraphDef* output_graph) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_51(mht_51_v, 1547, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "InlineFunctionCalls");
+
   bool is_aggressive = opt_level == RewriterConfig::AGGRESSIVE;
   VLOG(2) << "Inline function calls: grappler_item_id=" << item.id
           << " (aggressive_mode=" << is_aggressive << ")";
@@ -1410,6 +1747,9 @@ Status InlineFunctionCalls(const GrapplerItem& item,
 // connected to valid nodes.
 void RestoreTensorMapping(const FunctionOptimizerContext& ctx,
                           GraphDef* optimized_graph) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_52(mht_52_v, 1750, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "RestoreTensorMapping");
+
   if (ctx.tensor_mapping().empty()) return;
 
   // During function specialization, we might prune unused function outputs. We
@@ -1439,6 +1779,9 @@ void RestoreTensorMapping(const FunctionOptimizerContext& ctx,
 
 Status FunctionOptimizer::RunFunctionOptimizerPass(
     const GrapplerItem& item, GraphDef* optimized_graph) const {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_53(mht_53_v, 1782, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "FunctionOptimizer::RunFunctionOptimizerPass");
+
   VLOG(3) << "Run function optimizer pass: grappler_item_id=" << item.id;
 
   // Inline all function calls into a graph using common_runtime/function
@@ -1455,13 +1798,19 @@ Status FunctionOptimizer::RunFunctionOptimizerPass(
     // nodes, we can check node size to make sure that graph was not modified.
     const int num_nodes_before = optimized_graph->node_size();
     const auto is_graph_modified = [&]() {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_54(mht_54_v, 1801, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "lambda");
+
       int num_nodes = optimized_graph->node_size();
       DCHECK_GE(num_nodes, num_nodes_before) << "Nodes should not be removed";
       return num_nodes > num_nodes_before;
     };
 
     // Copy node from the `graph_after_inlining` to the `optimized_graph`.
-    const auto copy_node = [&]() { *optimized_graph->add_node() = node; };
+    const auto copy_node = [&]() {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_55(mht_55_v, 1811, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "lambda");
+ *optimized_graph->add_node() = node; };
 
     // Find if a node is a function call (direct or indirect).
     const FunctionDef* func = FindFunctionCall(ctx, node);
@@ -1514,6 +1863,9 @@ Status FunctionOptimizer::RunFunctionOptimizerPass(
 
 Status FunctionOptimizer::Optimize(Cluster*, const GrapplerItem& item,
                                    GraphDef* optimized_graph) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSfunction_optimizerDTcc mht_56(mht_56_v, 1866, "", "./tensorflow/core/grappler/optimizers/function_optimizer.cc", "FunctionOptimizer::Optimize");
+
   // Nothing to do here.
   if (item.graph.library().function_size() == 0) {
     return errors::Aborted("Nothing to do.");

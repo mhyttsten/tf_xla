@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,11 +210,23 @@ class TestOp {
  public:
   TestOp(std::initializer_list<int> inputs, std::initializer_list<int> outputs,
          std::initializer_list<int> temporaries)
-      : inputs_(inputs), outputs_(outputs), temporaries_(temporaries) {}
+      : inputs_(inputs), outputs_(outputs), temporaries_(temporaries) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_0(mht_0_v, 214, "", "./tensorflow/lite/arena_planner_test.cc", "TestOp");
+}
 
-  const std::vector<int>& inputs() const { return inputs_; }
-  const std::vector<int>& outputs() const { return outputs_; }
-  const std::vector<int>& temporaries() const { return temporaries_; }
+  const std::vector<int>& inputs() const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_1(mht_1_v, 219, "", "./tensorflow/lite/arena_planner_test.cc", "inputs");
+ return inputs_; }
+  const std::vector<int>& outputs() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_2(mht_2_v, 223, "", "./tensorflow/lite/arena_planner_test.cc", "outputs");
+ return outputs_; }
+  const std::vector<int>& temporaries() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_3(mht_3_v, 227, "", "./tensorflow/lite/arena_planner_test.cc", "temporaries");
+ return temporaries_; }
 
  private:
   std::vector<int> inputs_;
@@ -62,6 +242,9 @@ class TestGraph {
             std::initializer_list<TestOp> nodes,
             std::initializer_list<int> outputs)
       : inputs_(inputs), outputs_(outputs) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_4(mht_4_v, 245, "", "./tensorflow/lite/arena_planner_test.cc", "TestGraph");
+
     int max_tensor_index = 0;
 
     for (int t : inputs) {
@@ -72,6 +255,9 @@ class TestGraph {
     }
     for (const auto& node : nodes) {
       auto int_array = [](const std::vector<int>& x) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_5(mht_5_v, 258, "", "./tensorflow/lite/arena_planner_test.cc", "lambda");
+
         TfLiteIntArray* lite = TfLiteIntArrayCreate(x.size());
         for (size_t i = 0; i < x.size(); i++) lite->data[i] = x[i];
         return lite;
@@ -102,6 +288,9 @@ class TestGraph {
   }
 
   ~TestGraph() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_6(mht_6_v, 291, "", "./tensorflow/lite/arena_planner_test.cc", "~TestGraph");
+
     for (auto node : nodes_) {
       TfLiteIntArrayFree(node.inputs);
       TfLiteIntArrayFree(node.outputs);
@@ -109,17 +298,38 @@ class TestGraph {
     }
   }
 
-  const std::vector<TfLiteNode>& nodes() { return nodes_; }
-  std::vector<TfLiteTensor>* tensors() { return &tensors_; }
-  const std::vector<int>& inputs() { return inputs_; }
-  const std::vector<int>& outputs() { return outputs_; }
-  const std::vector<int>& variables() { return variables_; }
+  const std::vector<TfLiteNode>& nodes() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_7(mht_7_v, 302, "", "./tensorflow/lite/arena_planner_test.cc", "nodes");
+ return nodes_; }
+  std::vector<TfLiteTensor>* tensors() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_8(mht_8_v, 306, "", "./tensorflow/lite/arena_planner_test.cc", "tensors");
+ return &tensors_; }
+  const std::vector<int>& inputs() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_9(mht_9_v, 310, "", "./tensorflow/lite/arena_planner_test.cc", "inputs");
+ return inputs_; }
+  const std::vector<int>& outputs() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_10(mht_10_v, 314, "", "./tensorflow/lite/arena_planner_test.cc", "outputs");
+ return outputs_; }
+  const std::vector<int>& variables() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_11(mht_11_v, 318, "", "./tensorflow/lite/arena_planner_test.cc", "variables");
+ return variables_; }
 
   void SetVariables(const std::vector<int>& variables) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_12(mht_12_v, 323, "", "./tensorflow/lite/arena_planner_test.cc", "SetVariables");
+
     variables_ = variables;
   }
 
   void Swap(TestGraph* other) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_13(mht_13_v, 330, "", "./tensorflow/lite/arena_planner_test.cc", "Swap");
+
     std::swap(nodes_, other->nodes_);
     std::swap(tensors_, other->tensors_);
     std::swap(inputs_, other->inputs_);
@@ -138,21 +348,51 @@ class TestGraph {
 // The GraphInfo for a TestGraph.
 class TestGraphInfo : public GraphInfo {
  public:
-  explicit TestGraphInfo(TestGraph* graph) : graph_(graph) {}
+  explicit TestGraphInfo(TestGraph* graph) : graph_(graph) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_14(mht_14_v, 352, "", "./tensorflow/lite/arena_planner_test.cc", "TestGraphInfo");
+}
 
-  size_t num_tensors() const override { return graph_->tensors()->size(); }
+  size_t num_tensors() const override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_15(mht_15_v, 357, "", "./tensorflow/lite/arena_planner_test.cc", "num_tensors");
+ return graph_->tensors()->size(); }
   TfLiteTensor* tensor(size_t index) override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_16(mht_16_v, 361, "", "./tensorflow/lite/arena_planner_test.cc", "tensor");
+
     return &graph_->tensors()->at(index);
   }
-  size_t num_execution_nodes() const override { return graph_->nodes().size(); }
-  size_t num_total_nodes() const override { return graph_->nodes().size(); }
+  size_t num_execution_nodes() const override {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_17(mht_17_v, 367, "", "./tensorflow/lite/arena_planner_test.cc", "num_execution_nodes");
+ return graph_->nodes().size(); }
+  size_t num_total_nodes() const override {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_18(mht_18_v, 371, "", "./tensorflow/lite/arena_planner_test.cc", "num_total_nodes");
+ return graph_->nodes().size(); }
   const TfLiteNode& node(size_t index) const override {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_19(mht_19_v, 375, "", "./tensorflow/lite/arena_planner_test.cc", "node");
+
     return graph_->nodes()[index];
   }
-  size_t node_index(size_t index) const override { return index; }
-  const std::vector<int>& inputs() const override { return graph_->inputs(); }
-  const std::vector<int>& outputs() const override { return graph_->outputs(); }
+  size_t node_index(size_t index) const override {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_20(mht_20_v, 381, "", "./tensorflow/lite/arena_planner_test.cc", "node_index");
+ return index; }
+  const std::vector<int>& inputs() const override {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_21(mht_21_v, 385, "", "./tensorflow/lite/arena_planner_test.cc", "inputs");
+ return graph_->inputs(); }
+  const std::vector<int>& outputs() const override {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_22(mht_22_v, 389, "", "./tensorflow/lite/arena_planner_test.cc", "outputs");
+ return graph_->outputs(); }
   const std::vector<int>& variables() const override {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_23(mht_23_v, 393, "", "./tensorflow/lite/arena_planner_test.cc", "variables");
+
     return graph_->variables();
   }
 
@@ -161,6 +401,10 @@ class TestGraphInfo : public GraphInfo {
 };
 
 void ReportError(TfLiteContext* context, const char* format, ...) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("format: \"" + (format == nullptr ? std::string("nullptr") : std::string((char*)format)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_24(mht_24_v, 405, "", "./tensorflow/lite/arena_planner_test.cc", "ReportError");
+
   const size_t kBufferSize = 1024;
   char temp_buffer[kBufferSize];
 
@@ -175,6 +419,9 @@ void ReportError(TfLiteContext* context, const char* format, ...) {
 class ArenaPlannerTest : public ::testing::Test {
  protected:
   void SetGraph(TestGraph* graph, bool preserve_all_tensors = false) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_25(mht_25_v, 422, "", "./tensorflow/lite/arena_planner_test.cc", "SetGraph");
+
     graph_ = graph;
     context_.ReportError = ReportError;
     planner_.reset(new ArenaPlanner(
@@ -185,33 +432,54 @@ class ArenaPlannerTest : public ::testing::Test {
   }
 
   void SwapGraph(TestGraph* graph) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_26(mht_26_v, 435, "", "./tensorflow/lite/arena_planner_test.cc", "SwapGraph");
+
     graph_->Swap(graph);
     CHECK(planner_->PlanAllocations() == kTfLiteOk);
   }
 
   void Execute(int start, int end) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_27(mht_27_v, 443, "", "./tensorflow/lite/arena_planner_test.cc", "Execute");
+
     CHECK(planner_->ExecuteAllocations(start, end) == kTfLiteOk);
   }
 
   void ReleaseNonPersistentMemory() {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_28(mht_28_v, 450, "", "./tensorflow/lite/arena_planner_test.cc", "ReleaseNonPersistentMemory");
+
     CHECK(planner_->ReleaseNonPersistentMemory() == kTfLiteOk);
   }
 
   void AcquireNonPersistentMemory() {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_29(mht_29_v, 457, "", "./tensorflow/lite/arena_planner_test.cc", "AcquireNonPersistentMemory");
+
     CHECK(planner_->AcquireNonPersistentMemory() == kTfLiteOk);
   }
 
   void ResetAllocationsAfter(int node) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_30(mht_30_v, 464, "", "./tensorflow/lite/arena_planner_test.cc", "ResetAllocationsAfter");
+
     CHECK(planner_->ResetAllocationsAfter(node) == kTfLiteOk);
   }
 
   bool HasNonPersistentMemory() {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_31(mht_31_v, 471, "", "./tensorflow/lite/arena_planner_test.cc", "HasNonPersistentMemory");
+
     return planner_ && planner_->HasNonPersistentMemory();
   }
 
   // Returns the actual offset of a given tensor, relative to the start of its
   // arena.
   std::ptrdiff_t GetOffset(int tensor_index) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_32(mht_32_v, 480, "", "./tensorflow/lite/arena_planner_test.cc", "GetOffset");
+
     const TfLiteTensor& tensor = (*graph_->tensors())[tensor_index];
     return reinterpret_cast<std::intptr_t>(tensor.data.raw) -
            planner_->BasePointer(tensor.allocation_type);
@@ -219,6 +487,9 @@ class ArenaPlannerTest : public ::testing::Test {
 
   // Returns the first aligned offset after a given tensor.
   std::ptrdiff_t GetOffsetAfter(int tensor_index) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_33(mht_33_v, 490, "", "./tensorflow/lite/arena_planner_test.cc", "GetOffsetAfter");
+
     const TfLiteTensor& tensor = (*graph_->tensors())[tensor_index];
     std::ptrdiff_t offset = GetOffset(tensor_index) + tensor.bytes;
     // We must make sure the offset is aligned to kDefaultArenaAlignment.
@@ -230,6 +501,9 @@ class ArenaPlannerTest : public ::testing::Test {
 
   // Returns if the given tensor is unallocated or not.
   bool IsUnallocated(int tensor_index) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePSarena_planner_testDTcc mht_34(mht_34_v, 504, "", "./tensorflow/lite/arena_planner_test.cc", "IsUnallocated");
+
     return (*graph_->tensors())[tensor_index].data.raw == nullptr;
   }
 

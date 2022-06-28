@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -45,6 +213,9 @@ using hlo_sharding_util::GroupedSharding;
 }  // namespace
 
 Status SpmdPartitioningVisitor::HandleDot(HloInstruction* hlo) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc mht_0(mht_0_v, 216, "", "./tensorflow/compiler/xla/service/spmd/dot_handler.cc", "SpmdPartitioningVisitor::HandleDot");
+
   DotConvDimsMapping mapping;
   const auto& dnums = hlo->dot_dimension_numbers();
   int64_t next_output_dim = 0;
@@ -117,8 +288,14 @@ struct DotDimensionIndexMapping {
 
 void UpdateDDNums(DotDimensionNumbers* new_ddnums, int64_t reshaped_dim,
                   bool lhs) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc mht_1(mht_1_v, 291, "", "./tensorflow/compiler/xla/service/spmd/dot_handler.cc", "UpdateDDNums");
+
   auto update_dims =
       [&reshaped_dim](tensorflow::protobuf::RepeatedField<int64_t>* dims) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc mht_2(mht_2_v, 296, "", "./tensorflow/compiler/xla/service/spmd/dot_handler.cc", "lambda");
+
         bool add_reshaped_dim = false;
         if (absl::c_linear_search(*dims, reshaped_dim)) {
           add_reshaped_dim = true;
@@ -148,6 +325,9 @@ Window GenNewWindow(const HloInstruction* original_dot,
                     const HloInstruction* dot_rhs, int64_t lhs_concat_dim,
                     int64_t rhs_concat_dim, bool windowed_at_contracting_dims,
                     bool windowed_at_batch_dims) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc mht_3(mht_3_v, 328, "", "./tensorflow/compiler/xla/service/spmd/dot_handler.cc", "GenNewWindow");
+
   auto new_window = original_dot->window();
   const ConvolutionDimensionNumbers& conv_dnums =
       original_dot->convolution_dimension_numbers();
@@ -235,6 +415,9 @@ ConvolutionDimensionNumbers GenNewConvDNums(
     const std::vector<int64_t>& lhs_to_output_indices,
     const std::vector<int64_t>& rhs_to_output_indices,
     const Shape& new_dot_shape) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc mht_4(mht_4_v, 418, "", "./tensorflow/compiler/xla/service/spmd/dot_handler.cc", "GenNewConvDNums");
+
   // Generate the new conv dimension numbers.
   const ConvolutionDimensionNumbers& dnums =
       original_dot->convolution_dimension_numbers();
@@ -338,6 +521,9 @@ ConvolutionDimensionNumbers GenNewConvDNums(
 DotDimensionIndexMapping ComputeDimensionIndexMapping(
     const DotConvDimsMapping& dims_mapping, int64_t lhs_rank, int64_t rhs_rank,
     int64_t output_rank) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc mht_5(mht_5_v, 524, "", "./tensorflow/compiler/xla/service/spmd/dot_handler.cc", "ComputeDimensionIndexMapping");
+
   std::vector<int64_t> lhs_to_rhs_indices(lhs_rank, -1);
   std::vector<int64_t> lhs_to_output_indices(lhs_rank, -1);
   std::vector<int64_t> rhs_to_lhs_indices(rhs_rank, -1);
@@ -346,6 +532,9 @@ DotDimensionIndexMapping ComputeDimensionIndexMapping(
   std::vector<int64_t> output_to_rhs_indices(output_rank, -1);
   auto populate_indices_mapping =
       [&](const DotConvDimsMapping::DimsMapping& mapping) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc mht_6(mht_6_v, 535, "", "./tensorflow/compiler/xla/service/spmd/dot_handler.cc", "lambda");
+
         if (mapping.lhs >= 0) {
           lhs_to_rhs_indices[mapping.lhs] = mapping.rhs;
           lhs_to_output_indices[mapping.lhs] = mapping.output;
@@ -437,6 +626,9 @@ absl::optional<WindowedEinsumConfig> GetWindowedEinsumConfiguration(
   // reuse of the resharding for the operand with original_hlo.
   auto check_users_sharding = [original_hlo](
                                   const HloInstruction* to_loop_over) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc mht_7(mht_7_v, 629, "", "./tensorflow/compiler/xla/service/spmd/dot_handler.cc", "lambda");
+
     if (to_loop_over->users().size() <= 1) {
       return true;
     }
@@ -486,6 +678,9 @@ absl::optional<WindowedEinsumConfig> GetWindowedEinsumConfiguration(
   // communication/computation generated by unit tests, we always allow windowed
   // einsum to have meaningful unit tests.
   auto disable_windowed_einsum = [&](bool lhs_needs_ag, bool rhs_needs_ag) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc mht_8(mht_8_v, 681, "", "./tensorflow/compiler/xla/service/spmd/dot_handler.cc", "lambda");
+
     if (visitor == nullptr) {
       return false;
     }
@@ -1877,6 +2072,9 @@ StatusOr<HloInstruction*> PartitionBaseCase(
   // Returns true if it is beneficial to reshard the operand at `operand_idx`
   // across the contracting dimension.
   const auto should_partition_contracting_dim = [&](int64_t operand_idx) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc mht_9(mht_9_v, 2075, "", "./tensorflow/compiler/xla/service/spmd/dot_handler.cc", "lambda");
+
     if (!output_sharding.IsReplicated()) {
       return false;
     }
@@ -2179,6 +2377,9 @@ GroupedSharding GetNonContractingPartitionGroupedShardingForMatchedOperand(
     bool lhs_matching, const HloSharding& matching_sharding,
     const HloSharding& output_sharding,
     absl::Span<const DotConvDimsMapping::DimsMapping> partitioned_dims) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc mht_10(mht_10_v, 2380, "", "./tensorflow/compiler/xla/service/spmd/dot_handler.cc", "GetNonContractingPartitionGroupedShardingForMatchedOperand");
+
   std::vector<int64_t> matching_sharding_dims =
       matching_sharding.tile_assignment().dimensions();
   std::vector<int64_t> matching_dims;
@@ -2651,6 +2852,9 @@ StatusOr<HloInstruction*> PartitionDotGroupOnContracting(
 
 DotConvDimsMapping ConvertDimsMappingWithFeatureGroupCount(
     const DotConvDimsMapping& dims_mapping, HloInstruction* original_hlo) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc mht_11(mht_11_v, 2855, "", "./tensorflow/compiler/xla/service/spmd/dot_handler.cc", "ConvertDimsMappingWithFeatureGroupCount");
+
   const auto& dnums = original_hlo->convolution_dimension_numbers();
   DotConvDimsMapping new_dims_mapping;
   new_dims_mapping.batch_dims = dims_mapping.batch_dims;
@@ -2674,6 +2878,9 @@ DotConvDimsMapping ConvertDimsMappingWithFeatureGroupCount(
 
 DotConvDimsMapping ConvertDimsMappingWithBatchGroupCount(
     const DotConvDimsMapping& dims_mapping, HloInstruction* original_hlo) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc mht_12(mht_12_v, 2881, "", "./tensorflow/compiler/xla/service/spmd/dot_handler.cc", "ConvertDimsMappingWithBatchGroupCount");
+
   const auto& dnums = original_hlo->convolution_dimension_numbers();
   DotConvDimsMapping new_dims_mapping;
   new_dims_mapping.batch_dims = dims_mapping.batch_dims;
@@ -2847,6 +3054,9 @@ bool PrioritizeContractingDimensionsPartitioning(
         HloInstruction*, HloInstruction*, SpmdBuilder*,
         const Window& conv_window)>& create_sharded_dot,
     SpmdPartitioningVisitor* visitor) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc mht_13(mht_13_v, 3057, "", "./tensorflow/compiler/xla/service/spmd/dot_handler.cc", "PrioritizeContractingDimensionsPartitioning");
+
   const bool may_group_on_lhs_non_contracting =
       lhs_non_contracting_partitions == output_lhs_non_contracting_partitions &&
       lhs_non_contracting_partitions > 1;
@@ -3065,6 +3275,9 @@ bool LhsIsBestMatchForNonContractingPartitioning(
         HloInstruction*, HloInstruction*, SpmdBuilder*,
         const Window& conv_window)>& create_sharded_dot,
     SpmdPartitioningVisitor* visitor) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc mht_14(mht_14_v, 3278, "", "./tensorflow/compiler/xla/service/spmd/dot_handler.cc", "LhsIsBestMatchForNonContractingPartitioning");
+
   const bool may_group_on_lhs_non_contracting =
       lhs_non_contracting_partitions == output_lhs_non_contracting_partitions &&
       lhs_non_contracting_partitions > 1;
@@ -3205,6 +3418,9 @@ StatusOr<HloInstruction*> PartitionDot(
       [&](const HloSharding& sharding,
           absl::Span<const DotConvDimsMapping::DimsMapping> dims,
           int lhs_rhs_or_output) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc mht_15(mht_15_v, 3421, "", "./tensorflow/compiler/xla/service/spmd/dot_handler.cc", "lambda");
+
         int64_t partitions = 1;
         if (sharding.IsTileMaximal()) {
           return partitions;
@@ -3610,6 +3826,9 @@ Status SpmdPartitioningVisitor::HandleDotHelper(
     const std::function<StatusOr<HloInstruction*>(
         HloInstruction*, HloInstruction*, SpmdBuilder*,
         const Window& conv_window)>& create_sharded_dot) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc mht_16(mht_16_v, 3829, "", "./tensorflow/compiler/xla/service/spmd/dot_handler.cc", "SpmdPartitioningVisitor::HandleDotHelper");
+
   if (hlo->sharding().HasUniqueDevice()) {
     return DefaultAction(hlo);
   }
@@ -3704,6 +3923,9 @@ FindInputNodesIfOnlyDependOnSmallOperands(HloInstruction* hlo) {
 // with the input nodes.
 Status SinkInputNodesIntoWindowedDotGeneralLoopOnContractingDimensions(
     HloInstruction* loop, int64_t non_windowed_operand_index) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc mht_17(mht_17_v, 3926, "", "./tensorflow/compiler/xla/service/spmd/dot_handler.cc", "SinkInputNodesIntoWindowedDotGeneralLoopOnContractingDimensions");
+
   auto input_tuple = loop->mutable_operand(0);
   auto old_operand = input_tuple->mutable_operand(non_windowed_operand_index);
   auto input_nodes = FindInputNodesIfOnlyDependOnSmallOperands(old_operand);
@@ -3741,6 +3963,9 @@ Status SinkInputNodesIntoWindowedDotGeneralLoopOnContractingDimensions(
   std::vector<HloInstruction*> worklist;
   absl::flat_hash_map<const HloInstruction*, HloInstruction*> outside_to_inside;
   auto add_users_if_available = [&](HloInstruction* inst) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc mht_18(mht_18_v, 3966, "", "./tensorflow/compiler/xla/service/spmd/dot_handler.cc", "lambda");
+
     for (auto u : inst->users()) {
       if (outside_to_inside.count(u) == 0 && to_sink.count(u) > 0 &&
           absl::c_all_of(u->operands(), [&](const HloInstruction* o) {
@@ -3819,6 +4044,9 @@ Status SinkInputNodesIntoWindowedDotGeneralLoopOnContractingDimensions(
 // with the input nodes (broadcast).
 Status MoveUsersIntoWindowedDotGeneralLoopOnNonContractingDimensions(
     HloInstruction* loop, const SpmdPartitionerOptions& options) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc mht_19(mht_19_v, 4047, "", "./tensorflow/compiler/xla/service/spmd/dot_handler.cc", "MoveUsersIntoWindowedDotGeneralLoopOnNonContractingDimensions");
+
   CHECK_EQ(loop->user_count(), 1);
   // There should be a single direct user of the while loop, which is the
   // gte for element 2, i.e., the dot output.
@@ -4000,6 +4228,9 @@ Status MoveUsersIntoWindowedDotGeneralLoopOnNonContractingDimensions(
 
   worklist.clear();
   auto add_users_if_available = [&](HloInstruction* inst) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc mht_20(mht_20_v, 4231, "", "./tensorflow/compiler/xla/service/spmd/dot_handler.cc", "lambda");
+
     for (auto* u : inst->users()) {
       if (base_motion_cluster.outside_to_inside.count(u) == 0 &&
           to_move.count(u) > 0 &&
@@ -4026,6 +4257,9 @@ Status MoveUsersIntoWindowedDotGeneralLoopOnNonContractingDimensions(
   auto get_slice = [&](HloInstruction* padded,
                        absl::Span<HloInstruction* const> slice_offsets,
                        HloInstruction* dus) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc mht_21(mht_21_v, 4260, "", "./tensorflow/compiler/xla/service/spmd/dot_handler.cc", "lambda");
+
     return body->AddInstruction(HloInstruction::CreateDynamicSlice(
         ShapeUtil::ChangeElementType(dus->operand(1)->shape(),
                                      padded->shape().element_type()),
@@ -4033,6 +4267,9 @@ Status MoveUsersIntoWindowedDotGeneralLoopOnNonContractingDimensions(
   };
   // Helper functions to create nodes with small operands.
   auto add_broadcast = [&](const HloInstruction* broadcast) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc mht_22(mht_22_v, 4270, "", "./tensorflow/compiler/xla/service/spmd/dot_handler.cc", "lambda");
+
     Shape padded_operand_shape = broadcast->operand(0)->shape();
     for (int64_t i = 0; i < broadcast->dimensions().size(); ++i) {
       padded_operand_shape.set_dimensions(
@@ -4052,6 +4289,9 @@ Status MoveUsersIntoWindowedDotGeneralLoopOnNonContractingDimensions(
     }
   };
   auto add_iota = [&](const HloInstruction* iota) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc mht_23(mht_23_v, 4292, "", "./tensorflow/compiler/xla/service/spmd/dot_handler.cc", "lambda");
+
     auto* inside_iota = body->AddInstruction(iota->CloneWithNewOperands(
         ShapeUtil::ChangeElementType(padded_shape,
                                      iota->shape().element_type()),
@@ -4062,6 +4302,9 @@ Status MoveUsersIntoWindowedDotGeneralLoopOnNonContractingDimensions(
     }
   };
   auto add_constant = [&](const HloInstruction* constant) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc mht_24(mht_24_v, 4305, "", "./tensorflow/compiler/xla/service/spmd/dot_handler.cc", "lambda");
+
     auto* constant_clone = body->AddInstruction(constant->Clone());
     auto* inside_constant =
         PadToShape(constant_clone,
@@ -4074,6 +4317,9 @@ Status MoveUsersIntoWindowedDotGeneralLoopOnNonContractingDimensions(
     }
   };
   auto add_other_inst = [&](const HloInstruction* inst) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc mht_25(mht_25_v, 4320, "", "./tensorflow/compiler/xla/service/spmd/dot_handler.cc", "lambda");
+
     std::vector<HloInstruction*> operands_inside(inst->operand_count());
     for (MotionCluster& motion_cluster : motion_clusters) {
       for (int64_t i = 0; i < operands_inside.size(); ++i) {
@@ -4250,6 +4496,9 @@ Status MoveUsersIntoWindowedDotGeneralLoopOnNonContractingDimensions(
 
 Status SpmdPartitioningVisitor::DoCodeMotionForWindowedDotGeneralLoops(
     HloComputation* computation, const SpmdPartitionerOptions& options) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSdot_handlerDTcc mht_26(mht_26_v, 4499, "", "./tensorflow/compiler/xla/service/spmd/dot_handler.cc", "SpmdPartitioningVisitor::DoCodeMotionForWindowedDotGeneralLoops");
+
   for (auto& loop : windowed_dot_general_loops_) {
     if (loop.windowed_in_contracting_dims || loop.windowed_in_batch_dims ||
         loop.operands_sharded_at_contracting_dims) {

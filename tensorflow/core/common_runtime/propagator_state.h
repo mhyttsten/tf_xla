@@ -14,6 +14,174 @@ limitations under the License.
 ==============================================================================*/
 #ifndef TENSORFLOW_CORE_COMMON_RUNTIME_PROPAGATOR_STATE_H_
 #define TENSORFLOW_CORE_COMMON_RUNTIME_PROPAGATOR_STATE_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <queue>
 #include <vector>
@@ -72,11 +240,20 @@ class PropagatorState {
         : node_item(node_item),
           input_frame(in_frame),
           input_iter(in_iter),
-          is_dead(dead) {}
+          is_dead(dead) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_0(mht_0_v, 244, "", "./tensorflow/core/common_runtime/propagator_state.h", "TaggedNode");
+}
 
-    const NodeItem& get_node_item() const { return *node_item; }
+    const NodeItem& get_node_item() const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_1(mht_1_v, 249, "", "./tensorflow/core/common_runtime/propagator_state.h", "get_node_item");
+ return *node_item; }
 
-    bool get_is_dead() const { return is_dead; }
+    bool get_is_dead() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_2(mht_2_v, 254, "", "./tensorflow/core/common_runtime/propagator_state.h", "get_is_dead");
+ return is_dead; }
     int64_t get_iter_num() const;
   };
 
@@ -85,14 +262,26 @@ class PropagatorState {
   // don't free up memory from the queue as we consume nodes.
   class TaggedNodeReadyQueue {
    public:
-    TaggedNodeReadyQueue() : front_index_(0) {}
+    TaggedNodeReadyQueue() : front_index_(0) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_3(mht_3_v, 266, "", "./tensorflow/core/common_runtime/propagator_state.h", "TaggedNodeReadyQueue");
+}
 
-    void push_back(const TaggedNode& node) { ready_.push_back(node); }
+    void push_back(const TaggedNode& node) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_4(mht_4_v, 271, "", "./tensorflow/core/common_runtime/propagator_state.h", "push_back");
+ ready_.push_back(node); }
     TaggedNode front() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_5(mht_5_v, 275, "", "./tensorflow/core/common_runtime/propagator_state.h", "front");
+
       DCHECK_LT(front_index_, ready_.size());
       return ready_[front_index_];
     }
     void pop_front() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_6(mht_6_v, 282, "", "./tensorflow/core/common_runtime/propagator_state.h", "pop_front");
+
       DCHECK_LT(front_index_, ready_.size());
       front_index_++;
       if ((front_index_ == ready_.size()) || (front_index_ > kSpillThreshold)) {
@@ -106,7 +295,10 @@ class PropagatorState {
         front_index_ = 0;
       }
     }
-    bool empty() const { return ready_.empty(); }
+    bool empty() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_7(mht_7_v, 299, "", "./tensorflow/core/common_runtime/propagator_state.h", "empty");
+ return ready_.empty(); }
 
    private:
     // TODO(b/152925936): Re-evaluate these constants with current usage
@@ -129,7 +321,10 @@ class PropagatorState {
           input_tensors(new Entry[total_input_tensors]),
           outstanding_ops(0),
           outstanding_frame_count(0),
-          counts(*pending_counts) {  // Initialize with copy of *pending_counts
+          counts(*pending_counts) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_8(mht_8_v, 325, "", "./tensorflow/core/common_runtime/propagator_state.h", "IterationState");
+  // Initialize with copy of *pending_counts
     }
 
     const int64_t
@@ -150,35 +345,68 @@ class PropagatorState {
 
     // The number of outstanding frames for each iteration.
     int outstanding_frame_count;
-    int pending(PendingCounts::Handle h) { return counts.pending(h); }
+    int pending(PendingCounts::Handle h) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_9(mht_9_v, 349, "", "./tensorflow/core/common_runtime/propagator_state.h", "pending");
+ return counts.pending(h); }
     int decrement_pending(PendingCounts::Handle h, int v) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_10(mht_10_v, 353, "", "./tensorflow/core/common_runtime/propagator_state.h", "decrement_pending");
+
       return counts.decrement_pending(h, v);
     }
     // Mark a merge node as live
     // REQUIRES: Node corresponding to "h" is a merge node
-    void mark_live(PendingCounts::Handle h) { counts.mark_live(h); }
+    void mark_live(PendingCounts::Handle h) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_11(mht_11_v, 361, "", "./tensorflow/core/common_runtime/propagator_state.h", "mark_live");
+ counts.mark_live(h); }
     // Mark a node to show that processing has started.
-    void mark_started(PendingCounts::Handle h) { counts.mark_started(h); }
+    void mark_started(PendingCounts::Handle h) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_12(mht_12_v, 366, "", "./tensorflow/core/common_runtime/propagator_state.h", "mark_started");
+ counts.mark_started(h); }
     // Mark a node to show that processing has completed.
-    void mark_completed(PendingCounts::Handle h) { counts.mark_completed(h); }
+    void mark_completed(PendingCounts::Handle h) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_13(mht_13_v, 371, "", "./tensorflow/core/common_runtime/propagator_state.h", "mark_completed");
+ counts.mark_completed(h); }
     PendingCounts::NodeState node_state(PendingCounts::Handle h) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_14(mht_14_v, 375, "", "./tensorflow/core/common_runtime/propagator_state.h", "node_state");
+
       return counts.node_state(h);
     }
 
-    int dead_count(PendingCounts::Handle h) { return counts.dead_count(h); }
+    int dead_count(PendingCounts::Handle h) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_15(mht_15_v, 382, "", "./tensorflow/core/common_runtime/propagator_state.h", "dead_count");
+ return counts.dead_count(h); }
     void increment_dead_count(PendingCounts::Handle h) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_16(mht_16_v, 386, "", "./tensorflow/core/common_runtime/propagator_state.h", "increment_dead_count");
+
       counts.increment_dead_count(h);
     }
     PendingCounts::AdjustResult adjust_for_activation(PendingCounts::Handle h,
                                                       bool increment_dead) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_17(mht_17_v, 393, "", "./tensorflow/core/common_runtime/propagator_state.h", "adjust_for_activation");
+
       return counts.adjust_for_activation(h, increment_dead);
     }
     PendingCounts::AdjustResult adjust_for_activation_atomic(
         PendingCounts::Handle h, bool increment_dead) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_18(mht_18_v, 400, "", "./tensorflow/core/common_runtime/propagator_state.h", "adjust_for_activation_atomic");
+
       return counts.adjust_for_activation_atomic(h, increment_dead);
     }
 
-    ~IterationState() { delete[] input_tensors; }
+    ~IterationState() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_19(mht_19_v, 407, "", "./tensorflow/core/common_runtime/propagator_state.h", "~IterationState");
+ delete[] input_tensors; }
 
    private:
     PendingCounts counts;
@@ -191,7 +419,10 @@ class PropagatorState {
           max_parallel_iterations(parallel_iters),
           num_outstanding_iterations(1),
           iterations(parallel_iters + 1),
-          iterations_raw(iterations.data()) {}
+          iterations_raw(iterations.data()) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_20(mht_20_v, 423, "", "./tensorflow/core/common_runtime/propagator_state.h", "FrameState");
+}
 
     // A new frame is created for each loop. Execution starts at iteration 0.
     // When a value at iteration 0 passes through a NextIteration node,
@@ -375,6 +606,9 @@ class PropagatorState {
         TF_EXCLUSIVE_LOCKS_REQUIRED(mu);
 
     void DumpIterationState(PropagatorState* parent) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_21(mht_21_v, 609, "", "./tensorflow/core/common_runtime/propagator_state.h", "DumpIterationState");
+
       mutex_lock l(mu);
       for (IterationState* iteration : iterations) {
         if (iteration) {
@@ -385,6 +619,9 @@ class PropagatorState {
     }
 
     ~FrameState() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_22(mht_22_v, 622, "", "./tensorflow/core/common_runtime/propagator_state.h", "~FrameState");
+
       for (size_t i = 0; i < iterations.size(); ++i) {
         delete iterations[i];
         iterations[i] = nullptr;
@@ -399,6 +636,9 @@ class PropagatorState {
                                     IterationState* iter_state,
                                     EntryVector* outputs, TaggedNodeSeq* ready)
         TF_EXCLUSIVE_LOCKS_REQUIRED(mu) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_23(mht_23_v, 639, "", "./tensorflow/core/common_runtime/propagator_state.h", "ActivateNodesFastPathLocked");
+
       return ActivateNodesFastPathInternal<false>(item, is_dead, iter_state,
                                                   outputs, ready);
     }
@@ -449,6 +689,9 @@ class PropagatorState {
   }
 
   FrameAndIter GetFrameAndIter(const TaggedNode& tagged_node) const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_24(mht_24_v, 692, "", "./tensorflow/core/common_runtime/propagator_state.h", "GetFrameAndIter");
+
     return {tagged_node.input_frame->frame_id,
             tagged_node.input_iter->iter_num};
   }
@@ -458,6 +701,9 @@ class PropagatorState {
 
   // For debugging/logging only.
   void MaybeMarkStarted(const TaggedNode& tagged_node) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_25(mht_25_v, 704, "", "./tensorflow/core/common_runtime/propagator_state.h", "MaybeMarkStarted");
+
     // TODO(misard) Replace with a finer-grain enabling flag once we add better
     // optional debugging support.
     if (TF_PREDICT_FALSE(vlog_) && VLOG_IS_ON(1)) {
@@ -468,6 +714,9 @@ class PropagatorState {
   }
 
   void MaybeMarkCompleted(const TaggedNode& tagged_node) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_26(mht_26_v, 717, "", "./tensorflow/core/common_runtime/propagator_state.h", "MaybeMarkCompleted");
+
     // TODO(misard) Replace with a finer-grain enabling flag once we add better
     // optional debugging support.
     if (TF_PREDICT_FALSE(vlog_) && VLOG_IS_ON(1)) {
@@ -515,6 +764,9 @@ class PropagatorState {
 };
 
 inline int64_t PropagatorState::TaggedNode::get_iter_num() const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_27(mht_27_v, 767, "", "./tensorflow/core/common_runtime/propagator_state.h", "PropagatorState::TaggedNode::get_iter_num");
+
   return input_iter->iter_num;
 }
 
@@ -534,14 +786,32 @@ class OrderedPropagatorState : public PropagatorState {
  public:
   class TaggedNodeReadyQueue : PropagatorState::TaggedNodeReadyQueue {
    public:
-    TaggedNodeReadyQueue() : readyp_(compare) {}
-    void push_back(const TaggedNode& node) { readyp_.push(node); }
-    TaggedNode front() const { return readyp_.top(); }
-    void pop_front() { readyp_.pop(); }
-    bool empty() const { return readyp_.empty(); }
+    TaggedNodeReadyQueue() : readyp_(compare) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_28(mht_28_v, 790, "", "./tensorflow/core/common_runtime/propagator_state.h", "TaggedNodeReadyQueue");
+}
+    void push_back(const TaggedNode& node) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_29(mht_29_v, 794, "", "./tensorflow/core/common_runtime/propagator_state.h", "push_back");
+ readyp_.push(node); }
+    TaggedNode front() const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_30(mht_30_v, 798, "", "./tensorflow/core/common_runtime/propagator_state.h", "front");
+ return readyp_.top(); }
+    void pop_front() {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_31(mht_31_v, 802, "", "./tensorflow/core/common_runtime/propagator_state.h", "pop_front");
+ readyp_.pop(); }
+    bool empty() const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_32(mht_32_v, 806, "", "./tensorflow/core/common_runtime/propagator_state.h", "empty");
+ return readyp_.empty(); }
 
    private:
     static bool compare(TaggedNode const& lhs, TaggedNode const& rhs) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSpropagator_stateDTh mht_33(mht_33_v, 812, "", "./tensorflow/core/common_runtime/propagator_state.h", "compare");
+
       std::tuple<int, uint64, int64_t> lhs_prio{lhs.node_item->node_id,
                                                 lhs.input_frame->frame_id,
                                                 lhs.input_iter->iter_num};

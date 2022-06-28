@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSwindow_utilDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSwindow_utilDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSwindow_utilDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,6 +195,9 @@ namespace xla {
 namespace window_util {
 
 Window MakeWindow(absl::Span<const int64_t> sizes) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSwindow_utilDTcc mht_0(mht_0_v, 198, "", "./tensorflow/compiler/xla/window_util.cc", "MakeWindow");
+
   Window window;
   for (int64_t size : sizes) {
     auto* dimension = window.add_dimensions();
@@ -40,6 +211,9 @@ Window MakeWindow(absl::Span<const int64_t> sizes) {
 
 Window MakeWindow(absl::Span<const int64_t> sizes,
                   absl::Span<const int64_t> strides) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSwindow_utilDTcc mht_1(mht_1_v, 214, "", "./tensorflow/compiler/xla/window_util.cc", "MakeWindow");
+
   Window window;
   CHECK_EQ(sizes.size(), strides.size());
   for (auto nb = 0; nb < sizes.size(); ++nb) {
@@ -53,6 +227,9 @@ Window MakeWindow(absl::Span<const int64_t> sizes,
 }
 
 PaddingConfig MakeSymmetricPadding(absl::Span<const int64_t> sizes) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSwindow_utilDTcc mht_2(mht_2_v, 230, "", "./tensorflow/compiler/xla/window_util.cc", "MakeSymmetricPadding");
+
   PaddingConfig config;
   for (int64_t size : sizes) {
     auto* dimension = config.add_dimensions();
@@ -63,6 +240,9 @@ PaddingConfig MakeSymmetricPadding(absl::Span<const int64_t> sizes) {
 }
 
 /* static */ std::string ToString(const WindowDimension& dim) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSwindow_utilDTcc mht_3(mht_3_v, 243, "", "./tensorflow/compiler/xla/window_util.cc", "ToString");
+
   using absl::StrAppend;
   using absl::StrCat;
   std::string str = StrCat("(size=", dim.size());
@@ -89,6 +269,9 @@ PaddingConfig MakeSymmetricPadding(absl::Span<const int64_t> sizes) {
 }
 
 std::string ToString(const Window& window) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSwindow_utilDTcc mht_4(mht_4_v, 272, "", "./tensorflow/compiler/xla/window_util.cc", "ToString");
+
   using absl::StrAppend;
   using absl::StrCat;
 
@@ -96,6 +279,10 @@ std::string ToString(const Window& window) {
   const auto add_field =
       [&](const char* heading,
           std::function<std::string(const WindowDimension&)> format) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("heading: \"" + (heading == nullptr ? std::string("nullptr") : std::string((char*)heading)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSwindow_utilDTcc mht_5(mht_5_v, 283, "", "./tensorflow/compiler/xla/window_util.cc", "lambda");
+
         StrAppend(&str, heading, "=");
         const char* prefix = "";
         for (const auto& window_dimension : window.dimensions()) {
@@ -136,6 +323,9 @@ std::string ToString(const Window& window) {
 }
 
 bool HasStride(const Window& window) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSwindow_utilDTcc mht_6(mht_6_v, 326, "", "./tensorflow/compiler/xla/window_util.cc", "HasStride");
+
   for (const auto& dim : window.dimensions()) {
     if (dim.stride() != 1) {
       return true;
@@ -145,6 +335,9 @@ bool HasStride(const Window& window) {
 }
 
 bool HasPadding(const Window& window) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSwindow_utilDTcc mht_7(mht_7_v, 338, "", "./tensorflow/compiler/xla/window_util.cc", "HasPadding");
+
   for (const auto& dim : window.dimensions()) {
     if (dim.padding_low() != 0 || dim.padding_high() != 0) {
       return true;
@@ -154,12 +347,18 @@ bool HasPadding(const Window& window) {
 }
 
 bool HasSymmetricPadding(const Window& window) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSwindow_utilDTcc mht_8(mht_8_v, 350, "", "./tensorflow/compiler/xla/window_util.cc", "HasSymmetricPadding");
+
   return absl::c_all_of(window.dimensions(), [](const WindowDimension& dim) {
     return dim.padding_low() == dim.padding_high();
   });
 }
 
 bool HasSymmetricPadding(const PaddingConfig& padding_config) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSwindow_utilDTcc mht_9(mht_9_v, 359, "", "./tensorflow/compiler/xla/window_util.cc", "HasSymmetricPadding");
+
   return absl::c_all_of(padding_config.dimensions(),
                         [](const PaddingConfig::PaddingConfigDimension& dim) {
                           return dim.edge_padding_low() ==
@@ -168,12 +367,18 @@ bool HasSymmetricPadding(const PaddingConfig& padding_config) {
 }
 
 bool HasNegativePadding(const Window& window) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSwindow_utilDTcc mht_10(mht_10_v, 370, "", "./tensorflow/compiler/xla/window_util.cc", "HasNegativePadding");
+
   return absl::c_any_of(window.dimensions(), [](const WindowDimension& dim) {
     return dim.padding_low() < 0 || dim.padding_high() < 0;
   });
 }
 
 bool HasBaseDilation(const Window& window) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSwindow_utilDTcc mht_11(mht_11_v, 379, "", "./tensorflow/compiler/xla/window_util.cc", "HasBaseDilation");
+
   for (const auto& dim : window.dimensions()) {
     if (dim.base_dilation() != 1) {
       return true;
@@ -183,6 +388,9 @@ bool HasBaseDilation(const Window& window) {
 }
 
 bool HasWindowDilation(const Window& window) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSwindow_utilDTcc mht_12(mht_12_v, 391, "", "./tensorflow/compiler/xla/window_util.cc", "HasWindowDilation");
+
   for (const auto& dim : window.dimensions()) {
     if (dim.window_dilation() != 1) {
       return true;
@@ -192,6 +400,9 @@ bool HasWindowDilation(const Window& window) {
 }
 
 bool HasWindowReversal(const Window& window) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSwindow_utilDTcc mht_13(mht_13_v, 403, "", "./tensorflow/compiler/xla/window_util.cc", "HasWindowReversal");
+
   for (const auto& dim : window.dimensions()) {
     if (dim.window_reversal()) {
       return true;
@@ -201,6 +412,9 @@ bool HasWindowReversal(const Window& window) {
 }
 
 bool AllOrNoneReversed(const Window& window) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSwindow_utilDTcc mht_14(mht_14_v, 415, "", "./tensorflow/compiler/xla/window_util.cc", "AllOrNoneReversed");
+
   if (window.dimensions().empty()) {
     return true;
   }
@@ -211,10 +425,16 @@ bool AllOrNoneReversed(const Window& window) {
 }
 
 bool HasDilation(const Window& window) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSwindow_utilDTcc mht_15(mht_15_v, 428, "", "./tensorflow/compiler/xla/window_util.cc", "HasDilation");
+
   return HasBaseDilation(window) || HasWindowDilation(window);
 }
 
 bool IsTrivialWindowDimension(const WindowDimension& window_dimension) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSwindow_utilDTcc mht_16(mht_16_v, 435, "", "./tensorflow/compiler/xla/window_util.cc", "IsTrivialWindowDimension");
+
   return window_dimension.size() == 1 && window_dimension.stride() == 1 &&
          window_dimension.padding_low() == 0 &&
          window_dimension.padding_high() == 0 &&
@@ -223,6 +443,9 @@ bool IsTrivialWindowDimension(const WindowDimension& window_dimension) {
 }
 
 bool HasOverlappingWindow(const Window& window) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSwindow_utilDTcc mht_17(mht_17_v, 446, "", "./tensorflow/compiler/xla/window_util.cc", "HasOverlappingWindow");
+
   for (const auto& dim : window.dimensions()) {
     if (dim.size() > dim.stride()) {
       return true;
@@ -232,6 +455,9 @@ bool HasOverlappingWindow(const Window& window) {
 }
 
 int64_t DilatedBound(int64_t bound, int64_t dilation) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSwindow_utilDTcc mht_18(mht_18_v, 458, "", "./tensorflow/compiler/xla/window_util.cc", "DilatedBound");
+
   CHECK_GE(bound, 0);
   CHECK_GE(dilation, 1);
   if (bound == 0) {
@@ -246,6 +472,9 @@ int64_t DilatedBound(int64_t bound, int64_t dilation) {
 }
 
 int64_t StridedBound(int64_t bound, int64_t window_size, int64_t stride) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSwindow_utilDTcc mht_19(mht_19_v, 475, "", "./tensorflow/compiler/xla/window_util.cc", "StridedBound");
+
   CHECK_GE(window_size, 0);
   CHECK_GE(bound, 0);
   CHECK_GE(stride, 1);

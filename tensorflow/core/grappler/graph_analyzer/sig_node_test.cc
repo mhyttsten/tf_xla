@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSsig_node_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSsig_node_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSsig_node_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -62,6 +230,9 @@ TEST(SigNodeLinkTag, Compare) {
 class SigBaseTest : public ::testing::Test, protected TestGraphs {
  protected:
   void BuildSigMap(const GraphDef& graph) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSsig_node_testDTcc mht_0(mht_0_v, 233, "", "./tensorflow/core/grappler/graph_analyzer/sig_node_test.cc", "BuildSigMap");
+
     gen_map_.clear();
     sig_.map.clear();
     CHECK(GenNode::BuildGraphInMap(graph, &gen_map_).ok());
@@ -75,52 +246,103 @@ class SigBaseTest : public ::testing::Test, protected TestGraphs {
 
   static void CopyLinksPass2(
       std::map<SigNode::LinkTag, SigNode::Link>* link_map, SigNode* node) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSsig_node_testDTcc mht_1(mht_1_v, 249, "", "./tensorflow/core/grappler/graph_analyzer/sig_node_test.cc", "CopyLinksPass2");
+
     node->CopyLinksPass2(link_map);
   }
 
-  static void ComputeTopoHash0(SigNode* node) { node->ComputeTopoHash0(); }
+  static void ComputeTopoHash0(SigNode* node) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSsig_node_testDTcc mht_2(mht_2_v, 256, "", "./tensorflow/core/grappler/graph_analyzer/sig_node_test.cc", "ComputeTopoHash0");
+ node->ComputeTopoHash0(); }
 
   static void ComputeTopoHash(int distance, SigNode* node) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSsig_node_testDTcc mht_3(mht_3_v, 261, "", "./tensorflow/core/grappler/graph_analyzer/sig_node_test.cc", "ComputeTopoHash");
+
     node->ComputeTopoHash(distance);
   }
 
   static size_t GetTopoHash(int distance, SigNode* node) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSsig_node_testDTcc mht_4(mht_4_v, 268, "", "./tensorflow/core/grappler/graph_analyzer/sig_node_test.cc", "GetTopoHash");
+
     return node->GetTopoHash(distance);
   }
 
   static size_t GetHighTopoHash(SigNode* node) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSsig_node_testDTcc mht_5(mht_5_v, 275, "", "./tensorflow/core/grappler/graph_analyzer/sig_node_test.cc", "GetHighTopoHash");
+
     return node->GetHighTopoHash();
   }
 
-  static void ReHighTopoHash(SigNode* node) { node->ReHighTopoHash(); }
+  static void ReHighTopoHash(SigNode* node) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSsig_node_testDTcc mht_6(mht_6_v, 282, "", "./tensorflow/core/grappler/graph_analyzer/sig_node_test.cc", "ReHighTopoHash");
+ node->ReHighTopoHash(); }
 
   static SigNode::HashedPeerVector& RefHashedPeers(SigNode* node) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSsig_node_testDTcc mht_7(mht_7_v, 287, "", "./tensorflow/core/grappler/graph_analyzer/sig_node_test.cc", "RefHashedPeers");
+
     return node->hashed_peers_;
   }
-  static size_t& RefUniqueRank(SigNode* node) { return node->unique_rank_; }
-  static bool& RefHashIsFinal(SigNode* node) { return node->hash_is_final_; }
+  static size_t& RefUniqueRank(SigNode* node) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSsig_node_testDTcc mht_8(mht_8_v, 293, "", "./tensorflow/core/grappler/graph_analyzer/sig_node_test.cc", "RefUniqueRank");
+ return node->unique_rank_; }
+  static bool& RefHashIsFinal(SigNode* node) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSsig_node_testDTcc mht_9(mht_9_v, 297, "", "./tensorflow/core/grappler/graph_analyzer/sig_node_test.cc", "RefHashIsFinal");
+ return node->hash_is_final_; }
   static std::vector<size_t>& RefTopoHash(SigNode* node) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSsig_node_testDTcc mht_10(mht_10_v, 301, "", "./tensorflow/core/grappler/graph_analyzer/sig_node_test.cc", "RefTopoHash");
+
     return node->topo_hash_;
   }
-  static uint64_t& RefNodeMask(SigNode* node) { return node->node_mask_; }
+  static uint64_t& RefNodeMask(SigNode* node) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSsig_node_testDTcc mht_11(mht_11_v, 307, "", "./tensorflow/core/grappler/graph_analyzer/sig_node_test.cc", "RefNodeMask");
+ return node->node_mask_; }
   static uint64_t& RefLastHashedNodes(SigNode* node) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSsig_node_testDTcc mht_12(mht_12_v, 311, "", "./tensorflow/core/grappler/graph_analyzer/sig_node_test.cc", "RefLastHashedNodes");
+
     return node->last_hashed_nodes_;
   }
   static uint64_t& RefNextHashedNodes(SigNode* node) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSsig_node_testDTcc mht_13(mht_13_v, 317, "", "./tensorflow/core/grappler/graph_analyzer/sig_node_test.cc", "RefNextHashedNodes");
+
     return node->next_hashed_nodes_;
   }
 
-  static void PrepareNodes(Signature* signature) { signature->PrepareNodes(); }
+  static void PrepareNodes(Signature* signature) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSsig_node_testDTcc mht_14(mht_14_v, 324, "", "./tensorflow/core/grappler/graph_analyzer/sig_node_test.cc", "PrepareNodes");
+ signature->PrepareNodes(); }
 
   static void FindUniqueHashes(size_t* next_node_id_p, Signature* signature) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSsig_node_testDTcc mht_15(mht_15_v, 329, "", "./tensorflow/core/grappler/graph_analyzer/sig_node_test.cc", "FindUniqueHashes");
+
     signature->FindUniqueHashes(next_node_id_p);
   }
 
   static void ComputeOneRound(size_t next_node_id, Signature* signature) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSsig_node_testDTcc mht_16(mht_16_v, 336, "", "./tensorflow/core/grappler/graph_analyzer/sig_node_test.cc", "ComputeOneRound");
+
     signature->ComputeOneRound(next_node_id);
   }
 
-  static void OrderLinks(Signature* signature) { signature->OrderLinks(); }
+  static void OrderLinks(Signature* signature) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSsig_node_testDTcc mht_17(mht_17_v, 343, "", "./tensorflow/core/grappler/graph_analyzer/sig_node_test.cc", "OrderLinks");
+ signature->OrderLinks(); }
 
   // These get initialized in BuildSigMap().
   GenNodeMap gen_map_;
@@ -567,6 +789,9 @@ class SignatureTest : public SigBaseTest {
   static void InitPermutation(size_t size,
                               std::vector<size_t>* plain_permutation,
                               std::vector<size_t>* countdown) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSsig_node_testDTcc mht_18(mht_18_v, 792, "", "./tensorflow/core/grappler/graph_analyzer/sig_node_test.cc", "InitPermutation");
+
     plain_permutation->clear();
     countdown->clear();
     for (size_t i = 0; i < size; ++i) {
@@ -579,6 +804,9 @@ class SignatureTest : public SigBaseTest {
   static void BuildPermutation(const std::vector<size_t>& plain_permutation,
                                const std::vector<size_t>& countdown,
                                std::vector<size_t>* result) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSsig_node_testDTcc mht_19(mht_19_v, 807, "", "./tensorflow/core/grappler/graph_analyzer/sig_node_test.cc", "BuildPermutation");
+
     *result = plain_permutation;
     for (int i = 0; i < result->size(); ++i) {
       std::swap((*result)[i], (*result)[i + countdown[i]]);
@@ -587,6 +815,9 @@ class SignatureTest : public SigBaseTest {
 
   // Returns false when the count-down is finished.
   static bool CountDown(std::vector<size_t>* countdown) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSsig_node_testDTcc mht_20(mht_20_v, 818, "", "./tensorflow/core/grappler/graph_analyzer/sig_node_test.cc", "CountDown");
+
     // The last position always contains 0, so skip it.
     int pos;
     for (pos = countdown->size() - 2; pos >= 0; --pos) {
@@ -605,6 +836,9 @@ class SignatureTest : public SigBaseTest {
   // size 5, maybe 6 at the stretch. After that the number of permutation grows
   // huge and the test becomes very slow.
   void TestGraphEveryWay(const GraphDef& graph) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSsig_node_testDTcc mht_21(mht_21_v, 839, "", "./tensorflow/core/grappler/graph_analyzer/sig_node_test.cc", "TestGraphEveryWay");
+
     size_t graph_size = graph.node_size();
 
     gen_map_.clear();

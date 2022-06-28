@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -63,12 +231,18 @@ class LegalizeTFCommunication
 
 // Checks if an op is a TF/XLA communication op.
 bool IsCommunicationOp(Operation* op) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_0(mht_0_v, 234, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "IsCommunicationOp");
+
   return isa<TF::_XlaHostComputeMlirOp, TF::XlaSendToHostOp,
              TF::XlaRecvFromHostOp>(op);
 }
 
 // Checks if an op is a supported HLO control flow op.
-bool IsControlFlowOp(Operation* op) { return isa<IfOp, WhileOp>(op); }
+bool IsControlFlowOp(Operation* op) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_1(mht_1_v, 243, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "IsControlFlowOp");
+ return isa<IfOp, WhileOp>(op); }
 
 // Collects control flow op ancestors of a given op, up until FuncOp. If any
 // ancestor is not a control flow op or a FuncOp, or of a single block region,
@@ -76,6 +250,9 @@ bool IsControlFlowOp(Operation* op) { return isa<IfOp, WhileOp>(op); }
 LogicalResult GetControlFlowAncestors(
     Operation* op, llvm::SmallPtrSetImpl<Operation*>& control_flow_ops,
     llvm::SmallPtrSetImpl<Block*>& control_flow_blocks) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_2(mht_2_v, 253, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "GetControlFlowAncestors");
+
   Block* block = op->getBlock();
   Operation* parent = block->getParentOp();
   while (block && parent && !isa<FuncOp>(parent)) {
@@ -103,6 +280,9 @@ LogicalResult FindCommunicationOps(
     FuncOp func, llvm::SmallPtrSetImpl<Operation*>& control_flow_ops,
     llvm::SmallPtrSetImpl<Block*>& control_flow_blocks,
     bool& has_communication_ops) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_3(mht_3_v, 283, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "FindCommunicationOps");
+
   auto result = func.walk([&](Operation* op) {
     if (!IsCommunicationOp(op)) return WalkResult::advance();
     has_communication_ops = true;
@@ -130,6 +310,9 @@ struct FuncToRewrite {
 LogicalResult GetFunctionsToRewrite(
     ModuleOp module,
     llvm::SmallDenseMap<StringRef, FuncToRewrite>& funcs_to_rewrite) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_4(mht_4_v, 313, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "GetFunctionsToRewrite");
+
   // Find functions containing communication ops.
   SmallVector<FuncOp, 4> funcs_to_visit;
   for (FuncOp func : module.getOps<FuncOp>()) {
@@ -205,6 +388,9 @@ LogicalResult GetFunctionsToRewrite(
 
 // Assigns op sharding to an op for a given device core.
 void SetOpSharding(Operation* op, int64_t tpu_core) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_5(mht_5_v, 391, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "SetOpSharding");
+
   std::string sharding_serialized =
       ::xla::sharding_builder::AssignDevice(tpu_core).SerializeAsString();
   op->setAttr(kShardingAttr,
@@ -217,6 +403,9 @@ void SetOpSharding(Operation* op, int64_t tpu_core) {
 void SetFrontendAttributes(Operation* op, int32_t index, StringRef key,
                            Type type, bool device_to_host,
                            StringRef host_handler_name) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_6(mht_6_v, 406, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "SetFrontendAttributes");
+
   MLIRContext* context = op->getContext();
 
   std::string formatted_key =
@@ -256,6 +445,9 @@ Value CreateSendOp(OpBuilder& builder, int64_t& channel_id, Location loc,
                    Value operand, StringRef key, size_t index,
                    const Optional<int64_t>& tpu_core, Value token,
                    StringRef host_handler_name) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_7(mht_7_v, 448, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "CreateSendOp");
+
   // type 2 == DEVICE_TO_HOST
   auto channel_handle = ChannelHandle::get(
       /*handle=*/builder.getI64IntegerAttr(channel_id++),
@@ -278,6 +470,9 @@ Value CreateRecvOp(OpBuilder& builder, int64_t& channel_id, Location loc,
                    Value result, StringRef key, size_t index,
                    const Optional<int64_t>& tpu_core, Value token,
                    StringRef host_handler_name) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_8(mht_8_v, 473, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "CreateRecvOp");
+
   // type 3 == HOST_TO_DEVICE
   auto channel_handle = ChannelHandle::get(
       /*handle=*/builder.getI64IntegerAttr(channel_id++),
@@ -303,6 +498,9 @@ Value CreateRecvOp(OpBuilder& builder, int64_t& channel_id, Location loc,
 // is empty, `original_token` is returned instead.
 Value CreateSinkToken(OpBuilder& builder, Location loc, ArrayRef<Value> tokens,
                       Value original_token) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_9(mht_9_v, 501, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "CreateSinkToken");
+
   if (tokens.empty()) {
     return original_token;
   } else if (llvm::hasSingleElement(tokens)) {
@@ -320,6 +518,9 @@ Value CreateSinkToken(OpBuilder& builder, Location loc, ArrayRef<Value> tokens,
 Value RewriteHostComputeOp(OpBuilder& builder, int64_t& channel_id,
                            TF::_XlaHostComputeMlirOp host_compute,
                            Value token) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_10(mht_10_v, 521, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "RewriteHostComputeOp");
+
   builder.setInsertionPoint(host_compute);
   Location loc = host_compute.getLoc();
   int64_t tpu_core = host_compute.tpu_coreAttr().getInt();
@@ -351,6 +552,9 @@ Value RewriteHostComputeOp(OpBuilder& builder, int64_t& channel_id,
 // Replaces `tf.XlaSendToHost` with a `mhlo.send`.
 Value RewriteSendToHostOp(OpBuilder& builder, int64_t& channel_id,
                           TF::XlaSendToHostOp send_to_host, Value token) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_11(mht_11_v, 555, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "RewriteSendToHostOp");
+
   builder.setInsertionPoint(send_to_host);
   token = CreateSendOp(builder, channel_id, send_to_host.getLoc(),
                        send_to_host.input(), send_to_host.key(),
@@ -364,6 +568,9 @@ Value RewriteSendToHostOp(OpBuilder& builder, int64_t& channel_id,
 // Replaces `tf.XlaRecvFromHost` with a `mhlo.recv`.
 Value RewriteRecvFromHostOp(OpBuilder& builder, int64_t& channel_id,
                             TF::XlaRecvFromHostOp recv_from_host, Value token) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_12(mht_12_v, 571, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "RewriteRecvFromHostOp");
+
   builder.setInsertionPoint(recv_from_host);
   token = CreateRecvOp(builder, channel_id, recv_from_host.getLoc(),
                        recv_from_host.output(), recv_from_host.key(),
@@ -379,6 +586,9 @@ Value RewriteRecvFromHostOp(OpBuilder& builder, int64_t& channel_id,
 // be updated to call the `new_symbol` instead.
 Value RewriteCallOp(OpBuilder& builder, func::CallOp call,
                     const Optional<StringRef>& new_symbol, Value token) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_13(mht_13_v, 589, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "RewriteCallOp");
+
   builder.setInsertionPoint(call);
   auto new_operands = llvm::to_vector(call.getArgOperands());
   new_operands.push_back(token);
@@ -406,6 +616,9 @@ struct OpVisitorState {
 
 // Creates a tuple from a sequence of values.
 Value CreateTuple(OpBuilder& builder, Location loc, ArrayRef<Value> operands) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_14(mht_14_v, 619, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "CreateTuple");
+
   return builder.create<TupleOp>(loc, operands).getResult();
 }
 
@@ -428,6 +641,9 @@ SmallVector<Value> GetValueWithToken(
   if (it != rewritten_values.end()) return {it->getSecond()};
 
   auto create_tuple = [&](ArrayRef<Value> operands) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_15(mht_15_v, 644, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "lambda");
+
     auto new_result = CreateTuple(builder, value.getLoc(), operands);
     rewritten_values.insert({value, new_result});
     return new_result;
@@ -486,6 +702,9 @@ SmallVector<Type> GetTypeWithToken(OpBuilder& builder, ArrayRef<Type> types,
 // Creates a slice of a tuple `value` with `mhlo.get_tuple_element` from index 0
 // to `end`, exclusive.
 Value CreateSubTuple(OpBuilder& builder, Value value, size_t end) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_16(mht_16_v, 705, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "CreateSubTuple");
+
   SmallVector<Value, 4> tuple_operands;
   for (auto idx : llvm::seq<int32_t>(0, end))
     tuple_operands.push_back(
@@ -503,6 +722,9 @@ Value CreateSubTuple(OpBuilder& builder, Value value, size_t end) {
 // slice of `replacement`.
 void ReplaceWithTupleResult(OpBuilder& builder, ArrayRef<Value> values,
                             ArrayRef<Value> replacements, bool flatten_tuple) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_17(mht_17_v, 725, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "ReplaceWithTupleResult");
+
   if (flatten_tuple) {
     for (size_t result_index = 0; result_index < values.size(); result_index++)
       values[result_index].replaceAllUsesWith(replacements[result_index]);
@@ -540,6 +762,9 @@ void ReplaceWithTupleResult(OpBuilder& builder, ArrayRef<Value> values,
 // returned.
 Value UpdateControlFlowBlockArgWithToken(OpBuilder& builder, Block& block,
                                          ArrayRef<Type> types) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_18(mht_18_v, 765, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "UpdateControlFlowBlockArgWithToken");
+
   builder.setInsertionPointToStart(&block);
 
   auto old_args_size = block.getNumArguments();
@@ -565,6 +790,9 @@ Value UpdateControlFlowBlockArgWithToken(OpBuilder& builder, Block& block,
 // Updates control flow op terminator with an extra element `token`.
 void RewriteControlFlowTerminator(OpBuilder& builder, Operation* terminator,
                                   Value token, bool flatten_tuple) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_19(mht_19_v, 793, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "RewriteControlFlowTerminator");
+
   assert(flatten_tuple || terminator->getNumOperands() == 1);
   assert(flatten_tuple || terminator->getBlock()->getNumArguments() == 1);
   // `mhlo.while` cond terminator does not need to be rewritten as it always
@@ -587,6 +815,9 @@ void RewriteControlFlowTerminator(OpBuilder& builder, Operation* terminator,
 void RewriteRegionIfOp(OpBuilder& builder, IfOp region_if,
                        SmallVectorImpl<OpVisitorState>& ops_to_visit,
                        Value token) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_20(mht_20_v, 818, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "RewriteRegionIfOp");
+
   llvm::SmallDenseMap<Value, Value> rewritten_operands;
 
   auto new_result_types =
@@ -627,6 +858,9 @@ void RewriteControlFlowOpRegion(
     ArrayRef<Type> block_arg_types,
     SmallVectorImpl<OpVisitorState>& ops_to_visit,
     const llvm::SmallPtrSetImpl<Block*>& control_flow_blocks, Value token) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_21(mht_21_v, 861, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "RewriteControlFlowOpRegion");
+
   ops_to_visit.push_back({region_idx + 1, token, region_op});
 
   Region& region = region_op->getRegion(region_idx);
@@ -650,6 +884,9 @@ void RewriteControlFlowOpRegion(
 void ReplaceBlockArgumentsWithImplicitOperands(mlir::Operation* op,
                                                unsigned region_idx,
                                                Value implicit_operand) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_22(mht_22_v, 887, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "ReplaceBlockArgumentsWithImplicitOperands");
+
   assert((mlir::dyn_cast<mlir::mhlo::IfOp>(*op) ||
           mlir::dyn_cast<mlir::mhlo::CaseOp>(*op)) &&
          "Unexpected mlir op in "
@@ -670,6 +907,9 @@ bool ProcessRegionIfOp(OpBuilder& builder, IfOp region_if,
                        SmallVectorImpl<OpVisitorState>& ops_to_visit,
                        const llvm::SmallPtrSetImpl<Block*>& control_flow_blocks,
                        Value token) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_23(mht_23_v, 910, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "ProcessRegionIfOp");
+
   builder.setInsertionPoint(region_if);
 
   if (!region_idx) {
@@ -707,6 +947,9 @@ bool ProcessRegionIfOp(OpBuilder& builder, IfOp region_if,
 void RewriteRegionWhileOp(OpBuilder& builder, WhileOp region_while,
                           SmallVectorImpl<OpVisitorState>& ops_to_visit,
                           Value token) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_24(mht_24_v, 950, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "RewriteRegionWhileOp");
+
   llvm::SmallDenseMap<Value, Value> rewritten_operands;
 
   // Rewrite region operand to have an extra operand `token`.
@@ -751,6 +994,9 @@ bool ProcessRegionWhileOp(
     OpBuilder& builder, WhileOp region_while, Optional<unsigned> region_idx,
     SmallVectorImpl<OpVisitorState>& ops_to_visit,
     const llvm::SmallPtrSetImpl<Block*>& control_flow_blocks, Value token) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_25(mht_25_v, 997, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "ProcessRegionWhileOp");
+
   builder.setInsertionPoint(region_while);
 
   if (!region_idx) {
@@ -772,6 +1018,9 @@ bool ProcessRegionWhileOp(
 // Updates function type based on current function body block arguments and
 // terminator operand types.
 void UpdateFunctionType(OpBuilder& builder, FuncOp func, Block& func_body) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_26(mht_26_v, 1021, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "UpdateFunctionType");
+
   auto new_argument_types = llvm::to_vector(func_body.getArgumentTypes());
   auto new_result_types =
       llvm::to_vector(func_body.getTerminator()->getOperandTypes());
@@ -783,6 +1032,9 @@ void UpdateFunctionType(OpBuilder& builder, FuncOp func, Block& func_body) {
 // extra `mhlo.token` operand.
 void RewriteFunctionTerminator(OpBuilder& builder,
                                mlir::func::ReturnOp terminator, Value token) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_27(mht_27_v, 1035, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "RewriteFunctionTerminator");
+
   auto new_results = llvm::to_vector(terminator.getOperands());
   new_results.push_back(token);
   builder.setInsertionPoint(terminator);
@@ -799,6 +1051,9 @@ LogicalResult RewriteFunction(
     const llvm::SmallDenseMap<StringRef, FuncToRewrite>& funcs,
     const llvm::SmallPtrSetImpl<Operation*>& control_flow_ops,
     const llvm::SmallPtrSetImpl<Block*>& control_flow_blocks, bool is_clone) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_28(mht_28_v, 1054, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "RewriteFunction");
+
   MLIRContext* context = module.getContext();
   if (!llvm::hasSingleElement(func.getBody()))
     return func.emitError()
@@ -899,6 +1154,9 @@ LogicalResult RewriteFunction(
 bool IsFunctionCallWithCommunication(
     Operation* op,
     const llvm::SmallDenseMap<StringRef, FuncToRewrite>& funcs_to_rewrite) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_29(mht_29_v, 1157, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "IsFunctionCallWithCommunication");
+
   if (auto call = dyn_cast<mlir::func::CallOp>(op))
     return funcs_to_rewrite.count(call.getCallee());
 
@@ -912,6 +1170,9 @@ void GetCommunicationControlFlowOps(
     const llvm::SmallDenseMap<StringRef, FuncToRewrite>& funcs_to_rewrite,
     llvm::SmallPtrSetImpl<Operation*>& control_flow_ops,
     llvm::SmallPtrSetImpl<Block*>& control_flow_blocks) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_30(mht_30_v, 1173, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "GetCommunicationControlFlowOps");
+
   func.walk([&](Operation* op) {
     if (IsCommunicationOp(op) ||
         IsFunctionCallWithCommunication(op, funcs_to_rewrite))
@@ -924,6 +1185,9 @@ void GetCommunicationControlFlowOps(
 }
 
 void LegalizeTFCommunication::runOnOperation() {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tf_communicationDTcc mht_31(mht_31_v, 1188, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf_communication.cc", "LegalizeTFCommunication::runOnOperation");
+
   auto module = getOperation();
   llvm::SmallDenseMap<StringRef, FuncToRewrite> funcs_to_rewrite;
   if (failed(GetFunctionsToRewrite(module, funcs_to_rewrite)))

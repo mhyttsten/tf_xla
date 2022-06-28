@@ -325,10 +325,13 @@ cc_library(
         "//tensorflow/python:__pkg__",
         "//tensorflow/python/saved_model:__subpackages__",
     ],
-    deps = if_static([
+    deps = [
         ":metrics_impl",
-    ]) + if_not_mobile(["//tensorflow/core:lib"]) + if_android(["//tensorflow/core:portable_tensorflow_lib_lite"]),
+    ],
 )
+#    deps = if_static([
+#        ":metrics_impl",
+#    ]) + if_not_mobile(["//tensorflow/core:lib"]) + if_android(["//tensorflow/core:portable_tensorflow_lib_lite"]),
 
 tf_cc_test(
     name = "metrics_test",

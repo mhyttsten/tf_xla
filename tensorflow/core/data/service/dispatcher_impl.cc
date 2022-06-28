@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -95,19 +263,35 @@ using Job = DispatcherState::Job;
 using Task = DispatcherState::Task;
 
 std::string JournalDir(const std::string& work_dir) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("work_dir: \"" + work_dir + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_0(mht_0_v, 267, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "JournalDir");
+
   return io::JoinPath(work_dir, kJournalDir);
 }
 
 std::string DatasetsDir(const std::string& work_dir) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("work_dir: \"" + work_dir + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_1(mht_1_v, 275, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DatasetsDir");
+
   return io::JoinPath(work_dir, kDatasetsDir);
 }
 
 std::string DatasetKey(int64_t id, uint64 fingerprint) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_2(mht_2_v, 282, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DatasetKey");
+
   return absl::StrCat("id_", id, "_fp_", fingerprint);
 }
 
 Status CreateWorkerStub(const std::string& address, const std::string& protocol,
                         std::unique_ptr<WorkerService::Stub>& stub) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("address: \"" + address + "\"");
+   mht_3_v.push_back("protocol: \"" + protocol + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_3(mht_3_v, 292, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "CreateWorkerStub");
+
   ::grpc::ChannelArguments args;
   args.SetMaxReceiveMessageSize(-1);
   std::shared_ptr<::grpc::ChannelCredentials> credentials;
@@ -119,6 +303,9 @@ Status CreateWorkerStub(const std::string& address, const std::string& protocol,
 }
 
 void PrepareGraph(GraphDef* graph) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_4(mht_4_v, 306, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "PrepareGraph");
+
   for (NodeDef& node : *graph->mutable_node()) {
     for (const auto& op : kNodeNameSharingOps) {
       // Set `use_node_name_sharing` to `true` so that resources aren't deleted
@@ -136,6 +323,9 @@ void PrepareGraph(GraphDef* graph) {
 }
 
 DispatcherConfig ApplyConfigDefaults(const DispatcherConfig& config) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_5(mht_5_v, 326, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "ApplyConfigDefaults");
+
   DispatcherConfig new_config(config);
   if (new_config.job_gc_check_interval_ms() == 0) {
     new_config.set_job_gc_check_interval_ms(kDefaultJobGcCheckIntervalMs);
@@ -156,6 +346,9 @@ DataServiceDispatcherImpl::DataServiceDispatcherImpl(
     : config_(ApplyConfigDefaults(config)),
       env_(Env::Default()),
       state_(config_) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_6(mht_6_v, 349, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::DataServiceDispatcherImpl");
+
   if (config_.work_dir().empty()) {
     dataset_store_ = absl::make_unique<MemoryDatasetStore>();
   } else {
@@ -165,6 +358,9 @@ DataServiceDispatcherImpl::DataServiceDispatcherImpl(
 }
 
 DataServiceDispatcherImpl::~DataServiceDispatcherImpl() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_7(mht_7_v, 361, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::~DataServiceDispatcherImpl");
+
   {
     mutex_lock l(mu_);
     cancelled_ = true;
@@ -174,6 +370,9 @@ DataServiceDispatcherImpl::~DataServiceDispatcherImpl() {
 }
 
 Status DataServiceDispatcherImpl::Start() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_8(mht_8_v, 373, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::Start");
+
   mutex_lock l(mu_);
   if (config_.job_gc_timeout_ms() >= 0) {
     job_gc_thread_ = absl::WrapUnique(
@@ -245,6 +444,9 @@ size_t DataServiceDispatcherImpl::NumActiveJobs() TF_LOCKS_EXCLUDED(mu_) {
 Status DataServiceDispatcherImpl::RestoreSplitProviders(
     const Job& job, std::vector<std::unique_ptr<SplitProvider>>& restored)
     TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_9(mht_9_v, 447, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::RestoreSplitProviders");
+
   const std::vector<int64_t>& indices =
       job.distributed_epoch_state.value().indices;
   std::vector<std::unique_ptr<SplitProvider>> split_providers;
@@ -269,6 +471,9 @@ Status DataServiceDispatcherImpl::FindTasksToDelete(
     const absl::flat_hash_set<int64_t>& current_tasks,
     const std::vector<std::shared_ptr<const Task>> assigned_tasks,
     WorkerHeartbeatResponse* response) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_10(mht_10_v, 474, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::FindTasksToDelete");
+
   absl::flat_hash_set<int64_t> assigned_ids;
   for (const auto& assigned : assigned_tasks) {
     assigned_ids.insert(assigned->task_id);
@@ -286,6 +491,10 @@ Status DataServiceDispatcherImpl::FindNewTasks(
     const absl::flat_hash_set<int64_t>& current_tasks,
     std::vector<std::shared_ptr<const Task>>& assigned_tasks,
     WorkerHeartbeatResponse* response) TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("worker_address: \"" + worker_address + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_11(mht_11_v, 495, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::FindNewTasks");
+
   // Check for round-robin jobs that had tasks on the worker removed. Now that
   // the worker is back, we create a new pending task for the worker.
   absl::flat_hash_set<int64_t> assigned_job_ids;
@@ -314,6 +523,9 @@ Status DataServiceDispatcherImpl::FindNewTasks(
 
 Status DataServiceDispatcherImpl::WorkerHeartbeat(
     const WorkerHeartbeatRequest* request, WorkerHeartbeatResponse* response) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_12(mht_12_v, 526, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::WorkerHeartbeat");
+
   TF_RETURN_IF_ERROR(CheckStarted());
   VLOG(4) << "Received worker heartbeat request from worker "
           << request->worker_address();
@@ -354,6 +566,9 @@ Status DataServiceDispatcherImpl::WorkerHeartbeat(
 
 Status DataServiceDispatcherImpl::WorkerUpdate(
     const WorkerUpdateRequest* request, WorkerUpdateResponse* response) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_13(mht_13_v, 569, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::WorkerUpdate");
+
   TF_RETURN_IF_ERROR(CheckStarted());
   mutex_lock l(mu_);
   for (auto& update : request->updates()) {
@@ -378,6 +593,9 @@ Status DataServiceDispatcherImpl::WorkerUpdate(
 
 Status DataServiceDispatcherImpl::GetDatasetDef(
     const GetDatasetDefRequest* request, GetDatasetDefResponse* response) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_14(mht_14_v, 596, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::GetDatasetDef");
+
   TF_RETURN_IF_ERROR(CheckStarted());
   mutex_lock l(mu_);
   std::shared_ptr<const Dataset> dataset;
@@ -390,6 +608,9 @@ Status DataServiceDispatcherImpl::GetDatasetDef(
 
 Status DataServiceDispatcherImpl::GetSplit(const GetSplitRequest* request,
                                            GetSplitResponse* response) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_15(mht_15_v, 611, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::GetSplit");
+
   TF_RETURN_IF_ERROR(CheckStarted());
   mutex_lock l(mu_);
   int64_t job_id = request->job_id();
@@ -436,6 +657,9 @@ Status DataServiceDispatcherImpl::MakeSplitProviders(
     int64_t dataset_id,
     std::vector<std::unique_ptr<SplitProvider>>& split_providers)
     TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_16(mht_16_v, 660, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::MakeSplitProviders");
+
   std::shared_ptr<const Dataset> dataset;
   TF_RETURN_IF_ERROR(state_.DatasetFromId(dataset_id, dataset));
   std::shared_ptr<const DatasetDef> dataset_def;
@@ -450,6 +674,9 @@ Status DataServiceDispatcherImpl::MakeSplitProviders(
 
 Status DataServiceDispatcherImpl::GetVersion(const GetVersionRequest* request,
                                              GetVersionResponse* response) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_17(mht_17_v, 677, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::GetVersion");
+
   response->set_version(kDataServiceVersion);
   return Status::OK();
 }
@@ -457,6 +684,9 @@ Status DataServiceDispatcherImpl::GetVersion(const GetVersionRequest* request,
 Status DataServiceDispatcherImpl::GetOrRegisterDataset(
     const GetOrRegisterDatasetRequest* request,
     GetOrRegisterDatasetResponse* response) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_18(mht_18_v, 687, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::GetOrRegisterDataset");
+
   TF_RETURN_IF_ERROR(CheckStarted());
   uint64 fingerprint;
   DatasetDef dataset_def = request->dataset();
@@ -496,6 +726,9 @@ Status DataServiceDispatcherImpl::RegisterDataset(
     uint64 fingerprint, const DatasetDef& dataset,
     const DataServiceMetadata& metadata, int64_t& dataset_id)
     TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_19(mht_19_v, 729, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::RegisterDataset");
+
   dataset_id = state_.NextAvailableDatasetId();
   Update update;
   RegisterDatasetUpdate* register_dataset = update.mutable_register_dataset();
@@ -510,6 +743,9 @@ Status DataServiceDispatcherImpl::RegisterDataset(
 Status DataServiceDispatcherImpl::GetDataServiceMetadata(
     const GetDataServiceMetadataRequest* request,
     GetDataServiceMetadataResponse* response) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_20(mht_20_v, 746, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::GetDataServiceMetadata");
+
   TF_RETURN_IF_ERROR(CheckStarted());
   int64_t dataset_id = request->dataset_id();
   std::shared_ptr<const Dataset> dataset;
@@ -525,6 +761,9 @@ Status DataServiceDispatcherImpl::GetDataServiceMetadata(
 Status DataServiceDispatcherImpl::GetDataServiceConfig(
     const GetDataServiceConfigRequest* request,
     GetDataServiceConfigResponse* response) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_21(mht_21_v, 764, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::GetDataServiceConfig");
+
   TF_RETURN_IF_ERROR(CheckStarted());
   response->mutable_config()->set_deployment_mode(config_.deployment_mode());
   return Status::OK();
@@ -532,6 +771,9 @@ Status DataServiceDispatcherImpl::GetDataServiceConfig(
 
 Status DataServiceDispatcherImpl::GetOrCreateJob(
     const GetOrCreateJobRequest* request, GetOrCreateJobResponse* response) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_22(mht_22_v, 774, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::GetOrCreateJob");
+
   TF_RETURN_IF_ERROR(CheckStarted());
   VLOG(3) << "GetOrCreateJob(" << request->DebugString() << ")";
   std::shared_ptr<const Job> job;
@@ -567,6 +809,9 @@ Status DataServiceDispatcherImpl::GetOrCreateJob(
 
 Status DataServiceDispatcherImpl::MaybeRemoveTask(
     const MaybeRemoveTaskRequest* request, MaybeRemoveTaskResponse* response) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_23(mht_23_v, 812, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::MaybeRemoveTask");
+
   VLOG(1) << "Attempting to remove task. Request: " << request->DebugString();
   std::shared_ptr<TaskRemover> remover;
   std::shared_ptr<const Task> task;
@@ -611,6 +856,9 @@ Status DataServiceDispatcherImpl::MaybeRemoveTask(
 Status DataServiceDispatcherImpl::ReleaseJobClient(
     const ReleaseJobClientRequest* request,
     ReleaseJobClientResponse* response) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_24(mht_24_v, 859, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::ReleaseJobClient");
+
   TF_RETURN_IF_ERROR(CheckStarted());
   mutex_lock l(mu_);
   int64_t job_client_id = request->job_client_id();
@@ -629,6 +877,9 @@ Status DataServiceDispatcherImpl::ReleaseJobClient(
 Status DataServiceDispatcherImpl::ValidateMatchingJob(
     std::shared_ptr<const Job> job, const GetOrCreateJobRequest& request)
     TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_25(mht_25_v, 880, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::ValidateMatchingJob");
+
   std::string job_name = job->job_key.name;
 
   if (!MessageDifferencer::Equals(job->processing_mode,
@@ -655,6 +906,9 @@ Status DataServiceDispatcherImpl::ValidateMatchingJob(
 Status DataServiceDispatcherImpl::CreateJob(
     const JobKey& job_key, const GetOrCreateJobRequest& request,
     std::shared_ptr<const Job>& job) TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_26(mht_26_v, 909, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::CreateJob");
+
   TF_RETURN_IF_ERROR(ValidateProcessingMode(request.processing_mode_def()));
   int64_t job_id = state_.NextAvailableJobId();
   int64_t num_split_providers = 0;
@@ -686,6 +940,10 @@ Status DataServiceDispatcherImpl::CreateJob(
 
 Status DataServiceDispatcherImpl::CreateTasksForWorker(
     const std::string& worker_address) TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("worker_address: \"" + worker_address + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_27(mht_27_v, 944, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::CreateTasksForWorker");
+
   std::vector<std::shared_ptr<const Job>> jobs = state_.ListJobs();
   for (const auto& job : jobs) {
     if (job->finished) {
@@ -704,6 +962,9 @@ Status DataServiceDispatcherImpl::CreateTasksForWorker(
 Status DataServiceDispatcherImpl::AcquireJobClientId(
     const std::shared_ptr<const Job>& job, int64_t& job_client_id)
     TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_28(mht_28_v, 965, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::AcquireJobClientId");
+
   job_client_id = state_.NextAvailableJobClientId();
   Update update;
   AcquireJobClientUpdate* acquire_job_client =
@@ -720,6 +981,9 @@ Status DataServiceDispatcherImpl::CreateTasksForJob(
     std::shared_ptr<const Job> job,
     std::vector<std::shared_ptr<const Task>>& tasks)
     TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_29(mht_29_v, 984, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::CreateTasksForJob");
+
   std::vector<std::shared_ptr<const Worker>> workers = state_.ListWorkers();
   tasks.clear();
   tasks.reserve(workers.size());
@@ -734,6 +998,10 @@ Status DataServiceDispatcherImpl::CreateTasksForJob(
 Status DataServiceDispatcherImpl::CreatePendingTask(
     std::shared_ptr<const Job> job, const std::string& worker_address)
     TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_30_v;
+   mht_30_v.push_back("worker_address: \"" + worker_address + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_30(mht_30_v, 1002, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::CreatePendingTask");
+
   int64_t task_id = state_.NextAvailableTaskId();
   Update update;
   CreatePendingTaskUpdate* create_task = update.mutable_create_pending_task();
@@ -755,6 +1023,10 @@ Status DataServiceDispatcherImpl::CreateTask(std::shared_ptr<const Job> job,
                                              const std::string& worker_address,
                                              std::shared_ptr<const Task>& task)
     TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_31_v;
+   mht_31_v.push_back("worker_address: \"" + worker_address + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_31(mht_31_v, 1027, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::CreateTask");
+
   int64_t task_id = state_.NextAvailableTaskId();
   Update update;
   CreateTaskUpdate* create_task = update.mutable_create_task();
@@ -840,6 +1112,9 @@ Status DataServiceDispatcherImpl::AssignTask(std::shared_ptr<const Task> task)
 
 Status DataServiceDispatcherImpl::ClientHeartbeat(
     const ClientHeartbeatRequest* request, ClientHeartbeatResponse* response) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_32(mht_32_v, 1115, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::ClientHeartbeat");
+
   TF_RETURN_IF_ERROR(CheckStarted());
   mutex_lock l(mu_);
   VLOG(4) << "Received heartbeat from client id " << request->job_client_id();
@@ -929,6 +1204,9 @@ Status DataServiceDispatcherImpl::ClientHeartbeat(
 
 Status DataServiceDispatcherImpl::GetWorkers(const GetWorkersRequest* request,
                                              GetWorkersResponse* response) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_33(mht_33_v, 1207, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::GetWorkers");
+
   TF_RETURN_IF_ERROR(CheckStarted());
   mutex_lock l(mu_);
   VLOG(3) << "Enter GetWorkers";
@@ -990,6 +1268,9 @@ Status DataServiceDispatcherImpl::CheckStarted() TF_LOCKS_EXCLUDED(mu_) {
 Status DataServiceDispatcherImpl::RecordSplitProduced(
     int64_t job_id, int64_t iteration, int64_t split_provider_index,
     bool finished) TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_34(mht_34_v, 1271, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::RecordSplitProduced");
+
   Update update;
   ProduceSplitUpdate* produce_split = update.mutable_produce_split();
   produce_split->set_job_id(job_id);
@@ -1001,11 +1282,17 @@ Status DataServiceDispatcherImpl::RecordSplitProduced(
 
 Status DataServiceDispatcherImpl::ApplyWithoutJournaling(const Update& update)
     TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_35(mht_35_v, 1285, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::ApplyWithoutJournaling");
+
   return state_.Apply(update);
 }
 
 Status DataServiceDispatcherImpl::Apply(const Update& update)
     TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_36(mht_36_v, 1293, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::Apply");
+
   if (journal_writer_.has_value()) {
     TF_RETURN_IF_ERROR(journal_writer_.value()->Write(update));
   }
@@ -1013,6 +1300,9 @@ Status DataServiceDispatcherImpl::Apply(const Update& update)
 }
 
 void DataServiceDispatcherImpl::JobGcThread() {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_37(mht_37_v, 1303, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::JobGcThread");
+
   int64_t next_check_micros = 0;
   while (true) {
     mutex_lock l(mu_);
@@ -1044,6 +1334,9 @@ void DataServiceDispatcherImpl::JobGcThread() {
 
 Status DataServiceDispatcherImpl::ReleaseMissingClients()
     TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_38(mht_38_v, 1337, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::ReleaseMissingClients");
+
   int64_t now = env_->NowMicros();
   for (const auto& client_id : state_.ListActiveClientIds()) {
     if (absl::FromUnixMicros(now) >
@@ -1062,6 +1355,9 @@ Status DataServiceDispatcherImpl::ReleaseMissingClients()
 }
 
 Status DataServiceDispatcherImpl::GcOldJobs() TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_39(mht_39_v, 1358, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::GcOldJobs");
+
   std::vector<std::shared_ptr<const Job>> jobs = state_.ListJobs();
   int64_t now = env_->NowMicros();
   for (const auto& job : jobs) {
@@ -1082,6 +1378,9 @@ Status DataServiceDispatcherImpl::GcOldJobs() TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
 Status DataServiceDispatcherImpl::GetDatasetDef(
     int64_t dataset_id, std::shared_ptr<const DatasetDef>& dataset_def)
     TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_40(mht_40_v, 1381, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::GetDatasetDef");
+
   std::shared_ptr<const Dataset> dataset;
   TF_RETURN_IF_ERROR(state_.DatasetFromId(dataset_id, dataset));
   return GetDatasetDef(*dataset, dataset_def);
@@ -1090,6 +1389,9 @@ Status DataServiceDispatcherImpl::GetDatasetDef(
 Status DataServiceDispatcherImpl::GetDatasetDef(
     const Dataset& dataset, std::shared_ptr<const DatasetDef>& dataset_def)
     TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSdispatcher_implDTcc mht_41(mht_41_v, 1392, "", "./tensorflow/core/data/service/dispatcher_impl.cc", "DataServiceDispatcherImpl::GetDatasetDef");
+
   std::string key = DatasetKey(dataset.dataset_id, dataset.fingerprint);
   return dataset_store_->Get(key, dataset_def);
 }

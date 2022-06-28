@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSprngDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSprngDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSprngDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,6 +196,9 @@ namespace xla {
 
 xla::XlaOp ConcatScalars(xla::XlaBuilder* builder,
                          absl::Span<const xla::XlaOp> scalars) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSprngDTcc mht_0(mht_0_v, 199, "", "./tensorflow/compiler/xla/client/lib/prng.cc", "ConcatScalars");
+
   std::vector<xla::XlaOp> vectors;
   absl::c_transform(scalars, std::back_inserter(vectors),
                     [](xla::XlaOp x) { return xla::Reshape(x, {1}); });
@@ -38,6 +209,9 @@ namespace {
 
 // Rotates a 32-bit integer 'v' left by 'distance' bits.
 XlaOp RotateLeftU32(XlaOp v, int distance) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSprngDTcc mht_1(mht_1_v, 212, "", "./tensorflow/compiler/xla/client/lib/prng.cc", "RotateLeftU32");
+
   return (v << ConstantR0<uint32_t>(v.builder(), distance)) |
          ShiftRightLogical(v, ConstantR0<uint32_t>(v.builder(), 32 - distance));
 }
@@ -49,6 +223,9 @@ using ThreeFry2x32State = std::array<XlaOp, 2>;
 // Salmon et al. SC 2011. Parallel random numbers: as easy as 1, 2, 3.
 // http://www.thesalmons.org/john/random123/papers/random123sc11.pdf
 ThreeFry2x32State ThreeFry2x32(ThreeFry2x32State input, ThreeFry2x32State key) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSprngDTcc mht_2(mht_2_v, 226, "", "./tensorflow/compiler/xla/client/lib/prng.cc", "ThreeFry2x32");
+
   XlaBuilder* builder = input[0].builder();
   key[0] = BitcastConvertType(key[0], U32);
   key[1] = BitcastConvertType(key[1], U32);
@@ -72,6 +249,9 @@ ThreeFry2x32State ThreeFry2x32(ThreeFry2x32State input, ThreeFry2x32State key) {
   // Performs a single round of the Threefry2x32 algorithm, with a rotation
   // amount 'rotation'.
   auto round = [](ThreeFry2x32State v, int rotation) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSprngDTcc mht_3(mht_3_v, 252, "", "./tensorflow/compiler/xla/client/lib/prng.cc", "lambda");
+
     v[0] = v[0] + v[1];
     v[1] = RotateLeftU32(v[1], rotation);
     v[1] = v[0] ^ v[1];
@@ -129,6 +309,9 @@ std::array<XlaOp, 2> Uint64ToUint32s(XlaOp u64) {
 
 // Converts two uint32s to a uint64_t.
 XlaOp Uint32sToUint64(std::array<XlaOp, 2> u32s) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSprngDTcc mht_4(mht_4_v, 312, "", "./tensorflow/compiler/xla/client/lib/prng.cc", "Uint32sToUint64");
+
   XlaBuilder* builder = u32s[0].builder();
   return ConvertElementType(u32s[0], U64) |
          ShiftLeft(ConvertElementType(u32s[1], U64),
@@ -168,6 +351,9 @@ struct SplitShapePair {
 
 // Split the shape on a dimension > 1 into two halves.
 SplitShapePair SplitShapeIntoHalves(const Shape& shape) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSprngDTcc mht_5(mht_5_v, 354, "", "./tensorflow/compiler/xla/client/lib/prng.cc", "SplitShapeIntoHalves");
+
   SplitShapePair pair;
   if (shape.rank() == 0) {
     pair.half_shape = ShapeUtil::MakeShape(shape.element_type(), {1});
@@ -222,6 +408,9 @@ SplitShapePair SplitShapeIntoHalves(const Shape& shape) {
 XlaOp CombineShapePair(absl::Span<const XlaOp> pair,
                        const SplitShapePair& shape_pair,
                        const Shape& original_shape) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSprngDTcc mht_6(mht_6_v, 411, "", "./tensorflow/compiler/xla/client/lib/prng.cc", "CombineShapePair");
+
   if (original_shape.rank() == 0) {
     return Reshape(pair[0], {});
   }
@@ -244,6 +433,9 @@ XlaOp CombineShapePair(absl::Span<const XlaOp> pair,
 // Generates random 32bits with the given shape using the Three Fry
 // implementation. Returns the random bits and the new state.
 RngOutput ThreeFryRngBit32(XlaOp key, XlaOp initial_state, const Shape& shape) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSprngDTcc mht_7(mht_7_v, 436, "", "./tensorflow/compiler/xla/client/lib/prng.cc", "ThreeFryRngBit32");
+
   auto shape_pair = SplitShapeIntoHalves(shape);
   std::pair<ThreeFry2x32State, XlaOp> inputs_state =
       GetThreeFryInputsAndUpdatedState(initial_state, shape_pair.half_shape);
@@ -256,6 +448,9 @@ RngOutput ThreeFryRngBit32(XlaOp key, XlaOp initial_state, const Shape& shape) {
 // Generates random 64bits with the given shape using the Three Fry
 // implementation. Returns the random bits and the new state.
 RngOutput ThreeFryRngBit64(XlaOp key, XlaOp initial_state, const Shape& shape) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSprngDTcc mht_8(mht_8_v, 451, "", "./tensorflow/compiler/xla/client/lib/prng.cc", "ThreeFryRngBit64");
+
   std::pair<ThreeFry2x32State, XlaOp> inputs_state =
       GetThreeFryInputsAndUpdatedState(initial_state, shape);
   ThreeFry2x32State inputs = inputs_state.first;
@@ -271,6 +466,9 @@ using Philox4x32State = std::array<XlaOp, 4>;
 
 // Computes the Philox4x32 algorithm using 10 rounds.
 Philox4x32State Philox4x32(Philox4x32State state, Philox4x32Key key) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSprngDTcc mht_9(mht_9_v, 469, "", "./tensorflow/compiler/xla/client/lib/prng.cc", "Philox4x32");
+
   // Constants specified by the Philox algorithm.
   static const uint32_t kPhiloxW32A = 0x9E3779B9;
   static const uint32_t kPhiloxW32B = 0xBB67AE85;
@@ -284,6 +482,9 @@ Philox4x32State Philox4x32(Philox4x32State state, Philox4x32Key key) {
 
   // Compute the high and low words from multiplying two 32-bit integers.
   auto mul_hi_low = [](XlaOp x, uint32_t k) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSprngDTcc mht_10(mht_10_v, 485, "", "./tensorflow/compiler/xla/client/lib/prng.cc", "lambda");
+
     auto product =
         ConvertElementType(x, U64) * ConstantR0<uint64_t>(x.builder(), k);
     auto low = ConvertElementType(product, U32);
@@ -294,6 +495,9 @@ Philox4x32State Philox4x32(Philox4x32State state, Philox4x32Key key) {
 
   // Perform a single round of the Philox algorithm.
   auto philox_round = [&](Philox4x32State x, Philox4x32Key key) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSprngDTcc mht_11(mht_11_v, 498, "", "./tensorflow/compiler/xla/client/lib/prng.cc", "lambda");
+
     auto product0 = mul_hi_low(x[0], kPhiloxM4x32A);
     auto product1 = mul_hi_low(x[2], kPhiloxM4x32B);
     return Philox4x32State{product1.high ^ x[1] ^ key[0], product1.low,
@@ -302,6 +506,9 @@ Philox4x32State Philox4x32(Philox4x32State state, Philox4x32Key key) {
 
   // Update the key after a round of Philox algorithm.
   auto raise_key = [](Philox4x32Key key) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSprngDTcc mht_12(mht_12_v, 509, "", "./tensorflow/compiler/xla/client/lib/prng.cc", "lambda");
+
     XlaBuilder* builder = key[0].builder();
     return Philox4x32Key{key[0] + ConstantR0<uint32_t>(builder, kPhiloxW32A),
                          key[1] + ConstantR0<uint32_t>(builder, kPhiloxW32B)};
@@ -370,6 +577,9 @@ std::array<XlaOp, 2> Uint128FromOp(XlaOp op) {
 }
 
 XlaOp Uint128ToOp(std::array<XlaOp, 2> u128) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSprngDTcc mht_13(mht_13_v, 580, "", "./tensorflow/compiler/xla/client/lib/prng.cc", "Uint128ToOp");
+
   return ConcatScalars(u128[0].builder(), {u128[0], u128[1]});
 }
 
@@ -409,6 +619,9 @@ std::pair<Philox4x32State, XlaOp> GeneratePhiloxBits(int64_t num_elems,
 // state of the random number generator.
 RngOutput PhiloxRngBit32(XlaOp op_key, XlaOp initial_state,
                          const Shape& shape) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSprngDTcc mht_14(mht_14_v, 622, "", "./tensorflow/compiler/xla/client/lib/prng.cc", "PhiloxRngBit32");
+
   XlaBuilder* builder = op_key.builder();
   const int64_t num_elems = ShapeUtil::ElementsIn(shape);
 
@@ -436,6 +649,9 @@ RngOutput PhiloxRngBit32(XlaOp op_key, XlaOp initial_state,
 // state of the random number generator.
 RngOutput PhiloxRngBit64(XlaOp op_key, XlaOp initial_state,
                          const Shape& shape) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSprngDTcc mht_15(mht_15_v, 652, "", "./tensorflow/compiler/xla/client/lib/prng.cc", "PhiloxRngBit64");
+
   XlaBuilder* builder = op_key.builder();
   const int64_t num_elems = ShapeUtil::ElementsIn(shape);
 
@@ -466,6 +682,9 @@ RngOutput PhiloxRngBit64(XlaOp op_key, XlaOp initial_state,
 
 XlaOp ConvertRandomBitsToUniformFloatingPoint(XlaOp bits, XlaOp minval,
                                               XlaOp maxval) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSprngDTcc mht_16(mht_16_v, 685, "", "./tensorflow/compiler/xla/client/lib/prng.cc", "ConvertRandomBitsToUniformFloatingPoint");
+
   XlaBuilder* builder = bits.builder();
   return builder->ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* minval_shape,
@@ -502,6 +721,9 @@ XlaOp ConvertRandomBitsToUniformFloatingPoint(XlaOp bits, XlaOp minval,
 XlaOp ConvertRandomBitsToUniformInt(XlaOp bits, XlaOp minval, XlaOp maxval,
                                     PrimitiveType type,
                                     PrimitiveType unsigned_type) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSprngDTcc mht_17(mht_17_v, 724, "", "./tensorflow/compiler/xla/client/lib/prng.cc", "ConvertRandomBitsToUniformInt");
+
   XlaBuilder* builder = bits.builder();
   XlaOp range = BitcastConvertType(maxval, unsigned_type) -
                 BitcastConvertType(minval, unsigned_type);
@@ -529,11 +751,17 @@ std::pair<XlaOp, XlaOp> BoxMullerTransform(XlaOp x0, XlaOp x1) {
 }  // namespace
 
 XlaOp PhiloxIncreaseCounter(XlaOp counter, XlaOp delta) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSprngDTcc mht_18(mht_18_v, 754, "", "./tensorflow/compiler/xla/client/lib/prng.cc", "PhiloxIncreaseCounter");
+
   return Uint128ToOp(Uint128AddUint64(Uint128FromOp(counter), delta));
 }
 
 RngOutput ThreeFryBitGenerator(XlaOp key, XlaOp initial_state,
                                const Shape& shape) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSprngDTcc mht_19(mht_19_v, 762, "", "./tensorflow/compiler/xla/client/lib/prng.cc", "ThreeFryBitGenerator");
+
   PrimitiveType type = shape.element_type();
   switch (type) {
     case F32:
@@ -555,6 +783,9 @@ RngOutput ThreeFryBitGenerator(XlaOp key, XlaOp initial_state,
 
 RngOutput PhiloxBitGenerator(XlaOp key, XlaOp initial_state,
                              const Shape& shape) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSprngDTcc mht_20(mht_20_v, 786, "", "./tensorflow/compiler/xla/client/lib/prng.cc", "PhiloxBitGenerator");
+
   PrimitiveType type = shape.element_type();
   switch (type) {
     case F32:
@@ -585,6 +816,9 @@ RngOutput UniformFloatingPointDistribution(XlaOp key, XlaOp initial_state,
                                            BitGeneratorTy bit_generator,
                                            XlaOp minval, XlaOp maxval,
                                            const Shape& shape) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSprngDTcc mht_21(mht_21_v, 819, "", "./tensorflow/compiler/xla/client/lib/prng.cc", "UniformFloatingPointDistribution");
+
   RngOutput bits_state = bit_generator(key, initial_state, shape);
   XlaOp bits = bits_state.value;
   XlaOp new_state = bits_state.state;
@@ -595,6 +829,9 @@ RngOutput UniformFloatingPointDistribution(XlaOp key, XlaOp initial_state,
 RngOutput UniformIntDistribution(XlaOp key, XlaOp initial_state,
                                  BitGeneratorTy bit_generator, XlaOp minval,
                                  XlaOp maxval, const Shape& shape) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSprngDTcc mht_22(mht_22_v, 832, "", "./tensorflow/compiler/xla/client/lib/prng.cc", "UniformIntDistribution");
+
   RngOutput bits_state = bit_generator(key, initial_state, shape);
   XlaOp bits = bits_state.value;
   XlaOp new_state = bits_state.state;
@@ -614,6 +851,9 @@ RngOutput UniformIntDistribution(XlaOp key, XlaOp initial_state,
 RngOutput NormalFloatingPointDistribution(XlaOp key, XlaOp initial_state,
                                           BitGeneratorTy bit_generator,
                                           const Shape& shape) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSprngDTcc mht_23(mht_23_v, 854, "", "./tensorflow/compiler/xla/client/lib/prng.cc", "NormalFloatingPointDistribution");
+
   PrimitiveType primitive_type = shape.element_type();
   DCHECK(primitive_type == F32 || primitive_type == F64);
 

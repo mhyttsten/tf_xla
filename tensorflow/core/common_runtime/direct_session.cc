@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -94,6 +262,9 @@ Status NewThreadPoolFromThreadPoolOptions(
     const SessionOptions& options,
     const ThreadPoolOptionProto& thread_pool_options, int pool_number,
     thread::ThreadPool** pool, bool* owned) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_0(mht_0_v, 265, "", "./tensorflow/core/common_runtime/direct_session.cc", "NewThreadPoolFromThreadPoolOptions");
+
   int32_t num_threads = thread_pool_options.num_threads();
   if (num_threads == 0) {
     num_threads = NumInterOpThreadsFromSessionOptions(options);
@@ -139,6 +310,9 @@ Status NewThreadPoolFromThreadPoolOptions(
 }
 
 thread::ThreadPool* GlobalThreadPool(const SessionOptions& options) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_1(mht_1_v, 313, "", "./tensorflow/core/common_runtime/direct_session.cc", "GlobalThreadPool");
+
   static thread::ThreadPool* const thread_pool =
       NewThreadPoolFromSessionOptions(options);
   return thread_pool;
@@ -150,6 +324,10 @@ thread::ThreadPool* GlobalThreadPool(const SessionOptions& options) {
 string GetRendezvousKey(const string& tensor_name,
                         const DeviceAttributes& device_info,
                         const FrameAndIter& frame_iter) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("tensor_name: \"" + tensor_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_2(mht_2_v, 328, "", "./tensorflow/core/common_runtime/direct_session.cc", "GetRendezvousKey");
+
   return strings::StrCat(device_info.name(), ";",
                          strings::FpToString(device_info.incarnation()), ";",
                          device_info.name(), ";", tensor_name, ";",
@@ -160,9 +338,15 @@ string GetRendezvousKey(const string& tensor_name,
 
 class DirectSessionFactory : public SessionFactory {
  public:
-  DirectSessionFactory() {}
+  DirectSessionFactory() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_3(mht_3_v, 342, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSessionFactory");
+}
 
   bool AcceptsOptions(const SessionOptions& options) override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_4(mht_4_v, 347, "", "./tensorflow/core/common_runtime/direct_session.cc", "AcceptsOptions");
+
     return options.target.empty() &&
            !options.config.experimental().use_tfrt() &&
            GetDefaultLocalSessionImpl() == LocalSessionImpl::kDirectSession;
@@ -170,6 +354,9 @@ class DirectSessionFactory : public SessionFactory {
 
   Status NewSession(const SessionOptions& options,
                     Session** out_session) override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_5(mht_5_v, 357, "", "./tensorflow/core/common_runtime/direct_session.cc", "NewSession");
+
     const auto& experimental_config = options.config.experimental();
     if (experimental_config.has_session_metadata()) {
       if (experimental_config.session_metadata().version() < 0) {
@@ -207,6 +394,9 @@ class DirectSessionFactory : public SessionFactory {
 
   Status Reset(const SessionOptions& options,
                const std::vector<string>& containers) override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_6(mht_6_v, 397, "", "./tensorflow/core/common_runtime/direct_session.cc", "Reset");
+
     std::vector<DirectSession*> sessions_to_reset;
     {
       mutex_lock l(sessions_lock_);
@@ -228,6 +418,9 @@ class DirectSessionFactory : public SessionFactory {
   }
 
   void Deregister(const DirectSession* session) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_7(mht_7_v, 421, "", "./tensorflow/core/common_runtime/direct_session.cc", "Deregister");
+
     mutex_lock l(sessions_lock_);
     sessions_.erase(std::remove(sessions_.begin(), sessions_.end(), session),
                     sessions_.end());
@@ -239,6 +432,9 @@ class DirectSessionFactory : public SessionFactory {
 
  private:
   static string GetMetadataKey(const SessionMetadata& metadata) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_8(mht_8_v, 435, "", "./tensorflow/core/common_runtime/direct_session.cc", "GetMetadataKey");
+
     return absl::StrCat(metadata.name(), "/", metadata.version());
   }
 
@@ -251,6 +447,9 @@ class DirectSessionFactory : public SessionFactory {
 class DirectSessionRegistrar {
  public:
   DirectSessionRegistrar() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_9(mht_9_v, 450, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSessionRegistrar");
+
     SessionFactory::Register("DIRECT_SESSION", new DirectSessionFactory());
   }
 };
@@ -260,6 +459,9 @@ std::atomic_int_fast64_t DirectSession::step_id_counter_(1);
 
 static RunHandlerPool* GetOrCreateRunHandlerPool(
     const SessionOptions& options) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_10(mht_10_v, 462, "", "./tensorflow/core/common_runtime/direct_session.cc", "GetOrCreateRunHandlerPool");
+
   int num_inter_threads = 0;
   int num_intra_threads = 0;
   static const int env_num_inter_threads = NumInterOpThreadsFromEnvironment();
@@ -291,6 +493,9 @@ static RunHandlerPool* GetOrCreateRunHandlerPool(
   }
 
   static RunHandlerPool* pool = [&]() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_11(mht_11_v, 496, "", "./tensorflow/core/common_runtime/direct_session.cc", "lambda");
+
     LOG(INFO) << "Creating run-handler pool with "
                  "[num_inter_threads, num_intra_threads] as ["
               << num_inter_threads << "," << num_intra_threads << "]";
@@ -301,6 +506,9 @@ static RunHandlerPool* GetOrCreateRunHandlerPool(
 
 bool DirectSession::ShouldUseRunHandlerPool(
     const RunOptions& run_options) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_12(mht_12_v, 509, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::ShouldUseRunHandlerPool");
+
   if (options_.config.use_per_session_threads()) return false;
   if (options_.config.session_inter_op_thread_pool_size() > 0 &&
       run_options.inter_op_thread_pool() > 0)
@@ -323,6 +531,9 @@ DirectSession::DirectSession(const SessionOptions& options,
       factory_(factory),
       cancellation_manager_(new CancellationManager()),
       operation_timeout_in_ms_(options_.config.operation_timeout_in_ms()) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_13(mht_13_v, 534, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::DirectSession");
+
   const int thread_pool_size =
       options_.config.session_inter_op_thread_pool_size();
   if (thread_pool_size > 0) {
@@ -385,6 +596,9 @@ DirectSession::DirectSession(const SessionOptions& options,
 }
 
 DirectSession::~DirectSession() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_14(mht_14_v, 599, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::~DirectSession");
+
   if (!closed_) Close().IgnoreError();
   for (auto& it : partial_runs_) {
     it.second.reset(nullptr);
@@ -407,10 +621,16 @@ DirectSession::~DirectSession() {
 }
 
 Status DirectSession::Create(const GraphDef& graph) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_15(mht_15_v, 624, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::Create");
+
   return Create(GraphDef(graph));
 }
 
 Status DirectSession::Create(GraphDef&& graph) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_16(mht_16_v, 631, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::Create");
+
   TF_RETURN_IF_ERROR(init_error_);
   if (graph.node_size() > 0) {
     mutex_lock l(graph_state_lock_);
@@ -424,16 +644,25 @@ Status DirectSession::Create(GraphDef&& graph) {
 }
 
 Status DirectSession::Extend(const GraphDef& graph) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_17(mht_17_v, 647, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::Extend");
+
   return Extend(GraphDef(graph));
 }
 
 Status DirectSession::Extend(GraphDef&& graph) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_18(mht_18_v, 654, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::Extend");
+
   TF_RETURN_IF_ERROR(CheckNotClosed());
   mutex_lock l(graph_state_lock_);
   return ExtendLocked(std::move(graph));
 }
 
 Status DirectSession::ExtendLocked(GraphDef&& graph) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_19(mht_19_v, 663, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::ExtendLocked");
+
   if (finalized_) {
     return errors::FailedPrecondition("Session has been finalized.");
   }
@@ -468,6 +697,9 @@ Status DirectSession::Run(const NamedTensorList& inputs,
                           const std::vector<string>& output_names,
                           const std::vector<string>& target_nodes,
                           std::vector<Tensor>* outputs) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_20(mht_20_v, 700, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::Run");
+
   RunMetadata run_metadata;
   return Run(RunOptions(), inputs, output_names, target_nodes, outputs,
              &run_metadata);
@@ -477,6 +709,9 @@ Status DirectSession::CreateDebuggerState(
     const CallableOptions& callable_options, int64_t global_step,
     int64_t session_run_index, int64_t executor_step_index,
     std::unique_ptr<DebuggerStateInterface>* debugger_state) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_21(mht_21_v, 712, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::CreateDebuggerState");
+
   TF_RETURN_IF_ERROR(DebuggerStateRegistry::CreateState(
       callable_options.run_options().debug_options(), debugger_state));
   std::vector<string> input_names(callable_options.feed().begin(),
@@ -494,6 +729,9 @@ Status DirectSession::CreateDebuggerState(
 
 Status DirectSession::DecorateAndPublishGraphForDebug(
     const DebugOptions& debug_options, Graph* graph, Device* device) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_22(mht_22_v, 732, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::DecorateAndPublishGraphForDebug");
+
   std::unique_ptr<DebugGraphDecoratorInterface> decorator;
   TF_RETURN_IF_ERROR(
       DebugGraphDecoratorRegistry::CreateDecorator(debug_options, &decorator));
@@ -508,6 +746,9 @@ Status DirectSession::RunInternal(
     CallFrameInterface* call_frame, ExecutorsAndKeys* executors_and_keys,
     RunMetadata* run_metadata,
     const thread::ThreadPoolOptions& threadpool_options) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_23(mht_23_v, 749, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::RunInternal");
+
   const uint64 start_time_usecs = options_.env->NowMicros();
   const int64_t executor_step_count =
       executors_and_keys->step_count.fetch_add(1);
@@ -626,13 +867,22 @@ Status DirectSession::RunInternal(
   Executor::Args::Runner default_runner = nullptr;
 
   if (pool == nullptr) {
-    default_runner = [](const Executor::Args::Closure& c) { c(); };
+    default_runner = [](const Executor::Args::Closure& c) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_24(mht_24_v, 871, "", "./tensorflow/core/common_runtime/direct_session.cc", "lambda");
+ c(); };
   } else if (handler_ptr != nullptr) {
     default_runner = [handler_ptr](Executor::Args::Closure c) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_25(mht_25_v, 876, "", "./tensorflow/core/common_runtime/direct_session.cc", "lambda");
+
       handler_ptr->ScheduleInterOpClosure(std::move(c));
     };
   } else {
     default_runner = [pool](Executor::Args::Closure c) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_26(mht_26_v, 883, "", "./tensorflow/core/common_runtime/direct_session.cc", "lambda");
+
       pool->Schedule(std::move(c));
     };
   }
@@ -703,6 +953,9 @@ Status DirectSession::RunInternal(
   auto set_threadpool_args_for_item =
       [&default_runner, &handler](const PerPartitionExecutorsAndLib& item,
                                   Executor::Args* args) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_27(mht_27_v, 956, "", "./tensorflow/core/common_runtime/direct_session.cc", "lambda");
+
         // TODO(azaks): support partial run.
         // TODO(azaks): if the device picks its own threadpool, we need to
         // assign
@@ -715,6 +968,9 @@ Status DirectSession::RunInternal(
           args->runner = default_runner;
         } else {
           args->runner = [device_thread_pool](Executor::Args::Closure c) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_28(mht_28_v, 971, "", "./tensorflow/core/common_runtime/direct_session.cc", "lambda");
+
             device_thread_pool->Schedule(std::move(c));
           };
         }
@@ -833,6 +1089,9 @@ Status DirectSession::Run(const RunOptions& run_options,
                           const std::vector<string>& target_nodes,
                           std::vector<Tensor>* outputs,
                           RunMetadata* run_metadata) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_29(mht_29_v, 1092, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::Run");
+
   return Run(run_options, inputs, output_names, target_nodes, outputs,
              run_metadata, thread::ThreadPoolOptions());
 }
@@ -844,6 +1103,9 @@ Status DirectSession::Run(const RunOptions& run_options,
                           std::vector<Tensor>* outputs,
                           RunMetadata* run_metadata,
                           const thread::ThreadPoolOptions& threadpool_options) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_30(mht_30_v, 1106, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::Run");
+
   TF_RETURN_IF_ERROR(CheckNotClosed());
   TF_RETURN_IF_ERROR(CheckGraphCreated("Run()"));
   direct_session_runs->GetCell()->IncrementBy(1);
@@ -952,6 +1214,9 @@ Status DirectSession::PRunSetup(const std::vector<string>& input_names,
                                 const std::vector<string>& output_names,
                                 const std::vector<string>& target_nodes,
                                 string* handle) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_31(mht_31_v, 1217, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::PRunSetup");
+
   TF_RETURN_IF_ERROR(CheckNotClosed());
   TF_RETURN_IF_ERROR(CheckGraphCreated("PRunSetup()"));
 
@@ -1003,6 +1268,9 @@ Status DirectSession::PRunSetup(const std::vector<string>& input_names,
   // their use is intended.
   args.collective_executor = nullptr;
   args.runner = [this, pool](Executor::Args::Closure c) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_32(mht_32_v, 1271, "", "./tensorflow/core/common_runtime/direct_session.cc", "lambda");
+
     pool->Schedule(std::move(c));
   };
   args.session_state = &session_state_;
@@ -1030,6 +1298,10 @@ Status DirectSession::PRunSetup(const std::vector<string>& input_names,
 Status DirectSession::PRun(const string& handle, const NamedTensorList& inputs,
                            const std::vector<string>& output_names,
                            std::vector<Tensor>* outputs) {
+   std::vector<std::string> mht_33_v;
+   mht_33_v.push_back("handle: \"" + handle + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_33(mht_33_v, 1302, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::PRun");
+
   TF_RETURN_IF_ERROR(CheckNotClosed());
   std::vector<string> parts = str_util::Split(handle, ';');
   const string& key = parts[0];
@@ -1130,6 +1402,9 @@ Status DirectSession::PRun(const string& handle, const NamedTensorList& inputs,
 
 Status DirectSession::ResourceHandleToInputTensor(const Tensor& resource_tensor,
                                                   Tensor* retrieved_tensor) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_34(mht_34_v, 1405, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::ResourceHandleToInputTensor");
+
   if (resource_tensor.dtype() != DT_RESOURCE) {
     return errors::InvalidArgument(strings::StrCat(
         "ResourceHandleToInputTensor() received non-DT_RESOURCE Tensor: ",
@@ -1157,6 +1432,9 @@ Status DirectSession::ResourceHandleToInputTensor(const Tensor& resource_tensor,
 Status DirectSession::SendPRunInputs(const NamedTensorList& inputs,
                                      const ExecutorsAndKeys* executors_and_keys,
                                      IntraProcessRendezvous* rendez) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_35(mht_35_v, 1435, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::SendPRunInputs");
+
   Status s;
   Rendezvous::ParsedKey parsed;
   // Insert the input tensors into the local rendezvous by their
@@ -1197,6 +1475,9 @@ Status DirectSession::RecvPRunOutputs(
     const std::vector<string>& output_names,
     const ExecutorsAndKeys* executors_and_keys, PartialRunState* run_state,
     std::vector<Tensor>* outputs) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_36(mht_36_v, 1478, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::RecvPRunOutputs");
+
   Status s;
   if (!output_names.empty()) {
     outputs->resize(output_names.size());
@@ -1242,6 +1523,9 @@ Status DirectSession::CheckFetch(const NamedTensorList& feeds,
                                  const std::vector<string>& fetches,
                                  const ExecutorsAndKeys* executors_and_keys,
                                  const PartialRunState* run_state) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_37(mht_37_v, 1526, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::CheckFetch");
+
   const Graph* graph = executors_and_keys->graph.get();
   const NameNodeMap* name_to_node = &executors_and_keys->name_to_node;
 
@@ -1304,6 +1588,9 @@ Status DirectSession::CreateExecutors(
     std::unique_ptr<ExecutorsAndKeys>* out_executors_and_keys,
     std::unique_ptr<FunctionInfo>* out_func_info,
     RunStateArgs* run_state_args) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_38(mht_38_v, 1591, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::CreateExecutors");
+
   BuildGraphOptions options;
   options.callable_options = callable_options;
   options.use_function_convention = !run_state_args->is_partial_run;
@@ -1359,6 +1646,9 @@ Status DirectSession::CreateExecutors(
       /*parent=*/nullptr, session_metadata,
       Rendezvous::Factory{
           [](const int64_t, const DeviceMgr* device_mgr, Rendezvous** r) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_39(mht_39_v, 1649, "", "./tensorflow/core/common_runtime/direct_session.cc", "lambda");
+
             *r = new IntraProcessRendezvous(device_mgr);
             return Status::OK();
           }}));
@@ -1387,6 +1677,9 @@ Status DirectSession::CreateExecutors(
     params.create_kernel =
         [this, lib, opseg](const std::shared_ptr<const NodeProperties>& props,
                            OpKernel** kernel) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_40(mht_40_v, 1680, "", "./tensorflow/core/common_runtime/direct_session.cc", "lambda");
+
           // NOTE(mrry): We must not share function kernels (implemented
           // using `CallOp`) between subgraphs, because `CallOp::handle_`
           // is tied to a particular subgraph. Even if the function itself
@@ -1395,6 +1688,9 @@ Status DirectSession::CreateExecutors(
             return lib->CreateKernel(props, kernel);
           }
           auto create_fn = [lib, &props](OpKernel** kernel) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_41(mht_41_v, 1691, "", "./tensorflow/core/common_runtime/direct_session.cc", "lambda");
+
             return lib->CreateKernel(props, kernel);
           };
           // Kernels created for subgraph nodes need to be cached.  On
@@ -1404,6 +1700,9 @@ Status DirectSession::CreateExecutors(
                                      kernel, create_fn);
         };
     params.delete_kernel = [lib](OpKernel* kernel) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_42(mht_42_v, 1703, "", "./tensorflow/core/common_runtime/direct_session.cc", "lambda");
+
       if (kernel && !OpSegment::ShouldOwnKernel(lib, kernel->type_string()))
         delete kernel;
     };
@@ -1476,6 +1775,9 @@ Status DirectSession::GetOrCreateExecutors(
     gtl::ArraySlice<string> inputs, gtl::ArraySlice<string> outputs,
     gtl::ArraySlice<string> target_nodes, ExecutorsAndKeys** executors_and_keys,
     RunStateArgs* run_state_args) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_43(mht_43_v, 1778, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::GetOrCreateExecutors");
+
   int64_t handle_name_counter_value = -1;
   if (LogMemory::IsEnabled() || run_state_args->is_partial_run) {
     handle_name_counter_value = handle_name_counter_.fetch_add(1);
@@ -1592,6 +1894,9 @@ Status DirectSession::CreateGraphs(
     std::unique_ptr<FunctionLibraryDefinition>* flib_def,
     RunStateArgs* run_state_args, DataTypeVector* input_types,
     DataTypeVector* output_types, int64_t* collective_graph_key) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_44(mht_44_v, 1897, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::CreateGraphs");
+
   mutex_lock l(graph_state_lock_);
   if (finalized_) {
     return errors::FailedPrecondition("Session has been finalized.");
@@ -1667,12 +1972,23 @@ Status DirectSession::CreateGraphs(
   // Partition the graph across devices.
   PartitionOptions popts;
   popts.node_to_loc = [](const Node* node) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_45(mht_45_v, 1975, "", "./tensorflow/core/common_runtime/direct_session.cc", "lambda");
+
     return node->assigned_device_name();
   };
   popts.new_name = [this](const string& prefix) {
+   std::vector<std::string> mht_46_v;
+   mht_46_v.push_back("prefix: \"" + prefix + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_46(mht_46_v, 1982, "", "./tensorflow/core/common_runtime/direct_session.cc", "lambda");
+
     return strings::StrCat(prefix, "/_", edge_name_counter_.fetch_add(1));
   };
   popts.get_incarnation = [](const string& name) {
+   std::vector<std::string> mht_47_v;
+   mht_47_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_47(mht_47_v, 1989, "", "./tensorflow/core/common_runtime/direct_session.cc", "lambda");
+
     // The direct session does not have changing incarnation numbers.
     // Just return '1'.
     return 1;
@@ -1748,6 +2064,9 @@ Status DirectSession::CreateGraphs(
 
 ::tensorflow::Status DirectSession::ListDevices(
     std::vector<DeviceAttributes>* response) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_48(mht_48_v, 2067, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::ListDevices");
+
   response->clear();
   response->reserve(devices_.size());
   for (Device* d : devices_) {
@@ -1759,11 +2078,17 @@ Status DirectSession::CreateGraphs(
 
 ::tensorflow::Status DirectSession::Reset(
     const std::vector<string>& containers) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_49(mht_49_v, 2081, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::Reset");
+
   device_mgr_->ClearContainers(containers);
   return ::tensorflow::Status::OK();
 }
 
 ::tensorflow::Status DirectSession::Close() {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_50(mht_50_v, 2089, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::Close");
+
   cancellation_manager_->StartCancel();
   {
     mutex_lock l(closed_lock_);
@@ -1777,6 +2102,9 @@ Status DirectSession::CreateGraphs(
 DirectSession::RunState::RunState(int64_t step_id,
                                   const std::vector<Device*>* devices)
     : step_container(step_id, [devices, step_id](const string& name) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_51(mht_51_v, 2105, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::RunState::RunState");
+
         for (auto d : *devices) {
           if (!d->resource_manager()->Cleanup(name).ok()) {
             // Do nothing...
@@ -1791,6 +2119,9 @@ DirectSession::PartialRunState::PartialRunState(
     const std::vector<string>& pending_output_names, int64_t step_id,
     const std::vector<Device*>* devices)
     : RunState(step_id, devices) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_52(mht_52_v, 2122, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::PartialRunState::PartialRunState");
+
   // Initially all the feeds and fetches are pending.
   for (auto& name : pending_input_names) {
     pending_inputs[name] = false;
@@ -1801,6 +2132,9 @@ DirectSession::PartialRunState::PartialRunState(
 }
 
 DirectSession::PartialRunState::~PartialRunState() {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_53(mht_53_v, 2135, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::PartialRunState::~PartialRunState");
+
   if (rendez != nullptr) {
     rendez->StartAbort(errors::Cancelled("PRun cancellation"));
     executors_done.WaitForNotification();
@@ -1808,6 +2142,9 @@ DirectSession::PartialRunState::~PartialRunState() {
 }
 
 bool DirectSession::PartialRunState::PendingDone() const {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_54(mht_54_v, 2145, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::PartialRunState::PendingDone");
+
   for (const auto& it : pending_inputs) {
     if (!it.second) return false;
   }
@@ -1820,6 +2157,9 @@ bool DirectSession::PartialRunState::PendingDone() const {
 void DirectSession::WaitForNotification(Notification* n, RunState* run_state,
                                         CancellationManager* cm,
                                         int64_t timeout_in_ms) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_55(mht_55_v, 2160, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::WaitForNotification");
+
   const Status status = WaitForNotification(n, timeout_in_ms);
   if (!status.ok()) {
     {
@@ -1836,6 +2176,9 @@ void DirectSession::WaitForNotification(Notification* n, RunState* run_state,
 
 ::tensorflow::Status DirectSession::WaitForNotification(
     Notification* notification, int64_t timeout_in_ms) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_56(mht_56_v, 2179, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::WaitForNotification");
+
   if (timeout_in_ms > 0) {
     const int64_t timeout_in_us = timeout_in_ms * 1000;
     const bool notified =
@@ -1852,6 +2195,9 @@ void DirectSession::WaitForNotification(Notification* n, RunState* run_state,
 
 Status DirectSession::MakeCallable(const CallableOptions& callable_options,
                                    CallableHandle* out_handle) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_57(mht_57_v, 2198, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::MakeCallable");
+
   TF_RETURN_IF_ERROR(CheckNotClosed());
   TF_RETURN_IF_ERROR(CheckGraphCreated("MakeCallable()"));
 
@@ -1880,13 +2226,22 @@ class DirectSession::RunCallableCallFrame : public CallFrameInterface {
         fetch_tensors_(fetch_tensors) {}
 
   size_t num_args() const override {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_58(mht_58_v, 2229, "", "./tensorflow/core/common_runtime/direct_session.cc", "num_args");
+
     return executors_and_keys_->input_types.size();
   }
   size_t num_retvals() const override {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_59(mht_59_v, 2235, "", "./tensorflow/core/common_runtime/direct_session.cc", "num_retvals");
+
     return executors_and_keys_->output_types.size();
   }
 
   Status GetArg(int index, const Tensor** val) override {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_60(mht_60_v, 2242, "", "./tensorflow/core/common_runtime/direct_session.cc", "GetArg");
+
     if (TF_PREDICT_FALSE(index > feed_tensors_->size())) {
       return errors::Internal("Args index out of bounds: ", index);
     } else {
@@ -1896,6 +2251,9 @@ class DirectSession::RunCallableCallFrame : public CallFrameInterface {
   }
 
   Status SetRetval(int index, const Tensor& val) override {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_61(mht_61_v, 2254, "", "./tensorflow/core/common_runtime/direct_session.cc", "SetRetval");
+
     if (index > fetch_tensors_->size()) {
       return errors::Internal("RetVal index out of bounds: ", index);
     }
@@ -1913,6 +2271,9 @@ class DirectSession::RunCallableCallFrame : public CallFrameInterface {
 ::tensorflow::Status DirectSession::RunCallable(
     CallableHandle handle, const std::vector<Tensor>& feed_tensors,
     std::vector<Tensor>* fetch_tensors, RunMetadata* run_metadata) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_62(mht_62_v, 2274, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::RunCallable");
+
   return RunCallable(handle, feed_tensors, fetch_tensors, run_metadata,
                      thread::ThreadPoolOptions());
 }
@@ -1921,6 +2282,9 @@ class DirectSession::RunCallableCallFrame : public CallFrameInterface {
     CallableHandle handle, const std::vector<Tensor>& feed_tensors,
     std::vector<Tensor>* fetch_tensors, RunMetadata* run_metadata,
     const thread::ThreadPoolOptions& threadpool_options) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_63(mht_63_v, 2285, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::RunCallable");
+
   TF_RETURN_IF_ERROR(CheckNotClosed());
   TF_RETURN_IF_ERROR(CheckGraphCreated("RunCallable()"));
   direct_session_runs->GetCell()->IncrementBy(1);
@@ -2015,6 +2379,9 @@ class DirectSession::RunCallableCallFrame : public CallFrameInterface {
 }
 
 ::tensorflow::Status DirectSession::ReleaseCallable(CallableHandle handle) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_64(mht_64_v, 2382, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::ReleaseCallable");
+
   mutex_lock l(callables_lock_);
   if (handle >= next_callable_handle_) {
     return errors::InvalidArgument("No such callable handle: ", handle);
@@ -2024,6 +2391,9 @@ class DirectSession::RunCallableCallFrame : public CallFrameInterface {
 }
 
 Status DirectSession::Finalize() {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_65(mht_65_v, 2394, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::Finalize");
+
   mutex_lock l(graph_state_lock_);
   if (finalized_) {
     return errors::FailedPrecondition("Session already finalized.");
@@ -2038,6 +2408,9 @@ Status DirectSession::Finalize() {
 }
 
 DirectSession::Callable::~Callable() {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSdirect_sessionDTcc mht_66(mht_66_v, 2411, "", "./tensorflow/core/common_runtime/direct_session.cc", "DirectSession::Callable::~Callable");
+
   // We must delete the fields in this order, because the destructor
   // of `executors_and_keys` will call into an object owned by
   // `function_info` (in particular, when deleting a kernel, it relies

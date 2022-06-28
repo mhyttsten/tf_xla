@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,11 +207,17 @@ using absl::StrJoin;
 
 HloSharding HloSharding::AssignDevice(int64_t device_id,
                                       absl::Span<const OpMetadata> metadata) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_0(mht_0_v, 210, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::AssignDevice");
+
   return HloSharding(device_id, metadata);
 }
 
 HloSharding HloSharding::Tile1D(const Shape& input_shape, int64_t num_tiles,
                                 absl::Span<const OpMetadata> metadata) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_1(mht_1_v, 218, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::Tile1D");
+
   CHECK_EQ(1, input_shape.rank());
   CHECK_GT(num_tiles, 1);
   std::vector<int64_t> dimensions(1, num_tiles);
@@ -57,6 +231,9 @@ HloSharding HloSharding::PartialTile(
     const Array<int64_t>& group_tile_assignment,
     absl::Span<const absl::Span<const int64_t>> replication_groups,
     absl::Span<const OpMetadata> metadata) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_2(mht_2_v, 234, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::PartialTile");
+
   CHECK_EQ(group_tile_assignment.num_elements(), replication_groups.size());
   if (replication_groups.size() == 1) {
     return Replicate(metadata);
@@ -77,6 +254,9 @@ HloSharding HloSharding::PartialTile(
 HloSharding HloSharding::PartialTile(
     const Array<int64_t>& tile_assignment_last_dim_replicate,
     absl::Span<const OpMetadata> metadata) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_3(mht_3_v, 257, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::PartialTile");
+
   if (tile_assignment_last_dim_replicate.num_dimensions() == 1 ||
       tile_assignment_last_dim_replicate.dimensions().back() ==
           tile_assignment_last_dim_replicate.num_elements()) {
@@ -94,6 +274,9 @@ HloSharding HloSharding::PartialTile(
       tile_assignment_last_dim_replicate.num_elements() /
       tile_assignment_last_dim_replicate.dimensions().back());
   auto get_group_id = [&](absl::Span<const int64_t> indices) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_4(mht_4_v, 277, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "lambda");
+
     int64_t group_id = 0;
     for (int64_t i = 0; i < indices.size() - 1; ++i) {
       group_id *= tile_assignment_last_dim_replicate.dim(i);
@@ -120,6 +303,9 @@ HloSharding HloSharding::Subgroup(
     const Array<int64_t>& tile_assignment,
     absl::Span<const OpSharding::Type> subgroup_types,
     absl::Span<const OpMetadata> metadata) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_5(mht_5_v, 306, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::Subgroup");
+
   if (subgroup_types.empty()) {
     return HloSharding(tile_assignment, /*replicate_on_last_tile_dim=*/false,
                        metadata);
@@ -178,6 +364,9 @@ HloSharding HloSharding::Subgroup(
   auto create_sharding = [](const Array<int64_t> tiles,
                             absl::Span<const OpSharding::Type> types,
                             absl::Span<const OpMetadata> metadata) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_6(mht_6_v, 367, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "lambda");
+
     if (types.size() == 1 && types.back() == OpSharding::REPLICATED) {
       // Normalize to partial tile.
       return PartialTile(tiles, metadata);
@@ -233,6 +422,9 @@ HloSharding HloSharding::Subgroup(
 }
 
 HloSharding HloSharding::Tuple(const ShapeTree<HloSharding>& sub_shardings) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_7(mht_7_v, 425, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::Tuple");
+
   std::vector<HloSharding> flattened_list;
   flattened_list.reserve(sub_shardings.leaf_count());
   for (const auto& index_to_sharding : sub_shardings.leaves()) {
@@ -251,6 +443,9 @@ HloSharding HloSharding::Tuple(const ShapeTree<HloSharding>& sub_shardings) {
 
 HloSharding HloSharding::Tuple(const Shape& tuple_shape,
                                absl::Span<const HloSharding> shardings) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_8(mht_8_v, 446, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::Tuple");
+
   CHECK(tuple_shape.IsTuple()) << ShapeUtil::HumanString(tuple_shape);
   for (auto& sharding : shardings) {
     CHECK(!sharding.IsTuple())
@@ -265,6 +460,9 @@ HloSharding HloSharding::Tuple(const Shape& tuple_shape,
 
 HloSharding HloSharding::SingleTuple(const Shape& tuple_shape,
                                      const HloSharding& sharding) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_9(mht_9_v, 463, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::SingleTuple");
+
   CHECK(tuple_shape.IsTuple()) << ShapeUtil::HumanString(tuple_shape);
   CHECK(!sharding.IsTuple()) << sharding.ToString();
   int64_t leaf_count = RequiredLeaves(tuple_shape);
@@ -275,10 +473,16 @@ HloSharding HloSharding::SingleTuple(const Shape& tuple_shape,
 
 HloSharding HloSharding::Single(const Shape& shape,
                                 const HloSharding& sharding) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_10(mht_10_v, 476, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::Single");
+
   return shape.IsTuple() ? SingleTuple(shape, sharding) : sharding;
 }
 
 std::string HloSharding::ToString(bool include_metadata) const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_11(mht_11_v, 483, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::ToString");
+
   if (IsTuple()) {
     CHECK(metadata_.empty());
     std::string result = "{";
@@ -315,6 +519,9 @@ std::string HloSharding::ToString(bool include_metadata) const {
   std::string last_tile_dims;
   if (!subgroup_types_.empty()) {
     auto op_sharding_type_to_string = [](OpSharding::Type type) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_12(mht_12_v, 522, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "lambda");
+
       switch (type) {
         case OpSharding::MANUAL:
           return "manual";
@@ -355,6 +562,9 @@ std::string HloSharding::ToString(bool include_metadata) const {
 }
 
 bool HloSharding::UsesDevice(int64_t device) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_13(mht_13_v, 565, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::UsesDevice");
+
   if (IsTuple()) {
     return absl::c_any_of(tuple_elements_, [&](const HloSharding& s) {
       return s.UsesDevice(device);
@@ -388,6 +598,9 @@ std::map<int64_t, int64_t> HloSharding::UsedDevices(int64_t* count) const {
 }
 
 std::vector<int64_t> HloSharding::TileIndexForDevice(int64_t device) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_14(mht_14_v, 601, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::TileIndexForDevice");
+
   CHECK(!maximal_);
   CHECK(!manual_);
   CHECK(!IsTuple());
@@ -403,6 +616,9 @@ std::vector<int64_t> HloSharding::TileIndexForDevice(int64_t device) const {
 }
 
 int64_t HloSharding::DeviceForTileIndex(absl::Span<const int64_t> index) const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_15(mht_15_v, 619, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::DeviceForTileIndex");
+
   CHECK(!replicated_);
   CHECK(!manual_);
   CHECK(!IsTuple());
@@ -423,6 +639,9 @@ int64_t HloSharding::DeviceForTileIndex(absl::Span<const int64_t> index) const {
 
 std::vector<int64_t> HloSharding::TileOffsetForDevice(const Shape& shape,
                                                       int64_t device) const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_16(mht_16_v, 642, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::TileOffsetForDevice");
+
   CHECK(!IsTuple());
   CHECK(!manual_);
 
@@ -441,6 +660,9 @@ std::vector<int64_t> HloSharding::TileOffsetForDevice(const Shape& shape,
 
 std::vector<int64_t> HloSharding::TileLimitForDevice(const Shape& shape,
                                                      int64_t device) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_17(mht_17_v, 663, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::TileLimitForDevice");
+
   CHECK(!IsTuple());
   CHECK(!manual_);
 
@@ -461,6 +683,9 @@ std::vector<int64_t> HloSharding::TileLimitForDevice(const Shape& shape,
 }
 
 int64_t HloSharding::RequiredLeaves(const Shape& shape) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_18(mht_18_v, 686, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::RequiredLeaves");
+
   // Empty tuples (with arbitrary nesting) have no leaf nodes as far as
   // ShapeUtil and ShapeTree are concerned, but they do have a single
   // tuple_elements_ entry since we want to allow empty tuple results to
@@ -470,6 +695,9 @@ int64_t HloSharding::RequiredLeaves(const Shape& shape) {
 }
 
 Status HloSharding::CheckLeafCount(const Shape& shape) const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_19(mht_19_v, 698, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::CheckLeafCount");
+
   int64_t leaf_count = ShapeUtil::GetLeafCount(shape);
   if (leaf_count == 0 && tuple_elements_.size() == 1) {
     // Allow (but don't require) empty tuples to have a single sharding
@@ -483,6 +711,9 @@ Status HloSharding::CheckLeafCount(const Shape& shape) const {
 
 StatusOr<ShapeTree<HloSharding>> HloSharding::AsShapeTree(
     const Shape& shape) const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_20(mht_20_v, 714, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::AsShapeTree");
+
   if (IsTuple()) {
     ShapeTree<HloSharding> result(shape, HloSharding::Replicate());
     TF_RETURN_IF_ERROR(CheckLeafCount(shape));
@@ -502,6 +733,9 @@ StatusOr<ShapeTree<HloSharding>> HloSharding::AsShapeTree(
 }
 
 StatusOr<HloSharding> HloSharding::GetTupleSharding(const Shape& shape) const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_21(mht_21_v, 736, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::GetTupleSharding");
+
   if (IsTuple()) {
     TF_RETURN_IF_ERROR(CheckLeafCount(shape));
     return *this;
@@ -510,6 +744,9 @@ StatusOr<HloSharding> HloSharding::GetTupleSharding(const Shape& shape) const {
 }
 
 absl::optional<int64_t> HloSharding::UniqueDevice() const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_22(mht_22_v, 747, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::UniqueDevice");
+
   if (IsTuple()) {
     if (tuple_elements_.empty()) {
       return absl::nullopt;
@@ -531,6 +768,9 @@ absl::optional<int64_t> HloSharding::UniqueDevice() const {
 }
 
 int64_t HloSharding::GetUniqueDevice() const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_23(mht_23_v, 771, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::GetUniqueDevice");
+
   auto device = UniqueDevice();
   CHECK(device) << "Sharding does not have a unique device: " << *this;
   return *device;
@@ -538,6 +778,9 @@ int64_t HloSharding::GetUniqueDevice() const {
 
 Status HloSharding::ValidateTuple(const Shape& shape,
                                   int64_t num_devices) const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_24(mht_24_v, 781, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::ValidateTuple");
+
   if (!shape.IsTuple()) {
     return tensorflow::errors::InvalidArgument(
         StrCat("Sharding is tuple-shaped but validation shape is not."));
@@ -566,6 +809,9 @@ Status HloSharding::ValidateTuple(const Shape& shape,
 }
 
 Status HloSharding::Validate(const Shape& shape, int64_t num_devices) const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_25(mht_25_v, 812, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::Validate");
+
   if (shape.IsToken()) {
     return Status::OK();
   }
@@ -581,6 +827,9 @@ Status HloSharding::Validate(const Shape& shape, int64_t num_devices) const {
 
 Status HloSharding::ValidateNonTuple(const Shape& shape,
                                      int64_t num_devices) const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_26(mht_26_v, 830, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::ValidateNonTuple");
+
   if (shape.IsTuple()) {
     return tensorflow::errors::InvalidArgument(
         StrCat("Validation shape is a tuple but sharding is not."));
@@ -637,6 +886,9 @@ Status HloSharding::ValidateNonTuple(const Shape& shape,
 
 /*static*/ StatusOr<HloSharding> HloSharding::FromProto(
     const OpSharding& proto) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_27(mht_27_v, 889, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::FromProto");
+
   std::vector<OpMetadata> metadata(proto.metadata().begin(),
                                    proto.metadata().end());
   std::vector<int> subgroup_types_int(proto.last_tile_dims().begin(),
@@ -702,6 +954,9 @@ Status HloSharding::ValidateNonTuple(const Shape& shape,
 }
 
 OpSharding HloSharding::ToProto() const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_28(mht_28_v, 957, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::ToProto");
+
   OpSharding result;
 
   if (IsTuple()) {
@@ -743,6 +998,9 @@ OpSharding HloSharding::ToProto() const {
 }
 
 Shape HloSharding::TileShape(const Shape& shape) const {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_29(mht_29_v, 1001, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::TileShape");
+
   if (IsTileMaximal() || IsManual()) {
     return shape;
   }
@@ -755,6 +1013,9 @@ Shape HloSharding::TileShape(const Shape& shape) const {
 }
 
 Shape HloSharding::TileShape(const Shape& shape, int64_t device) const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_30(mht_30_v, 1016, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::TileShape");
+
   if (IsTileMaximal() || IsManual()) {
     return shape;
   }
@@ -774,6 +1035,9 @@ Shape HloSharding::TileShape(const Shape& shape, int64_t device) const {
 }
 
 int64_t HloSharding::NumTiles() const {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_31(mht_31_v, 1038, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::NumTiles");
+
   if (IsTileMaximal()) {
     return 1;
   }
@@ -783,6 +1047,9 @@ int64_t HloSharding::NumTiles() const {
 }
 
 int64_t HloSharding::NumTiles(absl::Span<const int64_t> dims) const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_32(mht_32_v, 1050, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::NumTiles");
+
   if (IsTileMaximal()) {
     return 1;
   }
@@ -799,6 +1066,9 @@ int64_t HloSharding::NumTiles(absl::Span<const int64_t> dims) const {
 
 HloSharding HloSharding::GetSubSharding(const Shape& shape,
                                         const ShapeIndex& index) const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_33(mht_33_v, 1069, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::GetSubSharding");
+
   CHECK(IsTuple());
   int64_t sharding_index = 0;
   const Shape* sub_shape = &shape;
@@ -820,6 +1090,9 @@ HloSharding HloSharding::GetSubSharding(const Shape& shape,
 }
 
 absl::optional<HloSharding> HloSharding::ExtractSingleSharding() const {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_34(mht_34_v, 1093, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::ExtractSingleSharding");
+
   if (!IsTuple()) {
     return *this;
   }
@@ -836,7 +1109,13 @@ absl::optional<HloSharding> HloSharding::ExtractSingleSharding() const {
 
 HloSharding HloSharding::WithMetadata(absl::Span<const OpMetadata> metadata,
                                       bool overwrite) const {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_35(mht_35_v, 1112, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::WithMetadata");
+
   auto assign_metadata = [&](HloSharding& sharding) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_36(mht_36_v, 1116, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "lambda");
+
     if (sharding.metadata_.empty() || overwrite) {
       sharding.metadata_.assign(metadata.begin(), metadata.end());
     }
@@ -854,6 +1133,9 @@ HloSharding HloSharding::WithMetadata(absl::Span<const OpMetadata> metadata,
 }
 
 HloSharding HloSharding::WithoutMetadata() const {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_37(mht_37_v, 1136, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "HloSharding::WithoutMetadata");
+
   HloSharding sharding = *this;
   sharding.metadata_.clear();
   for (HloSharding& sub_sharding : sharding.tuple_elements()) {
@@ -863,6 +1145,9 @@ HloSharding HloSharding::WithoutMetadata() const {
 }
 
 std::ostream& operator<<(std::ostream& out, const HloSharding& sharding) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_shardingDTcc mht_38(mht_38_v, 1148, "", "./tensorflow/compiler/xla/service/hlo_sharding.cc", "operator<<");
+
   out << sharding.ToString();
   return out;
 }

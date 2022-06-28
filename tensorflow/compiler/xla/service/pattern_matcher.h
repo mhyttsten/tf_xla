@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_PATTERN_MATCHER_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_PATTERN_MATCHER_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <functional>
 #include <string>
@@ -219,6 +387,9 @@ enum {
 // encounter a failing disjunction, so we just handle them as a special case
 // there.)
 inline void Indent(std::ostream* os, int64_t indent) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_0(mht_0_v, 390, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Indent");
+
   *os << "\n";
   for (int64_t i = 0; i < indent; ++i) {
     *os << " ";
@@ -247,9 +418,15 @@ struct IsTrivialMatcher<T,
 template <typename Item, typename... Patterns>
 class AllOfPattern {
  public:
-  explicit AllOfPattern(const Patterns&... patterns) : patterns_(patterns...) {}
+  explicit AllOfPattern(const Patterns&... patterns) : patterns_(patterns...) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_1(mht_1_v, 422, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "AllOfPattern");
+}
 
   bool Match(const Item* item, MatchOption option) const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_2(mht_2_v, 427, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     bool matched = MatchImpl(item, option, std::integral_constant<size_t, 0>());
     // This invariant is guaranteed by the top-level Match and AnyOf.
     DCHECK(matched || !option.capture);
@@ -257,6 +434,9 @@ class AllOfPattern {
   }
 
   bool Match(Item* item, MatchOption option) const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_3(mht_3_v, 437, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     bool matched = MatchImpl(item, option, std::integral_constant<size_t, 0>());
     // This invariant is guaranteed by the top-level Match and AnyOf.
     DCHECK(matched || !option.capture);
@@ -264,6 +444,9 @@ class AllOfPattern {
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_4(mht_4_v, 447, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     DescribeToImpl(os, std::integral_constant<size_t, 0>(), indent);
   }
 
@@ -283,6 +466,9 @@ class AllOfPattern {
   template <typename ItemType>
   bool MatchImpl(ItemType* item, MatchOption option,
                  std::integral_constant<size_t, sizeof...(Patterns)>) const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_5(mht_5_v, 469, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "MatchImpl");
+
     return true;
   }
 
@@ -313,6 +499,9 @@ class AllOfPattern {
   template <size_t index>
   void DescribeToImpl(std::ostream* os, std::integral_constant<size_t, index>,
                       int64_t indent) const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_6(mht_6_v, 502, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeToImpl");
+
     constexpr bool first_is_trivial =
         IsTrivialMatcher<typename std::remove_reference<decltype(std::get<0>(
             patterns_))>::type>::value;
@@ -351,7 +540,10 @@ class AllOfPattern {
 
   void DescribeToImpl(std::ostream* os,
                       std::integral_constant<size_t, sizeof...(Patterns)>,
-                      int64_t indent) const {}
+                      int64_t indent) const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_7(mht_7_v, 544, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeToImpl");
+}
 
   std::tuple<Patterns...> patterns_;
 };
@@ -375,6 +567,9 @@ auto AllOf(const detail::AllOfPattern<Item, InnerPs...>& inner_p,
   // Invoke constructor of AllOfPattern<Item, InnerPs..., OuterPs...>.
   auto make_all_of = [](const InnerPs&... inner_ps,
                         const OuterPs&... outer_ps) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_8(mht_8_v, 570, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "lambda");
+
     return detail::AllOfPattern<typename std::remove_const<Item>::type,
                                 InnerPs..., OuterPs...>(inner_ps...,
                                                         outer_ps...);
@@ -393,6 +588,9 @@ class LayoutPattern;
 class LayoutPatternBaseImpl {
  public:
   bool Match(const ::xla::Layout* layout, MatchOption option) const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_9(mht_9_v, 591, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (layout == nullptr) {
       EXPLAIN << "Layout is null";
       return false;
@@ -401,6 +599,9 @@ class LayoutPatternBaseImpl {
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_10(mht_10_v, 602, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "a layout";
   }
 
@@ -415,6 +616,9 @@ class LayoutPatternEqualImpl {
       : layout_(layout) {}
 
   bool Match(const ::xla::Layout* layout, MatchOption option) const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_11(mht_11_v, 619, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (!LayoutUtil::Equal(*layout_, *layout)) {
       EXPLAIN << "Layout " << LayoutUtil::HumanString(*layout)
               << " is not equal to expected "
@@ -425,6 +629,9 @@ class LayoutPatternEqualImpl {
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_12(mht_12_v, 632, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "equal to " << LayoutUtil::HumanString(*layout_);
   }
 
@@ -439,6 +646,9 @@ class LayoutPatternFormatImpl {
   explicit constexpr LayoutPatternFormatImpl(Format format) : format_(format) {}
 
   bool Match(const ::xla::Layout* layout, MatchOption option) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_13(mht_13_v, 649, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (layout->format() != format_) {
       EXPLAIN << "Layout has format " << Format_Name(layout->format())
               << " but expected " << Format_Name(format_);
@@ -448,6 +658,9 @@ class LayoutPatternFormatImpl {
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_14(mht_14_v, 661, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "with format " << Format_Name(format_);
   }
 
@@ -461,6 +674,9 @@ class LayoutPattern {
  private:
   template <typename NewImpl>
   auto AppendImpl(NewImpl new_impl) const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_15(mht_15_v, 677, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "AppendImpl");
+
     auto new_allof = AllOf<::xla::Layout>(impl_, std::move(new_impl));
     return LayoutPattern<LayoutType, decltype(new_allof)>(std::move(new_allof),
                                                           matched_layout_);
@@ -473,6 +689,9 @@ class LayoutPattern {
 
   // Returns true and captures the layout iff it matches the pattern.
   bool Match(const ::xla::Layout* layout, MatchOption option) const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_16(mht_16_v, 692, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (impl_.Match(layout, option)) {
       if (option.capture && matched_layout_) {
         *matched_layout_ = layout;
@@ -484,6 +703,9 @@ class LayoutPattern {
 
   // Returns true and captures the layout iff it matches the pattern.
   bool Match(::xla::Layout* layout, MatchOption option) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_17(mht_17_v, 706, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (impl_.Match(layout, option)) {
       if (option.capture && matched_layout_) {
         *matched_layout_ = layout;
@@ -494,6 +716,9 @@ class LayoutPattern {
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_18(mht_18_v, 719, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     impl_.DescribeTo(os, indent);
   }
 
@@ -516,17 +741,29 @@ class LayoutPattern {
 template <typename Item, typename... Patterns>
 class AnyOfPattern {
  public:
-  explicit AnyOfPattern(const Patterns&... patterns) : patterns_(patterns...) {}
+  explicit AnyOfPattern(const Patterns&... patterns) : patterns_(patterns...) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_19(mht_19_v, 745, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "AnyOfPattern");
+}
 
   bool Match(const Item* item, MatchOption option) const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_20(mht_20_v, 750, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     return MatchImpl(item, option);
   }
 
   bool Match(Item* item, MatchOption option) const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_21(mht_21_v, 757, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     return MatchImpl(item, option);
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_22(mht_22_v, 764, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "any of:";
     Indent(os, indent);
     DescribeToImpl(os, std::integral_constant<size_t, 0>(), indent);
@@ -535,6 +772,9 @@ class AnyOfPattern {
  private:
   template <typename ItemType>
   bool MatchImpl(ItemType* item, MatchOption option) const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_23(mht_23_v, 775, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "MatchImpl");
+
     // If we're generating an explanation, buffer it until we know we failed.
     absl::optional<std::stringstream> explanation;
     MatchOption new_option = option;
@@ -600,12 +840,18 @@ class AnyOfPattern {
   bool MatchRecursiveImpl(
       ItemType* item, MatchOption option,
       std::integral_constant<size_t, sizeof...(Patterns)>) const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_24(mht_24_v, 843, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "MatchRecursiveImpl");
+
     return false;
   }
 
   template <size_t index>
   void DescribeToImpl(std::ostream* os, std::integral_constant<size_t, index>,
                       int64_t indent) const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_25(mht_25_v, 852, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeToImpl");
+
     *os << " - ";
     std::get<index>(patterns_).DescribeTo(os, indent + 3);
     if (index != sizeof...(Patterns) - 1) {
@@ -617,7 +863,10 @@ class AnyOfPattern {
 
   void DescribeToImpl(std::ostream* os,
                       std::integral_constant<size_t, sizeof...(Patterns)>,
-                      int64_t indent) const {}
+                      int64_t indent) const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_26(mht_26_v, 867, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeToImpl");
+}
 
   std::tuple<Patterns...> patterns_;
 };
@@ -658,6 +907,9 @@ class ShapePattern;
 class ShapePatternBaseImpl {
  public:
   bool Match(const ::xla::Shape* shape, MatchOption option) const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_27(mht_27_v, 910, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (shape == nullptr) {
       EXPLAIN << "Shape is null";
     }
@@ -665,6 +917,9 @@ class ShapePatternBaseImpl {
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_28(mht_28_v, 920, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "a shape";
   }
 
@@ -679,6 +934,9 @@ class ShapePatternEqualImpl {
       : shape_(shape) {}
 
   bool Match(const ::xla::Shape* shape, MatchOption option) const {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_29(mht_29_v, 937, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (!ShapeUtil::Equal(*shape_, *shape)) {
       EXPLAIN << "Shape not equal to "
               << ShapeUtil::HumanStringWithLayout(*shape_);
@@ -688,6 +946,9 @@ class ShapePatternEqualImpl {
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_30(mht_30_v, 949, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "equal to " << ShapeUtil::HumanStringWithLayout(*shape_);
   }
 
@@ -703,6 +964,9 @@ class ShapePatternCompatibleImpl {
       : shape_(shape) {}
 
   bool Match(const ::xla::Shape* shape, MatchOption option) const {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_31(mht_31_v, 967, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (!ShapeUtil::Compatible(*shape_, *shape)) {
       EXPLAIN << "Shape not compatible with "
               << ShapeUtil::HumanString(*shape_);
@@ -712,6 +976,9 @@ class ShapePatternCompatibleImpl {
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_32(mht_32_v, 979, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "compatible with " << ShapeUtil::HumanString(*shape_);
   }
 
@@ -727,6 +994,9 @@ class ShapePatternElementTypeImpl {
       : element_type_(element_type) {}
 
   bool Match(const ::xla::Shape* shape, MatchOption option) const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_33(mht_33_v, 997, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (shape->element_type() != element_type_) {
       EXPLAIN << "Shape does not have element type "
               << PrimitiveType_Name(element_type_);
@@ -736,6 +1006,9 @@ class ShapePatternElementTypeImpl {
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_34(mht_34_v, 1009, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "with element type " << PrimitiveType_Name(element_type_);
   }
 
@@ -748,9 +1021,15 @@ class ShapePatternElementTypeImpl {
 class ShapePatternDimsImpl {
  public:
   explicit ShapePatternDimsImpl(absl::Span<const int64_t> dims)
-      : dims_(dims.begin(), dims.end()) {}
+      : dims_(dims.begin(), dims.end()) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_35(mht_35_v, 1025, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "ShapePatternDimsImpl");
+}
 
   bool Match(const ::xla::Shape* shape, MatchOption option) const {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_36(mht_36_v, 1030, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (shape->dimensions() != dims_) {
       EXPLAIN << "Shape does not have dimensions [" << absl::StrJoin(dims_, ",")
               << "]";
@@ -760,6 +1039,9 @@ class ShapePatternDimsImpl {
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_37(mht_37_v, 1042, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "with dimensions [" << absl::StrJoin(dims_, ",") << "]";
   }
 
@@ -773,6 +1055,9 @@ class ShapePatternIsScalarImpl {
   explicit constexpr ShapePatternIsScalarImpl() {}
 
   bool Match(const ::xla::Shape* shape, MatchOption option) const {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_38(mht_38_v, 1058, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (!ShapeUtil::IsScalar(*shape)) {
       EXPLAIN << "Shape is not a scalar";
       return false;
@@ -781,6 +1066,9 @@ class ShapePatternIsScalarImpl {
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_39(mht_39_v, 1069, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "that represents a scalar";
   }
 };
@@ -791,6 +1079,9 @@ class ShapePatternIsArrayImpl {
   explicit constexpr ShapePatternIsArrayImpl() {}
 
   bool Match(const ::xla::Shape* shape, MatchOption option) const {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_40(mht_40_v, 1082, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (!shape->IsArray()) {
       EXPLAIN << "Shape is not an array";
       return false;
@@ -799,6 +1090,9 @@ class ShapePatternIsArrayImpl {
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_41(mht_41_v, 1093, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "that represents an array";
   }
 };
@@ -809,6 +1103,9 @@ class ShapePatternIsTupleImpl {
   explicit constexpr ShapePatternIsTupleImpl() {}
 
   bool Match(const ::xla::Shape* shape, MatchOption option) const {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_42(mht_42_v, 1106, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (!shape->IsTuple()) {
       EXPLAIN << "Shape is not a tuple";
       return false;
@@ -817,6 +1114,9 @@ class ShapePatternIsTupleImpl {
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_43(mht_43_v, 1117, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "that represents a tuple";
   }
 };
@@ -828,6 +1128,9 @@ class ShapePatternEffectiveScalarImpl {
   explicit constexpr ShapePatternEffectiveScalarImpl() {}
 
   bool Match(const ::xla::Shape* shape, MatchOption option) const {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_44(mht_44_v, 1131, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (!ShapeUtil::IsEffectiveScalar(*shape)) {
       EXPLAIN << "Shape is not an effective scalar";
       return false;
@@ -836,6 +1139,9 @@ class ShapePatternEffectiveScalarImpl {
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_45(mht_45_v, 1142, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "that is an effective scalar";
   }
 };
@@ -847,6 +1153,9 @@ class ShapePatternRankImpl {
   explicit constexpr ShapePatternRankImpl(int64_t rank) : rank_(rank) {}
 
   bool Match(const ::xla::Shape* shape, MatchOption option) const {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_46(mht_46_v, 1156, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (shape->rank() != rank_) {
       if (rank_ == 0) {
         EXPLAIN << "Shape is not a scalar";
@@ -859,6 +1168,9 @@ class ShapePatternRankImpl {
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_47(mht_47_v, 1171, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     if (rank_ == 0) {
       *os << "that is a scalar";
     } else {
@@ -880,11 +1192,17 @@ class ShapePatternLayoutImpl {
       : layout_(layout) {}
 
   bool Match(const ::xla::Shape* shape, MatchOption option) const {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_48(mht_48_v, 1195, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     return LayoutUtil::HasLayout(*shape) &&
            layout_.Match(&shape->layout(), option);
   }
 
   bool Match(::xla::Shape* shape, MatchOption option) const {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_49(mht_49_v, 1203, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (!LayoutUtil::HasLayout(*shape)) {
       EXPLAIN << "Shape does not have a layout";
       return false;
@@ -897,6 +1215,9 @@ class ShapePatternLayoutImpl {
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_50(mht_50_v, 1218, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "with";
     Indent(os, indent + kIndentInc);
     layout_.DescribeTo(os, indent + kIndentInc);
@@ -914,17 +1235,29 @@ class ShapePatternSubshapeImpl {
   explicit ShapePatternSubshapeImpl(
       ShapeIndexView index,
       const ShapePattern<SubshapeType, SubshapeImpl>& subshape)
-      : index_(index), subshape_(subshape) {}
+      : index_(index), subshape_(subshape) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_51(mht_51_v, 1239, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "ShapePatternSubshapeImpl");
+}
 
   bool Match(const ::xla::Shape* shape, MatchOption option) const {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_52(mht_52_v, 1244, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     return MatchImpl(shape, option);
   }
 
   bool Match(::xla::Shape* shape, MatchOption option) const {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_53(mht_53_v, 1251, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     return MatchImpl(shape, option);
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_54(mht_54_v, 1258, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "with subshape at index " << ShapeIndex(index_) << " which is";
     Indent(os, indent + kIndentInc);
     subshape_.DescribeTo(os, indent + kIndentInc);
@@ -932,14 +1265,23 @@ class ShapePatternSubshapeImpl {
 
  private:
   ::xla::Shape* GetSubshape(::xla::Shape* shape) const {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_55(mht_55_v, 1268, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "GetSubshape");
+
     return ShapeUtil::GetMutableSubshape(shape, index_);
   }
   const ::xla::Shape* GetSubshape(const ::xla::Shape* shape) const {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_56(mht_56_v, 1274, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "GetSubshape");
+
     return &ShapeUtil::GetSubshape(*shape, index_);
   }
 
   template <typename ShapeType>
   bool MatchImpl(ShapeType* shape, MatchOption option) const {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_57(mht_57_v, 1282, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "MatchImpl");
+
     if (!ShapeUtil::IndexIsValid(*shape, index_)) {
       EXPLAIN << "No subshape at " << ShapeIndex(index_);
       return false;
@@ -961,6 +1303,9 @@ class ShapePattern {
  private:
   template <typename NewImpl>
   auto AppendImpl(NewImpl new_impl) const {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_58(mht_58_v, 1306, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "AppendImpl");
+
     auto new_all_of = AllOf<::xla::Shape>(impl_, std::move(new_impl));
     return ShapePattern<ShapeType, decltype(new_all_of)>(std::move(new_all_of),
                                                          matched_shape_);
@@ -972,6 +1317,9 @@ class ShapePattern {
 
   // Returns true and captures the shape iff it matches the pattern.
   bool Match(const ::xla::Shape* shape, MatchOption option) const {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_59(mht_59_v, 1320, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (impl_.Match(shape, option)) {
       if (option.capture && matched_shape_) {
         *matched_shape_ = shape;
@@ -988,6 +1336,9 @@ class ShapePattern {
 
   // Returns true and captures the shape iff it matches the pattern.
   bool Match(::xla::Shape* shape, MatchOption option) const {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_60(mht_60_v, 1339, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (impl_.Match(shape, option)) {
       if (option.capture && matched_shape_) {
         *matched_shape_ = shape;
@@ -1001,6 +1352,9 @@ class ShapePattern {
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_61(mht_61_v, 1355, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     return impl_.DescribeTo(os, indent);
   }
 
@@ -1124,16 +1478,25 @@ namespace detail {
 
 // Overloads to get a const or non-const operand out of an instruction.
 inline HloInstruction* HloOperand(HloInstruction* instr, int64_t idx) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_62(mht_62_v, 1481, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "HloOperand");
+
   return instr->mutable_operand(idx);
 }
 inline const HloInstruction* HloOperand(const HloInstruction* instr,
                                         int64_t idx) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_63(mht_63_v, 1488, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "HloOperand");
+
   return instr->operand(idx);
 }
 
 // Pretty-printer for HloInstruction.  Sort of like ToShortString, but with
 // fewer %s and more shapes.
 inline std::string InstToString(const HloInstruction* inst) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_64(mht_64_v, 1497, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "InstToString");
+
   return inst->ToString(
       HloPrintOptions().set_print_metadata(false).set_print_percent(false));
 }
@@ -1146,6 +1509,9 @@ class HloInstructionPattern;
 class HloInstructionPatternBaseImpl {
  public:
   bool Match(const ::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_65(mht_65_v, 1512, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (inst == nullptr) {
       EXPLAIN << "HloInstruction* is null";
       return false;
@@ -1154,6 +1520,9 @@ class HloInstructionPatternBaseImpl {
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_66(mht_66_v, 1523, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "an HloInstruction";
   }
 
@@ -1165,9 +1534,16 @@ class HloInstructionPatternBaseImpl {
 class HloInstructionPatternNameImpl {
  public:
   explicit HloInstructionPatternNameImpl(absl::string_view name)
-      : name_(name) {}
+      : name_(name) {
+   std::vector<std::string> mht_67_v;
+   mht_67_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_67(mht_67_v, 1539, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "HloInstructionPatternNameImpl");
+}
 
   bool Match(const ::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_68(mht_68_v, 1544, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (inst->name() != name_) {
       EXPLAIN << "HloInstruction not named \"" << name_ << "\"";
       return false;
@@ -1176,6 +1552,9 @@ class HloInstructionPatternNameImpl {
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_69(mht_69_v, 1555, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "named \"" << name_ << "\"";
   }
 
@@ -1187,9 +1566,15 @@ class HloInstructionPatternNameImpl {
 // equals a particular pointer.
 class HloInstructionIsImpl {
  public:
-  explicit HloInstructionIsImpl(const HloInstruction* inst) : inst_(inst) {}
+  explicit HloInstructionIsImpl(const HloInstruction* inst) : inst_(inst) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_70(mht_70_v, 1570, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "HloInstructionIsImpl");
+}
 
   bool Match(const ::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_71(mht_71_v, 1575, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (inst != inst_) {
       EXPLAIN << "HloInstruction " << std::hex << std::nouppercase
               << std::showbase << reinterpret_cast<uint64_t>(inst) << " is not "
@@ -1201,6 +1586,9 @@ class HloInstructionIsImpl {
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_72(mht_72_v, 1589, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "which is " << std::hex << std::nouppercase << std::showbase
         << reinterpret_cast<uint64_t>(inst_) << " (" << InstToString(inst_)
         << ")";
@@ -1219,6 +1607,9 @@ class HloInstructionPatternOpcodeImpl {
       : opcode_(opcode), invert_(invert) {}
 
   bool Match(const ::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_73(mht_73_v, 1610, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (invert_ && inst->opcode() == opcode_) {
       EXPLAIN << "HloInstruction has opcode " << HloOpcodeString(opcode_)
               << ", expected anything else";
@@ -1233,6 +1624,9 @@ class HloInstructionPatternOpcodeImpl {
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_74(mht_74_v, 1627, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     if (!invert_) {
       *os << "with opcode " << HloOpcodeString(opcode_);
     } else {
@@ -1252,9 +1646,15 @@ class HloInstructionCustomCallTargetImpl {
   explicit HloInstructionCustomCallTargetImpl(
       absl::Span<const absl::string_view> custom_call_targets)
       : custom_call_targets_(custom_call_targets.begin(),
-                             custom_call_targets.end()) {}
+                             custom_call_targets.end()) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_75(mht_75_v, 1650, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "HloInstructionCustomCallTargetImpl");
+}
 
   bool Match(const ::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_76(mht_76_v, 1655, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (inst->opcode() != HloOpcode::kCustomCall ||
         !absl::c_linear_search(custom_call_targets_,
                                inst->custom_call_target())) {
@@ -1271,6 +1671,9 @@ class HloInstructionCustomCallTargetImpl {
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_77(mht_77_v, 1674, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     if (custom_call_targets_.size() == 1) {
       *os << "custom call with target '" << custom_call_targets_.front() << "'";
     } else {
@@ -1291,6 +1694,9 @@ class HloInstructionPatternNumOperandsImpl {
       : num_operands_(num_operands) {}
 
   bool Match(const ::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_78(mht_78_v, 1697, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (inst->operand_count() != num_operands_) {
       EXPLAIN << "HloInstruction doesn't have " << num_operands_ << " operands";
       return false;
@@ -1299,6 +1705,9 @@ class HloInstructionPatternNumOperandsImpl {
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_79(mht_79_v, 1708, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "with " << num_operands_ << " operand"
         << (num_operands_ != 1 ? "s" : "");
   }
@@ -1317,6 +1726,9 @@ class HloInstructionPatternShapeImpl {
       : shape_(shape) {}
 
   bool Match(const ::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_80(mht_80_v, 1729, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (!shape_.Match(&inst->shape(), option)) {
       EXPLAIN << "\nin output shape";
       return false;
@@ -1325,6 +1737,9 @@ class HloInstructionPatternShapeImpl {
   }
 
   bool Match(::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_81(mht_81_v, 1740, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (!shape_.Match(inst->mutable_shape(), option)) {
       EXPLAIN << "\nin output shape";
       return false;
@@ -1333,6 +1748,9 @@ class HloInstructionPatternShapeImpl {
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_82(mht_82_v, 1751, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "outputting";
     Indent(os, indent + kIndentInc);
     shape_.DescribeTo(os, indent + kIndentInc);
@@ -1353,14 +1771,23 @@ class HloInstructionPatternOperandImpl {
       : operand_index_(operand_index), operand_(operand) {}
 
   bool Match(const ::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_83(mht_83_v, 1774, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     return MatchImpl(inst, option);
   }
 
   bool Match(::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_84(mht_84_v, 1781, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     return MatchImpl(inst, option);
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_85(mht_85_v, 1788, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "with operand " << operand_index_ << " which is:";
     Indent(os, indent + kIndentInc);
     operand_.DescribeTo(os, indent + kIndentInc);
@@ -1369,6 +1796,9 @@ class HloInstructionPatternOperandImpl {
  private:
   template <typename HloInstructionType>
   bool MatchImpl(HloInstructionType* inst, MatchOption option) const {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_86(mht_86_v, 1799, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "MatchImpl");
+
     if (operand_index_ >= inst->operand_count()) {
       EXPLAIN << "desired operand index " << operand_index_
               << " is out of bounds";
@@ -1396,14 +1826,23 @@ class HloInstructionPatternOperandIfPresentImpl {
       : operand_index_(operand_index), operand_(operand) {}
 
   bool Match(const ::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_87(mht_87_v, 1829, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     return MatchImpl(inst, option);
   }
 
   bool Match(::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_88(mht_88_v, 1836, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     return MatchImpl(inst, option);
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_89(mht_89_v, 1843, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "either with fewer than " << operand_index_ + 1 << " operand"
         << (operand_index_ + 1 != 1 ? "s" : "") << ", or with an operand "
         << operand_index_ << " which is:";
@@ -1414,6 +1853,9 @@ class HloInstructionPatternOperandIfPresentImpl {
  private:
   template <typename HloInstructionType>
   bool MatchImpl(HloInstructionType* inst, MatchOption option) const {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_90(mht_90_v, 1856, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "MatchImpl");
+
     if (operand_index_ >= inst->operand_count()) {
       return true;
     }
@@ -1439,14 +1881,23 @@ class HloInstructionPatternBinaryOperandsAnyOrderImpl {
       : op1_(op1), op2_(op2) {}
 
   bool Match(::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_91(mht_91_v, 1884, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     return MatchImpl(inst, option);
   }
 
   bool Match(const ::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_92(mht_92_v, 1891, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     return MatchImpl(inst, option);
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_93(mht_93_v, 1898, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "with two operands in either order:";
     Indent(os, indent);
     *os << " - ";
@@ -1458,14 +1909,23 @@ class HloInstructionPatternBinaryOperandsAnyOrderImpl {
 
  private:
   HloInstruction* operand(HloInstruction* inst, int64_t idx) const {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_94(mht_94_v, 1912, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "operand");
+
     return inst->mutable_operand(idx);
   }
   const HloInstruction* operand(const HloInstruction* inst, int64_t idx) const {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_95(mht_95_v, 1918, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "operand");
+
     return inst->operand(idx);
   }
 
   template <typename HloInstructionType>
   bool MatchImpl(HloInstructionType* inst, MatchOption option) const {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_96(mht_96_v, 1926, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "MatchImpl");
+
     // We could implement this using AnyOf and AllOf matchers, but the templates
     // get pretty difficult to debug, since any compile error herein becomes
     // not-an-error via SFINAE.  Also this way lets us give better messages on
@@ -1478,6 +1938,9 @@ class HloInstructionPatternBinaryOperandsAnyOrderImpl {
     // If we're not generating explanations, this is pretty simple.
     if (!option.explain_os) {
       auto try_match = [&](int64_t idx1, int64_t idx2) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_97(mht_97_v, 1941, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "lambda");
+
         MatchOption new_option = option;
         new_option.capture = false;
         if (op1_.Match(operand(inst, idx1), new_option) &&
@@ -1528,6 +1991,9 @@ class HloInstructionPatternBinaryOperandsAnyOrderImpl {
     }
 
     auto describe_matcher = [&](int matcher_idx) {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_98(mht_98_v, 1994, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "lambda");
+
       EXPLAIN << "\n - ";
       if (matcher_idx == 0) {
         op1_.DescribeTo(option.explain_os, /*indent=*/3);
@@ -1596,20 +2062,32 @@ class HloInstructionPatternFusionKindImpl {
       : kind_(kind) {}
 
   bool Match(const ::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_99(mht_99_v, 2065, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     return MatchImpl(inst, option);
   }
 
   bool Match(::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_100(mht_100_v, 2072, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     return MatchImpl(inst, option);
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_101(mht_101_v, 2079, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "with fusion kind " << ToString(kind_);
   }
 
  private:
   template <typename HloInstructionType>
   bool MatchImpl(HloInstructionType* inst, MatchOption option) const {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_102(mht_102_v, 2088, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "MatchImpl");
+
     if (inst->opcode() != HloOpcode::kFusion) {
       EXPLAIN << "HloInstruction does not have fusion kind " << ToString(kind_)
               << "; it's not a fusion";
@@ -1633,20 +2111,32 @@ class HloInstructionPatternTupleIndexImpl {
       : tuple_index_(tuple_index) {}
 
   bool Match(const ::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_103(mht_103_v, 2114, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     return MatchImpl(inst, option);
   }
 
   bool Match(::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_104(mht_104_v, 2121, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     return MatchImpl(inst, option);
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_105(mht_105_v, 2128, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "which is a GTE with index " << tuple_index_;
   }
 
  private:
   template <typename HloInstructionType>
   bool MatchImpl(HloInstructionType* inst, MatchOption option) const {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_106(mht_106_v, 2137, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "MatchImpl");
+
     if (inst->opcode() != HloOpcode::kGetTupleElement) {
       EXPLAIN << "HloInstruction is not a GTE with index " << tuple_index_
               << "; it's not a GTE at all";
@@ -1669,20 +2159,32 @@ class HloInstructionPatternParameterNumImpl {
       : parameter_num_(parameter_num) {}
 
   bool Match(const ::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_107(mht_107_v, 2162, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     return MatchImpl(inst, option);
   }
 
   bool Match(::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_108(mht_108_v, 2169, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     return MatchImpl(inst, option);
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_109(mht_109_v, 2176, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "which is parameter " << parameter_num_;
   }
 
  private:
   template <typename HloInstructionType>
   bool MatchImpl(HloInstructionType* inst, MatchOption option) const {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_110(mht_110_v, 2185, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "MatchImpl");
+
     if (inst->opcode() != HloOpcode::kParameter ||
         inst->parameter_number() != parameter_num_) {
       EXPLAIN << "HloInstruction is not parameter " << parameter_num_;
@@ -1699,6 +2201,9 @@ class HloInstructionPatternParameterNumImpl {
 class HloInstructionPatternOneUseOrUserImpl {
  protected:
   bool MatchOneUser(const HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_111(mht_111_v, 2204, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "MatchOneUser");
+
     if (inst->user_count() != 1) {
       EXPLAIN << "HloInstruction has " << inst->user_count()
               << " users, but expected exactly one.";
@@ -1718,6 +2223,9 @@ class HloInstructionPatternOneUseImpl
     : public HloInstructionPatternOneUseOrUserImpl {
  public:
   bool Match(const ::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_112(mht_112_v, 2226, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (!MatchOneUser(inst, option)) {
       return false;
     }
@@ -1735,6 +2243,9 @@ class HloInstructionPatternOneUseImpl
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_113_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_113(mht_113_v, 2246, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "which has exactly one use";
   }
 };
@@ -1743,10 +2254,16 @@ class HloInstructionPatternOneUserImpl
     : public HloInstructionPatternOneUseOrUserImpl {
  public:
   bool Match(const ::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_114_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_114(mht_114_v, 2257, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     return MatchOneUser(inst, option);
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_115(mht_115_v, 2264, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "which has exactly one user (but possibly is used multiple times by "
            "that instruction)";
   }
@@ -1759,14 +2276,23 @@ class HloInstructionPatternComparisonDirectionImpl {
       : direction_(direction) {}
 
   bool Match(const ::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_116_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_116(mht_116_v, 2279, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     return MatchImpl(inst, option);
   }
 
   bool Match(::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_117(mht_117_v, 2286, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     return MatchImpl(inst, option);
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_118_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_118(mht_118_v, 2293, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "which has comparison direction "
         << ComparisonDirectionToString(direction_);
   }
@@ -1774,6 +2300,9 @@ class HloInstructionPatternComparisonDirectionImpl {
  private:
   template <typename HloInstructionType>
   bool MatchImpl(HloInstructionType* inst, MatchOption option) const {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_119(mht_119_v, 2303, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "MatchImpl");
+
     if (inst->opcode() != HloOpcode::kCompare ||
         inst->comparison_direction() != direction_) {
       EXPLAIN << "HloInstruction is not comparison "
@@ -1790,9 +2319,15 @@ class HloInstructionPredicateImpl {
  public:
   explicit HloInstructionPredicateImpl(
       std::function<bool(const HloInstruction*)> fn)
-      : fn_(std::move(fn)) {}
+      : fn_(std::move(fn)) {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_120(mht_120_v, 2323, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "HloInstructionPredicateImpl");
+}
 
   bool Match(const HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_121(mht_121_v, 2328, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     bool match = fn_(inst);
     if (!match) {
       EXPLAIN << "HloInstruction does not match user-specified predicate";
@@ -1801,6 +2336,9 @@ class HloInstructionPredicateImpl {
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_122_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_122(mht_122_v, 2339, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "which matches a user-specified predicate";
   }
 
@@ -1819,14 +2357,23 @@ class HloConstantScalarImpl {
       : val_(val), match_effective_scalar_(match_effective_scalar) {}
 
   bool Match(const ::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_123_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_123(mht_123_v, 2360, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     return MatchImpl(inst, option);
   }
 
   bool Match(::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_124_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_124(mht_124_v, 2367, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     return MatchImpl(inst, option);
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_125_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_125(mht_125_v, 2374, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     *os << "which is a constant "
         << (match_effective_scalar_ ? "effective " : "") << "scalar";
     if (val_.has_value()) {
@@ -1837,6 +2384,9 @@ class HloConstantScalarImpl {
  private:
   template <typename InstTy>
   bool MatchImpl(InstTy* inst, MatchOption option) const {
+   std::vector<std::string> mht_126_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_126(mht_126_v, 2387, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "MatchImpl");
+
     const auto* const_inst = DynCast<HloConstantInstruction>(inst);
     if (!const_inst) {
       EXPLAIN << "HloInstruction is not a constant";
@@ -1880,6 +2430,9 @@ class HloInstructionPattern {
  private:
   template <typename NewImpl>
   auto AppendImpl(NewImpl new_impl) const {
+   std::vector<std::string> mht_127_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_127(mht_127_v, 2433, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "AppendImpl");
+
     auto new_allof = AllOf<::xla::HloInstruction>(impl_, std::move(new_impl));
     return HloInstructionPattern<HloInstructionType, decltype(new_allof)>(
         std::move(new_allof), matched_inst_);
@@ -1892,6 +2445,9 @@ class HloInstructionPattern {
 
   // Returns true and captures the instruction iff it matches the pattern.
   bool Match(const ::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_128_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_128(mht_128_v, 2448, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (impl_.Match(inst, option)) {
       if (option.capture && matched_inst_) {
         *matched_inst_ = inst;
@@ -1906,6 +2462,9 @@ class HloInstructionPattern {
 
   // Returns true and captures the instruction iff it matches the pattern.
   bool Match(::xla::HloInstruction* inst, MatchOption option) const {
+   std::vector<std::string> mht_129_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_129(mht_129_v, 2465, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Match");
+
     if (impl_.Match(inst, option)) {
       if (option.capture && matched_inst_) {
         *matched_inst_ = inst;
@@ -1918,32 +2477,52 @@ class HloInstructionPattern {
 
   // Modifies the pattern to match only if the instruction has the given name.
   auto WithName(absl::string_view name) const {
+   std::vector<std::string> mht_130_v;
+   mht_130_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_130(mht_130_v, 2481, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "WithName");
+
     return AppendImpl(HloInstructionPatternNameImpl(name));
   }
 
   // Modifies the pattern to match only if the instruction has the given opcode.
   auto WithOpcode(HloOpcode opcode) const {
+   std::vector<std::string> mht_131_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_131(mht_131_v, 2489, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "WithOpcode");
+
     return AppendImpl(HloInstructionPatternOpcodeImpl(opcode, false));
   }
 
   // Modifies the pattern to match only the custom call with a given target.
   auto WithCustomCallTarget(absl::string_view custom_call_target) const {
+   std::vector<std::string> mht_132_v;
+   mht_132_v.push_back("custom_call_target: \"" + std::string(custom_call_target.data(), custom_call_target.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_132(mht_132_v, 2498, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "WithCustomCallTarget");
+
     return AppendImpl(HloInstructionCustomCallTargetImpl({custom_call_target}));
   }
 
   // Modifies the pattern to match a custom call with one of the given targets.
   auto WithCustomCallTarget(
       absl::Span<const absl::string_view> custom_call_targets) const {
+   std::vector<std::string> mht_133_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_133(mht_133_v, 2507, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "WithCustomCallTarget");
+
     return AppendImpl(HloInstructionCustomCallTargetImpl(custom_call_targets));
   }
 
   auto WithNumOperands(int64_t num_operands) const {
+   std::vector<std::string> mht_134_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_134(mht_134_v, 2514, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "WithNumOperands");
+
     return AppendImpl(HloInstructionPatternNumOperandsImpl(num_operands));
   }
 
   // Modifies the pattern to match only if the instruction does not have the
   // given opcode.
   auto WithoutOpcode(HloOpcode opcode) const {
+   std::vector<std::string> mht_135_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_135(mht_135_v, 2523, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "WithoutOpcode");
+
     return AppendImpl(HloInstructionPatternOpcodeImpl(opcode, true));
   }
 
@@ -2088,14 +2667,23 @@ class HloInstructionPattern {
   // Modifies the pattern to match only if the instruction has the given
   // comparison direction.
   auto WithComparisonDirection(ComparisonDirection direction) const {
+   std::vector<std::string> mht_136_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_136(mht_136_v, 2670, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "WithComparisonDirection");
+
     return AppendImpl(HloInstructionPatternComparisonDirectionImpl(direction));
   }
 
   auto WithPredicate(std::function<bool(const HloInstruction*)> fn) const {
+   std::vector<std::string> mht_137_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_137(mht_137_v, 2677, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "WithPredicate");
+
     return AppendImpl(HloInstructionPredicateImpl(std::move(fn)));
   }
 
   void DescribeTo(std::ostream* os, int64_t indent = 0) const {
+   std::vector<std::string> mht_138_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_138(mht_138_v, 2684, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "DescribeTo");
+
     impl_.DescribeTo(os, indent);
   }
 
@@ -2334,10 +2922,16 @@ XLA_VARIADIC_OP_PATTERN(Call);
 // CustomCall doesn't use the XLA_VARIADIC_OP_PATTERN macro so that you can
 // optionally pass a string_view for the custom_call_target before the other
 // operands.
-inline auto CustomCall() { return Op().WithOpcode(HloOpcode::kCustomCall); }
+inline auto CustomCall() {
+   std::vector<std::string> mht_139_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_139(mht_139_v, 2926, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "CustomCall");
+ return Op().WithOpcode(HloOpcode::kCustomCall); }
 
 template <typename HloInstructionType>
 auto CustomCall(HloInstructionType** matched_inst) {
+   std::vector<std::string> mht_140_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_140(mht_140_v, 2932, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "CustomCall");
+
   return Op(matched_inst).WithOpcode(HloOpcode::kCustomCall);
 }
 
@@ -2426,10 +3020,16 @@ XLA_COMPARE_PATTERN(Le);
 XLA_COMPARE_PATTERN(Lt);
 
 // Helpers for matching non-constant instructions.
-inline auto NonConstant() { return Op().IsNonConstant(); }
+inline auto NonConstant() {
+   std::vector<std::string> mht_141_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_141(mht_141_v, 3024, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "NonConstant");
+ return Op().IsNonConstant(); }
 
 template <typename HloInstructionType>
 inline auto NonConstant(HloInstructionType** matched_inst) {
+   std::vector<std::string> mht_142_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_142(mht_142_v, 3030, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "NonConstant");
+
   return Op(matched_inst).IsNonConstant();
 }
 
@@ -2437,6 +3037,9 @@ inline auto NonConstant(HloInstructionType** matched_inst) {
 // element is selected.
 template <typename Arg>
 inline auto GetTupleElement(Arg&& arg, int64_t tuple_index) {
+   std::vector<std::string> mht_143_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_143(mht_143_v, 3040, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "GetTupleElement");
+
   return Op()
       .WithOpcode(HloOpcode::kGetTupleElement)
       .WithOperand(0, std::forward<Arg>(arg))
@@ -2455,25 +3058,40 @@ inline auto GetTupleElement(HloInstructionType** matched_inst, Arg&& arg,
 // Add overloads for Parameter which take an int64_t specifying the parameter
 // number.
 inline auto Parameter(int64_t parameter_num) {
+   std::vector<std::string> mht_144_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_144(mht_144_v, 3061, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Parameter");
+
   return Op().WithOpcode(HloOpcode::kParameter).WithParameterNum(parameter_num);
 }
 template <typename HloInstructionType>
 inline auto Parameter(HloInstructionType** matched_inst,
                       int64_t parameter_num) {
+   std::vector<std::string> mht_145_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_145(mht_145_v, 3069, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "Parameter");
+
   return Op(matched_inst)
       .WithOpcode(HloOpcode::kParameter)
       .WithParameterNum(parameter_num);
 }
 
-inline auto ConstantScalar() { return Op().IsConstantScalar(); }
+inline auto ConstantScalar() {
+   std::vector<std::string> mht_146_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_146(mht_146_v, 3078, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "ConstantScalar");
+ return Op().IsConstantScalar(); }
 
 template <typename HloInstructionType>
 inline auto ConstantScalar(HloInstructionType** matched_inst) {
+   std::vector<std::string> mht_147_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_147(mht_147_v, 3084, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "ConstantScalar");
+
   return Op(matched_inst).IsConstantScalar();
 }
 
 template <typename ScalarTy>
 inline auto ConstantScalar(ScalarTy val) {
+   std::vector<std::string> mht_148_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_148(mht_148_v, 3092, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "ConstantScalar");
+
   return Op().IsConstantScalar(val);
 }
 
@@ -2483,16 +3101,25 @@ inline auto ConstantScalar(HloInstructionType** matched_inst, ScalarTy val) {
 }
 
 inline auto ConstantEffectiveScalar() {
+   std::vector<std::string> mht_149_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_149(mht_149_v, 3104, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "ConstantEffectiveScalar");
+
   return Op().IsConstantEffectiveScalar();
 }
 
 template <typename HloInstructionType>
 inline auto ConstantEffectiveScalar(HloInstructionType** matched_inst) {
+   std::vector<std::string> mht_150_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_150(mht_150_v, 3112, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "ConstantEffectiveScalar");
+
   return Op(matched_inst).IsConstantEffectiveScalar();
 }
 
 template <typename ScalarTy>
 inline auto ConstantEffectiveScalar(ScalarTy val) {
+   std::vector<std::string> mht_151_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSpattern_matcherDTh mht_151(mht_151_v, 3120, "", "./tensorflow/compiler/xla/service/pattern_matcher.h", "ConstantEffectiveScalar");
+
   return Op().IsConstantEffectiveScalar(val);
 }
 

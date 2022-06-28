@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_compilation_cacheDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_compilation_cacheDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_compilation_cacheDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,11 +197,17 @@ namespace tensorflow {
 namespace {
 
 int64_t get_uid() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_compilation_cacheDTcc mht_0(mht_0_v, 200, "", "./tensorflow/compiler/xrt/xrt_compilation_cache.cc", "get_uid");
+
   uint64 unsigned_rand = random::New64() & INT64_MAX;
   return static_cast<int64_t>(unsigned_rand);
 }
 
 int64_t GetCompilationCacheSizeFromEnv() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_compilation_cacheDTcc mht_1(mht_1_v, 208, "", "./tensorflow/compiler/xrt/xrt_compilation_cache.cc", "GetCompilationCacheSizeFromEnv");
+
   const char* env = getenv("TF_XRT_COMPILATION_CACHE_SIZE");
   return env == nullptr ? 1024 : std::stol(env);
 }
@@ -45,25 +219,40 @@ const char* kXRTCompilationCacheResourceName = "xrt_compilation_cache";
 XRTCompilationCache::EntryRefImpl::EntryRefImpl(XRTCompilationCache* parent,
                                                 CompiledSubgraph* entry)
     : parent_(parent), entry_(entry) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_compilation_cacheDTcc mht_2(mht_2_v, 222, "", "./tensorflow/compiler/xrt/xrt_compilation_cache.cc", "XRTCompilationCache::EntryRefImpl::EntryRefImpl");
+
   entry_->Ref();
 }
 
 XRTCompilationCache::EntryRefImpl::~EntryRefImpl() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_compilation_cacheDTcc mht_3(mht_3_v, 229, "", "./tensorflow/compiler/xrt/xrt_compilation_cache.cc", "XRTCompilationCache::EntryRefImpl::~EntryRefImpl");
+
   parent_->DiscardEntryRef(entry_);
 }
 
 XRTCompilationCacheEntry XRTCompilationCache::EntryRefImpl::get() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_compilation_cacheDTcc mht_4(mht_4_v, 236, "", "./tensorflow/compiler/xrt/xrt_compilation_cache.cc", "XRTCompilationCache::EntryRefImpl::get");
+
   return XRTCompilationCacheEntry(entry_->program.get());
 }
 
 XRTCompilationCache::XRTCompilationCache(int max_number_of_entries)
     : max_cache_entries_(max_number_of_entries) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_compilation_cacheDTcc mht_5(mht_5_v, 244, "", "./tensorflow/compiler/xrt/xrt_compilation_cache.cc", "XRTCompilationCache::XRTCompilationCache");
+
   CHECK_GE(max_cache_entries_, 0);
   VLOG(1) << "Created compilation cache max " << max_cache_entries_
           << " entries.";
 }
 
 XRTCompilationCache::~XRTCompilationCache() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_compilation_cacheDTcc mht_6(mht_6_v, 253, "", "./tensorflow/compiler/xrt/xrt_compilation_cache.cc", "XRTCompilationCache::~XRTCompilationCache");
+
   VLOG(1) << "XRTCompilationCache::~XRTCompilationCache()";
   // A buggy client may be holding onto a reference, or a client might have
   // crashed while holding onto a reference. In either case, discard all
@@ -83,6 +272,9 @@ XRTCompilationCache::~XRTCompilationCache() {
 }
 
 Status XRTCompilationCache::Release(int64_t uid) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_compilation_cacheDTcc mht_7(mht_7_v, 275, "", "./tensorflow/compiler/xrt/xrt_compilation_cache.cc", "XRTCompilationCache::Release");
+
   absl::MutexLock lock(&mu_);
   auto iter = entries_by_uid_.find(uid);
 
@@ -103,11 +295,17 @@ Status XRTCompilationCache::Release(int64_t uid) {
 }
 
 void XRTCompilationCache::DiscardEntryRef(CompiledSubgraph* entry) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_compilation_cacheDTcc mht_8(mht_8_v, 298, "", "./tensorflow/compiler/xrt/xrt_compilation_cache.cc", "XRTCompilationCache::DiscardEntryRef");
+
   absl::MutexLock lock(&mu_);
   DiscardEntryRefLocked(entry);
 }
 
 void XRTCompilationCache::DiscardEntryRefLocked(CompiledSubgraph* entry) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_compilation_cacheDTcc mht_9(mht_9_v, 306, "", "./tensorflow/compiler/xrt/xrt_compilation_cache.cc", "XRTCompilationCache::DiscardEntryRefLocked");
+
   if (entry->RefCountIsOne()) {
     // The last reference to this entry is going away, so really delete it from
     // the cache in such a way that it can't be restored by being looked up
@@ -132,6 +330,9 @@ void XRTCompilationCache::DiscardEntryRefLocked(CompiledSubgraph* entry) {
 }
 
 void XRTCompilationCache::MarkOldestEntryForEviction() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_compilation_cacheDTcc mht_10(mht_10_v, 333, "", "./tensorflow/compiler/xrt/xrt_compilation_cache.cc", "XRTCompilationCache::MarkOldestEntryForEviction");
+
   CompiledSubgraph* entry_to_mark = entries_by_last_use_.begin()->second;
   VLOG(1) << "Marking " << entry_to_mark->key << " for eviction";
   entries_by_last_use_.erase(entry_to_mark->last_use);
@@ -147,6 +348,9 @@ void XRTCompilationCache::MarkOldestEntryForEviction() {
 
 void XRTCompilationCache::LookupEntryMarkedForEviction(
     CompiledSubgraph* entry) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_compilation_cacheDTcc mht_11(mht_11_v, 351, "", "./tensorflow/compiler/xrt/xrt_compilation_cache.cc", "XRTCompilationCache::LookupEntryMarkedForEviction");
+
   // The entry was previously marked for eviction (or is newly created) so
   // unmark it. Add a reference (owned by the cache), update the cache size, and
   // mark something old for eviction if necessary.
@@ -169,6 +373,10 @@ XRTCompilationCache::CompiledSubgraph* XRTCompilationCache::InitializeEntry(
     const string& key,
     const std::function<Status(std::unique_ptr<xla::LocalExecutable>*)>&
         initialize_program) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_compilation_cacheDTcc mht_12(mht_12_v, 377, "", "./tensorflow/compiler/xrt/xrt_compilation_cache.cc", "XRTCompilationCache::InitializeEntry");
+
   CompiledSubgraph* entry = new CompiledSubgraph();
   entry->parent = this;
   entry->key = key;
@@ -215,6 +423,10 @@ Status XRTCompilationCache::CompileIfKeyAbsent(
     const string& key, int64_t* uid,
     const std::function<Status(std::unique_ptr<xla::LocalExecutable>*)>&
         compile_function) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_compilation_cacheDTcc mht_13(mht_13_v, 427, "", "./tensorflow/compiler/xrt/xrt_compilation_cache.cc", "XRTCompilationCache::CompileIfKeyAbsent");
+
   CompiledSubgraph* entry = nullptr;
 
   absl::MutexLock lock(&mu_);
@@ -269,6 +481,9 @@ Status XRTCompilationCache::CompileIfKeyAbsent(
 
 Status XRTCompilationCache::Lookup(
     int64_t uid, std::unique_ptr<XRTCompilationCacheEntryRef>* entry) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_compilation_cacheDTcc mht_14(mht_14_v, 484, "", "./tensorflow/compiler/xrt/xrt_compilation_cache.cc", "XRTCompilationCache::Lookup");
+
   entry->reset();
 
   absl::MutexLock lock(&mu_);
@@ -283,6 +498,9 @@ Status XRTCompilationCache::Lookup(
 }
 
 string XRTCompilationCache::DebugString() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_compilation_cacheDTcc mht_15(mht_15_v, 501, "", "./tensorflow/compiler/xrt/xrt_compilation_cache.cc", "XRTCompilationCache::DebugString");
+
   return "XRTCompilationCache";
 }
 

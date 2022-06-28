@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -43,18 +211,29 @@ namespace {
 
 // Prepend the current test case's working temporary directory to <prefix>
 string Prefix(const string& prefix) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("prefix: \"" + prefix + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc mht_0(mht_0_v, 215, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle_test.cc", "Prefix");
+
   return strings::StrCat(testing::TmpDir(), "/", prefix);
 }
 
 // Construct a data input directory by prepending the test data root
 // directory to <prefix>
 string TestdataPrefix(const string& prefix) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("prefix: \"" + prefix + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc mht_1(mht_1_v, 225, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle_test.cc", "TestdataPrefix");
+
   return strings::StrCat(testing::TensorFlowSrcRoot(),
                          "/core/util/tensor_bundle/testdata/", prefix);
 }
 
 template <typename T>
 Tensor Constant(T v, TensorShape shape) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc mht_2(mht_2_v, 234, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle_test.cc", "Constant");
+
   Tensor ret(DataTypeToEnum<T>::value, shape);
   ret.flat<T>().setConstant(v);
   return ret;
@@ -62,10 +241,16 @@ Tensor Constant(T v, TensorShape shape) {
 
 template <typename T>
 Tensor Constant_2x3(T v) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc mht_3(mht_3_v, 244, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle_test.cc", "Constant_2x3");
+
   return Constant(v, TensorShape({2, 3}));
 }
 
 Tensor ByteSwap(Tensor t) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc mht_4(mht_4_v, 251, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle_test.cc", "ByteSwap");
+
   Tensor ret = tensor::DeepCopy(t);
   TF_EXPECT_OK(ByteSwapTensor(&ret));
   return ret;
@@ -76,6 +261,10 @@ Tensor ByteSwap(Tensor t) {
 template <typename T>
 void Expect(BundleReader* reader, const string& key,
             const Tensor& expected_val) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc mht_5(mht_5_v, 265, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle_test.cc", "Expect");
+
   // Tests for Contains().
   EXPECT_TRUE(reader->Contains(key));
   // Tests for LookupDtypeAndShape().
@@ -93,6 +282,10 @@ void Expect(BundleReader* reader, const string& key,
 template <class T>
 void ExpectVariant(BundleReader* reader, const string& key,
                    const Tensor& expected_t) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc mht_6(mht_6_v, 286, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle_test.cc", "ExpectVariant");
+
   // Tests for Contains().
   EXPECT_TRUE(reader->Contains(key));
   // Tests for LookupDtypeAndShape().
@@ -116,6 +309,9 @@ void ExpectVariant(BundleReader* reader, const string& key,
 
 template <typename T>
 void ExpectNext(BundleReader* reader, const Tensor& expected_val) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc mht_7(mht_7_v, 312, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle_test.cc", "ExpectNext");
+
   EXPECT_TRUE(reader->Valid());
   reader->Next();
   TF_ASSERT_OK(reader->status());
@@ -137,6 +333,10 @@ std::vector<string> AllTensorKeys(BundleReader* reader) {
 // Writes out the metadata file of a bundle again, with the endianness marker
 // bit flipped.
 Status FlipEndiannessBit(const string& prefix) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("prefix: \"" + prefix + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc mht_8(mht_8_v, 337, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle_test.cc", "FlipEndiannessBit");
+
   Env* env = Env::Default();
   const string metadata_tmp_path = Prefix("some_tmp_path");
   std::unique_ptr<WritableFile> metadata_file;
@@ -187,6 +387,9 @@ Status FlipEndiannessBit(const string& prefix) {
 
 template <typename T>
 void TestBasic() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc mht_9(mht_9_v, 390, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle_test.cc", "TestBasic");
+
   {
     BundleWriter writer(Env::Default(), Prefix("foo"));
     TF_EXPECT_OK(writer.Add("foo_003", Constant_2x3(T(3))));
@@ -285,6 +488,9 @@ void TestBasic() {
 // Type-specific subroutine of SwapBytes test below
 template <typename T>
 void TestByteSwap(const T* forward, const T* swapped, int array_len) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc mht_10(mht_10_v, 491, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle_test.cc", "TestByteSwap");
+
   auto bytes_per_elem = sizeof(T);
 
   // Convert the entire array at once
@@ -385,6 +591,9 @@ TEST(TensorBundleTest, SwapBytes) {
 // in TestBasic.
 template <typename T>
 void TestEndianness() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc mht_11(mht_11_v, 594, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle_test.cc", "TestEndianness");
+
   {
     // Write out a TensorBundle in the opposite of this host's endianness.
     BundleWriter writer(Env::Default(), Prefix("foo"));
@@ -485,6 +694,9 @@ void TestEndianness() {
 
 template <typename T>
 void TestNonStandardShapes() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc mht_12(mht_12_v, 697, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle_test.cc", "TestNonStandardShapes");
+
   {
     BundleWriter writer(Env::Default(), Prefix("nonstandard"));
     TF_EXPECT_OK(writer.Add("scalar", Constant(T(0), TensorShape())));
@@ -506,6 +718,9 @@ void TestNonStandardShapes() {
 
 // Writes a bundle to disk with a bad "version"; checks for "expected_error".
 void VersionTest(const VersionDef& version, StringPiece expected_error) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc mht_13(mht_13_v, 721, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle_test.cc", "VersionTest");
+
   const string path = Prefix("version_test");
   {
     // Prepare an empty bundle with the given version information.
@@ -796,12 +1011,25 @@ TEST(TensorBundleTest, StringTensors) {
 
 class VariantObject {
  public:
-  VariantObject() {}
+  VariantObject() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc mht_14(mht_14_v, 1015, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle_test.cc", "VariantObject");
+}
   VariantObject(const string& metadata, int64_t value)
-      : metadata_(metadata), value_(value) {}
+      : metadata_(metadata), value_(value) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("metadata: \"" + metadata + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc mht_15(mht_15_v, 1021, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle_test.cc", "VariantObject");
+}
 
-  string TypeName() const { return "TEST VariantObject"; }
+  string TypeName() const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc mht_16(mht_16_v, 1026, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle_test.cc", "TypeName");
+ return "TEST VariantObject"; }
   void Encode(VariantTensorData* data) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc mht_17(mht_17_v, 1030, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle_test.cc", "Encode");
+
     data->set_type_name(TypeName());
     data->set_metadata(metadata_);
     Tensor val_t = Tensor(DT_INT64, TensorShape({}));
@@ -809,6 +1037,9 @@ class VariantObject {
     *(data->add_tensors()) = val_t;
   }
   bool Decode(const VariantTensorData& data) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc mht_18(mht_18_v, 1040, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle_test.cc", "Decode");
+
     EXPECT_EQ(data.type_name(), TypeName());
     data.get_metadata(&metadata_);
     EXPECT_EQ(data.tensors_size(), 1);
@@ -858,6 +1089,10 @@ TEST(TensorBundleTest, DirectoryStructure) {
   // Ensures we have the expected files.
   auto CheckDirFiles = [env](const string& bundle_prefix,
                              gtl::ArraySlice<string> expected_files) {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("bundle_prefix: \"" + bundle_prefix + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc mht_19(mht_19_v, 1093, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle_test.cc", "lambda");
+
     StringPiece dir = io::Dirname(bundle_prefix);
     for (const string& expected_file : expected_files) {
       TF_EXPECT_OK(env->FileExists(io::JoinPath(dir, expected_file)));
@@ -950,6 +1185,10 @@ TEST(TensorBundleTest, Checksum) {
   // pos_lhs if exact_pos == True.
   auto FlipByte = [](const string& prefix, int pos_lhs,
                      bool exact_pos = false) {
+   std::vector<std::string> mht_20_v;
+   mht_20_v.push_back("prefix: \"" + prefix + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc mht_20(mht_20_v, 1189, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle_test.cc", "lambda");
+
     DCHECK_GE(pos_lhs, 0);
     const string& datafile = DataFilename(Prefix(prefix), 0, 1);
     string data;
@@ -969,6 +1208,12 @@ TEST(TensorBundleTest, Checksum) {
   // The lookup should fail with a checksum-related message.
   auto ExpectLookupFails = [](const string& prefix, const string& key,
                               const string& expected_msg, Tensor& val) {
+   std::vector<std::string> mht_21_v;
+   mht_21_v.push_back("prefix: \"" + prefix + "\"");
+   mht_21_v.push_back("key: \"" + key + "\"");
+   mht_21_v.push_back("expected_msg: \"" + expected_msg + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc mht_21(mht_21_v, 1214, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle_test.cc", "lambda");
+
     BundleReader reader(Env::Default(), Prefix(prefix));
     Status status = reader.Lookup(key, &val);
     EXPECT_TRUE(errors::IsDataLoss(status));
@@ -989,6 +1234,9 @@ TEST(TensorBundleTest, Checksum) {
   // Corrupts a string tensor.
   {
     auto WriteStrings = []() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc mht_22(mht_22_v, 1237, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle_test.cc", "lambda");
+
       BundleWriter writer(Env::Default(), Prefix("strings"));
       TF_EXPECT_OK(
           writer.Add("foo", test::AsTensor<tstring>({"hello", "world"})));
@@ -1104,6 +1352,10 @@ class TensorBundleAlignmentTest : public ::testing::Test {
  protected:
   template <typename T>
   void ExpectAlignment(BundleReader* reader, const string& key, int alignment) {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc mht_23(mht_23_v, 1356, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle_test.cc", "ExpectAlignment");
+
     BundleEntryProto full_tensor_entry;
     TF_ASSERT_OK(reader->GetBundleEntryProto(key, &full_tensor_entry));
     EXPECT_EQ(0, full_tensor_entry.offset() % alignment);
@@ -1154,6 +1406,9 @@ TEST_F(TensorBundleAlignmentTest, AlignmentTest) {
 }
 
 static void BM_BundleAlignment(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc mht_24(mht_24_v, 1409, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle_test.cc", "BM_BundleAlignment");
+
   {
     const int alignment = state.range(0);
     const int tensor_size = state.range(1);
@@ -1180,6 +1435,9 @@ BENCHMARK(BM_BundleAlignment)->ArgPair(4096, 4096);
 BENCHMARK(BM_BundleAlignment)->ArgPair(4096, 1048576);
 
 static void BM_BundleWriterSmallTensor(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc mht_25(mht_25_v, 1438, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle_test.cc", "BM_BundleWriterSmallTensor");
+
   const int64_t bytes = state.range(0);
   Tensor t = Constant(static_cast<int8>('a'), TensorShape{bytes});
   BundleWriter writer(Env::Default(), Prefix("foo"));
@@ -1192,6 +1450,9 @@ static void BM_BundleWriterSmallTensor(::testing::benchmark::State& state) {
 BENCHMARK(BM_BundleWriterSmallTensor)->Range(1, 1 << 20);
 
 static void BM_BundleWriterLargeTensor(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundle_testDTcc mht_26(mht_26_v, 1453, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle_test.cc", "BM_BundleWriterLargeTensor");
+
   const int mb = state.range(0);
   const int64_t bytes = static_cast<int64_t>(mb) * (1 << 20);
   Tensor t = Constant(static_cast<int8>('a'), TensorShape{bytes});

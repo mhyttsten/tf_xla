@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSdirect_tpu_driverDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSdirect_tpu_driverDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSdirect_tpu_driverDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 // Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,6 +202,9 @@ namespace {
 #endif
 
 xla::Status CreateXlaStatus(::TpuStatus* status) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSdirect_tpu_driverDTcc mht_0(mht_0_v, 205, "", "./tensorflow/compiler/xla/python/tpu_driver/direct_tpu_driver.cc", "CreateXlaStatus");
+
   if (status->code == tensorflow::error::OK) {
     return xla::Status::OK();
   } else {
@@ -45,6 +216,9 @@ xla::Status CreateXlaStatus(::TpuStatus* status) {
 constexpr char kDirectProtocol[] = "direct://";
 
 ::TpuAllocationShape GetTpuAllocationShape(const xla::ShapeProto& shape) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSdirect_tpu_driverDTcc mht_1(mht_1_v, 219, "", "./tensorflow/compiler/xla/python/tpu_driver/direct_tpu_driver.cc", "GetTpuAllocationShape");
+
   ::TpuAllocationShape shape_;
   shape_.size = shape.ByteSizeLong();
   shape_.bytes = malloc(shape_.size);
@@ -62,11 +236,20 @@ class DirectTpuDriver;
 class DirectEvent : public Event {
  public:
   explicit DirectEvent(::TpuDriverFn* driver_fn, ::TpuEvent* event)
-      : driver_fn_(driver_fn), event_(event) {}
+      : driver_fn_(driver_fn), event_(event) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSdirect_tpu_driverDTcc mht_2(mht_2_v, 240, "", "./tensorflow/compiler/xla/python/tpu_driver/direct_tpu_driver.cc", "DirectEvent");
+}
 
-  ~DirectEvent() override { driver_fn_->TpuDriver_FreeEvent(event_); }
+  ~DirectEvent() override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSdirect_tpu_driverDTcc mht_3(mht_3_v, 245, "", "./tensorflow/compiler/xla/python/tpu_driver/direct_tpu_driver.cc", "~DirectEvent");
+ driver_fn_->TpuDriver_FreeEvent(event_); }
 
   xla::Status Await() override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSdirect_tpu_driverDTcc mht_4(mht_4_v, 250, "", "./tensorflow/compiler/xla/python/tpu_driver/direct_tpu_driver.cc", "Await");
+
     auto tpu_status = driver_fn_->TpuDriver_EventAwait(event_, -1);
     auto ret = CreateXlaStatus(tpu_status);
     driver_fn_->TpuDriver_FreeStatus(tpu_status);
@@ -87,6 +270,9 @@ class DirectEvent : public Event {
   }
 
   void AddCallback(std::function<void(xla::Status)> callback) override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSdirect_tpu_driverDTcc mht_5(mht_5_v, 273, "", "./tensorflow/compiler/xla/python/tpu_driver/direct_tpu_driver.cc", "AddCallback");
+
     // We have to create a new copy of the fn on the heap to make it persist.
     std::function<void(xla::Status)>* callback_addr =
         new std::function<void(xla::Status)>(callback);
@@ -116,11 +302,17 @@ class DirectBufferHandle : public BufferHandle {
  public:
   explicit DirectBufferHandle(::TpuDriverFn* driver_fn,
                               ::TpuBufferHandle* handle)
-      : handle_(handle), event_(new DirectEvent(driver_fn, handle->event)) {}
+      : handle_(handle), event_(new DirectEvent(driver_fn, handle->event)) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSdirect_tpu_driverDTcc mht_6(mht_6_v, 306, "", "./tensorflow/compiler/xla/python/tpu_driver/direct_tpu_driver.cc", "DirectBufferHandle");
+}
 
   std::shared_ptr<Event> OnReady() override { return event_; }
 
-  int64_t size_in_bytes() override { return handle_->size_in_bytes; }
+  int64_t size_in_bytes() override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSdirect_tpu_driverDTcc mht_7(mht_7_v, 313, "", "./tensorflow/compiler/xla/python/tpu_driver/direct_tpu_driver.cc", "size_in_bytes");
+ return handle_->size_in_bytes; }
 
   absl::optional<xla::ShapeProto> shape() override {
     LOG(FATAL) << "Unimplemented.";
@@ -140,20 +332,32 @@ class DirectCompiledProgramHandle : public CompiledProgramHandle {
                                        ::TpuCompiledProgramHandle* handle)
       : handle_(handle),
         driver_fn_(driver_fn),
-        event_(new DirectEvent(driver_fn, handle->event)) {}
+        event_(new DirectEvent(driver_fn, handle->event)) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSdirect_tpu_driverDTcc mht_8(mht_8_v, 336, "", "./tensorflow/compiler/xla/python/tpu_driver/direct_tpu_driver.cc", "DirectCompiledProgramHandle");
+}
 
   ~DirectCompiledProgramHandle() override {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSdirect_tpu_driverDTcc mht_9(mht_9_v, 341, "", "./tensorflow/compiler/xla/python/tpu_driver/direct_tpu_driver.cc", "~DirectCompiledProgramHandle");
+
     driver_fn_->TpuDriver_FreeCompiledProgramHandle(handle_);
   }
 
   std::shared_ptr<Event> OnReady() override { return event_; }
 
   int64_t size_in_bytes() override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSdirect_tpu_driverDTcc mht_10(mht_10_v, 350, "", "./tensorflow/compiler/xla/python/tpu_driver/direct_tpu_driver.cc", "size_in_bytes");
+
     LOG(FATAL) << "Unimplemented.";
     return 0;
   }
 
   xla::Status program_shape(xla::ProgramShapeProto* program_shape) override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSdirect_tpu_driverDTcc mht_11(mht_11_v, 358, "", "./tensorflow/compiler/xla/python/tpu_driver/direct_tpu_driver.cc", "program_shape");
+
     struct CompiledProgramShape* shape =
         driver_fn_->TpuDriver_GetCompiledProgramShape(handle_);
     program_shape->ParseFromArray(shape->bytes, shape->size);
@@ -175,10 +379,16 @@ class DirectLoadedProgramHandle : public LoadedProgramHandle {
  public:
   explicit DirectLoadedProgramHandle(::TpuDriverFn* driver_fn,
                                      ::TpuLoadedProgramHandle* handle)
-      : handle_(handle), event_(new DirectEvent(driver_fn, handle->event)) {}
+      : handle_(handle), event_(new DirectEvent(driver_fn, handle->event)) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSdirect_tpu_driverDTcc mht_12(mht_12_v, 383, "", "./tensorflow/compiler/xla/python/tpu_driver/direct_tpu_driver.cc", "DirectLoadedProgramHandle");
+}
   std::shared_ptr<Event> OnReady() override { return event_; }
 
   int64_t size_in_bytes() override {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSdirect_tpu_driverDTcc mht_13(mht_13_v, 389, "", "./tensorflow/compiler/xla/python/tpu_driver/direct_tpu_driver.cc", "size_in_bytes");
+
     LOG(FATAL) << "Unimplemented.";
     return 0;
   }
@@ -193,10 +403,16 @@ class DirectLoadedProgramHandle : public LoadedProgramHandle {
 class DirectTpuLinearizer : public TpuLinearizer {
  public:
   explicit DirectTpuLinearizer(::TpuDriver* driver, ::TpuDriverFn* driver_fn)
-      : driver_(driver), driver_fn_(driver_fn) {}
+      : driver_(driver), driver_fn_(driver_fn) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSdirect_tpu_driverDTcc mht_14(mht_14_v, 407, "", "./tensorflow/compiler/xla/python/tpu_driver/direct_tpu_driver.cc", "DirectTpuLinearizer");
+}
 
   int64_t ComputeLinearizedBytesFromShape(
       const xla::ShapeProto& shape) override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSdirect_tpu_driverDTcc mht_15(mht_15_v, 413, "", "./tensorflow/compiler/xla/python/tpu_driver/direct_tpu_driver.cc", "ComputeLinearizedBytesFromShape");
+
     ::TpuAllocationShape shape_ = GetTpuAllocationShape(shape);
     uint64_t size =
         driver_fn_->TpuDriver_ComputeLinearizedBytesFromShape(driver_, shape_);
@@ -206,6 +422,9 @@ class DirectTpuLinearizer : public TpuLinearizer {
 
   xla::Status LinearizeShape(void* dst, const void* src,
                              const xla::ShapeProto& shape) override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSdirect_tpu_driverDTcc mht_16(mht_16_v, 425, "", "./tensorflow/compiler/xla/python/tpu_driver/direct_tpu_driver.cc", "LinearizeShape");
+
     ::TpuAllocationShape shape_ = GetTpuAllocationShape(shape);
 
     auto tpu_status =
@@ -218,6 +437,9 @@ class DirectTpuLinearizer : public TpuLinearizer {
 
   xla::Status DelinearizeShape(void* dst, const void* src,
                                const xla::ShapeProto& shape) override {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSdirect_tpu_driverDTcc mht_17(mht_17_v, 440, "", "./tensorflow/compiler/xla/python/tpu_driver/direct_tpu_driver.cc", "DelinearizeShape");
+
     ::TpuAllocationShape shape_ = GetTpuAllocationShape(shape);
 
     auto tpu_status =
@@ -236,6 +458,10 @@ class DirectTpuLinearizer : public TpuLinearizer {
 class DirectTpuDriver : public TpuDriver {
  public:
   explicit DirectTpuDriver(const std::string& so_path) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("so_path: \"" + so_path + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSdirect_tpu_driverDTcc mht_18(mht_18_v, 462, "", "./tensorflow/compiler/xla/python/tpu_driver/direct_tpu_driver.cc", "DirectTpuDriver");
+
     void* handle;
     handle = dlopen(so_path.c_str(), RTLD_NOW);
     if (!handle) {
@@ -260,12 +486,18 @@ class DirectTpuDriver : public TpuDriver {
   ~DirectTpuDriver() override { driver_fn_.TpuDriver_Close(driver_); }
 
   void QuerySystemInfo(SystemInfo* system_info) override {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSdirect_tpu_driverDTcc mht_19(mht_19_v, 489, "", "./tensorflow/compiler/xla/python/tpu_driver/direct_tpu_driver.cc", "QuerySystemInfo");
+
     ::TpuSystemInfo* info = driver_fn_.TpuDriver_QuerySystemInfo(driver_);
     system_info->ParseFromArray(info->bytes, info->size);
     driver_fn_.TpuDriver_FreeSystemInfo(info);
   }
 
   xla::Status Reset() override {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSdirect_tpu_driverDTcc mht_20(mht_20_v, 498, "", "./tensorflow/compiler/xla/python/tpu_driver/direct_tpu_driver.cc", "Reset");
+
     auto tpu_status = driver_fn_.TpuDriver_Reset(driver_);
     auto status = CreateXlaStatus(tpu_status);
     driver_fn_.TpuDriver_FreeStatus(tpu_status);
@@ -472,6 +704,9 @@ class DirectTpuDriver : public TpuDriver {
   ::TpuDriver* driver_;
 
   ::TpuEvent** MakeEventArray(absl::Span<Event* const> wait_for) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPStpu_driverPSdirect_tpu_driverDTcc mht_21(mht_21_v, 707, "", "./tensorflow/compiler/xla/python/tpu_driver/direct_tpu_driver.cc", "MakeEventArray");
+
     if (wait_for.empty()) return nullptr;
     ::TpuEvent** ret = new ::TpuEvent*[wait_for.size()];
     for (int i = 0; i < wait_for.size(); i++) {

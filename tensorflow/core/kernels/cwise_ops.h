@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_KERNELS_CWISE_OPS_H_
 #define TENSORFLOW_CORE_KERNELS_CWISE_OPS_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPScwise_opsDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPScwise_opsDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPScwise_opsDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #define _USE_MATH_DEFINES
 #include <cmath>
@@ -99,7 +267,10 @@ struct safe_scalar_binary_pow_op {
   bool* const error;
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE safe_scalar_binary_pow_op(bool* error)
-      : error(error) {}
+      : error(error) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScwise_opsDTh mht_0(mht_0_v, 271, "", "./tensorflow/core/kernels/cwise_ops.h", "safe_scalar_binary_pow_op");
+}
 
   EIGEN_DEVICE_FUNC inline Scalar operator()(const Scalar& a,
                                              const Exponent& b) const {
@@ -125,7 +296,10 @@ struct safe_div_or_mod_op {
   bool* const error;
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE safe_div_or_mod_op(bool* error)
-      : error(error) {}
+      : error(error) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScwise_opsDTh mht_1(mht_1_v, 300, "", "./tensorflow/core/kernels/cwise_ops.h", "safe_div_or_mod_op");
+}
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T operator()(const T& a,
                                                      const T& b) const {
@@ -169,6 +343,9 @@ struct no_nan_op {
   template <typename Packet>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& a,
                                                         const Packet& b) const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScwise_opsDTh mht_2(mht_2_v, 346, "", "./tensorflow/core/kernels/cwise_ops.h", "packetOp");
+
     const Packet mask = pcmp_eq(b, pzero(b));
     const Packet quotient = Binary().packetOp(a, b);
     return pandnot(quotient, mask);
@@ -216,6 +393,9 @@ struct div_no_nan_op<T, /*IsComplex=*/true> {
   template <typename Packet>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& a,
                                                         const Packet& b) const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScwise_opsDTh mht_3(mht_3_v, 396, "", "./tensorflow/core/kernels/cwise_ops.h", "packetOp");
+
     const Packet numerator = pmul(a, pconj(b));
     const Packet mask = por(pcmp_eq(b, pzero(a)), pcmp_eq(numerator, pzero(a)));
     const Packet quotient = pdiv(a, b);
@@ -420,6 +600,9 @@ struct scalar_squared_difference_op {
   template <typename Packet>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& a,
                                                         const Packet& b) const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScwise_opsDTh mht_4(mht_4_v, 603, "", "./tensorflow/core/kernels/cwise_ops.h", "packetOp");
+
     const Packet v = scalar_difference_op<Scalar>().packetOp(a, b);
     return scalar_product_op<Scalar>().packetOp(
         v, scalar_conjugate_op<Scalar>().packetOp(v));
@@ -451,6 +634,9 @@ struct google_floor_div {
   template <typename Packet>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& x,
                                                         const Packet& y) const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScwise_opsDTh mht_5(mht_5_v, 637, "", "./tensorflow/core/kernels/cwise_ops.h", "packetOp");
+
     Packet zeros = pzero(x);
     Packet x_mask = pcmp_lt(x, zeros);
     Packet y_mask = pcmp_lt(y, zeros);
@@ -471,6 +657,9 @@ struct google_floor_div<
   template <typename Packet>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& x,
                                                         const Packet& y) const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScwise_opsDTh mht_6(mht_6_v, 660, "", "./tensorflow/core/kernels/cwise_ops.h", "packetOp");
+
     return pdiv(x, y);
   }
 };
@@ -494,6 +683,9 @@ struct google_floor_div_real {
   template <typename Packet>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& x,
                                                         const Packet& y) const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScwise_opsDTh mht_7(mht_7_v, 686, "", "./tensorflow/core/kernels/cwise_ops.h", "packetOp");
+
     return pfloor(pdiv(x, y));
   }
 };
@@ -580,6 +772,9 @@ struct scalar_round_half_to_even_op {
 
   template <typename Packet>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& x) const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScwise_opsDTh mht_8(mht_8_v, 775, "", "./tensorflow/core/kernels/cwise_ops.h", "packetOp");
+
     Packet half = pset1<Packet>(Scalar(0.5));
     Packet round_val = pfloor(padd(x, half));
     Packet fraction = psub(round_val, x);
@@ -603,6 +798,9 @@ struct scalar_round_half_to_even_op<Scalar, true, false> {
   }
   template <typename Packet>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& x) const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScwise_opsDTh mht_9(mht_9_v, 801, "", "./tensorflow/core/kernels/cwise_ops.h", "packetOp");
+
     return x;
   }
 };
@@ -615,6 +813,9 @@ struct scalar_round_half_to_even_op<Scalar, false, true> {
   }
   template <typename Packet>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& x) const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScwise_opsDTh mht_10(mht_10_v, 816, "", "./tensorflow/core/kernels/cwise_ops.h", "packetOp");
+
     return print(x);
   }
 };
@@ -641,6 +842,9 @@ struct scalar_round_up_op {
 
   template <typename Packet>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& x) const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScwise_opsDTh mht_11(mht_11_v, 845, "", "./tensorflow/core/kernels/cwise_ops.h", "packetOp");
+
     return pfloor(padd(x, pset1<Packet>(0.5)));
   }
 };
@@ -654,6 +858,9 @@ struct scalar_round_up_op<Scalar, true> {
 
   template <typename Packet>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& x) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScwise_opsDTh mht_12(mht_12_v, 861, "", "./tensorflow/core/kernels/cwise_ops.h", "packetOp");
+
     return x;
   }
 };
@@ -679,6 +886,9 @@ struct bitwise_xor_op {
   template <typename Packet>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& a,
                                                         const Packet& b) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScwise_opsDTh mht_13(mht_13_v, 889, "", "./tensorflow/core/kernels/cwise_ops.h", "packetOp");
+
     return Eigen::internal::pxor(a, b);
   }
 };
@@ -701,6 +911,9 @@ struct xlogy_op {
   template <typename Packet>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& x,
                                                         const Packet& y) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScwise_opsDTh mht_14(mht_14_v, 914, "", "./tensorflow/core/kernels/cwise_ops.h", "packetOp");
+
     Packet zeros = pzero(x);
     Packet mask = pcmp_eq(x, zeros);
     scalar_log_op<Scalar> log_op;
@@ -732,6 +945,9 @@ struct xlog1py_op {
   template <typename Packet>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& x,
                                                         const Packet& y) const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScwise_opsDTh mht_15(mht_15_v, 948, "", "./tensorflow/core/kernels/cwise_ops.h", "packetOp");
+
     Packet zeros = pzero(x);
     Packet mask = pcmp_eq(x, zeros);
     scalar_log1p_op<Scalar> log1p_op;
@@ -767,6 +983,9 @@ struct xdivy_op {
   template <typename Packet>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& x,
                                                         const Packet& y) const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScwise_opsDTh mht_16(mht_16_v, 986, "", "./tensorflow/core/kernels/cwise_ops.h", "packetOp");
+
     Packet zeros = pzero(x);
     Packet mask = pcmp_eq(x, zeros);
     Packet x_div_y = pdiv(x, y);
@@ -796,6 +1015,9 @@ struct scalar_erfinv_op {
   }
   template <typename Packet>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& x) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScwise_opsDTh mht_17(mht_17_v, 1018, "", "./tensorflow/core/kernels/cwise_ops.h", "packetOp");
+
     Packet half = pset1<Packet>(T(0.5));
     Packet y = pndtri<Packet>(pmadd(half, x, half));
     Packet half_sqrt = pset1<Packet>(T(M_SQRT1_2));
@@ -1366,6 +1588,9 @@ struct ApproximateEqual {
 
 template <int NDIMS>
 bool AllOne(const typename Eigen::array<Eigen::DenseIndex, NDIMS>& a) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPScwise_opsDTh mht_18(mht_18_v, 1591, "", "./tensorflow/core/kernels/cwise_ops.h", "AllOne");
+
   for (size_t i = 0; i < a.size(); ++i) {
     if (a[i] != 1) return false;
   }

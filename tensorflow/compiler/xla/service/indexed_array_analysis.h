@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_INDEXED_ARRAY_ANALYSIS_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_INDEXED_ARRAY_ANALYSIS_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <type_traits>
 
@@ -54,6 +222,9 @@ class IndexedArrayAnalysis {
     // subtypes.
     template <typename T>
     T* as() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTh mht_0(mht_0_v, 225, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.h", "as");
+
       static_assert((std::is_base_of<Array, T>::value),
                     "target type not derived from source type");
       // We skip the CHECK and hence the dynamic_cast if RTTI is disabled.
@@ -74,12 +245,24 @@ class IndexedArrayAnalysis {
   // HloInstruction.
   class UnknownArray : public Array {
    public:
-    Kind kind() const override { return kUnknown; }
-    const Shape& shape() const override { return instruction().shape(); }
-    const HloInstruction& instruction() const { return instruction_; }
+    Kind kind() const override {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTh mht_1(mht_1_v, 249, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.h", "kind");
+ return kUnknown; }
+    const Shape& shape() const override {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTh mht_2(mht_2_v, 253, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.h", "shape");
+ return instruction().shape(); }
+    const HloInstruction& instruction() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTh mht_3(mht_3_v, 257, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.h", "instruction");
+ return instruction_; }
 
    private:
-    explicit UnknownArray(const HloInstruction* instr) : instruction_(*instr) {}
+    explicit UnknownArray(const HloInstruction* instr) : instruction_(*instr) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTh mht_4(mht_4_v, 263, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.h", "UnknownArray");
+}
 
     const HloInstruction& instruction_;
 
@@ -91,12 +274,24 @@ class IndexedArrayAnalysis {
   // analysis.
   class ConstantArray : public Array {
    public:
-    Kind kind() const override { return kConstant; }
-    const Shape& shape() const override { return literal()->shape(); }
-    const Literal* literal() const { return literal_; }
+    Kind kind() const override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTh mht_5(mht_5_v, 278, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.h", "kind");
+ return kConstant; }
+    const Shape& shape() const override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTh mht_6(mht_6_v, 282, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.h", "shape");
+ return literal()->shape(); }
+    const Literal* literal() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTh mht_7(mht_7_v, 286, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.h", "literal");
+ return literal_; }
 
    private:
-    explicit ConstantArray(const Literal* literal) : literal_(literal) {}
+    explicit ConstantArray(const Literal* literal) : literal_(literal) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTh mht_8(mht_8_v, 292, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.h", "ConstantArray");
+}
     const Literal* literal_;
 
     friend class IndexedArrayAnalysis;
@@ -105,17 +300,29 @@ class IndexedArrayAnalysis {
   // Represents an Array that is a reshape of another Array.
   class ReshapedArray : public Array {
    public:
-    Kind kind() const override { return kReshaped; }
+    Kind kind() const override {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTh mht_9(mht_9_v, 304, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.h", "kind");
+ return kReshaped; }
 
     // The array to reshape.
-    Array* operand() const { return operand_; }
+    Array* operand() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTh mht_10(mht_10_v, 310, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.h", "operand");
+ return operand_; }
 
     // The output shape.
-    const Shape& shape() const override { return shape_; }
+    const Shape& shape() const override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTh mht_11(mht_11_v, 316, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.h", "shape");
+ return shape_; }
 
    private:
     explicit ReshapedArray(Array* operand, Shape shape)
-        : operand_(operand), shape_(shape) {}
+        : operand_(operand), shape_(shape) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTh mht_12(mht_12_v, 323, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.h", "ReshapedArray");
+}
 
     Array* operand_;
     const Shape shape_;
@@ -174,16 +381,31 @@ class IndexedArrayAnalysis {
   // input index [B,D,indices[A,C],E].
   class ScalarIndexedArray : public Array {
    public:
-    Kind kind() const override { return kScalarIndexed; }
-    const Shape& shape() const override { return shape_; }
+    Kind kind() const override {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTh mht_13(mht_13_v, 385, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.h", "kind");
+ return kScalarIndexed; }
+    const Shape& shape() const override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTh mht_14(mht_14_v, 389, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.h", "shape");
+ return shape_; }
 
-    Array* source() const { return source_; }
-    Array* indices() const { return indices_; }
+    Array* source() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTh mht_15(mht_15_v, 394, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.h", "source");
+ return source_; }
+    Array* indices() const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTh mht_16(mht_16_v, 398, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.h", "indices");
+ return indices_; }
 
     // `source_dim` is the dimension in the source array that is being indexed
     // over using indices from the `indices` array.  See the class documentation
     // and the overview for more details.
-    int64_t source_dim() const { return source_dim_; }
+    int64_t source_dim() const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTh mht_17(mht_17_v, 406, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.h", "source_dim");
+ return source_dim_; }
 
     // `output_dims` are the dimensions in the output array that are being used
     // to compute an index into the `indices` array.  See the class
@@ -198,7 +420,10 @@ class IndexedArrayAnalysis {
           indices_(indices),
           source_dim_(source_dim),
           output_dims_(std::move(output_dims)),
-          shape_(std::move(shape)) {}
+          shape_(std::move(shape)) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTh mht_18(mht_18_v, 424, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.h", "ScalarIndexedArray");
+}
 
     Array* source_;
     Array* indices_;
@@ -215,9 +440,15 @@ class IndexedArrayAnalysis {
   // check source()->kind().
   class ScalarIndexedConstantArray : public ScalarIndexedArray {
    public:
-    Kind kind() const override { return kScalarIndexedConstant; }
+    Kind kind() const override {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTh mht_19(mht_19_v, 444, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.h", "kind");
+ return kScalarIndexedConstant; }
 
     const Literal& literal() const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTh mht_20(mht_20_v, 449, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.h", "literal");
+
       return *source()->as<ConstantArray>()->literal();
     }
 
@@ -228,6 +459,9 @@ class IndexedArrayAnalysis {
                                         Shape shape)
         : ScalarIndexedArray(source, indices, source_dim,
                              std::move(output_dims), std::move(shape)) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTh mht_21(mht_21_v, 462, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.h", "ScalarIndexedConstantArray");
+
       CHECK(dynamic_cast<ConstantArray*>(source));
     }
 
@@ -337,6 +571,9 @@ class IndexedArrayAnalysis {
   ScalarIndexedArray* ConstructScalarIndexedArray(
       Array* source, Array* indices, int64_t source_dim,
       std::vector<int64_t> output_dims, Shape shape) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTh mht_22(mht_22_v, 574, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.h", "ConstructScalarIndexedArray");
+
     if (source->kind() == Array::kConstant) {
       return Construct<ScalarIndexedConstantArray>(source, indices, source_dim,
                                                    std::move(output_dims),
@@ -349,6 +586,9 @@ class IndexedArrayAnalysis {
   }
 
   Literal* TakeOwnership(Literal literal) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSindexed_array_analysisDTh mht_23(mht_23_v, 589, "", "./tensorflow/compiler/xla/service/indexed_array_analysis.h", "TakeOwnership");
+
     owned_literals_.push_back(std::move(literal));
     return &owned_literals_.back();
   }

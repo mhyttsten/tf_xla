@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmemory_optimizerDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmemory_optimizerDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmemory_optimizerDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -129,6 +297,9 @@ void connected_subgraph(const NodeMap& node_map, bool collect_inputs,
                         bool collect_outputs,
                         const std::function<bool(const NodeDef&)>& is_candidate,
                         std::unordered_set<const NodeDef*>* expanded_nodes) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmemory_optimizerDTcc mht_0(mht_0_v, 300, "", "./tensorflow/core/grappler/optimizers/memory_optimizer.cc", "connected_subgraph");
+
   std::queue<const NodeDef*> to_visit;
   for (const NodeDef* starting_node : *expanded_nodes) {
     to_visit.push(starting_node);
@@ -381,6 +552,10 @@ AddRecomputeControlDependencyNodes(
 string RecomputedOrOriginalNodeName(
     const std::unordered_set<string>& recomputed_node_names,
     const string& original_node_name) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("original_node_name: \"" + original_node_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmemory_optimizerDTcc mht_1(mht_1_v, 556, "", "./tensorflow/core/grappler/optimizers/memory_optimizer.cc", "RecomputedOrOriginalNodeName");
+
   if (recomputed_node_names.find(original_node_name) ==
       recomputed_node_names.end()) {
     return original_node_name;
@@ -397,6 +572,9 @@ void RecomputeSubgraph(
     const std::unordered_set<NodeDef*>& target_nodes, const NodeMap& node_map,
     const std::unordered_map<const NodeDef*, int>& components,
     GraphDef* graph) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmemory_optimizerDTcc mht_2(mht_2_v, 575, "", "./tensorflow/core/grappler/optimizers/memory_optimizer.cc", "RecomputeSubgraph");
+
   std::unordered_set<string> recomputed_node_names;
   VLOG(1) << "Recomputing a " << recomputed_source_nodes.size()
           << " node subgraph";
@@ -443,6 +621,10 @@ void RecomputeSubgraph(
 void RecomputationRewritingPass(RewriterConfig::MemOptType optimization_level,
                                 const string& recomputation_targets_name_scope,
                                 GraphDef* graph, const GrapplerItem& item) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("recomputation_targets_name_scope: \"" + recomputation_targets_name_scope + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmemory_optimizerDTcc mht_3(mht_3_v, 625, "", "./tensorflow/core/grappler/optimizers/memory_optimizer.cc", "RecomputationRewritingPass");
+
   // The topological numberings and NodeMap will be stale as soon as we start
   // modifying the graph in RecomputeSubgraph. However, RecomputeSubgraph only
   // looks up nodes which were in the original graph, and preserves the graph
@@ -461,6 +643,9 @@ void RecomputationRewritingPass(RewriterConfig::MemOptType optimization_level,
   }
   std::function<bool(const NodeDef&)> is_target =
       [&recomputation_targets_name_scope](const NodeDef& node) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmemory_optimizerDTcc mht_4(mht_4_v, 646, "", "./tensorflow/core/grappler/optimizers/memory_optimizer.cc", "lambda");
+
         // Nodes whose inputs we may want to recompute. This matches node names
         // that contain recomputation_targets_name_scope as a name scope,
         // meaning it either begins with or contains the name scope.
@@ -514,6 +699,9 @@ void RecomputationRewritingPass(RewriterConfig::MemOptType optimization_level,
 
 bool SchedulingPass(Cluster* cluster, std::unique_ptr<GraphMemory>* memory_ptr,
                     GrapplerItem* item) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmemory_optimizerDTcc mht_5(mht_5_v, 702, "", "./tensorflow/core/grappler/optimizers/memory_optimizer.cc", "SchedulingPass");
+
   // Look for AddN nodes (and equivalent) and record input names.
   MutableGraphView view(&item->graph);
 
@@ -744,6 +932,9 @@ Status BuildSwapPair(NodeDef* node, int input_to_swap,
                      const std::unordered_map<string, const NodeDef*>& name_map,
                      GraphDef* graph,
                      std::pair<NodeDef*, NodeDef*>* swap_pair) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmemory_optimizerDTcc mht_6(mht_6_v, 935, "", "./tensorflow/core/grappler/optimizers/memory_optimizer.cc", "BuildSwapPair");
+
   string task, device;
   if (!DeviceNameUtils::SplitDeviceName(node->device(), &task, &device) ||
       !absl::StrContains(device, DEVICE_GPU)) {
@@ -807,6 +998,9 @@ static const NodeDef* FindSwapInTrigger(
     const std::unordered_map<string, const NodeDef*>& name_map,
     const std::unordered_map<const NodeDef*, Costs::NanoSeconds>&
         execution_times) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmemory_optimizerDTcc mht_7(mht_7_v, 1001, "", "./tensorflow/core/grappler/optimizers/memory_optimizer.cc", "FindSwapInTrigger");
+
   // max_trigger_time stores the time before which the swap operation needs to
   // be started in order to load the data back onto the accelerator without
   // delaying the downstream computation.
@@ -884,6 +1078,9 @@ static const NodeDef* FindSwapInTrigger(
 
 static bool IsSwappable(const MutableGraphView& graph,
                         MutableGraphView::OutputPort output) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmemory_optimizerDTcc mht_8(mht_8_v, 1081, "", "./tensorflow/core/grappler/optimizers/memory_optimizer.cc", "IsSwappable");
+
   const NodeDef& node = *output.node;
   // There is no point in swapping out persistent tensors, since the tensor will
   // continue to use memory.
@@ -924,6 +1121,9 @@ static NodeDef* FindSwapOutTrigger(
     const NodeDef* node, int input_id, const MutableGraphView& view,
     const std::unordered_map<const NodeDef*, Costs::NanoSeconds>&
         execution_times) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmemory_optimizerDTcc mht_9(mht_9_v, 1124, "", "./tensorflow/core/grappler/optimizers/memory_optimizer.cc", "FindSwapOutTrigger");
+
   // Find the output port that generated the tensor to swap.
   MutableGraphView::InputPort swap;
   swap.node = const_cast<NodeDef*>(node);
@@ -953,6 +1153,9 @@ static NodeDef* FindSwapOutTrigger(
 }
 
 static bool IsSwappable(MutableGraphView::InputPort input) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmemory_optimizerDTcc mht_10(mht_10_v, 1156, "", "./tensorflow/core/grappler/optimizers/memory_optimizer.cc", "IsSwappable");
+
   const NodeDef& node = *input.node;
 
   const OpDef* op_def;
@@ -974,7 +1177,10 @@ struct MemInfo {
   std::vector<MutableGraphView::InputPort> uses_left;
   double fitness;
 
-  bool operator<(const MemInfo& other) const { return fitness < other.fitness; }
+  bool operator<(const MemInfo& other) const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmemory_optimizerDTcc mht_11(mht_11_v, 1181, "", "./tensorflow/core/grappler/optimizers/memory_optimizer.cc", "operator<");
+ return fitness < other.fitness; }
 };
 
 static bool IdentifySwappingCandidates(
@@ -982,6 +1188,9 @@ static bool IdentifySwappingCandidates(
     std::unique_ptr<GraphMemory>* memory_ptr,
     std::unordered_set<string>* skip_list,
     std::unordered_map<NodeDef*, SwapInfo>* nodes_to_swap) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmemory_optimizerDTcc mht_12(mht_12_v, 1191, "", "./tensorflow/core/grappler/optimizers/memory_optimizer.cc", "IdentifySwappingCandidates");
+
   if ((*memory_ptr) == nullptr) {
     memory_ptr->reset(new GraphMemory(*item));
     Status s = (*memory_ptr)->InferStatically(cluster->GetDevices());
@@ -1149,6 +1358,9 @@ static bool IdentifySwappingCandidates(
 bool SwappingPass(RewriterConfig::MemOptType optimization_level,
                   Cluster* cluster, std::unique_ptr<GraphMemory>* memory,
                   GrapplerItem* item, std::unordered_set<string>* skip_list) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmemory_optimizerDTcc mht_13(mht_13_v, 1361, "", "./tensorflow/core/grappler/optimizers/memory_optimizer.cc", "SwappingPass");
+
   std::unordered_map<NodeDef*, SwapInfo> nodes_to_swap;
   if (optimization_level == RewriterConfig::DEFAULT_MEM_OPT ||
       optimization_level == RewriterConfig::SWAPPING_HEURISTICS ||
@@ -1271,6 +1483,9 @@ bool SwappingPass(RewriterConfig::MemOptType optimization_level,
 }
 
 bool CrossesTaskOrCpuGpuBoundary(const NodeDef& node1, const NodeDef& node2) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmemory_optimizerDTcc mht_14(mht_14_v, 1486, "", "./tensorflow/core/grappler/optimizers/memory_optimizer.cc", "CrossesTaskOrCpuGpuBoundary");
+
   string task1;
   string device1;
   DeviceNameUtils::SplitDeviceName(node1.device(), &task1, &device1);
@@ -1286,6 +1501,9 @@ bool CrossesTaskOrCpuGpuBoundary(const NodeDef& node1, const NodeDef& node2) {
 
 void RelaxAssignNodes(const std::set<int>& nodes_to_relax,
                       GraphDef* optimized_graph) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmemory_optimizerDTcc mht_15(mht_15_v, 1504, "", "./tensorflow/core/grappler/optimizers/memory_optimizer.cc", "RelaxAssignNodes");
+
   for (int idx : nodes_to_relax) {
     // Set an attribute telling AssignOp to ignore allocator constraints.
     NodeDef* assign_node = optimized_graph->mutable_node(idx);
@@ -1297,6 +1515,9 @@ void RelaxAssignNodes(const std::set<int>& nodes_to_relax,
 // TODO(rmlarsen): Add distributed TF test.
 Status FindAssignNodesToRelax(const GraphDef& graph,
                               std::set<int>* nodes_to_relax) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmemory_optimizerDTcc mht_16(mht_16_v, 1518, "", "./tensorflow/core/grappler/optimizers/memory_optimizer.cc", "FindAssignNodesToRelax");
+
   std::unordered_set<string> devices;
   std::vector<int> assign_nodes;
   bool found_send = false;
@@ -1380,6 +1601,9 @@ Status FindAssignNodesToRelax(const GraphDef& graph,
 
 Status MemoryOptimizer::Optimize(Cluster* cluster, const GrapplerItem& item,
                                  GraphDef* optimized_graph) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmemory_optimizerDTcc mht_17(mht_17_v, 1604, "", "./tensorflow/core/grappler/optimizers/memory_optimizer.cc", "MemoryOptimizer::Optimize");
+
   std::set<int> nodes_to_relax;
   TF_RETURN_IF_ERROR(FindAssignNodesToRelax(item.graph, &nodes_to_relax));
 

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -67,6 +235,9 @@ struct TPUExtractOutsideCompilation
 FuncOp BuildFunction(llvm::ArrayRef<Operation*> ops,
                      llvm::ArrayRef<Value> inputs,
                      llvm::ArrayRef<Value> outputs, OpBuilder* builder) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_0(mht_0_v, 238, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "BuildFunction");
+
   llvm::SmallVector<Type, 4> operand_types;
   operand_types.reserve(inputs.size());
   for (Value v : inputs) operand_types.emplace_back(v.getType());
@@ -104,6 +275,9 @@ FuncOp BuildFunction(llvm::ArrayRef<Operation*> ops,
 // `serialized_func_module` is set to the serialized module.
 void EncapsulateFuncAndSerialize(FuncOp func,
                                  std::string* serialized_func_module) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_1(mht_1_v, 278, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "EncapsulateFuncAndSerialize");
+
   // Create a new module to hold func and all referenced functions.
   OwningOpRef<mlir::ModuleOp> module_for_func =
       ModuleOp::create(mlir::UnknownLoc::get(func.getContext()));
@@ -116,6 +290,9 @@ void EncapsulateFuncAndSerialize(FuncOp func,
 
 // Returns whether `op` or ops nested in `op` are outside compiled.
 bool HasOutsideCompilationNested(Operation* op) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_2(mht_2_v, 293, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "HasOutsideCompilationNested");
+
   return op
       ->walk([&](Operation* walked_op) {
         if (op == walked_op) return WalkResult::advance();
@@ -129,6 +306,9 @@ bool HasOutsideCompilationNested(Operation* op) {
 
 // Returns whether `op` or any ancestors of `op` are outside compiled.
 bool HasOutsideCompilationAncestor(Operation* op) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_3(mht_3_v, 309, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "HasOutsideCompilationAncestor");
+
   while (op) {
     if (op->hasAttrOfType<StringAttr>(kXlaOutsideCompilationAttr)) {
       return true;
@@ -140,12 +320,18 @@ bool HasOutsideCompilationAncestor(Operation* op) {
 
 // Returns whether any ancestors of `op` are outside compiled.
 bool HasOutsideCompilationAncestorExclusive(Operation* op) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_4(mht_4_v, 323, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "HasOutsideCompilationAncestorExclusive");
+
   Operation* parent_op = op->getParentOp();
   if (!parent_op) return false;
   return HasOutsideCompilationAncestor(parent_op);
 }
 
 Operation* ApplyXlaHostTransferAttr(Operation* op, OpBuilder& builder) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_5(mht_5_v, 332, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "ApplyXlaHostTransferAttr");
+
   op->setAttr("_xla_has_host_transfer", builder.getBoolAttr(true));
   return op;
 }
@@ -156,6 +342,9 @@ Operation* CreateSendFromHostOp(OpBuilder& builder, Location loc,
                                 ValueRange inputs, Value compilation_key,
                                 Value device_ordinal,
                                 llvm::StringRef communication_key) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_6(mht_6_v, 345, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "CreateSendFromHostOp");
+
   if (device_ordinal)
     return ApplyXlaHostTransferAttr(
         builder.create<TF::_XlaSendFromHostV2Op>(
@@ -179,6 +368,9 @@ Operation* CreateRecvAtHostOp(OpBuilder& builder, Location loc,
                               TypeRange output_types, Value compilation_key,
                               Value device_ordinal,
                               llvm::StringRef communication_key) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_7(mht_7_v, 371, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "CreateRecvAtHostOp");
+
   if (device_ordinal)
     return ApplyXlaHostTransferAttr(
         builder.create<TF::_XlaRecvAtHostV2Op>(
@@ -198,6 +390,9 @@ Operation* CreateRecvAtHostOp(OpBuilder& builder, Location loc,
 // with yield op and an empty block.
 TF::IfRegionOp CloneEmptyIfWithPredicate(TF::IfRegionOp if_region,
                                          OpBuilder& builder) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_8(mht_8_v, 393, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "CloneEmptyIfWithPredicate");
+
   auto host_side_if = builder.create<TF::IfRegionOp>(
       if_region.getLoc(), llvm::SmallVector<Type, 4>{}, if_region.cond(),
       if_region.is_stateless(), if_region._then_func_nameAttr(),
@@ -223,6 +418,9 @@ TF::IfRegionOp CloneEmptyIfWithPredicate(TF::IfRegionOp if_region,
 TF::WhileRegionOp CloneEmptyWhile(bool is_stateless,
                                   uint64_t parallel_iterations, Location loc,
                                   OpBuilder& builder) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_9(mht_9_v, 421, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "CloneEmptyWhile");
+
   auto host_side_while = builder.create<TF::WhileRegionOp>(
       loc, /*output=*/ArrayRef<Type>{}, /*input=*/ArrayRef<Value>{},
       parallel_iterations, is_stateless, /*shape_invariant=*/false);
@@ -244,6 +442,9 @@ TF::WhileRegionOp CloneEmptyWhile(bool is_stateless,
 // replaced by the TPU cluster _TPUCompileMlir in a subsequent pass.
 TF::_TPUCompileMlirPlaceholderProgramKeyOp CreateCompilationKeyPlaceholder(
     Location loc, OpBuilder& builder) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_10(mht_10_v, 445, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "CreateCompilationKeyPlaceholder");
+
   auto result_type =
       RankedTensorType::get({3}, builder.getType<TF::StringType>());
   return builder.create<TF::_TPUCompileMlirPlaceholderProgramKeyOp>(
@@ -253,6 +454,9 @@ TF::_TPUCompileMlirPlaceholderProgramKeyOp CreateCompilationKeyPlaceholder(
 // Creates a `tf_device.launch` to wrap cluster ops.
 tf_device::LaunchOp CreateLaunchOpForOutsideCluster(
     OpBuilder& builder, Operation* loc_op, llvm::StringRef host_device) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_11(mht_11_v, 457, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "CreateLaunchOpForOutsideCluster");
+
   // An empty string placeholder is used for the device as that will be later
   // populated with the device of the associated TPUReplicateMetadata op.
   auto launch_op = builder.create<tf_device::LaunchOp>(
@@ -269,6 +473,9 @@ tf_device::LaunchOp CreateLaunchOpForOutsideCluster(
 
 // Returns true if `op` has non-static shaped outputs.
 bool HasDynamicOutputs(Operation* op) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_12(mht_12_v, 476, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "HasDynamicOutputs");
+
   for (Value v : op->getResults()) {
     if (TF::CanBeRefined(v.getType())) return true;
   }
@@ -278,6 +485,9 @@ bool HasDynamicOutputs(Operation* op) {
 // Returns true if any op in `cluster_ops` has outputs consumed by ops not
 // `cluster_ops` with a non-static shape.
 bool HasDynamicOutputs(const llvm::SmallSetVector<Operation*, 4>& cluster_ops) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_13(mht_13_v, 488, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "HasDynamicOutputs");
+
   for (Operation* op : cluster_ops) {
     for (const OpOperand& use : op->getUses()) {
       if (cluster_ops.count(use.getOwner())) {
@@ -290,6 +500,9 @@ bool HasDynamicOutputs(const llvm::SmallSetVector<Operation*, 4>& cluster_ops) {
 }
 
 bool HasDynamicExternalValues(Operation* op) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_14(mht_14_v, 503, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "HasDynamicExternalValues");
+
   return op
       ->walk([](Operation* walked_op) {
         for (Value v : walked_op->getOperands()) {
@@ -400,6 +613,9 @@ TF::_XlaHostComputeMlirOp CreateHostCompute(
     llvm::StringRef args_communication_key,
     llvm::StringRef retvals_communication_key,
     llvm::StringRef serialized_func_module) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_15(mht_15_v, 616, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "CreateHostCompute");
+
   llvm::SmallVector<Type, 4> device_output_types;
   for (const auto& output : outputs)
     device_output_types.push_back(output.getType());
@@ -413,6 +629,9 @@ TF::_XlaHostComputeMlirOp CreateHostCompute(
 }
 
 void MarkOutsideCompiled(Operation* op) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_16(mht_16_v, 632, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "MarkOutsideCompiled");
+
   op->setAttr(kXlaOutsideCompilationAttr,
               StringAttr::get(op->getContext(), "temp"));
 }
@@ -422,6 +641,9 @@ void MarkOutsideCompiled(Operation* op) {
 // op.
 // 2. There is no dynamically shaped output.
 bool ShouldCloseCluster(llvm::ArrayRef<Value> outputs) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_17(mht_17_v, 644, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "ShouldCloseCluster");
+
   bool has_dynamic_output = false;
   for (Value v : outputs) {
     if (TF::CanBeRefined(v.getType())) {
@@ -443,7 +665,13 @@ void ReplaceExternalOperandUsage(
     const llvm::SmallSetVector<Value, 4>& external_operands,
     Operation* recv_at_host, Operation* insertion_point,
     Block* original_op_block) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_18(mht_18_v, 668, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "ReplaceExternalOperandUsage");
+
   auto replace_operand_usage = [&](OpOperand& operand) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_19(mht_19_v, 672, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "lambda");
+
     if (TF::CanBeRefined(operand.get().getType()) ||
         HasDynamicOutputs(operand.getOwner())) {
       return insertion_point->getParentRegion()->isAncestor(
@@ -462,6 +690,9 @@ void ReplaceExternalOperandUsage(
 }
 
 bool HasDynamicOutputs(llvm::ArrayRef<Value> outputs) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_20(mht_20_v, 693, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "HasDynamicOutputs");
+
   for (Value v : outputs) {
     if (TF::CanBeRefined(v.getType())) {
       return true;
@@ -475,9 +706,15 @@ bool HasDynamicOutputs(llvm::ArrayRef<Value> outputs) {
 void ReplaceExternalOutputUsage(
     const llvm::SmallSetVector<Value, 4>& external_outputs,
     TF::_XlaHostComputeMlirOp host_compute) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_21(mht_21_v, 709, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "ReplaceExternalOutputUsage");
+
   bool has_dynamic_outputs = HasDynamicOutputs(external_outputs.getArrayRef());
 
   auto replace_output_usage = [&](OpOperand& operand) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_22(mht_22_v, 715, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "lambda");
+
     // Don't replace output usages if in host computation (defining op and user
     // in same region).
     bool in_same_region =
@@ -508,6 +745,9 @@ void MoveOpsToHost(const llvm::SmallSetVector<Operation*, 4>& clustered_ops,
                    const llvm::SmallSetVector<Value, 4>& external_outputs,
                    Operation* insertion_point, Value compilation_key,
                    Value device_ordinal, int& communication_key_index) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_23(mht_23_v, 748, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "MoveOpsToHost");
+
   OpBuilder builder(insertion_point);
   Operation& op = *clustered_ops.back();
   std::string args_communication_key =
@@ -592,6 +832,9 @@ LogicalResult MoveOpsToHost(tf_device::ClusterOp tpu_cluster, Block* src,
                             Operation* insertion_point, Value compilation_key,
                             Value device_ordinal,
                             int& communication_key_index) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_24(mht_24_v, 835, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "MoveOpsToHost");
+
   // Contains all of the outside compiled operations that should be moved to the
   // host using a single `_XlaHostComputeMlir` op.  This should only contain a
   // single op except in the case where some of the input/output shapes are
@@ -647,6 +890,9 @@ LogicalResult MoveOpsToHost(tf_device::ClusterOp tpu_cluster, Block* src,
 LogicalResult DecomposeControlFlow(tf_device::ClusterOp tpu_cluster,
                                    Value compilation_key, Value device_ordinal,
                                    int& communication_key_index) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_25(mht_25_v, 893, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "DecomposeControlFlow");
+
   auto result = tpu_cluster.GetBody().walk([&](Operation* op) {
     if (auto if_op = llvm::dyn_cast<TF::IfRegionOp>(op)) {
       if (!HasOutsideCompilationNested(op)) return WalkResult::advance();
@@ -708,6 +954,9 @@ LogicalResult DecomposeControlFlow(tf_device::ClusterOp tpu_cluster,
 // only be run after all outside compiled ops have been moved to
 // `host_launch_op`.
 void RemoveOutsideCompilation(tf_device::LaunchOp host_launch_op) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_26(mht_26_v, 957, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "RemoveOutsideCompilation");
+
   host_launch_op.GetBody().walk([&](Operation* op) {
     if (op->hasAttrOfType<StringAttr>(kXlaOutsideCompilationAttr)) {
       op->removeAttr(
@@ -722,6 +971,9 @@ void RemoveOutsideCompilation(tf_device::LaunchOp host_launch_op) {
 LogicalResult CreateParallelExecuteForOutsideCompilation(
     ModuleOp module, tf_device::ClusterOp tpu_cluster,
     llvm::StringRef host_device) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_27(mht_27_v, 974, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "CreateParallelExecuteForOutsideCompilation");
+
   OpBuilder builder(tpu_cluster);
   // Create parallel_execute regions, one for the host computation for outside
   // compilation and the second for the original TPU cluster computation.
@@ -792,6 +1044,9 @@ LogicalResult CreateParallelExecuteForOutsideCompilation(
 }
 
 void TPUExtractOutsideCompilation::runOnOperation() {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_extract_outside_compilationDTcc mht_28(mht_28_v, 1047, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_extract_outside_compilation.cc", "TPUExtractOutsideCompilation::runOnOperation");
+
   // Get runtime devices information from the closest parent module.
   auto module = getOperation();
   mlir::TF::RuntimeDevices devices;

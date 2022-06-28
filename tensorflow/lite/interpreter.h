@@ -17,6 +17,174 @@ limitations under the License.
 /// See context.h for the API for defining operations (TfLiteRegistration).
 #ifndef TENSORFLOW_LITE_INTERPRETER_H_
 #define TENSORFLOW_LITE_INTERPRETER_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSinterpreterDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSinterpreterDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <stddef.h>
 #include <stdint.h>
@@ -70,17 +238,26 @@ class InterpreterOptions {
   InterpreterOptions()
       : experimental_preserve_all_tensors_(false),
         experimental_ensure_dynamic_tensors_are_released_(false),
-        experimental_dynamic_allocation_for_large_tensors_(0) {}
+        experimental_dynamic_allocation_for_large_tensors_(0) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_0(mht_0_v, 242, "", "./tensorflow/lite/interpreter.h", "InterpreterOptions");
+}
 
   /// Preserving all intermediates tensors for debugging.
   /// WARNING: This is an experimental API and subject to change.
   void SetPreserveAllTensors(bool value = true) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_1(mht_1_v, 249, "", "./tensorflow/lite/interpreter.h", "SetPreserveAllTensors");
+
     experimental_preserve_all_tensors_ = value;
   }
 
   /// Returns if the `experimental_preserve_all_tensors_` feature is enabled.
   /// WARNING: This is an experimental API and subject to change.
-  bool GetPreserveAllTensors() { return experimental_preserve_all_tensors_; }
+  bool GetPreserveAllTensors() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_2(mht_2_v, 258, "", "./tensorflow/lite/interpreter.h", "GetPreserveAllTensors");
+ return experimental_preserve_all_tensors_; }
 
   /// Force all intermediate dynamic tensors to be released once they are not
   /// used by the model. Please use this configuration with caution, since it
@@ -88,6 +265,9 @@ class InterpreterOptions {
   /// inference speed.
   /// WARNING: This is an experimental API and subject to change.
   void SetEnsureDynamicTensorsAreReleased(bool value = true) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_3(mht_3_v, 268, "", "./tensorflow/lite/interpreter.h", "SetEnsureDynamicTensorsAreReleased");
+
     experimental_ensure_dynamic_tensors_are_released_ = value;
   }
 
@@ -95,6 +275,9 @@ class InterpreterOptions {
   /// is enabled.
   /// WARNING: This is an experimental API and subject to change.
   bool GetEnsureDynamicTensorsAreReleased() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_4(mht_4_v, 278, "", "./tensorflow/lite/interpreter.h", "GetEnsureDynamicTensorsAreReleased");
+
     return experimental_ensure_dynamic_tensors_are_released_;
   }
 
@@ -103,6 +286,9 @@ class InterpreterOptions {
   /// latency impact. The value is used to determine large tensors.
   /// WARNING: This is an experimental API and subject to change.
   void SetDynamicAllocationForLargeTensors(int value) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_5(mht_5_v, 289, "", "./tensorflow/lite/interpreter.h", "SetDynamicAllocationForLargeTensors");
+
     if (value > 0) {
       experimental_dynamic_allocation_for_large_tensors_ = value;
     }
@@ -112,6 +298,9 @@ class InterpreterOptions {
   /// It returns zero if the feature is not enabled.
   /// WARNING: This is an experimental API and subject to change.
   int GetDynamicAllocationForLargeTensors() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_6(mht_6_v, 301, "", "./tensorflow/lite/interpreter.h", "GetDynamicAllocationForLargeTensors");
+
     return experimental_dynamic_allocation_for_large_tensors_;
   }
 
@@ -222,6 +411,11 @@ class Interpreter {
       const std::vector<int>& dims, TfLiteQuantizationParams quantization,
       const char* buffer, size_t bytes,
       const Allocation* allocation = nullptr) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("name: \"" + (name == nullptr ? std::string("nullptr") : std::string((char*)name)) + "\"");
+   mht_7_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_7(mht_7_v, 416, "", "./tensorflow/lite/interpreter.h", "SetTensorParametersReadOnly");
+
     return SetTensorParametersReadOnly(tensor_index, type, name, dims.size(),
                                        dims.data(), quantization, buffer, bytes,
                                        allocation);
@@ -248,6 +442,10 @@ class Interpreter {
       const std::vector<int>& dims, TfLiteQuantizationParams quantization,
       bool is_variable = false,
       const std::vector<int>* dims_signature = nullptr) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("name: \"" + (name == nullptr ? std::string("nullptr") : std::string((char*)name)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_8(mht_8_v, 446, "", "./tensorflow/lite/interpreter.h", "SetTensorParametersReadWrite");
+
     size_t rank_dims_signature = 0;
     const int* dims_signature_pointer = nullptr;
     if (dims_signature) {
@@ -267,38 +465,62 @@ class Interpreter {
   // Functions to access tensor data
 
   /// Read only access to list of inputs.
-  const std::vector<int>& inputs() const { return primary_subgraph().inputs(); }
+  const std::vector<int>& inputs() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_9(mht_9_v, 469, "", "./tensorflow/lite/interpreter.h", "inputs");
+ return primary_subgraph().inputs(); }
 
   /// Return the name of a given input. The given index must be between 0 and
   /// inputs().size().
   const char* GetInputName(int index) const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_10(mht_10_v, 476, "", "./tensorflow/lite/interpreter.h", "GetInputName");
+
     return context_->tensors[inputs()[index]].name;
   }
 
   /// Read only access to list of outputs.
   const std::vector<int>& outputs() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_11(mht_11_v, 484, "", "./tensorflow/lite/interpreter.h", "outputs");
+
     return primary_subgraph().outputs();
   }
 
   /// Read only access to list of variable tensors.
   const std::vector<int>& variables() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_12(mht_12_v, 492, "", "./tensorflow/lite/interpreter.h", "variables");
+
     return primary_subgraph().variables();
   }
 
   /// Return the name of a given output. The given index must be between 0 and
   /// outputs().size().
   const char* GetOutputName(int index) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_13(mht_13_v, 501, "", "./tensorflow/lite/interpreter.h", "GetOutputName");
+
     return context_->tensors[outputs()[index]].name;
   }
 
   /// Return the number of tensors in the model.
-  size_t tensors_size() const { return context_->tensors_size; }
+  size_t tensors_size() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_14(mht_14_v, 509, "", "./tensorflow/lite/interpreter.h", "tensors_size");
+ return context_->tensors_size; }
 
   /// Return the number of ops in the model.
-  size_t nodes_size() const { return primary_subgraph().nodes_size(); }
+  size_t nodes_size() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_15(mht_15_v, 515, "", "./tensorflow/lite/interpreter.h", "nodes_size");
+ return primary_subgraph().nodes_size(); }
 
   /// WARNING: Experimental interface, subject to change
   const std::vector<int>& execution_plan() const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_16(mht_16_v, 521, "", "./tensorflow/lite/interpreter.h", "execution_plan");
+
     return primary_subgraph().execution_plan();
   }
 
@@ -306,11 +528,17 @@ class Interpreter {
   // TODO(aselle): Create a safe ArrayHandle interface to avoid exposing this
   // read/write access to structure
   TfLiteTensor* tensor(int tensor_index) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_17(mht_17_v, 531, "", "./tensorflow/lite/interpreter.h", "tensor");
+
     return primary_subgraph().tensor(tensor_index);
   }
 
   /// Get an immutable tensor data structure.
   const TfLiteTensor* tensor(int tensor_index) const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_18(mht_18_v, 539, "", "./tensorflow/lite/interpreter.h", "tensor");
+
     return primary_subgraph().tensor(tensor_index);
   }
 
@@ -332,6 +560,9 @@ class Interpreter {
   /// version).
   template <class T>
   T* typed_tensor(int tensor_index) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_19(mht_19_v, 563, "", "./tensorflow/lite/interpreter.h", "typed_tensor");
+
     if (TfLiteTensor* tensor_ptr = tensor(tensor_index)) {
       if (tensor_ptr->type == typeToTfLiteType<T>()) {
         return reinterpret_cast<T*>(tensor_ptr->data.raw);
@@ -344,6 +575,9 @@ class Interpreter {
   /// version).
   template <class T>
   const T* typed_tensor(int tensor_index) const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_20(mht_20_v, 578, "", "./tensorflow/lite/interpreter.h", "typed_tensor");
+
     if (const TfLiteTensor* tensor_ptr = tensor(tensor_index)) {
       if (tensor_ptr->type == typeToTfLiteType<T>()) {
         return reinterpret_cast<const T*>(tensor_ptr->data.raw);
@@ -381,6 +615,10 @@ class Interpreter {
   /// 'signature_key'.
   /// If invalid name passed, -1 will be returned.
   int GetSubgraphIndexFromSignature(const char* signature_key) const {
+   std::vector<std::string> mht_21_v;
+   mht_21_v.push_back("signature_key: \"" + (signature_key == nullptr ? std::string("nullptr") : std::string((char*)signature_key)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_21(mht_21_v, 619, "", "./tensorflow/lite/interpreter.h", "GetSubgraphIndexFromSignature");
+
     for (const auto& signature : signature_defs_) {
       if (signature.signature_key == signature_key) {
         return signature.subgraph_index;
@@ -423,6 +661,11 @@ class Interpreter {
   /// Returns nullptr if not found.
   TfLiteTensor* input_tensor_by_signature(const char* signature_input_name,
                                           const char* signature_key) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("signature_input_name: \"" + (signature_input_name == nullptr ? std::string("nullptr") : std::string((char*)signature_input_name)) + "\"");
+   mht_22_v.push_back("signature_key: \"" + (signature_key == nullptr ? std::string("nullptr") : std::string((char*)signature_key)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_22(mht_22_v, 666, "", "./tensorflow/lite/interpreter.h", "input_tensor_by_signature");
+
     const int subgraph_index = GetSubgraphIndexFromSignature(signature_key);
     if (subgraph_index == -1) return nullptr;
     const int tensor_index = GetTensorIndexFromSignature(
@@ -437,6 +680,11 @@ class Interpreter {
   /// Returns nullptr if not found.
   const TfLiteTensor* output_tensor_by_signature(
       const char* signature_output_name, const char* signature_key) const {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("signature_output_name: \"" + (signature_output_name == nullptr ? std::string("nullptr") : std::string((char*)signature_output_name)) + "\"");
+   mht_23_v.push_back("signature_key: \"" + (signature_key == nullptr ? std::string("nullptr") : std::string((char*)signature_key)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_23(mht_23_v, 685, "", "./tensorflow/lite/interpreter.h", "output_tensor_by_signature");
+
     const int subgraph_index = GetSubgraphIndexFromSignature(signature_key);
     if (subgraph_index == -1) return nullptr;
     const int tensor_index = GetTensorIndexFromSignature(
@@ -447,11 +695,17 @@ class Interpreter {
 
   /// Return a mutable pointer to the given input tensor. The given index must
   /// be between 0 and inputs().size().
-  TfLiteTensor* input_tensor(size_t index) { return tensor(inputs()[index]); }
+  TfLiteTensor* input_tensor(size_t index) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_24(mht_24_v, 699, "", "./tensorflow/lite/interpreter.h", "input_tensor");
+ return tensor(inputs()[index]); }
 
   /// Return an immutable pointer to the given input tensor. The given index
   /// must be between 0 and inputs().size().
   const TfLiteTensor* input_tensor(size_t index) const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_25(mht_25_v, 706, "", "./tensorflow/lite/interpreter.h", "input_tensor");
+
     return tensor(inputs()[index]);
   }
 
@@ -459,6 +713,9 @@ class Interpreter {
   /// index must be between 0 and inputs().size().
   template <class T>
   T* typed_input_tensor(int index) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_26(mht_26_v, 716, "", "./tensorflow/lite/interpreter.h", "typed_input_tensor");
+
     return typed_tensor<T>(inputs()[index]);
   }
 
@@ -466,16 +723,25 @@ class Interpreter {
   /// given index must be between 0 and inputs().size().
   template <class T>
   const T* typed_input_tensor(int index) const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_27(mht_27_v, 726, "", "./tensorflow/lite/interpreter.h", "typed_input_tensor");
+
     return typed_tensor<T>(inputs()[index]);
   }
 
   /// Return a mutable pointer to the given output tensor. The given index must
   /// be between 0 and outputs().size().
-  TfLiteTensor* output_tensor(size_t index) { return tensor(outputs()[index]); }
+  TfLiteTensor* output_tensor(size_t index) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_28(mht_28_v, 735, "", "./tensorflow/lite/interpreter.h", "output_tensor");
+ return tensor(outputs()[index]); }
 
   /// Return an immutable pointer to the given output tensor. The given index
   /// must be between 0 and outputs().size().
   const TfLiteTensor* output_tensor(size_t index) const {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_29(mht_29_v, 742, "", "./tensorflow/lite/interpreter.h", "output_tensor");
+
     return tensor(outputs()[index]);
   }
 
@@ -483,6 +749,9 @@ class Interpreter {
   /// index must be between 0 and outputs().size().
   template <class T>
   T* typed_output_tensor(int index) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_30(mht_30_v, 752, "", "./tensorflow/lite/interpreter.h", "typed_output_tensor");
+
     return typed_tensor<T>(outputs()[index]);
   }
 
@@ -490,6 +759,9 @@ class Interpreter {
   /// given index must be between 0 and outputs().size().
   template <class T>
   const T* typed_output_tensor(int index) const {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_31(mht_31_v, 762, "", "./tensorflow/lite/interpreter.h", "typed_output_tensor");
+
     return typed_tensor<T>(outputs()[index]);
   }
 
@@ -567,6 +839,9 @@ class Interpreter {
   /// Get the half precision flag.
   /// WARNING: This is an experimental API and subject to change.
   bool GetAllowFp16PrecisionForFp32() const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_32(mht_32_v, 842, "", "./tensorflow/lite/interpreter.h", "GetAllowFp16PrecisionForFp32");
+
     return context_->allow_fp32_relax_to_fp16;
   }
 
@@ -633,6 +908,9 @@ class Interpreter {
   /// it might require to copy the data from delegate buffer to raw memory.
   /// WARNING: This is an experimental API and subject to change.
   TfLiteStatus EnsureTensorDataIsReadable(int tensor_index) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_33(mht_33_v, 911, "", "./tensorflow/lite/interpreter.h", "EnsureTensorDataIsReadable");
+
     return primary_subgraph().EnsureTensorDataIsReadable(tensor_index);
   }
 
@@ -687,6 +965,9 @@ class Interpreter {
   /// data from buffer handle to CPU memory.
   /// WARNING: This is an experimental API and subject to change.
   void SetAllowBufferHandleOutput(bool allow_buffer_handle_output) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_34(mht_34_v, 968, "", "./tensorflow/lite/interpreter.h", "SetAllowBufferHandleOutput");
+
     allow_buffer_handle_output_ = allow_buffer_handle_output;
   }
 
@@ -700,6 +981,9 @@ class Interpreter {
   /// Retrieve an operator's description of its work, for profiling purposes.
   const char* OpProfilingString(const TfLiteRegistration& op_reg,
                                 const TfLiteNode* node) const {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_35(mht_35_v, 984, "", "./tensorflow/lite/interpreter.h", "OpProfilingString");
+
     if (op_reg.profiling_string == nullptr) return nullptr;
     return op_reg.profiling_string(context_, node);
   }
@@ -748,6 +1032,9 @@ class Interpreter {
   /// Get a pointer to a subgraph if in bounds.
   /// WARNING: This is an experimental API and subject to change.
   const Subgraph* subgraph(int subgraph_index) const {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_36(mht_36_v, 1035, "", "./tensorflow/lite/interpreter.h", "subgraph");
+
     if (subgraph_index < 0 ||
         static_cast<size_t>(subgraph_index) >= subgraphs_size()) {
       return nullptr;
@@ -757,23 +1044,35 @@ class Interpreter {
 
   /// WARNING: This is an experimental API and subject to change.
   Subgraph* subgraph(int subgraph_index) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_37(mht_37_v, 1047, "", "./tensorflow/lite/interpreter.h", "subgraph");
+
     return const_cast<Subgraph*>(
         static_cast<const Interpreter*>(this)->subgraph(subgraph_index));
   }
 
   /// WARNING: Experimental interface, subject to change
   Subgraph& primary_subgraph() {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_38(mht_38_v, 1056, "", "./tensorflow/lite/interpreter.h", "primary_subgraph");
+
     return *subgraphs_.front();  /// Safe as subgraphs_ always has 1 entry.
   }
 
   /// WARNING: Experimental interface, subject to change
   const Subgraph& primary_subgraph() const {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_39(mht_39_v, 1064, "", "./tensorflow/lite/interpreter.h", "primary_subgraph");
+
     return *subgraphs_.front();  // Safe as subgraphs_ always has 1 entry.
   }
 
   /// WARNING: Experimental interface, subject to change
   // Get the error reporter associated with this interpreter.
-  ErrorReporter* error_reporter() const { return error_reporter_; }
+  ErrorReporter* error_reporter() const {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_40(mht_40_v, 1073, "", "./tensorflow/lite/interpreter.h", "error_reporter");
+ return error_reporter_; }
 
 #endif  // DOXYGEN_SKIP
 
@@ -798,6 +1097,11 @@ class Interpreter {
   int GetTensorIndexFromSignature(const char* signature_tensor_name,
                                   const char* signature_key,
                                   bool is_input) const {
+   std::vector<std::string> mht_41_v;
+   mht_41_v.push_back("signature_tensor_name: \"" + (signature_tensor_name == nullptr ? std::string("nullptr") : std::string((char*)signature_tensor_name)) + "\"");
+   mht_41_v.push_back("signature_key: \"" + (signature_key == nullptr ? std::string("nullptr") : std::string((char*)signature_key)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_41(mht_41_v, 1102, "", "./tensorflow/lite/interpreter.h", "GetTensorIndexFromSignature");
+
     // Iterate directly and don't use other methods to avoid extra allocation.
     for (const auto& signature : signature_defs_) {
       if (signature.signature_key != signature_key) continue;
@@ -858,6 +1162,9 @@ class Interpreter {
 
   // Sets the list of signature defs in the model.
   void SetSignatureDef(std::vector<internal::SignatureDef> signature_defs) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreterDTh mht_42(mht_42_v, 1165, "", "./tensorflow/lite/interpreter.h", "SetSignatureDef");
+
     signature_defs_ = std::move(signature_defs);
   }
 

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_simplifierDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_simplifierDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_simplifierDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,6 +215,9 @@ namespace {
 // A computation with array type that only contains parameters and tuples is
 // considered emtpy.
 bool ComputationIsEmptyWithArrayRoot(const HloComputation* computation) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_simplifierDTcc mht_0(mht_0_v, 218, "", "./tensorflow/compiler/xla/service/conditional_simplifier.cc", "ComputationIsEmptyWithArrayRoot");
+
   bool empty_operations = absl::c_all_of(
       computation->MakeInstructionPostOrder(), [](const HloInstruction* inst) {
         return inst->opcode() == HloOpcode::kTuple ||
@@ -158,6 +329,9 @@ StatusOr<bool> TryRemoveUnusedConditionalOperands(
 // Replaces the roots of all branches with an empty tuple if the conditional op
 // has no users. Returns true if anything is changed.
 bool ReplaceRootWithEmptyTupleIfNoUsers(HloInstruction* conditional_op) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_simplifierDTcc mht_1(mht_1_v, 332, "", "./tensorflow/compiler/xla/service/conditional_simplifier.cc", "ReplaceRootWithEmptyTupleIfNoUsers");
+
   const Shape empty_tuple = ShapeUtil::MakeTupleShape({});
   if (conditional_op->user_count() == 0 &&
       conditional_op != conditional_op->parent()->root_instruction() &&
@@ -203,6 +377,9 @@ bool ReplaceRootWithEmptyTupleIfNoUsers(HloInstruction* conditional_op) {
 //        get-tuple-element, index=0
 //
 bool RemoveUnusedTupleElements(HloInstruction* conditional_op) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_simplifierDTcc mht_2(mht_2_v, 380, "", "./tensorflow/compiler/xla/service/conditional_simplifier.cc", "RemoveUnusedTupleElements");
+
   if (conditional_op->user_count() == 0 ||
       conditional_op == conditional_op->parent()->root_instruction() ||
       !conditional_op->shape().IsTuple()) {
@@ -355,6 +532,9 @@ bool RemoveUnusedTupleElements(HloInstruction* conditional_op) {
 //              tuple
 //            (f32, f32)
 bool MergeDuplicateTupleElements(HloInstruction* conditional) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_simplifierDTcc mht_3(mht_3_v, 535, "", "./tensorflow/compiler/xla/service/conditional_simplifier.cc", "MergeDuplicateTupleElements");
+
   if (conditional->user_count() == 0 ||
       conditional == conditional->parent()->root_instruction() ||
       !conditional->shape().IsTuple()) {
@@ -397,6 +577,9 @@ bool MergeDuplicateTupleElements(HloInstruction* conditional) {
   // In this case, vectorize(1), vectorize(2) are equal and index 1, 2 are
   // identical.
   auto vectorize_branches_root_tuple_ith_operand = [conditional](int64_t i) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_simplifierDTcc mht_4(mht_4_v, 580, "", "./tensorflow/compiler/xla/service/conditional_simplifier.cc", "lambda");
+
     std::vector<const HloInstruction*> operands;
     absl::c_transform(conditional->branch_computations(),
                       std::back_inserter(operands),
@@ -408,6 +591,9 @@ bool MergeDuplicateTupleElements(HloInstruction* conditional) {
 
   auto replace_root_user_gte_jth_with_gte_ith = [conditional](int64_t i,
                                                               int64_t j) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_simplifierDTcc mht_5(mht_5_v, 594, "", "./tensorflow/compiler/xla/service/conditional_simplifier.cc", "lambda");
+
     bool changed = false;
     for (HloInstruction* user : conditional->users()) {
       if (user->tuple_index() == j) {
@@ -443,6 +629,9 @@ bool MergeDuplicateTupleElements(HloInstruction* conditional) {
 // Returns true if it made a change to the graph.
 StatusOr<bool> ConditionalSimplifier::TryRemoveConditional(
     HloInstruction* conditional) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_simplifierDTcc mht_6(mht_6_v, 632, "", "./tensorflow/compiler/xla/service/conditional_simplifier.cc", "ConditionalSimplifier::TryRemoveConditional");
+
   CHECK_EQ(conditional->opcode(), HloOpcode::kConditional);
   // Do not remove conditionals that contain side-effecting instructions or
   // have control predecessors/successors in either true/false computation.
@@ -457,6 +646,9 @@ StatusOr<bool> ConditionalSimplifier::TryRemoveConditional(
   // We can always inline a 1-branch conditional due to default branch fallback.
   auto computation = conditional->parent();
   auto create_call = [&](int64_t branch) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_simplifierDTcc mht_7(mht_7_v, 649, "", "./tensorflow/compiler/xla/service/conditional_simplifier.cc", "lambda");
+
     auto call = computation->AddInstruction(HloInstruction::CreateCall(
         conditional->shape(), {conditional->mutable_operand(1 + branch)},
         conditional->branch_computation(branch)));
@@ -489,6 +681,9 @@ StatusOr<bool> ConditionalSimplifier::TryRemoveConditional(
   }
 
   auto instruction_is_expensive = [](const HloInstruction* hlo) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_simplifierDTcc mht_8(mht_8_v, 684, "", "./tensorflow/compiler/xla/service/conditional_simplifier.cc", "lambda");
+
     switch (hlo->opcode()) {
       case HloOpcode::kBroadcast:
       case HloOpcode::kConcatenate:
@@ -530,6 +725,9 @@ StatusOr<bool> ConditionalSimplifier::TryRemoveConditional(
   HloInstruction* true_call_op = create_call(0);
   HloInstruction* false_call_op = create_call(1);
   auto condition_broadcast = [&](const Shape& shape) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_simplifierDTcc mht_9(mht_9_v, 728, "", "./tensorflow/compiler/xla/service/conditional_simplifier.cc", "lambda");
+
     if (ShapeUtil::IsScalar(shape)) {
       return conditional->mutable_operand(0);
     }
@@ -540,12 +738,18 @@ StatusOr<bool> ConditionalSimplifier::TryRemoveConditional(
   };
 
   auto gte = [&](HloInstruction* hlo, int64_t i) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_simplifierDTcc mht_10(mht_10_v, 741, "", "./tensorflow/compiler/xla/service/conditional_simplifier.cc", "lambda");
+
     return computation->AddInstruction(HloInstruction::CreateGetTupleElement(
         hlo->shape().tuple_shapes(i), hlo, i));
   };
 
   std::function<HloInstruction*(HloInstruction*, HloInstruction*)> select =
       [&](HloInstruction* t, HloInstruction* f) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_simplifierDTcc mht_11(mht_11_v, 750, "", "./tensorflow/compiler/xla/service/conditional_simplifier.cc", "lambda");
+
         if (f->shape().IsToken()) {
           return computation->AddInstruction(
               HloInstruction::CreateAfterAll({t, f}));
@@ -576,6 +780,9 @@ StatusOr<bool> ConditionalSimplifier::TryRemoveConditional(
 
 static bool ComputationCallsChannelInstructions(
     const HloComputation& computation) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_simplifierDTcc mht_12(mht_12_v, 783, "", "./tensorflow/compiler/xla/service/conditional_simplifier.cc", "ComputationCallsChannelInstructions");
+
   std::vector<const HloComputation*> worklist = {&computation};
   while (!worklist.empty()) {
     const HloComputation* work = worklist.back();
@@ -594,6 +801,9 @@ static bool ComputationCallsChannelInstructions(
 
 static bool InstructionCallsChannelInstructions(
     const HloInstruction& instruction) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_simplifierDTcc mht_13(mht_13_v, 804, "", "./tensorflow/compiler/xla/service/conditional_simplifier.cc", "InstructionCallsChannelInstructions");
+
   for (const HloComputation* called_computation :
        instruction.called_computations()) {
     if (ComputationCallsChannelInstructions(*called_computation)) {
@@ -604,6 +814,9 @@ static bool InstructionCallsChannelInstructions(
 }
 
 StatusOr<bool> ConditionalSimplifier::Run(HloModule* module) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_simplifierDTcc mht_14(mht_14_v, 817, "", "./tensorflow/compiler/xla/service/conditional_simplifier.cc", "ConditionalSimplifier::Run");
+
   XLA_VLOG_LINES(
       3, "ConditionalSimplifier::Run(), before:\n" + module->ToString());
   bool changed = false;

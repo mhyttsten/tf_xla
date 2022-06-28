@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSmini_benchmark_implementationDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSmini_benchmark_implementationDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSmini_benchmark_implementationDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,6 +218,12 @@ class MemoizedBestAccelerationSelector {
         number_of_events_in_memoized_call_(0),
         memoised_result_(nullptr),
         storage_(storage_path, tflite::DefaultErrorReporter()) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("model_namespace: \"" + model_namespace + "\"");
+   mht_0_v.push_back("model_id: \"" + model_id + "\"");
+   mht_0_v.push_back("storage_path: \"" + storage_path + "\"");
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSmini_benchmark_implementationDTcc mht_0(mht_0_v, 224, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/mini_benchmark_implementation.cc", "MemoizedBestAccelerationSelector");
+
     storage_.Read();
 
     TFLITE_LOG_PROD_ONCE(TFLITE_LOG_INFO,
@@ -82,6 +256,9 @@ class MemoizedBestAccelerationSelector {
 
   ComputeSettingsT GetBestAcceleration(
       const std::vector<const BenchmarkEvent*>& events) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSmini_benchmark_implementationDTcc mht_1(mht_1_v, 259, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/mini_benchmark_implementation.cc", "GetBestAcceleration");
+
     ComputeSettingsT result;
     if (events.empty()) {
       TFLITE_LOG_PROD_ONCE(
@@ -127,11 +304,17 @@ class MemoizedBestAccelerationSelector {
   // indicating the acceleration configuration has run successfully and produced
   // correct results.
   int NumEventsUsedInBestAcceleration() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSmini_benchmark_implementationDTcc mht_2(mht_2_v, 307, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/mini_benchmark_implementation.cc", "NumEventsUsedInBestAcceleration");
+
     return number_of_events_in_memoized_call_;
   }
 
  private:
   void Memoize(const TFLiteSettings* acceleration_settings, int num_events) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSmini_benchmark_implementationDTcc mht_3(mht_3_v, 315, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/mini_benchmark_implementation.cc", "Memoize");
+
     number_of_events_in_memoized_call_ = num_events;
     memoised_result_buffer_.Clear();
     flatbuffers::Offset<tflite::TFLiteSettings> tflite_setting_offset = 0;
@@ -154,6 +337,9 @@ class MemoizedBestAccelerationSelector {
   // Stores the BestAcceleration to persistent storage to handle restart.
   void StoreBestAcceleration(const BenchmarkEvent* min_latency_event,
                              int64_t min_latency) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSmini_benchmark_implementationDTcc mht_4(mht_4_v, 340, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/mini_benchmark_implementation.cc", "StoreBestAcceleration");
+
     flatbuffers::FlatBufferBuilder fbb;
     tflite::BenchmarkEventT min_latency_ev_copy;
     min_latency_event->UnPackTo(&min_latency_ev_copy);
@@ -167,6 +353,9 @@ class MemoizedBestAccelerationSelector {
 
   const BenchmarkEvent* FindMinLatencyEvent(
       const std::vector<const BenchmarkEvent*>& events, int64_t& min_latency) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSmini_benchmark_implementationDTcc mht_5(mht_5_v, 356, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/mini_benchmark_implementation.cc", "FindMinLatencyEvent");
+
     const BenchmarkEvent* min_latency_event = nullptr;
     min_latency = -1;
     for (const BenchmarkEvent* ev : events) {
@@ -186,6 +375,9 @@ class MemoizedBestAccelerationSelector {
   }
 
   std::string GetDelegateFromBenchmarkEvent(const BenchmarkEvent* event) const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSmini_benchmark_implementationDTcc mht_6(mht_6_v, 378, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/mini_benchmark_implementation.cc", "GetDelegateFromBenchmarkEvent");
+
     if (event->tflite_settings()->delegate() == Delegate_NNAPI) {
       return "NNAPI";
     }
@@ -204,6 +396,9 @@ class MemoizedBestAccelerationSelector {
   // Returns nullptr if no matching settings is found.
   const TFLiteSettings* FindAccelerationToTestFromMiniBenchmarkEvent(
       const BenchmarkEvent* min_latency_event) const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSmini_benchmark_implementationDTcc mht_7(mht_7_v, 399, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/mini_benchmark_implementation.cc", "FindAccelerationToTestFromMiniBenchmarkEvent");
+
     TFLiteSettingsT event_tflite_settings;
     min_latency_event->tflite_settings()->UnPackTo(&event_tflite_settings);
     for (int i = 0; i < settings_.settings_to_test()->size(); i++) {
@@ -224,6 +419,9 @@ class MemoizedBestAccelerationSelector {
 
   const TFLiteSettings* CreateAccelerationFromBenchmark(
       const BenchmarkEvent* min_latency_event, int64_t min_latency) const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSmini_benchmark_implementationDTcc mht_8(mht_8_v, 422, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/mini_benchmark_implementation.cc", "CreateAccelerationFromBenchmark");
+
     std::string delegate = GetDelegateFromBenchmarkEvent(min_latency_event);
     TFLITE_LOG_PROD_ONCE(
         TFLITE_LOG_INFO,
@@ -261,6 +459,11 @@ class MiniBenchmarkImpl : public MiniBenchmark {
                     const std::string& model_namespace,
                     const std::string& model_id)
       : model_namespace_(model_namespace), model_id_(model_id) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("model_namespace: \"" + model_namespace + "\"");
+   mht_9_v.push_back("model_id: \"" + model_id + "\"");
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSmini_benchmark_implementationDTcc mht_9(mht_9_v, 464, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/mini_benchmark_implementation.cc", "MiniBenchmarkImpl");
+
     // Keep a copy of the passed in 'settings' to simplify the memory
     // management. Otherwise, the 'settings' has to outlast this instance.
     MinibenchmarkSettingsT copy;
@@ -303,6 +506,9 @@ class MiniBenchmarkImpl : public MiniBenchmark {
   }
 
   ComputeSettingsT GetBestAcceleration() override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSmini_benchmark_implementationDTcc mht_10(mht_10_v, 509, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/mini_benchmark_implementation.cc", "GetBestAcceleration");
+
     if (!is_enabled_) return ComputeSettingsT();
     CreateValidatorIfNececessary();
     if (!validator_initialized_) return ComputeSettingsT();
@@ -317,6 +523,9 @@ class MiniBenchmarkImpl : public MiniBenchmark {
   }
 
   void TriggerMiniBenchmark() override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSmini_benchmark_implementationDTcc mht_11(mht_11_v, 526, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/mini_benchmark_implementation.cc", "TriggerMiniBenchmark");
+
     if (!is_enabled_) return;
     CreateValidatorIfNececessary();
     if (!validator_initialized_) return;
@@ -384,12 +593,18 @@ class MiniBenchmarkImpl : public MiniBenchmark {
   }
 
   void SetEventTimeoutForTesting(int64_t timeout_us) override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSmini_benchmark_implementationDTcc mht_12(mht_12_v, 596, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/mini_benchmark_implementation.cc", "SetEventTimeoutForTesting");
+
     event_timeout_us_ = (timeout_us == -1)
                             ? ValidatorRunner::kDefaultEventTimeoutUs
                             : timeout_us;
   }
 
   int NumRemainingAccelerationTests() override {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSmini_benchmark_implementationDTcc mht_13(mht_13_v, 605, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/mini_benchmark_implementation.cc", "NumRemainingAccelerationTests");
+
     // We return -1 when the overall mini-benchmark-related setup isn't properly
     // initialized.
     if (!is_enabled_ || !validator_initialized_) return -1;
@@ -412,6 +627,9 @@ class MiniBenchmarkImpl : public MiniBenchmark {
  private:
   static std::string LocalEventStorageFileName(
       const MinibenchmarkSettings& settings) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSmini_benchmark_implementationDTcc mht_14(mht_14_v, 630, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/mini_benchmark_implementation.cc", "LocalEventStorageFileName");
+
     if (settings.storage_paths() == nullptr ||
         settings.storage_paths()->storage_file_path() == nullptr) {
       return "mini_benchmark.default.extra.fb";
@@ -420,6 +638,9 @@ class MiniBenchmarkImpl : public MiniBenchmark {
   }
 
   bool BenchmarkIsEnabled() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSmini_benchmark_implementationDTcc mht_15(mht_15_v, 641, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/mini_benchmark_implementation.cc", "BenchmarkIsEnabled");
+
     if (settings_->settings_to_test() == nullptr) return false;
     if (settings_->settings_to_test()->size() <= 0) return false;
 
@@ -457,6 +678,9 @@ class MiniBenchmarkImpl : public MiniBenchmark {
 
   MinibenchmarkStatus GetNnApiSlPointerIfPresent(
       const NnApiSLDriverImplFL5** nnapi_sl) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSmini_benchmark_implementationDTcc mht_16(mht_16_v, 681, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/mini_benchmark_implementation.cc", "GetNnApiSlPointerIfPresent");
+
     *nnapi_sl = nullptr;
     const auto& settings_to_test = *settings_->settings_to_test();
     for (const auto* setting_to_test : settings_to_test) {
@@ -476,6 +700,9 @@ class MiniBenchmarkImpl : public MiniBenchmark {
   }
 
   void LogInitializationFailure(MinibenchmarkStatus status) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSmini_benchmark_implementationDTcc mht_17(mht_17_v, 703, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/mini_benchmark_implementation.cc", "LogInitializationFailure");
+
     if (!initialization_failure_logged_) {
       flatbuffers::FlatBufferBuilder fbb;
       storage_->Append(&fbb, CreateMiniBenchmarkEvent(
@@ -488,6 +715,9 @@ class MiniBenchmarkImpl : public MiniBenchmark {
   }
 
   void CreateValidatorIfNececessary() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSmini_benchmarkPSmini_benchmark_implementationDTcc mht_18(mht_18_v, 718, "", "./tensorflow/lite/experimental/acceleration/mini_benchmark/mini_benchmark_implementation.cc", "CreateValidatorIfNececessary");
+
     if (validator_) return;
 
     const NnApiSLDriverImplFL5* nnapi_sl;

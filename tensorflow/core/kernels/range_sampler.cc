@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,10 +201,16 @@ namespace tensorflow {
 using gtl::ArraySlice;
 using gtl::MutableArraySlice;
 
-RangeSampler::~RangeSampler() {}
+RangeSampler::~RangeSampler() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_0(mht_0_v, 205, "", "./tensorflow/core/kernels/range_sampler.cc", "RangeSampler::~RangeSampler");
+}
 
 void RangeSampler::SampleBatch(random::SimplePhilox* rnd, bool unique,
                                gtl::MutableArraySlice<int64_t> batch) const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_1(mht_1_v, 211, "", "./tensorflow/core/kernels/range_sampler.cc", "RangeSampler::SampleBatch");
+
   SampleBatchGetExpectedCount(
       rnd, unique, batch, gtl::MutableArraySlice<float>(),
       gtl::ArraySlice<int64_t>(), gtl::MutableArraySlice<float>());
@@ -48,6 +222,9 @@ void RangeSampler::SampleBatchGetExpectedCount(
     gtl::MutableArraySlice<float> batch_expected_count,
     gtl::ArraySlice<int64_t> extras,
     gtl::MutableArraySlice<float> extras_expected_count) const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_2(mht_2_v, 225, "", "./tensorflow/core/kernels/range_sampler.cc", "RangeSampler::SampleBatchGetExpectedCount");
+
   SampleBatchGetExpectedCountAvoid(rnd, unique, batch, batch_expected_count,
                                    extras, extras_expected_count,
                                    gtl::ArraySlice<int64_t>());
@@ -66,6 +243,9 @@ namespace {
 // distinct values is _always_ num_tries, the probability that the value
 // is in a batch is (1 - (1-p)^num_tries)
 static float ExpectedCountHelper(float p, int batch_size, int num_tries) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_3(mht_3_v, 246, "", "./tensorflow/core/kernels/range_sampler.cc", "ExpectedCountHelper");
+
   if (num_tries == batch_size) {
     // This shortcut will always be taken if unique=false
     return p * batch_size;
@@ -81,6 +261,9 @@ void RangeSampler::SampleBatchGetExpectedCountAvoid(
     MutableArraySlice<float> batch_expected_count, ArraySlice<int64_t> extras,
     MutableArraySlice<float> extras_expected_count,
     ArraySlice<int64_t> avoided_values) const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_4(mht_4_v, 264, "", "./tensorflow/core/kernels/range_sampler.cc", "RangeSampler::SampleBatchGetExpectedCountAvoid");
+
   const int batch_size = batch.size();
   int num_tries;
 
@@ -121,13 +304,19 @@ void RangeSampler::SampleBatchGetExpectedCountAvoid(
   }
 }
 
-AllSampler::AllSampler(int64_t range) : RangeSampler(range) {}
+AllSampler::AllSampler(int64_t range) : RangeSampler(range) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_5(mht_5_v, 308, "", "./tensorflow/core/kernels/range_sampler.cc", "AllSampler::AllSampler");
+}
 
 void AllSampler::SampleBatchGetExpectedCountAvoid(
     random::SimplePhilox* rnd, bool unique, MutableArraySlice<int64_t> batch,
     MutableArraySlice<float> batch_expected_count, ArraySlice<int64_t> extras,
     MutableArraySlice<float> extras_expected_count,
     ArraySlice<int64_t> avoided_values) const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_6(mht_6_v, 317, "", "./tensorflow/core/kernels/range_sampler.cc", "AllSampler::SampleBatchGetExpectedCountAvoid");
+
   const int batch_size = batch.size();
   CHECK_EQ(range_, batch_size);
   for (int i = 0; i < batch_size; i++) {
@@ -147,18 +336,33 @@ void AllSampler::SampleBatchGetExpectedCountAvoid(
 }
 
 UniformSampler::UniformSampler(int64_t range)
-    : RangeSampler(range), inv_range_(1.0 / range) {}
+    : RangeSampler(range), inv_range_(1.0 / range) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_7(mht_7_v, 340, "", "./tensorflow/core/kernels/range_sampler.cc", "UniformSampler::UniformSampler");
+}
 
 int64_t UniformSampler::Sample(random::SimplePhilox* rnd) const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_8(mht_8_v, 345, "", "./tensorflow/core/kernels/range_sampler.cc", "UniformSampler::Sample");
+
   return rnd->Uniform64(range_);
 }
 
-float UniformSampler::Probability(int64_t value) const { return inv_range_; }
+float UniformSampler::Probability(int64_t value) const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_9(mht_9_v, 352, "", "./tensorflow/core/kernels/range_sampler.cc", "UniformSampler::Probability");
+ return inv_range_; }
 
 LogUniformSampler::LogUniformSampler(int64_t range)
-    : RangeSampler(range), log_range_(log1p(range)) {}
+    : RangeSampler(range), log_range_(log1p(range)) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_10(mht_10_v, 358, "", "./tensorflow/core/kernels/range_sampler.cc", "LogUniformSampler::LogUniformSampler");
+}
 
 int64_t LogUniformSampler::Sample(random::SimplePhilox* rnd) const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_11(mht_11_v, 363, "", "./tensorflow/core/kernels/range_sampler.cc", "LogUniformSampler::Sample");
+
   const int64_t value =
       static_cast<int64_t>(exp(rnd->RandDouble() * log_range_)) - 1;
   DCHECK_GE(value, 0);
@@ -170,6 +374,9 @@ int64_t LogUniformSampler::Sample(random::SimplePhilox* rnd) const {
 }
 
 float LogUniformSampler::Probability(int64_t value) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_12(mht_12_v, 377, "", "./tensorflow/core/kernels/range_sampler.cc", "LogUniformSampler::Probability");
+
   // value is returned iff the call to UniformDouble(log_range_) in the
   // Sample() function returns a value between log(value + 1)
   // and log(value + 2).   The probability of this is:
@@ -180,18 +387,30 @@ float LogUniformSampler::Probability(int64_t value) const {
 
 ThreadUnsafeUnigramSampler::ThreadUnsafeUnigramSampler(int64_t range)
     : RangeSampler(range), picker_(range) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_13(mht_13_v, 390, "", "./tensorflow/core/kernels/range_sampler.cc", "ThreadUnsafeUnigramSampler::ThreadUnsafeUnigramSampler");
+
   CHECK_LT(range, kint32max);
 }
 
 int64_t ThreadUnsafeUnigramSampler::Sample(random::SimplePhilox* rnd) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_14(mht_14_v, 397, "", "./tensorflow/core/kernels/range_sampler.cc", "ThreadUnsafeUnigramSampler::Sample");
+
   return picker_.Pick(rnd);
 }
 
 float ThreadUnsafeUnigramSampler::Probability(int64_t value) const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_15(mht_15_v, 404, "", "./tensorflow/core/kernels/range_sampler.cc", "ThreadUnsafeUnigramSampler::Probability");
+
   return static_cast<float>(picker_.get_weight(value)) / picker_.total_weight();
 }
 
 void ThreadUnsafeUnigramSampler::Update(ArraySlice<int64_t> values) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_16(mht_16_v, 411, "", "./tensorflow/core/kernels/range_sampler.cc", "ThreadUnsafeUnigramSampler::Update");
+
   int num_updates = std::min(static_cast<int>(values.size()),
                              kint32max - picker_.total_weight());
   for (int i = 0; i < num_updates; i++) {
@@ -203,15 +422,24 @@ void ThreadUnsafeUnigramSampler::Update(ArraySlice<int64_t> values) {
 // Thread-safe unigram sampler
 UnigramSampler::UnigramSampler(int64_t range)
     : RangeSampler(range), unsafe_sampler_(range) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_17(mht_17_v, 425, "", "./tensorflow/core/kernels/range_sampler.cc", "UnigramSampler::UnigramSampler");
+
   CHECK_LT(range, kint32max);
 }
 
 int64_t UnigramSampler::Sample(random::SimplePhilox* rnd) const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_18(mht_18_v, 432, "", "./tensorflow/core/kernels/range_sampler.cc", "UnigramSampler::Sample");
+
   tf_shared_lock lock(mu_);
   return unsafe_sampler_.Sample(rnd);
 }
 
 float UnigramSampler::Probability(int64_t value) const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_19(mht_19_v, 440, "", "./tensorflow/core/kernels/range_sampler.cc", "UnigramSampler::Probability");
+
   tf_shared_lock lock(mu_);
   return unsafe_sampler_.Probability(value);
 }
@@ -222,6 +450,9 @@ void UnigramSampler::SampleBatchGetExpectedCountAvoid(
     MutableArraySlice<float> batch_expected_count, ArraySlice<int64_t> extras,
     MutableArraySlice<float> extras_expected_count,
     ArraySlice<int64_t> avoided_values) const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_20(mht_20_v, 453, "", "./tensorflow/core/kernels/range_sampler.cc", "UnigramSampler::SampleBatchGetExpectedCountAvoid");
+
   tf_shared_lock lock(mu_);
   unsafe_sampler_.SampleBatchGetExpectedCountAvoid(
       rnd, unique, batch, batch_expected_count, extras, extras_expected_count,
@@ -229,6 +460,9 @@ void UnigramSampler::SampleBatchGetExpectedCountAvoid(
 }
 
 void UnigramSampler::Update(ArraySlice<int64_t> values) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_21(mht_21_v, 463, "", "./tensorflow/core/kernels/range_sampler.cc", "UnigramSampler::Update");
+
   mutex_lock lock(mu_);
   unsafe_sampler_.Update(values);
 }
@@ -242,6 +476,10 @@ FixedUnigramSampler::FixedUnigramSampler(Env* env, int64_t range,
       total_weight_(0.0),
       num_shards_(num_shards),
       shard_(shard) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("vocab_file: \"" + vocab_file + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_22(mht_22_v, 480, "", "./tensorflow/core/kernels/range_sampler.cc", "FixedUnigramSampler::FixedUnigramSampler");
+
   FillReservedIds(num_reserved_ids);
   // TODO(vanhoucke): make this non-crashing.
   TF_CHECK_OK(LoadFromFile(env, vocab_file, distortion));
@@ -258,6 +496,9 @@ FixedUnigramSampler::FixedUnigramSampler(int64_t range,
       total_weight_(0.0),
       num_shards_(num_shards),
       shard_(shard) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_23(mht_23_v, 499, "", "./tensorflow/core/kernels/range_sampler.cc", "FixedUnigramSampler::FixedUnigramSampler");
+
   FillReservedIds(num_reserved_ids);
   LoadFromUnigrams(unigrams, distortion);
   // TODO(vanhoucke): make this non-crashing.
@@ -266,6 +507,9 @@ FixedUnigramSampler::FixedUnigramSampler(int64_t range,
 }
 
 float FixedUnigramSampler::Probability(int64_t value) const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_24(mht_24_v, 510, "", "./tensorflow/core/kernels/range_sampler.cc", "FixedUnigramSampler::Probability");
+
   if (value < 0 || static_cast<size_t>(value) >= weights_.size()) {
     return 0.0;
   }
@@ -273,10 +517,16 @@ float FixedUnigramSampler::Probability(int64_t value) const {
 }
 
 int64_t FixedUnigramSampler::Sample(random::SimplePhilox* rnd) const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_25(mht_25_v, 520, "", "./tensorflow/core/kernels/range_sampler.cc", "FixedUnigramSampler::Sample");
+
   return dist_sampler_->Sample(rnd);
 }
 
 void FixedUnigramSampler::FillReservedIds(int32_t num_reserved_ids) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_26(mht_26_v, 527, "", "./tensorflow/core/kernels/range_sampler.cc", "FixedUnigramSampler::FillReservedIds");
+
   for (int32_t word_id = 0; word_id < num_reserved_ids; ++word_id) {
     if (word_id % num_shards_ == shard_) weights_.push_back(0.0);
   }
@@ -284,6 +534,10 @@ void FixedUnigramSampler::FillReservedIds(int32_t num_reserved_ids) {
 
 Status FixedUnigramSampler::LoadFromFile(Env* env, const string& vocab_file,
                                          float distortion) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("vocab_file: \"" + vocab_file + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_27(mht_27_v, 538, "", "./tensorflow/core/kernels/range_sampler.cc", "FixedUnigramSampler::LoadFromFile");
+
   std::unique_ptr<RandomAccessFile> file;
   TF_RETURN_IF_ERROR(env->NewRandomAccessFile(vocab_file, &file));
 
@@ -313,6 +567,9 @@ Status FixedUnigramSampler::LoadFromFile(Env* env, const string& vocab_file,
 
 void FixedUnigramSampler::LoadFromUnigrams(const std::vector<float>& unigrams,
                                            float distortion) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSrange_samplerDTcc mht_28(mht_28_v, 570, "", "./tensorflow/core/kernels/range_sampler.cc", "FixedUnigramSampler::LoadFromUnigrams");
+
   int32_t word_id = weights_.size();
   for (float w : unigrams) {
     // Skip entries that do not belong to this shard.

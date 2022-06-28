@@ -194,11 +194,16 @@ cc_library(
         "@com_google_absl//absl/strings",
         "//tensorflow/core:lib",
         "//tensorflow/core/platform",
-    ] + if_not_android([
         "//tensorflow/core/profiler/internal/cpu:traceme_recorder",
         "//tensorflow/core/profiler/utils:time_utils",
-    ]),
+        ]
 )
+
+#    ] + if_not_android([
+#        "//tensorflow/core/profiler/internal/cpu:traceme_recorder",
+#        "//tensorflow/core/profiler/utils:time_utils",
+#    ]),
+
 
 cc_library(
     name = "traceme_encode",

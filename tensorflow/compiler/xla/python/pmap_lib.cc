@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -55,7 +223,10 @@ namespace {
 // for performance.
 struct InputSpec {
   InputSpec(ShardingSpec sharding_spec, py::object indices)
-      : sharding_spec(std::move(sharding_spec)), indices(std::move(indices)) {}
+      : sharding_spec(std::move(sharding_spec)), indices(std::move(indices)) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_0(mht_0_v, 227, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "InputSpec");
+}
   ShardingSpec sharding_spec;
   py::object indices;
 };
@@ -68,7 +239,10 @@ struct ResultSpec {
       : out_aval(std::move(aval)),
         weak_type(py::cast<bool>(out_aval.attr("weak_type"))),
         out_spec(std::move(out_spec)),
-        out_indices(std::move(out_indices)) {}
+        out_indices(std::move(out_indices)) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_1(mht_1_v, 243, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "ResultSpec");
+}
   py::object out_aval;
   bool weak_type;
   ShardingSpec out_spec;
@@ -198,6 +372,9 @@ class PmapFunction {
         cache_miss_(std::move(cache_miss)),
         static_argnums_(std::move(static_argnums)),
         python_shard_arg_fallback_(std::move(python_shard_arg_fallback)) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_2(mht_2_v, 375, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "PmapFunction");
+
     std::sort(static_argnums_.begin(), static_argnums_.end());
 
     function_name_ = py::str(py::getattr(fun_, "__name__", fun));
@@ -216,18 +393,39 @@ class PmapFunction {
   xla::StatusOr<py::object> Call(py::args args, py::kwargs kwargs);
 
   py::object PythonSignature() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_3(mht_3_v, 396, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "PythonSignature");
+
     static const auto* inspect = new py::module(py::module::import("inspect"));
     return inspect->attr("signature")(fun_);
   }
 
-  int cache_size() const { return executables_.size(); }
-  const py::function& fun() const { return fun_; }
-  const py::function& cache_miss() const { return cache_miss_; }
-  const std::string& function_name() const { return function_name_; }
+  int cache_size() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_4(mht_4_v, 404, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "cache_size");
+ return executables_.size(); }
+  const py::function& fun() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_5(mht_5_v, 408, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "fun");
+ return fun_; }
+  const py::function& cache_miss() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_6(mht_6_v, 412, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "cache_miss");
+ return cache_miss_; }
+  const std::string& function_name() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_7(mht_7_v, 416, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "function_name");
+ return function_name_; }
   const py::function& python_shard_arg_fallback() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_8(mht_8_v, 420, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "python_shard_arg_fallback");
+
     return python_shard_arg_fallback_;
   }
-  const std::vector<int>& static_argnums() const { return static_argnums_; }
+  const std::vector<int>& static_argnums() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_9(mht_9_v, 426, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "static_argnums");
+ return static_argnums_; }
 
   // pybind11::object typed subclass for PmapFunction objects.
   class pyobject : public py::object {
@@ -236,6 +434,9 @@ class PmapFunction {
                     py::object, PmapFunction::IsPmapFunction);
     pyobject() = default;
     PmapFunction* func() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_10(mht_10_v, 437, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "func");
+
       return PmapFunction::AsPmapFunctionUnchecked(*this);
     }
   };
@@ -251,6 +452,9 @@ class PmapFunction {
 
   // Helper function used by the tp_clear GC method.
   void ClearPythonReferences() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_11(mht_11_v, 455, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "ClearPythonReferences");
+
     py::function fun, cache_miss, python_shard_arg_fallback;
     // Swap values for nulls before they are destroyed. See the Python
     // Py_CLEAR() documentation for a discussion of this topic.
@@ -287,6 +491,9 @@ class PmapFunction {
 void PmapFunction::PopulateCacheEntry(PmapCacheEntry& cache_entry,
                                       const CallSignature& signature,
                                       const py::tuple& out_and_fastpath_data) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_12(mht_12_v, 494, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "PmapFunction::PopulateCacheEntry");
+
   CHECK_EQ(out_and_fastpath_data.size(), 2);
   if (out_and_fastpath_data[1].is_none()) {
     cache_entry.fall_back_to_python = true;
@@ -354,6 +561,9 @@ void PmapFunction::PopulateCacheEntry(PmapCacheEntry& cache_entry,
 }
 
 xla::StatusOr<py::object> PmapFunction::Call(py::args args, py::kwargs kwargs) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_13(mht_13_v, 564, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "PmapFunction::Call");
+
   if (always_fallback_to_python_) {
     return py::object(py::cast<py::tuple>(cache_miss_(*args, **kwargs))[0]);
   }
@@ -529,10 +739,16 @@ struct JaxPmapFunctionObject {
 PyObject* JaxPmapFunction_Type = nullptr;
 
 bool PmapFunction::IsPmapFunction(py::handle handle) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_14(mht_14_v, 742, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "PmapFunction::IsPmapFunction");
+
   return handle.get_type() == JaxPmapFunction_Type;
 }
 
 PmapFunction* PmapFunction::AsPmapFunctionUnchecked(py::handle handle) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_15(mht_15_v, 749, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "PmapFunction::AsPmapFunctionUnchecked");
+
   return &(reinterpret_cast<JaxPmapFunctionObject*>(handle.ptr())->fun);
 }
 
@@ -544,6 +760,9 @@ xla::StatusOr<PmapFunction*> AsPmapFunction(py::handle handle) {
 }
 
 py::handle PmapFunction::AsPyHandle() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_16(mht_16_v, 763, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "PmapFunction::AsPyHandle");
+
   return reinterpret_cast<PyObject*>(reinterpret_cast<char*>(this) -
                                      offsetof(JaxPmapFunctionObject, fun));
 }
@@ -554,6 +773,9 @@ extern "C" {
 
 PyObject* JaxPmapFunction_tp_new(PyTypeObject* subtype, PyObject* args,
                                  PyObject* kwds) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_17(mht_17_v, 776, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "JaxPmapFunction_tp_new");
+
   JaxPmapFunctionObject* self =
       reinterpret_cast<JaxPmapFunctionObject*>(subtype->tp_alloc(subtype, 0));
   if (!self) return nullptr;
@@ -563,6 +785,9 @@ PyObject* JaxPmapFunction_tp_new(PyTypeObject* subtype, PyObject* args,
 }
 
 void JaxPmapFunction_tp_dealloc(PyObject* self) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_18(mht_18_v, 788, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "JaxPmapFunction_tp_dealloc");
+
   PyTypeObject* tp = Py_TYPE(self);
   JaxPmapFunctionObject* o = reinterpret_cast<JaxPmapFunctionObject*>(self);
   if (o->weakrefs) {
@@ -575,6 +800,9 @@ void JaxPmapFunction_tp_dealloc(PyObject* self) {
 }
 
 int JaxPmapFunction_tp_traverse(PyObject* self, visitproc visit, void* arg) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_19(mht_19_v, 803, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "JaxPmapFunction_tp_traverse");
+
   JaxPmapFunctionObject* o = reinterpret_cast<JaxPmapFunctionObject*>(self);
   Py_VISIT(o->dict);
   Py_VISIT(o->fun.fun().ptr());
@@ -583,6 +811,9 @@ int JaxPmapFunction_tp_traverse(PyObject* self, visitproc visit, void* arg) {
 }
 
 int JaxPmapFunction_tp_clear(PyObject* self) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_20(mht_20_v, 814, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "JaxPmapFunction_tp_clear");
+
   JaxPmapFunctionObject* o = reinterpret_cast<JaxPmapFunctionObject*>(self);
   Py_CLEAR(o->dict);
   o->fun.ClearPythonReferences();
@@ -594,6 +825,9 @@ int JaxPmapFunction_tp_clear(PyObject* self) {
 // https://docs.python.org/3/howto/descriptor.html#functions-and-methods
 PyObject* JaxPmapFunction_tp_descr_get(PyObject* self, PyObject* obj,
                                        PyObject* type) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_21(mht_21_v, 828, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "JaxPmapFunction_tp_descr_get");
+
   if (obj == nullptr || obj == Py_None) {
     Py_INCREF(self);
     return self;
@@ -603,6 +837,9 @@ PyObject* JaxPmapFunction_tp_descr_get(PyObject* self, PyObject* obj,
 
 // Support d = instance.__dict__.
 PyObject* JaxPmapFunction_get_dict(PyObject* self, void*) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_22(mht_22_v, 840, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "JaxPmapFunction_get_dict");
+
   JaxPmapFunctionObject* o = reinterpret_cast<JaxPmapFunctionObject*>(self);
   if (!o->dict) {
     o->dict = PyDict_New();
@@ -612,6 +849,9 @@ PyObject* JaxPmapFunction_get_dict(PyObject* self, void*) {
 }
 
 int JaxPmapFunction_set_dict(PyObject* self, PyObject* new_dict, void*) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_23(mht_23_v, 852, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "JaxPmapFunction_set_dict");
+
   JaxPmapFunctionObject* o = reinterpret_cast<JaxPmapFunctionObject*>(self);
   if (!PyDict_Check(new_dict)) {
     PyErr_Format(PyExc_TypeError,
@@ -634,6 +874,9 @@ static PyGetSetDef JaxPmapFunction_tp_getset[] = {
 
 PyObject* JaxPmapFunction_tp_call(PyObject* self, PyObject* args,
                                   PyObject* kwargs) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_24(mht_24_v, 877, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "JaxPmapFunction_tp_call");
+
   JaxPmapFunctionObject* o = reinterpret_cast<JaxPmapFunctionObject*>(self);
   tensorflow::profiler::TraceMe traceme([&] {
     return absl::StrCat("JaxPmapFunction(", o->fun.function_name(), ")");
@@ -666,6 +909,9 @@ void InitializePmapFunction(JaxPmapFunctionObject* cfun, py::function fun,
                             py::function cache_miss,
                             std::vector<int> static_argnums,
                             py::function python_shard_arg_fallback) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_25(mht_25_v, 912, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "InitializePmapFunction");
+
   new (&cfun->fun) PmapFunction(std::move(fun), std::move(cache_miss),
                                 std::move(static_argnums),
                                 std::move(python_shard_arg_fallback));
@@ -676,6 +922,9 @@ void InitializePmapFunction(JaxPmapFunctionObject* cfun, py::function fun,
 py::object MakePmapFunction(py::function fun, py::function cache_miss,
                             std::vector<int> static_argnums,
                             py::function python_shard_arg_fallback) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_26(mht_26_v, 925, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "MakePmapFunction");
+
   py::object obj = py::reinterpret_steal<py::object>(JaxPmapFunction_tp_new(
       reinterpret_cast<PyTypeObject*>(JaxPmapFunction_Type), nullptr, nullptr));
   JaxPmapFunctionObject* buf =
@@ -693,6 +942,9 @@ const int kPmapFunctionPickleVersion = 1;
 }  // namespace
 
 void BuildPmapSubmodule(py::module& m) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpmap_libDTcc mht_27(mht_27_v, 945, "", "./tensorflow/compiler/xla/python/pmap_lib.cc", "BuildPmapSubmodule");
+
   py::module pmap_lib = m.def_submodule("pmap_lib", "Jax C++ pmap library");
 
   py::class_<NoSharding> no_sharding(pmap_lib, "NoSharding");

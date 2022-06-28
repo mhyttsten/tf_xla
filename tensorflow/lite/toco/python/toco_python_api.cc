@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePStocoPSpythonPStoco_python_apiDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePStocoPSpythonPStoco_python_apiDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePStocoPSpythonPStoco_python_apiDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -58,6 +226,12 @@ void PopulateConversionLogHelper(const toco::ModelFlags& model_flags,
                                  const std::string& output_file_contents_txt,
                                  const std::string& error_message,
                                  GraphVizDumpOptions* dump_options) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("input_contents_txt: \"" + input_contents_txt + "\"");
+   mht_0_v.push_back("output_file_contents_txt: \"" + output_file_contents_txt + "\"");
+   mht_0_v.push_back("error_message: \"" + error_message + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSpythonPStoco_python_apiDTcc mht_0(mht_0_v, 232, "", "./tensorflow/lite/toco/python/toco_python_api.cc", "PopulateConversionLogHelper");
+
   // Make sure the graphviz file will be dumped under the same folder.
   dump_options->dump_graphviz = toco_flags->conversion_summary_dir();
   // Here we construct the `toco::Model` class based on the input graph def,
@@ -98,9 +272,15 @@ PyObject* TocoConvert(PyObject* model_flags_proto_txt_raw,
                       PyObject* input_contents_txt_raw, bool extended_return,
                       PyObject* debug_info_txt_raw,
                       bool enable_mlir_converter) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSpythonPStoco_python_apiDTcc mht_1(mht_1_v, 275, "", "./tensorflow/lite/toco/python/toco_python_api.cc", "TocoConvert");
+
   // Use Python C API to validate and convert arguments. In py3 (bytes),
   // in py2 (str).
   auto ConvertArg = [&](PyObject* obj, bool* error) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSpythonPStoco_python_apiDTcc mht_2(mht_2_v, 281, "", "./tensorflow/lite/toco/python/toco_python_api.cc", "lambda");
+
     char* buf;
     Py_ssize_t len;
     if (::tflite::python_utils::ConvertFromPyString(obj, &buf, &len) == -1) {
@@ -239,6 +419,9 @@ PyObject* TocoConvert(PyObject* model_flags_proto_txt_raw,
 }
 
 tflite::TensorType FromTocoDataTypeToTflitToTensorType(int inference_type) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSpythonPStoco_python_apiDTcc mht_3(mht_3_v, 422, "", "./tensorflow/lite/toco/python/toco_python_api.cc", "FromTocoDataTypeToTflitToTensorType");
+
   switch (inference_type) {
     case toco::IODataType::QUANTIZED_INT16:
       return tflite::TensorType_INT16;
@@ -256,6 +439,9 @@ tflite::TensorType FromTocoDataTypeToTflitToTensorType(int inference_type) {
 }
 
 int ToStringSet(PyObject* py_denylist, StringSet* string_set) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSpythonPStoco_python_apiDTcc mht_4(mht_4_v, 442, "", "./tensorflow/lite/toco/python/toco_python_api.cc", "ToStringSet");
+
   using tflite::python_utils::ConvertFromPyString;
   // Ensure op_denylist is non null
   if (!py_denylist) {
@@ -293,6 +479,9 @@ PyObject* MlirQuantizeModel(PyObject* data, bool disable_per_channel,
                             bool enable_numeric_verify,
                             bool enable_whole_model_verify,
                             PyObject* op_denylist, PyObject* node_denylist) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSpythonPStoco_python_apiDTcc mht_5(mht_5_v, 482, "", "./tensorflow/lite/toco/python/toco_python_api.cc", "MlirQuantizeModel");
+
   using tflite::interpreter_wrapper::PythonErrorReporter;
   char* buf = nullptr;
   Py_ssize_t length;
@@ -348,6 +537,9 @@ PyObject* MlirQuantizeModel(PyObject* data, bool disable_per_channel,
 }
 
 PyObject* MlirSparsifyModel(PyObject* data) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSpythonPStoco_python_apiDTcc mht_6(mht_6_v, 540, "", "./tensorflow/lite/toco/python/toco_python_api.cc", "MlirSparsifyModel");
+
   using tflite::interpreter_wrapper::PythonErrorReporter;
   char* buf = nullptr;
   Py_ssize_t length;
@@ -381,6 +573,9 @@ PyObject* MlirSparsifyModel(PyObject* data) {
 }
 
 PyObject* RegisterCustomOpdefs(PyObject* list) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSpythonPStoco_python_apiDTcc mht_7(mht_7_v, 576, "", "./tensorflow/lite/toco/python/toco_python_api.cc", "RegisterCustomOpdefs");
+
   if (!PyList_Check(list)) {
     PyErr_SetString(PyExc_TypeError, "Expected list in argument");
     return nullptr;
@@ -423,6 +618,9 @@ PyObject* RegisterCustomOpdefs(PyObject* list) {
     const char* op_name = opdef.name().c_str();
     const char* device_name = "CPU";
     static auto fake_compute_func = [](void* kernel, TF_OpKernelContext* ctx) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSpythonPStoco_python_apiDTcc mht_8(mht_8_v, 621, "", "./tensorflow/lite/toco/python/toco_python_api.cc", "lambda");
+
     };
 
     TF_KernelBuilder* builder =
@@ -458,6 +656,10 @@ const std::vector<std::string> RetrieveCollectedErrors() {
 
 std::string FlatBufferFileToMlir(const std::string& model,
                                  bool input_is_filepath) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("model: \"" + model + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSpythonPStoco_python_apiDTcc mht_9(mht_9_v, 660, "", "./tensorflow/lite/toco/python/toco_python_api.cc", "FlatBufferFileToMlir");
+
   return ::tensorflow::FlatBufferFileToMlir(model, input_is_filepath);
 }
 

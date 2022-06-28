@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSplatformPScloudPSram_file_block_cache_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPSram_file_block_cache_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSplatformPScloudPSram_file_block_cache_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,6 +197,10 @@ namespace {
 
 Status ReadCache(RamFileBlockCache* cache, const string& filename,
                  size_t offset, size_t n, std::vector<char>* out) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("filename: \"" + filename + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPSram_file_block_cache_testDTcc mht_0(mht_0_v, 201, "", "./tensorflow/core/platform/cloud/ram_file_block_cache_test.cc", "ReadCache");
+
   out->clear();
   out->resize(n, 0);
   size_t bytes_transferred = 0;
@@ -42,6 +214,11 @@ Status ReadCache(RamFileBlockCache* cache, const string& filename,
 TEST(RamFileBlockCacheTest, IsCacheEnabled) {
   auto fetcher = [](const string& filename, size_t offset, size_t n,
                     char* buffer, size_t* bytes_transferred) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("filename: \"" + filename + "\"");
+   mht_1_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPSram_file_block_cache_testDTcc mht_1(mht_1_v, 219, "", "./tensorflow/core/platform/cloud/ram_file_block_cache_test.cc", "lambda");
+
     // Do nothing.
     return Status::OK();
   };
@@ -60,6 +237,11 @@ TEST(RamFileBlockCacheTest, ValidateAndUpdateFileSignature) {
   int calls = 0;
   auto fetcher = [&calls](const string& filename, size_t offset, size_t n,
                           char* buffer, size_t* bytes_transferred) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("filename: \"" + filename + "\"");
+   mht_2_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPSram_file_block_cache_testDTcc mht_2(mht_2_v, 242, "", "./tensorflow/core/platform/cloud/ram_file_block_cache_test.cc", "lambda");
+
     calls++;
     memset(buffer, 'x', n);
     *bytes_transferred = n;
@@ -93,6 +275,11 @@ TEST(RamFileBlockCacheTest, PassThrough) {
   auto fetcher = [&calls, want_filename, want_offset, want_n](
                      const string& got_filename, size_t got_offset,
                      size_t got_n, char* buffer, size_t* bytes_transferred) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("got_filename: \"" + got_filename + "\"");
+   mht_3_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPSram_file_block_cache_testDTcc mht_3(mht_3_v, 280, "", "./tensorflow/core/platform/cloud/ram_file_block_cache_test.cc", "lambda");
+
     EXPECT_EQ(got_filename, want_filename);
     EXPECT_EQ(got_offset, want_offset);
     EXPECT_EQ(got_n, want_n);
@@ -129,6 +316,11 @@ TEST(RamFileBlockCacheTest, BlockAlignment) {
   // The fetcher just fetches slices of the buffer.
   auto fetcher = [&buf](const string& filename, size_t offset, size_t n,
                         char* buffer, size_t* bytes_transferred) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("filename: \"" + filename + "\"");
+   mht_4_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPSram_file_block_cache_testDTcc mht_4(mht_4_v, 321, "", "./tensorflow/core/platform/cloud/ram_file_block_cache_test.cc", "lambda");
+
     if (offset < buf.size()) {
       size_t bytes_to_copy = std::min<size_t>(buf.size() - offset, n);
       memcpy(buffer, buf.data() + offset, bytes_to_copy);
@@ -175,6 +367,11 @@ TEST(RamFileBlockCacheTest, CacheHits) {
   auto fetcher = [&calls, block_size](const string& filename, size_t offset,
                                       size_t n, char* buffer,
                                       size_t* bytes_transferred) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("filename: \"" + filename + "\"");
+   mht_5_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPSram_file_block_cache_testDTcc mht_5(mht_5_v, 372, "", "./tensorflow/core/platform/cloud/ram_file_block_cache_test.cc", "lambda");
+
     EXPECT_EQ(n, block_size);
     EXPECT_EQ(offset % block_size, 0);
     EXPECT_EQ(calls.find(offset), calls.end()) << "at offset " << offset;
@@ -207,6 +404,11 @@ TEST(RamFileBlockCacheTest, OutOfRange) {
   auto fetcher = [block_size, file_size, &first_block, &second_block](
                      const string& filename, size_t offset, size_t n,
                      char* buffer, size_t* bytes_transferred) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("filename: \"" + filename + "\"");
+   mht_6_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPSram_file_block_cache_testDTcc mht_6(mht_6_v, 409, "", "./tensorflow/core/platform/cloud/ram_file_block_cache_test.cc", "lambda");
+
     EXPECT_EQ(n, block_size);
     EXPECT_EQ(offset % block_size, 0);
     size_t bytes_to_copy = 0;
@@ -250,6 +452,11 @@ TEST(RamFileBlockCacheTest, Inconsistent) {
   // This fetcher returns OK but only fills in one byte for any offset.
   auto fetcher = [block_size](const string& filename, size_t offset, size_t n,
                               char* buffer, size_t* bytes_transferred) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("filename: \"" + filename + "\"");
+   mht_7_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPSram_file_block_cache_testDTcc mht_7(mht_7_v, 457, "", "./tensorflow/core/platform/cloud/ram_file_block_cache_test.cc", "lambda");
+
     EXPECT_EQ(n, block_size);
     EXPECT_EQ(offset % block_size, 0);
     EXPECT_GE(n, 1);
@@ -274,6 +481,11 @@ TEST(RamFileBlockCacheTest, LRU) {
   auto fetcher = [&calls, block_size](const string& filename, size_t offset,
                                       size_t n, char* buffer,
                                       size_t* bytes_transferred) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("filename: \"" + filename + "\"");
+   mht_8_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPSram_file_block_cache_testDTcc mht_8(mht_8_v, 486, "", "./tensorflow/core/platform/cloud/ram_file_block_cache_test.cc", "lambda");
+
     EXPECT_EQ(n, block_size);
     EXPECT_FALSE(calls.empty()) << "at offset = " << offset;
     if (!calls.empty()) {
@@ -321,6 +533,11 @@ TEST(RamFileBlockCacheTest, MaxStaleness) {
   int calls = 0;
   auto fetcher = [&calls](const string& filename, size_t offset, size_t n,
                           char* buffer, size_t* bytes_transferred) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("filename: \"" + filename + "\"");
+   mht_9_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPSram_file_block_cache_testDTcc mht_9(mht_9_v, 538, "", "./tensorflow/core/platform/cloud/ram_file_block_cache_test.cc", "lambda");
+
     calls++;
     memset(buffer, 'x', n);
     *bytes_transferred = n;
@@ -361,6 +578,11 @@ TEST(RamFileBlockCacheTest, RemoveFile) {
   int calls = 0;
   auto fetcher = [&calls](const string& filename, size_t offset, size_t n,
                           char* buffer, size_t* bytes_transferred) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("filename: \"" + filename + "\"");
+   mht_10_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPSram_file_block_cache_testDTcc mht_10(mht_10_v, 583, "", "./tensorflow/core/platform/cloud/ram_file_block_cache_test.cc", "lambda");
+
     calls++;
     char c = (filename == "a") ? 'a' : (filename == "b") ? 'b' : 'x';
     if (offset > 0) {
@@ -423,6 +645,11 @@ TEST(RamFileBlockCacheTest, Prune) {
   int calls = 0;
   auto fetcher = [&calls](const string& filename, size_t offset, size_t n,
                           char* buffer, size_t* bytes_transferred) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("filename: \"" + filename + "\"");
+   mht_11_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPSram_file_block_cache_testDTcc mht_11(mht_11_v, 650, "", "./tensorflow/core/platform/cloud/ram_file_block_cache_test.cc", "lambda");
+
     calls++;
     memset(buffer, 'x', n);
     *bytes_transferred = n;
@@ -486,6 +713,11 @@ TEST(RamFileBlockCacheTest, ParallelReads) {
   BlockingCounter counter(callers);
   auto fetcher = [&counter](const string& filename, size_t offset, size_t n,
                             char* buffer, size_t* bytes_transferred) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("filename: \"" + filename + "\"");
+   mht_12_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPSram_file_block_cache_testDTcc mht_12(mht_12_v, 718, "", "./tensorflow/core/platform/cloud/ram_file_block_cache_test.cc", "lambda");
+
     counter.DecrementCount();
     if (!counter.WaitFor(std::chrono::seconds(10))) {
       // This avoids having the test time out, which is harder to debug.
@@ -501,6 +733,9 @@ TEST(RamFileBlockCacheTest, ParallelReads) {
   for (int i = 0; i < callers; i++) {
     threads.emplace_back(
         Env::Default()->StartThread({}, "caller", [&cache, i, block_size]() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPSram_file_block_cache_testDTcc mht_13(mht_13_v, 736, "", "./tensorflow/core/platform/cloud/ram_file_block_cache_test.cc", "lambda");
+
           std::vector<char> out;
           TF_EXPECT_OK(
               ReadCache(&cache, "a", i * block_size, block_size, &out));
@@ -521,6 +756,11 @@ TEST(RamFileBlockCacheTest, CoalesceConcurrentReads) {
   auto fetcher = [&num_requests, &notification, block_size](
                      const string& filename, size_t offset, size_t n,
                      char* buffer, size_t* bytes_transferred) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("filename: \"" + filename + "\"");
+   mht_14_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPSram_file_block_cache_testDTcc mht_14(mht_14_v, 761, "", "./tensorflow/core/platform/cloud/ram_file_block_cache_test.cc", "lambda");
+
     EXPECT_EQ(n, block_size);
     EXPECT_EQ(offset, 0);
     num_requests++;
@@ -551,6 +791,11 @@ TEST(RamFileBlockCacheTest, Flush) {
   int calls = 0;
   auto fetcher = [&calls](const string& filename, size_t offset, size_t n,
                           char* buffer, size_t* bytes_transferred) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("filename: \"" + filename + "\"");
+   mht_15_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPSram_file_block_cache_testDTcc mht_15(mht_15_v, 796, "", "./tensorflow/core/platform/cloud/ram_file_block_cache_test.cc", "lambda");
+
     calls++;
     memset(buffer, 'x', n);
     *bytes_transferred = n;

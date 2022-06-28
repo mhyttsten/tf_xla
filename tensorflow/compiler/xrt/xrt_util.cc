@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_utilDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_utilDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_utilDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,9 +206,15 @@ std::shared_ptr<NcclUniqueIdFactory>* nccl_factory;
 class ScopedHandles {
  public:
   explicit ScopedHandles(RefPtr<XRTMemoryManager> memory_manager)
-      : memory_manager_(std::move(memory_manager)) {}
+      : memory_manager_(std::move(memory_manager)) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_utilDTcc mht_0(mht_0_v, 210, "", "./tensorflow/compiler/xrt/xrt_util.cc", "ScopedHandles");
+}
 
   ~ScopedHandles() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_utilDTcc mht_1(mht_1_v, 215, "", "./tensorflow/compiler/xrt/xrt_util.cc", "~ScopedHandles");
+
     for (size_t i = 0; i < handles_.size(); ++i) {
       if (handles_release_[i]) {
         memory_manager_->Release(handles_[i]).IgnoreError();
@@ -48,14 +222,23 @@ class ScopedHandles {
     }
   }
 
-  int64_t operator[](size_t index) const { return handles_.at(index); }
+  int64_t operator[](size_t index) const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_utilDTcc mht_2(mht_2_v, 226, "", "./tensorflow/compiler/xrt/xrt_util.cc", "lambda");
+ return handles_.at(index); }
 
-  size_t size() const { return handles_.size(); }
+  size_t size() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_utilDTcc mht_3(mht_3_v, 231, "", "./tensorflow/compiler/xrt/xrt_util.cc", "size");
+ return handles_.size(); }
 
   // Adds the given handle at the index position, by marking it releasable
   // according to the release argument. If an existing, and to-be-released
   // handle already exists at the same index, it will be released.
   Status Add(size_t index, int64_t handle, bool release) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_utilDTcc mht_4(mht_4_v, 239, "", "./tensorflow/compiler/xrt/xrt_util.cc", "Add");
+
     if (index >= handles_.size()) {
       handles_.resize(index + 1, XRTMemoryManager::InvalidKey());
       handles_release_.resize(index + 1, false);
@@ -76,6 +259,9 @@ class ScopedHandles {
 
   // Adds a to-be-released tuple allocation at the given index.
   Status Add(size_t index, RefPtr<XRTTupleAllocation> tuple) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_utilDTcc mht_5(mht_5_v, 262, "", "./tensorflow/compiler/xrt/xrt_util.cc", "Add");
+
     return Add(index, memory_manager_->Register(std::move(tuple)),
                /*release=*/true);
   }
@@ -83,6 +269,9 @@ class ScopedHandles {
   // Drops the handle at the given index, and releases it using the
   // XRTMemoryManager::Release() if marked as to-be-released.
   Status Drop(size_t index) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_utilDTcc mht_6(mht_6_v, 272, "", "./tensorflow/compiler/xrt/xrt_util.cc", "Drop");
+
     if (handles_release_.at(index)) {
       TF_RETURN_IF_ERROR(memory_manager_->Release(handles_[index]));
     }
@@ -93,6 +282,9 @@ class ScopedHandles {
   // Releases the handle at the given index. The destructor will not use that
   // XRTMemoryManager::Release() API on such handle.
   int64_t Release(size_t index) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_utilDTcc mht_7(mht_7_v, 285, "", "./tensorflow/compiler/xrt/xrt_util.cc", "Release");
+
     int64_t handle = handles_.at(index);
     handles_[index] = XRTMemoryManager::InvalidKey();
     handles_release_[index] = false;
@@ -112,6 +304,9 @@ class ScopedHandles {
 };
 
 bool DebugOptionsPassThroughEnabled() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_utilDTcc mht_8(mht_8_v, 307, "", "./tensorflow/compiler/xrt/xrt_util.cc", "DebugOptionsPassThroughEnabled");
+
   const char* env = getenv("TF_XLA_DEBUG_OPTIONS_PASSTHROUGH");
   bool enabled =
       env != nullptr && (strcmp(env, "1") == 0 || strcmp(env, "true") == 0);
@@ -125,6 +320,10 @@ bool DebugOptionsPassThroughEnabled() {
 }
 
 string SafeDebugPath(const string& path) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("path: \"" + path + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_utilDTcc mht_9(mht_9_v, 324, "", "./tensorflow/compiler/xrt/xrt_util.cc", "SafeDebugPath");
+
   if (path.empty() || path.compare(0, 5, "gs://") == 0 ||
       path.compare(0, 11, "bigstore://") == 0) {
     return path;
@@ -135,6 +334,9 @@ string SafeDebugPath(const string& path) {
 
 Status MakeOutput(const RefPtr<XRTTupleAllocation>& output, int64_t index,
                   RefPtr<XRTTupleAllocation>* result) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_utilDTcc mht_10(mht_10_v, 337, "", "./tensorflow/compiler/xrt/xrt_util.cc", "MakeOutput");
+
   if (index == 0) {
     *result = output;
   } else {
@@ -152,6 +354,9 @@ Status PopulateOpWorkingSet(xla::Backend* backend,
                             int current_index, const ScopedHandles& outputs,
                             XRTMemoryManager::WorkingSet* working_set,
                             se::DeviceMemoryAllocator* allocator) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_utilDTcc mht_11(mht_11_v, 357, "", "./tensorflow/compiler/xrt/xrt_util.cc", "PopulateOpWorkingSet");
+
   for (int i = 0; i < op.inputs_size(); ++i) {
     auto& input = op.inputs(i);
     if (input.op_index() >= current_index) {
@@ -168,6 +373,9 @@ Status PopulateOpWorkingSet(xla::Backend* backend,
 }  // namespace
 
 void SetNcclUniqueIdFactory(std::shared_ptr<NcclUniqueIdFactory> factory) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_utilDTcc mht_12(mht_12_v, 376, "", "./tensorflow/compiler/xrt/xrt_util.cc", "SetNcclUniqueIdFactory");
+
   mutex_lock lock(nccl_factory_mutex);
   if (nccl_factory == nullptr) {
     nccl_factory = new std::shared_ptr<NcclUniqueIdFactory>();
@@ -181,6 +389,9 @@ std::shared_ptr<NcclUniqueIdFactory> GetNcclUniqueIdFactory() {
 }
 
 xla::DebugOptions BuildXlaDebugOptions(const xla::DebugOptions& ref_options) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_utilDTcc mht_13(mht_13_v, 392, "", "./tensorflow/compiler/xrt/xrt_util.cc", "BuildXlaDebugOptions");
+
   static const bool options_passthrough = DebugOptionsPassThroughEnabled();
   if (options_passthrough) {
     return ref_options;
@@ -224,8 +435,14 @@ xla::StatusOr<std::vector<InputCoords>> GetComputationInputs(
 
 bool InputShapeMatches(const xla::Shape& parameter_shape,
                        const xla::Shape& input_shape) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_utilDTcc mht_14(mht_14_v, 438, "", "./tensorflow/compiler/xrt/xrt_util.cc", "InputShapeMatches");
+
   auto shape_checker = [&](const xla::Shape& pshape,
                            const xla::ShapeIndex& index) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_utilDTcc mht_15(mht_15_v, 443, "", "./tensorflow/compiler/xrt/xrt_util.cc", "lambda");
+
     if (pshape.IsArray()) {
       TF_ASSIGN_OR_RETURN(const xla::Shape* ishape,
                           xla::ShapeUtil::TryGetSubshape(input_shape, index));
@@ -301,6 +518,9 @@ Status RebuildOutputAliases(
     const RefPtr<XRTTupleAllocation>& output_tuple,
     absl::Span<const RefPtr<XRTTupleAllocation>> input_tuples,
     const xla::HloInputOutputAliasConfig& input_output_alias) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_utilDTcc mht_16(mht_16_v, 521, "", "./tensorflow/compiler/xrt/xrt_util.cc", "RebuildOutputAliases");
+
   auto alias_function =
       [&](const xla::ShapeIndex& output_index,
           const xla::HloInputOutputAliasConfig::Alias& alias) -> Status {
@@ -316,6 +536,9 @@ xla::StatusOr<std::vector<xla::ExecutionInput>> GetArgumentsBuffers(
     absl::Span<const RefPtr<XRTTupleAllocation>> input_tuples,
     const std::vector<bool>& input_is_dynamic, bool release_inputs) {
   auto is_dynamic = [&](size_t arg) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_utilDTcc mht_17(mht_17_v, 539, "", "./tensorflow/compiler/xrt/xrt_util.cc", "lambda");
+
     return arg < input_is_dynamic.size() && input_is_dynamic[arg];
   };
   std::vector<xla::ExecutionInput> arguments;
@@ -348,6 +571,9 @@ Status CreateExecuteOutput(OpKernelContext* context,
                            XRTMemoryManager* memory_manager,
                            RefPtr<XRTTupleAllocation> output_tuple,
                            bool return_exploded_tuple) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_utilDTcc mht_18(mht_18_v, 574, "", "./tensorflow/compiler/xrt/xrt_util.cc", "CreateExecuteOutput");
+
   if (return_exploded_tuple && output_tuple->on_host_shape().IsTuple()) {
     int64_t tuple_element_count =
         xla::ShapeUtil::TupleElementCount(output_tuple->on_device_shape());
@@ -380,6 +606,9 @@ Status ExecuteChained(OpKernelContext* context,
                       const xrt::XRTChainedExecuteConfig& config,
                       const ChainedExecuteFn& execute_op,
                       se::DeviceMemoryAllocator* allocator) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_utilDTcc mht_19(mht_19_v, 609, "", "./tensorflow/compiler/xrt/xrt_util.cc", "ExecuteChained");
+
   // Create the vector which tracks the uses of the intermediate chained
   // operations outputs.
   std::vector<int64_t> uses(plan.ops_size(), 0);

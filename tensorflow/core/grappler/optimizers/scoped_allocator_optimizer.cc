@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -48,6 +216,11 @@ const char kScopedAllocatorAttrName[] = "_scoped_allocator";
 // matches op_name, i.e. it looks from the name like this node is
 // of that op type.
 bool HasOpName(const string& node_name, const string& op_name) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("node_name: \"" + node_name + "\"");
+   mht_0_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_0(mht_0_v, 221, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "HasOpName");
+
   size_t begin = node_name.rfind('/');
   if (begin == string::npos) {
     begin = 0;
@@ -73,6 +246,9 @@ bool HasOpName(const string& node_name, const string& op_name) {
 Status GetOutputDataType(
     const std::vector<OpInfo::TensorProperties>& output_props, int output_index,
     DataType* dtype) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_1(mht_1_v, 249, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "GetOutputDataType");
+
   int output_props_size = output_props.size();
   if (output_index >= output_props_size) {
     return errors::Internal("Invalid output index ", output_index,
@@ -93,6 +269,9 @@ Status GetOutputDataType(
 Status CheckTypesAndGetShapes(const GraphProperties& graph_properties,
                               const std::vector<NodeDef*>& ops, DataType* type,
                               std::vector<TensorShape>* shapes) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_2(mht_2_v, 272, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "CheckTypesAndGetShapes");
+
   VLOG(1) << "CheckTypesAndGetShapes";
   *type = DT_INVALID;
   for (NodeDef* n : ops) {
@@ -142,13 +321,19 @@ struct InputDesc {
   int output_slot;
   NodeDef* to_node_def;
   InputDesc(NodeDef* f, int os, NodeDef* t)
-      : from_node_def(f), output_slot(os), to_node_def(t) {}
+      : from_node_def(f), output_slot(os), to_node_def(t) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_3(mht_3_v, 325, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "InputDesc");
+}
 };
 
 // Remove the NodeDef nd from node_map and graph.  It must be the case
 // that nd no longer has any input or output edges, though that is not
 // checked.
 void RemoveNode(NodeDef* nd, GraphDef* graph, NodeMap* node_map) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_4(mht_4_v, 334, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "RemoveNode");
+
   node_map->RemoveNode(nd->name());
   // TODO(tucker): The efficiency of this routine is poor.
   // Change to accumulate and do a bulk removal, maybe refactoring
@@ -167,6 +352,11 @@ void RemoveNode(NodeDef* nd, GraphDef* graph, NodeMap* node_map) {
 // Removes a named edge from between two nodes.
 Status RemoveEdge(const string& input_edge_name, const string& from_node_name,
                   NodeDef* to_node, NodeMap* node_map) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("input_edge_name: \"" + input_edge_name + "\"");
+   mht_5_v.push_back("from_node_name: \"" + from_node_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_5(mht_5_v, 357, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "RemoveEdge");
+
   protobuf::RepeatedPtrField<string>* inputs = to_node->mutable_input();
   int edge_index = -1;
   for (edge_index = 0; edge_index < inputs->size(); ++edge_index) {
@@ -218,6 +408,10 @@ Status MaybeRewriteInput(ScopedAllocatorOptimizer* sa_opti,
                          NodeDef* input, const string& edge_name,
                          int output_index, NodeDef* op, NodeDef** new_input,
                          int* new_output_index, bool* rewrite) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("edge_name: \"" + edge_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_6(mht_6_v, 412, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "MaybeRewriteInput");
+
   *rewrite = IsConstant(*input) || IsExit(*input) ||
              (sa_opti->repeated_outputs().find(edge_name) !=
               sa_opti->repeated_outputs().end());
@@ -259,6 +453,9 @@ Status GetInputs(ScopedAllocatorOptimizer* sa_opti, int64_t invocation_count,
                  GraphDef* graph, const GraphProperties& graph_properties,
                  NodeMap* node_map, const std::vector<NodeDef*>& ops,
                  DataType dtype, std::vector<InputDesc>* inputs) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_7(mht_7_v, 456, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "GetInputs");
+
   VLOG(1) << "Getinputs";
   for (NodeDef* n : ops) {
     NodeDef* inode = nullptr;
@@ -313,6 +510,9 @@ Status GetInputs(ScopedAllocatorOptimizer* sa_opti, int64_t invocation_count,
 // Return non-control inputs of `op` in `inputs`.
 Status GetDataInputs(GraphDef* graph, NodeMap* node_map, NodeDef* op,
                      std::vector<InputDesc>* inputs) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_8(mht_8_v, 513, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "GetDataInputs");
+
   VLOG(2) << "GetDataInputs for node " << op->name();
   NodeDef* inode = nullptr;
   int output_index = 0;
@@ -334,6 +534,9 @@ Status GetDataInputs(GraphDef* graph, NodeMap* node_map, NodeDef* op,
 }
 
 void DumpGraphToVLOG(const GraphDef& graph, int log_level) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_9(mht_9_v, 537, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "DumpGraphToVLOG");
+
   if (VLOG_IS_ON(log_level)) {
     // VLOG may truncate lines so we print line by line.
     for (const auto& line : str_util::Split(graph.DebugString(), "\n\r")) {
@@ -347,6 +550,9 @@ void DumpGraphToVLOG(const GraphDef& graph, int log_level) {
 void ScopedAllocatorOptimizer::ExtendNodeAttr(StringPiece name,
                                               const std::vector<int32>& values,
                                               NodeDef* node_def) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_10(mht_10_v, 553, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "ScopedAllocatorOptimizer::ExtendNodeAttr");
+
   if (HasNodeAttr(*node_def, name)) {
     VLOG(2) << "extending";
     AttrValue* existing = &(*node_def->mutable_attr())[string(name)];
@@ -361,11 +567,17 @@ void ScopedAllocatorOptimizer::ExtendNodeAttr(StringPiece name,
 
 class UnaryElementwiseRewriter : public ScopedAllocatorOptimizer::Rewriter {
  public:
-  ~UnaryElementwiseRewriter() override {}
+  ~UnaryElementwiseRewriter() override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_11(mht_11_v, 571, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "~UnaryElementwiseRewriter");
+}
 
   // Return non-OK if any input is an op that does not use the
   // AllocatorAttributes set by executor to allocate its output.
   Status CheckUsesAllocatorAttributes(const std::vector<InputDesc>& inputs) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_12(mht_12_v, 578, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "CheckUsesAllocatorAttributes");
+
     for (const InputDesc& nd : inputs) {
       if (IsConstant(*nd.from_node_def)) {
         return errors::Aborted(
@@ -383,6 +595,9 @@ class UnaryElementwiseRewriter : public ScopedAllocatorOptimizer::Rewriter {
   // scope ids in `MaybeRewriteInput`, so this function is basically a sanity
   // check.
   Status CheckExistingScopedAllocator(const std::vector<InputDesc>& inputs) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_13(mht_13_v, 598, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "CheckExistingScopedAllocator");
+
     for (const InputDesc& nd : inputs) {
       VLOG(2) << "get attrs for " << nd.from_node_def->name();
       AttrSlice n_attrs = AttrSlice(*nd.from_node_def);
@@ -406,6 +621,9 @@ class UnaryElementwiseRewriter : public ScopedAllocatorOptimizer::Rewriter {
   // Return non-OK if any input is a member of op_set.
   Status CheckInternalDataDependency(const std::set<string>& op_set,
                                      const std::vector<InputDesc>& inputs) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_14(mht_14_v, 624, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "CheckInternalDataDependency");
+
     for (const InputDesc& nd : inputs) {
       if (op_set.find(nd.from_node_def->name()) != op_set.end()) {
         if (nd.output_slot != tensorflow::Graph::kControlSlot) {
@@ -423,6 +641,9 @@ class UnaryElementwiseRewriter : public ScopedAllocatorOptimizer::Rewriter {
   void ClearInternalControlInputs(const std::set<string>& op_set,
                                   const std::vector<NodeDef*>& ops,
                                   NodeMap* node_map) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_15(mht_15_v, 644, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "ClearInternalControlInputs");
+
     for (NodeDef* n : ops) {
       for (const auto& input_name : n->input()) {
         if (IsControlInput(input_name)) {
@@ -450,6 +671,9 @@ class UnaryElementwiseRewriter : public ScopedAllocatorOptimizer::Rewriter {
                        string* device_name, DataType* dtype,
                        std::vector<TensorShape>* input_shapes,
                        std::vector<InputDesc>* inputs, TensorShape* sa_shape) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_16(mht_16_v, 674, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "AnalyzeInputs");
+
     CHECK(graph_properties_);
     LOG_WARNING_AND_RETURN_IF_ERROR(
         CheckTypesAndGetShapes(*graph_properties_, ops, dtype, input_shapes));
@@ -484,6 +708,9 @@ class UnaryElementwiseRewriter : public ScopedAllocatorOptimizer::Rewriter {
       GraphDef* graph, NodeMap* node_map,
       const std::vector<const NodeDef*>& source_nodes,
       absl::flat_hash_set<const NodeDef*>* fanout) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_17(mht_17_v, 711, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "TransitiveFanoutWithinFrame");
+
     std::deque<const NodeDef*> queue(source_nodes.begin(), source_nodes.end());
     absl::flat_hash_set<const NodeDef*> visited;
     while (!queue.empty()) {
@@ -513,6 +740,11 @@ class UnaryElementwiseRewriter : public ScopedAllocatorOptimizer::Rewriter {
       DataType dtype, int sa_id, const string& sa_name,
       const std::vector<TensorShape>& input_shapes,
       const std::vector<InputDesc>& inputs, const TensorShape& sa_shape) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("device_name: \"" + device_name + "\"");
+   mht_18_v.push_back("sa_name: \"" + sa_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_18(mht_18_v, 745, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "ConstructScopedAllocatorNode");
+
     VLOG(2) << "ConstructScopedAllocatorNode " << sa_name;
     NodeDefBuilder sa_builder(sa_name, "_ScopedAllocator");
     sa_builder.Device(device_name);
@@ -601,6 +833,12 @@ class UnaryElementwiseRewriter : public ScopedAllocatorOptimizer::Rewriter {
                            const string& sa_name, const string& sac_name,
                            const TensorShape& sa_shape,
                            std::vector<NodeDefBuilder::NodeOut>* sac_inputs) {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("device_name: \"" + device_name + "\"");
+   mht_19_v.push_back("sa_name: \"" + sa_name + "\"");
+   mht_19_v.push_back("sac_name: \"" + sac_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_19(mht_19_v, 839, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "BuildSAConcatNode");
+
     VLOG(2) << "BuildSAConcatNode " << sac_name;
     // control input: edge name -> source node name
     absl::flat_hash_map<string, string> sac_ctl_inputs;
@@ -662,6 +900,13 @@ class UnaryElementwiseRewriter : public ScopedAllocatorOptimizer::Rewriter {
                             const string& device_name, DataType dtype,
                             const string& op_name, const string& sac_name,
                             const string& sa_op_name) {
+   std::vector<std::string> mht_20_v;
+   mht_20_v.push_back("device_name: \"" + device_name + "\"");
+   mht_20_v.push_back("op_name: \"" + op_name + "\"");
+   mht_20_v.push_back("sac_name: \"" + sac_name + "\"");
+   mht_20_v.push_back("sa_op_name: \"" + sa_op_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_20(mht_20_v, 907, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "BuildReplacementOp");
+
     VLOG(2) << "BuildReplacementOp " << sa_op_name;
     NodeDefBuilder op_builder(sa_op_name, op_name);
     op_builder.Device(device_name);
@@ -692,6 +937,14 @@ class UnaryElementwiseRewriter : public ScopedAllocatorOptimizer::Rewriter {
                         const string& op_name, int sa_id,
                         const string& sas_name, const string& sa_name,
                         const string& sa_op_name) {
+   std::vector<std::string> mht_21_v;
+   mht_21_v.push_back("device_name: \"" + device_name + "\"");
+   mht_21_v.push_back("op_name: \"" + op_name + "\"");
+   mht_21_v.push_back("sas_name: \"" + sas_name + "\"");
+   mht_21_v.push_back("sa_name: \"" + sa_name + "\"");
+   mht_21_v.push_back("sa_op_name: \"" + sa_op_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_21(mht_21_v, 945, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "BuildSplitNode");
+
     VLOG(2) << "new ScopedAllocatorSplit " << sas_name;
     NodeDefBuilder sas_builder(sas_name, "_ScopedAllocatorSplit");
     sas_builder.Device(device_name);
@@ -724,6 +977,11 @@ class UnaryElementwiseRewriter : public ScopedAllocatorOptimizer::Rewriter {
                         const std::vector<NodeDef*>& ops,
                         const std::set<string>& op_instance_names,
                         const string& op_name, const string& sas_name) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("op_name: \"" + op_name + "\"");
+   mht_22_v.push_back("sas_name: \"" + sas_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_22(mht_22_v, 982, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "RewireSubgraph");
+
     VLOG(2) << "RewireSubgraph";
     for (int op_idx = 0, idx_limit = ops.size(); op_idx < idx_limit; ++op_idx) {
       NodeDef* old_op = ops[op_idx];
@@ -821,6 +1079,10 @@ class UnaryElementwiseRewriter : public ScopedAllocatorOptimizer::Rewriter {
   Status Rewrite(ScopedAllocatorOptimizer* sa_opti, int64_t invocation_count,
                  GraphDef* graph, const string& op_name,
                  const std::vector<NodeDef*>& ops, bool* applied) override {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_23(mht_23_v, 1083, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "Rewrite");
+
     if (VLOG_IS_ON(1)) {
       VLOG(1) << "Rewrite";
       string op_names;
@@ -889,6 +1151,9 @@ class UnaryElementwiseRewriter : public ScopedAllocatorOptimizer::Rewriter {
 ScopedAllocatorOptimizer::ScopedAllocatorOptimizer(
     RewriterConfig::Toggle opt_level, const ScopedAllocatorOptions& opts)
     : opt_level_(opt_level) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_24(mht_24_v, 1154, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "ScopedAllocatorOptimizer::ScopedAllocatorOptimizer");
+
   VLOG(1) << "ScopedAllocatorOptimizer::ScopedAllocatorOptimizer";
   Rewriter* r = new UnaryElementwiseRewriter();
   to_delete_.push_back(r);
@@ -909,6 +1174,9 @@ ScopedAllocatorOptimizer::ScopedAllocatorOptimizer(
 Status ScopedAllocatorOptimizer::Optimize(Cluster* /*cluster*/,
                                           const GrapplerItem& item,
                                           GraphDef* optimized_graph) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_25(mht_25_v, 1177, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "ScopedAllocatorOptimizer::Optimize");
+
   VLOG(3) << "Input graph:";
   DumpGraphToVLOG(item.graph, /*log_level=*/3);
 
@@ -935,6 +1203,10 @@ Status ScopedAllocatorOptimizer::Optimize(Cluster* /*cluster*/,
 
 ScopedAllocatorOptimizer::Rewriter* ScopedAllocatorOptimizer::GetRewriter(
     const string& op_name) {
+   std::vector<std::string> mht_26_v;
+   mht_26_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_26(mht_26_v, 1207, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "ScopedAllocatorOptimizer::GetRewriter");
+
   auto it = rewriters_.find(op_name);
   if (it != rewriters_.end()) {
     return it->second;
@@ -943,6 +1215,9 @@ ScopedAllocatorOptimizer::Rewriter* ScopedAllocatorOptimizer::GetRewriter(
 }
 
 int ScopedAllocatorOptimizer::NewScopedAllocatorId(int num_fields) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_27(mht_27_v, 1218, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "ScopedAllocatorOptimizer::NewScopedAllocatorId");
+
   CHECK_GT(num_fields, 0);
   int id = next_sa_id_;
   next_sa_id_ += (num_fields + 1);
@@ -951,6 +1226,9 @@ int ScopedAllocatorOptimizer::NewScopedAllocatorId(int num_fields) {
 }
 
 Status ScopedAllocatorOptimizer::NewIdentityId(int* id) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_28(mht_28_v, 1229, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "ScopedAllocatorOptimizer::NewIdentityId");
+
   *id = next_identity_id_++;
   if (next_identity_id_ < 0) {
     return errors::Aborted("NewIdentityId overflow");
@@ -959,6 +1237,9 @@ Status ScopedAllocatorOptimizer::NewIdentityId(int* id) {
 }
 
 ScopedAllocatorOptimizer::~ScopedAllocatorOptimizer() {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_29(mht_29_v, 1240, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "ScopedAllocatorOptimizer::~ScopedAllocatorOptimizer");
+
   for (auto ptr : to_delete_) {
     delete ptr;
   }
@@ -967,6 +1248,9 @@ ScopedAllocatorOptimizer::~ScopedAllocatorOptimizer() {
 void ScopedAllocatorOptimizer::FindOpOccurrences(GraphDef* graph,
                                                  const OpNameSet& op_names,
                                                  GraphOpOccurrences* occs) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_30(mht_30_v, 1251, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "ScopedAllocatorOptimizer::FindOpOccurrences");
+
   VLOG(1) << "FindOpOccurrences ";
   for (const auto& it : op_names) {
     VLOG(1) << "search target " << it;
@@ -990,12 +1274,23 @@ struct OpNameOrder {
 
 class Tree {
  public:
-  Tree(const string& edge, int depth) : edge_(edge), depth_(depth) {}
+  Tree(const string& edge, int depth) : edge_(edge), depth_(depth) {
+   std::vector<std::string> mht_31_v;
+   mht_31_v.push_back("edge: \"" + edge + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_31(mht_31_v, 1279, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "Tree");
+}
   ~Tree() {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_32(mht_32_v, 1283, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "~Tree");
+
     for (const auto& it : subtrees_) delete it.second;
   }
 
   Tree* GetSubTree(const string& edge) {
+   std::vector<std::string> mht_33_v;
+   mht_33_v.push_back("edge: \"" + edge + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_33(mht_33_v, 1291, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "GetSubTree");
+
     auto it = subtrees_.find(edge);
     if (it != subtrees_.end()) {
       return it->second;
@@ -1005,7 +1300,10 @@ class Tree {
     return t;
   }
 
-  void InsertNode(NodeDef* n) { nodes_.push_back(n); }
+  void InsertNode(NodeDef* n) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_34(mht_34_v, 1304, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "InsertNode");
+ nodes_.push_back(n); }
 
   string edge_;
   int depth_;
@@ -1016,6 +1314,9 @@ class Tree {
 // Applies a function to every Tree in DFS order.  Terminates early
 // on any non-OK Status.
 Status ApplyToAll(Tree* tree, const std::function<Status(Tree*)>& func) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_35(mht_35_v, 1317, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "ApplyToAll");
+
   Status s;
   for (const auto& it : tree->subtrees_) {
     s = ApplyToAll(it.second, func);
@@ -1027,6 +1328,10 @@ Status ApplyToAll(Tree* tree, const std::function<Status(Tree*)>& func) {
 
 Tree* ComputeScopeTree(const string& op_name,
                        const std::vector<NodeDef*>& node_vec) {
+   std::vector<std::string> mht_36_v;
+   mht_36_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_36(mht_36_v, 1332, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "ComputeScopeTree");
+
   Tree* root = new Tree("", 0);
   for (NodeDef* n : node_vec) {
     std::vector<string> pieces = str_util::Split(n->name(), "/");
@@ -1044,6 +1349,9 @@ Tree* ComputeScopeTree(const string& op_name,
 void PartitionByLoopStructure(const FrameView& frame_view,
                               std::vector<NodeDef*> nodes,
                               std::vector<std::vector<NodeDef*>>* loop_groups) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_37(mht_37_v, 1352, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "PartitionByLoopStructure");
+
   // It is assumed that two nodes with identical loop containment have
   // identical integer vectors. Represent those by 64 bit hashes.
   absl::flat_hash_map<uint64, std::vector<NodeDef*>> loop_sets;
@@ -1064,6 +1372,9 @@ void PartitionByLoopStructure(const FrameView& frame_view,
 void IdentifyRepeatedInputs(const std::vector<NodeDef*>& nodes,
                             absl::flat_hash_set<string>* seen_outputs,
                             absl::flat_hash_set<string>* repeated_outputs) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_38(mht_38_v, 1375, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "IdentifyRepeatedInputs");
+
   for (NodeDef* node : nodes) {
     for (const auto& input_name : node->input()) {
       if (!seen_outputs->insert(input_name).second) {
@@ -1077,6 +1388,9 @@ void IdentifyRepeatedInputs(const std::vector<NodeDef*>& nodes,
 
 Status ScopedAllocatorOptimizer::ProcessGraphDef(
     GraphDef* graph, const GraphProperties& graph_properties) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_39(mht_39_v, 1391, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "ScopedAllocatorOptimizer::ProcessGraphDef");
+
   // Nodes created by this optimizer have the IsStateful() property
   // which means their names must be globally unique within a process,
   // so we include an optimizer invocation count in every generated
@@ -1179,6 +1493,9 @@ struct NameLess {
 };
 
 bool IsCollectiveNode(const NodeDef& n) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_40(mht_40_v, 1496, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "IsCollectiveNode");
+
   AttrSlice attrs = AttrSlice(n);
   int key = -1;
   if (!IsCollective(n)) return false;
@@ -1192,6 +1509,9 @@ bool IsCollectiveNode(const NodeDef& n) {
 
 Status ScopedAllocatorOptimizer::OrderNodeSet(
     std::vector<NodeDef*>* nodes) const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSscoped_allocator_optimizerDTcc mht_41(mht_41_v, 1512, "", "./tensorflow/core/grappler/optimizers/scoped_allocator_optimizer.cc", "ScopedAllocatorOptimizer::OrderNodeSet");
+
   // Nodes should be identical type.  Default order is by name but for
   // collectives we order by increasing instance_key so each group gets
   // the same instance_key.

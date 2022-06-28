@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -73,6 +241,10 @@ constexpr int kInvalidRank = -2;
 inline bool AttrDataFormatMatch(const utils::MutableNodeView& node,
                                 absl::string_view src_data_format,
                                 bool* missing) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("src_data_format: \"" + std::string(src_data_format.data(), src_data_format.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_0(mht_0_v, 245, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "AttrDataFormatMatch");
+
   const auto* attr = node.GetAttr(kAttrDataFormat);
   if (attr != nullptr) {
     return attr->s() == src_data_format;
@@ -83,11 +255,18 @@ inline bool AttrDataFormatMatch(const utils::MutableNodeView& node,
 
 inline bool AttrDataFormatMatch(const utils::MutableNodeView& node,
                                 absl::string_view src_data_format) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("src_data_format: \"" + std::string(src_data_format.data(), src_data_format.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_1(mht_1_v, 259, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "AttrDataFormatMatch");
+
   bool missing = false;
   return AttrDataFormatMatch(node, src_data_format, &missing);
 }
 
 bool IsNonFloatingConv2D(const utils::MutableNodeView& node) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_2(mht_2_v, 267, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "IsNonFloatingConv2D");
+
   if (IsConv2D(*node.node()) || IsConv2DBackpropInput(*node.node())) {
     const auto* attr = node.GetAttr(kAttrT);
     if (attr != nullptr) {
@@ -100,6 +279,9 @@ bool IsNonFloatingConv2D(const utils::MutableNodeView& node) {
 // Utils for layout agnostic transposer.
 
 bool IsComparisonOp(const NodeDef& node) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_3(mht_3_v, 282, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "IsComparisonOp");
+
   bool is_compare = IsApproximateEqual(node) || IsEqual(node) ||
                     IsGreater(node) || IsGreaterEqual(node) || IsLess(node) ||
                     IsLessEqual(node) || IsNotEqual(node);
@@ -137,6 +319,9 @@ struct ComparatorByNodeNameAndIndex {
 };
 
 bool IsHostMemory(const NodeDef& node, int output_port) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_4(mht_4_v, 322, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "IsHostMemory");
+
   DeviceNameUtils::ParsedName parsed_name;
   if (DeviceNameUtils::ParseFullName(node.device(), &parsed_name)) {
     DeviceType device_type(parsed_name.type);
@@ -176,6 +361,9 @@ class ScopedDataFormatUpgrader {
  public:
   ScopedDataFormatUpgrader(TransposeContext* context, int rank)
       : context_(context) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_5(mht_5_v, 364, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "ScopedDataFormatUpgrader");
+
     if (rank == 5 && IsSupportedDataFormat(context_->src_format) &&
         IsSupportedDataFormat(context_->dst_format)) {
       old_src_format_ = context_->src_format;
@@ -192,6 +380,9 @@ class ScopedDataFormatUpgrader {
   ScopedDataFormatUpgrader& operator=(const ScopedDataFormatUpgrader&) = delete;
 
   ~ScopedDataFormatUpgrader() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_6(mht_6_v, 383, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "~ScopedDataFormatUpgrader");
+
     if (upgraded_) {
       context_->AssignDeviceAndDataFormats(context_->target_device,
                                            old_src_format_, old_dst_format_);
@@ -200,10 +391,18 @@ class ScopedDataFormatUpgrader {
 
  private:
   bool IsSupportedDataFormat(absl::string_view data_format) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("data_format: \"" + std::string(data_format.data(), data_format.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_7(mht_7_v, 395, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "IsSupportedDataFormat");
+
     return data_format == "NHWC" || data_format == "NCHW";
   }
 
   std::string GetUpgradedDataFormat(absl::string_view data_format) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("data_format: \"" + std::string(data_format.data(), data_format.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_8(mht_8_v, 403, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "GetUpgradedDataFormat");
+
     if (data_format == "NHWC") {
       return "NDHWC";
     }
@@ -226,6 +425,9 @@ Status TransposeContext::InitializeTransposeContext(bool assume_valid_feeds,
                                                     const GrapplerItem& item,
                                                     const Cluster* cluster,
                                                     TransposeContext* context) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_9(mht_9_v, 428, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "TransposeContext::InitializeTransposeContext");
+
   DCHECK(context != nullptr);
   context->graph_properties = absl::make_unique<GraphProperties>(item);
   TF_RETURN_IF_ERROR(
@@ -252,6 +454,12 @@ Status TransposeContext::InitializeTransposeContext(bool assume_valid_feeds,
 void TransposeContext::AssignDeviceAndDataFormats(
     absl::string_view target_device, absl::string_view src_format,
     absl::string_view dst_format) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("target_device: \"" + std::string(target_device.data(), target_device.size()) + "\"");
+   mht_10_v.push_back("src_format: \"" + std::string(src_format.data(), src_format.size()) + "\"");
+   mht_10_v.push_back("dst_format: \"" + std::string(dst_format.data(), dst_format.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_10(mht_10_v, 460, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "TransposeContext::AssignDeviceAndDataFormats");
+
   this->target_device = string(target_device);
   this->src_format = string(src_format);
   this->dst_format = string(dst_format);
@@ -265,6 +473,9 @@ void TransposeContext::AssignDeviceAndDataFormats(
 
 bool Transposer::ShouldProcess(const TransposeContext& context,
                                const utils::MutableNodeView& node) const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_11(mht_11_v, 476, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "Transposer::ShouldProcess");
+
   const auto* node_def = node.node();
   const string& device_name =
       GetDeviceName(context.virtual_placer.get(), *node_def);
@@ -293,6 +504,12 @@ Status Transposer::CreateConstPermNode(TransposeContext* context,
                                        absl::Span<const int> permutation,
                                        absl::string_view control_node_name,
                                        utils::MutationNewNode* added_node) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   mht_12_v.push_back("device: \"" + std::string(device.data(), device.size()) + "\"");
+   mht_12_v.push_back("control_node_name: \"" + std::string(control_node_name.data(), control_node_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_12(mht_12_v, 510, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "Transposer::CreateConstPermNode");
+
   auto* graph_view = context->graph_view.get();
   DCHECK(!graph_view->HasNode(node_name));
 
@@ -329,6 +546,12 @@ Status Transposer::CreateTransposeNode(
     TensorShapeProto fanin_shape, absl::Span<const int> permutation,
     absl::string_view control_node_name, utils::MutationNewNode* added_node,
     string* transpose_node_name) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("name_format: \"" + std::string(name_format.data(), name_format.size()) + "\"");
+   mht_13_v.push_back("device: \"" + std::string(device.data(), device.size()) + "\"");
+   mht_13_v.push_back("control_node_name: \"" + std::string(control_node_name.data(), control_node_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_13(mht_13_v, 552, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "Transposer::CreateTransposeNode");
+
   const string node_name = absl::Substitute(name_format, kOpTranspose);
   auto* graph_view = context->graph_view.get();
   DCHECK(!graph_view->HasNode(node_name));
@@ -378,6 +601,10 @@ Status Transposer::UpdateFaninEdgesWithOp(TransposeContext* context,
                                           absl::Span<const int> dst_ports,
                                           utils::MutableNodeView* dst_node,
                                           absl::string_view op) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("op: \"" + std::string(op.data(), op.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_14(mht_14_v, 605, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "Transposer::UpdateFaninEdgesWithOp");
+
   const bool is_in_frame = context->frames.IsInFrame(*dst_node->node());
   for (int dst_port : dst_ports) {
     auto& fanin_port = dst_node->GetRegularFanin(dst_port);
@@ -398,6 +625,10 @@ Status Transposer::UpdateFanoutEdgesWithOp(TransposeContext* context,
                                            absl::Span<const int> src_ports,
                                            utils::MutableNodeView* src_node,
                                            absl::string_view op) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("op: \"" + std::string(op.data(), op.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_15(mht_15_v, 629, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "Transposer::UpdateFanoutEdgesWithOp");
+
   // Update attr _output_shapes for output ports.
   const auto* output_shape_attr = src_node->GetAttr(kAttrOutputShape);
   AttrValue shape_attr_copy;
@@ -445,6 +676,12 @@ Status Transposer::CreateDataFormatNode(
     absl::string_view op, absl::string_view device, const DataType& data_type,
     bool is_fanin_on_host, bool is_src_format_to_dst_format,
     utils::MutationNewNode* added_node) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   mht_16_v.push_back("op: \"" + std::string(op.data(), op.size()) + "\"");
+   mht_16_v.push_back("device: \"" + std::string(device.data(), device.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_16(mht_16_v, 682, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "Transposer::CreateDataFormatNode");
+
   auto* graph_view = context->graph_view.get();
   DCHECK(!graph_view->HasNode(node_name));
 
@@ -490,6 +727,11 @@ Status Transposer::UpdateEdge(
     absl::string_view op, const AttrValue* input_shape, bool is_in_frame,
     bool is_src_format_to_dst_format, const int src_port, const int dst_port,
     utils::MutableNodeView* src_node, utils::MutableNodeView* dst_node) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("name_format: \"" + std::string(name_format.data(), name_format.size()) + "\"");
+   mht_17_v.push_back("op: \"" + std::string(op.data(), op.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_17(mht_17_v, 732, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "Transposer::UpdateEdge");
+
   DCHECK(src_node != nullptr);
   DCHECK(dst_node != nullptr);
   auto* src_node_def = src_node->node();
@@ -560,6 +802,9 @@ Status Transposer::UpdateEdge(
 
 int Transposer::GetFanoutPortRank(const utils::MutableNodeView& node,
                                   int port) const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_18(mht_18_v, 805, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "Transposer::GetFanoutPortRank");
+
   const auto* output_shape_attr = node.GetAttr(kAttrOutputShape);
   if (output_shape_attr == nullptr ||
       output_shape_attr->list().shape_size() <= port) {
@@ -574,11 +819,17 @@ int Transposer::GetFanoutPortRank(const utils::MutableNodeView& node,
 
 bool Transposer::IsFanoutPortRankN(const utils::MutableNodeView& node, int port,
                                    int n) const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_19(mht_19_v, 822, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "Transposer::IsFanoutPortRankN");
+
   return GetFanoutPortRank(node, port) == n;
 }
 
 bool Transposer::IsFanoutPortsRankN(const utils::MutableNodeView& node,
                                     absl::Span<const int> ports, int n) const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_20(mht_20_v, 830, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "Transposer::IsFanoutPortsRankN");
+
   for (const auto& port : ports) {
     if (!IsFanoutPortRankN(node, port, n)) {
       return false;
@@ -589,6 +840,9 @@ bool Transposer::IsFanoutPortsRankN(const utils::MutableNodeView& node,
 
 int Transposer::GetFaninPortRank(const utils::MutableNodeView& node,
                                  int port) const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_21(mht_21_v, 843, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "Transposer::GetFaninPortRank");
+
   if (port < node.NumRegularFanins() && port >= 0) {
     const auto& regular_fanin = node.GetRegularFanin(port);
     return GetFanoutPortRank(*regular_fanin.node_view(), regular_fanin.index());
@@ -598,12 +852,18 @@ int Transposer::GetFaninPortRank(const utils::MutableNodeView& node,
 
 bool Transposer::IsFaninPortRankN(const utils::MutableNodeView& node, int port,
                                   int n) const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_22(mht_22_v, 855, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "Transposer::IsFaninPortRankN");
+
   return GetFaninPortRank(node, port) == n;
 }
 
 bool Transposer::IsFaninPortDimsNIfConst(const utils::MutableNodeView& node,
                                          int port,
                                          absl::Span<const int> dims) const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_23(mht_23_v, 864, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "Transposer::IsFaninPortDimsNIfConst");
+
   if (port < node.NumRegularFanins() && port >= 0) {
     const auto& regular_fanin = node.GetRegularFanin(port);
     const auto* fanin_node_view = regular_fanin.node_view();
@@ -636,6 +896,9 @@ bool Transposer::IsFaninPortDimsNIfConst(const utils::MutableNodeView& node,
 bool Transposer::IsFaninPortsDimsNIfConst(const utils::MutableNodeView& node,
                                           absl::Span<const int> ports,
                                           absl::Span<const int> dims) const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_24(mht_24_v, 899, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "Transposer::IsFaninPortsDimsNIfConst");
+
   for (const auto& port : ports) {
     if (!IsFaninPortDimsNIfConst(node, port, dims)) {
       return false;
@@ -646,6 +909,9 @@ bool Transposer::IsFaninPortsDimsNIfConst(const utils::MutableNodeView& node,
 
 bool Transposer::CanProcessNode(const TransposeContext& context,
                                 const utils::MutableNodeView& node) const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_25(mht_25_v, 912, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "Transposer::CanProcessNode");
+
   return !context.nodes_to_preserve.contains(node.GetName()) &&
          !(node.NumRegularFanouts() == 0 && node.NumControlledFanouts() == 0);
 }
@@ -653,6 +919,12 @@ bool Transposer::CanProcessNode(const TransposeContext& context,
 string Transposer::GetFaninNameFormat(absl::string_view node_name, int port,
                                       absl::string_view src_format,
                                       absl::string_view dst_format) {
+   std::vector<std::string> mht_26_v;
+   mht_26_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   mht_26_v.push_back("src_format: \"" + std::string(src_format.data(), src_format.size()) + "\"");
+   mht_26_v.push_back("dst_format: \"" + std::string(dst_format.data(), dst_format.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_26(mht_26_v, 925, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "Transposer::GetFaninNameFormat");
+
   return absl::StrCat(node_name, "-", port, "-$0", src_format, "To", dst_format,
                       "-", kOptimizedSuffix);
 }
@@ -660,11 +932,21 @@ string Transposer::GetFaninNameFormat(absl::string_view node_name, int port,
 string Transposer::GetFanoutNameFormat(absl::string_view node_name, int port,
                                        int index, absl::string_view src_format,
                                        absl::string_view dst_format) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   mht_27_v.push_back("src_format: \"" + std::string(src_format.data(), src_format.size()) + "\"");
+   mht_27_v.push_back("dst_format: \"" + std::string(dst_format.data(), dst_format.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_27(mht_27_v, 938, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "Transposer::GetFanoutNameFormat");
+
   return absl::StrCat(node_name, "-", port, "-", index, "-$0", dst_format, "To",
                       src_format, "-", kOptimizedSuffix);
 }
 
 string Transposer::LayoutOptimizerNode(absl::string_view node_name) {
+   std::vector<std::string> mht_28_v;
+   mht_28_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_28(mht_28_v, 947, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "Transposer::LayoutOptimizerNode");
+
   return absl::StrCat(node_name, "-", kOptimizedSuffix);
 }
 
@@ -672,12 +954,22 @@ string Transposer::GetReshapeNodeNameFormat(absl::string_view node_name,
                                             int index,
                                             absl::string_view src_format,
                                             absl::string_view dst_format) {
+   std::vector<std::string> mht_29_v;
+   mht_29_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   mht_29_v.push_back("src_format: \"" + std::string(src_format.data(), src_format.size()) + "\"");
+   mht_29_v.push_back("dst_format: \"" + std::string(dst_format.data(), dst_format.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_29(mht_29_v, 960, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "Transposer::GetReshapeNodeNameFormat");
+
   return absl::StrCat(node_name, "-", index, "-", kReshape, src_format, "To",
                       dst_format);
 }
 
 string Transposer::GetShapeConstNodeNameFormat(absl::string_view node_name,
                                                int index) {
+   std::vector<std::string> mht_30_v;
+   mht_30_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_30(mht_30_v, 970, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "Transposer::GetShapeConstNodeNameFormat");
+
   return absl::StrCat(node_name, "-", index, "-", kReshapeConst);
 }
 
@@ -685,6 +977,9 @@ string Transposer::GetShapeConstNodeNameFormat(absl::string_view node_name,
 
 inline string GetLayoutSensitiveNodeDataFormat(
     const utils::MutableNodeView& node) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_31(mht_31_v, 980, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "GetLayoutSensitiveNodeDataFormat");
+
   const auto* attr = node.GetAttr(kAttrDataFormat);
   if (attr != nullptr) {
     return attr->s();
@@ -694,6 +989,9 @@ inline string GetLayoutSensitiveNodeDataFormat(
 
 Status LayoutSensitiveOpTransposer::UpdateNode(TransposeContext* context,
                                                utils::MutableNodeView* node) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_32(mht_32_v, 992, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "LayoutSensitiveOpTransposer::UpdateNode");
+
   utils::Mutation* mutation = context->graph_view->GetMutationBuilder();
   AttrValue data_format_attr;
   data_format_attr.set_s(context->dst_format);
@@ -701,6 +999,10 @@ Status LayoutSensitiveOpTransposer::UpdateNode(TransposeContext* context,
 
   auto permute_attr = [&context, &node,
                        &mutation](absl::string_view attr_name) {
+   std::vector<std::string> mht_33_v;
+   mht_33_v.push_back("attr_name: \"" + std::string(attr_name.data(), attr_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_33(mht_33_v, 1003, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "lambda");
+
     const auto* attr = node->GetAttr(attr_name);
     if (attr != nullptr) {
       AttrValue attr_copy(*attr);
@@ -734,6 +1036,9 @@ Status LayoutSensitiveOpTransposer::UpdateNode(TransposeContext* context,
 
 Status DefaultLayoutSensitiveOpTransposer::TransposeNode(
     TransposeContext* context, utils::MutableNodeView* node) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_34(mht_34_v, 1039, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "DefaultLayoutSensitiveOpTransposer::TransposeNode");
+
   DCHECK(IsDefaultLayoutSensitiveOp(*node->node()));
   const int rank = GetFanoutPortRank(*node, 0);
   if (rank != 4 && rank != 5) {
@@ -754,6 +1059,9 @@ Status DefaultLayoutSensitiveOpTransposer::TransposeNode(
 
 Status AvgPoolGradTransposer::TransposeNode(TransposeContext* context,
                                             utils::MutableNodeView* node) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_35(mht_35_v, 1062, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "AvgPoolGradTransposer::TransposeNode");
+
   DCHECK(IsAvgPoolGrad(*node->node()));
   if (!ShouldProcess(*context, *node) || !IsFaninPortRankN(*node, 1, 4)) {
     return Status::OK();
@@ -771,6 +1079,9 @@ Status AvgPoolGradTransposer::TransposeNode(TransposeContext* context,
 
 Status BiasAddTransposer::TransposeNode(TransposeContext* context,
                                         utils::MutableNodeView* node) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_36(mht_36_v, 1082, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "BiasAddTransposer::TransposeNode");
+
   // This TransposeNode allows for BiasAdd but not BiasAddV1, since BiasAdd
   // supports different data format.
   DCHECK(IsBiasAddV2(*node->node()));
@@ -797,6 +1108,9 @@ Status BiasAddTransposer::TransposeNode(TransposeContext* context,
 
 Status BiasAddGradTransposer::TransposeNode(TransposeContext* context,
                                             utils::MutableNodeView* node) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_37(mht_37_v, 1111, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "BiasAddGradTransposer::TransposeNode");
+
   DCHECK(IsBiasAddGrad(*node->node()));
   const int rank = GetFaninPortRank(*node, 0);
   if (rank != 4 && rank != 5) {
@@ -823,6 +1137,9 @@ Status BiasAddGradTransposer::TransposeNode(TransposeContext* context,
 
 Status Conv2DBackpropFilterTransposer::TransposeNode(
     TransposeContext* context, utils::MutableNodeView* node) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_38(mht_38_v, 1140, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "Conv2DBackpropFilterTransposer::TransposeNode");
+
   DCHECK(IsConv2DBackpropFilter(*node->node()) ||
          IsDepthwiseConv2dNativeBackpropFilter(*node->node()));
   if (!ShouldProcess(*context, *node) || !IsFanoutPortRankN(*node, 0, 4)) {
@@ -842,6 +1159,9 @@ Status Conv2DBackpropFilterTransposer::TransposeNode(
 
 Status Conv2DBackpropInputTransposer::TransposeNode(
     TransposeContext* context, utils::MutableNodeView* node) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_39(mht_39_v, 1162, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "Conv2DBackpropInputTransposer::TransposeNode");
+
   DCHECK(IsConv2DBackpropInput(*node->node()) ||
          IsDepthwiseConv2dNativeBackpropInput(*node->node()));
   if (!ShouldProcess(*context, *node) || !IsFanoutPortRankN(*node, 0, 4)) {
@@ -875,6 +1195,9 @@ Status Conv2DBackpropInputTransposer::TransposeNode(
 
 Status Conv3DTransposer::TransposeNode(TransposeContext* context,
                                        utils::MutableNodeView* node) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_40(mht_40_v, 1198, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "Conv3DTransposer::TransposeNode");
+
   DCHECK(IsConv3D(*node->node()));
   const int rank = GetFanoutPortRank(*node, 0);
   if (rank != 5) {
@@ -895,6 +1218,9 @@ Status Conv3DTransposer::TransposeNode(TransposeContext* context,
 
 Status Conv3DBackpropFilterTransposer::TransposeNode(
     TransposeContext* context, utils::MutableNodeView* node) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_41(mht_41_v, 1221, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "Conv3DBackpropFilterTransposer::TransposeNode");
+
   DCHECK(IsConv3DBackpropFilterV2(*node->node()));
   const int rank = GetFanoutPortRank(*node, 0);
   if (rank != 5) {
@@ -918,6 +1244,9 @@ Status Conv3DBackpropFilterTransposer::TransposeNode(
 
 Status Conv3DBackpropInputTransposer::TransposeNode(
     TransposeContext* context, utils::MutableNodeView* node) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_42(mht_42_v, 1247, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "Conv3DBackpropInputTransposer::TransposeNode");
+
   DCHECK(IsConv3DBackpropInputV2(*node->node()));
   const int rank = GetFanoutPortRank(*node, 0);
   if (rank != 5) {
@@ -940,6 +1269,9 @@ Status Conv3DBackpropInputTransposer::TransposeNode(
 
 Status FusedBatchNormExTransposer::TransposeNode(TransposeContext* context,
                                                  utils::MutableNodeView* node) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_43(mht_43_v, 1272, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "FusedBatchNormExTransposer::TransposeNode");
+
   DCHECK(IsFusedBatchNormEx(*node->node()));
   if (!ShouldProcess(*context, *node) || !IsFanoutPortRankN(*node, 0, 4)) {
     return Status::OK();
@@ -961,6 +1293,9 @@ Status FusedBatchNormExTransposer::TransposeNode(TransposeContext* context,
 
 bool FusedBatchNormGradTransposer::IsTraining(
     const utils::MutableNodeView& node) const {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_44(mht_44_v, 1296, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "FusedBatchNormGradTransposer::IsTraining");
+
   const auto* is_training_attr = node.GetAttr(kAttrIsTraining);
   if (is_training_attr != nullptr) {
     return is_training_attr->b();
@@ -970,6 +1305,9 @@ bool FusedBatchNormGradTransposer::IsTraining(
 
 Status FusedBatchNormGradTransposer::TransposeNode(
     TransposeContext* context, utils::MutableNodeView* node) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_45(mht_45_v, 1308, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "FusedBatchNormGradTransposer::TransposeNode");
+
   DCHECK(IsFusedBatchNormGrad(*node->node()));
   const int rank = GetFanoutPortRank(*node, 0);
   if (rank != 4 && rank != 5) {
@@ -991,6 +1329,9 @@ Status FusedBatchNormGradTransposer::TransposeNode(
 
 Status MaxPoolV2Transposer::TransposeNode(TransposeContext* context,
                                           utils::MutableNodeView* node) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_46(mht_46_v, 1332, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "MaxPoolV2Transposer::TransposeNode");
+
   DCHECK(IsMaxPoolV2(*node->node()));
   // We check data_input's shape instead, because the shape inference of
   // MaxPoolV2 is not able to infer the shape when ksize or strides is not
@@ -1014,6 +1355,9 @@ Status MaxPoolV2Transposer::TransposeNode(TransposeContext* context,
 
 Status MaxPoolGradTransposer::TransposeNode(TransposeContext* context,
                                             utils::MutableNodeView* node) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_47(mht_47_v, 1358, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "MaxPoolGradTransposer::TransposeNode");
+
   DCHECK(IsMaxPoolGrad(*node->node()) || IsMaxPoolGradGradV1(*node->node()));
   if (!ShouldProcess(*context, *node) || !IsFanoutPortRankN(*node, 0, 4)) {
     return Status::OK();
@@ -1030,6 +1374,9 @@ Status MaxPoolGradTransposer::TransposeNode(TransposeContext* context,
 
 Status MaxPoolGradV2Transposer::TransposeNode(TransposeContext* context,
                                               utils::MutableNodeView* node) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_48(mht_48_v, 1377, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "MaxPoolGradV2Transposer::TransposeNode");
+
   DCHECK(IsMaxPoolGradV2(*node->node()) || IsMaxPoolGradGradV2(*node->node()));
   if (!ShouldProcess(*context, *node) || !IsFanoutPortRankN(*node, 0, 4)) {
     return Status::OK();
@@ -1050,6 +1397,9 @@ Status MaxPoolGradV2Transposer::TransposeNode(TransposeContext* context,
 
 inline bool IsValidConstPermTransposeNode(const utils::MutableNodeView& node,
                                           absl::Span<const int> permutation) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_49(mht_49_v, 1400, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "IsValidConstPermTransposeNode");
+
   Tensor tensor;
   if (!GetValueAttrFromConstInputNode(node, IsTranspose, 1, &tensor)) {
     return false;
@@ -1071,6 +1421,11 @@ inline bool IsValidConstPermTransposeNode(const utils::MutableNodeView& node,
 inline bool IsValidDataFormatNode(const utils::MutableNodeView& node,
                                   absl::string_view src_format,
                                   absl::string_view dst_format) {
+   std::vector<std::string> mht_50_v;
+   mht_50_v.push_back("src_format: \"" + std::string(src_format.data(), src_format.size()) + "\"");
+   mht_50_v.push_back("dst_format: \"" + std::string(dst_format.data(), dst_format.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_50(mht_50_v, 1426, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "IsValidDataFormatNode");
+
   if (!IsDataFormatOp(node)) {
     return false;
   }
@@ -1087,12 +1442,18 @@ inline bool IsValidDataFormatNode(const utils::MutableNodeView& node,
 
 inline bool IsLayoutOptimizerAddedDstToSrcTranspose(
     const TransposeContext& context, const utils::MutableNodeView& node) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_51(mht_51_v, 1445, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "IsLayoutOptimizerAddedDstToSrcTranspose");
+
   return node.node_index() >= context.num_nodes &&
          IsValidConstPermTransposeNode(node, context.dst_to_src);
 }
 
 inline bool IsLayoutOptimizerAddedDstToSrcTransform(
     const TransposeContext& context, const utils::MutableNodeView& node) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_52(mht_52_v, 1454, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "IsLayoutOptimizerAddedDstToSrcTransform");
+
   return node.node_index() >= context.num_nodes &&
          (IsValidConstPermTransposeNode(node, context.dst_to_src) ||
           IsValidDataFormatNode(node, context.dst_format, context.src_format));
@@ -1100,6 +1461,9 @@ inline bool IsLayoutOptimizerAddedDstToSrcTransform(
 
 bool LayoutAgnosticOpTransposer::IsAfterDstToSrcTransform(
     const TransposeContext& context, const utils::MutableNodeView& node) const {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_53(mht_53_v, 1464, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "LayoutAgnosticOpTransposer::IsAfterDstToSrcTransform");
+
   std::deque<utils::MutableNodeView*> queue;
   absl::flat_hash_set<utils::MutableNodeView*> visited_nodes;
   auto data_node_pos = GetDataFaninPorts(node);
@@ -1136,6 +1500,9 @@ bool LayoutAgnosticOpTransposer::IsAfterDstToSrcTransform(
 std::vector<int> LayoutAgnosticOpTransposer::GetVariadicNDFaninPorts(
     const TransposeContext& context, const utils::MutableNodeView& node,
     int rank) const {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_54(mht_54_v, 1503, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "LayoutAgnosticOpTransposer::GetVariadicNDFaninPorts");
+
   std::vector<int> ports;
   const int num_regular_fanins = node.NumRegularFanins();
   ports.reserve(num_regular_fanins);
@@ -1156,6 +1523,9 @@ std::vector<int> LayoutAgnosticOpTransposer::GetVariadicNDFaninPorts(
 
 Status DefaultLayoutAgnosticOpTransposer::TransposeNode(
     TransposeContext* context, utils::MutableNodeView* node) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_55(mht_55_v, 1526, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "DefaultLayoutAgnosticOpTransposer::TransposeNode");
+
   DCHECK(IsDefaultLayoutAgnosticOp(*node->node()));
   const int rank = GetFanoutPortRank(*node, 0);
   if (rank != 4 && rank != 5) {
@@ -1176,6 +1546,9 @@ Status DefaultLayoutAgnosticOpTransposer::TransposeNode(
 
 Status AddNTransposer::TransposeNode(TransposeContext* context,
                                      utils::MutableNodeView* node) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_56(mht_56_v, 1549, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "AddNTransposer::TransposeNode");
+
   DCHECK(IsAddN(*node->node()));
   const int rank = GetFanoutPortRank(*node, 0);
   if (rank != 4 && rank != 5) {
@@ -1197,11 +1570,17 @@ Status AddNTransposer::TransposeNode(TransposeContext* context,
 
 bool BinaryOpTransposer::IsNDOperateWithMD(const utils::MutableNodeView& node,
                                            int n, int m) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_57(mht_57_v, 1573, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "BinaryOpTransposer::IsNDOperateWithMD");
+
   return IsFaninPortRankN(node, 0, n) && IsFaninPortRankN(node, 1, m);
 }
 
 bool BinaryOpTransposer::IsFaninShapeSupported(
     const utils::MutableNodeView& node, int rank) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_58(mht_58_v, 1581, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "BinaryOpTransposer::IsFaninShapeSupported");
+
   return (IsNDOperateWithMD(node, rank, 0) ||
           IsNDOperateWithMD(node, rank, 1) ||
           IsNDOperateWithMD(node, rank, rank) ||
@@ -1210,6 +1589,9 @@ bool BinaryOpTransposer::IsFaninShapeSupported(
 
 std::vector<int> BinaryOpTransposer::GetNDDataFaninPorts(
     const utils::MutableNodeView& node, int rank) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_59(mht_59_v, 1592, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "BinaryOpTransposer::GetNDDataFaninPorts");
+
   std::vector<int> values;
   if (IsFaninPortRankN(node, 0, rank)) {
     values.push_back(0);
@@ -1224,6 +1606,13 @@ Status BinaryOpTransposer::AddNodeReshape(
     utils::Mutation* mutation, absl::string_view node_name,
     absl::string_view node_device, absl::string_view input_name,
     absl::string_view shape_const_node_name, const DataType& data_type) {
+   std::vector<std::string> mht_60_v;
+   mht_60_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   mht_60_v.push_back("node_device: \"" + std::string(node_device.data(), node_device.size()) + "\"");
+   mht_60_v.push_back("input_name: \"" + std::string(input_name.data(), input_name.size()) + "\"");
+   mht_60_v.push_back("shape_const_node_name: \"" + std::string(shape_const_node_name.data(), shape_const_node_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_60(mht_60_v, 1613, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "BinaryOpTransposer::AddNodeReshape");
+
   NodeDef new_node;
   new_node.set_name(string(node_name));
   new_node.add_input(string(input_name));
@@ -1248,6 +1637,12 @@ Status BinaryOpTransposer::AddNodeShapeConst(
     utils::Mutation* mutation, absl::string_view node_name,
     absl::string_view node_device, bool node_in_frame, int num_channels,
     absl::string_view depended_node, int rank) {
+   std::vector<std::string> mht_61_v;
+   mht_61_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   mht_61_v.push_back("node_device: \"" + std::string(node_device.data(), node_device.size()) + "\"");
+   mht_61_v.push_back("depended_node: \"" + std::string(depended_node.data(), depended_node.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_61(mht_61_v, 1643, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "BinaryOpTransposer::AddNodeShapeConst");
+
   NodeDef new_node;
   new_node.set_name(string(node_name));
   new_node.set_op(kOpConst);
@@ -1280,6 +1675,9 @@ Status BinaryOpTransposer::AddNodeShapeConst(
 Status BinaryOpTransposer::MaybeReshapeVectorFanin(TransposeContext* context,
                                                    utils::MutableNodeView* node,
                                                    int rank) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_62(mht_62_v, 1678, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "BinaryOpTransposer::MaybeReshapeVectorFanin");
+
   int vector_index = -1;
   if (IsNDOperateWithMD(*node, rank, 1)) {
     vector_index = 1;
@@ -1322,6 +1720,9 @@ Status BinaryOpTransposer::MaybeReshapeVectorFanin(TransposeContext* context,
 
 Status BinaryOpTransposer::TransposeNode(TransposeContext* context,
                                          utils::MutableNodeView* node) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_63(mht_63_v, 1723, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "BinaryOpTransposer::TransposeNode");
+
   DCHECK(IsBinaryOp(*node->node()));
   const int rank = GetFanoutPortRank(*node, 0);
   if (rank != 4 && rank != 5) {
@@ -1344,6 +1745,9 @@ Status BinaryOpTransposer::TransposeNode(TransposeContext* context,
 
 Status ConcatOpTransposer::TransposeNode(TransposeContext* context,
                                          utils::MutableNodeView* node) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_64(mht_64_v, 1748, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "ConcatOpTransposer::TransposeNode");
+
   DCHECK(IsConcat(*node->node()));
   const int rank = GetFanoutPortRank(*node, 0);
   if (rank != 4 && rank != 5) {
@@ -1374,6 +1778,9 @@ Status ConcatOpTransposer::TransposeNode(TransposeContext* context,
 
 Status FillOpTransposer::TransposeNode(TransposeContext* context,
                                        utils::MutableNodeView* node) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_65(mht_65_v, 1781, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "FillOpTransposer::TransposeNode");
+
   DCHECK(IsFill(*node->node()));
   if (!ShouldProcess(*context, *node) || !IsFanoutPortRankN(*node, 0, 4) ||
       !IsFaninPortDimsNIfConst(*node, 0, {4}) ||
@@ -1388,6 +1795,9 @@ Status FillOpTransposer::TransposeNode(TransposeContext* context,
 
 Status IdentityNTransposer::TransposeNode(TransposeContext* context,
                                           utils::MutableNodeView* node) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_66(mht_66_v, 1798, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "IdentityNTransposer::TransposeNode");
+
   DCHECK(IsIdentityN(*node->node()));
   const auto ports_4d = GetVariadicNDFaninPorts(*context, *node, 4);
 
@@ -1421,6 +1831,9 @@ Status IdentityNTransposer::TransposeNode(TransposeContext* context,
 
 bool MergeTransposer::IsEveryFaninAfterDstToSrcTransform(
     const TransposeContext& context, const utils::MutableNodeView& node) const {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_67(mht_67_v, 1834, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "MergeTransposer::IsEveryFaninAfterDstToSrcTransform");
+
   for (const auto& regular_fanin : node.GetRegularFanins()) {
     auto* regular_fanin_node = regular_fanin.node_view();
     if (IsFanoutPortRankN(*regular_fanin_node, regular_fanin.index(), 4) &&
@@ -1437,6 +1850,9 @@ bool MergeTransposer::IsEveryFaninAfterDstToSrcTransform(
 
 Status MergeTransposer::TransposeNode(TransposeContext* context,
                                       utils::MutableNodeView* node) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_68(mht_68_v, 1853, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "MergeTransposer::TransposeNode");
+
   DCHECK(IsMerge(*node->node()));
   if (!ShouldProcess(*context, *node) || !IsFanoutPortRankN(*node, 0, 4) ||
       !IsEveryFaninAfterDstToSrcTransform(*context, *node)) {
@@ -1450,6 +1866,9 @@ Status MergeTransposer::TransposeNode(TransposeContext* context,
 
 Status PadTransposer::TransposeNode(TransposeContext* context,
                                     utils::MutableNodeView* node) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_69(mht_69_v, 1869, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "PadTransposer::TransposeNode");
+
   DCHECK(IsMirrorPad(*node->node()) || IsMirrorPadGrad(*node->node()) ||
          IsPad(*node->node()));
   if (!ShouldProcess(*context, *node) || !IsFanoutPortRankN(*node, 0, 4) ||
@@ -1465,6 +1884,9 @@ Status PadTransposer::TransposeNode(TransposeContext* context,
 }
 
 bool ReduceTransposer::KeepDims(const utils::MutableNodeView& node) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_70(mht_70_v, 1887, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "ReduceTransposer::KeepDims");
+
   const auto* keep_dims_attr = node.GetAttr(kAttrKeepDims);
   if (keep_dims_attr != nullptr) {
     return keep_dims_attr->b();
@@ -1474,6 +1896,9 @@ bool ReduceTransposer::KeepDims(const utils::MutableNodeView& node) {
 
 bool ReduceTransposer::IsAlongAxis(const Tensor& tensor,
                                    absl::Span<const int> axis, int rank) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_71(mht_71_v, 1899, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "ReduceTransposer::IsAlongAxis");
+
   const int axis_size = axis.size();
   if (tensor.dims() != 1 || tensor.dim_size(0) != axis_size) {
     return false;
@@ -1505,6 +1930,9 @@ bool ReduceTransposer::IsAlongAxis(const Tensor& tensor,
 bool ReduceTransposer::IsReduceAxisSupported(const TransposeContext& context,
                                              const utils::MutableNodeView& node,
                                              int rank) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_72(mht_72_v, 1933, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "ReduceTransposer::IsReduceAxisSupported");
+
   if (KeepDims(node)) {
     return true;
   }
@@ -1523,6 +1951,9 @@ bool ReduceTransposer::IsReduceAxisSupported(const TransposeContext& context,
     return false;
   }
   auto indices = [&context](absl::Span<const char> labels) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_73(mht_73_v, 1954, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "lambda");
+
     return GetDimensionIndicesFromLabel(context.src_dim_indices, labels);
   };
   if (rank == 5) {
@@ -1542,6 +1973,9 @@ bool ReduceTransposer::IsReduceAxisSupported(const TransposeContext& context,
 
 Status ReduceTransposer::TransposeNode(TransposeContext* context,
                                        utils::MutableNodeView* node) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_74(mht_74_v, 1976, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "ReduceTransposer::TransposeNode");
+
   DCHECK(IsReduceOp(*node->node()));
   const int rank = GetFaninPortRank(*node, 0);
   if (rank != 4 && rank != 5) {
@@ -1568,6 +2002,9 @@ Status ReduceTransposer::TransposeNode(TransposeContext* context,
 
 Status ReverseV2Transposer::TransposeNode(TransposeContext* context,
                                           utils::MutableNodeView* node) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_75(mht_75_v, 2005, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "ReverseV2Transposer::TransposeNode");
+
   DCHECK(IsReverseV2(*node->node()));
   if (!ShouldProcess(*context, *node) || !IsFanoutPortRankN(*node, 0, 4) ||
       !IsAfterDstToSrcTransform(*context, *node)) {
@@ -1582,12 +2019,18 @@ Status ReverseV2Transposer::TransposeNode(TransposeContext* context,
 
 bool SelectTransposer::IsFaninScalarVector4D(
     const utils::MutableNodeView& fanin, int port) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_76(mht_76_v, 2022, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "SelectTransposer::IsFaninScalarVector4D");
+
   return IsFanoutPortRankN(fanin, port, 0) ||
          IsFanoutPortRankN(fanin, port, 1) || IsFanoutPortRankN(fanin, port, 4);
 }
 
 std::vector<int> SelectTransposer::GetFaninPorts(
     const utils::MutableNodeView& fanin, int port) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_77(mht_77_v, 2031, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "SelectTransposer::GetFaninPorts");
+
   // Input 0 could be a scalar, a vector with size matching the first dimension
   // of input 1 and 2, or must have the same shape as input 1 and 2.
   if (IsFanoutPortRankN(fanin, port, 4)) {
@@ -1598,6 +2041,9 @@ std::vector<int> SelectTransposer::GetFaninPorts(
 
 Status SelectTransposer::TransposeNode(TransposeContext* context,
                                        utils::MutableNodeView* node) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_78(mht_78_v, 2044, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "SelectTransposer::TransposeNode");
+
   DCHECK(IsSelect(*node->node()));
   const auto& regular_fanin_0 = node->GetRegularFanin(0);
   auto* regular_fanin_0_node = regular_fanin_0.node_view();
@@ -1615,6 +2061,9 @@ Status SelectTransposer::TransposeNode(TransposeContext* context,
 
 Status ShapeTransposer::TransposeNode(TransposeContext* context,
                                       utils::MutableNodeView* node) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_79(mht_79_v, 2064, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "ShapeTransposer::TransposeNode");
+
   DCHECK(IsShape(*node->node()));
   const int rank = GetFaninPortRank(*node, 0);
   if (rank != 4 && rank != 5) {
@@ -1636,6 +2085,9 @@ Status ShapeTransposer::TransposeNode(TransposeContext* context,
 
 Status ShapeNTransposer::TransposeNode(TransposeContext* context,
                                        utils::MutableNodeView* node) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_80(mht_80_v, 2088, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "ShapeNTransposer::TransposeNode");
+
   DCHECK(IsShapeN(*node->node()));
   // ShapeN requires all input tensors to have the same dimensions. Therefore,
   // we simply use the 0th fanin port.
@@ -1660,6 +2112,9 @@ Status ShapeNTransposer::TransposeNode(TransposeContext* context,
 
 Status SliceTransposer::TransposeNode(TransposeContext* context,
                                       utils::MutableNodeView* node) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_81(mht_81_v, 2115, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "SliceTransposer::TransposeNode");
+
   DCHECK(IsSlice(*node->node()));
   const int rank = GetFanoutPortRank(*node, 0);
   if (rank != 4 && rank != 5) {
@@ -1683,6 +2138,9 @@ Status SliceTransposer::TransposeNode(TransposeContext* context,
 
 Status SplitTransposer::TransposeNode(TransposeContext* context,
                                       utils::MutableNodeView* node) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_82(mht_82_v, 2141, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "SplitTransposer::TransposeNode");
+
   DCHECK(IsSplit(*node->node()));
   const auto ports = GetDataFanoutPorts(*node);
   if (!ShouldProcess(*context, *node) || !IsFanoutPortsRankN(*node, ports, 4) ||
@@ -1699,6 +2157,9 @@ Status SplitTransposer::TransposeNode(TransposeContext* context,
 
 Status SplitVTransposer::TransposeNode(TransposeContext* context,
                                        utils::MutableNodeView* node) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_83(mht_83_v, 2160, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "SplitVTransposer::TransposeNode");
+
   DCHECK(IsSplitV(*node->node()));
   const auto ports = GetDataFanoutPorts(*node);
   if (!ShouldProcess(*context, *node) || !IsFanoutPortsRankN(*node, ports, 4) ||
@@ -1715,6 +2176,9 @@ Status SplitVTransposer::TransposeNode(TransposeContext* context,
 
 bool SqueezeTransposer::IsInputConvertible(
     const TransposeContext& context, const utils::MutableNodeView& node) const {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_84(mht_84_v, 2179, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "SqueezeTransposer::IsInputConvertible");
+
   const auto& regular_fanin_0 = node.GetRegularFanin(0);
   auto* regular_fanin_0_node = regular_fanin_0.node_view();
   const auto* output_shape_attr =
@@ -1736,6 +2200,9 @@ bool SqueezeTransposer::IsInputConvertible(
 bool SqueezeTransposer::IsAlongAxis(const AttrValue& attr,
                                     absl::Span<const int> axis,
                                     int rank) const {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_85(mht_85_v, 2203, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "SqueezeTransposer::IsAlongAxis");
+
   const auto& list = attr.list();
   // If list is empty, Squeeze op will squeeze all dimensions of size 1.
   int axis_size = axis.size();
@@ -1765,7 +2232,13 @@ bool SqueezeTransposer::IsAlongAxis(const AttrValue& attr,
 
 bool SqueezeTransposer::IsDimsSupported(
     const TransposeContext& context, const utils::MutableNodeView& node) const {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_86(mht_86_v, 2235, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "SqueezeTransposer::IsDimsSupported");
+
   auto indices = [&context](absl::Span<const char> labels) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_87(mht_87_v, 2239, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "lambda");
+
     return GetDimensionIndicesFromLabel(context.src_dim_indices, labels);
   };
   const auto* squeeze_dims_attr = node.GetAttr(kAttrSqueezeDims);
@@ -1780,6 +2253,9 @@ bool SqueezeTransposer::IsDimsSupported(
 
 Status SqueezeTransposer::UpdateSqueezeDims(TransposeContext* context,
                                             utils::MutableNodeView* node) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_88(mht_88_v, 2256, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "SqueezeTransposer::UpdateSqueezeDims");
+
   const auto* squeeze_dims_attr = node->GetAttr(kAttrSqueezeDims);
   if (squeeze_dims_attr == nullptr) {
     return errors::InvalidArgument("Missing attribute ", kAttrSqueezeDims);
@@ -1815,6 +2291,9 @@ Status SqueezeTransposer::UpdateSqueezeDims(TransposeContext* context,
 
 Status SqueezeTransposer::TransposeNode(TransposeContext* context,
                                         utils::MutableNodeView* node) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_89(mht_89_v, 2294, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "SqueezeTransposer::TransposeNode");
+
   DCHECK(IsSqueeze(*node->node()));
   if (!ShouldProcess(*context, *node) || !IsDimsSupported(*context, *node) ||
       !IsInputConvertible(*context, *node) ||
@@ -1828,6 +2307,10 @@ Status SqueezeTransposer::TransposeNode(TransposeContext* context,
 
 bool StridedSliceTransposer::IsMaskZero(const utils::MutableNodeView& node,
                                         absl::string_view mask) {
+   std::vector<std::string> mht_90_v;
+   mht_90_v.push_back("mask: \"" + std::string(mask.data(), mask.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_90(mht_90_v, 2311, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "StridedSliceTransposer::IsMaskZero");
+
   const auto* mask_attr = node.GetAttr(mask);
   if (mask_attr != nullptr) {
     return mask_attr->i() == 0;
@@ -1837,6 +2320,9 @@ bool StridedSliceTransposer::IsMaskZero(const utils::MutableNodeView& node,
 
 bool StridedSliceTransposer::HasOnlyBeginEndMask(
     const utils::MutableNodeView& node) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_91(mht_91_v, 2323, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "StridedSliceTransposer::HasOnlyBeginEndMask");
+
   return IsMaskZero(node, "ellipsis_mask") &&
          IsMaskZero(node, "new_axis_mask") &&
          IsMaskZero(node, "shrink_axis_mask");
@@ -1845,6 +2331,10 @@ bool StridedSliceTransposer::HasOnlyBeginEndMask(
 Status StridedSliceTransposer::PermuteMask(TransposeContext* context,
                                            utils::MutableNodeView* node,
                                            absl::string_view mask) {
+   std::vector<std::string> mht_92_v;
+   mht_92_v.push_back("mask: \"" + std::string(mask.data(), mask.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_92(mht_92_v, 2335, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "StridedSliceTransposer::PermuteMask");
+
   // Computers the permutation of the masks based on the src and dst format.
   // For example:
   // src_format = NHWC
@@ -1873,6 +2363,9 @@ Status StridedSliceTransposer::PermuteMask(TransposeContext* context,
 
 Status StridedSliceTransposer::TransposeNode(TransposeContext* context,
                                              utils::MutableNodeView* node) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_93(mht_93_v, 2366, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "StridedSliceTransposer::TransposeNode");
+
   DCHECK(IsStridedSlice(*node->node()));
   if (!ShouldProcess(*context, *node) || !IsFanoutPortRankN(*node, 0, 4) ||
       !IsFaninPortsDimsNIfConst(*node, {1, 2, 3}, {4}) ||
@@ -1891,6 +2384,9 @@ Status StridedSliceTransposer::TransposeNode(TransposeContext* context,
 
 Status SwitchTransposer::TransposeNode(TransposeContext* context,
                                        utils::MutableNodeView* node) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_94(mht_94_v, 2387, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "SwitchTransposer::TransposeNode");
+
   DCHECK(IsSwitch(*node->node()));
   if (!ShouldProcess(*context, *node) || !IsFaninPortRankN(*node, 0, 4) ||
       !IsAfterDstToSrcTransform(*context, *node)) {
@@ -1904,6 +2400,9 @@ Status SwitchTransposer::TransposeNode(TransposeContext* context,
 
 Status TernaryOpTransposer::TransposeNode(TransposeContext* context,
                                           utils::MutableNodeView* node) {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_95(mht_95_v, 2403, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "TernaryOpTransposer::TransposeNode");
+
   DCHECK(IsTernaryOp(*node->node()));
   if (!ShouldProcess(*context, *node) || !IsFanoutPortRankN(*node, 0, 4) ||
       !IsAfterDstToSrcTransform(*context, *node)) {
@@ -1917,6 +2416,9 @@ Status TernaryOpTransposer::TransposeNode(TransposeContext* context,
 
 Status TileTransposer::TransposeNode(TransposeContext* context,
                                      utils::MutableNodeView* node) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_96(mht_96_v, 2419, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "TileTransposer::TransposeNode");
+
   DCHECK(IsTile(*node->node()));
   if (!ShouldProcess(*context, *node) || !IsFanoutPortRankN(*node, 0, 4) ||
       !IsFaninPortDimsNIfConst(*node, 1, {4}) ||
@@ -1932,6 +2434,9 @@ Status TileTransposer::TransposeNode(TransposeContext* context,
 
 Status UnaryGradTransposer::TransposeNode(TransposeContext* context,
                                           utils::MutableNodeView* node) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_97(mht_97_v, 2437, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "UnaryGradTransposer::TransposeNode");
+
   DCHECK(IsUnaryGrad(*node->node()));
   const int rank = GetFanoutPortRank(*node, 0);
   if (rank != 4 && rank != 5) {
@@ -1954,12 +2459,18 @@ Status UnaryGradTransposer::TransposeNode(TransposeContext* context,
 // Utils.
 
 string GetDeviceName(const VirtualPlacer* virtual_placer, const NodeDef& node) {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_98(mht_98_v, 2462, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "GetDeviceName");
+
   return (node.device().empty() && virtual_placer != nullptr)
              ? virtual_placer->get_canonical_device_name(node)
              : node.device();
 }
 
 bool IsDefaultLayoutSensitiveOp(const NodeDef& node) {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_99(mht_99_v, 2471, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "IsDefaultLayoutSensitiveOp");
+
   static absl::flat_hash_set<string>* default_layout_sensitive_ops =
       new absl::flat_hash_set<std::string>(
           {"AvgPool", "Conv2D", "DepthwiseConv2dNative", "DepthToSpace",
@@ -1970,6 +2481,9 @@ bool IsDefaultLayoutSensitiveOp(const NodeDef& node) {
 }
 
 bool IsLayoutSensitiveOp(const NodeDef& node) {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_100(mht_100_v, 2484, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "IsLayoutSensitiveOp");
+
   return IsDefaultLayoutSensitiveOp(node) || IsAvgPoolGrad(node) ||
          IsBiasAddV2(node) || IsBiasAddGrad(node) ||
          IsConv2DBackpropFilter(node) || IsConv2DBackpropInput(node) ||
@@ -1983,6 +2497,9 @@ bool IsLayoutSensitiveOp(const NodeDef& node) {
 }
 
 bool IsDefaultLayoutAgnosticOp(const NodeDef& node) {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_101(mht_101_v, 2500, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "IsDefaultLayoutAgnosticOp");
+
   static absl::flat_hash_set<string>* agnostic_nodes =
       new absl::flat_hash_set<std::string>({"Abs",
                                             "Acos",
@@ -2054,6 +2571,9 @@ bool IsDefaultLayoutAgnosticOp(const NodeDef& node) {
 }
 
 bool IsLayoutAgnosticOp(const NodeDef& node) {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_102(mht_102_v, 2574, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "IsLayoutAgnosticOp");
+
   return IsDefaultLayoutAgnosticOp(node) || IsAddN(node) || IsBinaryOp(node) ||
          IsIdentityN(node) || IsMerge(node) || IsMirrorPad(node) ||
          IsMirrorPadGrad(node) || IsPad(node) || IsSelect(node) ||
@@ -2064,9 +2584,15 @@ bool IsLayoutAgnosticOp(const NodeDef& node) {
          IsReduceOp(node);
 }
 
-bool IsTernaryOp(const NodeDef& node) { return IsBetainc(node); }
+bool IsTernaryOp(const NodeDef& node) {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_103(mht_103_v, 2588, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "IsTernaryOp");
+ return IsBetainc(node); }
 
 bool IsUnaryGrad(const NodeDef& node) {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_104(mht_104_v, 2593, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "IsUnaryGrad");
+
   bool is_unary_grad =
       IsEluGrad(node) || IsInvGrad(node) || IsLeakyReluGrad(node) ||
       IsReciprocalGrad(node) || IsRelu6Grad(node) || IsReluGrad(node) ||
@@ -2076,21 +2602,36 @@ bool IsUnaryGrad(const NodeDef& node) {
   return is_unary_grad;
 }
 
-bool IsMaxPoolV2(const NodeDef& node) { return node.op() == "MaxPoolV2"; }
+bool IsMaxPoolV2(const NodeDef& node) {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_105(mht_105_v, 2606, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "IsMaxPoolV2");
+ return node.op() == "MaxPoolV2"; }
 
 bool IsMaxPoolGradV2(const NodeDef& node) {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_106(mht_106_v, 2611, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "IsMaxPoolGradV2");
+
   return node.op() == "MaxPoolGradV2";
 }
 
 bool IsMaxPoolGradGradV1(const NodeDef& node) {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_107(mht_107_v, 2618, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "IsMaxPoolGradGradV1");
+
   return node.op() == "MaxPoolGradGrad";
 }
 
 bool IsMaxPoolGradGradV2(const NodeDef& node) {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_108(mht_108_v, 2625, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "IsMaxPoolGradGradV2");
+
   return node.op() == "MaxPoolGradGradV2";
 }
 
 bool IsBinaryOp(const NodeDef& node) {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_109(mht_109_v, 2632, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "IsBinaryOp");
+
   bool is_binary =
       IsAdd(node) || IsAtan2(node) || IsComparisonOp(node) || IsComplex(node) ||
       IsDiv(node) || IsFloorDiv(node) || IsIgamma(node) || IsIgammac(node) ||
@@ -2102,6 +2643,9 @@ bool IsBinaryOp(const NodeDef& node) {
 }
 
 bool IsReduceOp(const NodeDef& node) {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_110(mht_110_v, 2646, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "IsReduceOp");
+
   return IsSum(node) || IsMean(node) || IsProd(node) || IsMax(node) ||
          IsMin(node) || IsAll(node) || IsAny(node);
 }
@@ -2163,6 +2707,9 @@ bool GetValueAttrFromConstInputNode(
     const utils::MutableNodeView& node,
     const std::function<bool(const NodeDef&)>& predicate, int index,
     Tensor* tensor) {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_111(mht_111_v, 2710, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "GetValueAttrFromConstInputNode");
+
   if (!predicate(*node.node())) {
     return false;
   }
@@ -2183,6 +2730,9 @@ bool GetValueAttrFromConstInputNode(
 }
 
 bool IsDataFormatOp(const utils::MutableNodeView& node) {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSgeneric_layout_optimizer_transposerDTcc mht_112(mht_112_v, 2733, "", "./tensorflow/core/grappler/optimizers/generic_layout_optimizer_transposer.cc", "IsDataFormatOp");
+
   const string& op = node.GetOp();
   return op == kOpDataFormatDimMap || op == kOpDataFormatVecPermute;
 }

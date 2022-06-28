@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -240,6 +408,9 @@ namespace tensorflow {
 class MklLayoutRewritePass : public GraphOptimizationPass {
  public:
   MklLayoutRewritePass() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_0(mht_0_v, 411, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass");
+
     // NOTE: names are alphabetically sorted.
     csinfo_.addn = "AddN";
     csinfo_.avg_pool = "AvgPool";
@@ -765,6 +936,9 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
   // Get the op rewrite cause depending on whether native format mode
   // is enabled or not.
   RewriteCause GetRewriteCause() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_1(mht_1_v, 939, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "GetRewriteCause");
+
     if (NativeFormatEnabled()) {
       return kRewriteForOpNameChange;
     } else {
@@ -986,12 +1160,18 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
   // Is OpDef::ArgDef a list type? It could be N * T or list(type).
   // Refer to opdef.proto for details of list type.
   inline bool ArgIsList(const OpDef::ArgDef& arg) const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_2(mht_2_v, 1163, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "ArgIsList");
+
     return !arg.type_list_attr().empty() || !arg.number_attr().empty();
   }
 
   // Get length of a list in 'n' if 'arg' is of list type. Refer to
   // description of ArgIsList for definition of list type.
   inline int GetTensorListLength(const OpDef::ArgDef& arg, const Node* n) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_3(mht_3_v, 1172, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "GetTensorListLength");
+
     CHECK_EQ(ArgIsList(arg), true);
     int N = 0;
     const string attr_name = !arg.type_list_attr().empty()
@@ -1011,6 +1191,9 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
   // Op can run on CPU with MKL if the runtime assigned device or the
   // user requested device contains device CPU, or both are empty.
   bool CanOpRunOnCPUDevice(const Node* n) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_4(mht_4_v, 1194, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "CanOpRunOnCPUDevice");
+
     bool result = true;
     string reason;
 
@@ -1077,6 +1260,9 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
   // merged with 'm'. If input 'm' is Conv2D, then check if there exists BiasAdd
   // node that can be merged with 'm'.
   static Node* GetConv2DOrBiasAdd(const Node* m) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_5(mht_5_v, 1263, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "GetConv2DOrBiasAdd");
+
     DCHECK(m);
     Node* n = nullptr;
 
@@ -1117,6 +1303,9 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
   // merged with 'm'. If input 'm' is Conv2D, then check if there exists Pad
   // node that can be merged with 'm'.
   static Node* GetPadOrConv2D(const Node* m) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_6(mht_6_v, 1306, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "GetPadOrConv2D");
+
     DCHECK(m);
     Node* n = nullptr;
 
@@ -1172,6 +1361,9 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
   // be merged with 'm'. If input 'm' is _FusedConv2D, then check if there
   // exists Pad node that can be merged with 'm'.
   static Node* GetPadOrFusedConv2D(const Node* m) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_7(mht_7_v, 1364, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "GetPadOrFusedConv2D");
+
     DCHECK(m);
     Node* n = nullptr;
 
@@ -1234,6 +1426,9 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
   // So 1st input of BiasAddGrad connects with 3rd input of
   // Conv2DBackpropFilter and vice versa.
   static Node* GetConv2DBackpropFilterOrBiasAddGrad(const Node* m) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_8(mht_8_v, 1429, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "GetConv2DBackpropFilterOrBiasAddGrad");
+
     DCHECK(m);
     Node* n = nullptr;
     const Node* conv2d_backprop_filter = nullptr;
@@ -1321,6 +1516,9 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
       string data_format);
 
   static bool CheckForTranspose(const Node* node, std::vector<int> perm) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_9(mht_9_v, 1519, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "CheckForTranspose");
+
     // Check if node's type is "Transpose"
     if (node->type_string() != "Transpose") return false;
 
@@ -1392,6 +1590,9 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
   }
 
   static bool CheckForMklOp(const Node* node, string name = "") {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_10(mht_10_v, 1593, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "CheckForMklOp");
+
     if (node == nullptr) return false;
 
     if (!name.empty() && node->type_string() != name) {
@@ -1418,7 +1619,10 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
 
   // Default rewrite rule to be used in scenario 1 for rewrite.
   // @return - true (since we want to always rewrite)
-  static bool AlwaysRewrite(const Node* n) { return true; }
+  static bool AlwaysRewrite(const Node* n) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_11(mht_11_v, 1623, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "AlwaysRewrite");
+ return true; }
 
   // Rewrite rule which considers "context" of the current node to decide if we
   // should rewrite. By "context" we currently mean all the inputs of current
@@ -1438,6 +1642,9 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
   // @input - Input graph node to be rewritten
   // @return - true if node is to be rewritten as MKL node; false otherwise.
   static bool RewriteIfAtleastOneMklInput(const Node* n) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_12(mht_12_v, 1645, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "RewriteIfAtleastOneMklInput");
+
     DataType T;
     if (GetNodeAttr(n->def(), "T", &T).ok() &&
         mkl_op_registry::IsMklOp(
@@ -1453,6 +1660,9 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
   }
 
   static bool MatMulRewrite(const Node* n) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_13(mht_13_v, 1663, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MatMulRewrite");
+
     DataType T;
     TF_CHECK_OK(GetNodeAttr(n->def(), "T", &T));
     if ((T == DT_FLOAT) || (T == DT_BFLOAT16)) {
@@ -1463,12 +1673,18 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
   }
   // For oneDNN, only int32 is supported for axis data type
   static bool ConcatV2Rewrite(const Node* n) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_14(mht_14_v, 1676, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "ConcatV2Rewrite");
+
     DataType T;
     TF_CHECK_OK(GetNodeAttr(n->def(), "Tidx", &T));
     return (T == DT_INT32);
   }
 
   static bool DequantizeRewrite(const Node* n) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_15(mht_15_v, 1685, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "DequantizeRewrite");
+
     DCHECK(n);
     Node* input = nullptr;
     TF_CHECK_OK(n->input_node(0, &input));
@@ -1494,6 +1710,9 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
   // @return - true (no transpose attribute for input 1);
   //           false otherwise.
   static bool FusedMatMulRewrite(const Node* n) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_16(mht_16_v, 1713, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "FusedMatMulRewrite");
+
     bool trans_a;
 
     // Do not rewrite with transpose attribute because reorder has performance
@@ -1508,6 +1727,9 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
   // @return - true (if it is not a depth/batch wise pooling case);
   //           false otherwise.
   static bool NonDepthBatchWisePoolRewrite(const Node* n) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_17(mht_17_v, 1730, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "NonDepthBatchWisePoolRewrite");
+
     DCHECK(n);
 
     string data_format_str;
@@ -1535,6 +1757,9 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
   // and use default Eigen. But for depth_radius=2, MKL DNN optimized
   // path is taken, i.e., eigen node is rewritten by MKl DNN node.
   static bool LrnRewrite(const Node* n) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_18(mht_18_v, 1760, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "LrnRewrite");
+
     DCHECK(n);
 
     int depth_radius;
@@ -1553,6 +1778,9 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
   }
 
   static bool LrnGradRewrite(const Node* n) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_19(mht_19_v, 1781, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "LrnGradRewrite");
+
     DCHECK(n);
     bool do_rewrite = false;
 
@@ -1575,6 +1803,9 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
   // These two algorithms are not consistent when alpha > 1,
   // so we only rewrite LeakyRelu to MKL OP when alpha <= 1.
   static bool LeakyReluRewrite(const Node* n) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_20(mht_20_v, 1806, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "LeakyReluRewrite");
+
     DCHECK(n);
 
     float alpha;
@@ -1594,6 +1825,9 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
   }
 
   static bool QuantizeOpRewrite(const Node* n) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_21(mht_21_v, 1828, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "QuantizeOpRewrite");
+
     DCHECK(n);
     Node* filter_node = nullptr;
     TF_CHECK_OK(n->input_node(0, &filter_node));
@@ -1649,6 +1883,9 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
   }
 
   static bool MaxpoolGradRewrite(const Node* n) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_22(mht_22_v, 1886, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MaxpoolGradRewrite");
+
     DCHECK(n);
     bool do_rewrite = false;
     for (const Edge* e : n->in_edges()) {
@@ -1667,6 +1904,9 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
   }
 
   static bool Maxpool3DGradRewrite(const Node* n) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_23(mht_23_v, 1907, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "Maxpool3DGradRewrite");
+
     DCHECK(n);
     for (const Edge* e : n->in_edges()) {
       // Rewrite only if there is corresponding Maxpool3D, i.e., workspace is
@@ -1683,6 +1923,9 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
   }
 
   static bool FusedBatchNormV3Rewrite(const Node* n) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_24(mht_24_v, 1926, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "FusedBatchNormV3Rewrite");
+
     DCHECK(n);
     if (Check5DFormat(n->def())) {
       VLOG(1) << "Graph Rewrite: FusedBatchNorm(Grad)V3 op currently does not "
@@ -1693,6 +1936,9 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
   }
 
   static bool FusedBatchNormExRewrite(const Node* n) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_25(mht_25_v, 1939, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "FusedBatchNormExRewrite");
+
     DCHECK(n);
 
     int num_side_inputs;
@@ -1718,6 +1964,9 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
   }
 
   static bool FusedConv2DRewrite(const Node* n) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_26(mht_26_v, 1967, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "FusedConv2DRewrite");
+
     // MKL DNN currently doesn't support all fusions that grappler fuses
     // together with Conv2D (ex. batchnorm). We rewrite _FusedConv2D only if
     // it includes those we support.
@@ -1754,6 +2003,9 @@ class MklLayoutRewritePass : public GraphOptimizationPass {
   }
 
   static bool FusedDepthwiseConv2DRewrite(const Node* n) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_27(mht_27_v, 2006, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "FusedDepthwiseConv2DRewrite");
+
     // MKL DNN currently doesn't support all fusions that grappler fuses
     // together with DepthwiseConv2D (ex. batchnorm). We rewrite
     // _FusedDepthwiseConv2DNative only if it includes those we support.
@@ -2028,6 +2280,9 @@ REGISTER_OPTIMIZATION(kMklLayoutRewritePassGroup, 1, MklLayoutRewritePass);
 static void FillInputs(const Node* n,
                        gtl::InlinedVector<Node*, 4>* control_edges,
                        gtl::InlinedVector<std::pair<Node*, int>, 4>* in) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_28(mht_28_v, 2283, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "FillInputs");
+
   control_edges->clear();
   for (const Edge* e : n->in_edges()) {
     if (e->IsControlEdge()) {
@@ -2042,6 +2297,9 @@ static void FillInputs(const Node* n,
 void MklLayoutRewritePass::GetNodesProducingTFTensorList(
     const gtl::InlinedVector<std::pair<Node*, int>, 4>& inputs, int* input_idx,
     int list_length, std::vector<NodeBuilder::NodeOut>* output_nodes) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_29(mht_29_v, 2300, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::GetNodesProducingTFTensorList");
+
   CHECK_LT(*input_idx, inputs.size());
   CHECK_GT(list_length, 0);
   DCHECK(output_nodes);
@@ -2064,6 +2322,9 @@ void MklLayoutRewritePass::GetNodesProducingTFTensorList(
 void MklLayoutRewritePass::GetDummyMklTensorNode(std::unique_ptr<Graph>* g,
                                                  Node** out,
                                                  const Node* orig_node) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_30(mht_30_v, 2325, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::GetDummyMklTensorNode");
+
   // We use a tensor of shape {8} and value 0,0,0,0,0,0,0,0 to represent
   // dummy Mkl tensor. 8 = 2*size_t.
   const DataType dt = DataTypeToEnum<uint8>::v();
@@ -2107,6 +2368,9 @@ void MklLayoutRewritePass::GetNodesProducingMklTensorList(
     std::unique_ptr<Graph>* g, const Node* orig_node,
     const gtl::InlinedVector<std::pair<Node*, int>, 4>& inputs, int* input_idx,
     int list_length, std::vector<NodeBuilder::NodeOut>* output_nodes) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_31(mht_31_v, 2371, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::GetNodesProducingMklTensorList");
+
   CHECK_LT(*input_idx, inputs.size());
   CHECK_GT(list_length, 0);
   DCHECK(output_nodes);
@@ -2137,6 +2401,9 @@ void MklLayoutRewritePass::GetNodesProducingMklTensorList(
 void MklLayoutRewritePass::GetNodeProducingMklTensor(
     std::unique_ptr<Graph>* g, const Node* orig_node, Node* n,
     int n_output_slot, Node** mkl_node, int* mkl_node_output_slot) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_32(mht_32_v, 2404, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::GetNodeProducingMklTensor");
+
   DCHECK(n);
   DCHECK(mkl_node);
   DCHECK(mkl_node_output_slot);
@@ -2169,6 +2436,9 @@ int MklLayoutRewritePass::SetUpContiguousInputs(
     NodeBuilder* nb, const Node* old_node,
     std::vector<NodeBuilder::NodeOut>* workspace_tensors,
     bool are_workspace_tensors_available) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_33(mht_33_v, 2439, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::SetUpContiguousInputs");
+
   DCHECK(workspace_tensors);
   CHECK_EQ(kTensorOrdering, MklTfTensorOrdering::TENSORS_CONTIGUOUS);
 
@@ -2314,6 +2584,9 @@ int MklLayoutRewritePass::SetUpContiguousInputs(
 // not used in quantized ops, so checking that would fail as quantized ops
 // don't have attribute: "T".
 bool IsWorkspaceCheckNeeded(const Node* node) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_34(mht_34_v, 2587, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "IsWorkspaceCheckNeeded");
+
   std::vector<string> quant_ops{
       "Dequantize",
       "QuantizeV2",
@@ -2346,6 +2619,9 @@ Status MklLayoutRewritePass::SetUpInputs(
     std::unique_ptr<Graph>* g,
     const gtl::InlinedVector<std::pair<Node*, int>, 4>& old_node_inputs,
     NodeBuilder* nb, const Node* old_node) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_35(mht_35_v, 2622, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::SetUpInputs");
+
   // Let's check if we need to add workspace tensors for this node.
   // We add workspace edge only for MaxPool, LRN and BatchNorm.
   std::vector<NodeBuilder::NodeOut> workspace_tensors;
@@ -2394,6 +2670,9 @@ Status MklLayoutRewritePass::CopyInputs(
     const Node* old_node,
     const gtl::InlinedVector<std::pair<Node*, int>, 4>& old_node_inputs,
     NodeBuilder* nb) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_36(mht_36_v, 2673, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::CopyInputs");
+
   // Number of input slots to old node
   // Input slots are represented by .Input() calls in REGISTER_OP.
   int old_node_input_slots = old_node->op_def().input_arg_size();
@@ -2432,6 +2711,9 @@ Status MklLayoutRewritePass::CopyInputs(
 // TODO(nhasabni) We should move this to mkl_util.h.
 void MklLayoutRewritePass::GetDummyWorkspaceTensorNode(
     std::unique_ptr<Graph>* g, Node** out, const Node* orig_node) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_37(mht_37_v, 2714, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::GetDummyWorkspaceTensorNode");
+
   // We use uint8 tensor of shape 8 with content {0,0,0,0,0,0,0,0} to represent
   // workspace tensor.
   GetDummyMklTensorNode(g, out, orig_node);
@@ -2440,6 +2722,9 @@ void MklLayoutRewritePass::GetDummyWorkspaceTensorNode(
 void MklLayoutRewritePass::AddWorkSpaceEdgeIfNeeded(
     std::unique_ptr<Graph>* g, const Node* orig_node, NodeBuilder* nb,
     std::vector<NodeBuilder::NodeOut>* ws_tensors, bool* are_ws_tensors_added) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_38(mht_38_v, 2725, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::AddWorkSpaceEdgeIfNeeded");
+
   bool workspace_edge_added = false;  // Default initializer
   DCHECK(are_ws_tensors_added);
   *are_ws_tensors_added = false;  // Default initializer
@@ -2555,6 +2840,9 @@ void MklLayoutRewritePass::AddWorkSpaceEdgeIfNeeded(
 // Generic function to copy all attributes from original node to target.
 void MklLayoutRewritePass::CopyAttrsAll(const Node* orig_node, NodeBuilder* nb,
                                         bool change_format) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_39(mht_39_v, 2843, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::CopyAttrsAll");
+
   string name;
   AttrSlice attr_list(orig_node->def());
 
@@ -2571,6 +2859,9 @@ void MklLayoutRewritePass::CopyAttrsAll(const Node* orig_node, NodeBuilder* nb,
 void MklLayoutRewritePass::CopyAttrsAllCheckConstFilter(const Node* orig_node,
                                                         NodeBuilder* nb,
                                                         bool change_format) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_40(mht_40_v, 2862, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::CopyAttrsAllCheckConstFilter");
+
   CopyAttrsAll(orig_node, nb, change_format);
 
   // Check and set filter attribute.
@@ -2582,6 +2873,9 @@ void MklLayoutRewritePass::CopyAttrsAllCheckConstFilter(const Node* orig_node,
 void MklLayoutRewritePass::CopyAttrsConvCheckConstFilter(const Node* orig_node,
                                                          NodeBuilder* nb,
                                                          bool change_format) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_41(mht_41_v, 2876, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::CopyAttrsConvCheckConstFilter");
+
   CopyAttrsConv(orig_node, nb, change_format);
 
   // Check and set filter attribute.
@@ -2592,6 +2886,9 @@ void MklLayoutRewritePass::CopyAttrsConvCheckConstFilter(const Node* orig_node,
 
 void MklLayoutRewritePass::CopyAttrsConv(const Node* orig_node, NodeBuilder* nb,
                                          bool change_format) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_42(mht_42_v, 2889, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::CopyAttrsConv");
+
   DataType T;
   string padding;
   std::vector<int32> strides;
@@ -2625,6 +2922,9 @@ void MklLayoutRewritePass::CopyAttrsFromPadAndConv2D(const Node* orig_node1,
                                                      const Node* orig_node2,
                                                      NodeBuilder* nb,
                                                      bool change_format) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_43(mht_43_v, 2925, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::CopyAttrsFromPadAndConv2D");
+
   DataType Tpaddings;
   DataType T;
   string data_format;
@@ -2657,6 +2957,9 @@ void MklLayoutRewritePass::CopyAttrsFromPadAndConv2D(const Node* orig_node1,
 void MklLayoutRewritePass::CopyAttrsFromPadAndFusedConv2D(
     const Node* fused_conv2d, const Node* pad, NodeBuilder* nb,
     bool change_format) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_44(mht_44_v, 2960, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::CopyAttrsFromPadAndFusedConv2D");
+
   DataType T;
   int num_args;
   string data_format;
@@ -2697,6 +3000,9 @@ void MklLayoutRewritePass::CopyAttrsFromPadAndFusedConv2D(
 void MklLayoutRewritePass::CopyAttrsQuantizedConv2D(const Node* orig_node,
                                                     NodeBuilder* nb,
                                                     bool change_format) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_45(mht_45_v, 3003, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::CopyAttrsQuantizedConv2D");
+
   DataType Tinput, Tfilter, out_type;
   string padding;
   string data_format("NHWC");
@@ -2738,6 +3044,9 @@ void MklLayoutRewritePass::CopyAttrsQuantizedConv2D(const Node* orig_node,
 
 void MklLayoutRewritePass::CopyAttrsQuantizedMatMulWithBiasAndDequantize(
     const Node* orig_node, NodeBuilder* nb, bool change_format) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_46(mht_46_v, 3047, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::CopyAttrsQuantizedMatMulWithBiasAndDequantize");
+
   CopyAttrsAll(orig_node, nb, change_format);
 
   // Check and set filter attribute.
@@ -2748,6 +3057,9 @@ void MklLayoutRewritePass::CopyAttrsQuantizedMatMulWithBiasAndDequantize(
 
 void MklLayoutRewritePass::CopyAttrsQuantizedMatMulWithBias(
     const Node* orig_node, NodeBuilder* nb, bool change_format) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_47(mht_47_v, 3060, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::CopyAttrsQuantizedMatMulWithBias");
+
   DataType T1, T2, Toutput;
 
   // Get all attributes from old node.
@@ -2773,6 +3085,9 @@ void MklLayoutRewritePass::CopyAttrsQuantizedMatMulWithBias(
 void MklLayoutRewritePass::CopyFormatAttrsConv(
     const Node* orig_node, NodeBuilder* nb, const std::vector<int32>& strides,
     const std::vector<int32>& dilations, bool change_format) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_48(mht_48_v, 3088, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::CopyFormatAttrsConv");
+
   string data_format;
 
   if (!change_format) {
@@ -2812,6 +3127,9 @@ void MklLayoutRewritePass::CopyFormatAttrsConv(
 void MklLayoutRewritePass::CopyAttrsPooling(const Node* orig_node,
                                             NodeBuilder* nb,
                                             bool change_format) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_49(mht_49_v, 3130, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::CopyAttrsPooling");
+
   DataType T;
   string data_format;
   string padding;
@@ -2868,6 +3186,9 @@ void MklLayoutRewritePass::CopyAttrsPooling(const Node* orig_node,
 //////////////////////////////////////////////////////////////////////////
 
 Node* MklLayoutRewritePass::CheckForNodeMerge(const Node* a) const {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_50(mht_50_v, 3189, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::CheckForNodeMerge");
+
   // TODO(nhasabni) Add check for type of node similar to CheckForNodeRewrite
   // once we support BiasAddGrad as Mkl layer.
 
@@ -2912,6 +3233,9 @@ Node* MklLayoutRewritePass::CheckForNodeMerge(const Node* a) const {
 
 Status MklLayoutRewritePass::MergeConv2DWithBiasAdd(std::unique_ptr<Graph>* g,
                                                     Node* m, Node* n) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_51(mht_51_v, 3236, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::MergeConv2DWithBiasAdd");
+
   CHECK_EQ(((m->type_string() == csinfo_.bias_add &&
              n->type_string() == csinfo_.conv2d)) ||
                ((n->type_string() == csinfo_.bias_add &&
@@ -3076,6 +3400,9 @@ Status MklLayoutRewritePass::MergeConv2DWithBiasAdd(std::unique_ptr<Graph>* g,
 
 Status MklLayoutRewritePass::MergePadWithConv2D(std::unique_ptr<Graph>* g,
                                                 Node* m, Node* n) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_52(mht_52_v, 3403, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::MergePadWithConv2D");
+
   DCHECK((m->type_string() == csinfo_.pad &&
           (n->type_string() == csinfo_.conv2d ||
            n->type_string() == csinfo_.fused_conv2d)) ||
@@ -3256,6 +3583,9 @@ Status MklLayoutRewritePass::MergePadWithConv2D(std::unique_ptr<Graph>* g,
 
 Status MklLayoutRewritePass::MergeConv2DBackpropFilterWithBiasAddGrad(
     std::unique_ptr<Graph>* g, Node* m, Node* n) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_53(mht_53_v, 3586, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::MergeConv2DBackpropFilterWithBiasAddGrad");
+
   CHECK_EQ(((m->type_string() == csinfo_.bias_add_grad &&
              n->type_string() == csinfo_.conv2d_grad_filter)) ||
                ((n->type_string() == csinfo_.bias_add_grad &&
@@ -3390,6 +3720,9 @@ Status MklLayoutRewritePass::MergeConv2DBackpropFilterWithBiasAddGrad(
 
 Status MklLayoutRewritePass::MergeNode(std::unique_ptr<Graph>* g, Node* m,
                                        Node* n) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_54(mht_54_v, 3723, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::MergeNode");
+
   DCHECK(m);
   DCHECK(n);
 
@@ -3426,6 +3759,9 @@ Status MklLayoutRewritePass::MergeNode(std::unique_ptr<Graph>* g, Node* m,
 Status MklLayoutRewritePass::RewriteNodeForLayoutPropagation(
     std::unique_ptr<Graph>* g, const Node* orig_node, Node** new_node,
     const RewriteInfo* ri) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_55(mht_55_v, 3762, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::RewriteNodeForLayoutPropagation");
+
   // Get all data inputs.
   int num_data_inputs = orig_node->in_edges().size();
   // Drop count for control edges from inputs
@@ -3510,6 +3846,9 @@ Status MklLayoutRewritePass::RewriteNodeForLayoutPropagation(
 Status MklLayoutRewritePass::RewriteNodeForJustOpNameChange(
     std::unique_ptr<Graph>* g, const Node* orig_node, Node** new_node,
     const RewriteInfo* ri) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_56(mht_56_v, 3849, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::RewriteNodeForJustOpNameChange");
+
   // Get all data inputs.
   int num_data_inputs = orig_node->in_edges().size();
   // Drop count for control edges from inputs
@@ -3600,6 +3939,9 @@ Status MklLayoutRewritePass::RewriteNodeForJustOpNameChange(
 Status MklLayoutRewritePass::RewriteNode(std::unique_ptr<Graph>* g,
                                          Node* orig_node,
                                          const RewriteInfo* ri) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_57(mht_57_v, 3942, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::RewriteNode");
+
   DCHECK(ri != nullptr);
   DCHECK(orig_node != nullptr);
 
@@ -3633,6 +3975,9 @@ Status MklLayoutRewritePass::RewriteNode(std::unique_ptr<Graph>* g,
 // Current implementation reflects only QuantizedConv2D and its fused Ops.
 const MklLayoutRewritePass::RewriteInfo*
 MklLayoutRewritePass::CheckForQuantizedNodeRewrite(const Node* n) const {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_58(mht_58_v, 3978, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::CheckForQuantizedNodeRewrite");
+
   DataType T1, T2;
   DataType Tinput, Tfilter;
   bool type_attrs_present = false;
@@ -3662,6 +4007,9 @@ MklLayoutRewritePass::CheckForQuantizedNodeRewrite(const Node* n) const {
 
 const MklLayoutRewritePass::RewriteInfo*
 MklLayoutRewritePass::CheckForNodeRewrite(const Node* n) const {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_59(mht_59_v, 4010, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::CheckForNodeRewrite");
+
   DCHECK(n);
 
   // QuantizedOps may have attributes other than "T", so decoupled the check
@@ -3734,6 +4082,10 @@ Status MklLayoutRewritePass::FuseTransposeMklOpTranspose(
     std::unique_ptr<Graph>* g, std::vector<Node*>& nodes,
     std::function<void(const Node*, NodeBuilder* nb, bool)> copy_attrs,
     string data_format) {
+   std::vector<std::string> mht_60_v;
+   mht_60_v.push_back("data_format: \"" + data_format + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_60(mht_60_v, 4086, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::FuseTransposeMklOpTranspose");
+
   Node* transpose_to_nhwc = nodes[0];
   Node* mklop = nodes[1];
   Node* transpose_to_nchw = nodes[2];
@@ -3811,11 +4163,17 @@ Status MklLayoutRewritePass::FuseTransposeMklOpTranspose(
 Status MklLayoutRewritePass::FuseNode(
     std::unique_ptr<Graph>* g, std::vector<Node*>& nodes,
     const MklLayoutRewritePass::FusionInfo fi) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_61(mht_61_v, 4166, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::FuseNode");
+
   return fi.fuse_func(g, nodes, fi.copy_attrs);
 }
 
 std::tuple<bool, std::vector<Node*>, const MklLayoutRewritePass::FusionInfo>
 MklLayoutRewritePass::CheckForNodeFusion(Node* a) const {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_62(mht_62_v, 4174, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::CheckForNodeFusion");
+
   // Stores matched nodes, in the same order as node_checkers.
   std::vector<Node*> nodes;
 
@@ -3872,6 +4230,9 @@ MklLayoutRewritePass::CheckForNodeFusion(Node* a) const {
 bool MklLayoutRewritePass::FixMklMetaDataEdgeIfNeeded(std::unique_ptr<Graph>* g,
                                                       const Edge* e_data,
                                                       const Edge* e_metadata) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_63(mht_63_v, 4233, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::FixMklMetaDataEdgeIfNeeded");
+
   if (g == nullptr || e_data == nullptr || e_metadata == nullptr) {
     return false;
   }
@@ -3899,6 +4260,9 @@ bool MklLayoutRewritePass::FixMklMetaDataEdgeIfNeeded(std::unique_ptr<Graph>* g,
 
 bool MklLayoutRewritePass::FixMklMetaDataEdges(std::unique_ptr<Graph>* g,
                                                Node* n) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_64(mht_64_v, 4263, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::FixMklMetaDataEdges");
+
   bool result = false;
 
   // If graph node is not Mkl node, then return.
@@ -3959,6 +4323,9 @@ bool MklLayoutRewritePass::FixMklMetaDataEdges(std::unique_ptr<Graph>* g,
 ///////////////////////////////////////////////////////////////////////////////
 
 bool MklLayoutRewritePass::RunPass(std::unique_ptr<Graph>* g) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_65(mht_65_v, 4326, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::RunPass");
+
   bool result = false;
   DCHECK(g);
 
@@ -4067,10 +4434,16 @@ bool MklLayoutRewritePass::RunPass(std::unique_ptr<Graph>* g) {
 }
 
 bool RunMklLayoutRewritePass(std::unique_ptr<Graph>* g) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_66(mht_66_v, 4437, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "RunMklLayoutRewritePass");
+
   return MklLayoutRewritePass().RunPass(g);
 }
 
 Status MklLayoutRewritePass::Run(const GraphOptimizationPassOptions& options) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_67(mht_67_v, 4444, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "MklLayoutRewritePass::Run");
+
   if (options.graph == nullptr && options.partition_graphs == nullptr) {
     return Status::OK();
   }
@@ -4080,6 +4453,9 @@ Status MklLayoutRewritePass::Run(const GraphOptimizationPassOptions& options) {
   }
 
   auto process_graph = [&](std::unique_ptr<Graph>* g) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSmkl_layout_passDTcc mht_68(mht_68_v, 4456, "", "./tensorflow/core/common_runtime/mkl_layout_pass.cc", "lambda");
+
     // Get the ownership of a graph
     std::unique_ptr<Graph>* ng = std::move(g);
     RunPass(ng);

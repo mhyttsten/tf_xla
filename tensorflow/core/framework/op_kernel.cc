@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -69,6 +237,9 @@ Status MatchSignatureHelper(const DataTypeSlice expected_inputs,
                             const DataTypeSlice expected_outputs,
                             const DataTypeSlice inputs,
                             const DataTypeSlice outputs) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_0(mht_0_v, 240, "", "./tensorflow/core/framework/op_kernel.cc", "MatchSignatureHelper");
+
   bool signature_mismatch = false;
 
   if (inputs.size() != expected_inputs.size()) signature_mismatch = true;
@@ -99,7 +270,10 @@ Status MatchSignatureHelper(const DataTypeSlice expected_inputs,
 
 // OpKernel ------------------------------------------------------------------
 
-OpKernel::OpKernel(OpKernelConstruction* context) : OpKernel(context, false) {}
+OpKernel::OpKernel(OpKernelConstruction* context) : OpKernel(context, false) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_1(mht_1_v, 274, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernel::OpKernel");
+}
 
 OpKernel::OpKernel(OpKernelConstruction* context, bool is_deferred)
     : props_(context->props_),
@@ -113,6 +287,9 @@ OpKernel::OpKernel(OpKernelConstruction* context, bool is_deferred)
       type_string_view_(props_->node_def.op()),
       graph_def_version_(context->graph_def_version()),
       is_deferred_(is_deferred) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_2(mht_2_v, 290, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernel::OpKernel");
+
   OP_REQUIRES_OK(context,
                  NameRangesForNode(props_->node_def, *props_->op_def,
                                    &input_name_map_, &output_name_map_));
@@ -141,6 +318,9 @@ OpKernel::OpKernel(OpKernelConstruction* context, NodeDef&& custom_def,
       type_string_view_(props_->node_def.op()),
       graph_def_version_(context->graph_def_version()),
       is_deferred_(is_deferred) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_3(mht_3_v, 321, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernel::OpKernel");
+
   OP_REQUIRES_OK(context,
                  NameRangesForNode(props_->node_def, *props_->op_def,
                                    &input_name_map_, &output_name_map_));
@@ -154,10 +334,16 @@ OpKernel::OpKernel(OpKernelConstruction* context, NodeDef&& custom_def,
                    DeviceTypeString(context->device_type()));
 }
 
-OpKernel::~OpKernel() {}
+OpKernel::~OpKernel() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_4(mht_4_v, 338, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernel::~OpKernel");
+}
 
 Status OpKernel::InputRange(StringPiece input_name, int* start,
                             int* stop) const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_5(mht_5_v, 344, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernel::InputRange");
+
   const auto result = input_name_map_.find(input_name);
   if (result == input_name_map_.end()) {
     return errors::InvalidArgument("Unknown input name: ", input_name);
@@ -170,6 +356,9 @@ Status OpKernel::InputRange(StringPiece input_name, int* start,
 
 Status OpKernel::OutputRange(StringPiece output_name, int* start,
                              int* stop) const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_6(mht_6_v, 359, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernel::OutputRange");
+
   const auto result = output_name_map_.find(output_name);
   if (result == output_name_map_.end()) {
     return errors::InvalidArgument("Unknown output name: ", output_name);
@@ -181,6 +370,9 @@ Status OpKernel::OutputRange(StringPiece output_name, int* start,
 }
 
 string OpKernel::ShapeTraceString(const OpKernelContext& ctx) const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_7(mht_7_v, 373, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernel::ShapeTraceString");
+
   int num_inputs = ctx.num_inputs();
   if (num_inputs == 0) return "";
   std::vector<string> tensor_shapes;
@@ -203,6 +395,9 @@ string OpKernel::ShapeTraceString(const OpKernelContext& ctx) const {
 }
 
 string OpKernel::TraceString(const OpKernelContext& ctx, bool verbose) const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_8(mht_8_v, 398, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernel::TraceString");
+
   string trace_string = profiler::TraceMeOp(name_view(), type_string_view());
   if (verbose) {
     string shape = ShapeTraceString(ctx);
@@ -215,6 +410,9 @@ string OpKernel::TraceString(const OpKernelContext& ctx, bool verbose) const {
 }
 
 void AsyncOpKernel::Compute(OpKernelContext* context) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_9(mht_9_v, 413, "", "./tensorflow/core/framework/op_kernel.cc", "AsyncOpKernel::Compute");
+
   Notification n;
   ComputeAsync(context, [&n]() { n.Notify(); });
   n.WaitForNotification();
@@ -238,18 +436,30 @@ OpKernelConstruction::OpKernelConstruction(
       input_memory_types_(input_memory_types),
       output_memory_types_(output_memory_types),
       graph_def_version_(graph_def_version),
-      status_(status) {}
+      status_(status) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_10(mht_10_v, 440, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelConstruction::OpKernelConstruction");
+}
 
 bool OpKernelConstruction::HasAttr(StringPiece attr_name) const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_11(mht_11_v, 445, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelConstruction::HasAttr");
+
   return HasNodeAttr(def(), attr_name);
 }
 
 void OpKernelConstruction::SetStatus(const Status& status) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_12(mht_12_v, 452, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelConstruction::SetStatus");
+
   status_->Update(status);
 }
 
 Status OpKernelConstruction::MatchSignature(
     const DataTypeSlice expected_inputs, const DataTypeSlice expected_outputs) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_13(mht_13_v, 460, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelConstruction::MatchSignature");
+
   return MatchSignatureHelper(expected_inputs, expected_outputs,
                               props_->input_types, props_->output_types);
 }
@@ -257,6 +467,9 @@ Status OpKernelConstruction::MatchSignature(
 Status OpKernelConstruction::allocate_temp(DataType type,
                                            const TensorShape& shape,
                                            Tensor* out_temp) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_14(mht_14_v, 470, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelConstruction::allocate_temp");
+
   AllocationAttributes attr;
   attr.allocation_will_be_logged = true;
   Tensor new_temp(allocator_, type, shape, attr);
@@ -277,6 +490,9 @@ Status OpKernelConstruction::allocate_temp(DataType type,
                                            const TensorShape& shape,
                                            Tensor* out_temp,
                                            AllocatorAttributes allocator_attr) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_15(mht_15_v, 493, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelConstruction::allocate_temp");
+
   if (allocator_attr.scope_id != 0) {
     return errors::InvalidArgument(
         "ScopedAllocator cannot be used via OpKernelConstruction.");
@@ -305,10 +521,16 @@ const int OpKernelContext::Params::kNoReservation;
 
 OpKernelContext::OpKernelContext(Params* params)
     : OpKernelContext(
-          params, static_cast<int>(params->op_kernel->output_types().size())) {}
+          params, static_cast<int>(params->op_kernel->output_types().size())) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_16(mht_16_v, 525, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::OpKernelContext");
+}
 
 OpKernelContext::OpKernelContext(Params* params, int num_outputs)
     : params_(params), outputs_(num_outputs) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_17(mht_17_v, 531, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::OpKernelContext");
+
   if (params_->track_allocations) {
     tracking_state_ = absl::make_unique<TrackingState>();
   }
@@ -326,6 +548,9 @@ OpKernelContext::OpKernelContext(Params* params, int num_outputs)
 }
 
 OpKernelContext::~OpKernelContext() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_18(mht_18_v, 551, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::~OpKernelContext");
+
   for (TensorValue& value : outputs_) {
     if (!value.is_ref()) {
       delete value.tensor;
@@ -342,6 +567,9 @@ OpKernelContext::~OpKernelContext() {
 }
 
 Allocator* OpKernelContext::get_allocator(AllocatorAttributes attr) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_19(mht_19_v, 570, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::get_allocator");
+
   Allocator* allocator = nullptr;
   if (TF_PREDICT_FALSE(attr.scope_id > 0)) {
     allocator = params_->device->GetScopedAllocator(attr, step_id());
@@ -368,10 +596,16 @@ Allocator* OpKernelContext::get_allocator(AllocatorAttributes attr) {
 }
 
 void OpKernelContext::SetStatus(const Status& status) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_20(mht_20_v, 599, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::SetStatus");
+
   status_.Update(status);
 }
 
 Status OpKernelContext::input(StringPiece name, const Tensor** tensor) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_21(mht_21_v, 606, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::input");
+
   int index;
   TF_RETURN_IF_ERROR(get_input_index(name, &index));
   if (input_is_ref(index)) {
@@ -383,6 +617,9 @@ Status OpKernelContext::input(StringPiece name, const Tensor** tensor) {
 }
 
 Status OpKernelContext::input_dtype(StringPiece name, DataType* dtype) const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_22(mht_22_v, 620, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::input_dtype");
+
   int index;
   TF_RETURN_IF_ERROR(get_input_index(name, &index));
   const TensorValue& value((*params_->inputs)[index]);
@@ -391,6 +628,9 @@ Status OpKernelContext::input_dtype(StringPiece name, DataType* dtype) const {
 }
 
 Status OpKernelContext::input_ref_mutex(StringPiece name, mutex** out_mutex) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_23(mht_23_v, 631, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::input_ref_mutex");
+
   int index;
   TF_RETURN_IF_ERROR(get_input_index(name, &index));
   *out_mutex = input_ref_mutex(index);
@@ -398,6 +638,9 @@ Status OpKernelContext::input_ref_mutex(StringPiece name, mutex** out_mutex) {
 }
 
 const Tensor& OpKernelContext::input(int index) const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_24(mht_24_v, 641, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::input");
+
   CHECK_GE(index, 0);
   CHECK_LT(index, num_inputs()) << " name: " << op_kernel().name();
   CHECK(!input_is_ref(index));
@@ -406,6 +649,9 @@ const Tensor& OpKernelContext::input(int index) const {
 }
 
 Tensor OpKernelContext::mutable_input(int index, bool lock_held) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_25(mht_25_v, 652, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::mutable_input");
+
   CHECK_GE(index, 0);
   CHECK_LT(index, num_inputs());
   CHECK(input_is_ref(index));
@@ -422,6 +668,9 @@ Tensor OpKernelContext::mutable_input(int index, bool lock_held) {
 
 void OpKernelContext::replace_ref_input(int index, const Tensor& tensor,
                                         bool lock_held) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_26(mht_26_v, 671, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::replace_ref_input");
+
   CHECK_GE(index, 0);
   CHECK_LT(index, num_inputs());
   CHECK(input_is_ref(index));
@@ -436,6 +685,9 @@ void OpKernelContext::replace_ref_input(int index, const Tensor& tensor,
 
 void OpKernelContext::forward_ref_input_to_ref_output(int input_index,
                                                       int output_index) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_27(mht_27_v, 688, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::forward_ref_input_to_ref_output");
+
   CHECK_GE(input_index, 0);
   CHECK_LT(input_index, num_inputs());
   CHECK(input_is_ref(input_index));
@@ -446,6 +698,9 @@ void OpKernelContext::forward_ref_input_to_ref_output(int input_index,
 bool OpKernelContext::forward_input_to_output_with_shape(
     int input_index, int output_index, const TensorShape& output_shape,
     Tensor** output) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_28(mht_28_v, 701, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::forward_input_to_output_with_shape");
+
   const auto output_attr = params_->output_attr_array == nullptr
                                ? AllocatorAttributes()
                                : output_alloc_attr(output_index);
@@ -465,6 +720,9 @@ bool OpKernelContext::forward_input_to_output_with_shape(
 Status OpKernelContext::forward_input_to_output_with_shape(
     StringPiece input_name, StringPiece output_name,
     const TensorShape& output_shape, Tensor** output) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_29(mht_29_v, 723, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::forward_input_to_output_with_shape");
+
   int input_index, output_index;
   TF_RETURN_IF_ERROR(get_input_index(input_name, &input_index));
   TF_RETURN_IF_ERROR(get_output_index(output_name, &output_index));
@@ -480,6 +738,9 @@ std::unique_ptr<Tensor> OpKernelContext::forward_input(
     int input_index, int output_index, DataType output_dtype,
     const TensorShape& output_shape, MemoryType output_memory_type,
     const AllocatorAttributes& output_attr) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_30(mht_30_v, 741, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::forward_input");
+
   CHECK_GE(input_index, 0);
   CHECK_LT(input_index, num_inputs());
   const TensorValue& input = (*params_->inputs)[input_index];
@@ -548,6 +809,9 @@ Status OpKernelContext::forward_input_or_allocate_temp(
     gtl::ArraySlice<int> candidate_input_indices, DataType type,
     const TensorShape& shape, const AllocatorAttributes& allocator_attr,
     Tensor* out_temp) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_31(mht_31_v, 812, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::forward_input_or_allocate_temp");
+
   for (int input_index : candidate_input_indices) {
     std::unique_ptr<Tensor> new_tensor =
         forward_input(input_index, Params::kNoReservation /*output_index*/,
@@ -561,6 +825,9 @@ Status OpKernelContext::forward_input_or_allocate_temp(
 }
 
 void OpKernelContext::delete_ref_input(int index, bool lock_held) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_32(mht_32_v, 828, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::delete_ref_input");
+
   CHECK_GE(index, 0);
   CHECK_LT(index, num_inputs());
   CHECK(input_is_ref(index));
@@ -575,6 +842,9 @@ void OpKernelContext::delete_ref_input(int index, bool lock_held) {
 
 Status OpKernelContext::mutable_input(StringPiece name, Tensor* tensor,
                                       bool lock_held) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_33(mht_33_v, 845, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::mutable_input");
+
   int index;
   TF_RETURN_IF_ERROR(get_input_index(name, &index));
   if (!input_is_ref(index)) {
@@ -594,6 +864,9 @@ Status OpKernelContext::mutable_input(StringPiece name, Tensor* tensor,
 Status OpKernelContext::replace_ref_input(StringPiece name,
                                           const Tensor& tensor,
                                           bool lock_held) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_34(mht_34_v, 867, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::replace_ref_input");
+
   int index;
   TF_RETURN_IF_ERROR(get_input_index(name, &index));
   if (!input_is_ref(index)) {
@@ -605,6 +878,9 @@ Status OpKernelContext::replace_ref_input(StringPiece name,
 }
 
 Status OpKernelContext::input_list(StringPiece name, OpInputList* list) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_35(mht_35_v, 881, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::input_list");
+
   int start, stop;
   TF_RETURN_IF_ERROR(params_->op_kernel->InputRange(name, &start, &stop));
   *list = OpInputList(this, start, stop);
@@ -613,6 +889,9 @@ Status OpKernelContext::input_list(StringPiece name, OpInputList* list) {
 
 Status OpKernelContext::mutable_input_list(StringPiece name,
                                            OpMutableInputList* list) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_36(mht_36_v, 892, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::mutable_input_list");
+
   int start, stop;
   TF_RETURN_IF_ERROR(params_->op_kernel->InputRange(name, &start, &stop));
   *list = OpMutableInputList(this, start, stop);
@@ -620,6 +899,9 @@ Status OpKernelContext::mutable_input_list(StringPiece name,
 }
 
 Status OpKernelContext::output_list(StringPiece name, OpOutputList* list) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_37(mht_37_v, 902, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::output_list");
+
   int start, stop;
   TF_RETURN_IF_ERROR(params_->op_kernel->OutputRange(name, &start, &stop));
   *list = OpOutputList(this, start, stop);
@@ -627,6 +909,9 @@ Status OpKernelContext::output_list(StringPiece name, OpOutputList* list) {
 }
 
 void OpKernelContext::maybe_initialize_scope_id_set() {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_38(mht_38_v, 912, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::maybe_initialize_scope_id_set");
+
   if (allocated_scope_ids_ == nullptr) {
     allocated_scope_ids_ = absl::make_unique<std::unordered_set<int32>>();
   }
@@ -634,6 +919,9 @@ void OpKernelContext::maybe_initialize_scope_id_set() {
 
 Status OpKernelContext::allocate_output(int index, const TensorShape& shape,
                                         Tensor** tensor) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_39(mht_39_v, 922, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::allocate_output");
+
   if (index < 0) {
     return errors::Internal("allocate_output with bad index=", index,
                             " kernel=", params_->op_kernel->name());
@@ -658,6 +946,9 @@ Status OpKernelContext::allocate_output(int index, const TensorShape& shape,
 Status OpKernelContext::allocate_output(StringPiece name,
                                         const TensorShape& shape,
                                         Tensor** tensor) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_40(mht_40_v, 949, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::allocate_output");
+
   int start, stop;
   TF_RETURN_IF_ERROR(params_->op_kernel->OutputRange(name, &start, &stop));
   if (stop != start + 1) {
@@ -673,6 +964,9 @@ Status OpKernelContext::allocate_output(StringPiece name,
                                         const TensorShape& shape,
                                         Tensor** tensor,
                                         AllocatorAttributes attr) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_41(mht_41_v, 967, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::allocate_output");
+
   int start, stop;
   TF_RETURN_IF_ERROR(params_->op_kernel->OutputRange(name, &start, &stop));
   if (stop != start + 1) {
@@ -687,6 +981,9 @@ Status OpKernelContext::allocate_output(StringPiece name,
 Status OpKernelContext::allocate_tensor(
     DataType type, const TensorShape& shape, Tensor* out_tensor,
     AllocatorAttributes attr, const AllocationAttributes& allocation_attr) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_42(mht_42_v, 984, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::allocate_tensor");
+
   Allocator* a = get_allocator(attr);
   Tensor new_tensor(
       a, type, shape,
@@ -711,6 +1008,9 @@ Status OpKernelContext::allocate_tensor(
 Status OpKernelContext::allocate_output(int index, const TensorShape& shape,
                                         Tensor** output,
                                         AllocatorAttributes attr) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_43(mht_43_v, 1011, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::allocate_output");
+
   if (index < 0) {
     return errors::Internal("allocate_output with bad index=", index,
                             " kernel=", params_->op_kernel->name());
@@ -758,6 +1058,9 @@ Status OpKernelContext::allocate_temp(
     DataType type, const TensorShape& shape, Tensor* out_temp,
     AllocatorAttributes allocator_attr,
     const AllocationAttributes& allocation_attr) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_44(mht_44_v, 1061, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::allocate_temp");
+
   if (allocator_attr.scope_id > 0) {
     // We do not allow ScopedAllocator calls from allocate_temp.
     // Here we clear the scope_id and return a temporary buffer.
@@ -794,6 +1097,9 @@ Status OpKernelContext::allocate_temp(
 
 Status OpKernelContext::get_input_index(StringPiece name,
                                         int* out_index) const {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_45(mht_45_v, 1100, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::get_input_index");
+
   int start, stop;
   TF_RETURN_IF_ERROR(params_->op_kernel->InputRange(name, &start, &stop));
   if (stop != start + 1) {
@@ -808,6 +1114,9 @@ Status OpKernelContext::get_input_index(StringPiece name,
 
 Status OpKernelContext::get_output_index(StringPiece name,
                                          int* out_index) const {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_46(mht_46_v, 1117, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::get_output_index");
+
   int start, stop;
   TF_RETURN_IF_ERROR(params_->op_kernel->OutputRange(name, &start, &stop));
   if (stop != start + 1) {
@@ -821,6 +1130,9 @@ Status OpKernelContext::get_output_index(StringPiece name,
 }
 
 Status OpKernelContext::set_output(StringPiece name, const Tensor& tensor) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_47(mht_47_v, 1133, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::set_output");
+
   int index;
   TF_RETURN_IF_ERROR(get_output_index(name, &index));
   set_output(index, tensor);
@@ -828,6 +1140,9 @@ Status OpKernelContext::set_output(StringPiece name, const Tensor& tensor) {
 }
 
 Status OpKernelContext::set_output(StringPiece name, Tensor&& tensor) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_48(mht_48_v, 1143, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::set_output");
+
   int index;
   TF_RETURN_IF_ERROR(get_output_index(name, &index));
   set_output(index, std::move(tensor));
@@ -836,6 +1151,9 @@ Status OpKernelContext::set_output(StringPiece name, Tensor&& tensor) {
 
 bool OpKernelContext::maybe_set_output_by_allocate_and_copy(
     int index, const Tensor& tensor) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_49(mht_49_v, 1154, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::maybe_set_output_by_allocate_and_copy");
+
   bool allocate_and_copy = false;
   const bool never_forward =
       (params_->forward_from_array != nullptr &&
@@ -882,6 +1200,9 @@ bool OpKernelContext::maybe_set_output_by_allocate_and_copy(
 
 void OpKernelContext::maybe_track_allocations_for_set_output(
     const Tensor& tensor) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_50(mht_50_v, 1203, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::maybe_track_allocations_for_set_output");
+
   if (TF_PREDICT_FALSE(track_allocations()) && tensor.TotalBytes() > 0) {
     DCHECK(tracking_state_);
     mutex_lock l(tracking_state_->stats_mu);
@@ -900,6 +1221,9 @@ void OpKernelContext::maybe_track_allocations_for_set_output(
 }
 
 void OpKernelContext::set_output(int index, const Tensor& tensor) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_51(mht_51_v, 1224, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::set_output");
+
   CHECK_GE(index, 0);
   CHECK_LT(index, outputs_.size());
   const DataType type = params_->op_kernel->output_type(index);
@@ -914,6 +1238,9 @@ void OpKernelContext::set_output(int index, const Tensor& tensor) {
 }
 
 void OpKernelContext::set_output(int index, Tensor&& tensor) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_52(mht_52_v, 1241, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::set_output");
+
   CHECK_GE(index, 0);
   CHECK_LT(index, outputs_.size());
   const DataType type = params_->op_kernel->output_type(index);
@@ -928,6 +1255,9 @@ void OpKernelContext::set_output(int index, Tensor&& tensor) {
 
 void OpKernelContext::set_output_ref(int index, mutex* mu,
                                      Tensor* tensor_for_ref) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_53(mht_53_v, 1258, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::set_output_ref");
+
   CHECK_GE(index, 0);
   CHECK_LT(index, outputs_.size());
   CHECK(IsRefType(params_->op_kernel->output_type(index)));
@@ -936,6 +1266,9 @@ void OpKernelContext::set_output_ref(int index, mutex* mu,
 
 Status OpKernelContext::set_output_ref(StringPiece name, mutex* mu,
                                        Tensor* tensor_for_ref) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_54(mht_54_v, 1269, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::set_output_ref");
+
   int index;
   TF_RETURN_IF_ERROR(get_output_index(name, &index));
   set_output_ref(index, mu, tensor_for_ref);
@@ -943,6 +1276,9 @@ Status OpKernelContext::set_output_ref(StringPiece name, mutex* mu,
 }
 
 Status OpKernelContext::mutable_output(StringPiece name, Tensor** tensor) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_55(mht_55_v, 1279, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::mutable_output");
+
   int index;
   TF_RETURN_IF_ERROR(get_output_index(name, &index));
   *tensor = mutable_output(index);
@@ -950,6 +1286,9 @@ Status OpKernelContext::mutable_output(StringPiece name, Tensor** tensor) {
 }
 
 bool OpKernelContext::ValidateInputsAreSameShape(OpKernel* op) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_56(mht_56_v, 1289, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::ValidateInputsAreSameShape");
+
   const auto& inputs = *params_->inputs;
   for (size_t i = 1; i < inputs.size(); ++i) {
     if (!inputs[0]->IsSameSize(*(inputs[i].tensor))) {
@@ -966,6 +1305,9 @@ bool OpKernelContext::ValidateInputsAreSameShape(OpKernel* op) {
 
 Status OpKernelContext::MatchSignature(const DataTypeSlice expected_inputs,
                                        const DataTypeSlice expected_outputs) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_57(mht_57_v, 1308, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::MatchSignature");
+
   DataTypeVector inputs;
   for (const TensorValue& t : *params_->inputs) {
     inputs.push_back(t.dtype());
@@ -977,6 +1319,9 @@ Status OpKernelContext::MatchSignature(const DataTypeSlice expected_inputs,
 
 void OpKernelContext::record_temp_memory_allocation(int64_t size,
                                                     const Tensor& t) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_58(mht_58_v, 1322, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::record_temp_memory_allocation");
+
   if (tracking_state_) {
     mutex_lock l(tracking_state_->stats_mu);
     tracking_state_->temp_memory_allocated += size;
@@ -986,6 +1331,9 @@ void OpKernelContext::record_temp_memory_allocation(int64_t size,
 }
 
 int64_t OpKernelContext::temp_memory_allocated() const {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_59(mht_59_v, 1334, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::temp_memory_allocated");
+
   if (tracking_state_) {
     mutex_lock l(tracking_state_->stats_mu);
     return tracking_state_->temp_memory_allocated;
@@ -996,6 +1344,9 @@ int64_t OpKernelContext::temp_memory_allocated() const {
 
 void OpKernelContext::record_persistent_memory_allocation(int64_t size,
                                                           int64_t alloc_id) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_60(mht_60_v, 1347, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::record_persistent_memory_allocation");
+
   if (tracking_state_) {
     mutex_lock l(tracking_state_->stats_mu);
     tracking_state_->persistent_memory_allocated += size;
@@ -1006,6 +1357,9 @@ void OpKernelContext::record_persistent_memory_allocation(int64_t size,
 }
 
 int64_t OpKernelContext::persistent_memory_allocated() const {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_61(mht_61_v, 1360, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::persistent_memory_allocated");
+
   if (tracking_state_) {
     mutex_lock l(tracking_state_->stats_mu);
     return tracking_state_->persistent_memory_allocated;
@@ -1015,6 +1369,9 @@ int64_t OpKernelContext::persistent_memory_allocated() const {
 }
 
 std::vector<int64_t> OpKernelContext::persistent_alloc_ids() const {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_62(mht_62_v, 1372, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::persistent_alloc_ids");
+
   if (tracking_state_) {
     mutex_lock l(tracking_state_->stats_mu);
     return std::vector<int64_t>(tracking_state_->persistent_alloc_ids.begin(),
@@ -1025,6 +1382,9 @@ std::vector<int64_t> OpKernelContext::persistent_alloc_ids() const {
 }
 
 void OpKernelContext::clear_recorded_memory() {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_63(mht_63_v, 1385, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::clear_recorded_memory");
+
   if (tracking_state_) {
     mutex_lock l(tracking_state_->stats_mu);
     tracking_state_->temp_memory_allocated = 0;
@@ -1035,6 +1395,9 @@ void OpKernelContext::clear_recorded_memory() {
 }
 
 void OpKernelContext::set_record_memory_consumption(bool v) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_64(mht_64_v, 1398, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::set_record_memory_consumption");
+
   record_memory_consumption_ = v;
   if (v && !tracking_state_) {
     tracking_state_ = absl::make_unique<TrackingState>();
@@ -1042,6 +1405,9 @@ void OpKernelContext::set_record_memory_consumption(bool v) {
 }
 
 const string& OpKernelContext::executor_type() const {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_65(mht_65_v, 1408, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::executor_type");
+
   if (params_->executor_type) {
     return *params_->executor_type;
   } else {
@@ -1055,7 +1421,10 @@ const string& OpKernelContext::executor_type() const {
 struct KernelRegistration {
   KernelRegistration(const KernelDef& d, StringPiece c,
                      std::unique_ptr<kernel_factory::OpKernelFactory> f)
-      : def(d), kernel_class_name(c), factory(std::move(f)) {}
+      : def(d), kernel_class_name(c), factory(std::move(f)) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_66(mht_66_v, 1425, "", "./tensorflow/core/framework/op_kernel.cc", "KernelRegistration");
+}
 
   const KernelDef def;
   const string kernel_class_name;
@@ -1085,6 +1454,10 @@ static const char kKernelLibPattern[] = "libtfkernel*.so";
 // Returns Status::OK if the dynamic library at the given path is safe to
 // load with some level of confidence.
 static Status IsProbablySafeToLoad(const string& path) {
+   std::vector<std::string> mht_67_v;
+   mht_67_v.push_back("path: \"" + path + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_67(mht_67_v, 1458, "", "./tensorflow/core/framework/op_kernel.cc", "IsProbablySafeToLoad");
+
   // A map of platform string to required CPU feature.
   using port::CPUFeature;
   static const auto* feature_map =
@@ -1118,6 +1491,9 @@ static Status IsProbablySafeToLoad(const string& path) {
 }
 
 void LoadDynamicKernelsInternal() {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_68(mht_68_v, 1494, "", "./tensorflow/core/framework/op_kernel.cc", "LoadDynamicKernelsInternal");
+
   Env* env = Env::Default();
 
   // Override to allow loading unsafe packages for development.
@@ -1159,6 +1535,9 @@ void LoadDynamicKernelsInternal() {
 
 // Mechanism for loading existing kernel libraries.
 void LoadDynamicKernels() {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_69(mht_69_v, 1538, "", "./tensorflow/core/framework/op_kernel.cc", "LoadDynamicKernels");
+
   // TODO(gunan): As more features are available, add intelligent kernel
   // selection, and dropping unsuitable kernel logic here.
   static absl::once_flag dll_loader_flag;
@@ -1167,6 +1546,9 @@ void LoadDynamicKernels() {
 
 static string Key(StringPiece op_type, const DeviceType& device_type,
                   StringPiece label) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_70(mht_70_v, 1549, "", "./tensorflow/core/framework/op_kernel.cc", "Key");
+
   return strings::StrCat(op_type, ":", DeviceTypeString(device_type), ":",
                          label);
 }
@@ -1176,6 +1558,9 @@ static string Key(StringPiece op_type, const DeviceType& device_type,
 // to JIT kernels during the static registration, to allow them to be found
 // during lookup as normal kernels.
 void SetupOrDisableJit(KernelRegistry* registry) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_71(mht_71_v, 1561, "", "./tensorflow/core/framework/op_kernel.cc", "SetupOrDisableJit");
+
   std::unordered_multimap<string, KernelRegistration> jit_kernels;
   bool remove_jit_kernels = absl::StrContains(
       absl::NullSafeStringView(getenv(kDisableJitKernelsEnvVar)), "1");
@@ -1214,7 +1599,13 @@ void SetupOrDisableJit(KernelRegistry* registry) {
 }
 
 void* GlobalKernelRegistry() {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_72(mht_72_v, 1602, "", "./tensorflow/core/framework/op_kernel.cc", "GlobalKernelRegistry");
+
   static KernelRegistry* global_kernel_registry = []() {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_73(mht_73_v, 1606, "", "./tensorflow/core/framework/op_kernel.cc", "lambda");
+
     KernelRegistry* registry = new KernelRegistry;
     OpRegistry::Global()->RegisterValidator(ValidateKernelRegistrations);
     return registry;
@@ -1223,6 +1614,9 @@ void* GlobalKernelRegistry() {
 }
 
 static KernelRegistry* GlobalKernelRegistryTyped() {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_74(mht_74_v, 1617, "", "./tensorflow/core/framework/op_kernel.cc", "GlobalKernelRegistryTyped");
+
 #ifdef AUTOLOAD_DYNAMIC_KERNELS
   LoadDynamicKernels();
 #endif  // AUTOLOAD_DYNAMIC_KERNELS
@@ -1239,6 +1633,9 @@ namespace kernel_factory {
 void OpKernelRegistrar::InitInternal(const KernelDef* kernel_def,
                                      StringPiece kernel_class_name,
                                      std::unique_ptr<OpKernelFactory> factory) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_75(mht_75_v, 1636, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelRegistrar::InitInternal");
+
   const string key =
       Key(kernel_def->op(), DeviceType(kernel_def->device_type()),
           kernel_def->label());
@@ -1261,6 +1658,9 @@ void OpKernelRegistrar::InitInternal(const KernelDef* kernel_def,
 
 OpKernel* OpKernelRegistrar::PtrOpKernelFactory::Create(
     OpKernelConstruction* context) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_76(mht_76_v, 1661, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelRegistrar::PtrOpKernelFactory::Create");
+
   return (*create_func_)(context);
 }
 
@@ -1270,6 +1670,9 @@ namespace {
 
 // Label defaults to empty if not found in NodeDef.
 const string& GetKernelLabelAttr(const AttrSlice& node_attrs) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_77(mht_77_v, 1673, "", "./tensorflow/core/framework/op_kernel.cc", "GetKernelLabelAttr");
+
   static const string& kKernelAttr = *new string("_kernel");
   static const string& kEmptyString = *new string("");
 
@@ -1291,6 +1694,9 @@ Status FindKernelRegistration(
     const NodeDef_ExperimentalDebugInfo& experimental_debug_info,
     StringPiece node_op, AttrSlice node_attrs, const KernelRegistration** reg,
     bool* was_attr_mismatch) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_78(mht_78_v, 1697, "", "./tensorflow/core/framework/op_kernel.cc", "FindKernelRegistration");
+
   *reg = nullptr;
   *was_attr_mismatch = false;
 
@@ -1368,6 +1774,9 @@ Status FindKernelRegistration(const DeviceType& device_type,
                               const NodeDef& node_def,
                               const KernelRegistration** reg,
                               bool* was_attr_mismatch) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_79(mht_79_v, 1777, "", "./tensorflow/core/framework/op_kernel.cc", "FindKernelRegistration");
+
   return FindKernelRegistration(
       device_type, node_def.name(), node_def.has_experimental_debug_info(),
       node_def.experimental_debug_info(), node_def.op(),
@@ -1378,6 +1787,9 @@ Status FindKernelRegistration(const DeviceType& device_type,
 
 bool KernelDefAvailable(const DeviceType& device_type,
                         const NodeDef& node_def) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_80(mht_80_v, 1790, "", "./tensorflow/core/framework/op_kernel.cc", "KernelDefAvailable");
+
   const KernelRegistration* reg = nullptr;
   bool was_attr_mismatch;
   Status result =
@@ -1392,6 +1804,9 @@ Status FindKernelDef(
     const NodeDef_ExperimentalDebugInfo& experimental_debug_info,
     StringPiece node_op, StringPiece node_device, AttrSlice node_attrs,
     const KernelDef** def, string* kernel_class_name) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_81(mht_81_v, 1807, "", "./tensorflow/core/framework/op_kernel.cc", "FindKernelDef");
+
   const KernelRegistration* reg = nullptr;
   bool was_attr_mismatch;
   TF_RETURN_IF_ERROR(FindKernelRegistration(
@@ -1427,6 +1842,9 @@ Status FindKernelDef(
 
 Status FindKernelDef(const DeviceType& device_type, const NodeDef& node_def,
                      const KernelDef** def, string* kernel_class_name) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_82(mht_82_v, 1845, "", "./tensorflow/core/framework/op_kernel.cc", "FindKernelDef");
+
   return FindKernelDef(
       device_type, node_def.name(), node_def.has_experimental_debug_info(),
       node_def.experimental_debug_info(), node_def.op(), node_def.device(),
@@ -1437,6 +1855,9 @@ Status SupportedDeviceTypesForNode(
     const std::vector<DeviceType>& prioritized_types, const NodeDef& def,
     PrioritizedDeviceTypeVector* prioritized_device_types,
     const DeviceNameUtils::ParsedName* local_address_spec) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_83(mht_83_v, 1858, "", "./tensorflow/core/framework/op_kernel.cc", "SupportedDeviceTypesForNode");
+
   // TODO(zhifengc): Changes the callers (SimplePlacer and
   // DynamicPlacer) to consider the possibility that 'def' is call to
   // a user-defined function and only calls this
@@ -1505,6 +1926,9 @@ Status SupportedDeviceTypesForNode(
 }
 
 void LogAllRegisteredKernels() {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_84(mht_84_v, 1929, "", "./tensorflow/core/framework/op_kernel.cc", "LogAllRegisteredKernels");
+
   KernelList kernel_list = GetAllRegisteredKernels();
   for (const auto& kernel_def : kernel_list.kernel()) {
     LOG(INFO) << "OpKernel ('" << kernel_def.ShortDebugString() << "')";
@@ -1512,11 +1936,17 @@ void LogAllRegisteredKernels() {
 }
 
 KernelList GetAllRegisteredKernels() {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_85(mht_85_v, 1939, "", "./tensorflow/core/framework/op_kernel.cc", "GetAllRegisteredKernels");
+
   return GetFilteredRegisteredKernels([](const KernelDef& k) { return true; });
 }
 
 KernelList GetFilteredRegisteredKernels(
     const std::function<bool(const KernelDef&)>& predicate) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_86(mht_86_v, 1947, "", "./tensorflow/core/framework/op_kernel.cc", "GetFilteredRegisteredKernels");
+
   KernelRegistry* const typed_registry = GlobalKernelRegistryTyped();
   KernelList kernel_list;
   tf_shared_lock lock(typed_registry->mu);
@@ -1531,11 +1961,20 @@ KernelList GetFilteredRegisteredKernels(
 }
 
 KernelList GetRegisteredKernelsForOp(StringPiece op_name) {
-  auto op_pred = [op_name](const KernelDef& k) { return k.op() == op_name; };
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_87(mht_87_v, 1964, "", "./tensorflow/core/framework/op_kernel.cc", "GetRegisteredKernelsForOp");
+
+  auto op_pred = [op_name](const KernelDef& k) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_88(mht_88_v, 1968, "", "./tensorflow/core/framework/op_kernel.cc", "lambda");
+ return k.op() == op_name; };
   return GetFilteredRegisteredKernels(op_pred);
 }
 
 string KernelsRegisteredForOp(StringPiece op_name) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_89(mht_89_v, 1975, "", "./tensorflow/core/framework/op_kernel.cc", "KernelsRegisteredForOp");
+
   KernelList kernel_list = GetRegisteredKernelsForOp(op_name);
   if (kernel_list.kernel_size() == 0) return "  <no registered kernels>\n";
   string ret;
@@ -1586,6 +2025,9 @@ Status CreateOpKernel(DeviceType device_type, DeviceBase* device,
                       Allocator* allocator, FunctionLibraryRuntime* flib,
                       const std::shared_ptr<const NodeProperties>& props,
                       int graph_def_version, OpKernel** kernel) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_90(mht_90_v, 2028, "", "./tensorflow/core/framework/op_kernel.cc", "CreateOpKernel");
+
   return CreateOpKernel(std::move(device_type), device, allocator, flib,
                         /* resource_mgr= */ nullptr, props, graph_def_version,
                         kernel);
@@ -1596,6 +2038,9 @@ Status CreateOpKernel(DeviceType device_type, DeviceBase* device,
                       ResourceMgr* resource_mgr,
                       const std::shared_ptr<const NodeProperties>& props,
                       int graph_def_version, OpKernel** kernel) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_91(mht_91_v, 2041, "", "./tensorflow/core/framework/op_kernel.cc", "CreateOpKernel");
+
   const NodeDef& node_def = props->node_def;
   bool was_attr_mismatch;
   const KernelRegistration* registration = nullptr;
@@ -1654,6 +2099,9 @@ namespace {
 
 bool FindArgInOp(StringPiece arg_name,
                  const protobuf::RepeatedPtrField<OpDef::ArgDef>& args) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_92(mht_92_v, 2102, "", "./tensorflow/core/framework/op_kernel.cc", "FindArgInOp");
+
   for (const auto& arg : args) {
     if (arg_name == arg.name()) {
       return true;
@@ -1665,6 +2113,9 @@ bool FindArgInOp(StringPiece arg_name,
 }  // namespace
 
 Status ValidateKernelRegistrations(const OpRegistryInterface& op_registry) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_93(mht_93_v, 2116, "", "./tensorflow/core/framework/op_kernel.cc", "ValidateKernelRegistrations");
+
   auto typed_registry = GlobalKernelRegistryTyped();
   tf_shared_lock lock(typed_registry->mu);
   for (const auto& key_registration : typed_registry->registry) {
@@ -1692,26 +2143,42 @@ Status ValidateKernelRegistrations(const OpRegistryInterface& op_registry) {
 
 template <>
 const Eigen::ThreadPoolDevice& OpKernelContext::eigen_device() const {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_94(mht_94_v, 2146, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::eigen_device");
+
   return eigen_cpu_device();
 }
 
 template <>
 const Eigen::GpuDevice& OpKernelContext::eigen_device() const {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_95(mht_95_v, 2154, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::eigen_device");
+
   return eigen_gpu_device();
 }
 
 void OpKernelConstruction::CtxFailure(const Status& s) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_96(mht_96_v, 2161, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelConstruction::CtxFailure");
+
   VLOG(1) << s;
   SetStatus(s);
 }
 
 void OpKernelConstruction::CtxFailureWithWarning(const Status& s) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_97(mht_97_v, 2169, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelConstruction::CtxFailureWithWarning");
+
   LOG(WARNING) << s;
   SetStatus(s);
 }
 
 void OpKernelConstruction::CtxFailure(const char* file, int line,
                                       const Status& s) {
+   std::vector<std::string> mht_98_v;
+   mht_98_v.push_back("file: \"" + (file == nullptr ? std::string("nullptr") : std::string((char*)file)) + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_98(mht_98_v, 2179, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelConstruction::CtxFailure");
+
   VLOG(1) << "OP_REQUIRES failed at " << io::Basename(file) << ":" << line
           << " : " << s;
   SetStatus(s);
@@ -1719,22 +2186,36 @@ void OpKernelConstruction::CtxFailure(const char* file, int line,
 
 void OpKernelConstruction::CtxFailureWithWarning(const char* file, int line,
                                                  const Status& s) {
+   std::vector<std::string> mht_99_v;
+   mht_99_v.push_back("file: \"" + (file == nullptr ? std::string("nullptr") : std::string((char*)file)) + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_99(mht_99_v, 2190, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelConstruction::CtxFailureWithWarning");
+
   LOG(WARNING) << "OP_REQUIRES failed at " << io::Basename(file) << ":" << line
                << " : " << s;
   SetStatus(s);
 }
 
 void OpKernelContext::CtxFailure(const Status& s) {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_100(mht_100_v, 2199, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::CtxFailure");
+
   VLOG(1) << s;
   SetStatus(s);
 }
 
 void OpKernelContext::CtxFailureWithWarning(const Status& s) {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_101(mht_101_v, 2207, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::CtxFailureWithWarning");
+
   LOG(WARNING) << s;
   SetStatus(s);
 }
 
 void OpKernelContext::CtxFailure(const char* file, int line, const Status& s) {
+   std::vector<std::string> mht_102_v;
+   mht_102_v.push_back("file: \"" + (file == nullptr ? std::string("nullptr") : std::string((char*)file)) + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_102(mht_102_v, 2216, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::CtxFailure");
+
   VLOG(1) << "OP_REQUIRES failed at " << io::Basename(file) << ":" << line
           << " : " << s;
   SetStatus(s);
@@ -1742,6 +2223,10 @@ void OpKernelContext::CtxFailure(const char* file, int line, const Status& s) {
 
 void OpKernelContext::CtxFailureWithWarning(const char* file, int line,
                                             const Status& s) {
+   std::vector<std::string> mht_103_v;
+   mht_103_v.push_back("file: \"" + (file == nullptr ? std::string("nullptr") : std::string((char*)file)) + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_103(mht_103_v, 2227, "", "./tensorflow/core/framework/op_kernel.cc", "OpKernelContext::CtxFailureWithWarning");
+
   LOG(WARNING) << "OP_REQUIRES failed at " << io::Basename(file) << ":" << line
                << " : " << s;
   SetStatus(s);
@@ -1749,6 +2234,10 @@ void OpKernelContext::CtxFailureWithWarning(const char* file, int line,
 
 void CheckNotInComputeAsync(OpKernelContext* ctx,
                             const char* correct_macro_name) {
+   std::vector<std::string> mht_104_v;
+   mht_104_v.push_back("correct_macro_name: \"" + (correct_macro_name == nullptr ? std::string("nullptr") : std::string((char*)correct_macro_name)) + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSop_kernelDTcc mht_104(mht_104_v, 2238, "", "./tensorflow/core/framework/op_kernel.cc", "CheckNotInComputeAsync");
+
   CHECK_EQ(nullptr, ctx->params_->op_kernel->AsAsync())
       << "Use " << correct_macro_name << " in AsyncOpKernel implementations.";
 }

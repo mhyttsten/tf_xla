@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_PLATFORM_FILE_SYSTEM_H_
 #define TENSORFLOW_CORE_PLATFORM_FILE_SYSTEM_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <stdint.h>
 
@@ -69,12 +237,20 @@ class FileSystem {
   /// and the object should be deleted when is not used.
   virtual tensorflow::Status NewRandomAccessFile(
       const std::string& fname, std::unique_ptr<RandomAccessFile>* result) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_0(mht_0_v, 241, "", "./tensorflow/core/platform/file_system.h", "NewRandomAccessFile");
+
     return NewRandomAccessFile(fname, nullptr, result);
   }
 
   virtual tensorflow::Status NewRandomAccessFile(
       const std::string& fname, TransactionToken* token,
       std::unique_ptr<RandomAccessFile>* result) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_1(mht_1_v, 251, "", "./tensorflow/core/platform/file_system.h", "NewRandomAccessFile");
+
     // We duplicate these methods due to Google internal coding style prevents
     // virtual functions with default arguments. See PR #41615.
     return Status::OK();
@@ -94,12 +270,20 @@ class FileSystem {
   /// and the object should be deleted when is not used.
   virtual tensorflow::Status NewWritableFile(
       const std::string& fname, std::unique_ptr<WritableFile>* result) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_2(mht_2_v, 274, "", "./tensorflow/core/platform/file_system.h", "NewWritableFile");
+
     return NewWritableFile(fname, nullptr, result);
   }
 
   virtual tensorflow::Status NewWritableFile(
       const std::string& fname, TransactionToken* token,
       std::unique_ptr<WritableFile>* result) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_3(mht_3_v, 284, "", "./tensorflow/core/platform/file_system.h", "NewWritableFile");
+
     return Status::OK();
   }
 
@@ -116,12 +300,20 @@ class FileSystem {
   /// and the object should be deleted when is not used.
   virtual tensorflow::Status NewAppendableFile(
       const std::string& fname, std::unique_ptr<WritableFile>* result) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_4(mht_4_v, 304, "", "./tensorflow/core/platform/file_system.h", "NewAppendableFile");
+
     return NewAppendableFile(fname, nullptr, result);
   }
 
   virtual tensorflow::Status NewAppendableFile(
       const std::string& fname, TransactionToken* token,
       std::unique_ptr<WritableFile>* result) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_5(mht_5_v, 314, "", "./tensorflow/core/platform/file_system.h", "NewAppendableFile");
+
     return Status::OK();
   }
 
@@ -137,22 +329,38 @@ class FileSystem {
   /// and the object should be deleted when is not used.
   virtual tensorflow::Status NewReadOnlyMemoryRegionFromFile(
       const std::string& fname, std::unique_ptr<ReadOnlyMemoryRegion>* result) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_6(mht_6_v, 333, "", "./tensorflow/core/platform/file_system.h", "NewReadOnlyMemoryRegionFromFile");
+
     return NewReadOnlyMemoryRegionFromFile(fname, nullptr, result);
   }
 
   virtual tensorflow::Status NewReadOnlyMemoryRegionFromFile(
       const std::string& fname, TransactionToken* token,
       std::unique_ptr<ReadOnlyMemoryRegion>* result) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_7(mht_7_v, 343, "", "./tensorflow/core/platform/file_system.h", "NewReadOnlyMemoryRegionFromFile");
+
     return Status::OK();
   }
 
   /// Returns OK if the named path exists and NOT_FOUND otherwise.
   virtual tensorflow::Status FileExists(const std::string& fname) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_8(mht_8_v, 352, "", "./tensorflow/core/platform/file_system.h", "FileExists");
+
     return FileExists(fname, nullptr);
   }
 
   virtual tensorflow::Status FileExists(const std::string& fname,
                                         TransactionToken* token) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_9(mht_9_v, 361, "", "./tensorflow/core/platform/file_system.h", "FileExists");
+
     return Status::OK();
   }
 
@@ -161,6 +369,9 @@ class FileSystem {
   /// for each file.
   virtual bool FilesExist(const std::vector<string>& files,
                           std::vector<Status>* status) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_10(mht_10_v, 372, "", "./tensorflow/core/platform/file_system.h", "FilesExist");
+
     return FilesExist(files, nullptr, status);
   }
 
@@ -172,12 +383,20 @@ class FileSystem {
   /// The returned paths are relative to 'dir'.
   virtual tensorflow::Status GetChildren(const std::string& dir,
                                          std::vector<string>* result) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("dir: \"" + dir + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_11(mht_11_v, 387, "", "./tensorflow/core/platform/file_system.h", "GetChildren");
+
     return GetChildren(dir, nullptr, result);
   }
 
   virtual tensorflow::Status GetChildren(const std::string& dir,
                                          TransactionToken* token,
                                          std::vector<string>* result) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("dir: \"" + dir + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_12(mht_12_v, 397, "", "./tensorflow/core/platform/file_system.h", "GetChildren");
+
     return Status::OK();
   }
 
@@ -205,12 +424,20 @@ class FileSystem {
   ///                    implemented
   virtual tensorflow::Status GetMatchingPaths(const std::string& pattern,
                                               std::vector<string>* results) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("pattern: \"" + pattern + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_13(mht_13_v, 428, "", "./tensorflow/core/platform/file_system.h", "GetMatchingPaths");
+
     return GetMatchingPaths(pattern, nullptr, results);
   }
 
   virtual tensorflow::Status GetMatchingPaths(const std::string& pattern,
                                               TransactionToken* token,
                                               std::vector<string>* results) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("pattern: \"" + pattern + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_14(mht_14_v, 438, "", "./tensorflow/core/platform/file_system.h", "GetMatchingPaths");
+
     return Status::OK();
   }
 
@@ -224,22 +451,38 @@ class FileSystem {
   /// \brief Obtains statistics for the given path.
   virtual tensorflow::Status Stat(const std::string& fname,
                                   FileStatistics* stat) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_15(mht_15_v, 455, "", "./tensorflow/core/platform/file_system.h", "Stat");
+
     return Stat(fname, nullptr, stat);
   }
 
   virtual tensorflow::Status Stat(const std::string& fname,
                                   TransactionToken* token,
                                   FileStatistics* stat) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_16(mht_16_v, 465, "", "./tensorflow/core/platform/file_system.h", "Stat");
+
     return Status::OK();
   }
 
   /// \brief Deletes the named file.
   virtual tensorflow::Status DeleteFile(const std::string& fname) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_17(mht_17_v, 474, "", "./tensorflow/core/platform/file_system.h", "DeleteFile");
+
     return DeleteFile(fname, nullptr);
   }
 
   virtual tensorflow::Status DeleteFile(const std::string& fname,
                                         TransactionToken* token) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_18(mht_18_v, 483, "", "./tensorflow/core/platform/file_system.h", "DeleteFile");
+
     return Status::OK();
   }
 
@@ -249,11 +492,19 @@ class FileSystem {
   ///  * ALREADY_EXISTS - directory with name dirname already exists.
   ///  * PERMISSION_DENIED - dirname is not writable.
   virtual tensorflow::Status CreateDir(const std::string& dirname) {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("dirname: \"" + dirname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_19(mht_19_v, 496, "", "./tensorflow/core/platform/file_system.h", "CreateDir");
+
     return CreateDir(dirname, nullptr);
   }
 
   virtual tensorflow::Status CreateDir(const std::string& dirname,
                                        TransactionToken* token) {
+   std::vector<std::string> mht_20_v;
+   mht_20_v.push_back("dirname: \"" + dirname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_20(mht_20_v, 505, "", "./tensorflow/core/platform/file_system.h", "CreateDir");
+
     return Status::OK();
   }
 
@@ -264,6 +515,10 @@ class FileSystem {
   ///         they were already created.
   ///  * PERMISSION_DENIED - dirname or some subdirectory is not writable.
   virtual tensorflow::Status RecursivelyCreateDir(const std::string& dirname) {
+   std::vector<std::string> mht_21_v;
+   mht_21_v.push_back("dirname: \"" + dirname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_21(mht_21_v, 519, "", "./tensorflow/core/platform/file_system.h", "RecursivelyCreateDir");
+
     return RecursivelyCreateDir(dirname, nullptr);
   }
 
@@ -272,11 +527,19 @@ class FileSystem {
 
   /// \brief Deletes the specified directory.
   virtual tensorflow::Status DeleteDir(const std::string& dirname) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("dirname: \"" + dirname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_22(mht_22_v, 531, "", "./tensorflow/core/platform/file_system.h", "DeleteDir");
+
     return DeleteDir(dirname, nullptr);
   }
 
   virtual tensorflow::Status DeleteDir(const std::string& dirname,
                                        TransactionToken* token) {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("dirname: \"" + dirname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_23(mht_23_v, 540, "", "./tensorflow/core/platform/file_system.h", "DeleteDir");
+
     return Status::OK();
   }
 
@@ -307,6 +570,10 @@ class FileSystem {
   virtual tensorflow::Status DeleteRecursively(const std::string& dirname,
                                                int64_t* undeleted_files,
                                                int64_t* undeleted_dirs) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("dirname: \"" + dirname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_24(mht_24_v, 574, "", "./tensorflow/core/platform/file_system.h", "DeleteRecursively");
+
     return DeleteRecursively(dirname, nullptr, undeleted_files, undeleted_dirs);
   }
 
@@ -318,30 +585,53 @@ class FileSystem {
   /// \brief Stores the size of `fname` in `*file_size`.
   virtual tensorflow::Status GetFileSize(const std::string& fname,
                                          uint64* file_size) {
+   std::vector<std::string> mht_25_v;
+   mht_25_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_25(mht_25_v, 589, "", "./tensorflow/core/platform/file_system.h", "GetFileSize");
+
     return GetFileSize(fname, nullptr, file_size);
   }
 
   virtual tensorflow::Status GetFileSize(const std::string& fname,
                                          TransactionToken* token,
                                          uint64* file_size) {
+   std::vector<std::string> mht_26_v;
+   mht_26_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_26(mht_26_v, 599, "", "./tensorflow/core/platform/file_system.h", "GetFileSize");
+
     return Status::OK();
   }
 
   /// \brief Overwrites the target if it exists.
   virtual tensorflow::Status RenameFile(const std::string& src,
                                         const std::string& target) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("src: \"" + src + "\"");
+   mht_27_v.push_back("target: \"" + target + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_27(mht_27_v, 610, "", "./tensorflow/core/platform/file_system.h", "RenameFile");
+
     return RenameFile(src, target, nullptr);
   }
 
   virtual tensorflow::Status RenameFile(const std::string& src,
                                         const std::string& target,
                                         TransactionToken* token) {
+   std::vector<std::string> mht_28_v;
+   mht_28_v.push_back("src: \"" + src + "\"");
+   mht_28_v.push_back("target: \"" + target + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_28(mht_28_v, 621, "", "./tensorflow/core/platform/file_system.h", "RenameFile");
+
     return Status::OK();
   }
 
   /// \brief Copy the src to target.
   virtual tensorflow::Status CopyFile(const std::string& src,
                                       const std::string& target) {
+   std::vector<std::string> mht_29_v;
+   mht_29_v.push_back("src: \"" + src + "\"");
+   mht_29_v.push_back("target: \"" + target + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_29(mht_29_v, 632, "", "./tensorflow/core/platform/file_system.h", "CopyFile");
+
     return CopyFile(src, target, nullptr);
   }
 
@@ -368,6 +658,10 @@ class FileSystem {
   ///  * PERMISSION_DENIED - Insufficient permissions.
   ///  * UNIMPLEMENTED - The file factory doesn't support directories.
   virtual tensorflow::Status IsDirectory(const std::string& fname) {
+   std::vector<std::string> mht_30_v;
+   mht_30_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_30(mht_30_v, 662, "", "./tensorflow/core/platform/file_system.h", "IsDirectory");
+
     return IsDirectory(fname, nullptr);
   }
 
@@ -387,7 +681,10 @@ class FileSystem {
   virtual Status HasAtomicMove(const std::string& path, bool* has_atomic_move);
 
   /// \brief Flushes any cached filesystem objects from memory.
-  virtual void FlushCaches() { FlushCaches(nullptr); }
+  virtual void FlushCaches() {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_31(mht_31_v, 685, "", "./tensorflow/core/platform/file_system.h", "FlushCaches");
+ FlushCaches(nullptr); }
 
   virtual void FlushCaches(TransactionToken* token);
 
@@ -459,6 +756,9 @@ class FileSystem {
   /// string path = io::JoinPath("/full", "path", "to", "filename");
   template <typename... T>
   std::string JoinPath(const T&... args) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_32(mht_32_v, 759, "", "./tensorflow/core/platform/file_system.h", "JoinPath");
+
     return JoinPathImpl({args...});
   }
 #endif /* SWIG */
@@ -483,6 +783,9 @@ class FileSystem {
 
   /// \brief Starts a new transaction
   virtual tensorflow::Status StartTransaction(TransactionToken** token) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_33(mht_33_v, 786, "", "./tensorflow/core/platform/file_system.h", "StartTransaction");
+
     *token = nullptr;
     return Status::OK();
   }
@@ -490,11 +793,18 @@ class FileSystem {
   /// \brief Adds `path` to transaction in `token`
   virtual tensorflow::Status AddToTransaction(const std::string& path,
                                               TransactionToken* token) {
+   std::vector<std::string> mht_34_v;
+   mht_34_v.push_back("path: \"" + path + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_34(mht_34_v, 797, "", "./tensorflow/core/platform/file_system.h", "AddToTransaction");
+
     return Status::OK();
   }
 
   /// \brief Ends transaction
   virtual tensorflow::Status EndTransaction(TransactionToken* token) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_35(mht_35_v, 805, "", "./tensorflow/core/platform/file_system.h", "EndTransaction");
+
     return Status::OK();
   }
 
@@ -502,6 +812,10 @@ class FileSystem {
   /// it.
   virtual tensorflow::Status GetTokenOrStartTransaction(
       const std::string& path, TransactionToken** token) {
+   std::vector<std::string> mht_36_v;
+   mht_36_v.push_back("path: \"" + path + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_36(mht_36_v, 816, "", "./tensorflow/core/platform/file_system.h", "GetTokenOrStartTransaction");
+
     *token = nullptr;
     return Status::OK();
   }
@@ -509,6 +823,10 @@ class FileSystem {
   /// \brief Return transaction for `path` or nullptr in `token`
   virtual tensorflow::Status GetTransactionForPath(const std::string& path,
                                                    TransactionToken** token) {
+   std::vector<std::string> mht_37_v;
+   mht_37_v.push_back("path: \"" + path + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_37(mht_37_v, 827, "", "./tensorflow/core/platform/file_system.h", "GetTransactionForPath");
+
     *token = nullptr;
     return Status::OK();
   }
@@ -518,28 +836,48 @@ class FileSystem {
 
   /// \brief Set File System Configuration Options
   virtual Status SetOption(const string& key, const string& value) {
+   std::vector<std::string> mht_38_v;
+   mht_38_v.push_back("key: \"" + key + "\"");
+   mht_38_v.push_back("value: \"" + value + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_38(mht_38_v, 841, "", "./tensorflow/core/platform/file_system.h", "SetOption");
+
     return errors::Unimplemented("SetOption");
   }
 
   /// \brief Set File System Configuration Option
   virtual tensorflow::Status SetOption(const std::string& name,
                                        const std::vector<string>& values) {
+   std::vector<std::string> mht_39_v;
+   mht_39_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_39(mht_39_v, 851, "", "./tensorflow/core/platform/file_system.h", "SetOption");
+
     return errors::Unimplemented("SetOption");
   }
 
   /// \brief Set File System Configuration Option
   virtual tensorflow::Status SetOption(const std::string& name,
                                        const std::vector<int64_t>& values) {
+   std::vector<std::string> mht_40_v;
+   mht_40_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_40(mht_40_v, 861, "", "./tensorflow/core/platform/file_system.h", "SetOption");
+
     return errors::Unimplemented("SetOption");
   }
 
   /// \brief Set File System Configuration Option
   virtual tensorflow::Status SetOption(const std::string& name,
                                        const std::vector<double>& values) {
+   std::vector<std::string> mht_41_v;
+   mht_41_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_41(mht_41_v, 871, "", "./tensorflow/core/platform/file_system.h", "SetOption");
+
     return errors::Unimplemented("SetOption");
   }
 
-  FileSystem() {}
+  FileSystem() {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_42(mht_42_v, 878, "", "./tensorflow/core/platform/file_system.h", "FileSystem");
+}
 
   virtual ~FileSystem() = default;
 };
@@ -583,76 +921,132 @@ class WrappedFileSystem : public FileSystem {
   tensorflow::Status NewRandomAccessFile(
       const std::string& fname, TransactionToken* token,
       std::unique_ptr<RandomAccessFile>* result) override {
+   std::vector<std::string> mht_43_v;
+   mht_43_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_43(mht_43_v, 925, "", "./tensorflow/core/platform/file_system.h", "NewRandomAccessFile");
+
     return fs_->NewRandomAccessFile(fname, (token ? token : token_), result);
   }
 
   tensorflow::Status NewWritableFile(
       const std::string& fname, TransactionToken* token,
       std::unique_ptr<WritableFile>* result) override {
+   std::vector<std::string> mht_44_v;
+   mht_44_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_44(mht_44_v, 935, "", "./tensorflow/core/platform/file_system.h", "NewWritableFile");
+
     return fs_->NewWritableFile(fname, (token ? token : token_), result);
   }
 
   tensorflow::Status NewAppendableFile(
       const std::string& fname, TransactionToken* token,
       std::unique_ptr<WritableFile>* result) override {
+   std::vector<std::string> mht_45_v;
+   mht_45_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_45(mht_45_v, 945, "", "./tensorflow/core/platform/file_system.h", "NewAppendableFile");
+
     return fs_->NewAppendableFile(fname, (token ? token : token_), result);
   }
 
   tensorflow::Status NewReadOnlyMemoryRegionFromFile(
       const std::string& fname, TransactionToken* token,
       std::unique_ptr<ReadOnlyMemoryRegion>* result) override {
+   std::vector<std::string> mht_46_v;
+   mht_46_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_46(mht_46_v, 955, "", "./tensorflow/core/platform/file_system.h", "NewReadOnlyMemoryRegionFromFile");
+
     return fs_->NewReadOnlyMemoryRegionFromFile(fname, (token ? token : token_),
                                                 result);
   }
 
   tensorflow::Status FileExists(const std::string& fname,
                                 TransactionToken* token) override {
+   std::vector<std::string> mht_47_v;
+   mht_47_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_47(mht_47_v, 965, "", "./tensorflow/core/platform/file_system.h", "FileExists");
+
     return fs_->FileExists(fname, (token ? token : token_));
   }
 
   bool FilesExist(const std::vector<string>& files, TransactionToken* token,
                   std::vector<Status>* status) override {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_48(mht_48_v, 973, "", "./tensorflow/core/platform/file_system.h", "FilesExist");
+
     return fs_->FilesExist(files, (token ? token : token_), status);
   }
 
   tensorflow::Status GetChildren(const std::string& dir,
                                  TransactionToken* token,
                                  std::vector<string>* result) override {
+   std::vector<std::string> mht_49_v;
+   mht_49_v.push_back("dir: \"" + dir + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_49(mht_49_v, 983, "", "./tensorflow/core/platform/file_system.h", "GetChildren");
+
     return fs_->GetChildren(dir, (token ? token : token_), result);
   }
 
   tensorflow::Status GetMatchingPaths(const std::string& pattern,
                                       TransactionToken* token,
                                       std::vector<string>* results) override {
+   std::vector<std::string> mht_50_v;
+   mht_50_v.push_back("pattern: \"" + pattern + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_50(mht_50_v, 993, "", "./tensorflow/core/platform/file_system.h", "GetMatchingPaths");
+
     return fs_->GetMatchingPaths(pattern, (token ? token : token_), results);
   }
 
   bool Match(const std::string& filename, const std::string& pattern) override {
+   std::vector<std::string> mht_51_v;
+   mht_51_v.push_back("filename: \"" + filename + "\"");
+   mht_51_v.push_back("pattern: \"" + pattern + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_51(mht_51_v, 1002, "", "./tensorflow/core/platform/file_system.h", "Match");
+
     return fs_->Match(filename, pattern);
   }
 
   tensorflow::Status Stat(const std::string& fname, TransactionToken* token,
                           FileStatistics* stat) override {
+   std::vector<std::string> mht_52_v;
+   mht_52_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_52(mht_52_v, 1011, "", "./tensorflow/core/platform/file_system.h", "Stat");
+
     return fs_->Stat(fname, (token ? token : token_), stat);
   }
 
   tensorflow::Status DeleteFile(const std::string& fname,
                                 TransactionToken* token) override {
+   std::vector<std::string> mht_53_v;
+   mht_53_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_53(mht_53_v, 1020, "", "./tensorflow/core/platform/file_system.h", "DeleteFile");
+
     return fs_->DeleteFile(fname, (token ? token : token_));
   }
 
   tensorflow::Status CreateDir(const std::string& dirname,
                                TransactionToken* token) override {
+   std::vector<std::string> mht_54_v;
+   mht_54_v.push_back("dirname: \"" + dirname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_54(mht_54_v, 1029, "", "./tensorflow/core/platform/file_system.h", "CreateDir");
+
     return fs_->CreateDir(dirname, (token ? token : token_));
   }
 
   tensorflow::Status RecursivelyCreateDir(const std::string& dirname,
                                           TransactionToken* token) override {
+   std::vector<std::string> mht_55_v;
+   mht_55_v.push_back("dirname: \"" + dirname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_55(mht_55_v, 1038, "", "./tensorflow/core/platform/file_system.h", "RecursivelyCreateDir");
+
     return fs_->RecursivelyCreateDir(dirname, (token ? token : token_));
   }
 
   tensorflow::Status DeleteDir(const std::string& dirname,
                                TransactionToken* token) override {
+   std::vector<std::string> mht_56_v;
+   mht_56_v.push_back("dirname: \"" + dirname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_56(mht_56_v, 1047, "", "./tensorflow/core/platform/file_system.h", "DeleteDir");
+
     return fs_->DeleteDir(dirname, (token ? token : token_));
   }
 
@@ -660,6 +1054,10 @@ class WrappedFileSystem : public FileSystem {
                                        TransactionToken* token,
                                        int64_t* undeleted_files,
                                        int64_t* undeleted_dirs) override {
+   std::vector<std::string> mht_57_v;
+   mht_57_v.push_back("dirname: \"" + dirname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_57(mht_57_v, 1058, "", "./tensorflow/core/platform/file_system.h", "DeleteRecursively");
+
     return fs_->DeleteRecursively(dirname, (token ? token : token_),
                                   undeleted_files, undeleted_dirs);
   }
@@ -667,73 +1065,132 @@ class WrappedFileSystem : public FileSystem {
   tensorflow::Status GetFileSize(const std::string& fname,
                                  TransactionToken* token,
                                  uint64* file_size) override {
+   std::vector<std::string> mht_58_v;
+   mht_58_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_58(mht_58_v, 1069, "", "./tensorflow/core/platform/file_system.h", "GetFileSize");
+
     return fs_->GetFileSize(fname, (token ? token : token_), file_size);
   }
 
   tensorflow::Status RenameFile(const std::string& src,
                                 const std::string& target,
                                 TransactionToken* token) override {
+   std::vector<std::string> mht_59_v;
+   mht_59_v.push_back("src: \"" + src + "\"");
+   mht_59_v.push_back("target: \"" + target + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_59(mht_59_v, 1080, "", "./tensorflow/core/platform/file_system.h", "RenameFile");
+
     return fs_->RenameFile(src, target, (token ? token : token_));
   }
 
   tensorflow::Status CopyFile(const std::string& src, const std::string& target,
                               TransactionToken* token) override {
+   std::vector<std::string> mht_60_v;
+   mht_60_v.push_back("src: \"" + src + "\"");
+   mht_60_v.push_back("target: \"" + target + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_60(mht_60_v, 1090, "", "./tensorflow/core/platform/file_system.h", "CopyFile");
+
     return fs_->CopyFile(src, target, (token ? token : token_));
   }
 
   std::string TranslateName(const std::string& name) const override {
+   std::vector<std::string> mht_61_v;
+   mht_61_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_61(mht_61_v, 1098, "", "./tensorflow/core/platform/file_system.h", "TranslateName");
+
     return fs_->TranslateName(name);
   }
 
   tensorflow::Status IsDirectory(const std::string& fname,
                                  TransactionToken* token) override {
+   std::vector<std::string> mht_62_v;
+   mht_62_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_62(mht_62_v, 1107, "", "./tensorflow/core/platform/file_system.h", "IsDirectory");
+
     return fs_->IsDirectory(fname, (token ? token : token_));
   }
 
   Status HasAtomicMove(const std::string& path,
                        bool* has_atomic_move) override {
+   std::vector<std::string> mht_63_v;
+   mht_63_v.push_back("path: \"" + path + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_63(mht_63_v, 1116, "", "./tensorflow/core/platform/file_system.h", "HasAtomicMove");
+
     return fs_->HasAtomicMove(path, has_atomic_move);
   }
 
   void FlushCaches(TransactionToken* token) override {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_64(mht_64_v, 1123, "", "./tensorflow/core/platform/file_system.h", "FlushCaches");
+
     return fs_->FlushCaches((token ? token : token_));
   }
 
-  char Separator() const override { return fs_->Separator(); }
+  char Separator() const override {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_65(mht_65_v, 1130, "", "./tensorflow/core/platform/file_system.h", "Separator");
+ return fs_->Separator(); }
 
   StringPiece Basename(StringPiece path) const override {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_66(mht_66_v, 1135, "", "./tensorflow/core/platform/file_system.h", "Basename");
+
     return fs_->Basename(path);
   }
 
   tensorflow::Status StartTransaction(TransactionToken** token) override {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_67(mht_67_v, 1142, "", "./tensorflow/core/platform/file_system.h", "StartTransaction");
+
     return fs_->StartTransaction(token);
   }
 
   tensorflow::Status AddToTransaction(const std::string& path,
                                       TransactionToken* token) override {
+   std::vector<std::string> mht_68_v;
+   mht_68_v.push_back("path: \"" + path + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_68(mht_68_v, 1151, "", "./tensorflow/core/platform/file_system.h", "AddToTransaction");
+
     return fs_->AddToTransaction(path, (token ? token : token_));
   }
 
   tensorflow::Status EndTransaction(TransactionToken* token) override {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_69(mht_69_v, 1158, "", "./tensorflow/core/platform/file_system.h", "EndTransaction");
+
     return fs_->EndTransaction(token);
   }
 
   tensorflow::Status GetTransactionForPath(const std::string& path,
                                            TransactionToken** token) override {
+   std::vector<std::string> mht_70_v;
+   mht_70_v.push_back("path: \"" + path + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_70(mht_70_v, 1167, "", "./tensorflow/core/platform/file_system.h", "GetTransactionForPath");
+
     return fs_->GetTransactionForPath(path, token);
   }
 
   tensorflow::Status GetTokenOrStartTransaction(
       const std::string& path, TransactionToken** token) override {
+   std::vector<std::string> mht_71_v;
+   mht_71_v.push_back("path: \"" + path + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_71(mht_71_v, 1176, "", "./tensorflow/core/platform/file_system.h", "GetTokenOrStartTransaction");
+
     return fs_->GetTokenOrStartTransaction(path, token);
   }
 
   std::string DecodeTransaction(const TransactionToken* token) override {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_72(mht_72_v, 1183, "", "./tensorflow/core/platform/file_system.h", "DecodeTransaction");
+
     return fs_->DecodeTransaction((token ? token : token_));
   }
 
   WrappedFileSystem(FileSystem* file_system, TransactionToken* token)
-      : fs_(file_system), token_(token) {}
+      : fs_(file_system), token_(token) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_73(mht_73_v, 1191, "", "./tensorflow/core/platform/file_system.h", "WrappedFileSystem");
+}
 
   ~WrappedFileSystem() override = default;
 
@@ -745,7 +1202,10 @@ class WrappedFileSystem : public FileSystem {
 /// A file abstraction for randomly reading the contents of a file.
 class RandomAccessFile {
  public:
-  RandomAccessFile() {}
+  RandomAccessFile() {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_74(mht_74_v, 1206, "", "./tensorflow/core/platform/file_system.h", "RandomAccessFile");
+}
   virtual ~RandomAccessFile() = default;
 
   /// \brief Returns the name of the file.
@@ -753,6 +1213,9 @@ class RandomAccessFile {
   /// This is an optional operation that may not be implemented by every
   /// filesystem.
   virtual tensorflow::Status Name(StringPiece* result) const {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_75(mht_75_v, 1216, "", "./tensorflow/core/platform/file_system.h", "Name");
+
     return errors::Unimplemented("This filesystem does not support Name()");
   }
 
@@ -778,6 +1241,9 @@ class RandomAccessFile {
   /// \brief Read up to `n` bytes from the file starting at `offset`.
   virtual tensorflow::Status Read(uint64 offset, size_t n,
                                   absl::Cord* cord) const {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_76(mht_76_v, 1244, "", "./tensorflow/core/platform/file_system.h", "Read");
+
     return errors::Unimplemented(
         "Read(uint64, size_t, absl::Cord*) is not "
         "implemented");
@@ -794,7 +1260,10 @@ class RandomAccessFile {
 /// small fragments at a time to the file.
 class WritableFile {
  public:
-  WritableFile() {}
+  WritableFile() {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_77(mht_77_v, 1264, "", "./tensorflow/core/platform/file_system.h", "WritableFile");
+}
   virtual ~WritableFile() = default;
 
   /// \brief Append 'data' to the file.
@@ -803,6 +1272,9 @@ class WritableFile {
 #if defined(TF_CORD_SUPPORT)
   // \brief Append 'data' to the file.
   virtual tensorflow::Status Append(const absl::Cord& cord) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_78(mht_78_v, 1275, "", "./tensorflow/core/platform/file_system.h", "Append");
+
     for (StringPiece chunk : cord.Chunks()) {
       TF_RETURN_IF_ERROR(Append(chunk));
     }
@@ -836,6 +1308,9 @@ class WritableFile {
   /// This is an optional operation that may not be implemented by every
   /// filesystem.
   virtual tensorflow::Status Name(StringPiece* result) const {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_79(mht_79_v, 1311, "", "./tensorflow/core/platform/file_system.h", "Name");
+
     return errors::Unimplemented("This filesystem does not support Name()");
   }
 
@@ -853,6 +1328,9 @@ class WritableFile {
   /// This is an optional operation, subclasses may choose to return
   /// errors::Unimplemented.
   virtual tensorflow::Status Tell(int64_t* position) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_80(mht_80_v, 1331, "", "./tensorflow/core/platform/file_system.h", "Tell");
+
     *position = -1;
     return errors::Unimplemented("This filesystem does not support Tell()");
   }
@@ -867,7 +1345,10 @@ class WritableFile {
 /// object exists, independently from the Env that created it.
 class ReadOnlyMemoryRegion {
  public:
-  ReadOnlyMemoryRegion() {}
+  ReadOnlyMemoryRegion() {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScorePSplatformPSfile_systemDTh mht_81(mht_81_v, 1349, "", "./tensorflow/core/platform/file_system.h", "ReadOnlyMemoryRegion");
+}
   virtual ~ReadOnlyMemoryRegion() = default;
 
   /// \brief Returns a pointer to the memory region.

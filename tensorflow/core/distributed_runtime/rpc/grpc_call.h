@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_DISTRIBUTED_RUNTIME_RPC_GRPC_CALL_H_
 #define TENSORFLOW_CORE_DISTRIBUTED_RUNTIME_RPC_GRPC_CALL_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include "grpcpp/completion_queue.h"
 #include "grpcpp/impl/service_type.h"
@@ -77,7 +245,10 @@ namespace tensorflow {
 template <class Service>
 class GrpcCallTag {
  public:
-  virtual ~GrpcCallTag() {}
+  virtual ~GrpcCallTag() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh mht_0(mht_0_v, 249, "", "./tensorflow/core/distributed_runtime/rpc/grpc_call.h", "~GrpcCallTag");
+}
 
   // Calls the callback associated with this tag.
   virtual void OnCompleted(Service* service, bool ok) = 0;
@@ -87,7 +258,10 @@ class GrpcCallTag {
 template <class Service>
 class UntypedCall : public core::RefCounted {
  public:
-  virtual ~UntypedCall() {}
+  virtual ~UntypedCall() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh mht_1(mht_1_v, 262, "", "./tensorflow/core/distributed_runtime/rpc/grpc_call.h", "~UntypedCall");
+}
 
   // The implementation of this method should use `service` to handle
   // an incoming request, and (perhaps asynchronously) send the
@@ -115,12 +289,18 @@ class UntypedCall : public core::RefCounted {
     // One enum value per supported callback.
     enum Callback { kRequestReceived, kResponseSent, kCancelled };
 
-    Tag(UntypedCall* call, Callback cb) : call_(call), callback_(cb) {}
+    Tag(UntypedCall* call, Callback cb) : call_(call), callback_(cb) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh mht_2(mht_2_v, 293, "", "./tensorflow/core/distributed_runtime/rpc/grpc_call.h", "Tag");
+}
 
     // Calls the callback associated with this tag.
     //
     // The callback takes ownership of `this->call_`.
     void OnCompleted(Service* service, bool ok) override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh mht_3(mht_3_v, 301, "", "./tensorflow/core/distributed_runtime/rpc/grpc_call.h", "OnCompleted");
+
       switch (callback_) {
         case kRequestReceived:
           call_->RequestReceived(service, ok);
@@ -161,11 +341,20 @@ class Call : public UntypedCall<Service> {
       Call<Service, GrpcService, RequestMessage, ResponseMessage>*);
 
   Call(HandleRequestFunction handle_request_function)
-      : handle_request_function_(handle_request_function), responder_(&ctx_) {}
+      : handle_request_function_(handle_request_function), responder_(&ctx_) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh mht_4(mht_4_v, 345, "", "./tensorflow/core/distributed_runtime/rpc/grpc_call.h", "Call");
+}
 
-  virtual ~Call() {}
+  virtual ~Call() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh mht_5(mht_5_v, 350, "", "./tensorflow/core/distributed_runtime/rpc/grpc_call.h", "~Call");
+}
 
   void RequestReceived(Service* service, bool ok) override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh mht_6(mht_6_v, 355, "", "./tensorflow/core/distributed_runtime/rpc/grpc_call.h", "RequestReceived");
+
     if (ok) {
       this->Ref();
       (service->*handle_request_function_)(this);
@@ -173,12 +362,18 @@ class Call : public UntypedCall<Service> {
   }
 
   void SendResponse(::grpc::Status status) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh mht_7(mht_7_v, 365, "", "./tensorflow/core/distributed_runtime/rpc/grpc_call.h", "SendResponse");
+
     this->Ref();  // Ref for grpc; released in Tag callback.
     responder_.Finish(response, status, &response_sent_tag_);
     this->Unref();
   }
 
   void RequestCancelled(Service* service, bool ok) override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh mht_8(mht_8_v, 374, "", "./tensorflow/core/distributed_runtime/rpc/grpc_call.h", "RequestCancelled");
+
     if (ctx_.IsCancelled()) {
       mutex_lock l(mu_);
       if (cancel_callback_) {
@@ -190,12 +385,18 @@ class Call : public UntypedCall<Service> {
   // Registers `callback` as the function that should be called if and when this
   // call is canceled by the client.
   void SetCancelCallback(std::function<void()> callback) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh mht_9(mht_9_v, 388, "", "./tensorflow/core/distributed_runtime/rpc/grpc_call.h", "SetCancelCallback");
+
     mutex_lock l(mu_);
     cancel_callback_ = std::move(callback);
   }
 
   // Clears any cancellation callback that has been registered for this call.
   void ClearCancelCallback() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh mht_10(mht_10_v, 397, "", "./tensorflow/core/distributed_runtime/rpc/grpc_call.h", "ClearCancelCallback");
+
     mutex_lock l(mu_);
     cancel_callback_ = nullptr;
   }
@@ -210,6 +411,9 @@ class Call : public UntypedCall<Service> {
                              EnqueueFunction enqueue_function,
                              HandleRequestFunction handle_request_function,
                              bool supports_cancel) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh mht_11(mht_11_v, 414, "", "./tensorflow/core/distributed_runtime/rpc/grpc_call.h", "EnqueueRequest");
+
     auto call = new Call<Service, GrpcService, RequestMessage, ResponseMessage>(
         handle_request_function);
     if (supports_cancel) {
@@ -231,6 +435,9 @@ class Call : public UntypedCall<Service> {
       GrpcService* grpc_service, ::grpc::ServerCompletionQueue* cq,
       int method_id, HandleRequestFunction handle_request_function,
       bool supports_cancel) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh mht_12(mht_12_v, 438, "", "./tensorflow/core/distributed_runtime/rpc/grpc_call.h", "EnqueueRequestForMethod");
+
     auto call = new Call<Service, GrpcService, RequestMessage, ResponseMessage>(
         handle_request_function);
     if (supports_cancel) {
@@ -248,6 +455,9 @@ class Call : public UntypedCall<Service> {
 
   const std::multimap<::grpc::string_ref, ::grpc::string_ref>& client_metadata()
       const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh mht_13(mht_13_v, 458, "", "./tensorflow/core/distributed_runtime/rpc/grpc_call.h", "client_metadata");
+
     return ctx_.client_metadata();
   }
 
@@ -256,6 +466,9 @@ class Call : public UntypedCall<Service> {
   // NOTE: This method must be called before this call is enqueued on a
   // completion queue.
   void RegisterCancellationHandler() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh mht_14(mht_14_v, 469, "", "./tensorflow/core/distributed_runtime/rpc/grpc_call.h", "RegisterCancellationHandler");
+
     this->Ref();  // Ref for grpc; released in Tag callback.
     ctx_.AsyncNotifyWhenDone(&cancelled_tag_);
   }
@@ -322,10 +535,16 @@ class ServerUntypedBidirectionalStreamingCall : public core::RefCounted {
     };
 
     Tag(ServerUntypedBidirectionalStreamingCall* call, TagType cb)
-        : call_(call), callback_(cb) {}
+        : call_(call), callback_(cb) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh mht_15(mht_15_v, 539, "", "./tensorflow/core/distributed_runtime/rpc/grpc_call.h", "Tag");
+}
 
     // Calls the callback associated with this tag and Unrefs this->call_.
     void OnCompleted(Service* service, bool ok) override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh mht_16(mht_16_v, 545, "", "./tensorflow/core/distributed_runtime/rpc/grpc_call.h", "OnCompleted");
+
       switch (callback_) {
         case TagType::kCallOpen:
           // Non-ok value indicates that the server has been shutdown before we
@@ -426,14 +645,23 @@ class ServerBidirectionalStreamingCall
         grpc_service_(grpc_service),
         cq_(cq),
         enqueue_function_(enqueue_function) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh mht_17(mht_17_v, 648, "", "./tensorflow/core/distributed_runtime/rpc/grpc_call.h", "ServerBidirectionalStreamingCall");
+
     VLOG(3) << "Creating ServerBidirectionalStreamingCall " << this;
   }
 
   ~ServerBidirectionalStreamingCall() override {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh mht_18(mht_18_v, 655, "", "./tensorflow/core/distributed_runtime/rpc/grpc_call.h", "~ServerBidirectionalStreamingCall");
+
     VLOG(3) << "Destroying ServerBidirectionalStreamingCall " << this;
   }
 
   void CallOpen() override {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh mht_19(mht_19_v, 662, "", "./tensorflow/core/distributed_runtime/rpc/grpc_call.h", "CallOpen");
+
     // Let gRPC know that we can accept another call.
     ServerBidirectionalStreamingCall<
         Service, GrpcService, RequestMessage,
@@ -443,18 +671,27 @@ class ServerBidirectionalStreamingCall
   }
 
   void RequestRead() override {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh mht_20(mht_20_v, 674, "", "./tensorflow/core/distributed_runtime/rpc/grpc_call.h", "RequestRead");
+
     this->Ref();
     request_.Clear();
     stream_.Read(&request_, &request_received_tag_);
   }
 
   void RequestReceived(Service* service) override {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh mht_21(mht_21_v, 683, "", "./tensorflow/core/distributed_runtime/rpc/grpc_call.h", "RequestReceived");
+
     this->Ref();
     // Request handling should result in a call to SendResponse or Finish.
     (service->*handle_request_function_)(this);
   }
 
   void SendResponse() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh mht_22(mht_22_v, 692, "", "./tensorflow/core/distributed_runtime/rpc/grpc_call.h", "SendResponse");
+
     // Transferring ownership of this to the response_sent_tag_.
     stream_.Write(response_, &response_sent_tag_);
     // stream_.Write does not save references to response_. We are free to muck
@@ -464,6 +701,9 @@ class ServerBidirectionalStreamingCall
   }
 
   void Finish(::grpc::Status status) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh mht_23(mht_23_v, 704, "", "./tensorflow/core/distributed_runtime/rpc/grpc_call.h", "Finish");
+
     // Transferring ownership of this to the server_finished_tag_.
     stream_.Finish(status, &server_finished_tag_);
   }
@@ -476,6 +716,9 @@ class ServerBidirectionalStreamingCall
                              ::grpc::ServerCompletionQueue* cq,
                              EnqueueFunction enqueue_function,
                              HandleRequestFunction handle_request_function) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh mht_24(mht_24_v, 719, "", "./tensorflow/core/distributed_runtime/rpc/grpc_call.h", "EnqueueRequest");
+
     auto call =
         new ServerBidirectionalStreamingCall<Service, GrpcService,
                                              RequestMessage, ResponseMessage>(
@@ -486,8 +729,14 @@ class ServerBidirectionalStreamingCall
                                       &call->call_open_tag_);
   }
 
-  const RequestMessage& request() const { return request_; }
-  ResponseMessage* mutable_response() { return &response_; }
+  const RequestMessage& request() const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh mht_25(mht_25_v, 733, "", "./tensorflow/core/distributed_runtime/rpc/grpc_call.h", "request");
+ return request_; }
+  ResponseMessage* mutable_response() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_callDTh mht_26(mht_26_v, 737, "", "./tensorflow/core/distributed_runtime/rpc/grpc_call.h", "mutable_response");
+ return &response_; }
 
  private:
   // Request and response messages are reused for each request/response exchange

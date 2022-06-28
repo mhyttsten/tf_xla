@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSdistributed_runtimePSsession_mgrDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSsession_mgrDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSdistributed_runtimePSsession_mgrDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,10 +219,17 @@ SessionMgr::SessionMgr(
           std::unique_ptr<GraphMgr>(
               new GraphMgr(worker_env, worker_env->device_mgr)),
           nullptr)),
-      worker_cache_factory_(std::move(worker_cache_factory)) {}
+      worker_cache_factory_(std::move(worker_cache_factory)) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("default_worker_name: \"" + default_worker_name + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSsession_mgrDTcc mht_0(mht_0_v, 224, "", "./tensorflow/core/distributed_runtime/session_mgr.cc", "SessionMgr::SessionMgr");
+}
 
 /* static */
 std::string SessionMgr::WorkerNameFromServerDef(const ServerDef& server_def) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSsession_mgrDTcc mht_1(mht_1_v, 230, "", "./tensorflow/core/distributed_runtime/session_mgr.cc", "SessionMgr::WorkerNameFromServerDef");
+
   return strings::StrCat("/job:", server_def.job_name(),
                          "/replica:0/task:", server_def.task_index());
 }
@@ -63,6 +238,10 @@ Status SessionMgr::CreateSession(const std::string& session,
                                  const ServerDef& server_def,
                                  bool isolate_session_state,
                                  StatusCallback coordination_error_callback) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("session: \"" + session + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSsession_mgrDTcc mht_2(mht_2_v, 242, "", "./tensorflow/core/distributed_runtime/session_mgr.cc", "SessionMgr::CreateSession");
+
   return CreateSession(session, server_def, {}, isolate_session_state,
                        /*master_task=*/"",
                        /*master_incarnation=*/0, coordination_error_callback);
@@ -73,6 +252,10 @@ Status SessionMgr::CreateSession(
     const protobuf::RepeatedPtrField<DeviceAttributes>&
         cluster_device_attributes,
     bool isolate_session_state) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("session: \"" + session + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSsession_mgrDTcc mht_3(mht_3_v, 256, "", "./tensorflow/core/distributed_runtime/session_mgr.cc", "SessionMgr::CreateSession");
+
   return CreateSession(session, server_def, cluster_device_attributes,
                        isolate_session_state,
                        /*master_task=*/"",
@@ -85,6 +268,11 @@ Status SessionMgr::CreateSession(
         cluster_device_attributes,
     bool isolate_session_state, std::string master_task,
     int64_t master_incarnation, StatusCallback coordination_error_callback) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("session: \"" + session + "\"");
+   mht_4_v.push_back("master_task: \"" + master_task + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSsession_mgrDTcc mht_4(mht_4_v, 273, "", "./tensorflow/core/distributed_runtime/session_mgr.cc", "SessionMgr::CreateSession");
+
   mutex_lock l(mu_);
   if (session.empty()) {
     return errors::InvalidArgument("Session must be non-empty.");
@@ -151,6 +339,9 @@ Status SessionMgr::CreateSession(
     }
     auto device_mgr = MakeUnique<StaticDeviceMgr>(std::move(renamed_devices));
     LookupLocalDevice cb = [&device_mgr](StringPiece name, Device** device) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSsession_mgrDTcc mht_5(mht_5_v, 342, "", "./tensorflow/core/distributed_runtime/session_mgr.cc", "lambda");
+
       return device_mgr->LookupDevice(name, device);
     };
     AsRemoteDevices(worker_env_->env, cluster_device_attributes, cb,
@@ -221,6 +412,9 @@ Status SessionMgr::CreateSession(
 }
 
 void SessionMgr::ResetDefaultWorkerCache(WorkerCacheInterface* worker_cache) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSsession_mgrDTcc mht_6(mht_6_v, 415, "", "./tensorflow/core/distributed_runtime/session_mgr.cc", "SessionMgr::ResetDefaultWorkerCache");
+
   default_worker_cache_.reset(worker_cache);
 }
 
@@ -228,6 +422,10 @@ Status SessionMgr::UpdateSession(
     const std::string& session, const ServerDef& server_def,
     const protobuf::RepeatedPtrField<DeviceAttributes>&
         cluster_device_attributes) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("session: \"" + session + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSsession_mgrDTcc mht_7(mht_7_v, 426, "", "./tensorflow/core/distributed_runtime/session_mgr.cc", "SessionMgr::UpdateSession");
+
   mutex_lock l(mu_);
   if (session.empty()) {
     return errors::InvalidArgument("Session must be non-empty.");
@@ -288,6 +486,10 @@ Status SessionMgr::UpdateSession(
 }
 
 Status SessionMgr::DeleteSession(const std::string& session) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("session: \"" + session + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSsession_mgrDTcc mht_8(mht_8_v, 490, "", "./tensorflow/core/distributed_runtime/session_mgr.cc", "SessionMgr::DeleteSession");
+
   mutex_lock l(mu_);
   auto it = sessions_.find(session);
   if (it != sessions_.end()) {
@@ -299,6 +501,10 @@ Status SessionMgr::DeleteSession(const std::string& session) {
 Status SessionMgr::WorkerSessionForSessionLocked(
     const std::string& session_handle,
     std::shared_ptr<WorkerSession>* out_session) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("session_handle: \"" + session_handle + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSsession_mgrDTcc mht_9(mht_9_v, 505, "", "./tensorflow/core/distributed_runtime/session_mgr.cc", "SessionMgr::WorkerSessionForSessionLocked");
+
   if (session_handle.empty()) {
     *out_session = legacy_session_;
   } else {
@@ -322,19 +528,32 @@ Status SessionMgr::WorkerSessionForSessionLocked(
 Status SessionMgr::WorkerSessionForSession(
     const std::string& session_handle,
     std::shared_ptr<WorkerSession>* out_session) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("session_handle: \"" + session_handle + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSsession_mgrDTcc mht_10(mht_10_v, 532, "", "./tensorflow/core/distributed_runtime/session_mgr.cc", "SessionMgr::WorkerSessionForSession");
+
   mutex_lock l(mu_);
   return WorkerSessionForSessionLocked(session_handle, out_session);
 }
 
 std::shared_ptr<WorkerSession> SessionMgr::LegacySession() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSsession_mgrDTcc mht_11(mht_11_v, 540, "", "./tensorflow/core/distributed_runtime/session_mgr.cc", "SessionMgr::LegacySession");
+
   return legacy_session_;
 }
 
 CoordinationServiceAgent* SessionMgr::GetCoordinationServiceAgent() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSsession_mgrDTcc mht_12(mht_12_v, 547, "", "./tensorflow/core/distributed_runtime/session_mgr.cc", "SessionMgr::GetCoordinationServiceAgent");
+
   return coordination_service_agent_.get();
 }
 
 void SessionMgr::SetLogging(bool active) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSsession_mgrDTcc mht_13(mht_13_v, 554, "", "./tensorflow/core/distributed_runtime/session_mgr.cc", "SessionMgr::SetLogging");
+
   mutex_lock l(mu_);
   this->is_logging_active_ = active;
   // Legacy Session
@@ -357,6 +576,9 @@ void SessionMgr::SetLogging(bool active) {
 }
 
 void SessionMgr::RetrieveLogs(int64_t step_id, LoggingResponse* response) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSsession_mgrDTcc mht_14(mht_14_v, 579, "", "./tensorflow/core/distributed_runtime/session_mgr.cc", "SessionMgr::RetrieveLogs");
+
   mutex_lock l(mu_);
   // Legacy Session
   if (legacy_session_) {
@@ -387,6 +609,9 @@ void SessionMgr::RetrieveLogs(int64_t step_id, LoggingResponse* response) {
 }
 
 void SessionMgr::ClearLogs() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSsession_mgrDTcc mht_15(mht_15_v, 612, "", "./tensorflow/core/distributed_runtime/session_mgr.cc", "SessionMgr::ClearLogs");
+
   mutex_lock l(mu_);
   // Legacy Session
   if (legacy_session_) {
@@ -408,10 +633,16 @@ void SessionMgr::ClearLogs() {
 }
 
 void SessionMgr::TeardownCoordinationService() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSsession_mgrDTcc mht_16(mht_16_v, 636, "", "./tensorflow/core/distributed_runtime/session_mgr.cc", "SessionMgr::TeardownCoordinationService");
+
   coordination_service_ = nullptr;
 }
 
 void SessionMgr::TeardownCoordinationServiceAgent() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSsession_mgrDTcc mht_17(mht_17_v, 643, "", "./tensorflow/core/distributed_runtime/session_mgr.cc", "SessionMgr::TeardownCoordinationServiceAgent");
+
   coordination_service_agent_ = nullptr;
 }
 }  // namespace tensorflow

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSdelegatesPSutilsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSutilsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSdelegatesPSutilsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,6 +200,9 @@ TfLiteStatus CreateNewTensorWithDifferentType(TfLiteContext* context,
                                               TfLiteType new_type,
                                               TfLiteTensor** new_tensor,
                                               int* new_tensor_index) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSutilsDTcc mht_0(mht_0_v, 203, "", "./tensorflow/lite/delegates/utils.cc", "CreateNewTensorWithDifferentType");
+
   TF_LITE_ENSURE_STATUS(context->AddTensors(context, 1, new_tensor_index));
   const TfLiteTensor& original_tensor = context->tensors[original_tensor_index];
   *new_tensor = &context->tensors[*new_tensor_index];
@@ -51,6 +222,9 @@ TfLiteStatus CreateNewTensorWithDifferentType(TfLiteContext* context,
 
 TfLiteStatus GraphPartitionHelper::Partition(
     std::set<std::string>* unsupported_nodes_info) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSutilsDTcc mht_1(mht_1_v, 225, "", "./tensorflow/lite/delegates/utils.cc", "GraphPartitionHelper::Partition");
+
   const auto prepare_status = PrepareSupportedNodes(unsupported_nodes_info);
   if (prepare_status != kTfLiteOk) return prepare_status;
 
@@ -73,6 +247,9 @@ TfLiteStatus GraphPartitionHelper::Partition(
 std::vector<TfLiteDelegateParams*>
 GraphPartitionHelper::GetFirstNLargestPartitions(
     int n, int min_nodes_per_partition) const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSutilsDTcc mht_2(mht_2_v, 250, "", "./tensorflow/lite/delegates/utils.cc", "GraphPartitionHelper::GetFirstNLargestPartitions");
+
   // In general, the number of partitions in a delegate is never likely to be
   // high enough to cause latency issues. Also considering this is generally a
   // one-time work, we simply unconditionally sort partitions here according to
@@ -100,6 +277,9 @@ GraphPartitionHelper::GetFirstNLargestPartitions(
 
 std::vector<int> GraphPartitionHelper::GetNodesOfFirstNLargestPartitionsImpl(
     int n, int min_nodes_per_partition) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSutilsDTcc mht_3(mht_3_v, 280, "", "./tensorflow/lite/delegates/utils.cc", "GraphPartitionHelper::GetNodesOfFirstNLargestPartitionsImpl");
+
   auto first_n_partitions =
       GetFirstNLargestPartitions(n, min_nodes_per_partition);
   std::vector<int> ops_to_replace;
@@ -113,6 +293,9 @@ std::vector<int> GraphPartitionHelper::GetNodesOfFirstNLargestPartitionsImpl(
 
 TfLiteStatus GraphPartitionHelper::PrepareSupportedNodes(
     std::set<std::string>* unsupported_nodes_info) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSutilsDTcc mht_4(mht_4_v, 296, "", "./tensorflow/lite/delegates/utils.cc", "GraphPartitionHelper::PrepareSupportedNodes");
+
   if (!is_node_supported_fn_) return kTfLiteOk;
 
   TfLiteIntArray* execution_plan = nullptr;
@@ -164,6 +347,9 @@ TfLiteStatus GraphPartitionHelper::PrepareSupportedNodes(
 std::vector<int>
 FP16GraphPartitionHelper::GetNodesOfFirstNLargestPartitionsImpl(
     int n, int min_nodes_per_partition) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSutilsDTcc mht_5(mht_5_v, 350, "", "./tensorflow/lite/delegates/utils.cc", "FP16GraphPartitionHelper::GetNodesOfFirstNLargestPartitionsImpl");
+
   std::vector<int> ops_to_replace;
 
   if (num_supported_nodes() + constant_dequant_nodes_.size() ==
@@ -199,6 +385,9 @@ FP16GraphPartitionHelper::GetNodesOfFirstNLargestPartitionsImpl(
 bool FP16GraphPartitionHelper::IsNodeSupported(
     TfLiteContext* context, TfLiteNode* node, TfLiteRegistration* registration,
     int node_id, std::string* unsupported_details) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSutilsDTcc mht_6(mht_6_v, 388, "", "./tensorflow/lite/delegates/utils.cc", "FP16GraphPartitionHelper::IsNodeSupported");
+
   if (registration->builtin_code == kTfLiteBuiltinDequantize) {
     auto& dequantize_input = context_->tensors[node->inputs->data[0]];
     if (dequantize_input.type == kTfLiteFloat16 &&
@@ -240,6 +429,9 @@ bool FP16GraphPartitionHelper::IsNodeSupported(
 
 void FP16GraphPartitionHelper::RemapFp16InputTensors(
     const std::vector<int>& nodes) const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSutilsDTcc mht_7(mht_7_v, 432, "", "./tensorflow/lite/delegates/utils.cc", "FP16GraphPartitionHelper::RemapFp16InputTensors");
+
   for (int node_id : nodes) {
     TfLiteNode* node;
     TfLiteRegistration* registration;
@@ -256,6 +448,9 @@ void FP16GraphPartitionHelper::RemapFp16InputTensors(
 
 void FP16GraphPartitionHelper::RemapFp16InputTensors(
     TfLiteNode* node, std::vector<int>* orig_inputs) const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSutilsDTcc mht_8(mht_8_v, 451, "", "./tensorflow/lite/delegates/utils.cc", "FP16GraphPartitionHelper::RemapFp16InputTensors");
+
   TfLiteIntArray* inputs = node->inputs;
   auto inputs_view = TfLiteIntArrayView(inputs);
   // Prepopulate 'orig_inputs' first and clear it if there's no input from a

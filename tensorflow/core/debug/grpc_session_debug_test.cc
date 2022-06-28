@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSdebugPSgrpc_session_debug_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSdebugPSgrpc_session_debug_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSdebugPSgrpc_session_debug_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -43,6 +211,9 @@ namespace tensorflow {
 namespace {
 
 SessionOptions Devices(int num_cpus, int num_gpus) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSgrpc_session_debug_testDTcc mht_0(mht_0_v, 214, "", "./tensorflow/core/debug/grpc_session_debug_test.cc", "Devices");
+
   SessionOptions result;
   (*result.config.mutable_device_count())["CPU"] = num_cpus;
   (*result.config.mutable_device_count())["GPU"] = num_gpus;
@@ -50,6 +221,9 @@ SessionOptions Devices(int num_cpus, int num_gpus) {
 }
 
 void CreateGraphDef(GraphDef* graph_def, string node_names[3]) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSgrpc_session_debug_testDTcc mht_1(mht_1_v, 224, "", "./tensorflow/core/debug/grpc_session_debug_test.cc", "CreateGraphDef");
+
   Graph graph(OpRegistry::Global());
 
   Tensor a_tensor(DT_FLOAT, TensorShape({1, 2}));
@@ -72,12 +246,19 @@ void CreateGraphDef(GraphDef* graph_def, string node_names[3]) {
 // Asserts that "val" is a single float tensor. The only float is
 // "expected_val".
 void IsSingleFloatValue(const Tensor& val, float expected_val) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSgrpc_session_debug_testDTcc mht_2(mht_2_v, 249, "", "./tensorflow/core/debug/grpc_session_debug_test.cc", "IsSingleFloatValue");
+
   ASSERT_EQ(val.dtype(), DT_FLOAT);
   ASSERT_EQ(val.NumElements(), 1);
   ASSERT_EQ(val.flat<float>()(0), expected_val);
 }
 
 SessionOptions Options(const string& target, int placement_period) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("target: \"" + target + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSgrpc_session_debug_testDTcc mht_3(mht_3_v, 259, "", "./tensorflow/core/debug/grpc_session_debug_test.cc", "Options");
+
   SessionOptions options;
   // NOTE(mrry): GrpcSession requires a grpc:// scheme prefix in the target
   // string.
@@ -98,11 +279,20 @@ std::unique_ptr<Session> NewRemote(const SessionOptions& options) {
 
 class GrpcSessionDebugTest : public ::testing::Test {
  protected:
-  void SetUp() override { CreateDumpDir(); }
+  void SetUp() override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSgrpc_session_debug_testDTcc mht_4(mht_4_v, 283, "", "./tensorflow/core/debug/grpc_session_debug_test.cc", "SetUp");
+ CreateDumpDir(); }
 
-  void TearDown() override { DeleteDumpDir(); }
+  void TearDown() override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSgrpc_session_debug_testDTcc mht_5(mht_5_v, 288, "", "./tensorflow/core/debug/grpc_session_debug_test.cc", "TearDown");
+ DeleteDumpDir(); }
 
   void DeleteDumpDir() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSgrpc_session_debug_testDTcc mht_6(mht_6_v, 293, "", "./tensorflow/core/debug/grpc_session_debug_test.cc", "DeleteDumpDir");
+
     if (Env::Default()->IsDirectory(dump_dir_).ok()) {
       int64_t undeleted_files = 0;
       int64_t undeleted_dirs = 0;
@@ -115,9 +305,16 @@ class GrpcSessionDebugTest : public ::testing::Test {
     }
   }
 
-  const string GetDebugURL() { return debug_url_; }
+  const string GetDebugURL() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSgrpc_session_debug_testDTcc mht_7(mht_7_v, 309, "", "./tensorflow/core/debug/grpc_session_debug_test.cc", "GetDebugURL");
+ return debug_url_; }
 
   void LoadTensorDumps(const string& subdir, std::vector<Tensor>* tensors) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("subdir: \"" + subdir + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSgrpc_session_debug_testDTcc mht_8(mht_8_v, 315, "", "./tensorflow/core/debug/grpc_session_debug_test.cc", "LoadTensorDumps");
+
     const string dirpath = io::JoinPath(dump_dir_, subdir);
     if (!(Env::Default()->IsDirectory(dirpath).ok())) {
       return;
@@ -139,6 +336,9 @@ class GrpcSessionDebugTest : public ::testing::Test {
 
  private:
   void CreateDumpDir() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSgrpc_session_debug_testDTcc mht_9(mht_9_v, 339, "", "./tensorflow/core/debug/grpc_session_debug_test.cc", "CreateDumpDir");
+
     char dir_template[] = "/tmp/tfdbg_grpc_sessions_XXXXXX";
     dump_dir_ = mkdtemp(dir_template);
     debug_url_ = strings::StrCat("file://", dump_dir_);
@@ -213,6 +413,11 @@ TEST_F(GrpcSessionDebugTest, FileDebugURL) {
 }
 
 void SetDevice(GraphDef* graph, const string& name, const string& dev) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("name: \"" + name + "\"");
+   mht_10_v.push_back("dev: \"" + dev + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSgrpc_session_debug_testDTcc mht_10(mht_10_v, 418, "", "./tensorflow/core/debug/grpc_session_debug_test.cc", "SetDevice");
+
   for (size_t i = 0; i < graph->node_size(); ++i) {
     if (graph->node(i).name() == name) {
       graph->mutable_node(i)->set_device(dev);

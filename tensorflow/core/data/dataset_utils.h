@@ -14,6 +14,174 @@ limitations under the License.
 ==============================================================================*/
 #ifndef TENSORFLOW_CORE_DATA_DATASET_UTILS_H_
 #define TENSORFLOW_CORE_DATA_DATASET_UTILS_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <functional>
 #include <string>
@@ -41,6 +209,10 @@ constexpr int kAutotuneDefaultParallelism = 16;
 template <typename T>
 Status CreateWeakHandle(OpKernelContext* ctx, T* resource,
                         const string& container_name, ResourceHandle* handle) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("container_name: \"" + container_name + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTh mht_0(mht_0_v, 213, "", "./tensorflow/core/data/dataset_utils.h", "CreateWeakHandle");
+
   static std::atomic<int64_t> resource_id_counter(0);
   string unique_name =
       strings::StrCat(container_name, resource_id_counter.fetch_add(1));
@@ -56,6 +228,9 @@ Status CreateWeakHandle(OpKernelContext* ctx, T* resource,
 // resource is owned by the handle.
 template <typename T>
 Status CreateHandle(OpKernelContext* ctx, T* resource, ResourceHandle* handle) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTh mht_1(mht_1_v, 231, "", "./tensorflow/core/data/dataset_utils.h", "CreateHandle");
+
   ResourceMgr* mgr = ctx->resource_manager();
   *handle =
       ResourceHandle::MakeRefCountingHandle(resource, ctx->device()->name());
@@ -78,9 +253,15 @@ class AnonymousResourceOp : public OpKernel {
                                bool return_deleter)
       : OpKernel(context),
         ref_counting_(ref_counting),
-        return_deleter_(return_deleter) {}
+        return_deleter_(return_deleter) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTh mht_2(mht_2_v, 257, "", "./tensorflow/core/data/dataset_utils.h", "AnonymousResourceOp");
+}
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTh mht_3(mht_3_v, 262, "", "./tensorflow/core/data/dataset_utils.h", "Compute");
+
     FunctionLibraryRuntime* lib;
     std::unique_ptr<FunctionLibraryDefinition> flib_def(nullptr);
     std::unique_ptr<ProcessFunctionLibraryRuntime> pflr(nullptr);
@@ -161,8 +342,14 @@ class DeterminismPolicy {
   static constexpr const char* const kNondeterministic = "false";
   static constexpr const char* const kDefault = "default";
 
-  DeterminismPolicy() : determinism_(Type::kDefault) {}
-  explicit DeterminismPolicy(Type determinism) : determinism_(determinism) {}
+  DeterminismPolicy() : determinism_(Type::kDefault) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTh mht_4(mht_4_v, 346, "", "./tensorflow/core/data/dataset_utils.h", "DeterminismPolicy");
+}
+  explicit DeterminismPolicy(Type determinism) : determinism_(determinism) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTh mht_5(mht_5_v, 350, "", "./tensorflow/core/data/dataset_utils.h", "DeterminismPolicy");
+}
   // Creates a DeterminismPolicy with Type kDeterministic or
   // kNondeterministic, depending on the values of `is_deterministic`.
   explicit DeterminismPolicy(bool is_deterministic);
@@ -174,11 +361,20 @@ class DeterminismPolicy {
   std::string String() const;
 
   /// Convenience methods for checking the DeterminismPolicy::Type.
-  bool IsDeterministic() const { return determinism_ == Type::kDeterministic; }
+  bool IsDeterministic() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTh mht_6(mht_6_v, 365, "", "./tensorflow/core/data/dataset_utils.h", "IsDeterministic");
+ return determinism_ == Type::kDeterministic; }
   bool IsNondeterministic() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTh mht_7(mht_7_v, 369, "", "./tensorflow/core/data/dataset_utils.h", "IsNondeterministic");
+
     return determinism_ == Type::kNondeterministic;
   }
-  bool IsDefault() const { return determinism_ == Type::kDefault; }
+  bool IsDefault() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTh mht_8(mht_8_v, 375, "", "./tensorflow/core/data/dataset_utils.h", "IsDefault");
+ return determinism_ == Type::kDefault; }
 
  private:
   Type determinism_;
@@ -224,9 +420,15 @@ std::function<void(std::function<void()>)> RunnerWithMaxParallelism(
 template <typename ResourceType>
 class DummyResourceOp : public OpKernel {
  public:
-  explicit DummyResourceOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+  explicit DummyResourceOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTh mht_9(mht_9_v, 424, "", "./tensorflow/core/data/dataset_utils.h", "DummyResourceOp");
+}
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTh mht_10(mht_10_v, 429, "", "./tensorflow/core/data/dataset_utils.h", "Compute");
+
     Tensor* tensor;
     OP_REQUIRES_OK(ctx, ctx->allocate_output(0, TensorShape({}), &tensor));
     tensor->scalar<ResourceHandle>()() = MakeResourceHandle<ResourceType>(
@@ -285,12 +487,18 @@ struct CopyBatchParams {
   int64 runner_threadpool_size;
 
   explicit CopyBatchParams(IteratorContext* ctx) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTh mht_11(mht_11_v, 490, "", "./tensorflow/core/data/dataset_utils.h", "CopyBatchParams");
+
     allocator = ctx->allocator({});
     runner = ctx->runner();
     runner_threadpool_size = ctx->runner_threadpool_size();
   }
 
   explicit CopyBatchParams(OpKernelContext* ctx) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTh mht_12(mht_12_v, 499, "", "./tensorflow/core/data/dataset_utils.h", "CopyBatchParams");
+
     allocator = ctx->get_allocator({});
     runner = ctx->runner();
     runner_threadpool_size = GetRunnerThreadpoolSizeFromOpKernelContext(ctx);
@@ -353,6 +561,9 @@ bool ShouldApplyOptimizations(
 
 // Returns the default CPU budget.
 inline int GetCpuBudget() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTh mht_13(mht_13_v, 564, "", "./tensorflow/core/data/dataset_utils.h", "GetCpuBudget");
+
   static bool in_experiment = GetExperiments().contains("tune_cpu_budget");
   return (in_experiment ? 1.2 : 1.0) * port::NumSchedulableCPUs();
 }
@@ -376,6 +587,10 @@ class DatasetExperimentRegistrar {
  public:
   explicit DatasetExperimentRegistrar(const string& experiment,
                                       int64_t rollout_pct) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("experiment: \"" + experiment + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_utilsDTh mht_14(mht_14_v, 591, "", "./tensorflow/core/data/dataset_utils.h", "DatasetExperimentRegistrar");
+
     DatasetExperimentRegistry::Register(experiment, rollout_pct);
   }
 };

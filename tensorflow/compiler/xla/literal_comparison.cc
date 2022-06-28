@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,9 +207,15 @@ namespace {
 // able to transparently access the raw 16-bit value contained within.
 template <typename T>
 T GetRawValue(T val) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_0(mht_0_v, 210, "", "./tensorflow/compiler/xla/literal_comparison.cc", "GetRawValue");
+
   return val;
 }
 uint16_t GetRawValue(Eigen::half val) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_1(mht_1_v, 216, "", "./tensorflow/compiler/xla/literal_comparison.cc", "GetRawValue");
+
   return Eigen::numext::bit_cast<uint16_t>(val);
 }
 
@@ -62,6 +236,9 @@ bool CompareFloatsBitwiseEqual(FloatT lhs, FloatT rhs,
 template <typename NativeT>
 bool CompareEqual(NativeT lhs, NativeT rhs,
                   absl::Span<const int64_t> multi_index) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_2(mht_2_v, 239, "", "./tensorflow/compiler/xla/literal_comparison.cc", "CompareEqual");
+
   return lhs == rhs;
 }
 
@@ -70,33 +247,51 @@ bool CompareEqual(NativeT lhs, NativeT rhs,
 template <>
 bool CompareEqual<bfloat16>(bfloat16 lhs, bfloat16 rhs,
                             absl::Span<const int64_t> multi_index) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_3(mht_3_v, 250, "", "./tensorflow/compiler/xla/literal_comparison.cc", "CompareEqual<bfloat16>");
+
   return CompareFloatsBitwiseEqual<bfloat16, uint16_t>(lhs, rhs, multi_index);
 }
 template <>
 bool CompareEqual<Eigen::half>(Eigen::half lhs, Eigen::half rhs,
                                absl::Span<const int64_t> multi_index) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_4(mht_4_v, 258, "", "./tensorflow/compiler/xla/literal_comparison.cc", "CompareEqual<Eigen::half>");
+
   return CompareFloatsBitwiseEqual<Eigen::half, uint16_t>(lhs, rhs,
                                                           multi_index);
 }
 template <>
 bool CompareEqual<float>(float lhs, float rhs,
                          absl::Span<const int64_t> multi_index) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_5(mht_5_v, 267, "", "./tensorflow/compiler/xla/literal_comparison.cc", "CompareEqual<float>");
+
   return CompareFloatsBitwiseEqual<float, uint32_t>(lhs, rhs, multi_index);
 }
 template <>
 bool CompareEqual<double>(double lhs, double rhs,
                           absl::Span<const int64_t> multi_index) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_6(mht_6_v, 275, "", "./tensorflow/compiler/xla/literal_comparison.cc", "CompareEqual<double>");
+
   return CompareFloatsBitwiseEqual<double, uint64_t>(lhs, rhs, multi_index);
 }
 template <>
 bool CompareEqual<complex64>(complex64 lhs, complex64 rhs,
                              absl::Span<const int64_t> multi_index) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_7(mht_7_v, 283, "", "./tensorflow/compiler/xla/literal_comparison.cc", "CompareEqual<complex64>");
+
   return CompareEqual<float>(lhs.real(), rhs.real(), multi_index) &&
          CompareEqual<float>(lhs.imag(), rhs.imag(), multi_index);
 }
 template <>
 bool CompareEqual<complex128>(complex128 lhs, complex128 rhs,
                               absl::Span<const int64_t> multi_index) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_8(mht_8_v, 292, "", "./tensorflow/compiler/xla/literal_comparison.cc", "CompareEqual<complex128>");
+
   return CompareEqual<double>(lhs.real(), rhs.real(), multi_index) &&
          CompareEqual<double>(lhs.imag(), rhs.imag(), multi_index);
 }
@@ -119,6 +314,9 @@ Status MakeBitwiseErrorStatus(NativeT lhs, NativeT rhs,
 template <typename NativeT>
 Status MakeErrorStatus(NativeT lhs, NativeT rhs,
                        absl::Span<const int64_t> multi_index) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_9(mht_9_v, 317, "", "./tensorflow/compiler/xla/literal_comparison.cc", "MakeErrorStatus");
+
   return InvalidArgument(
       "first mismatch at array index %s:\n  expected value: %s\n  actual "
       "value:   %s",
@@ -128,26 +326,41 @@ Status MakeErrorStatus(NativeT lhs, NativeT rhs,
 template <>
 Status MakeErrorStatus(bfloat16 lhs, bfloat16 rhs,
                        absl::Span<const int64_t> multi_index) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_10(mht_10_v, 329, "", "./tensorflow/compiler/xla/literal_comparison.cc", "MakeErrorStatus");
+
   return MakeBitwiseErrorStatus<bfloat16, uint16_t>(lhs, rhs, multi_index);
 }
 template <>
 Status MakeErrorStatus(Eigen::half lhs, Eigen::half rhs,
                        absl::Span<const int64_t> multi_index) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_11(mht_11_v, 337, "", "./tensorflow/compiler/xla/literal_comparison.cc", "MakeErrorStatus");
+
   return MakeBitwiseErrorStatus<Eigen::half, uint16_t>(lhs, rhs, multi_index);
 }
 template <>
 Status MakeErrorStatus(float lhs, float rhs,
                        absl::Span<const int64_t> multi_index) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_12(mht_12_v, 345, "", "./tensorflow/compiler/xla/literal_comparison.cc", "MakeErrorStatus");
+
   return MakeBitwiseErrorStatus<float, uint32_t>(lhs, rhs, multi_index);
 }
 template <>
 Status MakeErrorStatus(double lhs, double rhs,
                        absl::Span<const int64_t> multi_index) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_13(mht_13_v, 353, "", "./tensorflow/compiler/xla/literal_comparison.cc", "MakeErrorStatus");
+
   return MakeBitwiseErrorStatus<double, uint64_t>(lhs, rhs, multi_index);
 }
 template <>
 Status MakeErrorStatus(complex64 lhs, complex64 rhs,
                        absl::Span<const int64_t> multi_index) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_14(mht_14_v, 361, "", "./tensorflow/compiler/xla/literal_comparison.cc", "MakeErrorStatus");
+
   if (!CompareEqual<float>(lhs.real(), rhs.real(), multi_index)) {
     return MakeErrorStatus(lhs.real(), rhs.real(), multi_index);
   }
@@ -156,6 +369,9 @@ Status MakeErrorStatus(complex64 lhs, complex64 rhs,
 template <>
 Status MakeErrorStatus(complex128 lhs, complex128 rhs,
                        absl::Span<const int64_t> multi_index) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_15(mht_15_v, 372, "", "./tensorflow/compiler/xla/literal_comparison.cc", "MakeErrorStatus");
+
   if (!CompareEqual<double>(lhs.real(), rhs.real(), multi_index)) {
     return MakeErrorStatus(lhs.real(), rhs.real(), multi_index);
   }
@@ -174,6 +390,9 @@ template <typename NativeT>
 Status Equal(LiteralSlice expected, LiteralSlice actual,
              absl::Span<int64_t> multi_index, int64_t dimension,
              Literal* mismatched = nullptr) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_16(mht_16_v, 393, "", "./tensorflow/compiler/xla/literal_comparison.cc", "Equal");
+
   if (dimension == expected.shape().dimensions_size()) {
     NativeT expected_value = expected.Get<NativeT>(multi_index);
     NativeT actual_value = actual.Get<NativeT>(multi_index);
@@ -204,6 +423,9 @@ Status Equal(LiteralSlice expected, LiteralSlice actual,
 // Gets the total element count.  For tuples, this is not the count of tuple
 // elements, but the sum of elements of each tuple element.
 int64_t RecursiveElementCount(const Shape& shape) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_17(mht_17_v, 426, "", "./tensorflow/compiler/xla/literal_comparison.cc", "RecursiveElementCount");
+
   if (shape.IsTuple()) {
     const int64_t tuple_elements = ShapeUtil::TupleElementCount(shape);
     int64_t total = 0;
@@ -221,37 +443,61 @@ int64_t RecursiveElementCount(const Shape& shape) {
 // Returns whether the given value is infinity.
 template <typename NativeT>
 bool IsInf(NativeT val) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_18(mht_18_v, 446, "", "./tensorflow/compiler/xla/literal_comparison.cc", "IsInf");
+
   return Eigen::numext::isinf(val);
 }
 // Returns whether the given value is nan.
 template <typename NativeT>
 bool IsNan(NativeT value) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_19(mht_19_v, 454, "", "./tensorflow/compiler/xla/literal_comparison.cc", "IsNan");
+
   return Eigen::numext::isnan(value);
 }
 
 // Converts the given floating-point value to a string.
 std::string FpValueToString(bfloat16 value) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_20(mht_20_v, 462, "", "./tensorflow/compiler/xla/literal_comparison.cc", "FpValueToString");
+
   return absl::StrFormat("%10.4g", static_cast<double>(value));
 }
 
 std::string FpValueToString(half value) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_21(mht_21_v, 469, "", "./tensorflow/compiler/xla/literal_comparison.cc", "FpValueToString");
+
   return absl::StrFormat("%11.5g", static_cast<double>(value));
 }
 
 std::string FpValueToString(float value) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_22(mht_22_v, 476, "", "./tensorflow/compiler/xla/literal_comparison.cc", "FpValueToString");
+
   return absl::StrFormat("%15.9g", static_cast<double>(value));
 }
 
 std::string FpValueToString(double value) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_23(mht_23_v, 483, "", "./tensorflow/compiler/xla/literal_comparison.cc", "FpValueToString");
+
   return absl::StrFormat("%24.17g", value);
 }
 
 std::string FpValueToString(complex64 value) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_24(mht_24_v, 490, "", "./tensorflow/compiler/xla/literal_comparison.cc", "FpValueToString");
+
   return absl::StrCat(FpValueToString(value.real()), " + ",
                       FpValueToString(value.imag()));
 }
 
 std::string FpValueToString(complex128 value) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_25(mht_25_v, 498, "", "./tensorflow/compiler/xla/literal_comparison.cc", "FpValueToString");
+
   return absl::StrCat(FpValueToString(value.real()), " + ",
                       FpValueToString(value.imag()));
 }
@@ -260,16 +506,25 @@ std::string FpValueToString(complex128 value) {
 // std::abs, in particular, bfloat16 and half.
 template <typename NativeT>
 double FpAbsoluteValue(NativeT value) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_26(mht_26_v, 509, "", "./tensorflow/compiler/xla/literal_comparison.cc", "FpAbsoluteValue");
+
   return std::abs(value);
 }
 
 template <>
 double FpAbsoluteValue(bfloat16 value) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_27(mht_27_v, 517, "", "./tensorflow/compiler/xla/literal_comparison.cc", "FpAbsoluteValue");
+
   return FpAbsoluteValue<float>(static_cast<float>(value));
 }
 
 template <>
 double FpAbsoluteValue(half value) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_28(mht_28_v, 525, "", "./tensorflow/compiler/xla/literal_comparison.cc", "FpAbsoluteValue");
+
   return FpAbsoluteValue<float>(static_cast<float>(value));
 }
 
@@ -286,6 +541,9 @@ class NearComparator {
                         const ShapeIndex& shape_index, ErrorSpec error,
                         bool detailed_message,
                         const MiscompareCallback& miscompare_callback) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_29(mht_29_v, 544, "", "./tensorflow/compiler/xla/literal_comparison.cc", "Compare");
+
     NearComparator<NativeT> comparator(expected, actual, shape_index, error,
                                        detailed_message, miscompare_callback);
     return comparator.Run();
@@ -304,10 +562,16 @@ class NearComparator {
     int64_t linear_index;
 
     bool operator<(const Mismatch& other) const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_30(mht_30_v, 565, "", "./tensorflow/compiler/xla/literal_comparison.cc", "operator<");
+
       return rel_error < other.rel_error;
     }
 
     std::string ToString(const Shape& shape) const {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_31(mht_31_v, 572, "", "./tensorflow/compiler/xla/literal_comparison.cc", "ToString");
+
       return absl::StrFormat(
           "actual %s, expected %s, index %s, rel error %8.3g, abs error %8.3g",
           FpValueToString(actual), FpValueToString(expected),
@@ -330,10 +594,16 @@ class NearComparator {
         miscompare_callback_(miscompare_callback),
         abs_value_buckets_(kAbsValueBucketBounds.size() - 1, {0, 0}),
         abs_error_buckets_(kErrorBucketBounds.size(), 0),
-        rel_error_buckets_(kErrorBucketBounds.size(), 0) {}
+        rel_error_buckets_(kErrorBucketBounds.size(), 0) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_32(mht_32_v, 598, "", "./tensorflow/compiler/xla/literal_comparison.cc", "NearComparator");
+}
 
   // Runs the comparison between expected and actual literals.
   Status Run() {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_33(mht_33_v, 604, "", "./tensorflow/compiler/xla/literal_comparison.cc", "Run");
+
     // If the shapes mismatch, we simply fail the expectation instead of
     // printing out data, as it's a type error rather than a value error.
     TF_RETURN_IF_ERROR(EqualShapes(expected_.shape(), actual_.shape()));
@@ -358,6 +628,9 @@ class NearComparator {
   // Insert the given absolute value into the absolute value bucket vector. The
   // bounds of the buckets are given by kAbsValueBucketBounds.
   void UpdateAbsValueBucket(NativeT value, bool is_mismatch) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_34(mht_34_v, 631, "", "./tensorflow/compiler/xla/literal_comparison.cc", "UpdateAbsValueBucket");
+
     // Adjust the bucket containing the absolute values of the 'actual'
     // elements.
     const double abs_value = FpAbsoluteValue(value);
@@ -378,6 +651,9 @@ class NearComparator {
 
   // Insert the given error into the given error bucket vector.
   void UpdateErrorBucket(double error, absl::Span<int64_t> error_buckets) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_35(mht_35_v, 654, "", "./tensorflow/compiler/xla/literal_comparison.cc", "UpdateErrorBucket");
+
     CHECK_EQ(error_buckets.size(), kErrorBucketBounds.size());
     for (int i = 0; i < error_buckets.size(); ++i) {
       if (error >= kErrorBucketBounds[i]) {
@@ -390,6 +666,9 @@ class NearComparator {
   // the given literal_index and keeps track of various mismatch statistics.
   template <typename T>
   void CompareValues(T expected, T actual, int64_t linear_index) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_36(mht_36_v, 669, "", "./tensorflow/compiler/xla/literal_comparison.cc", "CompareValues");
+
     double abs_error;
     double rel_error;
     if (CompareEqual<T>(expected, actual, {linear_index})) {
@@ -480,6 +759,9 @@ class NearComparator {
   // For complex types, we compare real and imaginary parts individually.
   void CompareValues(complex64 expected, complex64 actual,
                      int64_t linear_index) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_37(mht_37_v, 762, "", "./tensorflow/compiler/xla/literal_comparison.cc", "CompareValues");
+
     const auto both_parts_mismatch = num_mismatches_ + 2;
     CompareValues<float>(expected.real(), actual.real(), linear_index);
     CompareValues<float>(expected.imag(), actual.imag(), linear_index);
@@ -494,6 +776,9 @@ class NearComparator {
 
   void CompareValues(complex128 expected, complex128 actual,
                      int64_t linear_index) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_38(mht_38_v, 779, "", "./tensorflow/compiler/xla/literal_comparison.cc", "CompareValues");
+
     const auto both_parts_mismatch = num_mismatches_ + 2;
     CompareValues<double>(expected.real(), actual.real(), linear_index);
     CompareValues<double>(expected.imag(), actual.imag(), linear_index);
@@ -508,6 +793,9 @@ class NearComparator {
 
   // Compares the two literals elementwise.
   void CompareLiterals() {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_39(mht_39_v, 796, "", "./tensorflow/compiler/xla/literal_comparison.cc", "CompareLiterals");
+
     // Fast path optimization for the case were layouts match.
     if (LayoutUtil::Equal(actual_.shape().layout(),
                           expected_.shape().layout())) {
@@ -528,6 +816,9 @@ class NearComparator {
   // and indexed for each element.
   void CompareLiteralsSlow(int64_t dimension,
                            std::vector<int64_t>* multi_index) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_40(mht_40_v, 819, "", "./tensorflow/compiler/xla/literal_comparison.cc", "CompareLiteralsSlow");
+
     if (dimension == multi_index->size()) {
       CompareValues(expected_.Get<NativeT>(*multi_index),
                     actual_.Get<NativeT>(*multi_index),
@@ -544,10 +835,16 @@ class NearComparator {
   // Returns an error message string with a detailed breakdown of the
   // mismatches. Called after calling Run().
   std::string ErrorMessage() {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_41(mht_41_v, 838, "", "./tensorflow/compiler/xla/literal_comparison.cc", "ErrorMessage");
+
     std::string out;
     int64_t element_count = ShapeUtil::ElementsIn(actual_.shape());
 
     auto percent_string = [](float a, float b) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_42(mht_42_v, 845, "", "./tensorflow/compiler/xla/literal_comparison.cc", "lambda");
+
       float pct = b == 0.0 ? 0.0 : 100.0 * a / b;
       return absl::StrFormat("%0.4f%%", pct);
     };
@@ -589,6 +886,10 @@ class NearComparator {
 
     auto print_accum_buckets = [&](const std::string& header, int64_t total,
                                    absl::Span<const int64_t> buckets) {
+   std::vector<std::string> mht_43_v;
+   mht_43_v.push_back("header: \"" + header + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_43(mht_43_v, 890, "", "./tensorflow/compiler/xla/literal_comparison.cc", "lambda");
+
       StrAppend(&out, header, ":\n");
       StrAppendFormat(&out, "  <  %-6g : %7d (%s)\n", kErrorBucketBounds[0],
                       total - buckets[0],
@@ -682,6 +983,9 @@ constexpr std::array<float, 5> NearComparator<NativeT>::kErrorBucketBounds;
 Status EqualHelper(const LiteralSlice& expected, const LiteralSlice& actual,
                    const ShapeIndex& shape_index,
                    const MiscompareCallback& miscompare_callback) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_44(mht_44_v, 986, "", "./tensorflow/compiler/xla/literal_comparison.cc", "EqualHelper");
+
   TF_RETURN_IF_ERROR(EqualShapes(expected.shape(), actual.shape()));
 
   Status result;
@@ -779,6 +1083,9 @@ Status NearHelper(const LiteralSlice& expected, const LiteralSlice& actual,
                   const ShapeIndex& shape_index, const ErrorSpec& error,
                   absl::optional<bool> detailed_message,
                   const MiscompareCallback& miscompare_callback) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_45(mht_45_v, 1086, "", "./tensorflow/compiler/xla/literal_comparison.cc", "NearHelper");
+
   TF_RETURN_IF_ERROR(EqualShapes(expected.shape(), actual.shape()));
 
   if (expected.shape().IsTuple()) {
@@ -865,6 +1172,9 @@ Status NearHelper(const LiteralSlice& expected, const LiteralSlice& actual,
 }  // namespace
 
 Status EqualShapes(const Shape& expected, const Shape& actual) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_46(mht_46_v, 1175, "", "./tensorflow/compiler/xla/literal_comparison.cc", "EqualShapes");
+
   if (expected.element_type() != actual.element_type()) {
     return InvalidArgument("element type mismatch, want: %s got %s",
                            ShapeUtil::HumanString(expected),
@@ -920,6 +1230,9 @@ namespace {
 Status EmitLiteralsInErrorMessage(const Status& result,
                                   const LiteralSlice& expected,
                                   const LiteralSlice& actual) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_47(mht_47_v, 1233, "", "./tensorflow/compiler/xla/literal_comparison.cc", "EmitLiteralsInErrorMessage");
+
   if (result.ok()) {
     return result;
   }
@@ -931,6 +1244,9 @@ Status EmitLiteralsInErrorMessage(const Status& result,
 }  // namespace
 
 Status Equal(const LiteralSlice& expected, const LiteralSlice& actual) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_48(mht_48_v, 1247, "", "./tensorflow/compiler/xla/literal_comparison.cc", "Equal");
+
   VLOG(1) << "expected:";
   XLA_VLOG_LINES(1, expected.ToString());
   VLOG(1) << "actual:";
@@ -942,6 +1258,9 @@ Status Equal(const LiteralSlice& expected, const LiteralSlice& actual) {
 Status Near(const LiteralSlice& expected, const LiteralSlice& actual,
             const ErrorSpec& error, absl::optional<bool> detailed_message,
             const MiscompareCallback& miscompare_callback) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_49(mht_49_v, 1261, "", "./tensorflow/compiler/xla/literal_comparison.cc", "Near");
+
   VLOG(1) << "Expected literal:";
   XLA_VLOG_LINES(1, expected.ToString());
   VLOG(1) << "Actual literal:";
@@ -952,6 +1271,9 @@ Status Near(const LiteralSlice& expected, const LiteralSlice& actual,
 }
 
 std::string ToStringTruncated(const LiteralSlice& literal) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteral_comparisonDTcc mht_50(mht_50_v, 1274, "", "./tensorflow/compiler/xla/literal_comparison.cc", "ToStringTruncated");
+
   return RecursiveElementCount(literal.shape()) < 1000
              ? literal.ToString()
              : "[TRUNCATED, Literal with more than 1000 values]";

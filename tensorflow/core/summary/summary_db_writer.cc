@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -80,12 +248,18 @@ const int64_t kPreallocateRows = 1000;
 const uint64 kFlushBytes = 1024 * 1024;
 
 double DoubleTime(uint64 micros) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_0(mht_0_v, 251, "", "./tensorflow/core/summary/summary_db_writer.cc", "DoubleTime");
+
   // TODO(@jart): Follow precise definitions for time laid out in schema.
   // TODO(@jart): Use monotonic clock from gRPC codebase.
   return static_cast<double>(micros) / 1.0e6;
 }
 
 string StringifyShape(const TensorShape& shape) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_1(mht_1_v, 260, "", "./tensorflow/core/summary/summary_db_writer.cc", "StringifyShape");
+
   string result;
   bool first = true;
   for (const auto& dim : shape) {
@@ -100,6 +274,9 @@ string StringifyShape(const TensorShape& shape) {
 }
 
 Status CheckSupportedType(const Tensor& t) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_2(mht_2_v, 277, "", "./tensorflow/core/summary/summary_db_writer.cc", "CheckSupportedType");
+
 #define CASE(T)                  \
   case DataTypeToEnum<T>::value: \
     break;
@@ -114,6 +291,9 @@ Status CheckSupportedType(const Tensor& t) {
 }
 
 Tensor AsScalar(const Tensor& t) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_3(mht_3_v, 294, "", "./tensorflow/core/summary/summary_db_writer.cc", "AsScalar");
+
   Tensor t2{t.dtype(), {}};
 #define CASE(T)                        \
   case DataTypeToEnum<T>::value:       \
@@ -131,12 +311,19 @@ Tensor AsScalar(const Tensor& t) {
 }
 
 void PatchPluginName(SummaryMetadata* metadata, const char* name) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("name: \"" + (name == nullptr ? std::string("nullptr") : std::string((char*)name)) + "\"");
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_4(mht_4_v, 315, "", "./tensorflow/core/summary/summary_db_writer.cc", "PatchPluginName");
+
   if (metadata->plugin_data().plugin_name().empty()) {
     metadata->mutable_plugin_data()->set_plugin_name(name);
   }
 }
 
 Status SetDescription(Sqlite* db, int64_t id, const StringPiece& markdown) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_5(mht_5_v, 324, "", "./tensorflow/core/summary/summary_db_writer.cc", "SetDescription");
+
   const char* sql = R"sql(
     INSERT OR REPLACE INTO Descriptions (id, description) VALUES (?, ?)
   )sql";
@@ -161,6 +348,9 @@ Status SetDescription(Sqlite* db, int64_t id, const StringPiece& markdown) {
 class IdAllocator {
  public:
   IdAllocator(Env* env, Sqlite* db) : env_{env}, db_{db} {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_6(mht_6_v, 351, "", "./tensorflow/core/summary/summary_db_writer.cc", "IdAllocator");
+
     DCHECK(env_ != nullptr);
     DCHECK(db_ != nullptr);
   }
@@ -200,6 +390,9 @@ class IdAllocator {
 
  private:
   int64_t MakeRandomId() TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_7(mht_7_v, 393, "", "./tensorflow/core/summary/summary_db_writer.cc", "MakeRandomId");
+
     int64_t id = static_cast<int64_t>(random::New64() & kIdTiers[tier_]);
     if (id == kAbsent) ++id;
     return id;
@@ -231,9 +424,15 @@ class GraphWriter {
  private:
   GraphWriter(Sqlite* db, SqliteTransaction* txn, GraphDef* graph, uint64 now,
               int64_t graph_id)
-      : db_(db), txn_(txn), graph_(graph), now_(now), graph_id_(graph_id) {}
+      : db_(db), txn_(txn), graph_(graph), now_(now), graph_id_(graph_id) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_8(mht_8_v, 428, "", "./tensorflow/core/summary/summary_db_writer.cc", "GraphWriter");
+}
 
   void MapNameToNodeId() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_9(mht_9_v, 433, "", "./tensorflow/core/summary/summary_db_writer.cc", "MapNameToNodeId");
+
     size_t toto = static_cast<size_t>(graph_->node_size());
     name_copies_.reserve(toto);
     name_to_node_id_.reserve(toto);
@@ -246,6 +445,9 @@ class GraphWriter {
   }
 
   Status SaveNodeInputs() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_10(mht_10_v, 448, "", "./tensorflow/core/summary/summary_db_writer.cc", "SaveNodeInputs");
+
     const char* sql = R"sql(
       INSERT INTO NodeInputs (
         graph_id,
@@ -298,6 +500,9 @@ class GraphWriter {
   }
 
   Status SaveNodes() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_11(mht_11_v, 503, "", "./tensorflow/core/summary/summary_db_writer.cc", "SaveNodes");
+
     const char* sql = R"sql(
       INSERT INTO Nodes (
         graph_id,
@@ -333,6 +538,9 @@ class GraphWriter {
   }
 
   Status SaveGraph(int64_t run_id) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_12(mht_12_v, 541, "", "./tensorflow/core/summary/summary_db_writer.cc", "SaveGraph");
+
     const char* sql = R"sql(
       INSERT OR REPLACE INTO Graphs (
         run_id,
@@ -355,6 +563,9 @@ class GraphWriter {
   }
 
   Status MaybeFlush() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_13(mht_13_v, 566, "", "./tensorflow/core/summary/summary_db_writer.cc", "MaybeFlush");
+
     if (unflushed_bytes_ >= kFlushBytes) {
       TF_RETURN_WITH_CONTEXT_IF_ERROR(txn_->Commit(), "flushing ",
                                       unflushed_bytes_, " bytes");
@@ -390,12 +601,27 @@ class RunMetadata {
         experiment_name_{experiment_name},
         run_name_{run_name},
         user_name_{user_name} {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("experiment_name: \"" + experiment_name + "\"");
+   mht_14_v.push_back("run_name: \"" + run_name + "\"");
+   mht_14_v.push_back("user_name: \"" + user_name + "\"");
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_14(mht_14_v, 607, "", "./tensorflow/core/summary/summary_db_writer.cc", "RunMetadata");
+
     DCHECK(ids_ != nullptr);
   }
 
-  const string& experiment_name() { return experiment_name_; }
-  const string& run_name() { return run_name_; }
-  const string& user_name() { return user_name_; }
+  const string& experiment_name() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_15(mht_15_v, 614, "", "./tensorflow/core/summary/summary_db_writer.cc", "experiment_name");
+ return experiment_name_; }
+  const string& run_name() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_16(mht_16_v, 618, "", "./tensorflow/core/summary/summary_db_writer.cc", "run_name");
+ return run_name_; }
+  const string& user_name() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_17(mht_17_v, 622, "", "./tensorflow/core/summary/summary_db_writer.cc", "user_name");
+ return user_name_; }
 
   int64_t run_id() TF_LOCKS_EXCLUDED(mu_) {
     mutex_lock lock(mu_);
@@ -466,6 +692,9 @@ class RunMetadata {
  private:
   Status InitializeUser(Sqlite* db, uint64 now)
       TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_18(mht_18_v, 695, "", "./tensorflow/core/summary/summary_db_writer.cc", "InitializeUser");
+
     if (user_id_ != kAbsent || user_name_.empty()) return Status::OK();
     const char* get_sql = R"sql(
       SELECT user_id FROM Users WHERE user_name = ?
@@ -498,6 +727,9 @@ class RunMetadata {
 
   Status InitializeExperiment(Sqlite* db, uint64 now, double computed_time)
       TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_19(mht_19_v, 730, "", "./tensorflow/core/summary/summary_db_writer.cc", "InitializeExperiment");
+
     if (experiment_name_.empty()) return Status::OK();
     if (experiment_id_ == kAbsent) {
       TF_RETURN_IF_ERROR(InitializeUser(db, now));
@@ -565,6 +797,9 @@ class RunMetadata {
 
   Status InitializeRun(Sqlite* db, uint64 now, double computed_time)
       TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_20(mht_20_v, 800, "", "./tensorflow/core/summary/summary_db_writer.cc", "InitializeRun");
+
     if (run_name_.empty()) return Status::OK();
     TF_RETURN_IF_ERROR(InitializeExperiment(db, now, computed_time));
     if (run_id_ == kAbsent) {
@@ -629,6 +864,9 @@ class SeriesWriter {
  public:
   SeriesWriter(int64_t series, RunMetadata* meta)
       : series_{series}, meta_{meta} {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_21(mht_21_v, 867, "", "./tensorflow/core/summary/summary_db_writer.cc", "SeriesWriter");
+
     DCHECK(series_ > 0);
   }
 
@@ -694,6 +932,9 @@ class SeriesWriter {
 
   Status Update(Sqlite* db, int64_t step, double computed_time, const Tensor& t,
                 const StringPiece& data, int64_t rowid) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_22(mht_22_v, 935, "", "./tensorflow/core/summary/summary_db_writer.cc", "Update");
+
     const char* sql = R"sql(
       UPDATE OR REPLACE
         Tensors
@@ -829,7 +1070,10 @@ class SeriesWriter {
 /// This class is thread safe.
 class RunWriter {
  public:
-  explicit RunWriter(RunMetadata* meta) : meta_{meta} {}
+  explicit RunWriter(RunMetadata* meta) : meta_{meta} {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_23(mht_23_v, 1074, "", "./tensorflow/core/summary/summary_db_writer.cc", "RunWriter");
+}
 
   Status Append(Sqlite* db, int64_t tag_id, int64_t step, uint64 now,
                 double computed_time, const Tensor& t)
@@ -885,11 +1129,20 @@ class SummaryDbWriter : public SummaryWriterInterface {
         ids_{env_, db_},
         meta_{&ids_, experiment_name, run_name, user_name},
         run_{&meta_} {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("experiment_name: \"" + experiment_name + "\"");
+   mht_24_v.push_back("run_name: \"" + run_name + "\"");
+   mht_24_v.push_back("user_name: \"" + user_name + "\"");
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_24(mht_24_v, 1135, "", "./tensorflow/core/summary/summary_db_writer.cc", "SummaryDbWriter");
+
     DCHECK(env_ != nullptr);
     db_->Ref();
   }
 
   ~SummaryDbWriter() override {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_25(mht_25_v, 1143, "", "./tensorflow/core/summary/summary_db_writer.cc", "~SummaryDbWriter");
+
     core::ScopedUnref unref(db_);
     Status s = run_.Finish(db_);
     if (!s.ok()) {
@@ -914,10 +1167,18 @@ class SummaryDbWriter : public SummaryWriterInterface {
     }
   }
 
-  Status Flush() override { return Status::OK(); }
+  Status Flush() override {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_26(mht_26_v, 1171, "", "./tensorflow/core/summary/summary_db_writer.cc", "Flush");
+ return Status::OK(); }
 
   Status WriteTensor(int64_t global_step, Tensor t, const string& tag,
                      const string& serialized_metadata) override {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("tag: \"" + tag + "\"");
+   mht_27_v.push_back("serialized_metadata: \"" + serialized_metadata + "\"");
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_27(mht_27_v, 1179, "", "./tensorflow/core/summary/summary_db_writer.cc", "WriteTensor");
+
     TF_RETURN_IF_ERROR(CheckSupportedType(t));
     SummaryMetadata metadata;
     if (!metadata.ParseFromString(serialized_metadata)) {
@@ -928,6 +1189,10 @@ class SummaryDbWriter : public SummaryWriterInterface {
 
   Status WriteScalar(int64_t global_step, Tensor t,
                      const string& tag) override {
+   std::vector<std::string> mht_28_v;
+   mht_28_v.push_back("tag: \"" + tag + "\"");
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_28(mht_28_v, 1193, "", "./tensorflow/core/summary/summary_db_writer.cc", "WriteScalar");
+
     TF_RETURN_IF_ERROR(CheckSupportedType(t));
     SummaryMetadata metadata;
     PatchPluginName(&metadata, kScalarPluginName);
@@ -935,16 +1200,26 @@ class SummaryDbWriter : public SummaryWriterInterface {
   }
 
   Status WriteGraph(int64_t global_step, std::unique_ptr<GraphDef> g) override {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_29(mht_29_v, 1203, "", "./tensorflow/core/summary/summary_db_writer.cc", "WriteGraph");
+
     uint64 now = env_->NowMicros();
     return meta_.SetGraph(db_, now, DoubleTime(now), std::move(g));
   }
 
   Status WriteEvent(std::unique_ptr<Event> e) override {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_30(mht_30_v, 1211, "", "./tensorflow/core/summary/summary_db_writer.cc", "WriteEvent");
+
     return MigrateEvent(std::move(e));
   }
 
   Status WriteHistogram(int64_t global_step, Tensor t,
                         const string& tag) override {
+   std::vector<std::string> mht_31_v;
+   mht_31_v.push_back("tag: \"" + tag + "\"");
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_31(mht_31_v, 1220, "", "./tensorflow/core/summary/summary_db_writer.cc", "WriteHistogram");
+
     uint64 now = env_->NowMicros();
     std::unique_ptr<Event> e{new Event};
     e->set_step(global_step);
@@ -956,6 +1231,10 @@ class SummaryDbWriter : public SummaryWriterInterface {
 
   Status WriteImage(int64_t global_step, Tensor t, const string& tag,
                     int max_images, Tensor bad_color) override {
+   std::vector<std::string> mht_32_v;
+   mht_32_v.push_back("tag: \"" + tag + "\"");
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_32(mht_32_v, 1235, "", "./tensorflow/core/summary/summary_db_writer.cc", "WriteImage");
+
     uint64 now = env_->NowMicros();
     std::unique_ptr<Event> e{new Event};
     e->set_step(global_step);
@@ -967,6 +1246,10 @@ class SummaryDbWriter : public SummaryWriterInterface {
 
   Status WriteAudio(int64_t global_step, Tensor t, const string& tag,
                     int max_outputs, float sample_rate) override {
+   std::vector<std::string> mht_33_v;
+   mht_33_v.push_back("tag: \"" + tag + "\"");
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_33(mht_33_v, 1250, "", "./tensorflow/core/summary/summary_db_writer.cc", "WriteAudio");
+
     uint64 now = env_->NowMicros();
     std::unique_ptr<Event> e{new Event};
     e->set_step(global_step);
@@ -976,11 +1259,18 @@ class SummaryDbWriter : public SummaryWriterInterface {
     return MigrateEvent(std::move(e));
   }
 
-  string DebugString() const override { return "SummaryDbWriter"; }
+  string DebugString() const override {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_34(mht_34_v, 1263, "", "./tensorflow/core/summary/summary_db_writer.cc", "DebugString");
+ return "SummaryDbWriter"; }
 
  private:
   Status Write(int64_t step, const Tensor& t, const string& tag,
                const SummaryMetadata& metadata) {
+   std::vector<std::string> mht_35_v;
+   mht_35_v.push_back("tag: \"" + tag + "\"");
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_35(mht_35_v, 1271, "", "./tensorflow/core/summary/summary_db_writer.cc", "Write");
+
     uint64 now = env_->NowMicros();
     double computed_time = DoubleTime(now);
     int64_t tag_id;
@@ -994,6 +1284,9 @@ class SummaryDbWriter : public SummaryWriterInterface {
   }
 
   Status MigrateEvent(std::unique_ptr<Event> e) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_36(mht_36_v, 1287, "", "./tensorflow/core/summary/summary_db_writer.cc", "MigrateEvent");
+
     switch (e->what_case()) {
       case Event::WhatCase::kSummary: {
         uint64 now = env_->NowMicros();
@@ -1021,6 +1314,10 @@ class SummaryDbWriter : public SummaryWriterInterface {
   }
 
   Status MigrateGraph(const Event* e, const string& graph_def) {
+   std::vector<std::string> mht_37_v;
+   mht_37_v.push_back("graph_def: \"" + graph_def + "\"");
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_37(mht_37_v, 1318, "", "./tensorflow/core/summary/summary_db_writer.cc", "MigrateGraph");
+
     uint64 now = env_->NowMicros();
     std::unique_ptr<GraphDef> graph{new GraphDef};
     if (!ParseProtoUnlimited(graph.get(), graph_def)) {
@@ -1030,6 +1327,9 @@ class SummaryDbWriter : public SummaryWriterInterface {
   }
 
   Status MigrateSummary(const Event* e, Summary::Value* s, uint64 now) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_38(mht_38_v, 1330, "", "./tensorflow/core/summary/summary_db_writer.cc", "MigrateSummary");
+
     switch (s->value_case()) {
       case Summary::Value::ValueCase::kTensor:
         TF_RETURN_WITH_CONTEXT_IF_ERROR(MigrateTensor(e, s, now), "tensor");
@@ -1053,6 +1353,9 @@ class SummaryDbWriter : public SummaryWriterInterface {
   }
 
   Status MigrateTensor(const Event* e, Summary::Value* s, uint64 now) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_39(mht_39_v, 1356, "", "./tensorflow/core/summary/summary_db_writer.cc", "MigrateTensor");
+
     Tensor t;
     if (!t.FromProto(s->tensor())) return errors::InvalidArgument("bad proto");
     TF_RETURN_IF_ERROR(CheckSupportedType(t));
@@ -1065,6 +1368,9 @@ class SummaryDbWriter : public SummaryWriterInterface {
   // TODO(jart): Refactor Summary -> Tensor logic into separate file.
 
   Status MigrateScalar(const Event* e, Summary::Value* s, uint64 now) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_40(mht_40_v, 1371, "", "./tensorflow/core/summary/summary_db_writer.cc", "MigrateScalar");
+
     // See tensorboard/plugins/scalar/summary.py and data_compat.py
     Tensor t{DT_FLOAT, {}};
     t.scalar<float>()() = s->simple_value();
@@ -1076,6 +1382,9 @@ class SummaryDbWriter : public SummaryWriterInterface {
   }
 
   Status MigrateHistogram(const Event* e, Summary::Value* s, uint64 now) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_41(mht_41_v, 1385, "", "./tensorflow/core/summary/summary_db_writer.cc", "MigrateHistogram");
+
     const HistogramProto& histo = s->histo();
     int k = histo.bucket_size();
     if (k != histo.bucket_limit_size()) {
@@ -1107,6 +1416,9 @@ class SummaryDbWriter : public SummaryWriterInterface {
   }
 
   Status MigrateImage(const Event* e, Summary::Value* s, uint64 now) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_42(mht_42_v, 1419, "", "./tensorflow/core/summary/summary_db_writer.cc", "MigrateImage");
+
     // See tensorboard/plugins/image/summary.py and data_compat.py
     Tensor t{DT_STRING, {3}};
     auto img = s->mutable_image();
@@ -1121,6 +1433,9 @@ class SummaryDbWriter : public SummaryWriterInterface {
   }
 
   Status MigrateAudio(const Event* e, Summary::Value* s, uint64 now) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_43(mht_43_v, 1436, "", "./tensorflow/core/summary/summary_db_writer.cc", "MigrateAudio");
+
     // See tensorboard/plugins/audio/summary.py and data_compat.py
     Tensor t{DT_STRING, {1, 2}};
     auto wav = s->mutable_audio();
@@ -1145,6 +1460,12 @@ class SummaryDbWriter : public SummaryWriterInterface {
 Status CreateSummaryDbWriter(Sqlite* db, const string& experiment_name,
                              const string& run_name, const string& user_name,
                              Env* env, SummaryWriterInterface** result) {
+   std::vector<std::string> mht_44_v;
+   mht_44_v.push_back("experiment_name: \"" + experiment_name + "\"");
+   mht_44_v.push_back("run_name: \"" + run_name + "\"");
+   mht_44_v.push_back("user_name: \"" + user_name + "\"");
+   MHTracer_DTPStensorflowPScorePSsummaryPSsummary_db_writerDTcc mht_44(mht_44_v, 1466, "", "./tensorflow/core/summary/summary_db_writer.cc", "CreateSummaryDbWriter");
+
   *result = new SummaryDbWriter(env, db, experiment_name, run_name, user_name);
   return Status::OK();
 }

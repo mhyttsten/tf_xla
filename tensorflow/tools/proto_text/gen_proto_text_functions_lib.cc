@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -62,34 +230,53 @@ class Generator {
       : tf_header_prefix_(tf_header_prefix),
         header_(&code_.header),
         header_impl_(&code_.header_impl),
-        cc_(&code_.cc) {}
+        cc_(&code_.cc) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("tf_header_prefix: \"" + tf_header_prefix + "\"");
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_0(mht_0_v, 235, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "Generator");
+}
 
   void Generate(const FileDescriptor& fd);
 
   // The generated code; valid after Generate has been called.
-  ProtoTextFunctionCode code() const { return code_; }
+  ProtoTextFunctionCode code() const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_1(mht_1_v, 243, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "code");
+ return code_; }
 
  private:
   struct Section {
-    explicit Section(string* str) : str(str) {}
+    explicit Section(string* str) : str(str) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_2(mht_2_v, 250, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "Section");
+}
     string* str;
     string indent;
   };
 
   // Switches the currently active section to <section>.
   Generator& SetOutput(Section* section) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_3(mht_3_v, 259, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "SetOutput");
+
     cur_ = section;
     return *this;
   }
 
   // Increases indent level.  Returns <*this>, to allow chaining.
   Generator& Nest() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_4(mht_4_v, 268, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "Nest");
+
     StrAppend(&cur_->indent, "  ");
     return *this;
   }
 
   // Decreases indent level.  Returns <*this>, to allow chaining.
   Generator& Unnest() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_5(mht_5_v, 277, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "Unnest");
+
     cur_->indent = cur_->indent.substr(0, cur_->indent.size() - 2);
     return *this;
   }
@@ -151,6 +338,9 @@ class Generator {
 // Returns the prefix needed to reference objects defined in <fd>. E.g.
 // "::tensorflow::test".
 string GetPackageReferencePrefix(const FileDescriptor* fd) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_6(mht_6_v, 341, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "GetPackageReferencePrefix");
+
   string result = "::";
   const string& package = fd->package();
   for (size_t i = 0; i < package.size(); ++i) {
@@ -166,12 +356,18 @@ string GetPackageReferencePrefix(const FileDescriptor* fd) {
 
 // Returns the name of the class generated by proto to represent <d>.
 string GetClassName(const Descriptor& d) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_7(mht_7_v, 359, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "GetClassName");
+
   if (d.containing_type() == nullptr) return d.name();
   return StrCat(GetClassName(*d.containing_type()), "_", d.name());
 }
 
 // Returns the name of the class generated by proto to represent <ed>.
 string GetClassName(const EnumDescriptor& ed) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_8(mht_8_v, 368, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "GetClassName");
+
   if (ed.containing_type() == nullptr) return ed.name();
   return StrCat(GetClassName(*ed.containing_type()), "_", ed.name());
 }
@@ -179,18 +375,27 @@ string GetClassName(const EnumDescriptor& ed) {
 // Returns the qualified name that refers to the class generated by proto to
 // represent <d>.
 string GetQualifiedName(const Descriptor& d) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_9(mht_9_v, 378, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "GetQualifiedName");
+
   return StrCat(GetPackageReferencePrefix(d.file()), GetClassName(d));
 }
 
 // Returns the qualified name that refers to the class generated by proto to
 // represent <ed>.
 string GetQualifiedName(const EnumDescriptor& d) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_10(mht_10_v, 387, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "GetQualifiedName");
+
   return StrCat(GetPackageReferencePrefix(d.file()), GetClassName(d));
 }
 
 // Returns the qualified name that refers to the generated
 // AppendProtoDebugString function for <d>.
 string GetQualifiedAppendFn(const Descriptor& d) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_11(mht_11_v, 396, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "GetQualifiedAppendFn");
+
   return StrCat(GetPackageReferencePrefix(d.file()),
                 "internal::AppendProtoDebugString");
 }
@@ -198,11 +403,17 @@ string GetQualifiedAppendFn(const Descriptor& d) {
 // Returns the name of the generated function that returns an enum value's
 // string value.
 string GetEnumNameFn(const EnumDescriptor& enum_d) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_12(mht_12_v, 406, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "GetEnumNameFn");
+
   return StrCat("EnumName_", GetClassName(enum_d));
 }
 
 // Returns the qualified name of the function returned by GetEnumNameFn().
 string GetQualifiedEnumNameFn(const EnumDescriptor& enum_d) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_13(mht_13_v, 414, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "GetQualifiedEnumNameFn");
+
   return StrCat(GetPackageReferencePrefix(enum_d.file()),
                 GetEnumNameFn(enum_d));
 }
@@ -210,6 +421,9 @@ string GetQualifiedEnumNameFn(const EnumDescriptor& enum_d) {
 // Returns the name of a generated header file, either the public api (if impl
 // is false) or the internal implementation header (if impl is true).
 string GetProtoTextHeaderName(const FileDescriptor& fd, bool impl) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_14(mht_14_v, 424, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "GetProtoTextHeaderName");
+
   const int dot_index = fd.name().find_last_of('.');
   return fd.name().substr(0, dot_index) +
          (impl ? ".pb_text-impl.h" : ".pb_text.h");
@@ -217,12 +431,18 @@ string GetProtoTextHeaderName(const FileDescriptor& fd, bool impl) {
 
 // Returns the name of the header generated by the proto library for <fd>.
 string GetProtoHeaderName(const FileDescriptor& fd) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_15(mht_15_v, 434, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "GetProtoHeaderName");
+
   const int dot_index = fd.name().find_last_of('.');
   return fd.name().substr(0, dot_index) + ".pb.h";
 }
 
 // Returns the C++ class name for the given proto field.
 string GetCppClass(const FieldDescriptor& d) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_16(mht_16_v, 443, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "GetCppClass");
+
   string cpp_class = d.cpp_type() == FieldDescriptor::CPPTYPE_MESSAGE
                          ? GetQualifiedName(*d.message_type())
                          : d.cpp_type_name();
@@ -241,6 +461,9 @@ string GetCppClass(const FieldDescriptor& d) {
 // headers for <fd>, either for the public api (if impl is false) or the
 // internal implementation header (if impl is true).
 string GetHeaderGuard(const FileDescriptor& fd, bool impl) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_17(mht_17_v, 464, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "GetHeaderGuard");
+
   string s = fd.name();
   std::replace(s.begin(), s.end(), '/', '_');
   std::replace(s.begin(), s.end(), '.', '_');
@@ -250,6 +473,10 @@ string GetHeaderGuard(const FileDescriptor& fd, bool impl) {
 void Generator::AppendFieldValueAppend(const FieldDescriptor& field,
                                        const bool omit_default,
                                        const string& field_expr) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("field_expr: \"" + field_expr + "\"");
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_18(mht_18_v, 477, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "Generator::AppendFieldValueAppend");
+
   SetOutput(&cc_);
   switch (field.cpp_type()) {
     case FieldDescriptor::CPPTYPE_INT32:
@@ -307,6 +534,9 @@ void Generator::AppendFieldValueAppend(const FieldDescriptor& field,
 }
 
 void Generator::AppendFieldAppend(const FieldDescriptor& field) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_19(mht_19_v, 537, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "Generator::AppendFieldAppend");
+
   const string& name = field.name();
 
   if (field.is_map()) {
@@ -353,6 +583,9 @@ void Generator::AppendFieldAppend(const FieldDescriptor& field) {
 }
 
 void Generator::AppendEnumFunctions(const EnumDescriptor& enum_d) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_20(mht_20_v, 586, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "Generator::AppendEnumFunctions");
+
   const string sig = StrCat("const char* ", GetEnumNameFn(enum_d), "(\n    ",
                             GetQualifiedName(enum_d), " value)");
   SetOutput(&header_);
@@ -372,6 +605,9 @@ void Generator::AppendEnumFunctions(const EnumDescriptor& enum_d) {
 }
 
 void Generator::AppendParseMessageFunction(const Descriptor& md) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_21(mht_21_v, 608, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "Generator::AppendParseMessageFunction");
+
   const bool map_append = (md.options().map_entry());
   string sig;
   if (!map_append) {
@@ -610,6 +846,9 @@ void Generator::AppendParseMessageFunction(const Descriptor& md) {
 }
 
 void Generator::AppendDebugStringFunctions(const Descriptor& md) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_22(mht_22_v, 849, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "Generator::AppendDebugStringFunctions");
+
   SetOutput(&header_impl_).Print();
   SetOutput(&header_).Print().Print("// Message-text conversion for ",
                                     string(md.full_name()));
@@ -662,6 +901,9 @@ void Generator::AppendDebugStringFunctions(const Descriptor& md) {
 }
 
 void Generator::AppendMessageFunctions(const Descriptor& md) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_23(mht_23_v, 904, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "Generator::AppendMessageFunctions");
+
   if (md.options().map_entry()) {
     // The 'map entry' Message is not a user-visible message type.  Only its
     // parse function is created (and that actually parsed the whole Map, not
@@ -685,6 +927,10 @@ void Generator::AppendMessageFunctions(const Descriptor& md) {
 }
 
 void Generator::AddNamespaceToCurrentSection(const string& package, bool open) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("package: \"" + package + "\"");
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_24(mht_24_v, 931, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "Generator::AddNamespaceToCurrentSection");
+
   Print();
   std::vector<string> parts = {""};
   for (size_t i = 0; i < package.size(); ++i) {
@@ -706,6 +952,9 @@ void Generator::AddNamespaceToCurrentSection(const string& package, bool open) {
 }
 
 void Generator::AddHeadersToCurrentSection(const std::vector<string>& headers) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_25(mht_25_v, 955, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "Generator::AddHeadersToCurrentSection");
+
   std::vector<string> sorted = headers;
   std::sort(sorted.begin(), sorted.end());
   for (const auto& h : sorted) {
@@ -724,6 +973,9 @@ void GetAllFileDescriptorsFromFile(const FileDescriptor* fd,
 void GetAllFileDescriptorsFromMessage(const Descriptor* d,
                                       std::set<const FileDescriptor*>* all_fd,
                                       std::set<const Descriptor*>* all_d) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_26(mht_26_v, 976, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "GetAllFileDescriptorsFromMessage");
+
   if (!all_d->insert(d).second) return;
   GetAllFileDescriptorsFromFile(d->file(), all_fd, all_d);
   for (int i = 0; i < d->field_count(); ++i) {
@@ -754,6 +1006,9 @@ void GetAllFileDescriptorsFromMessage(const Descriptor* d,
 void GetAllFileDescriptorsFromFile(const FileDescriptor* fd,
                                    std::set<const FileDescriptor*>* all_fd,
                                    std::set<const Descriptor*>* all_d) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_27(mht_27_v, 1009, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "GetAllFileDescriptorsFromFile");
+
   if (!all_fd->insert(fd).second) return;
   for (int i = 0; i < fd->message_type_count(); ++i) {
     GetAllFileDescriptorsFromMessage(fd->message_type(i), all_fd, all_d);
@@ -761,6 +1016,9 @@ void GetAllFileDescriptorsFromFile(const FileDescriptor* fd,
 }
 
 void Generator::Generate(const FileDescriptor& fd) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_28(mht_28_v, 1019, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "Generator::Generate");
+
   // This does not emit code with proper proto2 semantics (e.g. it doesn't check
   // 'has' fields on non-messages), so check that only proto3 is passed.
   CHECK_EQ(fd.syntax(), FileDescriptor::SYNTAX_PROTO3) << fd.name();
@@ -851,6 +1109,10 @@ void Generator::Generate(const FileDescriptor& fd) {
 
 ProtoTextFunctionCode GetProtoTextFunctionCode(const FileDescriptor& fd,
                                                const string& tf_header_prefix) {
+   std::vector<std::string> mht_29_v;
+   mht_29_v.push_back("tf_header_prefix: \"" + tf_header_prefix + "\"");
+   MHTracer_DTPStensorflowPStoolsPSproto_textPSgen_proto_text_functions_libDTcc mht_29(mht_29_v, 1113, "", "./tensorflow/tools/proto_text/gen_proto_text_functions_lib.cc", "GetProtoTextFunctionCode");
+
   Generator gen(tf_header_prefix);
   gen.Generate(fd);
   return gen.code();

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_helperDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_helperDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_helperDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,6 +220,9 @@ namespace {
 //   node(copy(output)) <- passthrough_node(output)
 absl::Status NewPassthroughNode(GraphFloat32* graph, Node* node,
                                 const Value* output, Node** passthru_node) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_helperDTcc mht_0(mht_0_v, 223, "", "./tensorflow/lite/delegates/gpu/common/model_builder_helper.cc", "NewPassthroughNode");
+
   *passthru_node = graph->NewNode();
   // Make copies for every output in the original node.
   RETURN_IF_ERROR(graph->SetProducer((*passthru_node)->id, output->id));
@@ -68,6 +239,9 @@ absl::Status NewPassthroughNode(GraphFloat32* graph, Node* node,
 absl::Status GetNodeAndRegistration(TfLiteContext* context, int node_id,
                                     TfLiteNode** tflite_node,
                                     TfLiteRegistration** registration) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_helperDTcc mht_1(mht_1_v, 242, "", "./tensorflow/lite/delegates/gpu/common/model_builder_helper.cc", "GetNodeAndRegistration");
+
   if (context->GetNodeAndRegistration(context, node_id, tflite_node,
                                       registration) != kTfLiteOk) {
     return absl::InvalidArgumentError(absl::StrCat(
@@ -77,6 +251,9 @@ absl::Status GetNodeAndRegistration(TfLiteContext* context, int node_id,
 }
 
 DataType ToDataType(TfLiteType type) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_helperDTcc mht_2(mht_2_v, 254, "", "./tensorflow/lite/delegates/gpu/common/model_builder_helper.cc", "ToDataType");
+
   switch (type) {
     case kTfLiteFloat32:
       return DataType::FLOAT32;
@@ -94,6 +271,9 @@ DataType ToDataType(TfLiteType type) {
 }
 
 absl::Status ExtractTensorShape(const TfLiteTensor& tflite_tensor, BHWC* bhwc) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_helperDTcc mht_3(mht_3_v, 274, "", "./tensorflow/lite/delegates/gpu/common/model_builder_helper.cc", "ExtractTensorShape");
+
   const TfLiteIntArray* dims = tflite_tensor.dims;
   switch (dims->size) {
     case 1:
@@ -121,6 +301,9 @@ absl::Status ExtractTensorShape(const TfLiteTensor& tflite_tensor, BHWC* bhwc) {
 
 absl::Status ExtractAxisFromIndex(const TfLiteTensor& tflite_tensor, int index,
                                   Axis* axis) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_helperDTcc mht_4(mht_4_v, 304, "", "./tensorflow/lite/delegates/gpu/common/model_builder_helper.cc", "ExtractAxisFromIndex");
+
   const TfLiteIntArray* dims = tflite_tensor.dims;
   if (index < 0) {
     index = dims->size + index;
@@ -155,12 +338,18 @@ absl::Status ExtractAxisFromIndex(const TfLiteTensor& tflite_tensor, int index,
 
 absl::Status ConvertTfLiteTensorToTensorRef(const TfLiteTensor& tflite_tensor,
                                             TensorRef<BHWC>* tensor_ref) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_helperDTcc mht_5(mht_5_v, 341, "", "./tensorflow/lite/delegates/gpu/common/model_builder_helper.cc", "ConvertTfLiteTensorToTensorRef");
+
   tensor_ref->type = ToDataType(tflite_tensor.type);
   return ExtractTensorShape(tflite_tensor, &tensor_ref->shape);
 }
 
 absl::Status PopulateQuantParams(const TfLiteTensor& tensor,
                                  QuantizationParams* quant_params) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_helperDTcc mht_6(mht_6_v, 350, "", "./tensorflow/lite/delegates/gpu/common/model_builder_helper.cc", "PopulateQuantParams");
+
   const TfLiteQuantization& quant = tensor.quantization;
   if (quant.type != TfLiteQuantizationType::kTfLiteAffineQuantization) {
     return absl::InvalidArgumentError(
@@ -197,6 +386,9 @@ absl::Status PopulateQuantParams(const TfLiteTensor& tensor,
 
 int GetNumberOfRuntimeInputsForNode(const TfLiteContext* context,
                                     const TfLiteNode* tflite_node) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_helperDTcc mht_7(mht_7_v, 389, "", "./tensorflow/lite/delegates/gpu/common/model_builder_helper.cc", "GetNumberOfRuntimeInputsForNode");
+
   int number_of_runtime_inputs = 0;
   for (int i = 0; i < NumInputs(tflite_node); i++) {
     const TfLiteTensor* tensor =
@@ -210,6 +402,9 @@ int GetNumberOfRuntimeInputsForNode(const TfLiteContext* context,
 
 int GetNumberOfConstInputsForNode(const TfLiteContext* context,
                                   const TfLiteNode* tflite_node) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_helperDTcc mht_8(mht_8_v, 405, "", "./tensorflow/lite/delegates/gpu/common/model_builder_helper.cc", "GetNumberOfConstInputsForNode");
+
   return NumInputs(tflite_node) -
          GetNumberOfRuntimeInputsForNode(context, tflite_node);
 }
@@ -217,6 +412,9 @@ int GetNumberOfConstInputsForNode(const TfLiteContext* context,
 absl::Status CheckInputsOutputs(const TfLiteContext* context,
                                 const TfLiteNode* tflite_node,
                                 int runtime_inputs, int outputs) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_helperDTcc mht_9(mht_9_v, 415, "", "./tensorflow/lite/delegates/gpu/common/model_builder_helper.cc", "CheckInputsOutputs");
+
   const int runtime_inputs_from_model =
       GetNumberOfRuntimeInputsForNode(context, tflite_node);
   if (runtime_inputs_from_model != runtime_inputs) {
@@ -237,6 +435,9 @@ absl::Status CheckInputsConstsOutputs(const TfLiteContext* context,
                                       const TfLiteNode* tflite_node,
                                       int runtime_inputs, int const_inputs,
                                       int outputs) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_helperDTcc mht_10(mht_10_v, 438, "", "./tensorflow/lite/delegates/gpu/common/model_builder_helper.cc", "CheckInputsConstsOutputs");
+
   const int const_inputs_from_model =
       GetNumberOfConstInputsForNode(context, tflite_node);
   if (const_inputs_from_model != const_inputs) {
@@ -249,6 +450,9 @@ absl::Status CheckInputsConstsOutputs(const TfLiteContext* context,
 
 void ConvertFloat16ToFloat32(size_t num_elements, const uint16_t* src,
                              float* dst) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_helperDTcc mht_11(mht_11_v, 453, "", "./tensorflow/lite/delegates/gpu/common/model_builder_helper.cc", "ConvertFloat16ToFloat32");
+
   for (size_t i = 0; i < num_elements; i++) {
     *dst++ = fp16_ieee_to_fp32_value(*src++);
   }
@@ -257,6 +461,9 @@ void ConvertFloat16ToFloat32(size_t num_elements, const uint16_t* src,
 template <>
 absl::Status CreateVectorCopyData<float>(const TfLiteTensor& tensor,
                                          float* tensor_data) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_helperDTcc mht_12(mht_12_v, 464, "", "./tensorflow/lite/delegates/gpu/common/model_builder_helper.cc", "CreateVectorCopyData<float>");
+
   switch (tensor.type) {
     case kTfLiteFloat32:
       std::memcpy(tensor_data, tensor.data.f, tensor.bytes);
@@ -283,10 +490,16 @@ absl::Status CreateVectorCopyData<float>(const TfLiteTensor& tensor,
 }
 
 const std::string GetDimensionString(const TfLiteIntArray* dimensions) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_helperDTcc mht_13(mht_13_v, 493, "", "./tensorflow/lite/delegates/gpu/common/model_builder_helper.cc", "GetDimensionString");
+
   return absl::StrJoin(TfLiteIntArrayView(dimensions), "x");
 }
 
 absl::Status SetAllDimensions(const TfLiteIntArray* dimensions, Scalar* shape) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_helperDTcc mht_14(mht_14_v, 500, "", "./tensorflow/lite/delegates/gpu/common/model_builder_helper.cc", "SetAllDimensions");
+
   if (dimensions->size < 0) {
     return absl::InvalidArgumentError("Invalid Scalar dimensions");
   }
@@ -301,6 +514,9 @@ absl::Status SetAllDimensions(const TfLiteIntArray* dimensions, Scalar* shape) {
 }
 
 absl::Status CheckIfLinearConvertible(const TfLiteIntArray* dimensions) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_helperDTcc mht_15(mht_15_v, 517, "", "./tensorflow/lite/delegates/gpu/common/model_builder_helper.cc", "CheckIfLinearConvertible");
+
   if (dimensions->size <= 0) {
     return absl::InvalidArgumentError("Dimension is empty.");
   }
@@ -314,12 +530,18 @@ absl::Status CheckIfLinearConvertible(const TfLiteIntArray* dimensions) {
 }
 
 absl::Status SetAllDimensions(const TfLiteIntArray* dimensions, Linear* shape) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_helperDTcc mht_16(mht_16_v, 533, "", "./tensorflow/lite/delegates/gpu/common/model_builder_helper.cc", "SetAllDimensions");
+
   RETURN_IF_ERROR(CheckIfLinearConvertible(dimensions));
   shape->v = dimensions->data[dimensions->size - 1];
   return absl::OkStatus();
 }
 
 absl::Status SetAllDimensions(const TfLiteIntArray* dimensions, HWC* shape) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_helperDTcc mht_17(mht_17_v, 542, "", "./tensorflow/lite/delegates/gpu/common/model_builder_helper.cc", "SetAllDimensions");
+
   if (dimensions->size == 3) {
     shape->h = dimensions->data[0];
     shape->w = dimensions->data[1];
@@ -342,6 +564,9 @@ absl::Status SetAllDimensions(const TfLiteIntArray* dimensions, HWC* shape) {
 }
 
 absl::Status SetAllDimensions(const TfLiteIntArray* dimensions, HW* shape) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_helperDTcc mht_18(mht_18_v, 567, "", "./tensorflow/lite/delegates/gpu/common/model_builder_helper.cc", "SetAllDimensions");
+
   if (dimensions->size != 2) {
     return absl::InvalidArgumentError(
         absl::StrCat("Expected a 2D tensor of shape HxW but got ",
@@ -353,6 +578,9 @@ absl::Status SetAllDimensions(const TfLiteIntArray* dimensions, HW* shape) {
 }
 
 absl::Status SetAllDimensions(const TfLiteIntArray* dimensions, OHWI* shape) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_helperDTcc mht_19(mht_19_v, 581, "", "./tensorflow/lite/delegates/gpu/common/model_builder_helper.cc", "SetAllDimensions");
+
   if (dimensions->size != 4) {
     return absl::InvalidArgumentError(
         absl::StrCat("Expected a 4D tensor of shape OxHxWxI but got ",
@@ -366,6 +594,9 @@ absl::Status SetAllDimensions(const TfLiteIntArray* dimensions, OHWI* shape) {
 }
 
 absl::Status SetAllDimensions(const TfLiteIntArray* dimensions, BHWC* shape) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_helperDTcc mht_20(mht_20_v, 597, "", "./tensorflow/lite/delegates/gpu/common/model_builder_helper.cc", "SetAllDimensions");
+
   if (dimensions->size != 4) {
     return absl::InvalidArgumentError(
         absl::StrCat("Expected a 4D tensor of shape BxHxWxC but got ",
@@ -383,6 +614,9 @@ absl::Status SetAllDimensions(const TfLiteIntArray* dimensions, BHWC* shape) {
 // depend on the given node output.
 absl::Status MaybeFuseActivation(TfLiteFusedActivation fused_activation,
                                  GraphFloat32* graph, Node* node) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_helperDTcc mht_21(mht_21_v, 617, "", "./tensorflow/lite/delegates/gpu/common/model_builder_helper.cc", "MaybeFuseActivation");
+
   const auto outputs = graph->FindOutputs(node->id);
   if (outputs.size() != 1) {
     return absl::InternalError("Number of outputs != 1");

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,6 +210,9 @@ T EvaluatePolynomial(T x, const std::array<T, N>& coeffs) {
 // Wichura 1998, https://www.jstor.org/stable/2347330 which, notably, is a
 // different implementation from that in math.cc.
 float HostErfInv(float x) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_0(mht_0_v, 213, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "HostErfInv");
+
   std::array<double, 8> kPolyA = {
       8.8709406962545514830200e2, 1.1819493347062294404278e4,
       2.3782041382114385731252e4, 1.6235862515167575384252e4,
@@ -108,6 +279,9 @@ float HostErfInv(float x) {
 // Digamma implementation using a polynomial from Cephes.  Notably this is a
 // different implementation from the one in math.cc.
 float HostDigamma(float x) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_1(mht_1_v, 282, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "HostDigamma");
+
   // Euler-Mascheroni constant
   float kGamma = 0.57721566490153286061;
   float kPi = M_PI;
@@ -183,6 +357,9 @@ class Exhaustive32BitOrLessUnaryTest
 
  private:
   int64_t GetInputSize() override {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_2(mht_2_v, 360, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "GetInputSize");
+
     int64_t begin, end;
     std::tie(begin, end) = GetParam();
     VLOG(2) << "Checking range [" << begin << ", " << end << ")";
@@ -196,6 +373,9 @@ class Exhaustive32BitOrLessUnaryTest
   // the same bit as the type being tested, if needed, and then bitcasted to the
   // type being tested.
   void FillInput(std::array<Literal, 1>* input_literal) override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_3(mht_3_v, 376, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "FillInput");
+
     using IntegralT =
         typename ExhaustiveOpTestBase<T, 1>::ComponentIntegralNativeT;
     int64_t input_size = (*input_literal)[0].element_count();
@@ -256,7 +436,10 @@ using ExhaustiveBF16UnaryTest = Exhaustive32BitOrLessUnaryTest<BF16>;
 UNARY_TEST_FLOAT_32_BITS_OR_LESS(Log, {
   ErrorSpecGen error_spec_gen = GetDefaultSpecGenerator();
   if (platform_ != "Host" && platform_ != "CUDA" && ty_ == F32) {
-    error_spec_gen = +[](NativeT x) { return ErrorSpec{0.001, 0.001}; };
+    error_spec_gen = +[](NativeT x) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_4(mht_4_v, 440, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "lambda");
+ return ErrorSpec{0.001, 0.001}; };
   }
   Run(Log, std::log, error_spec_gen);
 })
@@ -264,7 +447,10 @@ UNARY_TEST_FLOAT_32_BITS_OR_LESS(Log, {
 UNARY_TEST_FLOAT_32_BITS_OR_LESS(Log1p, {
   ErrorSpecGen error_spec_gen = GetDefaultSpecGenerator();
   if (platform_ != "Host" && platform_ != "CUDA" && ty_ == F32) {
-    error_spec_gen = +[](NativeT x) { return ErrorSpec{0.001, 0.001}; };
+    error_spec_gen = +[](NativeT x) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_5(mht_5_v, 451, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "lambda");
+ return ErrorSpec{0.001, 0.001}; };
   }
   Run(Log1p, std::log1p, error_spec_gen);
 })
@@ -277,6 +463,9 @@ UNARY_TEST_FLOAT_32_BITS_OR_LESS(Exp, {
   // approaches 0 as x approaches -inf, or that our implementation is not
   // approaching 0 fast enough.
   ErrorSpecGen error_spec_gen = +[](NativeT x) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_6(mht_6_v, 466, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "lambda");
+
     if (x < static_cast<NativeT>(-105)) {
       return ErrorSpec{0, 0};
     }
@@ -289,6 +478,9 @@ UNARY_TEST_FLOAT_32_BITS_OR_LESS(Exp, {
   // changes.
   if (platform_ == "Host") {
     auto host_exp_with_overflow = +[](float f) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_7(mht_7_v, 481, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "lambda");
+
       if (f == 88.7228394f) {
         return 3.40282347e+38f;
       }
@@ -305,12 +497,18 @@ UNARY_TEST_FLOAT_32_BITS_OR_LESS(Expm1, {
   if (ty_ == F32) {
     if (platform_ == "Host") {
       error_spec_gen = +[](NativeT x) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_8(mht_8_v, 500, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "lambda");
+
         // We expect no worse than an error of 8 ULPs.
         return ErrorSpec{
             0.0, std::scalbn(8.0f, -std::numeric_limits<float>::digits)};
       };
     } else {
-      error_spec_gen = +[](NativeT x) { return ErrorSpec{0, 0.00015}; };
+      error_spec_gen = +[](NativeT x) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_9(mht_9_v, 509, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "lambda");
+ return ErrorSpec{0, 0.00015}; };
     }
   }
 
@@ -320,6 +518,9 @@ UNARY_TEST_FLOAT_32_BITS_OR_LESS(Expm1, {
   // changes.
   if (platform_ == "Host") {
     auto host_expm1_with_overflow = +[](float f) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_10(mht_10_v, 521, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "lambda");
+
       if (f == 88.7228394f) {
         return 3.40282347e+38f;
       }
@@ -335,10 +536,16 @@ UNARY_TEST_FLOAT_32_BITS_OR_LESS(Expm1, {
 // this *did* find a bug, namely that some backends were assuming sqrt(x) ==
 // pow(x, 0.5), but this is not true for x == -inf.
 UNARY_TEST_FLOAT_32_BITS_OR_LESS(PowOneHalf, {
-  EvaluateOp fn = +[](float x) { return std::pow(x, 0.5f); };
+  EvaluateOp fn = +[](float x) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_11(mht_11_v, 540, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "lambda");
+ return std::pow(x, 0.5f); };
   // TODO(b/123837116): Enable the test for all values after fixing the bug.
   if (platform_ != "Host" && platform_ != "CUDA") {
     fn = +[](float x) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_12(mht_12_v, 546, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "lambda");
+
       if (x == -std::numeric_limits<float>::infinity()) {
         return std::nanf("");
       }
@@ -357,6 +564,9 @@ UNARY_TEST_FLOAT_32_BITS_OR_LESS(Sqrt, {
   ErrorSpecGen error_spec_gen = GetDefaultSpecGenerator();
   if (platform_ == "Host" || platform_ == "CUDA") {
     error_spec_gen = +[](NativeT x) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_13(mht_13_v, 567, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "lambda");
+
       auto spec = GetDefaultSpecGenerator()(x);
       spec.strict_signed_zeros = true;
       return spec;
@@ -369,6 +579,9 @@ UNARY_TEST_FLOAT_32_BITS_OR_LESS(Sqrt, {
 UNARY_TEST_FLOAT_32_BITS_OR_LESS(Cbrt, {
   if (platform_ == "Host" || platform_ == "CUDA") {
     ErrorSpecGen error_spec_gen = +[](NativeT x) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_14(mht_14_v, 582, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "lambda");
+
       return ErrorSpec{0.01, 0.01};
     };
     Run(Cbrt, std::cbrt, error_spec_gen);
@@ -382,7 +595,10 @@ XLA_TEST_P(ExhaustiveF32UnaryTest, Acosh) {
   // Error inherited from Log, which our implementation of Acosh uses.
   ErrorSpecGen error_spec_gen = GetDefaultSpecGenerator();
   if (platform_ != "Host" && platform_ != "CUDA") {
-    error_spec_gen = +[](float x) { return ErrorSpec{0.001, 0.001}; };
+    error_spec_gen = +[](float x) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_15(mht_15_v, 599, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "lambda");
+ return ErrorSpec{0.001, 0.001}; };
   }
 
   Run(Acosh, std::acosh, error_spec_gen);
@@ -400,7 +616,10 @@ XLA_TEST_P(ExhaustiveBF16UnaryTest, Acosh) { Run(Acosh, std::acosh); }
 XLA_TEST_P(ExhaustiveF32UnaryTest, Asinh) {
   ErrorSpecGen error_spec_gen = GetDefaultSpecGenerator();
   if (platform_ != "Host" && platform_ != "CUDA") {
-    error_spec_gen = +[](float x) { return ErrorSpec{0.001, 0.001}; };
+    error_spec_gen = +[](float x) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_16(mht_16_v, 620, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "lambda");
+ return ErrorSpec{0.001, 0.001}; };
   }
 
   Run(Asinh, std::asinh, error_spec_gen);
@@ -430,6 +649,9 @@ UNARY_TEST_FLOAT_32_BITS_OR_LESS(Cosh, {
     host_cosh = &std::cosh;
   } else {
     host_cosh = +[](float x) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_17(mht_17_v, 652, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "lambda");
+
       if (std::abs(x) == 89.4159851f) {
         return std::numeric_limits<float>::infinity();
       }
@@ -451,6 +673,9 @@ UNARY_TEST_FLOAT_32_BITS_OR_LESS(Sinh, {
     host_sinh = &std::sinh;
   } else {
     host_sinh = +[](float x) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_18(mht_18_v, 676, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "lambda");
+
       if (std::abs(x) == 89.4159851f) {
         return std::copysign(std::numeric_limits<float>::infinity(), x);
       }
@@ -464,6 +689,9 @@ UNARY_TEST_FLOAT_32_BITS_OR_LESS(Tanh, {
   ErrorSpecGen error_spec_gen = GetDefaultSpecGenerator();
   if (platform_ == "CUDA") {
     error_spec_gen = +[](NativeT x) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_19(mht_19_v, 692, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "lambda");
+
       return x <= static_cast<NativeT>(-20.0) || x >= static_cast<NativeT>(20.0)
                  ? ErrorSpec{0, 0}
                  : GetDefaultSpecGenerator()(x);
@@ -484,16 +712,25 @@ void Exhaustive32BitOrLessUnaryTest<T>::SetParamsForSinCos() {
   const int kFirstWrongVal = 1 << 16;
   if (T == F32) {
     this->known_incorrect_fn_ = [](int64_t v) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_20(mht_20_v, 715, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "lambda");
+
       float f = BitCast<float>(static_cast<uint32_t>(v));
       return std::abs(f) > kFirstWrongVal;
     };
   } else if (T == BF16) {
     this->known_incorrect_fn_ = [](int64_t v) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_21(mht_21_v, 723, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "lambda");
+
       float f = static_cast<float>(BitCast<bfloat16>(static_cast<uint16_t>(v)));
       return std::abs(f) > kFirstWrongVal;
     };
   } else if (T == F16) {
     this->known_incorrect_fn_ = [](int64_t v) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_22(mht_22_v, 731, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "lambda");
+
       float f = static_cast<float>(BitCast<half>(static_cast<uint16_t>(v)));
       return std::abs(f) > kFirstWrongVal;
     };
@@ -502,6 +739,9 @@ void Exhaustive32BitOrLessUnaryTest<T>::SetParamsForSinCos() {
 
 template <PrimitiveType T>
 void Exhaustive32BitOrLessUnaryTest<T>::SetParamsForTan() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_23(mht_23_v, 742, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "Exhaustive32BitOrLessUnaryTest<T>::SetParamsForTan");
+
   if (this->platform_ == "Host" || this->platform_ == "CUDA") {
     return;
   }
@@ -511,16 +751,25 @@ void Exhaustive32BitOrLessUnaryTest<T>::SetParamsForTan() {
   // exceed 2**p.
   if (T == F32) {
     this->known_incorrect_fn_ = [](int64_t v) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_24(mht_24_v, 754, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "lambda");
+
       float f = BitCast<float>(static_cast<uint32_t>(v));
       return std::abs(f) > (1 << 13);
     };
   } else if (T == BF16) {
     this->known_incorrect_fn_ = [](int64_t v) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_25(mht_25_v, 762, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "lambda");
+
       float f = static_cast<float>(BitCast<bfloat16>(static_cast<uint16_t>(v)));
       return std::abs(f) > (1 << 16);
     };
   } else if (T == F16) {
     this->known_incorrect_fn_ = [](int64_t v) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_26(mht_26_v, 770, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "lambda");
+
       float f = static_cast<float>(BitCast<half>(static_cast<uint16_t>(v)));
       return std::abs(f) > (1 << 15);
     };
@@ -601,7 +850,10 @@ UNARY_TEST_FLOAT_32_BITS_OR_LESS(Digamma, {
   if (platform_ != "Host" && platform_ != "CUDA") {
     // TODO(b/123956399): This is a fairly high error, significantly higher than
     // we see on CPU/GPU.
-    error_spec_gen = +[](NativeT) { return ErrorSpec{0.01, 0.01}; };
+    error_spec_gen = +[](NativeT) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_27(mht_27_v, 854, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "lambda");
+ return ErrorSpec{0.01, 0.01}; };
   }
 
   if (platform_ == "CUDA") {
@@ -614,6 +866,9 @@ UNARY_TEST_FLOAT_32_BITS_OR_LESS(Digamma, {
     // the results we get here are very close to MAX_FLOAT.  We just hardcode
     // these results, as this is better than ignoring these inputs altogether.
     auto host_digamma_with_gpu_ftz_errors = +[](float x) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_28(mht_28_v, 869, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "lambda");
+
       if (BitCast<uint32_t>(x) == 0x00200000 ||
           BitCast<uint32_t>(x) == 0x80200000) {
         return std::copysign(std::numeric_limits<float>::max(), -x);
@@ -632,6 +887,9 @@ UNARY_TEST_FLOAT_32_BITS_OR_LESS(Lgamma, {
   ErrorSpecGen error_spec_gen = GetDefaultSpecGenerator();
   if (platform_ == "CUDA" && (ty_ == F32 || ty_ == F16)) {
     error_spec_gen = +[](NativeT x) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_29(mht_29_v, 890, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "lambda");
+
       auto spec = GetDefaultSpecGenerator()(x);
       spec.rel_err = 0.001;
       return spec;
@@ -642,11 +900,17 @@ UNARY_TEST_FLOAT_32_BITS_OR_LESS(Lgamma, {
   if (platform_ != "Host" && platform_ != "CUDA") {
     // TODO(b/123956399): This is a fairly high error, significantly higher than
     // we see on CPU/GPU.
-    error_spec_gen = +[](NativeT) { return ErrorSpec{0.01, 0.01}; };
+    error_spec_gen = +[](NativeT) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_30(mht_30_v, 904, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "lambda");
+ return ErrorSpec{0.01, 0.01}; };
 
     // Overflows to inf for input 4.08500343e+36 (0x7c44af8e).
     if (ty_ == F32) {
       host_lgamma = +[](float v) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_unary_test_f32_or_smallerDTcc mht_31(mht_31_v, 911, "", "./tensorflow/compiler/xla/tests/exhaustive_unary_test_f32_or_smaller.cc", "lambda");
+
         if (BitCast<uint32_t>(v) == 0x7c44af8e) {
           return std::numeric_limits<float>::infinity();
         }

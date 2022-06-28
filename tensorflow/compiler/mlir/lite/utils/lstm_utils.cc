@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,6 +215,9 @@ namespace {
 
 Value CreateI32SplatConst(OpBuilder* builder, ArrayRef<int64_t> shape,
                           int32_t val, mlir::Location location) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_0(mht_0_v, 218, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "CreateI32SplatConst");
+
   auto type = RankedTensorType::get(shape, builder->getIntegerType(32));
   auto attr = DenseElementsAttr::get(type, val);
   return builder->create<arith::ConstantOp>(location, type, attr);
@@ -54,6 +225,9 @@ Value CreateI32SplatConst(OpBuilder* builder, ArrayRef<int64_t> shape,
 
 Value CreateF32SplatConst(OpBuilder* builder, ArrayRef<int64_t> shape,
                           float val, mlir::Location location) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_1(mht_1_v, 228, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "CreateF32SplatConst");
+
   auto type = RankedTensorType::get(shape, builder->getF32Type());
   auto attr = DenseElementsAttr::get(type, val);
   return builder->create<arith::ConstantOp>(location, type, attr);
@@ -61,6 +235,9 @@ Value CreateF32SplatConst(OpBuilder* builder, ArrayRef<int64_t> shape,
 
 Value CreatTfF32ConstOp(OpBuilder* builder, ArrayRef<int64_t> shape, float val,
                         mlir::Location location) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_2(mht_2_v, 238, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "CreatTfF32ConstOp");
+
   auto type = RankedTensorType::get(shape, builder->getF32Type());
   auto ele_type = RankedTensorType::get({1}, builder->getF32Type());
   auto attr = DenseElementsAttr::get(ele_type, val);
@@ -69,6 +246,9 @@ Value CreatTfF32ConstOp(OpBuilder* builder, ArrayRef<int64_t> shape, float val,
 
 Value CreateI64DenseConst(OpBuilder* builder, ArrayRef<int64_t> shape,
                           ArrayRef<int64_t> values, mlir::Location location) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_3(mht_3_v, 249, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "CreateI64DenseConst");
+
   auto type = RankedTensorType::get(static_cast<int>(shape.size()),
                                     builder->getIntegerType(64));
   auto attr = DenseElementsAttr::get(type, values);
@@ -77,6 +257,9 @@ Value CreateI64DenseConst(OpBuilder* builder, ArrayRef<int64_t> shape,
 
 Value CreateI32DenseConst(OpBuilder* builder, ArrayRef<int32_t> values,
                           mlir::Location location) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_4(mht_4_v, 260, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "CreateI32DenseConst");
+
   auto type = RankedTensorType::get(static_cast<int>(values.size()),
                                     builder->getIntegerType(32));
   auto attr = DenseElementsAttr::get(type, values);
@@ -84,6 +267,9 @@ Value CreateI32DenseConst(OpBuilder* builder, ArrayRef<int32_t> values,
 }
 
 Value CreateNoneValue(OpBuilder* builder, mlir::Location location) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_5(mht_5_v, 270, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "CreateNoneValue");
+
   return builder->create<TFL::NoValueOp>(location, builder->getNoneType(),
                                          builder->getUnitAttr());
 }
@@ -91,6 +277,9 @@ Value CreateNoneValue(OpBuilder* builder, mlir::Location location) {
 Value Transpose(OpBuilder* builder, Value value_to_transpose,
                 SmallVector<int32_t, 4> perm, RankedTensorType original_type,
                 mlir::Location location) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_6(mht_6_v, 280, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "Transpose");
+
   // Create a constant op for transpose permutation.
   auto perm_op = CreateI32DenseConst(builder, perm, location);
 
@@ -109,6 +298,9 @@ Value Transpose(OpBuilder* builder, Value value_to_transpose,
 
 Value Transpose2D(OpBuilder* builder, Value value_to_transpose,
                   RankedTensorType type, mlir::Location location) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_7(mht_7_v, 301, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "Transpose2D");
+
   // Create a constant op for transpose permutation.
   SmallVector<int32_t, 4> perm = {1, 0};
   return Transpose(builder, value_to_transpose, perm, type, location);
@@ -116,6 +308,9 @@ Value Transpose2D(OpBuilder* builder, Value value_to_transpose,
 
 Value Reverse(OpBuilder* builder, Value value_to_reverse, int axis,
               RankedTensorType type, mlir::Location location) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_8(mht_8_v, 311, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "Reverse");
+
   auto axis_op = CreateI32SplatConst(builder, {1}, axis, location);
   // The result type will be the same as the input.
   return builder->create<TF::ReverseV2Op>(location, type, value_to_reverse,
@@ -132,6 +327,9 @@ Value SliceRankedTensor(OpBuilder* builder, Value input,
                         ArrayRef<int64_t> size_shape,
                         ArrayRef<int64_t> size_values,
                         mlir::Location location) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_9(mht_9_v, 330, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "SliceRankedTensor");
+
   // If the size of the tensor to be sliced from the input overflows
   // the input tensor's dimensions, return 0-valued tensor of the requested
   // shape.
@@ -165,6 +363,9 @@ Value CreateStridedSliceOp(mlir::Location loc, ArrayRef<int64_t> output_shape,
                            int64_t begin_mask, int64_t end_mask,
                            int64_t ellipsis_mask, int64_t new_axis_mask,
                            int64_t shrink_axis_mask, OpBuilder* builder) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_10(mht_10_v, 366, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "CreateStridedSliceOp");
+
   auto output_type = RankedTensorType::get(
       output_shape, input.getType().cast<RankedTensorType>().getElementType());
   auto begin_tensor = CreateI32DenseConst(builder, begin, loc);
@@ -183,6 +384,9 @@ Value CreateStridedSliceOp(mlir::Location loc, ArrayRef<int64_t> output_shape,
 }  // namespace
 
 void ConvertLSTMCellSimpleToFusedLSTM::SetWeightForInputToCellGate() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_11(mht_11_v, 387, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "ConvertLSTMCellSimpleToFusedLSTM::SetWeightForInputToCellGate");
+
   SmallVector<int64_t, 2> begin_i2c_values = {0, 0};
   input2cell_ = SliceRankedTensor(
       &builder_, weight_transposed_, weight_slice_shape_, begin_i2c_values,
@@ -191,6 +395,9 @@ void ConvertLSTMCellSimpleToFusedLSTM::SetWeightForInputToCellGate() {
 }
 
 void ConvertLSTMCellSimpleToFusedLSTM::SetWeightForInputToInputGate() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_12(mht_12_v, 398, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "ConvertLSTMCellSimpleToFusedLSTM::SetWeightForInputToInputGate");
+
   SmallVector<int64_t, 2> begin_i2i_values = {n_cell_, 0};
   input2input_ = couple_input_forget_gates_
                      ? none_
@@ -202,6 +409,9 @@ void ConvertLSTMCellSimpleToFusedLSTM::SetWeightForInputToInputGate() {
 }
 
 void ConvertLSTMCellSimpleToFusedLSTM::SetWeightForInputToForgetGate() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_13(mht_13_v, 412, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "ConvertLSTMCellSimpleToFusedLSTM::SetWeightForInputToForgetGate");
+
   int input_forget_start = couple_input_forget_gates_ ? n_cell_ : 2 * n_cell_;
   SmallVector<int64_t, 2> begin_i2f_values = {input_forget_start, 0};
   input2forget_ = SliceRankedTensor(
@@ -211,6 +421,9 @@ void ConvertLSTMCellSimpleToFusedLSTM::SetWeightForInputToForgetGate() {
 }
 
 void ConvertLSTMCellSimpleToFusedLSTM::SetWeightForInputToOutputGate() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_14(mht_14_v, 424, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "ConvertLSTMCellSimpleToFusedLSTM::SetWeightForInputToOutputGate");
+
   int input_output_start =
       couple_input_forget_gates_ ? 2 * n_cell_ : 3 * n_cell_;
   SmallVector<int64_t, 2> begin_i2o_values = {input_output_start, 0};
@@ -221,6 +434,9 @@ void ConvertLSTMCellSimpleToFusedLSTM::SetWeightForInputToOutputGate() {
 }
 
 void ConvertLSTMCellSimpleToFusedLSTM::SetWeightForRecurrentToCellGate() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_15(mht_15_v, 437, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "ConvertLSTMCellSimpleToFusedLSTM::SetWeightForRecurrentToCellGate");
+
   SmallVector<int64_t, 2> begin_rec2c_values = {0, n_input_};
   rec2cell_ = SliceRankedTensor(
       &builder_, weight_transposed_, weight_slice_shape_, begin_rec2c_values,
@@ -229,6 +445,9 @@ void ConvertLSTMCellSimpleToFusedLSTM::SetWeightForRecurrentToCellGate() {
 }
 
 void ConvertLSTMCellSimpleToFusedLSTM::SetWeightForRecurrentToInputGate() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_16(mht_16_v, 448, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "ConvertLSTMCellSimpleToFusedLSTM::SetWeightForRecurrentToInputGate");
+
   SmallVector<int64_t, 2> begin_rec2i_values = {n_cell_, n_input_};
   rec2input_ = couple_input_forget_gates_
                    ? none_
@@ -240,6 +459,9 @@ void ConvertLSTMCellSimpleToFusedLSTM::SetWeightForRecurrentToInputGate() {
 }
 
 void ConvertLSTMCellSimpleToFusedLSTM::SetWeightForRecurrentToForgetGate() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_17(mht_17_v, 462, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "ConvertLSTMCellSimpleToFusedLSTM::SetWeightForRecurrentToForgetGate");
+
   int rec_forget_start = couple_input_forget_gates_ ? n_cell_ : 2 * n_cell_;
   SmallVector<int64_t, 2> begin_rec2f_values = {rec_forget_start, n_input_};
   rec2forget_ = SliceRankedTensor(
@@ -249,6 +471,9 @@ void ConvertLSTMCellSimpleToFusedLSTM::SetWeightForRecurrentToForgetGate() {
 }
 
 void ConvertLSTMCellSimpleToFusedLSTM::SetWeightForRecurrentToOutputGate() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_18(mht_18_v, 474, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "ConvertLSTMCellSimpleToFusedLSTM::SetWeightForRecurrentToOutputGate");
+
   int rec_output_start = couple_input_forget_gates_ ? 2 * n_cell_ : 3 * n_cell_;
   SmallVector<int64_t, 2> begin_rec2o_values = {rec_output_start, n_input_};
   rec2output_ = SliceRankedTensor(
@@ -258,6 +483,9 @@ void ConvertLSTMCellSimpleToFusedLSTM::SetWeightForRecurrentToOutputGate() {
 }
 
 void ConvertLSTMCellSimpleToFusedLSTM::SetBiasToCellGate() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_19(mht_19_v, 486, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "ConvertLSTMCellSimpleToFusedLSTM::SetBiasToCellGate");
+
   SmallVector<int64_t, 1> begin_bias2c_values = {0};
   bias2cell_ = SliceRankedTensor(&builder_, bias_, bias_slice_shape_,
                                  begin_bias2c_values, bias_slice_shape_,
@@ -265,6 +493,9 @@ void ConvertLSTMCellSimpleToFusedLSTM::SetBiasToCellGate() {
 }
 
 void ConvertLSTMCellSimpleToFusedLSTM::SetBiasToInputGate() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_20(mht_20_v, 496, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "ConvertLSTMCellSimpleToFusedLSTM::SetBiasToInputGate");
+
   SmallVector<int64_t, 1> begin_bias2i_values = {n_cell_};
   bias2input_ =
       couple_input_forget_gates_
@@ -275,6 +506,9 @@ void ConvertLSTMCellSimpleToFusedLSTM::SetBiasToInputGate() {
 }
 
 void ConvertLSTMCellSimpleToFusedLSTM::SetBiasToForgetGate() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_21(mht_21_v, 509, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "ConvertLSTMCellSimpleToFusedLSTM::SetBiasToForgetGate");
+
   int bias_forget_start = couple_input_forget_gates_ ? n_cell_ : 2 * n_cell_;
   SmallVector<int64_t, 1> begin_bias2f_values = {bias_forget_start};
   bias2forget_ = SliceRankedTensor(&builder_, bias_, bias_slice_shape_,
@@ -283,6 +517,9 @@ void ConvertLSTMCellSimpleToFusedLSTM::SetBiasToForgetGate() {
 }
 
 void ConvertLSTMCellSimpleToFusedLSTM::SetBiasToOutputGate() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_22(mht_22_v, 520, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "ConvertLSTMCellSimpleToFusedLSTM::SetBiasToOutputGate");
+
   int bias_output_start =
       couple_input_forget_gates_ ? 2 * n_cell_ : 3 * n_cell_;
   SmallVector<int64_t, 1> begin_bias2o_values = {bias_output_start};
@@ -292,6 +529,9 @@ void ConvertLSTMCellSimpleToFusedLSTM::SetBiasToOutputGate() {
 }
 
 void ConvertLSTMCellSimpleToFusedLSTM::SetProjection() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_23(mht_23_v, 532, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "ConvertLSTMCellSimpleToFusedLSTM::SetProjection");
+
   SmallVector<int64_t, 2> projection_slice_shape = {
       1, num_cols_projection_transposed_};
   SmallVector<int64_t, 2> projection_slice_size_values = {n_output_, n_cell_};
@@ -306,6 +546,9 @@ void ConvertLSTMCellSimpleToFusedLSTM::SetProjection() {
 }
 
 void ConvertLSTMCellSimpleToFusedLSTM::SetProjectionBias() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_24(mht_24_v, 549, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "ConvertLSTMCellSimpleToFusedLSTM::SetProjectionBias");
+
   proj_bias_ = !projection_type_
                    ? none_
                    : CreateF32SplatConst(&builder_, {n_output_}, 0,
@@ -313,31 +556,52 @@ void ConvertLSTMCellSimpleToFusedLSTM::SetProjectionBias() {
 }
 
 void ConvertLSTMCellSimpleToFusedLSTM::SetInputActivationState() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_25(mht_25_v, 559, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "ConvertLSTMCellSimpleToFusedLSTM::SetInputActivationState");
+
   input_activation_state_ = CreateF32SplatConst(&builder_, {1, n_output_}, 0,
                                                 fused_func_op_.getLoc());
 }
 
 void ConvertLSTMCellSimpleToFusedLSTM::SetInputCellState() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_26(mht_26_v, 567, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "ConvertLSTMCellSimpleToFusedLSTM::SetInputCellState");
+
   input_cell_state_ =
       CreateF32SplatConst(&builder_, {1, n_cell_}, 0, fused_func_op_.getLoc());
 }
 
 void ConvertLSTMCellSimpleToFusedLSTM::SetCellLayerNormCoefficients() {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_27(mht_27_v, 575, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "ConvertLSTMCellSimpleToFusedLSTM::SetCellLayerNormCoefficients");
+
   cell_layer_norm_coefficients_ = none_;
 }
 
 void ConvertLSTMCellSimpleToFusedLSTM::SetInputLayerNormCoefficients() {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_28(mht_28_v, 582, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "ConvertLSTMCellSimpleToFusedLSTM::SetInputLayerNormCoefficients");
+
   input_layer_norm_coefficients_ = none_;
 }
 
 void ConvertLSTMCellSimpleToFusedLSTM::SetForgetLayerNormCoefficients() {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_29(mht_29_v, 589, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "ConvertLSTMCellSimpleToFusedLSTM::SetForgetLayerNormCoefficients");
+
   forget_layer_norm_coefficients_ = none_;
 }
 void ConvertLSTMCellSimpleToFusedLSTM::SetOutputLayerNormCoefficients() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_30(mht_30_v, 595, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "ConvertLSTMCellSimpleToFusedLSTM::SetOutputLayerNormCoefficients");
+
   output_layer_norm_coefficients_ = none_;
 }
 
 void ConvertLSTMCellSimpleToFusedLSTM::GenerateFusedOpOperands() {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_31(mht_31_v, 602, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "ConvertLSTMCellSimpleToFusedLSTM::GenerateFusedOpOperands");
+
   // Transpose both weight and projection.
   weight_transposed_ =
       Transpose2D(&builder_, weight_, weight_type_, fused_func_op_.getLoc());
@@ -379,6 +643,9 @@ void ConvertLSTMCellSimpleToFusedLSTM::GenerateFusedOpOperands() {
 }
 
 void ConvertLSTMCellSimpleToFusedLSTM::UpdateFuncSignature() {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_32(mht_32_v, 646, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "ConvertLSTMCellSimpleToFusedLSTM::UpdateFuncSignature");
+
   // https://github.com/tensorflow/community/pull/113
   SmallVector<int64_t, 2> output_shape{1, -1};
   auto input_types = fused_func_op_.getFunctionType().getInputs();
@@ -389,6 +656,9 @@ void ConvertLSTMCellSimpleToFusedLSTM::UpdateFuncSignature() {
 }
 
 LogicalResult ConvertLSTMCellSimpleToFusedLSTM::RewriteFunc() {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_33(mht_33_v, 659, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "ConvertLSTMCellSimpleToFusedLSTM::RewriteFunc");
+
   LogicalResult result = Initialize();
   if (failed(result)) {
     return result;
@@ -441,6 +711,9 @@ LogicalResult ConvertLSTMCellSimpleToFusedLSTM::RewriteFunc() {
 }
 
 LogicalResult ConvertLSTMCellSimpleToFusedLSTM::InitializeFromFuncAttributes() {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_34(mht_34_v, 714, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "ConvertLSTMCellSimpleToFusedLSTM::InitializeFromFuncAttributes");
+
   auto attr = fused_func_op_->getAttrOfType<StringAttr>(kTFImplements);
   if (!attr) {
     return fused_func_op_.emitError()
@@ -474,6 +747,9 @@ LogicalResult ConvertLSTMCellSimpleToFusedLSTM::InitializeFromFuncAttributes() {
 }
 
 LogicalResult ConvertLSTMCellSimpleToFusedLSTM::Initialize() {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_35(mht_35_v, 750, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "ConvertLSTMCellSimpleToFusedLSTM::Initialize");
+
   if (failed(InitializeFromFuncAttributes())) {
     return fused_func_op_.emitError()
            << "Expected function attributes were not set on the function "
@@ -520,6 +796,9 @@ LogicalResult ConvertLSTMCellSimpleToFusedLSTM::Initialize() {
 }
 
 LogicalResult ConvertLayerNormalizedLSTMCellSimpleToFusedLSTM::Initialize() {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_36(mht_36_v, 799, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "ConvertLayerNormalizedLSTMCellSimpleToFusedLSTM::Initialize");
+
   if (failed(ConvertLSTMCellSimpleToFusedLSTM::Initialize())) {
     return fused_func_op_.emitError()
            << "Specified LayerNormalizedLSTMCellSimple was not of the expected "
@@ -579,6 +858,9 @@ void ConvertLayerNormalizedLSTMCellSimpleToFusedLSTM::
 
 TF::ConstOp Create1DConstantOp(const std::vector<int>& value, Location loc,
                                OpBuilder* builder) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_37(mht_37_v, 861, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "Create1DConstantOp");
+
   auto type =
       mlir::RankedTensorType::get(value.size(), builder->getIntegerType(32));
   auto dense_values = mlir::DenseIntElementsAttr::get(type, value);
@@ -587,12 +869,18 @@ TF::ConstOp Create1DConstantOp(const std::vector<int>& value, Location loc,
 
 TF::ConstOp CreateScalarConstantOp(int value, Location loc,
                                    OpBuilder* builder) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_38(mht_38_v, 872, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "CreateScalarConstantOp");
+
   return builder->create<TF::ConstOp>(loc, builder->getI32IntegerAttr(value));
 }
 
 LogicalResult CreateEqualSizeSplitVOp(Value input, int axis, int splits,
                                       Location loc, OpBuilder* builder,
                                       Operation** result) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_39(mht_39_v, 881, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "CreateEqualSizeSplitVOp");
+
   auto input_type = input.getType().cast<RankedTensorType>();
   SmallVector<int64_t, 4> output_shape;
   int size_of_splits;
@@ -629,6 +917,9 @@ LogicalResult CreateEqualSizeSplitVOp(Value input, int axis, int splits,
 // TODO(b/147436982): Consider refactor this to be more general.
 LogicalResult ConvertKerasLSTMLayer(mlir::func::FuncOp func_op,
                                     OpBuilder* builder) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSutilsPSlstm_utilsDTcc mht_40(mht_40_v, 920, "", "./tensorflow/compiler/mlir/lite/utils/lstm_utils.cc", "ConvertKerasLSTMLayer");
+
   // For argument order, please check out standard_lstm under
   // tensorflow/python/keras/layers/recurrent_v2.py
   Value input = func_op.getArgument(0);

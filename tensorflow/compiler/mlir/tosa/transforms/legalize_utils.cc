@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_utilsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_utilsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_utilsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,6 +199,9 @@ Value buildRescale(PatternRewriter& rewriter, Operation* op,
                    ShapedType output_type, Value input_val, double scale,
                    int64_t input_zp, int64_t output_zp, bool double_round,
                    bool scale32) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_utilsDTcc mht_0(mht_0_v, 202, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_utils.cc", "buildRescale");
+
   int32_t multiplier;
   int32_t shift;
 
@@ -53,6 +224,9 @@ Value buildRescale(PatternRewriter& rewriter, Operation* op,
 Value buildRescaleToInt32(PatternRewriter& rewriter, Operation* op,
                           Value input_val, double input_scale,
                           int64_t input_zp) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_utilsDTcc mht_1(mht_1_v, 227, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_utils.cc", "buildRescaleToInt32");
+
   // Output is always int32 type
   auto input_type = input_val.getType().dyn_cast<mlir::ShapedType>();
   assert(input_type);
@@ -66,6 +240,9 @@ Value buildRescaleToInt32(PatternRewriter& rewriter, Operation* op,
 Value buildRescaleFromInt32(PatternRewriter& rewriter, Operation* op,
                             ShapedType output_type, Value input_val,
                             double output_scale, int64_t output_zp) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_utilsDTcc mht_2(mht_2_v, 243, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_utils.cc", "buildRescaleFromInt32");
+
   // Input should be int32 type
   auto input_type = input_val.getType().dyn_cast<mlir::ShapedType>();
   (void)input_type;
@@ -81,6 +258,9 @@ Value buildRescaleFromInt32(PatternRewriter& rewriter, Operation* op,
 Value buildRescaleOpConvOutput(PatternRewriter& rewriter, Operation* op,
                                Value conv_val, ShapedType input_type,
                                ShapedType weight_type, ShapedType output_type) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_utilsDTcc mht_3(mht_3_v, 261, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_utils.cc", "buildRescaleOpConvOutput");
+
   auto input_qtype =
       input_type.getElementType().dyn_cast<mlir::quant::UniformQuantizedType>();
   auto output_qtype = output_type.getElementType()
@@ -166,6 +346,9 @@ Value getTosaConst8bitTable(PatternRewriter& rewriter, Operation* op,
                             double input_scale, int32_t input_zp,
                             double output_scale, int32_t output_zp,
                             std::function<double(double)> func) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_utilsDTcc mht_4(mht_4_v, 349, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_utils.cc", "getTosaConst8bitTable");
+
   SmallVector<int8_t, 256> table;
 
   for (int32_t i = -128; i < 128; i++) {
@@ -197,6 +380,9 @@ Value getTosaConst8bitTable(PatternRewriter& rewriter, Operation* op,
 Value getTosaConst16bitTable(PatternRewriter& rewriter, Operation* op,
                              std::function<double(double)> func, double min,
                              double max) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_utilsDTcc mht_5(mht_5_v, 383, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_utils.cc", "getTosaConst16bitTable");
+
   SmallVector<int16_t, 513> table;
 
   double step = (max - min) / 512.0f;
@@ -240,6 +426,9 @@ void getTosaConst32bitTable(PatternRewriter& rewriter, Operation* op,
                             double input_scale, int32_t input_zp,
                             std::function<double(double)> func,
                             Value& upper_const, Value& lower_const) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_utilsDTcc mht_6(mht_6_v, 429, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_utils.cc", "getTosaConst32bitTable");
+
   SmallVector<int16_t, 513> upper_table, lower_table;
 
   double output_inv_scale = static_cast<double>(1L << 31);
@@ -290,6 +479,9 @@ void getTosaConst32bitTable(PatternRewriter& rewriter, Operation* op,
 // Create a 32-bit float constant operator from a float
 Value getTosaConstTensorSingleF32(PatternRewriter& rewriter, Operation* op,
                                   float val) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_utilsDTcc mht_7(mht_7_v, 482, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_utils.cc", "getTosaConstTensorSingleF32");
+
   auto const_type = RankedTensorType::get({}, rewriter.getF32Type());
   auto const_attr = DenseElementsAttr::get(const_type, val);
 
@@ -301,6 +493,9 @@ Value getTosaConstTensorSingleF32(PatternRewriter& rewriter, Operation* op,
 // Create a 32-bit integer constant operator from an int
 Value getTosaConstTensorSingleI32(PatternRewriter& rewriter, Operation* op,
                                   int32_t val) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_utilsDTcc mht_8(mht_8_v, 496, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_utils.cc", "getTosaConstTensorSingleI32");
+
   auto const_type = RankedTensorType::get({}, rewriter.getIntegerType(32));
   auto const_attr = DenseElementsAttr::get(const_type, val);
 
@@ -312,6 +507,9 @@ Value getTosaConstTensorSingleI32(PatternRewriter& rewriter, Operation* op,
 // Create a vector from a 32-bit value tensor.  Returns the size of
 // the new vector or -1 on error.
 LogicalResult getVectorFromValue32(Value val, SmallVectorImpl<int32_t>& vec) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_utilsDTcc mht_9(mht_9_v, 510, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_utils.cc", "getVectorFromValue32");
+
   int i = 0;
 
   ElementsAttr elems;
@@ -341,6 +539,9 @@ bool getPaddingValuesFromPadType(tensorflow::Padding tf_pad,
                                  ArrayAttr strides, ArrayAttr dilations,
                                  PatternRewriter& rewriter,
                                  ArrayAttr& explicit_padding) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_utilsDTcc mht_10(mht_10_v, 542, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_utils.cc", "getPaddingValuesFromPadType");
+
   assert(tf_pad != tensorflow::Padding::EXPLICIT);
   if (!input_type.hasRank() || !filter_type.getRank()) return false;
 
@@ -391,6 +592,9 @@ bool getPaddingValuesFromPadType(tensorflow::Padding tf_pad,
 ArrayAttr getPaddingValuesFromExplicitPadAttr(
     ArrayAttr explicit_pad, tensorflow::TensorFormat data_format_tf,
     PatternRewriter& rewriter) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_utilsDTcc mht_11(mht_11_v, 595, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_utils.cc", "getPaddingValuesFromExplicitPadAttr");
+
   SmallVector<int64_t> computed_paddings;
 
   int64_t pad_before, pad_after;
@@ -414,6 +618,9 @@ bool getTransposeConv2dPaddingValues(
     ShapedType filter_type, ShapedType output_type, ArrayAttr strides,
     ArrayAttr dilations, PatternRewriter& rewriter,
     ArrayAttr& explicit_padding) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_utilsDTcc mht_12(mht_12_v, 621, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_utils.cc", "getTransposeConv2dPaddingValues");
+
   assert(tf_pad != tensorflow::Padding::EXPLICIT);
   if (!input_type.hasRank() || !filter_type.hasRank() || !output_type.hasRank())
     return false;
@@ -538,11 +745,17 @@ template llvm::Optional<Value> getConstTensor<int32_t>(PatternRewriter&,
 
 // Check if scale32 mode is used for given output_element_type
 bool isScale32(mlir::quant::UniformQuantizedType output_element_type) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_utilsDTcc mht_13(mht_13_v, 748, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_utils.cc", "isScale32");
+
   return (output_element_type.getStorageTypeIntegralWidth() == 8);
 }
 
 LogicalResult ApplyPatternsWithShapeResolution(
     FuncOp func, const FrozenRewritePatternSet& patterns) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStosaPStransformsPSlegalize_utilsDTcc mht_14(mht_14_v, 756, "", "./tensorflow/compiler/mlir/tosa/transforms/legalize_utils.cc", "ApplyPatternsWithShapeResolution");
+
   // We use top-down traversal so that shape inference can fully infer types
   // during pattern rewrite.
   GreedyRewriteConfig config;

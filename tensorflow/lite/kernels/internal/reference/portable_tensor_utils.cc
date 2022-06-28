@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,6 +208,9 @@ const int32_t kInt16Min = std::numeric_limits<int16_t>::min();
 void PortableSymmetricQuantizeFloats(const float* values, const int size,
                                      int8_t* quantized_values, float* min_value,
                                      float* max_value, float* scaling_factor) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_0(mht_0_v, 211, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableSymmetricQuantizeFloats");
+
   auto minmax = std::minmax_element(values, values + size);
   *min_value = *minmax.first;
   *max_value = *minmax.second;
@@ -51,6 +222,9 @@ void PortableSymmetricQuantizeFloats(const float* values, const int size,
 void PortableSymmetricQuantizeFloats(const float* values, const int size,
                                      int8_t* quantized_values, float min_value,
                                      float max_value, float* scaling_factor) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_1(mht_1_v, 225, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableSymmetricQuantizeFloats");
+
   const int32_t kScale = 127;
   const float range = std::max(std::abs(min_value), std::abs(max_value));
   if (range == 0) {
@@ -72,6 +246,9 @@ void PortableSymmetricQuantizeFloats(const float* values, const int size,
 void PortableAsymmetricQuantizeFloats(const float* values, const int size,
                                       int8_t* quantized_values,
                                       float* scaling_factor, int32_t* offset) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_2(mht_2_v, 249, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableAsymmetricQuantizeFloats");
+
   const int32_t kMinScale = -128;
   const int32_t kMaxScale = 127;
   const double qmin_double = kMinScale;
@@ -120,6 +297,9 @@ void PortableMatrixBatchVectorMultiplyAccumulate(const float* matrix,
                                                  int m_rows, int m_cols,
                                                  const float* vector,
                                                  int n_batch, float* result) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_3(mht_3_v, 300, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableMatrixBatchVectorMultiplyAccumulate");
+
   float* result_in_batch = result;
   for (int b = 0; b < n_batch; b++) {
     const float* matrix_ptr = matrix;
@@ -139,6 +319,9 @@ void PortableMatrixBatchVectorMultiplyAccumulate(
     const int8_t* __restrict__ matrix, const int m_rows, const int m_cols,
     const int8_t* __restrict__ vectors, const float* scaling_factors,
     int n_batch, float* __restrict__ result) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_4(mht_4_v, 322, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableMatrixBatchVectorMultiplyAccumulate");
+
   for (int batch = 0; batch < n_batch; ++batch, vectors += m_cols) {
     const float batch_scaling_factor = scaling_factors[batch];
     // Get the address of the first row.
@@ -166,6 +349,9 @@ void PortableMatrixBatchVectorMultiplyAccumulate(
     int n_batch, float* __restrict__ result, const float* per_channel_scale,
     const int32_t* input_offset, int32_t* scratch, int32_t* row_sums,
     bool* compute_row_sums, CpuBackendContext* context) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_5(mht_5_v, 352, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableMatrixBatchVectorMultiplyAccumulate");
+
   if (input_offset == nullptr) {
     PortableMatrixBatchVectorMultiplyAccumulate(
         matrix, m_rows, m_cols, vectors, scaling_factors, n_batch, result);
@@ -207,6 +393,9 @@ void PortableSparseMatrixBatchVectorMultiplyAccumulate1x4(
     const float* __restrict__ matrix, const int32_t* __restrict__ segments,
     const int32_t* __restrict__ indices, int m_rows, int m_cols,
     const float* __restrict__ vector, int n_batch, float* __restrict__ result) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_6(mht_6_v, 396, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableSparseMatrixBatchVectorMultiplyAccumulate1x4");
+
   const int kBlockSize = 4;
   TFLITE_DCHECK_EQ(m_cols % kBlockSize, 0);
   for (int batch = 0; batch < n_batch; batch++) {
@@ -235,6 +424,9 @@ void PortableSparseMatrixBatchVectorMultiplyAccumulate1x16(
     const int32_t output_shift, const int32_t output_offset,
     const int32_t output_activation_min, const int32_t output_activation_max,
     int8_t* __restrict__ result) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_7(mht_7_v, 427, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableSparseMatrixBatchVectorMultiplyAccumulate1x16");
+
   const int kBlockSize = 16;
   TFLITE_DCHECK_EQ(m_cols % kBlockSize, 0);
   for (int batch = 0; batch < n_batch; ++batch) {
@@ -266,6 +458,9 @@ void PortableSparseMatrixBatchVectorMultiplyAccumulate(
     const float* __restrict__ matrix, const uint8_t* __restrict__ ledger,
     int m_rows, int m_cols, const float* __restrict__ vector, int n_batch,
     float* __restrict__ result) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_8(mht_8_v, 461, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableSparseMatrixBatchVectorMultiplyAccumulate");
+
   const int kBlockSize = 16;
   TFLITE_DCHECK_EQ(  // NOLINT
       m_cols % kBlockSize, 0);
@@ -295,6 +490,9 @@ void PortableSparseMatrixBatchVectorMultiplyAccumulate(
     const int8_t* __restrict__ matrix, const uint8_t* ledger, const int m_rows,
     const int m_cols, const int8_t* __restrict__ vectors,
     const float* scaling_factors, int n_batch, float* __restrict__ result) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_9(mht_9_v, 493, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableSparseMatrixBatchVectorMultiplyAccumulate");
+
   static const int kBlockSize = 16;
   TFLITE_DCHECK_EQ(  // NOLINT
       m_cols % kBlockSize, 0);
@@ -330,6 +528,9 @@ void PortableMatrixBatchVectorMultiplyAccumulateImpl(
     const int8_t* input_to_gate_weights, int32_t multiplier, int32_t shift,
     int32_t n_batch, int32_t n_input, int32_t n_output, int32_t output_zp,
     T* output) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_10(mht_10_v, 531, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableMatrixBatchVectorMultiplyAccumulateImpl");
+
   const int16_t output_max = std::numeric_limits<T>::max();
   const int16_t output_min = std::numeric_limits<T>::min();
   for (int batch = 0; batch < n_batch; ++batch) {
@@ -359,6 +560,9 @@ void PortableMatrixBatchVectorMultiplyAccumulate(
     const int8_t* input_to_gate_weights, int32_t multiplier, int32_t shift,
     int32_t n_batch, int32_t n_input, int32_t n_output, int32_t output_zp,
     int32_t* scratch, int16_t* output, CpuBackendContext* context) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_11(mht_11_v, 563, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableMatrixBatchVectorMultiplyAccumulate");
+
   PortableMatrixBatchVectorMultiplyAccumulateImpl(
       input, bias, input_to_gate_weights, multiplier, shift, n_batch, n_input,
       n_output, output_zp, output);
@@ -369,6 +573,9 @@ void PortableMatrixBatchVectorMultiplyAccumulate(
     const int8_t* input_to_gate_weights, int32_t multiplier, int32_t shift,
     int32_t n_batch, int32_t n_input, int32_t n_output, int32_t output_zp,
     int32_t* scratch, int8_t* output, CpuBackendContext* context) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_12(mht_12_v, 576, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableMatrixBatchVectorMultiplyAccumulate");
+
   PortableMatrixBatchVectorMultiplyAccumulateImpl(
       input, bias, input_to_gate_weights, multiplier, shift, n_batch, n_input,
       n_output, output_zp, output);
@@ -382,6 +589,9 @@ void PortableMatrixBatchVectorMultiply(const int8_t* input,
                                        int32_t n_batch, int32_t n_input,
                                        int32_t n_cell, int8_t* gate_output,
                                        int8_t gate_output_zp) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_13(mht_13_v, 592, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableMatrixBatchVectorMultiply");
+
   const int32_t int8_max = std::numeric_limits<int8_t>::max();
   const int32_t int8_min = std::numeric_limits<int8_t>::min();
   for (int batch = 0; batch < n_batch; ++batch) {
@@ -411,6 +621,9 @@ void PortableMatrixBatchVectorMultiply(
     int32_t proj_effective_scale_a, int32_t proj_effective_scale_b,
     const int32_t* gate_bias, int32_t n_batch, int32_t n_hidden,
     int32_t n_output, int32_t output_zp, int8_t* proj_output) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_14(mht_14_v, 624, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableMatrixBatchVectorMultiply");
+
   const int16_t int8_max = std::numeric_limits<int8_t>::max();
   const int16_t int8_min = std::numeric_limits<int8_t>::min();
   for (int batch = 0; batch < n_batch; ++batch) {
@@ -447,6 +660,9 @@ void PortableApplyLayerNorm(const int16_t* input,
                             const int32_t* bias, int32_t layer_norm_scale_a,
                             int32_t layer_norm_scale_b, int32_t variance_limit,
                             int n_batch, int n_input, int16_t* output) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_15(mht_15_v, 663, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableApplyLayerNorm");
+
   // The square of std::pow(2, 10), which is the extra factor that makes sure
   // normalized values has enough resolution.
   static const int kTwoToPower20 = 1 << 20;
@@ -498,6 +714,9 @@ void PortableApplyLayerNormFloat(const int16_t* input,
                                  int32_t layer_norm_scale_b,
                                  const int32_t* bias, int n_batch, int n_input,
                                  int16_t* output) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_16(mht_16_v, 717, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableApplyLayerNormFloat");
+
   const int32_t int16_max = std::numeric_limits<int16_t>::max();
   const int32_t int16_min = std::numeric_limits<int16_t>::min();
   const float layer_norm_scale =
@@ -540,6 +759,9 @@ void PortableApplyLayerNormFloat(const int16_t* input,
 void PortableMatrixScalarMultiplyAccumulate(const int8_t* matrix,
                                             int32_t scalar, int32_t n_row,
                                             int32_t n_col, int32_t* output) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_17(mht_17_v, 762, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableMatrixScalarMultiplyAccumulate");
+
   for (int i = 0; i < n_row; ++i) {
     int32_t row_sum = 0;
     for (int j = 0; j < n_col; ++j) {
@@ -551,6 +773,9 @@ void PortableMatrixScalarMultiplyAccumulate(const int8_t* matrix,
 
 void PortableApplySigmoid(const int16_t* input, int32_t n_batch,
                           int32_t n_input, int16_t* output) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_18(mht_18_v, 776, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableApplySigmoid");
+
   for (int batch = 0; batch < n_batch; ++batch) {
     for (int c = 0; c < n_input; c++) {
       using F3 = gemmlowp::FixedPoint<std::int16_t, 3>;
@@ -565,6 +790,9 @@ void PortableApplySigmoid(const int16_t* input, int32_t n_batch,
 
 void PortableApplySigmoidFloat(const int16_t* input, int32_t n_batch,
                                int32_t n_input, int16_t* output) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_19(mht_19_v, 793, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableApplySigmoidFloat");
+
   const int32_t int16_max = std::numeric_limits<int16_t>::max();
   const int32_t int16_min = std::numeric_limits<int16_t>::min();
   for (int batch = 0; batch < n_batch; ++batch) {
@@ -585,6 +813,9 @@ void PortableApplySigmoidFloat(const int16_t* input, int32_t n_batch,
 template <int IntegerBits>
 void PortableApplyTanhImpl(const int16_t* input, int32_t n_batch,
                            int32_t n_input, int16_t* output) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_20(mht_20_v, 816, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableApplyTanhImpl");
+
   using FX = gemmlowp::FixedPoint<std::int16_t, IntegerBits>;
   using F0 = gemmlowp::FixedPoint<std::int16_t, 0>;
   for (int batch = 0; batch < n_batch; ++batch) {
@@ -599,6 +830,9 @@ void PortableApplyTanhImpl(const int16_t* input, int32_t n_batch,
 
 void PortableApplyTanh(int32_t integer_bits, const int16_t* input,
                        int32_t n_batch, int32_t n_input, int16_t* output) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_21(mht_21_v, 833, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableApplyTanh");
+
   assert(integer_bits <= 6);
 #define DISPATCH_TANH(i)                                       \
   case i:                                                      \
@@ -621,6 +855,9 @@ void PortableApplyTanh(int32_t integer_bits, const int16_t* input,
 void PortableApplyTanhFloat(const int16_t* input, int32_t n_batch,
                             int32_t n_input, int32_t integer_bits,
                             int16_t* output) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_22(mht_22_v, 858, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableApplyTanhFloat");
+
   const int32_t int16_max = std::numeric_limits<int16_t>::max();
   const int32_t int16_min = std::numeric_limits<int16_t>::min();
   const double two = 2.0;
@@ -641,6 +878,9 @@ void PortableApplyTanhFloat(const int16_t* input, int32_t n_batch,
 
 void PortableCwiseMul(const int16_t* input_1, const int16_t* input_2,
                       int n_batch, int n_input, int shift, int16_t* output) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_23(mht_23_v, 881, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableCwiseMul");
+
   for (int batch = 0; batch < n_batch; ++batch) {
     for (int i = 0; i < n_input; ++i) {
       const int index = batch * n_input + i;
@@ -656,6 +896,9 @@ void PortableCwiseMul(const int16_t* input_1, const int16_t* input_2,
 void PortableCwiseMul(const int16_t* input_1, const int16_t* input_2,
                       int32_t multiplier, int32_t shift, int32_t n_batch,
                       int32_t n_input, int32_t output_zp, int8_t* output) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_24(mht_24_v, 899, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableCwiseMul");
+
   for (int batch = 0; batch < n_batch; ++batch) {
     for (int i = 0; i < n_input; ++i) {
       const int index = batch * n_input + i;
@@ -674,6 +917,9 @@ void PortableCwiseMul(const int16_t* input_1, const int16_t* input_2,
 
 void PortableCwiseAdd(const int16_t* input_1, const int16_t* input_2,
                       int n_batch, int n_input, int16_t* output) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_25(mht_25_v, 920, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableCwiseAdd");
+
   for (int batch = 0; batch < n_batch; ++batch) {
     for (int i = 0; i < n_input; ++i) {
       const int index = batch * n_input + i;
@@ -686,6 +932,9 @@ void PortableCwiseAdd(const int16_t* input_1, const int16_t* input_2,
 
 float PortableVectorVectorDotProduct(const float* vector1, const float* vector2,
                                      int v_size) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_26(mht_26_v, 935, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableVectorVectorDotProduct");
+
   float result = 0.0;
   for (int v = 0; v < v_size; v++) {
     result += *vector1++ * *vector2++;
@@ -696,6 +945,9 @@ float PortableVectorVectorDotProduct(const float* vector1, const float* vector2,
 namespace {
 inline int32_t VectorVectorDotProduct(const int16_t* vector1,
                                       const int16_t* vector2, int v_size) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_27(mht_27_v, 948, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "VectorVectorDotProduct");
+
   int32_t result = 0;
   for (int v = 0; v < v_size; v++) {
     result += *vector1++ * *vector2++;
@@ -708,6 +960,9 @@ void PortableBatchVectorBatchVectorDotProduct(const int16_t* vector1,
                                               const int16_t* vector2,
                                               int v_size, int n_batch,
                                               int32_t* result) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_28(mht_28_v, 963, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableBatchVectorBatchVectorDotProduct");
+
   for (int b = 0; b < n_batch; b++) {
     result[b] = VectorVectorDotProduct(vector1, vector2, v_size);
     vector1 += v_size;
@@ -718,6 +973,9 @@ void PortableBatchVectorBatchVectorDotProduct(const int16_t* vector1,
 void PortableVectorBatchVectorCwiseProductAccumulate(
     const int16_t* vector, int v_size, const int16_t* batch_vector, int n_batch,
     int32_t multiplier, int shift, int16_t* result) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_29(mht_29_v, 976, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableVectorBatchVectorCwiseProductAccumulate");
+
   for (int b = 0; b < n_batch; b++) {
     for (int v = 0; v < v_size; v++) {
       int32_t prod = vector[v] * *batch_vector++;
@@ -731,12 +989,18 @@ void PortableVectorBatchVectorCwiseProductAccumulate(
 }
 
 void PortableSub1Vector(const float* vector, int v_size, float* result) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_30(mht_30_v, 992, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableSub1Vector");
+
   for (int v = 0; v < v_size; v++) {
     *result++ = 1.0f - *vector++;
   }
 }
 
 void PortableSub1Vector(const int16_t* vector, int v_size, int16_t* result) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_31(mht_31_v, 1001, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableSub1Vector");
+
   static const int16_t kOne = 32767;
   for (int v = 0; v < v_size; v++) {
     *result++ = kOne - *vector++;
@@ -745,6 +1009,9 @@ void PortableSub1Vector(const int16_t* vector, int v_size, int16_t* result) {
 
 void PortableVectorScalarMultiply(const int8_t* vector, const int v_size,
                                   const float scale, float* result) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_32(mht_32_v, 1012, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableVectorScalarMultiply");
+
   for (int v = 0; v < v_size; ++v) {
     *result++ = scale * *vector++;
   }
@@ -753,6 +1020,9 @@ void PortableVectorScalarMultiply(const int8_t* vector, const int v_size,
 void PortableMeanStddevNormalization(const float* __restrict__ input_vector,
                                      float* __restrict__ output_vector,
                                      int v_size, int n_batch) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_33(mht_33_v, 1023, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableMeanStddevNormalization");
+
   for (int batch = 0; batch < n_batch; ++batch) {
     float sum = 0.0f;
     for (int i = 0; i < v_size; ++i) {
@@ -784,6 +1054,9 @@ void PortableTwoGateSaturatingAdd(const int8_t* input, int8_t input_zp,
                                   int32_t recurrent_effective_scale_b,
                                   int32_t n_batch, int32_t n_cell,
                                   int16_t* output) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSportable_tensor_utilsDTcc mht_34(mht_34_v, 1057, "", "./tensorflow/lite/kernels/internal/reference/portable_tensor_utils.cc", "PortableTwoGateSaturatingAdd");
+
   const int32_t int16_max = std::numeric_limits<int16_t>::max();
   const int32_t int16_min = std::numeric_limits<int16_t>::min();
   for (int i = 0; i < n_batch * n_cell; ++i) {

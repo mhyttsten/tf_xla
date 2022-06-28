@@ -14,6 +14,174 @@ limitations under the License.
 ==============================================================================*/
 #ifndef TENSORFLOW_LITE_KERNELS_INTERNAL_OPTIMIZED_OPTIMIZED_OPS_H_
 #define TENSORFLOW_LITE_KERNELS_INTERNAL_OPTIMIZED_OPTIMIZED_OPS_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <assert.h>
 #include <stdint.h>
@@ -333,6 +501,9 @@ inline void FullyConnected(
     const float* weights_data, const RuntimeShape& bias_shape,
     const float* optional_bias_data, const RuntimeShape& output_shape,
     float* output_data, CpuBackendContext* cpu_backend_context) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_0(mht_0_v, 504, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "FullyConnected");
+
   ruy::profiler::ScopeLabel label("FullyConnected");
   const int dims_count = weights_shape.DimensionsCount();
   const int input_rows = weights_shape.Dims(dims_count - 1);
@@ -369,6 +540,9 @@ inline void FullyConnected(
     const uint8* filter_data, const RuntimeShape& bias_shape,
     const int32* bias_data, const RuntimeShape& output_shape,
     uint8* output_data, CpuBackendContext* cpu_backend_context) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_1(mht_1_v, 543, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "FullyConnected");
+
   ruy::profiler::ScopeLabel label("FullyConnected/8bit");
   const int32 input_offset = params.input_offset;
   const int32 filter_offset = params.weights_offset;
@@ -432,6 +606,9 @@ inline void FullyConnected(
     const uint8* filter_data, const RuntimeShape& bias_shape,
     const int32* bias_data_int32, const RuntimeShape& output_shape,
     int16* output_data, CpuBackendContext* cpu_backend_context) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_2(mht_2_v, 609, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "FullyConnected");
+
   ruy::profiler::ScopeLabel label("FullyConnected/Uint8Int16");
   const int32 input_offset = params.input_offset;
   const int32 filter_offset = params.weights_offset;
@@ -497,6 +674,9 @@ inline void ShuffledFullyConnectedWorkerImpl(
     const int8* shuffled_weights_data, int batches, int output_depth,
     int output_stride, int accum_depth, const int32* bias_data,
     int32 output_multiplier, int output_shift, int16* output_data) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_3(mht_3_v, 677, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "ShuffledFullyConnectedWorkerImpl");
+
 #if defined USE_NEON
   const int8* shuffled_weights_ptr = shuffled_weights_data;
   if (batches == 1) {
@@ -788,6 +968,9 @@ struct ShuffledFullyConnectedWorkerTask : cpu_backend_threadpool::Task {
         output_data_(output_data) {}
 
   void Run() override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_4(mht_4_v, 971, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Run");
+
     ShuffledFullyConnectedWorkerImpl(
         input_data_, shuffled_weights_data_, batches_, output_depth_,
         output_stride_, accum_depth_, bias_data_, output_multiplier_,
@@ -813,6 +996,9 @@ inline void ShuffledFullyConnected(
     const int32* bias_data, const RuntimeShape& output_shape,
     int16* output_data, uint8* shuffled_input_workspace_data,
     CpuBackendContext* cpu_backend_context) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_5(mht_5_v, 999, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "ShuffledFullyConnected");
+
   ruy::profiler::ScopeLabel label("ShuffledFullyConnected/8bit");
   const int32 output_multiplier = params.output_multiplier;
   const int output_shift = params.output_shift;
@@ -954,6 +1140,9 @@ inline int32x4_t RoundToNearest(const float32x4_t input) {
 }
 
 inline uint32x4_t RoundToNearestUnsigned(const float32x4_t input) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_6(mht_6_v, 1143, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "RoundToNearestUnsigned");
+
 #if defined(__aarch64__)
   // Note that vcvtnq_u32_f32 is not available in ARMv7 or in arm_neon_sse.h.
   return vcvtnq_u32_f32(input);
@@ -1106,6 +1295,9 @@ struct MeanWorkerTask : cpu_backend_threadpool::Task {
         end_height(end_height) {}
 
   void Run() override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_7(mht_7_v, 1298, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Run");
+
     MeanImpl(op_params, input_shape, input_data, multiplier, shift, bias,
              output_shape, output_data, start_height, end_height);
   }
@@ -1129,6 +1321,9 @@ inline void Mean(const tflite::MeanParams& op_params,
                  float input_scale, const RuntimeShape& unextended_output_shape,
                  uint8_t* output_data, int32 output_zero_point,
                  float output_scale, CpuBackendContext* cpu_backend_context) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_8(mht_8_v, 1324, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Mean");
+
   ruy::profiler::ScopeLabel label("Mean4D/Uint8");
   // Current implementation only supports dimension equals 4 and simultaneous
   // reduction over width and height.
@@ -1239,6 +1434,9 @@ inline void Conv(const ConvParams& params, const RuntimeShape& input_shape,
                  const float* bias_data, const RuntimeShape& output_shape,
                  float* output_data, const RuntimeShape& im2col_shape,
                  float* im2col_data, CpuBackendContext* cpu_backend_context) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_9(mht_9_v, 1437, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Conv");
+
   const int stride_width = params.stride_width;
   const int stride_height = params.stride_height;
   const int dilation_width_factor = params.dilation_width_factor;
@@ -1338,6 +1536,9 @@ inline void HybridConv(const ConvParams& params, float* scaling_factors_ptr,
                        int32_t* accum_scratch, const RuntimeShape& output_shape,
                        float* output_data, const RuntimeShape& im2col_shape,
                        int8_t* im2col_data, CpuBackendContext* context) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_10(mht_10_v, 1539, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "HybridConv");
+
   const int stride_width = params.stride_width;
   const int stride_height = params.stride_height;
   const int dilation_width_factor = params.dilation_width_factor;
@@ -1430,6 +1631,9 @@ inline void HybridConvPerChannel(
     const float* per_channel_scale, int32_t* input_offset,
     const RuntimeShape& scratch_shape, int32_t* scratch, int32_t* row_sums,
     bool* compute_row_sums, CpuBackendContext* cpu_backend_context) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_11(mht_11_v, 1634, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "HybridConvPerChannel");
+
   ruy::profiler::ScopeLabel label("ConvHybridPerChannel");
   const int stride_width = params.stride_width;
   const int stride_height = params.stride_height;
@@ -1537,6 +1741,9 @@ inline void Conv(const ConvParams& params, const RuntimeShape& input_shape,
                  const int32* bias_data, const RuntimeShape& output_shape,
                  uint8* output_data, const RuntimeShape& im2col_shape,
                  uint8* im2col_data, CpuBackendContext* cpu_backend_context) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_12(mht_12_v, 1744, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Conv");
+
   ruy::profiler::ScopeLabel label("Conv/8bit");
 
   const int stride_width = params.stride_width;
@@ -1641,6 +1848,9 @@ inline void DepthToSpace(const tflite::DepthToSpaceParams& op_params,
                          const T* input_data,
                          const RuntimeShape& unextended_output_shape,
                          T* output_data) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_13(mht_13_v, 1851, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "DepthToSpace");
+
   ruy::profiler::ScopeLabel label("DepthToSpace");
 
   TFLITE_DCHECK_LE(unextended_input_shape.DimensionsCount(), 4);
@@ -1682,6 +1892,9 @@ inline void SpaceToDepth(const tflite::SpaceToDepthParams& op_params,
                          const T* input_data,
                          const RuntimeShape& unextended_output_shape,
                          T* output_data) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_14(mht_14_v, 1895, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "SpaceToDepth");
+
   ruy::profiler::ScopeLabel label("SpaceToDepth");
 
   TFLITE_DCHECK_LE(unextended_input_shape.DimensionsCount(), 4);
@@ -1719,6 +1932,9 @@ inline void SpaceToDepth(const tflite::SpaceToDepthParams& op_params,
 
 inline void Relu(const RuntimeShape& input_shape, const float* input_data,
                  const RuntimeShape& output_shape, float* output_data) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_15(mht_15_v, 1935, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Relu");
+
   ruy::profiler::ScopeLabel label("Relu (not fused)");
 
   const auto input = MapAsVector(input_data, input_shape);
@@ -1731,6 +1947,9 @@ inline void L2Normalization(const tflite::L2NormalizationParams& op_params,
                             const float* input_data,
                             const RuntimeShape& output_shape,
                             float* output_data, float epsilon = 1e-6) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_16(mht_16_v, 1950, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "L2Normalization");
+
   ruy::profiler::ScopeLabel label("L2Normalization");
   const int trailing_dim = input_shape.DimensionsCount() - 1;
   const int outer_size =
@@ -1758,6 +1977,9 @@ inline void L2Normalization(const tflite::L2NormalizationParams& op_params,
                             const uint8* input_data,
                             const RuntimeShape& output_shape,
                             uint8* output_data) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_17(mht_17_v, 1980, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "L2Normalization");
+
   ruy::profiler::ScopeLabel label("L2Normalization/8bit");
   const int trailing_dim = input_shape.DimensionsCount() - 1;
   const int depth =
@@ -1795,6 +2017,9 @@ inline void L2Normalization(const tflite::L2NormalizationParams& op_params,
 inline void AddElementwise(int size, const ArithmeticParams& params,
                            const float* input1_data, const float* input2_data,
                            float* output_data) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_18(mht_18_v, 2020, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "AddElementwise");
+
   int i = 0;
 
 #ifdef USE_NEON
@@ -1847,6 +2072,9 @@ inline void Add(const ArithmeticParams& params,
                 const RuntimeShape& input1_shape, const float* input1_data,
                 const RuntimeShape& input2_shape, const float* input2_data,
                 const RuntimeShape& output_shape, float* output_data) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_19(mht_19_v, 2075, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Add");
+
   ruy::profiler::ScopeLabel label("Add");
   const int flat_size =
       MatchingElementsSize(input1_shape, input2_shape, output_shape);
@@ -1858,6 +2086,9 @@ inline void Add(const ArithmeticParams& params,
 inline void AddElementwise(int size, const ArithmeticParams& params,
                            const uint8* input1_data, const uint8* input2_data,
                            uint8* output_data) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_20(mht_20_v, 2089, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "AddElementwise");
+
   ruy::profiler::ScopeLabel label("AddElementwise/8bit");
   int i = 0;
   TFLITE_DCHECK_GT(params.input1_offset, -256);
@@ -1950,6 +2181,9 @@ inline void AddElementwise(int size, const ArithmeticParams& params,
 inline void AddScalarBroadcast(int size, const ArithmeticParams& params,
                                uint8 input1_data, const uint8* input2_data,
                                uint8* output_data) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_21(mht_21_v, 2184, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "AddScalarBroadcast");
+
   using gemmlowp::RoundingDivideByPOT;
 
   ruy::profiler::ScopeLabel label("AddScalarBroadcast/8bit");
@@ -2053,6 +2287,9 @@ inline void AddScalarBroadcast(int size, const ArithmeticParams& params,
 inline void AddScalarBroadcast(int size, const ArithmeticParams& params,
                                float broadcast_value, const float* input2_data,
                                float* output_data) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_22(mht_22_v, 2290, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "AddScalarBroadcast");
+
   int i = 0;
 #ifdef USE_NEON
   const float32x4_t output_activation_min_vector =
@@ -2084,6 +2321,9 @@ inline void Add(const ArithmeticParams& params,
                 const RuntimeShape& input1_shape, const uint8* input1_data,
                 const RuntimeShape& input2_shape, const uint8* input2_data,
                 const RuntimeShape& output_shape, uint8* output_data) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_23(mht_23_v, 2324, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Add");
+
   TFLITE_DCHECK_LE(params.quantized_activation_min,
                    params.quantized_activation_max);
   ruy::profiler::ScopeLabel label("Add/8bit");
@@ -2101,6 +2341,9 @@ inline void Add(const ArithmeticParams& params,
                 const RuntimeShape& input1_shape, const int16* input1_data,
                 const RuntimeShape& input2_shape, const int16* input2_data,
                 const RuntimeShape& output_shape, int16* output_data) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_24(mht_24_v, 2344, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Add");
+
   ruy::profiler::ScopeLabel label("Add/Int16");
   TFLITE_DCHECK_LE(params.quantized_activation_min,
                    params.quantized_activation_max);
@@ -2139,6 +2382,9 @@ inline typename std::enable_if<is_int32_or_int64<T>::value, void>::type Add(
     const ArithmeticParams& params, const RuntimeShape& input1_shape,
     const T* input1_data, const RuntimeShape& input2_shape,
     const T* input2_data, const RuntimeShape& output_shape, T* output_data) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_25(mht_25_v, 2385, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Add");
+
   ruy::profiler::ScopeLabel label("Add/int32or64");
 
   T activation_min, activation_max;
@@ -2173,6 +2419,9 @@ inline void BroadcastAddDispatch(
     const ArithmeticParams& params, const RuntimeShape& input1_shape,
     const T* input1_data, const RuntimeShape& input2_shape,
     const T* input2_data, const RuntimeShape& output_shape, T* output_data) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_26(mht_26_v, 2422, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "BroadcastAddDispatch");
+
   if (params.broadcast_category == BroadcastableOpCategory::kGenericBroadcast) {
     return BroadcastAdd4DSlow(params, input1_shape, input1_data, input2_shape,
                               input2_data, output_shape, output_data);
@@ -2194,6 +2443,9 @@ inline void BroadcastAddFivefold(const ArithmeticParams& unswitched_params,
                                  const uint8* unswitched_input2_data,
                                  const RuntimeShape& output_shape,
                                  uint8* output_data) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_27(mht_27_v, 2446, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "BroadcastAddFivefold");
+
   BroadcastAddDispatch(unswitched_params, unswitched_input1_shape,
                        unswitched_input1_data, unswitched_input2_shape,
                        unswitched_input2_data, output_shape, output_data);
@@ -2206,6 +2458,9 @@ inline void BroadcastAddFivefold(const ArithmeticParams& params,
                                  const float* unswitched_input2_data,
                                  const RuntimeShape& output_shape,
                                  float* output_data) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_28(mht_28_v, 2461, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "BroadcastAddFivefold");
+
   BroadcastAddDispatch(params, unswitched_input1_shape, unswitched_input1_data,
                        unswitched_input2_shape, unswitched_input2_data,
                        output_shape, output_data);
@@ -2214,6 +2469,9 @@ inline void BroadcastAddFivefold(const ArithmeticParams& params,
 inline void MulElementwise(int size, const ArithmeticParams& params,
                            const float* input1_data, const float* input2_data,
                            float* output_data) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_29(mht_29_v, 2472, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "MulElementwise");
+
   const float output_activation_min = params.float_activation_min;
   const float output_activation_max = params.float_activation_max;
 
@@ -2272,6 +2530,9 @@ inline void Mul(const ArithmeticParams& params,
                 const RuntimeShape& input1_shape, const float* input1_data,
                 const RuntimeShape& input2_shape, const float* input2_data,
                 const RuntimeShape& output_shape, float* output_data) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_30(mht_30_v, 2533, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Mul");
+
   ruy::profiler::ScopeLabel label("Mul");
 
   const int flat_size =
@@ -2283,6 +2544,9 @@ inline void Mul(const ArithmeticParams& params,
                 const RuntimeShape& input1_shape, const int32* input1_data,
                 const RuntimeShape& input2_shape, const int32* input2_data,
                 const RuntimeShape& output_shape, int32* output_data) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_31(mht_31_v, 2547, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Mul");
+
   ruy::profiler::ScopeLabel label("Mul/int32/activation");
 
   const int flat_size =
@@ -2303,6 +2567,9 @@ inline void MulNoActivation(const ArithmeticParams& params,
                             const int32* input2_data,
                             const RuntimeShape& output_shape,
                             int32* output_data) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_32(mht_32_v, 2570, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "MulNoActivation");
+
   ruy::profiler::ScopeLabel label("Mul/int32");
 
   auto input1_map = MapAsVector(input1_data, input1_shape);
@@ -2327,6 +2594,9 @@ inline void Mul(const ArithmeticParams& params,
                 const RuntimeShape& input1_shape, const int16* input1_data,
                 const RuntimeShape& input2_shape, const int16* input2_data,
                 const RuntimeShape& output_shape, int16* output_data) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_33(mht_33_v, 2597, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Mul");
+
   ruy::profiler::ScopeLabel label("Mul/Int16/NoActivation");
   // This is a copy of the reference implementation. We do not currently have a
   // properly optimized version.
@@ -2348,6 +2618,9 @@ inline void Mul(const ArithmeticParams& params,
                 const RuntimeShape& input1_shape, const int16* input1_data,
                 const RuntimeShape& input2_shape, const int16* input2_data,
                 const RuntimeShape& output_shape, uint8* output_data) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_34(mht_34_v, 2621, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Mul");
+
   ruy::profiler::ScopeLabel label("Mul/Int16Uint8");
   // This is a copy of the reference implementation. We do not currently have a
   // properly optimized version.
@@ -2380,6 +2653,9 @@ inline void Mul(const ArithmeticParams& params,
 inline void MulElementwise(int size, const ArithmeticParams& params,
                            const uint8* input1_data, const uint8* input2_data,
                            uint8* output_data) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_35(mht_35_v, 2656, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "MulElementwise");
+
   int i = 0;
   TFLITE_DCHECK_GT(params.input1_offset, -256);
   TFLITE_DCHECK_LT(params.input1_offset, 256);
@@ -2455,6 +2731,9 @@ inline void MulElementwise(int size, const ArithmeticParams& params,
 inline void MulSimpleBroadcast(int size, const ArithmeticParams& params,
                                const uint8 broadcast_value,
                                const uint8* input2_data, uint8* output_data) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_36(mht_36_v, 2734, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "MulSimpleBroadcast");
+
   const int16 input1_val = params.input1_offset + broadcast_value;
 
   int i = 0;
@@ -2526,6 +2805,9 @@ inline void MulSimpleBroadcast(int size, const ArithmeticParams& params,
 inline void MulSimpleBroadcast(int size, const ArithmeticParams& params,
                                const float broadcast_value,
                                const float* input2_data, float* output_data) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_37(mht_37_v, 2808, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "MulSimpleBroadcast");
+
   int i = 0;
 #ifdef USE_NEON
   const float32x4_t output_activation_min_vector =
@@ -2557,6 +2839,9 @@ inline void Mul(const ArithmeticParams& params,
                 const RuntimeShape& input1_shape, const uint8* input1_data,
                 const RuntimeShape& input2_shape, const uint8* input2_data,
                 const RuntimeShape& output_shape, uint8* output_data) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_38(mht_38_v, 2842, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Mul");
+
   TFLITE_DCHECK_LE(params.quantized_activation_min,
                    params.quantized_activation_max);
   ruy::profiler::ScopeLabel label("Mul/8bit");
@@ -2571,6 +2856,9 @@ inline void BroadcastMulDispatch(
     const ArithmeticParams& params, const RuntimeShape& input1_shape,
     const T* input1_data, const RuntimeShape& input2_shape,
     const T* input2_data, const RuntimeShape& output_shape, T* output_data) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_39(mht_39_v, 2859, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "BroadcastMulDispatch");
+
   if (params.broadcast_category == BroadcastableOpCategory::kGenericBroadcast) {
     return BroadcastMul4DSlow(params, input1_shape, input1_data, input2_shape,
                               input2_data, output_shape, output_data);
@@ -2592,6 +2880,9 @@ inline void BroadcastMulFivefold(const ArithmeticParams& unswitched_params,
                                  const uint8* unswitched_input2_data,
                                  const RuntimeShape& output_shape,
                                  uint8* output_data) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_40(mht_40_v, 2883, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "BroadcastMulFivefold");
+
   BroadcastMulDispatch(unswitched_params, unswitched_input1_shape,
                        unswitched_input1_data, unswitched_input2_shape,
                        unswitched_input2_data, output_shape, output_data);
@@ -2604,6 +2895,9 @@ inline void BroadcastMulFivefold(const ArithmeticParams& params,
                                  const float* unswitched_input2_data,
                                  const RuntimeShape& output_shape,
                                  float* output_data) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_41(mht_41_v, 2898, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "BroadcastMulFivefold");
+
   BroadcastMulDispatch(params, unswitched_input1_shape, unswitched_input1_data,
                        unswitched_input2_shape, unswitched_input2_data,
                        output_shape, output_data);
@@ -2654,6 +2948,9 @@ void BroadcastDivSlow(const ArithmeticParams& params,
   // nesting loops such that the innermost loop has the smallest stride for the
   // best cache behavior.
   auto div_func = [&](int indexes[N]) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_42(mht_42_v, 2951, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "lambda");
+
     output_data[SubscriptToIndex(output_desc, indexes)] =
         ActivationFunctionWithMinMax(
             input1_data[SubscriptToIndex(desc1, indexes)] /
@@ -2694,6 +2991,9 @@ inline void BroadcastDivSlow(const ArithmeticParams& params,
   TFLITE_DCHECK_LT(params.output_offset, 256);
 
   auto div_func = [&](int indexes[N]) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_43(mht_43_v, 2994, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "lambda");
+
     int32 input1_val =
         params.input1_offset + input1_data[SubscriptToIndex(desc1, indexes)];
     int32 input2_val =
@@ -2729,6 +3029,9 @@ inline void SubWithActivation(
     const ArithmeticParams& params, const RuntimeShape& input1_shape,
     const T* input1_data, const RuntimeShape& input2_shape,
     const T* input2_data, const RuntimeShape& output_shape, T* output_data) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_44(mht_44_v, 3032, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "SubWithActivation");
+
   ruy::profiler::ScopeLabel label("SubWithActivation_optimized");
   TFLITE_DCHECK_EQ(input1_shape.FlatSize(), input2_shape.FlatSize());
   auto input1_map = MapAsVector(input1_data, input1_shape);
@@ -2748,6 +3051,9 @@ inline void SubNonBroadcast(const ArithmeticParams& params,
                             const float* input2_data,
                             const RuntimeShape& output_shape,
                             float* output_data) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_45(mht_45_v, 3054, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "SubNonBroadcast");
+
   ruy::profiler::ScopeLabel label("SubNonBroadcast");
   SubWithActivation<float>(params, input1_shape, input1_data, input2_shape,
                            input2_data, output_shape, output_data);
@@ -2758,6 +3064,9 @@ void Sub(const ArithmeticParams& params, const RuntimeShape& input1_shape,
          const T* input1_data, const RuntimeShape& input2_shape,
          const T* input2_data, const RuntimeShape& output_shape,
          T* output_data) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_46(mht_46_v, 3067, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Sub");
+
   ruy::profiler::ScopeLabel label("Sub");
 
   auto input1_map = MapAsVector(input1_data, input1_shape);
@@ -2789,6 +3098,9 @@ inline void LstmCell(
     const RuntimeShape& unextended_concat_temp_shape, float* concat_temp_data,
     const RuntimeShape& unextended_activ_temp_shape, float* activ_temp_data,
     CpuBackendContext* cpu_backend_context) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_47(mht_47_v, 3101, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "LstmCell");
+
   ruy::profiler::ScopeLabel label("LstmCell");
   TFLITE_DCHECK_LE(unextended_input_shape.DimensionsCount(), 4);
   TFLITE_DCHECK_LE(unextended_prev_activ_shape.DimensionsCount(), 4);
@@ -2915,6 +3227,9 @@ inline void LstmCell(
     uint8* concat_temp_data_uint8,
     const RuntimeShape& unextended_activ_temp_shape,
     int16* activ_temp_data_int16, CpuBackendContext* cpu_backend_context) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_48(mht_48_v, 3230, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "LstmCell");
+
   ruy::profiler::ScopeLabel label(
       "LstmCell/quantized (8bit external, 16bit internal)");
   int32 weights_zero_point = params.weights_zero_point;
@@ -3173,6 +3488,9 @@ inline void LstmCell(
 }
 
 inline int NodeOffset(int b, int h, int w, int height, int width) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_49(mht_49_v, 3491, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "NodeOffset");
+
   return (b * height + h) * width + w;
 }
 
@@ -3180,6 +3498,9 @@ inline bool AveragePool(const PoolParams& params,
                         const RuntimeShape& input_shape,
                         const float* input_data,
                         const RuntimeShape& output_shape, float* output_data) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_50(mht_50_v, 3501, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "AveragePool");
+
   ruy::profiler::ScopeLabel label("AveragePool");
   TFLITE_DCHECK_EQ(input_shape.DimensionsCount(), 4);
   TFLITE_DCHECK_EQ(output_shape.DimensionsCount(), 4);
@@ -3247,6 +3568,9 @@ inline bool AveragePool(const PoolParams& params,
                         const RuntimeShape& input_shape,
                         const uint8* input_data,
                         const RuntimeShape& output_shape, uint8* output_data) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_51(mht_51_v, 3571, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "AveragePool");
+
   ruy::profiler::ScopeLabel label("AveragePool/8bit");
 
   // Here, and in other pooling ops, in order to maintain locality of reference,
@@ -3385,6 +3709,9 @@ inline bool AveragePool(const PoolParams& params,
 inline void MaxPool(const PoolParams& params, const RuntimeShape& input_shape,
                     const float* input_data, const RuntimeShape& output_shape,
                     float* output_data) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_52(mht_52_v, 3712, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "MaxPool");
+
   ruy::profiler::ScopeLabel label("MaxPool");
   TFLITE_DCHECK_EQ(input_shape.DimensionsCount(), 4);
   TFLITE_DCHECK_EQ(output_shape.DimensionsCount(), 4);
@@ -3439,6 +3766,9 @@ inline void MaxPool(const PoolParams& params, const RuntimeShape& input_shape,
 inline void MaxPool(const PoolParams& params, const RuntimeShape& input_shape,
                     const uint8* input_data, const RuntimeShape& output_shape,
                     uint8* output_data) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_53(mht_53_v, 3769, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "MaxPool");
+
   ruy::profiler::ScopeLabel label("MaxPool/8bit");
 
   // Here, and in other pooling ops, in order to maintain locality of reference,
@@ -3548,6 +3878,9 @@ inline void MaxPool(const PoolParams& params, const RuntimeShape& input_shape,
 inline void L2Pool(const PoolParams& params, const RuntimeShape& input_shape,
                    const float* input_data, const RuntimeShape& output_shape,
                    float* output_data) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_54(mht_54_v, 3881, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "L2Pool");
+
   ruy::profiler::ScopeLabel label("L2Pool");
   TFLITE_DCHECK_EQ(input_shape.DimensionsCount(), 4);
   TFLITE_DCHECK_EQ(output_shape.DimensionsCount(), 4);
@@ -3616,6 +3949,9 @@ inline void LocalResponseNormalization(
     const tflite::LocalResponseNormalizationParams& op_params,
     const RuntimeShape& input_shape, const float* input_data,
     const RuntimeShape& output_shape, float* output_data) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_55(mht_55_v, 3952, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "LocalResponseNormalization");
+
   ruy::profiler::ScopeLabel label("LocalResponseNormalization");
   MatchingFlatSize(input_shape, output_shape);
 
@@ -3662,6 +3998,9 @@ inline void SoftmaxImpl(const SoftmaxParams& params,
                         const float* input_data,
                         const RuntimeShape& output_shape, float* output_data,
                         int start_batch, int end_batch) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_56(mht_56_v, 4001, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "SoftmaxImpl");
+
   ruy::profiler::ScopeLabel label("Softmax/Impl");
   MatchingFlatSize(input_shape, output_shape);
 
@@ -3695,6 +4034,9 @@ struct SoftmaxWorkerTask : cpu_backend_threadpool::Task {
         start_batch(start_batch),
         end_batch(end_batch) {}
   void Run() override {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_57(mht_57_v, 4037, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Run");
+
     SoftmaxImpl(params, input_shape, input_data, output_shape, output_data,
                 start_batch, end_batch);
   }
@@ -3713,6 +4055,9 @@ inline void Softmax(const SoftmaxParams& params,
                     const RuntimeShape& input_shape, const float* input_data,
                     const RuntimeShape& output_shape, float* output_data,
                     CpuBackendContext* cpu_backend_context = nullptr) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_58(mht_58_v, 4058, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Softmax");
+
   ruy::profiler::ScopeLabel label("Softmax");
 
   // We picture softmax input as a 2-D matrix while the last dim is the logit
@@ -3750,6 +4095,9 @@ inline void Softmax(const SoftmaxParams& params,
 
 template <typename T>
 inline int32_t QuantizeSoftmaxOutput(float prob_rescaled, int32_t zero_point) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_59(mht_59_v, 4098, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "QuantizeSoftmaxOutput");
+
   const int32_t prob_rnd = static_cast<int32_t>(std::round(prob_rescaled));
   return prob_rnd + zero_point;
 }
@@ -3849,6 +4197,9 @@ inline void Softmax(const SoftmaxParams& params,
 // to that.
 inline void PopulateSoftmaxUInt8LookupTable(SoftmaxParams* data,
                                             float input_scale, float beta) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_60(mht_60_v, 4200, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "PopulateSoftmaxUInt8LookupTable");
+
   const float scale = input_scale * beta;
   const int32_t max_uint8 = std::numeric_limits<uint8_t>::max();
   const int32_t max_uint16 = std::numeric_limits<uint16_t>::max();
@@ -3865,6 +4216,9 @@ inline void PopulateSoftmaxUInt8LookupTable(SoftmaxParams* data,
 }
 
 inline int FindMaxValue(int size, const uint8_t* input_data, uint8_t offset) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_61(mht_61_v, 4219, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "FindMaxValue");
+
   int32_t max_val = std::numeric_limits<uint8_t>::min();
   int j = 0;
 #ifdef TFLITE_SOFTMAX_USE_UINT16_LUT
@@ -3900,6 +4254,9 @@ inline void StoreValue(int32x4x4_t value_to_store, int8_t* output) {
 // Value_to_store layout:
 // [high_high, high_low, low_high, low_low].
 inline void StoreValue(int32x4x4_t value_to_store, uint8_t* output) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_62(mht_62_v, 4257, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "StoreValue");
+
   const uint16x8_t result_1 =
       vcombine_u16(vqmovn_u32(vreinterpretq_u32_s32(value_to_store.val[1])),
                    vqmovn_u32(vreinterpretq_u32_s32(value_to_store.val[0])));
@@ -4081,6 +4438,9 @@ inline void SoftmaxInt8LUT(const SoftmaxParams& params,
 inline void LogSoftmax(const SoftmaxParams& params,
                        const RuntimeShape& input_shape, const float* input_data,
                        const RuntimeShape& output_shape, float* output_data) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_63(mht_63_v, 4441, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "LogSoftmax");
+
   ruy::profiler::ScopeLabel label("LogSoftmax");
   const int trailing_dim = input_shape.DimensionsCount() - 1;
   const int outer_size =
@@ -4104,6 +4464,9 @@ inline void LogSoftmax(const SoftmaxParams& params,
 inline void LogSoftmax(const SoftmaxParams& params,
                        const RuntimeShape& input_shape, const uint8* input_data,
                        const RuntimeShape& output_shape, uint8* output_data) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_64(mht_64_v, 4467, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "LogSoftmax");
+
   reference_ops::LogSoftmax(params, input_shape, input_data, output_shape,
                             output_data);
 }
@@ -4127,6 +4490,9 @@ template <typename T>
 inline void LogSoftmax(const SoftmaxParams& params, float input_scale,
                        const RuntimeShape& input_shape, const T* input_data,
                        const RuntimeShape& output_shape, T* output_data) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_65(mht_65_v, 4493, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "LogSoftmax");
+
   ruy::profiler::ScopeLabel label("LogSoftmax");
   const int trailing_dim = input_shape.DimensionsCount() - 1;
   const int excluding_last_dim =
@@ -4178,6 +4544,9 @@ inline void LogSoftmax(const SoftmaxParams& params, float input_scale,
 
 inline void Logistic(const RuntimeShape& input_shape, const float* input_data,
                      const RuntimeShape& output_shape, float* output_data) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_66(mht_66_v, 4547, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Logistic");
+
   ruy::profiler::ScopeLabel label("Logistic");
   auto input_map = MapAsVector(input_data, input_shape);
   auto output_map = MapAsVector(output_data, output_shape);
@@ -4190,6 +4559,9 @@ inline void Logistic(const RuntimeShape& input_shape, const float* input_data,
 inline void Logistic(const LogisticParams&, const RuntimeShape& input_shape,
                      const float* input_data, const RuntimeShape& output_shape,
                      float* output_data) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_67(mht_67_v, 4562, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Logistic");
+
   // Drop params: not needed.
   Logistic(input_shape, input_data, output_shape, output_data);
 }
@@ -4197,6 +4569,9 @@ inline void Logistic(const LogisticParams&, const RuntimeShape& input_shape,
 inline void Logistic(const LogisticParams& params,
                      const RuntimeShape& input_shape, const int16* input_data,
                      const RuntimeShape& output_shape, int16* output_data) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_68(mht_68_v, 4572, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Logistic");
+
   ruy::profiler::ScopeLabel label("Logistic/Int16");
   const int flat_size = MatchingFlatSize(input_shape, output_shape);
 
@@ -4292,6 +4667,9 @@ inline void Logistic(const LogisticParams& params,
 
 inline void Tanh(const RuntimeShape& input_shape, const float* input_data,
                  const RuntimeShape& output_shape, float* output_data) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_69(mht_69_v, 4670, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Tanh");
+
   ruy::profiler::ScopeLabel label("Tanh");
   auto input_map = MapAsVector(input_data, input_shape);
   auto output_map = MapAsVector(output_data, output_shape);
@@ -4303,6 +4681,9 @@ inline void Tanh(const RuntimeShape& input_shape, const float* input_data,
 inline void Tanh(const TanhParams&, const RuntimeShape& input_shape,
                  const float* input_data, const RuntimeShape& output_shape,
                  float* output_data) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_70(mht_70_v, 4684, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Tanh");
+
   // Drop params: not needed.
   Tanh(input_shape, input_data, output_shape, output_data);
 }
@@ -4310,6 +4691,9 @@ inline void Tanh(const TanhParams&, const RuntimeShape& input_shape,
 inline void Tanh(const TanhParams& params, const RuntimeShape& input_shape,
                  const int16* input_data, const RuntimeShape& output_shape,
                  int16* output_data) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_71(mht_71_v, 4694, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Tanh");
+
   ruy::profiler::ScopeLabel label("Tanh/Int16");
   const int input_left_shift = params.input_left_shift;
   // Support for shifts is limited until we have a parameterized version of
@@ -4485,6 +4869,9 @@ inline void Cast(const RuntimeShape& input_shape, const SrcT* input_data,
 
 inline void Floor(const RuntimeShape& input_shape, const float* input_data,
                   const RuntimeShape& output_shape, float* output_data) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_72(mht_72_v, 4872, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Floor");
+
   ruy::profiler::ScopeLabel label("Floor");
   auto input_map = MapAsVector(input_data, input_shape);
   auto output_map = MapAsVector(output_data, output_shape);
@@ -4493,6 +4880,9 @@ inline void Floor(const RuntimeShape& input_shape, const float* input_data,
 
 inline void Ceil(const RuntimeShape& input_shape, const float* input_data,
                  const RuntimeShape& output_shape, float* output_data) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_73(mht_73_v, 4883, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Ceil");
+
   ruy::profiler::ScopeLabel label("Ceil");
   auto input_map = MapAsVector(input_data, input_shape);
   auto output_map = MapAsVector(output_data, output_shape);
@@ -4509,6 +4899,9 @@ inline void Ceil(const RuntimeShape& input_shape, const float* input_data,
 inline void GetIndexRange(int spatial_index_dim, int block_shape_dim,
                           int input_dim, int output_dim, int* start_index,
                           int* end_index) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_74(mht_74_v, 4902, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "GetIndexRange");
+
   // (*start_index) * block_shape_dim is effectively rounded up to the next
   // multiple of block_shape_dim by the integer division.
   *start_index =
@@ -4526,6 +4919,9 @@ inline void BatchToSpaceND(
     const RuntimeShape& unextended_input2_shape, const int32* block_shape_data,
     const RuntimeShape& unextended_input3_shape, const int32* crops_data,
     const RuntimeShape& unextended_output_shape, T* output_data) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_75(mht_75_v, 4922, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "BatchToSpaceND");
+
   ruy::profiler::ScopeLabel label("BatchToSpaceND");
 
   TFLITE_DCHECK_GE(unextended_input1_shape.DimensionsCount(), 3);
@@ -4535,6 +4931,9 @@ inline void BatchToSpaceND(
 
   // Extends the input/output shape from 3D to 4D if needed, NHC -> NH1C.
   auto extend_shape = [](const RuntimeShape& shape) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_76(mht_76_v, 4934, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "lambda");
+
     if (shape.DimensionsCount() == 4) {
       return shape;
     }
@@ -4603,6 +5002,9 @@ inline void BatchToSpaceND(
 
 template <typename T>
 void TypedMemset(void* ptr, T value, size_t num) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_77(mht_77_v, 5005, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "TypedMemset");
+
   // Optimization for common cases where memset() will suffice.
   if (value == 0 || std::is_same<T, uint8_t>::value) {
     memset(ptr, value, num * sizeof(T));
@@ -4775,6 +5177,9 @@ inline void Pad(const tflite::PadParams& op_params,
                 const RuntimeShape& input_shape, const T* input_data,
                 const int32* pad_value_ptr, const RuntimeShape& output_shape,
                 T* output_data) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_78(mht_78_v, 5180, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Pad");
+
   const T converted_pad_value = static_cast<T>(*pad_value_ptr);
   PadImpl(op_params, input_shape, input_data, &converted_pad_value,
           output_shape, output_data);
@@ -4786,6 +5191,9 @@ inline void Pad(const tflite::PadParams& op_params,
                 const RuntimeShape& input_shape, const int32* input_data,
                 const int32* pad_value_ptr, const RuntimeShape& output_shape,
                 int32* output_data) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_79(mht_79_v, 5194, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Pad");
+
   PadImpl(op_params, input_shape, input_data, pad_value_ptr, output_shape,
           output_data);
 }
@@ -4927,6 +5335,9 @@ inline void PadImageStyle(const tflite::PadParams& op_params,
                           const uint8* input_data, const P* pad_value_ptr,
                           const RuntimeShape& output_shape,
                           uint8* output_data) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_80(mht_80_v, 5338, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "PadImageStyle");
+
   PadImageStyleMemset(op_params, input_shape, input_data, pad_value_ptr,
                       output_shape, output_data);
 }
@@ -4937,6 +5348,9 @@ inline void PadImageStyle(const tflite::PadParams& op_params,
                           const float* input_data, const P* pad_value_ptr,
                           const RuntimeShape& output_shape,
                           float* output_data) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_81(mht_81_v, 5351, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "PadImageStyle");
+
   const float converted_pad_value = static_cast<float>(*pad_value_ptr);
   if (converted_pad_value == 0.0f) {
     PadImageStyleMemset(op_params, input_shape, input_data, pad_value_ptr,
@@ -4952,6 +5366,9 @@ inline void Slice(const tflite::SliceParams& op_params,
                   const RuntimeShape& input_shape,
                   const RuntimeShape& output_shape,
                   SequentialTensorWriter<T>* writer) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_82(mht_82_v, 5369, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Slice");
+
   ruy::profiler::ScopeLabel label("Slice");
   const RuntimeShape ext_shape = RuntimeShape::ExtendedShape(5, input_shape);
   TFLITE_DCHECK_LE(op_params.begin_count, 5);
@@ -4988,6 +5405,9 @@ template <typename T>
 inline void Slice(const tflite::SliceParams& op_params,
                   const RuntimeShape& input_shape, const T* input_data,
                   const RuntimeShape& output_shape, T* output_data) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_83(mht_83_v, 5408, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Slice");
+
   SequentialTensorWriter<T> writer(input_data, output_data);
   return Slice(op_params, input_shape, output_shape, &writer);
 }
@@ -4996,6 +5416,9 @@ template <typename T>
 inline void Slice(const tflite::SliceParams& op_params,
                   const RuntimeShape& input_shape, const TfLiteTensor* input,
                   const RuntimeShape& output_shape, TfLiteTensor* output) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_84(mht_84_v, 5419, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Slice");
+
   SequentialTensorWriter<T> writer(input, output);
   return Slice(op_params, input_shape, output_shape, &writer);
 }
@@ -5007,6 +5430,9 @@ inline void StridedSlice(const tflite::StridedSliceParams& op_params,
                          const RuntimeShape& unextended_input_shape,
                          const RuntimeShape& unextended_output_shape,
                          SequentialTensorWriter<T>* writer) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_85(mht_85_v, 5433, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "StridedSlice");
+
   using strided_slice::LoopCondition;
   using strided_slice::StartForAxis;
   using strided_slice::StopForAxis;
@@ -5086,6 +5512,9 @@ inline void StridedSlice(const tflite::StridedSliceParams& op_params,
                          const T* input_data,
                          const RuntimeShape& unextended_output_shape,
                          T* output_data) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_86(mht_86_v, 5515, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "StridedSlice");
+
   SequentialTensorWriter<T> writer(input_data, output_data);
   StridedSlice<T>(op_params, unextended_input_shape, unextended_output_shape,
                   &writer);
@@ -5097,6 +5526,9 @@ inline void StridedSlice(const tflite::StridedSliceParams& op_params,
                          const TfLiteTensor* input,
                          const RuntimeShape& unextended_output_shape,
                          TfLiteTensor* output) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_87(mht_87_v, 5529, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "StridedSlice");
+
   SequentialTensorWriter<T> writer(input, output);
   StridedSlice<T>(op_params, unextended_input_shape, unextended_output_shape,
                   &writer);
@@ -5106,6 +5538,9 @@ template <typename T>
 void Minimum(const RuntimeShape& input1_shape, const T* input1_data,
              const T* input2_data, const RuntimeShape& output_shape,
              T* output_data) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_88(mht_88_v, 5541, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Minimum");
+
   ruy::profiler::ScopeLabel label("TensorFlowMinimum");
   auto input1_map = MapAsVector(input1_data, input1_shape);
   auto output_map = MapAsVector(output_data, output_shape);
@@ -5119,6 +5554,9 @@ template <typename T>
 inline void Minimum(const RuntimeShape& input1_shape, const T* input1_data,
                     const RuntimeShape&, const T* input2_data,
                     const RuntimeShape& output_shape, T* output_data) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_89(mht_89_v, 5557, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Minimum");
+
   // Drop shape of second input: not needed.
   Minimum(input1_shape, input1_data, input2_data, output_shape, output_data);
 }
@@ -5127,6 +5565,9 @@ template <typename T>
 void Maximum(const RuntimeShape& input1_shape, const T* input1_data,
              const T* input2_data, const RuntimeShape& output_shape,
              T* output_data) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_90(mht_90_v, 5568, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Maximum");
+
   ruy::profiler::ScopeLabel label("TensorFlowMaximum");
   auto input1_map = MapAsVector(input1_data, input1_shape);
   auto output_map = MapAsVector(output_data, output_shape);
@@ -5140,6 +5581,9 @@ template <typename T>
 inline void Maximum(const RuntimeShape& input1_shape, const T* input1_data,
                     const RuntimeShape&, const T* input2_data,
                     const RuntimeShape& output_shape, T* output_data) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_91(mht_91_v, 5584, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Maximum");
+
   // Drop shape of second input: not needed.
   Maximum(input1_shape, input1_data, input2_data, output_shape, output_data);
 }
@@ -5149,6 +5593,9 @@ void TransposeIm2col(const ConvParams& params, uint8 zero_byte,
                      const RuntimeShape& input_shape, const T* input_data,
                      const RuntimeShape& filter_shape,
                      const RuntimeShape& output_shape, T* im2col_data) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_92(mht_92_v, 5596, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "TransposeIm2col");
+
   ruy::profiler::ScopeLabel label("TransposeIm2col");
   const int stride_width = params.stride_width;
   const int stride_height = params.stride_height;
@@ -5228,6 +5675,9 @@ void Col2im(const T* col_data, const int depth, const int height,
             const int width, const int filter_h, const int filter_w,
             const int pad_t, const int pad_l, const int pad_b, const int pad_r,
             const int stride_h, const int stride_w, T* im_data) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_93(mht_93_v, 5678, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Col2im");
+
   ruy::profiler::ScopeLabel label("Col2im");
   int height_col = (height + pad_t + pad_b - filter_h) / stride_h + 1;
   int width_col = (width + pad_l + pad_r - filter_w) / stride_w + 1;
@@ -5260,6 +5710,9 @@ void Col2im(const T* col_data, const int depth, const int height,
 template <typename T>
 void BiasAdd(T* im_data, const T* bias_data, const int batch_size,
              const int height, const int width, const int depth) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_94(mht_94_v, 5713, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "BiasAdd");
+
   if (bias_data) {
     for (int n = 0; n < batch_size; ++n) {
       for (int h = 0; h < height; ++h) {
@@ -5282,6 +5735,9 @@ inline void TransposeConvV2(
     const float* bias_data, const RuntimeShape& output_shape,
     float* const output_data, const RuntimeShape& col2im_shape,
     float* col2im_data, CpuBackendContext* cpu_backend_context) {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_95(mht_95_v, 5738, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "TransposeConvV2");
+
   ruy::profiler::ScopeLabel label("TransposeConvV2/float");
   TFLITE_DCHECK_EQ(input_shape.DimensionsCount(), 4);
   TFLITE_DCHECK_EQ(hwoi_ordered_filter_shape.DimensionsCount(), 4);
@@ -5347,6 +5803,9 @@ inline void TransposeConvV2(
 
 inline void Quantize(int32_t multiplier, int32_t shift, int32_t total_size,
                      int32_t output_zp, int32_t* scratch, uint8_t* output) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_96(mht_96_v, 5806, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Quantize");
+
   ruy::profiler::ScopeLabel label("Quantize/uint8");
   int i = 0;
   const int32_t output_min = std::numeric_limits<uint8_t>::min();
@@ -5504,6 +5963,9 @@ inline void Quantize(const int32_t* multiplier, const int32_t* shift,
                      int32_t channel_size, int32_t total_size,
                      int32_t output_zp, int32_t output_min, int32_t output_max,
                      int32_t* scratch, int16_t* output) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_97(mht_97_v, 5966, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Quantize");
+
   ruy::profiler::ScopeLabel label("Quantize(Single-rounding)/int16");
 
   // Here we're trying to quantize the raw accumulators:
@@ -5685,6 +6147,9 @@ inline void Quantize(const int32_t* multiplier, const int32_t* shift,
                      int32_t channel_size, int32_t total_size,
                      int32_t output_zp, int32_t output_min, int32_t output_max,
                      int32_t* scratch, int16_t* output) {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_98(mht_98_v, 6150, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Quantize");
+
   ruy::profiler::ScopeLabel label("Quantize(Double-rounding)/int16");
 
   // Here we're trying to quantize the raw accumulators:
@@ -5864,6 +6329,9 @@ inline void ResizeNearestNeighbor(
     const RuntimeShape& unextended_input_shape, const uint8* input_data,
     const RuntimeShape& output_size_shape, const int32* output_size_data,
     const RuntimeShape& unextended_output_shape, uint8* output_data) {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_99(mht_99_v, 6332, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "ResizeNearestNeighbor");
+
   if (op_params.align_corners || op_params.half_pixel_centers) {
     // TODO(b/149823713): Add support for align_corners & half_pixel_centers in
     // this kernel.
@@ -6273,6 +6741,9 @@ inline void Requantize<uint8_t, uint8_t>(
 
 inline void HardSwish(const RuntimeShape& input_shape, const float* input_data,
                       const RuntimeShape& output_shape, float* output_data) {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_100(mht_100_v, 6744, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "HardSwish");
+
   ruy::profiler::ScopeLabel label("HardSwish/Float");
   auto size = MatchingFlatSize(input_shape, output_shape);
   int i = 0;
@@ -6340,6 +6811,9 @@ inline void SaturateAndStore(int16x8_t src, std::uint8_t* dst) {
 }
 
 inline void SaturateAndStore(int16x8_t src, std::int8_t* dst) {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_101(mht_101_v, 6814, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "SaturateAndStore");
+
   // Narrow values down to 8 bit unsigned, saturating.
   int8x8_t res8 = vqmovn_s16(src);
   // Store results to destination.
@@ -6518,6 +6992,9 @@ inline void IntegerExponentPow(const ArithmeticParams& params,
                                const T* base_data, const int exponent,
                                const RuntimeShape& unextended_output_shape,
                                T* output_data) {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_102(mht_102_v, 6995, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "IntegerExponentPow");
+
   TFLITE_DCHECK_GE(exponent, 1);
   if (exponent == 1) {
     // copy data over.
@@ -6542,6 +7019,9 @@ inline void BroadcastPow4D(const RuntimeShape& unextended_input1_shape,
                            const T* input2_data,
                            const RuntimeShape& unextended_output_shape,
                            T* output_data) {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_103(mht_103_v, 7022, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "BroadcastPow4D");
+
   ruy::profiler::ScopeLabel label("PowBroadcast");
 
   if (unextended_input2_shape.FlatSize() == 1) {
@@ -6628,6 +7108,9 @@ inline void Dequantize(const tflite::DequantizationParams& op_params,
                        const RuntimeShape& input_shape,
                        const int8_t* input_data,
                        const RuntimeShape& output_shape, float* output_data) {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_104(mht_104_v, 7111, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Dequantize");
+
   ruy::profiler::ScopeLabel label("Dequantize/Int8");
   const int32 zero_point = op_params.zero_point;
   const double scale = op_params.scale;
@@ -6667,6 +7150,9 @@ inline void Dequantize(const tflite::DequantizationParams& op_params,
                        const RuntimeShape& input_shape,
                        const int16_t* input_data,
                        const RuntimeShape& output_shape, float* output_data) {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_105(mht_105_v, 7153, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Dequantize");
+
   ruy::profiler::ScopeLabel label("Dequantize/Int16");
   const int32 zero_point = op_params.zero_point;
   const double scale = op_params.scale;
@@ -6703,6 +7189,9 @@ inline void Dequantize(const tflite::DequantizationParams& op_params,
 inline void Dequantize(const RuntimeShape& input_shape,
                        const Eigen::half* input_data,
                        const RuntimeShape& output_shape, float* output_data) {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_106(mht_106_v, 7192, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Dequantize");
+
   reference_ops::Dequantize(input_shape, input_data, output_shape, output_data);
 }
 
@@ -6711,6 +7200,9 @@ inline void AffineQuantize(const tflite::QuantizationParams& op_params,
                            const RuntimeShape& input_shape,
                            const float* input_data,
                            const RuntimeShape& output_shape, T* output_data) {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_107(mht_107_v, 7203, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "AffineQuantize");
+
   reference_ops::AffineQuantize(op_params, input_shape, input_data,
                                 output_shape, output_data);
 }
@@ -6721,6 +7213,9 @@ inline void AffineQuantize(const tflite::QuantizationParams& op_params,
                            const float* input_data,
                            const RuntimeShape& output_shape,
                            int8_t* output_data) {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_108(mht_108_v, 7216, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "AffineQuantize");
+
   ruy::profiler::ScopeLabel label("Quantize/Int8");
   const int32 zero_point = op_params.zero_point;
   const double scale = static_cast<double>(op_params.scale);
@@ -6778,6 +7273,9 @@ inline void AffineQuantize(const tflite::QuantizationParams& op_params,
                            const float* input_data,
                            const RuntimeShape& output_shape,
                            uint8_t* output_data) {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_109(mht_109_v, 7276, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "AffineQuantize");
+
   ruy::profiler::ScopeLabel label("Quantize/Uint8");
   const int32 zero_point = op_params.zero_point;
   const double scale = static_cast<double>(op_params.scale);
@@ -6836,6 +7334,9 @@ inline void AffineQuantize(const tflite::QuantizationParams& op_params,
                            const float* input_data,
                            const RuntimeShape& output_shape,
                            int16_t* output_data) {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_110(mht_110_v, 7337, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "AffineQuantize");
+
   ruy::profiler::ScopeLabel label("Quantize/Int16");
   const int32 zero_point = op_params.zero_point;
   const double scale = static_cast<double>(op_params.scale);
@@ -6914,6 +7415,9 @@ inline int16x8x4_t SaturatingRounding(
 // 4-bit fixed point is enough for tanh since tanh(16) is almost same with one,
 // considering 7 digits under zero.
 inline int16x8x4_t FixedPoint4Logistic(int16x8x4_t input_val) {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_111(mht_111_v, 7418, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "FixedPoint4Logistic");
+
   // Invoke gemmlowp::logistic on FixedPoint wrapping int16x8_t
   using FixedPoint4 = gemmlowp::FixedPoint<int16x8_t, 4>;
   using FixedPoint0 = gemmlowp::FixedPoint<int16x8_t, 0>;
@@ -6944,6 +7448,9 @@ inline int16x8x4_t FixedPoint4Logistic(int16x8x4_t input_val) {
 // 4-bit fixed point is enough for tanh since tanh(16) is almost same with one,
 // considering 11 digits under zero at least.
 inline int16x8x4_t FixedPoint4Tanh(int16x8x4_t input_val) {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_112(mht_112_v, 7451, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "FixedPoint4Tanh");
+
   // Invoke gemmlowp::logistic on FixedPoint wrapping int16x8_t
   using FixedPoint4 = gemmlowp::FixedPoint<int16x8_t, 4>;
   using FixedPoint0 = gemmlowp::FixedPoint<int16x8_t, 0>;
@@ -6974,6 +7481,9 @@ inline int16x8x4_t FixedPoint4Tanh(int16x8x4_t input_val) {
 inline uint8x16x2_t CalculateUnsignedClampingWithRangeBitMasks(
     int16x8x2_t input_val, int16x8_t range_radius_dup,
     int16x8_t neg_range_radius_dup) {
+   std::vector<std::string> mht_113_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_113(mht_113_v, 7484, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "CalculateUnsignedClampingWithRangeBitMasks");
+
   const uint16x8_t mask_rightclamp_0 =
       vcgtq_s16(input_val.val[0], range_radius_dup);
   const uint16x8_t mask_rightclamp_1 =
@@ -6995,6 +7505,9 @@ inline uint8x16x2_t CalculateUnsignedClampingWithRangeBitMasks(
 inline uint8x16x2_t CalculateSignedClampingWithRangeBitMasks(
     int16x8x2_t input_val, int16x8_t range_radius_dup,
     int16x8_t neg_range_radius_dup) {
+   std::vector<std::string> mht_114_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_114(mht_114_v, 7508, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "CalculateSignedClampingWithRangeBitMasks");
+
   const uint16x8_t mask_rightclamp_0 =
       vcgtq_s16(input_val.val[0], range_radius_dup);
   const uint16x8_t mask_rightclamp_1 =
@@ -7015,6 +7528,9 @@ inline uint8x16x2_t CalculateSignedClampingWithRangeBitMasks(
 
 inline void ClampWithRangeAndStore(uint8_t* output_dst, uint8x16_t input_val,
                                    uint8x16x2_t masks_clamp) {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_115(mht_115_v, 7531, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "ClampWithRangeAndStore");
+
   // Store back to memory
   vst1q_u8(output_dst, vandq_u8(vorrq_u8(input_val, masks_clamp.val[1]),
                                 masks_clamp.val[0]));
@@ -7022,6 +7538,9 @@ inline void ClampWithRangeAndStore(uint8_t* output_dst, uint8x16_t input_val,
 
 inline void ClampWithRangeAndStore(int8_t* output_dst, int8x16_t input_val,
                                    uint8x16x2_t masks_clamp) {
+   std::vector<std::string> mht_116_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_116(mht_116_v, 7541, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "ClampWithRangeAndStore");
+
   static const int8x16_t max_dup = vdupq_n_s8(127);
   static const int8x16_t min_dup = vdupq_n_s8(-128);
   // Store back to memory
@@ -7144,6 +7663,9 @@ inline void Tanh16bitPrecision(const TanhParams& params,
                                const int8* input_data,
                                const RuntimeShape& output_shape,
                                int8* output_data) {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_117(mht_117_v, 7666, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Tanh16bitPrecision");
+
   // Note that this is almost the exact same code as in Logistic().
   ruy::profiler::ScopeLabel label("Tanh/Int8");
   const int32 input_zero_point = params.input_zero_point;
@@ -7237,6 +7759,9 @@ inline void Logistic16bitPrecision(const LogisticParams& params,
                                    const uint8* input_data,
                                    const RuntimeShape& output_shape,
                                    uint8* output_data) {
+   std::vector<std::string> mht_118_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_118(mht_118_v, 7762, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Logistic16bitPrecision");
+
   ruy::profiler::ScopeLabel label("Logistic/Uint8");
   const int32 input_zero_point = params.input_zero_point;
   const int32 input_range_radius = params.input_range_radius;
@@ -7329,6 +7854,9 @@ inline void Logistic16bitPrecision(const LogisticParams& params,
                                    const int8* input_data,
                                    const RuntimeShape& output_shape,
                                    int8* output_data) {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_119(mht_119_v, 7857, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Logistic16bitPrecision");
+
   ruy::profiler::ScopeLabel label("Logistic/Int8");
   const int32 input_zero_point = params.input_zero_point;
   const int32 input_range_radius = params.input_range_radius;
@@ -7435,6 +7963,9 @@ inline void Logistic16bitPrecision(const LogisticParams& params,
 template <typename T>
 inline void Transpose2D(const RuntimeShape& input_shape, const T* input_data,
                         const RuntimeShape& output_shape, T* output_data) {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_120(mht_120_v, 7966, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Transpose2D");
+
   TFLITE_DCHECK_EQ(input_shape.DimensionsCount(), 2);
   TFLITE_DCHECK_EQ(output_shape.DimensionsCount(), 2);
 
@@ -7533,6 +8064,9 @@ inline void Transpose2D(const RuntimeShape& input_shape,
                         const int32_t* input_data,
                         const RuntimeShape& output_shape,
                         int32_t* output_data) {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_121(mht_121_v, 8067, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Transpose2D");
+
   TFLITE_DCHECK_EQ(input_shape.DimensionsCount(), 2);
   TFLITE_DCHECK_EQ(output_shape.DimensionsCount(), 2);
 
@@ -7613,6 +8147,9 @@ template <typename T>
 inline void Transpose3D(const TransposeParams& params,
                         const RuntimeShape& input_shape, const T* input_data,
                         const RuntimeShape& output_shape, T* output_data) {
+   std::vector<std::string> mht_122_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_122(mht_122_v, 8150, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Transpose3D");
+
   int s1, s2, s3;
   s1 = input_shape.Dims(0);
   s2 = input_shape.Dims(1);
@@ -7759,6 +8296,9 @@ void Transpose(const TransposeParams& unshrinked_params,
 inline void MaximumElementwise(int size, const ArithmeticParams& params,
                                const int8* input1_data, const int8* input2_data,
                                int8* output_data) {
+   std::vector<std::string> mht_123_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_123(mht_123_v, 8299, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "MaximumElementwise");
+
   ruy::profiler::ScopeLabel label("MaximumElementwiseInt8/8bit");
   int i = 0;
 #ifdef USE_NEON
@@ -7780,6 +8320,9 @@ inline void MaximumElementwise(int size, const ArithmeticParams& params,
 inline void MaximumScalarBroadcast(int size, const ArithmeticParams& params,
                                    int8 input1_data, const int8* input2_data,
                                    int8* output_data) {
+   std::vector<std::string> mht_124_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_124(mht_124_v, 8323, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "MaximumScalarBroadcast");
+
   ruy::profiler::ScopeLabel label("MaximumScalarBroadcastInt8/8bit");
   int i = 0;
 
@@ -7802,6 +8345,9 @@ inline void MaximumScalarBroadcast(int size, const ArithmeticParams& params,
 inline void MinimumElementwise(int size, const ArithmeticParams& params,
                                const int8* input1_data, const int8* input2_data,
                                int8* output_data) {
+   std::vector<std::string> mht_125_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_125(mht_125_v, 8348, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "MinimumElementwise");
+
   ruy::profiler::ScopeLabel label("MinimumElementwiseInt8/8bit");
   int i = 0;
 #ifdef USE_NEON
@@ -7823,6 +8369,9 @@ inline void MinimumElementwise(int size, const ArithmeticParams& params,
 inline void MinimumScalarBroadcast(int size, const ArithmeticParams& params,
                                    int8 input1_data, const int8* input2_data,
                                    int8* output_data) {
+   std::vector<std::string> mht_126_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_126(mht_126_v, 8372, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "MinimumScalarBroadcast");
+
   ruy::profiler::ScopeLabel label("MinimumScalarBroadcastInt8/8bit");
   int i = 0;
 
@@ -7849,6 +8398,9 @@ inline void BroadcastMaximumDispatch(const ArithmeticParams& params,
                                      const int8* input2_data,
                                      const RuntimeShape& output_shape,
                                      int8* output_data, Op op) {
+   std::vector<std::string> mht_127_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_127(mht_127_v, 8401, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "BroadcastMaximumDispatch");
+
   if (params.broadcast_category == BroadcastableOpCategory::kGenericBroadcast) {
     return reference_ops::MaximumMinimumBroadcastSlow(
         input1_shape, input1_data, input2_shape, input2_data, output_shape,
@@ -7868,6 +8420,9 @@ inline void BroadcastMinimumDispatch(const ArithmeticParams& params,
                                      const int8* input2_data,
                                      const RuntimeShape& output_shape,
                                      int8* output_data, Op op) {
+   std::vector<std::string> mht_128_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_128(mht_128_v, 8423, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "BroadcastMinimumDispatch");
+
   if (params.broadcast_category == BroadcastableOpCategory::kGenericBroadcast) {
     return reference_ops::MaximumMinimumBroadcastSlow(
         input1_shape, input1_data, input2_shape, input2_data, output_shape,
@@ -7882,6 +8437,9 @@ inline void BroadcastMinimumDispatch(const ArithmeticParams& params,
 template <typename T>
 void CumsumImpl(const T* input_data, const RuntimeShape& shape, int axis,
                 bool exclusive, bool reverse, T* output_data) {
+   std::vector<std::string> mht_129_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_129(mht_129_v, 8440, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "CumsumImpl");
+
   Eigen::array<Eigen::DenseIndex, 3> dims = {1, 1, 1};
 
   for (int i = 0; i < axis; ++i) {
@@ -7914,6 +8472,9 @@ void CumsumImpl(const T* input_data, const RuntimeShape& shape, int axis,
 template <typename T>
 void CumSum(const T* input_data, const RuntimeShape& shape, int axis,
             bool exclusive, bool reverse, T* output_data) {
+   std::vector<std::string> mht_130_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_130(mht_130_v, 8475, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "CumSum");
+
   const int dim = shape.DimensionsCount();
   TFLITE_DCHECK_GE(dim, 1);
   CumsumImpl<T>(input_data, shape, axis, exclusive, reverse, output_data);
@@ -7922,6 +8483,9 @@ void CumSum(const T* input_data, const RuntimeShape& shape, int axis,
 inline void PReluScalarBroadcast(int size, const ArithmeticParams& params,
                                  float alpha, const float* input_data,
                                  float* output_data) {
+   std::vector<std::string> mht_131_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_131(mht_131_v, 8486, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "PReluScalarBroadcast");
+
   ruy::profiler::ScopeLabel label("PreluScalarBroadcast/float");
   int i = 0;
 
@@ -7971,6 +8535,9 @@ inline void PReluScalarBroadcast(int size, const ArithmeticParams& params,
 inline void PReluElementWise(int flat_size, const ArithmeticParams& params,
                              const float* alpha_data, const float* input_data,
                              float* output_data) {
+   std::vector<std::string> mht_132_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_132(mht_132_v, 8538, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "PReluElementWise");
+
   ruy::profiler::ScopeLabel label("PreluElementWise/float");
 
   int i = 0;
@@ -8028,6 +8595,9 @@ inline void BroadcastPReluDispatch(
     const float* input_data, const RuntimeShape& alpha_shape,
     const float* alpha_data, const RuntimeShape& output_shape,
     float* output_data, float (*func)(float, float)) {
+   std::vector<std::string> mht_133_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_133(mht_133_v, 8598, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "BroadcastPReluDispatch");
+
   if (params.broadcast_category == BroadcastableOpCategory::kGenericBroadcast) {
     return reference_ops::BroadcastBinaryFunction4DSlow<float, float, float>(
         input_shape, input_data, alpha_shape, alpha_data, output_shape,
@@ -8043,6 +8613,9 @@ inline void BroadcastPReluDispatch(
 // If there is a tie, returns the smaller index.
 template <typename T>
 inline int ArgMinVector(const T* input_data, int size) {
+   std::vector<std::string> mht_134_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_134(mht_134_v, 8616, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "ArgMinVector");
+
   T min_value = input_data[0];
   int min_index = 0;
   for (int i = 1; i < size; ++i) {
@@ -8059,6 +8632,9 @@ inline int ArgMinVector(const T* input_data, int size) {
 // If there is a tie, returns the smaller index.
 template <typename T>
 inline int ArgMaxVector(const T* input_data, int size) {
+   std::vector<std::string> mht_135_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_135(mht_135_v, 8635, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "ArgMaxVector");
+
   T max_value = input_data[0];
   int max_index = 0;
   for (int i = 1; i < size; ++i) {
@@ -8073,6 +8649,9 @@ inline int ArgMaxVector(const T* input_data, int size) {
 
 template <>
 inline int ArgMinVector(const float* input_data, int size) {
+   std::vector<std::string> mht_136_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_136(mht_136_v, 8652, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "ArgMinVector");
+
   int32_t min_index = 0;
   float min_value = input_data[0];
   int32_t i = 1;
@@ -8129,6 +8708,9 @@ inline int ArgMinVector(const float* input_data, int size) {
 
 template <>
 inline int ArgMaxVector(const float* input_data, int size) {
+   std::vector<std::string> mht_137_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_137(mht_137_v, 8711, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "ArgMaxVector");
+
   int32_t max_index = 0;
   float max_value = input_data[0];
   int32_t i = 1;
@@ -8185,6 +8767,9 @@ inline int ArgMaxVector(const float* input_data, int size) {
 
 template <>
 inline int ArgMaxVector(const int8_t* input_data, int size) {
+   std::vector<std::string> mht_138_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_138(mht_138_v, 8770, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "ArgMaxVector");
+
   int32_t max_index = 0;
   int8_t max_value = input_data[0];
   int32_t i = 0;
@@ -8234,6 +8819,9 @@ inline int ArgMaxVector(const int8_t* input_data, int size) {
 
 template <>
 inline int ArgMaxVector(const uint8_t* input_data, int size) {
+   std::vector<std::string> mht_139_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_139(mht_139_v, 8822, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "ArgMaxVector");
+
   int32_t max_index = 0;
   uint8_t max_value = input_data[0];
   int32_t i = 0;
@@ -8380,6 +8968,9 @@ inline void Conv3D(const Conv3DParams& params, const RuntimeShape& input_shape,
                    const RuntimeShape& transposed_filter_shape,
                    float* transposed_filter_data,
                    CpuBackendContext* cpu_backend_context) {
+   std::vector<std::string> mht_140_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_140(mht_140_v, 8971, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Conv3D");
+
   const int stride_depth = params.stride_depth;
   const int stride_height = params.stride_height;
   const int stride_width = params.stride_width;
@@ -8477,6 +9068,9 @@ void Col2im(const T* col_data, const int channel, const int planes,
             const int pad_t, const int pad_l, const int pad_pb, const int pad_b,
             const int pad_r, const int stride_p, const int stride_h,
             const int stride_w, T* im_data) {
+   std::vector<std::string> mht_141_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_141(mht_141_v, 9071, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Col2im");
+
   const int planes_col = (planes + pad_pt + pad_pb - filter_p) / stride_p + 1;
   const int height_col = (height + pad_t + pad_b - filter_h) / stride_h + 1;
   const int width_col = (width + pad_l + pad_r - filter_w) / stride_w + 1;
@@ -8518,6 +9112,9 @@ void Col2im(const T* col_data, const int channel, const int planes,
 template <typename T>
 void BiasAdd3D(T* im_data, const T* bias_data, const RuntimeShape& input_shape,
                float float_activation_min, float float_activation_max) {
+   std::vector<std::string> mht_142_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_142(mht_142_v, 9115, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "BiasAdd3D");
+
   if (bias_data) {
     const int outer_size = input_shape.Dims(0) * input_shape.Dims(1) *
                            input_shape.Dims(2) * input_shape.Dims(3);
@@ -8546,6 +9143,9 @@ inline void Conv3DTranspose(
     const float* bias_data, const RuntimeShape& output_shape,
     float* const output_data, const RuntimeShape& col2im_shape,
     float* col2im_data, CpuBackendContext* cpu_backend_context) {
+   std::vector<std::string> mht_143_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_143(mht_143_v, 9146, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Conv3DTranspose");
+
   ruy::profiler::ScopeLabel label("Conv3DTranspose/float");
   TFLITE_DCHECK_EQ(input_shape.DimensionsCount(), 5);
   TFLITE_DCHECK_EQ(filter_shape.DimensionsCount(), 5);
@@ -8633,6 +9233,9 @@ struct AddNWorkerTask : cpu_backend_threadpool::Task {
         num_elems(num_elems),
         split(split) {}
   void Run() override {
+   std::vector<std::string> mht_144_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_144(mht_144_v, 9236, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "Run");
+
     RuntimeShape shape(1);
     shape.SetDim(0, num_elems);
     ArithmeticParams params;
@@ -8659,6 +9262,9 @@ template <typename T>
 inline void AddN(const RuntimeShape& input_shape, const size_t num_inputs,
                  const T* const* input_data, T* output_data, T* scratch_buffer,
                  CpuBackendContext* cpu_backend_context) {
+   std::vector<std::string> mht_145_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSoptimized_opsDTh mht_145(mht_145_v, 9265, "", "./tensorflow/lite/kernels/internal/optimized/optimized_ops.h", "AddN");
+
   // All inputs and output should have the same shape, this is checked during
   // Prepare stage.
   const size_t num_elems = input_shape.FlatSize();

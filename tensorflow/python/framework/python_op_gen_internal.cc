@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,6 +219,10 @@ const int kRightMargin = 78;
 const int kLatestAPIExportVersion = 2;
 
 bool IsPythonReserved(const string& s) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("s: \"" + s + "\"");
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_0(mht_0_v, 223, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "IsPythonReserved");
+
   static const std::set<string>* const kPythonReserved = new std::set<string>(
       {// Keywords in Python, from:
        //   import keyword
@@ -81,6 +253,10 @@ bool IsPythonReserved(const string& s) {
 }
 
 bool IsOpWithUnderscorePrefix(const string& s) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("s: \"" + s + "\"");
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_1(mht_1_v, 257, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "IsOpWithUnderscorePrefix");
+
   static const std::set<string>* const kUnderscoreOps = new std::set<string>(
       {// Lowercase built-in functions and types in Python, from:
        // [x for x in dir(__builtins__) if x[0].islower()] except "round".
@@ -108,6 +284,10 @@ bool IsOpWithUnderscorePrefix(const string& s) {
 }
 
 string AvoidPythonReserved(const string& s) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("s: \"" + s + "\"");
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_2(mht_2_v, 288, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "AvoidPythonReserved");
+
   // Convert namespace separators ('>' characters) to joiners
   string result = absl::StrReplaceAll(s, {{">", "_"}});
 
@@ -118,6 +298,9 @@ string AvoidPythonReserved(const string& s) {
 // Indent the first line by "initial" spaces and all following lines
 // by "rest" spaces.
 string Indent(int initial, int rest, StringPiece in) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_3(mht_3_v, 301, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "Indent");
+
   // TODO(josh11b): Also word-wrapping?
   string copy(in.data(), in.size());
   absl::StripTrailingAsciiWhitespace(&copy);
@@ -143,6 +326,9 @@ string Indent(int initial, int rest, StringPiece in) {
 // Adds append to *dest, with a space if the first line will be <= width,
 // or a newline otherwise.
 void AppendWithinWidth(string* dest, StringPiece append, int width) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_4(mht_4_v, 329, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "AppendWithinWidth");
+
   auto first_line = append.find('\n');
   if (first_line == string::npos) first_line = append.size();
   if (dest->size() + first_line + 1 /* space */ > static_cast<size_t>(width)) {
@@ -155,6 +341,9 @@ void AppendWithinWidth(string* dest, StringPiece append, int width) {
 // Like DataTypeString() but uses the Python names for the
 // float types.
 string PythonDataTypeString(DataType dtype) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_5(mht_5_v, 344, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "PythonDataTypeString");
+
   switch (dtype) {
     case DT_FLOAT:
       return "float32";
@@ -166,6 +355,9 @@ string PythonDataTypeString(DataType dtype) {
 }
 
 string TypeString(DataType dtype, bool ref) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_6(mht_6_v, 358, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "TypeString");
+
   if (ref) {
     return strings::StrCat("mutable `", PythonDataTypeString(dtype), "`");
   } else {
@@ -174,6 +366,9 @@ string TypeString(DataType dtype, bool ref) {
 }
 
 string TypeListString(const AttrValue& value) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_7(mht_7_v, 369, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "TypeListString");
+
   string ret;
   for (int t : value.list().type()) {
     if (!ret.empty()) strings::StrAppend(&ret, ", ");
@@ -189,6 +384,9 @@ string TypeListString(const AttrValue& value) {
 }
 
 string SingleTensorName(DataType dtype, bool is_ref) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_8(mht_8_v, 387, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "SingleTensorName");
+
   const string type_str = TypeString(dtype, is_ref);
   return strings::StrCat("A `Tensor` of type ", type_str, ".");
 }
@@ -198,6 +396,9 @@ const char kUnknownTensorType[] = {"A `Tensor`."};
 string ArgTypeName(const OpDef& op_def, const OpDef::ArgDef& arg,
                    const std::unordered_map<string, string>& inferred_attrs,
                    bool is_output) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_9(mht_9_v, 399, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "ArgTypeName");
+
   if (!arg.number_attr().empty()) {
     // N Tensors with the same type
     const string* original_arg =
@@ -282,6 +483,9 @@ string ArgTypeName(const OpDef& op_def, const OpDef::ArgDef& arg,
 
 string GetReturns(const OpDef& op_def,
                   const std::vector<string>& output_type_string) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_10(mht_10_v, 486, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "GetReturns");
+
   string result;
   DCHECK_EQ(op_def.output_arg_size(), output_type_string.size());
   const int num_outs = op_def.output_arg_size();
@@ -354,14 +558,25 @@ string GetReturns(const OpDef& op_def,
 }
 
 string StringToPython(const string& str) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("str: \"" + str + "\"");
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_11(mht_11_v, 562, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "StringToPython");
+
   return strings::StrCat("\"", absl::CEscape(str), "\"");
 }
 
 string DataTypeToPython(DataType dtype, const string& dtype_module) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("dtype_module: \"" + dtype_module + "\"");
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_12(mht_12_v, 570, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "DataTypeToPython");
+
   return strings::StrCat(dtype_module, PythonDataTypeString(dtype));
 }
 
 string ShapeToPython(const TensorShapeProto& shape) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_13(mht_13_v, 577, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "ShapeToPython");
+
   if (shape.unknown_rank()) {
     return "None";
   }
@@ -380,11 +595,17 @@ string ShapeToPython(const TensorShapeProto& shape) {
 }
 
 string TensorToPython(const TensorProto& proto) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_14(mht_14_v, 598, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "TensorToPython");
+
   return proto.ShortDebugString();
 }
 
 string AttrListToPython(const AttrValue& value,
                         const string& dtype_module = "tf.") {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_15(mht_15_v, 606, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "AttrListToPython");
+
   string ret;
   if (value.list().s_size() > 0) {
     for (int i = 0; i < value.list().s_size(); ++i) {
@@ -436,6 +657,11 @@ string AttrListToPython(const AttrValue& value,
 // to WordWrap().
 string AttrValueToPython(const string& type, const AttrValue& value,
                          const string& dtype_module) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("type: \"" + type + "\"");
+   mht_16_v.push_back("dtype_module: \"" + dtype_module + "\"");
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_16(mht_16_v, 662, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "AttrValueToPython");
+
   if (type == "string") {
     return StringToPython(value.s());
   } else if (type == "int") {
@@ -474,6 +700,10 @@ string AttrValueToPython(const string& type, const AttrValue& value,
 }
 
 void GenerateLowerCaseOpName(const string& str, string* result) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("str: \"" + str + "\"");
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_17(mht_17_v, 704, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "GenerateLowerCaseOpName");
+
   const char joiner = '_';
   const char namespace_separator = '>';
   const int last_index = str.size() - 1;
@@ -500,10 +730,17 @@ void GenerateLowerCaseOpName(const string& str, string* result) {
 }
 
 static void AddDelimiter(string* append_to, const string& delim) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("delim: \"" + delim + "\"");
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_18(mht_18_v, 734, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "AddDelimiter");
+
   if (!append_to->empty()) strings::StrAppend(append_to, delim);
 }
 
 const ApiDef::Attr* FindAttr(StringPiece name, const ApiDef& api_def) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_19(mht_19_v, 741, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "FindAttr");
+
   for (int i = 0; i < api_def.attr_size(); ++i) {
     if (api_def.attr(i).name() == name) {
       return &api_def.attr(i);
@@ -518,11 +755,21 @@ GenPythonOp::GenPythonOp(const OpDef& op_def, const ApiDef& api_def,
       api_def_(api_def),
       function_name_(function_name),
       add_type_annotations_(add_type_annotations),
-      num_outs_(op_def.output_arg_size()) {}
+      num_outs_(op_def.output_arg_size()) {
+   std::vector<std::string> mht_20_v;
+   mht_20_v.push_back("function_name: \"" + function_name + "\"");
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_20(mht_20_v, 760, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "GenPythonOp::GenPythonOp");
+}
 
-GenPythonOp::~GenPythonOp() {}
+GenPythonOp::~GenPythonOp() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_21(mht_21_v, 765, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "GenPythonOp::~GenPythonOp");
+}
 
 string GenPythonOp::Code() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_22(mht_22_v, 770, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "GenPythonOp::Code");
+
   // This has all the input args followed by those attrs that don't have
   // defaults.
   std::vector<ParamNames> params_no_default;
@@ -606,6 +853,9 @@ string GenPythonOp::Code() {
 }
 
 void GenPythonOp::AddExport() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_23(mht_23_v, 856, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "GenPythonOp::AddExport");
+
   if (api_def_.visibility() != ApiDef::VISIBLE) {
     return;
   }
@@ -660,14 +910,26 @@ void GenPythonOp::AddExport() {
 
 void GenPythonOp::AddDefLine(const string& function_name,
                              const string& parameters) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("function_name: \"" + function_name + "\"");
+   mht_24_v.push_back("parameters: \"" + parameters + "\"");
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_24(mht_24_v, 915, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "GenPythonOp::AddDefLine");
+
   strings::StrAppend(&result_, "def ", function_name, "(", parameters, "):\n");
 }
 
 void GenPythonOp::AddDefLine(const string& parameters) {
+   std::vector<std::string> mht_25_v;
+   mht_25_v.push_back("parameters: \"" + parameters + "\"");
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_25(mht_25_v, 923, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "GenPythonOp::AddDefLine");
+
   AddDefLine(function_name_, parameters);
 }
 
 void GenPythonOp::AddDocStringDescription() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_26(mht_26_v, 930, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "GenPythonOp::AddDocStringDescription");
+
   string comment;
   if (api_def_.summary().empty()) {
     comment = "TODO: add doc.\n";
@@ -681,10 +943,16 @@ void GenPythonOp::AddDocStringDescription() {
 }
 
 void GenPythonOp::AddDocStringArgs() {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_27(mht_27_v, 946, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "GenPythonOp::AddDocStringArgs");
+
   strings::StrAppend(&result_, "  Args:\n");
 }
 
 void GenPythonOp::AddDocStringInputs() {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_28(mht_28_v, 953, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "GenPythonOp::AddDocStringInputs");
+
   for (int i = 0; i < api_def_.arg_order_size(); ++i) {
     const auto& arg = *FindInputArg(api_def_.arg_order(i), op_def_);
     const auto& api_def_arg = *FindInputArg(api_def_.arg_order(i), api_def_);
@@ -704,6 +972,9 @@ void GenPythonOp::AddDocStringInputs() {
 }
 
 void GenPythonOp::AddDocStringAttrs() {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_29(mht_29_v, 975, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "GenPythonOp::AddDocStringAttrs");
+
   for (const string& name : attrs_) {
     const auto& attr = *FindAttr(name, op_def_);
     const auto& api_def_attr = *FindAttr(name, api_def_);
@@ -775,11 +1046,17 @@ void GenPythonOp::AddDocStringAttrs() {
 }
 
 void GenPythonOp::AddDocStringNameArg() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_30(mht_30_v, 1049, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "GenPythonOp::AddDocStringNameArg");
+
   strings::StrAppend(&result_,
                      "    name: A name for the operation (optional).\n");
 }
 
 void GenPythonOp::AddOutputGlobals() {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_31(mht_31_v, 1057, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "GenPythonOp::AddOutputGlobals");
+
   // Generate a namedtuple class to hold the outputs, if there are multiple.
   // Example:
   //
@@ -808,6 +1085,9 @@ void GenPythonOp::AddOutputGlobals() {
 }
 
 void GenPythonOp::AddDocStringOutputs() {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_32(mht_32_v, 1088, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "GenPythonOp::AddDocStringOutputs");
+
   std::vector<string> output_type_string;
   output_type_string.reserve(num_outs_);
   for (int i = 0; i < num_outs_; ++i) {
@@ -818,6 +1098,10 @@ void GenPythonOp::AddDocStringOutputs() {
 }
 
 void GenPythonOp::AddBody(const string& prefix) {
+   std::vector<std::string> mht_33_v;
+   mht_33_v.push_back("prefix: \"" + prefix + "\"");
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_33(mht_33_v, 1102, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "GenPythonOp::AddBody");
+
   const string apply_prefix = strings::StrCat(
       prefix, "_result = _op_def_lib.apply_op(\"", op_def_.name(), "\", ");
   AddBodyNoReturn(apply_prefix);
@@ -830,6 +1114,10 @@ void GenPythonOp::AddBody(const string& prefix) {
 }
 
 void GenPythonOp::AddBodyNoReturn(const string& apply_prefix) {
+   std::vector<std::string> mht_34_v;
+   mht_34_v.push_back("apply_prefix: \"" + apply_prefix + "\"");
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_op_gen_internalDTcc mht_34(mht_34_v, 1118, "", "./tensorflow/python/framework/python_op_gen_internal.cc", "GenPythonOp::AddBodyNoReturn");
+
   string args;
   for (size_t i = 0; i < param_names_.size(); ++i) {
     strings::StrAppend(&args, AvoidPythonReserved(param_names_[i].GetName()),

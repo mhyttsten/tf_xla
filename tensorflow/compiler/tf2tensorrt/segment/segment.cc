@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -65,15 +233,39 @@ class SimpleEdge {
         src_port_(src_port),
         dst_(dst),
         dst_port_(dst_port),
-        control_(is_control) {}
-  ~SimpleEdge() {}
+        control_(is_control) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_0(mht_0_v, 237, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "SimpleEdge");
+}
+  ~SimpleEdge() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_1(mht_1_v, 241, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "~SimpleEdge");
+}
 
-  SimpleNode* src() const { return src_; }
-  SimpleNode* dst() const { return dst_; }
-  int src_output() const { return src_port_; }
-  int dst_input() const { return dst_port_; }
-  int id() const { return id_; }
-  bool IsControlEdge() const { return control_; }
+  SimpleNode* src() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_2(mht_2_v, 246, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "src");
+ return src_; }
+  SimpleNode* dst() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_3(mht_3_v, 250, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "dst");
+ return dst_; }
+  int src_output() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_4(mht_4_v, 254, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "src_output");
+ return src_port_; }
+  int dst_input() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_5(mht_5_v, 258, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "dst_input");
+ return dst_port_; }
+  int id() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_6(mht_6_v, 262, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "id");
+ return id_; }
+  bool IsControlEdge() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_7(mht_7_v, 266, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "IsControlEdge");
+ return control_; }
 
  private:
   int id_;
@@ -88,8 +280,14 @@ class SimpleNode {
  public:
   SimpleNode(const Node* node, const int id);
 
-  const std::vector<SimpleEdge*>& in_edges() const { return in_edges_; }
-  const std::vector<SimpleEdge*>& out_edges() const { return out_edges_; }
+  const std::vector<SimpleEdge*>& in_edges() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_8(mht_8_v, 284, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "in_edges");
+ return in_edges_; }
+  const std::vector<SimpleEdge*>& out_edges() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_9(mht_9_v, 288, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "out_edges");
+ return out_edges_; }
 
   std::vector<SimpleNode*> in_nodes() const {
     std::vector<SimpleNode*> res;
@@ -109,9 +307,18 @@ class SimpleNode {
     return res;
   }
 
-  const string& name() const { return node_->name(); }
-  const Node* tf_node() const { return node_; }
-  int id() const { return id_; }
+  const string& name() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_10(mht_10_v, 311, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "name");
+ return node_->name(); }
+  const Node* tf_node() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_11(mht_11_v, 315, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "tf_node");
+ return node_; }
+  int id() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_12(mht_12_v, 319, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "id");
+ return id_; }
 
  private:
   const Node* node_;
@@ -131,14 +338,26 @@ class SimpleGraph {
   void AddEdge(SimpleNode* src, int out_port, SimpleNode* dst, int in_port);
   void RemoveEdge(const SimpleEdge*);
   SimpleNode* FindNodeId(int node_id) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_13(mht_13_v, 341, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "FindNodeId");
+
     if (node_id < 0 || node_id > static_cast<int>(nodes_.size())) {
       return nullptr;
     }
     return nodes_[node_id];
   }
-  int num_node_ids() const { return nodes_.size(); }
-  const SimpleNode* source_node() const { return nodes_[Graph::kSourceId]; }
-  const SimpleNode* sink_node() const { return nodes_[Graph::kSinkId]; }
+  int num_node_ids() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_14(mht_14_v, 350, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "num_node_ids");
+ return nodes_.size(); }
+  const SimpleNode* source_node() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_15(mht_15_v, 354, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "source_node");
+ return nodes_[Graph::kSourceId]; }
+  const SimpleNode* sink_node() const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_16(mht_16_v, 358, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "sink_node");
+ return nodes_[Graph::kSinkId]; }
 
  private:
   const Graph* g_;
@@ -150,6 +369,9 @@ class SimpleGraph {
 };
 
 SimpleNode::SimpleNode(const Node* node, const int id) : node_(node), id_(id) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_17(mht_17_v, 372, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "SimpleNode::SimpleNode");
+
   if (node_) {
     in_edges_.reserve(node_->in_edges().size());
     out_edges_.reserve(node_->out_edges().size());
@@ -157,6 +379,9 @@ SimpleNode::SimpleNode(const Node* node, const int id) : node_(node), id_(id) {
 }
 
 SimpleGraph::SimpleGraph(const Graph* g) : g_(g) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_18(mht_18_v, 382, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "SimpleGraph::SimpleGraph");
+
   int n_nodes = g_->num_node_ids();
   nodes_.resize(n_nodes, nullptr);
   nodes_[g->kSourceId] = new SimpleNode(g->source_node(), g->kSourceId);
@@ -192,6 +417,9 @@ SimpleGraph::SimpleGraph(const Graph* g) : g_(g) {
 
 void SimpleGraph::AddEdge(SimpleNode* src, int out_port, SimpleNode* dst,
                           int in_port) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_19(mht_19_v, 420, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "SimpleGraph::AddEdge");
+
   int i = edges_.size();
   if (!free_edge_ids_.empty()) {
     auto it = free_edge_ids_.begin();
@@ -209,10 +437,16 @@ void SimpleGraph::AddEdge(SimpleNode* src, int out_port, SimpleNode* dst,
 }
 
 void SimpleGraph::AddControlEdge(SimpleNode* src, SimpleNode* dst) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_20(mht_20_v, 440, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "SimpleGraph::AddControlEdge");
+
   AddEdge(src, Graph::kControlSlot, dst, Graph::kControlSlot);
 }
 
 void SimpleGraph::RemoveEdge(const SimpleEdge* edge) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_21(mht_21_v, 447, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "SimpleGraph::RemoveEdge");
+
   auto src = edge->src();
   auto dst = edge->dst();
   for (auto it = src->out_edges_.begin(); it != src->out_edges_.end(); ++it) {
@@ -230,6 +464,9 @@ void SimpleGraph::RemoveEdge(const SimpleEdge* edge) {
 }
 
 SimpleGraph::~SimpleGraph() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_22(mht_22_v, 467, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "SimpleGraph::~SimpleGraph");
+
   for (auto x : nodes_) delete x;
   for (auto x : edges_) delete x;
 }
@@ -250,6 +487,9 @@ void StableDFS(const SimpleGraph& g, bool reverse,
                const std::vector<const SimpleNode*>& start,
                const std::function<bool(const SimpleNode*)>& enter,
                const std::function<bool(const SimpleNode*)>& leave) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_23(mht_23_v, 490, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "StableDFS");
+
   // Stack of work to do.
   struct Work {
     const SimpleNode* node;
@@ -261,6 +501,9 @@ void StableDFS(const SimpleGraph& g, bool reverse,
   }
 
   auto get_nodes = [reverse](const SimpleNode* n) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_24(mht_24_v, 504, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "lambda");
+
     return reverse ? n->in_nodes() : n->out_nodes();
   };
   std::vector<bool> visited(g.num_node_ids(), false);
@@ -297,6 +540,9 @@ void StableDFS(const SimpleGraph& g, bool reverse,
 
 bool CanContractEdge(const SimpleEdge* edge,
                      const std::unique_ptr<SimpleGraph>& graph) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_25(mht_25_v, 543, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "CanContractEdge");
+
   const auto src = edge->src();
   const auto dst = edge->dst();
 
@@ -348,6 +594,9 @@ bool CanContractEdge(const SimpleEdge* edge,
 
 // TODO(bixia): put this to a common utility file.
 string TensorPropertiesToString(const OpInfo::TensorProperties& prop) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_26(mht_26_v, 597, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "TensorPropertiesToString");
+
   string s = StrCat(DataTypeString(prop.dtype()), ": ");
   StrAppend(&s, "[");
   if (prop.shape().unknown_rank()) {
@@ -364,6 +613,9 @@ string TensorPropertiesToString(const OpInfo::TensorProperties& prop) {
 
 string TensorPropertiesToString(
     const std::vector<OpInfo::TensorProperties>& properties) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_27(mht_27_v, 616, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "TensorPropertiesToString");
+
   return StrJoin(properties, "; ",
                  [](string* out, const OpInfo::TensorProperties& prop) {
                    StrAppend(out, TensorPropertiesToString(prop));
@@ -410,6 +662,9 @@ absl::optional<const TensorShapeProto*> FindLeadingShape(
   const TensorShapeProto* result;
   int max_batch_dim_value;
   auto choose_shape_with_higher_rank = [&](const TensorShapeProto* s) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_28(mht_28_v, 665, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "lambda");
+
     result = s;
     max_batch_dim_value = s->dim_size() < 1 ? 1 : s->dim(0).size();
   };
@@ -514,6 +769,9 @@ absl::Span<const OpInfo::TensorProperties> GetInputsToDeterminateBatchSize(
 // a new operation for TRT translation.
 bool OperationCanBeTranslatedToImplicitBatch(
     const grappler::GraphProperties* graph_properties, const Node* node) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_29(mht_29_v, 772, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "OperationCanBeTranslatedToImplicitBatch");
+
   VLOG(3) << "process node " << node->name();
   if (node->num_inputs() == 0) return true;
   if (!graph_properties || !graph_properties->HasInputProperties(node->name()))
@@ -542,6 +800,9 @@ bool OperationCanBeTranslatedToImplicitBatch(
 // won't have negative values for non-batch dimensions.
 //
 bool HasDynamicNonBatchDimension(const OpInfo::TensorProperties& prop) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_30(mht_30_v, 803, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "HasDynamicNonBatchDimension");
+
   const TensorShapeProto& shape = prop.shape();
   if (shape.unknown_rank()) return true;
 
@@ -563,6 +824,9 @@ bool HasDynamicNonBatchDimension(const OpInfo::TensorProperties& prop) {
 // assuming shape inference already propagates the shapes.
 bool OperationHasDynamicNonBatchDimension(
     const grappler::GraphProperties* graph_properties, const Node* node) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_31(mht_31_v, 827, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "OperationHasDynamicNonBatchDimension");
+
   VLOG(3) << "process node " << node->name();
   // If the node doesn't have any input or output, not computation is involved.
   if (node->num_inputs() == 0 || node->num_outputs() == 0) return false;
@@ -578,6 +842,9 @@ bool OperationHasDynamicNonBatchDimension(
 
 void ContractEdge(SimpleEdge* edge, SimpleGraph* graph,
                   std::vector<const SimpleEdge*>* remove_edges) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_32(mht_32_v, 845, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "ContractEdge");
+
   // Transfer all inputs and outputs of 'dst' to 'src' except edges
   // connecting the two.
   auto src = edge->src();
@@ -639,6 +906,9 @@ void ContractEdge(SimpleEdge* edge, SimpleGraph* graph,
 ClusterBatchSize GetClusterBatchSizeForNode(
     const grappler::GraphProperties* graph_properties, const Node* node,
     bool use_implicit_batch) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_33(mht_33_v, 909, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "GetClusterBatchSizeForNode");
+
   ClusterBatchSize cluster_batch_size;
   if (!use_implicit_batch || !node || node->num_inputs() == 0) {
     return cluster_batch_size;
@@ -674,6 +944,9 @@ void AddSegmentForNode(const grappler::GraphProperties* graph_properties,
                        SimpleNode* node,
                        const DeviceNameUtils::ParsedName& device_name,
                        bool use_implicit_batch) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_34(mht_34_v, 947, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "AddSegmentForNode");
+
   ClusterProperty property(
       GetClusterBatchSizeForNode(graph_properties,
                                  node == nullptr ? nullptr : node->tf_node(),
@@ -688,6 +961,10 @@ Status ExportNonConversionReportToCSV(
     string filename,
     std::map<string, std::map<string, int>>& nonconverted_ops_map,
     string sep = "|") {
+   std::vector<std::string> mht_35_v;
+   mht_35_v.push_back("filename: \"" + filename + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_35(mht_35_v, 965, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "ExportNonConversionReportToCSV");
+
   std::fstream csv_file(filename, std::fstream::out | std::fstream::trunc);
 
   if (!csv_file || !csv_file.good()) {
@@ -721,6 +998,9 @@ Status ExportNonConversionReportToCSV(
 
 string GenerateNonConversionReport(
     std::map<string, std::map<string, int>>& nonconverted_ops_map) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_36(mht_36_v, 1001, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "GenerateNonConversionReport");
+
   // Fetch whether to print a detailed version of the TF-TRT conversion report.
   // TF_TRT_SHOW_DETAILED_REPORT triggers three possible behaviors:
   // - If Number >= 1:      Print detailed non-conversion report on stdout.
@@ -843,6 +1123,9 @@ Status SegmentGraph(const Graph* tf_graph,
                     const std::function<bool(const Edge*)>& input_candidate_fn,
                     const std::function<bool(const Edge*)>& output_candidate_fn,
                     const SegmentOptions& options, SegmentVector* segments) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_37(mht_37_v, 1126, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "SegmentGraph");
+
   if (!options.use_implicit_batch && !options.allow_dynamic_non_batch_dim) {
     return errors::Internal(
         "Explicit batch mode should allow dynamic non-batch dimensions");
@@ -901,6 +1184,10 @@ Status SegmentGraph(const Graph* tf_graph,
     const string node_op_type{node->tf_node()->type_string()};
 
     auto exclude_node = [&](absl::string_view reason) {
+   std::vector<std::string> mht_38_v;
+   mht_38_v.push_back("reason: \"" + std::string(reason.data(), reason.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_38(mht_38_v, 1188, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "lambda");
+
       VLOG(1) << "Not a TF-TRT candidate, "
               << "(Op type: " << node_op_type << "), "
               << "(Op name: " << node->name() << "), "
@@ -968,6 +1255,9 @@ Status SegmentGraph(const Graph* tf_graph,
   order.reserve(graph->num_node_ids());
   StableDFS(*graph, /*reverse=*/false, {graph->source_node()},
             /*enter=*/nullptr, [&order](const SimpleNode* n) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_39(mht_39_v, 1258, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "lambda");
+
               order.push_back(n);
               return true;
             });
@@ -1144,6 +1434,9 @@ Status SegmentGraph(const Graph* tf_graph,
       // nodes should be minimum.
       auto remove_nodes = [&segment_nodes](bool is_input_nodes,
                                            std::deque<const Node*>* que) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSsegmentPSsegmentDTcc mht_40(mht_40_v, 1437, "", "./tensorflow/compiler/tf2tensorrt/segment/segment.cc", "lambda");
+
         // Run a BFS on the queue to find all the input/output nodes.
         std::set<const Node*, NodePtrCompare> visited;
         std::set<const Node*, NodePtrCompare> logged(que->begin(), que->end());

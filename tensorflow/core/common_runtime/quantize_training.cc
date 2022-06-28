@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePScommon_runtimePSquantize_trainingDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSquantize_trainingDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePScommon_runtimePSquantize_trainingDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -59,7 +227,10 @@ struct EdgeToConvert {
         signed_input(sign),
         range_given(range),
         input_min(min),
-        input_max(max) {}
+        input_max(max) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSquantize_trainingDTcc mht_0(mht_0_v, 231, "", "./tensorflow/core/common_runtime/quantize_training.cc", "EdgeToConvert");
+}
 };
 
 // Decide if a node is in backward pass by checking if its name is led by
@@ -67,6 +238,9 @@ struct EdgeToConvert {
 // TODO(jmchen): Make this check more robust as it is not guaranteed that the
 // forward node will not be named with a leading "gradients".
 inline bool IsGradientNode(const Graph* graph, const Node* node) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSquantize_trainingDTcc mht_1(mht_1_v, 241, "", "./tensorflow/core/common_runtime/quantize_training.cc", "IsGradientNode");
+
   static const string tag = "gradients";
   return (node->name().compare(0, tag.size(), tag) == 0);
 }
@@ -76,6 +250,9 @@ inline bool IsGradientNode(const Graph* graph, const Node* node) {
 // Returns true if the root tensor op type is known, false otherwise.
 bool FindType(const Graph* graph, const Node* node, bool* signed_input,
               bool* range_given, float* input_min, float* input_max) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSquantize_trainingDTcc mht_2(mht_2_v, 253, "", "./tensorflow/core/common_runtime/quantize_training.cc", "FindType");
+
   const string& src_op = node->type_string();
   if (src_op == "Const" || src_op == "Variable" || src_op == "VariableV2") {
     *signed_input = true;
@@ -136,6 +313,9 @@ bool FindType(const Graph* graph, const Node* node, bool* signed_input,
 // Find the Save op and inputs.
 Status FindSaveOp(const Graph* graph, Node** save_op,
                   std::vector<const Edge*>* in_edges, bool* found) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSquantize_trainingDTcc mht_3(mht_3_v, 316, "", "./tensorflow/core/common_runtime/quantize_training.cc", "FindSaveOp");
+
   *found = false;
   for (Node* node : graph->op_nodes()) {
     if (node->type_string() == "SaveV2") {
@@ -152,6 +332,9 @@ Status FindSaveOp(const Graph* graph, Node** save_op,
 }
 
 Node* FindRestoreAllOp(const Graph* graph, StringPiece save_prefix) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSquantize_trainingDTcc mht_4(mht_4_v, 335, "", "./tensorflow/core/common_runtime/quantize_training.cc", "FindRestoreAllOp");
+
   for (Node* node : graph->op_nodes()) {
     // The restore_all op should have the same prefix of the save_op.
     if (node->name() == strings::StrCat(save_prefix, "/restore_all")) {
@@ -165,11 +348,17 @@ Node* FindRestoreAllOp(const Graph* graph, StringPiece save_prefix) {
 // We use this to construct the name of restore ops in the same way they are
 // constructed by the Saver.
 StringPiece GetNodeNamePrefix(const Node* node) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSquantize_trainingDTcc mht_5(mht_5_v, 351, "", "./tensorflow/core/common_runtime/quantize_training.cc", "GetNodeNamePrefix");
+
   StringPiece name = node->name();
   return name.substr(0, name.rfind('/'));
 }
 
 void FillStringTensor(Tensor* dst, const Tensor& src) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSquantize_trainingDTcc mht_6(mht_6_v, 359, "", "./tensorflow/core/common_runtime/quantize_training.cc", "FillStringTensor");
+
   auto dst_flat = dst->flat<tstring>();
   auto src_flat = src.flat<tstring>();
   for (int i = 0; i < src.NumElements(); i++) {
@@ -183,6 +372,9 @@ void FillStringTensor(Tensor* dst, const Tensor& src) {
 Status ConnectVariablesToSaveOp(Graph* graph, Node* save_op,
                                 const std::vector<const Edge*>& in_edges,
                                 const std::vector<Node*>& added_variables) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSquantize_trainingDTcc mht_7(mht_7_v, 375, "", "./tensorflow/core/common_runtime/quantize_training.cc", "ConnectVariablesToSaveOp");
+
   Node* tensor_names_op = in_edges[1]->src();
   Node* shape_and_slices_op = in_edges[2]->src();
 
@@ -248,6 +440,9 @@ Status ConnectVariablesToSaveOp(Graph* graph, Node* save_op,
 Status AddRestoreVariableSubgraphs(Graph* graph, Node* save_op,
                                    const std::vector<const Edge*>& in_edges,
                                    const std::vector<Node*>& variables) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSquantize_trainingDTcc mht_8(mht_8_v, 443, "", "./tensorflow/core/common_runtime/quantize_training.cc", "AddRestoreVariableSubgraphs");
+
   Node* prefix_op = in_edges[0]->src();
   StringPiece name_prefix = GetNodeNamePrefix(save_op);
   Node* restore_all = FindRestoreAllOp(graph, name_prefix);
@@ -313,6 +508,9 @@ Status AddRestoreVariableSubgraphs(Graph* graph, Node* save_op,
 // Adds new variables to save and restore ops matching the Save and Restore
 // graphs created in tensorflow/python/training/saver.py.
 Status AddSaveAndRestore(Graph* graph, const std::vector<Node*>& variables) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSquantize_trainingDTcc mht_9(mht_9_v, 511, "", "./tensorflow/core/common_runtime/quantize_training.cc", "AddSaveAndRestore");
+
   Node* save_op = nullptr;
   std::vector<const Edge*> in_edges;
   bool found = false;
@@ -330,6 +528,10 @@ Status AddSaveAndRestore(Graph* graph, const std::vector<Node*>& variables) {
 // dimensions of input and return.
 Status MakeReductionAxes(Graph* graph, string name_prefix, Node* input,
                          Node** output) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("name_prefix: \"" + name_prefix + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSquantize_trainingDTcc mht_10(mht_10_v, 532, "", "./tensorflow/core/common_runtime/quantize_training.cc", "MakeReductionAxes");
+
   name_prefix = strings::StrCat(name_prefix, "/ReductionAxes");
   Node* start;
   Tensor zero_tensor(DT_INT32, TensorShape());
@@ -366,6 +568,10 @@ Status MakeExponentialMovingAverage(Graph* graph, string name_prefix,
                                     const NodeBuilder::NodeOut& input,
                                     Node* decay, Node* update_variable,
                                     Node** assign_value) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("name_prefix: \"" + name_prefix + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSquantize_trainingDTcc mht_11(mht_11_v, 572, "", "./tensorflow/core/common_runtime/quantize_training.cc", "MakeExponentialMovingAverage");
+
   // variable_t+1 = variable_t - [(variable_t - value) * (1 - decay)]
   name_prefix = strings::StrCat(name_prefix, "/EMA");
   Node* one;
@@ -419,6 +625,10 @@ Status MakeInitializedEMAVariable(Graph* graph, const string& name, Node* decay,
                                   Node* init_val,
                                   std::vector<Node*>* added_variables,
                                   Node** var) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSquantize_trainingDTcc mht_12(mht_12_v, 629, "", "./tensorflow/core/common_runtime/quantize_training.cc", "MakeInitializedEMAVariable");
+
   // TODO(suharshs): Update this to use ResourceVariables when they are ready.
   TF_RETURN_IF_ERROR(
       NodeBuilder(strings::StrCat(name, "/Variable"), "VariableV2")
@@ -461,6 +671,10 @@ Status MakeInitializedEMAVariable(Graph* graph, const string& name, Node* decay,
 Status MakeEMAMinMaxVars(Graph* graph, const string& name_prefix, Node* input,
                          std::vector<Node*>* added_variables, Node** min_var,
                          Node** max_var) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("name_prefix: \"" + name_prefix + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSquantize_trainingDTcc mht_13(mht_13_v, 675, "", "./tensorflow/core/common_runtime/quantize_training.cc", "MakeEMAMinMaxVars");
+
   // TODO(suharshs): The decay will be constant, so we could make only one for
   // all quantize_and_dequantize ops to share, this would have to live outside
   // this function.
@@ -501,6 +715,10 @@ Status MakeInputMinMax(Graph* graph, const string& name_prefix,
                        const EdgeToConvert& edge,
                        std::vector<Node*>* added_variables, Node** input_min,
                        Node** input_max) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("name_prefix: \"" + name_prefix + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSquantize_trainingDTcc mht_14(mht_14_v, 719, "", "./tensorflow/core/common_runtime/quantize_training.cc", "MakeInputMinMax");
+
   if (edge.range_given) {
     // Make constant nodes for the input_min and input_max if the range is
     // provided.
@@ -535,6 +753,11 @@ Status MakeQuantizeOp(Graph* graph, const string& name_prefix,
                       const string& quant_op_type, const EdgeToConvert& edge,
                       std::vector<Node*>* added_variables,
                       Node** convert_node) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("name_prefix: \"" + name_prefix + "\"");
+   mht_15_v.push_back("quant_op_type: \"" + quant_op_type + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSquantize_trainingDTcc mht_15(mht_15_v, 758, "", "./tensorflow/core/common_runtime/quantize_training.cc", "MakeQuantizeOp");
+
   Node* input_min;
   Node* input_max;
   TF_RETURN_IF_ERROR(MakeInputMinMax(graph, name_prefix, edge, added_variables,
@@ -565,6 +788,10 @@ Status MakeQuantizeOp(Graph* graph, const string& name_prefix,
 // Insert conversion op, connect it to the graph and remove the old edge.
 Status ProcessTargetEdges(Graph* graph, const string& quant_op_type,
                           const std::vector<EdgeToConvert>& target_edges) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("quant_op_type: \"" + quant_op_type + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSquantize_trainingDTcc mht_16(mht_16_v, 792, "", "./tensorflow/core/common_runtime/quantize_training.cc", "ProcessTargetEdges");
+
   // Remember previously converted ops to avoid duplicated conversion on the
   // same input.
   std::unordered_map<string, Node*, StringPieceHasher> name_index;
@@ -595,6 +822,10 @@ Status ProcessTargetEdges(Graph* graph, const string& quant_op_type,
 
 Status DoQuantizeTraining(int32_t num_bits, const string& quant_op_type,
                           Graph* graph) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("quant_op_type: \"" + quant_op_type + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSquantize_trainingDTcc mht_17(mht_17_v, 826, "", "./tensorflow/core/common_runtime/quantize_training.cc", "DoQuantizeTraining");
+
   if (graph == nullptr) {
     return errors::InvalidArgument("Cannot accept empty graph pointer.");
   }
@@ -662,6 +893,10 @@ Status DoQuantizeTrainingOnGraphDef(const GraphDef& input_graphdef,
                                     int32_t num_bits,
                                     const string& quant_op_type,
                                     GraphDef* result_graphdef) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("quant_op_type: \"" + quant_op_type + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSquantize_trainingDTcc mht_18(mht_18_v, 897, "", "./tensorflow/core/common_runtime/quantize_training.cc", "DoQuantizeTrainingOnGraphDef");
+
   Graph graph(OpRegistry::Global());
   GraphConstructorOptions opts;
   TF_RETURN_IF_ERROR(ConvertGraphDefToGraph(opts, input_graphdef, &graph));
@@ -678,6 +913,11 @@ Status DoQuantizeTrainingOnSerializedGraphDef(const string& input_graph_string,
                                               int32_t num_bits,
                                               const string& quant_op_type,
                                               string* result_graph_string) {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("input_graph_string: \"" + input_graph_string + "\"");
+   mht_19_v.push_back("quant_op_type: \"" + quant_op_type + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSquantize_trainingDTcc mht_19(mht_19_v, 918, "", "./tensorflow/core/common_runtime/quantize_training.cc", "DoQuantizeTrainingOnSerializedGraphDef");
+
   // First create the graph from the GraphDef.
   GraphDef input_graphdef;
   if (!ParseProtoUnlimited(&input_graphdef, input_graph_string)) {

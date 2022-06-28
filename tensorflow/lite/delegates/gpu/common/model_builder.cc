@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019-2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -63,6 +231,9 @@ absl::Status GetFullyConnectedAttributes(int weights_tensor_id,
                                          int bias_tensor_id,
                                          ObjectReader* reader,
                                          FullyConnectedAttributes* attr) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_0(mht_0_v, 234, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "GetFullyConnectedAttributes");
+
   Tensor<HW, DataType::FLOAT32> weights;
   RETURN_IF_ERROR(reader->ReadTensor(weights_tensor_id, &weights));
   attr->weights.data = std::move(weights.data);
@@ -78,6 +249,9 @@ absl::Status GetFullyConnectedAttributes(int weights_tensor_id,
 template <typename ParamsT>
 absl::Status RetrieveBuiltinData(const TfLiteNode* tflite_node,
                                  const ParamsT** tf_options) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_1(mht_1_v, 252, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "RetrieveBuiltinData");
+
   *tf_options = static_cast<const ParamsT*>(tflite_node->builtin_data);
   if (!*tf_options) {
     return absl::InternalError("Unable to retrieve builtin_data.");
@@ -88,6 +262,9 @@ absl::Status RetrieveBuiltinData(const TfLiteNode* tflite_node,
 template <typename ParamsT>
 absl::Status RetrieveCustomInitialData(const TfLiteNode* tflite_node,
                                        const ParamsT** tf_options) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_2(mht_2_v, 265, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "RetrieveCustomInitialData");
+
   *tf_options = static_cast<const ParamsT*>(tflite_node->custom_initial_data);
   if (!*tf_options) {
     return absl::InternalError("Unable to retrieve custom_initial_data.");
@@ -97,6 +274,9 @@ absl::Status RetrieveCustomInitialData(const TfLiteNode* tflite_node,
 
 // Creates a simple node that holds tensor value.
 absl::Status NewConstNode(TensorFloat32 t, GraphFloat32* graph, Value** value) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_3(mht_3_v, 277, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "NewConstNode");
+
   ConstTensorAttributes attr;
   attr.tensor = std::move(t);
   Node* node = graph->NewNode();
@@ -113,6 +293,9 @@ absl::Status NewConstNode(TensorFloat32 t, GraphFloat32* graph, Value** value) {
 
 absl::Status ParseInputsWithConstTensor(Node* node, ObjectReader* reader,
                                         TensorOrScalar* tensor_or_scalar) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_4(mht_4_v, 296, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "ParseInputsWithConstTensor");
+
   const std::string& opname = node->operation.type;
 
   // Determine runtime/constant tensors.
@@ -169,6 +352,9 @@ absl::Status ParseInputsWithConstTensor(Node* node, ObjectReader* reader,
 absl::Status MaybeFuseActivationForElementwiseNode(
     OperationType operation_type, const TfLiteNode* tflite_node,
     GraphFloat32* graph, Node* node) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_5(mht_5_v, 355, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "MaybeFuseActivationForElementwiseNode");
+
   TfLiteFusedActivation activation = kTfLiteActNone;
   switch (operation_type) {
     case OperationType::MUL: {
@@ -217,6 +403,9 @@ struct TensorInfo {
 
 absl::Status GetTensorInfo(const TfLiteContext* context, int tensor_id,
                            TensorInfo* result) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_6(mht_6_v, 406, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "GetTensorInfo");
+
   TfLiteIntArray* execution_plan = nullptr;
   if (context->GetExecutionPlan(const_cast<TfLiteContext*>(context),
                                 &execution_plan) != kTfLiteOk) {
@@ -247,6 +436,9 @@ absl::Status GetTensorInfo(const TfLiteContext* context, int tensor_id,
 }
 
 bool IsLogicalCode(int32_t builtin_code) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_7(mht_7_v, 439, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsLogicalCode");
+
   return builtin_code == kTfLiteBuiltinGreater ||
          builtin_code == kTfLiteBuiltinGreaterEqual ||
          builtin_code == kTfLiteBuiltinLess ||
@@ -256,6 +448,9 @@ bool IsLogicalCode(int32_t builtin_code) {
 }
 
 bool IsLogicalOp(tflite::gpu::OperationType op_type) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_8(mht_8_v, 451, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsLogicalOp");
+
   return op_type == tflite::gpu::OperationType::GREATER ||
          op_type == tflite::gpu::OperationType::GREATER_EQUAL ||
          op_type == tflite::gpu::OperationType::LESS ||
@@ -269,12 +464,18 @@ class BatchedMatMulOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_9(mht_9_v, 467, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
   }
 
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_10(mht_10_v, 476, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     Node* node = graph->NewNode();
     node->operation.type = ToString(OperationType::BATCHED_MATMUL);
     RETURN_IF_ERROR(reader->AddInput(node, 0));
@@ -289,6 +490,9 @@ class CastOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_11(mht_11_v, 493, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     TensorInfo input_tensor_info;
     RETURN_IF_ERROR(GetTensorInfo(context, tflite_node->inputs->data[0],
                                   &input_tensor_info));
@@ -305,6 +509,9 @@ class CastOperationParser : public TFLiteOperationParser {
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_12(mht_12_v, 512, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     Node* node = graph->NewNode();
     // Adding Identity reshape that will be removed.
     node->operation.type = ToString(OperationType::RESHAPE);
@@ -321,16 +528,25 @@ class CastOperationParser : public TFLiteOperationParser {
 class ClampOperationsParser : public TFLiteOperationParser {
  public:
   explicit ClampOperationsParser(float clamp_a, float clamp_b)
-      : clamp_a_(clamp_a), clamp_b_(clamp_b) {}
+      : clamp_a_(clamp_a), clamp_b_(clamp_b) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_13(mht_13_v, 532, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "ClampOperationsParser");
+}
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_14(mht_14_v, 538, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     return absl::OkStatus();
   }
 
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_15(mht_15_v, 547, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     // clamp(v, a, b) = clamp(v - a, 0.0, b - a) + a;
     // We replace clamp(...) with sequence of elementwise ops:
     // substaction -> usual relu with alpha = 0.0 -> addition.
@@ -386,6 +602,9 @@ class ConcatenationOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_16(mht_16_v, 605, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     RETURN_IF_ERROR(CheckMaxSupportedOpVersion(registration, 2));
 
     // TODO(eignasheva): add proper tensor availability checking
@@ -399,6 +618,9 @@ class ConcatenationOperationParser : public TFLiteOperationParser {
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_17(mht_17_v, 621, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     ConcatAttributes attr;
     // Read inputs first to make sure const node is added to a graph before
     // concat node to ensure topological order.
@@ -455,6 +677,9 @@ class ConcatenationOperationParser : public TFLiteOperationParser {
 
  private:
   absl::Status SetAxis(const std::vector<BHWC>& input_shapes, Axis* axis) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_18(mht_18_v, 680, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "SetAxis");
+
     *axis = Axis::BATCH;
     for (int i = 1; i < input_shapes.size(); i++) {
       if (input_shapes[0].h != input_shapes[i].h &&
@@ -501,6 +726,9 @@ class Conv2DOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_19(mht_19_v, 729, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     RETURN_IF_ERROR(CheckMaxSupportedOpVersion(registration, 5));
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
   }
@@ -508,6 +736,9 @@ class Conv2DOperationParser : public TFLiteOperationParser {
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_20(mht_20_v, 739, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     Node* node = graph->NewNode();
     node->operation.type = ToString(OperationType::CONVOLUTION_2D);
     RETURN_IF_ERROR(reader->AddInput(node, 0));
@@ -541,6 +772,9 @@ class DensifyOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_21(mht_21_v, 775, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     RETURN_IF_ERROR(CheckMaxSupportedOpVersion(registration, 1));
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
   }
@@ -548,6 +782,9 @@ class DensifyOperationParser : public TFLiteOperationParser {
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_22(mht_22_v, 785, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     Node* node = graph->NewNode();
     node->operation.type = ToString(OperationType::DENSIFY);
     const TfLiteTensor* const_tensor = reader->GetInputTensor(0);
@@ -568,6 +805,9 @@ class DepthwiseConvolutionOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_23(mht_23_v, 808, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     RETURN_IF_ERROR(CheckMaxSupportedOpVersion(registration, 6));
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
   }
@@ -575,6 +815,9 @@ class DepthwiseConvolutionOperationParser : public TFLiteOperationParser {
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_24(mht_24_v, 818, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     Node* node = graph->NewNode();
     node->operation.type = ToString(OperationType::DEPTHWISE_CONVOLUTION);
     RETURN_IF_ERROR(reader->AddInput(node, 0));
@@ -616,6 +859,9 @@ class DepthwiseConvolutionOperationParser : public TFLiteOperationParser {
                                const TfLiteTensor* filter,
                                const TfLiteTensor* output, int depth_multiplier,
                                DepthwiseConvolution2DAttributes* attr) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_25(mht_25_v, 862, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "TransposeWeights");
+
     const int input_depth = input->dims->data[3];
     const int filter_height = filter->dims->data[1];
     const int filter_width = filter->dims->data[2];
@@ -643,12 +889,18 @@ class DepthToSpaceOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_26(mht_26_v, 892, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
   }
 
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_27(mht_27_v, 901, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     Node* node = graph->NewNode();
     node->operation.type = ToString(OperationType::DEPTH_TO_SPACE);
     RETURN_IF_ERROR(reader->AddInput(node, 0));
@@ -667,6 +919,9 @@ class DequantizeOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_28(mht_28_v, 922, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     RETURN_IF_ERROR(CheckMaxSupportedOpVersion(registration, 3));
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
   }
@@ -674,6 +929,9 @@ class DequantizeOperationParser : public TFLiteOperationParser {
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_29(mht_29_v, 932, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     // 'Dequantize' is rewritten as QuantizeAndDequantize since we are dealing
     // with floating-point versions of the original tensors.
     Node* node = graph->NewNode();
@@ -723,11 +981,17 @@ class DequantizeOperationParser : public TFLiteOperationParser {
 class ElementwiseOperationParser : public TFLiteOperationParser {
  public:
   explicit ElementwiseOperationParser(OperationType operation_type)
-      : operation_type_(operation_type) {}
+      : operation_type_(operation_type) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_30(mht_30_v, 985, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "ElementwiseOperationParser");
+}
 
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_31(mht_31_v, 992, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     const int kMaxSupportedOpVersion =
         operation_type_ == OperationType::MUL ? 3 : 2;
     RETURN_IF_ERROR(
@@ -753,6 +1017,9 @@ class ElementwiseOperationParser : public TFLiteOperationParser {
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_32(mht_32_v, 1020, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     Node* node = graph->NewNode();
     node->operation.type = ToString(operation_type_);
     if (operation_type_ == OperationType::ADD) {
@@ -843,6 +1110,9 @@ class ElementwiseOperationParser : public TFLiteOperationParser {
  private:
   absl::Status GetActivation(const TfLiteNode* tflite_node,
                              TfLiteFusedActivation* activation) const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_33(mht_33_v, 1113, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "GetActivation");
+
     if (operation_type_ == OperationType::DIV) {
       const TfLiteDivParams* tf_options;
       auto status = RetrieveBuiltinData(tflite_node, &tf_options);
@@ -863,6 +1133,9 @@ class ElementwiseOperationParser : public TFLiteOperationParser {
   }
 
   bool IsOneArgumentOperation() const {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_34(mht_34_v, 1136, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsOneArgumentOperation");
+
     switch (operation_type_) {
       case OperationType::ABS:
       case OperationType::COPY:
@@ -885,6 +1158,9 @@ class ElementwiseOperationParser : public TFLiteOperationParser {
   }
 
   bool IsTwoArgumentOperation() const {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_35(mht_35_v, 1161, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsTwoArgumentOperation");
+
     switch (operation_type_) {
       case OperationType::ADD:
       case OperationType::DIV:
@@ -909,6 +1185,9 @@ class ElementwiseOperationParser : public TFLiteOperationParser {
   }
 
   bool IsTwoArgumentOperationWithConst() const {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_36(mht_36_v, 1188, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsTwoArgumentOperationWithConst");
+
     switch (operation_type_) {
       case OperationType::ADD:
       case OperationType::DIV:
@@ -940,6 +1219,9 @@ class FullyConnectedOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_37(mht_37_v, 1222, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     RETURN_IF_ERROR(CheckMaxSupportedOpVersion(registration, 9));
     // TODO(eignasheva): check input shape
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
@@ -948,6 +1230,9 @@ class FullyConnectedOperationParser : public TFLiteOperationParser {
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_38(mht_38_v, 1233, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     const TfLiteFullyConnectedParams* tf_options;
     RETURN_IF_ERROR(RetrieveBuiltinData(tflite_node, &tf_options));
 
@@ -1020,11 +1305,17 @@ class HardSwishOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_39(mht_39_v, 1308, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
   }
 
   absl::Status Parse(const TfLiteNode*, const TfLiteRegistration*,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_40(mht_40_v, 1316, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     Node* node = graph->NewNode();
     node->operation.type = ToString(OperationType::HARD_SWISH);
     RETURN_IF_ERROR(reader->AddInput(node, 0));
@@ -1065,6 +1356,9 @@ class LSTMOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_41(mht_41_v, 1359, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     RETURN_IF_ERROR(CheckMaxSupportedOpVersion(registration, 4));
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
   }
@@ -1072,6 +1366,9 @@ class LSTMOperationParser : public TFLiteOperationParser {
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_42(mht_42_v, 1369, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     const TfLiteLSTMParams* tf_options;
     RETURN_IF_ERROR(RetrieveBuiltinData(tflite_node, &tf_options));
     switch (tf_options->kernel_type) {
@@ -1092,6 +1389,9 @@ class LSTMOperationParser : public TFLiteOperationParser {
                           const TfLiteRegistration* registration,
                           GraphFloat32* graph, ObjectReader* reader,
                           const TfLiteLSTMParams* tf_options) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_43(mht_43_v, 1392, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "ParseBasic");
+
     if (tflite_node->inputs->size != 5) {
       return absl::InvalidArgumentError("LSTM should have 5 input tensors");
     }
@@ -1143,6 +1443,9 @@ class LSTMOperationParser : public TFLiteOperationParser {
   }
 
   absl::Status CheckBasicParameters(const TfLiteLSTMParams* tf_options) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_44(mht_44_v, 1446, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "CheckBasicParameters");
+
     if (tf_options->activation != kTfLiteActTanh) {
       return absl::UnimplementedError("Only TANH activation is supported.");
     }
@@ -1159,6 +1462,9 @@ class LSTMOperationParser : public TFLiteOperationParser {
                          const TfLiteRegistration* registration,
                          GraphFloat32* graph, ObjectReader* reader,
                          const TfLiteLSTMParams* tf_options) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_45(mht_45_v, 1465, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "ParseFull");
+
     // Invoke full LSTM parser
     RETURN_IF_ERROR(ParseLSTMAttributes(tflite_node, registration, graph,
                                         reader, tf_options,
@@ -1167,6 +1473,9 @@ class LSTMOperationParser : public TFLiteOperationParser {
   }
 
   absl::Status CheckFullParameters(const TfLiteLSTMParams* tf_options) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_46(mht_46_v, 1476, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "CheckFullParameters");
+
     if (tf_options->activation != kTfLiteActSigmoid &&
         tf_options->activation != kTfLiteActTanh) {
       return absl::UnimplementedError(
@@ -1184,12 +1493,18 @@ class PackOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_47(mht_47_v, 1496, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
   }
 
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_48(mht_48_v, 1505, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     if (tflite_node->inputs->size == 1) {
       // Pack with single input can be replaced with Reshape
       Node* node = graph->NewNode();
@@ -1244,6 +1559,9 @@ class PReLUOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_49(mht_49_v, 1562, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     RETURN_IF_ERROR(CheckMaxSupportedOpVersion(registration, 1));
     // TODO(eignasheva): add params check
     return absl::OkStatus();
@@ -1251,6 +1569,9 @@ class PReLUOperationParser : public TFLiteOperationParser {
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_50(mht_50_v, 1572, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     Node* node = graph->NewNode();
     node->operation.type = ToString(OperationType::PRELU);
     RETURN_IF_ERROR(reader->AddInput(node, 0));
@@ -1283,11 +1604,17 @@ class PReLUOperationParser : public TFLiteOperationParser {
 
 class PadOperationParser : public TFLiteOperationParser {
  public:
-  explicit PadOperationParser(bool mirror_pad) : mirror_pad_(mirror_pad) {}
+  explicit PadOperationParser(bool mirror_pad) : mirror_pad_(mirror_pad) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_51(mht_51_v, 1608, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "PadOperationParser");
+}
 
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_52(mht_52_v, 1615, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     RETURN_IF_ERROR(CheckMaxSupportedOpVersion(registration, 2));
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
   }
@@ -1295,6 +1622,9 @@ class PadOperationParser : public TFLiteOperationParser {
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_53(mht_53_v, 1625, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     Node* node = graph->NewNode();
     node->operation.type = ToString(OperationType::PAD);
     RETURN_IF_ERROR(reader->AddInput(node, 0));
@@ -1340,16 +1670,25 @@ class Pooling2DOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_54(mht_54_v, 1673, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     RETURN_IF_ERROR(CheckMaxSupportedOpVersion(registration, 2));
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
   }
 
  public:
-  explicit Pooling2DOperationParser(PoolingType type) : type_(type) {}
+  explicit Pooling2DOperationParser(PoolingType type) : type_(type) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_55(mht_55_v, 1682, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Pooling2DOperationParser");
+}
 
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_56(mht_56_v, 1689, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     Node* node = graph->NewNode();
     node->operation.type = ToString(OperationType::POOLING_2D);
     RETURN_IF_ERROR(reader->AddInput(node, 0));
@@ -1394,17 +1733,26 @@ class Pooling2DOperationParser : public TFLiteOperationParser {
 class ReduceOperationParser : public TFLiteOperationParser {
  public:
   explicit ReduceOperationParser(OperationType operation_type)
-      : operation_type_(operation_type) {}
+      : operation_type_(operation_type) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_57(mht_57_v, 1737, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "ReduceOperationParser");
+}
 
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_58(mht_58_v, 1744, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
   }
 
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_59(mht_59_v, 1753, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     Node* node = graph->NewNode();
     node->operation.type = ToString(operation_type_);
     RETURN_IF_ERROR(reader->AddInput(node, 0));
@@ -1434,6 +1782,9 @@ class QuantizeOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_60(mht_60_v, 1785, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     RETURN_IF_ERROR(CheckMaxSupportedOpVersion(registration, 2));
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
   }
@@ -1441,6 +1792,9 @@ class QuantizeOperationParser : public TFLiteOperationParser {
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_61(mht_61_v, 1795, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     // 'Quantize' is rewritten as QuantizeAndDequantize since we are dealing
     // with floating-point versions of the original tensors.
     Node* node = graph->NewNode();
@@ -1466,11 +1820,17 @@ class QuantizeOperationParser : public TFLiteOperationParser {
 
 class ReLUOperationParser : public TFLiteOperationParser {
  public:
-  explicit ReLUOperationParser(int clip) : clip_(clip) {}
+  explicit ReLUOperationParser(int clip) : clip_(clip) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_62(mht_62_v, 1824, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "ReLUOperationParser");
+}
 
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_63(mht_63_v, 1831, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     RETURN_IF_ERROR(CheckMaxSupportedOpVersion(registration, 2));
     return absl::OkStatus();
   }
@@ -1478,6 +1838,9 @@ class ReLUOperationParser : public TFLiteOperationParser {
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_64(mht_64_v, 1841, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     Node* node = graph->NewNode();
     node->operation.type = ToString(OperationType::RELU);
     RETURN_IF_ERROR(reader->AddInput(node, 0));
@@ -1500,12 +1863,18 @@ class ResamplerOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_65(mht_65_v, 1866, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
   }
 
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_66(mht_66_v, 1875, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     Node* node = graph->NewNode();
     RETURN_IF_ERROR(reader->AddInput(node, 0));  // src
     RETURN_IF_ERROR(reader->AddInput(node, 1));  // warp
@@ -1528,6 +1897,9 @@ class ReshapeOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_67(mht_67_v, 1900, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     RETURN_IF_ERROR(CheckMaxSupportedOpVersion(registration, 1));
     // TODO(eignasheva): add shape checking
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
@@ -1536,6 +1908,9 @@ class ReshapeOperationParser : public TFLiteOperationParser {
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_68(mht_68_v, 1911, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     Node* node = graph->NewNode();
     node->operation.type = ToString(OperationType::RESHAPE);
     RETURN_IF_ERROR(reader->AddInput(node, 0));
@@ -1555,11 +1930,17 @@ class ReshapeOperationParser : public TFLiteOperationParser {
 class Resize2DOperationParser : public TFLiteOperationParser {
  public:
   explicit Resize2DOperationParser(SamplingType sampling_type)
-      : sampling_type_(sampling_type) {}
+      : sampling_type_(sampling_type) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_69(mht_69_v, 1934, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Resize2DOperationParser");
+}
 
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_70(mht_70_v, 1941, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     RETURN_IF_ERROR(CheckMaxSupportedOpVersion(registration, 3));
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
   }
@@ -1567,6 +1948,9 @@ class Resize2DOperationParser : public TFLiteOperationParser {
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_71(mht_71_v, 1951, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     Node* node = graph->NewNode();
     node->operation.type = ToString(OperationType::RESIZE);
     RETURN_IF_ERROR(reader->AddInput(node, 0));
@@ -1588,6 +1972,9 @@ class Resize2DOperationParser : public TFLiteOperationParser {
  private:
   absl::Status GetAlignCornersValue(const TfLiteNode* tflite_node,
                                     bool* align_corners) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_72(mht_72_v, 1975, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "GetAlignCornersValue");
+
     switch (sampling_type_) {
       case SamplingType::BILINEAR:
         return GetAlignCornersValueForType<TfLiteResizeBilinearParams>(
@@ -1604,6 +1991,9 @@ class Resize2DOperationParser : public TFLiteOperationParser {
   template <class T>
   absl::Status GetAlignCornersValueForType(const TfLiteNode* tflite_node,
                                            bool* align_corners) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_73(mht_73_v, 1994, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "GetAlignCornersValueForType");
+
     const T* tf_options;
     RETURN_IF_ERROR(RetrieveBuiltinData(tflite_node, &tf_options));
     *align_corners = tf_options->align_corners;
@@ -1612,6 +2002,9 @@ class Resize2DOperationParser : public TFLiteOperationParser {
 
   absl::Status GetHalfPixelCentersValue(const TfLiteNode* tflite_node,
                                         bool* half_pixel_centers) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_74(mht_74_v, 2005, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "GetHalfPixelCentersValue");
+
     if (sampling_type_ == SamplingType::BILINEAR) {
       const TfLiteResizeBilinearParams* tf_options;
       RETURN_IF_ERROR(RetrieveBuiltinData(tflite_node, &tf_options));
@@ -1636,6 +2029,9 @@ class SliceOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_75(mht_75_v, 2032, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     RETURN_IF_ERROR(CheckMaxSupportedOpVersion(registration, 2));
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
   }
@@ -1643,6 +2039,9 @@ class SliceOperationParser : public TFLiteOperationParser {
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_76(mht_76_v, 2042, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     Node* node = graph->NewNode();
     node->operation.type = ToString(OperationType::SLICE);
     RETURN_IF_ERROR(reader->AddOutputs(node));
@@ -1742,6 +2141,9 @@ class SliceOperationParser : public TFLiteOperationParser {
  private:
   absl::Status UpdateIfNegative(const BHWC& input_shape,
                                 SliceAttributes* attr) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_77(mht_77_v, 2144, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "UpdateIfNegative");
+
     if (attr->ends.h < 0) {
       attr->ends.h = input_shape.h + attr->ends.h;
     }
@@ -1763,6 +2165,9 @@ class SoftmaxOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_78(mht_78_v, 2168, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     RETURN_IF_ERROR(CheckMaxSupportedOpVersion(registration, 2));
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
   }
@@ -1770,6 +2175,9 @@ class SoftmaxOperationParser : public TFLiteOperationParser {
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_79(mht_79_v, 2178, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     Node* node = graph->NewNode();
     node->operation.type = ToString(OperationType::SOFTMAX);
     RETURN_IF_ERROR(reader->AddInput(node, 0));
@@ -1796,6 +2204,9 @@ class SpaceToDepthOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_80(mht_80_v, 2207, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     RETURN_IF_ERROR(CheckMaxSupportedOpVersion(registration, 2));
     // TODO(impjdi): Dims check.
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
@@ -1804,6 +2215,9 @@ class SpaceToDepthOperationParser : public TFLiteOperationParser {
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_81(mht_81_v, 2218, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     Node* node = graph->NewNode();
     node->operation.type = ToString(OperationType::SPACE_TO_DEPTH);
     RETURN_IF_ERROR(reader->AddInput(node, 0));
@@ -1822,12 +2236,18 @@ class SplitOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_82(mht_82_v, 2239, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
   }
 
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_83(mht_83_v, 2248, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     const TfLiteSplitParams* split_params;
     RETURN_IF_ERROR(RetrieveBuiltinData(tflite_node, &split_params));
     if (split_params->num_splits == 1) {
@@ -1864,12 +2284,18 @@ class SplitVOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_84(mht_84_v, 2287, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
   }
 
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_85(mht_85_v, 2296, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     const TfLiteSplitVParams* split_params;
     RETURN_IF_ERROR(RetrieveBuiltinData(tflite_node, &split_params));
     if (split_params->num_splits == 1) {
@@ -1906,6 +2332,9 @@ class StridedSliceOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_86(mht_86_v, 2335, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     RETURN_IF_ERROR(CheckMaxSupportedOpVersion(registration, 2));
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
   }
@@ -1913,6 +2342,9 @@ class StridedSliceOperationParser : public TFLiteOperationParser {
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_87(mht_87_v, 2345, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     Node* node = graph->NewNode();
     node->operation.type = ToString(OperationType::SLICE);
     RETURN_IF_ERROR(reader->AddOutputs(node));
@@ -1979,6 +2411,9 @@ class StridedSliceOperationParser : public TFLiteOperationParser {
                               const BHWC& input_shape, int ignore_b,
                               int ignore_h, int ignore_w, int ignore_c,
                               SliceAttributes* attr) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_88(mht_88_v, 2414, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "UpdateWithMask");
+
     if (tf_options->begin_mask & ignore_h) {
       attr->starts.h = 0;
     }
@@ -2009,6 +2444,9 @@ class StridedSliceOperationParser : public TFLiteOperationParser {
 
   absl::Status UpdateIfNegative(const BHWC& input_shape,
                                 SliceAttributes* attr) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_89(mht_89_v, 2447, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "UpdateIfNegative");
+
     if (attr->ends.h < 0) {
       attr->ends.h = input_shape.h + attr->ends.h;
     }
@@ -2042,6 +2480,9 @@ class StridedSliceOperationParser : public TFLiteOperationParser {
                                     const TfLiteStridedSliceParams* tf_options,
                                     const BHWC& input_shape,
                                     SliceAttributes* attr) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_90(mht_90_v, 2483, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "ReadAttribsWithBatch");
+
     auto read_bhwc = [&](int tensor_index, BHWC* bhwc) -> absl::Status {
       Tensor<Linear, DataType::INT32> t;
       RETURN_IF_ERROR(reader->ReadTensor(tensor_index, &t));
@@ -2060,6 +2501,9 @@ class StridedSliceOperationParser : public TFLiteOperationParser {
   absl::Status ReadAttribsWithoutBatch(
       const ObjectReader* reader, const TfLiteStridedSliceParams* tf_options,
       const BHWC& input_shape, SliceAttributes* attr) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_91(mht_91_v, 2504, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "ReadAttribsWithoutBatch");
+
     auto read_hwc = [&](int tensor_index, BHWC* bhwc) -> absl::Status {
       Tensor<Linear, DataType::INT32> t;
       RETURN_IF_ERROR(reader->ReadTensor(tensor_index, &t));
@@ -2078,6 +2522,9 @@ class StridedSliceOperationParser : public TFLiteOperationParser {
     return absl::OkStatus();
   }
   absl::Status CheckOptionsSupport(const TfLiteStridedSliceParams* tf_options) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_92(mht_92_v, 2525, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "CheckOptionsSupport");
+
     if (tf_options->ellipsis_mask) {
       return absl::UnimplementedError("Slice does not support ellipsis_mask.");
     }
@@ -2097,12 +2544,18 @@ class TileOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_93(mht_93_v, 2547, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
   }
 
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_94(mht_94_v, 2556, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     Node* node = graph->NewNode();
     node->operation.type = ToString(OperationType::TILE);
     RETURN_IF_ERROR(reader->AddInput(node, 0));
@@ -2117,6 +2570,9 @@ class TransposeConvBuiltinOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_95(mht_95_v, 2573, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     RETURN_IF_ERROR(CheckMaxSupportedOpVersion(registration, 3));
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
   }
@@ -2127,6 +2583,9 @@ class TransposeConvBuiltinOperationParser : public TFLiteOperationParser {
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_96(mht_96_v, 2586, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     auto* node = graph->NewNode();
     node->operation.type = ToString(OperationType::CONVOLUTION_TRANSPOSED);
     Value* input;
@@ -2165,12 +2624,18 @@ class TransposeConvCustomOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_97(mht_97_v, 2627, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
   }
 
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_98(mht_98_v, 2636, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     auto* node = graph->NewNode();
     node->operation.type = ToString(OperationType::CONVOLUTION_TRANSPOSED);
     RETURN_IF_ERROR(reader->AddInput(node, 0));
@@ -2198,6 +2663,9 @@ class TransposeOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_99(mht_99_v, 2666, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     RETURN_IF_ERROR(CheckMaxSupportedOpVersion(registration, 2));
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
   }
@@ -2205,6 +2673,9 @@ class TransposeOperationParser : public TFLiteOperationParser {
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_100(mht_100_v, 2676, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     Node* node = graph->NewNode();
     node->operation.type = ToString(OperationType::TRANSPOSE);
     RETURN_IF_ERROR(reader->AddInput(node, 0));
@@ -2247,12 +2718,18 @@ class Unpooling2DOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_101(mht_101_v, 2721, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
   }
 
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_102(mht_102_v, 2730, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     Node* node = graph->NewNode();
     node->operation.type = ToString(OperationType::MAX_UNPOOLING_2D);
     RETURN_IF_ERROR(reader->AddInput(node, 0));
@@ -2282,12 +2759,18 @@ class BatchToSpaceOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_103(mht_103_v, 2762, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     return absl::OkStatus();
   }
 
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_104(mht_104_v, 2771, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     auto* node = graph->NewNode();
     node->operation.type = ToString(OperationType::BATCH_TO_SPACE);
     RETURN_IF_ERROR(reader->AddInput(node, 0));
@@ -2325,12 +2808,18 @@ class SpaceToBatchOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_105(mht_105_v, 2811, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
   }
 
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_106(mht_106_v, 2820, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     auto* node = graph->NewNode();
     node->operation.type = ToString(OperationType::SPACE_TO_BATCH);
     RETURN_IF_ERROR(reader->AddInput(node, 0));
@@ -2368,12 +2857,18 @@ class MeanOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_107(mht_107_v, 2860, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
   }
 
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_108(mht_108_v, 2869, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     auto* node = graph->NewNode();
     node->operation.type = ToString(OperationType::MEAN);
     RETURN_IF_ERROR(reader->AddInput(node, 0));
@@ -2397,12 +2892,18 @@ class UnsupportedOperationParser : public TFLiteOperationParser {
   absl::Status IsSupported(const TfLiteContext* context,
                            const TfLiteNode* tflite_node,
                            const TfLiteRegistration* registration) final {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_109(mht_109_v, 2895, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
     return absl::UnimplementedError("Operation is not supported.");
   }
 
   absl::Status Parse(const TfLiteNode* tflite_node,
                      const TfLiteRegistration* registration,
                      GraphFloat32* graph, ObjectReader* reader) final {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_110(mht_110_v, 2904, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Parse");
+
     return absl::UnimplementedError("Operation is not supported.");
   }
 };
@@ -2411,6 +2912,9 @@ absl::Status IsSupported(
     const TfLiteContext* context, TfLiteNode* node,
     const TfLiteRegistration* registration, bool allow_quant_ops = false,
     const absl::flat_hash_set<TfLiteBuiltinOperator>* excluded_ops = nullptr) {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_111(mht_111_v, 2915, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsSupported");
+
   return NewOperationParser(registration, allow_quant_ops, excluded_ops)
       ->IsSupported(context, node, registration);
 }
@@ -2418,6 +2922,9 @@ absl::Status IsSupported(
 bool IsAllAllowedTensors(TfLiteContext* context,
                          const TfLiteIntArray* tensor_indices,
                          const std::vector<TfLiteType>& allowed_types) {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_112(mht_112_v, 2925, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "IsAllAllowedTensors");
+
   for (int i = 0; i < tensor_indices->size; ++i) {
     int tensor_idx = tensor_indices->data[i];
     if (tensor_idx == kTfLiteOptionalTensor) continue;
@@ -2631,6 +3138,9 @@ std::unique_ptr<TFLiteOperationParser> NewOperationParser(
 TfLiteIntArray* GetOpsToReplace(
     TfLiteContext* context, bool allow_quant_ops, int max_delegated_partitions,
     const absl::flat_hash_set<TfLiteBuiltinOperator>* excluded_ops) {
+   std::vector<std::string> mht_113_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_113(mht_113_v, 3141, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "GetOpsToReplace");
+
   delegates::IsNodeSupportedFn node_supported_fn =
       [=](TfLiteContext* context, TfLiteNode* node,
           TfLiteRegistration* registration,
@@ -2715,6 +3225,9 @@ absl::Status PrecreateIOTensors(
     TfLiteContext* context, GraphFloat32* graph, const std::vector<int>& io_ids,
     absl::flat_hash_map<int, int>* quant_conversion_map,
     absl::flat_hash_map<int, Value*>* tensor_to_value) {
+   std::vector<std::string> mht_114_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_114(mht_114_v, 3228, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "PrecreateIOTensors");
+
   for (const auto& id : io_ids) {
     const TfLiteTensor& tflite_tensor = context->tensors[id];
     if (tflite::IsConstantTensor(&tflite_tensor)) continue;
@@ -2728,6 +3241,9 @@ absl::Status CopyVariableTensorOutputs(
     TfLiteNode* tflite_node, TfLiteRegistration* registration,
     GraphFloat32* graph, ObjectReader& reader,
     const absl::flat_hash_map<int, ValueId>& new_variable_tensor_values) {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_115(mht_115_v, 3244, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "CopyVariableTensorOutputs");
+
   absl::flat_hash_map<int, ValueId> new_variable_tensor_values_copy(
       new_variable_tensor_values);
   // Retrieve the final value id for the variable input tensors.
@@ -2766,6 +3282,9 @@ absl::Status BuildModel(TfLiteContext* context,
                         const TfLiteDelegateParams* delegate_params,
                         GraphFloat32* graph,
                         absl::flat_hash_map<int, int>* quant_conversion_map) {
+   std::vector<std::string> mht_116_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_116(mht_116_v, 3285, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "BuildModel");
+
   std::vector<int> inputs(delegate_params->input_tensors->size);
   std::vector<int> outputs(delegate_params->output_tensors->size);
   for (int i = 0; i < delegate_params->input_tensors->size; i++) {
@@ -2782,6 +3301,9 @@ absl::Status BuildModelEnforceIO(
     TfLiteContext* context, const TfLiteDelegateParams* delegate_params,
     const std::vector<int>& input_ids, const std::vector<int>& output_ids,
     GraphFloat32* graph, absl::flat_hash_map<int, int>* quant_conversion_map) {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_117(mht_117_v, 3304, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "BuildModelEnforceIO");
+
   std::vector<std::unique_ptr<TFLiteOperationParser>> operations;
   std::vector<int> tflite_nodes;
   for (int i = 0; i < delegate_params->nodes_to_replace->size; ++i) {
@@ -2855,6 +3377,9 @@ absl::Status BuildModelEnforceIO(
 absl::Status BuildFinalModel(
     TfLiteContext* context, const TfLiteDelegateParams* delegate_params,
     GraphFloat32* graph, absl::flat_hash_map<int, int>* quant_conversion_map) {
+   std::vector<std::string> mht_118_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_118(mht_118_v, 3380, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "BuildFinalModel");
+
   RETURN_IF_ERROR(
       BuildModel(context, delegate_params, graph, quant_conversion_map));
 
@@ -2878,6 +3403,9 @@ class DelegateContext {
   };
   bool Init(TfLiteContext* context,
             const TfLiteDelegateParams* delegate_params) {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_119(mht_119_v, 3406, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "Init");
+
     const auto* delegate_data =
         reinterpret_cast<DelegateData*>(delegate_params->delegate->data_);
     return delegate_data->graph &&
@@ -2890,6 +3418,9 @@ class DelegateContext {
 };
 
 TfLiteStatus DelegatePrepare(TfLiteContext* context, TfLiteDelegate* delegate) {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_120(mht_120_v, 3421, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "DelegatePrepare");
+
   TfLiteRegistration registration;
   registration.init = [](TfLiteContext* context, const char* buffer,
                          size_t) -> void* {
@@ -2926,6 +3457,9 @@ TfLiteStatus DelegatePrepare(TfLiteContext* context, TfLiteDelegate* delegate) {
 absl::Status BuildFromFlatBuffer(const tflite::FlatBufferModel& flatbuffer,
                                  const tflite::OpResolver& op_resolver,
                                  GraphFloat32* graph, bool allow_quant_ops) {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builderDTcc mht_121(mht_121_v, 3460, "", "./tensorflow/lite/delegates/gpu/common/model_builder.cc", "BuildFromFlatBuffer");
+
   std::unique_ptr<tflite::Interpreter> interpreter;
   tflite::InterpreterBuilder interpreter_builder(flatbuffer, op_resolver);
   if (interpreter_builder(&interpreter) != kTfLiteOk || !interpreter) {

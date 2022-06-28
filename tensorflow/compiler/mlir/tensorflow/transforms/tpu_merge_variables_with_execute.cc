@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_merge_variables_with_executeDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_merge_variables_with_executeDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_merge_variables_with_executeDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -64,6 +232,9 @@ class TPUMergeVariablesWithExecutePass
     : public TF::TPUMergeVariablesWithExecutePassBase<
           TPUMergeVariablesWithExecutePass> {
   void getDependentDialects(DialectRegistry& registry) const override {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_merge_variables_with_executeDTcc mht_0(mht_0_v, 235, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_merge_variables_with_execute.cc", "getDependentDialects");
+
     // We need this here because at the moment we deserialize the TPUCompileMlir
     // operation which contains annotation like `mhlo.sharding` attributes.
     registry.insert<mhlo::MhloDialect>();
@@ -108,6 +279,9 @@ bool IsResourceSafeForMerge(
     const VariableAccessesForTPUExecute& infos,
     const llvm::SmallDenseSet<int64_t>& resource_ids,
     bool previous_unknown_resource_access) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_merge_variables_with_executeDTcc mht_1(mht_1_v, 282, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_merge_variables_with_execute.cc", "IsResourceSafeForMerge");
+
   // If we had any unknown resource access before, then we conservatively assume
   // that `resource` has been accessed before.
   // If `resource` is an unknown resource, then we conservatively assume that
@@ -130,6 +304,9 @@ bool AddAccessedResourceIds(
     Operation* op,
     const mlir::TF::ResourceAliasAnalysis::Info& resource_analysis_info,
     llvm::SmallDenseSet<int64_t>& resource_ids) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_merge_variables_with_executeDTcc mht_2(mht_2_v, 307, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_merge_variables_with_execute.cc", "AddAccessedResourceIds");
+
   for (Value operand : TF::filter_resources(op->getOperands())) {
     if (resource_analysis_info.IsUnknownResource(operand)) {
       VLOG(2) << "  unknown access";
@@ -152,6 +329,9 @@ VariableAccessesForTPUExecute BuildVariableAccessInfo(
     tf_device::LaunchOp execute_launch,
     const mlir::TF::ResourceAliasAnalysis::Info& resource_analysis_info,
     bool check_device, bool check_same_region) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_merge_variables_with_executeDTcc mht_3(mht_3_v, 332, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_merge_variables_with_execute.cc", "BuildVariableAccessInfo");
+
   VariableAccessesForTPUExecute var_access_info;
   Attribute device_attr = execute_launch.deviceAttr();
   if (check_device && !device_attr) return var_access_info;
@@ -345,6 +525,9 @@ VariableAccessesForTPUExecute BuildVariableAccessInfo(
 int AppendTypes(llvm::SmallVectorImpl<Type>* output_types,
                 tf_device::ParallelExecuteOp parallel_execute, int start,
                 int end) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_merge_variables_with_executeDTcc mht_4(mht_4_v, 528, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_merge_variables_with_execute.cc", "AppendTypes");
+
   const int size_before = output_types->size();
   for (int index = start; index < end; ++index) {
     Block& block = parallel_execute.GetRegionBlockWithIndex(index);
@@ -362,6 +545,9 @@ void ReplaceParallelExecute(
     tf_device::LaunchOp execute_launch,
     tf_device::LaunchOp merged_execute_launch,
     const VariableAccessesForTPUExecute& var_access_info, OpBuilder* builder) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_merge_variables_with_executeDTcc mht_5(mht_5_v, 548, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_merge_variables_with_execute.cc", "ReplaceParallelExecute");
+
   Operation* parallel_execute_op = parallel_execute.getOperation();
 
   // Collect result types of tf_device.parallel_execute and update region
@@ -438,6 +624,9 @@ void ReplaceParallelExecute(
 void ReplaceExecute(tf_device::LaunchOp execute_launch,
                     tf_device::LaunchOp merged_execute_launch,
                     const VariableAccessesForTPUExecute& var_access_info) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_merge_variables_with_executeDTcc mht_6(mht_6_v, 627, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_merge_variables_with_execute.cc", "ReplaceExecute");
+
   // Replace the uses.
   for (int i = 0, end = var_access_info.old_to_new_output_mapping.size();
        i < end; ++i) {
@@ -457,6 +646,9 @@ LogicalResult MergeForOneTPUExecute(
     tf_device::LaunchOp execute_launch,
     const mlir::TF::ResourceAliasAnalysis::Info& resource_analysis_info,
     bool check_device, bool check_same_region, OpBuilder* builder) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_merge_variables_with_executeDTcc mht_7(mht_7_v, 649, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_merge_variables_with_execute.cc", "MergeForOneTPUExecute");
+
   auto var_access_info = BuildVariableAccessInfo(
       execute_launch, resource_analysis_info, check_device, check_same_region);
   if (var_access_info.per_resource_info.empty()) return success();
@@ -546,6 +738,9 @@ LogicalResult MergeForOneTPUExecute(
 // Checks if an ops parent is a tf_device.parallel_execute and the region the
 // op is in is perfectly wrapped.
 bool ParentParallelExecuteWrapsSingleOp(Operation* op) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_merge_variables_with_executeDTcc mht_8(mht_8_v, 741, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_merge_variables_with_execute.cc", "ParentParallelExecuteWrapsSingleOp");
+
   auto parallel_execute =
       llvm::dyn_cast<tf_device::ParallelExecuteOp>(op->getParentOp());
   if (!parallel_execute) return true;
@@ -555,6 +750,9 @@ bool ParentParallelExecuteWrapsSingleOp(Operation* op) {
 }
 
 void TPUMergeVariablesWithExecutePass::runOnOperation() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_merge_variables_with_executeDTcc mht_9(mht_9_v, 753, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_merge_variables_with_execute.cc", "TPUMergeVariablesWithExecutePass::runOnOperation");
+
   ModuleOp module = getOperation();
   mlir::TF::ResourceAliasAnalysis resource_analysis(module);
   module.walk([&](FuncOp func) {

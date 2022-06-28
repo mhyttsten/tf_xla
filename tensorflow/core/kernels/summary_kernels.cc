@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSsummary_kernelsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsummary_kernelsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSsummary_kernelsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,9 +201,15 @@ REGISTER_KERNEL_BUILDER(Name("SummaryWriter").Device(DEVICE_CPU),
 class CreateSummaryFileWriterOp : public OpKernel {
  public:
   explicit CreateSummaryFileWriterOp(OpKernelConstruction* ctx)
-      : OpKernel(ctx) {}
+      : OpKernel(ctx) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsummary_kernelsDTcc mht_0(mht_0_v, 205, "", "./tensorflow/core/kernels/summary_kernels.cc", "CreateSummaryFileWriterOp");
+}
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsummary_kernelsDTcc mht_1(mht_1_v, 210, "", "./tensorflow/core/kernels/summary_kernels.cc", "Compute");
+
     const Tensor* tmp;
     OP_REQUIRES_OK(ctx, ctx->input("logdir", &tmp));
     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(tmp->shape()),
@@ -70,9 +244,15 @@ REGISTER_KERNEL_BUILDER(Name("CreateSummaryFileWriter").Device(DEVICE_CPU),
 
 class CreateSummaryDbWriterOp : public OpKernel {
  public:
-  explicit CreateSummaryDbWriterOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+  explicit CreateSummaryDbWriterOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsummary_kernelsDTcc mht_2(mht_2_v, 248, "", "./tensorflow/core/kernels/summary_kernels.cc", "CreateSummaryDbWriterOp");
+}
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsummary_kernelsDTcc mht_3(mht_3_v, 253, "", "./tensorflow/core/kernels/summary_kernels.cc", "Compute");
+
     const Tensor* tmp;
     OP_REQUIRES_OK(ctx, ctx->input("db_uri", &tmp));
     const string db_uri = tmp->scalar<tstring>()();
@@ -106,9 +286,15 @@ REGISTER_KERNEL_BUILDER(Name("CreateSummaryDbWriter").Device(DEVICE_CPU),
 
 class FlushSummaryWriterOp : public OpKernel {
  public:
-  explicit FlushSummaryWriterOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+  explicit FlushSummaryWriterOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsummary_kernelsDTcc mht_4(mht_4_v, 290, "", "./tensorflow/core/kernels/summary_kernels.cc", "FlushSummaryWriterOp");
+}
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsummary_kernelsDTcc mht_5(mht_5_v, 295, "", "./tensorflow/core/kernels/summary_kernels.cc", "Compute");
+
     core::RefCountPtr<SummaryWriterInterface> s;
     OP_REQUIRES_OK(ctx, LookupResource(ctx, HandleFromInput(ctx, 0), &s));
     OP_REQUIRES_OK(ctx, s->Flush());
@@ -119,9 +305,15 @@ REGISTER_KERNEL_BUILDER(Name("FlushSummaryWriter").Device(DEVICE_CPU),
 
 class CloseSummaryWriterOp : public OpKernel {
  public:
-  explicit CloseSummaryWriterOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+  explicit CloseSummaryWriterOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsummary_kernelsDTcc mht_6(mht_6_v, 309, "", "./tensorflow/core/kernels/summary_kernels.cc", "CloseSummaryWriterOp");
+}
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsummary_kernelsDTcc mht_7(mht_7_v, 314, "", "./tensorflow/core/kernels/summary_kernels.cc", "Compute");
+
     OP_REQUIRES_OK(ctx, DeleteResource<SummaryWriterInterface>(
                             ctx, HandleFromInput(ctx, 0)));
   }
@@ -131,9 +323,15 @@ REGISTER_KERNEL_BUILDER(Name("CloseSummaryWriter").Device(DEVICE_CPU),
 
 class WriteSummaryOp : public OpKernel {
  public:
-  explicit WriteSummaryOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+  explicit WriteSummaryOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsummary_kernelsDTcc mht_8(mht_8_v, 327, "", "./tensorflow/core/kernels/summary_kernels.cc", "WriteSummaryOp");
+}
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsummary_kernelsDTcc mht_9(mht_9_v, 332, "", "./tensorflow/core/kernels/summary_kernels.cc", "Compute");
+
     core::RefCountPtr<SummaryWriterInterface> s;
     OP_REQUIRES_OK(ctx, LookupResource(ctx, HandleFromInput(ctx, 0), &s));
     const Tensor* tmp;
@@ -155,9 +353,15 @@ REGISTER_KERNEL_BUILDER(Name("WriteSummary").Device(DEVICE_CPU),
 
 class WriteRawProtoSummaryOp : public OpKernel {
  public:
-  explicit WriteRawProtoSummaryOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+  explicit WriteRawProtoSummaryOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsummary_kernelsDTcc mht_10(mht_10_v, 357, "", "./tensorflow/core/kernels/summary_kernels.cc", "WriteRawProtoSummaryOp");
+}
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsummary_kernelsDTcc mht_11(mht_11_v, 362, "", "./tensorflow/core/kernels/summary_kernels.cc", "Compute");
+
     core::RefCountPtr<SummaryWriterInterface> s;
     OP_REQUIRES_OK(ctx, LookupResource(ctx, HandleFromInput(ctx, 0), &s));
     const Tensor* tmp;
@@ -191,9 +395,15 @@ REGISTER_KERNEL_BUILDER(Name("WriteRawProtoSummary").Device(DEVICE_CPU),
 
 class ImportEventOp : public OpKernel {
  public:
-  explicit ImportEventOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+  explicit ImportEventOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsummary_kernelsDTcc mht_12(mht_12_v, 399, "", "./tensorflow/core/kernels/summary_kernels.cc", "ImportEventOp");
+}
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsummary_kernelsDTcc mht_13(mht_13_v, 404, "", "./tensorflow/core/kernels/summary_kernels.cc", "Compute");
+
     core::RefCountPtr<SummaryWriterInterface> s;
     OP_REQUIRES_OK(ctx, LookupResource(ctx, HandleFromInput(ctx, 0), &s));
     const Tensor* t;
@@ -211,9 +421,15 @@ REGISTER_KERNEL_BUILDER(Name("ImportEvent").Device(DEVICE_CPU), ImportEventOp);
 
 class WriteScalarSummaryOp : public OpKernel {
  public:
-  explicit WriteScalarSummaryOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+  explicit WriteScalarSummaryOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsummary_kernelsDTcc mht_14(mht_14_v, 425, "", "./tensorflow/core/kernels/summary_kernels.cc", "WriteScalarSummaryOp");
+}
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsummary_kernelsDTcc mht_15(mht_15_v, 430, "", "./tensorflow/core/kernels/summary_kernels.cc", "Compute");
+
     core::RefCountPtr<SummaryWriterInterface> s;
     OP_REQUIRES_OK(ctx, LookupResource(ctx, HandleFromInput(ctx, 0), &s));
     const Tensor* tmp;
@@ -233,9 +449,15 @@ REGISTER_KERNEL_BUILDER(Name("WriteScalarSummary").Device(DEVICE_CPU),
 
 class WriteHistogramSummaryOp : public OpKernel {
  public:
-  explicit WriteHistogramSummaryOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+  explicit WriteHistogramSummaryOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsummary_kernelsDTcc mht_16(mht_16_v, 453, "", "./tensorflow/core/kernels/summary_kernels.cc", "WriteHistogramSummaryOp");
+}
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsummary_kernelsDTcc mht_17(mht_17_v, 458, "", "./tensorflow/core/kernels/summary_kernels.cc", "Compute");
+
     core::RefCountPtr<SummaryWriterInterface> s;
     OP_REQUIRES_OK(ctx, LookupResource(ctx, HandleFromInput(ctx, 0), &s));
     const Tensor* tmp;
@@ -256,6 +478,9 @@ REGISTER_KERNEL_BUILDER(Name("WriteHistogramSummary").Device(DEVICE_CPU),
 class WriteImageSummaryOp : public OpKernel {
  public:
   explicit WriteImageSummaryOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsummary_kernelsDTcc mht_18(mht_18_v, 481, "", "./tensorflow/core/kernels/summary_kernels.cc", "WriteImageSummaryOp");
+
     int64_t max_images_tmp;
     OP_REQUIRES_OK(ctx, ctx->GetAttr("max_images", &max_images_tmp));
     OP_REQUIRES(ctx, max_images_tmp < (1LL << 31),
@@ -264,6 +489,9 @@ class WriteImageSummaryOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsummary_kernelsDTcc mht_19(mht_19_v, 492, "", "./tensorflow/core/kernels/summary_kernels.cc", "Compute");
+
     core::RefCountPtr<SummaryWriterInterface> s;
     OP_REQUIRES_OK(ctx, LookupResource(ctx, HandleFromInput(ctx, 0), &s));
     const Tensor* tmp;
@@ -293,12 +521,18 @@ REGISTER_KERNEL_BUILDER(Name("WriteImageSummary").Device(DEVICE_CPU),
 class WriteAudioSummaryOp : public OpKernel {
  public:
   explicit WriteAudioSummaryOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsummary_kernelsDTcc mht_20(mht_20_v, 524, "", "./tensorflow/core/kernels/summary_kernels.cc", "WriteAudioSummaryOp");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("max_outputs", &max_outputs_));
     OP_REQUIRES(ctx, max_outputs_ > 0,
                 errors::InvalidArgument("max_outputs must be > 0"));
   }
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsummary_kernelsDTcc mht_21(mht_21_v, 533, "", "./tensorflow/core/kernels/summary_kernels.cc", "Compute");
+
     core::RefCountPtr<SummaryWriterInterface> s;
     OP_REQUIRES_OK(ctx, LookupResource(ctx, HandleFromInput(ctx, 0), &s));
     const Tensor* tmp;
@@ -324,9 +558,15 @@ REGISTER_KERNEL_BUILDER(Name("WriteAudioSummary").Device(DEVICE_CPU),
 
 class WriteGraphSummaryOp : public OpKernel {
  public:
-  explicit WriteGraphSummaryOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+  explicit WriteGraphSummaryOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsummary_kernelsDTcc mht_22(mht_22_v, 562, "", "./tensorflow/core/kernels/summary_kernels.cc", "WriteGraphSummaryOp");
+}
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsummary_kernelsDTcc mht_23(mht_23_v, 567, "", "./tensorflow/core/kernels/summary_kernels.cc", "Compute");
+
     core::RefCountPtr<SummaryWriterInterface> s;
     OP_REQUIRES_OK(ctx, LookupResource(ctx, HandleFromInput(ctx, 0), &s));
     const Tensor* t;

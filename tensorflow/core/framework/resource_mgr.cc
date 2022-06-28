@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,6 +203,11 @@ ResourceHandle MakeResourceHandle(
     const TypeIndex& type_index,
     const std::vector<DtypeAndPartialTensorShape>& dtypes_and_shapes,
     const absl::optional<ManagedStackTrace>& definition_stack_trace) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("container: \"" + container + "\"");
+   mht_0_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_0(mht_0_v, 208, "", "./tensorflow/core/framework/resource_mgr.cc", "MakeResourceHandle");
+
   ResourceHandle result;
   result.set_device(device.name());
   result.set_container(container);
@@ -54,6 +227,11 @@ ResourceHandle MakeResourceHandle(
 Status MakeResourceHandleToOutput(OpKernelContext* context, int output_index,
                                   const string& container, const string& name,
                                   const TypeIndex& type_index) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("container: \"" + container + "\"");
+   mht_1_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_1(mht_1_v, 232, "", "./tensorflow/core/framework/resource_mgr.cc", "MakeResourceHandleToOutput");
+
   Tensor* handle;
   TF_RETURN_IF_ERROR(
       context->allocate_output(output_index, TensorShape({}), &handle));
@@ -65,6 +243,9 @@ Status MakeResourceHandleToOutput(OpKernelContext* context, int output_index,
 namespace internal {
 
 Status ValidateDevice(OpKernelContext* ctx, const ResourceHandle& p) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_2(mht_2_v, 246, "", "./tensorflow/core/framework/resource_mgr.cc", "ValidateDevice");
+
   if (ctx->device()->attributes().name() != p.device()) {
     return errors::InvalidArgument(
         "Trying to access resource ", p.name(), " located in device ",
@@ -77,6 +258,10 @@ Status ValidateDevice(OpKernelContext* ctx, const ResourceHandle& p) {
 
 Status ResourceMgr::InsertDebugTypeName(uint64 hash_code,
                                         const string& type_name) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("type_name: \"" + type_name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_3(mht_3_v, 262, "", "./tensorflow/core/framework/resource_mgr.cc", "ResourceMgr::InsertDebugTypeName");
+
   auto iter = debug_type_names_.emplace(hash_code, type_name);
   if (iter.first->second != type_name) {
     return errors::AlreadyExists("Duplicate hash code found for type ",
@@ -86,6 +271,9 @@ Status ResourceMgr::InsertDebugTypeName(uint64 hash_code,
 }
 
 const char* ResourceMgr::DebugTypeName(uint64 hash_code) const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_4(mht_4_v, 274, "", "./tensorflow/core/framework/resource_mgr.cc", "ResourceMgr::DebugTypeName");
+
   auto type_name_iter = debug_type_names_.find(hash_code);
   if (type_name_iter == debug_type_names_.end()) {
     return "<unknown>";
@@ -94,13 +282,23 @@ const char* ResourceMgr::DebugTypeName(uint64 hash_code) const {
   }
 }
 
-ResourceMgr::ResourceAndName::ResourceAndName() : name(nullptr) {}
+ResourceMgr::ResourceAndName::ResourceAndName() : name(nullptr) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_5(mht_5_v, 286, "", "./tensorflow/core/framework/resource_mgr.cc", "ResourceMgr::ResourceAndName::ResourceAndName");
+}
 
 ResourceMgr::ResourceAndName::ResourceAndName(const string& name)
-    : name(absl::make_unique<string>(name)) {}
+    : name(absl::make_unique<string>(name)) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_6(mht_6_v, 293, "", "./tensorflow/core/framework/resource_mgr.cc", "ResourceMgr::ResourceAndName::ResourceAndName");
+}
 
 core::RefCountPtr<ResourceBase> ResourceMgr::ResourceAndName::GetResource()
     const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_7(mht_7_v, 299, "", "./tensorflow/core/framework/resource_mgr.cc", "ResourceMgr::ResourceAndName::GetResource");
+
   if (absl::holds_alternative<core::RefCountPtr<ResourceBase>>(resource)) {
     ResourceBase* ptr =
         absl::get<core::RefCountPtr<ResourceBase>>(resource).get();
@@ -119,7 +317,10 @@ ResourceMgr::ResourceAndName::ResourceAndName(
   resource = std::move(other.resource);
 }
 
-ResourceMgr::ResourceAndName::~ResourceAndName() {}
+ResourceMgr::ResourceAndName::~ResourceAndName() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_8(mht_8_v, 321, "", "./tensorflow/core/framework/resource_mgr.cc", "ResourceMgr::ResourceAndName::~ResourceAndName");
+}
 
 ResourceMgr::ResourceAndName& ResourceMgr::ResourceAndName::operator=(
     ResourceAndName&& other) noexcept {
@@ -128,14 +329,27 @@ ResourceMgr::ResourceAndName& ResourceMgr::ResourceAndName::operator=(
   return *this;
 }
 
-ResourceMgr::ResourceMgr() : default_container_("localhost") {}
+ResourceMgr::ResourceMgr() : default_container_("localhost") {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_9(mht_9_v, 333, "", "./tensorflow/core/framework/resource_mgr.cc", "ResourceMgr::ResourceMgr");
+}
 
 ResourceMgr::ResourceMgr(const string& default_container)
-    : default_container_(default_container) {}
+    : default_container_(default_container) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("default_container: \"" + default_container + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_10(mht_10_v, 340, "", "./tensorflow/core/framework/resource_mgr.cc", "ResourceMgr::ResourceMgr");
+}
 
-ResourceMgr::~ResourceMgr() { Clear(); }
+ResourceMgr::~ResourceMgr() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_11(mht_11_v, 345, "", "./tensorflow/core/framework/resource_mgr.cc", "ResourceMgr::~ResourceMgr");
+ Clear(); }
 
 void ResourceMgr::Clear() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_12(mht_12_v, 350, "", "./tensorflow/core/framework/resource_mgr.cc", "ResourceMgr::Clear");
+
   // We do the deallocation outside of the lock to avoid a potential deadlock
   // in case any of the destructors access the resource manager.
   absl::flat_hash_map<string, Container*> tmp_containers;
@@ -150,6 +364,9 @@ void ResourceMgr::Clear() {
 }
 
 string ResourceMgr::DebugString() const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_13(mht_13_v, 367, "", "./tensorflow/core/framework/resource_mgr.cc", "ResourceMgr::DebugString");
+
   mutex_lock l(mu_);
   struct Line {
     const string* container;
@@ -183,7 +400,15 @@ string ResourceMgr::DebugString() const {
 Status ResourceMgr::DoCreate(const string& container_name, TypeIndex type,
                              const string& name, ResourceBase* resource,
                              bool owns_resource) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("container_name: \"" + container_name + "\"");
+   mht_14_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_14(mht_14_v, 405, "", "./tensorflow/core/framework/resource_mgr.cc", "ResourceMgr::DoCreate");
+
   Container* container = [&]() TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_15(mht_15_v, 409, "", "./tensorflow/core/framework/resource_mgr.cc", "lambda");
+
     Container** ptr = &containers_[container_name];
     if (*ptr == nullptr) {
       *ptr = new Container;
@@ -201,6 +426,9 @@ Status ResourceMgr::DoCreate(const string& container_name, TypeIndex type,
     resource_and_name.resource = core::RefCountPtr<ResourceBase>(resource);
   } else {
     auto cleanup_fn = [this, container, type, borrowed_name]() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_16(mht_16_v, 429, "", "./tensorflow/core/framework/resource_mgr.cc", "lambda");
+
       mutex_lock l(mu_);
       auto iter = container->find({type.hash_code(), borrowed_name});
       if (iter != container->end()) {
@@ -225,6 +453,9 @@ Status ResourceMgr::DoCreate(const string& container_name, TypeIndex type,
 
 Status ResourceMgr::Lookup(const ResourceHandle& handle,
                            ResourceBase** resource) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_17(mht_17_v, 456, "", "./tensorflow/core/framework/resource_mgr.cc", "ResourceMgr::Lookup");
+
   tf_shared_lock l(mu_);
   return DoLookup(handle.container(), handle.hash_code(),
                   /*type_name=*/"ResourceBase", handle.name(), resource);
@@ -233,6 +464,11 @@ Status ResourceMgr::Lookup(const ResourceHandle& handle,
 Status ResourceMgr::DoLookup(const string& container, TypeIndex type,
                              const string& name,
                              ResourceBase** resource) const {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("container: \"" + container + "\"");
+   mht_18_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_18(mht_18_v, 469, "", "./tensorflow/core/framework/resource_mgr.cc", "ResourceMgr::DoLookup");
+
   return DoLookup(container, type.hash_code(), type.name(), name, resource);
 }
 
@@ -240,6 +476,12 @@ Status ResourceMgr::DoLookup(const string& container, uint64 type_hash_code,
                              const string& type_name,
                              const string& resource_name,
                              ResourceBase** resource) const {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("container: \"" + container + "\"");
+   mht_19_v.push_back("type_name: \"" + type_name + "\"");
+   mht_19_v.push_back("resource_name: \"" + resource_name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_19(mht_19_v, 482, "", "./tensorflow/core/framework/resource_mgr.cc", "ResourceMgr::DoLookup");
+
   const Container* b = gtl::FindPtrOrNull(containers_, container);
   if (b == nullptr) {
     return errors::NotFound("Container ", container,
@@ -265,6 +507,12 @@ Status ResourceMgr::PopResourceAndName(const string& container,
                                        const string& resource_name,
                                        const string& type_name,
                                        ResourceAndName& resource_and_name) {
+   std::vector<std::string> mht_20_v;
+   mht_20_v.push_back("container: \"" + container + "\"");
+   mht_20_v.push_back("resource_name: \"" + resource_name + "\"");
+   mht_20_v.push_back("type_name: \"" + type_name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_20(mht_20_v, 513, "", "./tensorflow/core/framework/resource_mgr.cc", "ResourceMgr::PopResourceAndName");
+
   mutex_lock l(mu_);
   Container* b = gtl::FindPtrOrNull(containers_, container);
   if (b == nullptr) {
@@ -283,6 +531,12 @@ Status ResourceMgr::PopResourceAndName(const string& container,
 Status ResourceMgr::DoDelete(const string& container, uint64 type_hash_code,
                              const string& resource_name,
                              const string& type_name) {
+   std::vector<std::string> mht_21_v;
+   mht_21_v.push_back("container: \"" + container + "\"");
+   mht_21_v.push_back("resource_name: \"" + resource_name + "\"");
+   mht_21_v.push_back("type_name: \"" + type_name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_21(mht_21_v, 537, "", "./tensorflow/core/framework/resource_mgr.cc", "ResourceMgr::DoDelete");
+
   ResourceAndName resource_and_name;
   TF_RETURN_IF_ERROR(PopResourceAndName(
       container, type_hash_code, resource_name, type_name, resource_and_name));
@@ -300,15 +554,27 @@ Status ResourceMgr::DoDelete(const string& container, uint64 type_hash_code,
 
 Status ResourceMgr::DoDelete(const string& container, TypeIndex type,
                              const string& resource_name) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("container: \"" + container + "\"");
+   mht_22_v.push_back("resource_name: \"" + resource_name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_22(mht_22_v, 559, "", "./tensorflow/core/framework/resource_mgr.cc", "ResourceMgr::DoDelete");
+
   return DoDelete(container, type.hash_code(), resource_name, type.name());
 }
 
 Status ResourceMgr::Delete(const ResourceHandle& handle) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_23(mht_23_v, 566, "", "./tensorflow/core/framework/resource_mgr.cc", "ResourceMgr::Delete");
+
   return DoDelete(handle.container(), handle.hash_code(), handle.name(),
                   "<unknown>");
 }
 
 Status ResourceMgr::Cleanup(const string& container) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("container: \"" + container + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_24(mht_24_v, 575, "", "./tensorflow/core/framework/resource_mgr.cc", "ResourceMgr::Cleanup");
+
   {
     tf_shared_lock l(mu_);
     if (!gtl::FindOrNull(containers_, container)) {
@@ -333,6 +599,9 @@ Status ResourceMgr::Cleanup(const string& container) {
 }
 
 static bool IsValidContainerName(StringPiece s) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_25(mht_25_v, 602, "", "./tensorflow/core/framework/resource_mgr.cc", "IsValidContainerName");
+
   using ::tensorflow::strings::Scanner;
   return Scanner(s)
       .One(Scanner::LETTER_DIGIT_DOT)
@@ -343,6 +612,9 @@ static bool IsValidContainerName(StringPiece s) {
 
 Status ContainerInfo::Init(ResourceMgr* rmgr, const NodeDef& ndef,
                            bool use_node_name_as_default) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_26(mht_26_v, 615, "", "./tensorflow/core/framework/resource_mgr.cc", "ContainerInfo::Init");
+
   CHECK(rmgr);
   rmgr_ = rmgr;
   string attr_container;
@@ -375,17 +647,26 @@ Status ContainerInfo::Init(ResourceMgr* rmgr, const NodeDef& ndef,
 }
 
 string ContainerInfo::DebugString() const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_27(mht_27_v, 650, "", "./tensorflow/core/framework/resource_mgr.cc", "ContainerInfo::DebugString");
+
   return strings::StrCat("[", container(), ",", name(), ",",
                          resource_is_private_to_kernel() ? "private" : "public",
                          "]");
 }
 
 const ResourceHandle& HandleFromInput(OpKernelContext* ctx, int input) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_28(mht_28_v, 659, "", "./tensorflow/core/framework/resource_mgr.cc", "HandleFromInput");
+
   return ctx->input(input).flat<ResourceHandle>()(0);
 }
 
 Status HandleFromInput(OpKernelContext* ctx, StringPiece input,
                        ResourceHandle* handle) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_29(mht_29_v, 667, "", "./tensorflow/core/framework/resource_mgr.cc", "HandleFromInput");
+
   const Tensor* tensor;
   TF_RETURN_IF_ERROR(ctx->input(input, &tensor));
   *handle = tensor->flat<ResourceHandle>()(0);
@@ -394,6 +675,9 @@ Status HandleFromInput(OpKernelContext* ctx, StringPiece input,
 
 Status LookupResource(OpKernelContext* ctx, const ResourceHandle& p,
                       ResourceBase** value) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_30(mht_30_v, 678, "", "./tensorflow/core/framework/resource_mgr.cc", "LookupResource");
+
   TF_RETURN_IF_ERROR(internal::ValidateDevice(ctx, p));
   if (p.IsRefCounting()) {
     TF_ASSIGN_OR_RETURN(*value, p.GetResource<ResourceBase>());
@@ -404,6 +688,9 @@ Status LookupResource(OpKernelContext* ctx, const ResourceHandle& p,
 }
 
 Status DeleteResource(OpKernelContext* ctx, const ResourceHandle& p) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSresource_mgrDTcc mht_31(mht_31_v, 691, "", "./tensorflow/core/framework/resource_mgr.cc", "DeleteResource");
+
   TF_RETURN_IF_ERROR(internal::ValidateDevice(ctx, p));
   if (p.IsRefCounting()) {
     return Status::OK();

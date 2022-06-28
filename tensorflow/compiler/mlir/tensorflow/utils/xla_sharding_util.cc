@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPSxla_sharding_utilDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPSxla_sharding_utilDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPSxla_sharding_utilDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,6 +220,9 @@ mlir::LogicalResult CreateSplitOp(const int num_split,
                                   mlir::Value src_input,
                                   mlir::OpBuilder* builder,
                                   mlir::TF::SplitOp* split_op) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPSxla_sharding_utilDTcc mht_0(mht_0_v, 223, "", "./tensorflow/compiler/mlir/tensorflow/utils/xla_sharding_util.cc", "CreateSplitOp");
+
   // Creates a const op to hold split dimension value.
   auto split_dim_type =
       mlir::RankedTensorType::get({}, builder->getIntegerType(32));
@@ -103,6 +274,9 @@ mlir::TF::ConcatOp CreateConcatOp(const int concat_dimension,
                                   const mlir::Location& location,
                                   mlir::ArrayRef<mlir::Value> inputs,
                                   mlir::OpBuilder* builder) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPSxla_sharding_utilDTcc mht_1(mht_1_v, 277, "", "./tensorflow/compiler/mlir/tensorflow/utils/xla_sharding_util.cc", "CreateConcatOp");
+
   // Creates a const op to hold concat dimension value.
   auto concat_dim_type =
       mlir::RankedTensorType::get({}, builder->getIntegerType(32));
@@ -144,6 +318,9 @@ mlir::LogicalResult HandleTileShardedInputs(
     const mlir::Location& location, const xla::OpSharding& input_sharding,
     const mlir::Value& original_source, mlir::OpBuilder* builder,
     llvm::SmallVectorImpl<mlir::Value>* tiled_inputs) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPSxla_sharding_utilDTcc mht_2(mht_2_v, 321, "", "./tensorflow/compiler/mlir/tensorflow/utils/xla_sharding_util.cc", "HandleTileShardedInputs");
+
   llvm::SmallVector<mlir::TF::SplitOp, 4> split_ops_for_tiled_input;
   split_ops_for_tiled_input.reserve(
       input_sharding.tile_assignment_devices_size());
@@ -199,6 +376,9 @@ mlir::LogicalResult HandleTileShardedInputs(
 }
 
 bool UnsupportedPartitionedShardingType(xla::OpSharding::Type sharding) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPSxla_sharding_utilDTcc mht_3(mht_3_v, 379, "", "./tensorflow/compiler/mlir/tensorflow/utils/xla_sharding_util.cc", "UnsupportedPartitionedShardingType");
+
   return sharding != xla::OpSharding::REPLICATED &&
          sharding != xla::OpSharding::OTHER;
 }
@@ -209,6 +389,9 @@ mlir::LogicalResult ExtractInputsForLogicalDevices(
     const int num_cores_per_replica,
     mlir::tf_device::ClusterFuncOp cluster_func, mlir::OpBuilder* builder,
     llvm::SmallVectorImpl<llvm::SmallVector<mlir::Value, 4>>* input_list) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPSxla_sharding_utilDTcc mht_4(mht_4_v, 392, "", "./tensorflow/compiler/mlir/tensorflow/utils/xla_sharding_util.cc", "ExtractInputsForLogicalDevices");
+
   // Initialize the input list for each logical devices.
   input_list->reserve(num_cores_per_replica);
   for (int i = 0; i < num_cores_per_replica; ++i)
@@ -242,6 +425,9 @@ mlir::LogicalResult ExtractInputsForLogicalDevices(
     const auto input_sharding_type = sharding.type();
 
     auto tiled_sharding_mismatched = [&](int tiled_input_size) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPSxla_sharding_utilDTcc mht_5(mht_5_v, 428, "", "./tensorflow/compiler/mlir/tensorflow/utils/xla_sharding_util.cc", "lambda");
+
       return cluster_func.emitError(
           llvm::formatv("incorrect {0}-th tiled input sharding received. "
                         "Product of tile sharding splits({1}) must be equal to "
@@ -310,6 +496,9 @@ mlir::LogicalResult ParseAndValidateOutputSharding(
     const int num_cores_per_replica,
     mlir::tf_device::ClusterFuncOp cluster_func,
     mlir::SmallVector<xla::OpSharding, 4>* output_sharding_list) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPSxla_sharding_utilDTcc mht_6(mht_6_v, 499, "", "./tensorflow/compiler/mlir/tensorflow/utils/xla_sharding_util.cc", "ParseAndValidateOutputSharding");
+
   output_sharding_list->reserve(cluster_func.getNumResults());
 
   const auto output_sharding_attrs =
@@ -361,6 +550,9 @@ namespace {
 
 bool IsAssignedToLogicalDevice(const int core_id,
                                const xla::OpSharding& sharding) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPSxla_sharding_utilDTcc mht_7(mht_7_v, 553, "", "./tensorflow/compiler/mlir/tensorflow/utils/xla_sharding_util.cc", "IsAssignedToLogicalDevice");
+
   return sharding.type() == xla::OpSharding::MAXIMAL &&
          sharding.tile_assignment_devices(0) == core_id;
 }
@@ -372,6 +564,9 @@ bool IsAssignedToLogicalDevice(const int core_id,
 int MapClusterOutputIndexWithRegionOutputIndex(
     llvm::ArrayRef<xla::OpSharding> output_sharding_config, const int core_id,
     const int cluster_func_output_index) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPSxla_sharding_utilDTcc mht_8(mht_8_v, 567, "", "./tensorflow/compiler/mlir/tensorflow/utils/xla_sharding_util.cc", "MapClusterOutputIndexWithRegionOutputIndex");
+
   int region_output_index = 0;
   for (int output_index = 0; output_index < cluster_func_output_index;
        ++output_index) {
@@ -414,6 +609,9 @@ void HandleTileShardedOutputs(
     const mlir::Location& location, mlir::Value cluster_func_output,
     mlir::tf_device::ParallelExecuteOp parallel_execute,
     mlir::OpBuilder* builder) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPSxla_sharding_utilDTcc mht_9(mht_9_v, 612, "", "./tensorflow/compiler/mlir/tensorflow/utils/xla_sharding_util.cc", "HandleTileShardedOutputs");
+
   // Inject concat ops after parallel_execute to merge outputs from
   // concurrently executed computations.
   builder->setInsertionPointAfter(parallel_execute);
@@ -460,6 +658,9 @@ mlir::LogicalResult ValidateAndGetTiledExecuteOutputShape(
     const mlir::TensorType cluster_func_output_type,
     const xla::OpSharding& output_sharding,
     mlir::Type* tiled_logical_computation_type) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPSxla_sharding_utilDTcc mht_10(mht_10_v, 661, "", "./tensorflow/compiler/mlir/tensorflow/utils/xla_sharding_util.cc", "ValidateAndGetTiledExecuteOutputShape");
+
   auto new_output_shape =
       llvm::to_vector<4>(cluster_func_output_type.getShape());
   for (auto dimension_and_output_splits :
@@ -501,6 +702,9 @@ mlir::LogicalResult GetOutputTypesForLogicalDeviceComputation(
     const int core_id, llvm::ArrayRef<xla::OpSharding> output_sharding_config,
     mlir::tf_device::ClusterFuncOp cluster_func,
     llvm::SmallVectorImpl<mlir::Type>* output_types) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPSxla_sharding_utilDTcc mht_11(mht_11_v, 705, "", "./tensorflow/compiler/mlir/tensorflow/utils/xla_sharding_util.cc", "GetOutputTypesForLogicalDeviceComputation");
+
   output_types->reserve(cluster_func.getNumResults());
 
   for (auto result_and_index : llvm::enumerate(cluster_func.getResults())) {
@@ -539,6 +743,9 @@ mlir::LogicalResult RemapOutputsFromLogicalDevices(
     mlir::tf_device::ClusterFuncOp cluster_func,
     mlir::tf_device::ParallelExecuteOp parallel_execute,
     mlir::OpBuilder* builder) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSutilsPSxla_sharding_utilDTcc mht_12(mht_12_v, 746, "", "./tensorflow/compiler/mlir/tensorflow/utils/xla_sharding_util.cc", "RemapOutputsFromLogicalDevices");
+
   for (auto result_and_index : llvm::enumerate(cluster_func.getResults())) {
     const auto output_index = result_and_index.index();
     const auto cluster_func_output = result_and_index.value();

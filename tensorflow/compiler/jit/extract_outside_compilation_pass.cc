@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -69,6 +237,9 @@ StatusOr<Node*> AddHostComputeKeyPlaceholder(const string& xla_cluster_name,
 
 // Returns if the node is a XLA computation key placeholder.
 bool IsKeyPlaceholderNode(const Node& n) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_0(mht_0_v, 240, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "IsKeyPlaceholderNode");
+
   return n.type_string() == "Placeholder" &&
          absl::EndsWith(n.name(), "_key_placeholder");
 }
@@ -87,6 +258,9 @@ std::vector<Node*> GatherNodesWithType(const Graph& g, const string& type) {
 // Gets data types from `arg_nodes` and fills them into `recv_at_host_dtypes`.
 Status GetArgDataTypes(const std::vector<Node*>& arg_nodes,
                        std::vector<DataType>* recv_at_host_dtypes) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_1(mht_1_v, 261, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "GetArgDataTypes");
+
   recv_at_host_dtypes->resize(arg_nodes.size(), DT_INVALID);
   for (auto* n : arg_nodes) {
     int index;
@@ -187,6 +361,9 @@ StatusOr<Node*> ReplaceArgNodesWithRecvAtHostNode(
 // Gets data types from `ret_nodes` and fills them into `send_from_host_dtypes`.
 Status GetRetDataTypes(const std::vector<Node*>& ret_nodes,
                        std::vector<DataType>* send_from_host_dtypes) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_2(mht_2_v, 364, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "GetRetDataTypes");
+
   send_from_host_dtypes->resize(ret_nodes.size(), DT_INVALID);
   for (auto* n : ret_nodes) {
     int index;
@@ -300,6 +477,10 @@ absl::optional<std::vector<PartialTensorShape>> GetInferredInputShapes(
 }
 
 string host_compute_node_name(const string& original_oc_name) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("original_oc_name: \"" + original_oc_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_3(mht_3_v, 481, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "host_compute_node_name");
+
   return absl::StrCat("outside_compilation_", original_oc_name,
                       "_host_compute");
 }
@@ -393,6 +574,9 @@ TF_ATTRIBUTE_NOINLINE StatusOr<Node*> ReplaceOutsideCompilationCallNode(
 // (XlaRecvAtHost nodes; XlaSendFromHost nodes; If/While/FuncCall nodes
 // containing XlaRecvAtHost/XlaSendFromHost).
 Status ResetDeviceOrdinalToPlaceholderValue(Graph* g) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_4(mht_4_v, 577, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "ResetDeviceOrdinalToPlaceholderValue");
+
   AttrValue device_ordinal_value;
   device_ordinal_value.set_placeholder("_device_ordinal");
   for (Node* n : g->nodes()) {
@@ -436,6 +620,9 @@ Status ResetDeviceOrdinalToPlaceholderValue(Graph* g) {
 
 // Cheap check to tell whether FunctionDef contains a lifted argument.
 bool HasLiftedArgs(const FunctionDef& function_def) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_5(mht_5_v, 623, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "HasLiftedArgs");
+
   return absl::c_any_of(function_def.node_def(), [](const NodeDef& node_def) {
     return (node_def.op() == "Placeholder" &&
             node_def.attr().find(kXlaLiftedArgOutsideCompilationAttrName) !=
@@ -500,6 +687,9 @@ void AddEdgesFromOutsideCompilationNodes(
     const int original_arg_count, const int arg_to_input_edge_offset,
     const std::vector<DataType>& data_types,
     const std::vector<Node*>& outside_compilation_nodes, Graph* g, Node* n) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_6(mht_6_v, 690, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "AddEdgesFromOutsideCompilationNodes");
+
   // Add edges from outside compilation nodes to While node.
   for (int i = original_arg_count, end = data_types.size(); i < end; i++) {
     Node* outside_compilation_node =
@@ -527,6 +717,9 @@ StatusOr<Node*> AddOutsideCompilationInputArgToFunctionBody(
 Status AddMatchingRetvalNode(const FunctionBody& function_body,
                              const int arg_idx, const DataType& data_type,
                              Node* arg_node) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_7(mht_7_v, 720, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "AddMatchingRetvalNode");
+
   NodeDefBuilder ret_builder(absl::StrCat("ret_", arg_idx), "_Retval");
   ret_builder.Attr("T", data_type);
   ret_builder.Attr("index", arg_idx);
@@ -543,6 +736,9 @@ void ReplaceLiftedArgNodePlaceholderWithArg(
     const FunctionBody& function_body, const int original_arg_count,
     const int arg_idx, const std::vector<Node*>& lifted_arg_nodes,
     Node* arg_node) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_8(mht_8_v, 739, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "ReplaceLiftedArgNodePlaceholderWithArg");
+
   Node* lifted_arg_node = lifted_arg_nodes[arg_idx - original_arg_count];
   // This might happen because lifted_arg_node only exists in one branch of an
   // If node, and we are handling the other branch.
@@ -567,6 +763,11 @@ Status AddFunctionWithNewName(const std::string& new_name,
                               const FunctionDef& function_def,
                               NameAttrList* func_attr, Node* callsite_node,
                               FunctionLibraryDefinition* fld) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("new_name: \"" + new_name + "\"");
+   mht_9_v.push_back("func_attr_name: \"" + func_attr_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_9(mht_9_v, 768, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "AddFunctionWithNewName");
+
   TF_RETURN_IF_ERROR(fld->AddFunctionDef(function_def));
   func_attr->set_name(new_name);
   callsite_node->ClearAttr(func_attr_name);
@@ -579,6 +780,9 @@ Status AddFunctionWithNewName(const std::string& new_name,
 Status PostprocessLiftedArgsForWhile(
     const std::unordered_map<string, Node*>& outside_compilation_attr_to_node,
     Graph* g, Node* n, FunctionLibraryDefinition* fld) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_10(mht_10_v, 783, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "PostprocessLiftedArgsForWhile");
+
   TF_RET_CHECK(n->IsWhileNode());
 
   // Check if there is any lifted args in body function.
@@ -687,6 +891,9 @@ Status PostprocessLiftedArgsForWhile(
 Status PostprocessLiftedArgsForIf(
     const std::unordered_map<string, Node*>& outside_compilation_attr_to_node,
     Graph* g, Node* n, FunctionLibraryDefinition* fld) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_11(mht_11_v, 894, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "PostprocessLiftedArgsForIf");
+
   TF_RET_CHECK(n->IsIfNode());
 
   NameAttrList then_branch_func;
@@ -826,6 +1033,9 @@ Status PostprocessLiftedArgsForIf(
 Status PostprocessLiftedArgsForCall(
     const std::unordered_map<string, Node*>& outside_compilation_attr_to_node,
     Graph* g, Node* n, FunctionLibraryDefinition* fld) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_12(mht_12_v, 1036, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "PostprocessLiftedArgsForCall");
+
   const FunctionDef* fdef = fld->Find(n->type_string());
   TF_RET_CHECK(fdef);
 
@@ -941,6 +1151,9 @@ StatusOr<std::unordered_map<string, Node*>> OutsideCompilationAttrToNode(
 }
 
 Status PostprocessLiftedArgs(Graph* g, FunctionLibraryDefinition* fld) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_13(mht_13_v, 1154, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "PostprocessLiftedArgs");
+
   TF_ASSIGN_OR_RETURN(auto outside_compilation_attr_to_node,
                       OutsideCompilationAttrToNode(*g));
 
@@ -989,6 +1202,11 @@ Status ConstructHostGraph(
     const string& xla_cluster_name, const string& outside_compilation_attr_name,
     const std::vector<string>& outside_compilation_host_graphs,
     FunctionLibraryDefinition* fld, std::unique_ptr<Graph>* host_graph) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("xla_cluster_name: \"" + xla_cluster_name + "\"");
+   mht_14_v.push_back("outside_compilation_attr_name: \"" + outside_compilation_attr_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_14(mht_14_v, 1207, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "ConstructHostGraph");
+
   host_graph->reset(new Graph(fld));
 
   // Create sequencer node in host graph.
@@ -1126,6 +1344,10 @@ Status ExpandHostGraphIntoMainGraph(Graph* main_graph,
                                     const string& host_graph_func_name,
                                     Node* xla_computation_node,
                                     Node* pivot_node) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("host_graph_func_name: \"" + host_graph_func_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_15(mht_15_v, 1348, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "ExpandHostGraphIntoMainGraph");
+
   // Temporarily use "0" as "_device_ordinal". It will be rewritten with the
   // correct value in a later pass. We cannot just use placeholder value here
   // because FunctionDef instantiation does not allow placeholder value for
@@ -1156,6 +1378,9 @@ Status ExpandHostGraphIntoMainGraph(Graph* main_graph,
   node_map[host_graph->sink_node()] = main_graph->sink_node();
   Status s = Status::OK();
   auto copy_node_fn = [&](const Node* n) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_16(mht_16_v, 1381, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "lambda");
+
     if (!s.ok()) {
       return;
     }
@@ -1207,6 +1432,10 @@ Status ExpandHostGraphIntoMainGraph(Graph* main_graph,
 Status RewriteShapeInferenceGraph(const string& shape_inference_graph_name,
                                   Graph* host_graph, Node* pivot_node,
                                   FunctionLibraryDefinition* fld) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("shape_inference_graph_name: \"" + shape_inference_graph_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_17(mht_17_v, 1436, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "RewriteShapeInferenceGraph");
+
   // Use "0" as "_device_ordinal". It does not matter for shape inference.
   AttrValue device_ordinal_attr;
   device_ordinal_attr.set_i(0);
@@ -1348,6 +1577,11 @@ TF_ATTRIBUTE_NOINLINE StatusOr<Node*> BuildSendIfPredNode(
 Status ReplaceKeyPlaceholderWithArgNode(const string& xla_cluster_name,
                                         const string& func_name,
                                         FunctionLibraryDefinition* fld) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("xla_cluster_name: \"" + xla_cluster_name + "\"");
+   mht_18_v.push_back("func_name: \"" + func_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_18(mht_18_v, 1582, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "ReplaceKeyPlaceholderWithArgNode");
+
   // Temporarily use "0" as "_device_ordinal". It will be reset to placeholder
   // value after rewriting.
   AttrValue device_ordinal_attr;
@@ -1399,6 +1633,17 @@ TF_ATTRIBUTE_NOINLINE Status BuildHostGraphForIfNode(
     const string& host_graph_func_name, FunctionLibraryDefinition* fld,
     const string& then_branch_host_func_name,
     const string& else_branch_host_func_name) {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("xla_cluster_attr_name: \"" + xla_cluster_attr_name + "\"");
+   mht_19_v.push_back("outside_compilation_attr_name: \"" + outside_compilation_attr_name + "\"");
+   mht_19_v.push_back("xla_cluster_name: \"" + xla_cluster_name + "\"");
+   mht_19_v.push_back("if_node_name: \"" + if_node_name + "\"");
+   mht_19_v.push_back("host_transfer_key: \"" + host_transfer_key + "\"");
+   mht_19_v.push_back("host_graph_func_name: \"" + host_graph_func_name + "\"");
+   mht_19_v.push_back("then_branch_host_func_name: \"" + then_branch_host_func_name + "\"");
+   mht_19_v.push_back("else_branch_host_func_name: \"" + else_branch_host_func_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_19(mht_19_v, 1644, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "BuildHostGraphForIfNode");
+
   Graph host_graph(fld);
   string outside_compilation_name = absl::StrCat("oc_if_", if_node_name);
   AttrValue device_ordinal_value;
@@ -1476,6 +1721,11 @@ TF_ATTRIBUTE_NOINLINE Status AddSendLoopPredToLoopCond(
     const string& cond_xla_func_name, const string& host_transfer_key,
     NameAttrList* loop_cond_func, FunctionLibraryDefinition* fld,
     Node* while_node) {
+   std::vector<std::string> mht_20_v;
+   mht_20_v.push_back("cond_xla_func_name: \"" + cond_xla_func_name + "\"");
+   mht_20_v.push_back("host_transfer_key: \"" + host_transfer_key + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_20(mht_20_v, 1726, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "AddSendLoopPredToLoopCond");
+
   // Instantiate the loop cond function.
   std::unique_ptr<FunctionBody> fbody;
   const FunctionDef* loop_cond_fdef = fld->Find(loop_cond_func->name());
@@ -1552,6 +1802,16 @@ Status RewriteHostWhileLoopCond(
     const string& host_transfer_key, const string& xla_cluster_attr_name,
     const string& xla_cluster_name, const string& outside_compilation_attr_name,
     const string& outside_compilation_name, FunctionLibraryDefinition* fld) {
+   std::vector<std::string> mht_21_v;
+   mht_21_v.push_back("cond_host_func_name: \"" + cond_host_func_name + "\"");
+   mht_21_v.push_back("while_node_name: \"" + while_node_name + "\"");
+   mht_21_v.push_back("host_transfer_key: \"" + host_transfer_key + "\"");
+   mht_21_v.push_back("xla_cluster_attr_name: \"" + xla_cluster_attr_name + "\"");
+   mht_21_v.push_back("xla_cluster_name: \"" + xla_cluster_name + "\"");
+   mht_21_v.push_back("outside_compilation_attr_name: \"" + outside_compilation_attr_name + "\"");
+   mht_21_v.push_back("outside_compilation_name: \"" + outside_compilation_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_21(mht_21_v, 1812, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "RewriteHostWhileLoopCond");
+
   // Replace key placeholder node with _Arg node.
   TF_RETURN_IF_ERROR(ReplaceKeyPlaceholderWithArgNode(
       xla_cluster_name, cond_host_func_name, fld));
@@ -1626,6 +1886,16 @@ Status RewriteHostWhileLoopBody(
     const string& host_transfer_key, const string& xla_cluster_attr_name,
     const string& xla_cluster_name, const string& outside_compilation_attr_name,
     const string& outside_compilation_name, FunctionLibraryDefinition* fld) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("body_host_func_name: \"" + body_host_func_name + "\"");
+   mht_22_v.push_back("while_node_name: \"" + while_node_name + "\"");
+   mht_22_v.push_back("host_transfer_key: \"" + host_transfer_key + "\"");
+   mht_22_v.push_back("xla_cluster_attr_name: \"" + xla_cluster_attr_name + "\"");
+   mht_22_v.push_back("xla_cluster_name: \"" + xla_cluster_name + "\"");
+   mht_22_v.push_back("outside_compilation_attr_name: \"" + outside_compilation_attr_name + "\"");
+   mht_22_v.push_back("outside_compilation_name: \"" + outside_compilation_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_22(mht_22_v, 1896, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "RewriteHostWhileLoopBody");
+
   // Replace key placeholder node with _Arg node.
   TF_RETURN_IF_ERROR(ReplaceKeyPlaceholderWithArgNode(
       xla_cluster_name, body_host_func_name, fld));
@@ -1685,6 +1955,17 @@ TF_ATTRIBUTE_NOINLINE Status BuildHostGraphForWhileNode(
     const string& while_node_name, const string& host_transfer_key,
     const string& host_graph_func_name, FunctionLibraryDefinition* fld,
     const string& cond_host_func_name, const string& body_host_func_name) {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("xla_cluster_attr_name: \"" + xla_cluster_attr_name + "\"");
+   mht_23_v.push_back("outside_compilation_attr_name: \"" + outside_compilation_attr_name + "\"");
+   mht_23_v.push_back("xla_cluster_name: \"" + xla_cluster_name + "\"");
+   mht_23_v.push_back("while_node_name: \"" + while_node_name + "\"");
+   mht_23_v.push_back("host_transfer_key: \"" + host_transfer_key + "\"");
+   mht_23_v.push_back("host_graph_func_name: \"" + host_graph_func_name + "\"");
+   mht_23_v.push_back("cond_host_func_name: \"" + cond_host_func_name + "\"");
+   mht_23_v.push_back("body_host_func_name: \"" + body_host_func_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_23(mht_23_v, 1966, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "BuildHostGraphForWhileNode");
+
   Graph host_graph(fld);
   string outside_compilation_name = absl::StrCat("oc_while_", while_node_name);
 
@@ -1751,6 +2032,15 @@ Status BuildHostGraphForFuncCallNode(
     const string& outside_compilation_attr_name,
     const string& func_call_node_name, const string& func_call_host_func_name,
     const string& host_graph_func_name, FunctionLibraryDefinition* fld) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("xla_cluster_attr_name: \"" + xla_cluster_attr_name + "\"");
+   mht_24_v.push_back("xla_cluster_name: \"" + xla_cluster_name + "\"");
+   mht_24_v.push_back("outside_compilation_attr_name: \"" + outside_compilation_attr_name + "\"");
+   mht_24_v.push_back("func_call_node_name: \"" + func_call_node_name + "\"");
+   mht_24_v.push_back("func_call_host_func_name: \"" + func_call_host_func_name + "\"");
+   mht_24_v.push_back("host_graph_func_name: \"" + host_graph_func_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_24(mht_24_v, 2041, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "BuildHostGraphForFuncCallNode");
+
   Graph host_graph(fld);
   AttrValue device_ordinal_value;
   device_ordinal_value.set_placeholder("_device_ordinal");
@@ -1802,6 +2092,12 @@ TF_ATTRIBUTE_NOINLINE Status ExtractOutsideCompilationForFuncCallNode(
     std::vector<string>* host_graphs,
     std::vector<string>* shape_inference_graphs,
     bool* has_outside_compilation) {
+   std::vector<std::string> mht_25_v;
+   mht_25_v.push_back("xla_cluster_attr_name: \"" + xla_cluster_attr_name + "\"");
+   mht_25_v.push_back("outside_compilation_attr_name: \"" + outside_compilation_attr_name + "\"");
+   mht_25_v.push_back("xla_cluster_name: \"" + xla_cluster_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_25(mht_25_v, 2098, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "ExtractOutsideCompilationForFuncCallNode");
+
   bool func_has_outside_compilation = false;
   NameAttrList func;
   if (fld->Contains(n->type_string())) {
@@ -1888,6 +2184,12 @@ Status ExtractOutsideCompilationForIfNode(
     std::vector<string>* host_graphs,
     std::vector<string>* shape_inference_graphs,
     bool* has_outside_compilation) {
+   std::vector<std::string> mht_26_v;
+   mht_26_v.push_back("xla_cluster_attr_name: \"" + xla_cluster_attr_name + "\"");
+   mht_26_v.push_back("outside_compilation_attr_name: \"" + outside_compilation_attr_name + "\"");
+   mht_26_v.push_back("xla_cluster_name: \"" + xla_cluster_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_26(mht_26_v, 2190, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "ExtractOutsideCompilationForIfNode");
+
   // Instantiate "then_branch" and "else_branch".
   NameAttrList then_branch, else_branch;
   TF_RETURN_IF_ERROR(GetNodeAttr(n->attrs(), "then_branch", &then_branch));
@@ -2007,6 +2309,12 @@ Status ExtractOutsideCompilationForWhileNode(
     std::vector<string>* host_graphs,
     std::vector<string>* shape_inference_graphs,
     bool* has_outside_compilation) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("xla_cluster_attr_name: \"" + xla_cluster_attr_name + "\"");
+   mht_27_v.push_back("outside_compilation_attr_name: \"" + outside_compilation_attr_name + "\"");
+   mht_27_v.push_back("xla_cluster_name: \"" + xla_cluster_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_27(mht_27_v, 2315, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "ExtractOutsideCompilationForWhileNode");
+
   // Instantiate "cond" and "body".
   NameAttrList cond, body;
   TF_RETURN_IF_ERROR(GetNodeAttr(n->attrs(), "cond", &cond));
@@ -2107,6 +2415,12 @@ Status ExtractOutsideCompilationForNodesWithAssociatedFunctions(
     FunctionLibraryDefinition* fld, std::vector<string>* host_graphs,
     std::vector<string>* shape_inference_graphs,
     bool* has_outside_compilation) {
+   std::vector<std::string> mht_28_v;
+   mht_28_v.push_back("xla_cluster_attr_name: \"" + xla_cluster_attr_name + "\"");
+   mht_28_v.push_back("outside_compilation_attr_name: \"" + outside_compilation_attr_name + "\"");
+   mht_28_v.push_back("xla_cluster_name: \"" + xla_cluster_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_28(mht_28_v, 2421, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "ExtractOutsideCompilationForNodesWithAssociatedFunctions");
+
   std::vector<Node*> if_nodes, while_nodes, func_call_nodes;
   for (Node* n : g->nodes()) {
     if (n->IsIfNode()) {
@@ -2144,6 +2458,10 @@ Status ExtractOutsideCompilationForNodesWithAssociatedFunctions(
 
 Status CopyOutsideCompilationConstNodes(
     Graph* g, const string& outside_compilation_attr_name) {
+   std::vector<std::string> mht_29_v;
+   mht_29_v.push_back("outside_compilation_attr_name: \"" + outside_compilation_attr_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_29(mht_29_v, 2462, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "CopyOutsideCompilationConstNodes");
+
   for (Node* n : g->op_nodes()) {
     if (!n->IsConstant() ||
         !HasNodeAttr(n->def(), outside_compilation_attr_name)) {
@@ -2301,6 +2619,14 @@ Status ExtractOutsideCompilationForFunction(
     const std::map<string, int>& host_compute_core, FunctionLibraryRuntime* flr,
     FunctionLibraryDefinition* fld, std::vector<string>* shape_inference_graphs,
     bool* has_outside_compilation) {
+   std::vector<std::string> mht_30_v;
+   mht_30_v.push_back("xla_cluster_attr_name: \"" + xla_cluster_attr_name + "\"");
+   mht_30_v.push_back("outside_compilation_attr_name: \"" + outside_compilation_attr_name + "\"");
+   mht_30_v.push_back("xla_cluster_name: \"" + xla_cluster_name + "\"");
+   mht_30_v.push_back("new_func_name: \"" + new_func_name + "\"");
+   mht_30_v.push_back("host_graph_func_name: \"" + host_graph_func_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_30(mht_30_v, 2627, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "ExtractOutsideCompilationForFunction");
+
   // Convert the function to graph.
   const string& func_name = func_name_attrs.name();
   FunctionLibraryRuntime::Handle handle;
@@ -2492,6 +2818,11 @@ Status ExtractOutsideCompilation(
     const std::unordered_map<string, XlaClusterInfo>& clusters, Graph* g,
     FunctionLibraryRuntime* flr, FunctionLibraryDefinition* fld,
     bool* modified) {
+   std::vector<std::string> mht_31_v;
+   mht_31_v.push_back("xla_cluster_attr_name: \"" + xla_cluster_attr_name + "\"");
+   mht_31_v.push_back("outside_compilation_attr_name: \"" + outside_compilation_attr_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSextract_outside_compilation_passDTcc mht_31(mht_31_v, 2823, "", "./tensorflow/compiler/jit/extract_outside_compilation_pass.cc", "ExtractOutsideCompilation");
+
   if (VLOG_IS_ON(4)) {
     DumpGraphToFile("extract_outside_compilation_before", *g, fld);
   }

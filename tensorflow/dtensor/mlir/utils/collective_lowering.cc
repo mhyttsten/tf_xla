@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSdtensorPSmlirPSutilsPScollective_loweringDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSutilsPScollective_loweringDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSdtensorPSmlirPSutilsPScollective_loweringDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2022 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -92,6 +260,10 @@ mlir::TF::CollectiveReduceV2Op EmitCollectiveReduce(
     const std::string& reduce_op_str,
     const mlir::DenseIntElementsAttr& group_assignment, int32 key_base,
     mlir::Value device_id, int32 host_group_size) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("reduce_op_str: \"" + reduce_op_str + "\"");
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSutilsPScollective_loweringDTcc mht_0(mht_0_v, 264, "", "./tensorflow/dtensor/mlir/utils/collective_lowering.cc", "EmitCollectiveReduce");
+
   DCHECK_EQ(group_assignment.getType().getRank(), 2);
   auto shape = group_assignment.getType().getShape();
   const int32 num_groups = shape[0];
@@ -150,6 +322,9 @@ mlir::TF::CollectiveReduceV2Op EmitCollectiveReduce(
 mlir::LogicalResult LowerAllReduceOpImpl(
     mlir::MLIRContext& context, mlir::OpBuilder& builder,
     mlir::TF::DTensorAllReduceOp all_reduce, mlir::Value* value) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSutilsPScollective_loweringDTcc mht_1(mht_1_v, 325, "", "./tensorflow/dtensor/mlir/utils/collective_lowering.cc", "LowerAllReduceOpImpl");
+
   mlir::Location loc = all_reduce.getLoc();
   StatusOr<Layout> output_layout =
       ExtractRequiredSingleLayoutFromOp(all_reduce);
@@ -206,6 +381,9 @@ mlir::LogicalResult LowerAllReduceOpImpl(
 
 template <class ReduceOpType>
 mlir::LogicalResult ConvertBoolReduce(ReduceOpType reduce_op) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSutilsPScollective_loweringDTcc mht_2(mht_2_v, 384, "", "./tensorflow/dtensor/mlir/utils/collective_lowering.cc", "ConvertBoolReduce");
+
   mlir::OpBuilder builder(reduce_op);
   const mlir::Location loc = reduce_op.getLoc();
   const mlir::Type output_type = reduce_op.getResult().getType();
@@ -255,6 +433,9 @@ mlir::LogicalResult ConvertBoolReduce(ReduceOpType reduce_op) {
 
 mlir::LogicalResult LowerAllReduceOp(mlir::MLIRContext& context,
                                      mlir::TF::DTensorAllReduceOp all_reduce) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSutilsPScollective_loweringDTcc mht_3(mht_3_v, 436, "", "./tensorflow/dtensor/mlir/utils/collective_lowering.cc", "LowerAllReduceOp");
+
   if (mlir::failed(ConvertBoolReduce<mlir::TF::DTensorAllReduceOp>(all_reduce)))
     return mlir::failure();
 
@@ -270,6 +451,9 @@ mlir::LogicalResult LowerAllReduceOp(mlir::MLIRContext& context,
 
 mlir::LogicalResult LowerReduceScatterOp(
     mlir::TF::DTensorReduceScatterOp reduce_scatter) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSutilsPScollective_loweringDTcc mht_4(mht_4_v, 454, "", "./tensorflow/dtensor/mlir/utils/collective_lowering.cc", "LowerReduceScatterOp");
+
   mlir::Location loc = reduce_scatter.getLoc();
 
   StatusOr<Layout> output_layout =
@@ -345,6 +529,9 @@ mlir::LogicalResult LowerReduceScatterOp(
 
 mlir::Value CreateZeroScalar(mlir::OpBuilder& builder, mlir::Location loc,
                              mlir::RankedTensorType type) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSutilsPScollective_loweringDTcc mht_5(mht_5_v, 532, "", "./tensorflow/dtensor/mlir/utils/collective_lowering.cc", "CreateZeroScalar");
+
   const mlir::Value zero_scalar = ops_util::CreateScalarConst(0, builder, loc);
   return builder.create<mlir::TF::CastOp>(
       loc, mlir::RankedTensorType::get({}, type.getElementType()), zero_scalar);
@@ -356,6 +543,9 @@ mlir::Value SelectElementsBasedOnId(
     mlir::OpBuilder& builder, mlir::Location loc, mlir::Value device_id,
     const llvm::SmallVectorImpl<int64>& candidates_flat, int64 num_devices,
     int64 output_shape_size) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSutilsPScollective_loweringDTcc mht_6(mht_6_v, 546, "", "./tensorflow/dtensor/mlir/utils/collective_lowering.cc", "SelectElementsBasedOnId");
+
   // Reshape the flat list to a matrix of shape num_devices * output_shape_size.
   const mlir::Value candidates_flat_const =
       ops_util::GetR1Const(candidates_flat, builder, loc);
@@ -387,6 +577,9 @@ mlir::Value SelectElementsBasedOnId(
 }
 
 mlir::LogicalResult LowerAllGatherOp(mlir::TF::DTensorAllGatherOp all_gather) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSutilsPScollective_loweringDTcc mht_7(mht_7_v, 580, "", "./tensorflow/dtensor/mlir/utils/collective_lowering.cc", "LowerAllGatherOp");
+
   const Layout src_layout = all_gather.input_layout();
   const Layout tgt_layout = all_gather.output_layout();
 
@@ -575,6 +768,9 @@ mlir::LogicalResult LowerAllGatherOp(mlir::TF::DTensorAllGatherOp all_gather) {
 
 mlir::LogicalResult LowerAllScatterOp(
     mlir::TF::DTensorAllScatterOp all_scatter) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSutilsPScollective_loweringDTcc mht_8(mht_8_v, 771, "", "./tensorflow/dtensor/mlir/utils/collective_lowering.cc", "LowerAllScatterOp");
+
   const Layout original_layout = all_scatter.input_layout();
   const Layout desired_layout = all_scatter.output_layout();
 
@@ -677,6 +873,9 @@ mlir::LogicalResult LowerAllScatterOp(
 struct DTensorAllReduceLowering
     : public DTensorAllReduceLoweringBase<DTensorAllReduceLowering> {
   void runOnOperation() override {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSutilsPScollective_loweringDTcc mht_9(mht_9_v, 876, "", "./tensorflow/dtensor/mlir/utils/collective_lowering.cc", "runOnOperation");
+
     mlir::MLIRContext& context = getContext();
     mlir::ModuleOp module = getOperation();
 
@@ -696,10 +895,16 @@ struct DTensorAllReduceLowering
 struct DTensorReduceScatterLowering
     : public DTensorReduceScatterLoweringBase<DTensorReduceScatterLowering> {
   void getDependentDialects(mlir::DialectRegistry& registry) const override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSutilsPScollective_loweringDTcc mht_10(mht_10_v, 898, "", "./tensorflow/dtensor/mlir/utils/collective_lowering.cc", "getDependentDialects");
+
     registry.insert<mlir::dtensor::DTensorDialect>();
   }
 
   void runOnOperation() override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSutilsPScollective_loweringDTcc mht_11(mht_11_v, 905, "", "./tensorflow/dtensor/mlir/utils/collective_lowering.cc", "runOnOperation");
+
     mlir::ModuleOp module = getOperation();
 
     // Find all DTensorAllReduce ops.
@@ -718,6 +923,9 @@ struct DTensorReduceScatterLowering
 struct DTensorAllGatherLowering
     : public DTensorAllGatherLoweringBase<DTensorAllGatherLowering> {
   void runOnOperation() override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSutilsPScollective_loweringDTcc mht_12(mht_12_v, 926, "", "./tensorflow/dtensor/mlir/utils/collective_lowering.cc", "runOnOperation");
+
     mlir::ModuleOp module = getOperation();
 
     // Process all DTensorAllGather ops.
@@ -735,6 +943,9 @@ struct DTensorAllGatherLowering
 struct DTensorAllScatterLowering
     : public DTensorAllScatterLoweringBase<DTensorAllScatterLowering> {
   void runOnOperation() override {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSutilsPScollective_loweringDTcc mht_13(mht_13_v, 946, "", "./tensorflow/dtensor/mlir/utils/collective_lowering.cc", "runOnOperation");
+
     mlir::ModuleOp module = getOperation();
 
     // Process all DTensorAllScatter ops.

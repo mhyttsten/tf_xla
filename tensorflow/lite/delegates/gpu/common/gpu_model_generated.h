@@ -16,6 +16,174 @@ limitations under the License.
 
 #ifndef FLATBUFFERS_GENERATED_GPUMODEL_TFLITE_GPU_DATA_H_
 #define FLATBUFFERS_GENERATED_GPUMODEL_TFLITE_GPU_DATA_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include "flatbuffers/flatbuffers.h"
 #include "tensorflow/lite/delegates/gpu/common/task/serialization_base_generated.h"
@@ -43,10 +211,19 @@ struct TensorDescWithId FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_ID = 6
   };
   const tflite::gpu::data::TensorDescriptor *desc() const {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_0(mht_0_v, 214, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "desc");
+
     return GetPointer<const tflite::gpu::data::TensorDescriptor *>(VT_DESC);
   }
-  int32_t id() const { return GetField<int32_t>(VT_ID, 0); }
+  int32_t id() const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_1(mht_1_v, 220, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "id");
+ return GetField<int32_t>(VT_ID, 0); }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_2(mht_2_v, 224, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "Verify");
+
     return VerifyTableStart(verifier) && VerifyOffset(verifier, VT_DESC) &&
            verifier.VerifyTable(desc()) &&
            VerifyField<int32_t>(verifier, VT_ID) && verifier.EndTable();
@@ -58,13 +235,22 @@ struct TensorDescWithIdBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_desc(flatbuffers::Offset<tflite::gpu::data::TensorDescriptor> desc) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_3(mht_3_v, 238, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "add_desc");
+
     fbb_.AddOffset(TensorDescWithId::VT_DESC, desc);
   }
   void add_id(int32_t id) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_4(mht_4_v, 244, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "add_id");
+
     fbb_.AddElement<int32_t>(TensorDescWithId::VT_ID, id, 0);
   }
   explicit TensorDescWithIdBuilder(flatbuffers::FlatBufferBuilder &_fbb)
       : fbb_(_fbb) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_5(mht_5_v, 251, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "TensorDescWithIdBuilder");
+
     start_ = fbb_.StartTable();
   }
   flatbuffers::Offset<TensorDescWithId> Finish() {
@@ -90,9 +276,18 @@ struct PairOfValueIds FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_FIRST = 4,
     VT_SECOND = 6
   };
-  int32_t first() const { return GetField<int32_t>(VT_FIRST, 0); }
-  int32_t second() const { return GetField<int32_t>(VT_SECOND, 0); }
+  int32_t first() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_6(mht_6_v, 280, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "first");
+ return GetField<int32_t>(VT_FIRST, 0); }
+  int32_t second() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_7(mht_7_v, 284, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "second");
+ return GetField<int32_t>(VT_SECOND, 0); }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_8(mht_8_v, 288, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_FIRST) &&
            VerifyField<int32_t>(verifier, VT_SECOND) && verifier.EndTable();
@@ -104,13 +299,22 @@ struct PairOfValueIdsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_first(int32_t first) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_9(mht_9_v, 302, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "add_first");
+
     fbb_.AddElement<int32_t>(PairOfValueIds::VT_FIRST, first, 0);
   }
   void add_second(int32_t second) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_10(mht_10_v, 308, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "add_second");
+
     fbb_.AddElement<int32_t>(PairOfValueIds::VT_SECOND, second, 0);
   }
   explicit PairOfValueIdsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
       : fbb_(_fbb) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_11(mht_11_v, 315, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "PairOfValueIdsBuilder");
+
     start_ = fbb_.StartTable();
   }
   flatbuffers::Offset<PairOfValueIds> Finish() {
@@ -138,18 +342,33 @@ struct GpuNode FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_NAME = 10
   };
   const tflite::gpu::data::GPUOperation *gpu_op() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_12(mht_12_v, 345, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "gpu_op");
+
     return GetPointer<const tflite::gpu::data::GPUOperation *>(VT_GPU_OP);
   }
   const flatbuffers::Vector<int32_t> *input_ids() const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_13(mht_13_v, 351, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "input_ids");
+
     return GetPointer<const flatbuffers::Vector<int32_t> *>(VT_INPUT_IDS);
   }
   const flatbuffers::Vector<int32_t> *output_ids() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_14(mht_14_v, 357, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "output_ids");
+
     return GetPointer<const flatbuffers::Vector<int32_t> *>(VT_OUTPUT_IDS);
   }
   const flatbuffers::String *name() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_15(mht_15_v, 363, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "name");
+
     return GetPointer<const flatbuffers::String *>(VT_NAME);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_16(mht_16_v, 369, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "Verify");
+
     return VerifyTableStart(verifier) && VerifyOffset(verifier, VT_GPU_OP) &&
            verifier.VerifyTable(gpu_op()) &&
            VerifyOffset(verifier, VT_INPUT_IDS) &&
@@ -166,20 +385,35 @@ struct GpuNodeBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_gpu_op(flatbuffers::Offset<tflite::gpu::data::GPUOperation> gpu_op) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_17(mht_17_v, 388, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "add_gpu_op");
+
     fbb_.AddOffset(GpuNode::VT_GPU_OP, gpu_op);
   }
   void add_input_ids(
       flatbuffers::Offset<flatbuffers::Vector<int32_t>> input_ids) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_18(mht_18_v, 395, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "add_input_ids");
+
     fbb_.AddOffset(GpuNode::VT_INPUT_IDS, input_ids);
   }
   void add_output_ids(
       flatbuffers::Offset<flatbuffers::Vector<int32_t>> output_ids) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_19(mht_19_v, 402, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "add_output_ids");
+
     fbb_.AddOffset(GpuNode::VT_OUTPUT_IDS, output_ids);
   }
   void add_name(flatbuffers::Offset<flatbuffers::String> name) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_20(mht_20_v, 408, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "add_name");
+
     fbb_.AddOffset(GpuNode::VT_NAME, name);
   }
   explicit GpuNodeBuilder(flatbuffers::FlatBufferBuilder &_fbb) : fbb_(_fbb) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_21(mht_21_v, 414, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "GpuNodeBuilder");
+
     start_ = fbb_.StartTable();
   }
   flatbuffers::Offset<GpuNode> Finish() {
@@ -230,12 +464,18 @@ struct GpuModel FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   };
   const flatbuffers::Vector<flatbuffers::Offset<tflite::gpu::data::GpuNode>>
       *nodes() const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_22(mht_22_v, 467, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "nodes");
+
     return GetPointer<const flatbuffers::Vector<
         flatbuffers::Offset<tflite::gpu::data::GpuNode>> *>(VT_NODES);
   }
   const flatbuffers::Vector<
       flatbuffers::Offset<tflite::gpu::data::TensorDescWithId>>
       *tensors() const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_23(mht_23_v, 476, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "tensors");
+
     return GetPointer<const flatbuffers::Vector<
         flatbuffers::Offset<tflite::gpu::data::TensorDescWithId>> *>(
         VT_TENSORS);
@@ -243,30 +483,51 @@ struct GpuModel FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   const flatbuffers::Vector<
       flatbuffers::Offset<tflite::gpu::data::TensorDescWithId>>
       *const_tensors() const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_24(mht_24_v, 486, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "const_tensors");
+
     return GetPointer<const flatbuffers::Vector<
         flatbuffers::Offset<tflite::gpu::data::TensorDescWithId>> *>(
         VT_CONST_TENSORS);
   }
   const flatbuffers::Vector<int32_t> *input_ids() const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_25(mht_25_v, 494, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "input_ids");
+
     return GetPointer<const flatbuffers::Vector<int32_t> *>(VT_INPUT_IDS);
   }
   const flatbuffers::Vector<int32_t> *output_ids() const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_26(mht_26_v, 500, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "output_ids");
+
     return GetPointer<const flatbuffers::Vector<int32_t> *>(VT_OUTPUT_IDS);
   }
   const flatbuffers::Vector<int64_t> *input_refs() const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_27(mht_27_v, 506, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "input_refs");
+
     return GetPointer<const flatbuffers::Vector<int64_t> *>(VT_INPUT_REFS);
   }
   const flatbuffers::Vector<int64_t> *output_refs() const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_28(mht_28_v, 512, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "output_refs");
+
     return GetPointer<const flatbuffers::Vector<int64_t> *>(VT_OUTPUT_REFS);
   }
   const flatbuffers::Vector<
       flatbuffers::Offset<tflite::gpu::data::PairOfValueIds>>
       *variable_ids_and_refs() const {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_29(mht_29_v, 520, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "variable_ids_and_refs");
+
     return GetPointer<const flatbuffers::Vector<
         flatbuffers::Offset<tflite::gpu::data::PairOfValueIds>> *>(
         VT_VARIABLE_IDS_AND_REFS);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_30(mht_30_v, 528, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "Verify");
+
     return VerifyTableStart(verifier) && VerifyOffset(verifier, VT_NODES) &&
            verifier.VerifyVector(nodes()) &&
            verifier.VerifyVectorOfTables(nodes()) &&
@@ -299,43 +560,70 @@ struct GpuModelBuilder {
       flatbuffers::Offset<
           flatbuffers::Vector<flatbuffers::Offset<tflite::gpu::data::GpuNode>>>
           nodes) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_31(mht_31_v, 563, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "add_nodes");
+
     fbb_.AddOffset(GpuModel::VT_NODES, nodes);
   }
   void add_tensors(
       flatbuffers::Offset<flatbuffers::Vector<
           flatbuffers::Offset<tflite::gpu::data::TensorDescWithId>>>
           tensors) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_32(mht_32_v, 572, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "add_tensors");
+
     fbb_.AddOffset(GpuModel::VT_TENSORS, tensors);
   }
   void add_const_tensors(
       flatbuffers::Offset<flatbuffers::Vector<
           flatbuffers::Offset<tflite::gpu::data::TensorDescWithId>>>
           const_tensors) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_33(mht_33_v, 581, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "add_const_tensors");
+
     fbb_.AddOffset(GpuModel::VT_CONST_TENSORS, const_tensors);
   }
   void add_input_ids(
       flatbuffers::Offset<flatbuffers::Vector<int32_t>> input_ids) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_34(mht_34_v, 588, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "add_input_ids");
+
     fbb_.AddOffset(GpuModel::VT_INPUT_IDS, input_ids);
   }
   void add_output_ids(
       flatbuffers::Offset<flatbuffers::Vector<int32_t>> output_ids) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_35(mht_35_v, 595, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "add_output_ids");
+
     fbb_.AddOffset(GpuModel::VT_OUTPUT_IDS, output_ids);
   }
   void add_input_refs(
       flatbuffers::Offset<flatbuffers::Vector<int64_t>> input_refs) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_36(mht_36_v, 602, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "add_input_refs");
+
     fbb_.AddOffset(GpuModel::VT_INPUT_REFS, input_refs);
   }
   void add_output_refs(
       flatbuffers::Offset<flatbuffers::Vector<int64_t>> output_refs) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_37(mht_37_v, 609, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "add_output_refs");
+
     fbb_.AddOffset(GpuModel::VT_OUTPUT_REFS, output_refs);
   }
   void add_variable_ids_and_refs(
       flatbuffers::Offset<flatbuffers::Vector<
           flatbuffers::Offset<tflite::gpu::data::PairOfValueIds>>>
           variable_ids_and_refs) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_38(mht_38_v, 618, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "add_variable_ids_and_refs");
+
     fbb_.AddOffset(GpuModel::VT_VARIABLE_IDS_AND_REFS, variable_ids_and_refs);
   }
   explicit GpuModelBuilder(flatbuffers::FlatBufferBuilder &_fbb) : fbb_(_fbb) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_model_generatedDTh mht_39(mht_39_v, 624, "", "./tensorflow/lite/delegates/gpu/common/gpu_model_generated.h", "GpuModelBuilder");
+
     start_ = fbb_.StartTable();
   }
   flatbuffers::Offset<GpuModel> Finish() {

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -127,12 +295,18 @@ class Predicate {
 
   // An ID assigned to the Predicate at construction time.  Conceptually like a
   // pointer, except that it is stable across runs.
-  int64_t id() const { return id_; }
+  int64_t id() const {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_0(mht_0_v, 299, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "id");
+ return id_; }
 
   virtual absl::Span<Predicate* const> GetOperands() const = 0;
 
   virtual Kind kind() const = 0;
-  virtual ~Predicate() {}
+  virtual ~Predicate() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_1(mht_1_v, 307, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "~Predicate");
+}
 
   // Invokes func on p and on all of its operands recursively.  Does not invoke
   // `func` on the same Predicate instance twice.  Aborts the search if `func`
@@ -141,7 +315,10 @@ class Predicate {
   static void Visit(Predicate* p, const FunctionTy& func);
 
  protected:
-  explicit Predicate(int64_t id) : id_(id) {}
+  explicit Predicate(int64_t id) : id_(id) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_2(mht_2_v, 319, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "Predicate");
+}
 
  private:
   const int64_t id_;
@@ -153,9 +330,15 @@ class Predicate {
 class AndPredicate : public Predicate {
  public:
   explicit AndPredicate(int64_t id, std::vector<Predicate*> operands)
-      : Predicate(id), operands_(std::move(operands)) {}
+      : Predicate(id), operands_(std::move(operands)) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_3(mht_3_v, 334, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "AndPredicate");
+}
 
   string ToString() const override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_4(mht_4_v, 339, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "ToString");
+
     if (operands().empty()) {
       return "#true";
     }
@@ -168,7 +351,10 @@ class AndPredicate : public Predicate {
     return absl::StrCat("(", absl::StrJoin(operands_str, " & "), ")");
   }
 
-  Kind kind() const override { return Kind::kAnd; }
+  Kind kind() const override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_5(mht_5_v, 355, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "kind");
+ return Kind::kAnd; }
 
   absl::Span<Predicate* const> GetOperands() const override {
     return operands_;
@@ -183,9 +369,15 @@ class AndPredicate : public Predicate {
 class OrPredicate : public Predicate {
  public:
   explicit OrPredicate(int64_t id, std::vector<Predicate*> operands)
-      : Predicate(id), operands_(std::move(operands)) {}
+      : Predicate(id), operands_(std::move(operands)) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_6(mht_6_v, 373, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "OrPredicate");
+}
 
   string ToString() const override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_7(mht_7_v, 378, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "ToString");
+
     if (operands().empty()) {
       return "#false";
     }
@@ -198,7 +390,10 @@ class OrPredicate : public Predicate {
     return absl::StrCat("(", absl::StrJoin(operands_str, " | "), ")");
   }
 
-  Kind kind() const override { return Kind::kOr; }
+  Kind kind() const override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_8(mht_8_v, 394, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "kind");
+ return Kind::kOr; }
   absl::Span<Predicate* const> GetOperands() const override {
     return operands_;
   }
@@ -212,14 +407,26 @@ class OrPredicate : public Predicate {
 class NotPredicate : public Predicate {
  public:
   explicit NotPredicate(int64_t id, Predicate* operand)
-      : Predicate(id), operands_({operand}) {}
+      : Predicate(id), operands_({operand}) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_9(mht_9_v, 411, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "NotPredicate");
+}
 
   string ToString() const override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_10(mht_10_v, 416, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "ToString");
+
     return absl::StrCat("~", operand()->ToString());
   }
 
-  Kind kind() const override { return Kind::kNot; }
-  Predicate* operand() const { return operands_[0]; }
+  Kind kind() const override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_11(mht_11_v, 423, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "kind");
+ return Kind::kNot; }
+  Predicate* operand() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_12(mht_12_v, 427, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "operand");
+ return operands_[0]; }
   absl::Span<Predicate* const> GetOperands() const override {
     return operands_;
   }
@@ -251,18 +458,33 @@ class AndRecurrencePredicate : public Predicate {
  public:
   explicit AndRecurrencePredicate(int64_t id, Predicate* start, Predicate* step,
                                   std::vector<string> frame)
-      : Predicate(id), operands_({start, step}), frame_(std::move(frame)) {}
+      : Predicate(id), operands_({start, step}), frame_(std::move(frame)) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_13(mht_13_v, 462, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "AndRecurrencePredicate");
+}
 
-  Predicate* start() const { return operands_[0]; }
-  Predicate* step() const { return operands_[1]; }
+  Predicate* start() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_14(mht_14_v, 467, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "start");
+ return operands_[0]; }
+  Predicate* step() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_15(mht_15_v, 471, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "step");
+ return operands_[1]; }
   absl::Span<const string> frame() const { return frame_; }
 
   string ToString() const override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_16(mht_16_v, 477, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "ToString");
+
     return absl::StrCat("{", start()->ToString(), ",&,", step()->ToString(),
                         "}<", absl::StrJoin(frame(), ";"), ">");
   }
 
-  Kind kind() const override { return Kind::kAndRecurrence; }
+  Kind kind() const override {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_17(mht_17_v, 485, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "kind");
+ return Kind::kAndRecurrence; }
 
   absl::Span<Predicate* const> GetOperands() const override {
     return operands_;
@@ -283,14 +505,23 @@ class SymbolPredicate : public Predicate {
   explicit SymbolPredicate(int64_t id, TensorId tensor_id, bool must_be_true)
       : Predicate(id),
         tensor_id_(std::move(tensor_id)),
-        must_be_true_(must_be_true) {}
+        must_be_true_(must_be_true) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_18(mht_18_v, 509, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "SymbolPredicate");
+}
 
   string ToString() const override {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_19(mht_19_v, 514, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "ToString");
+
     return must_be_true() ? absl::StrCat("*", tensor_id_.ToString())
                           : tensor_id_.ToString();
   }
 
-  Kind kind() const override { return Kind::kSymbol; }
+  Kind kind() const override {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_20(mht_20_v, 522, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "kind");
+ return Kind::kSymbol; }
   absl::Span<Predicate* const> GetOperands() const override { return {}; }
 
   // If `must_be_true()` is true this SymbolPredicate represents the proposition
@@ -298,8 +529,14 @@ class SymbolPredicate : public Predicate {
   //
   // If `must_be_true()` is false then this SymbolPredicate represents the
   // proposition "tensor_id() is live (and may evaluate to any value)"
-  TensorId tensor_id() const { return tensor_id_; }
-  bool must_be_true() const { return must_be_true_; }
+  TensorId tensor_id() const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_21(mht_21_v, 533, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "tensor_id");
+ return tensor_id_; }
+  bool must_be_true() const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_22(mht_22_v, 537, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "must_be_true");
+ return must_be_true_; }
 
  private:
   TensorId tensor_id_;
@@ -317,15 +554,24 @@ class IntSymbolPredicate : public Predicate {
                               absl::optional<int> must_have_value)
       : Predicate(id),
         tensor_id_(std::move(tensor_id)),
-        must_have_value_(must_have_value) {}
+        must_have_value_(must_have_value) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_23(mht_23_v, 558, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "IntSymbolPredicate");
+}
 
   string ToString() const override {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_24(mht_24_v, 563, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "ToString");
+
     return must_have_value().has_value()
                ? absl::StrCat(tensor_id_.ToString(), "=", *must_have_value_)
                : tensor_id_.ToString();
   }
 
-  Kind kind() const override { return Kind::kIntSymbol; }
+  Kind kind() const override {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_25(mht_25_v, 572, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "kind");
+ return Kind::kIntSymbol; }
   absl::Span<Predicate* const> GetOperands() const override { return {}; }
 
   // If `must_have_value().has_value()` is true, then this IntSymbolPredicate
@@ -335,8 +581,14 @@ class IntSymbolPredicate : public Predicate {
   // If `must_have_value().has_value()` is false, then this IntSymbolPredicate
   // represents the proposition "tensor_id() is live (and may evaluate to any
   // value)".
-  TensorId tensor_id() const { return tensor_id_; }
+  TensorId tensor_id() const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_26(mht_26_v, 585, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "tensor_id");
+ return tensor_id_; }
   const absl::optional<int>& must_have_value() const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_27(mht_27_v, 589, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "must_have_value");
+
     return must_have_value_;
   }
 
@@ -347,6 +599,9 @@ class IntSymbolPredicate : public Predicate {
 
 template <typename FunctionTy>
 /*static*/ void Predicate::Visit(Predicate* p, const FunctionTy& func) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_28(mht_28_v, 602, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "Predicate::Visit");
+
   absl::flat_hash_set<Predicate*> visited;
   std::vector<Predicate*> stack;
 
@@ -373,14 +628,23 @@ template <typename FunctionTy>
 class PredicateFactory {
  public:
   Predicate* MakeAndPredicate(absl::Span<Predicate* const> operands) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_29(mht_29_v, 631, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "MakeAndPredicate");
+
     return MakeAndOrImpl(operands, /*is_and=*/true);
   }
 
   Predicate* MakeOrPredicate(absl::Span<Predicate* const> operands) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_30(mht_30_v, 638, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "MakeOrPredicate");
+
     return MakeAndOrImpl(operands, /*is_and=*/false);
   }
 
   Predicate* MakeNotPredicate(Predicate* pred) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_31(mht_31_v, 645, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "MakeNotPredicate");
+
     auto it = make_not_predicate_cache_.find(pred);
     if (it != make_not_predicate_cache_.end()) {
       return it->second;
@@ -398,6 +662,9 @@ class PredicateFactory {
 
   Predicate* MakeAndRecurrencePredicate(Predicate* start, Predicate* step,
                                         std::vector<string> frame) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_32(mht_32_v, 665, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "MakeAndRecurrencePredicate");
+
     SignatureForAndRec signature(start, step, std::move(frame));
     auto it = interned_and_rec_instances_.find(signature);
     if (it != interned_and_rec_instances_.end()) {
@@ -417,6 +684,9 @@ class PredicateFactory {
 
   Status MakeSymbolPredicate(Node* node, int output_idx, bool must_be_true,
                              Predicate** predicate) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_33(mht_33_v, 687, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "MakeSymbolPredicate");
+
     TensorId tensor_id(node->name(), output_idx);
 
     bool is_boolean_tensor =
@@ -453,6 +723,9 @@ class PredicateFactory {
   Status MakeSymbolPredicate(Node* node, int output_idx,
                              absl::optional<int> must_have_value,
                              Predicate** predicate) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_34(mht_34_v, 726, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "MakeSymbolPredicate");
+
     TensorId tensor_id(node->name(), output_idx);
 
     TF_RET_CHECK(BaseType(node->output_type(tensor_id.index())) == DT_INT32);
@@ -484,15 +757,27 @@ class PredicateFactory {
     return Status::OK();
   }
 
-  Predicate* MakeTrue() { return MakeAndPredicate({}); }
-  Predicate* MakeFalse() { return MakeOrPredicate({}); }
+  Predicate* MakeTrue() {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_35(mht_35_v, 761, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "MakeTrue");
+ return MakeAndPredicate({}); }
+  Predicate* MakeFalse() {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_36(mht_36_v, 765, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "MakeFalse");
+ return MakeOrPredicate({}); }
 
   ~PredicateFactory() {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_37(mht_37_v, 770, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "~PredicateFactory");
+
     DCHECK_EQ(stack_depth_, 0) << "Unnested IncrementStackDepth?";
   }
 
  private:
   Predicate* MakeNotPredicateImpl(Predicate* pred) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_38(mht_38_v, 778, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "MakeNotPredicateImpl");
+
     IncrementStackDepth stack_frame(this);
     if (!stack_frame.HasOverflowed()) {
       if (Predicate* simplified = SimplifyUsingDeMorgan(pred)) {
@@ -518,6 +803,9 @@ class PredicateFactory {
   }
 
   Predicate* SimplifyUsingDeMorgan(Predicate* pred) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_39(mht_39_v, 806, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "SimplifyUsingDeMorgan");
+
     // ~(A & B & C & ...) => ~A | ~B | ~C | ~...
     // ~(A | B | C | ...) -> ~A & ~B & ~C & ~...
     Predicate::Kind kind = pred->kind();
@@ -596,15 +884,24 @@ class PredicateFactory {
   class IncrementStackDepth {
    public:
     explicit IncrementStackDepth(PredicateFactory* parent) : parent_(parent) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_40(mht_40_v, 887, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "IncrementStackDepth");
+
       parent_->stack_depth_++;
     }
 
     bool HasOverflowed() const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_41(mht_41_v, 894, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "HasOverflowed");
+
       const int kMaxStackDepth = 8;
       return parent_->stack_depth_ >= kMaxStackDepth;
     }
 
-    ~IncrementStackDepth() { parent_->stack_depth_--; }
+    ~IncrementStackDepth() {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_42(mht_42_v, 902, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "~IncrementStackDepth");
+ parent_->stack_depth_--; }
 
    private:
     PredicateFactory* parent_;
@@ -641,6 +938,9 @@ class PredicateFactory {
 
 Predicate* PredicateFactory::MakeInternedAndOr(
     std::vector<Predicate*> simplified_ops, Predicate::Kind pred_kind) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_43(mht_43_v, 941, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "PredicateFactory::MakeInternedAndOr");
+
   std::stable_sort(
       simplified_ops.begin(), simplified_ops.end(),
       [](Predicate* a, Predicate* b) { return a->id() < b->id(); });
@@ -669,6 +969,9 @@ Predicate* PredicateFactory::MakeInternedAndOr(
 // Common code to create AndPredicate or OrPredicate instances.
 Predicate* PredicateFactory::MakeAndOrImpl(
     absl::Span<Predicate* const> operands, bool is_and) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_44(mht_44_v, 972, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "PredicateFactory::MakeAndOrImpl");
+
   Predicate::Kind pred_kind =
       is_and ? Predicate::Kind::kAnd : Predicate::Kind::kOr;
 
@@ -823,7 +1126,10 @@ Predicate* PredicateFactory::MakeAndOrImpl(
 class DeadnessAnalysisImpl : public DeadnessAnalysis {
  public:
   explicit DeadnessAnalysisImpl(const Graph* graph)
-      : graph_(*graph), vlog_(VLOG_IS_ON(2)) {}
+      : graph_(*graph), vlog_(VLOG_IS_ON(2)) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_45(mht_45_v, 1130, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "DeadnessAnalysisImpl");
+}
 
   Status Populate(bool enable_optimistic);
   Status PopulateFrame(absl::Span<Node* const> topo, bool use_optimistic_mode,
@@ -845,6 +1151,9 @@ class DeadnessAnalysisImpl : public DeadnessAnalysis {
   // for the `output_idx` output of `n`.
   void SetPredicate(Node* n, int output_idx, Predicate* pred,
                     std::vector<bool>* should_revisit) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_46(mht_46_v, 1154, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "SetPredicate");
+
     auto insert_result =
         predicate_map_.insert({TensorId(n->name(), output_idx), pred});
     if (!insert_result.second && insert_result.first->second != pred) {
@@ -863,6 +1172,9 @@ class DeadnessAnalysisImpl : public DeadnessAnalysis {
 
   void SetPredicate(Node* n, absl::Span<const int> output_idxs, Predicate* pred,
                     std::vector<bool>* should_revisit) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_47(mht_47_v, 1175, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "SetPredicate");
+
     for (int output_idx : output_idxs) {
       SetPredicate(n, output_idx, pred, should_revisit);
     }
@@ -879,10 +1191,16 @@ class DeadnessAnalysisImpl : public DeadnessAnalysis {
   Status GetFrameBasedTopologicalOrder(std::vector<Node*>* order);
 
   bool IsRootEnter(const Node* n) const {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_48(mht_48_v, 1194, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "IsRootEnter");
+
     return IsEnter(n) && control_flow_info_[n->id()].parent_frame->IsSource();
   }
 
   bool IsRootExit(const Node* n) const {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_49(mht_49_v, 1201, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "IsRootExit");
+
     return IsExit(n) && control_flow_info_[n->id()].parent_frame->IsSource();
   }
 
@@ -895,12 +1213,18 @@ class DeadnessAnalysisImpl : public DeadnessAnalysis {
 };
 
 TensorId InputEdgeToTensorId(const Edge* e) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_50(mht_50_v, 1216, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "InputEdgeToTensorId");
+
   return TensorId(e->src()->name(), e->src_output());
 }
 
 Status DeadnessAnalysisImpl::GetInputPreds(
     Node* n, DeadnessAnalysisImpl::EdgeKind edge_kind,
     std::vector<Predicate*>* result) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_51(mht_51_v, 1225, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "DeadnessAnalysisImpl::GetInputPreds");
+
   result->clear();
   for (const Edge* in_edge : n->in_edges()) {
     bool should_process =
@@ -930,6 +1254,9 @@ Status DeadnessAnalysisImpl::GetInputPreds(
 
 Status DeadnessAnalysisImpl::HandleSwitch(Node* n,
                                           std::vector<bool>* should_revisit) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_52(mht_52_v, 1257, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "DeadnessAnalysisImpl::HandleSwitch");
+
   std::vector<Predicate*> input_preds;
   TF_RETURN_IF_ERROR(GetInputPreds(n, EdgeKind::kDataAndControl, &input_preds));
   const Edge* pred_edge;
@@ -983,6 +1310,9 @@ Status DeadnessAnalysisImpl::HandleSwitch(Node* n,
 
 namespace {
 Status CreateMultipleNextIterationInputsError(Node* merge) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_53(mht_53_v, 1313, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "CreateMultipleNextIterationInputsError");
+
   std::vector<string> backedges;
   for (const Edge* backedge : merge->in_edges()) {
     if (backedge->src()->IsNextIteration()) {
@@ -996,6 +1326,9 @@ Status CreateMultipleNextIterationInputsError(Node* merge) {
 }
 
 Status FindUniqueBackedge(Node* merge, const Edge** result) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_54(mht_54_v, 1329, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "FindUniqueBackedge");
+
   *result = nullptr;
   CHECK(merge->IsMerge());
   for (const Edge* e : merge->in_edges()) {
@@ -1015,6 +1348,9 @@ Status FindUniqueBackedge(Node* merge, const Edge** result) {
 Predicate* DeduceStepPredicate(PredicateFactory* predicate_factory,
                                Predicate* symbolic_predicate,
                                Predicate* backedge_predicate) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_55(mht_55_v, 1351, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "DeduceStepPredicate");
+
   CHECK(dynamic_cast<SymbolPredicate*>(symbolic_predicate));
   if (backedge_predicate->kind() != Predicate::Kind::kAnd) {
     return nullptr;
@@ -1038,6 +1374,9 @@ Predicate* DeduceStepPredicate(PredicateFactory* predicate_factory,
     // symbol_predicate&(X|symbol_predicate).
     bool found_sym_as_inner_operand = false;
     auto has_self_as_inner_operand = [&](Predicate* p) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_56(mht_56_v, 1377, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "lambda");
+
       if (p == symbolic_predicate) {
         found_sym_as_inner_operand = true;
         return true;  // Stop searching, we're done.
@@ -1059,6 +1398,9 @@ Predicate* DeduceStepPredicate(PredicateFactory* predicate_factory,
 
 Status GetFullFrame(const Node* n, absl::Span<const ControlFlowInfo> cfi_infos,
                     std::vector<string>* frame) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_57(mht_57_v, 1401, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "GetFullFrame");
+
   int depth = 0;
   for (const ControlFlowInfo* cfi_iter = &cfi_infos[n->id()]; !n->IsSource();
        n = cfi_iter->parent_frame, cfi_iter = &cfi_infos[n->id()]) {
@@ -1078,6 +1420,9 @@ Status GetFullFrame(const Node* n, absl::Span<const ControlFlowInfo> cfi_infos,
 // frame.  Otherwise, get an empty frame name.
 Status GetRootFrame(const Node* n, absl::Span<const ControlFlowInfo> cfi_infos,
                     absl::string_view* frame) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_58(mht_58_v, 1423, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "GetRootFrame");
+
   int depth = 0;
   const ControlFlowInfo* cfi_iter = &cfi_infos[n->id()];
   while (!cfi_iter->parent_frame->IsSource()) {
@@ -1099,6 +1444,9 @@ Status GetRootFrame(const Node* n, absl::Span<const ControlFlowInfo> cfi_infos,
 Status DeadnessAnalysisImpl::HandleMerge(Node* n,
                                          std::vector<bool>* should_revisit,
                                          bool use_optimistic_mode) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_59(mht_59_v, 1447, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "DeadnessAnalysisImpl::HandleMerge");
+
   // Merge ignores deadness of its control inputs.  A merge that isn't the
   // target of a backedge has is alive iff any of its data inputs are.  The
   // liveness of a merge that is the target of a backedge can sometimes be
@@ -1188,6 +1536,9 @@ Status DeadnessAnalysisImpl::HandleMerge(Node* n,
 
 Status DeadnessAnalysisImpl::HandleRecv(Node* n,
                                         std::vector<bool>* should_revisit) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_60(mht_60_v, 1539, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "DeadnessAnalysisImpl::HandleRecv");
+
   // In addition to being alive or dead based on the inputs, a _Recv can also
   // acquire a dead signal from a _Send.
   std::vector<Predicate*> input_preds;
@@ -1204,6 +1555,9 @@ Status DeadnessAnalysisImpl::HandleRecv(Node* n,
 
 Status DeadnessAnalysisImpl::HandleGeneric(Node* n,
                                            std::vector<bool>* should_revisit) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_61(mht_61_v, 1558, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "DeadnessAnalysisImpl::HandleGeneric");
+
   // Generally nodes are alive iff all their inputs are alive.
   std::vector<Predicate*> input_preds;
   TF_RETURN_IF_ERROR(GetInputPreds(n, EdgeKind::kDataAndControl, &input_preds));
@@ -1218,6 +1572,9 @@ Status DeadnessAnalysisImpl::HandleGeneric(Node* n,
 Status DeadnessAnalysisImpl::HandleNode(Node* n,
                                         std::vector<bool>* should_revisit,
                                         bool use_optimistic_mode) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_62(mht_62_v, 1575, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "DeadnessAnalysisImpl::HandleNode");
+
   if (n->IsSwitch()) {
     TF_RETURN_IF_ERROR(HandleSwitch(n, should_revisit));
   } else if (n->IsMerge()) {
@@ -1243,6 +1600,9 @@ Status DeadnessAnalysisImpl::HandleNode(Node* n,
 // Ref. to https://en.wikipedia.org/wiki/Topological_sorting for details.
 Status DeadnessAnalysisImpl::GetFrameBasedTopologicalOrder(
     std::vector<Node*>* order) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_63(mht_63_v, 1603, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "DeadnessAnalysisImpl::GetFrameBasedTopologicalOrder");
+
   absl::flat_hash_map<absl::string_view, size_t> num_enters_for_frame;
   absl::flat_hash_map<absl::string_view, size_t> num_exits_for_frame;
   std::vector<size_t> num_ready_inputs(graph_.num_node_ids(), 0);
@@ -1358,6 +1718,9 @@ Status DeadnessAnalysisImpl::GetFrameBasedTopologicalOrder(
 // nested while, as there is no clean cut for separating them in the topological
 // order.
 Status DeadnessAnalysisImpl::Populate(bool enable_optimistic) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_64(mht_64_v, 1721, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "DeadnessAnalysisImpl::Populate");
+
   std::vector<string> unreachable_nodes;
   // Compute the loop structure of the graph.
   TF_RETURN_IF_ERROR(
@@ -1422,6 +1785,9 @@ Status DeadnessAnalysisImpl::Populate(bool enable_optimistic) {
 Status DeadnessAnalysisImpl::PopulateFrame(absl::Span<Node* const> topo,
                                            bool use_optimistic_mode,
                                            bool* success) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_65(mht_65_v, 1788, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "DeadnessAnalysisImpl::PopulateFrame");
+
   CHECK(use_optimistic_mode && success != nullptr ||
         !use_optimistic_mode && success == nullptr);
 
@@ -1541,6 +1907,9 @@ Status DeadnessAnalysisImpl::PopulateFrame(absl::Span<Node* const> topo,
 
 StatusOr<DeadnessAnalysis::DeadnessPredicate>
 DeadnessAnalysisImpl::GetPredicateFor(Node* n, int oidx) const {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_66(mht_66_v, 1910, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "DeadnessAnalysisImpl::GetPredicateFor");
+
   auto it = predicate_map_.find(TensorId(n->name(), oidx));
   TF_RET_CHECK(it != predicate_map_.end())
       << "could not find " << TensorId(n->name(), oidx).ToString()
@@ -1549,6 +1918,9 @@ DeadnessAnalysisImpl::GetPredicateFor(Node* n, int oidx) const {
 }
 
 void DeadnessAnalysisImpl::Print() const {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_67(mht_67_v, 1921, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "DeadnessAnalysisImpl::Print");
+
   std::vector<TensorId> tensor_ids;
   tensor_ids.reserve(predicate_map_.size());
   for (const auto& kv_pair : predicate_map_) {
@@ -1566,10 +1938,16 @@ void DeadnessAnalysisImpl::Print() const {
 
 }  // namespace
 
-DeadnessAnalysis::~DeadnessAnalysis() {}
+DeadnessAnalysis::~DeadnessAnalysis() {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_68(mht_68_v, 1942, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "DeadnessAnalysis::~DeadnessAnalysis");
+}
 
 /*static*/ Status DeadnessAnalysis::Run(
     const Graph& graph, std::unique_ptr<DeadnessAnalysis>* result) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_69(mht_69_v, 1948, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "DeadnessAnalysis::Run");
+
   std::unique_ptr<DeadnessAnalysisImpl> analysis(
       new DeadnessAnalysisImpl(&graph));
   TF_RETURN_IF_ERROR(analysis->Populate(/*enable_optimistic=*/true));
@@ -1584,6 +1962,9 @@ DeadnessAnalysis::~DeadnessAnalysis() {}
 
 absl::flat_hash_map<TensorId, string, TensorId::Hasher>
 DeadnessAnalysisImpl::PredicateMapAsString() const {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_70(mht_70_v, 1965, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "DeadnessAnalysisImpl::PredicateMapAsString");
+
   absl::flat_hash_map<TensorId, string, TensorId::Hasher> result;
   for (const auto& kv_pair : predicate_map_) {
     CHECK(result.insert({kv_pair.first, kv_pair.second->ToString()}).second);
@@ -1594,6 +1975,9 @@ DeadnessAnalysisImpl::PredicateMapAsString() const {
 namespace deadness_analysis_internal {
 Status ComputePredicates(const Graph& graph, PredicateMapTy* out_predicate_map,
                          bool enable_optimistic) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_71(mht_71_v, 1978, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "ComputePredicates");
+
   DeadnessAnalysisImpl impl(&graph);
   TF_RETURN_IF_ERROR(impl.Populate(enable_optimistic));
   *out_predicate_map = impl.PredicateMapAsString();
@@ -1603,6 +1987,9 @@ Status ComputePredicates(const Graph& graph, PredicateMapTy* out_predicate_map,
 }  // namespace deadness_analysis_internal
 
 string DeadnessAnalysis::DebugString(DeadnessPredicate predicate) const {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSdeadness_analysisDTcc mht_72(mht_72_v, 1990, "", "./tensorflow/compiler/jit/deadness_analysis.cc", "DeadnessAnalysis::DebugString");
+
   return static_cast<Predicate*>(predicate.pred_)->ToString();
 }
 

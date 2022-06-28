@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -108,6 +276,9 @@ std::unique_ptr<Interpreter> CreateInterpreter(
 }
 
 PyObject* PyArrayFromFloatVector(const float* data, npy_intp size) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_0(mht_0_v, 279, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "PyArrayFromFloatVector");
+
   void* pydata = malloc(size * sizeof(float));
   memcpy(pydata, data, size * sizeof(float));
   PyObject* obj = PyArray_SimpleNewFromData(1, &size, NPY_FLOAT32, pydata);
@@ -116,6 +287,9 @@ PyObject* PyArrayFromFloatVector(const float* data, npy_intp size) {
 }
 
 PyObject* PyArrayFromIntVector(const int* data, npy_intp size) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_1(mht_1_v, 290, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "PyArrayFromIntVector");
+
   void* pydata = malloc(size * sizeof(int));
   memcpy(pydata, data, size * sizeof(int));
   PyObject* obj = PyArray_SimpleNewFromData(1, &size, NPY_INT32, pydata);
@@ -124,6 +298,9 @@ PyObject* PyArrayFromIntVector(const int* data, npy_intp size) {
 }
 
 PyObject* PyTupleFromQuantizationParam(const TfLiteQuantizationParams& param) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_2(mht_2_v, 301, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "PyTupleFromQuantizationParam");
+
   PyObject* result = PyTuple_New(2);
   PyTuple_SET_ITEM(result, 0, PyFloat_FromDouble(param.scale));
   PyTuple_SET_ITEM(result, 1, PyLong_FromLong(param.zero_point));
@@ -131,6 +308,9 @@ PyObject* PyTupleFromQuantizationParam(const TfLiteQuantizationParams& param) {
 }
 
 PyObject* PyDictFromSparsityParam(const TfLiteSparsity& param) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_3(mht_3_v, 311, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "PyDictFromSparsityParam");
+
   PyObject* result = PyDict_New();
   PyDict_SetItemString(result, "traversal_order",
                        PyArrayFromIntVector(param.traversal_order->data,
@@ -165,6 +345,10 @@ PyObject* PyDictFromSparsityParam(const TfLiteSparsity& param) {
 bool RegisterCustomOpByName(const char* registerer_name,
                             tflite::MutableOpResolver* resolver,
                             std::string* error_msg) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("registerer_name: \"" + (registerer_name == nullptr ? std::string("nullptr") : std::string((char*)registerer_name)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_4(mht_4_v, 349, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "RegisterCustomOpByName");
+
   // Registerer functions take a pointer to a BuiltinOpResolver as an input
   // parameter and return void.
   // TODO(b/137576229): We should implement this functionality in a more
@@ -200,6 +384,9 @@ InterpreterWrapper* InterpreterWrapper::CreateInterpreterWrapper(
     const std::vector<std::string>& registerers_by_name,
     const std::vector<std::function<void(uintptr_t)>>& registerers_by_func,
     std::string* error_msg, bool preserve_all_tensors) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_5(mht_5_v, 387, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::CreateInterpreterWrapper");
+
   if (!model) {
     *error_msg = error_reporter->message();
     return nullptr;
@@ -253,14 +440,23 @@ InterpreterWrapper::InterpreterWrapper(
     : model_(std::move(model)),
       error_reporter_(std::move(error_reporter)),
       resolver_(std::move(resolver)),
-      interpreter_(std::move(interpreter)) {}
+      interpreter_(std::move(interpreter)) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_6(mht_6_v, 444, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::InterpreterWrapper");
+}
 
-InterpreterWrapper::~InterpreterWrapper() {}
+InterpreterWrapper::~InterpreterWrapper() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_7(mht_7_v, 449, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::~InterpreterWrapper");
+}
 
 // LINT.IfChange
 static constexpr int kUndeterminedSubgraphIndex = -1;
 // LINT.ThenChange(//tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper_pybind11.cc)
 PyObject* InterpreterWrapper::AllocateTensors(int subgraph_index) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_8(mht_8_v, 457, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::AllocateTensors");
+
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
   if (subgraph_index == kUndeterminedSubgraphIndex) {
     TFLITE_PY_CHECK(interpreter_->AllocateTensors());
@@ -272,6 +468,9 @@ PyObject* InterpreterWrapper::AllocateTensors(int subgraph_index) {
 }
 
 PyObject* InterpreterWrapper::Invoke(int subgraph_index) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_9(mht_9_v, 471, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::Invoke");
+
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
   TFLITE_PY_SUBGRAPH_BOUNDS_CHECK(subgraph_index);
 
@@ -295,6 +494,9 @@ PyObject* InterpreterWrapper::Invoke(int subgraph_index) {
 }
 
 PyObject* InterpreterWrapper::InputIndices() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_10(mht_10_v, 497, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::InputIndices");
+
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
   PyObject* np_array = PyArrayFromIntVector(interpreter_->inputs().data(),
                                             interpreter_->inputs().size());
@@ -303,6 +505,9 @@ PyObject* InterpreterWrapper::InputIndices() const {
 }
 
 PyObject* InterpreterWrapper::OutputIndices() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_11(mht_11_v, 508, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::OutputIndices");
+
   PyObject* np_array = PyArrayFromIntVector(interpreter_->outputs().data(),
                                             interpreter_->outputs().size());
 
@@ -310,6 +515,9 @@ PyObject* InterpreterWrapper::OutputIndices() const {
 }
 
 PyObject* InterpreterWrapper::ResizeInputTensorImpl(int i, PyObject* value) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_12(mht_12_v, 518, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::ResizeInputTensorImpl");
+
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
 
   std::unique_ptr<PyObject, PyDecrefDeleter> array_safe(
@@ -342,6 +550,9 @@ PyObject* InterpreterWrapper::ResizeInputTensorImpl(int i, PyObject* value) {
 PyObject* InterpreterWrapper::ResizeInputTensor(int i, PyObject* value,
                                                 bool strict,
                                                 int subgraph_index) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_13(mht_13_v, 553, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::ResizeInputTensor");
+
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
   TFLITE_PY_SUBGRAPH_BOUNDS_CHECK(subgraph_index);
 
@@ -365,6 +576,9 @@ PyObject* InterpreterWrapper::ResizeInputTensor(int i, PyObject* value,
 }
 
 int InterpreterWrapper::NumTensors() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_14(mht_14_v, 579, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::NumTensors");
+
   if (!interpreter_) {
     return 0;
   }
@@ -372,6 +586,9 @@ int InterpreterWrapper::NumTensors() const {
 }
 
 std::string InterpreterWrapper::TensorName(int i) const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_15(mht_15_v, 589, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::TensorName");
+
   if (!interpreter_ || i >= interpreter_->tensors_size() || i < 0) {
     return "";
   }
@@ -381,6 +598,9 @@ std::string InterpreterWrapper::TensorName(int i) const {
 }
 
 PyObject* InterpreterWrapper::TensorType(int i) const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_16(mht_16_v, 601, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::TensorType");
+
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
   TFLITE_PY_TENSOR_BOUNDS_CHECK(i);
 
@@ -399,6 +619,9 @@ PyObject* InterpreterWrapper::TensorType(int i) const {
 }
 
 PyObject* InterpreterWrapper::TensorSize(int i) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_17(mht_17_v, 622, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::TensorSize");
+
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
   TFLITE_PY_TENSOR_BOUNDS_CHECK(i);
 
@@ -414,6 +637,9 @@ PyObject* InterpreterWrapper::TensorSize(int i) const {
 }
 
 PyObject* InterpreterWrapper::TensorSizeSignature(int i) const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_18(mht_18_v, 640, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::TensorSizeSignature");
+
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
   TFLITE_PY_TENSOR_BOUNDS_CHECK(i);
 
@@ -434,6 +660,9 @@ PyObject* InterpreterWrapper::TensorSizeSignature(int i) const {
 }
 
 PyObject* InterpreterWrapper::TensorSparsityParameters(int i) const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_19(mht_19_v, 663, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::TensorSparsityParameters");
+
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
   TFLITE_PY_TENSOR_BOUNDS_CHECK(i);
   const TfLiteTensor* tensor = interpreter_->tensor(i);
@@ -445,6 +674,9 @@ PyObject* InterpreterWrapper::TensorSparsityParameters(int i) const {
 }
 
 PyObject* InterpreterWrapper::TensorQuantization(int i) const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_20(mht_20_v, 677, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::TensorQuantization");
+
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
   TFLITE_PY_TENSOR_BOUNDS_CHECK(i);
   const TfLiteTensor* tensor = interpreter_->tensor(i);
@@ -452,6 +684,9 @@ PyObject* InterpreterWrapper::TensorQuantization(int i) const {
 }
 
 PyObject* InterpreterWrapper::TensorQuantizationParameters(int i) const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_21(mht_21_v, 687, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::TensorQuantizationParameters");
+
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
   TFLITE_PY_TENSOR_BOUNDS_CHECK(i);
   const TfLiteTensor* tensor = interpreter_->tensor(i);
@@ -487,6 +722,9 @@ PyObject* InterpreterWrapper::TensorQuantizationParameters(int i) const {
 
 PyObject* InterpreterWrapper::SetTensor(int i, PyObject* value,
                                         int subgraph_index) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_22(mht_22_v, 725, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::SetTensor");
+
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
   TFLITE_PY_SUBGRAPH_BOUNDS_CHECK(subgraph_index);
   TFLITE_PY_SUBGRAPH_TENSOR_BOUNDS_CHECK(i, subgraph_index);
@@ -561,6 +799,9 @@ PyObject* InterpreterWrapper::SetTensor(int i, PyObject* value,
 }
 
 int InterpreterWrapper::NumNodes() const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_23(mht_23_v, 802, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::NumNodes");
+
   if (!interpreter_) {
     return 0;
   }
@@ -568,6 +809,9 @@ int InterpreterWrapper::NumNodes() const {
 }
 
 PyObject* InterpreterWrapper::NodeInputs(int i) const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_24(mht_24_v, 812, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::NodeInputs");
+
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
   TFLITE_PY_NODES_BOUNDS_CHECK(i);
 
@@ -578,6 +822,9 @@ PyObject* InterpreterWrapper::NodeInputs(int i) const {
 }
 
 PyObject* InterpreterWrapper::NodeOutputs(int i) const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_25(mht_25_v, 825, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::NodeOutputs");
+
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
   TFLITE_PY_NODES_BOUNDS_CHECK(i);
 
@@ -588,6 +835,9 @@ PyObject* InterpreterWrapper::NodeOutputs(int i) const {
 }
 
 std::string InterpreterWrapper::NodeName(int i) const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_26(mht_26_v, 838, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::NodeName");
+
   if (!interpreter_ || i >= interpreter_->nodes_size() || i < 0) {
     return "";
   }
@@ -613,6 +863,9 @@ namespace {
 PyObject* CheckGetTensorArgs(Interpreter* interpreter_, int tensor_index,
                              TfLiteTensor** tensor, int* type_num,
                              int subgraph_index) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_27(mht_27_v, 866, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "CheckGetTensorArgs");
+
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
   TFLITE_PY_SUBGRAPH_BOUNDS_CHECK(subgraph_index);
   TFLITE_PY_SUBGRAPH_TENSOR_BOUNDS_CHECK(tensor_index, subgraph_index);
@@ -645,6 +898,9 @@ PyObject* CheckGetTensorArgs(Interpreter* interpreter_, int tensor_index,
 }  // namespace
 
 PyObject* InterpreterWrapper::GetSignatureDefs() const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_28(mht_28_v, 901, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::GetSignatureDefs");
+
   PyObject* result = PyDict_New();
   for (const auto& sig_key : interpreter_->signature_keys()) {
     PyObject* signature_def = PyDict_New();
@@ -672,6 +928,10 @@ PyObject* InterpreterWrapper::GetSignatureDefs() const {
 
 PyObject* InterpreterWrapper::GetSubgraphIndexFromSignature(
     const char* signature_key) {
+   std::vector<std::string> mht_29_v;
+   mht_29_v.push_back("signature_key: \"" + (signature_key == nullptr ? std::string("nullptr") : std::string((char*)signature_key)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_29(mht_29_v, 932, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::GetSubgraphIndexFromSignature");
+
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
 
   int32_t subgraph_index =
@@ -685,6 +945,9 @@ PyObject* InterpreterWrapper::GetSubgraphIndexFromSignature(
 }
 
 PyObject* InterpreterWrapper::GetTensor(int i, int subgraph_index) const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_30(mht_30_v, 948, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::GetTensor");
+
   // Sanity check accessor
   TfLiteTensor* tensor = nullptr;
   int type_num = 0;
@@ -760,6 +1023,9 @@ PyObject* InterpreterWrapper::GetTensor(int i, int subgraph_index) const {
 
 PyObject* InterpreterWrapper::tensor(PyObject* base_object, int tensor_index,
                                      int subgraph_index) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_31(mht_31_v, 1026, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::tensor");
+
   // Sanity check accessor
   TfLiteTensor* tensor = nullptr;
   int type_num = 0;
@@ -784,6 +1050,10 @@ InterpreterWrapper* InterpreterWrapper::CreateWrapperCPPFromFile(
     const std::vector<std::string>& registerers_by_name,
     const std::vector<std::function<void(uintptr_t)>>& registerers_by_func,
     std::string* error_msg, bool preserve_all_tensors) {
+   std::vector<std::string> mht_32_v;
+   mht_32_v.push_back("model_path: \"" + (model_path == nullptr ? std::string("nullptr") : std::string((char*)model_path)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_32(mht_32_v, 1054, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::CreateWrapperCPPFromFile");
+
   std::unique_ptr<PythonErrorReporter> error_reporter(new PythonErrorReporter);
   std::unique_ptr<InterpreterWrapper::Model> model =
       Model::BuildFromFile(model_path, error_reporter.get());
@@ -797,6 +1067,10 @@ InterpreterWrapper* InterpreterWrapper::CreateWrapperCPPFromFile(
     const char* model_path, int op_resolver_id,
     const std::vector<std::string>& registerers, std::string* error_msg,
     bool preserve_all_tensors) {
+   std::vector<std::string> mht_33_v;
+   mht_33_v.push_back("model_path: \"" + (model_path == nullptr ? std::string("nullptr") : std::string((char*)model_path)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_33(mht_33_v, 1071, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::CreateWrapperCPPFromFile");
+
   return CreateWrapperCPPFromFile(model_path, op_resolver_id, registerers,
                                   {} /*registerers_by_func*/, error_msg,
                                   preserve_all_tensors);
@@ -807,6 +1081,9 @@ InterpreterWrapper* InterpreterWrapper::CreateWrapperCPPFromBuffer(
     const std::vector<std::string>& registerers_by_name,
     const std::vector<std::function<void(uintptr_t)>>& registerers_by_func,
     std::string* error_msg, bool preserve_all_tensors) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_34(mht_34_v, 1084, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::CreateWrapperCPPFromBuffer");
+
   char* buf = nullptr;
   Py_ssize_t length;
   std::unique_ptr<PythonErrorReporter> error_reporter(new PythonErrorReporter);
@@ -826,17 +1103,26 @@ InterpreterWrapper* InterpreterWrapper::CreateWrapperCPPFromBuffer(
     PyObject* data, int op_resolver_id,
     const std::vector<std::string>& registerers, std::string* error_msg,
     bool preserve_all_tensors) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_35(mht_35_v, 1106, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::CreateWrapperCPPFromBuffer");
+
   return CreateWrapperCPPFromBuffer(data, op_resolver_id, registerers, {},
                                     error_msg, preserve_all_tensors);
 }
 
 PyObject* InterpreterWrapper::ResetVariableTensors() {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_36(mht_36_v, 1114, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::ResetVariableTensors");
+
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
   TFLITE_PY_CHECK(interpreter_->ResetVariableTensors());
   Py_RETURN_NONE;
 }
 
 PyObject* InterpreterWrapper::SetNumThreads(int num_threads) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_37(mht_37_v, 1123, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::SetNumThreads");
+
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
   interpreter_->SetNumThreads(num_threads);
   Py_RETURN_NONE;
@@ -844,6 +1130,9 @@ PyObject* InterpreterWrapper::SetNumThreads(int num_threads) {
 
 PyObject* InterpreterWrapper::ModifyGraphWithDelegate(
     TfLiteDelegate* delegate) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSinterpreter_wrapperPSinterpreter_wrapperDTcc mht_38(mht_38_v, 1133, "", "./tensorflow/lite/python/interpreter_wrapper/interpreter_wrapper.cc", "InterpreterWrapper::ModifyGraphWithDelegate");
+
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
   TFLITE_PY_CHECK(interpreter_->ModifyGraphWithDelegate(delegate));
   Py_RETURN_NONE;

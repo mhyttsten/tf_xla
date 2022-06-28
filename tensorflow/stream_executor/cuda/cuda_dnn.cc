@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -117,6 +285,9 @@ NarrowT CheckedNarrowing(const WideT& wide) {
 }
 
 std::string CudnnStatusToString(cudnnStatus_t status) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_0(mht_0_v, 288, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnStatusToString");
+
   switch (status) {
     case CUDNN_STATUS_SUCCESS:
       return "CUDNN_STATUS_SUCCESS";
@@ -161,11 +332,17 @@ class CudnnHandle {
   // using handle.
   CudnnHandle(gpu::ScopedActivateExecutorContext context,
               std::unique_ptr<absl::MutexLock> lock, cudnnHandle_t handle)
-      : context_(std::move(context)), lock_(std::move(lock)), handle_(handle) {}
+      : context_(std::move(context)), lock_(std::move(lock)), handle_(handle) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_1(mht_1_v, 336, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnHandle");
+}
 
   // Returns cuDNN handle. To be passed directly to cuDNN APIs, don't keep
   // a copy.
-  cudnnHandle_t handle() const { return handle_; }
+  cudnnHandle_t handle() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_2(mht_2_v, 343, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "handle");
+ return handle_; }
 
  private:
   gpu::ScopedActivateExecutorContext context_;
@@ -183,9 +360,15 @@ class CudnnHandle {
 class CudnnAccess {
  public:
   // Takes ownership of the handle.
-  explicit CudnnAccess(cudnnHandle_t handle) : handle_(handle) {}
+  explicit CudnnAccess(cudnnHandle_t handle) : handle_(handle) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_3(mht_3_v, 364, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnAccess");
+}
 
   ~CudnnAccess() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_4(mht_4_v, 369, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "~CudnnAccess");
+
     absl::MutexLock lock(&mutex_);
     cudnnDestroy(handle_);
   }
@@ -207,6 +390,9 @@ class CudnnAccess {
   // therefore a bad idea (performance wise) to call any cuDNN APIs that
   // enqueue work in the stream.
   CudnnHandle GetHandle(GpuExecutor* executor, Stream* stream) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_5(mht_5_v, 393, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "GetHandle");
+
     auto lock = absl::make_unique<absl::MutexLock>(&mutex_);
     mutex_.AssertHeld();
     gpu::ScopedActivateExecutorContext context(executor);
@@ -220,6 +406,9 @@ class CudnnAccess {
   }
 
   void NotifyStreamDestroyed(Stream* stream) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_6(mht_6_v, 409, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "NotifyStreamDestroyed");
+
     CUstream cu_stream = AsGpuStreamValue(stream);
     absl::MutexLock lock(&mutex_);
     if (current_stream_ && cu_stream == *current_stream_) {
@@ -247,6 +436,9 @@ namespace {
 cudnnDataType_t GetRnnComputeType(dnn::DataType data_type);
 
 cudnnConvolutionFwdAlgo_t ToConvForwardAlgo(dnn::AlgorithmDesc algorithm) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_7(mht_7_v, 439, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "ToConvForwardAlgo");
+
   cudnnConvolutionFwdAlgo_t algo =
       cudnnConvolutionFwdAlgo_t(algorithm.algo_id());
   switch (algo) {
@@ -267,6 +459,9 @@ cudnnConvolutionFwdAlgo_t ToConvForwardAlgo(dnn::AlgorithmDesc algorithm) {
 
 cudnnConvolutionBwdDataAlgo_t ToConvBackwardDataAlgo(
     dnn::AlgorithmDesc algorithm) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_8(mht_8_v, 462, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "ToConvBackwardDataAlgo");
+
   cudnnConvolutionBwdDataAlgo_t algo =
       cudnnConvolutionBwdDataAlgo_t(algorithm.algo_id());
   switch (algo) {
@@ -286,6 +481,9 @@ cudnnConvolutionBwdDataAlgo_t ToConvBackwardDataAlgo(
 
 cudnnConvolutionBwdFilterAlgo_t ToConvBackwardFilterAlgo(
     dnn::AlgorithmDesc algorithm) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_9(mht_9_v, 484, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "ToConvBackwardFilterAlgo");
+
   cudnnConvolutionBwdFilterAlgo_t algo =
       cudnnConvolutionBwdFilterAlgo_t(algorithm.algo_id());
   switch (algo) {
@@ -312,6 +510,9 @@ port::StatusOr<int> GetCudnnProperty(libraryPropertyType type) {
 }
 
 cudnnRNNAlgo_t ToCudnnRNNAlgo(absl::optional<dnn::AlgorithmDesc> algorithm) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_10(mht_10_v, 513, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "ToCudnnRNNAlgo");
+
   if (!algorithm.has_value()) {
     return CUDNN_RNN_ALGO_STANDARD;
   }
@@ -327,6 +528,9 @@ cudnnRNNAlgo_t ToCudnnRNNAlgo(absl::optional<dnn::AlgorithmDesc> algorithm) {
 }
 
 port::Status GetLoadedCudnnVersion(CudnnVersion* version) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_11(mht_11_v, 531, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "GetLoadedCudnnVersion");
+
   SE_ASSIGN_OR_RETURN(version->major_version, GetCudnnProperty(MAJOR_VERSION));
   SE_ASSIGN_OR_RETURN(version->minor_version, GetCudnnProperty(MINOR_VERSION));
   SE_ASSIGN_OR_RETURN(version->patch_level, GetCudnnProperty(PATCH_LEVEL));
@@ -346,9 +550,15 @@ void PreloadCudnnLibrary(cudnnStatus_t (*version_check_fn)(),
 
 }  // namespace
 
-CudnnSupport::CudnnSupport(GpuExecutor* parent) : parent_(parent) {}
+CudnnSupport::CudnnSupport(GpuExecutor* parent) : parent_(parent) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_12(mht_12_v, 554, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::CudnnSupport");
+}
 
 port::Status CudnnSupport::Init() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_13(mht_13_v, 559, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::Init");
+
   ScopedActivateExecutorContext context(parent_);
 
   // Peek at the last error to give more information in cases of errors.
@@ -411,6 +621,9 @@ void CudnnSupport::NotifyStreamDestroyed(Stream* stream) /* override */ {
 
 port::StatusOr<perftools::gputools::dnn::VersionInfo>
 CudnnSupport::GetVersion() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_14(mht_14_v, 624, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::GetVersion");
+
   CudnnVersion version;
   TF_RETURN_IF_ERROR(GetLoadedCudnnVersion(&version));
   return perftools::gputools::dnn::VersionInfo(
@@ -510,41 +723,65 @@ TensorDescriptor CreateTensorDescriptor() {
   return TensorDescriptor(result);
 }
 RNNDataDescriptor CreateRNNDataDescriptor() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_15(mht_15_v, 726, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CreateRNNDataDescriptor");
+
   cudnnRNNDataDescriptor_t result;
   CHECK_CUDNN_OK(cudnnCreateRNNDataDescriptor(&result));
   return RNNDataDescriptor(result);
 }
 FilterDescriptor CreateFilterDescriptor() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_16(mht_16_v, 734, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CreateFilterDescriptor");
+
   cudnnFilterDescriptor_t result;
   CHECK_CUDNN_OK(cudnnCreateFilterDescriptor(&result));
   return FilterDescriptor(result);
 }
 ConvolutionDescriptor CreateConvolutionDescriptor() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_17(mht_17_v, 742, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CreateConvolutionDescriptor");
+
   cudnnConvolutionDescriptor_t result;
   CHECK_CUDNN_OK(cudnnCreateConvolutionDescriptor(&result));
   return ConvolutionDescriptor(result);
 }
 PoolingDescriptor CreatePoolingDescriptor() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_18(mht_18_v, 750, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CreatePoolingDescriptor");
+
   cudnnPoolingDescriptor_t result;
   CHECK_CUDNN_OK(cudnnCreatePoolingDescriptor(&result));
   return PoolingDescriptor(result);
 }
 LrnDescriptor CreateLrnDescriptor() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_19(mht_19_v, 758, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CreateLrnDescriptor");
+
   cudnnLRNDescriptor_t result;
   CHECK_CUDNN_OK(cudnnCreateLRNDescriptor(&result));
   return LrnDescriptor(result);
 }
 ActivationDescriptor CreateActivationDescriptor() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_20(mht_20_v, 766, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CreateActivationDescriptor");
+
   cudnnActivationDescriptor_t result;
   CHECK_CUDNN_OK(cudnnCreateActivationDescriptor(&result));
   return ActivationDescriptor(result);
 }
 DropoutDescriptor CreateDropoutDescriptor() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_21(mht_21_v, 774, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CreateDropoutDescriptor");
+
   cudnnDropoutDescriptor_t result;
   CHECK_CUDNN_OK(cudnnCreateDropoutDescriptor(&result));
   return DropoutDescriptor(result);
 }
 RnnDescriptor CreateRnnDescriptor() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_22(mht_22_v, 782, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CreateRnnDescriptor");
+
   cudnnRNNDescriptor_t result;
   CHECK_CUDNN_OK(cudnnCreateRNNDescriptor(&result));
   return RnnDescriptor(result);
@@ -572,6 +809,9 @@ class CudnnTensorDescriptor {
   CudnnTensorDescriptor(const dnn::BatchDescriptor& batch_descriptor,
                         cudnnDataType_t elem_type)
       : handle_(CreateTensorDescriptor()) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_23(mht_23_v, 812, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnTensorDescriptor");
+
     switch (batch_descriptor.layout()) {
       case dnn::DataLayout::kBatchYXDepth:
       case dnn::DataLayout::kBatchDepthYX: {
@@ -615,7 +855,10 @@ class CudnnTensorDescriptor {
     }
   }
 
-  cudnnTensorDescriptor_t handle() const { return handle_.get(); }
+  cudnnTensorDescriptor_t handle() const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_24(mht_24_v, 859, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "handle");
+ return handle_.get(); }
 
  private:
   TensorDescriptor handle_;
@@ -628,6 +871,9 @@ class CudnnFilterDescriptor {
   CudnnFilterDescriptor(const dnn::FilterDescriptor& filter_descriptor,
                         cudnnDataType_t elem_type)
       : handle_(CreateFilterDescriptor()) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_25(mht_25_v, 874, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnFilterDescriptor");
+
     // TODO(b/23032134): Even if the filter layout is not supported,
     // cudnnSetFilter4DDescriptor_v4 will return CUDNN_STATUS_SUCCESS because
     // it does not take layout as an input. Maybe force cuDNN by giving wrong
@@ -667,7 +913,10 @@ class CudnnFilterDescriptor {
                                               dims.size(), dims.data()));
   }
 
-  cudnnFilterDescriptor_t handle() const { return handle_.get(); }
+  cudnnFilterDescriptor_t handle() const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_26(mht_26_v, 917, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "handle");
+ return handle_.get(); }
 
  private:
   FilterDescriptor handle_;  // Owned.
@@ -706,6 +955,9 @@ const json* CudnnExecutionPlanEngineFilterStatic() {
 }
 
 const json* CudnnExecutionPlanEngineFilterRuntime() {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_27(mht_27_v, 958, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnExecutionPlanEngineFilterRuntime");
+
   static const json* json_handle = []() -> const json* {
     json j;
     if (cudnn_frontend::load_from_config(j, "")) {
@@ -739,6 +991,9 @@ bool BatchnormSpatialPersistentEnabled() {
 }
 
 bool RequireCudnnDeterminism() {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_28(mht_28_v, 994, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "RequireCudnnDeterminism");
+
   static bool require_cudnn_determinism = [] {
     // TODO(reedwm): Remove the TF_CUDNN_DETERMINISTIC env var.
     bool cudnn_deterministic = false;
@@ -752,6 +1007,9 @@ bool RequireCudnnDeterminism() {
 
 // A helper function to decide whether to force the default conv algorithm.
 bool ConvUseDefaultAlgorithm() {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_29(mht_29_v, 1010, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "ConvUseDefaultAlgorithm");
+
   static bool use_default = [] {
     bool use_default = false;
     TF_CHECK_OK(tensorflow::ReadBoolFromEnvVar("TF_USE_DEFAULT_CONV_ALGO",
@@ -770,6 +1028,9 @@ class CudnnConvolutionDescriptor {
       const dnn::ConvolutionDescriptor& convolution_descriptor,
       cudnnDataType_t data_type)
       : handle_(CreateConvolutionDescriptor()) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_30(mht_30_v, 1031, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnConvolutionDescriptor");
+
     absl::Span<const int64_t> strides64 = convolution_descriptor.strides();
     absl::Span<const int64_t> padding64 = convolution_descriptor.padding();
     absl::Span<const int64_t> dilations64 = convolution_descriptor.dilations();
@@ -810,6 +1071,9 @@ class CudnnConvolutionDescriptor {
   }
 
   void set_use_tensor_op_math(bool use_tensor_op_math) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_31(mht_31_v, 1074, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "set_use_tensor_op_math");
+
     cudnnMathType_t math_type =
 #if CUDNN_VERSION >= 8000
         (use_tensor_op_math ? CUDNN_TENSOR_OP_MATH : CUDNN_FMA_MATH);
@@ -819,7 +1083,10 @@ class CudnnConvolutionDescriptor {
     CHECK_CUDNN_OK(cudnnSetConvolutionMathType(handle_.get(), math_type));
   }
 
-  cudnnConvolutionDescriptor_t handle() const { return handle_.get(); }
+  cudnnConvolutionDescriptor_t handle() const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_32(mht_32_v, 1087, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "handle");
+ return handle_.get(); }
 
  private:
   ConvolutionDescriptor handle_;  // Owned.
@@ -828,6 +1095,9 @@ class CudnnConvolutionDescriptor {
 // A helper function to query if a CudnnConvolutionDescriptor has tensor_op_math
 // set
 static bool IsTensorMathOpSet(const CudnnConvolutionDescriptor& conv) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_33(mht_33_v, 1098, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "IsTensorMathOpSet");
+
   cudnnMathType_t math_type;
   CHECK_CUDNN_OK(cudnnGetConvolutionMathType(conv.handle(), &math_type));
 #if CUDNN_VERSION >= 8000
@@ -839,10 +1109,16 @@ static bool IsTensorMathOpSet(const CudnnConvolutionDescriptor& conv) {
 
 static bool TensorOpMathAvailable(
     CudaComputeCapability cuda_compute_capability) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_34(mht_34_v, 1112, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "TensorOpMathAvailable");
+
   return cuda_compute_capability.IsAtLeast(7);
 }
 
 static bool IsTensorMathEnabled(Stream* stream, dnn::DataType input_type) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_35(mht_35_v, 1119, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "IsTensorMathEnabled");
+
   if (!TensorOpMathAvailable(stream->GetCudaComputeCapability())) {
     return false;
   }
@@ -865,6 +1141,9 @@ class CudnnPoolingDescriptor {
   explicit CudnnPoolingDescriptor(
       const dnn::PoolingDescriptor& pooling_descriptor)
       : handle_(CreatePoolingDescriptor()) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_36(mht_36_v, 1144, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnPoolingDescriptor");
+
     absl::Span<const int64_t> strides64 = pooling_descriptor.strides();
     absl::Span<const int64_t> padding64 = pooling_descriptor.padding();
     absl::Span<const int64_t> shape64 = pooling_descriptor.window();
@@ -892,7 +1171,10 @@ class CudnnPoolingDescriptor {
         shape.data(), padding.data(), strides.data()));
   }
 
-  cudnnPoolingDescriptor_t handle() const { return handle_.get(); }
+  cudnnPoolingDescriptor_t handle() const {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_37(mht_37_v, 1175, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "handle");
+ return handle_.get(); }
 
  private:
   PoolingDescriptor handle_;  // Owned.
@@ -906,6 +1188,9 @@ class CudnnNormalizeDescriptor {
   explicit CudnnNormalizeDescriptor(
       const dnn::NormalizeDescriptor& normalize_descriptor)
       : handle_(CreateLrnDescriptor()) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_38(mht_38_v, 1191, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnNormalizeDescriptor");
+
     // The range specifies that the indices in the closed range
     // [i - range, i + range] should be included in the normalization for index
     // i. The lrnN value is the total number of elements in the range, so
@@ -930,7 +1215,10 @@ class CudnnNormalizeDescriptor {
         cudnnSetLRNDescriptor(handle_.get(), lrnN, lrnAlpha, lrnBeta, lrnK));
   }
 
-  cudnnLRNDescriptor_t handle() const { return handle_.get(); }
+  cudnnLRNDescriptor_t handle() const {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_39(mht_39_v, 1219, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "handle");
+ return handle_.get(); }
 
  private:
   LrnDescriptor handle_;  // Owned.
@@ -946,6 +1234,9 @@ class CudnnActivationDescriptor {
                             cudnnNanPropagation_t nan_propagation,
                             double value_max)
       : handle_(CreateActivationDescriptor()) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_40(mht_40_v, 1237, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnActivationDescriptor");
+
     double relu_ceiling = 0.0;
     cudnnActivationMode_t mode;
     switch (activation_mode) {
@@ -978,7 +1269,10 @@ class CudnnActivationDescriptor {
                                                 nan_propagation, relu_ceiling));
   }
 
-  cudnnActivationDescriptor_t handle() const { return handle_.get(); }
+  cudnnActivationDescriptor_t handle() const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_41(mht_41_v, 1273, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "handle");
+ return handle_.get(); }
 
  private:
   ActivationDescriptor handle_;  // Owned.
@@ -987,6 +1281,9 @@ class CudnnActivationDescriptor {
 cudnnDataType_t ToCudnnDataType(
     dnn::DataType data_type,
     dnn::DataLayout data_layout = dnn::DataLayout::kBatchDepthYX) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_42(mht_42_v, 1284, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "ToCudnnDataType");
+
   switch (data_type) {
     case dnn::DataType::kFloat:
       return CUDNN_DATA_FLOAT;
@@ -1016,6 +1313,9 @@ cudnnDataType_t ToCudnnDataType(
 
 cudnnDataType_t ToCudnnDataType(dnn::DataType data_type,
                                 dnn::FilterLayout filter_layout) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_43(mht_43_v, 1316, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "ToCudnnDataType");
+
   if (data_type == dnn::DataType::kInt8 &&
       filter_layout == dnn::FilterLayout::kOutputInputYX4) {
     return CUDNN_DATA_INT8x4;
@@ -1030,15 +1330,24 @@ cudnnDataType_t ToCudnnDataType(dnn::DataType data_type,
 template <typename T>
 cudnnDataType_t GetCudnnDataType(
     dnn::DataLayout data_layout = dnn::DataLayout::kBatchDepthYX) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_44(mht_44_v, 1333, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "GetCudnnDataType");
+
   return ToCudnnDataType(dnn::ToDataType<T>::value, data_layout);
 }
 
 template <typename T>
 cudnnDataType_t GetCudnnDataType(dnn::FilterLayout filter_layout) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_45(mht_45_v, 1341, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "GetCudnnDataType");
+
   return ToCudnnDataType(dnn::ToDataType<T>::value, filter_layout);
 }
 
 cudnnRNNInputMode_t ToCudnnRnnInputMode(dnn::RnnInputMode input_mode) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_46(mht_46_v, 1348, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "ToCudnnRnnInputMode");
+
   switch (input_mode) {
     case dnn::RnnInputMode::kRnnLinearSkip:
     case dnn::RnnInputMode::kRnnSkipInput:
@@ -1050,6 +1359,9 @@ cudnnRNNInputMode_t ToCudnnRnnInputMode(dnn::RnnInputMode input_mode) {
 
 cudnnDirectionMode_t ToCudnnRnnDirectionMode(
     dnn::RnnDirectionMode direction_mode) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_47(mht_47_v, 1362, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "ToCudnnRnnDirectionMode");
+
   switch (direction_mode) {
     case dnn::RnnDirectionMode::kRnnUnidirectional:
     case dnn::RnnDirectionMode::kRnnBidirectional:
@@ -1061,6 +1373,9 @@ cudnnDirectionMode_t ToCudnnRnnDirectionMode(
 }
 
 cudnnRNNMode_t ToCudnnRnnMode(dnn::RnnMode rnn_mode) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_48(mht_48_v, 1376, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "ToCudnnRnnMode");
+
   switch (rnn_mode) {
     case dnn::RnnMode::kRnnRelu:
     case dnn::RnnMode::kRnnTanh:
@@ -1073,6 +1388,9 @@ cudnnRNNMode_t ToCudnnRnnMode(dnn::RnnMode rnn_mode) {
 }
 
 int CudnnDataTypeToByteSize(cudnnDataType_t data_type) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_49(mht_49_v, 1391, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnDataTypeToByteSize");
+
   switch (data_type) {
     case CUDNN_DATA_FLOAT:
       return sizeof(float);
@@ -1087,7 +1405,10 @@ int CudnnDataTypeToByteSize(cudnnDataType_t data_type) {
 
 class CudnnDropoutDescriptor {
   explicit CudnnDropoutDescriptor(DropoutDescriptor handle)
-      : handle_(std::move(handle)) {}
+      : handle_(std::move(handle)) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_50(mht_50_v, 1409, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnDropoutDescriptor");
+}
 
  public:
   CudnnDropoutDescriptor(CudnnDropoutDescriptor&&) = default;
@@ -1117,7 +1438,10 @@ class CudnnDropoutDescriptor {
     return CudnnDropoutDescriptor(std::move(handle));
   }
 
-  cudnnDropoutDescriptor_t handle() const { return handle_.get(); }
+  cudnnDropoutDescriptor_t handle() const {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_51(mht_51_v, 1442, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "handle");
+ return handle_.get(); }
 
  private:
   DropoutDescriptor handle_;  // Owned.
@@ -1133,7 +1457,10 @@ class CudnnRnnParamsDescriptor {
       : handle_(std::move(handle)),
         params_size_in_bytes_(params_size_in_bytes),
         weights_(std::move(weights)),
-        biases_(std::move(biases)) {}
+        biases_(std::move(biases)) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_52(mht_52_v, 1461, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnRnnParamsDescriptor");
+}
 
  public:
   CudnnRnnParamsDescriptor(CudnnRnnParamsDescriptor&&) = default;
@@ -1143,10 +1470,22 @@ class CudnnRnnParamsDescriptor {
       cudnnRNNDescriptor_t rnn_desc, cudnnRNNMode_t rnn_mode,
       cudnnDirectionMode_t direction_mode, int num_layers);
 
-  cudnnFilterDescriptor_t handle() const { return handle_.get(); }
-  int64_t params_size_in_bytes() const { return params_size_in_bytes_; }
-  ParamsRegions params_weights() const { return weights_; }
-  ParamsRegions params_biases() const { return biases_; }
+  cudnnFilterDescriptor_t handle() const {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_53(mht_53_v, 1474, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "handle");
+ return handle_.get(); }
+  int64_t params_size_in_bytes() const {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_54(mht_54_v, 1478, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "params_size_in_bytes");
+ return params_size_in_bytes_; }
+  ParamsRegions params_weights() const {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_55(mht_55_v, 1482, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "params_weights");
+ return weights_; }
+  ParamsRegions params_biases() const {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_56(mht_56_v, 1486, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "params_biases");
+ return biases_; }
 
  private:
   FilterDescriptor handle_;
@@ -1184,7 +1523,10 @@ class CudnnRnnDescriptor : public dnn::RnnDescriptor {
         compute_type_(compute_type),
         algorithm_config_(algorithm_config),
         dropout_desc_(std::move(dropout_desc)),
-        params_desc_(std::move(params_desc)) {}
+        params_desc_(std::move(params_desc)) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_57(mht_57_v, 1527, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnRnnDescriptor");
+}
 
  public:
   CudnnRnnDescriptor(CudnnRnnDescriptor&& other) = default;
@@ -1305,30 +1647,78 @@ class CudnnRnnDescriptor : public dnn::RnnDescriptor {
                               std::move(dropout_desc), std::move(params_desc));
   }
 
-  cudnnRNNDescriptor_t handle() const { return rnn_desc_.get(); }
-  int num_layers() const { return num_layers_; }
-  int hidden_size() const { return hidden_size_; }
-  int input_size() const { return input_size_; }
-  int cell_size() const { return cell_size_; }
-  int batch_size() const { return batch_size_; }
-  cudnnRNNInputMode_t input_mode() const { return input_mode_; }
-  cudnnDirectionMode_t direction_mode() const { return direction_mode_; }
-  cudnnRNNMode_t rnn_mode() const { return rnn_mode_; }
-  cudnnDataType_t data_type() const { return data_type_; }
-  cudnnDataType_t compute_type() const { return compute_type_; }
+  cudnnRNNDescriptor_t handle() const {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_58(mht_58_v, 1651, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "handle");
+ return rnn_desc_.get(); }
+  int num_layers() const {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_59(mht_59_v, 1655, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "num_layers");
+ return num_layers_; }
+  int hidden_size() const {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_60(mht_60_v, 1659, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "hidden_size");
+ return hidden_size_; }
+  int input_size() const {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_61(mht_61_v, 1663, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "input_size");
+ return input_size_; }
+  int cell_size() const {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_62(mht_62_v, 1667, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "cell_size");
+ return cell_size_; }
+  int batch_size() const {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_63(mht_63_v, 1671, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "batch_size");
+ return batch_size_; }
+  cudnnRNNInputMode_t input_mode() const {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_64(mht_64_v, 1675, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "input_mode");
+ return input_mode_; }
+  cudnnDirectionMode_t direction_mode() const {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_65(mht_65_v, 1679, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "direction_mode");
+ return direction_mode_; }
+  cudnnRNNMode_t rnn_mode() const {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_66(mht_66_v, 1683, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "rnn_mode");
+ return rnn_mode_; }
+  cudnnDataType_t data_type() const {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_67(mht_67_v, 1687, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "data_type");
+ return data_type_; }
+  cudnnDataType_t compute_type() const {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_68(mht_68_v, 1691, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "compute_type");
+ return compute_type_; }
   const dnn::AlgorithmConfig& algorithm_config() const {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_69(mht_69_v, 1695, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "algorithm_config");
+
     return algorithm_config_;
   }
   int64_t ParamsSizeInBytes() const override {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_70(mht_70_v, 1701, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "ParamsSizeInBytes");
+
     return params_desc_.params_size_in_bytes();
   }
   cudnnFilterDescriptor_t params_handle() const {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_71(mht_71_v, 1707, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "params_handle");
+
     return params_desc_.handle();
   }
   ParamsRegions ParamsWeightRegions() const override {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_72(mht_72_v, 1713, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "ParamsWeightRegions");
+
     return params_desc_.params_weights();
   }
   ParamsRegions ParamsBiasRegions() const override {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_73(mht_73_v, 1719, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "ParamsBiasRegions");
+
     return params_desc_.params_biases();
   }
 
@@ -1361,6 +1751,9 @@ class CudnnCtcLossDescriptor {
  public:
   explicit CudnnCtcLossDescriptor(cudnnDataType_t data_type)
       : handle_(CreateCtcLossDescriptor()) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_74(mht_74_v, 1754, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnCtcLossDescriptor");
+
     CHECK_CUDNN_OK(cudnnSetCTCLossDescriptorEx(
         /*ctcLossDesc=*/handle_.get(),
         /*compType=*/data_type,
@@ -1368,7 +1761,10 @@ class CudnnCtcLossDescriptor {
         /*gradMode=*/CUDNN_NOT_PROPAGATE_NAN));
   }
 
-  cudnnCTCLossDescriptor_t handle() const { return handle_.get(); }
+  cudnnCTCLossDescriptor_t handle() const {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_75(mht_75_v, 1765, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "handle");
+ return handle_.get(); }
 
  private:
   CtcLossDescriptor handle_;  // Owned
@@ -1379,7 +1775,10 @@ class CudnnCtcLossDescriptor {
 // dummy class
 class CudnnCtcLossDescriptor {
  public:
-  CudnnCtcLossDescriptor(cudnnDataType_t data_type) {}
+  CudnnCtcLossDescriptor(cudnnDataType_t data_type) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_76(mht_76_v, 1779, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnCtcLossDescriptor");
+}
 };
 #endif
 
@@ -1393,6 +1792,9 @@ port::Status CheckAndFetchProjectionWeights(
     const TensorDescriptor& input_desc, const FilterDescriptor& filter_desc,
     const FilterDescriptor& region_desc_handle,
     dnn::RnnDescriptor::ParamsRegions* weights) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_77(mht_77_v, 1795, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CheckAndFetchProjectionWeights");
+
   int hidden_size_v;
   int num_layers_v;
   cudnnDropoutDescriptor_t dropout_desc;
@@ -1463,6 +1865,9 @@ port::StatusOr<CudnnRnnParamsDescriptor> CudnnRnnParamsDescriptor::Create(
     const CudnnHandle& cudnn, int input_size, cudnnDataType_t data_type,
     cudnnRNNDescriptor_t rnn_desc, cudnnRNNMode_t rnn_mode,
     cudnnDirectionMode_t direction_mode, int num_layers) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_78(mht_78_v, 1868, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnRnnParamsDescriptor::Create");
+
   // Query the params size.
   TensorDescriptor input_desc = CreateTensorDescriptor();
   int tensor_dims[] = {1, input_size, 1};
@@ -1572,7 +1977,10 @@ class CudnnRnnSequenceTensorDescriptor
         data_type_(data_type),
         handle_(std::move(handle)),
         rnn_data_handle_(std::move(data_handle)),
-        handles_(max_seq_length, handle_.get()) {}
+        handles_(max_seq_length, handle_.get()) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_79(mht_79_v, 1981, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnRnnSequenceTensorDescriptor");
+}
 
  public:
   CudnnRnnSequenceTensorDescriptor(CudnnRnnSequenceTensorDescriptor&&) =
@@ -1631,15 +2039,33 @@ class CudnnRnnSequenceTensorDescriptor
         std::move(data_desc), std::move(tensor_desc));
   }
 
-  const cudnnTensorDescriptor_t* handles() const { return handles_.data(); }
+  const cudnnTensorDescriptor_t* handles() const {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_80(mht_80_v, 2043, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "handles");
+ return handles_.data(); }
   const cudnnRNNDataDescriptor_t data_handle() const {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_81(mht_81_v, 2047, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "data_handle");
+
     return rnn_data_handle_.get();
   }
 
-  int max_seq_length() const { return max_seq_length_; }
-  int batch_size() const { return batch_size_; }
-  int data_size() const { return data_size_; }
-  bool is_var_seq_lengths() const { return rnn_data_handle_ != nullptr; }
+  int max_seq_length() const {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_82(mht_82_v, 2054, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "max_seq_length");
+ return max_seq_length_; }
+  int batch_size() const {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_83(mht_83_v, 2058, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "batch_size");
+ return batch_size_; }
+  int data_size() const {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_84(mht_84_v, 2062, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "data_size");
+ return data_size_; }
+  bool is_var_seq_lengths() const {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_85(mht_85_v, 2066, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "is_var_seq_lengths");
+ return rnn_data_handle_ != nullptr; }
 
  private:
   int max_seq_length_;
@@ -1662,6 +2088,9 @@ class CudnnRnnStateTensorDescriptor : public dnn::RnnStateTensorDescriptor {
         batch_size_(batch_size),
         data_size_(data_size),
         data_type_(data_type) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_86(mht_86_v, 2091, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnRnnStateTensorDescriptor");
+
     int dims[] = {num_layers, batch_size, data_size};
     int strides[] = {dims[1] * dims[2], dims[2], 1};
     CHECK_CUDNN_OK(cudnnSetTensorNdDescriptor(
@@ -1670,11 +2099,23 @@ class CudnnRnnStateTensorDescriptor : public dnn::RnnStateTensorDescriptor {
         /*strideA=*/strides));
   }
 
-  cudnnTensorDescriptor_t handle() const { return handle_.get(); }
+  cudnnTensorDescriptor_t handle() const {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_87(mht_87_v, 2103, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "handle");
+ return handle_.get(); }
 
-  int num_layers() const { return num_layers_; }
-  int batch_size() const { return batch_size_; }
-  int data_size() const { return data_size_; }
+  int num_layers() const {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_88(mht_88_v, 2108, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "num_layers");
+ return num_layers_; }
+  int batch_size() const {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_89(mht_89_v, 2112, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "batch_size");
+ return batch_size_; }
+  int data_size() const {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_90(mht_90_v, 2116, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "data_size");
+ return data_size_; }
 
  private:
   TensorDescriptor handle_;
@@ -1762,6 +2203,9 @@ port::StatusOr<RnnModelDims> ExtractAndCheckRnnForward(
 port::Status CheckRNNParameterSize(
     const CudnnHandle& cudnn, const CudnnRnnDescriptor& rnn_desc,
     const CudnnRnnSequenceTensorDescriptor& input_desc) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_91(mht_91_v, 2206, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CheckRNNParameterSize");
+
   size_t params_size_in_bytes = 0;
 #if CUDNN_VERSION >= 8100 && TF_ENABLE_CUDNN_FRONTEND
   RETURN_IF_CUDNN_ERROR(cudnnGetRNNWeightSpaceSize(
@@ -1873,6 +2317,9 @@ port::Status CudnnSupport::DoRnnForwardImpl(
     ScratchAllocator* reserve_space_allocator,
     ScratchAllocator* workspace_allocator,
     dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_92(mht_92_v, 2320, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoRnnForwardImpl");
+
   SE_ASSIGN_OR_RETURN(
       RnnModelDims model_dims,
       ExtractAndCheckRnnForward(
@@ -2093,6 +2540,9 @@ port::Status CudnnSupport::DoRnnBackwardImpl(
     DeviceMemory<uint8>* reserve_space_data,
     ScratchAllocator* workspace_allocator,
     dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_93(mht_93_v, 2543, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoRnnBackwardImpl");
+
   SE_ASSIGN_OR_RETURN(
       RnnModelDims model_dims,
       ExtractAndCheckRnnForward(rnn_desc, input_desc, input_data, input_h_desc,
@@ -2307,6 +2757,9 @@ port::Status CudnnSupport::DoCtcLossImpl(
     const CudnnRnnStateTensorDescriptor& grads_desc,
     DeviceMemoryBase grads_data, const CudnnCtcLossDescriptor& ctc_loss_desc,
     DeviceMemory<uint8> scratch_memory, int ctc_loss_algo_id) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_94(mht_94_v, 2760, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoCtcLossImpl");
+
   auto cudnn = cudnn_->GetHandle(parent_, stream);
 
   int kNumTimestamps = probs_desc.num_layers();
@@ -2346,6 +2799,9 @@ CudnnSupport::createRnnDescriptor(
     dnn::DataType data_type, const dnn::AlgorithmConfig& algorithm_config,
     float dropout, uint64_t seed, ScratchAllocator* state_allocator,
     bool use_padded_io) {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_95(mht_95_v, 2802, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::createRnnDescriptor");
+
   // Setting up a cudnnRNNDescriptor requires a cuDNN handle, but because it's
   // not enqueueing anything into a stream, we pass in the null stream.
   auto cudnn = cudnn_->GetHandle(parent_, /*stream=*/nullptr);
@@ -2365,6 +2821,9 @@ port::StatusOr<std::unique_ptr<dnn::RnnSequenceTensorDescriptor>>
 CudnnSupport::createRnnSequenceTensorDescriptor(int max_seq_length,
                                                 int batch_size, int data_size,
                                                 dnn::DataType data_type) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_96(mht_96_v, 2824, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::createRnnSequenceTensorDescriptor");
+
   SE_ASSIGN_OR_RETURN(CudnnRnnSequenceTensorDescriptor descriptor,
                       CudnnRnnSequenceTensorDescriptor::Create(
                           parent_, max_seq_length, batch_size, data_size,
@@ -2378,6 +2837,9 @@ CudnnSupport::createRnnSequenceTensorDescriptor(
     int max_seq_length, int batch_size, int data_size,
     const absl::Span<const int>& seq_lengths, bool time_major,
     dnn::DataType data_type) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_97(mht_97_v, 2840, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::createRnnSequenceTensorDescriptor");
+
   SE_ASSIGN_OR_RETURN(CudnnRnnSequenceTensorDescriptor descriptor,
                       CudnnRnnSequenceTensorDescriptor::Create(
                           parent_, max_seq_length, batch_size, data_size,
@@ -2390,6 +2852,9 @@ port::StatusOr<std::unique_ptr<dnn::RnnStateTensorDescriptor>>
 CudnnSupport::createRnnStateTensorDescriptor(int num_layer, int batch_size,
                                              int data_size,
                                              dnn::DataType data_type) {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_98(mht_98_v, 2855, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::createRnnStateTensorDescriptor");
+
   return std::unique_ptr<dnn::RnnStateTensorDescriptor>(
       new CudnnRnnStateTensorDescriptor(parent_, num_layer, batch_size,
                                         data_size, ToCudnnDataType(data_type)));
@@ -2414,6 +2879,9 @@ bool CudnnSupport::DoRnnForward(
     ScratchAllocator* reserve_space_allocator,
     ScratchAllocator* workspace_allocator,
     dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_99(mht_99_v, 2882, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoRnnForward");
+
   const CudnnRnnDescriptor& cudnn_rnn_desc =
       static_cast<const CudnnRnnDescriptor&>(rnn_desc);
   const CudnnRnnSequenceTensorDescriptor& cudnn_input_desc =
@@ -2457,6 +2925,9 @@ bool CudnnSupport::DoRnnForward(
     ScratchAllocator* reserve_space_allocator,
     ScratchAllocator* workspace_allocator,
     dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_100(mht_100_v, 2928, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoRnnForward");
+
   const CudnnRnnDescriptor& cudnn_rnn_desc =
       static_cast<const CudnnRnnDescriptor&>(rnn_desc);
   const CudnnRnnSequenceTensorDescriptor& cudnn_input_desc =
@@ -2501,6 +2972,9 @@ bool CudnnSupport::DoRnnForward(
     ScratchAllocator* reserve_space_allocator,
     ScratchAllocator* workspace_allocator,
     dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_101(mht_101_v, 2975, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoRnnForward");
+
   const CudnnRnnDescriptor& cudnn_rnn_desc =
       static_cast<const CudnnRnnDescriptor&>(rnn_desc);
   const CudnnRnnSequenceTensorDescriptor& cudnn_input_desc =
@@ -2552,6 +3026,9 @@ bool CudnnSupport::DoRnnBackward(
     DeviceMemory<uint8>* reserve_space_data,
     ScratchAllocator* workspace_allocator,
     dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_102(mht_102_v, 3029, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoRnnBackward");
+
   const CudnnRnnDescriptor& cudnn_rnn_desc =
       static_cast<const CudnnRnnDescriptor&>(rnn_desc);
   const CudnnRnnSequenceTensorDescriptor& cudnn_input_desc =
@@ -2604,6 +3081,9 @@ bool CudnnSupport::DoRnnBackward(
     DeviceMemory<uint8>* reserve_space_data,
     ScratchAllocator* workspace_allocator,
     dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_103(mht_103_v, 3084, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoRnnBackward");
+
   const CudnnRnnDescriptor& cudnn_rnn_desc =
       static_cast<const CudnnRnnDescriptor&>(rnn_desc);
   const CudnnRnnSequenceTensorDescriptor& cudnn_input_desc =
@@ -2657,6 +3137,9 @@ bool CudnnSupport::DoRnnBackward(
     DeviceMemory<uint8>* reserve_space_data,
     ScratchAllocator* workspace_allocator,
     dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_104(mht_104_v, 3140, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoRnnBackward");
+
   const CudnnRnnDescriptor& cudnn_rnn_desc =
       static_cast<const CudnnRnnDescriptor&>(rnn_desc);
   const CudnnRnnSequenceTensorDescriptor& cudnn_input_desc =
@@ -3172,12 +3655,18 @@ template <typename EnvVar>
 class CudnnEnvVar {
  public:
   static bool IsEnabled() {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_105(mht_105_v, 3658, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "IsEnabled");
+
     static bool is_enabled = IsEnabledImpl();
     return is_enabled;
   }
 
  private:
   static bool IsEnabledImpl() {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_106(mht_106_v, 3667, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "IsEnabledImpl");
+
     const char* tf_env_var_val = getenv(EnvVar::kName);
     if (tf_env_var_val != nullptr) {
       absl::string_view tf_env_var_val_str(tf_env_var_val);
@@ -3278,6 +3767,9 @@ bool GenericEngineFilter(cudnnBackendDescriptor_t engine_config,
 }  // namespace
 
 cudnnDataType_t GetRnnComputeType(dnn::DataType data_type) {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_107(mht_107_v, 3770, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "GetRnnComputeType");
+
   switch (data_type) {
     case dnn::DataType::kFloat:
       return CUDNN_DATA_FLOAT;
@@ -3295,6 +3787,9 @@ cudnnDataType_t GetRnnComputeType(dnn::DataType data_type) {
 }
 
 dnn::DataType GetConvActivationType(dnn::DataType data_type) {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_108(mht_108_v, 3790, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "GetConvActivationType");
+
   switch (data_type) {
     case dnn::DataType::kFloat:
     case dnn::DataType::kDouble:
@@ -3321,6 +3816,9 @@ dnn::DataType GetConvActivationType(dnn::DataType data_type) {
 }
 
 dnn::DataType GetConvAccumulatorType(dnn::DataType data_type) {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_109(mht_109_v, 3819, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "GetConvAccumulatorType");
+
   switch (data_type) {
     case dnn::DataType::kFloat:
     case dnn::DataType::kDouble:
@@ -3347,6 +3845,9 @@ dnn::DataType GetConvAccumulatorType(dnn::DataType data_type) {
 
 namespace {
 cudnnBackendHeurMode_t GetCudnnFrontendHeurMode() {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_110(mht_110_v, 3848, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "GetCudnnFrontendHeurMode");
+
 #if CUDNN_VERSION >= 8300
   return CUDNN_HEUR_MODE_B;
 #else
@@ -3356,6 +3857,9 @@ cudnnBackendHeurMode_t GetCudnnFrontendHeurMode() {
 
 cudnnBackendDescriptorType_t GetCudnnConvolutionType(
     dnn::ConvolutionKind kind) {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_111(mht_111_v, 3860, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "GetCudnnConvolutionType");
+
   cudnnBackendDescriptorType_t conv_mode;
   switch (kind) {
     case dnn::ConvolutionKind::FORWARD: {
@@ -3837,6 +4341,9 @@ port::Status CudnnSupport::DoPrepareForConvolution(
     const dnn::AlgorithmConfig& algorithm_config,
     ScratchAllocator* scratch_allocator, dnn::AlgorithmDesc* algorithm_desc,
     DeviceMemory<uint8>* scratch_memory) {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_112(mht_112_v, 4344, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoPrepareForConvolution");
+
   CudnnTensorDescriptor input_nd(
       input_descriptor,
       ToCudnnDataType(element_type, input_descriptor.layout()));
@@ -3942,10 +4449,16 @@ class CudnnLegacyConvRunner : public dnn::ConvRunner {
   }
 
   std::string ToString() const override {
+   std::vector<std::string> mht_113_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_113(mht_113_v, 4452, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "ToString");
+
     return MakeAlgorithmDesc().ToString();
   }
 
-  size_t GetWorkspaceSize() const override { return workspace_size_; }
+  size_t GetWorkspaceSize() const override {
+   std::vector<std::string> mht_114_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_114(mht_114_v, 4459, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "GetWorkspaceSize");
+ return workspace_size_; }
 
   port::StatusOr<dnn::AlgorithmDesc> ToAlgorithmDesc() const override {
     return MakeAlgorithmDesc();
@@ -4105,10 +4618,16 @@ class CudnnLegacyConvRunner : public dnn::ConvRunner {
         input_nd_(std::move(input_nd)),
         output_nd_(std::move(output_nd)),
         filter_(std::move(filter)),
-        conv_(std::move(conv)) {}
+        conv_(std::move(conv)) {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_115(mht_115_v, 4622, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnLegacyConvRunner");
+}
 
   // Internal form of ToAlgorithmDesc without the StatusOr.
   dnn::AlgorithmDesc MakeAlgorithmDesc() const {
+   std::vector<std::string> mht_116_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_116(mht_116_v, 4628, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "MakeAlgorithmDesc");
+
     return {algo_id_, tensor_ops_enabled_, workspace_size_};
   }
 
@@ -4137,6 +4656,9 @@ port::Status CudnnSupport::DoConvolve(
     const dnn::ConvolutionDescriptor& convolution_descriptor,
     dnn::AlgorithmDesc algorithm_desc, DeviceMemory<uint8> scratch_memory,
     dnn::ProfileResult* profile_result) {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_117(mht_117_v, 4659, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoConvolve");
+
   cudnnDataType_t cudnn_type =
       ToCudnnDataType(element_type, input_descriptor.layout());
   CudnnTensorDescriptor input_nd(input_descriptor, cudnn_type);
@@ -4313,9 +4835,15 @@ template <typename... Args>
 class CudnnExecutionPlanRunner<void(Args...)>
     : public dnn::OpRunner<void(Args...)> {
  public:
-  std::string ToString() const override { return plan_.getTag(); }
+  std::string ToString() const override {
+   std::vector<std::string> mht_118_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_118(mht_118_v, 4839, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "ToString");
+ return plan_.getTag(); }
 
-  size_t GetWorkspaceSize() const override { return workspace_size_; }
+  size_t GetWorkspaceSize() const override {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_119(mht_119_v, 4844, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "GetWorkspaceSize");
+ return workspace_size_; }
 
   port::StatusOr<dnn::AlgorithmDesc> ToAlgorithmDesc() const override {
     return ExecutionPlanToAlgorithmDesc(plan_, workspace_size_);
@@ -4403,7 +4931,10 @@ class CudnnExecutionPlanRunner<void(Args...)>
         cudnn_(cudnn),
         plan_(std::move(plan)),
         workspace_size_(workspace_size),
-        data_uids_(uids.begin(), uids.end()) {}
+        data_uids_(uids.begin(), uids.end()) {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_120(mht_120_v, 4935, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnExecutionPlanRunner");
+}
   GpuExecutor* parent_;
   CudnnAccess* cudnn_;
   cudnn_frontend::ExecutionPlan plan_;
@@ -4420,7 +4951,10 @@ class CudnnExecutionPlanRunner<void(Args...)>
 // ugliness that already exists in the CUDA API.
 class ScalingParam {
  public:
-  explicit ScalingParam(double value) : as_double_(value), as_float_(value) {}
+  explicit ScalingParam(double value) : as_double_(value), as_float_(value) {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_121(mht_121_v, 4955, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "ScalingParam");
+}
 
   // Return a pointer to the appropriate representation type for the given
   // element type.
@@ -4431,6 +4965,9 @@ class ScalingParam {
   // but is maintained from the existing behavior (namely, using a float scaling
   // parameter).
   void* ToVoidPointer(dnn::DataType element_type) {
+   std::vector<std::string> mht_122_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_122(mht_122_v, 4968, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "ToVoidPointer");
+
     if (element_type == dnn::DataType::kDouble) {
       return &as_double_;
     } else {
@@ -4454,6 +4991,9 @@ port::Status CreateOpRunners(
     dnn::ConvolutionKind kind, dnn::DataType input_type,
     absl::Span<const int64_t> input_uids, bool use_fallback,
     std::vector<std::unique_ptr<const dnn::OpRunner<Sig>>>* out_runners) {
+   std::vector<std::string> mht_123_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_123(mht_123_v, 4994, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CreateOpRunners");
+
   cudnn_frontend::EngineConfigList filtered_configs;
   auto generic_filter_fn = [=](cudnnBackendDescriptor_t engine_config) -> bool {
     return GenericEngineFilter(
@@ -4497,7 +5037,10 @@ port::Status CreateOpRunners(
   }
   VLOG(4) << "\nFiltered engine configs size: " << filtered_configs.size();
 
-  auto fn = []() { return true; };
+  auto fn = []() {
+   std::vector<std::string> mht_124_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_124(mht_124_v, 5041, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "lambda");
+ return true; };
   auto maybe_json_handle_static = CudnnExecutionPlanEngineFilterStatic();
   auto maybe_json_handle_runtime = CudnnExecutionPlanEngineFilterRuntime();
 
@@ -4566,6 +5109,9 @@ port::Status CudnnSupport::GetConvolveRunners(
     const dnn::ConvolutionDescriptor& convolution_descriptor, bool use_fallback,
     ScratchAllocator* /*scratch_allocator*/,
     std::vector<std::unique_ptr<const dnn::ConvRunner>>* out_exec_plans) {
+   std::vector<std::string> mht_125_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_125(mht_125_v, 5112, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::GetConvolveRunners");
+
   // All current versions of the frontend API lack support for Tx32
   // convolutions.
   const bool is_unsupported_x32 =
@@ -4666,6 +5212,9 @@ CudnnSupport::ConvolveRunnerFromDesc(
     const dnn::FilterDescriptor& filter_descriptor,
     const dnn::BatchDescriptor& output_descriptor,
     const dnn::ConvolutionDescriptor& convolution_descriptor) {
+   std::vector<std::string> mht_126_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_126(mht_126_v, 5215, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::ConvolveRunnerFromDesc");
+
   if (!algorithm_desc.is_cudnn_frontend()) {
     CudnnConvolutionDescriptor conv(
         convolution_descriptor,
@@ -4751,10 +5300,16 @@ class CudnnLegacyFusedConvRunner : public dnn::FusedConvRunner {
   }
 
   std::string ToString() const override {
+   std::vector<std::string> mht_127_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_127(mht_127_v, 5303, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "ToString");
+
     return MakeAlgorithmDesc().ToString();
   }
 
-  uint64_t GetWorkspaceSize() const override { return workspace_size_; }
+  uint64_t GetWorkspaceSize() const override {
+   std::vector<std::string> mht_128_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_128(mht_128_v, 5310, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "GetWorkspaceSize");
+ return workspace_size_; }
 
   port::StatusOr<dnn::AlgorithmDesc> ToAlgorithmDesc() const override {
     return MakeAlgorithmDesc();
@@ -4880,10 +5435,16 @@ class CudnnLegacyFusedConvRunner : public dnn::FusedConvRunner {
         filter_(std::move(filter)),
         bias_nd_(std::move(bias_nd)),
         conv_(std::move(conv)),
-        activation_desc_(std::move(activation_desc)) {}
+        activation_desc_(std::move(activation_desc)) {
+   std::vector<std::string> mht_129_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_129(mht_129_v, 5439, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnLegacyFusedConvRunner");
+}
 
   // Internal form of ToAlgorithmDesc without the StatusOr.
   dnn::AlgorithmDesc MakeAlgorithmDesc() const {
+   std::vector<std::string> mht_130_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_130(mht_130_v, 5445, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "MakeAlgorithmDesc");
+
     return {algo_id_, tensor_ops_enabled_, workspace_size_};
   }
 
@@ -4914,6 +5475,9 @@ CudnnSupport::FusedConvolveRunnerFromDesc(
     const dnn::BatchDescriptor& output_descriptor,
     const dnn::ConvolutionDescriptor& convolution_descriptor,
     dnn::ActivationMode activation_mode) {
+   std::vector<std::string> mht_131_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_131(mht_131_v, 5478, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::FusedConvolveRunnerFromDesc");
+
   if (!algorithm_desc.is_cudnn_frontend()) {
     CudnnTensorDescriptor conv_input_nd(
         input_descriptor,
@@ -4987,6 +5551,9 @@ port::Status CudnnSupport::GetFusedConvolveRunners(
     const dnn::ConvolutionDescriptor& convolution_descriptor, bool use_fallback,
     const dnn::ActivationMode activation_mode,
     std::vector<std::unique_ptr<const dnn::FusedConvRunner>>* out_exec_plans) {
+   std::vector<std::string> mht_132_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_132(mht_132_v, 5554, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::GetFusedConvolveRunners");
+
   // Fused convolutions with identity activations are broken in that they
   // implicitly do ReLU on some engines, and we can't reliably detect which
   // ones.
@@ -5109,6 +5676,9 @@ port::Status CudnnSupport::GetFusedConvolveRunners(
 bool CudnnSupport::GetConvolveAlgorithms(
     CudaComputeCapability cuda_compute_capability,
     std::vector<dnn::AlgorithmDesc>* out_algorithms) {
+   std::vector<std::string> mht_133_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_133(mht_133_v, 5679, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::GetConvolveAlgorithms");
+
   // Preload sub libs for cudnn 8.0.4+
 #if CUDNN_MAJOR >= 8 && (CUDNN_MINOR > 0 || CUDNN_PATCHLEVEL >= 4)
   cudnnOpsInferVersionCheck();
@@ -5150,6 +5720,9 @@ bool CudnnSupport::GetConvolveAlgorithms(
 
 bool CudnnSupport::GetRnnAlgorithms(
     std::vector<dnn::AlgorithmDesc>* out_algorithms) {
+   std::vector<std::string> mht_134_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_134(mht_134_v, 5723, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::GetRnnAlgorithms");
+
   // Preload sub libs for cudnn 8.0.4+
 #if CUDNN_MAJOR >= 8 && (CUDNN_MINOR > 0 || CUDNN_PATCHLEVEL >= 4)
   cudnnOpsInferVersionCheck();
@@ -5176,6 +5749,9 @@ bool CudnnSupport::GetRnnAlgorithms(
 bool CudnnSupport::GetConvolveBackwardDataAlgorithms(
     CudaComputeCapability cuda_compute_capability,
     std::vector<dnn::AlgorithmDesc>* out_algorithms) {
+   std::vector<std::string> mht_135_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_135(mht_135_v, 5752, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::GetConvolveBackwardDataAlgorithms");
+
   // Preload sub libs for cudnn 8.0.4+
 #if CUDNN_MAJOR >= 8 && (CUDNN_MINOR > 0 || CUDNN_PATCHLEVEL >= 4)
   cudnnOpsInferVersionCheck();
@@ -5216,6 +5792,9 @@ bool CudnnSupport::GetConvolveBackwardDataAlgorithms(
 bool CudnnSupport::GetConvolveBackwardFilterAlgorithms(
     CudaComputeCapability cuda_compute_capability,
     std::vector<dnn::AlgorithmDesc>* out_algorithms) {
+   std::vector<std::string> mht_136_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_136(mht_136_v, 5795, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::GetConvolveBackwardFilterAlgorithms");
+
   // Preload sub libs for cudnn 8.0.4+
 #if CUDNN_MAJOR >= 8 && (CUDNN_MINOR > 0 || CUDNN_PATCHLEVEL >= 4)
   cudnnOpsInferVersionCheck();
@@ -5271,6 +5850,9 @@ bool CudnnSupport::DoBatchNormalizationForward(
     DeviceMemory<float>* saved_mean, DeviceMemory<float>* saved_inv_var,
     bool is_training, ScratchAllocator* reserve_space_allocator,
     ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_137_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_137(mht_137_v, 5853, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoBatchNormalizationForward");
+
   return IsStatusOk(
       DoBatchNormalizationForwardImpl<float, float>(
           stream, dnn::DataType::kFloat, dnn::DataType::kFloat, x, scale,
@@ -5295,6 +5877,9 @@ bool CudnnSupport::DoBatchNormalizationForward(
     DeviceMemory<float>* saved_mean, DeviceMemory<float>* saved_inv_var,
     bool is_training, ScratchAllocator* reserve_space_allocator,
     ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_138_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_138(mht_138_v, 5880, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoBatchNormalizationForward");
+
   return IsStatusOk(
       DoBatchNormalizationForwardImpl<Eigen::half, float>(
           stream, dnn::DataType::kHalf, dnn::DataType::kFloat, x, scale, offset,
@@ -5320,6 +5905,9 @@ port::Status CudnnSupport::DoBatchNormalizationForwardImpl(
     DeviceMemory<U>* saved_mean, DeviceMemory<U>* saved_inv_var,
     bool is_training, ScratchAllocator* reserve_space_allocator,
     ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_139_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_139(mht_139_v, 5908, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoBatchNormalizationForwardImpl");
+
   CudnnTensorDescriptor x_descriptor(x_desc, ToCudnnDataType(input_data_type));
   CudnnTensorDescriptor scale_offset_descriptor(
       scale_offset_desc, ToCudnnDataType(scale_data_type));
@@ -5466,6 +6054,9 @@ bool CudnnSupport::DoBatchNormalizationBackward(
     DeviceMemory<float>* side_input_backprop,
     DeviceMemory<uint8>* reserve_space_data,
     ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_140_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_140(mht_140_v, 6057, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoBatchNormalizationBackward");
+
   return IsStatusOk(
       DoBatchNormalizationBackwardImpl(
           stream, CUDNN_DATA_FLOAT, CUDNN_DATA_FLOAT, y_backprop, x, scale,
@@ -5487,6 +6078,9 @@ bool CudnnSupport::DoBatchNormalizationBackward(
     DeviceMemory<Eigen::half>* side_input_backprop,
     DeviceMemory<uint8>* reserve_space_data,
     ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_141_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_141(mht_141_v, 6081, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoBatchNormalizationBackward");
+
   return IsStatusOk(
       DoBatchNormalizationBackwardImpl(
           stream, CUDNN_DATA_HALF, CUDNN_DATA_FLOAT, y_backprop, x, scale,
@@ -5509,6 +6103,9 @@ port::Status CudnnSupport::DoBatchNormalizationBackwardImpl(
     DeviceMemory<T>* side_input_backprop,
     DeviceMemory<uint8>* reserve_space_data,
     ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_142_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_142(mht_142_v, 6106, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoBatchNormalizationBackwardImpl");
+
   CudnnTensorDescriptor x_descriptor(
       x_desc, static_cast<cudnnDataType_t>(cudnn_input_type));
   CudnnTensorDescriptor scale_offset_descriptor(
@@ -5527,6 +6124,9 @@ port::Status CudnnSupport::DoBatchNormalizationBackwardImpl(
   if (reserve_space_data != nullptr && workspace_allocator != nullptr) {
     called = true;
     const cudnnBatchNormOps_t bn_ops = [&]() {
+   std::vector<std::string> mht_143_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_143(mht_143_v, 6127, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "lambda");
+
       if (side_input_backprop->is_null()) {
         return activation_mode == dnn::ActivationMode::kNone
                    ? CUDNN_BATCHNORM_OPS_BN
@@ -5618,6 +6218,9 @@ port::Status CudnnSupport::DoFusedConvolve(
     ScratchAllocator* scratch_allocator,
     const dnn::AlgorithmConfig& algorithm_config,
     dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_144_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_144(mht_144_v, 6221, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoFusedConvolve");
+
   if (input_type == dnn::DataType::kInt8 &&
       !stream->GetCudaComputeCapability().IsAtLeast(6, 1)) {
     return port::UnimplementedError(
@@ -5695,6 +6298,9 @@ port::Status CudnnSupport::DoPrepareForCtcLoss(
     absl::Span<const int> input_lengths_data,
     ScratchAllocator* scratch_allocator, DeviceMemory<uint8>* scratch_memory,
     int* ctc_loss_algo_id) {
+   std::vector<std::string> mht_145_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_145(mht_145_v, 6301, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoPrepareForCtcLoss");
+
   auto cudnn = cudnn_->GetHandle(parent_, stream);
   // Query the workspace size.
   size_t workspace_size_in_bytes = 0;
@@ -5765,6 +6371,9 @@ port::Status CudnnSupport::DoCtcLoss(
     const dnn::RnnStateTensorDescriptor& grads_desc,
     DeviceMemoryBase grads_data, DeviceMemory<uint8> scratch_memory,
     int ctc_loss_algo_id) {
+   std::vector<std::string> mht_146_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_146(mht_146_v, 6374, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoCtcLoss");
+
   // Current cuDNN CTC Loss only supports the float datatype
   if (CUDNN_VERSION < 7603 || element_type != dnn::DataType::kFloat) {
     return port::Status(port::error::INVALID_ARGUMENT,
@@ -5789,6 +6398,9 @@ bool CudnnSupport::DoTransformTensor(Stream* stream,
                                      const dnn::BatchDescriptor& output_desc,
                                      dnn::DataType output_type, float scale,
                                      DeviceMemoryBase* output_data) {
+   std::vector<std::string> mht_147_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_147(mht_147_v, 6401, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoTransformTensor");
+
   float beta = 0.0f;
   CudnnTensorDescriptor input_tensor_desc(
       input_desc, ToCudnnDataType(input_type, input_desc.layout()));
@@ -5810,6 +6422,9 @@ bool CudnnSupport::DoMatMul(Stream* stream,
                             const dnn::BatchDescriptor& input_dimensions,
                             const dnn::BatchDescriptor& output_dimensions,
                             DeviceMemory<float>* output_data) {
+   std::vector<std::string> mht_148_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_148(mht_148_v, 6425, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoMatMul");
+
   if (input_dimensions.count() != output_dimensions.count()) {
     LOG(ERROR) << "MatMul input and output dimensions are not compatible.";
     return false;
@@ -5924,6 +6539,9 @@ bool CudnnSupport::DoMatMul(Stream* stream,
           output_data->ElementCount() - output_offset);
     }
     const auto toPtrs = [](std::vector<DeviceMemory<float>>& v) {
+   std::vector<std::string> mht_149_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_149(mht_149_v, 6542, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "lambda");
+
       std::vector<DeviceMemory<float>*> ptrs;
       ptrs.reserve(v.size());
       for (auto& mem : v) {
@@ -5946,6 +6564,9 @@ bool CudnnSupport::DoBiasAdd(Stream* stream,
                              const DeviceMemory<float>& biases,
                              const dnn::BatchDescriptor& dimensions,
                              DeviceMemory<float>* output_data) {
+   std::vector<std::string> mht_150_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_150(mht_150_v, 6567, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoBiasAdd");
+
   CudnnTensorDescriptor input_descriptor(dimensions, CUDNN_DATA_FLOAT);
 
   dnn::BatchDescriptor bias_dimensions;
@@ -5990,6 +6611,9 @@ bool CudnnSupport::DoActivate(Stream* stream,
                               const DeviceMemory<float>& input_data,
                               DeviceMemory<float>* output_data,
                               uint64_t options) {
+   std::vector<std::string> mht_151_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_151(mht_151_v, 6614, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoActivate");
+
   CudnnActivationDescriptor activation_desc(
       activation_mode, CUDNN_PROPAGATE_NAN, dimensions.value_max());
 
@@ -6015,6 +6639,9 @@ bool CudnnSupport::DoPoolForward(
     const DeviceMemory<double>& input_data,
     const dnn::BatchDescriptor& output_dimensions,
     DeviceMemory<double>* output_data, ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_152_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_152(mht_152_v, 6642, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoPoolForward");
+
   // Alpha is the scaling factor for input.
   double alpha = 1.0;
   // Beta is the scaling factor for output.
@@ -6040,6 +6667,9 @@ bool CudnnSupport::DoPoolForward(
     const DeviceMemory<float>& input_data,
     const dnn::BatchDescriptor& output_dimensions,
     DeviceMemory<float>* output_data, ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_153_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_153(mht_153_v, 6670, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoPoolForward");
+
   // Alpha is the scaling factor for input.
   float alpha = 1.0;
   // Beta is the scaling factor for output.
@@ -6066,6 +6696,9 @@ bool CudnnSupport::DoPoolForward(
     const dnn::BatchDescriptor& output_dimensions,
     DeviceMemory<Eigen::half>* output_data,
     ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_154_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_154(mht_154_v, 6699, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoPoolForward");
+
   // Alpha is the scaling factor for input.
   float alpha = 1.0;
   // Beta is the scaling factor for output.
@@ -6090,6 +6723,9 @@ bool CudnnSupport::DoPoolForward(
     const DeviceMemory<int8>& input_data,
     const dnn::BatchDescriptor& output_dimensions,
     DeviceMemory<int8>* output_data, ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_155_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_155(mht_155_v, 6726, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoPoolForward");
+
   // Alpha is the scaling factor for input.
   float alpha = 1.0;
   // Beta is the scaling factor for output.
@@ -6118,6 +6754,9 @@ bool CudnnSupport::DoPoolBackward(
     const DeviceMemory<double>& input_diff_data,
     DeviceMemory<double>* output_diff_data,
     ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_156_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_156(mht_156_v, 6757, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoPoolBackward");
+
   // Alpha is the scaling factor for input.
   double alpha = 1.0;
   // Beta is the scaling factor for output.
@@ -6148,6 +6787,9 @@ bool CudnnSupport::DoPoolBackward(
     const DeviceMemory<float>& input_diff_data,
     DeviceMemory<float>* output_diff_data,
     ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_157_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_157(mht_157_v, 6790, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoPoolBackward");
+
   // Alpha is the scaling factor for input.
   float alpha = 1.0;
   // Beta is the scaling factor for output.
@@ -6178,6 +6820,9 @@ bool CudnnSupport::DoPoolBackward(
     const DeviceMemory<Eigen::half>& input_diff_data,
     DeviceMemory<Eigen::half>* output_diff_data,
     ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_158_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_158(mht_158_v, 6823, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoPoolBackward");
+
   // Alpha is the scaling factor for input.
   float alpha = 1.0;
   // Beta is the scaling factor for output.
@@ -6203,6 +6848,9 @@ bool CudnnSupport::DoNormalizeWithDimensions(
     Stream* stream, const dnn::NormalizeDescriptor& normalize_descriptor,
     const dnn::BatchDescriptor& dimensions,
     const DeviceMemory<float>& input_data, DeviceMemory<float>* output_data) {
+   std::vector<std::string> mht_159_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_159(mht_159_v, 6851, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoNormalizeWithDimensions");
+
   // Check for unsupported modes.
   if (normalize_descriptor.wrap_around()) {
     LOG(ERROR) << "CUDA LRN does not support cudnn-around mode";
@@ -6241,6 +6889,9 @@ bool CudnnSupport::DoNormalizeBackwardWithDimensions(
     const DeviceMemory<float>& normalized_variable_gradient,
     DeviceMemory<float>* raw_variable_gradient,
     ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_160_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_160(mht_160_v, 6892, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoNormalizeBackwardWithDimensions");
+
   // Check for unsupported modes.
   if (normalize_descriptor.wrap_around()) {
     LOG(ERROR) << "CUDA LRN does not support cudnn-around mode";
@@ -6273,6 +6924,9 @@ bool CudnnSupport::DoDepthConcatenate(
     Stream* stream, port::ArraySlice<dnn::BatchDescriptor> input_dimensions,
     port::ArraySlice<const DeviceMemory<float>*> input_data,
     DeviceMemory<float>* output_data) {
+   std::vector<std::string> mht_161_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_161(mht_161_v, 6927, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoDepthConcatenate");
+
   CHECK_EQ(input_dimensions.size(), input_data.size());
 
   for (const auto& dimensions : input_dimensions) {
@@ -6293,6 +6947,9 @@ bool CudnnSupport::DoDepthConcatenate(
   const int64_t area = output_dimensions.width() * output_dimensions.height();
   const auto index = [area](int64_t batch, int64_t depth, int64_t yx,
                             int64_t max_depth) {
+   std::vector<std::string> mht_162_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_162(mht_162_v, 6950, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "lambda");
+
     return (batch * max_depth + depth) * area + yx;
   };
 
@@ -6333,6 +6990,9 @@ bool CudnnSupport::DoElementwiseOperate(
     port::ArraySlice<const DeviceMemory<float>*> input_data,
     const dnn::BatchDescriptor& output_dimensions,
     DeviceMemory<float>* output_data) {
+   std::vector<std::string> mht_163_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_163(mht_163_v, 6993, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoElementwiseOperate");
+
   LOG(FATAL) << "not yet implemented";  // TODO(leary)
   return false;
 }
@@ -6343,6 +7003,9 @@ bool CudnnSupport::DoXYPad(Stream* stream,
                            int64_t left_pad, int64_t right_pad, int64_t top_pad,
                            int64_t bottom_pad,
                            DeviceMemory<float>* output_data) {
+   std::vector<std::string> mht_164_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_164(mht_164_v, 7006, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoXYPad");
+
   LOG(FATAL) << "not yet implemented";  // TODO(leary)
   return false;
 }
@@ -6353,6 +7016,9 @@ bool CudnnSupport::DoXYSlice(Stream* stream,
                              int64_t left_trim, int64_t right_trim,
                              int64_t top_trim, int64_t bottom_trim,
                              DeviceMemory<float>* output_data) {
+   std::vector<std::string> mht_165_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_165(mht_165_v, 7019, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoXYSlice");
+
   LOG(FATAL) << "not yet implemented";  // TODO(leary)
   return false;
 }
@@ -6360,6 +7026,9 @@ bool CudnnSupport::DoXYSlice(Stream* stream,
 bool CudnnSupport::DoMemcpyD2HQuantized(
     Stream* stream, const DeviceMemory<float>& gpu_unquantized_src,
     dnn::QuantizedActivationMode mode, void* host_dst, int64_t size) {
+   std::vector<std::string> mht_166_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_166(mht_166_v, 7029, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoMemcpyD2HQuantized");
+
   LOG(ERROR) << "quantized memcpy not supported by cuDNN";
   return false;
 }
@@ -6368,6 +7037,9 @@ bool CudnnSupport::DoMemcpyH2DQuantized(
     Stream* stream, const void* host_src, int64_t size,
     dnn::QuantizedActivationMode mode,
     DeviceMemory<float>* gpu_unquantized_dst) {
+   std::vector<std::string> mht_167_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_167(mht_167_v, 7040, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DoMemcpyH2DQuantized");
+
   LOG(ERROR) << "quantized memcpy not supported by cuDNN";
   return false;
 }
@@ -6377,6 +7049,9 @@ bool CudnnSupport::DeriveOutputBatchDescriptor(
     const dnn::FilterDescriptor& filter_descriptor,
     const dnn::ConvolutionDescriptor& convolution_descriptor,
     dnn::BatchDescriptor* output_batch_descriptor) {
+   std::vector<std::string> mht_168_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_168(mht_168_v, 7052, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "CudnnSupport::DeriveOutputBatchDescriptor");
+
   CudnnTensorDescriptor input_nd(batch_descriptor, CUDNN_DATA_FLOAT);
   CudnnFilterDescriptor filter(filter_descriptor, CUDNN_DATA_FLOAT);
   CudnnConvolutionDescriptor conv(convolution_descriptor, CUDNN_DATA_FLOAT);
@@ -6402,6 +7077,9 @@ bool CudnnSupport::DeriveOutputBatchDescriptor(
 }  // namespace gpu
 
 void initialize_cudnn() {
+   std::vector<std::string> mht_169_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_dnnDTcc mht_169(mht_169_v, 7080, "", "./tensorflow/stream_executor/cuda/cuda_dnn.cc", "initialize_cudnn");
+
   port::Status status =
       PluginRegistry::Instance()->RegisterFactory<PluginRegistry::DnnFactory>(
           cuda::kCudaPlatformId, gpu::kCuDnnPlugin, "cuDNN",

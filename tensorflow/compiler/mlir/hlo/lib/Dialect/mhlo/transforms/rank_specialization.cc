@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -48,6 +216,9 @@ namespace mlir {
 /// Needed to build `llvm::SmallSet`s and `llvm::EquivalenceClasses` of
 /// `mlir::Value`s.
 static bool operator<(const Value &lhs, const Value &rhs) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_0(mht_0_v, 219, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "operator<");
+
   return lhs.getAsOpaquePointer() < rhs.getAsOpaquePointer();
 }
 
@@ -70,6 +241,9 @@ namespace {
 ///     restore the desired result shape.
 
 bool IsClusterable(Operation *op) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_1(mht_1_v, 244, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "IsClusterable");
+
   if (!llvm::isa<InferShapedTypeOpInterface>(op)) return false;
   if (op->getNumOperands() == 0) return false;
   return (op->hasTrait<mlir::OpTrait::Elementwise>() &&
@@ -79,10 +253,16 @@ bool IsClusterable(Operation *op) {
 
 struct RankSpecializationClusterPattern : public RewritePattern {
   explicit RankSpecializationClusterPattern(MLIRContext *ctx)
-      : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/1, ctx) {}
+      : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/1, ctx) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_2(mht_2_v, 257, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "RankSpecializationClusterPattern");
+}
 
   LogicalResult matchAndRewrite(Operation *op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_3(mht_3_v, 263, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "matchAndRewrite");
+
     // Only apply to operations that have not been clustered yet.
     if (op->getParentOfType<chlo::RankSpecializationClusterOp>()) {
       return failure();
@@ -173,6 +353,9 @@ struct MergeRankSpecializationClusterOpsPattern
 
   LogicalResult matchAndRewrite(chlo::RankSpecializationClusterOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_4(mht_4_v, 356, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "matchAndRewrite");
+
     auto preceding_op =
         llvm::dyn_cast_or_null<chlo::RankSpecializationClusterOp>(
             op->getPrevNode());
@@ -281,10 +464,16 @@ struct MergeRankSpecializationClusterOpsPattern
 struct RankSpecializationClusterPass
     : public RankSpecializationClusterPassBase<RankSpecializationClusterPass> {
   void getDependentDialects(DialectRegistry &registry) const override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_5(mht_5_v, 467, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "getDependentDialects");
+
     registry.insert<mhlo::MhloDialect, chlo::HloClientDialect>();
   }
 
   void runOnOperation() override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_6(mht_6_v, 474, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "runOnOperation");
+
     MLIRContext *ctx = &getContext();
     RewritePatternSet patterns(ctx);
     mhlo::PopulateRankSpecializationClusterPatterns(ctx, &patterns);
@@ -298,15 +487,24 @@ struct RankSpecializationClusterPass
 /// Lower rank specialization cluster to SCF.
 
 bool IsScalarTensorType(Type ty) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_7(mht_7_v, 490, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "IsScalarTensorType");
+
   auto ranked_ty = ty.dyn_cast<RankedTensorType>();
   return ranked_ty && ranked_ty.getRank() == 0;
 }
 
 bool IsScalarShapeType(Type ty) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_8(mht_8_v, 498, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "IsScalarShapeType");
+
   return ty.cast<RankedTensorType>().getDimSize(0) == 0;
 }
 
 Type DeriveRankedTensorTypes(Type ty, int64_t rank) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_9(mht_9_v, 505, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "DeriveRankedTensorTypes");
+
   auto tensor_ty = ty.dyn_cast<TensorType>();
   if (!tensor_ty) return ty;
   SmallVector<int64_t, 8> shape(rank, ShapedType::kDynamicSize);
@@ -314,6 +512,9 @@ Type DeriveRankedTensorTypes(Type ty, int64_t rank) {
 }
 
 Type DeriveUnrankedTensorTypes(Type ty) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_10(mht_10_v, 515, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "DeriveUnrankedTensorTypes");
+
   if (auto ranked_ty = ty.dyn_cast<RankedTensorType>())
     return UnrankedTensorType::get(ranked_ty.getElementType());
   return ty;
@@ -418,6 +619,9 @@ SmallVector<Value, 8> MaterializeFinalReshape(
 }
 
 Value MaterializeFlatShape(OpBuilder &b, Location loc, ValueRange same_shapes) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_11(mht_11_v, 622, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "MaterializeFlatShape");
+
   assert(!same_shapes.empty() && "Expected at least one shape.");
   Value shape = same_shapes.size() == 1
                     ? same_shapes.front()
@@ -432,6 +636,9 @@ Value MaterializeScalarRankSpecializationCase(
     OpBuilder &b, Location loc, chlo::RankSpecializationClusterOp op,
     const SmallVector<Value, 8> &shapes, ValueRange non_scalars_of_same_shape,
     function_ref<void(OpBuilder &, Location)> else_builder_fn) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_12(mht_12_v, 639, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "MaterializeScalarRankSpecializationCase");
+
   // Materialize predicate: All operands are scalars, except the expected
   // non-scalars.
   Value one = b.create<arith::ConstantIndexOp>(loc, 1);
@@ -507,6 +714,9 @@ Value MaterializeEqualShapesRankSpecializationCase(
     OpBuilder &b, Location loc, chlo::RankSpecializationClusterOp op,
     const SmallVector<Value, 8> &shapes,
     function_ref<void(OpBuilder &, Location)> else_builder_fn) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_13(mht_13_v, 717, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "MaterializeEqualShapesRankSpecializationCase");
+
   // Materialize all shapes equal predicate.
   Value all_shapes_eq_or_scalar;
   auto non_scalar_shapes = llvm::to_vector<8>(llvm::make_filter_range(
@@ -561,6 +771,9 @@ Value MaterializeEqualShapesRankSpecializationCase(
 Value MaterializeTargetRankSpecializationCase(
     OpBuilder &b, Location loc, chlo::RankSpecializationClusterOp op,
     const SmallVector<Value, 8> &shapes, int64_t target_rank) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_14(mht_14_v, 774, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "MaterializeTargetRankSpecializationCase");
+
   // Reshape unranked operands to match the target rank.
   RankedTensorType extent_tensor_ty =
       shape::getExtentTensorType(b.getContext(), target_rank);
@@ -603,6 +816,9 @@ Value RecusivelyMaterializeTargetRankSpecializationCases(
     OpBuilder &b, Location loc, chlo::RankSpecializationClusterOp op,
     const SmallVector<Value, 8> &shapes, Value max_rank,
     int64_t min_target_rank, int64_t max_target_rank) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_15(mht_15_v, 819, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "RecusivelyMaterializeTargetRankSpecializationCases");
+
   Value condition = b.create<arith::CmpIOp>(
       loc, arith::CmpIPredicate::ule, max_rank,
       b.create<arith::ConstantIndexOp>(loc, min_target_rank));
@@ -640,6 +856,9 @@ Value RecusivelyMaterializeTargetRankSpecializationCases(
 Value MaterializeGenericRankSpecializationCases(
     OpBuilder &b, Location loc, chlo::RankSpecializationClusterOp op,
     const SmallVector<Value, 8> &shapes, int64_t max_target_rank) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_16(mht_16_v, 859, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "MaterializeGenericRankSpecializationCases");
+
   // Get the minimum broadcast shapes of the operands.
   auto non_scalar_shapes = llvm::to_vector<8>(llvm::make_filter_range(
       shapes, [](Value v) { return !IsScalarShapeType(v.getType()); }));
@@ -684,6 +903,9 @@ Value MaterializeGenericRankSpecializationCases(
 Value MaterializeDefaultRankSpecializationCases(
     OpBuilder &b, Location loc, chlo::RankSpecializationClusterOp op,
     const SmallVector<Value, 8> &shapes, int64_t max_target_rank) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_17(mht_17_v, 906, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "MaterializeDefaultRankSpecializationCases");
+
   return MaterializeEqualShapesRankSpecializationCase(
       b, loc, op, shapes, [&](OpBuilder &b, Location loc) {
         b.create<scf::YieldOp>(loc, MaterializeGenericRankSpecializationCases(
@@ -736,6 +958,9 @@ Value MaterializeRankSpecializationForTwoNonScalarShapeEquivalenceClasses(
     chlo::RankSpecializationClusterOp op,
     SmallVector<SmallVector<Value, 4>, 4> non_scalar_eqs,
     int64_t max_target_rank) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_18(mht_18_v, 961, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "MaterializeRankSpecializationForTwoNonScalarShapeEquivalenceClasses");
+
   assert(non_scalar_eqs.size() == 2 &&
          "Expect two non-scalar equivalence classes.");
   auto shapes = llvm::to_vector<8>(llvm::map_range(op.operands(), [&](Value v) {
@@ -767,6 +992,9 @@ Value MaterializeDefaultRankSpecialization(PatternRewriter &rewriter,
                                            Location loc,
                                            chlo::RankSpecializationClusterOp op,
                                            int64_t max_target_rank) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_19(mht_19_v, 995, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "MaterializeDefaultRankSpecialization");
+
   auto shapes = llvm::to_vector<8>(llvm::map_range(op.operands(), [&](Value v) {
     return rewriter.create<shape::ShapeOfOp>(loc, v).getResult();
   }));
@@ -790,6 +1018,9 @@ SmallVector<SmallVector<Value, 4>, 4> FindNonScalarShapeEquivalences(
 
   // Find equalities through `SameOperandsAndResultShape` trait.
   auto union_sets = [&](ValueRange vs) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_20(mht_20_v, 1021, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "lambda");
+
     if (vs.empty()) return;
     Value repr = vs.front();
     for (Value v : vs.drop_front()) eqs.unionSets(repr, v);
@@ -807,6 +1038,9 @@ SmallVector<SmallVector<Value, 4>, 4> FindNonScalarShapeEquivalences(
   if (auto assuming_op = op->getParentOfType<shape::AssumingOp>()) {
     SmallVector<Operation *, 8> queue;
     auto append_if_not_null = [&](Operation *op) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_21(mht_21_v, 1041, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "lambda");
+
       if (op != nullptr) queue.push_back(op);
     };
     append_if_not_null(assuming_op.getWitness().getDefiningOp());
@@ -866,10 +1100,16 @@ struct LowerRankSpecializationClusterPattern
   LowerRankSpecializationClusterPattern(MLIRContext *ctx,
                                         int64_t max_target_rank)
       : OpRewritePattern<chlo::RankSpecializationClusterOp>(ctx, /*benefit=*/1),
-        max_target_rank(max_target_rank) {}
+        max_target_rank(max_target_rank) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_22(mht_22_v, 1104, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "LowerRankSpecializationClusterPattern");
+}
 
   LogicalResult matchAndRewrite(chlo::RankSpecializationClusterOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_23(mht_23_v, 1110, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "matchAndRewrite");
+
     // Restoring the result shape currently relies on all operands being used
     // for a single result. The result shape is then the broadcasted shape of
     // all operands.
@@ -915,15 +1155,24 @@ struct RankSpecializationToSCFPass
   explicit RankSpecializationToSCFPass(int64_t max_target_rank)
       : RankSpecializationToSCFPassBase<
             RankSpecializationToSCFPass>::RankSpecializationToSCFPassBase() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_24(mht_24_v, 1158, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "RankSpecializationToSCFPass");
+
     this->max_target_rank_ = max_target_rank;
   }
 
   void getDependentDialects(DialectRegistry &registry) const override {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_25(mht_25_v, 1165, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "getDependentDialects");
+
     registry.insert<mhlo::MhloDialect, chlo::HloClientDialect,
                     func::FuncDialect, shape::ShapeDialect, scf::SCFDialect>();
   }
 
   void runOnOperation() override {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_26(mht_26_v, 1173, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "runOnOperation");
+
     MLIRContext *ctx = &getContext();
     RewritePatternSet patterns(ctx);
     PopulateRankSpecializationToSCFPatterns(ctx, &patterns,
@@ -939,6 +1188,9 @@ struct RankSpecializationToSCFPass
 
 void PopulateRankSpecializationClusterPatterns(MLIRContext *context,
                                                RewritePatternSet *patterns) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_27(mht_27_v, 1191, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "PopulateRankSpecializationClusterPatterns");
+
   patterns->add<MergeRankSpecializationClusterOpsPattern,
                 RankSpecializationClusterPattern>(context);
 }
@@ -946,6 +1198,9 @@ void PopulateRankSpecializationClusterPatterns(MLIRContext *context,
 void PopulateRankSpecializationToSCFPatterns(MLIRContext *context,
                                              RewritePatternSet *patterns,
                                              int64_t max_target_rank) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSrank_specializationDTcc mht_28(mht_28_v, 1201, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/rank_specialization.cc", "PopulateRankSpecializationToSCFPatterns");
+
   patterns->add<LowerRankSpecializationClusterPattern>(context,
                                                        max_target_rank);
   shape::BroadcastOp::getCanonicalizationPatterns(*patterns, context);

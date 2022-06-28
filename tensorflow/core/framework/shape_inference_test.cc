@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,6 +207,9 @@ namespace {
   } while (false);
 
 OpDef MakeOpDefWithLists() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc mht_0(mht_0_v, 210, "", "./tensorflow/core/framework/shape_inference_test.cc", "MakeOpDefWithLists");
+
   OpRegistrationData op_reg_data;
   OpDefBuilder b("dummy");
   b.Input(strings::StrCat("input: N * float"));
@@ -48,10 +219,16 @@ OpDef MakeOpDefWithLists() {
 }
 
 PartialTensorShape S(std::initializer_list<int64_t> dims) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc mht_1(mht_1_v, 222, "", "./tensorflow/core/framework/shape_inference_test.cc", "S");
+
   return PartialTensorShape(dims);
 }
 
-PartialTensorShape Unknown() { return PartialTensorShape(); }
+PartialTensorShape Unknown() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc mht_2(mht_2_v, 229, "", "./tensorflow/core/framework/shape_inference_test.cc", "Unknown");
+ return PartialTensorShape(); }
 
 }  // namespace
 
@@ -59,17 +236,35 @@ class ShapeInferenceTest : public ::testing::Test {
  protected:
   // These give access to private functions of DimensionHandle and ShapeHandle.
   bool SameHandle(DimensionHandle a, DimensionHandle b) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc mht_3(mht_3_v, 239, "", "./tensorflow/core/framework/shape_inference_test.cc", "SameHandle");
+
     return a.SameHandle(b);
   }
-  bool SameHandle(ShapeHandle a, ShapeHandle b) { return a.SameHandle(b); }
-  bool IsSet(DimensionHandle d) { return d.IsSet(); }
-  bool IsSet(ShapeHandle s) { return s.IsSet(); }
+  bool SameHandle(ShapeHandle a, ShapeHandle b) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc mht_4(mht_4_v, 245, "", "./tensorflow/core/framework/shape_inference_test.cc", "SameHandle");
+ return a.SameHandle(b); }
+  bool IsSet(DimensionHandle d) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc mht_5(mht_5_v, 249, "", "./tensorflow/core/framework/shape_inference_test.cc", "IsSet");
+ return d.IsSet(); }
+  bool IsSet(ShapeHandle s) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc mht_6(mht_6_v, 253, "", "./tensorflow/core/framework/shape_inference_test.cc", "IsSet");
+ return s.IsSet(); }
   void Relax(InferenceContext* c, DimensionHandle d0, DimensionHandle d1,
              DimensionHandle* out) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc mht_7(mht_7_v, 258, "", "./tensorflow/core/framework/shape_inference_test.cc", "Relax");
+
     c->Relax(d0, d1, out);
   }
   void Relax(InferenceContext* c, ShapeHandle s0, ShapeHandle s1,
              ShapeHandle* out) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc mht_8(mht_8_v, 265, "", "./tensorflow/core/framework/shape_inference_test.cc", "Relax");
+
     c->Relax(s0, s1, out);
   }
   void TestMergeHandles(bool input_not_output);
@@ -109,6 +304,9 @@ TEST_F(ShapeInferenceTest, InputOutputByName) {
 }
 
 static OpDef MakeOpDef(int num_inputs, int num_outputs) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc mht_9(mht_9_v, 307, "", "./tensorflow/core/framework/shape_inference_test.cc", "MakeOpDef");
+
   OpRegistrationData op_reg_data;
   OpDefBuilder b("dummy");
   for (int i = 0; i < num_inputs; ++i) {
@@ -143,6 +341,9 @@ TEST_F(ShapeInferenceTest, Run) {
 
   {
     auto fn = [](InferenceContext* c) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc mht_10(mht_10_v, 344, "", "./tensorflow/core/framework/shape_inference_test.cc", "lambda");
+
       ShapeHandle h;
       TF_RETURN_IF_ERROR(c->WithRankAtMost(c->input(0), 6, &h));
       c->set_output(0, c->input(0));
@@ -154,6 +355,9 @@ TEST_F(ShapeInferenceTest, Run) {
 
   {
     auto fn = [](InferenceContext* c) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc mht_11(mht_11_v, 358, "", "./tensorflow/core/framework/shape_inference_test.cc", "lambda");
+
       ShapeHandle h;
       TF_RETURN_IF_ERROR(c->WithRankAtMost(c->input(0), 0, &h));
       c->set_output(0, c->input(0));
@@ -179,6 +383,9 @@ TEST_F(ShapeInferenceTest, AttachContext) {
                        {});
     TF_ASSERT_OK(c.construction_status());
     auto fn = [](InferenceContext* c) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc mht_12(mht_12_v, 386, "", "./tensorflow/core/framework/shape_inference_test.cc", "lambda");
+
       ShapeHandle h;
       TF_RETURN_IF_ERROR(c->WithRankAtMost(c->input(0), 0, &h));
       c->set_output(0, c->input(0));
@@ -199,6 +406,9 @@ TEST_F(ShapeInferenceTest, AttachContext) {
                        {S({1, 2, 3}), S({4, 5})}, {nullptr, &input_t}, {}, {});
     TF_ASSERT_OK(c.construction_status());
     auto fn = [](InferenceContext* c) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc mht_13(mht_13_v, 409, "", "./tensorflow/core/framework/shape_inference_test.cc", "lambda");
+
       c->input_tensor(0);  // get this one, but it's null - won't be in error.
       c->input_tensor(1);  // get this one, will now be in error.
       ShapeHandle h;
@@ -224,6 +434,9 @@ TEST_F(ShapeInferenceTest, AttachContext) {
                        {nullptr, &input_t}, {}, {});
     TF_ASSERT_OK(c.construction_status());
     auto fn = [](InferenceContext* c) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc mht_14(mht_14_v, 437, "", "./tensorflow/core/framework/shape_inference_test.cc", "lambda");
+
       ShapeHandle s;
       TF_RETURN_IF_ERROR(c->MakeShapeFromShapeTensor(0, &s));
       TF_RETURN_IF_ERROR(c->MakeShapeFromShapeTensor(1, &s));
@@ -250,6 +463,9 @@ TEST_F(ShapeInferenceTest, AttachContext) {
                        {nullptr, &input_t}, {S({10, -1, 5}), Unknown()}, {});
     TF_ASSERT_OK(c.construction_status());
     auto fn = [](InferenceContext* c) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc mht_15(mht_15_v, 466, "", "./tensorflow/core/framework/shape_inference_test.cc", "lambda");
+
       ShapeHandle s;
       TF_RETURN_IF_ERROR(c->MakeShapeFromShapeTensor(0, &s));
       TF_RETURN_IF_ERROR(c->MakeShapeFromShapeTensor(1, &s));
@@ -1083,6 +1299,9 @@ TEST_F(ShapeInferenceTest, Matrix) {
 
 TEST_F(ShapeInferenceTest, MakeShapeFromShapeTensor) {
   auto create = [&](Tensor* t) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc mht_16(mht_16_v, 1302, "", "./tensorflow/core/framework/shape_inference_test.cc", "lambda");
+
     NodeDef def;
     InferenceContext c(kVersion, def, MakeOpDef(1, 0), {Unknown()}, {t}, {},
                        {});
@@ -1619,15 +1838,24 @@ TEST_F(ShapeInferenceTest, Max) {
 }
 
 void ShapeInferenceTest::TestMergeHandles(bool input_not_output) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc mht_17(mht_17_v, 1841, "", "./tensorflow/core/framework/shape_inference_test.cc", "ShapeInferenceTest::TestMergeHandles");
+
   NodeDef def;
   InferenceContext c(kVersion, def, MakeOpDef(2, 2), {S({}), S({})}, {}, {},
                      {});
   auto make_shape = [&c](std::initializer_list<int64_t> dim_sizes) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc mht_18(mht_18_v, 1848, "", "./tensorflow/core/framework/shape_inference_test.cc", "lambda");
+
     ShapeHandle s;
     TF_CHECK_OK(c.MakeShapeFromPartialTensorShape(S(dim_sizes), &s));
     return s;
   };
   auto get_shapes_and_types_from_context = [&](int idx) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc mht_19(mht_19_v, 1856, "", "./tensorflow/core/framework/shape_inference_test.cc", "lambda");
+
     if (input_not_output) {
       return c.input_handle_shapes_and_types(idx);
     } else {
@@ -1636,6 +1864,9 @@ void ShapeInferenceTest::TestMergeHandles(bool input_not_output) {
   };
   auto merge_shapes_and_types_to_context =
       [&](int idx, const std::vector<ShapeAndType>& shapes_and_types) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc mht_20(mht_20_v, 1867, "", "./tensorflow/core/framework/shape_inference_test.cc", "lambda");
+
         if (input_not_output) {
           return c.MergeInputHandleShapesAndTypes(idx, shapes_and_types);
         } else {
@@ -1730,15 +1961,24 @@ TEST_F(ShapeInferenceTest, MergeOutputHandleShapesAndTypes) {
 }
 
 void ShapeInferenceTest::TestRelaxHandles(bool input_not_output) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc mht_21(mht_21_v, 1964, "", "./tensorflow/core/framework/shape_inference_test.cc", "ShapeInferenceTest::TestRelaxHandles");
+
   NodeDef def;
   InferenceContext c(kVersion, def, MakeOpDef(2, 2), {S({}), S({})}, {}, {},
                      {});
   auto make_shape = [&c](std::initializer_list<int64_t> dim_sizes) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc mht_22(mht_22_v, 1971, "", "./tensorflow/core/framework/shape_inference_test.cc", "lambda");
+
     ShapeHandle s;
     TF_CHECK_OK(c.MakeShapeFromPartialTensorShape(S(dim_sizes), &s));
     return s;
   };
   auto get_shapes_and_types_from_context = [&](int idx) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc mht_23(mht_23_v, 1979, "", "./tensorflow/core/framework/shape_inference_test.cc", "lambda");
+
     if (input_not_output) {
       return c.input_handle_shapes_and_types(idx);
     } else {
@@ -1747,6 +1987,9 @@ void ShapeInferenceTest::TestRelaxHandles(bool input_not_output) {
   };
   auto relax_shapes_and_types_to_context =
       [&](int idx, const std::vector<ShapeAndType>& shapes_and_types) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inference_testDTcc mht_24(mht_24_v, 1990, "", "./tensorflow/core/framework/shape_inference_test.cc", "lambda");
+
         if (input_not_output) {
           return c.RelaxInputHandleShapesAndMergeTypes(idx, shapes_and_types);
         } else {

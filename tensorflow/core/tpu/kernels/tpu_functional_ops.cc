@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -76,6 +244,9 @@ constexpr char kXLAShardingAttrAltName[] = "_XlaSharding";
 Status GenerateDeviceNaturalOrder(int x_num_cores, int y_num_cores,
                                   int z_num_cores, int num_cores_per_chip,
                                   std::vector<int>* natural_order) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_0(mht_0_v, 247, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "GenerateDeviceNaturalOrder");
+
   for (int y = 0; y < y_num_cores; ++y) {
     for (int x = 0; x < x_num_cores; ++x) {
       for (int z = 0; z < z_num_cores; ++z) {
@@ -94,7 +265,10 @@ Status GenerateDeviceNaturalOrder(int x_num_cores, int y_num_cores,
 
 struct TPUVariableInfo {
   TPUVariableInfo(int device_ordinal_id, bool use_fast_mem)
-      : device_ordinal(device_ordinal_id), fast_mem(use_fast_mem) {}
+      : device_ordinal(device_ordinal_id), fast_mem(use_fast_mem) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_1(mht_1_v, 269, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "TPUVariableInfo");
+}
   // The TPU core which the variable will be placed on.
   int device_ordinal;
   // If true, try to place the variable on fast memory space if hardware
@@ -106,6 +280,9 @@ struct TPUVariableInfo {
 // num_cores_per_replica descriables how many cores the single model uses.
 Status ParseTPUVariableInfor(const Node* node, const int num_cores_per_replica,
                              TPUVariableInfo* var_info) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_2(mht_2_v, 283, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "ParseTPUVariableInfor");
+
   int core = 0;
   bool use_fast_mem = false;
   VLOG(3) << "Parse tpu variable information for " << node->name();
@@ -152,6 +329,9 @@ Status ParseTPUVariableInfor(const Node* node, const int num_cores_per_replica,
 // Helper to instantiate function "func" in the library "lib".
 Status Instantiate(FunctionLibraryRuntime* lib, const NameAttrList& func,
                    FunctionLibraryRuntime::Handle* handle) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_3(mht_3_v, 332, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "Instantiate");
+
   return lib->Instantiate(func.name(), AttrSlice(&func.attr()), handle);
 }
 
@@ -172,6 +352,10 @@ static constexpr const char* const kTPUDeviceNamePrefix = "/device:TPU:";
 static constexpr const int kTPUDefaultDeviceOrdinal = 0;
 
 bool IsSupportedTPUOp(const string& op_name) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_4(mht_4_v, 356, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "IsSupportedTPUOp");
+
   return op_name == kTPUExecuteOp || op_name == kInfeedEnqueueOp ||
          op_name == kInfeedEnqueueTupleOp || op_name == kOutfeedDequeueOp ||
          op_name == kOutfeedDequeueTupleOp || op_name == kOutfeedDequeueV2Op ||
@@ -181,6 +365,9 @@ bool IsSupportedTPUOp(const string& op_name) {
 // Sets the sharding attributes for an XlaSharding node.
 void SetXlaShardingNodeAttr(Node* xla_sharding_node, int num_cores_per_replica,
                             int rank, int shard_dim) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_5(mht_5_v, 368, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "SetXlaShardingNodeAttr");
+
   auto sharding = absl::make_optional<xla::OpSharding>();
   sharding->set_type(xla::OpSharding::OTHER);
 
@@ -207,6 +394,9 @@ void SetXlaShardingNodeAttr(Node* xla_sharding_node, int num_cores_per_replica,
 // and set '*rewritten' to true. Otherwise, do nothing.
 Status UpdateTPUDeviceOrdinal(int device_ordinal, string* device_name,
                               bool* rewritten) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_6(mht_6_v, 397, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "UpdateTPUDeviceOrdinal");
+
   DeviceNameUtils::ParsedName device;
   if (!DeviceNameUtils::ParseFullName(*device_name, &device)) {
     return errors::InvalidArgument("Unable to parse device name ",
@@ -221,6 +411,9 @@ Status UpdateTPUDeviceOrdinal(int device_ordinal, string* device_name,
 }
 
 const Edge* FindHostToDeviceEdge(Node* arg_node) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_7(mht_7_v, 414, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "FindHostToDeviceEdge");
+
   const Edge* candidate_edge = nullptr;
   for (const Edge* edge : arg_node->out_edges())
     if (!edge->IsControlEdge()) {
@@ -251,6 +444,9 @@ const Edge* FindHostToDeviceEdge(Node* arg_node) {
 
 Status CreateInputProxy(Graph* graph, const Edge* candidate_edge,
                         const Edge** tpu_input_edge) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_8(mht_8_v, 447, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "CreateInputProxy");
+
   std::vector<const Edge*> edges_to_replace;
   for (const Edge* input_edge : candidate_edge->src()->out_edges()) {
     if (!input_edge->IsControlEdge() &&
@@ -283,6 +479,9 @@ Status CreateInputProxy(Graph* graph, const Edge* candidate_edge,
 }
 
 Status GetClusterName(Graph* graph, string* cluster_name) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_9(mht_9_v, 482, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "GetClusterName");
+
   *cluster_name = "";
   for (const Node* node : graph->nodes()) {
     if (node->attrs().Find(kTpuReplicateAttr) == nullptr) continue;
@@ -311,6 +510,10 @@ Status GetClusterName(Graph* graph, string* cluster_name) {
 int64_t RemoveDescendantNodeOfArg(
     Graph* graph, const std::string& node_type_to_remove,
     const std::set<std::string>& must_be_child_of) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("node_type_to_remove: \"" + node_type_to_remove + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_10(mht_10_v, 514, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "RemoveDescendantNodeOfArg");
+
   int64_t nodes_removed = 0;
   std::vector<std::pair<const Edge*, std::vector<const Edge*>>> edges_to_remove;
 
@@ -353,6 +556,9 @@ int64_t RemoveDescendantNodeOfArg(
 }
 
 uint64 GetInputHash(OpKernelContext* ctx) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_11(mht_11_v, 559, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "GetInputHash");
+
   uint64 input_hash = 0;  // initialization for determinism.
   // Use the number of elements to compute hash.
   // TODO(chiachenc): use fhe full shape to compute the hash.
@@ -366,6 +572,10 @@ uint64 GetInputHash(OpKernelContext* ctx) {
 
 string HashShapeAndType(const string prefix, const std::vector<int>& input_dims,
                         const DataType& dtype, const bool input_shape_opt) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("prefix: \"" + prefix + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_12(mht_12_v, 576, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "HashShapeAndType");
+
   string hash = strings::StrCat(prefix, dtype, "_dims");
   // We will concat at the last dimension.
   for (int d = 0; d < input_dims.size() - 1; ++d) {
@@ -388,6 +598,9 @@ Status GetInputOutputInfo(
     std::map<int, InferredShape>& arg_shapes, EdgeShapes& tpu_input_shapes,
     absl::flat_hash_map<const Edge*, DataType>& tpu_input_dtypes,
     OpKernelContext* ctx) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_13(mht_13_v, 601, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "GetInputOutputInfo");
+
   // Search for the device-to-host or tpu-to-cpu edges.
   for (Node* node : graph->op_nodes()) {
     if (!node->IsArg()) continue;
@@ -435,6 +648,9 @@ Status GetInputOutputInfo(
 Status ConvertEdgeShapesToTensorShapes(
     const std::map<std::string, std::vector<int>>& named_input_shapes,
     std::vector<TensorShape>* shapes) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_14(mht_14_v, 651, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "ConvertEdgeShapesToTensorShapes");
+
   shapes->resize(named_input_shapes.size());
   int32_t i = 0;
   // keys in tpu_input_shapes may be stale.
@@ -458,6 +674,9 @@ Status MaybeRegisterFingerprint(
     Graph* graph,
     const std::map<std::string, std::vector<int>>& named_input_shapes,
     uint64 input_hash) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_15(mht_15_v, 677, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "MaybeRegisterFingerprint");
+
   // Find the compiler metadata.
   tpu::TPUCompileMetadataProto metadata_proto;
   std::map<std::string, std::vector<int>> inputs_to_keep;
@@ -539,6 +758,9 @@ Status MaybeRegisterFingerprint(
 bool FindTpuReplicatedInputAndXlaSharding(
     const Graph* graph, XlaShardingInfoMap& xla_sharding_ops,
     TpuReplicatedInputInfoMap& tpu_replicated_input_ops) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_16(mht_16_v, 761, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "FindTpuReplicatedInputAndXlaSharding");
+
   bool xla_spmd_input_sharded = false;
   // Detect whether there are XLA Sharding on the inputs, if there are, then
   // we cannot remove the replicated inputs or the xla sharding ops.
@@ -586,6 +808,10 @@ bool FindTpuReplicatedInputAndXlaSharding(
 // Returns the name of the framework that rewrote the graph to support
 // inference on TPUs. This name is accessed later during metric collection.
 string GetProducerName(const string& function_name) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("function_name: \"" + function_name + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_17(mht_17_v, 812, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "GetProducerName");
+
   if (absl::StrContains(function_name, "tpu_func_0") ||
       absl::StrContains(function_name, "_with_batch") ||
       absl::StrContains(function_name, "_optim"))
@@ -614,6 +840,9 @@ GroupedEdges GroupTensorsForInputPacking(
     const EdgeShapes& tpu_input_shapes,
     const absl::flat_hash_map<const Edge*, DataType>& tpu_input_dtypes,
     bool input_shape_opt, bool group_tensors_for_packing) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_18(mht_18_v, 843, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "GroupTensorsForInputPacking");
+
   GroupedEdges grouped_input_edges;
   for (const auto& iter : tpu_input_shapes) {
     if (iter.second.empty()) continue;
@@ -671,6 +900,9 @@ GroupedEdges GroupTensorsForInputPacking(
 GroupedEdges GroupTensorsForOutputPacking(Graph* graph,
                                           EdgeShapes& tpu_output_shapes,
                                           GraphShapeInfo* shape_info) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_19(mht_19_v, 903, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "GroupTensorsForOutputPacking");
+
   GroupedEdges shape_to_output;
   for (const Edge* edge : graph->edges()) {
     if (edge->IsControlEdge()) continue;
@@ -711,6 +943,10 @@ Status CreateConcatAndSplitNodesForInputTensor(
     int32_t minimum_input_tensors_packing, bool xla_spmd_input_sharded,
     const XlaShardingInfoMap& xla_sharding_info,
     const TpuReplicatedInputInfoMap& tpu_replicated_input_info) {
+   std::vector<std::string> mht_20_v;
+   mht_20_v.push_back("cluster_name: \"" + cluster_name + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_20(mht_20_v, 947, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "CreateConcatAndSplitNodesForInputTensor");
+
   for (const auto& iter : grouped_input_edges) {
     std::vector<int> last_dim_vec;
     std::vector<NodeBuilder::NodeOut> concat_nodeouts;
@@ -887,6 +1123,10 @@ Status CreateConcatAndSplitNodesForOutputTensor(
     Graph* graph, const string& cluster_name, EdgeShapes* tpu_output_shapes,
     GraphShapeInfo* tpu_inferred_info, GroupedEdges shape_to_output,
     int32_t minimum_output_tensors_packing) {
+   std::vector<std::string> mht_21_v;
+   mht_21_v.push_back("cluster_name: \"" + cluster_name + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_21(mht_21_v, 1127, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "CreateConcatAndSplitNodesForOutputTensor");
+
   for (const auto& iter : shape_to_output) {
     std::vector<int> last_dim_vec;
     std::vector<NodeBuilder::NodeOut> concat_nodeouts;
@@ -1026,6 +1266,10 @@ Status CreateConcatAndSplitNodesForOutputTensor(
 Status InsertReshapeNodePairs(Graph* graph, const string& cluster_name,
                               EdgeShapes* tpu_input_shapes,
                               int num_cores_per_replica) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("cluster_name: \"" + cluster_name + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_22(mht_22_v, 1270, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "InsertReshapeNodePairs");
+
   std::vector<const Edge*> tpu_input_edges_original;
   for (const auto& it : *tpu_input_shapes)
     if (!it.second.empty()) tpu_input_edges_original.push_back(it.first);
@@ -1161,6 +1405,9 @@ Status InsertReshapeNodePairs(Graph* graph, const string& cluster_name,
 
 void TPUPartitionedCallOp::ComputeAsync(OpKernelContext* ctx,
                                         DoneCallback done) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_23(mht_23_v, 1408, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "TPUPartitionedCallOp::ComputeAsync");
+
   Status init_status;
   absl::call_once(once_, [&]() {
     library_runtime_ = ctx->function_library();
@@ -1318,6 +1565,9 @@ Status TPUPartitionedCallOp::GetTpuCoreOrdinal(OpKernelContext* ctx,
                                                uint64 input_hash,
                                                int64_t* ordinal_selector_req_id,
                                                int32_t* core_ordinal) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_24(mht_24_v, 1568, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "TPUPartitionedCallOp::GetTpuCoreOrdinal");
+
   profiler::TraceMe trace_me("TPUPartitionedCallOp-GetTpuCoreOrdinal");
   const Tensor* device_ordinal_t;
   TF_RETURN_IF_ERROR(ctx->input(kDeviceOrdinalAttr, &device_ordinal_t));
@@ -1333,6 +1583,9 @@ Status TPUPartitionedCallOp::GetTpuCoreOrdinal(OpKernelContext* ctx,
 Status TPUPartitionedCallOp::InitializeVarOnTPU(
     OpKernelContext* ctx, const core::RefCountPtr<Var>& var, NodeDef* ndef,
     int device_ordinal, bool fast_mem) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_25(mht_25_v, 1586, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "TPUPartitionedCallOp::InitializeVarOnTPU");
+
   const string device = strings::StrCat(kTPUDeviceNamePrefix, device_ordinal);
   Status status;
   std::unique_ptr<Graph> init_graph(new Graph(OpRegistry::Global()));
@@ -1378,7 +1631,10 @@ Status TPUPartitionedCallOp::InitializeVarOnTPU(
   // concurrent warm-up requests can exhaust the default thread pool.
   // Create a new thread pool to initialize variables on TPU.
   std::function<void(std::function<void()>)> runner =
-      [this](std::function<void()> fn) { pool_.Schedule(fn); };
+      [this](std::function<void()> fn) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_26(mht_26_v, 1635, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "lambda");
+ pool_.Schedule(fn); };
   opts.runner = &runner;
 
   opts.source_device = local_device_name_;
@@ -1414,6 +1670,9 @@ Status TPUPartitionedCallOp::InitializeVarOnTPU(
 Status TPUPartitionedCallOp::InitializeShardedVarOnTPU(
     OpKernelContext* ctx, const core::RefCountPtr<Var>& var,
     std::vector<NodeDef>& ndefs, int split_dim, int device_ordinal) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_27(mht_27_v, 1673, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "TPUPartitionedCallOp::InitializeShardedVarOnTPU");
+
   std::unique_ptr<Graph> init_graph(new Graph(OpRegistry::Global()));
   int num_cores = ndefs.size();
   string cpu_device = "/device:CPU:0";
@@ -1536,7 +1795,10 @@ Status TPUPartitionedCallOp::InitializeShardedVarOnTPU(
   // concurrent warm-up requests can exhaust the default thread pool.
   // Create a new thread pool to initialize variables on TPU.
   std::function<void(std::function<void()>)> runner =
-      [this](std::function<void()> fn) { pool_.Schedule(fn); };
+      [this](std::function<void()> fn) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_28(mht_28_v, 1799, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "lambda");
+ pool_.Schedule(fn); };
   opts.runner = &runner;
 
   opts.step_container = ctx->step_container();
@@ -1582,6 +1844,9 @@ Status TPUPartitionedCallOp::InitializeShardedVarOnTPU(
 }
 
 bool TPUPartitionedCallOp::IsInputToTPUReplicate(Node* node) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_29(mht_29_v, 1847, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "TPUPartitionedCallOp::IsInputToTPUReplicate");
+
   for (Node* successor : node->out_nodes()) {
     if (successor->attrs().Find(kTpuReplicateAttr) != nullptr) {
       return true;
@@ -1593,6 +1858,9 @@ bool TPUPartitionedCallOp::IsInputToTPUReplicate(Node* node) {
 Status TPUPartitionedCallOp::ReplaceResourceArgsWithVarHandleOps(
     Graph* graph, OpKernelContext* ctx, int device_ordinal,
     int num_cores_per_replica, bool enable_spmd_xla_partitioning) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_30(mht_30_v, 1861, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "TPUPartitionedCallOp::ReplaceResourceArgsWithVarHandleOps");
+
   // Currently variable deduplication is not supported for XLA SPMD
   // partitioning. It is possible that it could be supported in the future.
   bool enable_variable_deduplication =
@@ -1754,6 +2022,9 @@ Status TPUPartitionedCallOp::ReplaceResourceArgsWithVarHandleOps(
 Status TPUPartitionedCallOp::ReplaceAndPartitionXLAShardingVariable(
     Graph* graph, OpKernelContext* ctx, int device_ordinal,
     ResourceHandle& handle, Node* variable, int num_cores_per_replica) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_31(mht_31_v, 2025, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "TPUPartitionedCallOp::ReplaceAndPartitionXLAShardingVariable");
+
   TF_ASSIGN_OR_RETURN(
       auto sharding,
       GetShardingFromNodeDef(variable->def(), /*add_metadata=*/false));
@@ -1923,6 +2194,9 @@ Status TPUPartitionedCallOp::InferShapesWithResourceVar(
     Graph* graph, OpKernelContext* ctx,
     std::map<int, InferredShape>& arg_shapes,
     GraphShapeInfo* tpu_inferred_info) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_32(mht_32_v, 2197, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "TPUPartitionedCallOp::InferShapesWithResourceVar");
+
   auto shape_inference_graph_interim =
       absl::make_unique<Graph>(graph->flib_def());
   CopyGraph(*graph, shape_inference_graph_interim.get());
@@ -1991,6 +2265,9 @@ Status TPUPartitionedCallOp::InferShapesWithResourceVar(
 
 Status TPUPartitionedCallOp::ShardInputsWithXlaSharding(
     Graph* graph, int num_cores_per_replica, OpKernelContext* ctx) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_33(mht_33_v, 2268, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "TPUPartitionedCallOp::ShardInputsWithXlaSharding");
+
   for (Node* replicated_input_node : graph->nodes()) {
     if (replicated_input_node->type_string() != "TPUReplicatedInput") continue;
 
@@ -2108,6 +2385,9 @@ Status TPUPartitionedCallOp::OptimizeTpuInputOutputTensors(
     Graph* graph, bool enable_spmd_xla_partitioning, int num_cores_per_replica,
     std::map<std::string, std::vector<int>>& named_input_shapes,
     OpKernelContext* ctx) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_34(mht_34_v, 2388, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "TPUPartitionedCallOp::OptimizeTpuInputOutputTensors");
+
   if (runtime_params_.enable_auto_xla_input_sharding) {
     VLOG(2) << DumpGraphToFile("before_enable_auto_xla_input_sharding", *graph,
                                flib_def_.get());
@@ -2219,6 +2499,9 @@ Status TPUPartitionedCallOp::OptimizeTpuInputOutputTensors(
 Status TPUPartitionedCallOp::GetGraphFromFunction(
     Graph* graph, int device_ordinal, int* num_core_per_replica,
     bool* use_spmd_for_xla_partitioning) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_35(mht_35_v, 2502, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "TPUPartitionedCallOp::GetGraphFromFunction");
+
   FunctionLibraryRuntime::InstantiateOptions opts;
   FHandle handle;
   TF_RETURN_IF_ERROR(library_runtime_->Instantiate(
@@ -2322,6 +2605,10 @@ Status TPUPartitionedCallOp::PlacementHelper(
     const DeviceSet& device_set,
     const GraphOptimizationPassOptions& optimization_options,
     const string& function_name) {
+   std::vector<std::string> mht_36_v;
+   mht_36_v.push_back("function_name: \"" + function_name + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_36(mht_36_v, 2609, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "TPUPartitionedCallOp::PlacementHelper");
+
   TF_RETURN_IF_ERROR(OptimizationPassRegistry::Global()->RunGrouping(
       OptimizationPassRegistry::PRE_PLACEMENT, optimization_options));
   Placer placer(optimization_options.graph->get(), function_name,
@@ -2338,8 +2625,14 @@ Status TPUPartitionedCallOp::PartitionHelper(
     const DeviceSet& device_set,
     const GraphOptimizationPassOptions& optimization_options, Graph* graph,
     std::unordered_map<std::string, std::unique_ptr<Graph>>* subgraphs) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_37(mht_37_v, 2628, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "TPUPartitionedCallOp::PartitionHelper");
+
   PartitionOptions partition_options;
   partition_options.node_to_loc = [](const Node* node) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_38(mht_38_v, 2633, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "lambda");
+
     // TODO(akshayka): To better support the distributed case, first split
     // the graph by worker (e.g,. using the master session's
     // `SplitByWorker` policy), and then recursively partition the
@@ -2348,9 +2641,17 @@ Status TPUPartitionedCallOp::PartitionHelper(
   };
   int64_t edge_name_counter = 0;
   partition_options.new_name = [&edge_name_counter](const string& prefix) {
+   std::vector<std::string> mht_39_v;
+   mht_39_v.push_back("prefix: \"" + prefix + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_39(mht_39_v, 2645, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "lambda");
+
     return strings::StrCat(prefix, "/_", ++edge_name_counter);
   };
   partition_options.get_incarnation = [&device_set](const string& name) {
+   std::vector<std::string> mht_40_v;
+   mht_40_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_40(mht_40_v, 2652, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "lambda");
+
     const Device* d = device_set.FindDeviceByName(name);
     if (d == nullptr) {
       return PartitionOptions::kIllegalIncarnation;
@@ -2388,6 +2689,11 @@ Status TPUPartitionedCallOp::InstantiatePartition(
     const Graph& graph, const string& function_name,
     const string& target_device, FHandle* handle,
     std::unique_ptr<FunctionLibraryDefinition>* out_flib_def) {
+   std::vector<std::string> mht_41_v;
+   mht_41_v.push_back("function_name: \"" + function_name + "\"");
+   mht_41_v.push_back("target_device: \"" + target_device + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_41(mht_41_v, 2694, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "TPUPartitionedCallOp::InstantiatePartition");
+
   FunctionDef shard;
   TF_RETURN_IF_ERROR(GraphToFunctionDef(graph, function_name, &shard));
   TF_RETURN_IF_ERROR(flib_def_->AddFunctionDef(shard));
@@ -2406,6 +2712,9 @@ Status TPUPartitionedCallOp::InstantiatePartition(
 Status TPUPartitionedCallOp::SetDeviceOrdinal(const DeviceSet& device_set,
                                               int device_ordinal, Graph* graph,
                                               bool* modified) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_42(mht_42_v, 2715, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "TPUPartitionedCallOp::SetDeviceOrdinal");
+
   int ordinal = -1;
   for (Node* node : graph->op_nodes()) {
     if (node->type_string() == kVarHandleOp) {
@@ -2480,6 +2789,9 @@ Status TPUPartitionedCallOp::InstantiateFunctionsFromSubgraphs(
     const DeviceSet& device_set, int replica_id, uint64 cache_hash,
     int num_cores_per_replica,
     std::unordered_map<std::string, std::unique_ptr<Graph>> subgraphs) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_43(mht_43_v, 2792, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "TPUPartitionedCallOp::InstantiateFunctionsFromSubgraphs");
+
   const Device* reference_device = nullptr;
   auto entry =
       partition_cache_.emplace(cache_hash, std::vector<DeviceAndFHandle>());
@@ -2557,6 +2869,9 @@ Status TPUPartitionedCallOp::InstantiateFunctionsFromSubgraphs(
 void TPUPartitionedCallOp::ExecuteRemoteFunction(
     const FunctionLibraryRuntime::Options& opts, FHandle handle,
     OpKernelContext* ctx, ReffedStatusCallback* done) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_44(mht_44_v, 2872, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "TPUPartitionedCallOp::ExecuteRemoteFunction");
+
   std::vector<Tensor> dummy_args;
   std::vector<Tensor>* dummy_rets = new std::vector<Tensor>;
 
@@ -2574,6 +2889,9 @@ void TPUPartitionedCallOp::ExecuteRemoteFunction(
 void TPUPartitionedCallOp::ExecuteLocalFunction(
     const FunctionLibraryRuntime::Options& opts, const OpInputList& arguments,
     FHandle handle, OpKernelContext* ctx, ReffedStatusCallback* done) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_45(mht_45_v, 2892, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "TPUPartitionedCallOp::ExecuteLocalFunction");
+
   std::vector<Tensor> args;
 
   for (int i = 0; i < arguments.size(); ++i) {
@@ -2604,6 +2922,9 @@ void TPUPartitionedCallOp::ExecuteLocalFunction(
 void TPUPartitionedCallOp::ExecuteFunctions(
     const std::vector<DeviceAndFHandle>& functions, OpKernelContext* ctx,
     int device_ordinal, int64_t ordinal_selector_req_id, DoneCallback done) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_functional_opsDTcc mht_46(mht_46_v, 2925, "", "./tensorflow/core/tpu/kernels/tpu_functional_ops.cc", "TPUPartitionedCallOp::ExecuteFunctions");
+
   profiler::TraceMe trace_me("TPUPartitionedCallOp-ExecuteFunctions");
   FunctionLibraryRuntime::Options opts;
   opts.step_container = ctx->step_container();

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -68,6 +236,9 @@ namespace {
 // Checks that arguments `args` match types `types`.
 Status CheckSignature(const DataTypeVector& types,
                       absl::Span<const XlaCompiler::Argument> args) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_0(mht_0_v, 239, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "CheckSignature");
+
   if (args.size() != types.size()) {
     return errors::Internal("Compilation arguments have ", args.size(),
                             " elements while function has ", types.size());
@@ -124,6 +295,9 @@ ComputeArgAndRetvalShardings(const Graph& graph) {
 Status ExecuteGraph(XlaContext* xla_context, std::unique_ptr<Graph> graph,
                     XlaCompilationDevice* device, FunctionLibraryRuntime* flib,
                     int64_t step_id) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_1(mht_1_v, 298, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "ExecuteGraph");
+
   // Resource cleanup is a bit messy. XlaContext is a ref-countd resource; the
   // resource manager takes ownership via Create, and unrefs via Cleanup.  We
   // explicitly add a reference to ensure the refcount at entry is maintained at
@@ -178,6 +352,9 @@ Status BuildComputation(
     std::vector<XlaCompiler::OutputDescription>* outputs,
     std::vector<XlaCompiler::ResourceUpdate>* resource_updates,
     xla::Shape* output_shape, absl::Span<int const> input_mapping) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_2(mht_2_v, 355, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "BuildComputation");
+
   // Attach a common operator name as metadata. This has no semantic effect — it
   // merely makes the HLO graph more readable when visualized via TensorBoard,
   // since TensorBoard forms groups out of operators with similar names.
@@ -193,6 +370,9 @@ Status BuildComputation(
   auto identity_op = [builder](
                          xla::XlaOp op,
                          const absl::optional<xla::OpSharding>& sharding) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_3(mht_3_v, 373, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "lambda");
+
     xla::XlaScopedShardingAssignment assign_sharding(builder, sharding);
     return xla::Copy(op);
   };
@@ -436,6 +616,9 @@ Status BuildComputation(
 
 
 string XlaCompiler::Argument::HumanString() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_4(mht_4_v, 619, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "XlaCompiler::Argument::HumanString");
+
   string common;
   if (!name.empty()) {
     common = absl::StrCat(" name=", name);
@@ -477,6 +660,9 @@ string XlaCompiler::Argument::HumanString() const {
 }
 
 std::vector<int64_t> XlaCompiler::Argument::DimensionSizes() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_5(mht_5_v, 663, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "XlaCompiler::Argument::DimensionSizes");
+
   if (absl::holds_alternative<TensorShape>(shape)) {
     return xla::InlinedVectorToVector(
         absl::get<TensorShape>(shape).dim_sizes());
@@ -496,6 +682,9 @@ XlaCompiler::Argument::DimensionSizesAsInlinedVector() const {
 }
 
 string XlaCompiler::Argument::ShapeHumanString() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_6(mht_6_v, 685, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "XlaCompiler::Argument::ShapeHumanString");
+
   if (absl::holds_alternative<TensorShape>(shape)) {
     return absl::get<TensorShape>(shape).DebugString();
   } else {
@@ -509,6 +698,9 @@ XlaCompiler::XlaCompiler(XlaCompiler::Options options)
       next_step_id_(1),
       device_(new XlaCompilationDevice(SessionOptions(), options_.device_type)),
       device_mgr_(absl::WrapUnique(device_)) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_7(mht_7_v, 701, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "XlaCompiler::XlaCompiler");
+
   CHECK(!options_.device_type.type_string().empty());
   if (options_.populate_resource_manager) {
     initialization_status_ =
@@ -542,7 +734,10 @@ XlaCompiler::XlaCompiler(XlaCompiler::Options options)
 
 XlaCompiler::~XlaCompiler() = default;
 
-int64_t XlaCompiler::NextStepId() { return next_step_id_++; }
+int64_t XlaCompiler::NextStepId() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_8(mht_8_v, 738, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "XlaCompiler::NextStepId");
+ return next_step_id_++; }
 
 uint64 XlaCompiler::SignatureHash::operator()(
     const std::pair<string, std::vector<Argument>>& signature) const {
@@ -552,6 +747,9 @@ uint64 XlaCompiler::SignatureHash::operator()(
 static Status GetFunctionBody(const NameAttrList& function,
                               FunctionLibraryRuntime* flib_runtime,
                               const FunctionBody** fbody) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_9(mht_9_v, 750, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "GetFunctionBody");
+
   FunctionLibraryRuntime::Handle handle;
   TF_RETURN_IF_ERROR(flib_runtime->Instantiate(
       function.name(), AttrSlice(&function.attr()), &handle));
@@ -564,6 +762,9 @@ static Status GetFunctionBody(const NameAttrList& function,
 Status XlaCompiler::FindFunctionBody(const NameAttrList& function,
                                      const FunctionBody** fbody,
                                      const ConfigProto** config_proto) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_10(mht_10_v, 765, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "XlaCompiler::FindFunctionBody");
+
   // The function may be in either the local_flib_runtime_ or flib_runtime_.
   // Look up the function in local first and if it is not found then look up the
   // function in flib_runtime_.
@@ -589,6 +790,9 @@ Status XlaCompiler::FindFunctionBody(const NameAttrList& function,
 }
 
 std::unique_ptr<Graph> XlaCompiler::GetGraph(const FunctionBody* fbody) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_11(mht_11_v, 793, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "XlaCompiler::GetGraph");
+
   std::unique_ptr<Graph> graph(new Graph(options_.flib_def));
   CopyGraph(*fbody->graph, graph.get());
 
@@ -629,6 +833,9 @@ std::unique_ptr<Graph> XlaCompiler::GetGraph(const FunctionBody* fbody) {
   // upperbound shape, which can be constant folded and then lose the info
   // that this Shape is dynamic.
   auto cf_consider_fn = [](const Node* n) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_12(mht_12_v, 836, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "lambda");
+
     for (const auto& output_arg : n->op_def().output_arg()) {
       if (output_arg.type() == DT_VARIANT) {
         return false;
@@ -738,6 +945,9 @@ Status XlaCompiler::CompileFunction(
     const NameAttrList& fn_name_attrs,
     absl::Span<const XlaCompiler::Argument> args,
     XlaCompiler::CompilationResult* result) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_13(mht_13_v, 948, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "XlaCompiler::CompileFunction");
+
   const string function_id =
       Canonicalize(fn_name_attrs.name(), AttrSlice(&fn_name_attrs.attr()));
   VLOG(1) << "XlaCompiler::CompileFunction " << function_id;
@@ -855,6 +1065,9 @@ Status XlaCompiler::XLAShapeForArgument(
     const XlaCompiler::Argument& arg, bool is_entry_computation,
     const absl::optional<xla::HloSharding>& arg_sharding,
     xla::Shape* xla_shape) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_14(mht_14_v, 1068, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "XlaCompiler::XLAShapeForArgument");
+
   switch (arg.kind) {
     case XlaCompiler::Argument::kConstant:
       LOG(FATAL) << "Unreachable case";
@@ -965,6 +1178,9 @@ Status XlaCompiler::XLAShapeForArgument(
 /* static */
 void XlaCompiler::PopulateArgumentFromResource(const XlaResource& resource,
                                                Argument* arg) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_15(mht_15_v, 1181, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "XlaCompiler::PopulateArgumentFromResource");
+
   arg->initialized = resource.initialized();
   arg->kind = XlaCompiler::Argument::kResource;
   arg->resource_kind = resource.kind();
@@ -987,6 +1203,9 @@ Status XlaCompiler::BuildArguments(
     std::vector<XlaExpression>* arg_expressions,
     std::vector<int>* input_to_args, std::vector<xla::Shape>* input_shapes,
     bool is_entry_computation) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_16(mht_16_v, 1206, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "XlaCompiler::BuildArguments");
+
   arg_expressions->resize(args.size());
 
   // Argument numbers of arguments and resources that are to be passed to the
@@ -1209,6 +1428,9 @@ namespace {
 // Check that the ops of all non-functional nodes have been registered.
 Status ValidateFunctionDef(const FunctionDef* fdef,
                            const FunctionLibraryDefinition& flib_def) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_17(mht_17_v, 1431, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "ValidateFunctionDef");
+
   for (const NodeDef& node : fdef->node_def()) {
     const string& op = node.op();
     if (op == FunctionLibraryDefinition::kGradientOp || flib_def.Find(op)) {
@@ -1226,6 +1448,9 @@ Status ValidateFunctionDef(const FunctionDef* fdef,
 // or in its NodeDef. This pointer is valid as long as the node has not been
 // modified.
 Status GetPotentialFunctionName(const Node& node, const string** name) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_18(mht_18_v, 1451, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "GetPotentialFunctionName");
+
   if (node.IsPartitionedCall()) {
     const AttrValue* attr_value;
     TF_RETURN_IF_ERROR(
@@ -1247,6 +1472,10 @@ Status GetPotentialFunctionName(const Node& node, const string** name) {
 Status ValidateGraph(const Graph* graph,
                      const FunctionLibraryDefinition& flib_def,
                      const DeviceType& device_type, const string& name) {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_19(mht_19_v, 1476, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "ValidateGraph");
+
   // Make sure the XLA compilation kernels are registered.  This operation is
   // idempotent so it is fine if someone called it already.
   XlaOpRegistry::RegisterCompilationKernels();
@@ -1303,6 +1532,9 @@ Status ValidateGraph(const Graph* graph,
 
 void ConvertConstantsToExpressions(xla::XlaBuilder* builder,
                                    absl::Span<XlaExpression> expressions) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_20(mht_20_v, 1535, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "ConvertConstantsToExpressions");
+
   for (XlaExpression& expression : expressions) {
     if (expression.kind() == XlaExpression::Kind::kConstant) {
       expression =
@@ -1317,6 +1549,9 @@ Status XlaCompiler::CompileGraph(
     const XlaCompiler::CompileOptions& options, string const& name,
     std::unique_ptr<Graph> graph, absl::Span<const XlaCompiler::Argument> args,
     CompilationResult* result) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_21(mht_21_v, 1552, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "XlaCompiler::CompileGraph");
+
   VLOG(1) << "Executing graph symbolically to populate XlaBuilder.: " << name;
 
   TF_RETURN_IF_ERROR(PropagateConstIntoFunctionalNodes(
@@ -1443,6 +1678,10 @@ Status XlaCompiler::CompileGraph(
 
 Status XlaCompiler::GetChannelHandle(const string& key,
                                      xla::ChannelHandle* channel) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_22(mht_22_v, 1682, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "XlaCompiler::GetChannelHandle");
+
   auto result = channels_.emplace(key, xla::ChannelHandle());
   if (result.second) {
     TF_ASSIGN_OR_RETURN(result.first->second, client()->CreateChannelHandle());
@@ -1454,6 +1693,10 @@ Status XlaCompiler::GetChannelHandle(const string& key,
 
 Status XlaCompiler::GetHostToDeviceChannelHandle(const string& key,
                                                  xla::ChannelHandle* channel) {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_23(mht_23_v, 1697, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "XlaCompiler::GetHostToDeviceChannelHandle");
+
   auto result = channels_.emplace(key, xla::ChannelHandle());
   if (result.second) {
     TF_ASSIGN_OR_RETURN(result.first->second,
@@ -1466,6 +1709,10 @@ Status XlaCompiler::GetHostToDeviceChannelHandle(const string& key,
 
 Status XlaCompiler::GetDeviceToHostChannelHandle(const string& key,
                                                  xla::ChannelHandle* channel) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_24(mht_24_v, 1713, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "XlaCompiler::GetDeviceToHostChannelHandle");
+
   auto result = channels_.emplace(key, xla::ChannelHandle());
   if (result.second) {
     TF_ASSIGN_OR_RETURN(result.first->second,
@@ -1481,6 +1728,10 @@ namespace {
 void SetTransfer(const string& key, absl::Span<const DataType> types,
                  absl::Span<const TensorShape> shapes,
                  tf2xla::HostTransferMetadata* transfer) {
+   std::vector<std::string> mht_25_v;
+   mht_25_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_25(mht_25_v, 1732, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "SetTransfer");
+
   transfer->set_key(key);
   CHECK(types.size() == shapes.size());
   for (int i = 0, end = types.size(); i < end; ++i) {
@@ -1495,6 +1746,10 @@ void SetTransfer(const string& key, absl::Span<const DataType> types,
 Status XlaCompiler::SetDeviceToHostMetadata(
     const string& key, absl::Span<const DataType> types,
     absl::Span<const TensorShape> shapes) {
+   std::vector<std::string> mht_26_v;
+   mht_26_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_26(mht_26_v, 1750, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "XlaCompiler::SetDeviceToHostMetadata");
+
   if (host_compute_sends_.find(key) != host_compute_sends_.end()) {
     tf2xla::HostTransferMetadata& existing_transfer = host_compute_sends_[key];
     tf2xla::HostTransferMetadata new_transfer;
@@ -1513,6 +1768,10 @@ Status XlaCompiler::SetDeviceToHostMetadata(
 
 Status XlaCompiler::GetDeviceToHostShapes(
     const string& key, std::vector<TensorShape>* shapes) const {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_27(mht_27_v, 1772, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "XlaCompiler::GetDeviceToHostShapes");
+
   const auto iter = host_compute_sends_.find(key);
   if (iter == host_compute_sends_.end()) {
     return errors::InvalidArgument(
@@ -1529,6 +1788,10 @@ Status XlaCompiler::GetDeviceToHostShapes(
 Status XlaCompiler::SetHostToDeviceMetadata(
     const string& key, absl::Span<const DataType> types,
     absl::Span<const TensorShape> shapes) {
+   std::vector<std::string> mht_28_v;
+   mht_28_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_28(mht_28_v, 1792, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "XlaCompiler::SetHostToDeviceMetadata");
+
   if (host_compute_recvs_.find(key) != host_compute_recvs_.end()) {
     tf2xla::HostTransferMetadata& existing_transfer = host_compute_recvs_[key];
     tf2xla::HostTransferMetadata new_transfer;
@@ -1547,6 +1810,10 @@ Status XlaCompiler::SetHostToDeviceMetadata(
 
 Status XlaCompiler::GetHostComputeControlDependency(
     const string& host_compute_name, xla::XlaOp* handle) {
+   std::vector<std::string> mht_29_v;
+   mht_29_v.push_back("host_compute_name: \"" + host_compute_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_29(mht_29_v, 1814, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "XlaCompiler::GetHostComputeControlDependency");
+
   const auto iter = host_compute_control_output_.find(host_compute_name);
   if (iter == host_compute_control_output_.end()) {
     return errors::InvalidArgument(
@@ -1560,6 +1827,10 @@ Status XlaCompiler::GetHostComputeControlDependency(
 
 Status XlaCompiler::SetHostComputeControlDependency(
     const string& host_compute_name, const xla::XlaOp& handle) {
+   std::vector<std::string> mht_30_v;
+   mht_30_v.push_back("host_compute_name: \"" + host_compute_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_30(mht_30_v, 1831, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "XlaCompiler::SetHostComputeControlDependency");
+
   if (host_compute_control_output_.find(host_compute_name) !=
       host_compute_control_output_.end()) {
     return errors::InvalidArgument(
@@ -1571,10 +1842,16 @@ Status XlaCompiler::SetHostComputeControlDependency(
 }
 
 void XlaCompiler::PushNodeTokenMapping() {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_31(mht_31_v, 1845, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "XlaCompiler::PushNodeTokenMapping");
+
   node_token_mapping_stack_.emplace(std::map<string, xla::XlaOp>{});
 }
 
 Status XlaCompiler::PopNodeTokenMapping() {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_32(mht_32_v, 1852, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "XlaCompiler::PopNodeTokenMapping");
+
   if (node_token_mapping_stack_.empty()) {
     return errors::FailedPrecondition(
         "Calling PopNodeTokenMapping() when node_token_mapping_stack_ is "
@@ -1586,6 +1863,10 @@ Status XlaCompiler::PopNodeTokenMapping() {
 
 Status XlaCompiler::SetNodeToken(const string& node_name,
                                  const xla::XlaOp& op) {
+   std::vector<std::string> mht_33_v;
+   mht_33_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_33(mht_33_v, 1867, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "XlaCompiler::SetNodeToken");
+
   if (node_token_mapping_stack_.empty()) {
     return errors::FailedPrecondition(
         "Calling SetNodeToken() when node_token_mapping_stack_ is "
@@ -1600,6 +1881,10 @@ Status XlaCompiler::SetNodeToken(const string& node_name,
 }
 
 StatusOr<xla::XlaOp> XlaCompiler::GetNodeToken(const string& node_name) {
+   std::vector<std::string> mht_34_v;
+   mht_34_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compilerDTcc mht_34(mht_34_v, 1885, "", "./tensorflow/compiler/tf2xla/xla_compiler.cc", "XlaCompiler::GetNodeToken");
+
   if (node_token_mapping_stack_.empty()) {
     return errors::FailedPrecondition(
         "Calling GetNodeToken() when node_token_mapping_stack_ is "

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSelemental_ir_emitterDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSelemental_ir_emitterDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSelemental_ir_emitterDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -59,6 +227,9 @@ using llvm_ir::SetToFirstInsertPoint;
 namespace {
 // Returns whether operand is a floating-point literal with the given value.
 bool IsFPLiteralWithValue(const HloInstruction* operand, float value) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSelemental_ir_emitterDTcc mht_0(mht_0_v, 230, "", "./tensorflow/compiler/xla/service/gpu/elemental_ir_emitter.cc", "IsFPLiteralWithValue");
+
   if (operand->opcode() == HloOpcode::kConstant &&
       operand->literal().IsAllFloat(value)) {
     return true;
@@ -73,12 +244,19 @@ GpuElementalIrEmitter::GpuElementalIrEmitter(
     llvm::IRBuilder<>* b, NestedComputer compute_nested)
     : ElementalIrEmitter(module, b),
       hlo_module_config_(hlo_module_config),
-      compute_nested_(std::move(compute_nested)) {}
+      compute_nested_(std::move(compute_nested)) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSelemental_ir_emitterDTcc mht_1(mht_1_v, 248, "", "./tensorflow/compiler/xla/service/gpu/elemental_ir_emitter.cc", "GpuElementalIrEmitter::GpuElementalIrEmitter");
+}
 
 StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitDeviceMathCall(
     TargetDeviceFunctionID funcid, absl::Span<llvm::Value* const> operands,
     absl::Span<const PrimitiveType> input_types, PrimitiveType output_type,
     absl::string_view name) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSelemental_ir_emitterDTcc mht_2(mht_2_v, 257, "", "./tensorflow/compiler/xla/service/gpu/elemental_ir_emitter.cc", "GpuElementalIrEmitter::EmitDeviceMathCall");
+
   // Device functions dont have f16 math functions, so we convert the operands
   // to f32 before calling the function and then convert the result back to f16.
   bool cast_result_to_fp16 = false;
@@ -120,6 +298,10 @@ StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitDeviceMathCall(
 StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitLlvmIntrinsicMathCall(
     const std::string& callee_name, absl::Span<llvm::Value* const> operands,
     absl::Span<const PrimitiveType> input_types, PrimitiveType output_type) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("callee_name: \"" + callee_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSelemental_ir_emitterDTcc mht_3(mht_3_v, 302, "", "./tensorflow/compiler/xla/service/gpu/elemental_ir_emitter.cc", "GpuElementalIrEmitter::EmitLlvmIntrinsicMathCall");
+
   // llvm intrinsics differentiate between half/float/double functions via
   // the suffixes ".f16", ".f32" and ".f64".
   std::string munged_callee = callee_name;
@@ -144,6 +326,11 @@ StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitMathCall(
     const std::string& callee_name, absl::Span<llvm::Value* const> operands,
     absl::Span<const PrimitiveType> input_types, PrimitiveType output_type,
     absl::string_view name) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("callee_name: \"" + callee_name + "\"");
+   mht_4_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSelemental_ir_emitterDTcc mht_4(mht_4_v, 331, "", "./tensorflow/compiler/xla/service/gpu/elemental_ir_emitter.cc", "GpuElementalIrEmitter::EmitMathCall");
+
   // Binary math functions transform are of type [T] -> T.
   for (PrimitiveType input_type : input_types) {
     if (output_type != input_type) {
@@ -160,6 +347,9 @@ StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitMathCall(
 
 llvm_ir::IrArray::Index GpuElementalIrEmitter::GetSourceIndexOfBitcast(
     const llvm_ir::IrArray::Index& index, const HloInstruction* hlo) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSelemental_ir_emitterDTcc mht_5(mht_5_v, 350, "", "./tensorflow/compiler/xla/service/gpu/elemental_ir_emitter.cc", "GpuElementalIrEmitter::GetSourceIndexOfBitcast");
+
   Shape shape = hlo->shape();
   Shape operand_shape = hlo->operand(0)->shape();
 
@@ -177,6 +367,9 @@ llvm_ir::IrArray::Index GpuElementalIrEmitter::GetSourceIndexOfBitcast(
 
 StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitFloatBinaryOp(
     const HloInstruction* op, llvm::Value* lhs_value, llvm::Value* rhs_value) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSelemental_ir_emitterDTcc mht_6(mht_6_v, 370, "", "./tensorflow/compiler/xla/service/gpu/elemental_ir_emitter.cc", "GpuElementalIrEmitter::EmitFloatBinaryOp");
+
   PrimitiveType lhs_input_type = op->operand(0)->shape().element_type();
   PrimitiveType rhs_input_type = op->operand(1)->shape().element_type();
   PrimitiveType output_type = op->shape().element_type();
@@ -206,6 +399,9 @@ StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitFloatBinaryOp(
 
 StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitPowerOp(
     const HloInstruction* op, llvm::Value* lhs_value, llvm::Value* rhs_value) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSelemental_ir_emitterDTcc mht_7(mht_7_v, 402, "", "./tensorflow/compiler/xla/service/gpu/elemental_ir_emitter.cc", "GpuElementalIrEmitter::EmitPowerOp");
+
   CHECK_EQ(op->opcode(), HloOpcode::kPower);
   PrimitiveType lhs_input_type = op->operand(0)->shape().element_type();
   PrimitiveType rhs_input_type = op->operand(1)->shape().element_type();
@@ -217,36 +413,54 @@ StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitPowerOp(
 
 StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitLog(PrimitiveType prim_type,
                                                       llvm::Value* value) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSelemental_ir_emitterDTcc mht_8(mht_8_v, 416, "", "./tensorflow/compiler/xla/service/gpu/elemental_ir_emitter.cc", "GpuElementalIrEmitter::EmitLog");
+
   return EmitDeviceMathCall(TargetDeviceFunctionID::kLog, {value}, {prim_type},
                             prim_type);
 }
 
 StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitLog1p(PrimitiveType prim_type,
                                                         llvm::Value* value) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSelemental_ir_emitterDTcc mht_9(mht_9_v, 425, "", "./tensorflow/compiler/xla/service/gpu/elemental_ir_emitter.cc", "GpuElementalIrEmitter::EmitLog1p");
+
   return EmitDeviceMathCall(TargetDeviceFunctionID::kLog1p, {value},
                             {prim_type}, prim_type);
 }
 
 StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitSin(PrimitiveType prim_type,
                                                       llvm::Value* value) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSelemental_ir_emitterDTcc mht_10(mht_10_v, 434, "", "./tensorflow/compiler/xla/service/gpu/elemental_ir_emitter.cc", "GpuElementalIrEmitter::EmitSin");
+
   return EmitDeviceMathCall(TargetDeviceFunctionID::kSin, {value}, {prim_type},
                             prim_type);
 }
 
 StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitCos(PrimitiveType prim_type,
                                                       llvm::Value* value) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSelemental_ir_emitterDTcc mht_11(mht_11_v, 443, "", "./tensorflow/compiler/xla/service/gpu/elemental_ir_emitter.cc", "GpuElementalIrEmitter::EmitCos");
+
   return EmitDeviceMathCall(TargetDeviceFunctionID::kCos, {value}, {prim_type},
                             prim_type);
 }
 
 StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitExp(
     PrimitiveType prim_type, llvm::Value* value, absl::string_view /*name*/) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSelemental_ir_emitterDTcc mht_12(mht_12_v, 452, "", "./tensorflow/compiler/xla/service/gpu/elemental_ir_emitter.cc", "GpuElementalIrEmitter::EmitExp");
+
   return EmitDeviceMathCall(TargetDeviceFunctionID::kExp, {value}, {prim_type},
                             prim_type);
 }
 
 StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitExpm1(PrimitiveType prim_type,
                                                         llvm::Value* value) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSelemental_ir_emitterDTcc mht_13(mht_13_v, 461, "", "./tensorflow/compiler/xla/service/gpu/elemental_ir_emitter.cc", "GpuElementalIrEmitter::EmitExpm1");
+
   return EmitDeviceMathCall(TargetDeviceFunctionID::kExpm1, {value},
                             {prim_type}, prim_type);
 }
@@ -255,18 +469,28 @@ StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitPow(PrimitiveType prim_type,
                                                       llvm::Value* lhs,
                                                       llvm::Value* rhs,
                                                       absl::string_view name) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSelemental_ir_emitterDTcc mht_14(mht_14_v, 473, "", "./tensorflow/compiler/xla/service/gpu/elemental_ir_emitter.cc", "GpuElementalIrEmitter::EmitPow");
+
   return EmitDeviceMathCall(TargetDeviceFunctionID::kPow, {lhs, rhs},
                             {prim_type, prim_type}, prim_type, name);
 }
 
 StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitSqrt(PrimitiveType prim_type,
                                                        llvm::Value* value) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSelemental_ir_emitterDTcc mht_15(mht_15_v, 482, "", "./tensorflow/compiler/xla/service/gpu/elemental_ir_emitter.cc", "GpuElementalIrEmitter::EmitSqrt");
+
   return EmitDeviceMathCall(TargetDeviceFunctionID::kSqrt, {value}, {prim_type},
                             prim_type);
 }
 
 StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitRsqrt(PrimitiveType prim_type,
                                                         llvm::Value* value) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSelemental_ir_emitterDTcc mht_16(mht_16_v, 491, "", "./tensorflow/compiler/xla/service/gpu/elemental_ir_emitter.cc", "GpuElementalIrEmitter::EmitRsqrt");
+
   return EmitDeviceMathCall(TargetDeviceFunctionID::kRsqrt, {value},
                             {prim_type}, prim_type);
 }
@@ -274,12 +498,19 @@ StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitRsqrt(PrimitiveType prim_type,
 StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitAtan2(
     PrimitiveType prim_type, llvm::Value* lhs, llvm::Value* rhs,
     absl::string_view name) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSelemental_ir_emitterDTcc mht_17(mht_17_v, 502, "", "./tensorflow/compiler/xla/service/gpu/elemental_ir_emitter.cc", "GpuElementalIrEmitter::EmitAtan2");
+
   return EmitDeviceMathCall(TargetDeviceFunctionID::kAtan2, {lhs, rhs},
                             {prim_type, prim_type}, prim_type, name);
 }
 
 StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitTanh(PrimitiveType prim_type,
                                                        llvm::Value* value) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSelemental_ir_emitterDTcc mht_18(mht_18_v, 511, "", "./tensorflow/compiler/xla/service/gpu/elemental_ir_emitter.cc", "GpuElementalIrEmitter::EmitTanh");
+
   // When F64 is being requested, assume performance is less important and use
   // the more numerically precise tanh function.
   if (prim_type == F64) {
@@ -314,12 +545,18 @@ StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitTanh(PrimitiveType prim_type,
 
 StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitComplexAbs(
     PrimitiveType prim_type, llvm::Value* value) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSelemental_ir_emitterDTcc mht_19(mht_19_v, 548, "", "./tensorflow/compiler/xla/service/gpu/elemental_ir_emitter.cc", "GpuElementalIrEmitter::EmitComplexAbs");
+
   return EmitDeviceMathCall(TargetDeviceFunctionID::kHypot,
                             {EmitExtractReal(value), EmitExtractImag(value)},
                             {prim_type, prim_type}, prim_type);
 }
 
 llvm::Value* GpuElementalIrEmitter::EmitThreadId() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSelemental_ir_emitterDTcc mht_20(mht_20_v, 557, "", "./tensorflow/compiler/xla/service/gpu/elemental_ir_emitter.cc", "GpuElementalIrEmitter::EmitThreadId");
+
   llvm::Value* block_id = IntCast(
       EmitCallToTargetIntrinsic(TargetIntrinsicID::kBlockIdx, {}, {}, b()),
       b()->getIntNTy(128), /*isSigned=*/true, "block.id");

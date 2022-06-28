@@ -14,6 +14,174 @@ limitations under the License.
 ==============================================================================*/
 #ifndef TENSORFLOW_LITE_CORE_SUBGRAPH_H_
 #define TENSORFLOW_LITE_CORE_SUBGRAPH_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <stdarg.h>
 #include <stddef.h>
@@ -108,6 +276,11 @@ class Subgraph {
       const std::vector<int>& dims, TfLiteQuantization quantization,
       const char* buffer, size_t bytes, const Allocation* allocation = nullptr,
       TfLiteSparsity* sparsity = nullptr) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("name: \"" + (name == nullptr ? std::string("nullptr") : std::string((char*)name)) + "\"");
+   mht_0_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_0(mht_0_v, 281, "", "./tensorflow/lite/core/subgraph.h", "SetTensorParametersReadOnly");
+
     return SetTensorParametersReadOnly(tensor_index, type, name, dims.size(),
                                        dims.data(), quantization, buffer, bytes,
                                        allocation, sparsity);
@@ -143,6 +316,9 @@ class Subgraph {
 
   // Get a mutable tensor data structure.
   TfLiteTensor* tensor(int tensor_index) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_1(mht_1_v, 319, "", "./tensorflow/lite/core/subgraph.h", "tensor");
+
     if (tensor_index < 0 ||
         static_cast<size_t>(tensor_index) >= context_.tensors_size) {
       return nullptr;
@@ -152,6 +328,9 @@ class Subgraph {
 
   // Get an immutable tensor data structure.
   const TfLiteTensor* tensor(int tensor_index) const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_2(mht_2_v, 331, "", "./tensorflow/lite/core/subgraph.h", "tensor");
+
     if (tensor_index < 0 ||
         static_cast<size_t>(tensor_index) >= context_.tensors_size) {
       return nullptr;
@@ -160,47 +339,86 @@ class Subgraph {
   }
 
   // Read only access to list of inputs.
-  std::vector<int>& inputs() { return inputs_; }
+  std::vector<int>& inputs() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_3(mht_3_v, 343, "", "./tensorflow/lite/core/subgraph.h", "inputs");
+ return inputs_; }
 
   // Read only access to list of inputs.
-  const std::vector<int>& inputs() const { return inputs_; }
+  const std::vector<int>& inputs() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_4(mht_4_v, 349, "", "./tensorflow/lite/core/subgraph.h", "inputs");
+ return inputs_; }
 
   // Read only access to list of outputs.
-  std::vector<int>& outputs() { return outputs_; }
+  std::vector<int>& outputs() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_5(mht_5_v, 355, "", "./tensorflow/lite/core/subgraph.h", "outputs");
+ return outputs_; }
 
   // Read only access to list of outputs.
-  const std::vector<int>& outputs() const { return outputs_; }
+  const std::vector<int>& outputs() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_6(mht_6_v, 361, "", "./tensorflow/lite/core/subgraph.h", "outputs");
+ return outputs_; }
 
   // Read only access to list of variable tensors.
-  std::vector<int>& variables() { return variables_; }
+  std::vector<int>& variables() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_7(mht_7_v, 367, "", "./tensorflow/lite/core/subgraph.h", "variables");
+ return variables_; }
 
   // Read only access to list of variable tensors.
-  const std::vector<int>& variables() const { return variables_; }
+  const std::vector<int>& variables() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_8(mht_8_v, 373, "", "./tensorflow/lite/core/subgraph.h", "variables");
+ return variables_; }
 
   // WARNING: Experimental interface, subject to change.
   // TODO(ycling): Move this function to an external context interface.
-  resource::ResourceMap& resources() { return *resources_; }
+  resource::ResourceMap& resources() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_9(mht_9_v, 380, "", "./tensorflow/lite/core/subgraph.h", "resources");
+ return *resources_; }
 
   // WARNING: Experimental interface, subject to change.
   // TODO(b/149099381): Move this function to an external context interface.
-  resource::ResourceIDMap& resource_ids() { return *resource_ids_; }
+  resource::ResourceIDMap& resource_ids() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_10(mht_10_v, 387, "", "./tensorflow/lite/core/subgraph.h", "resource_ids");
+ return *resource_ids_; }
 
   // WARNING: Experimental interface, subject to change.
   // TODO(b/149099381): Move this function to an external context interface.
   resource::InitializationStatusMap& initialization_status_map() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_11(mht_11_v, 394, "", "./tensorflow/lite/core/subgraph.h", "initialization_status_map");
+
     return *initialization_status_map_;
   }
 
-  size_t tensors_size() const { return tensors_.size(); }
+  size_t tensors_size() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_12(mht_12_v, 401, "", "./tensorflow/lite/core/subgraph.h", "tensors_size");
+ return tensors_.size(); }
 
   // Return the number of ops in the model.
-  size_t nodes_size() const { return nodes_and_registration_.size(); }
+  size_t nodes_size() const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_13(mht_13_v, 407, "", "./tensorflow/lite/core/subgraph.h", "nodes_size");
+ return nodes_and_registration_.size(); }
 
   // Return vector of node indices in the order of execution.
-  std::vector<int>& execution_plan() { return execution_plan_; }
+  std::vector<int>& execution_plan() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_14(mht_14_v, 413, "", "./tensorflow/lite/core/subgraph.h", "execution_plan");
+ return execution_plan_; }
 
   // Return read-only vector of node indices in the order of execution.
-  const std::vector<int>& execution_plan() const { return execution_plan_; }
+  const std::vector<int>& execution_plan() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_15(mht_15_v, 419, "", "./tensorflow/lite/core/subgraph.h", "execution_plan");
+ return execution_plan_; }
 
   const std::vector<std::pair<TfLiteNode, TfLiteRegistration>>&
   nodes_and_registration() const {
@@ -253,8 +471,14 @@ class Subgraph {
   void ReportError(const char* format, ...);
 
   // Return the subgraph specific context.
-  TfLiteContext* context() { return &context_; }
-  const TfLiteContext* context() const { return &context_; }
+  TfLiteContext* context() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_16(mht_16_v, 475, "", "./tensorflow/lite/core/subgraph.h", "context");
+ return &context_; }
+  const TfLiteContext* context() const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_17(mht_17_v, 479, "", "./tensorflow/lite/core/subgraph.h", "context");
+ return &context_; }
 
   // Set the value of an external context.
   void SetExternalContext(TfLiteExternalContextType type,
@@ -262,6 +486,9 @@ class Subgraph {
   // Get the half precision flag.
   // WARNING: This is an experimental API and subject to change.
   bool GetAllowFp16PrecisionForFp32() const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_18(mht_18_v, 489, "", "./tensorflow/lite/core/subgraph.h", "GetAllowFp16PrecisionForFp32");
+
     return context_.allow_fp32_relax_to_fp16;
   }
 
@@ -278,6 +505,9 @@ class Subgraph {
   // it might require to copy the data from delegate buffer to raw memory.
   // WARNING: This is an experimental API and subject to change.
   TfLiteStatus EnsureTensorDataIsReadable(int tensor_index) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_19(mht_19_v, 508, "", "./tensorflow/lite/core/subgraph.h", "EnsureTensorDataIsReadable");
+
     TfLiteTensor* t = &tensors_[tensor_index];
     TF_LITE_ENSURE(&context_, t != nullptr);
     if (t->data_is_stale) {
@@ -307,6 +537,9 @@ class Subgraph {
   TfLiteStatus ResetVariableTensors();
 
   void SetProfiler(Profiler* profiler, int associated_subgraph_idx) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_20(mht_20_v, 540, "", "./tensorflow/lite/core/subgraph.h", "SetProfiler");
+
     if (!profiler) {
       profiler_.reset(nullptr);
       context_.profiler = nullptr;
@@ -317,16 +550,25 @@ class Subgraph {
     }
   }
 
-  Profiler* GetProfiler() { return profiler_.get(); }
+  Profiler* GetProfiler() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_21(mht_21_v, 554, "", "./tensorflow/lite/core/subgraph.h", "GetProfiler");
+ return profiler_.get(); }
 
   // Returns a pointer to vector of subgraphs.
   // WARNING: This is an experimental API and subject to change.
-  std::vector<std::unique_ptr<Subgraph>>* GetSubgraphs() { return subgraphs_; }
+  std::vector<std::unique_ptr<Subgraph>>* GetSubgraphs() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_22(mht_22_v, 561, "", "./tensorflow/lite/core/subgraph.h", "GetSubgraphs");
+ return subgraphs_; }
 
   // True if all tensors in the graph has static size after calling
   // `AllocateTensors` function.
   // Before `AllocateTensors` is called, this will always return true;
-  bool HasDynamicTensors() { return has_dynamic_tensors_; }
+  bool HasDynamicTensors() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_23(mht_23_v, 569, "", "./tensorflow/lite/core/subgraph.h", "HasDynamicTensors");
+ return has_dynamic_tensors_; }
 
   // Assigns (or reassigns) a custom memory allocation for the given tensor.
   // `flags` is a bitmask, see TfLiteCustomAllocationFlags.
@@ -375,6 +617,9 @@ class Subgraph {
   // inference speed. This API needs to be called before calling
   // `AllocateTensors`.
   void EnsureDynamicTensorsAreReleased() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_24(mht_24_v, 620, "", "./tensorflow/lite/core/subgraph.h", "EnsureDynamicTensorsAreReleased");
+
     release_dynamic_tensors_if_unused_ = true;
   }
 
@@ -403,24 +648,40 @@ class Subgraph {
    public:
     // Constructor should be called with the non-nullptr profiler argument.
     SubgraphAwareProfiler(Profiler* profiler, int64_t subgraph_index)
-        : profiler_(profiler), subgraph_index_(subgraph_index) {}
-    ~SubgraphAwareProfiler() override {}
+        : profiler_(profiler), subgraph_index_(subgraph_index) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_25(mht_25_v, 652, "", "./tensorflow/lite/core/subgraph.h", "SubgraphAwareProfiler");
+}
+    ~SubgraphAwareProfiler() override {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_26(mht_26_v, 656, "", "./tensorflow/lite/core/subgraph.h", "~SubgraphAwareProfiler");
+}
 
     uint32_t BeginEvent(const char* tag, EventType event_type,
                         int64_t event_metadata1,
                         int64_t event_metadata2) override {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("tag: \"" + (tag == nullptr ? std::string("nullptr") : std::string((char*)tag)) + "\"");
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_27(mht_27_v, 664, "", "./tensorflow/lite/core/subgraph.h", "BeginEvent");
+
       if (!profiler_) return 0;
       return profiler_->BeginEvent(tag, event_type, event_metadata1,
                                    subgraph_index_);
     }
 
     void EndEvent(uint32_t event_handle) override {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_28(mht_28_v, 673, "", "./tensorflow/lite/core/subgraph.h", "EndEvent");
+
       if (!profiler_) return;
       profiler_->EndEvent(event_handle);
     }
 
     void EndEvent(uint32_t event_handle, int64_t event_metadata1,
                   int64_t event_metadata2) override {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_29(mht_29_v, 682, "", "./tensorflow/lite/core/subgraph.h", "EndEvent");
+
       if (!profiler_) return;
       profiler_->EndEvent(event_handle, event_metadata1, event_metadata2);
     }
@@ -428,6 +689,10 @@ class Subgraph {
     void AddEvent(const char* tag, EventType event_type, uint64_t start,
                   uint64_t end, int64_t event_metadata1,
                   int64_t event_metadata2) override {
+   std::vector<std::string> mht_30_v;
+   mht_30_v.push_back("tag: \"" + (tag == nullptr ? std::string("nullptr") : std::string((char*)tag)) + "\"");
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_30(mht_30_v, 693, "", "./tensorflow/lite/core/subgraph.h", "AddEvent");
+
       if (!profiler_) return;
       profiler_->AddEvent(tag, event_type, start, end, event_metadata1,
                           subgraph_index_);
@@ -460,12 +725,19 @@ class Subgraph {
   // 'buffer'.
   void* OpInit(const TfLiteRegistration& op_reg, const char* buffer,
                size_t length) {
+   std::vector<std::string> mht_31_v;
+   mht_31_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_31(mht_31_v, 729, "", "./tensorflow/lite/core/subgraph.h", "OpInit");
+
     if (op_reg.init == nullptr) return nullptr;
     return op_reg.init(&context_, buffer, length);
   }
 
   // Let 'op_reg' release any memory it might have allocated via 'OpInit'.
   void OpFree(const TfLiteRegistration& op_reg, void* buffer) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_32(mht_32_v, 738, "", "./tensorflow/lite/core/subgraph.h", "OpFree");
+
     if (op_reg.free == nullptr) return;
     if (buffer) {
       op_reg.free(&context_, buffer);
@@ -477,6 +749,9 @@ class Subgraph {
 
   // Invoke the operator represented by 'node'.
   TfLiteStatus OpInvoke(const TfLiteRegistration& op_reg, TfLiteNode* node) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePScorePSsubgraphDTh mht_33(mht_33_v, 752, "", "./tensorflow/lite/core/subgraph.h", "OpInvoke");
+
     if (op_reg.invoke == nullptr) return kTfLiteError;
     return op_reg.invoke(&context_, node);
   }

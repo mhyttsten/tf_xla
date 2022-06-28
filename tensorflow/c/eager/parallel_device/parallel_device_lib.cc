@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScPSeagerPSparallel_devicePSparallel_device_libDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScPSeagerPSparallel_devicePSparallel_device_libDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScPSeagerPSparallel_devicePSparallel_device_libDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -79,7 +247,11 @@ class DeviceThread {
         op_(nullptr),
         thread_(tensorflow::Env::Default()->StartThread(
             tensorflow::ThreadOptions(), "parallel_device_execute",
-            std::bind(&DeviceThread::Run, this))) {}
+            std::bind(&DeviceThread::Run, this))) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("device: \"" + device + "\"");
+   MHTracer_DTPStensorflowPScPSeagerPSparallel_devicePSparallel_device_libDTcc mht_0(mht_0_v, 252, "", "./tensorflow/c/eager/parallel_device/parallel_device_lib.cc", "DeviceThread");
+}
   ~DeviceThread();
 
   // Requests that the worker thread execute the specified operation. Blocks
@@ -154,6 +326,9 @@ class DeviceThread {
 };
 
 DeviceThread::~DeviceThread() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScPSeagerPSparallel_devicePSparallel_device_libDTcc mht_1(mht_1_v, 329, "", "./tensorflow/c/eager/parallel_device/parallel_device_lib.cc", "DeviceThread::~DeviceThread");
+
   {
     tensorflow::mutex_lock l(execution_mutex_);
     execution_state_ = ExecutionState::kShuttingDown;
@@ -162,12 +337,18 @@ DeviceThread::~DeviceThread() {
 }
 
 void DeviceThread::AsyncWait(TF_Status* status) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScPSeagerPSparallel_devicePSparallel_device_libDTcc mht_2(mht_2_v, 340, "", "./tensorflow/c/eager/parallel_device/parallel_device_lib.cc", "DeviceThread::AsyncWait");
+
   tensorflow::mutex_lock l(execution_mutex_);
   TFE_ExecutorWaitForAllPendingNodes(executor_.get(), status);
   TFE_ExecutorClearError(executor_.get());
 }
 
 void DeviceThread::Run() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScPSeagerPSparallel_devicePSparallel_device_libDTcc mht_3(mht_3_v, 349, "", "./tensorflow/c/eager/parallel_device/parallel_device_lib.cc", "DeviceThread::Run");
+
   while (true) {
     {
       tensorflow::mutex_lock l(execution_mutex_);
@@ -196,6 +377,10 @@ void DeviceThread::StartExecute(TFE_Context* context,
                                 int expected_max_outputs,
                                 CancellationManager& cancellation_manager,
                                 absl::optional<int64_t> step_id) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("operation_name: \"" + (operation_name == nullptr ? std::string("nullptr") : std::string((char*)operation_name)) + "\"");
+   MHTracer_DTPStensorflowPScPSeagerPSparallel_devicePSparallel_device_libDTcc mht_4(mht_4_v, 381, "", "./tensorflow/c/eager/parallel_device/parallel_device_lib.cc", "DeviceThread::StartExecute");
+
   {
     tensorflow::mutex_lock l(execution_mutex_);
     while (execution_state_ != ExecutionState::kIdle) {
@@ -216,6 +401,9 @@ void DeviceThread::StartExecute(TFE_Context* context,
 }
 
 std::vector<TensorHandlePtr> DeviceThread::Join(TF_Status* status) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScPSeagerPSparallel_devicePSparallel_device_libDTcc mht_5(mht_5_v, 404, "", "./tensorflow/c/eager/parallel_device/parallel_device_lib.cc", "DeviceThread::Join");
+
   std::vector<TensorHandlePtr> result;
   {
     tensorflow::mutex_lock l(execution_mutex_);
@@ -243,6 +431,10 @@ void DeviceThread::Execute(TFE_Context* context, const char* operation_name,
                            int expected_max_outputs,
                            std::vector<TensorHandlePtr>* outputs,
                            TF_Status* status) const {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("operation_name: \"" + (operation_name == nullptr ? std::string("nullptr") : std::string((char*)operation_name)) + "\"");
+   MHTracer_DTPStensorflowPScPSeagerPSparallel_devicePSparallel_device_libDTcc mht_6(mht_6_v, 435, "", "./tensorflow/c/eager/parallel_device/parallel_device_lib.cc", "DeviceThread::Execute");
+
   if (op_ == nullptr) {
     TFE_ContextSetExecutorForThread(context, executor_.get());
     op_.reset(TFE_NewOp(context, operation_name, status));
@@ -285,6 +477,9 @@ ParallelDevice::ParallelDevice(const std::vector<std::string>& devices,
                                const bool is_async)
     : underlying_devices_(devices),
       default_cancellation_manager_(absl::make_unique<CancellationManager>()) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScPSeagerPSparallel_devicePSparallel_device_libDTcc mht_7(mht_7_v, 480, "", "./tensorflow/c/eager/parallel_device/parallel_device_lib.cc", "ParallelDevice::ParallelDevice");
+
   device_threads_.reserve(devices.size());
   for (int device_index = 0; device_index < devices.size(); ++device_index) {
     device_threads_.emplace_back(
@@ -297,6 +492,9 @@ ParallelDevice::~ParallelDevice() = default;
 
 std::unique_ptr<ParallelTensor> ParallelDevice::CopyToParallelDevice(
     TFE_Context* context, TFE_TensorHandle* tensor, TF_Status* status) const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScPSeagerPSparallel_devicePSparallel_device_libDTcc mht_8(mht_8_v, 495, "", "./tensorflow/c/eager/parallel_device/parallel_device_lib.cc", "ParallelDevice::CopyToParallelDevice");
+
   std::vector<TensorHandlePtr> components;
   components.reserve(underlying_devices_.size());
   for (const std::string& underlying_device_name : underlying_devices_) {
@@ -311,6 +509,9 @@ std::unique_ptr<ParallelTensor> ParallelDevice::CopyToParallelDevice(
 
 std::unique_ptr<ParallelTensor> ParallelDevice::DeviceIDs(
     TFE_Context* context, TF_Status* status) const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScPSeagerPSparallel_devicePSparallel_device_libDTcc mht_9(mht_9_v, 512, "", "./tensorflow/c/eager/parallel_device/parallel_device_lib.cc", "ParallelDevice::DeviceIDs");
+
   std::vector<int32_t> ids;
   ids.reserve(num_underlying_devices());
   for (int i = 0; i < num_underlying_devices(); ++i) {
@@ -325,6 +526,10 @@ ParallelDevice::Execute(TFE_Context* context,
                         const char* operation_name,
                         const TFE_OpAttrs* attributes, int expected_max_outputs,
                         TF_Status* status) const {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("operation_name: \"" + (operation_name == nullptr ? std::string("nullptr") : std::string((char*)operation_name)) + "\"");
+   MHTracer_DTPStensorflowPScPSeagerPSparallel_devicePSparallel_device_libDTcc mht_10(mht_10_v, 530, "", "./tensorflow/c/eager/parallel_device/parallel_device_lib.cc", "ParallelDevice::Execute");
+
   std::vector<PartialTensorShape> expected_output_shapes(expected_max_outputs);
   StartExecute(context, inputs, operation_name, attributes,
                expected_max_outputs, *default_cancellation_manager_);
@@ -350,6 +555,10 @@ void ParallelDevice::StartExecute(TFE_Context* context,
                                   int expected_max_outputs,
                                   CancellationManager& cancellation_manager,
                                   absl::optional<int64_t> step_id) const {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("operation_name: \"" + (operation_name == nullptr ? std::string("nullptr") : std::string((char*)operation_name)) + "\"");
+   MHTracer_DTPStensorflowPScPSeagerPSparallel_devicePSparallel_device_libDTcc mht_11(mht_11_v, 559, "", "./tensorflow/c/eager/parallel_device/parallel_device_lib.cc", "ParallelDevice::StartExecute");
+
   for (int device_index = 0; device_index < underlying_devices_.size();
        ++device_index) {
     DeviceThread* device_thread = device_threads_[device_index].get();
@@ -366,6 +575,9 @@ void ParallelDevice::StartExecute(TFE_Context* context,
 }
 
 void ParallelDevice::AsyncWait(TFE_Context* context, TF_Status* status) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScPSeagerPSparallel_devicePSparallel_device_libDTcc mht_12(mht_12_v, 578, "", "./tensorflow/c/eager/parallel_device/parallel_device_lib.cc", "ParallelDevice::AsyncWait");
+
   StatusPtr first_bad_status(nullptr);
 
   for (const auto& dt : device_threads_) {
@@ -391,6 +603,9 @@ absl::optional<std::vector<std::unique_ptr<ParallelTensor>>>
 ParallelDevice::Join(
     const std::vector<PartialTensorShape>& expected_output_shapes,
     TF_Status* status) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScPSeagerPSparallel_devicePSparallel_device_libDTcc mht_13(mht_13_v, 606, "", "./tensorflow/c/eager/parallel_device/parallel_device_lib.cc", "ParallelDevice::Join");
+
   absl::optional<std::vector<std::unique_ptr<ParallelTensor>>> result;
   // Compute per-device per-output tensors
   std::vector<std::vector<TensorHandlePtr>> per_device_output_tensors;
@@ -456,6 +671,9 @@ ParallelDevice::Join(
 }
 
 std::vector<std::string> ParallelDevice::SummarizeDeviceNames() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScPSeagerPSparallel_devicePSparallel_device_libDTcc mht_14(mht_14_v, 674, "", "./tensorflow/c/eager/parallel_device/parallel_device_lib.cc", "ParallelDevice::SummarizeDeviceNames");
+
   std::vector<DeviceNameUtils::ParsedName> parsed_components(
       underlying_devices_.size());
   for (int component_index = 0; component_index < underlying_devices_.size();
@@ -483,6 +701,9 @@ std::unique_ptr<ParallelTensor> ParallelTensor::FromTensorHandles(
     const ParallelDevice& parallel_device,
     std::vector<TensorHandlePtr> components, absl::Span<const int64_t> shape,
     TF_Status* status) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScPSeagerPSparallel_devicePSparallel_device_libDTcc mht_15(mht_15_v, 704, "", "./tensorflow/c/eager/parallel_device/parallel_device_lib.cc", "ParallelTensor::FromTensorHandles");
+
   TFE_TensorHandleGetStatus(components[0].get(), status);
   if (!status->status.ok()) {
     return nullptr;
@@ -510,6 +731,9 @@ std::unique_ptr<ParallelTensor> ParallelTensor::FromTensorHandles(
 std::unique_ptr<ParallelTensor> ParallelTensor::FromTensorHandles(
     const ParallelDevice& parallel_device,
     std::vector<TensorHandlePtr> components, TF_Status* status) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScPSeagerPSparallel_devicePSparallel_device_libDTcc mht_16(mht_16_v, 734, "", "./tensorflow/c/eager/parallel_device/parallel_device_lib.cc", "ParallelTensor::FromTensorHandles");
+
   TFE_TensorHandleGetStatus(components[0].get(), status);
   if (!status->status.ok()) {
     return nullptr;
@@ -535,6 +759,9 @@ std::unique_ptr<ParallelTensor> ParallelTensor::FromTensorHandles(
 }
 
 Status ParallelTensor::Shape(const std::vector<int64_t>** shape) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScPSeagerPSparallel_devicePSparallel_device_libDTcc mht_17(mht_17_v, 762, "", "./tensorflow/c/eager/parallel_device/parallel_device_lib.cc", "ParallelTensor::Shape");
+
   if (!shape_.has_value()) {
     TF_Status status;
     PartialTensorShape combined_shape;
@@ -574,6 +801,9 @@ Status ParallelTensor::Shape(const std::vector<int64_t>** shape) const {
 }
 
 Status ParallelTensor::SummarizeValue(std::string& summary) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScPSeagerPSparallel_devicePSparallel_device_libDTcc mht_18(mht_18_v, 804, "", "./tensorflow/c/eager/parallel_device/parallel_device_lib.cc", "ParallelTensor::SummarizeValue");
+
   summary = "{";
   std::vector<std::string> summarized_devices = device_.SummarizeDeviceNames();
   for (int component_index = 0; component_index < tensors_.size();

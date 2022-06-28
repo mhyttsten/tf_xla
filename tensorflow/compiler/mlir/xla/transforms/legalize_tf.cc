@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -77,11 +245,17 @@ constexpr char kShardingAttr[] = "mhlo.sharding";
 /// Returns the feature dimension for the given format and input type.
 static size_t GetFeatureDimension(tensorflow::TensorFormat format,
                                   RankedTensorType input_ty) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_0(mht_0_v, 248, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetFeatureDimension");
+
   return GetTensorFeatureDimIndex(input_ty.getRank(), format);
 }
 
 // Gets all integer values from the given attribute and push them to `values`.
 void GetI64ArrayAttrValues(Attribute attr, SmallVectorImpl<int64_t> *values) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_1(mht_1_v, 256, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetI64ArrayAttrValues");
+
   auto array_attr = attr.cast<ArrayAttr>();
   values->reserve(array_attr.getValue().size());
   for (Attribute val : array_attr.getValue())
@@ -91,6 +265,9 @@ void GetI64ArrayAttrValues(Attribute attr, SmallVectorImpl<int64_t> *values) {
 // Returns 1D 32-bit dense elements attribute with the given values.
 static DenseIntElementsAttr GetI32ElementsAttr(ArrayRef<int32_t> values,
                                                Builder *builder) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_2(mht_2_v, 268, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetI32ElementsAttr");
+
   RankedTensorType ty = RankedTensorType::get(
       {static_cast<int32_t>(values.size())}, builder->getIntegerType(32));
   return DenseIntElementsAttr::get(ty, values);
@@ -100,6 +277,9 @@ static DenseIntElementsAttr GetI32ElementsAttr(ArrayRef<int32_t> values,
 // end, excluding.
 static DenseIntElementsAttr GetI64ElementsAttrForSeq(int start, int end,
                                                      Builder *builder) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_3(mht_3_v, 280, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetI64ElementsAttrForSeq");
+
   int size = end - start;
 
   SmallVector<int64_t, 4> vals;
@@ -114,6 +294,9 @@ static DenseIntElementsAttr GetI64ElementsAttrForSeq(int start, int end,
 // times.
 static DenseIntElementsAttr GetI64ElementsAttrForValue(int size, int64_t val,
                                                        Builder *builder) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_4(mht_4_v, 297, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetI64ElementsAttrForValue");
+
   TensorType ty = RankedTensorType::get({size}, builder->getIntegerType(64));
   return DenseIntElementsAttr::get(ty, val);
 }
@@ -121,6 +304,9 @@ static DenseIntElementsAttr GetI64ElementsAttrForValue(int size, int64_t val,
 // Returns the corresponding type that should be used for performing sum
 // accumulation over the given input type.
 Type GetSumAccumulationType(Type input_type) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_5(mht_5_v, 307, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetSumAccumulationType");
+
   MLIRContext *ctx = input_type.getContext();
   if (input_type.isBF16() || input_type.isF16()) return FloatType::getF32(ctx);
   if (input_type.isSignlessInteger(8) || input_type.isSignlessInteger(16))
@@ -133,6 +319,9 @@ Type GetSumAccumulationType(Type input_type) {
 // format supports negative indexing unlike HLO.
 static IntegerAttr GetHLOAxisFromTFAxis(Attribute attr, int64_t rank,
                                         Builder *b) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_6(mht_6_v, 322, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetHLOAxisFromTFAxis");
+
   IntegerAttr intAttr = attr.dyn_cast_or_null<IntegerAttr>();
   if (auto elementAttr = attr.dyn_cast_or_null<ElementsAttr>()) {
     SmallVector<uint64_t, 1> index(elementAttr.getType().getRank(), 0);
@@ -167,6 +356,9 @@ static llvm::Optional<int64_t> GetIntegerHLOAxisFromTFAxis(Value value,
 /// the shape of the input value.
 static ConvertOp CastValueToI64(Location loc, Value value,
                                 PatternRewriter *rewriter) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_7(mht_7_v, 359, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "CastValueToI64");
+
   return rewriter->create<ConvertOp>(loc, value, rewriter->getIntegerType(64));
 }
 
@@ -174,6 +366,9 @@ static ConvertOp CastValueToI64(Location loc, Value value,
 // must be a ranked tensor.
 static TF::UnpackOp UnpackTensorAlongZeroDim(Location loc, Value value,
                                              PatternRewriter *rewriter) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_8(mht_8_v, 369, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "UnpackTensorAlongZeroDim");
+
   auto indices_type = value.getType().cast<RankedTensorType>();
   int num_outputs = indices_type.getShape().front();
   SmallVector<Type, 2> unpacked_indices_type(
@@ -189,6 +384,9 @@ static TF::UnpackOp UnpackTensorAlongZeroDim(Location loc, Value value,
 //
 // Aborts if the type is ranked but doesn't have the dimension.
 int64_t GetDimSize(Type ty, int64_t index) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_9(mht_9_v, 387, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetDimSize");
+
   RankedTensorType ranked_ty = ty.dyn_cast<RankedTensorType>();
   if (!ranked_ty) return -1;
 
@@ -197,6 +395,9 @@ int64_t GetDimSize(Type ty, int64_t index) {
 
 template <typename T, int num_dims>
 tensorflow::TensorShape ToTensorShape(llvm::ArrayRef<T> sizes) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_10(mht_10_v, 398, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "ToTensorShape");
+
   return tensorflow::TensorShape(
       llvm::SmallVector<int64_t, num_dims>(sizes.begin(), sizes.end()));
 }
@@ -204,6 +405,9 @@ tensorflow::TensorShape ToTensorShape(llvm::ArrayRef<T> sizes) {
 template <typename T, int num_dims>
 tensorflow::TensorShape ToTensorShape(
     llvm::iterator_range<DenseElementsAttr::ElementIterator<T>> sizes) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_11(mht_11_v, 408, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "ToTensorShape");
+
   return tensorflow::TensorShape(
       llvm::SmallVector<int64_t, num_dims>(sizes.begin(), sizes.end()));
 }
@@ -213,6 +417,9 @@ tensorflow::TensorShape ToTensorShape(
 static ConstOp GetScalarLimitConstOfType(Type ty, Location loc,
                                          hlo::ScalarLimit limit,
                                          OpBuilder *builder) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_12(mht_12_v, 420, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetScalarLimitConstOfType");
+
   return builder->create<ConstOp>(loc, hlo::GetScalarLimitOfType(ty, limit));
 }
 
@@ -222,6 +429,9 @@ static Value SliceInMinorDims(Location loc, Value v,
                               ArrayRef<int64_t> minor_starts,
                               ArrayRef<int64_t> minor_limits,
                               OpBuilder *builder) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_13(mht_13_v, 432, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "SliceInMinorDims");
+
   auto type = v.getType().cast<RankedTensorType>();
   llvm::SmallVector<int64_t, 4> slice_starts(type.getRank(), 0);
   int64_t major_dims = type.getRank() - minor_starts.size();
@@ -259,6 +469,9 @@ static Value DynamicSliceInMinorDims(Location loc, Value v,
                                      ArrayRef<Value> minor_starts,
                                      ArrayRef<int64_t> minor_sizes,
                                      OpBuilder *builder) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_14(mht_14_v, 472, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "DynamicSliceInMinorDims");
+
   if (minor_starts.empty()) return v;
   auto type = v.getType().cast<RankedTensorType>();
   auto slice_starts = CreateFullIndexVectorFromMinorIndices(
@@ -278,6 +491,9 @@ static Value DynamicSliceInMinorDims(Location loc, Value v,
 static Value DynamicUpdateSliceInMinorDims(Location loc, Value v, Value update,
                                            ArrayRef<Value> minor_starts,
                                            OpBuilder *builder) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_15(mht_15_v, 494, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "DynamicUpdateSliceInMinorDims");
+
   if (minor_starts.empty()) return v;
   auto type = v.getType().cast<RankedTensorType>();
   auto dus_starts = CreateFullIndexVectorFromMinorIndices(
@@ -291,6 +507,9 @@ static Value DynamicUpdateSliceInMinorDims(Location loc, Value v, Value update,
 static Value UpdateSliceInMinorDims(Location loc, Value v, Value update,
                                     ArrayRef<int64_t> minor_starts,
                                     OpBuilder *builder) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_16(mht_16_v, 510, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "UpdateSliceInMinorDims");
+
   llvm::SmallVector<Value, 4> dus_starts(minor_starts.size());
   for (uint64_t i = 0; i < minor_starts.size(); ++i) {
     dus_starts[i] = GetScalarConstOfType(builder->getIntegerType(32), loc,
@@ -310,6 +529,9 @@ static Value UpdateSliceInMinorDims(Location loc, Value v, Value update,
 static RankedTensorType GetStaticBroadcastType(
     RankedTensorType x, RankedTensorType y,
     DenseIntElementsAttr broadcast_dimensions_attr) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_17(mht_17_v, 532, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetStaticBroadcastType");
+
   auto element_type = x.getElementType();
   auto shape_x = x.getShape();
   auto shape_y = y.getShape();
@@ -356,6 +578,9 @@ template <typename BinaryOp>
 static Value StaticBinaryBroadcast(Location loc, Value x, Value y,
                                    DenseIntElementsAttr broadcast_dims,
                                    OpBuilder &builder) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_18(mht_18_v, 581, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "StaticBinaryBroadcast");
+
   auto x_type = x.getType().cast<RankedTensorType>();
   auto y_type = y.getType().cast<RankedTensorType>();
   auto result_type = GetStaticBroadcastType(x_type, y_type, broadcast_dims);
@@ -390,6 +615,9 @@ static Value StaticBinaryBroadcast(Location loc, Value x, Value y,
 // value type. If the value type is ranked, the result will be statically
 // shaped. Otherwise, it will have a dynamic dimension.
 static RankedTensorType GetExtentsTensorTypeFor(TensorType value_type) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_19(mht_19_v, 618, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetExtentsTensorTypeFor");
+
   Builder b(value_type.getContext());
   int64_t dim = value_type.hasRank() ? value_type.getRank() : -1;
   return RankedTensorType::get({dim}, b.getIndexType());
@@ -410,6 +638,9 @@ static RankedTensorType GetExtentsTensorTypeFor(TensorType value_type) {
 static Value Broadcast1DToFeatureDim(Location loc, Value broadcast_to,
                                      Value broadcast_from, int64_t feature_dim,
                                      OpBuilder &builder) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_20(mht_20_v, 641, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "Broadcast1DToFeatureDim");
+
   auto broadcast_dims = GetI64ElementsAttr({feature_dim}, &builder);
   auto to_type = broadcast_to.getType().cast<RankedTensorType>();
   auto result_shape = builder.create<shape::ShapeOfOp>(loc, broadcast_to);
@@ -429,6 +660,9 @@ static Value Broadcast1DToFeatureDim(Location loc, Value broadcast_to,
 // supports unranked inputs in the lowering.
 static Value BroadcastToShapeOf(Location loc, Value input, Value broadcast_to,
                                 OpBuilder &builder) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_21(mht_21_v, 663, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "BroadcastToShapeOf");
+
   auto result_shape = builder.create<shape::ShapeOfOp>(loc, broadcast_to);
   auto to_type = broadcast_to.getType().cast<TensorType>();
   auto result_extents_type = GetExtentsTensorTypeFor(to_type);
@@ -444,6 +678,9 @@ static Value BroadcastToShapeOf(Location loc, Value input, Value broadcast_to,
 Value BatchDot(Location loc, Value lhs, bool transpose_lhs, Value rhs,
                bool transpose_rhs, int64_t num_batch_dims,
                ArrayAttr precision_config, OpBuilder *builder) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_22(mht_22_v, 681, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "BatchDot");
+
   auto batch_dimensions =
       llvm::to_vector<4>(llvm::seq<int64_t>(0, num_batch_dims));
   auto lhs_contracting_dimensions = llvm::to_vector<1>(llvm::makeArrayRef(
@@ -474,6 +711,9 @@ Value BatchDot(Location loc, Value lhs, bool transpose_lhs, Value rhs,
 static Value ApplyReduction(Location loc, Value input,
                             DenseIntElementsAttr reduce_dims,
                             OpBuilder *builder) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_23(mht_23_v, 714, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "ApplyReduction");
+
   auto reduce_dims_op = builder->create<ConstOp>(loc, reduce_dims);
   return builder->create<TF::SumOp>(loc, input, reduce_dims_op,
                                     builder->getBoolAttr(false));
@@ -484,6 +724,9 @@ static Value ApplyReduction(Location loc, Value input,
 static mhlo::RngUniformOp CreateRngUniform32(Location loc, int num_elements,
                                              int lower_limit, int upper_limit,
                                              OpBuilder *builder) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_24(mht_24_v, 727, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "CreateRngUniform32");
+
   auto i32_type = builder->getIntegerType(32);
   auto key_type = RankedTensorType::get({num_elements}, i32_type);
   auto shape_tensor = builder->create<mhlo::ConstOp>(
@@ -525,6 +768,9 @@ static void CreateWhile32(Location loc, int num_iterations,
                           WhileBodyFnType body_fn, ArrayRef<Value> init_values,
                           SmallVectorImpl<Value> *final_values,
                           OpBuilder *builder) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_25(mht_25_v, 771, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "CreateWhile32");
+
   int value_count = init_values.size() + 1;
 
   // Prepend a loop induction variable to the initial values.
@@ -609,6 +855,9 @@ static void CreateWhile32(Location loc, int num_iterations,
 static IntegerAttr getFeatureDimensionAttr(Builder &b,
                                            tensorflow::TensorFormat format,
                                            Value input) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_26(mht_26_v, 858, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "getFeatureDimensionAttr");
+
   return b.getI64IntegerAttr(
       GetFeatureDimension(format, input.getType().cast<RankedTensorType>()));
 }
@@ -621,6 +870,9 @@ static IntegerAttr getFeatureDimensionAttr(Builder &b,
 // the value.
 static DenseIntElementsAttr GetInnerDimFromValue(ShapedType type,
                                                  Builder *builder) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_27(mht_27_v, 873, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetInnerDimFromValue");
+
   if (type.getRank() == 0) {
     return builder->getI64TensorAttr({});
   }
@@ -629,6 +881,9 @@ static DenseIntElementsAttr GetInnerDimFromValue(ShapedType type,
 
 // Returns True if the inner-most dim is static.
 bool CheckInnerDimStatic(ShapedType type, Builder *builder) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_28(mht_28_v, 884, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "CheckInnerDimStatic");
+
   if (!type.hasRank()) {
     return false;
   }
@@ -642,6 +897,9 @@ bool CheckInnerDimStatic(ShapedType type, Builder *builder) {
 // If the 'transpose' attribute is true returns ElementsAttr to transpose 2D
 // matrix. Otherwise, returns ElementsAttr for identity transpose.
 static DenseIntElementsAttr Get2DTransposePerm(BoolAttr transpose, Builder *b) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_29(mht_29_v, 900, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "Get2DTransposePerm");
+
   if (transpose.getValue()) return GetI64ElementsAttr({1, 0}, b);
   return GetI64ElementsAttr({0, 1}, b);
 }
@@ -653,6 +911,9 @@ static DenseIntElementsAttr Get2DTransposePerm(BoolAttr transpose, Builder *b) {
 // Gets the size of the dimension `dim_from_end` from the end of `input`.
 // Requires that `input` is a tensor.
 static int GetDimensionSizeFromEnd(Value input, int dim_from_end) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_30(mht_30_v, 914, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetDimensionSizeFromEnd");
+
   // Note: the verifier enforces that `input` is a ranked tensor.
   auto input_type = input.getType().cast<TensorType>();
   auto input_shape = input_type.getShape();
@@ -666,6 +927,9 @@ static int GetDimensionSizeFromEnd(Value input, int dim_from_end) {
 // outputted RankedTensorType will match the element type of `input`.
 // Requires that `input` is a tensor.
 static RankedTensorType Get2DTensorType(Value input, Value num_lower) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_31(mht_31_v, 930, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "Get2DTensorType");
+
   // `dim_0` refers to the second-to-last dimension; `dim_1` refers to the last.
   int dim_0 = GetDimensionSizeFromEnd(input, 1);
   int dim_1 = GetDimensionSizeFromEnd(input, 0);
@@ -677,6 +941,9 @@ static RankedTensorType Get2DTensorType(Value input, Value num_lower) {
 // `elem_type_tensor`. Requires `elem_type_tensor` to be a tensor.
 static Value CreateConvertOp(OpBuilder *builder, Location loc, Value input,
                              Value elem_type_tensor) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_32(mht_32_v, 944, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "CreateConvertOp");
+
   auto element_type =
       elem_type_tensor.getType().cast<TensorType>().getElementType();
   return builder->create<mhlo::ConvertOp>(loc, input, element_type);
@@ -692,6 +959,9 @@ static Value CreateConvertOp(OpBuilder *builder, Location loc, Value input,
 // attribute.
 static DenseIntElementsAttr SliceDenseIntElementsAttrColumn2D(
     ElementsAttr input, int column) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_33(mht_33_v, 962, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "SliceDenseIntElementsAttrColumn2D");
+
   auto int_attr = input.cast<DenseIntElementsAttr>();
   auto shaped_type = int_attr.getType();
   auto shape = shaped_type.getShape();
@@ -715,6 +985,9 @@ static DenseIntElementsAttr SliceDenseIntElementsAttrColumn2D(
 // Returns interior padding to use in HLO Pad op based on the TensorFlow padding
 // in TensorFlow PadV2 op.
 static DenseIntElementsAttr GetInteriorPadding(ElementsAttr tf_padding) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_34(mht_34_v, 988, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetInteriorPadding");
+
   auto length = tf_padding.getType().getShape()[0];
   auto element_type = IntegerType::get(tf_padding.getContext(), 64);
   return DenseIntElementsAttr::get<int64_t>(
@@ -730,6 +1003,9 @@ static DenseIntElementsAttr GetInteriorPadding(ElementsAttr tf_padding) {
 // must be broadcasted with a size 1 tensor or another dynamic dimension.
 // Returns false on rankless.
 static bool AreBroadcastCompatible(Value x, Value y) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_35(mht_35_v, 1006, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "AreBroadcastCompatible");
+
   auto x_rankless = x.getType().dyn_cast<RankedTensorType>();
   auto y_rankless = y.getType().dyn_cast<RankedTensorType>();
   if (!x_rankless || !y_rankless) {
@@ -759,6 +1035,9 @@ static bool AreBroadcastCompatible(Value x, Value y) {
 // updated element type.
 static Type ChangeTensorElementType(Builder *b, Type tensor_type,
                                     Type element_type) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_36(mht_36_v, 1038, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "ChangeTensorElementType");
+
   RankedTensorType ranked_type = tensor_type.dyn_cast<RankedTensorType>();
   if (ranked_type) {
     return RankedTensorType::get(ranked_type.getShape(), element_type);
@@ -773,6 +1052,9 @@ static Type ChangeTensorElementType(Builder *b, Type tensor_type,
 
 // Returns the type to use for accumulating the given type.
 static Type GetAccumulationType(Type ty) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_37(mht_37_v, 1055, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetAccumulationType");
+
   // Upcast 16 bit sum reductions to 32 bit to reduce the precision loss from
   // repeated floating point additions.
   return (ty.isF16() || ty.isBF16()) ? FloatType::getF32(ty.getContext()) : ty;
@@ -783,6 +1065,9 @@ static Type GetAccumulationType(Type ty) {
 //===----------------------------------------------------------------------===//
 
 static DenseElementsAttr GetEpsilonValue(Type ty) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_38(mht_38_v, 1068, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetEpsilonValue");
+
   auto element_ty = ty.cast<TensorType>().getElementType();
   auto scalar_ty = RankedTensorType::get({}, element_ty);
   if (element_ty.isF16()) {
@@ -813,6 +1098,9 @@ static void BuildArgMinMaxReductionBody(Type input_element_type,
                                         Type index_element_type,
                                         ComparisonDirection direction,
                                         Region *body, OpBuilder *builder) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_39(mht_39_v, 1101, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "BuildArgMinMaxReductionBody");
+
   OpBuilder::InsertionGuard insertion_point_gurad(*builder);
 
   Type input_type = RankedTensorType::get(/*shape=*/{}, input_element_type);
@@ -852,6 +1140,9 @@ static void BuildArgMinMaxReductionBody(Type input_element_type,
 // as the function paramter types.
 static bool ArgTypesMatchCallee(mlir::Operation *op, OperandRange args,
                                 SymbolRefAttr func) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_40(mht_40_v, 1143, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "ArgTypesMatchCallee");
+
   auto module = op->getParentOfType<ModuleOp>();
   auto function =
       dyn_cast_or_null<FuncOp>(SymbolTable::lookupSymbolIn(module, func));
@@ -872,6 +1163,9 @@ static bool ArgTypesMatchCallee(mlir::Operation *op, OperandRange args,
 
 static bool CanBeTranslatedToDynamicSlice(Value input, Value start_indices,
                                           DenseIntElementsAttr slice_sizes) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_41(mht_41_v, 1166, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "CanBeTranslatedToDynamicSlice");
+
   auto input_ty = input.getType().dyn_cast<RankedTensorType>();
   if (!input_ty) return false;
   auto start_indices_ty = start_indices.getType().dyn_cast<RankedTensorType>();
@@ -900,6 +1194,9 @@ static bool CanBeTranslatedToDynamicSlice(Value input, Value start_indices,
 static DenseIntElementsAttr TFSliceSizes2HLOSliceSizes(
     Value input, Value start_indices, DenseIntElementsAttr slice_sizes,
     Builder *builder) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_42(mht_42_v, 1197, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "TFSliceSizes2HLOSliceSizes");
+
   DenseIntElementsAttr constant_start_indices;
   if (!matchPattern(start_indices, m_Constant(&constant_start_indices))) {
     return hlo::ConvertElementsAttr(slice_sizes, builder->getIntegerType(64))
@@ -937,6 +1234,9 @@ static void BuildSortComparisonBody(llvm::ArrayRef<Type> element_types,
                                     ComparisonDirection direction,
                                     llvm::Optional<StringRef> compare_type,
                                     Region *body, OpBuilder *builder) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_43(mht_43_v, 1237, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "BuildSortComparisonBody");
+
   OpBuilder::InsertionGuard insertion_point_gurad(*builder);
 
   Location loc = body->getLoc();
@@ -965,6 +1265,9 @@ static mhlo::SortOp CreateSortOp(PatternRewriter *rewriter, const Location &loc,
                                  const llvm::ArrayRef<Type> &element_types,
                                  int64_t dimension, bool is_stable,
                                  ComparisonDirection direction) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_44(mht_44_v, 1268, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "CreateSortOp");
+
   assert(!operands.empty() && "No operands to sort");
   // Create the sort op.
   auto sort_op =
@@ -988,12 +1291,18 @@ static mhlo::SortOp CreateSortOp(PatternRewriter *rewriter, const Location &loc,
 //===----------------------------------------------------------------------===//
 
 bool HasValidGatherDims(StringAttr attr) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_45(mht_45_v, 1294, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "HasValidGatherDims");
+
   ::xla::GatherDimensionNumbers dims;
   return dims.ParseFromString(attr.getValue().str());
 }
 
 GatherDimensionNumbersAttr GetGatherDimNumsAttr(StringAttr attr,
                                                 Builder *builder) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_46(mht_46_v, 1303, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetGatherDimNumsAttr");
+
   ::xla::GatherDimensionNumbers dims;
   if (!dims.ParseFromString(attr.getValue().str())) return {};
   return ::xla::ConvertGatherDimensionNumbers(dims, builder);
@@ -1004,22 +1313,34 @@ GatherDimensionNumbersAttr GetGatherDimNumsAttr(StringAttr attr,
 //===----------------------------------------------------------------------===//
 
 bool HasValidDotDims(StringAttr attr) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_47(mht_47_v, 1316, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "HasValidDotDims");
+
   ::xla::DotDimensionNumbers dims;
   return dims.ParseFromString(attr.getValue().str());
 }
 
 DotDimensionNumbersAttr GetDotDimNumsAttr(StringAttr attr, Builder *builder) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_48(mht_48_v, 1324, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetDotDimNumsAttr");
+
   ::xla::DotDimensionNumbers dims;
   if (!dims.ParseFromString(attr.getValue().str())) return {};
   return ::xla::ConvertDotDimensionNumbers(dims, builder);
 }
 
 bool HasValidPrecisionConfig(StringAttr attr) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_49(mht_49_v, 1333, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "HasValidPrecisionConfig");
+
   ::xla::PrecisionConfig precision;
   return precision.ParseFromString(attr.getValue().str());
 }
 
 mlir::ArrayAttr GetPrecisionConfigAttr(StringAttr attr, Builder *builder) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_50(mht_50_v, 1341, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetPrecisionConfigAttr");
+
   ::xla::PrecisionConfig precision;
   if (!precision.ParseFromString(attr.getValue().str())) return {};
   return ::xla::ConvertPrecisionConfig(&precision, builder);
@@ -1032,6 +1353,9 @@ mlir::ArrayAttr GetPrecisionConfigAttr(StringAttr attr, Builder *builder) {
 static void BuildBodyWithCall(PatternRewriter &rewriter, const Location &loc,
                               mlir::SymbolRefAttr func,
                               mlir::FunctionType func_ty, Region *body) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_51(mht_51_v, 1356, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "BuildBodyWithCall");
+
   OpBuilder::InsertionGuard guard(rewriter);
 
   Block *block = rewriter.createBlock(body);
@@ -1049,6 +1373,9 @@ static void BuildBodyWithCall(PatternRewriter &rewriter, const Location &loc,
 NamedAttribute GetConvDimensionNumbersAttr(ArrayRef<int64_t> spatial_dims,
                                            tensorflow::TensorFormat format,
                                            Builder *builder) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_52(mht_52_v, 1376, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetConvDimensionNumbersAttr");
+
   int64_t num_spatial_dims = spatial_dims.size();
   int64_t num_dims = num_spatial_dims + 2;
 
@@ -1083,6 +1410,9 @@ class ConvertBiasAddOp : public OpRewritePattern<TF::BiasAddOp> {
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(TF::BiasAddOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_53(mht_53_v, 1413, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     Location loc = op.getLoc();
     tensorflow::TensorFormat data_format;
     if (!FormatFromString(op.data_format().str(), &data_format))
@@ -1115,6 +1445,9 @@ class ConvertConvDynamic : public OpRewritePattern<OpT> {
                         int64_t stride, tensorflow::Padding padding_type,
                         Type shape_scalar_type, Value *padding_low,
                         Value *padding_high) const {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_54(mht_54_v, 1448, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetPaddingValues");
+
     // Stride must be > 0
     if (stride <= 0) return false;
     // Dilation rate must be >= 1
@@ -1182,6 +1515,9 @@ class ConvertConvDynamic : public OpRewritePattern<OpT> {
 
   LogicalResult matchAndRewriteDynamicConv(OpT op,
                                            PatternRewriter &rewriter) const {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_55(mht_55_v, 1518, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewriteDynamicConv");
+
     tensorflow::TensorFormat data_format;
     if (!FormatFromString(op.data_format().str(), &data_format))
       return op.emitOpError("invalid data format");
@@ -1216,6 +1552,9 @@ class ConvertConvDynamic : public OpRewritePattern<OpT> {
     SmallVector<Value, num_spatial_dims * 2> paddings;
 
     auto get_int = [](Attribute attr) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_56(mht_56_v, 1555, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "lambda");
+
       return attr.template cast<IntegerAttr>().getInt();
     };
 
@@ -1225,10 +1564,16 @@ class ConvertConvDynamic : public OpRewritePattern<OpT> {
     auto shape_scalar_type = rewriter.getIntegerType(32);
 
     auto get_const = [&](int64_t val) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_57(mht_57_v, 1567, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "lambda");
+
       return rewriter.create<mlir::arith::ConstantIntOp>(loc, val,
                                                          shape_scalar_type);
     };
     auto get_dim_value = [&](Value val, int64_t dim) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_58(mht_58_v, 1574, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "lambda");
+
       Value dim_value = rewriter.create<tensor::DimOp>(loc, val, dim);
       return rewriter.create<arith::IndexCastOp>(loc, shape_scalar_type,
                                                  dim_value);
@@ -1316,6 +1661,9 @@ class ConvertConvDynamic : public OpRewritePattern<OpT> {
 
   LogicalResult matchAndRewrite(OpT op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_59(mht_59_v, 1664, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     return matchAndRewriteDynamicConv(op, rewriter);
   }
 };
@@ -1345,6 +1693,9 @@ class ConvertConvOp : public OpRewritePattern<OpTy> {
 
   LogicalResult matchAndRewrite(OpTy op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_60(mht_60_v, 1696, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     tensorflow::TensorFormat data_format;
     if (!FormatFromString(op.data_format().str(), &data_format))
       return op.emitOpError("invalid data format");
@@ -1380,6 +1731,9 @@ class ConvertConvOp : public OpRewritePattern<OpTy> {
     SmallVector<int64_t, num_spatial_dims * 2> paddings;
 
     auto get_int = [](Attribute attr) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_61(mht_61_v, 1734, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "lambda");
+
       return attr.template cast<IntegerAttr>().getInt();
     };
 
@@ -1481,6 +1835,9 @@ class ConvertPadOpDynamic : public OpRewritePattern<TF::PadV2Op> {
   // canonicalization.
   LogicalResult matchAndRewrite(TF::PadV2Op op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_62(mht_62_v, 1838, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     Location loc = op.getLoc();
     auto input = op.input();
     auto paddings = op.paddings();
@@ -1549,6 +1906,9 @@ class ConvertGatherNdOpDynamic : public OpRewritePattern<TF::GatherNdOp> {
   // canonicalization.
   LogicalResult matchAndRewrite(TF::GatherNdOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_63(mht_63_v, 1909, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     Location loc = op.getLoc();
     auto params = op.params();
     auto params_ty = params.getType().dyn_cast<RankedTensorType>();
@@ -1651,6 +2011,9 @@ class ConvertBF16FloorDivOp : public OpRewritePattern<TF::FloorDivOp> {
 
   LogicalResult matchAndRewrite(TF::FloorDivOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_64(mht_64_v, 2014, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     auto l = op.x();
     auto r = op.y();
     auto element_type = getElementTypeOrSelf(l.getType());
@@ -1679,6 +2042,9 @@ class ConvertBroadcastToOp : public OpRewritePattern<TF::BroadcastToOp> {
 
   LogicalResult matchAndRewrite(TF::BroadcastToOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_65(mht_65_v, 2045, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     auto input_type = op.input().getType().dyn_cast<RankedTensorType>();
     auto output_type = op.output().getType();
     if (!input_type) {
@@ -1710,6 +2076,9 @@ class ConvertRollOp : public OpRewritePattern<TF::RollOp> {
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(TF::RollOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_66(mht_66_v, 2079, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     auto shift_ty = op.shift().getType().dyn_cast<RankedTensorType>();
     if (!shift_ty || shift_ty.getRank() != 0) {
       return rewriter.notifyMatchFailure(
@@ -1766,6 +2135,9 @@ class ConvertLeakyReluOp : public OpRewritePattern<TF::LeakyReluOp> {
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(TF::LeakyReluOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_67(mht_67_v, 2138, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     Location loc = op.getLoc();
     Value features = op.features();
     auto featureType = features.getType();
@@ -1795,6 +2167,9 @@ class ConvertLeakyReluGradOp : public OpRewritePattern<TF::LeakyReluGradOp> {
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(TF::LeakyReluGradOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_68(mht_68_v, 2170, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     Location loc = op.getLoc();
     Value gradients = op.gradients();
     Value features = op.features();
@@ -1839,6 +2214,9 @@ class ConvertDiagPartOp : public OpRewritePattern<TF::DiagPartOp> {
 
   LogicalResult matchAndRewrite(TF::DiagPartOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_69(mht_69_v, 2217, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     auto input_type = op.input().getType().dyn_cast<RankedTensorType>();
     if (!input_type || !input_type.hasStaticShape()) return failure();
     int64_t num_dims = input_type.getRank();
@@ -1896,6 +2274,9 @@ class ConvertMatrixDiagPartV3Op
   // with k. This can be either a single value (for a single diagonal) or a
   // tuple of two values (starting and ending diagonal, for a band).
   LogicalResult ExtractK(TF::MatrixDiagPartV3Op op, int64_t (*k)[2]) const {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_70(mht_70_v, 2277, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "ExtractK");
+
     DenseIntElementsAttr kattr;
     if (!matchPattern(op.k(), m_Constant(&kattr))) {
       return failure();
@@ -1918,6 +2299,9 @@ class ConvertMatrixDiagPartV3Op
   // Utility method for broadcasting integer constants to a given shape.
   BroadcastOp BroadcastConstant(Location loc, Shape shape, int32_t constant,
                                 int int_size, PatternRewriter &rewriter) const {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_71(mht_71_v, 2302, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "BroadcastConstant");
+
     return rewriter.create<BroadcastOp>(
         loc, RankedTensorType::get(shape, rewriter.getIntegerType(int_size)),
         GetScalarConstOfType(rewriter.getIntegerType(int_size), loc, constant,
@@ -1930,6 +2314,9 @@ class ConvertMatrixDiagPartV3Op
 
   LogicalResult matchAndRewrite(TF::MatrixDiagPartV3Op op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_72(mht_72_v, 2317, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     Location loc = op.getLoc();
     ShapedType input_type = op.input().getType().dyn_cast<ShapedType>();
     auto element_type = input_type.getElementType();
@@ -2157,6 +2544,9 @@ class ConvertEinsumOp : public OpRewritePattern<TF::EinsumOp> {
 
   LogicalResult matchAndRewrite(TF::EinsumOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_73(mht_73_v, 2547, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     StringAttr equation = op->getAttrOfType<StringAttr>("equation");
     if (op.N() == 1) {
       rewriter.replaceOpWithNewOp<UnaryEinsumOp>(
@@ -2180,6 +2570,9 @@ class ConvertIdentityNOp : public OpRewritePattern<TF::IdentityNOp> {
   using OpRewritePattern<TF::IdentityNOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(TF::IdentityNOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_74(mht_74_v, 2573, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     rewriter.replaceOp(op, op.getOperands());
     return success();
   }
@@ -2191,6 +2584,9 @@ class ConvertFFTOp : public OpRewritePattern<OpTy> {
   using OpRewritePattern<OpTy>::OpRewritePattern;
   LogicalResult matchAndRewrite(OpTy op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_75(mht_75_v, 2587, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     auto input_ty = op.input().getType().template cast<ShapedType>();
     if (!input_ty.hasRank()) {
       return failure();
@@ -2274,6 +2670,9 @@ class ConvertFusedBatchNormGradBase
 
   LogicalResult matchAndRewrite(FusedBatchNormGradOpT op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_76(mht_76_v, 2673, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     Location loc = op.getLoc();
     Value grad = op.y_backprop();
     Value act = op.x();
@@ -2405,6 +2804,9 @@ class ConvertFusedBatchNormBase : public OpRewritePattern<FusedBatchNormOpT> {
 
   LogicalResult matchAndRewrite(FusedBatchNormOpT op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_77(mht_77_v, 2807, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     tensorflow::TensorFormat data_format;
     if (!FormatFromString(op.data_format().str(), &data_format))
       return op.emitOpError("invalid data format");
@@ -2603,6 +3005,9 @@ template <int num_dims>
 static PaddingArray GetReduceWindowPaddingAsArray(
     llvm::ArrayRef<int64_t> input_dims, ArrayAttr window_dims,
     ArrayAttr window_strides, StringRef padding, Builder *builder) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_78(mht_78_v, 3008, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetReduceWindowPaddingAsArray");
+
   if (padding == "VALID") {
     return PaddingArray(num_dims, std::make_pair(0, 0));
   }
@@ -2629,6 +3034,9 @@ template <int num_dims>
 static DenseIntElementsAttr GetReduceWindowPaddingAsAttr(
     llvm::ArrayRef<int64_t> input_dims, ArrayAttr window_dims,
     ArrayAttr window_strides, StringRef padding, Builder *builder) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_79(mht_79_v, 3037, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetReduceWindowPaddingAsAttr");
+
   if (padding == "VALID") return {};
   assert(padding == "SAME");
   PaddingArray paddings = GetReduceWindowPaddingAsArray<num_dims>(
@@ -2711,8 +3119,14 @@ Operation *AvgPoolDivideByCount(
   return result;
 }
 
-Value GetAvgPoolInput(TF::AvgPoolOp op) { return op.value(); }
-Value GetAvgPoolInput(TF::AvgPool3DOp op) { return op.input(); }
+Value GetAvgPoolInput(TF::AvgPoolOp op) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_80(mht_80_v, 3123, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetAvgPoolInput");
+ return op.value(); }
+Value GetAvgPoolInput(TF::AvgPool3DOp op) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_81(mht_81_v, 3127, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetAvgPoolInput");
+ return op.input(); }
 
 // Converts AvgPool op to HLO ReduceWindow op by setting appropriate window
 // dimensions with add as the reduction function. The reduction result is
@@ -2724,6 +3138,9 @@ class ConvertAvgPoolOp : public OpRewritePattern<OpTy> {
 
   LogicalResult matchAndRewrite(OpTy op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_82(mht_82_v, 3141, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     Value input_value = GetAvgPoolInput(op);
     auto input_type =
         input_value.getType().template dyn_cast<RankedTensorType>();
@@ -2835,6 +3252,9 @@ class ConvertAvgPoolGradOp : public OpRewritePattern<OpTy> {
 
   LogicalResult matchAndRewrite(OpTy op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_83(mht_83_v, 3255, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     Location loc = op.getLoc();
     tensorflow::TensorFormat data_format;
     if (!FormatFromString(op.data_format().str(), &data_format)) {
@@ -2977,6 +3397,9 @@ class ConvertMaxPoolOp : public OpRewritePattern<OpTy> {
 
   LogicalResult matchAndRewrite(OpTy op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_84(mht_84_v, 3400, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     Type element_type =
         op.input().getType().template cast<TensorType>().getElementType();
     if (!element_type.isSignlessIntOrFloat()) return failure();
@@ -3017,6 +3440,9 @@ class ConvertSelectOp : public OpRewritePattern<TF::SelectOp> {
 
   LogicalResult matchAndRewrite(TF::SelectOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_85(mht_85_v, 3443, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     // This lowering only works on ranked types.
     auto cond_type = op.condition().getType().dyn_cast<RankedTensorType>();
     auto then_type = op.t().getType().dyn_cast<RankedTensorType>();
@@ -3109,10 +3535,16 @@ class ConvertSigmoidOp : public RewritePattern {
              shape::ToExtentTensorOp::getOperationName(),
              mhlo::DynamicBroadcastInDimOp::getOperationName(),
              mhlo::MulOp::getOperationName(), mhlo::TanhOp::getOperationName(),
-             mhlo::AddOp::getOperationName()}) {}
+             mhlo::AddOp::getOperationName()}) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_86(mht_86_v, 3539, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "ConvertSigmoidOp");
+}
 
   LogicalResult matchAndRewrite(Operation *sigmoid_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_87(mht_87_v, 3545, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     auto op = cast<TF::SigmoidOp>(sigmoid_op);
     Location loc = op.getLoc();
 
@@ -3143,6 +3575,9 @@ class ConvertSliceOpDynamic : public OpRewritePattern<TF::SliceOp> {
 
   LogicalResult matchAndRewrite(TF::SliceOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_88(mht_88_v, 3578, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     Location loc = op.getLoc();
     Value input = op.input();
     Value begin_indices = op.begin();
@@ -3225,6 +3660,9 @@ class ConvertSliceOpDynamic : public OpRewritePattern<TF::SliceOp> {
 static void BroadcastBatchMatMulV2Operands(Value lhs, Value rhs, Location loc,
                                            Value *out_lhs, Value *out_rhs,
                                            PatternRewriter *rewriter) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_89(mht_89_v, 3663, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "BroadcastBatchMatMulV2Operands");
+
   // The dimension structure of the relevant operands to a tf.BatchMatMulV2 is:
   // - lhs: [LHSBATCHDIMS..., LHSROWS, LHSCOLS]
   // - rhs: [RHSBATCHDIMS..., RHSROWS, RHSCOLS]
@@ -3266,6 +3704,9 @@ static void BroadcastBatchMatMulV2Operands(Value lhs, Value rhs, Location loc,
   // leading-batch dimensions.
   auto broadcast_one_side = [&](Value side, RankedTensorType type,
                                 Value tail_shape, Value *out_side) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_90(mht_90_v, 3707, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "lambda");
+
     ArrayRef<int64_t> matrix_dims = type.getShape().take_back(2);
     auto result_shape = result_batch_shape_compile_time_extents;
     result_shape.append(matrix_dims.begin(), matrix_dims.end());
@@ -3298,10 +3739,16 @@ class ConvertBatchMatMulV2Op : public OpRewritePattern<TF::BatchMatMulV2Op> {
   //
   // Native legalization for BatchMatMulV3 needs to be added as well.
   explicit ConvertBatchMatMulV2Op(MLIRContext *context)
-      : OpRewritePattern<TF::BatchMatMulV2Op>(context, /*benefit=*/0) {}
+      : OpRewritePattern<TF::BatchMatMulV2Op>(context, /*benefit=*/0) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_91(mht_91_v, 3743, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "ConvertBatchMatMulV2Op");
+}
 
   LogicalResult matchAndRewrite(TF::BatchMatMulV2Op op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_92(mht_92_v, 3749, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     Value lhs = op.x();
     Value rhs = op.y();
     auto lhs_type = lhs.getType().dyn_cast<RankedTensorType>();
@@ -3380,6 +3827,9 @@ class ConvertSplitOp : public OpRewritePattern<TF::SplitOp> {
 
   LogicalResult matchAndRewrite(TF::SplitOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_93(mht_93_v, 3830, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     // We can only split along static dimensions.
     auto input_type = op.value().getType().dyn_cast<RankedTensorType>();
     if (!input_type) return failure();
@@ -3443,6 +3893,9 @@ class ConvertSplitOpDynamic : public OpRewritePattern<TF::SplitOp> {
 
   LogicalResult matchAndRewrite(TF::SplitOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_94(mht_94_v, 3896, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     Location loc = op.getLoc();
     Value input = op.value();
     auto input_type = input.getType().dyn_cast<RankedTensorType>();
@@ -3558,6 +4011,9 @@ class ConvertSplitVOp : public OpRewritePattern<TF::SplitVOp> {
 
   LogicalResult matchAndRewrite(TF::SplitVOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_95(mht_95_v, 4014, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     // We can only split along static dimensions.
     // TODO(b/145731001): enhance to support dynamic-shaped inputs.
     auto input_type = op.value().getType().dyn_cast<RankedTensorType>();
@@ -3661,6 +4117,9 @@ class ConvertStridedSliceOp : public OpRewritePattern<TF::StridedSliceOp> {
                                          ArrayRef<int64_t> strides,
                                          RankedTensorType input_ty,
                                          PatternRewriter &rewriter) const {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_96(mht_96_v, 4120, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "rewriteWithConstantBegin");
+
     SmallVector<int64_t, 4> hlo_begin_indices, hlo_end_indices, hlo_strides,
         dims_to_reverse;
     int64_t input_rank = input_ty.getRank();
@@ -3721,6 +4180,9 @@ class ConvertStridedSliceOp : public OpRewritePattern<TF::StridedSliceOp> {
                                         RankedTensorType input_ty,
                                         RankedTensorType result_ty,
                                         PatternRewriter &rewriter) const {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_97(mht_97_v, 4183, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "rewriteWithUnknownBegin");
+
     // If begin and end values are dynamic, we can only support this lowering
     // if strides are a known value of 1.
     DenseIntElementsAttr sparse_strides_attr;
@@ -3855,6 +4317,9 @@ class ConvertStridedSliceOp : public OpRewritePattern<TF::StridedSliceOp> {
 
   LogicalResult matchAndRewrite(TF::StridedSliceOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_98(mht_98_v, 4320, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     // Input shape needs to be static to convert negative indices in TensorFlow
     // to absolute indices required by HLO.
     //
@@ -3898,6 +4363,9 @@ class ConvertStridedSliceGradOp
 
   LogicalResult matchAndRewrite(TF::StridedSliceGradOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_99(mht_99_v, 4366, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     // We need constant input shape to perform padding calculations later.
     DenseIntElementsAttr input_shape_attr;
     if (!matchPattern(op.shape(), m_Constant(&input_shape_attr)))
@@ -3991,6 +4459,9 @@ class ConvertRangeOp : public OpRewritePattern<TF::RangeOp> {
 
   LogicalResult matchAndRewrite(TF::RangeOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_100(mht_100_v, 4462, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     auto result = op.getResult();
     auto result_type = result.getType();
     if (!result_type.cast<ShapedType>().hasStaticShape()) {
@@ -4025,6 +4496,9 @@ class ConvertDynamicRangeOp : public OpRewritePattern<TF::RangeOp> {
 
   LogicalResult matchAndRewrite(TF::RangeOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_101(mht_101_v, 4499, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     auto result = op.getResult();
     auto result_type = result.getType().cast<ShapedType>();
     if (result_type.hasStaticShape()) {
@@ -4090,6 +4564,9 @@ class ConvertDynamicRangeOp : public OpRewritePattern<TF::RangeOp> {
 };
 
 ElementsAttr ConvertAxisAttr(Value val, ElementsAttr attr, Builder *builder) {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_102(mht_102_v, 4567, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "ConvertAxisAttr");
+
   auto int_attr = attr.cast<DenseIntElementsAttr>();
   auto type = val.getType().cast<ShapedType>();
 
@@ -4113,6 +4590,9 @@ class ConvertLinSpaceOp : public OpRewritePattern<TF::LinSpaceOp> {
 
   LogicalResult matchAndRewrite(TF::LinSpaceOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_103(mht_103_v, 4593, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     auto result = op.getResult();
     auto result_type = result.getType().dyn_cast<ShapedType>();
     if (!result_type || !result_type.hasStaticShape()) {
@@ -4179,6 +4659,9 @@ class GenericConvertReductionOp : public OpRewritePattern<OpTy> {
 
   LogicalResult matchAndRewrite(OpTy op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_104(mht_104_v, 4662, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     // TODO(b/141785544): Update this to not require ranked shapes.
     // Input shape needs to be ranked to convert negative indices in TensorFlow
     // to absolute indices required by HLO.
@@ -4293,6 +4776,9 @@ class ConvertMeanOp
   using GenericConvertReductionOp::GenericConvertReductionOp;
   static Value GetInitialValue(Type reduce_element_type, Location loc,
                                PatternRewriter *rewriter) {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_105(mht_105_v, 4779, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetInitialValue");
+
     return GetScalarNegZeroOfType(reduce_element_type, loc, rewriter);
   }
 };
@@ -4309,6 +4795,9 @@ class ConvertSumOp
 
   static Value GetInitialValue(Type reduce_element_type, Location loc,
                                PatternRewriter *rewriter) {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_106(mht_106_v, 4798, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetInitialValue");
+
     // The neutral element of fp addition is -0.0, not 0.0: '0.0 + -0.0 = 0.0'.
     return GetScalarNegZeroOfType(reduce_element_type, loc, rewriter);
   }
@@ -4327,6 +4816,9 @@ class ConvertMaxOp
 
   static Value GetInitialValue(Type reduce_element_type, Location loc,
                                PatternRewriter *rewriter) {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_107(mht_107_v, 4819, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetInitialValue");
+
     return GetScalarLimitConstOfType(reduce_element_type, loc,
                                      hlo::kInfinityLowest, rewriter);
   }
@@ -4345,6 +4837,9 @@ class ConvertMinOp
 
   static Value GetInitialValue(Type reduce_element_type, Location loc,
                                PatternRewriter *rewriter) {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_108(mht_108_v, 4840, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetInitialValue");
+
     return GetScalarLimitConstOfType(reduce_element_type, loc,
                                      hlo::kInfinityMax, rewriter);
   }
@@ -4362,6 +4857,9 @@ class ConvertProdOp
 
   static Value GetInitialValue(Type reduce_element_type, Location loc,
                                PatternRewriter *rewriter) {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_109(mht_109_v, 4860, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetInitialValue");
+
     return GetScalarConstOfType(reduce_element_type, loc, 1, rewriter);
   }
 };
@@ -4377,6 +4875,9 @@ class ConvertAllOp
   using GenericConvertReductionOp::GenericConvertReductionOp;
   static Value GetInitialValue(Type reduce_element_type, Location loc,
                                PatternRewriter *rewriter) {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_110(mht_110_v, 4878, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetInitialValue");
+
     return GetScalarConstOfType(reduce_element_type, loc, 1, rewriter);
   }
 };
@@ -4392,6 +4893,9 @@ class ConvertAnyOp
   using GenericConvertReductionOp::GenericConvertReductionOp;
   static Value GetInitialValue(Type reduce_element_type, Location loc,
                                PatternRewriter *rewriter) {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_111(mht_111_v, 4896, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetInitialValue");
+
     return GetScalarConstOfType(reduce_element_type, loc, 0, rewriter);
   }
 };
@@ -4407,6 +4911,9 @@ class ConvertArgMinMaxOp : public OpRewritePattern<OpTy> {
 
   LogicalResult matchAndRewrite(OpTy op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_112(mht_112_v, 4914, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     RankedTensorType input_type =
         op.input().getType().template dyn_cast<RankedTensorType>();
     if (!input_type) {
@@ -4478,11 +4985,17 @@ class ConvertArgMaxOp
 
   static Value GetInitialValue(Type reduce_element_type, Location loc,
                                PatternRewriter &rewriter) {
+   std::vector<std::string> mht_113_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_113(mht_113_v, 4988, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetInitialValue");
+
     return GetScalarLimitConstOfType(reduce_element_type, loc,
                                      hlo::kInfinityLowest, &rewriter);
   }
 
-  static ComparisonDirection GetDirection() { return ComparisonDirection::GE; }
+  static ComparisonDirection GetDirection() {
+   std::vector<std::string> mht_114_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_114(mht_114_v, 4996, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetDirection");
+ return ComparisonDirection::GE; }
 };
 
 // Converts tensorflow ArgMin op to mhlo operations. The actual
@@ -4499,11 +5012,17 @@ class ConvertArgMinOp
 
   static Value GetInitialValue(Type reduce_element_type, Location loc,
                                PatternRewriter &rewriter) {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_115(mht_115_v, 5015, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetInitialValue");
+
     return GetScalarLimitConstOfType(reduce_element_type, loc,
                                      hlo::kInfinityMax, &rewriter);
   }
 
-  static ComparisonDirection GetDirection() { return ComparisonDirection::LE; }
+  static ComparisonDirection GetDirection() {
+   std::vector<std::string> mht_116_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_116(mht_116_v, 5023, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetDirection");
+ return ComparisonDirection::LE; }
 };
 
 // Converts TF TensorScatterUpdate/Min/Max/Add/Sub op into Scatter Op with
@@ -4519,6 +5038,9 @@ class ConvertTensorScatterOp : public OpRewritePattern<OpTy> {
 
   LogicalResult matchAndRewrite(OpTy op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_117(mht_117_v, 5041, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     auto tensor_ty =
         op.tensor().getType().template dyn_cast<RankedTensorType>();
     auto indices_ty =
@@ -4565,6 +5087,9 @@ class ConvertTensorScatterUpdateOp
 
   static void BuildScatterBody(Type element_type, Region *region, Location loc,
                                OpBuilder &builder) {
+   std::vector<std::string> mht_118_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_118(mht_118_v, 5090, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "BuildScatterBody");
+
     OpBuilder::InsertionGuard guard(builder);
     Block *block = builder.createBlock(region);
     Type type = RankedTensorType::get(/*shape=*/{}, element_type);
@@ -4581,6 +5106,9 @@ class ConvertTensorScatterAddOp
 
   static void BuildScatterBody(Type element_type, Region *region, Location loc,
                                OpBuilder &builder) {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_119(mht_119_v, 5109, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "BuildScatterBody");
+
     OpBuilder::InsertionGuard guard(builder);
     Block *block = builder.createBlock(region);
     Type type = RankedTensorType::get(/*shape=*/{}, element_type);
@@ -4599,6 +5127,9 @@ class ConvertTensorScatterSubOp
 
   static void BuildScatterBody(Type element_type, Region *region, Location loc,
                                OpBuilder &builder) {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_120(mht_120_v, 5130, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "BuildScatterBody");
+
     OpBuilder::InsertionGuard guard(builder);
     Block *block = builder.createBlock(region);
     Type type = RankedTensorType::get(/*shape=*/{}, element_type);
@@ -4617,6 +5148,9 @@ class ConvertTensorScatterMinOp
 
   static void BuildScatterBody(Type element_type, Region *region, Location loc,
                                OpBuilder &builder) {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_121(mht_121_v, 5151, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "BuildScatterBody");
+
     OpBuilder::InsertionGuard guard(builder);
     Block *block = builder.createBlock(region);
     Type type = RankedTensorType::get(/*shape=*/{}, element_type);
@@ -4635,6 +5169,9 @@ class ConvertTensorScatterMaxOp
 
   static void BuildScatterBody(Type element_type, Region *region, Location loc,
                                OpBuilder &builder) {
+   std::vector<std::string> mht_122_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_122(mht_122_v, 5172, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "BuildScatterBody");
+
     OpBuilder::InsertionGuard guard(builder);
     Block *block = builder.createBlock(region);
     Type type = RankedTensorType::get(/*shape=*/{}, element_type);
@@ -4660,6 +5197,9 @@ class ConvertTileOp : public OpRewritePattern<TF::TileOp> {
 
   LogicalResult matchAndRewrite(TF::TileOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_123_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_123(mht_123_v, 5200, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     auto input_ty = op.input().getType().dyn_cast<RankedTensorType>();
     if (!input_ty || !input_ty.hasStaticShape()) return failure();
     ArrayRef<int64_t> input_shape = input_ty.getShape();
@@ -4738,6 +5278,9 @@ class ConvertTileOpDynamic : public OpRewritePattern<TF::TileOp> {
   // clang-format on
   LogicalResult matchAndRewrite(TF::TileOp op,
                                 PatternRewriter &rewriter) const final {
+   std::vector<std::string> mht_124_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_124(mht_124_v, 5281, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     Location loc = op.getLoc();
     Value input = op.input();
     Value multiples = op.multiples();
@@ -4827,6 +5370,9 @@ class ConvertMaxPoolGradOp : public OpRewritePattern<OpTy> {
 
   LogicalResult matchAndRewrite(OpTy op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_125_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_125(mht_125_v, 5373, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     Location loc = op.getLoc();
 
     Type element_type =
@@ -4883,6 +5429,9 @@ class ConvertConvBackpropInputOp : public OpRewritePattern<OpTy> {
 
   LogicalResult matchAndRewrite(OpTy op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_126_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_126(mht_126_v, 5432, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     // Unpack all of the attributes.
     tensorflow::TensorFormat data_format;
     if (!FormatFromString(op.data_format().str(), &data_format))
@@ -5064,6 +5613,9 @@ class ConvertConvBackpropFilterOp : public OpRewritePattern<OpTy> {
 
   LogicalResult matchAndRewrite(OpTy op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_127_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_127(mht_127_v, 5616, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     // Unpack all of the attributes.
     tensorflow::TensorFormat data_format;
     if (!FormatFromString(op.data_format().str(), &data_format))
@@ -5267,6 +5819,9 @@ class ConvertOneHotOp : public OpRewritePattern<TF::OneHotOp> {
 
   LogicalResult matchAndRewrite(TF::OneHotOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_128_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_128(mht_128_v, 5822, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     auto indices_ty = op.indices().getType().dyn_cast<RankedTensorType>();
     if (!indices_ty || !indices_ty.hasStaticShape()) return failure();
     ArrayRef<int64_t> indices_shape = indices_ty.getShape();
@@ -5346,6 +5901,9 @@ class ConvertInfeedDequeueTupleOp
 
   LogicalResult matchAndRewrite(TF::InfeedDequeueTupleOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_129_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_129(mht_129_v, 5904, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     SmallVector<Type> result_types;
     result_types.reserve(op.outputs().size() + 1);
     for (const auto &output : op.outputs()) {
@@ -5431,6 +5989,9 @@ class ConvertOutfeedEnqueueTupleOp
 
   LogicalResult matchAndRewrite(TF::OutfeedEnqueueTupleOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_130_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_130(mht_130_v, 5992, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     auto token_type = mhlo::TokenType::get(rewriter.getContext());
     auto token = rewriter.create<CreateTokenOp>(op.getLoc(), token_type);
 
@@ -5477,6 +6038,9 @@ class ConvertTopKV2Op : public OpRewritePattern<TF::TopKV2Op> {
 
   LogicalResult matchAndRewrite(TF::TopKV2Op op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_131_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_131(mht_131_v, 6041, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     // We can only match when the `k` operand is a constant scalar.
     DenseIntElementsAttr k_attr;
     if (!matchPattern(op.k(), m_Constant(&k_attr))) return failure();
@@ -5546,6 +6110,9 @@ class ConvertUnpackOp : public OpRewritePattern<TF::UnpackOp> {
 
   LogicalResult matchAndRewrite(TF::UnpackOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_132_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_132(mht_132_v, 6113, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     auto value_type = op.value().getType().dyn_cast<RankedTensorType>();
     if (!value_type) return failure();
 
@@ -5591,6 +6158,9 @@ class ConvertUnpackOpDynamic : public OpRewritePattern<TF::UnpackOp> {
 
   LogicalResult matchAndRewrite(TF::UnpackOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_133_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_133(mht_133_v, 6161, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     auto value_type = op.value().getType().dyn_cast<RankedTensorType>();
     if (!value_type) return failure();
     // TODO(disc): Remove this constraint once fold and canonicalization
@@ -5689,6 +6259,9 @@ class ConvertSigmoidGradOpDynamic : public OpRewritePattern<TF::SigmoidGradOp> {
 
   LogicalResult matchAndRewrite(TF::SigmoidGradOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_134_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_134(mht_134_v, 6262, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     Location loc = op.getLoc();
     Value y = op.y();
     Value dy = op.dy();
@@ -5746,6 +6319,9 @@ class GenericConvertUnsortedSegmentReductionOp : public OpRewritePattern<OpTy> {
 
   LogicalResult matchAndRewrite(OpTy op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_135_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_135(mht_135_v, 6322, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     auto data_type = op.data().getType().template dyn_cast<RankedTensorType>();
     if (!data_type) return failure();
     int64_t data_rank = data_type.getRank();
@@ -5807,6 +6383,9 @@ class ConvertUnsortedSegmentMaxOp
 
   static Value GetInitialValue(Type reduce_element_type, Location loc,
                                PatternRewriter *rewriter) {
+   std::vector<std::string> mht_136_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_136(mht_136_v, 6386, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetInitialValue");
+
     return GetScalarLimitConstOfType(reduce_element_type, loc, hlo::kLowest,
                                      rewriter);
   }
@@ -5821,6 +6400,9 @@ class ConvertUnsortedSegmentMinOp
 
   static Value GetInitialValue(Type reduce_element_type, Location loc,
                                PatternRewriter *rewriter) {
+   std::vector<std::string> mht_137_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_137(mht_137_v, 6403, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetInitialValue");
+
     return GetScalarLimitConstOfType(reduce_element_type, loc, hlo::kMax,
                                      rewriter);
   }
@@ -5835,6 +6417,9 @@ class ConvertUnsortedSegmentProdOp
 
   static Value GetInitialValue(Type reduce_element_type, Location loc,
                                PatternRewriter *rewriter) {
+   std::vector<std::string> mht_138_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_138(mht_138_v, 6420, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetInitialValue");
+
     return GetScalarConstOfType(reduce_element_type, loc, 1, rewriter);
   }
 };
@@ -5848,6 +6433,9 @@ class ConvertUnsortedSegmentSumOp
 
   static Value GetInitialValue(Type reduce_element_type, Location loc,
                                PatternRewriter *rewriter) {
+   std::vector<std::string> mht_139_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_139(mht_139_v, 6436, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "GetInitialValue");
+
     return GetScalarConstOfType(reduce_element_type, loc, 0, rewriter);
   }
 };
@@ -5866,6 +6454,9 @@ class ConvertRandomShuffleOp : public OpRewritePattern<TF::RandomShuffleOp> {
 
   LogicalResult matchAndRewrite(TF::RandomShuffleOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_140_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_140(mht_140_v, 6457, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     auto input_type = op.value().getType().dyn_cast<RankedTensorType>();
     if (!input_type) return failure();
 
@@ -5955,6 +6546,9 @@ class ConvertRandomShuffleOp : public OpRewritePattern<TF::RandomShuffleOp> {
     auto swap_body_fn = [&](Location loc, Value i, ArrayRef<Value> old_values,
                             SmallVectorImpl<Value> *new_values,
                             OpBuilder *builder) {
+   std::vector<std::string> mht_141_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_141(mht_141_v, 6549, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "lambda");
+
       Value swaps = old_values[0];
       Value indices = old_values[1];
 
@@ -6023,6 +6617,9 @@ class ConvertXlaShardingOp : public OpRewritePattern<TF::XlaShardingOp> {
 
   LogicalResult matchAndRewrite(TF::XlaShardingOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_142_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_142(mht_142_v, 6620, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     // TODO(b/148313088): define sharding attribute struct in MLIR intead of
     // using a string.
     if (!op._XlaSharding().hasValue()) return failure();
@@ -6047,6 +6644,9 @@ class ConvertInplaceUpdateOp : public OpRewritePattern<TF::InplaceUpdateOp> {
 
   LogicalResult matchAndRewrite(TF::InplaceUpdateOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_143_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_143(mht_143_v, 6647, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     auto input = op.x();
     auto indices = op.i();
     auto updates = op.v();
@@ -6113,6 +6713,9 @@ class ConvertXlaDynamicUpdateSliceOp
 
   LogicalResult matchAndRewrite(TF::XlaDynamicUpdateSliceOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_144_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_144(mht_144_v, 6716, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     auto indices_type = op.indices().getType().dyn_cast<RankedTensorType>();
     if (!indices_type || !indices_type.hasStaticShape() ||
         indices_type.getShape().size() != 1)
@@ -6137,6 +6740,9 @@ class ConvertXlaReduceScatterOp
 
   LogicalResult matchAndRewrite(TF::XlaReduceScatterOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_145_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_145(mht_145_v, 6743, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     DenseIntElementsAttr group_assignment;
     if (!matchPattern(op.group_assignment(), m_Constant(&group_assignment)))
       return failure();
@@ -6203,6 +6809,9 @@ class ConvertXlaReduceWindowOp
 
   LogicalResult matchAndRewrite(TF::XlaReduceWindowOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_146_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_146(mht_146_v, 6812, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     DenseElementsAttr window_dimensions, window_strides, base_dilations,
         window_dilations, padding;
     if (!(matchPattern(op.window_dimensions(),
@@ -6250,6 +6859,9 @@ class ConvertClipByValueOp : public OpRewritePattern<TF::ClipByValueOp> {
 
   LogicalResult matchAndRewrite(TF::ClipByValueOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_147_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_147(mht_147_v, 6862, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     Value input = op.t();
     Value min = op.clip_value_min();
     Value max = op.clip_value_max();
@@ -6290,6 +6902,9 @@ class ConvertConstOp : public OpRewritePattern<TF::ConstOp> {
 
   LogicalResult matchAndRewrite(TF::ConstOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_148_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_148(mht_148_v, 6905, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     // Convert only for valid HLO tensors.
     auto ty = op.getType().dyn_cast<TensorType>();
     if (!ty || !ty.getElementType().isa<FloatType, IntegerType, ComplexType>())
@@ -6315,6 +6930,9 @@ class ConvertCumOp : public OpRewritePattern<OpT> {
 
   LogicalResult matchAndRewrite(OpT op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_149_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_149(mht_149_v, 6933, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     auto input = op.x();
     auto input_type = input.getType().template dyn_cast<ShapedType>();
     if (!input_type || !input_type.hasStaticShape()) {
@@ -6426,6 +7044,9 @@ class ConvertShapeOp : public OpRewritePattern<TF::ShapeOp> {
 
   LogicalResult matchAndRewrite(TF::ShapeOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_150_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_150(mht_150_v, 7047, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     Value input = op.input();
 
     auto result_ty = op.getResult().getType().dyn_cast<RankedTensorType>();
@@ -6448,6 +7069,9 @@ class ConvertDynamicExpandDimsOp : public OpRewritePattern<TF::ExpandDimsOp> {
 
   LogicalResult matchAndRewrite(TF::ExpandDimsOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_151_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_151(mht_151_v, 7072, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     auto input = op.input();
     auto input_ty = input.getType().cast<ShapedType>();
     auto result_ty = op.getType().cast<ShapedType>();
@@ -6505,6 +7129,9 @@ class ConvertDynamicSqueezeOp : public OpRewritePattern<TF::SqueezeOp> {
 
   LogicalResult matchAndRewrite(TF::SqueezeOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_152_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_152(mht_152_v, 7132, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     auto input = op.input();
     auto input_ty = input.getType().cast<ShapedType>();
     auto result_ty = op.getType().cast<ShapedType>();
@@ -6555,6 +7182,9 @@ class ConvertQrOp : public OpRewritePattern<TF::QrOp> {
 
   LogicalResult matchAndRewrite(TF::QrOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_153_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_153(mht_153_v, 7185, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     // Block Householder QR Factorization. Algorithm 5.2.2 of Golub and van
     // Loan. def qr_blocked(a, block_size):
     //   m = a.shape[0]
@@ -6673,6 +7303,9 @@ class ConvertQrOp : public OpRewritePattern<TF::QrOp> {
   void House(Location loc, Value x, Value k, ArrayRef<int64_t> batch_dims,
              const int64_t m, OpBuilder *builder, Value *v, Value *tau,
              Value *beta) const {
+   std::vector<std::string> mht_154_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_154(mht_154_v, 7306, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "House");
+
     auto x_type = x.getType().cast<RankedTensorType>();
 
     llvm::SmallVector<int64_t, 4> batch_dim_ids(batch_dims.size());
@@ -6780,6 +7413,9 @@ class ConvertQrOp : public OpRewritePattern<TF::QrOp> {
   //   return (q, vs, taus)
   void QRBlock(Location loc, Value a, Value *r, Value *taus, Value *vs,
                PatternRewriter *rewriter) const {
+   std::vector<std::string> mht_155_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_155(mht_155_v, 7416, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "QRBlock");
+
     auto a_type = a.getType().cast<RankedTensorType>();
     const int num_dims = a_type.getRank();
     assert(num_dims >= 2 && "Argument to QR must have rank >= 2");
@@ -6795,6 +7431,9 @@ class ConvertQrOp : public OpRewritePattern<TF::QrOp> {
     auto qr_body_fn = [&](Location loc, Value j, ArrayRef<Value> old_values,
                           SmallVectorImpl<Value> *new_values,
                           OpBuilder *builder) {
+   std::vector<std::string> mht_156_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_156(mht_156_v, 7434, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "lambda");
+
       auto a = old_values[0];
       auto vs = old_values[1];
       auto taus = old_values[2];
@@ -6960,12 +7599,18 @@ class ConvertQrOp : public OpRewritePattern<TF::QrOp> {
                                 ArrayRef<int64_t> batch_dims, Value vs,
                                 Value taus, int64_t m, int64_t n,
                                 PatternRewriter *rewriter) const {
+   std::vector<std::string> mht_157_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_157(mht_157_v, 7602, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "ComputeWYRepresentation");
+
     int64_t n_index = batch_dims.size() + 1;
     llvm::SmallVector<int64_t, 4> batch_dim_indices(batch_dims.size());
     std::iota(batch_dim_indices.begin(), batch_dim_indices.end(), 0);
 
     auto body_fn = [&](Location loc, Value j, ArrayRef<Value> old_values,
                        SmallVectorImpl<Value> *new_values, OpBuilder *builder) {
+   std::vector<std::string> mht_158_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_158(mht_158_v, 7611, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "lambda");
+
       // w has shape [..., m, n]
       auto w = old_values[0];
       const auto vs = old_values[1];
@@ -7051,6 +7696,9 @@ class ConvertPrintOp : public OpRewritePattern<TF::PrintOp> {
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(TF::PrintOp op,
                                 PatternRewriter &rewriter) const final {
+   std::vector<std::string> mht_159_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_159(mht_159_v, 7699, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     auto input = op.input();
     rewriter.replaceOpWithNewOp<mhlo::PrintOp>(op, op.getType(), input);
     return success();
@@ -7065,6 +7713,9 @@ class ConvertXlaSelectAndScatterOp
 
   LogicalResult matchAndRewrite(TF::XlaSelectAndScatterOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_160_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_160(mht_160_v, 7716, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     ElementsAttr window_dimensions, window_strides, padding;
     if (!(matchPattern(op.window_dimensions(),
                        m_Constant(&window_dimensions)) &&
@@ -7086,6 +7737,9 @@ class ConvertXlaSelectAndScatterOp
             .cast<DenseIntElementsAttr>());
 
     auto insert_call_to = [&](const mlir::SymbolRefAttr &func, Region *region) {
+   std::vector<std::string> mht_161_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_161(mht_161_v, 7740, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "lambda");
+
       auto func_op = cast<mlir::func::FuncOp>(SymbolTable::lookupSymbolIn(
           op->getParentOfType<mlir::ModuleOp>(), func));
       auto func_ty = func_op.getFunctionType();
@@ -7111,6 +7765,9 @@ class ConvertXlaSortOp : public OpRewritePattern<TF::XlaSortOp> {
 
   LogicalResult matchAndRewrite(TF::XlaSortOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_162_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_162(mht_162_v, 7768, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     // Create the sort op.
     Type element_type = getElementTypeOrSelf(op.input().getType());
     auto sort_op =
@@ -7142,6 +7799,9 @@ class ConvertXlaRngBitGeneratorOp
 
   LogicalResult matchAndRewrite(TF::XlaRngBitGeneratorOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_163_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_163(mht_163_v, 7802, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     Location loc = op.getLoc();
     DenseElementsAttr algorithm;
     if (!(matchPattern(op.algorithm(), m_Constant(&algorithm))) ||
@@ -7173,6 +7833,9 @@ class ConvertXlaVariadicReduceV2Op
 
   LogicalResult matchAndRewrite(TF::XlaVariadicReduceV2Op op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_164_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_164(mht_164_v, 7836, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     Location loc = op.getLoc();
 
     // Create the mhlo.reduce op.
@@ -7200,6 +7863,9 @@ class ConvertXlaVariadicSortOp
 
   LogicalResult matchAndRewrite(TF::XlaVariadicSortOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_165_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSlegalize_tfDTcc mht_165(mht_165_v, 7866, "", "./tensorflow/compiler/mlir/xla/transforms/legalize_tf.cc", "matchAndRewrite");
+
     Location loc = op.getLoc();
     ElementsAttr dimension;
     matchPattern(op.dimension(), m_Constant(&dimension));

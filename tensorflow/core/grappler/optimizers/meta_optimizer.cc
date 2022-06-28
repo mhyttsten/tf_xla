@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -73,6 +241,9 @@ constexpr int kDefaultMinGraphNodes = 4;
 constexpr char kGrapplerCategory[] = "Grappler";
 
 int64_t NumEdges(const GraphDef& graph) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_0(mht_0_v, 244, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "NumEdges");
+
   int64_t num_edges = 0;
   for (const auto& node : graph.node()) {
     num_edges += node.input_size();
@@ -81,6 +252,9 @@ int64_t NumEdges(const GraphDef& graph) {
 }
 
 string PrintSizesBeforeAfter(const GraphDef& before, const GraphDef& after) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_1(mht_1_v, 255, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "PrintSizesBeforeAfter");
+
   return strings::StrCat("Graph size after: ", after.node_size(), " nodes (",
                          after.node_size() - before.node_size(), "), ",
                          NumEdges(after), " edges (",
@@ -88,6 +262,9 @@ string PrintSizesBeforeAfter(const GraphDef& before, const GraphDef& after) {
 }
 
 int NumIterations(const RewriterConfig& cfg) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_2(mht_2_v, 265, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "NumIterations");
+
   return cfg.meta_optimizer_iterations() == RewriterConfig::DEFAULT_NUM_ITERS
              ? kDefaultNumberOfIterations
              : cfg.meta_optimizer_iterations();
@@ -95,6 +272,10 @@ int NumIterations(const RewriterConfig& cfg) {
 
 // Check if optimizer is allowed to run only once.
 bool IsRunOnceOptimizer(const string& name) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_3(mht_3_v, 276, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "IsRunOnceOptimizer");
+
   return name == "layout" || name == "memory_optimizer" ||
          name == "loop_optimizer" ||
          absl::StartsWith(name, "auto_mixed_precision");
@@ -106,6 +287,9 @@ bool IsRunOnceOptimizer(const string& name) {
 // optimizer, if optimizer doesn't instantiate functions.
 FunctionDefLibrary GetFunctionDefLibraryStub(
     const FunctionDefLibrary& fdef_lib) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_4(mht_4_v, 290, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "GetFunctionDefLibraryStub");
+
   FunctionDefLibrary stub;
   for (const FunctionDef& fn : fdef_lib.function()) {
     FunctionDef* fn_stub = stub.mutable_function()->Add();
@@ -119,6 +303,9 @@ FunctionDefLibrary GetFunctionDefLibraryStub(
 }
 
 uint64 DeadlineMicroSeconds(const RewriterConfig& cfg) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_5(mht_5_v, 306, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "DeadlineMicroSeconds");
+
   if (cfg.meta_optimizer_timeout_ms() <= 0) return 0;  // no deadline
   return Env::Default()->NowMicros() + cfg.meta_optimizer_timeout_ms() * 1000;
 }
@@ -126,6 +313,9 @@ uint64 DeadlineMicroSeconds(const RewriterConfig& cfg) {
 // A helper function to decide whether to enable the automatic mixed precision
 // optimizer.
 bool AutoMixedPrecisionEnabled(RewriterConfig::Toggle opt_level) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_6(mht_6_v, 316, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "AutoMixedPrecisionEnabled");
+
   if (opt_level == RewriterConfig::ON ||
       opt_level == RewriterConfig::AGGRESSIVE) {
     return true;
@@ -138,6 +328,9 @@ bool AutoMixedPrecisionEnabled(RewriterConfig::Toggle opt_level) {
 
 bool IsXlaGlobalJitOn(
     const OptimizerOptions::GlobalJitLevel& jit_level_in_session_opts) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_7(mht_7_v, 331, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "IsXlaGlobalJitOn");
+
   xla_config_registry::XlaGlobalJitLevel xla_global_jit_level =
       xla_config_registry::GetGlobalJitLevel(jit_level_in_session_opts);
   // Return true only if XLA JIT is ON for both single-gpu and multi-gpu
@@ -150,6 +343,9 @@ bool IsXlaGlobalJitOn(
 // A helper function to decide whether to enable the memory optimizer.
 bool MemoryOptimizerEnabled(RewriterConfig::MemOptType mem_opt_type,
                             bool xla_auto_clustering_on) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_8(mht_8_v, 346, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "MemoryOptimizerEnabled");
+
   // Disable the default memory optimizer when XLA JIT is ON as it hurts the
   // XLA JIT performance. The (current) XLA clustering can result in loss of
   // concurrency between kernel compute and memory copies. As such, it usually
@@ -165,6 +361,9 @@ bool MemoryOptimizerEnabled(RewriterConfig::MemOptType mem_opt_type,
 }
 
 Status GetGraphDevice(const GraphDef& g_def, std::set<std::string>* devices) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_9(mht_9_v, 364, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "GetGraphDevice");
+
   for (auto& node : g_def.node()) {
     DeviceNameUtils::ParsedName parsed_name;
     if (!DeviceNameUtils::ParseFullName(node.device(), &parsed_name)) {
@@ -186,6 +385,9 @@ Status GetGraphDevice(const GraphDef& g_def, std::set<std::string>* devices) {
   }
 
 bool MetaOptimizer::LowerControlFlow() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_10(mht_10_v, 388, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "MetaOptimizer::LowerControlFlow");
+
   if (config_proto_.experimental().executor_type() ==
       "SINGLE_THREADED_EXECUTOR")
     return false;
@@ -197,6 +399,10 @@ bool MetaOptimizer::LowerControlFlow() const {
 
 std::unique_ptr<GraphOptimizer> MetaOptimizer::MakeNewOptimizer(
     const string& optimizer, const std::set<string>& device_types) const {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("optimizer: \"" + optimizer + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_11(mht_11_v, 403, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "MetaOptimizer::MakeNewOptimizer");
+
   ConfigList plugin_configs = PluginGraphOptimizerRegistry::GetPluginConfigs(
       cfg_.use_plugin_optimizers() != RewriterConfig::OFF, device_types);
   if (optimizer == "pruning" && !plugin_configs.disable_model_pruning)
@@ -265,6 +471,9 @@ MetaOptimizer::MetaOptimizer(DeviceBase* cpu_device, const ConfigProto& cfg)
 Status MetaOptimizer::InitializeOptimizers(
     const std::set<string>& device_types,
     std::vector<std::unique_ptr<GraphOptimizer>>* optimizers) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_12(mht_12_v, 474, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "MetaOptimizer::InitializeOptimizers");
+
   if (cfg_.disable_meta_optimizer()) {
     return Status::OK();
   }
@@ -470,6 +679,9 @@ Status MetaOptimizer::InitializeOptimizers(
 Status MetaOptimizer::InitializeOptimizersByName(
     const std::set<string>& device_types,
     std::vector<std::unique_ptr<GraphOptimizer>>* optimizers) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_13(mht_13_v, 682, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "MetaOptimizer::InitializeOptimizersByName");
+
   std::set<string> initialized_custom_optimizers;
   for (const string& optimizer_name : cfg_.optimizers()) {
     auto optimizer = MakeNewOptimizer(optimizer_name, device_types);
@@ -500,6 +712,9 @@ Status MetaOptimizer::InitializeCustomGraphOptimizers(
     const std::set<string>& device_types,
     const std::set<string>& pre_initialized_optimizers,
     std::vector<std::unique_ptr<GraphOptimizer>>* optimizers) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_14(mht_14_v, 715, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "MetaOptimizer::InitializeCustomGraphOptimizers");
+
   for (const auto& optimizer_config : cfg_.custom_optimizers()) {
     if (pre_initialized_optimizers.find(optimizer_config.name()) !=
         pre_initialized_optimizers.end()) {
@@ -536,6 +751,9 @@ Status MetaOptimizer::InitializeCustomGraphOptimizers(
 Status MetaOptimizer::InitializePluginGraphOptimizers(
     const std::set<string>& device_types,
     std::vector<std::unique_ptr<GraphOptimizer>>* optimizers) const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_15(mht_15_v, 754, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "MetaOptimizer::InitializePluginGraphOptimizers");
+
   if (cfg_.use_plugin_optimizers() == RewriterConfig::OFF) return Status::OK();
   auto plugin_optimizers =
       PluginGraphOptimizerRegistry::CreateOptimizers(device_types);
@@ -547,6 +765,10 @@ Status MetaOptimizer::InitializePluginGraphOptimizers(
 
 const RewriterConfig::CustomGraphOptimizer*
 MetaOptimizer::GetCustomGraphOptimizerConfig(const string& name) const {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_16(mht_16_v, 769, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "MetaOptimizer::GetCustomGraphOptimizerConfig");
+
   for (const auto& config : cfg_.custom_optimizers()) {
     if (config.name() == name) {
       return &config;
@@ -559,6 +781,9 @@ void MetaOptimizer::InitializeVerifiers(
     std::vector<std::unique_ptr<GraphVerifier>>* inter_optimizer_verifiers,
     std::vector<std::unique_ptr<GraphVerifier>>* post_optimization_verifiers)
     const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_17(mht_17_v, 784, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "MetaOptimizer::InitializeVerifiers");
+
   if (cfg_.inter_optimizer_verifier_config().structure_verifier() ==
       VerifierConfig::ON) {
     inter_optimizer_verifiers->push_back(MakeUnique<StructureVerifier>());
@@ -571,6 +796,9 @@ void MetaOptimizer::InitializeVerifiers(
 
 void MetaOptimizer::PrintUserAndPluginConfigs(
     const std::set<string>& device_types) const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_18(mht_18_v, 799, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "MetaOptimizer::PrintUserAndPluginConfigs");
+
   if (cfg_.use_plugin_optimizers() == RewriterConfig::OFF) return;
   ConfigList plugin_cfg = PluginGraphOptimizerRegistry::GetPluginConfigs(
       cfg_.use_plugin_optimizers() != RewriterConfig::OFF, device_types);
@@ -701,6 +929,9 @@ void MetaOptimizer::PrintUserAndPluginConfigs(
 
 Status MetaOptimizer::OptimizeGraph(Cluster* cluster, GrapplerItem&& item,
                                     GraphDef* optimized_graph) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_19(mht_19_v, 932, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "MetaOptimizer::OptimizeGraph");
+
   int min_graph_nodes = cfg_.min_graph_nodes() == 0 ? kDefaultMinGraphNodes
                                                     : cfg_.min_graph_nodes();
   if (item.graph.node_size() < min_graph_nodes) {
@@ -857,6 +1088,9 @@ Status MetaOptimizer::OptimizeGraph(Cluster* cluster, GrapplerItem&& item,
 Status MetaOptimizer::RunOptimizer(
     GraphOptimizer* optimizer, Cluster* cluster, GrapplerItem* optimized_item,
     GraphDef* optimized_graph, GraphOptimizationResult* optimization_result) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_20(mht_20_v, 1091, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "MetaOptimizer::RunOptimizer");
+
   // If optimizer doesn't need a function library, we will replace it with a
   // stub before running optimization, and will put it back at the end.
   std::unique_ptr<FunctionDefLibrary> optimized_graph_function_library;
@@ -926,6 +1160,9 @@ Status MetaOptimizer::RunOptimizer(
 // Propagates `_tf_data_function` attributes from functions to their callees.
 void PropagateTFDataAttrs(const FunctionLibraryDefinition& flib,
                           FunctionDefLibrary& fdef_lib) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_21(mht_21_v, 1163, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "PropagateTFDataAttrs");
+
   // Collect functions that need the attribute in this set.
   absl::flat_hash_set<std::string> tf_data_functions;
   std::function<void(const std::string&)> collect_tf_data_functions_dfs =
@@ -982,6 +1219,9 @@ void PropagateTFDataAttrs(const FunctionLibraryDefinition& flib,
 
 Status MetaOptimizer::OptimizeConsumeItem(Cluster* cluster, GrapplerItem&& item,
                                           GraphDef* optimized_graph) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_22(mht_22_v, 1222, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "MetaOptimizer::OptimizeConsumeItem");
+
   tensorflow::metrics::ScopedCounter<2> timings(
       tensorflow::metrics::GetGraphOptimizationCounter(),
       {kGrapplerCategory, "*"});
@@ -1223,6 +1463,9 @@ Status MetaOptimizer::OptimizeConsumeItem(Cluster* cluster, GrapplerItem&& item,
 }
 
 string MetaOptimizer::GetResultString() const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_23(mht_23_v, 1466, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "MetaOptimizer::GetResultString");
+
   std::string result_string;
   for (const GraphOptimizationResult& graph_result : optimization_results_) {
     absl::StrAppend(&result_string,
@@ -1236,9 +1479,15 @@ string MetaOptimizer::GetResultString() const {
   return result_string;
 }
 
-void MetaOptimizer::PrintResult() { VLOG(1) << GetResultString(); }
+void MetaOptimizer::PrintResult() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_24(mht_24_v, 1483, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "MetaOptimizer::PrintResult");
+ VLOG(1) << GetResultString(); }
 
 bool MetaOptimizerEnabled(const ConfigProto& cfg) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_25(mht_25_v, 1488, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "MetaOptimizerEnabled");
+
   const auto& rewrite_cfg = cfg.graph_options().rewrite_options();
   if (rewrite_cfg.disable_meta_optimizer()) {
     return false;
@@ -1270,6 +1519,9 @@ bool MetaOptimizerEnabled(const ConfigProto& cfg) {
 Status RunMetaOptimizer(GrapplerItem&& item, const ConfigProto& cfg,
                         DeviceBase* cpu_device, Cluster* cluster,
                         GraphDef* optimized_graph) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_26(mht_26_v, 1522, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "RunMetaOptimizer");
+
   MetaOptimizer optimizer(cpu_device, cfg);
   optimizer.set_deadline_usec(
       DeadlineMicroSeconds(cfg.graph_options().rewrite_options()));
@@ -1284,6 +1536,10 @@ Status OptimizeGraph(
     const string& grappler_item_id,
     const GrapplerItem::OptimizationOptions& optimization_options,
     std::unique_ptr<tensorflow::Graph>* g) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("grappler_item_id: \"" + grappler_item_id + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmeta_optimizerDTcc mht_27(mht_27_v, 1540, "", "./tensorflow/core/grappler/optimizers/meta_optimizer.cc", "OptimizeGraph");
+
   if (!tensorflow::grappler::MetaOptimizerEnabled(config_proto)) {
     return Status::OK();
   }

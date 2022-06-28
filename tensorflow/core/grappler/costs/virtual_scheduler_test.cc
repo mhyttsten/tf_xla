@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -48,6 +216,9 @@ constexpr char kRecv[] = "_Recv";
 class ReadyNodeManagerTest : public ::testing::Test {
  protected:
   ReadyNodeManagerTest() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc mht_0(mht_0_v, 219, "", "./tensorflow/core/grappler/costs/virtual_scheduler_test.cc", "ReadyNodeManagerTest");
+
     // node1_ to node6_ on kCPU0, with time_ready in reverse_order.
     NodeSetUp("Node1", kConv2D, kCPU0, 6000, &node1_);
     NodeSetUp("Node2", kConv2D, kCPU0, 5000, &node2_);
@@ -60,6 +231,12 @@ class ReadyNodeManagerTest : public ::testing::Test {
   void NodeSetUp(const string& name, const string& op_name,
                  const string& device_name, const uint64 time_ready,
                  NodeDef* node) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("name: \"" + name + "\"");
+   mht_1_v.push_back("op_name: \"" + op_name + "\"");
+   mht_1_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc mht_1(mht_1_v, 237, "", "./tensorflow/core/grappler/costs/virtual_scheduler_test.cc", "NodeSetUp");
+
     node->set_name(name);
     node->set_op(op_name);
     node->set_device(device_name);
@@ -658,6 +835,9 @@ class TestVirtualScheduler : public VirtualScheduler {
             use_static_shapes, use_aggressive_shape_inference, cluster,
             ready_node_manager,
             absl::make_unique<VirtualPlacer>(cluster->GetDevices())) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc mht_2(mht_2_v, 838, "", "./tensorflow/core/grappler/costs/virtual_scheduler_test.cc", "TestVirtualScheduler");
+
     enable_mem_usage_tracking();
   }
 
@@ -671,6 +851,9 @@ class TestVirtualScheduler : public VirtualScheduler {
 class VirtualSchedulerTest : public ::testing::Test {
  protected:
   VirtualSchedulerTest() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc mht_3(mht_3_v, 854, "", "./tensorflow/core/grappler/costs/virtual_scheduler_test.cc", "VirtualSchedulerTest");
+
     // Initializes cluster_ and scheduler_.
     std::unordered_map<string, DeviceProperties> devices;
 
@@ -689,6 +872,9 @@ class VirtualSchedulerTest : public ::testing::Test {
   }
 
   DeviceProperties GetDummyCPUDevice() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc mht_4(mht_4_v, 875, "", "./tensorflow/core/grappler/costs/virtual_scheduler_test.cc", "GetDummyCPUDevice");
+
     // Create CPU with 2 cores, 4 Ghz freq, 2 GB/s mem bandwidth.
     // - 8 Gflops
     // - 2 GB/s
@@ -702,6 +888,9 @@ class VirtualSchedulerTest : public ::testing::Test {
 
   // Three Conv2Ds with only two in fetch nodes.
   void CreateGrapplerItemWithConv2Ds() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc mht_5(mht_5_v, 891, "", "./tensorflow/core/grappler/costs/virtual_scheduler_test.cc", "CreateGrapplerItemWithConv2Ds");
+
     Scope s = Scope::NewRootScope().WithDevice(kCPU0);
     auto x = ops::RandomUniform(
         s.WithOpName("x"), {batch_size_, width_, height_, depth_in_}, DT_FLOAT);
@@ -727,6 +916,9 @@ class VirtualSchedulerTest : public ::testing::Test {
 
   // A Conv2D with a variable.
   void CreateGrapplerItemWithConv2DAndVariable() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc mht_6(mht_6_v, 919, "", "./tensorflow/core/grappler/costs/virtual_scheduler_test.cc", "CreateGrapplerItemWithConv2DAndVariable");
+
     Scope s = Scope::NewRootScope().WithDevice(kCPU0);
     auto x = ops::RandomUniform(
         s.WithOpName("x"), {batch_size_, width_, height_, depth_in_}, DT_FLOAT);
@@ -745,6 +937,9 @@ class VirtualSchedulerTest : public ::testing::Test {
   }
 
   void CreateGrapplerItemWithMatmulChain() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc mht_7(mht_7_v, 940, "", "./tensorflow/core/grappler/costs/virtual_scheduler_test.cc", "CreateGrapplerItemWithMatmulChain");
+
     Scope s = Scope::NewRootScope().WithDevice(kCPU0);
     // Add control dependencies to ensure tests do not rely on specific
     // manager and the order remains consistent for the test.
@@ -776,6 +971,9 @@ class VirtualSchedulerTest : public ::testing::Test {
 
   // AddN that takes 4 tensors with 10x10x10x10.
   void CreateGrapplerItemWithAddN() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc mht_8(mht_8_v, 974, "", "./tensorflow/core/grappler/costs/virtual_scheduler_test.cc", "CreateGrapplerItemWithAddN");
+
     Scope s = Scope::NewRootScope().WithDevice(kCPU0);
     auto x = ops::RandomUniform(s.WithOpName("x"), {10, 10, 10, 10}, DT_FLOAT);
     auto y = ops::RandomUniform(s.WithOpName("y"), {10, 10, 10, 10}, DT_FLOAT);
@@ -795,6 +993,9 @@ class VirtualSchedulerTest : public ::testing::Test {
 
   // Graph with some placeholder feed nodes that are not in the fetch fan-in.
   void CreateGrapplerItemWithUnnecessaryPlaceholderNodes() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc mht_9(mht_9_v, 996, "", "./tensorflow/core/grappler/costs/virtual_scheduler_test.cc", "CreateGrapplerItemWithUnnecessaryPlaceholderNodes");
+
     Scope s = Scope::NewRootScope().WithDevice(kCPU0);
     auto unnecessary = ops::Placeholder(s.WithOpName("unnecessary"), DT_FLOAT);
     auto x = ops::Placeholder(s.WithOpName("x"), DT_FLOAT);
@@ -812,6 +1013,9 @@ class VirtualSchedulerTest : public ::testing::Test {
 
   // NoOp that takes 7 NoOps as control dependency.
   void CreateGrapplerItemWithControlDependency() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc mht_10(mht_10_v, 1016, "", "./tensorflow/core/grappler/costs/virtual_scheduler_test.cc", "CreateGrapplerItemWithControlDependency");
+
     Scope s = Scope::NewRootScope().WithDevice(kCPU0);
     std::vector<string> input_noop_names = {"x", "y", "z", "w", "u", "v", "t"};
     std::vector<Operation> input_tensors;
@@ -832,6 +1036,9 @@ class VirtualSchedulerTest : public ::testing::Test {
   }
 
   void CreateGrapplerItemWithAddFromOneTensor() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc mht_11(mht_11_v, 1039, "", "./tensorflow/core/grappler/costs/virtual_scheduler_test.cc", "CreateGrapplerItemWithAddFromOneTensor");
+
     Scope s = Scope::NewRootScope().WithDevice(kCPU0);
     auto x = tensorflow::ops::RandomUniform(
         s.WithOpName("x"), {batch_size_, width_, height_, depth_in_}, DT_FLOAT);
@@ -850,6 +1057,9 @@ class VirtualSchedulerTest : public ::testing::Test {
   }
 
   void CreateGrapplerItemWithSwitchMergeInput() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc mht_12(mht_12_v, 1060, "", "./tensorflow/core/grappler/costs/virtual_scheduler_test.cc", "CreateGrapplerItemWithSwitchMergeInput");
+
     // sw = Switch(x, pred)
     // a = Add(S:1, b)
     // m = Merge(sw:0, a)
@@ -880,6 +1090,9 @@ class VirtualSchedulerTest : public ::testing::Test {
   // FusedBN [an op with multiple outputs] with multiple consumers (including
   // control dependency).
   void CreateGrapplerItemWithBatchNorm() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc mht_13(mht_13_v, 1093, "", "./tensorflow/core/grappler/costs/virtual_scheduler_test.cc", "CreateGrapplerItemWithBatchNorm");
+
     Scope s = Scope::NewRootScope().WithDevice(kCPU0);
     auto x = ops::RandomUniform(
         s.WithOpName("x"), {batch_size_, width_, height_, depth_in_}, DT_FLOAT);
@@ -922,6 +1135,9 @@ class VirtualSchedulerTest : public ::testing::Test {
   }
 
   void CreateGrapplerItemWithSendRecv() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc mht_14(mht_14_v, 1138, "", "./tensorflow/core/grappler/costs/virtual_scheduler_test.cc", "CreateGrapplerItemWithSendRecv");
+
     const string gdef_ascii = R"EOF(
 node {
   name: "Const"
@@ -1094,6 +1310,9 @@ versions {
   }
 
   void CreateGrapplerItemWithRecvWithoutSend() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc mht_15(mht_15_v, 1313, "", "./tensorflow/core/grappler/costs/virtual_scheduler_test.cc", "CreateGrapplerItemWithRecvWithoutSend");
+
     const string gdef_ascii = R"EOF(
 node {
   name: "Recv"
@@ -1152,6 +1371,9 @@ versions {
 
   // A simple while loop
   void CreateGrapplerItemWithLoop() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc mht_16(mht_16_v, 1374, "", "./tensorflow/core/grappler/costs/virtual_scheduler_test.cc", "CreateGrapplerItemWithLoop");
+
     // Test graph produced in python using:
     /*
       with tf.Graph().as_default():
@@ -1548,6 +1770,9 @@ versions {
 
   // A simple while loop strengthened with Switch outputs xxx.
   void CreateGrapplerItemWithLoopAnnotated() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc mht_17(mht_17_v, 1773, "", "./tensorflow/core/grappler/costs/virtual_scheduler_test.cc", "CreateGrapplerItemWithLoopAnnotated");
+
     // Test graph produced in python using:
     /*
       with tf.Graph().as_default():
@@ -2106,6 +2331,9 @@ versions {
 
   // A simple condition graph.
   void CreateGrapplerItemWithCondition() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc mht_18(mht_18_v, 2334, "", "./tensorflow/core/grappler/costs/virtual_scheduler_test.cc", "CreateGrapplerItemWithCondition");
+
     // Handcrafted test graph: a/Less -> Switch -> First/Second -> Merge.
     const string gdef_ascii = R"EOF(
 node {
@@ -2215,6 +2443,9 @@ versions {
 
   // Create a FusedBatchNorm op that has multiple output ports.
   void CreateGrapplerItemWithInterDeviceTransfers() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc mht_19(mht_19_v, 2446, "", "./tensorflow/core/grappler/costs/virtual_scheduler_test.cc", "CreateGrapplerItemWithInterDeviceTransfers");
+
     tensorflow::Scope s = tensorflow::Scope::NewRootScope().WithDevice(kCPU0);
 
     // Create a FusedBatchNorm op that has multiple output ports.
@@ -2262,10 +2493,16 @@ versions {
   }
 
   // Call this after creating grappler_item_ and setting up dependency_.
-  void InitScheduler() { TF_ASSERT_OK(scheduler_->Init(grappler_item_.get())); }
+  void InitScheduler() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc mht_20(mht_20_v, 2497, "", "./tensorflow/core/grappler/costs/virtual_scheduler_test.cc", "InitScheduler");
+ TF_ASSERT_OK(scheduler_->Init(grappler_item_.get())); }
 
   // Returns cost based on op.
   Costs SimplePredictCosts(const OpContext& op_context) const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc mht_21(mht_21_v, 2503, "", "./tensorflow/core/grappler/costs/virtual_scheduler_test.cc", "SimplePredictCosts");
+
     Costs c;
     int64_t exec_cost = 0;
     if (op_context.op_info.op() == "MatMul") {
@@ -2313,6 +2550,9 @@ versions {
   template <typename T>
   void ExpectVectorEq(const std::vector<T>& expected,
                       const std::vector<T>& test_elements) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc mht_22(mht_22_v, 2553, "", "./tensorflow/core/grappler/costs/virtual_scheduler_test.cc", "ExpectVectorEq");
+
     // Set of expected elements for an easy comparison.
     std::set<T> expected_set(expected.begin(), expected.end());
     for (const auto& element : test_elements) {
@@ -2324,6 +2564,9 @@ versions {
   // Helper method that checks the name of nodes.
   void ValidateNodeDefs(const std::vector<string>& expected,
                         const std::vector<const NodeDef*>& node_defs) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc mht_23(mht_23_v, 2567, "", "./tensorflow/core/grappler/costs/virtual_scheduler_test.cc", "ValidateNodeDefs");
+
     std::vector<string> node_names;
     std::transform(node_defs.begin(), node_defs.end(),
                    std::back_inserter(node_names),
@@ -2335,6 +2578,9 @@ versions {
   template <typename T>
   void ExpectSetEq(const std::set<T>& expected,
                    const std::set<T>& test_elements) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc mht_24(mht_24_v, 2581, "", "./tensorflow/core/grappler/costs/virtual_scheduler_test.cc", "ExpectSetEq");
+
     for (const auto& element : test_elements) {
       EXPECT_GT(expected.count(element), 0);
     }
@@ -2357,6 +2603,9 @@ versions {
       const std::vector<string>& expected_names, const int port_num_expected,
       const std::unordered_set<std::pair<const NodeDef*, int>,
                                DeviceState::NodePairHash>& mem_usage_snapshot) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc mht_25(mht_25_v, 2606, "", "./tensorflow/core/grappler/costs/virtual_scheduler_test.cc", "ValidateMemoryUsageSnapshot");
+
     std::set<std::pair<string, int>> nodes_at_peak_mem_usage;
     std::transform(
         mem_usage_snapshot.begin(), mem_usage_snapshot.end(),
@@ -2377,6 +2626,9 @@ versions {
   void ValidateDependencyChain(
       const std::unordered_map<string, int64_t>& start_times,
       const std::vector<string>& nodes_in_dependency_order) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_scheduler_testDTcc mht_26(mht_26_v, 2629, "", "./tensorflow/core/grappler/costs/virtual_scheduler_test.cc", "ValidateDependencyChain");
+
     int64_t prev_node_time = -1;
     for (const auto& node : nodes_in_dependency_order) {
       int64_t curr_node_time = start_times.at(node);

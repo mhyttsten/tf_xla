@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSquantization_utilDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSquantization_utilDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSquantization_utilDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,6 +220,9 @@ constexpr uint32_t kFractionRoundingThreshold = 0x00200000;
 
 void QuantizeMultiplier(double double_multiplier, int32_t* quantized_multiplier,
                         int* shift) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSquantization_utilDTcc mht_0(mht_0_v, 223, "", "./tensorflow/lite/kernels/internal/quantization_util.cc", "QuantizeMultiplier");
+
 #if TFLITE_SINGLE_ROUNDING
   // Single-rounding MultiplyByQuantizedMultiplier only supports positive
   // multipliers.
@@ -106,6 +277,9 @@ void QuantizeMultiplier(double double_multiplier, int32_t* quantized_multiplier,
 void QuantizeMultiplierGreaterThanOne(double double_multiplier,
                                       int32_t* quantized_multiplier,
                                       int* left_shift) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSquantization_utilDTcc mht_1(mht_1_v, 280, "", "./tensorflow/lite/kernels/internal/quantization_util.cc", "QuantizeMultiplierGreaterThanOne");
+
   TFLITE_CHECK_GT(double_multiplier, 1.);
   QuantizeMultiplier(double_multiplier, quantized_multiplier, left_shift);
   TFLITE_CHECK_GE(*left_shift, 0);
@@ -114,6 +288,9 @@ void QuantizeMultiplierGreaterThanOne(double double_multiplier,
 void QuantizeMultiplierSmallerThanOneExp(double double_multiplier,
                                          int32_t* quantized_multiplier,
                                          int* left_shift) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSquantization_utilDTcc mht_2(mht_2_v, 291, "", "./tensorflow/lite/kernels/internal/quantization_util.cc", "QuantizeMultiplierSmallerThanOneExp");
+
   TFLITE_CHECK_LT(double_multiplier, 1.);
   TFLITE_CHECK_GT(double_multiplier, 0.);
   int shift;
@@ -123,6 +300,9 @@ void QuantizeMultiplierSmallerThanOneExp(double double_multiplier,
 }
 
 int64_t IntegerFrExp(double input, int* shift) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSquantization_utilDTcc mht_3(mht_3_v, 303, "", "./tensorflow/lite/kernels/internal/quantization_util.cc", "IntegerFrExp");
+
   // Make sure our assumptions about the double layout hold.
   TFLITE_CHECK_EQ(8, sizeof(double));
 
@@ -189,6 +369,9 @@ int64_t IntegerFrExp(double input, int* shift) {
 }
 
 double DoubleFromFractionAndShift(int64_t fraction, int shift) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSquantization_utilDTcc mht_4(mht_4_v, 372, "", "./tensorflow/lite/kernels/internal/quantization_util.cc", "DoubleFromFractionAndShift");
+
   union {
     double double_value;
     uint64_t double_as_uint;
@@ -236,6 +419,9 @@ double DoubleFromFractionAndShift(int64_t fraction, int shift) {
 }
 
 double IntegerDoubleMultiply(double a, double b) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSquantization_utilDTcc mht_5(mht_5_v, 422, "", "./tensorflow/lite/kernels/internal/quantization_util.cc", "IntegerDoubleMultiply");
+
   int a_shift;
   const int64_t a_fraction = IntegerFrExp(a, &a_shift);
   int b_shift;
@@ -251,6 +437,9 @@ double IntegerDoubleMultiply(double a, double b) {
 }
 
 int IntegerDoubleCompare(double a, double b) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSquantization_utilDTcc mht_6(mht_6_v, 440, "", "./tensorflow/lite/kernels/internal/quantization_util.cc", "IntegerDoubleCompare");
+
   int a_shift;
   const int64_t a_fraction = IntegerFrExp(a, &a_shift);
   int b_shift;
@@ -282,6 +471,9 @@ int IntegerDoubleCompare(double a, double b) {
 void PreprocessSoftmaxScaling(double beta, double input_scale,
                               int input_integer_bits,
                               int32_t* quantized_multiplier, int* left_shift) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSquantization_utilDTcc mht_7(mht_7_v, 474, "", "./tensorflow/lite/kernels/internal/quantization_util.cc", "PreprocessSoftmaxScaling");
+
   // If the overall multiplier (input and beta) is large, then exp() of an
   // input difference of 1 scaled by this will be large.  In other words, we
   // can cap the multiplier and know that, when it is used, the output will be
@@ -324,6 +516,9 @@ void PreprocessLogSoftmaxScalingExp(double beta, double input_scale,
                                     int* left_shift,
                                     int32_t* reverse_scaling_divisor,
                                     int* reverse_scaling_left_shift) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSquantization_utilDTcc mht_8(mht_8_v, 519, "", "./tensorflow/lite/kernels/internal/quantization_util.cc", "PreprocessLogSoftmaxScalingExp");
+
   PreprocessSoftmaxScaling(beta, input_scale, input_integer_bits,
                            quantized_multiplier, left_shift);
 
@@ -337,6 +532,9 @@ void PreprocessLogSoftmaxScalingExp(double beta, double input_scale,
 
 int CalculateInputRadius(int input_integer_bits, int input_left_shift,
                          int total_signed_bits) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSquantization_utilDTcc mht_9(mht_9_v, 535, "", "./tensorflow/lite/kernels/internal/quantization_util.cc", "CalculateInputRadius");
+
 #ifdef TFLITE_EMULATE_FLOAT
   int64_t result = (1 << input_integer_bits) - 1;
   result <<= (total_signed_bits - input_integer_bits);
@@ -358,6 +556,9 @@ void NudgeQuantizationRange(const float min, const float max,
                             const int quant_min, const int quant_max,
                             float* nudged_min, float* nudged_max,
                             float* nudged_scale) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSquantization_utilDTcc mht_10(mht_10_v, 559, "", "./tensorflow/lite/kernels/internal/quantization_util.cc", "NudgeQuantizationRange");
+
   // This code originates from tensorflow/core/kernels/fake_quant_ops_functor.h.
   const float quant_min_float = static_cast<float>(quant_min);
   const float quant_max_float = static_cast<float>(quant_max);
@@ -378,6 +579,9 @@ void NudgeQuantizationRange(const float min, const float max,
 void FakeQuantizeArray(const float nudged_scale, const float nudged_min,
                        const float nudged_max, const float* input_data,
                        float* output_data, const float size) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSquantization_utilDTcc mht_11(mht_11_v, 582, "", "./tensorflow/lite/kernels/internal/quantization_util.cc", "FakeQuantizeArray");
+
   // This code originates from tensorflow/core/kernels/fake_quant_ops_functor.h.
   const float inv_nudged_scale = 1.0f / nudged_scale;
 
@@ -393,6 +597,9 @@ void FakeQuantizeArray(const float nudged_scale, const float nudged_min,
 }
 
 bool CheckedLog2(const float x, int* log2_result) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSquantization_utilDTcc mht_12(mht_12_v, 600, "", "./tensorflow/lite/kernels/internal/quantization_util.cc", "CheckedLog2");
+
   // Using TfLiteRound instead of std::round and std::log instead of
   // std::log2 to work around these functions being missing in a toolchain
   // used in some TensorFlow tests as of May 2018.
@@ -407,6 +614,9 @@ bool CheckedLog2(const float x, int* log2_result) {
 void QuantizeMultiplierArray(const double* effective_scales, size_t size,
                              int32_t* effective_scale_significand,
                              int* effective_shift) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSquantization_utilDTcc mht_13(mht_13_v, 617, "", "./tensorflow/lite/kernels/internal/quantization_util.cc", "QuantizeMultiplierArray");
+
   for (size_t i = 0; i < size; ++i) {
     QuantizeMultiplier(effective_scales[i], &effective_scale_significand[i],
                        &effective_shift[i]);

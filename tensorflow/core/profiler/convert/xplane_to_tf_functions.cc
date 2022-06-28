@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_tf_functionsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_tf_functionsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_tf_functionsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -60,6 +228,9 @@ std::pair<TfFunctionExecutionMode, TfFunctionCompiler> Decode(
 }
 
 double ComputeExpensiveCallPercent(const TfFunction& tf_function) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_tf_functionsDTcc mht_0(mht_0_v, 231, "", "./tensorflow/core/profiler/convert/xplane_to_tf_functions.cc", "ComputeExpensiveCallPercent");
+
   // Computes the expensiveness in terms of time (rather than count).
   uint64 total_call_time_ps = 0;
   uint64 expensive_call_time_ps = 0;
@@ -89,7 +260,10 @@ struct ActivationRecord {
         execution_mode(INVALID_MODE),
         compiler(INVALID_COMPILER),
         tracing_count(0),
-        children_duration_ps(0) {}
+        children_duration_ps(0) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_tf_functionsDTcc mht_1(mht_1_v, 264, "", "./tensorflow/core/profiler/convert/xplane_to_tf_functions.cc", "ActivationRecord");
+}
   ActivationRecord(absl::string_view name, const Timespan& timespan,
                    TfFunctionExecutionMode exe_mode,
                    TfFunctionCompiler compiler, int64_t tracing_cnt)
@@ -98,8 +272,15 @@ struct ActivationRecord {
         execution_mode(exe_mode),
         compiler(compiler),
         tracing_count(tracing_cnt),
-        children_duration_ps(0) {}
+        children_duration_ps(0) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_tf_functionsDTcc mht_2(mht_2_v, 277, "", "./tensorflow/core/profiler/convert/xplane_to_tf_functions.cc", "ActivationRecord");
+}
   std::string DebugString() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_tf_functionsDTcc mht_3(mht_3_v, 281, "", "./tensorflow/core/profiler/convert/xplane_to_tf_functions.cc", "DebugString");
+
     return absl::StrCat("{", function_name, ", ",
                         TfFunctionExecutionMode_Name(execution_mode), ", ",
                         TfFunctionCompiler_Name(compiler),
@@ -114,10 +295,19 @@ struct EntryOrExit {
   bool is_entry;        // true for entry, false for exit.
   int64_t index;        // index to the ActivationRecord.
   uint64 timestamp_ps;  // the time when this entry/exit happens.
-  EntryOrExit() : is_entry(false), index(-1), timestamp_ps(0) {}
+  EntryOrExit() : is_entry(false), index(-1), timestamp_ps(0) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_tf_functionsDTcc mht_4(mht_4_v, 299, "", "./tensorflow/core/profiler/convert/xplane_to_tf_functions.cc", "EntryOrExit");
+}
   EntryOrExit(bool is_entry, int64_t index, uint64 timestamp_ps)
-      : is_entry(is_entry), index(index), timestamp_ps(timestamp_ps) {}
+      : is_entry(is_entry), index(index), timestamp_ps(timestamp_ps) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_tf_functionsDTcc mht_5(mht_5_v, 304, "", "./tensorflow/core/profiler/convert/xplane_to_tf_functions.cc", "EntryOrExit");
+}
   std::string DebugString() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_tf_functionsDTcc mht_6(mht_6_v, 308, "", "./tensorflow/core/profiler/convert/xplane_to_tf_functions.cc", "DebugString");
+
     std::string entry_or_exit = is_entry ? "entry, " : "exit,  ";
     return absl::StrCat("{", entry_or_exit, "idx:", index,
                         ", timestamp:", timestamp_ps, "}");
@@ -126,6 +316,9 @@ struct EntryOrExit {
 
 TfFunctionCompiler CombineCompilers(TfFunctionCompiler a,
                                     TfFunctionCompiler b) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_tf_functionsDTcc mht_7(mht_7_v, 319, "", "./tensorflow/core/profiler/convert/xplane_to_tf_functions.cc", "CombineCompilers");
+
   if (a == INVALID_COMPILER) return b;
   if (b == INVALID_COMPILER) return a;
   if (a == b) return a;
@@ -134,11 +327,17 @@ TfFunctionCompiler CombineCompilers(TfFunctionCompiler a,
 
 void CombineTfFunctionMetrics(const TfFunctionMetrics& src,
                               TfFunctionMetrics* dst) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_tf_functionsDTcc mht_8(mht_8_v, 330, "", "./tensorflow/core/profiler/convert/xplane_to_tf_functions.cc", "CombineTfFunctionMetrics");
+
   dst->set_count(src.count() + dst->count());
   dst->set_self_time_ps(src.self_time_ps() + dst->self_time_ps());
 }
 
 void CombineTfFunction(const TfFunction& src, TfFunction* dst) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_tf_functionsDTcc mht_9(mht_9_v, 338, "", "./tensorflow/core/profiler/convert/xplane_to_tf_functions.cc", "CombineTfFunction");
+
   dst->set_total_tracing_count(
       std::max(src.total_tracing_count(), dst->total_tracing_count()));
   dst->set_compiler(CombineCompilers(src.compiler(), dst->compiler()));
@@ -160,6 +359,9 @@ void CombineTfFunction(const TfFunction& src, TfFunction* dst) {
 class TfFunctionExecutions {
  public:
   explicit TfFunctionExecutions(const XLineVisitor& line) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_tf_functionsDTcc mht_10(mht_10_v, 362, "", "./tensorflow/core/profiler/convert/xplane_to_tf_functions.cc", "TfFunctionExecutions");
+
     // Creates points_ and activations_ from line.
     line.ForEachEvent([&](const XEventVisitor& event) {
       absl::string_view mode;
@@ -196,6 +398,9 @@ class TfFunctionExecutions {
     // Sorts points_ in ascending order of timestamps.
     auto ascending_in_timestamp = [](const EntryOrExit& a,
                                      const EntryOrExit& b) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_tf_functionsDTcc mht_11(mht_11_v, 401, "", "./tensorflow/core/profiler/convert/xplane_to_tf_functions.cc", "lambda");
+
       return a.timestamp_ps < b.timestamp_ps;
     };
     absl::c_sort(points_, ascending_in_timestamp);
@@ -205,6 +410,9 @@ class TfFunctionExecutions {
   }
 
   std::string DebugString() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_tf_functionsDTcc mht_12(mht_12_v, 413, "", "./tensorflow/core/profiler/convert/xplane_to_tf_functions.cc", "DebugString");
+
     std::string result = "\nActivations:\n";
     for (int i = 0, end = activations_.size(); i < end; i++) {
       absl::StrAppend(&result, "[", i, "] ", activations_[i].DebugString(),
@@ -219,6 +427,9 @@ class TfFunctionExecutions {
 
   // Converts this execution history to a TfFunctionDb.
   TfFunctionDb ConvertToTfFunctionDb() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_tf_functionsDTcc mht_13(mht_13_v, 430, "", "./tensorflow/core/profiler/convert/xplane_to_tf_functions.cc", "ConvertToTfFunctionDb");
+
     TfFunctionDb result;
     for (const auto& record : activations_) {
       TfFunction* fun = &(*result.mutable_tf_functions())[record.function_name];
@@ -245,6 +456,9 @@ class TfFunctionExecutions {
 
   // Calculates the children duration of every tf-function.
   void CalculateChildrenDurations() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_tf_functionsDTcc mht_14(mht_14_v, 459, "", "./tensorflow/core/profiler/convert/xplane_to_tf_functions.cc", "CalculateChildrenDurations");
+
     std::stack<int64_t> call_stack;
     for (const auto& pt : points_) {
       if (pt.is_entry) {
@@ -274,12 +488,18 @@ class TfFunctionExecutions {
 }  // namespace
 
 std::string DebugString(const TfFunctionDb& tf_function_db) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_tf_functionsDTcc mht_15(mht_15_v, 491, "", "./tensorflow/core/profiler/convert/xplane_to_tf_functions.cc", "DebugString");
+
   std::string str;
   protobuf::TextFormat::PrintToString(tf_function_db, &str);
   return str;
 }
 
 void CombineTfFunctionDb(const TfFunctionDb& src, TfFunctionDb* dst) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_tf_functionsDTcc mht_16(mht_16_v, 500, "", "./tensorflow/core/profiler/convert/xplane_to_tf_functions.cc", "CombineTfFunctionDb");
+
   for (const auto& name_function : src.tf_functions()) {
     const auto& name = name_function.first;
     const auto& src_fun = name_function.second;
@@ -293,6 +513,9 @@ void CombineTfFunctionDb(const TfFunctionDb& src, TfFunctionDb* dst) {
 }
 
 TfFunctionDb ConvertHostThreadsXLineToTfFunctionDb(const XLineVisitor& line) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSxplane_to_tf_functionsDTcc mht_17(mht_17_v, 516, "", "./tensorflow/core/profiler/convert/xplane_to_tf_functions.cc", "ConvertHostThreadsXLineToTfFunctionDb");
+
   TfFunctionExecutions tf_function_executions = TfFunctionExecutions(line);
   return tf_function_executions.ConvertToTfFunctionDb();
 }

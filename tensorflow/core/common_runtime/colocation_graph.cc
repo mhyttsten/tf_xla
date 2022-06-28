@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -84,6 +252,9 @@ std::vector<string> DeviceTypeAndPriorityToString(
 }
 
 bool IsRefOrResource(DataType data_type) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_0(mht_0_v, 255, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "IsRefOrResource");
+
   return IsRefType(data_type) || data_type == DT_RESOURCE;
 }
 
@@ -93,11 +264,17 @@ bool IsRefOrResource(DataType data_type) {
 // e.g. VarHandleOp, _Arg. Such ops are currently no-input, single resource/ref
 // output nodes.
 bool IsRefOrResourceGeneratorNode(const Node& node) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_1(mht_1_v, 267, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "IsRefOrResourceGeneratorNode");
+
   return node.num_inputs() == 0 && node.num_outputs() == 1 &&
          IsRefOrResource(node.output_type(0));
 }
 
 bool IsExemptFromResourceInputColocation(const Node* node) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_2(mht_2_v, 275, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "IsExemptFromResourceInputColocation");
+
   // Note: Partitioned function calls, which place and partition their
   // function bodies, are exempt from this check: they forward resource and
   // ref inputs to operations that are appropriately placed, instead of
@@ -108,6 +285,9 @@ bool IsExemptFromResourceInputColocation(const Node* node) {
 }
 
 bool HasPriorities(const PrioritizedDeviceTypeVector& device_types) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_3(mht_3_v, 288, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "HasPriorities");
+
   for (const auto& prioritized_device_type : device_types) {
     if (prioritized_device_type.second != 0) return true;
   }
@@ -116,6 +296,9 @@ bool HasPriorities(const PrioritizedDeviceTypeVector& device_types) {
 
 bool ArePrioritiesSame(const PrioritizedDeviceTypeVector& a_types,
                        const PrioritizedDeviceTypeVector& b_types) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_4(mht_4_v, 299, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "ArePrioritiesSame");
+
   if (a_types.size() != b_types.size()) {
     return false;
   }
@@ -128,6 +311,10 @@ bool ArePrioritiesSame(const PrioritizedDeviceTypeVector& a_types,
 }
 
 bool IsXlaDevice(absl::string_view device_type) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("device_type: \"" + std::string(device_type.data(), device_type.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_5(mht_5_v, 315, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "IsXlaDevice");
+
   if (device_type == "XLA_CPU_JIT" || device_type == "XLA_GPU_JIT" ||
       device_type == "XLA_TPU_JIT") {
     // Symbolic XLA device.
@@ -139,6 +326,10 @@ bool IsXlaDevice(absl::string_view device_type) {
 }
 
 bool IsCompositeDevice(absl::string_view device_type) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("device_type: \"" + std::string(device_type.data(), device_type.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_6(mht_6_v, 330, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "IsCompositeDevice");
+
   return device_type == kCompositeDeviceType;
 }
 
@@ -147,6 +338,9 @@ bool IsCompositeDevice(absl::string_view device_type) {
 // they depend on the assigned device.
 // So we need a constraint model of the kind: <<node device>>: <<output_device>>
 bool HasHostMemoryOutType(const Node& node) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_7(mht_7_v, 341, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "HasHostMemoryOutType");
+
   if (!node.def().has_experimental_type()) {
     return false;
   }
@@ -166,6 +360,9 @@ bool HasHostMemoryOutType(const Node& node) {
 Status Member::SetParentAndSupportedDevices(
     const Node& node, const std::vector<DeviceType>& types,
     const DeviceNameUtils::ParsedName* local_address_spec) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_8(mht_8_v, 363, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "Member::SetParentAndSupportedDevices");
+
   int id = node.id();
   if (id < 0) {
     return errors::Internal("Placer should not be creating a Member for node: ",
@@ -177,6 +374,10 @@ Status Member::SetParentAndSupportedDevices(
 }
 
 Status Member::SetAssignedDeviceName(const string& device_name) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_9(mht_9_v, 378, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "Member::SetAssignedDeviceName");
+
   if (DeviceNameUtils::HasSomeDetails(requested_device_name_)) {
     return errors::Internal(
         "Setting assigned device name when there is a requested device set "
@@ -192,6 +393,9 @@ Status Member::SetAssignedDeviceName(const string& device_name) {
 }
 
 Status Member::SetResourceDeviceName(const Node& node) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_10(mht_10_v, 396, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "Member::SetResourceDeviceName");
+
   if (DeviceNameUtils::HasSomeDetails(requested_device_name_)) {
     return errors::Internal(
         "Setting resource device name when there is a requested device set "
@@ -212,6 +416,9 @@ Status Member::SetResourceDeviceName(const Node& node) {
 }
 
 Status Member::SetRequestedDeviceName(const Node& node) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_11(mht_11_v, 419, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "Member::SetRequestedDeviceName");
+
   if (DeviceNameUtils::HasSomeDetails(assigned_device_name_)) {
     return errors::Internal(
         "Setting requested device name when there is an assigned device set "
@@ -232,6 +439,9 @@ Status Member::SetRequestedDeviceName(const Node& node) {
 }
 
 Status Member::FillPossibleDevices(PossibleDevices* possible_device) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_12(mht_12_v, 442, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "Member::FillPossibleDevices");
+
   if (DeviceNameUtils::HasSomeDetails(assigned_device_name_)) {
     return errors::Internal(
         "Cannot fill PossibleDevices from a member that has non-empty assigned "
@@ -247,6 +457,9 @@ Status Member::FillPossibleDevices(PossibleDevices* possible_device) const {
 
 bool Member::IsEdgeFromCompositeDeviceToPhysicalDevice(
     const Member& src_root) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_13(mht_13_v, 460, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "Member::IsEdgeFromCompositeDeviceToPhysicalDevice");
+
   auto compatible_edge_from_composite_device_to_physical_device =
       [](const DeviceNameUtils::ParsedName& src_device,
          const DeviceNameUtils::ParsedName& dst_device) -> bool {
@@ -269,6 +482,9 @@ Status Member::EnsureCompatibilityAcrossResourceEdge(
     const Node& src, const Member& src_root,
     const Node& dst, /*dst_root is this*/
     bool log_device_placement) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_14(mht_14_v, 485, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "Member::EnsureCompatibilityAcrossResourceEdge");
+
   if (!DeviceNameUtils::AreCompatibleDevNames(src_root.assigned_device_name_,
                                               assigned_device_name_)) {
     return errors::InvalidArgument(
@@ -320,6 +536,9 @@ Status Member::EnsureCompatibilityAcrossResourceEdge(
 
 void Member::Merge(std::vector<Member>* tree, int x_root, int y_root,
                    Member** new_root, Member** old_root, bool dry_run) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_15(mht_15_v, 539, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "Member::Merge");
+
   Member& x_root_member = (*tree)[x_root];
   Member& y_root_member = (*tree)[y_root];
 
@@ -367,6 +586,9 @@ void Member::Merge(std::vector<Member>* tree, int x_root, int y_root,
 // members for more efficient future lookups. The vector itself is not
 // changed.
 int Member::FindAndUpdateRoot(std::vector<Member>* tree, int node_id) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_16(mht_16_v, 589, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "Member::FindAndUpdateRoot");
+
   Member& member = (*tree)[node_id];
   if (member.parent_ == node_id) {
     // member.parent is the root of this disjoint tree.  Do nothing.
@@ -379,6 +601,9 @@ int Member::FindAndUpdateRoot(std::vector<Member>* tree, int node_id) {
 }
 
 int Member::FindRoot(const std::vector<Member>& tree, int node_id) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_17(mht_17_v, 604, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "Member::FindRoot");
+
   const Member& member = tree[node_id];
   if (member.parent_ == node_id) {
     return member.parent_;
@@ -388,6 +613,9 @@ int Member::FindRoot(const std::vector<Member>& tree, int node_id) {
 
 Status Member::MergeDeviceNames(const Member& other,
                                 bool allow_soft_placement) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_18(mht_18_v, 616, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "Member::MergeDeviceNames");
+
   // Assuming the "requested is a specialization of assigned and resource
   // devices" invariant holds for this and `other`, it will hold after the
   // merges below.
@@ -420,11 +648,17 @@ Status Member::MergeDeviceNames(const Member& other,
 // Updates this to contain the intersection of the device types in
 // this and "other".
 bool Member::MergeSupportedDevices(const Member& other) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_19(mht_19_v, 651, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "Member::MergeSupportedDevices");
+
   return MergeSupportedDevices(other.supported_device_types_);
 }
 
 bool Member::MergeSupportedDevices(
     const PrioritizedDeviceTypeVector& other_devices) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_20(mht_20_v, 659, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "Member::MergeSupportedDevices");
+
   // Generate intersection with priorities.
   // Each vector contains the same device types but with different priorities.
   // The priorities are taken from the corresponding source vector.
@@ -486,6 +720,9 @@ bool Member::MergeSupportedDevices(
 }
 
 Status Member::AssignDevice(const Node& node) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_21(mht_21_v, 723, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "Member::AssignDevice");
+
   if (node.assigned_device_name_index() == assigned_device_name_index_) {
     return Status::OK();
   }
@@ -527,6 +764,9 @@ Status Member::AssignDevice(const Node& node) {
 }
 
 void Member::MaybeExcludeXlaDevices() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_22(mht_22_v, 767, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "Member::MaybeExcludeXlaDevices");
+
   for (const auto& parsed_name :
        {requested_device_name_, assigned_device_name_, resource_device_name_}) {
     // Don't exculde XLA devices from supported devices if member is explicitly
@@ -553,6 +793,9 @@ void Member::MaybeExcludeXlaDevices() {
 
 Status Member::LimitToPossibleDevices(const PossibleDevices& devices,
                                       bool allow_soft_placement) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_23(mht_23_v, 796, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "Member::LimitToPossibleDevices");
+
   TF_RETURN_IF_ERROR(DeviceNameUtils::MergeDevNames(
       &requested_device_name_, devices.requested_device_name,
       allow_soft_placement));
@@ -563,6 +806,9 @@ Status Member::LimitToPossibleDevices(const PossibleDevices& devices,
 }
 
 string Member::DebugString() const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_24(mht_24_v, 809, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "Member::DebugString");
+
   return absl::StrCat(
       "Member(assigned_device_name_index_=", assigned_device_name_index_,
       " requested_device_name_='",
@@ -579,6 +825,9 @@ string Member::DebugString() const {
 }
 
 DeviceNameUtils::ParsedName Member::GetSoftDeviceName() const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_25(mht_25_v, 828, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "Member::GetSoftDeviceName");
+
   DeviceNameUtils::ParsedName soft_device_name = requested_device_name_;
   if (!assigned_device_name_.has_type) {
     soft_device_name.type.clear();
@@ -591,6 +840,9 @@ DeviceNameUtils::ParsedName Member::GetSoftDeviceName() const {
 }
 
 DeviceNameUtils::ParsedName Member::GetPreferredSoftDeviceName() const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_26(mht_26_v, 843, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "Member::GetPreferredSoftDeviceName");
+
   DeviceNameUtils::ParsedName soft_device_name = requested_device_name_;
   if (!assigned_device_name_.has_type && !resource_device_name_.has_type) {
     soft_device_name.type.clear();
@@ -609,6 +861,9 @@ DeviceNameUtils::ParsedName Member::GetPreferredSoftDeviceName() const {
 // local process.
 static const DeviceNameUtils::ParsedName LocalAddressSpec(
     const Device* client_device, const Device* default_local_device) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_27(mht_27_v, 864, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "LocalAddressSpec");
+
   if (client_device != nullptr) {
     return DeviceNameUtils::AddressSpace(client_device->parsed_name());
   }
@@ -640,6 +895,9 @@ ColocationGraph::ColocationGraph(const Graph* graph, const FunctionStack& stack,
       default_local_device_(default_local_device),
       allow_soft_placement_(allow_soft_placement),
       log_device_placement_(log_device_placement) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_28(mht_28_v, 898, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "ColocationGraph::ColocationGraph");
+
   members_.resize(graph_.num_node_ids());
 }
 
@@ -651,6 +909,9 @@ ColocationGraph::ColocationGraph(const Graph* graph, const FunctionStack& stack,
 // NOTE: If this method returns an error, *this is left in an undefined
 // state.
 Status ColocationGraph::ColocateAllNodes() {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_29(mht_29_v, 912, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "ColocationGraph::ColocateAllNodes");
+
   // This maps from a colocation group identifier to the 'root' of that
   // colocation group.  Note that the keys in this map are StringPiece; the
   // actual strings are stored under the NodeDef.  The lifetime of this map
@@ -704,6 +965,9 @@ Status ColocationGraph::ColocateAllNodes() {
 
 Status ColocationGraph::ColocateResourceOrRefEdge(const Node* src,
                                                   const Node* dst) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_30(mht_30_v, 968, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "ColocationGraph::ColocateResourceOrRefEdge");
+
   // Colocate `src` and `dst` to maintain the invariant that nodes
   // connected by reference edges are colocated.
   int src_root_id = FindAndUpdateRoot(src->id());
@@ -734,6 +998,9 @@ Status ColocationGraph::ColocateResourceOrRefEdge(const Node* src,
 
 Status ColocationGraph::ColocateResourceAndRefEdges(
     std::unordered_set<Node*>* inspection_required) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_31(mht_31_v, 1001, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "ColocationGraph::ColocateResourceAndRefEdges");
+
   // If `node` has an input edge with reference type, add an edge from the
   // source of that edge to `node`.
   for (const Edge* edge : graph_.edges()) {
@@ -787,6 +1054,9 @@ namespace {
 // operate with TensorLists. Otherwise returns DT_INVALID.
 // TODO(b/199443424): Don't use op names, use FullType here.
 DataType GetElementDataType(const Node& node) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_32(mht_32_v, 1057, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "GetElementDataType");
+
   static absl::flat_hash_set<std::string>* tensor_list_ops =
       new absl::flat_hash_set<std::string>(
           {"TensorListReserve", "TensorListFromTensor", "EmptyTensorList",
@@ -808,6 +1078,9 @@ DataType GetElementDataType(const Node& node) {
 }  // namespace
 
 Status ColocationGraph::AddHostOnlyDataTypesConstraints() {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_33(mht_33_v, 1081, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "ColocationGraph::AddHostOnlyDataTypesConstraints");
+
   auto is_variant = [](DataType dtype) -> bool { return dtype == DT_VARIANT; };
 
   auto is_cpu_device = [](const std::pair<DeviceType, int32>& entry) -> bool {
@@ -901,6 +1174,9 @@ Status ColocationGraph::AddHostOnlyDataTypesConstraints() {
 
 Status ColocationGraph::AddInspectionConstraints(
     const std::unordered_set<Node*>& inspection_required) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_34(mht_34_v, 1177, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "ColocationGraph::AddInspectionConstraints");
+
   for (Node* node : inspection_required) {
     IOColocationGroups groups;
     TF_RETURN_IF_ERROR(
@@ -913,6 +1189,9 @@ Status ColocationGraph::AddInspectionConstraints(
 }
 
 Status ColocationGraph::Initialize() {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_35(mht_35_v, 1192, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "ColocationGraph::Initialize");
+
   TF_RETURN_IF_ERROR(InitializeMembers());
 
   std::unordered_set<Node*> inspection_required;
@@ -956,6 +1235,9 @@ std::vector<string> NodeAndBoolToString(const std::vector<NodeAndBool>& nodes) {
 // The same node can be added to multiple groups.
 Status GetGroupNodes(const IOColocationGroups& groups, const Node& node,
                      std::vector<std::vector<NodeAndBool>>* group_nodes) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_36(mht_36_v, 1238, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "GetGroupNodes");
+
   group_nodes->reserve(groups.group_devices.size());
   for (int arg_idx = 0; arg_idx < groups.input_groups.size(); ++arg_idx) {
     const Node* src;
@@ -987,6 +1269,9 @@ Status GetGroupNodes(const IOColocationGroups& groups, const Node& node,
 // Returns whether the device_type in `device_attributes` is supported.
 bool IsSupportedDeviceType(const DeviceAttributes& device_attributes,
                            const DeviceType& supported_type) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_37(mht_37_v, 1272, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "IsSupportedDeviceType");
+
   if (DeviceType(device_attributes.device_type()) == supported_type) {
     return true;
   }
@@ -997,6 +1282,9 @@ bool IsSupportedDeviceType(const DeviceAttributes& device_attributes,
 
 Status ColocationGraph::ApplyIOColocationGroups(
     const IOColocationGroups& groups, const Node& node) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_38(mht_38_v, 1285, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "ColocationGraph::ApplyIOColocationGroups");
+
   if (groups.input_groups.size() != node.num_inputs()) {
     return errors::Internal(
         "Cannot apply input/output device constraints to node ",
@@ -1058,6 +1346,9 @@ Status ColocationGraph::ColocateNodeToGroup(
     std::unordered_map<StringPiece, const Node*, StringPieceHasher>*
         colocation_group_root,
     const Node* node, StringPiece colocation_group) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_39(mht_39_v, 1349, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "ColocationGraph::ColocateNodeToGroup");
+
   const Node*& root_node = (*colocation_group_root)[colocation_group];
   if (root_node == nullptr) {
     // This is the first node of the colocation group, so
@@ -1090,6 +1381,9 @@ Status ColocationGraph::ColocateNodeToGroup(
 // NOTE: If this method returns an error, *this is left in an undefined
 // state.
 Status ColocationGraph::ColocateNodes(const Node& x, const Node& y) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_40(mht_40_v, 1384, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "ColocationGraph::ColocateNodes");
+
   int x_root = FindAndUpdateRoot(x.id());
   int y_root = FindAndUpdateRoot(y.id());
   return ColocateNodes(x, x_root, y, y_root);
@@ -1100,6 +1394,9 @@ Status ColocationGraph::ColocateNodes(const Node& x, const Node& y) {
 // graph load time.
 Status ColocationGraph::ColocateNodes(const Node& x, int x_root, const Node& y,
                                       int y_root) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_41(mht_41_v, 1397, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "ColocationGraph::ColocateNodes");
+
   if (x_root == y_root) {
     return Status::OK();
   }
@@ -1146,6 +1443,9 @@ Status ColocationGraph::ColocateNodes(const Node& x, int x_root, const Node& y,
 }
 
 Status ColocationGraph::LimitToAssignedDevice(const Node& node) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_42(mht_42_v, 1446, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "ColocationGraph::LimitToAssignedDevice");
+
   if (node.assigned_device_name_index() < 0) {
     return errors::Internal(
         "Expected an assigned node as argument to LimitToAssignedDevice but "
@@ -1160,6 +1460,9 @@ Status ColocationGraph::LimitToAssignedDevice(const Node& node) {
 void ColocationGraph::GetSoftDeviceCandidates(
     const Node& node, const Member& root_member, int root_id,
     std::vector<Device*>* possible_devices) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_43(mht_43_v, 1463, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "ColocationGraph::GetSoftDeviceCandidates");
+
   // Try to find supported devices that don't violate resource devices.
   // The soft_device_name is the same as the requested device name
   // without specifying the device type or ID (if assigned and requested
@@ -1210,6 +1513,9 @@ void ColocationGraph::GetSoftDeviceCandidates(
 
 Status ColocationGraph::LimitToPossibleDevices(const Node& node,
                                                const PossibleDevices& devices) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_44(mht_44_v, 1516, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "ColocationGraph::LimitToPossibleDevices");
+
   int root = FindAndUpdateRoot(node.id());
   Member& root_member = members_[root];
   return root_member.LimitToPossibleDevices(devices, allow_soft_placement_);
@@ -1217,6 +1523,9 @@ Status ColocationGraph::LimitToPossibleDevices(const Node& node,
 
 Status ColocationGraph::GetDevicesForNode(
     Node* node, const std::vector<Device*>** possible_devices) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_45(mht_45_v, 1526, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "ColocationGraph::GetDevicesForNode");
+
   *possible_devices = nullptr;
   const int node_root = FindAndUpdateRoot(node->id());
   if (!members_[node_root].possible_devices().empty()) {
@@ -1352,6 +1661,9 @@ Status ColocationGraph::GetDevicesForNode(
 }
 
 Status ColocationGraph::InitializeMembers() {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_46(mht_46_v, 1664, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "ColocationGraph::InitializeMembers");
+
   for (Node* node : graph_.op_nodes()) {
     Status status = InitializeMember(*node, &members_[node->id()]);
     if (!status.ok()) {
@@ -1362,6 +1674,9 @@ Status ColocationGraph::InitializeMembers() {
 }
 
 string ColocationGraph::DebugString() const {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_47(mht_47_v, 1677, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "ColocationGraph::DebugString");
+
   std::unordered_set<int> roots;
   std::vector<string> root_strings;
   for (const Node* node : graph_.nodes()) {
@@ -1379,6 +1694,9 @@ string ColocationGraph::DebugString() const {
 
 // Returns debugging info for the node referred to by 'node_root'.
 string ColocationGraph::DebugInfo(const int node_root) const {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_48(mht_48_v, 1697, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "ColocationGraph::DebugInfo");
+
   string text(
       "\nColocation Debug Info:\n"
       "Colocation group had the following types and supported devices: ");
@@ -1442,6 +1760,11 @@ string ColocationGraph::DebugInfo(const int node_root) const {
 Status ColocationGraph::InitializeMemberWithAssignedDevice(
     const string& assigned_device_name, const string& node_type,
     Member* member) {
+   std::vector<std::string> mht_49_v;
+   mht_49_v.push_back("assigned_device_name: \"" + assigned_device_name + "\"");
+   mht_49_v.push_back("node_type: \"" + node_type + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_49(mht_49_v, 1765, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "ColocationGraph::InitializeMemberWithAssignedDevice");
+
   // This node has already been assigned to a device, so we
   // respect this placement, after sanity-checking it.
   // NOTE: Since any assignment must have been performed by
@@ -1479,6 +1802,9 @@ Status ColocationGraph::InitializeMemberWithAssignedDevice(
 }
 
 Status ColocationGraph::InitializeMember(const Node& node, Member* member) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_50(mht_50_v, 1805, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "ColocationGraph::InitializeMember");
+
   TF_RETURN_IF_ERROR(member->SetParentAndSupportedDevices(
       node, device_types_, &local_address_spec_));
 
@@ -1533,6 +1859,9 @@ Status ColocationGraph::InitializeMember(const Node& node, Member* member) {
     const std::vector<Device*>& devices,
     const PrioritizedDeviceTypeVector& supported_device_types,
     const Device* default_local_device) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScolocation_graphDTcc mht_51(mht_51_v, 1862, "", "./tensorflow/core/common_runtime/colocation_graph.cc", "ColocationGraph::FilterSupportedDevices");
+
   Device* filtered_default_device = nullptr;
   PrioritizedDeviceVector prioritized_filtered_devices;
   for (const auto& supported_device_type : supported_device_types) {

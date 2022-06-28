@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSglPSruntimeDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSglPSruntimeDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSglPSruntimeDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -72,6 +240,9 @@ struct TextureF32Maker {
 
 absl::Status MakeGlTexture(const Object& object, const ObjectData& data,
                            GlTexture* gl_texture) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSglPSruntimeDTcc mht_0(mht_0_v, 243, "", "./tensorflow/lite/delegates/gpu/gl/runtime.cc", "MakeGlTexture");
+
   if (object.access == AccessType::READ_WRITE ||
       object.access == AccessType::WRITE) {
     return absl::InvalidArgumentError("Read-write textures are not supported");
@@ -130,12 +301,18 @@ struct TextureRefMaker {
 
 // Makes read-write gl texture
 absl::Status MakeGlTextureRef(const Object& object, GlTexture* gl_texture) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSglPSruntimeDTcc mht_1(mht_1_v, 304, "", "./tensorflow/lite/delegates/gpu/gl/runtime.cc", "MakeGlTextureRef");
+
   return absl::visit(TextureRefMaker{object.data_type, gl_texture},
                      object.size);
 }
 
 absl::Status MakeGlBuffer(const Object& object, const ObjectData& data,
                           GlBuffer* gl_buffer) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSglPSruntimeDTcc mht_2(mht_2_v, 313, "", "./tensorflow/lite/delegates/gpu/gl/runtime.cc", "MakeGlBuffer");
+
   if (data.size() % SizeOf(object.data_type) != 0) {
     return absl::InvalidArgumentError("Buffer size is not aligned");
   }
@@ -146,6 +323,9 @@ absl::Status MakeGlBuffer(const Object& object, const ObjectData& data,
 absl::Status MakeBindingFunc(const Object& object, uint32_t id,
                              const ObjectManager* objects,
                              std::function<absl::Status()>* binding_func) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSglPSruntimeDTcc mht_3(mht_3_v, 326, "", "./tensorflow/lite/delegates/gpu/gl/runtime.cc", "MakeBindingFunc");
+
   const uint32_t binding = object.binding;
   switch (object.object_type) {
     case ObjectType::BUFFER: {
@@ -161,7 +341,10 @@ absl::Status MakeBindingFunc(const Object& object, uint32_t id,
             absl::StrCat("Buffer ", id, " size in bytes ", ptr->bytes_size(),
                          " < requested size_in_bytes ", size_in_bytes));
       }
-      *binding_func = [=]() { return ptr->BindToIndex(binding); };
+      *binding_func = [=]() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSglPSruntimeDTcc mht_4(mht_4_v, 345, "", "./tensorflow/lite/delegates/gpu/gl/runtime.cc", "lambda");
+ return ptr->BindToIndex(binding); };
       break;
     }
     case ObjectType::TEXTURE: {
@@ -170,7 +353,10 @@ absl::Status MakeBindingFunc(const Object& object, uint32_t id,
         return absl::NotFoundError(
             absl::StrCat("Texture ", id, " is not found"));
       }
-      *binding_func = [=]() { return ptr->BindAsReadWriteImage(binding); };
+      *binding_func = [=]() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSglPSruntimeDTcc mht_5(mht_5_v, 357, "", "./tensorflow/lite/delegates/gpu/gl/runtime.cc", "lambda");
+ return ptr->BindAsReadWriteImage(binding); };
       break;
     }
     case ObjectType::UNKNOWN:
@@ -183,6 +369,9 @@ absl::Status MakeBindingFunc(const Object& object, uint32_t id,
 absl::Status MakeLateBindingFunc(const Object& object, uint32_t id,
                                  const ObjectManager* objects,
                                  std::function<absl::Status()>* binding_func) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSglPSruntimeDTcc mht_6(mht_6_v, 372, "", "./tensorflow/lite/delegates/gpu/gl/runtime.cc", "MakeLateBindingFunc");
+
   const uint32_t binding = object.binding;
   switch (object.object_type) {
     case ObjectType::BUFFER: {
@@ -192,6 +381,9 @@ absl::Status MakeLateBindingFunc(const Object& object, uint32_t id,
             absl::StrCat("Buffer ", id, " is not found"));
       }
       *binding_func = [=]() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSglPSruntimeDTcc mht_7(mht_7_v, 384, "", "./tensorflow/lite/delegates/gpu/gl/runtime.cc", "lambda");
+
         auto ptr = objects->FindBuffer(id);
         if (!ptr) {
           return absl::NotFoundError(
@@ -217,6 +409,9 @@ absl::Status MakeLateBindingFunc(const Object& object, uint32_t id,
             absl::StrCat("Texture ", id, " is not found"));
       }
       *binding_func = [=]() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSglPSruntimeDTcc mht_8(mht_8_v, 412, "", "./tensorflow/lite/delegates/gpu/gl/runtime.cc", "lambda");
+
         auto ptr = objects->FindTexture(id);
         if (!ptr) {
           return absl::NotFoundError(
@@ -244,6 +439,9 @@ Runtime::Runtime(const RuntimeOptions& options, const GpuInfo& gpu_info,
       gpu_info_(gpu_info),
       external_objects_(external_objects),
       command_queue_(command_queue) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSglPSruntimeDTcc mht_9(mht_9_v, 442, "", "./tensorflow/lite/delegates/gpu/gl/runtime.cc", "Runtime::Runtime");
+
   programs_.reserve(256);
   if (options_.bundle_readonly_objects) {
     shared_readonly_buffer_ = absl::make_unique<SharedBufferData>();
@@ -254,6 +452,9 @@ absl::Status Runtime::AddProgram(const GlShader& shader,
                                  const std::vector<Variable>& parameters,
                                  const std::vector<Object>& objects,
                                  const uint3& num_workgroups) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSglPSruntimeDTcc mht_10(mht_10_v, 455, "", "./tensorflow/lite/delegates/gpu/gl/runtime.cc", "Runtime::AddProgram");
+
   GlProgram program;
   RETURN_IF_ERROR(GlProgram::CreateWithShader(shader, &program));
 
@@ -298,6 +499,9 @@ absl::Status Runtime::AddProgram(const GlShader& shader,
 }
 
 absl::Status Runtime::AllocateInternalObject(const Object& object) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSglPSruntimeDTcc mht_11(mht_11_v, 502, "", "./tensorflow/lite/delegates/gpu/gl/runtime.cc", "Runtime::AllocateInternalObject");
+
   const ObjectRef ref = GetRef(object);
   switch (object.object_type) {
     case ObjectType::BUFFER: {
@@ -322,6 +526,9 @@ absl::Status Runtime::AllocateInternalObject(const Object& object) {
 }
 
 absl::Status Runtime::AllocateConstObject(const Object& object, uint32_t* id) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSglPSruntimeDTcc mht_12(mht_12_v, 529, "", "./tensorflow/lite/delegates/gpu/gl/runtime.cc", "Runtime::AllocateConstObject");
+
   const ObjectData* data = GetData(object);
   if (data == nullptr) {
     return absl::InternalError(
@@ -352,6 +559,9 @@ absl::Status Runtime::AllocateConstObject(const Object& object, uint32_t* id) {
 }
 
 absl::Status Runtime::PrepareForExecution() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSglPSruntimeDTcc mht_13(mht_13_v, 562, "", "./tensorflow/lite/delegates/gpu/gl/runtime.cc", "Runtime::PrepareForExecution");
+
   if (shared_readonly_buffer_ && !shared_readonly_buffer_->empty()) {
     GlBuffer shared_buffer;
     RETURN_IF_ERROR(
@@ -410,6 +620,9 @@ struct CombinedUsageRecords {
 template <typename TensorSizeT>
 void UpdateUsageRecord(TensorUsageRecord<TensorSizeT>* usage_rec,
                        size_t task_id) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSglPSruntimeDTcc mht_14(mht_14_v, 623, "", "./tensorflow/lite/delegates/gpu/gl/runtime.cc", "UpdateUsageRecord");
+
   usage_rec->first_task = std::min(usage_rec->first_task, task_id);
   usage_rec->last_task = std::max(usage_rec->last_task, task_id);
 }
@@ -460,6 +673,9 @@ struct AddUsageRecordForTextureFunc {
 // program_id.
 absl::Status AddUsageRecord(CombinedUsageRecords* usage_records,
                             const Object& object, const size_t program_id) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSglPSruntimeDTcc mht_15(mht_15_v, 676, "", "./tensorflow/lite/delegates/gpu/gl/runtime.cc", "AddUsageRecord");
+
   auto ref = GetRef(object);
   if (ref >= usage_records->usage_refs.size()) {
     usage_records->usage_refs.resize(ref + 1, kNotAssigned);
@@ -491,6 +707,9 @@ absl::Status ApplyBuffersAssignment(
     const std::vector<Object*>& global_ref_to_object_ptr,
     std::vector<ObjectRef>* global_ref_to_shared_ref,
     std::vector<Object>* shared_objects) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSglPSruntimeDTcc mht_16(mht_16_v, 710, "", "./tensorflow/lite/delegates/gpu/gl/runtime.cc", "ApplyBuffersAssignment");
+
   std::vector<ObjectRef> assigned_id_to_shared_ref(
       assignment.object_sizes.size(), kInvalidObjectRef);
   for (size_t global_ref = 0; global_ref < global_ref_to_usage_rec.size();
@@ -531,6 +750,9 @@ absl::Status ApplyTexturesAssignment(
     const std::vector<Object*>& global_ref_to_object_ptr,
     std::vector<ObjectRef>* global_ref_to_shared_ref,
     std::vector<Object>* shared_objects) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSglPSruntimeDTcc mht_17(mht_17_v, 753, "", "./tensorflow/lite/delegates/gpu/gl/runtime.cc", "ApplyTexturesAssignment");
+
   std::vector<ObjectRef> assigned_id_to_shared_ref(
       assignment.object_sizes.size(), kInvalidObjectRef);
   for (size_t global_ref = 0; global_ref < global_ref_to_usage_rec.size();
@@ -573,6 +795,9 @@ absl::Status ApplyTexturesAssignment(
 // each data type and object type.
 absl::Status Runtime::AssignInternalObjects(
     std::vector<Object>* shared_objects) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSglPSruntimeDTcc mht_18(mht_18_v, 798, "", "./tensorflow/lite/delegates/gpu/gl/runtime.cc", "Runtime::AssignInternalObjects");
+
   // Build tensor usage records, clusterized by object type and data type.
   std::map<DataType, CombinedUsageRecords> usage_records_by_data_type;
   std::vector<Object*> global_ref_to_object_ptr;
@@ -643,6 +868,9 @@ absl::Status Runtime::AssignInternalObjects(
 }
 
 absl::Status Runtime::Execute() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSglPSruntimeDTcc mht_19(mht_19_v, 871, "", "./tensorflow/lite/delegates/gpu/gl/runtime.cc", "Runtime::Execute");
+
   for (const auto& descriptor : programs_) {
     for (auto& b : descriptor.bindings) {
       RETURN_IF_ERROR(b());

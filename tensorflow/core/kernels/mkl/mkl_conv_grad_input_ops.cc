@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_conv_grad_input_opsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_conv_grad_input_opsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_conv_grad_input_opsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -68,7 +236,10 @@ struct MklConvBwdInputParams {
         native_format(native_format),
         dilations(dilations),
         padding_left(padding_left),
-        padding_right(padding_right) {}
+        padding_right(padding_right) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_conv_grad_input_opsDTcc mht_0(mht_0_v, 240, "", "./tensorflow/core/kernels/mkl/mkl_conv_grad_input_ops.cc", "MklConvBwdInputParams");
+}
 };
 
 template <typename T>
@@ -77,13 +248,19 @@ class MklConvBwdInputPrimitive : public MklPrimitive {
   explicit MklConvBwdInputPrimitive(
       const MklConvBwdInputParams& convBwdInputDims)
       : MklPrimitive(engine(engine::kind::cpu, 0)) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_conv_grad_input_opsDTcc mht_1(mht_1_v, 251, "", "./tensorflow/core/kernels/mkl/mkl_conv_grad_input_ops.cc", "MklConvBwdInputPrimitive");
+
     // Create conv bwd input primitive
     if (context_.conv_bwd_input == nullptr) {
       Setup(convBwdInputDims);
     }
   }
 
-  ~MklConvBwdInputPrimitive() {}
+  ~MklConvBwdInputPrimitive() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_conv_grad_input_opsDTcc mht_2(mht_2_v, 261, "", "./tensorflow/core/kernels/mkl/mkl_conv_grad_input_ops.cc", "~MklConvBwdInputPrimitive");
+}
 
   // Convolution backward input (data) execution.
   //   diff_src_data: output data buffer for diff_src
@@ -93,6 +270,9 @@ class MklConvBwdInputPrimitive : public MklPrimitive {
   void Execute(const T* diff_src_data, const T* filter_data,
                const T* diff_dst_data,
                std::shared_ptr<stream> bwd_input_stream) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_conv_grad_input_opsDTcc mht_3(mht_3_v, 273, "", "./tensorflow/core/kernels/mkl/mkl_conv_grad_input_ops.cc", "Execute");
+
 #ifdef DNNL_AARCH64_USE_ACL
     mutex_lock lock(primitive_execution_mu_);
 #endif
@@ -165,10 +345,16 @@ class MklConvBwdInputPrimitive : public MklPrimitive {
           conv_bwd_input(nullptr),
           diff_src_md(nullptr),
           filter_md(nullptr),
-          diff_dst_md(nullptr) {}
+          diff_dst_md(nullptr) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_conv_grad_input_opsDTcc mht_4(mht_4_v, 349, "", "./tensorflow/core/kernels/mkl/mkl_conv_grad_input_ops.cc", "ConvBwdInputContext");
+}
   };
 
   void Setup(const MklConvBwdInputParams& convBwdInputDims) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_conv_grad_input_opsDTcc mht_5(mht_5_v, 355, "", "./tensorflow/core/kernels/mkl/mkl_conv_grad_input_ops.cc", "Setup");
+
     memory::format_tag user_data_fmt;
     if (convBwdInputDims.native_format) {
       user_data_fmt =
@@ -233,12 +419,21 @@ class MklConvBwdInputPrimitive : public MklPrimitive {
 template <typename T>
 class MklConvBwdInputPrimitiveFactory : public MklPrimitiveFactory<T> {
  private:
-  MklConvBwdInputPrimitiveFactory() {}
-  ~MklConvBwdInputPrimitiveFactory() {}
+  MklConvBwdInputPrimitiveFactory() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_conv_grad_input_opsDTcc mht_6(mht_6_v, 423, "", "./tensorflow/core/kernels/mkl/mkl_conv_grad_input_ops.cc", "MklConvBwdInputPrimitiveFactory");
+}
+  ~MklConvBwdInputPrimitiveFactory() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_conv_grad_input_opsDTcc mht_7(mht_7_v, 427, "", "./tensorflow/core/kernels/mkl/mkl_conv_grad_input_ops.cc", "~MklConvBwdInputPrimitiveFactory");
+}
 
  public:
   static MklConvBwdInputPrimitive<T>* Get(
       const MklConvBwdInputParams& convBwdInputDims, bool do_not_cache) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_conv_grad_input_opsDTcc mht_8(mht_8_v, 434, "", "./tensorflow/core/kernels/mkl/mkl_conv_grad_input_ops.cc", "Get");
+
     MklConvBwdInputPrimitive<T>* conv_bwd_input = nullptr;
 
     if (do_not_cache) {  // Always allocate primitive.
@@ -260,11 +455,17 @@ class MklConvBwdInputPrimitiveFactory : public MklPrimitiveFactory<T> {
 
  private:
   static MklConvBwdInputPrimitiveFactory& GetInstance() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_conv_grad_input_opsDTcc mht_9(mht_9_v, 458, "", "./tensorflow/core/kernels/mkl/mkl_conv_grad_input_ops.cc", "GetInstance");
+
     static MklConvBwdInputPrimitiveFactory instance_;
     return instance_;
   }
 
   static string CreateKey(const MklConvBwdInputParams& convBwdInputDims) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_conv_grad_input_opsDTcc mht_10(mht_10_v, 466, "", "./tensorflow/core/kernels/mkl/mkl_conv_grad_input_ops.cc", "CreateKey");
+
     string prefix = "conv_bwd_input";
     FactoryKeyCreator key_creator;
     key_creator.AddAsKey(prefix);
@@ -282,12 +483,18 @@ class MklConvBwdInputPrimitiveFactory : public MklPrimitiveFactory<T> {
   }
 
   MklPrimitive* GetConvBwdInput(const MklConvBwdInputParams& convBwdInputDims) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_conv_grad_input_opsDTcc mht_11(mht_11_v, 486, "", "./tensorflow/core/kernels/mkl/mkl_conv_grad_input_ops.cc", "GetConvBwdInput");
+
     string key = CreateKey(convBwdInputDims);
     return this->GetOp(key);
   }
 
   void SetConvBwdInput(const MklConvBwdInputParams& convBwdInputDims,
                        MklPrimitive* op) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_conv_grad_input_opsDTcc mht_12(mht_12_v, 495, "", "./tensorflow/core/kernels/mkl/mkl_conv_grad_input_ops.cc", "SetConvBwdInput");
+
     string key = CreateKey(convBwdInputDims);
     this->SetOp(key, op);
   }
@@ -298,11 +505,20 @@ class MklConvCustomBackpropInputOp
     : public MklConvBackpropCommonOp<Device, T, is_depthwise> {
  public:
   explicit MklConvCustomBackpropInputOp(OpKernelConstruction* context)
-      : MklConvBackpropCommonOp<Device, T, is_depthwise>(context) {}
+      : MklConvBackpropCommonOp<Device, T, is_depthwise>(context) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_conv_grad_input_opsDTcc mht_13(mht_13_v, 509, "", "./tensorflow/core/kernels/mkl/mkl_conv_grad_input_ops.cc", "MklConvCustomBackpropInputOp");
+}
 
-  ~MklConvCustomBackpropInputOp() {}
+  ~MklConvCustomBackpropInputOp() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_conv_grad_input_opsDTcc mht_14(mht_14_v, 514, "", "./tensorflow/core/kernels/mkl/mkl_conv_grad_input_ops.cc", "~MklConvCustomBackpropInputOp");
+}
 
   void Compute(OpKernelContext* context) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_conv_grad_input_opsDTcc mht_15(mht_15_v, 519, "", "./tensorflow/core/kernels/mkl/mkl_conv_grad_input_ops.cc", "Compute");
+
     try {
       // Input tensors.
       const Tensor& src_tensor = MklGetInput(context, kInputIdx);
@@ -508,6 +724,9 @@ class MklConvCustomBackpropInputOp
   void ValidateMklShapes(const MklDnnShape& input_mkl_shape,
                          const MklDnnShape& filter_mkl_shape,
                          const MklDnnShape& obp_mkl_shape) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_conv_grad_input_opsDTcc mht_16(mht_16_v, 727, "", "./tensorflow/core/kernels/mkl/mkl_conv_grad_input_ops.cc", "ValidateMklShapes");
+
     // Tensor that feeds to 'Input' slot of BackpropInput is always just a shape
     // of the Tensor and never an actual tensor. So it will never be in MKL
     // layout.
@@ -518,6 +737,9 @@ class MklConvCustomBackpropInputOp
   // Get TensorFlow shape of input tensor.
   TensorShape MakeInputTfShape(OpKernelContext* context,
                                const Tensor& input_tensor) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_conv_grad_input_opsDTcc mht_17(mht_17_v, 740, "", "./tensorflow/core/kernels/mkl/mkl_conv_grad_input_ops.cc", "MakeInputTfShape");
+
     TensorShape input_tf_shape;
     CHECK_EQ(TensorShapeUtils::IsVector(input_tensor.shape()), true);
     // Conv[2D|3D]BackpropInputV2 supports both DT_INT32 and DT_INT64
@@ -530,6 +752,9 @@ class MklConvCustomBackpropInputOp
   // Get TensorFlow shape of filter tensor.
   TensorShape MakeFilterTfShape(OpKernelContext* context,
                                 const Tensor& filter_tensor) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_conv_grad_input_opsDTcc mht_18(mht_18_v, 755, "", "./tensorflow/core/kernels/mkl/mkl_conv_grad_input_ops.cc", "MakeFilterTfShape");
+
     return GetTfShape(context, kFilterIdx, native_format);
   }
 
@@ -538,16 +763,25 @@ class MklConvCustomBackpropInputOp
   TensorShape GetOutputTfShape(const TensorShape& input_shape,
                                const TensorShape& filter_shape,
                                const TensorShape& outbprop_shape) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_conv_grad_input_opsDTcc mht_19(mht_19_v, 766, "", "./tensorflow/core/kernels/mkl/mkl_conv_grad_input_ops.cc", "GetOutputTfShape");
+
     return input_shape;
   }
 
   const memory::dims& GetOutputDims(const memory::dims& fwd_input_dims,
                                     const memory::dims& fwd_filter_dims) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_conv_grad_input_opsDTcc mht_20(mht_20_v, 774, "", "./tensorflow/core/kernels/mkl/mkl_conv_grad_input_ops.cc", "GetOutputDims");
+
     return fwd_input_dims;
   }
 
   // Output layout is Tensorflow's layout in data format order.
   MklTensorFormat GetOutputFormat(const MklTensorFormat data_format) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_conv_grad_input_opsDTcc mht_21(mht_21_v, 782, "", "./tensorflow/core/kernels/mkl/mkl_conv_grad_input_ops.cc", "GetOutputFormat");
+
     return data_format;
   }
 
@@ -558,6 +792,9 @@ class MklConvCustomBackpropInputOp
                             const memory::dims& output_dims_mkl_order,
                             MklTensorFormat output_tf_format,
                             Tensor** output_tensor) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_conv_grad_input_opsDTcc mht_22(mht_22_v, 795, "", "./tensorflow/core/kernels/mkl/mkl_conv_grad_input_ops.cc", "AllocateOutputTensor");
+
     DCHECK(output_tensor != nullptr);
 
     // Output primitive descriptor for backward data is diff_src.

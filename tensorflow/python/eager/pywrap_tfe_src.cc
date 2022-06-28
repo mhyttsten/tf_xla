@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -90,6 +258,11 @@ std::unique_ptr<TFE_Op, OpDeleter> ReleaseThreadLocalOp(TFE_Context* ctx) {
 
 TFE_Op* GetOp(TFE_Context* ctx, const char* op_or_function_name,
               const char* raw_device_name, TF_Status* status) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("op_or_function_name: \"" + (op_or_function_name == nullptr ? std::string("nullptr") : std::string((char*)op_or_function_name)) + "\"");
+   mht_0_v.push_back("raw_device_name: \"" + (raw_device_name == nullptr ? std::string("nullptr") : std::string((char*)raw_device_name)) + "\"");
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_0(mht_0_v, 263, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "GetOp");
+
   auto op = ReleaseThreadLocalOp(ctx);
   if (!op) {
     op.reset(tensorflow::wrap(tensorflow::unwrap(ctx)->CreateOperation()));
@@ -103,6 +276,9 @@ TFE_Op* GetOp(TFE_Context* ctx, const char* op_or_function_name,
 }
 
 void ReturnOp(TFE_Context* ctx, TFE_Op* op) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_1(mht_1_v, 279, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "ReturnOp");
+
   if (op) {
     tensorflow::unwrap(op)->Clear();
     thread_local_eager_operation_map[ctx].reset(op);
@@ -110,6 +286,9 @@ void ReturnOp(TFE_Context* ctx, TFE_Op* op) {
 }
 
 TF_Status* ReleaseThreadLocalStatus() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_2(mht_2_v, 289, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "ReleaseThreadLocalStatus");
+
   if (thread_local_tf_status == nullptr) {
     return nullptr;
   }
@@ -117,7 +296,10 @@ TF_Status* ReleaseThreadLocalStatus() {
 }
 
 struct InputInfo {
-  InputInfo(int i, bool is_list) : i(i), is_list(is_list) {}
+  InputInfo(int i, bool is_list) : i(i), is_list(is_list) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_3(mht_3_v, 300, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "InputInfo");
+}
 
   int i;
   bool is_list = false;
@@ -139,6 +321,9 @@ tensorflow::gtl::FlatMap<string, AttrToInputsMap*>* GetAllAttrToInputsMaps() {
 
 // This function doesn't use a lock, since we depend on the GIL directly.
 AttrToInputsMap* GetAttrToInputsMapHoldingGIL(const tensorflow::OpDef& op_def) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_4(mht_4_v, 324, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "GetAttrToInputsMapHoldingGIL");
+
 #if PY_MAJOR_VERSION >= 3 && PY_MINOR_VERSION >= 4
   DCHECK(PyGILState_Check())
       << "This function needs to hold the GIL when called.";
@@ -173,6 +358,9 @@ AttrToInputsMap* GetAttrToInputsMapHoldingGIL(const tensorflow::OpDef& op_def) {
 tensorflow::gtl::FlatMap<
     string, tensorflow::gtl::FlatMap<string, tensorflow::DataType>*>*
 GetAllAttrToDefaultsMaps() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_5(mht_5_v, 361, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "GetAllAttrToDefaultsMaps");
+
   static auto* all_attr_to_defaults_maps = new tensorflow::gtl::FlatMap<
       string, tensorflow::gtl::FlatMap<string, tensorflow::DataType>*>;
   return all_attr_to_defaults_maps;
@@ -180,6 +368,9 @@ GetAllAttrToDefaultsMaps() {
 
 tensorflow::gtl::FlatMap<string, tensorflow::DataType>*
 GetAttrToDefaultsMapHoldingGIL(const tensorflow::OpDef& op_def) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_6(mht_6_v, 371, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "GetAttrToDefaultsMapHoldingGIL");
+
 #if PY_MAJOR_VERSION >= 3 && PY_MINOR_VERSION >= 4
   DCHECK(PyGILState_Check())
       << "This function needs to hold the GIL when called.";
@@ -284,6 +475,9 @@ Py_ssize_t TensorShapeNumDims(PyObject* value) {
 }
 
 bool IsInteger(PyObject* py_value) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_7(mht_7_v, 478, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "IsInteger");
+
 #if PY_MAJOR_VERSION >= 3
   return PyLong_Check(py_value);
 #else
@@ -295,6 +489,10 @@ bool IsInteger(PyObject* py_value) {
 // value to be -1 in that case.
 bool ParseDimensionValue(const string& key, PyObject* py_value,
                          TF_Status* status, int64_t* value) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_8(mht_8_v, 493, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "ParseDimensionValue");
+
   if (IsInteger(py_value)) {
     return ParseInt64Value(key, py_value, status, value);
   }
@@ -321,6 +519,10 @@ bool ParseDimensionValue(const string& key, PyObject* py_value,
 
 bool ParseStringValue(const string& key, PyObject* py_value, TF_Status* status,
                       tensorflow::StringPiece* value) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_9(mht_9_v, 523, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "ParseStringValue");
+
   if (PyBytes_Check(py_value)) {
     Py_ssize_t size = 0;
     char* buf = nullptr;
@@ -347,6 +549,11 @@ bool ParseStringValue(const string& key, PyObject* py_value, TF_Status* status,
 
 bool ParseBoolValue(const string& key, PyObject* py_value, TF_Status* status,
                     unsigned char* value) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("key: \"" + key + "\"");
+   mht_10_v.push_back("value: \"" + (value == nullptr ? std::string("nullptr") : std::string((char*)value)) + "\"");
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_10(mht_10_v, 554, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "ParseBoolValue");
+
   if (PyBool_Check(py_value)) {
     *value = PyObject_IsTrue(py_value);
     return true;
@@ -363,6 +570,10 @@ bool ParseBoolValue(const string& key, PyObject* py_value, TF_Status* status,
 // dtypes.DType or an int.
 bool ParseTypeValue(const string& key, PyObject* py_value, TF_Status* status,
                     int* value) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_11(mht_11_v, 574, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "ParseTypeValue");
+
   if (IsInteger(py_value)) {
     return ParseIntValue(key, py_value, status, value);
   }
@@ -386,6 +597,10 @@ bool SetOpAttrList(TFE_Context* ctx, TFE_Op* op, const char* key,
                    PyObject* py_list, TF_AttrType type,
                    tensorflow::gtl::FlatMap<string, int64_t>* attr_list_sizes,
                    TF_Status* status) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("key: \"" + (key == nullptr ? std::string("nullptr") : std::string((char*)key)) + "\"");
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_12(mht_12_v, 601, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "SetOpAttrList");
+
   if (!PySequence_Check(py_list)) {
     TF_SetStatus(
         status, TF_INVALID_ARGUMENT,
@@ -535,6 +750,9 @@ bool SetOpAttrList(TFE_Context* ctx, TFE_Op* op, const char* key,
 
 TFE_Op* GetFunc(TFE_Context* ctx, const tensorflow::NameAttrList& func,
                 TF_Status* status) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_13(mht_13_v, 753, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "GetFunc");
+
   TFE_Op* func_op = TFE_NewOp(ctx, func.name().data(), status);
   for (const auto& attr : func.attr()) {
     if (!status->status.ok()) return nullptr;
@@ -549,6 +767,10 @@ void SetOpAttrListDefault(
     const char* key, TF_AttrType type,
     tensorflow::gtl::FlatMap<string, int64_t>* attr_list_sizes,
     TF_Status* status) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("key: \"" + (key == nullptr ? std::string("nullptr") : std::string((char*)key)) + "\"");
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_14(mht_14_v, 771, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "SetOpAttrListDefault");
+
   if (type == TF_ATTR_STRING) {
     int num_values = attr.default_value().list().s_size();
     std::unique_ptr<const void*[]> values(new const void*[num_values]);
@@ -643,6 +865,10 @@ bool SetOpAttrScalar(TFE_Context* ctx, TFE_Op* op, const char* key,
                      PyObject* py_value, TF_AttrType type,
                      tensorflow::gtl::FlatMap<string, int64_t>* attr_list_sizes,
                      TF_Status* status) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("key: \"" + (key == nullptr ? std::string("nullptr") : std::string((char*)key)) + "\"");
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_15(mht_15_v, 869, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "SetOpAttrScalar");
+
   if (type == TF_ATTR_STRING) {
     tensorflow::StringPiece value;
     if (!ParseStringValue(key, py_value, status, &value)) return false;
@@ -743,6 +969,10 @@ void SetOpAttrScalarDefault(
     const char* attr_name,
     tensorflow::gtl::FlatMap<string, int64_t>* attr_list_sizes,
     TF_Status* status) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_16(mht_16_v, 973, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "SetOpAttrScalarDefault");
+
   SetOpAttrValueScalar(ctx, op, default_value, attr_name, status);
   if (default_value.value_case() == tensorflow::AttrValue::kI) {
     (*attr_list_sizes)[attr_name] = default_value.i();
@@ -753,6 +983,9 @@ void SetOpAttrScalarDefault(
 // processed.
 void SetOpAttrs(TFE_Context* ctx, TFE_Op* op, PyObject* attrs, int start_index,
                 TF_Status* out_status) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_17(mht_17_v, 986, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "SetOpAttrs");
+
   if (attrs == Py_None) return;
   Py_ssize_t len = PyTuple_GET_SIZE(attrs) - start_index;
   if ((len & 1) != 0) {
@@ -792,6 +1025,10 @@ void SetOpAttrWithDefaults(
     const char* attr_name, PyObject* attr_value,
     tensorflow::gtl::FlatMap<string, int64_t>* attr_list_sizes,
     TF_Status* status) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_18(mht_18_v, 1029, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "SetOpAttrWithDefaults");
+
   unsigned char is_list = 0;
   const TF_AttrType type = TFE_OpGetAttrType(op, attr_name, &is_list, status);
   if (!status->status.ok()) return;
@@ -815,6 +1052,9 @@ void SetOpAttrWithDefaults(
 }
 
 PyObject* GetPythonObjectFromInt(int num) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_19(mht_19_v, 1055, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "GetPythonObjectFromInt");
+
 #if PY_MAJOR_VERSION >= 3
   return PyLong_FromLong(num);
 #else
@@ -843,13 +1083,19 @@ static std::atomic<int64_t> _uid;
 // thread_local in the space where now-destroyed marker used to be.
 // Hopefully creating new thread_locals while destructing a thread is rare.
 struct ThreadLocalDestructionMarker {
-  ~ThreadLocalDestructionMarker() { alive = false; }
+  ~ThreadLocalDestructionMarker() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_20(mht_20_v, 1087, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "~ThreadLocalDestructionMarker");
+ alive = false; }
   bool alive = true;
 };
 
 }  // namespace
 
 TF_Status* GetStatus() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_21(mht_21_v, 1096, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "GetStatus");
+
   TF_Status* maybe_status = ReleaseThreadLocalStatus();
   if (maybe_status) {
     TF_SetStatus(maybe_status, TF_OK, "");
@@ -860,6 +1106,9 @@ TF_Status* GetStatus() {
 }
 
 void ReturnStatus(TF_Status* status) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_22(mht_22_v, 1109, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "ReturnStatus");
+
   TF_SetStatus(status, TF_OK, "");
   thread_local_tf_status.reset(status);
 }
@@ -868,6 +1117,11 @@ void TFE_Py_Execute(TFE_Context* ctx, const char* device_name,
                     const char* op_name, TFE_InputTensorHandles* inputs,
                     PyObject* attrs, TFE_OutputTensorHandles* outputs,
                     TF_Status* out_status) {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("device_name: \"" + (device_name == nullptr ? std::string("nullptr") : std::string((char*)device_name)) + "\"");
+   mht_23_v.push_back("op_name: \"" + (op_name == nullptr ? std::string("nullptr") : std::string((char*)op_name)) + "\"");
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_23(mht_23_v, 1122, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_Execute");
+
   TFE_Py_ExecuteCancelable(ctx, device_name, op_name, inputs, attrs,
                            /*cancellation_manager=*/nullptr, outputs,
                            out_status);
@@ -879,6 +1133,11 @@ void TFE_Py_ExecuteCancelable(TFE_Context* ctx, const char* device_name,
                               TFE_CancellationManager* cancellation_manager,
                               TFE_OutputTensorHandles* outputs,
                               TF_Status* out_status) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("device_name: \"" + (device_name == nullptr ? std::string("nullptr") : std::string((char*)device_name)) + "\"");
+   mht_24_v.push_back("op_name: \"" + (op_name == nullptr ? std::string("nullptr") : std::string((char*)op_name)) + "\"");
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_24(mht_24_v, 1138, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_ExecuteCancelable");
+
   tensorflow::profiler::TraceMe activity(
       "TFE_Py_ExecuteCancelable", tensorflow::profiler::TraceMeLevel::kInfo);
 
@@ -920,6 +1179,9 @@ void TFE_Py_ExecuteCancelable(TFE_Context* ctx, const char* device_name,
 }
 
 PyObject* TFE_Py_RegisterExceptionClass(PyObject* e) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_25(mht_25_v, 1182, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_RegisterExceptionClass");
+
   tensorflow::mutex_lock l(exception_class_mutex);
   if (exception_class != nullptr) {
     Py_DECREF(exception_class);
@@ -938,6 +1200,9 @@ PyObject* TFE_Py_RegisterExceptionClass(PyObject* e) {
 }
 
 PyObject* TFE_Py_RegisterFallbackExceptionClass(PyObject* e) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_26(mht_26_v, 1203, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_RegisterFallbackExceptionClass");
+
   if (fallback_exception_class != nullptr) {
     Py_DECREF(fallback_exception_class);
   }
@@ -955,6 +1220,9 @@ PyObject* TFE_Py_RegisterFallbackExceptionClass(PyObject* e) {
 }
 
 PyObject* TFE_Py_RegisterGradientFunction(PyObject* e) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_27(mht_27_v, 1223, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_RegisterGradientFunction");
+
   if (gradient_function != nullptr) {
     Py_DECREF(gradient_function);
   }
@@ -972,6 +1240,9 @@ PyObject* TFE_Py_RegisterGradientFunction(PyObject* e) {
 }
 
 PyObject* TFE_Py_RegisterJVPFunction(PyObject* e) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_28(mht_28_v, 1243, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_RegisterJVPFunction");
+
   if (forward_gradient_function != nullptr) {
     Py_DECREF(forward_gradient_function);
   }
@@ -989,6 +1260,10 @@ PyObject* TFE_Py_RegisterJVPFunction(PyObject* e) {
 }
 
 void RaiseFallbackException(const char* message) {
+   std::vector<std::string> mht_29_v;
+   mht_29_v.push_back("message: \"" + (message == nullptr ? std::string("nullptr") : std::string((char*)message)) + "\"");
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_29(mht_29_v, 1264, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "RaiseFallbackException");
+
   if (fallback_exception_class != nullptr) {
     PyErr_SetString(fallback_exception_class, message);
     return;
@@ -1005,6 +1280,9 @@ void RaiseFallbackException(const char* message) {
 // Format and return `status`' error message with the attached stack trace if
 // available. `status` must have an error.
 std::string FormatErrorStatusStackTrace(const tensorflow::Status& status) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_30(mht_30_v, 1283, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "FormatErrorStatusStackTrace");
+
   tensorflow::DCheckPyGilState();
   DCHECK(!status.ok());
 
@@ -1044,6 +1322,9 @@ std::string FormatErrorStatusStackTrace(const tensorflow::Status& status) {
 namespace tensorflow {
 
 int MaybeRaiseExceptionFromTFStatus(TF_Status* status, PyObject* exception) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_31(mht_31_v, 1325, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "MaybeRaiseExceptionFromTFStatus");
+
   if (status->status.ok()) return 0;
   const char* msg = TF_Message(status);
   if (exception == nullptr) {
@@ -1081,6 +1362,9 @@ int MaybeRaiseExceptionFromTFStatus(TF_Status* status, PyObject* exception) {
 
 int MaybeRaiseExceptionFromStatus(const tensorflow::Status& status,
                                   PyObject* exception) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_32(mht_32_v, 1365, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "MaybeRaiseExceptionFromStatus");
+
   if (status.ok()) return 0;
   const char* msg = status.error_message().c_str();
   if (exception == nullptr) {
@@ -1107,6 +1391,9 @@ int MaybeRaiseExceptionFromStatus(const tensorflow::Status& status,
 }
 
 const char* TFE_GetPythonString(PyObject* o) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_33(mht_33_v, 1394, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_GetPythonString");
+
 #if PY_MAJOR_VERSION >= 3
   if (PyBytes_Check(o)) {
     return PyBytes_AsString(o);
@@ -1118,11 +1405,20 @@ const char* TFE_GetPythonString(PyObject* o) {
 #endif
 }
 
-int64_t get_uid() { return _uid++; }
+int64_t get_uid() {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_34(mht_34_v, 1409, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "get_uid");
+ return _uid++; }
 
-PyObject* TFE_Py_UID() { return PyLong_FromLongLong(get_uid()); }
+PyObject* TFE_Py_UID() {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_35(mht_35_v, 1414, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_UID");
+ return PyLong_FromLongLong(get_uid()); }
 
 void TFE_DeleteContextCapsule(PyObject* context) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_36(mht_36_v, 1419, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_DeleteContextCapsule");
+
   TFE_Context* ctx =
       reinterpret_cast<TFE_Context*>(PyCapsule_GetPointer(context, nullptr));
   auto op = ReleaseThreadLocalOp(ctx);
@@ -1131,6 +1427,9 @@ void TFE_DeleteContextCapsule(PyObject* context) {
 }
 
 static int64_t MakeInt(PyObject* integer) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_37(mht_37_v, 1430, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "MakeInt");
+
 #if PY_MAJOR_VERSION >= 3
   return PyLong_AsLong(integer);
 #else
@@ -1139,6 +1438,9 @@ static int64_t MakeInt(PyObject* integer) {
 }
 
 static int64_t FastTensorId(PyObject* tensor) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_38(mht_38_v, 1441, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "FastTensorId");
+
   if (EagerTensor_CheckExact(tensor)) {
     return PyEagerTensor_ID(tensor);
   }
@@ -1153,6 +1455,9 @@ static int64_t FastTensorId(PyObject* tensor) {
 
 namespace tensorflow {
 DataType PyTensor_DataType(PyObject* tensor) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_39(mht_39_v, 1458, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "PyTensor_DataType");
+
   if (EagerTensor_CheckExact(tensor)) {
     return PyEagerTensor_Dtype(tensor);
   } else {
@@ -1185,12 +1490,21 @@ class PyTapeTensor {
  public:
   PyTapeTensor(int64_t id, tensorflow::DataType dtype,
                const tensorflow::TensorShape& shape)
-      : id_(id), dtype_(dtype), shape_(shape) {}
+      : id_(id), dtype_(dtype), shape_(shape) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_40(mht_40_v, 1494, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "PyTapeTensor");
+}
   PyTapeTensor(int64_t id, tensorflow::DataType dtype, PyObject* shape)
       : id_(id), dtype_(dtype), shape_(shape) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_41(mht_41_v, 1499, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "PyTapeTensor");
+
     Py_INCREF(absl::get<1>(shape_));
   }
   PyTapeTensor(const PyTapeTensor& other) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_42(mht_42_v, 1505, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "PyTapeTensor");
+
     id_ = other.id_;
     dtype_ = other.dtype_;
     shape_ = other.shape_;
@@ -1200,14 +1514,26 @@ class PyTapeTensor {
   }
 
   ~PyTapeTensor() {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_43(mht_43_v, 1517, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "~PyTapeTensor");
+
     if (shape_.index() == 1) {
       Py_DECREF(absl::get<1>(shape_));
     }
   }
   PyObject* GetShape() const;
-  PyObject* GetPyDType() const { return PyLong_FromLong(dtype_); }
-  int64_t GetID() const { return id_; }
-  tensorflow::DataType GetDType() const { return dtype_; }
+  PyObject* GetPyDType() const {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_44(mht_44_v, 1526, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "GetPyDType");
+ return PyLong_FromLong(dtype_); }
+  int64_t GetID() const {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_45(mht_45_v, 1530, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "GetID");
+ return id_; }
+  tensorflow::DataType GetDType() const {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_46(mht_46_v, 1534, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "GetDType");
+ return dtype_; }
 
   PyObject* OnesLike() const;
   PyObject* ZerosLike() const;
@@ -1229,10 +1555,16 @@ class PyVSpace : public tensorflow::eager::VSpace<PyObject, PyBackwardFunction,
                                                   PyTapeTensor> {
  public:
   explicit PyVSpace(PyObject* py_vspace) : py_vspace_(py_vspace) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_47(mht_47_v, 1558, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "PyVSpace");
+
     Py_INCREF(py_vspace_);
   }
 
   tensorflow::Status Initialize() {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_48(mht_48_v, 1565, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "Initialize");
+
     num_elements_ = PyObject_GetAttrString(py_vspace_, "num_elements_fn");
     if (num_elements_ == nullptr) {
       return tensorflow::errors::InvalidArgument("invalid vspace");
@@ -1265,6 +1597,9 @@ class PyVSpace : public tensorflow::eager::VSpace<PyObject, PyBackwardFunction,
   }
 
   ~PyVSpace() override {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_49(mht_49_v, 1600, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "~PyVSpace");
+
     Py_XDECREF(num_elements_);
     Py_XDECREF(aggregate_fn_);
     Py_XDECREF(zeros_fn_);
@@ -1277,6 +1612,9 @@ class PyVSpace : public tensorflow::eager::VSpace<PyObject, PyBackwardFunction,
   }
 
   int64_t NumElements(PyObject* tensor) const final {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_50(mht_50_v, 1615, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "NumElements");
+
     if (EagerTensor_CheckExact(tensor)) {
       return PyEagerTensor_NumElements(tensor);
     }
@@ -1295,6 +1633,9 @@ class PyVSpace : public tensorflow::eager::VSpace<PyObject, PyBackwardFunction,
 
   PyObject* AggregateGradients(
       tensorflow::gtl::ArraySlice<PyObject*> gradient_tensors) const final {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_51(mht_51_v, 1636, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "AggregateGradients");
+
     PyObject* list = PyList_New(gradient_tensors.size());
     for (int i = 0; i < gradient_tensors.size(); ++i) {
       // Note: stealing a reference to the gradient tensors.
@@ -1312,12 +1653,21 @@ class PyVSpace : public tensorflow::eager::VSpace<PyObject, PyBackwardFunction,
   }
 
   int64_t TensorId(PyObject* tensor) const final {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_52(mht_52_v, 1656, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TensorId");
+
     return FastTensorId(tensor);
   }
 
-  void MarkAsResult(PyObject* gradient) const final { Py_INCREF(gradient); }
+  void MarkAsResult(PyObject* gradient) const final {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_53(mht_53_v, 1663, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "MarkAsResult");
+ Py_INCREF(gradient); }
 
   PyObject* Ones(PyObject* shape, PyObject* dtype) const {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_54(mht_54_v, 1668, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "Ones");
+
     if (PyErr_Occurred()) {
       return nullptr;
     }
@@ -1328,6 +1678,9 @@ class PyVSpace : public tensorflow::eager::VSpace<PyObject, PyBackwardFunction,
   }
 
   PyObject* OnesLike(PyObject* tensor) const {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_55(mht_55_v, 1681, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "OnesLike");
+
     if (PyErr_Occurred()) {
       return nullptr;
     }
@@ -1337,11 +1690,17 @@ class PyVSpace : public tensorflow::eager::VSpace<PyObject, PyBackwardFunction,
   // Builds a tensor filled with ones with the same shape and dtype as `t`.
   Status BuildOnesLike(const PyTapeTensor& t,
                        PyObject** result) const override {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_56(mht_56_v, 1693, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "BuildOnesLike");
+
     *result = t.OnesLike();
     return Status::OK();
   }
 
   PyObject* Zeros(PyObject* shape, PyObject* dtype) const {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_57(mht_57_v, 1701, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "Zeros");
+
     if (PyErr_Occurred()) {
       return nullptr;
     }
@@ -1352,6 +1711,9 @@ class PyVSpace : public tensorflow::eager::VSpace<PyObject, PyBackwardFunction,
   }
 
   PyObject* ZerosLike(PyObject* tensor) const {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_58(mht_58_v, 1714, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "ZerosLike");
+
     if (PyErr_Occurred()) {
       return nullptr;
     }
@@ -1359,6 +1721,9 @@ class PyVSpace : public tensorflow::eager::VSpace<PyObject, PyBackwardFunction,
   }
 
   PyObject* GraphShape(PyObject* tensor) const {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_59(mht_59_v, 1724, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "GraphShape");
+
     PyObject* arg_list = Py_BuildValue("(O)", tensor);
     PyObject* result = PyEval_CallObject(graph_shape_fn_, arg_list);
     Py_DECREF(arg_list);
@@ -1370,6 +1735,10 @@ class PyVSpace : public tensorflow::eager::VSpace<PyObject, PyBackwardFunction,
       const std::vector<int64_t>& unneeded_gradients,
       tensorflow::gtl::ArraySlice<PyObject*> output_gradients,
       absl::Span<PyObject*> result) const final {
+   std::vector<std::string> mht_60_v;
+   mht_60_v.push_back("op_type: \"" + op_type + "\"");
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_60(mht_60_v, 1739, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "CallBackwardFunction");
+
     PyObject* grads = PyTuple_New(output_gradients.size());
     for (int i = 0; i < output_gradients.size(); ++i) {
       if (output_gradients[i] == nullptr) {
@@ -1414,9 +1783,15 @@ class PyVSpace : public tensorflow::eager::VSpace<PyObject, PyBackwardFunction,
     return tensorflow::Status::OK();
   }
 
-  void DeleteGradient(PyObject* tensor) const final { Py_XDECREF(tensor); }
+  void DeleteGradient(PyObject* tensor) const final {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_61(mht_61_v, 1787, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "DeleteGradient");
+ Py_XDECREF(tensor); }
 
   PyTapeTensor TapeTensorFromGradient(PyObject* tensor) const final {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_62(mht_62_v, 1792, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TapeTensorFromGradient");
+
     return TapeTensorFromTensor(tensor);
   }
 
@@ -1436,6 +1811,9 @@ PyVSpace* py_vspace = nullptr;
 bool HasAccumulator();
 
 PyObject* TFE_Py_RegisterVSpace(PyObject* e) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_63(mht_63_v, 1814, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_RegisterVSpace");
+
   if (py_vspace != nullptr) {
     if (HasAccumulator()) {
       // Accumulators reference py_vspace, so we can't swap it out while one is
@@ -1460,6 +1838,9 @@ PyObject* TFE_Py_RegisterVSpace(PyObject* e) {
 }
 
 PyObject* PyTapeTensor::GetShape() const {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_64(mht_64_v, 1841, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "PyTapeTensor::GetShape");
+
   if (shape_.index() == 0) {
     auto& shape = absl::get<0>(shape_);
     PyObject* py_shape = PyTuple_New(shape.dims());
@@ -1474,6 +1855,9 @@ PyObject* PyTapeTensor::GetShape() const {
 }
 
 PyObject* PyTapeTensor::OnesLike() const {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_65(mht_65_v, 1858, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "PyTapeTensor::OnesLike");
+
   if (shape_.index() == 1) {
     PyObject* tensor = absl::get<1>(shape_);
     return py_vspace->OnesLike(tensor);
@@ -1487,6 +1871,9 @@ PyObject* PyTapeTensor::OnesLike() const {
 }
 
 PyObject* PyTapeTensor::ZerosLike() const {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_66(mht_66_v, 1874, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "PyTapeTensor::ZerosLike");
+
   if (GetDType() == tensorflow::DT_RESOURCE) {
     // Gradient functions for ops which return resource tensors accept
     // None. This is the behavior of py_vspace->Zeros, but checking here avoids
@@ -1508,15 +1895,24 @@ PyObject* PyTapeTensor::ZerosLike() const {
 // Keeps track of all variables that have been accessed during execution.
 class VariableWatcher {
  public:
-  VariableWatcher() {}
+  VariableWatcher() {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_67(mht_67_v, 1899, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "VariableWatcher");
+}
 
   ~VariableWatcher() {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_68(mht_68_v, 1904, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "~VariableWatcher");
+
     for (const IdAndVariable& v : watched_variables_) {
       Py_DECREF(v.variable);
     }
   }
 
   int64_t WatchVariable(PyObject* v) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_69(mht_69_v, 1913, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "WatchVariable");
+
     tensorflow::Safe_PyObjectPtr handle(PyObject_GetAttrString(v, "handle"));
     if (handle == nullptr) {
       return -1;
@@ -1536,6 +1932,9 @@ class VariableWatcher {
   }
 
   PyObject* GetVariablesAsPyTuple() {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_70(mht_70_v, 1935, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "GetVariablesAsPyTuple");
+
     tensorflow::mutex_lock l(watched_variables_mu_);
     PyObject* result = PyTuple_New(watched_variables_.size());
     Py_ssize_t pos = 0;
@@ -1555,7 +1954,10 @@ class VariableWatcher {
     PyObject* variable;
 
     IdAndVariable(int64_t id, PyObject* variable)
-        : id(id), variable(variable) {}
+        : id(id), variable(variable) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_71(mht_71_v, 1958, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "IdAndVariable");
+}
   };
   struct CompareById {
     bool operator()(const IdAndVariable& lhs, const IdAndVariable& rhs) const {
@@ -1575,17 +1977,29 @@ class GradientTape
   explicit GradientTape(bool persistent, bool watch_accessed_variables)
       : tensorflow::eager::GradientTape<PyObject, PyBackwardFunction,
                                         PyTapeTensor>(persistent),
-        watch_accessed_variables_(watch_accessed_variables) {}
+        watch_accessed_variables_(watch_accessed_variables) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_72(mht_72_v, 1981, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "GradientTape");
+}
 
-  virtual ~GradientTape() {}
+  virtual ~GradientTape() {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_73(mht_73_v, 1986, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "~GradientTape");
+}
 
   void VariableAccessed(PyObject* v) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_74(mht_74_v, 1991, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "VariableAccessed");
+
     if (watch_accessed_variables_) {
       WatchVariable(v);
     }
   }
 
   void WatchVariable(PyObject* v) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_75(mht_75_v, 2000, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "WatchVariable");
+
     int64_t id = variable_watcher_.WatchVariable(v);
 
     if (!PyErr_Occurred()) {
@@ -1594,6 +2008,9 @@ class GradientTape
   }
 
   PyObject* GetVariablesAsPyTuple() {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_76(mht_76_v, 2011, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "GetVariablesAsPyTuple");
+
     return variable_watcher_.GetVariablesAsPyTuple();
   }
 
@@ -1621,6 +2038,9 @@ typedef struct {
 } TFE_Py_Tape;
 
 static void TFE_Py_Tape_Delete(PyObject* tape) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_77(mht_77_v, 2041, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_Tape_Delete");
+
   delete reinterpret_cast<TFE_Py_Tape*>(tape)->tape;
   Py_TYPE(tape)->tp_free(tape);
 }
@@ -1663,6 +2083,9 @@ typedef struct {
 } TFE_Py_ForwardAccumulator;
 
 static void TFE_Py_ForwardAccumulatorDelete(PyObject* accumulator) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_78(mht_78_v, 2086, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_ForwardAccumulatorDelete");
+
   delete reinterpret_cast<TFE_Py_ForwardAccumulator*>(accumulator)->accumulator;
   Py_TYPE(accumulator)->tp_free(accumulator);
 }
@@ -1701,6 +2124,9 @@ typedef struct {
 } TFE_Py_VariableWatcher;
 
 static void TFE_Py_VariableWatcher_Delete(PyObject* variable_watcher) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_79(mht_79_v, 2127, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_VariableWatcher_Delete");
+
   delete reinterpret_cast<TFE_Py_VariableWatcher*>(variable_watcher)
       ->variable_watcher;
   Py_TYPE(variable_watcher)->tp_free(variable_watcher);
@@ -1738,6 +2164,9 @@ static PyTypeObject TFE_Py_VariableWatcher_Type = {
 // revisit this if/when decide to not hold the GIL while manipulating the tape
 // stack.
 tensorflow::gtl::CompactPointerSet<TFE_Py_Tape*>* GetTapeSet() {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_80(mht_80_v, 2167, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "GetTapeSet");
+
   thread_local std::unique_ptr<tensorflow::gtl::CompactPointerSet<TFE_Py_Tape*>>
       tape_set;
   thread_local ThreadLocalDestructionMarker marker;
@@ -1753,6 +2182,9 @@ tensorflow::gtl::CompactPointerSet<TFE_Py_Tape*>* GetTapeSet() {
 
 tensorflow::gtl::CompactPointerSet<TFE_Py_VariableWatcher*>*
 GetVariableWatcherSet() {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_81(mht_81_v, 2185, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "GetVariableWatcherSet");
+
   thread_local std::unique_ptr<
       tensorflow::gtl::CompactPointerSet<TFE_Py_VariableWatcher*>>
       variable_watcher_set;
@@ -1781,6 +2213,9 @@ class AccumulatorSet {
  public:
   // Returns true if `element` was newly inserted, false if it already exists.
   bool insert(TFE_Py_ForwardAccumulator* element) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_82(mht_82_v, 2216, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "insert");
+
     if (map_.find(element) != map_.end()) {
       return false;
     }
@@ -1790,6 +2225,9 @@ class AccumulatorSet {
   }
 
   void erase(TFE_Py_ForwardAccumulator* element) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_83(mht_83_v, 2228, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "erase");
+
     MapType::iterator existing = map_.find(element);
     if (existing == map_.end()) {
       return;
@@ -1799,9 +2237,15 @@ class AccumulatorSet {
     ordered_.erase(list_position);
   }
 
-  bool empty() const { return ordered_.empty(); }
+  bool empty() const {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_84(mht_84_v, 2241, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "empty");
+ return ordered_.empty(); }
 
-  size_t size() const { return ordered_.size(); }
+  size_t size() const {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_85(mht_85_v, 2246, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "size");
+ return ordered_.size(); }
 
  private:
   typedef std::list<TFE_Py_ForwardAccumulator*> ListType;
@@ -1813,11 +2257,23 @@ class AccumulatorSet {
   typedef ListType::const_iterator const_iterator;
   typedef ListType::const_reverse_iterator const_reverse_iterator;
 
-  const_iterator begin() const { return ordered_.begin(); }
-  const_iterator end() const { return ordered_.end(); }
+  const_iterator begin() const {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_86(mht_86_v, 2261, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "begin");
+ return ordered_.begin(); }
+  const_iterator end() const {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_87(mht_87_v, 2265, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "end");
+ return ordered_.end(); }
 
-  const_reverse_iterator rbegin() const { return ordered_.rbegin(); }
-  const_reverse_iterator rend() const { return ordered_.rend(); }
+  const_reverse_iterator rbegin() const {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_88(mht_88_v, 2270, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "rbegin");
+ return ordered_.rbegin(); }
+  const_reverse_iterator rend() const {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_89(mht_89_v, 2274, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "rend");
+ return ordered_.rend(); }
 
  private:
   MapType map_;
@@ -1825,6 +2281,9 @@ class AccumulatorSet {
 };
 
 AccumulatorSet* GetAccumulatorSet() {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_90(mht_90_v, 2284, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "GetAccumulatorSet");
+
   thread_local std::unique_ptr<AccumulatorSet> accumulator_set;
   thread_local ThreadLocalDestructionMarker marker;
   if (!marker.alive) {
@@ -1837,11 +2296,20 @@ AccumulatorSet* GetAccumulatorSet() {
   return accumulator_set.get();
 }
 
-inline bool HasAccumulator() { return !GetAccumulatorSet()->empty(); }
+inline bool HasAccumulator() {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_91(mht_91_v, 2300, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "HasAccumulator");
+ return !GetAccumulatorSet()->empty(); }
 
-inline bool HasGradientTape() { return !GetTapeSet()->empty(); }
+inline bool HasGradientTape() {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_92(mht_92_v, 2305, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "HasGradientTape");
+ return !GetTapeSet()->empty(); }
 
 inline bool HasAccumulatorOrTape() {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_93(mht_93_v, 2310, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "HasAccumulatorOrTape");
+
   return HasGradientTape() || HasAccumulator();
 }
 
@@ -1851,25 +2319,43 @@ template <typename ContainerType>
 class SafeSetCopy {
  public:
   explicit SafeSetCopy(const ContainerType& to_copy) : set_copy_(to_copy) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_94(mht_94_v, 2322, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "SafeSetCopy");
+
     for (auto* member : set_copy_) {
       Py_INCREF(member);
     }
   }
 
   ~SafeSetCopy() {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_95(mht_95_v, 2331, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "~SafeSetCopy");
+
     for (auto* member : set_copy_) {
       Py_DECREF(member);
     }
   }
 
   typename ContainerType::const_iterator begin() const {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_96(mht_96_v, 2340, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "begin");
+
     return set_copy_.begin();
   }
 
-  typename ContainerType::const_iterator end() const { return set_copy_.end(); }
+  typename ContainerType::const_iterator end() const {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_97(mht_97_v, 2347, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "end");
+ return set_copy_.end(); }
 
-  bool empty() const { return set_copy_.empty(); }
-  size_t size() const { return set_copy_.size(); }
+  bool empty() const {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_98(mht_98_v, 2352, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "empty");
+ return set_copy_.empty(); }
+  size_t size() const {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_99(mht_99_v, 2356, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "size");
+ return set_copy_.size(); }
 
  protected:
   ContainerType set_copy_;
@@ -1880,18 +2366,30 @@ class SafeTapeSet
  public:
   SafeTapeSet()
       : SafeSetCopy<tensorflow::gtl::CompactPointerSet<TFE_Py_Tape*>>(
-            *GetTapeSet()) {}
+            *GetTapeSet()) {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_100(mht_100_v, 2370, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "SafeTapeSet");
+}
 };
 
 class SafeAccumulatorSet : public SafeSetCopy<AccumulatorSet> {
  public:
-  SafeAccumulatorSet() : SafeSetCopy<AccumulatorSet>(*GetAccumulatorSet()) {}
+  SafeAccumulatorSet() : SafeSetCopy<AccumulatorSet>(*GetAccumulatorSet()) {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_101(mht_101_v, 2378, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "SafeAccumulatorSet");
+}
 
   typename AccumulatorSet::const_reverse_iterator rbegin() const {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_102(mht_102_v, 2383, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "rbegin");
+
     return set_copy_.rbegin();
   }
 
   typename AccumulatorSet::const_reverse_iterator rend() const {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_103(mht_103_v, 2390, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "rend");
+
     return set_copy_.rend();
   }
 };
@@ -1903,19 +2401,34 @@ class SafeVariableWatcherSet
   SafeVariableWatcherSet()
       : SafeSetCopy<
             tensorflow::gtl::CompactPointerSet<TFE_Py_VariableWatcher*>>(
-            *GetVariableWatcherSet()) {}
+            *GetVariableWatcherSet()) {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_104(mht_104_v, 2405, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "SafeVariableWatcherSet");
+}
 };
 
 bool* ThreadTapeIsStopped() {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_105(mht_105_v, 2411, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "ThreadTapeIsStopped");
+
   thread_local bool thread_tape_is_stopped{false};
   return &thread_tape_is_stopped;
 }
 
-void TFE_Py_TapeSetStopOnThread() { *ThreadTapeIsStopped() = true; }
+void TFE_Py_TapeSetStopOnThread() {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_106(mht_106_v, 2419, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_TapeSetStopOnThread");
+ *ThreadTapeIsStopped() = true; }
 
-void TFE_Py_TapeSetRestartOnThread() { *ThreadTapeIsStopped() = false; }
+void TFE_Py_TapeSetRestartOnThread() {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_107(mht_107_v, 2424, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_TapeSetRestartOnThread");
+ *ThreadTapeIsStopped() = false; }
 
 PyObject* TFE_Py_TapeSetIsStopped() {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_108(mht_108_v, 2429, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_TapeSetIsStopped");
+
   if (*ThreadTapeIsStopped()) {
     Py_RETURN_TRUE;
   }
@@ -1924,6 +2437,9 @@ PyObject* TFE_Py_TapeSetIsStopped() {
 
 PyObject* TFE_Py_TapeSetNew(PyObject* persistent,
                             PyObject* watch_accessed_variables) {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_109(mht_109_v, 2440, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_TapeSetNew");
+
   TFE_Py_Tape_Type.tp_new = PyType_GenericNew;
   if (PyType_Ready(&TFE_Py_Tape_Type) < 0) return nullptr;
   TFE_Py_Tape* tape = PyObject_NEW(TFE_Py_Tape, &TFE_Py_Tape_Type);
@@ -1936,6 +2452,9 @@ PyObject* TFE_Py_TapeSetNew(PyObject* persistent,
 }
 
 void TFE_Py_TapeSetAdd(PyObject* tape) {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_110(mht_110_v, 2455, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_TapeSetAdd");
+
   Py_INCREF(tape);
   TFE_Py_Tape* tfe_tape = reinterpret_cast<TFE_Py_Tape*>(tape);
   if (!GetTapeSet()->insert(tfe_tape).second) {
@@ -1947,6 +2466,9 @@ void TFE_Py_TapeSetAdd(PyObject* tape) {
 }
 
 PyObject* TFE_Py_TapeSetIsEmpty() {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_111(mht_111_v, 2469, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_TapeSetIsEmpty");
+
   if (*ThreadTapeIsStopped() || !HasAccumulatorOrTape()) {
     Py_RETURN_TRUE;
   }
@@ -1954,6 +2476,9 @@ PyObject* TFE_Py_TapeSetIsEmpty() {
 }
 
 void TFE_Py_TapeSetRemove(PyObject* tape) {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_112(mht_112_v, 2479, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_TapeSetRemove");
+
   auto* stack = GetTapeSet();
   if (stack != nullptr) {
     stack->erase(reinterpret_cast<TFE_Py_Tape*>(tape));
@@ -1996,6 +2521,9 @@ static std::vector<int64_t> MakeIntList(PyObject* list) {
 // null. Returns true on success and false on a Python exception.
 bool TensorShapesAndDtypes(PyObject* tensors, std::vector<int64_t>* tensor_ids,
                            std::vector<tensorflow::DataType>* dtypes) {
+   std::vector<std::string> mht_113_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_113(mht_113_v, 2524, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TensorShapesAndDtypes");
+
   tensorflow::Safe_PyObjectPtr seq(
       PySequence_Fast(tensors, "expected a sequence"));
   if (seq == nullptr) {
@@ -2014,6 +2542,9 @@ bool TensorShapesAndDtypes(PyObject* tensors, std::vector<int64_t>* tensor_ids,
 }
 
 bool TapeCouldPossiblyRecord(PyObject* tensors) {
+   std::vector<std::string> mht_114_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_114(mht_114_v, 2545, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TapeCouldPossiblyRecord");
+
   if (tensors == Py_None) {
     return false;
   }
@@ -2026,11 +2557,20 @@ bool TapeCouldPossiblyRecord(PyObject* tensors) {
   return true;
 }
 
-bool CouldBackprop() { return !*ThreadTapeIsStopped() && HasGradientTape(); }
+bool CouldBackprop() {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_115(mht_115_v, 2561, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "CouldBackprop");
+ return !*ThreadTapeIsStopped() && HasGradientTape(); }
 
-bool CouldForwardprop() { return !*ThreadTapeIsStopped() && HasAccumulator(); }
+bool CouldForwardprop() {
+   std::vector<std::string> mht_116_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_116(mht_116_v, 2566, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "CouldForwardprop");
+ return !*ThreadTapeIsStopped() && HasAccumulator(); }
 
 PyObject* TFE_Py_TapeSetShouldRecordBackprop(PyObject* tensors) {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_117(mht_117_v, 2571, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_TapeSetShouldRecordBackprop");
+
   if (!TapeCouldPossiblyRecord(tensors) || !CouldBackprop()) {
     Py_RETURN_FALSE;
   }
@@ -2052,6 +2592,9 @@ PyObject* TFE_Py_TapeSetShouldRecordBackprop(PyObject* tensors) {
 }
 
 PyObject* TFE_Py_ForwardAccumulatorPushState() {
+   std::vector<std::string> mht_118_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_118(mht_118_v, 2595, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_ForwardAccumulatorPushState");
+
   auto& forward_accumulators = *GetAccumulatorSet();
   for (TFE_Py_ForwardAccumulator* accumulator : forward_accumulators) {
     accumulator->accumulator->PushState();
@@ -2060,6 +2603,9 @@ PyObject* TFE_Py_ForwardAccumulatorPushState() {
 }
 
 PyObject* TFE_Py_ForwardAccumulatorPopState() {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_119(mht_119_v, 2606, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_ForwardAccumulatorPopState");
+
   auto& forward_accumulators = *GetAccumulatorSet();
   for (TFE_Py_ForwardAccumulator* accumulator : forward_accumulators) {
     accumulator->accumulator->PopState();
@@ -2068,6 +2614,9 @@ PyObject* TFE_Py_ForwardAccumulatorPopState() {
 }
 
 PyObject* TFE_Py_TapeSetPossibleGradientTypes(PyObject* tensors) {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_120(mht_120_v, 2617, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_TapeSetPossibleGradientTypes");
+
   if (!TapeCouldPossiblyRecord(tensors)) {
     return GetPythonObjectFromInt(0);
   }
@@ -2119,6 +2668,9 @@ PyObject* TFE_Py_TapeSetPossibleGradientTypes(PyObject* tensors) {
 }
 
 void TFE_Py_TapeWatch(PyObject* tape, PyObject* tensor) {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_121(mht_121_v, 2671, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_TapeWatch");
+
   if (!CouldBackprop()) {
     return;
   }
@@ -2130,6 +2682,9 @@ void TFE_Py_TapeWatch(PyObject* tape, PyObject* tensor) {
 }
 
 bool ListContainsNone(PyObject* list) {
+   std::vector<std::string> mht_122_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_122(mht_122_v, 2685, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "ListContainsNone");
+
   if (list == Py_None) return true;
   tensorflow::Safe_PyObjectPtr seq(
       PySequence_Fast(list, "expected a sequence"));
@@ -2152,10 +2707,16 @@ bool ListContainsNone(PyObject* list) {
 // some tensors require OnesLike/ZerosLike because their gradients do not match
 // their inference shape/dtype.
 bool DTypeNeedsHandleData(tensorflow::DataType dtype) {
+   std::vector<std::string> mht_123_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_123(mht_123_v, 2710, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "DTypeNeedsHandleData");
+
   return dtype == tensorflow::DT_VARIANT || dtype == tensorflow::DT_RESOURCE;
 }
 
 static PyTapeTensor TapeTensorFromTensor(PyObject* tensor) {
+   std::vector<std::string> mht_124_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_124(mht_124_v, 2717, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TapeTensorFromTensor");
+
   if (EagerTensor_CheckExact(tensor)) {
     tensorflow::ImmediateExecutionTensorHandle* handle =
         tensorflow::unwrap(EagerTensor_Handle(tensor));
@@ -2230,6 +2791,9 @@ static PyTapeTensor TapeTensorFromTensor(PyObject* tensor) {
 // Python exception has been set.
 bool TapeTensorsFromTensorSequence(PyObject* output_seq,
                                    std::vector<PyTapeTensor>* output_info) {
+   std::vector<std::string> mht_125_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_125(mht_125_v, 2794, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TapeTensorsFromTensorSequence");
+
   Py_ssize_t output_len = PySequence_Fast_GET_SIZE(output_seq);
   PyObject** output_seq_array = PySequence_Fast_ITEMS(output_seq);
   output_info->reserve(output_len);
@@ -2264,6 +2828,9 @@ std::vector<int64_t> MakeTensorIDList(PyObject* tensors) {
 }
 
 void TFE_Py_TapeVariableAccessed(PyObject* variable) {
+   std::vector<std::string> mht_126_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_126(mht_126_v, 2831, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_TapeVariableAccessed");
+
   if (!CouldBackprop()) {
     return;
   }
@@ -2273,6 +2840,9 @@ void TFE_Py_TapeVariableAccessed(PyObject* variable) {
 }
 
 void TFE_Py_TapeWatchVariable(PyObject* tape, PyObject* variable) {
+   std::vector<std::string> mht_127_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_127(mht_127_v, 2843, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_TapeWatchVariable");
+
   if (!CouldBackprop()) {
     return;
   }
@@ -2280,10 +2850,16 @@ void TFE_Py_TapeWatchVariable(PyObject* tape, PyObject* variable) {
 }
 
 PyObject* TFE_Py_TapeWatchedVariables(PyObject* tape) {
+   std::vector<std::string> mht_128_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_128(mht_128_v, 2853, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_TapeWatchedVariables");
+
   return reinterpret_cast<TFE_Py_Tape*>(tape)->tape->GetVariablesAsPyTuple();
 }
 
 PyObject* TFE_Py_VariableWatcherNew() {
+   std::vector<std::string> mht_129_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_129(mht_129_v, 2860, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_VariableWatcherNew");
+
   TFE_Py_VariableWatcher_Type.tp_new = PyType_GenericNew;
   if (PyType_Ready(&TFE_Py_VariableWatcher_Type) < 0) return nullptr;
   TFE_Py_VariableWatcher* variable_watcher =
@@ -2295,6 +2871,9 @@ PyObject* TFE_Py_VariableWatcherNew() {
 }
 
 void TFE_Py_VariableWatcherRemove(PyObject* variable_watcher) {
+   std::vector<std::string> mht_130_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_130(mht_130_v, 2874, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_VariableWatcherRemove");
+
   auto* stack = GetVariableWatcherSet();
   stack->erase(reinterpret_cast<TFE_Py_VariableWatcher*>(variable_watcher));
   // We kept a reference to the variable watcher in the set to ensure it
@@ -2303,12 +2882,18 @@ void TFE_Py_VariableWatcherRemove(PyObject* variable_watcher) {
 }
 
 void TFE_Py_VariableWatcherVariableAccessed(PyObject* variable) {
+   std::vector<std::string> mht_131_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_131(mht_131_v, 2885, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_VariableWatcherVariableAccessed");
+
   for (TFE_Py_VariableWatcher* variable_watcher : SafeVariableWatcherSet()) {
     variable_watcher->variable_watcher->WatchVariable(variable);
   }
 }
 
 PyObject* TFE_Py_VariableWatcherWatchedVariables(PyObject* variable_watcher) {
+   std::vector<std::string> mht_132_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_132(mht_132_v, 2894, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_VariableWatcherWatchedVariables");
+
   return reinterpret_cast<TFE_Py_VariableWatcher*>(variable_watcher)
       ->variable_watcher->GetVariablesAsPyTuple();
 }
@@ -2333,6 +2918,9 @@ std::vector<tensorflow::DataType> MakeTensorDtypeList(PyObject* tensors) {
 
 PyObject* ForwardAccumulatorDeleteGradient(PyObject* tensor_id,
                                            PyObject* weak_tensor_ref) {
+   std::vector<std::string> mht_133_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_133(mht_133_v, 2921, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "ForwardAccumulatorDeleteGradient");
+
   auto* accumulator_set = GetAccumulatorSet();
   if (accumulator_set != nullptr) {
     int64_t parsed_tensor_id = MakeInt(tensor_id);
@@ -2351,6 +2939,9 @@ static PyMethodDef forward_accumulator_delete_gradient_method_def = {
     METH_O, "ForwardAccumulatorDeleteGradient"};
 
 void RegisterForwardAccumulatorCleanup(PyObject* tensor, int64_t tensor_id) {
+   std::vector<std::string> mht_134_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_134(mht_134_v, 2942, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "RegisterForwardAccumulatorCleanup");
+
   tensorflow::Safe_PyObjectPtr callback(
       PyCFunction_New(&forward_accumulator_delete_gradient_method_def,
                       PyLong_FromLong(tensor_id)));
@@ -2367,6 +2958,10 @@ void TapeSetRecordBackprop(
     const std::function<PyBackwardFunction*()>& backward_function_getter,
     const std::function<void(PyBackwardFunction*)>& backward_function_killer,
     tensorflow::uint64 max_gradient_tape_id) {
+   std::vector<std::string> mht_135_v;
+   mht_135_v.push_back("op_type: \"" + op_type + "\"");
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_135(mht_135_v, 2962, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TapeSetRecordBackprop");
+
   if (!CouldBackprop()) {
     return;
   }
@@ -2389,6 +2984,10 @@ bool TapeSetRecordForwardprop(
     const tensorflow::eager::ForwardFunction<PyObject>* forward_function,
     PyObject* forwardprop_output_indices,
     tensorflow::uint64* max_gradient_tape_id) {
+   std::vector<std::string> mht_136_v;
+   mht_136_v.push_back("op_type: \"" + op_type + "\"");
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_136(mht_136_v, 2988, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TapeSetRecordForwardprop");
+
   *max_gradient_tape_id = std::numeric_limits<tensorflow::uint64>::max();
   if (!CouldForwardprop()) {
     return true;
@@ -2468,6 +3067,9 @@ bool TapeSetRecordForwardprop(
 }
 
 PyObject* TangentsAsPyTuple(const std::vector<PyObject*>& input_tangents) {
+   std::vector<std::string> mht_137_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_137(mht_137_v, 3070, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TangentsAsPyTuple");
+
   PyObject* py_input_tangents = PyTuple_New(input_tangents.size());
   for (int i = 0; i < input_tangents.size(); ++i) {
     PyObject* element;
@@ -2484,6 +3086,9 @@ PyObject* TangentsAsPyTuple(const std::vector<PyObject*>& input_tangents) {
 
 tensorflow::Status ParseTangentOutputs(
     PyObject* user_output, std::vector<PyObject*>* output_tangents) {
+   std::vector<std::string> mht_138_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_138(mht_138_v, 3089, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "ParseTangentOutputs");
+
   if (user_output == Py_None) {
     // No connected gradients.
     return tensorflow::Status::OK();
@@ -2519,6 +3124,9 @@ tensorflow::Status CallJVPFunction(PyObject* op_name, PyObject* attrs,
                                    const std::vector<PyObject*>& input_tangents,
                                    std::vector<PyObject*>* output_tangents,
                                    bool use_batch) {
+   std::vector<std::string> mht_139_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_139(mht_139_v, 3127, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "CallJVPFunction");
+
   if (forward_gradient_function == nullptr) {
     return tensorflow::errors::Internal(
         "No forward gradient function registered.");
@@ -2548,6 +3156,9 @@ tensorflow::Status CallOpSpecificJVPFunction(
     PyObject* op_specific_forward_function,
     const std::vector<PyObject*>& input_tangents,
     std::vector<PyObject*>* output_tangents) {
+   std::vector<std::string> mht_140_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_140(mht_140_v, 3159, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "CallOpSpecificJVPFunction");
+
   tensorflow::Safe_PyObjectPtr py_input_tangents(
       TangentsAsPyTuple(input_tangents));
 
@@ -2561,6 +3172,9 @@ tensorflow::Status CallOpSpecificJVPFunction(
 }
 
 bool ParseOpTypeString(PyObject* op_type, string* op_type_string) {
+   std::vector<std::string> mht_141_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_141(mht_141_v, 3175, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "ParseOpTypeString");
+
   if (PyBytes_Check(op_type)) {
     *op_type_string = PyBytes_AsString(op_type);
   } else if (PyUnicode_Check(op_type)) {
@@ -2588,6 +3202,9 @@ bool TapeSetRecordOperation(
     const std::function<PyBackwardFunction*()>& backward_function_getter,
     const std::function<void(PyBackwardFunction*)>& backward_function_killer,
     const tensorflow::eager::ForwardFunction<PyObject>* forward_function) {
+   std::vector<std::string> mht_142_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_142(mht_142_v, 3205, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TapeSetRecordOperation");
+
   std::vector<PyTapeTensor> output_info;
   tensorflow::Safe_PyObjectPtr output_seq(PySequence_Fast(
       output_tensors, "expected a sequence of integer tensor ids"));
@@ -2619,6 +3236,9 @@ PyObject* TFE_Py_TapeSetRecordOperation(PyObject* op_type,
                                         PyObject* input_tensors,
                                         PyObject* backward_function,
                                         PyObject* forward_function) {
+   std::vector<std::string> mht_143_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_143(mht_143_v, 3239, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_TapeSetRecordOperation");
+
   if (!HasAccumulatorOrTape() || *ThreadTapeIsStopped()) {
     Py_RETURN_NONE;
   }
@@ -2673,6 +3293,9 @@ PyObject* TFE_Py_TapeSetRecordOperation(PyObject* op_type,
 PyObject* TFE_Py_TapeSetRecordOperationForwardprop(
     PyObject* op_type, PyObject* output_tensors, PyObject* input_tensors,
     PyObject* backward_function, PyObject* forwardprop_output_indices) {
+   std::vector<std::string> mht_144_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_144(mht_144_v, 3296, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_TapeSetRecordOperationForwardprop");
+
   if (!HasAccumulator() || *ThreadTapeIsStopped()) {
     Py_RETURN_NONE;
   }
@@ -2724,6 +3347,9 @@ PyObject* TFE_Py_TapeSetRecordOperationBackprop(PyObject* op_type,
                                                 PyObject* output_tensors,
                                                 PyObject* input_tensors,
                                                 PyObject* backward_function) {
+   std::vector<std::string> mht_145_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_145(mht_145_v, 3350, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_TapeSetRecordOperationBackprop");
+
   if (!CouldBackprop()) {
     Py_RETURN_NONE;
   }
@@ -2769,6 +3395,9 @@ PyObject* TFE_Py_TapeSetRecordOperationBackprop(PyObject* op_type,
 }
 
 void TFE_Py_TapeSetDeleteTrace(int64_t tensor_id) {
+   std::vector<std::string> mht_146_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_146(mht_146_v, 3398, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_TapeSetDeleteTrace");
+
   auto* tape_set = GetTapeSet();
   if (tape_set == nullptr) {
     // Current thread is being destructed, and the tape set has already
@@ -2797,6 +3426,9 @@ PyObject* TFE_Py_TapeGradient(PyObject* tape, PyObject* target,
                               PyObject* sources_raw,
                               PyObject* unconnected_gradients,
                               TF_Status* status) {
+   std::vector<std::string> mht_147_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_147(mht_147_v, 3429, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_TapeGradient");
+
   TFE_Py_Tape* tape_obj = reinterpret_cast<TFE_Py_Tape*>(tape);
   if (!tape_obj->tape->IsPersistent()) {
     auto* tape_set = GetTapeSet();
@@ -2905,6 +3537,9 @@ PyObject* TFE_Py_TapeGradient(PyObject* tape, PyObject* target,
 }
 
 PyObject* TFE_Py_ForwardAccumulatorNew(bool use_batch) {
+   std::vector<std::string> mht_148_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_148(mht_148_v, 3540, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_ForwardAccumulatorNew");
+
   TFE_Py_ForwardAccumulator_Type.tp_new = PyType_GenericNew;
   if (PyType_Ready(&TFE_Py_ForwardAccumulator_Type) < 0) return nullptr;
   TFE_Py_ForwardAccumulator* accumulator =
@@ -2920,6 +3555,9 @@ PyObject* TFE_Py_ForwardAccumulatorNew(bool use_batch) {
 }
 
 PyObject* TFE_Py_ForwardAccumulatorSetAdd(PyObject* accumulator) {
+   std::vector<std::string> mht_149_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_149(mht_149_v, 3558, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_ForwardAccumulatorSetAdd");
+
   TFE_Py_ForwardAccumulator* c_accumulator(
       reinterpret_cast<TFE_Py_ForwardAccumulator*>(accumulator));
   c_accumulator->nesting_id = tape_nesting_id_counter.fetch_add(1);
@@ -2936,6 +3574,9 @@ PyObject* TFE_Py_ForwardAccumulatorSetAdd(PyObject* accumulator) {
 }
 
 void TFE_Py_ForwardAccumulatorSetRemove(PyObject* accumulator) {
+   std::vector<std::string> mht_150_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_150(mht_150_v, 3577, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_ForwardAccumulatorSetRemove");
+
   auto* accumulator_set = GetAccumulatorSet();
   if (accumulator_set != nullptr) {
     accumulator_set->erase(
@@ -2946,6 +3587,9 @@ void TFE_Py_ForwardAccumulatorSetRemove(PyObject* accumulator) {
 
 void TFE_Py_ForwardAccumulatorWatch(PyObject* accumulator, PyObject* tensor,
                                     PyObject* tangent) {
+   std::vector<std::string> mht_151_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_151(mht_151_v, 3590, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_ForwardAccumulatorWatch");
+
   int64_t tensor_id = FastTensorId(tensor);
   reinterpret_cast<TFE_Py_ForwardAccumulator*>(accumulator)
       ->accumulator->Watch(tensor_id, tangent);
@@ -2955,6 +3599,9 @@ void TFE_Py_ForwardAccumulatorWatch(PyObject* accumulator, PyObject* tensor,
 // Returns a new reference to the JVP Tensor.
 PyObject* TFE_Py_ForwardAccumulatorJVP(PyObject* accumulator,
                                        PyObject* tensor) {
+   std::vector<std::string> mht_152_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_152(mht_152_v, 3602, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_ForwardAccumulatorJVP");
+
   PyObject* jvp = reinterpret_cast<TFE_Py_ForwardAccumulator*>(accumulator)
                       ->accumulator->FetchJVP(FastTensorId(tensor));
   if (jvp == nullptr) {
@@ -2965,6 +3612,9 @@ PyObject* TFE_Py_ForwardAccumulatorJVP(PyObject* accumulator,
 }
 
 PyObject* TFE_Py_PackJVPs(PyObject* tensors) {
+   std::vector<std::string> mht_153_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_153(mht_153_v, 3615, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_PackJVPs");
+
   if (!TapeCouldPossiblyRecord(tensors)) {
     tensorflow::Safe_PyObjectPtr empty_tuple(PyTuple_New(0));
     tensorflow::Safe_PyObjectPtr empty_list(PyList_New(0));
@@ -3069,6 +3719,9 @@ enum FastPathExecuteArgIndex {
 };
 
 PyObject* GetPythonObjectFromString(tensorflow::StringPiece s) {
+   std::vector<std::string> mht_154_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_154(mht_154_v, 3722, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "GetPythonObjectFromString");
+
 #if PY_MAJOR_VERSION >= 3
   return PyUnicode_FromStringAndSize(s.data(), s.size());
 #else
@@ -3077,6 +3730,9 @@ PyObject* GetPythonObjectFromString(tensorflow::StringPiece s) {
 }
 
 bool CheckResourceVariable(PyObject* item) {
+   std::vector<std::string> mht_155_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_155(mht_155_v, 3733, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "CheckResourceVariable");
+
   if (tensorflow::swig::IsResourceVariable(item)) {
     tensorflow::Safe_PyObjectPtr handle(
         PyObject_GetAttrString(item, "_handle"));
@@ -3087,6 +3743,9 @@ bool CheckResourceVariable(PyObject* item) {
 }
 
 bool IsNumberType(PyObject* item) {
+   std::vector<std::string> mht_156_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_156(mht_156_v, 3746, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "IsNumberType");
+
 #if PY_MAJOR_VERSION >= 3
   return PyFloat_Check(item) || PyLong_Check(item);
 #else
@@ -3095,6 +3754,9 @@ bool IsNumberType(PyObject* item) {
 }
 
 bool CheckOneInput(PyObject* item) {
+   std::vector<std::string> mht_157_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_157(mht_157_v, 3757, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "CheckOneInput");
+
   if (EagerTensor_CheckExact(item) || CheckResourceVariable(item) ||
       PyArray_Check(item) || IsNumberType(item)) {
     return true;
@@ -3109,6 +3771,9 @@ bool CheckOneInput(PyObject* item) {
 
 bool CheckInputsOk(PyObject* seq, int start_index,
                    const tensorflow::OpDef& op_def) {
+   std::vector<std::string> mht_158_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_158(mht_158_v, 3774, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "CheckInputsOk");
+
   for (int i = 0; i < op_def.input_arg_size(); i++) {
     PyObject* item = PyTuple_GET_ITEM(seq, i + start_index);
     if (!op_def.input_arg(i).number_attr().empty() ||
@@ -3154,6 +3819,9 @@ bool CheckInputsOk(PyObject* seq, int start_index,
 }
 
 tensorflow::DataType MaybeGetDType(PyObject* item) {
+   std::vector<std::string> mht_159_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_159(mht_159_v, 3822, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "MaybeGetDType");
+
   if (EagerTensor_CheckExact(item) || CheckResourceVariable(item)) {
     return tensorflow::PyTensor_DataType(item);
   }
@@ -3163,6 +3831,10 @@ tensorflow::DataType MaybeGetDType(PyObject* item) {
 
 tensorflow::DataType MaybeGetDTypeForAttr(const string& attr,
                                           FastPathOpExecInfo* op_exec_info) {
+   std::vector<std::string> mht_160_v;
+   mht_160_v.push_back("attr: \"" + attr + "\"");
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_160(mht_160_v, 3835, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "MaybeGetDTypeForAttr");
+
   auto cached_it = op_exec_info->cached_dtypes.find(attr);
   if (cached_it != op_exec_info->cached_dtypes.end()) {
     return cached_it->second;
@@ -3202,6 +3874,9 @@ tensorflow::DataType MaybeGetDTypeForAttr(const string& attr,
 
 PyObject* CopySequenceSettingIndicesToNull(
     PyObject* seq, const tensorflow::gtl::FlatSet<int>& indices) {
+   std::vector<std::string> mht_161_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_161(mht_161_v, 3877, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "CopySequenceSettingIndicesToNull");
+
   tensorflow::Safe_PyObjectPtr fast_seq(
       PySequence_Fast(seq, "unable to allocate"));
   int len = PySequence_Fast_GET_SIZE(fast_seq.get());
@@ -3223,6 +3898,9 @@ PyObject* CopySequenceSettingIndicesToNull(
 PyObject* RecordGradient(PyObject* op_name, PyObject* inputs, PyObject* attrs,
                          PyObject* results,
                          PyObject* forward_pass_name_scope = nullptr) {
+   std::vector<std::string> mht_162_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_162(mht_162_v, 3901, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "RecordGradient");
+
   std::vector<int64_t> input_ids = MakeTensorIDList(inputs);
   if (PyErr_Occurred()) return nullptr;
   std::vector<tensorflow::DataType> input_dtypes = MakeTensorDtypeList(inputs);
@@ -3352,6 +4030,9 @@ PyObject* RecordGradient(PyObject* op_name, PyObject* inputs, PyObject* attrs,
       },
       [op_name, attrs, num_inputs, op_inputs, op_outputs,
        forward_pass_name_scope](PyBackwardFunction* backward_function) {
+   std::vector<std::string> mht_163_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_163(mht_163_v, 4033, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "lambda");
+
         Py_DECREF(op_name);
         Py_DECREF(attrs);
         Py_DECREF(num_inputs);
@@ -3375,6 +4056,9 @@ PyObject* RecordGradient(PyObject* op_name, PyObject* inputs, PyObject* attrs,
 }
 
 void MaybeNotifyVariableAccessed(PyObject* input) {
+   std::vector<std::string> mht_164_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_164(mht_164_v, 4059, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "MaybeNotifyVariableAccessed");
+
   DCHECK(CheckResourceVariable(input));
   DCHECK(PyObject_HasAttrString(input, "_trainable"));
 
@@ -3388,6 +4072,9 @@ void MaybeNotifyVariableAccessed(PyObject* input) {
 bool ReadVariableOp(const FastPathOpExecInfo& parent_op_exec_info,
                     PyObject* input, tensorflow::Safe_PyObjectPtr* output,
                     TF_Status* status) {
+   std::vector<std::string> mht_165_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_165(mht_165_v, 4075, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "ReadVariableOp");
+
   MaybeNotifyVariableAccessed(input);
 
   TFE_Op* op = TFE_NewOp(parent_op_exec_info.ctx, "ReadVariableOp", status);
@@ -3466,6 +4153,9 @@ bool ConvertToTensor(
     // This sets the dtype after conversion is complete.
     const std::function<void(const tensorflow::DataType dtype)>& dtype_setter,
     TF_Status* status) {
+   std::vector<std::string> mht_166_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_166(mht_166_v, 4156, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "ConvertToTensor");
+
   if (EagerTensor_CheckExact(input)) {
     Py_INCREF(input);
     output_handle->reset(input);
@@ -3498,6 +4188,9 @@ bool AddInputToOp(FastPathOpExecInfo* op_exec_info, PyObject* input,
                   std::vector<tensorflow::Safe_PyObjectPtr>* flattened_attrs,
                   std::vector<tensorflow::Safe_PyObjectPtr>* flattened_inputs,
                   TFE_Op* op, TF_Status* status) {
+   std::vector<std::string> mht_167_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_167(mht_167_v, 4191, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "AddInputToOp");
+
   // py_eager_tensor's ownership is transferred to flattened_inputs if it is
   // required, else the object is destroyed and DECREF'd when the object goes
   // out of scope in this function.
@@ -3512,6 +4205,9 @@ bool AddInputToOp(FastPathOpExecInfo* op_exec_info, PyObject* input,
             return MaybeGetDTypeForAttr(input_arg.type_attr(), op_exec_info);
           },
           [&](const tensorflow::DataType dtype) {
+   std::vector<std::string> mht_168_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_168(mht_168_v, 4208, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "lambda");
+
             op_exec_info->cached_dtypes[input_arg.type_attr()] = dtype;
           },
           status)) {
@@ -3543,6 +4239,9 @@ bool AddInputToOp(FastPathOpExecInfo* op_exec_info, PyObject* input,
 }
 
 const char* GetDeviceName(PyObject* py_device_name) {
+   std::vector<std::string> mht_169_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_169(mht_169_v, 4242, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "GetDeviceName");
+
   if (py_device_name != Py_None) {
     return TFE_GetPythonString(py_device_name);
   }
@@ -3550,6 +4249,10 @@ const char* GetDeviceName(PyObject* py_device_name) {
 }
 
 bool RaiseIfNotPySequence(PyObject* seq, const string& attr_name) {
+   std::vector<std::string> mht_170_v;
+   mht_170_v.push_back("attr_name: \"" + attr_name + "\"");
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_170(mht_170_v, 4253, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "RaiseIfNotPySequence");
+
   if (!PySequence_Check(seq)) {
     PyErr_SetString(PyExc_TypeError,
                     Printf("expected a sequence for attr %s, got %s instead",
@@ -3577,6 +4280,9 @@ bool RunCallbacks(
     const std::vector<tensorflow::Safe_PyObjectPtr>& flattened_inputs,
     const std::vector<tensorflow::Safe_PyObjectPtr>& flattened_attrs,
     PyObject* flattened_result) {
+   std::vector<std::string> mht_171_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_171(mht_171_v, 4283, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "RunCallbacks");
+
   DCHECK(op_exec_info.run_callbacks);
 
   tensorflow::Safe_PyObjectPtr inputs(PyTuple_New(flattened_inputs.size()));
@@ -3640,6 +4346,9 @@ bool RunCallbacks(
 }  // namespace
 
 PyObject* TFE_Py_FastPathExecute_C(PyObject* args) {
+   std::vector<std::string> mht_172_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_172(mht_172_v, 4349, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_FastPathExecute_C");
+
   tensorflow::profiler::TraceMe activity(
       "TFE_Py_FastPathExecute_C", tensorflow::profiler::TraceMeLevel::kInfo);
   Py_ssize_t args_size = PyTuple_GET_SIZE(args);
@@ -3869,7 +4578,10 @@ PyObject* TFE_Py_FastPathExecute_C(PyObject* args) {
         if (!ConvertToTensor(
                 op_exec_info, py_input, &py_eager_tensor,
                 []() { return tensorflow::DT_INVALID; },
-                [](const tensorflow::DataType dtype) {}, status)) {
+                [](const tensorflow::DataType dtype) {
+   std::vector<std::string> mht_173_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_173(mht_173_v, 4582, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "lambda");
+}, status)) {
           return nullptr;
         }
 
@@ -4013,6 +4725,9 @@ PyObject* TFE_Py_FastPathExecute_C(PyObject* args) {
 PyObject* TFE_Py_RecordGradient(PyObject* op_name, PyObject* inputs,
                                 PyObject* attrs, PyObject* results,
                                 PyObject* forward_pass_name_scope) {
+   std::vector<std::string> mht_174_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_174(mht_174_v, 4728, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_RecordGradient");
+
   if (*ThreadTapeIsStopped() || !HasAccumulatorOrTape()) {
     Py_RETURN_NONE;
   }
@@ -4026,6 +4741,10 @@ PyObject* TFE_Py_RecordGradient(PyObject* op_name, PyObject* inputs,
 // and colabs where messages to the C stdout don't go to the notebook
 // cell outputs, but calls to Python's stdout do.
 void PrintToPythonStdout(const char* msg) {
+   std::vector<std::string> mht_175_v;
+   mht_175_v.push_back("msg: \"" + (msg == nullptr ? std::string("nullptr") : std::string((char*)msg)) + "\"");
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_175(mht_175_v, 4745, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "PrintToPythonStdout");
+
   if (Py_IsInitialized()) {
     PyGILState_STATE py_threadstate;
     py_threadstate = PyGILState_Ensure();
@@ -4050,6 +4769,9 @@ void PrintToPythonStdout(const char* msg) {
 // Register PrintToPythonStdout as a log listener, to allow
 // printing in colabs and jupyter notebooks to work.
 void TFE_Py_EnableInteractivePythonLogging() {
+   std::vector<std::string> mht_176_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_176(mht_176_v, 4772, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_EnableInteractivePythonLogging");
+
   static bool enabled_interactive_logging = false;
   if (!enabled_interactive_logging) {
     enabled_interactive_logging = true;
@@ -4068,6 +4790,9 @@ PyObject* global_py_eager_context = nullptr;
 }  // namespace
 
 PyObject* TFE_Py_SetEagerContext(PyObject* py_context) {
+   std::vector<std::string> mht_177_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_177(mht_177_v, 4793, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "TFE_Py_SetEagerContext");
+
   Py_XDECREF(global_py_eager_context);
   global_py_eager_context = PyWeakref_NewRef(py_context, nullptr);
   if (global_py_eager_context == nullptr) {
@@ -4077,6 +4802,9 @@ PyObject* TFE_Py_SetEagerContext(PyObject* py_context) {
 }
 
 PyObject* GetPyEagerContext() {
+   std::vector<std::string> mht_178_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_178(mht_178_v, 4805, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "GetPyEagerContext");
+
   if (global_py_eager_context == nullptr) {
     PyErr_SetString(PyExc_RuntimeError, "Python eager context is not set");
     return nullptr;
@@ -4123,6 +4851,9 @@ namespace tensorflow {
 void MakeEagerContextThreadLocalData(PyObject* py_eager_context,
                                      PyObject* is_eager,
                                      PyObject* device_spec) {
+   std::vector<std::string> mht_179_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_179(mht_179_v, 4854, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "MakeEagerContextThreadLocalData");
+
   DCheckPyGilState();
   if (eager_context_thread_local_data_defaults == nullptr) {
     absl::LeakCheckDisabler disabler;
@@ -4145,6 +4876,9 @@ void MakeEagerContextThreadLocalData(PyObject* py_eager_context,
 
 EagerContextThreadLocalData* GetEagerContextThreadLocalData(
     PyObject* py_eager_context) {
+   std::vector<std::string> mht_180_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_180(mht_180_v, 4879, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "GetEagerContextThreadLocalData");
+
   if (eager_context_thread_local_data_defaults == nullptr) {
     PyErr_SetString(PyExc_AssertionError,
                     "MakeEagerContextThreadLocalData must be called "
@@ -4204,6 +4938,9 @@ EagerContextThreadLocalData* GetEagerContextThreadLocalData(
 }
 
 void DestroyEagerContextThreadLocalData(PyObject* py_eager_context) {
+   std::vector<std::string> mht_181_v;
+   MHTracer_DTPStensorflowPSpythonPSeagerPSpywrap_tfe_srcDTcc mht_181(mht_181_v, 4941, "", "./tensorflow/python/eager/pywrap_tfe_src.cc", "DestroyEagerContextThreadLocalData");
+
   DCheckPyGilState();
   if (eager_context_thread_local_data_defaults) {
     eager_context_thread_local_data_defaults->erase(py_eager_context);

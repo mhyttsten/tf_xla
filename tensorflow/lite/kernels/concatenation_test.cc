@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSkernelsPSconcatenation_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconcatenation_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSkernelsPSconcatenation_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,10 +202,16 @@ class BaseConcatenationOpModel : public SingleOpModel {
  public:
   // TODO(ahentz): Also test different activation types, axis, input
   // dimensions.
-  BaseConcatenationOpModel() {}
+  BaseConcatenationOpModel() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconcatenation_testDTcc mht_0(mht_0_v, 206, "", "./tensorflow/lite/kernels/concatenation_test.cc", "BaseConcatenationOpModel");
+}
   BaseConcatenationOpModel(const std::vector<TensorData>& input_template,
                            int axis, int num_inputs,
                            const TensorData& output_template) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconcatenation_testDTcc mht_1(mht_1_v, 212, "", "./tensorflow/lite/kernels/concatenation_test.cc", "BaseConcatenationOpModel");
+
     std::vector<std::vector<int>> all_input_shapes;
     CHECK_EQ(input_template.size(), num_inputs);
     for (int i = 0; i < num_inputs; ++i) {
@@ -56,7 +230,10 @@ class BaseConcatenationOpModel : public SingleOpModel {
                            int num_inputs)
       : BaseConcatenationOpModel(
             std::vector<TensorData>(num_inputs, input_template), axis,
-            num_inputs, input_template) {}
+            num_inputs, input_template) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconcatenation_testDTcc mht_2(mht_2_v, 234, "", "./tensorflow/lite/kernels/concatenation_test.cc", "BaseConcatenationOpModel");
+}
 
  protected:
   int output_;
@@ -66,6 +243,9 @@ class ConcatenationOpModel : public BaseConcatenationOpModel {
  public:
   using BaseConcatenationOpModel::BaseConcatenationOpModel;
   void SetInput(int index, std::initializer_list<float> data) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconcatenation_testDTcc mht_3(mht_3_v, 246, "", "./tensorflow/lite/kernels/concatenation_test.cc", "SetInput");
+
     PopulateTensor(index, data);
   }
   std::vector<float> GetOutput() { return ExtractVector<float>(output_); }
@@ -77,6 +257,9 @@ class QuantizedConcatenationOpModel : public BaseConcatenationOpModel {
 
   template <typename T>
   void SetInput(int index, std::initializer_list<float> data) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconcatenation_testDTcc mht_4(mht_4_v, 260, "", "./tensorflow/lite/kernels/concatenation_test.cc", "SetInput");
+
     QuantizeAndPopulate<T>(index, data);
   }
   template <typename T>
@@ -94,6 +277,9 @@ class BoolConcatenationOpModel : public BaseConcatenationOpModel {
  public:
   using BaseConcatenationOpModel::BaseConcatenationOpModel;
   void SetInput(int index, std::initializer_list<bool> data) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconcatenation_testDTcc mht_5(mht_5_v, 280, "", "./tensorflow/lite/kernels/concatenation_test.cc", "SetInput");
+
     PopulateTensor(index, data);
   }
   std::vector<bool> GetOutput() { return ExtractVector<bool>(output_); }
@@ -489,6 +675,9 @@ class PersistentConcatenationOpModel : public SingleOpModel {
                                  PersistentTestCase test_case,
                                  std::vector<std::vector<T>> input_data_list)
       : input_data_list_(input_data_list), test_case_(test_case) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconcatenation_testDTcc mht_6(mht_6_v, 678, "", "./tensorflow/lite/kernels/concatenation_test.cc", "PersistentConcatenationOpModel");
+
     const int num_inputs = input_data_list.size();
     std::vector<std::vector<int>> all_input_shapes;
     CHECK_EQ(input_template.size(), num_inputs);
@@ -539,6 +728,9 @@ class PersistentConcatenationOpModel : public SingleOpModel {
   }
 
   void PopulateInputTensors() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconcatenation_testDTcc mht_7(mht_7_v, 731, "", "./tensorflow/lite/kernels/concatenation_test.cc", "PopulateInputTensors");
+
     int start = -1;
     if (test_case_.test_type == TestInputType::kDefault) {
       start = 0;
@@ -560,6 +752,9 @@ class PersistentConcatenationOpModel : public SingleOpModel {
   }
 
   bool IsPersistentOutput() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSconcatenation_testDTcc mht_8(mht_8_v, 755, "", "./tensorflow/lite/kernels/concatenation_test.cc", "IsPersistentOutput");
+
     const TfLiteTensor* tensor = interpreter_->tensor(output_);
     return tensor->allocation_type == kTfLitePersistentRo;
   }

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -62,6 +230,9 @@ constexpr int kMinimumAlignment = 64;
 //
 // Precondition: size % 2 == 0 (elements in the array are 16 bits long)
 void ConvertEndianShort(std::string* bytes) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_0(mht_0_v, 233, "", "./tensorflow/compiler/xla/literal.cc", "ConvertEndianShort");
+
   CHECK_EQ(bytes->size() % 2, 0);
   for (int64_t i = 0, end = bytes->size(); i < end; i += 2) {
     std::swap((*bytes)[i], (*bytes)[i + 1]);
@@ -69,6 +240,10 @@ void ConvertEndianShort(std::string* bytes) {
 }
 
 void ConvertEndianShort(char* bytes, int64_t size) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("bytes: \"" + (bytes == nullptr ? std::string("nullptr") : std::string((char*)bytes)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_1(mht_1_v, 244, "", "./tensorflow/compiler/xla/literal.cc", "ConvertEndianShort");
+
   CHECK_EQ(size % 2, 0);
   for (int64_t i = 0; i < size; i += 2) {
     std::swap(bytes[i], bytes[i + 1]);
@@ -76,6 +251,10 @@ void ConvertEndianShort(char* bytes, int64_t size) {
 }
 
 std::string CompactOneline(const std::string& input) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("input: \"" + input + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_2(mht_2_v, 255, "", "./tensorflow/compiler/xla/literal.cc", "CompactOneline");
+
   std::string result;
   std::vector<std::string> v = absl::StrSplit(input, absl::ByAnyChar("\n "));
   bool first = true;
@@ -95,13 +274,22 @@ std::string CompactOneline(const std::string& input) {
 // able to transparently access the raw 16-bit value contained within.
 template <typename T>
 T GetRawValue(T val) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_3(mht_3_v, 277, "", "./tensorflow/compiler/xla/literal.cc", "GetRawValue");
+
   return val;
 }
 uint16_t GetRawValue(Eigen::half val) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_4(mht_4_v, 283, "", "./tensorflow/compiler/xla/literal.cc", "GetRawValue");
+
   return Eigen::numext::bit_cast<uint16_t>(val);
 }
 
 bool LiteralProtoHasValues(const LiteralProto& proto) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_5(mht_5_v, 290, "", "./tensorflow/compiler/xla/literal.cc", "LiteralProtoHasValues");
+
   return proto.preds_size() || !proto.s8s().empty() || !proto.u8s().empty() ||
          proto.s32s_size() || proto.s64s_size() || proto.u32s_size() ||
          proto.u64s_size() || proto.f32s_size() || proto.f64s_size() ||
@@ -113,9 +301,15 @@ bool LiteralProtoHasValues(const LiteralProto& proto) {
 
 }  // namespace
 
-LiteralBase::~LiteralBase() {}
+LiteralBase::~LiteralBase() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_6(mht_6_v, 305, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::~LiteralBase");
+}
 
 std::ostream& operator<<(std::ostream& out, const Literal& literal) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_7(mht_7_v, 310, "", "./tensorflow/compiler/xla/literal.cc", "operator<<");
+
   out << literal.ToString();
   return out;
 }
@@ -126,6 +320,9 @@ MutableLiteralBase::StrideConfig::StrideConfig(
     : dimensions(dimensions),
       base(dimensions.size(), 0),
       step(dimensions.size(), 1) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_8(mht_8_v, 323, "", "./tensorflow/compiler/xla/literal.cc", "MutableLiteralBase::StrideConfig::StrideConfig");
+
   if (!dimensions.empty()) {
     // Selects the shape with the largest minor dimension as the one upon
     // which to run the tight stride loop.
@@ -144,10 +341,16 @@ MutableLiteralBase::StrideConfig::StrideConfig(
 }
 
 Literal::Literal(const Shape& shape)
-    : Literal(shape, /*allocate_arrays=*/true) {}
+    : Literal(shape, /*allocate_arrays=*/true) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_9(mht_9_v, 345, "", "./tensorflow/compiler/xla/literal.cc", "Literal::Literal");
+}
 
 void Literal::SetPiece(const Shape& shape, Piece* piece, bool allocate_arrays,
                        ArrayValueState leaf_array_value_state) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_10(mht_10_v, 351, "", "./tensorflow/compiler/xla/literal.cc", "Literal::SetPiece");
+
   if (shape.IsTuple()) {
     for (int i = 0; i < ShapeUtil::TupleElementCount(shape); ++i) {
       const Shape& subshape = shape.tuple_shapes(i);
@@ -175,6 +378,9 @@ void Literal::SetPiece(const Shape& shape, Piece* piece, bool allocate_arrays,
 Literal::Literal(const Shape& shape, bool allocate_arrays,
                  ArrayValueState leaf_array_value_state)
     : MutableLiteralBase() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_11(mht_11_v, 381, "", "./tensorflow/compiler/xla/literal.cc", "Literal::Literal");
+
   shape_ = absl::make_unique<Shape>(shape);
   CHECK(leaf_array_value_state != ArrayValueState::kKnown ||
         LayoutUtil::HasLayout(*shape_));
@@ -186,6 +392,9 @@ Literal::Literal(const Shape& shape, bool allocate_arrays,
 }
 
 Literal::~Literal() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_12(mht_12_v, 395, "", "./tensorflow/compiler/xla/literal.cc", "Literal::~Literal");
+
   if (root_piece_ != nullptr) {
     DeallocateBuffers();
     delete root_piece_;
@@ -193,6 +402,9 @@ Literal::~Literal() {
 }
 
 void Literal::DeallocateBuffers() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_13(mht_13_v, 405, "", "./tensorflow/compiler/xla/literal.cc", "Literal::DeallocateBuffers");
+
   root_piece_->ForEachMutableSubpiece(
       [&](const ShapeIndex& index, Piece* piece) {
         piece->DeallocateBuffers();
@@ -200,10 +412,16 @@ void Literal::DeallocateBuffers() {
 }
 
 Literal::Literal(Literal&& other) : MutableLiteralBase() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_14(mht_14_v, 415, "", "./tensorflow/compiler/xla/literal.cc", "Literal::Literal");
+
   *this = std::move(other);
 }
 
 Literal& Literal::operator=(Literal&& other) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_15(mht_15_v, 422, "", "./tensorflow/compiler/xla/literal.cc", "=");
+
   DCHECK(&other.root_piece_->subshape() == other.shape_.get());
   using std::swap;
   swap(shape_, other.shape_);
@@ -214,6 +432,9 @@ Literal& Literal::operator=(Literal&& other) {
 }
 
 Literal LiteralBase::CreateFromShape(const Shape& shape) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_16(mht_16_v, 435, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::CreateFromShape");
+
   Literal literal(shape);
   literal.root_piece_->ForEachMutableSubpiece(
       [&](const ShapeIndex& index, Piece* piece) {
@@ -225,27 +446,42 @@ Literal LiteralBase::CreateFromShape(const Shape& shape) {
 }
 
 Literal LiteralBase::CreateFromShapeWithUnknownLeafArrays(const Shape& shape) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_17(mht_17_v, 449, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::CreateFromShapeWithUnknownLeafArrays");
+
   Literal literal(shape, /*allocate_arrays=*/false, ArrayValueState::kUnknown);
   return literal;
 }
 
 Literal LiteralBase::CreateFromShapeWithUndeterminedLeafArrays(
     const Shape& shape) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_18(mht_18_v, 458, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::CreateFromShapeWithUndeterminedLeafArrays");
+
   Literal literal(shape, /*allocate_arrays=*/false,
                   ArrayValueState::kUndetermined);
   return literal;
 }
 
 int32_t LiteralBase::GetDynamicSize(int64_t dim_index) const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_19(mht_19_v, 467, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::GetDynamicSize");
+
   return GetDynamicSize(dim_index, {});
 }
 
 int32_t LiteralBase::GetDynamicSize(int64_t dim_index,
                                     const ShapeIndex& shape_index) const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_20(mht_20_v, 475, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::GetDynamicSize");
+
   return piece(shape_index).GetDynamicSize(dim_index);
 }
 
 absl::optional<int64_t> LiteralBase::GetFirstInteger() const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_21(mht_21_v, 482, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::GetFirstInteger");
+
   switch (shape().element_type()) {
     case U8:
       return GetFirstElement<uint8_t>();
@@ -277,6 +513,9 @@ template <typename NativeT>
 Status MutableLiteralBase::CopySliceFromInternal(
     const LiteralBase& src_literal, absl::Span<const int64_t> src_base,
     absl::Span<const int64_t> dest_base, absl::Span<const int64_t> copy_size) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_22(mht_22_v, 516, "", "./tensorflow/compiler/xla/literal.cc", "MutableLiteralBase::CopySliceFromInternal");
+
   const int64_t src_base_size = src_base.size();
   const int64_t dest_base_size = dest_base.size();
   TF_RET_CHECK(src_literal.shape().rank() == src_base_size);
@@ -284,6 +523,9 @@ Status MutableLiteralBase::CopySliceFromInternal(
 
   auto linear_index = [](const Shape& shape,
                          absl::Span<const int64_t> multi_index) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_23(mht_23_v, 526, "", "./tensorflow/compiler/xla/literal.cc", "lambda");
+
     return IndexUtil::MultidimensionalIndexToLinearIndex(shape, multi_index);
   };
 
@@ -311,6 +553,9 @@ Status MutableLiteralBase::CopySliceFromInternal(
                                                    copy_size);
 
     auto copy_proc = [&](absl::Span<const int64_t> indexes) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_24(mht_24_v, 556, "", "./tensorflow/compiler/xla/literal.cc", "lambda");
+
       // Map from multi-dimensional index, to source index.
       std::transform(indexes.begin(), indexes.end(), src_base.begin(),
                      src_indexes.begin(), std::plus<int64_t>());
@@ -338,6 +583,9 @@ Status MutableLiteralBase::CopySliceFromInternal(
 Status MutableLiteralBase::CopyElementFrom(
     const LiteralSlice& src_literal, absl::Span<const int64_t> src_index,
     absl::Span<const int64_t> dest_index) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_25(mht_25_v, 586, "", "./tensorflow/compiler/xla/literal.cc", "MutableLiteralBase::CopyElementFrom");
+
   DCHECK_EQ(shape().element_type(), src_literal.shape().element_type());
   const int64_t src_linear_index =
       IndexUtil::MultidimensionalIndexToLinearIndex(src_literal.shape(),
@@ -360,6 +608,9 @@ Status MutableLiteralBase::CopyElementFrom(
 
 /* static */ StatusOr<Literal> MutableLiteralBase::CreateFromProto(
     const LiteralProto& proto, bool prohibit_empty_literal) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_26(mht_26_v, 611, "", "./tensorflow/compiler/xla/literal.cc", "MutableLiteralBase::CreateFromProto");
+
   if (!proto.has_shape()) {
     return InvalidArgument("LiteralProto has no shape");
   }
@@ -414,6 +665,9 @@ Status MutableLiteralBase::CopyElementFrom(
 }
 
 Literal Literal::SubLiteral(ShapeIndexView shape_index) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_27(mht_27_v, 668, "", "./tensorflow/compiler/xla/literal.cc", "Literal::SubLiteral");
+
   if (!shape_index.empty()) {
     auto decomposed = this->DecomposeTuple();
     return decomposed.at(shape_index.front())
@@ -424,6 +678,9 @@ Literal Literal::SubLiteral(ShapeIndexView shape_index) {
 }
 
 std::vector<Literal> Literal::DecomposeTuple() {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_28(mht_28_v, 681, "", "./tensorflow/compiler/xla/literal.cc", "Literal::DecomposeTuple");
+
   CHECK(shape().IsTuple());
   std::vector<Literal> elements;
   const auto tuple_element_count = ShapeUtil::TupleElementCount(shape());
@@ -458,6 +715,9 @@ template <typename NativeT>
 void CopyElementsBetween(absl::Span<NativeT> dest,
                          absl::Span<const NativeT> src, const Shape& dest_shape,
                          const Shape& src_shape) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_29(mht_29_v, 718, "", "./tensorflow/compiler/xla/literal.cc", "CopyElementsBetween");
+
   CHECK(ShapeUtil::Compatible(dest_shape, src_shape));
   if (ShapeUtil::IsZeroElementArray(dest_shape)) {
     return;
@@ -471,6 +731,9 @@ void CopyElementsBetween(absl::Span<NativeT> dest,
 }  // namespace
 
 int32_t LiteralBase::Piece::GetDynamicSize(int64_t dim_index) const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_30(mht_30_v, 734, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::Piece::GetDynamicSize");
+
   CHECK(LayoutUtil::IsDenseArray(subshape()));
   if (!subshape_->is_dynamic_dimension(dim_index)) {
     // This is a static dimension, return size.
@@ -480,18 +743,27 @@ int32_t LiteralBase::Piece::GetDynamicSize(int64_t dim_index) const {
 }
 
 void LiteralBase::Piece::SetDynamicSize(int64_t dim_index, int32_t size) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_31(mht_31_v, 746, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::Piece::SetDynamicSize");
+
   CHECK(LayoutUtil::IsDenseArray(subshape()));
   CHECK(subshape_->is_dynamic_dimension(dim_index));
   dynamic_size_buffer()[dim_index] = size;
 }
 
 void LiteralBase::Piece::AllocateBuffers() {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_32(mht_32_v, 755, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::Piece::AllocateBuffers");
+
   CHECK_EQ(buffer(), nullptr);
   set_buffer(static_cast<char*>(
       tensorflow::port::AlignedMalloc(total_bytes(), kMinimumAlignment)));
 }
 
 void LiteralBase::Piece::DeallocateBuffers() {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_33(mht_33_v, 764, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::Piece::DeallocateBuffers");
+
   if (buffer_ != nullptr) {
     tensorflow::port::AlignedFree(buffer_);
     buffer_ = nullptr;
@@ -500,6 +772,9 @@ void LiteralBase::Piece::DeallocateBuffers() {
 
 Status LiteralBase::Piece::CopyFrom(const LiteralBase::Piece& src,
                                     bool only_dynamic_bound) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_34(mht_34_v, 775, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::Piece::CopyFrom");
+
   CHECK(subshape_ != nullptr);
   CHECK(src.subshape_ != nullptr);
   if (src.array_value_state_ == ArrayValueState::kUnknown ||
@@ -564,12 +839,18 @@ Status LiteralBase::Piece::CopyFrom(const LiteralBase::Piece& src,
 }
 
 void MutableLiteralBase::SetDynamicSize(int64_t dim_index, int32_t size) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_35(mht_35_v, 842, "", "./tensorflow/compiler/xla/literal.cc", "MutableLiteralBase::SetDynamicSize");
+
   return SetDynamicSize(dim_index, {}, size);
 }
 
 void MutableLiteralBase::SetDynamicSize(int64_t dim_index,
                                         const ShapeIndex& shape_index,
                                         int32_t size) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_36(mht_36_v, 851, "", "./tensorflow/compiler/xla/literal.cc", "MutableLiteralBase::SetDynamicSize");
+
   Shape* subshape_ = ShapeUtil::GetMutableSubshape(shape_.get(), shape_index);
   CHECK_GE(subshape_->dimensions(dim_index), size);
   if (subshape_->dimensions(dim_index) == size) {
@@ -584,6 +865,9 @@ Status MutableLiteralBase::CopyFrom(const LiteralSlice& src_literal,
                                     const ShapeIndex& dest_shape_index,
                                     const ShapeIndex& src_shape_index,
                                     bool only_dynamic_bound) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_37(mht_37_v, 868, "", "./tensorflow/compiler/xla/literal.cc", "MutableLiteralBase::CopyFrom");
+
   const Shape& dest_subshape =
       ShapeUtil::GetSubshape(shape(), dest_shape_index);
   const Shape& src_subshape =
@@ -635,6 +919,9 @@ Status MutableLiteralBase::CopyFrom(const LiteralSlice& src_literal,
 
 Status Literal::MoveFrom(Literal&& src_literal,
                          const ShapeIndex& dest_shape_index) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_38(mht_38_v, 922, "", "./tensorflow/compiler/xla/literal.cc", "Literal::MoveFrom");
+
   const Shape& dest_subshape =
       ShapeUtil::GetSubshape(shape(), dest_shape_index);
   if (!ShapeUtil::Equal(dest_subshape, src_literal.shape())) {
@@ -671,6 +958,9 @@ Status MutableLiteralBase::CopySliceFrom(const LiteralSlice& src_literal,
                                          absl::Span<const int64_t> src_base,
                                          absl::Span<const int64_t> dest_base,
                                          absl::Span<const int64_t> copy_size) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_39(mht_39_v, 961, "", "./tensorflow/compiler/xla/literal.cc", "MutableLiteralBase::CopySliceFrom");
+
   TF_RET_CHECK(shape().IsArray()) << ShapeUtil::HumanString(shape());
   TF_RET_CHECK(src_literal.shape().IsArray())
       << ShapeUtil::HumanString(src_literal.shape());
@@ -732,6 +1022,9 @@ Status MutableLiteralBase::CopySliceFrom(const LiteralSlice& src_literal,
 }
 
 void MutableLiteralBase::PopulateR1(const tensorflow::core::Bitmap& values) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_40(mht_40_v, 1025, "", "./tensorflow/compiler/xla/literal.cc", "MutableLiteralBase::PopulateR1");
+
   CHECK(shape().IsArray());
   CHECK_EQ(shape().rank(), 1);
   CHECK_EQ(element_count(), values.bits());
@@ -743,6 +1036,9 @@ void MutableLiteralBase::PopulateR1(const tensorflow::core::Bitmap& values) {
 
 Literal LiteralBase::Relayout(const Layout& new_layout,
                               const ShapeIndex& shape_index) const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_41(mht_41_v, 1039, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::Relayout");
+
   // Create new shape with 'new_layout' set at the given shape index.
   Shape new_shape = shape();
   Shape* subshape = ShapeUtil::GetMutableSubshape(&new_shape, shape_index);
@@ -754,6 +1050,9 @@ Literal LiteralBase::Relayout(const Layout& new_layout,
 }
 
 Literal LiteralBase::Relayout(const Shape& shape_with_layout) const {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_42(mht_42_v, 1053, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::Relayout");
+
   CHECK(ShapeUtil::Compatible(shape_with_layout, shape()))
       << "Given shape_with_layout " << ShapeUtil::HumanString(shape_with_layout)
       << " not compatible with literal shape "
@@ -772,6 +1071,9 @@ Literal LiteralBase::Relayout(const Shape& shape_with_layout) const {
 }
 
 Literal LiteralBase::ToBoundedDynamic(const Shape& bounded_shape) const {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_43(mht_43_v, 1074, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::ToBoundedDynamic");
+
   CHECK(bounded_shape.is_dynamic());
   Literal result(bounded_shape);
   ShapeUtil::ForEachSubshape(
@@ -789,6 +1091,9 @@ Literal LiteralBase::ToBoundedDynamic(const Shape& bounded_shape) const {
 }
 
 Literal LiteralBase::ToStatic() const {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_44(mht_44_v, 1094, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::ToStatic");
+
   // Create new shape with 'new_layout' set at the given shape index.
   Shape new_shape = shape();
   ShapeUtil::ForEachMutableSubshape(
@@ -808,6 +1113,9 @@ Literal LiteralBase::ToStatic() const {
 
 StatusOr<Literal> LiteralBase::Broadcast(
     const Shape& result_shape, absl::Span<const int64_t> dimensions) const {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_45(mht_45_v, 1116, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::Broadcast");
+
   if (!shape().IsArray()) {
     return InvalidArgument("Broadcast only supports arrays.");
   }
@@ -852,6 +1160,9 @@ StatusOr<Literal> LiteralBase::Broadcast(
 
 StatusOr<Literal> LiteralBase::Reshape(
     absl::Span<const int64_t> dimensions) const {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_46(mht_46_v, 1163, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::Reshape");
+
   if (!shape().IsArray()) {
     return InvalidArgument("Reshape does not support tuples.");
   }
@@ -882,6 +1193,9 @@ StatusOr<Literal> LiteralBase::Reshape(
 }
 
 Literal LiteralBase::Transpose(absl::Span<const int64_t> permutation) const {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_47(mht_47_v, 1196, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::Transpose");
+
   CHECK(shape().IsArray()) << "Tuple is not supported for transpose";
   CHECK(shape().rank() == permutation.size() && IsPermutation(permutation))
       << "Given permutation is not a permutation of dimension numbers";
@@ -923,6 +1237,9 @@ Literal LiteralBase::Transpose(absl::Span<const int64_t> permutation) const {
 template <typename NativeT>
 Literal LiteralBase::SliceInternal(
     const Shape& result_shape, absl::Span<const int64_t> start_indices) const {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_48(mht_48_v, 1240, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::SliceInternal");
+
   Literal result_literal(result_shape);
   DimensionVector new_indices(result_shape.rank());
   CHECK(result_literal
@@ -946,6 +1263,9 @@ Literal LiteralBase::SliceInternal(
 
 Literal LiteralBase::Slice(absl::Span<const int64_t> start_indices,
                            absl::Span<const int64_t> limit_indices) const {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_49(mht_49_v, 1266, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::Slice");
+
   CHECK(shape().IsArray()) << "tuple is not supported for slice";
 
   DimensionVector result_dimensions;
@@ -999,27 +1319,42 @@ Literal LiteralBase::Slice(absl::Span<const int64_t> start_indices,
 }
 
 Literal LiteralBase::Clone() const {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_50(mht_50_v, 1322, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::Clone");
+
   Literal result(shape());
   TF_CHECK_OK(result.CopyFrom(*this));
   return result;
 }
 
 std::unique_ptr<Literal> LiteralBase::CloneToUnique() const {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_51(mht_51_v, 1331, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::CloneToUnique");
+
   auto result = std::make_unique<Literal>(shape());
   TF_CHECK_OK(result->CopyFrom(*this));
   return result;
 }
 
 bool LiteralBase::IsDetermined(const ShapeIndex& shape_index) const {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_52(mht_52_v, 1340, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::IsDetermined");
+
   return piece(shape_index).IsDetermined();
 }
 
 bool LiteralBase::IsKnown(const ShapeIndex& shape_index) const {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_53(mht_53_v, 1347, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::IsKnown");
+
   return piece(shape_index).IsKnown();
 }
 
 std::string LiteralBase::GetAsString(absl::Span<const int64_t> multi_index,
                                      const ShapeIndex& shape_index) const {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_54(mht_54_v, 1355, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::GetAsString");
+
   const Shape& subshape = ShapeUtil::GetSubshape(shape(), shape_index);
   CHECK(LayoutUtil::IsDenseArray(subshape));
   switch (subshape.element_type()) {
@@ -1066,6 +1401,9 @@ std::string LiteralBase::GetAsString(absl::Span<const int64_t> multi_index,
 
 absl::optional<int64_t> LiteralBase::GetIntegralAsS64(
     absl::Span<const int64_t> multi_index) const {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_55(mht_55_v, 1404, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::GetIntegralAsS64");
+
   CHECK(LayoutUtil::IsDenseArray(shape()));
   switch (shape().element_type()) {
     case PRED:
@@ -1093,6 +1431,9 @@ absl::optional<int64_t> LiteralBase::GetIntegralAsS64(
 
 absl::optional<double> LiteralBase::GetAsDouble(
     absl::Span<const int64_t> multi_index) const {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_56(mht_56_v, 1434, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::GetAsDouble");
+
   CHECK(LayoutUtil::IsDenseArray(shape()));
   switch (shape().element_type()) {
     case F16:
@@ -1110,6 +1451,9 @@ absl::optional<double> LiteralBase::GetAsDouble(
 
 absl::optional<complex128> LiteralBase::GetAsComplex128(
     absl::Span<const int64_t> multi_index) const {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_57(mht_57_v, 1454, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::GetAsComplex128");
+
   switch (shape().element_type()) {
     case BF16:
       return {{static_cast<double>(Get<bfloat16>(multi_index)), 0}};
@@ -1132,6 +1476,9 @@ absl::optional<complex128> LiteralBase::GetAsComplex128(
 
 Status MutableLiteralBase::SetIntegralAsS64(
     absl::Span<const int64_t> multi_index, int64_t value) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_58(mht_58_v, 1479, "", "./tensorflow/compiler/xla/literal.cc", "MutableLiteralBase::SetIntegralAsS64");
+
   CHECK(LayoutUtil::IsDenseArray(shape()));
   switch (shape().element_type()) {
     case PRED:
@@ -1161,6 +1508,9 @@ Status MutableLiteralBase::SetIntegralAsS64(
 
 Status MutableLiteralBase::SetFromDouble(absl::Span<const int64_t> multi_index,
                                          double value) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_59(mht_59_v, 1511, "", "./tensorflow/compiler/xla/literal.cc", "MutableLiteralBase::SetFromDouble");
+
   CHECK(LayoutUtil::IsDenseArray(shape()));
   switch (shape().element_type()) {
     case F16:
@@ -1185,6 +1535,9 @@ Status MutableLiteralBase::SetFromDouble(absl::Span<const int64_t> multi_index,
 namespace {
 
 std::string ShapeToString(bool print_layout, const Shape& shape) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_60(mht_60_v, 1538, "", "./tensorflow/compiler/xla/literal.cc", "ShapeToString");
+
   return print_layout ? ShapeUtil::HumanStringWithLayout(shape)
                       : ShapeUtil::HumanString(shape);
 }
@@ -1196,6 +1549,9 @@ void ToStringHelper(const LiteralBase& literal, const ShapeIndex& shape_index,
 void TupleToStringHelper(const LiteralBase& literal,
                          const ShapeIndex& shape_index, bool print_shape,
                          bool print_layout, std::vector<std::string>* pieces) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_61(mht_61_v, 1552, "", "./tensorflow/compiler/xla/literal.cc", "TupleToStringHelper");
+
   const Shape& subshape = ShapeUtil::GetSubshape(literal.shape(), shape_index);
   pieces->push_back("(\n");
   std::vector<std::string> tuple_pieces;
@@ -1217,6 +1573,9 @@ void DenseArrayToStringHelper(const LiteralBase& literal,
                               const ShapeIndex& shape_index, bool print_shape,
                               bool print_layout,
                               std::vector<std::string>* pieces) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_62(mht_62_v, 1576, "", "./tensorflow/compiler/xla/literal.cc", "DenseArrayToStringHelper");
+
   const Shape& subshape = ShapeUtil::GetSubshape(literal.shape(), shape_index);
   int64_t rank = subshape.rank();
 
@@ -1224,6 +1583,9 @@ void DenseArrayToStringHelper(const LiteralBase& literal,
                      std::vector<int64_t>*)>
       to_string_recursive = [&](absl::Span<const int64_t> dimensions,
                                 std::vector<int64_t>* accum_indices) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_63(mht_63_v, 1586, "", "./tensorflow/compiler/xla/literal.cc", "lambda");
+
         // dimensions.size() decreases by 1 at each recursive call,
         // and accum_indices->size() increases by 1.
         // Their sum is equal to the rank of the tensor.
@@ -1305,6 +1667,9 @@ void DenseArrayToStringHelper(const LiteralBase& literal,
 void ToStringHelper(const LiteralBase& literal, const ShapeIndex& shape_index,
                     bool print_shape, bool print_layout,
                     std::vector<std::string>* pieces) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_64(mht_64_v, 1670, "", "./tensorflow/compiler/xla/literal.cc", "ToStringHelper");
+
   const Shape& subshape = ShapeUtil::GetSubshape(literal.shape(), shape_index);
   CHECK(LayoutUtil::HasLayout(literal.shape()));
   CHECK(LayoutUtil::HasLayout(subshape));
@@ -1333,6 +1698,9 @@ void ToStringHelper(const LiteralBase& literal, const ShapeIndex& shape_index,
 }  // namespace
 
 std::string LiteralBase::ToString() const {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_65(mht_65_v, 1701, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::ToString");
+
   std::vector<std::string> pieces;
   CHECK(LayoutUtil::HasLayout(this->shape()));
   ToStringHelper(*this, {}, /*print_shape=*/true,
@@ -1341,10 +1709,16 @@ std::string LiteralBase::ToString() const {
 }
 
 std::string LiteralBase::ToStringOneline() const {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_66(mht_66_v, 1712, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::ToStringOneline");
+
   return CompactOneline(ToString());
 }
 
 std::string LiteralBase::ToStringWithoutShape() const {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_67(mht_67_v, 1719, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::ToStringWithoutShape");
+
   std::vector<std::string> pieces;
   CHECK(LayoutUtil::HasLayout(this->shape()));
   ToStringHelper(*this, {}, /*print_shape=*/false,
@@ -1353,10 +1727,16 @@ std::string LiteralBase::ToStringWithoutShape() const {
 }
 
 std::string LiteralBase::ToStringWithoutShapeOneline() const {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_68(mht_68_v, 1730, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::ToStringWithoutShapeOneline");
+
   return CompactOneline(ToStringWithoutShape());
 }
 
 std::string LiteralBase::ToStringWithLayout() const {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_69(mht_69_v, 1737, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::ToStringWithLayout");
+
   std::vector<std::string> pieces;
   CHECK(LayoutUtil::HasLayout(this->shape()));
   ToStringHelper(*this, {}, /*print_shape=*/true,
@@ -1365,12 +1745,18 @@ std::string LiteralBase::ToStringWithLayout() const {
 }
 
 std::string LiteralBase::ToStringWithLayoutOneline() const {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_70(mht_70_v, 1748, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::ToStringWithLayoutOneline");
+
   return CompactOneline(ToStringWithLayout());
 }
 
 void LiteralBase::EachCellAsString(
     const std::function<void(absl::Span<const int64_t> indices,
                              const std::string& value)>& per_cell) const {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_71(mht_71_v, 1757, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::EachCellAsString");
+
   if (ShapeUtil::IsZeroElementArray(shape())) {
     return;
   }
@@ -1405,7 +1791,13 @@ typename std::enable_if<std::is_same<NativeSrcT, Eigen::half>::value &&
                              std::is_same<NativeDestT, complex128>::value),
                         Literal>::type
 ConvertBetweenNativeTypes(const LiteralBase& src_literal) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_72(mht_72_v, 1794, "", "./tensorflow/compiler/xla/literal.cc", "ConvertBetweenNativeTypes");
+
   auto converter = [](NativeSrcT src) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_73(mht_73_v, 1798, "", "./tensorflow/compiler/xla/literal.cc", "lambda");
+
     return NativeDestT(static_cast<typename NativeDestT::value_type>(src));
   };
   return ConvertBetweenNativeTypesWithConverter<NativeSrcT, NativeDestT>(
@@ -1417,7 +1809,13 @@ typename std::enable_if<std::is_floating_point<NativeSrcT>::value &&
                             std::is_integral<NativeDestT>::value,
                         Literal>::type
 ConvertBetweenNativeTypes(const LiteralBase& src_literal) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_74(mht_74_v, 1812, "", "./tensorflow/compiler/xla/literal.cc", "ConvertBetweenNativeTypes");
+
   auto converter = [](NativeSrcT src) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_75(mht_75_v, 1816, "", "./tensorflow/compiler/xla/literal.cc", "lambda");
+
     // C++ [conv.bool]p1:
     //   A prvalue of arithmetic [...] type can be converted to a prvalue of
     //   type bool. A zero value [...] is converted to false; any other value is
@@ -1455,7 +1853,13 @@ typename std::enable_if<!(std::is_floating_point<NativeSrcT>::value &&
                                std::is_same<NativeDestT, complex128>::value)),
                         Literal>::type
 ConvertBetweenNativeTypes(const LiteralBase& src_literal) {
-  auto converter = [](NativeSrcT src) { return static_cast<NativeDestT>(src); };
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_76(mht_76_v, 1856, "", "./tensorflow/compiler/xla/literal.cc", "ConvertBetweenNativeTypes");
+
+  auto converter = [](NativeSrcT src) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_77(mht_77_v, 1860, "", "./tensorflow/compiler/xla/literal.cc", "lambda");
+ return static_cast<NativeDestT>(src); };
   return ConvertBetweenNativeTypesWithConverter<NativeSrcT, NativeDestT>(
       src_literal, converter);
 }
@@ -1465,7 +1869,13 @@ typename std::enable_if<(sizeof(NativeSrcT) == sizeof(NativeDestT) &&
                          !std::is_same<NativeDestT, Eigen::half>::value),
                         Literal>::type
 BitcastBetweenNativeTypes(const LiteralBase& src_literal) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_78(mht_78_v, 1872, "", "./tensorflow/compiler/xla/literal.cc", "BitcastBetweenNativeTypes");
+
   auto converter = [](NativeSrcT src) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_79(mht_79_v, 1876, "", "./tensorflow/compiler/xla/literal.cc", "lambda");
+
     return absl::bit_cast<NativeDestT>(GetRawValue(src));
   };
   return ConvertBetweenNativeTypesWithConverter<NativeSrcT, NativeDestT>(
@@ -1477,9 +1887,15 @@ typename std::enable_if<(sizeof(NativeSrcT) == sizeof(Eigen::half) &&
                          std::is_same<NativeDestT, Eigen::half>::value),
                         Literal>::type
 BitcastBetweenNativeTypes(const LiteralBase& src_literal) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_80(mht_80_v, 1890, "", "./tensorflow/compiler/xla/literal.cc", "BitcastBetweenNativeTypes");
+
   // Eigen::half doesn't satisfy the absl::bit_cast contract, so explicitly
   // cast to unsigned short first.
   auto converter = [](NativeSrcT src) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_81(mht_81_v, 1896, "", "./tensorflow/compiler/xla/literal.cc", "lambda");
+
     return Eigen::numext::bit_cast<Eigen::half>(
         absl::bit_cast<uint16_t>(GetRawValue(src)));
   };
@@ -1495,6 +1911,9 @@ template <typename NativeSrcT, typename NativeDestT>
 typename std::enable_if<(sizeof(NativeSrcT) != sizeof(NativeDestT)),
                         Literal>::type
 BitcastBetweenNativeTypes(const LiteralBase& src_literal) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_82(mht_82_v, 1914, "", "./tensorflow/compiler/xla/literal.cc", "BitcastBetweenNativeTypes");
+
   LOG(FATAL) << "Invalid bitcast between types of different sizes.";
 }
 
@@ -1597,10 +2016,16 @@ StatusOr<Literal> ConvertSwitch(const LiteralBase& literal,
 
 StatusOr<Literal> LiteralBase::Convert(
     PrimitiveType primitive_dest_type) const {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_83(mht_83_v, 2019, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::Convert");
+
   return ConvertSwitch(*this, primitive_dest_type, /*bitcast=*/false);
 }
 
 StatusOr<Literal> LiteralBase::BitcastConvert(const Shape& dest_shape) const {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_84(mht_84_v, 2026, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::BitcastConvert");
+
   if (ShapeUtil::ByteSizeOf(dest_shape) != ShapeUtil::ByteSizeOf(shape())) {
     return InvalidArgument(
         "Can not bitcast-convert from shape %s to a shape of different size %s",
@@ -1624,6 +2049,9 @@ StatusOr<Literal> LiteralBase::BitcastConvert(const Shape& dest_shape) const {
 }
 
 StatusOr<Literal> LiteralBase::ConvertToShape(const Shape& dest_shape) const {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_85(mht_85_v, 2052, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::ConvertToShape");
+
   if (!dest_shape.IsTuple()) {
     return Convert(dest_shape.element_type());
   }
@@ -1642,6 +2070,9 @@ StatusOr<Literal> LiteralBase::ConvertToShape(const Shape& dest_shape) const {
 
 /* static */ Literal MutableLiteralBase::MoveIntoTuple(
     absl::Span<Literal> elements) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_86(mht_86_v, 2073, "", "./tensorflow/compiler/xla/literal.cc", "MutableLiteralBase::MoveIntoTuple");
+
   std::vector<Shape> element_shapes;
   element_shapes.reserve(elements.size());
   for (const Literal& element : elements) {
@@ -1659,6 +2090,9 @@ StatusOr<Literal> LiteralBase::ConvertToShape(const Shape& dest_shape) const {
 template <typename NativeT>
 void LiteralBase::Piece::CopyElementsWithDynamicBound(
     const LiteralBase::Piece& src) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_87(mht_87_v, 2093, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::Piece::CopyElementsWithDynamicBound");
+
   auto dest_shape = subshape();
   auto src_shape = src.subshape();
 
@@ -1690,6 +2124,9 @@ void LiteralBase::Piece::CopyElementsWithDynamicBound(
 template <typename NativeT>
 bool LiteralBase::Piece::EqualElementsInternal(
     const LiteralBase::Piece& other, std::vector<int64_t>* multi_index) const {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_88(mht_88_v, 2127, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::Piece::EqualElementsInternal");
+
   if (multi_index->size() == subshape().rank()) {
     return (Get<NativeT>(*multi_index) == other.Get<NativeT>(*multi_index));
   }
@@ -1705,6 +2142,9 @@ bool LiteralBase::Piece::EqualElementsInternal(
 
 bool LiteralBase::Piece::EqualDynamicSize(
     const LiteralBase::Piece& other) const {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_89(mht_89_v, 2145, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::Piece::EqualDynamicSize");
+
   DCHECK(ShapeUtil::Compatible(subshape(), other.subshape()));
   if (subshape().is_static()) {
     return true;
@@ -1719,6 +2159,9 @@ bool LiteralBase::Piece::EqualDynamicSize(
 }
 
 bool LiteralBase::Piece::EqualElements(const LiteralBase::Piece& other) const {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_90(mht_90_v, 2162, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::Piece::EqualElements");
+
   if (subshape().is_static() &&
       ShapeUtil::Equal(subshape(), other.subshape()) &&
       LayoutUtil::IsDenseArray(subshape())) {
@@ -1801,6 +2244,9 @@ bool LiteralBase::operator==(const LiteralBase& other) const {
 
 template <typename NativeT>
 static bool EqualIncludingNan(NativeT a, NativeT b) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_91(mht_91_v, 2247, "", "./tensorflow/compiler/xla/literal.cc", "EqualIncludingNan");
+
   // msvc can't compile std::isnan(a) where `a` is uint8_t.  This is a bug
   // according to https://en.cppreference.com/w/cpp/numeric/math/isnan, but it's
   // easy to work around.
@@ -1810,6 +2256,9 @@ static bool EqualIncludingNan(NativeT a, NativeT b) {
 
 template <typename T>
 static bool EqualIncludingNan(std::complex<T> a, std::complex<T> b) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_92(mht_92_v, 2259, "", "./tensorflow/compiler/xla/literal.cc", "EqualIncludingNan");
+
   return EqualIncludingNan(a.real(), b.real()) &&
          EqualIncludingNan(a.imag(), b.imag());
 }
@@ -1817,6 +2266,9 @@ static bool EqualIncludingNan(std::complex<T> a, std::complex<T> b) {
 template <typename NativeT>
 static bool AllElementsEqualValue(absl::Span<const NativeT> data,
                                   NativeT value) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_93(mht_93_v, 2269, "", "./tensorflow/compiler/xla/literal.cc", "AllElementsEqualValue");
+
   for (int64_t i = 0; i < data.size(); ++i) {
     if (!EqualIncludingNan(data[i], value)) {
       return false;
@@ -1826,6 +2278,9 @@ static bool AllElementsEqualValue(absl::Span<const NativeT> data,
 }
 
 bool Literal::Piece::IsAll(const Literal& scalar) const {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_94(mht_94_v, 2281, "", "./tensorflow/compiler/xla/literal.cc", "Literal::Piece::IsAll");
+
   CHECK(ShapeUtil::IsScalar(scalar.shape()));
   if (!subshape().IsArray()) {
     return false;
@@ -1884,10 +2339,16 @@ bool Literal::Piece::IsAll(const Literal& scalar) const {
 }
 
 bool LiteralBase::IsAll(const Literal& scalar) const {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_95(mht_95_v, 2342, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::IsAll");
+
   return root_piece().IsAll(scalar);
 }
 
 bool LiteralBase::IsAll(int8_t value) const {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_96(mht_96_v, 2349, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::IsAll");
+
   if (!shape().IsArray()) {
     return false;
   }
@@ -1940,6 +2401,9 @@ bool LiteralBase::IsAll(int8_t value) const {
 }
 
 bool LiteralBase::IsAllFloat(float value) const {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_97(mht_97_v, 2404, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::IsAllFloat");
+
   if (!shape().IsArray()) {
     return false;
   }
@@ -1965,6 +2429,9 @@ bool LiteralBase::IsAllFloat(float value) const {
 }
 
 bool LiteralBase::IsAllComplex(complex64 value) const {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_98(mht_98_v, 2432, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::IsAllComplex");
+
   if (!shape().IsArray()) {
     return false;
   }
@@ -1984,6 +2451,9 @@ bool LiteralBase::IsAllComplex(complex64 value) const {
 }
 
 bool LiteralBase::IsAllFirst() const {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_99(mht_99_v, 2454, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::IsAllFirst");
+
   if (!shape().IsArray()) {
     return false;
   }
@@ -2000,6 +2470,9 @@ bool LiteralBase::IsAllFirst() const {
 }
 
 bool LiteralBase::IsR1Iota() const {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_100(mht_100_v, 2473, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::IsR1Iota");
+
   if (!shape().IsArray()) {
     return false;
   }
@@ -2009,6 +2482,9 @@ bool LiteralBase::IsR1Iota() const {
   }
 
   auto is_iota_at_idx = [&](const int64_t idx) {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_101(mht_101_v, 2485, "", "./tensorflow/compiler/xla/literal.cc", "lambda");
+
     switch (shape().element_type()) {
       case U8:
         return static_cast<int64_t>(Get<uint8_t>({idx})) == idx;
@@ -2058,6 +2534,9 @@ bool LiteralBase::IsR1Iota() const {
 // stride. Only applicable for integer iotas. Returns absl::nullopt if the
 // literal is not a strided iota.
 absl::optional<int64_t> LiteralBase::IsR1StridedIota() const {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_102(mht_102_v, 2537, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::IsR1StridedIota");
+
   if (!shape().IsArray() || shape().rank() != 1) {
     return absl::nullopt;
   }
@@ -2109,6 +2588,9 @@ absl::optional<int64_t> LiteralBase::IsR1StridedIota() const {
 }
 
 bool LiteralBase::IsZero(absl::Span<const int64_t> indices) const {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_103(mht_103_v, 2591, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::IsZero");
+
   CHECK(shape().IsArray());
   switch (shape().element_type()) {
     case U8:
@@ -2157,14 +2639,23 @@ void CopyToRepeatedField(RepeatedFieldT* dest,
 }  // namespace
 
 void LiteralBase::Piece::set_array_value_state(ArrayValueState state) {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_104(mht_104_v, 2642, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::Piece::set_array_value_state");
+
   array_value_state_ = state;
 }
 
 LiteralBase::ArrayValueState LiteralBase::Piece::get_array_value_state() {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_105(mht_105_v, 2649, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::Piece::get_array_value_state");
+
   return array_value_state_;
 }
 
 void LiteralBase::Piece::WriteToProto(LiteralProto* proto) const {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_106(mht_106_v, 2656, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::Piece::WriteToProto");
+
   *proto->mutable_shape() = subshape().ToProto();
   switch (subshape().element_type()) {
     case PRED:
@@ -2248,11 +2739,17 @@ void LiteralBase::Piece::WriteToProto(LiteralProto* proto) const {
 }
 
 const void* LiteralBase::Piece::untyped_data() const {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_107(mht_107_v, 2742, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::Piece::untyped_data");
+
   CHECK(subshape().IsArray()) << ShapeUtil::HumanString(subshape());
   return buffer();
 }
 
 void* LiteralBase::Piece::untyped_data() {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_108(mht_108_v, 2750, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::Piece::untyped_data");
+
   CHECK(subshape().IsArray()) << ShapeUtil::HumanString(subshape());
   return buffer();
 }
@@ -2274,6 +2771,9 @@ Status CopyFromRepeatedField(absl::Span<NativeT> dest,
 }  // namespace
 
 Status LiteralBase::Piece::CopyFromProto(const LiteralProto& proto) {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_109(mht_109_v, 2774, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::Piece::CopyFromProto");
+
   // These conditions should have been checked in
   // MutableLiteralBase::CreateFromProto.
   TF_RET_CHECK(proto.has_shape());
@@ -2375,6 +2875,9 @@ Status LiteralBase::Piece::CopyFromProto(const LiteralProto& proto) {
 }
 
 bool LiteralBase::Piece::IsKnown() const {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_110(mht_110_v, 2878, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::Piece::IsKnown");
+
   if (array_value_state_ != ArrayValueState::kKnown) {
     return false;
   }
@@ -2393,6 +2896,9 @@ bool LiteralBase::Piece::IsKnown() const {
 }
 
 bool LiteralBase::Piece::IsDetermined() const {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_111(mht_111_v, 2899, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::Piece::IsDetermined");
+
   if (array_value_state_ == ArrayValueState::kUndetermined) {
     return false;
   }
@@ -2411,6 +2917,9 @@ bool LiteralBase::Piece::IsDetermined() const {
 }
 
 LiteralProto LiteralBase::ToProto() const {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_112(mht_112_v, 2920, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::ToProto");
+
   LiteralProto proto;
   root_piece().ForEachSubpiece(
       [&](const ShapeIndex& index, const Piece& piece) {
@@ -2428,18 +2937,30 @@ LiteralProto LiteralBase::ToProto() const {
 }
 
 const void* LiteralBase::untyped_data(const ShapeIndex& shape_index) const {
+   std::vector<std::string> mht_113_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_113(mht_113_v, 2940, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::untyped_data");
+
   return piece(shape_index).untyped_data();
 }
 
 void* MutableLiteralBase::untyped_data(const ShapeIndex& shape_index) {
+   std::vector<std::string> mht_114_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_114(mht_114_v, 2947, "", "./tensorflow/compiler/xla/literal.cc", "MutableLiteralBase::untyped_data");
+
   return piece(shape_index).untyped_data();
 }
 
 int64_t LiteralBase::size_bytes(const ShapeIndex& shape_index) const {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_115(mht_115_v, 2954, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::size_bytes");
+
   return piece(shape_index).size_bytes();
 }
 
 std::string LiteralBase::GetR1U8AsString() const {
+   std::vector<std::string> mht_116_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_116(mht_116_v, 2961, "", "./tensorflow/compiler/xla/literal.cc", "LiteralBase::GetR1U8AsString");
+
   CHECK(shape().IsArray());
   CHECK_EQ(shape().rank(), 1);
   CHECK_EQ(shape().element_type(), U8);
@@ -2450,6 +2971,9 @@ std::string LiteralBase::GetR1U8AsString() const {
 void MutableBorrowingLiteral::CopyPieceSubtree(const Shape& shape,
                                                Piece* src_piece,
                                                Piece* dest_piece) {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_117(mht_117_v, 2974, "", "./tensorflow/compiler/xla/literal.cc", "MutableBorrowingLiteral::CopyPieceSubtree");
+
   DCHECK(ShapeUtil::Equal(src_piece->subshape(), dest_piece->subshape()))
       << "src_piece has shape: "
       << ShapeUtil::HumanString(src_piece->subshape())
@@ -2476,11 +3000,17 @@ void MutableBorrowingLiteral::CopyPieceSubtree(const Shape& shape,
   }
 }
 
-MutableLiteralBase::~MutableLiteralBase() {}
+MutableLiteralBase::~MutableLiteralBase() {
+   std::vector<std::string> mht_118_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_118(mht_118_v, 3004, "", "./tensorflow/compiler/xla/literal.cc", "MutableLiteralBase::~MutableLiteralBase");
+}
 
 MutableBorrowingLiteral::MutableBorrowingLiteral(
     const MutableBorrowingLiteral& literal)
     : MutableLiteralBase() {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_119(mht_119_v, 3011, "", "./tensorflow/compiler/xla/literal.cc", "MutableBorrowingLiteral::MutableBorrowingLiteral");
+
   shape_ = absl::make_unique<Shape>(literal.shape());
   CHECK(LayoutUtil::HasLayout(*shape_));
 
@@ -2492,6 +3022,9 @@ MutableBorrowingLiteral::MutableBorrowingLiteral(
 
 MutableBorrowingLiteral& MutableBorrowingLiteral::operator=(
     const MutableBorrowingLiteral& literal) {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_120(mht_120_v, 3025, "", "./tensorflow/compiler/xla/literal.cc", "=");
+
   shape_ = absl::make_unique<Shape>(literal.shape());
   CHECK(LayoutUtil::HasLayout(*shape_));
 
@@ -2505,6 +3038,9 @@ MutableBorrowingLiteral& MutableBorrowingLiteral::operator=(
 
 MutableBorrowingLiteral::MutableBorrowingLiteral(MutableLiteralBase* literal)
     : MutableLiteralBase() {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_121(mht_121_v, 3041, "", "./tensorflow/compiler/xla/literal.cc", "MutableBorrowingLiteral::MutableBorrowingLiteral");
+
   shape_ = absl::make_unique<Shape>(literal->shape());
   CHECK(LayoutUtil::HasLayout(*shape_));
 
@@ -2517,6 +3053,9 @@ MutableBorrowingLiteral::MutableBorrowingLiteral(MutableLiteralBase* literal)
 MutableBorrowingLiteral::MutableBorrowingLiteral(
     MutableBorrowingLiteral literal, const ShapeIndex& view_root)
     : MutableLiteralBase() {
+   std::vector<std::string> mht_122_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_122(mht_122_v, 3056, "", "./tensorflow/compiler/xla/literal.cc", "MutableBorrowingLiteral::MutableBorrowingLiteral");
+
   shape_ = absl::make_unique<Shape>(literal.piece(view_root).subshape());
   CHECK(LayoutUtil::HasLayout(*shape_));
 
@@ -2529,6 +3068,10 @@ MutableBorrowingLiteral::MutableBorrowingLiteral(
 MutableBorrowingLiteral::MutableBorrowingLiteral(const char* src_buf_ptr,
                                                  const Shape& shape)
     : MutableLiteralBase() {
+   std::vector<std::string> mht_123_v;
+   mht_123_v.push_back("src_buf_ptr: \"" + (src_buf_ptr == nullptr ? std::string("nullptr") : std::string((char*)src_buf_ptr)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_123(mht_123_v, 3072, "", "./tensorflow/compiler/xla/literal.cc", "MutableBorrowingLiteral::MutableBorrowingLiteral");
+
   shape_ = absl::make_unique<Shape>(shape);
   CHECK(LayoutUtil::HasLayout(*shape_));
   CHECK(!shape_->IsTuple());
@@ -2541,6 +3084,9 @@ MutableBorrowingLiteral::MutableBorrowingLiteral(const char* src_buf_ptr,
 MutableBorrowingLiteral::MutableBorrowingLiteral(absl::Span<char*> src_buf_ptrs,
                                                  const Shape& shape)
     : MutableLiteralBase() {
+   std::vector<std::string> mht_124_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_124(mht_124_v, 3087, "", "./tensorflow/compiler/xla/literal.cc", "MutableBorrowingLiteral::MutableBorrowingLiteral");
+
   shape_ = absl::make_unique<Shape>(shape);
   if (!shape_->IsTuple()) {
     CHECK_EQ(src_buf_ptrs.size(), 1);
@@ -2565,19 +3111,31 @@ MutableBorrowingLiteral::MutableBorrowingLiteral(absl::Span<char*> src_buf_ptrs,
 }
 
 MutableBorrowingLiteral::~MutableBorrowingLiteral() {
+   std::vector<std::string> mht_125_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_125(mht_125_v, 3114, "", "./tensorflow/compiler/xla/literal.cc", "MutableBorrowingLiteral::~MutableBorrowingLiteral");
+
   if (root_piece_ != nullptr) {
     delete root_piece_;
   }
 }
 
 LiteralSlice::LiteralSlice(const LiteralBase& literal)
-    : LiteralBase(), root_piece_(&literal.root_piece()) {}
+    : LiteralBase(), root_piece_(&literal.root_piece()) {
+   std::vector<std::string> mht_126_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_126(mht_126_v, 3124, "", "./tensorflow/compiler/xla/literal.cc", "LiteralSlice::LiteralSlice");
+}
 
 LiteralSlice::LiteralSlice(const LiteralBase& literal,
                            const ShapeIndex& view_root)
-    : LiteralBase(), root_piece_(&literal.piece(view_root)) {}
+    : LiteralBase(), root_piece_(&literal.piece(view_root)) {
+   std::vector<std::string> mht_127_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_127(mht_127_v, 3131, "", "./tensorflow/compiler/xla/literal.cc", "LiteralSlice::LiteralSlice");
+}
 
 void BorrowingLiteral::BuildPieceSubtree(const Shape& shape, Piece* piece) {
+   std::vector<std::string> mht_128_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_128(mht_128_v, 3136, "", "./tensorflow/compiler/xla/literal.cc", "BorrowingLiteral::BuildPieceSubtree");
+
   CHECK(shape.IsTuple());
   for (int i = 0; i < ShapeUtil::TupleElementCount(shape); ++i) {
     const Shape& subshape = shape.tuple_shapes(i);
@@ -2595,6 +3153,10 @@ void BorrowingLiteral::BuildPieceSubtree(const Shape& shape, Piece* piece) {
 
 BorrowingLiteral::BorrowingLiteral(const char* src_buf_ptr, const Shape& shape)
     : LiteralBase(), shape_(absl::make_unique<Shape>(shape)) {
+   std::vector<std::string> mht_129_v;
+   mht_129_v.push_back("src_buf_ptr: \"" + (src_buf_ptr == nullptr ? std::string("nullptr") : std::string((char*)src_buf_ptr)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_129(mht_129_v, 3157, "", "./tensorflow/compiler/xla/literal.cc", "BorrowingLiteral::BorrowingLiteral");
+
   CHECK(shape_->IsArray());
   CHECK(LayoutUtil::HasLayout(*shape_));
 
@@ -2606,6 +3168,9 @@ BorrowingLiteral::BorrowingLiteral(const char* src_buf_ptr, const Shape& shape)
 BorrowingLiteral::BorrowingLiteral(absl::Span<const char* const> src_buf_ptrs,
                                    const Shape& shape)
     : LiteralBase(), shape_(absl::make_unique<Shape>(shape)) {
+   std::vector<std::string> mht_130_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSliteralDTcc mht_130(mht_130_v, 3171, "", "./tensorflow/compiler/xla/literal.cc", "BorrowingLiteral::BorrowingLiteral");
+
   CHECK(shape_->IsTuple());
   CHECK(!ShapeUtil::IsNestedTuple(*shape_));
   CHECK_EQ(src_buf_ptrs.size(), ShapeUtil::TupleElementCount(*shape_));

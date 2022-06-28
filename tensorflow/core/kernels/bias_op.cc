@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSbias_opDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbias_opDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSbias_opDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -48,6 +216,9 @@ namespace {
 void GetBiasValueDims(const Tensor& value_tensor, TensorFormat data_format,
                       int32* batch, int32* height, int32* width, int32* depth,
                       int32* channel) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbias_opDTcc mht_0(mht_0_v, 219, "", "./tensorflow/core/kernels/bias_op.cc", "GetBiasValueDims");
+
   *batch = 1;
   *height = 1;
   *width = 1;
@@ -90,6 +261,9 @@ template <typename Device, typename T>
 class BiasOp : public BinaryOp<T> {
  public:
   explicit BiasOp(OpKernelConstruction* context) : BinaryOp<T>(context) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbias_opDTcc mht_1(mht_1_v, 264, "", "./tensorflow/core/kernels/bias_op.cc", "BiasOp");
+
     string data_format;
     if (context->GetAttr("data_format", &data_format).ok()) {
       OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
@@ -100,6 +274,9 @@ class BiasOp : public BinaryOp<T> {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbias_opDTcc mht_2(mht_2_v, 277, "", "./tensorflow/core/kernels/bias_op.cc", "Compute");
+
     const Tensor& input = context->input(0);
     const Tensor& bias = context->input(1);
 
@@ -160,6 +337,9 @@ template <typename Device, typename T>
 class BiasGradOp : public OpKernel {
  public:
   explicit BiasGradOp(OpKernelConstruction* context) : OpKernel(context) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbias_opDTcc mht_3(mht_3_v, 340, "", "./tensorflow/core/kernels/bias_op.cc", "BiasGradOp");
+
     string data_format;
     if (context->GetAttr("data_format", &data_format).ok()) {
       OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
@@ -170,6 +350,9 @@ class BiasGradOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbias_opDTcc mht_4(mht_4_v, 353, "", "./tensorflow/core/kernels/bias_op.cc", "Compute");
+
     const Tensor& output_backprop = context->input(0);
 
     OP_REQUIRES(context,
@@ -239,6 +422,9 @@ class BiasOp<GPUDevice, T> : public BinaryOp<T> {
  public:
   typedef GPUDevice Device;
   explicit BiasOp(OpKernelConstruction* context) : BinaryOp<T>(context) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbias_opDTcc mht_5(mht_5_v, 425, "", "./tensorflow/core/kernels/bias_op.cc", "BiasOp");
+
     string data_format;
     if (context->GetAttr("data_format", &data_format).ok()) {
       OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
@@ -249,6 +435,9 @@ class BiasOp<GPUDevice, T> : public BinaryOp<T> {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbias_opDTcc mht_6(mht_6_v, 438, "", "./tensorflow/core/kernels/bias_op.cc", "Compute");
+
     const Tensor& input = context->input(0);
     const Tensor& bias = context->input(1);
 
@@ -296,13 +485,22 @@ REGISTER_GPU_KERNEL(int32);
 #undef REGISTER_GPU_KERNEL
 
 struct BiasGradAutotuneGroup {
-  static string name() { return "BiasGrad"; }
+  static string name() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbias_opDTcc mht_7(mht_7_v, 489, "", "./tensorflow/core/kernels/bias_op.cc", "name");
+ return "BiasGrad"; }
 };
 
 class BiasAddGradGPUConfig {
  public:
-  BiasAddGradGPUConfig() : mode_(BiasAddGradGPUMode::kReduction) {}
+  BiasAddGradGPUConfig() : mode_(BiasAddGradGPUMode::kReduction) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbias_opDTcc mht_8(mht_8_v, 497, "", "./tensorflow/core/kernels/bias_op.cc", "BiasAddGradGPUConfig");
+}
   string ToString() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbias_opDTcc mht_9(mht_9_v, 501, "", "./tensorflow/core/kernels/bias_op.cc", "ToString");
+
     if (mode_ == BiasAddGradGPUMode::kNative) {
       return "native CUDA kernel.";
     }
@@ -311,8 +509,14 @@ class BiasAddGradGPUConfig {
     }
     return "unknown kernel.";
   }
-  BiasAddGradGPUMode get_mode() const { return mode_; }
-  void set_mode(BiasAddGradGPUMode val) { mode_ = val; }
+  BiasAddGradGPUMode get_mode() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbias_opDTcc mht_10(mht_10_v, 513, "", "./tensorflow/core/kernels/bias_op.cc", "get_mode");
+ return mode_; }
+  void set_mode(BiasAddGradGPUMode val) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbias_opDTcc mht_11(mht_11_v, 517, "", "./tensorflow/core/kernels/bias_op.cc", "set_mode");
+ mode_ = val; }
 
   bool operator==(const BiasAddGradGPUConfig& other) const {
     return this->mode_ == other.get_mode();
@@ -338,6 +542,9 @@ class BiasAddParams {
         data_format_(data_format),
         dtype_(dtype),
         device_id_(device_id) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbias_opDTcc mht_12(mht_12_v, 545, "", "./tensorflow/core/kernels/bias_op.cc", "BiasAddParams");
+
     for (int64_t val : in_shape_) {
       hash_code_ = Hash64Combine(hash_code_, val);
     }
@@ -352,9 +559,15 @@ class BiasAddParams {
   bool operator!=(const BiasAddParams& other) const {
     return !(*this == other);
   }
-  uint64 hash() const { return hash_code_; }
+  uint64 hash() const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbias_opDTcc mht_13(mht_13_v, 563, "", "./tensorflow/core/kernels/bias_op.cc", "hash");
+ return hash_code_; }
 
   string ToString() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbias_opDTcc mht_14(mht_14_v, 568, "", "./tensorflow/core/kernels/bias_op.cc", "ToString");
+
     // clang-format off
     return strings::StrCat(
         "(", absl::StrJoin(in_shape_, ", "), "), ",
@@ -366,6 +579,9 @@ class BiasAddParams {
   using ParamsDataType = std::tuple<SpatialArray, TensorFormat, DataType, int>;
 
   ParamsDataType get_data_as_tuple() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbias_opDTcc mht_15(mht_15_v, 582, "", "./tensorflow/core/kernels/bias_op.cc", "get_data_as_tuple");
+
     return std::make_tuple(in_shape_, data_format_, dtype_, device_id_);
   }
 
@@ -387,6 +603,9 @@ class BiasGradOp<GPUDevice, T> : public OpKernel {
  public:
   typedef GPUDevice Device;
   explicit BiasGradOp(OpKernelConstruction* context) : OpKernel(context) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbias_opDTcc mht_16(mht_16_v, 606, "", "./tensorflow/core/kernels/bias_op.cc", "BiasGradOp");
+
     string data_format;
     if (context->GetAttr("data_format", &data_format).ok()) {
       OP_REQUIRES(context, FormatFromString(data_format, &data_format_),
@@ -400,6 +619,9 @@ class BiasGradOp<GPUDevice, T> : public OpKernel {
                                const Tensor& output_backprop, int32_t batch,
                                int32_t width, int32_t height, int32_t depth,
                                int32_t channel, Tensor* output) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbias_opDTcc mht_17(mht_17_v, 622, "", "./tensorflow/core/kernels/bias_op.cc", "ComputeWithCustomKernel");
+
     BiasGradGPU<T>::compute(context->template eigen_device<Device>(),
                             output_backprop.template flat<T>().data(),
                             output->flat<T>().data(), batch, width, height,
@@ -410,6 +632,9 @@ class BiasGradOp<GPUDevice, T> : public OpKernel {
                             const Tensor& output_backprop, int32_t batch,
                             int32_t width, int32_t height, int32_t depth,
                             int32_t channel, Tensor* output) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbias_opDTcc mht_18(mht_18_v, 635, "", "./tensorflow/core/kernels/bias_op.cc", "ComputeWithReduceSum");
+
     if (data_format_ == FORMAT_NCHW) {
       int32_t row_count = batch * channel;
       int32_t col_count = height * width * depth;
@@ -440,6 +665,9 @@ class BiasGradOp<GPUDevice, T> : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbias_opDTcc mht_19(mht_19_v, 668, "", "./tensorflow/core/kernels/bias_op.cc", "Compute");
+
     const Tensor& output_backprop = context->input(0);
 
     OP_REQUIRES(context,

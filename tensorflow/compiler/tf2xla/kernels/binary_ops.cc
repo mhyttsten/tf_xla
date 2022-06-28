@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSbinary_opsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSbinary_opsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSbinary_opsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -73,6 +241,9 @@ XLA_MAKE_BINARY(Complex, xla::Complex(lhs, rhs, extend_dimensions));
 // }
 static xla::XlaOp DivNoNanImpl(xla::XlaBuilder* b, DataType dtype, xla::XlaOp x,
                                xla::XlaOp y, const BCast& broadcast_helper) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSbinary_opsDTcc mht_0(mht_0_v, 244, "", "./tensorflow/compiler/tf2xla/kernels/binary_ops.cc", "DivNoNanImpl");
+
   std::tie(x, y) = XlaBinaryOp::Broadcast(x, y, broadcast_helper);
   auto zero = XlaHelpers::Zero(b, dtype);
   auto y_equals_0 = xla::Eq(y, zero);
@@ -91,6 +262,9 @@ XLA_MAKE_BINARY(DivNoNan,
 // }
 static xla::XlaOp MulNoNanImpl(xla::XlaBuilder* b, DataType dtype, xla::XlaOp x,
                                xla::XlaOp y, const BCast& broadcast_helper) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSbinary_opsDTcc mht_1(mht_1_v, 265, "", "./tensorflow/compiler/tf2xla/kernels/binary_ops.cc", "MulNoNanImpl");
+
   std::tie(x, y) = XlaBinaryOp::Broadcast(x, y, broadcast_helper);
   auto zero = XlaHelpers::Zero(b, dtype);
   auto y_equals_0 = xla::Eq(y, zero);
@@ -113,6 +287,9 @@ XLA_MAKE_BINARY(MulNoNan,
 // }
 static xla::XlaOp FloorDivImpl(xla::XlaBuilder* b, DataType dtype, xla::XlaOp x,
                                xla::XlaOp y, const BCast& broadcast_helper) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSbinary_opsDTcc mht_2(mht_2_v, 290, "", "./tensorflow/compiler/tf2xla/kernels/binary_ops.cc", "FloorDivImpl");
+
   std::tie(x, y) = XlaBinaryOp::Broadcast(x, y, broadcast_helper);
   if (DataTypeIsFloating(dtype)) {
     if (dtype == DataType::DT_BFLOAT16) {
@@ -142,6 +319,9 @@ XLA_MAKE_BINARY(FloorDiv,
 
 xla::XlaOp XlogyImpl(xla::XlaOp x, xla::XlaOp y,
                      const BCast& broadcast_helper) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSbinary_opsDTcc mht_3(mht_3_v, 322, "", "./tensorflow/compiler/tf2xla/kernels/binary_ops.cc", "XlogyImpl");
+
   std::tie(x, y) = XlaBinaryOp::Broadcast(x, y, broadcast_helper);
   auto zero = xla::ZerosLike(x);
   auto is_zero = xla::Eq(x, zero);
@@ -151,6 +331,9 @@ XLA_MAKE_BINARY(Xlogy, XlogyImpl(lhs, rhs, broadcast_helper));
 
 xla::XlaOp Xlog1pyImpl(xla::XlaOp x, xla::XlaOp y,
                        const BCast& broadcast_helper) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSbinary_opsDTcc mht_4(mht_4_v, 334, "", "./tensorflow/compiler/tf2xla/kernels/binary_ops.cc", "Xlog1pyImpl");
+
   std::tie(x, y) = XlaBinaryOp::Broadcast(x, y, broadcast_helper);
   auto non_zero = xla::Mul(x, xla::Log1p(y));
   auto zero = xla::ZerosLike(non_zero);
@@ -161,6 +344,9 @@ XLA_MAKE_BINARY(Xlog1py, Xlog1pyImpl(lhs, rhs, broadcast_helper));
 
 xla::XlaOp XdivyImpl(xla::XlaOp x, xla::XlaOp y,
                      const BCast& broadcast_helper) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSbinary_opsDTcc mht_5(mht_5_v, 347, "", "./tensorflow/compiler/tf2xla/kernels/binary_ops.cc", "XdivyImpl");
+
   std::tie(x, y) = XlaBinaryOp::Broadcast(x, y, broadcast_helper);
   auto zero = xla::ZerosLike(x);
   auto is_zero = xla::Eq(x, zero);
@@ -174,6 +360,9 @@ XLA_MAKE_BINARY(Xdivy, XdivyImpl(lhs, rhs, broadcast_helper));
 //                                                   : trunc_mod;
 static xla::XlaOp FloorModImpl(xla::XlaBuilder* b, DataType dtype, xla::XlaOp x,
                                xla::XlaOp y, const BCast& broadcast_helper) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSbinary_opsDTcc mht_6(mht_6_v, 363, "", "./tensorflow/compiler/tf2xla/kernels/binary_ops.cc", "FloorModImpl");
+
   std::tie(x, y) = XlaBinaryOp::Broadcast(x, y, broadcast_helper);
   auto zero = XlaHelpers::Zero(b, dtype);
   auto trunc_mod = xla::Rem(x, y);
@@ -245,6 +434,9 @@ XLA_MAKE_BINARY(Pow, xla::Pow(lhs, rhs, extend_dimensions));
 xla::XlaOp SquaredDifferenceImpl(
     DataType dtype, xla::XlaOp x, xla::XlaOp y,
     const std::vector<int64_t>& extend_dimensions) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSbinary_opsDTcc mht_7(mht_7_v, 437, "", "./tensorflow/compiler/tf2xla/kernels/binary_ops.cc", "SquaredDifferenceImpl");
+
   auto difference = xla::Sub(x, y, extend_dimensions);
   if (DataTypeIsComplex(dtype)) {
     return xla::Conj(difference) * difference;
@@ -258,6 +450,9 @@ XLA_MAKE_BINARY(SquaredDifference,
 
 xla::XlaOp IgammaImpl(xla::XlaOp x, xla::XlaOp y,
                       const BCast& broadcast_helper) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSbinary_opsDTcc mht_8(mht_8_v, 453, "", "./tensorflow/compiler/tf2xla/kernels/binary_ops.cc", "IgammaImpl");
+
   std::tie(x, y) = XlaBinaryOp::Broadcast(x, y, broadcast_helper);
   return xla::Igamma(x, y);
 }
@@ -266,6 +461,9 @@ XLA_MAKE_BINARY(Igamma, IgammaImpl(lhs, rhs, broadcast_helper));
 
 xla::XlaOp IgammaGradAImpl(xla::XlaOp x, xla::XlaOp y,
                            const BCast& broadcast_helper) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSbinary_opsDTcc mht_9(mht_9_v, 464, "", "./tensorflow/compiler/tf2xla/kernels/binary_ops.cc", "IgammaGradAImpl");
+
   std::tie(x, y) = XlaBinaryOp::Broadcast(x, y, broadcast_helper);
   return xla::IgammaGradA(x, y);
 }
@@ -274,6 +472,9 @@ XLA_MAKE_BINARY(IgammaGradA, IgammaGradAImpl(lhs, rhs, broadcast_helper));
 
 xla::XlaOp RandomGammaGradImpl(xla::XlaOp x, xla::XlaOp y,
                                const BCast& broadcast_helper) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSbinary_opsDTcc mht_10(mht_10_v, 475, "", "./tensorflow/compiler/tf2xla/kernels/binary_ops.cc", "RandomGammaGradImpl");
+
   std::tie(x, y) = XlaBinaryOp::Broadcast(x, y, broadcast_helper);
   return xla::RandomGammaGrad(x, y);
 }
@@ -283,6 +484,9 @@ XLA_MAKE_BINARY(RandomGammaGrad,
 
 xla::XlaOp IgammacImpl(xla::XlaOp x, xla::XlaOp y,
                        const BCast& broadcast_helper) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSbinary_opsDTcc mht_11(mht_11_v, 487, "", "./tensorflow/compiler/tf2xla/kernels/binary_ops.cc", "IgammacImpl");
+
   std::tie(x, y) = XlaBinaryOp::Broadcast(x, y, broadcast_helper);
   return xla::Igammac(x, y);
 }
@@ -291,6 +495,9 @@ XLA_MAKE_BINARY(Igammac, IgammacImpl(lhs, rhs, broadcast_helper));
 
 xla::XlaOp PolygammaImpl(xla::XlaOp n, xla::XlaOp x,
                          const BCast& broadcast_helper) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSbinary_opsDTcc mht_12(mht_12_v, 498, "", "./tensorflow/compiler/tf2xla/kernels/binary_ops.cc", "PolygammaImpl");
+
   std::tie(n, x) = XlaBinaryOp::Broadcast(n, x, broadcast_helper);
   return xla::Polygamma(n, x);
 }
@@ -298,6 +505,9 @@ xla::XlaOp PolygammaImpl(xla::XlaOp n, xla::XlaOp x,
 XLA_MAKE_BINARY(Polygamma, PolygammaImpl(lhs, rhs, broadcast_helper));
 
 xla::XlaOp ZetaImpl(xla::XlaOp x, xla::XlaOp q, const BCast& broadcast_helper) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSbinary_opsDTcc mht_13(mht_13_v, 508, "", "./tensorflow/compiler/tf2xla/kernels/binary_ops.cc", "ZetaImpl");
+
   std::tie(x, q) = XlaBinaryOp::Broadcast(x, q, broadcast_helper);
   return xla::Zeta(x, q);
 }
@@ -309,11 +519,17 @@ XLA_MAKE_BINARY(Zeta, ZetaImpl(lhs, rhs, broadcast_helper));
 class ApproximateEqualOp : public XlaOpKernel {
  public:
   explicit ApproximateEqualOp(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSbinary_opsDTcc mht_14(mht_14_v, 522, "", "./tensorflow/compiler/tf2xla/kernels/binary_ops.cc", "ApproximateEqualOp");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("tolerance", &tolerance_));
   }
 
   // Computes the max of the scalar input x and 0.
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSbinary_opsDTcc mht_15(mht_15_v, 530, "", "./tensorflow/compiler/tf2xla/kernels/binary_ops.cc", "Compile");
+
     xla::XlaBuilder* b = ctx->builder();
     auto abs = xla::Abs(xla::Sub(ctx->Input(0), ctx->Input(1)));
     auto abs_shape = b->GetShape(abs);

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -72,12 +240,18 @@ struct ResourceOpLiftingPass
 };
 
 bool IsResource(Value value) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_0(mht_0_v, 243, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "IsResource");
+
   return getElementTypeOrSelf(value.getType()).isa<TF::ResourceType>();
 }
 
 // Get the type of the data contained in a resource. Returns null if there is
 // no single type in the resource.
 Type GetResourceSubtype(Value value) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_1(mht_1_v, 252, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "GetResourceSubtype");
+
   auto resource_type =
       getElementTypeOrSelf(value.getType()).dyn_cast<TF::ResourceType>();
   auto subtypes = resource_type.getSubtypes();
@@ -89,6 +263,9 @@ Type GetResourceSubtype(Value value) {
 // TODO(b/171039585): Replace this with proper analysis of
 // `tf.VarIsInitializedOp` in regards to resource writes and control flow.
 void SetAllVarIsInitializedToTrue(Block* block) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_2(mht_2_v, 266, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "SetAllVarIsInitializedToTrue");
+
   auto builder = OpBuilder::atBlockBegin(block);
   TF::ConstOp const_true = nullptr;
   for (auto op :
@@ -112,6 +289,9 @@ void SetAllVarIsInitializedToTrue(Block* block) {
 // computation is purely sequential (no concurrency). Need to support concurrent
 // computation as well.
 void ForwardStoreToLoad(Block* block) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_3(mht_3_v, 292, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "ForwardStoreToLoad");
+
   // resource_handle_to_last_store_op keeps track of the most recent (last)
   // store to each resource. Non-existent entry indicates that a resource has
   // not been stored to yet.
@@ -163,27 +343,42 @@ void ForwardStoreToLoad(Block* block) {
 // Helper class to hoist resource ops out of regions attached to an op.
 class RegionResourceHoister {
  public:
-  explicit RegionResourceHoister(Operation* op) : op_(op) {}
+  explicit RegionResourceHoister(Operation* op) : op_(op) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_4(mht_4_v, 347, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "RegionResourceHoister");
+}
 
   // Analyzes attached regions to record resources read and written.
   LogicalResult Analyze();
 
   // Returns all resources accessed by the regions attached the op.
-  auto& GetResources() { return resources_; }
+  auto& GetResources() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_5(mht_5_v, 356, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "GetResources");
+ return resources_; }
 
   // Returns if the given value is a resource that needs lifting.
   bool Contains(Value resource) const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_6(mht_6_v, 362, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "Contains");
+
     return resources_.find(resource) != resources_.end();
   }
 
   // Drops the given resource from lifting.
   void DropResource(Value resource) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_7(mht_7_v, 370, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "DropResource");
+
     resources_.erase(resource);
     written_resources_.remove(resource);
   }
 
   // Replaces all resource loads in all regions attached to the op.
   void ReplaceResourceLoads(bool read_only) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_8(mht_8_v, 379, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "ReplaceResourceLoads");
+
     llvm::for_each(op_->getRegions(), [&](Region& region) {
       ReplaceResourceLoads(region, read_only);
     });
@@ -193,10 +388,16 @@ class RegionResourceHoister {
 
  private:
   // Returns if any resources need lifting.
-  bool NeedsLifting() const { return !resources_.empty(); }
+  bool NeedsLifting() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_9(mht_9_v, 392, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "NeedsLifting");
+ return !resources_.empty(); }
 
   // Returns the number of results generated by the lifted op.
-  int GetLiftedNumResults() const { return num_new_results_; }
+  int GetLiftedNumResults() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_10(mht_10_v, 398, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "GetLiftedNumResults");
+ return num_new_results_; }
 
   // Generates hoisted reads for resources that need them before the op.
   void GenerateHoistedReads();
@@ -214,6 +415,9 @@ class RegionResourceHoister {
 
   // Returns is this resource was written to in any of the regions.
   bool IsWritten(Value resource) const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_11(mht_11_v, 418, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "IsWritten");
+
     return written_resources_.contains(resource);
   }
 
@@ -249,12 +453,21 @@ class RegionResourceHoister {
           is_written_all(false),
           hoisted_read(nullptr),
           data_type(nullptr),
-          result_index(-1) {}
+          result_index(-1) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_12(mht_12_v, 457, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "ResourceInfo");
+}
 
-    bool IsResultIndexAssigned() { return result_index != -1; }
+    bool IsResultIndexAssigned() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_13(mht_13_v, 462, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "IsResultIndexAssigned");
+ return result_index != -1; }
 
     // Refine the resource type using the given type `type`.
     void RefineType(Type type) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_14(mht_14_v, 468, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "RefineType");
+
       if (!data_type) {
         data_type = type;
       } else {
@@ -272,6 +485,9 @@ class RegionResourceHoister {
 
 // Analyzes resources that are read or written within attached regions.
 LogicalResult RegionResourceHoister::Analyze() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_15(mht_15_v, 488, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "RegionResourceHoister::Analyze");
+
   // Hoisting of child regions might have created opportunity for store-load
   // forwarding.
   for (Region& region : op_->getRegions()) {
@@ -371,6 +587,9 @@ LogicalResult RegionResourceHoister::Analyze() {
 
 // Generates hoisted reads for all resources that need them just before the op.
 void RegionResourceHoister::GenerateHoistedReads() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_16(mht_16_v, 590, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "RegionResourceHoister::GenerateHoistedReads");
+
   OpBuilder builder(op_);
   DictionaryAttr empty_attrs = builder.getDictionaryAttr({});
   for (auto& resource_it : GetResources()) {
@@ -390,6 +609,9 @@ void RegionResourceHoister::GenerateHoistedReads() {
 // Replaces all resource reads with the hoisted read.
 void RegionResourceHoister::ReplaceResourceLoads(Region& region,
                                                  bool read_only) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_17(mht_17_v, 612, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "RegionResourceHoister::ReplaceResourceLoads");
+
   assert(llvm::hasSingleElement(region) && "Expected single block region");
   // Only iterate through ops directly in the body as we can't handle
   // ops nested deeper in regions.
@@ -415,6 +637,9 @@ void RegionResourceHoister::ReplaceResourceLoads(Region& region,
 // either as an existing return value, or a newly allocated return value.
 void RegionResourceHoister::AppendResourceStoreValueToReturn(
     RegionRange regions) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_18(mht_18_v, 640, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "RegionResourceHoister::AppendResourceStoreValueToReturn");
+
   for (Region* region : regions) {
     assert(llvm::hasSingleElement(*region) && "Expected single block region");
     Block& front = region->front();
@@ -451,6 +676,9 @@ void RegionResourceHoister::AppendResourceStoreValueToReturn(
 // Replace the old op with a new op (with potentially additional results), and
 // add stores to written resources after the new op.
 void RegionResourceHoister::ReplaceOpWithNewOp() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_19(mht_19_v, 679, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "RegionResourceHoister::ReplaceOpWithNewOp");
+
   auto new_result_types = llvm::to_vector<4>(op_->getResultTypes());
   int result_region = isa<TF::WhileRegionOp>(op_) ? 1 : 0;
   Operation* terminator = op_->getRegion(result_region).front().getTerminator();
@@ -496,6 +724,9 @@ void RegionResourceHoister::ReplaceOpWithNewOp() {
 // an If/case/cluster op.
 LogicalResult RegionResourceHoister::HoistResourcesOutOfIfCaseCluster(
     Operation* op) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_20(mht_20_v, 727, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "RegionResourceHoister::HoistResourcesOutOfIfCaseCluster");
+
   RegionResourceHoister hoister(op);
   if (failed(hoister.Analyze())) return failure();
 
@@ -514,6 +745,9 @@ LogicalResult RegionResourceHoister::HoistResourcesOutOfIfCaseCluster(
 // Lift resource loads and stores out of WhileRegion
 LogicalResult RegionResourceHoister::HoistResourcesOutOfWhileRegion(
     TF::WhileRegionOp op) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_21(mht_21_v, 748, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "RegionResourceHoister::HoistResourcesOutOfWhileRegion");
+
   // For WhileRegion, post canonicalization all resource used within the
   // body and condition regions are replaced with captured values, so we do not
   // need to take into account the body and condition region arguments.
@@ -590,6 +824,9 @@ LogicalResult RegionResourceHoister::HoistResourcesOutOfWhileRegion(
 
 // Lift resources out of the regions attached to `op`
 LogicalResult RegionResourceHoister::ReplaceOpWithNewOp(Operation* op) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_22(mht_22_v, 827, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "RegionResourceHoister::ReplaceOpWithNewOp");
+
   if (auto while_op = dyn_cast<TF::WhileRegionOp>(op))
     return HoistResourcesOutOfWhileRegion(while_op);
   return HoistResourcesOutOfIfCaseCluster(op);
@@ -611,6 +848,9 @@ struct ResourceArgUseInfo {
 // ops/functions need to be already resource-lifted.
 LogicalResult FindResourceArgUseInfo(
     FuncOp func_op, llvm::SmallDenseMap<int64_t, ResourceArgUseInfo>* result) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_23(mht_23_v, 851, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "FindResourceArgUseInfo");
+
   auto return_op = func_op.front().getTerminator();
   for (auto arg : TF::filter_resources(func_op.getArguments())) {
     ResourceArgUseInfo info;
@@ -681,6 +921,9 @@ void RemoveUnusedResourceArgumentsAndForwardedRetvals(
     llvm::SmallVector<int64_t, 4>* old_to_new_arg_indices = nullptr,
     llvm::SmallDenseMap<int64_t, Type>* remaining_resource_data_types =
         nullptr) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_24(mht_24_v, 924, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "RemoveUnusedResourceArgumentsAndForwardedRetvals");
+
   // Remove return values forwarded from unused arguments.
   auto return_op = func_op.front().getTerminator();
   auto old_return_vals = llvm::to_vector<8>(return_op->getOperands());
@@ -730,6 +973,9 @@ LogicalResult LiftArgRetResourcesForFunction(
     FuncOp func_op,
     const llvm::SmallDenseMap<int64_t, Type>& resource_data_types,
     llvm::function_ref<void(int64_t, Value)> handle_updated_arg_value) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_25(mht_25_v, 976, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "LiftArgRetResourcesForFunction");
+
   RegionResourceHoister hoister(func_op);
   if (failed(hoister.Analyze())) return failure();
 
@@ -803,6 +1049,9 @@ void AddLoadsStoresOutsideControlFlowOp(
     Operation* caller,
     const llvm::SmallDenseMap<int64_t, std::pair<Type, int64_t>>&
         arg_data_type_and_updated_output_index) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_26(mht_26_v, 1052, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "AddLoadsStoresOutsideControlFlowOp");
+
   OpBuilder builder(caller);
   auto new_operands = llvm::to_vector<8>(caller->getOperands());
   llvm::SmallVector<int64_t, 8> changed_indices;
@@ -826,6 +1075,9 @@ void AddLoadsStoresOutsideControlFlowOp(
 
 // Lifts loads/stores from while loop's body and cond functions.
 LogicalResult HandleWhileLoop(TF::WhileOp while_op, FuncOp body, FuncOp cond) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_27(mht_27_v, 1078, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "HandleWhileLoop");
+
   auto return_op = body.front().getTerminator();
   llvm::SmallDenseMap<int64_t, ResourceArgUseInfo> body_use_info;
   llvm::SmallDenseMap<int64_t, ResourceArgUseInfo> cond_use_info;
@@ -890,6 +1142,9 @@ LogicalResult HandleWhileLoop(TF::WhileOp while_op, FuncOp body, FuncOp cond) {
 // Lifts loads/stores from an IfOp or CaseOp's branches.
 template <class CaseOrIfOp>
 LogicalResult HandleCaseOrIfOp(CaseOrIfOp op, ArrayRef<FuncOp> branches) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_28(mht_28_v, 1145, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "HandleCaseOrIfOp");
+
   // For canonicalized If/Case, there should not be any resource outputs
   int64_t non_resource_results = op.getNumResults();
 
@@ -1007,6 +1262,9 @@ struct PartitionedCallLiftingInfo {
 // happens on a clone, which will be stored in `result`.
 LogicalResult HandlePartitionedCallOpCallee(
     FuncOp callee, PartitionedCallLiftingInfo* result) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_29(mht_29_v, 1265, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "HandlePartitionedCallOpCallee");
+
   // Sanity check: return of resources should be aliases of inputs. Such outputs
   // will be removed later.
   int64_t non_resource_results = 0;
@@ -1095,6 +1353,9 @@ LogicalResult HandlePartitionedCallOpCallee(
 template <typename CallOpType>
 void UpdatePartitionedCallOpWithNewCallee(
     CallOpType call_op, PartitionedCallLiftingInfo& lifting_info) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_30(mht_30_v, 1356, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "UpdatePartitionedCallOpWithNewCallee");
+
   if (!lifting_info.lifted_callee) return;
   // Replace output resource uses with the aliasing input, so that we can remove
   // this output.
@@ -1141,6 +1402,9 @@ LogicalResult HandlePartitionedCallOp(
     CallOpType call_op, FuncOp callee, ModuleOp module, bool vars_initialized,
     llvm::SmallDenseMap<llvm::StringRef, PartitionedCallLiftingInfo>*
         lifted_callees) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_31(mht_31_v, 1405, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "HandlePartitionedCallOp");
+
   auto emplace_res = lifted_callees->try_emplace(callee.getName(),
                                                  PartitionedCallLiftingInfo());
   if (emplace_res.second) {
@@ -1164,6 +1428,9 @@ LogicalResult HoistForControlFlow(
     Block* block, ModuleOp module, bool vars_initialized,
     llvm::SmallDenseMap<llvm::StringRef, PartitionedCallLiftingInfo>*
         lifted_partitioned_call_callees) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_32(mht_32_v, 1431, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "HoistForControlFlow");
+
   if (vars_initialized) SetAllVarIsInitializedToTrue(block);
 
   for (Operation& op : llvm::make_early_inc_range(*block)) {
@@ -1234,6 +1501,9 @@ LogicalResult HoistForControlFlow(
 // Returns failure if there are remaining resource-type values that can not be
 // lifted.
 void ResourceOpLiftingPass::runOnOperation() {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_33(mht_33_v, 1504, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "ResourceOpLiftingPass::runOnOperation");
+
   llvm::SmallDenseMap<llvm::StringRef, PartitionedCallLiftingInfo>
       lifted_partitioned_call_callees;
   ModuleOp module = getOperation();
@@ -1263,6 +1533,9 @@ struct ResourceOpLiftingForMainFunctionPass
 };
 
 void ResourceOpLiftingForMainFunctionPass::runOnOperation() {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_34(mht_34_v, 1536, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "ResourceOpLiftingForMainFunctionPass::runOnOperation");
+
   ModuleOp module = getOperation();
   FuncOp main_func = module.lookupSymbol<FuncOp>("main");
   if (!main_func) {
@@ -1290,6 +1563,9 @@ CreateResourceOpLiftingForMainFunctionPass() {
 
 namespace TF {
 LogicalResult ResourceLiftingForFunctionalControlFlow(FuncOp function) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSresource_op_liftingDTcc mht_35(mht_35_v, 1566, "", "./tensorflow/compiler/mlir/tensorflow/transforms/resource_op_lifting.cc", "ResourceLiftingForFunctionalControlFlow");
+
   // This routine should only be called when control flow operations are still
   // represented with TF IfOp and WhileOp operations. In this case, there should
   // be only one basic blocks in the MLIR representation.

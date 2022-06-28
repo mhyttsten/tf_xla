@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSframeworkPStensor_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSframeworkPStensor_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,7 +201,10 @@ namespace tensorflow {
 class TensorTestHelper {
  public:
   // This is an operation that can be done by VariableOp.
-  static void set_shape(Tensor* t, const TensorShape& s) { t->set_shape(s); }
+  static void set_shape(Tensor* t, const TensorShape& s) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_testDTcc mht_0(mht_0_v, 205, "", "./tensorflow/core/framework/tensor_test.cc", "set_shape");
+ t->set_shape(s); }
 };
 
 // To make TestCopies do the right thing.
@@ -117,20 +288,32 @@ TEST(TensorTest, DataType_Traits) {
 
 template <typename T>
 void ExpectEqual(const Tensor& x, const Tensor& y) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_testDTcc mht_1(mht_1_v, 291, "", "./tensorflow/core/framework/tensor_test.cc", "ExpectEqual");
+
   test::ExpectEqual(x, y);
 }
 // test::ExpectEqual does not support ResourceHandle or Variant.
 template <>
 void ExpectEqual<ResourceHandle>(const Tensor& x, const Tensor& y) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_testDTcc mht_2(mht_2_v, 299, "", "./tensorflow/core/framework/tensor_test.cc", "ExpectEqual<ResourceHandle>");
+
   EXPECT_EQ(x, y);
 }
 template <>
 void ExpectEqual<Variant>(const Tensor& x, const Tensor& y) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_testDTcc mht_3(mht_3_v, 306, "", "./tensorflow/core/framework/tensor_test.cc", "ExpectEqual<Variant>");
+
   EXPECT_EQ(x, y);
 }
 
 template <typename T>
 void TestCopies(const Tensor& t) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_testDTcc mht_4(mht_4_v, 314, "", "./tensorflow/core/framework/tensor_test.cc", "TestCopies");
+
   {
     LOG(INFO) << "CopyFrom()";
     Tensor t2(t.dtype());
@@ -375,9 +558,15 @@ class TensorReshapeTest : public ::testing::Test {
 
   TensorReshapeTest()
       : t(DT_FLOAT, TensorShape({2, 3, 4, 5})),
-        zero_t(DT_FLOAT, TensorShape({3, 0, 2, 0, 5})) {}
+        zero_t(DT_FLOAT, TensorShape({3, 0, 2, 0, 5})) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_testDTcc mht_5(mht_5_v, 562, "", "./tensorflow/core/framework/tensor_test.cc", "TensorReshapeTest");
+}
 
   void SetUp() override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_testDTcc mht_6(mht_6_v, 567, "", "./tensorflow/core/framework/tensor_test.cc", "SetUp");
+
     EXPECT_TRUE(t.shape().IsSameSize(TensorShape({2, 3, 4, 5})));
     EXPECT_TRUE(zero_t.shape().IsSameSize(TensorShape({3, 0, 2, 0, 5})));
 
@@ -411,6 +600,9 @@ class TensorReshapeTest : public ::testing::Test {
 
   template <typename T>
   void TestReshapeImpl(T shaped, std::initializer_list<int64_t> sizes) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_testDTcc mht_7(mht_7_v, 603, "", "./tensorflow/core/framework/tensor_test.cc", "TestReshapeImpl");
+
     auto iter = sizes.begin();
     for (int i = 0; i < shaped.rank(); ++i, ++iter) {
       EXPECT_EQ(*iter, shaped.dimension(i));
@@ -1151,11 +1343,20 @@ TEST(Tensor_Complex, SimpleWithHelper128) {
 class DummyCPUAllocator : public Allocator {
  public:
   DummyCPUAllocator() = default;
-  string Name() override { return "cpu"; }
+  string Name() override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_testDTcc mht_8(mht_8_v, 1347, "", "./tensorflow/core/framework/tensor_test.cc", "Name");
+ return "cpu"; }
   void* AllocateRaw(size_t alignment, size_t num_bytes) override {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_testDTcc mht_9(mht_9_v, 1351, "", "./tensorflow/core/framework/tensor_test.cc", "AllocateRaw");
+
     return nullptr;
   }
-  void DeallocateRaw(void* ptr) override {}
+  void DeallocateRaw(void* ptr) override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_testDTcc mht_10(mht_10_v, 1357, "", "./tensorflow/core/framework/tensor_test.cc", "DeallocateRaw");
+}
 };
 
 TEST(Tensor, SharesBufferWith) {
@@ -1342,6 +1543,9 @@ TEST(Tensor, SubSlice_Basic) {
 template <typename T>
 Tensor MkTensor(DataType dt, const TensorShape& shape,
                 std::vector<T> init_values) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_testDTcc mht_11(mht_11_v, 1546, "", "./tensorflow/core/framework/tensor_test.cc", "MkTensor");
+
   Tensor x(dt, shape);
   const int limit = x.NumElements();
   int vi = 0;
@@ -1469,6 +1673,9 @@ TEST(SummarizeValue, STRING_PRINT_V2) {
 }
 
 void BM_CreateAndDestroy(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_testDTcc mht_12(mht_12_v, 1676, "", "./tensorflow/core/framework/tensor_test.cc", "BM_CreateAndDestroy");
+
   TensorShape shape({10, 20});
   for (auto s : state) {
     Tensor t(DT_FLOAT, shape);
@@ -1477,6 +1684,9 @@ void BM_CreateAndDestroy(::testing::benchmark::State& state) {
 BENCHMARK(BM_CreateAndDestroy);
 
 void BM_Assign(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_testDTcc mht_13(mht_13_v, 1687, "", "./tensorflow/core/framework/tensor_test.cc", "BM_Assign");
+
   Tensor a(DT_FLOAT, TensorShape({10, 20}));
   Tensor b(DT_FLOAT, TensorShape({10, 20}));
   bool a_to_b = true;
@@ -1499,6 +1709,9 @@ TEST(Tensor, EmptyTensorData) {
 
 // Benchmark create and destroy a tensor, with an allocated buffer.
 void BM_CreateAndDestroyWithBuf(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_testDTcc mht_14(mht_14_v, 1712, "", "./tensorflow/core/framework/tensor_test.cc", "BM_CreateAndDestroyWithBuf");
+
   TensorShape shape({10, 20});
   Allocator* allocator = cpu_allocator();
   for (auto s : state) {
@@ -1509,6 +1722,9 @@ BENCHMARK(BM_CreateAndDestroyWithBuf);
 
 // Benchmark create+copy a tensor, with an allocated buffer.
 void BM_CreateAndCopyCtrWithBuf(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_testDTcc mht_15(mht_15_v, 1725, "", "./tensorflow/core/framework/tensor_test.cc", "BM_CreateAndCopyCtrWithBuf");
+
   TensorShape shape({10, 20});
   Allocator* allocator = cpu_allocator();
   for (auto s : state) {
@@ -1520,6 +1736,9 @@ BENCHMARK(BM_CreateAndCopyCtrWithBuf);
 
 // Benchmark create+move a tensor, with an allocated buffer.
 void BM_CreateAndMoveCtrWithBuf(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_testDTcc mht_16(mht_16_v, 1739, "", "./tensorflow/core/framework/tensor_test.cc", "BM_CreateAndMoveCtrWithBuf");
+
   TensorShape shape({10, 20});
   Allocator* allocator = cpu_allocator();
   for (auto s : state) {
@@ -1533,6 +1752,9 @@ BENCHMARK(BM_CreateAndMoveCtrWithBuf);
 // interface.
 void BM_CreateAndDestroyHostScalarNonOptimized(
     ::testing::benchmark::State& state) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_testDTcc mht_17(mht_17_v, 1755, "", "./tensorflow/core/framework/tensor_test.cc", "BM_CreateAndDestroyHostScalarNonOptimized");
+
   TensorShape shape({});
   Allocator* allocator = cpu_allocator();
   for (auto s : state) {
@@ -1546,6 +1768,9 @@ BENCHMARK(BM_CreateAndDestroyHostScalarNonOptimized);
 // constructor.
 void BM_CreateAndDestroyHostScalarOptimized(
     ::testing::benchmark::State& state) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_testDTcc mht_18(mht_18_v, 1771, "", "./tensorflow/core/framework/tensor_test.cc", "BM_CreateAndDestroyHostScalarOptimized");
+
   for (auto s : state) {
     Tensor a(37.0);
   }
@@ -1553,6 +1778,9 @@ void BM_CreateAndDestroyHostScalarOptimized(
 BENCHMARK(BM_CreateAndDestroyHostScalarOptimized);
 
 void BM_FromProto(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_testDTcc mht_19(mht_19_v, 1781, "", "./tensorflow/core/framework/tensor_test.cc", "BM_FromProto");
+
   const int size = state.range(0);
 
   TensorShape shape({size});
@@ -1569,6 +1797,9 @@ void BM_FromProto(::testing::benchmark::State& state) {
 BENCHMARK(BM_FromProto)->Range(1, 1 << 20);
 
 void BM_FromProtoCompressed(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_testDTcc mht_20(mht_20_v, 1800, "", "./tensorflow/core/framework/tensor_test.cc", "BM_FromProtoCompressed");
+
   const int size = state.range(0);
 
   TensorShape shape({size});
@@ -1586,6 +1817,9 @@ void BM_FromProtoCompressed(::testing::benchmark::State& state) {
 BENCHMARK(BM_FromProtoCompressed)->Range(1, 1 << 20);
 
 void BM_FromProtoCompressedZero(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPStensor_testDTcc mht_21(mht_21_v, 1820, "", "./tensorflow/core/framework/tensor_test.cc", "BM_FromProtoCompressedZero");
+
   const int size = state.range(0);
 
   TensorShape shape({size});

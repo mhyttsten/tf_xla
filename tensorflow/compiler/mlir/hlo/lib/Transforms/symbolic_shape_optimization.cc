@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -56,6 +224,9 @@ struct SimplifyBroadcasts : public mlir::OpRewritePattern<shape::BroadcastOp> {
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(
       shape::BroadcastOp op, mlir::PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_0(mht_0_v, 227, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "matchAndRewrite");
+
     // Require successful shape analysis.
     ShapeComponentAnalysis shape_analysis;
     llvm::SmallVector<ArrayRef<SymbolicExpr>> shapes_info;
@@ -96,6 +267,9 @@ struct SimplifyBroadcasts : public mlir::OpRewritePattern<shape::BroadcastOp> {
     auto loc = op.getLoc();
     DenseMap<int64_t, Value> constants;
     auto find_or_create_constant = [&](int64_t c) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_1(mht_1_v, 270, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "lambda");
+
       auto it = constants.find(c);
       if (it != constants.end()) return it->second;
       Value newly_created = rewriter.create<arith::ConstantIndexOp>(loc, c);
@@ -139,6 +313,9 @@ LogicalResult AnalyzeDynamicBroadcastInDimExpandingBehavior(
     ShapeComponentAnalysis &analysis, Value value, Value shape,
     llvm::SmallSetVector<int64_t, 4> *known_expanding_dims,
     llvm::SmallSetVector<int64_t, 4> *known_nonexpanding_dims) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_2(mht_2_v, 316, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "AnalyzeDynamicBroadcastInDimExpandingBehavior");
+
   // Require successful analysis of shapes.
   auto shape_in = analysis.GetShapeInfo(value);
   auto shape_out = analysis.GetValueInfo(shape);
@@ -168,6 +345,9 @@ struct AnnotateExpandingDimensionsInDynamicBroadcastInDim
   LogicalResult matchAndRewrite(
       mhlo::DynamicBroadcastInDimOp op,
       mlir::PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_3(mht_3_v, 348, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "matchAndRewrite");
+
     // Analyze shapes and identify expanding and non-expanding dims.
     ShapeComponentAnalysis analysis;
     llvm::SmallSetVector<int64_t, 4> known_expanding_dims,
@@ -181,6 +361,9 @@ struct AnnotateExpandingDimensionsInDynamicBroadcastInDim
     // Collect possibly already annotated info.
     auto insert_all = [](llvm::SmallSetVector<int64_t, 4> &dst,
                          Optional<DenseIntElementsAttr> src) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_4(mht_4_v, 364, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "lambda");
+
       if (!src) return;
       for (auto it : *src) dst.insert(it.getLimitedValue());
     };
@@ -190,6 +373,9 @@ struct AnnotateExpandingDimensionsInDynamicBroadcastInDim
     // Fail pattern application if there is nothing new to annotate.
     auto is_equal = [](llvm::SmallSetVector<int64_t, 4> &set,
                        DenseIntElementsAttr attr) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_5(mht_5_v, 376, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "lambda");
+
       return set.size() == attr.size() && llvm::all_of(attr, [&](auto it) {
                return set.count(it.getLimitedValue());
              });
@@ -219,6 +405,9 @@ struct RemoveComputeReshapeShape final
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(mhlo::ComputeReshapeShapeOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_6(mht_6_v, 408, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "matchAndRewrite");
+
     ShapeComponentAnalysis shapeComponentAnalysis;
     auto dynamic_shape =
         shapeComponentAnalysis.GetValueInfo(op.dynamic_shape());
@@ -237,6 +426,9 @@ struct RemoveComputeReshapeShape final
 bool IsProduct(AffineExpr expr,
                llvm::function_ref<void(AffineConstantExpr)> cbkConstantFactor,
                llvm::function_ref<void(AffineSymbolExpr)> cbkSymbolicFactor) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_7(mht_7_v, 429, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "IsProduct");
+
   auto binExpr = expr.dyn_cast<AffineBinaryOpExpr>();
   if (binExpr && binExpr.getKind() == AffineExprKind::Mul) {
     return IsProduct(binExpr.getLHS(), cbkConstantFactor, cbkSymbolicFactor) &&
@@ -256,10 +448,16 @@ bool IsProduct(AffineExpr expr,
 bool IsSymbolicProduct(const SymbolicExpr &symbolicExpr,
                        llvm::function_ref<void(int64_t)> cbkConstantFactor,
                        llvm::function_ref<void(Symbol)> cbkSymbolicFactor) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_8(mht_8_v, 451, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "IsSymbolicProduct");
+
   return IsProduct(
       symbolicExpr.expr,
       [&](AffineConstantExpr cexpr) { cbkConstantFactor(cexpr.getValue()); },
       [&](AffineSymbolExpr sexpr) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_9(mht_9_v, 458, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "lambda");
+
         cbkSymbolicFactor(symbolicExpr.symbols[sexpr.getPosition()]);
       });
 }
@@ -271,14 +469,23 @@ struct SymbolicProduct {
   int64_t concrete = 1;
   // List all symbolic factors as they can not be aggregated.
   llvm::SmallVector<Symbol> symbolic;
-  bool empty() { return concrete == 1 && symbolic.empty(); }
+  bool empty() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_10(mht_10_v, 473, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "empty");
+ return concrete == 1 && symbolic.empty(); }
 };
 
 bool IsSymbolicProduct(const SymbolicExpr &symbolicExpr,
                        SymbolicProduct *product) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_11(mht_11_v, 480, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "IsSymbolicProduct");
+
   return IsSymbolicProduct(
       symbolicExpr, [&](int64_t c) { product->concrete *= c; },
-      [&](Symbol s) { product->symbolic.push_back(s); });
+      [&](Symbol s) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_12(mht_12_v, 486, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "lambda");
+ product->symbolic.push_back(s); });
 }
 
 struct RemoveRedundantCstrReshapable final
@@ -286,6 +493,9 @@ struct RemoveRedundantCstrReshapable final
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(mhlo::CstrReshapableOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_13(mht_13_v, 496, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "matchAndRewrite");
+
     // Get shape analysis info for the number of elements.
     ShapeComponentAnalysis shapeComponentAnalysis;
     auto numElementsInfo =
@@ -335,7 +545,10 @@ struct RemoveRedundantCstrReshapable final
               [&](int64_t c) {
                 if (c != ShapedType::kDynamicSize) concreteProductDynShape *= c;
               },
-              [&](Symbol s) { partialSymbolicFactorsDynShape.push_back(s); })) {
+              [&](Symbol s) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_14(mht_14_v, 549, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "lambda");
+ partialSymbolicFactorsDynShape.push_back(s); })) {
         return failure();
       }
       for (const Symbol &symDynShape : partialSymbolicFactorsDynShape) {
@@ -370,6 +583,9 @@ LogicalResult MaterializeReshapeAsScalarExpand(RankedTensorType operand_ty,
                                                RankedTensorType result_ty,
                                                mhlo::DynamicReshapeOp op,
                                                PatternRewriter &rewriter) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_15(mht_15_v, 586, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "MaterializeReshapeAsScalarExpand");
+
   assert(operand_ty.getRank() == 0 && "expect scalar operand");
   auto loc = op.getLoc();
   SmallVector<int64_t> unit_dims(result_ty.getRank(), 1);
@@ -389,6 +605,9 @@ LogicalResult MaterializeReshapeAsScalarCollapse(RankedTensorType operand_ty,
                                                  RankedTensorType result_ty,
                                                  mhlo::DynamicReshapeOp op,
                                                  PatternRewriter &rewriter) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_16(mht_16_v, 608, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "MaterializeReshapeAsScalarCollapse");
+
   assert(result_ty.getRank() == 0 && "expect scalar result");
   auto loc = op.getLoc();
   Value operand = op.operand();
@@ -416,6 +635,9 @@ struct DimensionGroup {
 };
 
 SymbolicProduct EliminateCommonFactors(SymbolicProduct &a, SymbolicProduct &b) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_17(mht_17_v, 638, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "EliminateCommonFactors");
+
   SymbolicProduct gcd;
 
   // Eliminate common concrete factors.
@@ -445,11 +667,17 @@ bool IsUnpairedUnitDimension(
     ArrayRef<ShapeComponentAnalysis::SymbolicExpr>::iterator end,
     ArrayRef<ShapeComponentAnalysis::SymbolicExpr>::iterator other_it,
     ArrayRef<ShapeComponentAnalysis::SymbolicExpr>::iterator other_end) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_18(mht_18_v, 670, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "IsUnpairedUnitDimension");
+
   return it != end && it->isConstant(1) &&
          !(other_it != other_end && other_it->isConstant(1));
 }
 
 int64_t GetShapedTypyDimSize(const SymbolicProduct &sym_product) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_19(mht_19_v, 678, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "GetShapedTypyDimSize");
+
   return sym_product.symbolic.empty() ? sym_product.concrete
                                       : ShapedType::kDynamicSize;
 }
@@ -483,6 +711,9 @@ LogicalResult FindExpandingAndCollapsingDimensionGroups(
     ArrayRef<SymbolicExpr> result_shape_info,
     SmallVector<DimensionGroup> *dimension_groups,
     SmallVector<int64_t> *expanded_interm_shape) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_20(mht_20_v, 714, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "FindExpandingAndCollapsingDimensionGroups");
+
   auto operand_shape_it = operand_shape_info.begin();
   auto operand_shape_end = operand_shape_info.end();
   auto result_shape_it = result_shape_info.begin();
@@ -492,6 +723,9 @@ LogicalResult FindExpandingAndCollapsingDimensionGroups(
   SymbolicProduct remaining_operand_shape_factors;
   SymbolicProduct remaining_result_shape_factors;
   auto any_remaining_factors = [&]() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_21(mht_21_v, 726, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "lambda");
+
     return !remaining_operand_shape_factors.empty() ||
            !remaining_result_shape_factors.empty();
   };
@@ -666,6 +900,9 @@ LogicalResult MaterializeReshapeAsExpandAndCollapse(
     ShapeComponentAnalysis &shape_analysis, RankedTensorType operand_ty,
     RankedTensorType result_ty, mhlo::DynamicReshapeOp op,
     PatternRewriter &rewriter) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_22(mht_22_v, 903, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "MaterializeReshapeAsExpandAndCollapse");
+
   // Require sucessful shape analysis for operand and result shape.
   auto operand_shape_info = shape_analysis.GetShapeInfo(op.operand());
   if (!operand_shape_info) return failure();
@@ -717,6 +954,9 @@ struct DynamicReshapeToExpandAndCollapseShape final
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(mhlo::DynamicReshapeOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_23(mht_23_v, 957, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "matchAndRewrite");
+
     auto operand_ty = op.operand().getType().dyn_cast<RankedTensorType>();
     if (!operand_ty) return failure();
     auto result_ty = op.getType().dyn_cast<RankedTensorType>();
@@ -743,6 +983,9 @@ struct DynamicReshapeToExpandAndCollapseShape final
 // Returns true if all of bcasted_shapes can be broadcasted with output_shape.
 bool IsKnownBroadcastable(ShapeComponentAnalysis &analysis,
                           ValueRange bcasted_shapes, Value output_shape) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_24(mht_24_v, 986, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "IsKnownBroadcastable");
+
   auto output_shape_dims = analysis.GetValueInfo(output_shape);
   if (!output_shape_dims) return false;
   for (Value shape : bcasted_shapes) {
@@ -777,6 +1020,9 @@ struct CstrBroadcastableOpLowering
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(shape::CstrBroadcastableOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_25(mht_25_v, 1023, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "matchAndRewrite");
+
     ShapeComponentAnalysis shape_component_analysis;
     if (!IsKnownBroadcastable(shape_component_analysis, op.getShapes(),
                               op.getShapes().front())) {
@@ -790,10 +1036,16 @@ struct CstrBroadcastableOpLowering
 class SymbolicShapeOptimizationPass final
     : public SymbolicShapeOptimizationBase<SymbolicShapeOptimizationPass> {
   void getDependentDialects(DialectRegistry &registry) const override {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_26(mht_26_v, 1039, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "getDependentDialects");
+
     registry.insert<linalg::LinalgDialect>();
   }
 
   void runOnOperation() override {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSTransformsPSsymbolic_shape_optimizationDTcc mht_27(mht_27_v, 1046, "", "./tensorflow/compiler/mlir/hlo/lib/Transforms/symbolic_shape_optimization.cc", "runOnOperation");
+
     MLIRContext *ctx = &getContext();
     mlir::RewritePatternSet patterns(ctx);
 

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -106,6 +274,9 @@ constexpr const char kDistributedEpoch[] = "distributed_epoch";
 constexpr absl::Duration kGetMetadataRetryTimeout = absl::Hours(1);
 
 bool IsColocatedTask(const TaskInfo& task) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_0(mht_0_v, 277, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "IsColocatedTask");
+
   return absl::c_any_of(task.worker_tags(), [](absl::string_view worker_tag) {
     return absl::AsciiStrToUpper(worker_tag) == kColocatedWorkerTag;
   });
@@ -208,6 +379,9 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
         output_shapes_(output_shapes) {}
 
   ~Dataset() override {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_1(mht_1_v, 382, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "~Dataset");
+
     iteration_counter_->Unref();
     if (owns_resource_) {
       Status s = resource_mgr_->Delete<IterationCounter>(
@@ -227,17 +401,29 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
         iteration_counter_->GetAndIncrement());
   }
 
-  const DataTypeVector& output_dtypes() const override { return output_types_; }
+  const DataTypeVector& output_dtypes() const override {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_2(mht_2_v, 405, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "output_dtypes");
+ return output_types_; }
 
   const std::vector<PartialTensorShape>& output_shapes() const override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_3(mht_3_v, 410, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "output_shapes");
+
     return output_shapes_;
   }
 
   string DebugString() const override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_4(mht_4_v, 417, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "DebugString");
+
     return name_utils::DatasetDebugString(kDatasetType);
   }
 
   int64_t CardinalityInternal() const override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_5(mht_5_v, 424, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "CardinalityInternal");
+
     if (is_coordinated_read_) {
       // Coordinated reads require the dataset to be infinite.
       return kInfiniteCardinality;
@@ -265,12 +451,18 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
   }
 
   Status CheckExternalState() const override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_6(mht_6_v, 454, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "CheckExternalState");
+
     return Status(
         error::FAILED_PRECONDITION,
         strings::StrCat(DebugString(), " does not yet support serialization."));
   }
 
   Status InputDatasets(std::vector<const DatasetBase*>* inputs) const override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_7(mht_7_v, 463, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "InputDatasets");
+
     inputs->clear();
     return Status::OK();
   }
@@ -279,6 +471,9 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
   Status AsGraphDefInternal(SerializationContext* ctx,
                             DatasetGraphDefBuilder* b,
                             Node** output) const override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_8(mht_8_v, 474, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "AsGraphDefInternal");
+
     // Inputs
     std::vector<Node*> inputs;
     Node* dataset_id;
@@ -370,9 +565,15 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
         : DatasetIterator<Dataset>(params),
           iterator_index_(iterator_index),
           max_outstanding_requests_(params.dataset->max_outstanding_requests_) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_9(mht_9_v, 568, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "Iterator");
+
     }
 
     ~Iterator() override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_10(mht_10_v, 574, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "~Iterator");
+
       VLOG(1) << "Destroying data service dataset iterator for job id "
               << job_client_id_;
       CancelThreads();
@@ -393,6 +594,9 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
     }
 
     Status Initialize(IteratorContext* ctx) override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_11(mht_11_v, 597, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "Initialize");
+
       TF_RETURN_IF_ERROR(ValidateDataset());
       VLOG(3) << "Connecting to " << dataset()->address_
               << " in data service dataset op";
@@ -426,6 +630,9 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
     Status GetNextInternal(IteratorContext* ctx,
                            std::vector<Tensor>* out_tensors,
                            bool* end_of_sequence) override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_12(mht_12_v, 633, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "GetNextInternal");
+
       VLOG(3) << "Calling GetNext in data service dataset's iterator.";
       mutex_lock l(mu_);
       EnsureThreadsStarted(ctx);
@@ -475,15 +682,24 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
 
     Status SaveInternal(SerializationContext* ctx,
                         IteratorStateWriter* writer) override {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_13(mht_13_v, 685, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "SaveInternal");
+
       return errors::Unimplemented("SaveInternal is not yet supported");
     }
 
     Status RestoreInternal(IteratorContext* ctx,
                            IteratorStateReader* reader) override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_14(mht_14_v, 693, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "RestoreInternal");
+
       return errors::Unimplemented("RestoreInternal is not yet supported");
     }
 
     data::TraceMeMetadata GetTraceMeMetadata() const override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_15(mht_15_v, 700, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "GetTraceMeMetadata");
+
       data::TraceMeMetadata result;
       int64_t num_tasks = -1;
       if (mu_.try_lock()) {
@@ -507,7 +723,10 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
     struct Task {
       Task(const TaskInfo& info,
            std::unique_ptr<DataServiceWorkerClient> worker)
-          : info(info), worker(std::move(worker)) {}
+          : info(info), worker(std::move(worker)) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_16(mht_16_v, 727, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "Task");
+}
 
       const TaskInfo info;
       // Client for fetching task elements from the tf.data service worker.
@@ -545,6 +764,9 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
     };
 
     Status ValidateDataset() const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_17(mht_17_v, 767, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "ValidateDataset");
+
       if (dataset()->target_workers_ == TARGET_WORKERS_LOCAL &&
           LocalWorkers::Empty()) {
         if (IsStaticShard(dataset()->processing_mode_)) {
@@ -587,6 +809,9 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
 
     void EnsureThreadsStarted(IteratorContext* ctx)
         TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_18(mht_18_v, 812, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "EnsureThreadsStarted");
+
       if (!task_thread_manager_ && !cancelled_) {
         auto new_ctx = std::make_shared<IteratorContext>(*ctx);
         task_thread_manager_ =
@@ -607,6 +832,9 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
     }
 
     void DeleteLocalWorkerTasks() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_19(mht_19_v, 835, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "DeleteLocalWorkerTasks");
+
       std::vector<std::shared_ptr<Task>> tasks;
       {
         mutex_lock l(mu_);
@@ -624,6 +852,9 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
 
     // Deletes the task if it is only read by the local client.
     bool ShouldDeleteLocalTask(const TaskInfo& task) const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_20(mht_20_v, 855, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "ShouldDeleteLocalTask");
+
       if (StrictRoundRobin()) {
         return false;
       }
@@ -641,6 +872,9 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
     // TODO(aaudibert): Instead of polling, have dispatcher send updates when
     // the list of tasks changes.
     void TaskThreadManager(std::shared_ptr<IteratorContext> ctx) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_21(mht_21_v, 875, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "TaskThreadManager");
+
       auto cleanup =
           gtl::MakeCleanup([] { VLOG(1) << "Task thread manager exiting"; });
       VLOG(1) << "Starting task thread manager";
@@ -670,6 +904,9 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
     }
 
     void TryBlockRound(int64_t round) TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_22(mht_22_v, 907, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "TryBlockRound");
+
       if (round_robin_round_limit_.has_value() &&
           round_robin_round_limit_.value() == round) {
         return;
@@ -687,6 +924,9 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
     }
 
     void UpdateJobFinished(bool job_finished) TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_23(mht_23_v, 927, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "UpdateJobFinished");
+
       if (!job_finished) {
         return;
       }
@@ -696,6 +936,9 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
     }
 
     Status AddTask(const TaskInfo& task_info) TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_24(mht_24_v, 939, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "AddTask");
+
       TF_ASSIGN_OR_RETURN(
           std::unique_ptr<DataServiceWorkerClient> worker,
           CreateDataServiceWorkerClient(task_info.transfer_address(),
@@ -756,6 +999,9 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
 
     void UpdateTasks(const ClientHeartbeatResponse& resp)
         TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_25(mht_25_v, 1002, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "UpdateTasks");
+
       absl::flat_hash_map<int64_t, TaskInfo> task_id_to_task;
       for (auto& task : resp.task_info()) {
         task_id_to_task[task.task_id()] = task;
@@ -831,6 +1077,9 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
 
     void RecordTFMetrics(const ClientHeartbeatResponse& resp)
         TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_26(mht_26_v, 1080, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "RecordTFMetrics");
+
       for (const auto& task : resp.task_info()) {
         if (worker_uids_.contains(task.worker_uid())) {
           continue;
@@ -864,6 +1113,9 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
              status_.ok()) {
         num_running_worker_threads_++;
         auto done = [this]() {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_27(mht_27_v, 1116, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "lambda");
+
           mutex_lock l(mu_);
           num_running_worker_threads_--;
           get_next_cv_.notify_all();
@@ -876,6 +1128,9 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
     }
 
     void RunWorkerThread(std::function<void()> done) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_28(mht_28_v, 1131, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "RunWorkerThread");
+
       auto cleanup = gtl::MakeCleanup([done = std::move(done)]() {
         done();
         VLOG(1) << "Worker thread exiting";
@@ -943,6 +1198,9 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
     // Reports whether we can request another element without violating
     // `max_outstanding_requests_`.
     bool ShouldProcessTask() TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_29(mht_29_v, 1201, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "ShouldProcessTask");
+
       // When doing round-robin reads, outstanding requests pre-allocate a
       // result in `results_`, so we only need to check the size of `results_`.
       if (StrictRoundRobin()) {
@@ -995,6 +1253,9 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
     // Increments the next task index, starting over if all tasks have been
     // processed.
     void AdvanceTaskIndex() TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_30(mht_30_v, 1256, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "AdvanceTaskIndex");
+
       next_task_index_++;
       if (next_task_index_ >= tasks_.size()) {
         current_round_++;
@@ -1003,6 +1264,9 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
     }
 
     Status TryGetElement(const Task& task, GetElementResult& result) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_31(mht_31_v, 1267, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "TryGetElement");
+
       GetElementRequest req;
       req.set_task_id(task.info.task_id());
       req.set_skipped_previous_round(task.skipped_previous_round);
@@ -1019,6 +1283,9 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
     void ProcessGetElementResponse(bool enqueue_result,
                                    GetElementResult& get_element_result,
                                    Result& result, Task& task) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_32(mht_32_v, 1286, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "ProcessGetElementResponse");
+
       mutex_lock l(mu_);
       result.ready = true;
       result.end_of_sequence = get_element_result.end_of_sequence;
@@ -1068,6 +1335,9 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
 
     Status MaybeRemoveTask(Task& task, int64_t deadline_micros,
                            Result& result) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_33(mht_33_v, 1338, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "MaybeRemoveTask");
+
       bool removed;
       VLOG(1) << "Requesting task removal for worker "
               << task.info.worker_address() << " in round " << task.round;
@@ -1142,12 +1412,18 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
     }
 
     Result PopNextResult() TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_34(mht_34_v, 1415, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "PopNextResult");
+
       Result result = std::move(results_.front());
       results_.pop();
       return result;
     }
 
     bool StrictRoundRobin() const {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_35(mht_35_v, 1424, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "StrictRoundRobin");
+
       return dataset()->num_consumers_.has_value();
     }
 
@@ -1252,6 +1528,9 @@ class DataServiceDatasetOp::Dataset : public DatasetBase {
 
 DataServiceDatasetOp::DataServiceDatasetOp(OpKernelConstruction* ctx)
     : DatasetOpKernel(ctx) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_36(mht_36_v, 1531, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "DataServiceDatasetOp::DataServiceDatasetOp");
+
   OP_REQUIRES_OK(ctx, ctx->GetAttr(kTaskRefreshIntervalHintMs,
                                    &task_refresh_interval_hint_ms_));
   if (task_refresh_interval_hint_ms_ == model::kAutotune) {
@@ -1300,6 +1579,9 @@ DataServiceDatasetOp::DataServiceDatasetOp(OpKernelConstruction* ctx)
 
 void DataServiceDatasetOp::MakeDataset(OpKernelContext* ctx,
                                        DatasetBase** output) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSdata_service_dataset_opDTcc mht_37(mht_37_v, 1582, "", "./tensorflow/core/kernels/data/experimental/data_service_dataset_op.cc", "DataServiceDatasetOp::MakeDataset");
+
   int64_t dataset_id;
   OP_REQUIRES_OK(ctx, ParseScalarArgument(ctx, kDatasetId, &dataset_id));
 

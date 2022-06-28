@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPSdriverDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPSdriverDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPSdriverDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -74,6 +242,9 @@ extern void EntryModule(char* result_buffer, char* run_opts, char** params,
 bool __xla_cpu_runtime_StatusIsSuccess(  // NOLINT: This doesn't need a
                                          // prototype.
     const XlaCustomCallStatus* status) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPSdriverDTcc mht_0(mht_0_v, 245, "", "./tensorflow/compiler/xla/tools/driver.cc", "__xla_cpu_runtime_StatusIsSuccess");
+
   return !(status->failed);
 }
 }
@@ -86,14 +257,24 @@ namespace {
 }
 
 void Check(bool cond, const std::string& msg = "Precondition failed") {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPSdriverDTcc mht_1(mht_1_v, 260, "", "./tensorflow/compiler/xla/tools/driver.cc", "Check");
+
   if (!cond) {
     ExitWithMsg(msg);
   }
 }
 
-bool IsVerbose() { return getenv("VERBOSE") != nullptr; }
+bool IsVerbose() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPSdriverDTcc mht_2(mht_2_v, 269, "", "./tensorflow/compiler/xla/tools/driver.cc", "IsVerbose");
+ return getenv("VERBOSE") != nullptr; }
 
 void Log(const std::string& msg) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("msg: \"" + msg + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPSdriverDTcc mht_3(mht_3_v, 275, "", "./tensorflow/compiler/xla/tools/driver.cc", "Log");
+
   if (IsVerbose()) {
     std::cerr << msg << std::endl;
   }
@@ -117,21 +298,34 @@ enum PrimitiveType {
 };
 
 const std::vector<std::string>& primitive_strings() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPSdriverDTcc mht_4(mht_4_v, 301, "", "./tensorflow/compiler/xla/tools/driver.cc", "primitive_strings");
+
   static auto vec = new std::vector<std::string>(
       {"s16", "s32", "s64", "u8", "u16", "u32", "u64", "f16", "bf16", "f32",
        "f64", "c64", "c128"});
   return *vec;
 }
 
-std::string ToString(PrimitiveType type) { return primitive_strings()[type]; }
+std::string ToString(PrimitiveType type) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPSdriverDTcc mht_5(mht_5_v, 311, "", "./tensorflow/compiler/xla/tools/driver.cc", "ToString");
+ return primitive_strings()[type]; }
 
 PrimitiveType PrimitiveTypeFromString(const std::string& s) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("s: \"" + s + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPSdriverDTcc mht_6(mht_6_v, 317, "", "./tensorflow/compiler/xla/tools/driver.cc", "PrimitiveTypeFromString");
+
   const auto& vec = primitive_strings();
   return static_cast<PrimitiveType>(
       std::distance(vec.begin(), std::find(vec.begin(), vec.end(), s)));
 }
 
 int ByteSize(PrimitiveType type) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPSdriverDTcc mht_7(mht_7_v, 326, "", "./tensorflow/compiler/xla/tools/driver.cc", "ByteSize");
+
   std::string s = ToString(type);
   s = s.substr(1, s.size());
   return std::stoi(s) / 8;
@@ -148,6 +342,9 @@ struct TupleShape {
 };
 
 std::string ArrayShapeToString(ArrayShape shape) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPSdriverDTcc mht_8(mht_8_v, 345, "", "./tensorflow/compiler/xla/tools/driver.cc", "ArrayShapeToString");
+
   std::ostringstream out;
   out << ToString(shape.type) << "[";
   for (int i = 0; i < shape.dimensions.size(); i++) {
@@ -162,6 +359,10 @@ std::string ArrayShapeToString(ArrayShape shape) {
 
 // Input: TYPE[D1,D2,...DN]
 ArrayShape ArrayShapeFromString(const std::string& s) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("s: \"" + s + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPSdriverDTcc mht_9(mht_9_v, 363, "", "./tensorflow/compiler/xla/tools/driver.cc", "ArrayShapeFromString");
+
   Log("Array shape from string: " + s);
   Check(s.find('(') == std::string::npos, "Tuple shape is not supported");
   std::regex shape_r("([^\\[]+)\\[(.*)\\]");
@@ -181,6 +382,10 @@ ArrayShape ArrayShapeFromString(const std::string& s) {
 
 // E.g. (f32[10,20], u32[])
 TupleShape TupleShapeFromString(std::string s) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("s: \"" + s + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPSdriverDTcc mht_10(mht_10_v, 386, "", "./tensorflow/compiler/xla/tools/driver.cc", "TupleShapeFromString");
+
   Log("Tuple shape from string: " + s);
   if (s[0] != '(') {
     return {{ArrayShapeFromString(s)}};
@@ -199,6 +404,9 @@ TupleShape TupleShapeFromString(std::string s) {
 }
 
 std::string TupleShapeToString(TupleShape shape) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPSdriverDTcc mht_11(mht_11_v, 407, "", "./tensorflow/compiler/xla/tools/driver.cc", "TupleShapeToString");
+
   std::ostringstream out;
   if (shape.elements.size() == 1) {
     return ArrayShapeToString(shape.elements[0]);
@@ -230,6 +438,9 @@ struct BufferAssignment {
 };
 
 std::string BufferAssignmentToString(const BufferAssignment& assignment) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPSdriverDTcc mht_12(mht_12_v, 441, "", "./tensorflow/compiler/xla/tools/driver.cc", "BufferAssignmentToString");
+
   std::ostringstream out;
   for (const auto& p : assignment.param_to_alloc_idx) {
     int param_idx = p.first;
@@ -249,6 +460,9 @@ std::string BufferAssignmentToString(const BufferAssignment& assignment) {
 class BufferTable {
  public:
   explicit BufferTable(BufferAssignment assignment) : assignment_(assignment) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPSdriverDTcc mht_13(mht_13_v, 463, "", "./tensorflow/compiler/xla/tools/driver.cc", "BufferTable");
+
     int num_buffers = assignment.buffers_size.size();
     ptr_ = new char*[num_buffers];
     for (int buffer_idx = 0; buffer_idx < num_buffers; buffer_idx++) {
@@ -258,9 +472,15 @@ class BufferTable {
     }
   }
 
-  char** AsPtr() { return ptr_; }
+  char** AsPtr() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPSdriverDTcc mht_14(mht_14_v, 476, "", "./tensorflow/compiler/xla/tools/driver.cc", "AsPtr");
+ return ptr_; }
 
   ~BufferTable() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPSdriverDTcc mht_15(mht_15_v, 481, "", "./tensorflow/compiler/xla/tools/driver.cc", "~BufferTable");
+
     int num_buffers = assignment_.buffers_size.size();
     for (int buffer_idx = 0; buffer_idx < num_buffers; buffer_idx++) {
       free(ptr_[buffer_idx]);
@@ -293,6 +513,10 @@ class BufferTable {
 // allocation 5: 0x27017c46b970, size 4, output shape is f32[], thread-local:
 //  value: <2 add.1 @0> (size=4,offset=0): f32[]
 BufferAssignment ParseBufferAssignment(const std::string& fname) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPSdriverDTcc mht_16(mht_16_v, 517, "", "./tensorflow/compiler/xla/tools/driver.cc", "ParseBufferAssignment");
+
   BufferAssignment assignment;
   std::ifstream infile(fname);
   std::string line;
@@ -342,6 +566,9 @@ BufferAssignment ParseBufferAssignment(const std::string& fname) {
 }
 
 int GetNumElements(const ArrayShape& shape) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPSdriverDTcc mht_17(mht_17_v, 569, "", "./tensorflow/compiler/xla/tools/driver.cc", "GetNumElements");
+
   int num_elements = 1;
   for (int dim : shape.dimensions) {
     num_elements *= dim;
@@ -351,6 +578,9 @@ int GetNumElements(const ArrayShape& shape) {
 
 template <typename T, typename = std::enable_if_t<std::is_integral<T>::value>>
 void FillIntT(void* buffer, int num_elements) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPSdriverDTcc mht_18(mht_18_v, 581, "", "./tensorflow/compiler/xla/tools/driver.cc", "FillIntT");
+
   std::mt19937 generator(kSeed);
   T* casted = static_cast<T*>(buffer);
   std::uniform_int_distribution<> distr(kLowerBound, kUpperBound);
@@ -362,6 +592,9 @@ void FillIntT(void* buffer, int num_elements) {
 template <typename T,
           typename = std::enable_if_t<std::is_floating_point<T>::value>>
 void FillFloatT(void* buffer, int num_elements) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPSdriverDTcc mht_19(mht_19_v, 595, "", "./tensorflow/compiler/xla/tools/driver.cc", "FillFloatT");
+
   std::mt19937 generator(kSeed);
   T* casted = static_cast<T*>(buffer);
   std::uniform_real_distribution<T> distr(kLowerBoundFP, kUpperBoundFP);
@@ -371,6 +604,9 @@ void FillFloatT(void* buffer, int num_elements) {
 }
 
 void Fill(void* buffer, const ArrayShape& shape) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPSdriverDTcc mht_20(mht_20_v, 607, "", "./tensorflow/compiler/xla/tools/driver.cc", "Fill");
+
   int num_elements = GetNumElements(shape);
   Log("Number of elements = " + std::to_string(num_elements));
   Log("Shape type = " + ToString(shape.type) +
@@ -419,6 +655,9 @@ void DisplayT(const void* buffer, int num_elements) {
 }
 
 void Display(const void* buffer, const ArrayShape& shape) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPSdriverDTcc mht_21(mht_21_v, 658, "", "./tensorflow/compiler/xla/tools/driver.cc", "Display");
+
   int num_elements = GetNumElements(shape);
   switch (shape.type) {
     case S16:
@@ -449,6 +688,9 @@ void Display(const void* buffer, const ArrayShape& shape) {
 }
 
 void Display(const void* buffer, const TupleShape& shape) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPSdriverDTcc mht_22(mht_22_v, 691, "", "./tensorflow/compiler/xla/tools/driver.cc", "Display");
+
   if (shape.elements.size() == 1) {
     return Display(buffer, shape.elements[0]);
   }
@@ -467,6 +709,9 @@ void Display(const void* buffer, const TupleShape& shape) {
 }  // end namespace
 
 int main(int argc, char** argv) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPSdriverDTcc mht_23(mht_23_v, 712, "", "./tensorflow/compiler/xla/tools/driver.cc", "main");
+
   if (argc < 2) {
     ExitWithMsg(
         "Please provide buffer table filename as an argument, "

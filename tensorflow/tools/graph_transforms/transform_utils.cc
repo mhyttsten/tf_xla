@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,12 +194,18 @@ namespace graph_transforms {
 
 namespace {
 inline bool IsMerge(const NodeDef& node_def) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_0(mht_0_v, 197, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "IsMerge");
+
   return node_def.op() == "Merge" || node_def.op() == "RefMerge" ||
          node_def.op() == "_XlaMerge";
 }
 
 void RecordMatchedNodes(const NodeMatch& match,
                         std::set<string>* matched_nodes) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_1(mht_1_v, 206, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "RecordMatchedNodes");
+
   matched_nodes->insert(match.node.name());
   for (const NodeMatch& input_match : match.inputs) {
     RecordMatchedNodes(input_match, matched_nodes);
@@ -39,11 +213,18 @@ void RecordMatchedNodes(const NodeMatch& match,
 }
 
 inline uint64 Hash64String(const string& input) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("input: \"" + input + "\"");
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_2(mht_2_v, 217, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "Hash64String");
+
   return Hash64(input.data(), input.size());
 }
 }  // namespace
 
 void MatchedNodesAsArray(const NodeMatch& match, std::vector<NodeDef>* result) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_3(mht_3_v, 225, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "MatchedNodesAsArray");
+
   std::set<string> found_nodes;
   std::vector<NodeMatch> current_matches = {match};
   while (!current_matches.empty()) {
@@ -64,6 +245,9 @@ void MatchedNodesAsArray(const NodeMatch& match, std::vector<NodeDef>* result) {
 
 void MapNamesToNodes(const GraphDef& graph_def,
                      std::map<string, const NodeDef*>* result) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_4(mht_4_v, 248, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "MapNamesToNodes");
+
   for (const NodeDef& node : graph_def.node()) {
     (*result)[node.name()] = &node;
   }
@@ -71,6 +255,9 @@ void MapNamesToNodes(const GraphDef& graph_def,
 
 void MapNodesToOutputs(const GraphDef& graph_def,
                        std::map<string, std::vector<const NodeDef*>>* result) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_5(mht_5_v, 258, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "MapNodesToOutputs");
+
   std::map<string, const NodeDef*> node_map;
   MapNamesToNodes(graph_def, &node_map);
   for (const NodeDef& node : graph_def.node()) {
@@ -83,6 +270,10 @@ void MapNodesToOutputs(const GraphDef& graph_def,
 
 void NodeNamePartsFromInput(const string& input_name, string* prefix,
                             string* node_name, string* suffix) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("input_name: \"" + input_name + "\"");
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_6(mht_6_v, 274, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "NodeNamePartsFromInput");
+
   std::vector<string> input_parts = str_util::Split(input_name, ':');
   if (input_parts.size() < 2) {
     *suffix = "";
@@ -99,6 +290,10 @@ void NodeNamePartsFromInput(const string& input_name, string* prefix,
 }
 
 string NodeNameFromInput(const string& input_name) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("input_name: \"" + input_name + "\"");
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_7(mht_7_v, 294, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "NodeNameFromInput");
+
   string prefix;
   string node_name;
   string suffix;
@@ -107,6 +302,10 @@ string NodeNameFromInput(const string& input_name) {
 }
 
 string CanonicalInputName(const string& input_name) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("input_name: \"" + input_name + "\"");
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_8(mht_8_v, 306, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "CanonicalInputName");
+
   string prefix;
   string node_name;
   string suffix;
@@ -118,6 +317,9 @@ string CanonicalInputName(const string& input_name) {
 }
 
 uint64 HashNodeDef(const NodeDef& node) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_9(mht_9_v, 320, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "HashNodeDef");
+
   uint64 hash = Hash64String(node.op());
   hash = Hash64Combine(hash, Hash64String(node.name()));
   for (const string& input : node.input()) {
@@ -140,17 +342,30 @@ uint64 HashNodeDef(const NodeDef& node) {
 }
 
 void AddNodeInput(const string& input_name, NodeDef* node) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("input_name: \"" + input_name + "\"");
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_10(mht_10_v, 346, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "AddNodeInput");
+
   *(node->mutable_input()->Add()) = input_name;
 }
 
 void CopyNodeAttr(const NodeDef& source, const string& source_key,
                   const string& dest_key, NodeDef* dest) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("source_key: \"" + source_key + "\"");
+   mht_11_v.push_back("dest_key: \"" + dest_key + "\"");
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_11(mht_11_v, 356, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "CopyNodeAttr");
+
   CHECK_NE(0, source.attr().count(source_key))
       << "No key '" << source_key << "' found in " << source.DebugString();
   (*(dest->mutable_attr()))[dest_key] = source.attr().at(source_key);
 }
 
 Tensor GetNodeTensorAttr(const NodeDef& node, const string& key) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_12(mht_12_v, 366, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "GetNodeTensorAttr");
+
   TensorProto tensor_proto = node.attr().at(key).tensor();
   Tensor tensor;
   CHECK(tensor.FromProto(tensor_proto));
@@ -160,6 +375,9 @@ Tensor GetNodeTensorAttr(const NodeDef& node, const string& key) {
 void FilterGraphDef(const GraphDef& input_graph_def,
                     std::function<bool(const NodeDef&)> selector,
                     GraphDef* output_graph_def) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_13(mht_13_v, 378, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "FilterGraphDef");
+
   output_graph_def->mutable_node()->Clear();
   for (const NodeDef& node : input_graph_def.node()) {
     if (selector(node)) {
@@ -171,6 +389,9 @@ void FilterGraphDef(const GraphDef& input_graph_def,
 void RemoveAttributes(const GraphDef& input_graph_def,
                       const std::vector<string>& attributes,
                       GraphDef* output_graph_def) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_14(mht_14_v, 392, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "RemoveAttributes");
+
   output_graph_def->mutable_node()->Clear();
   for (const NodeDef& node : input_graph_def.node()) {
     NodeDef* new_node = output_graph_def->mutable_node()->Add();
@@ -183,6 +404,9 @@ void RemoveAttributes(const GraphDef& input_graph_def,
 
 Status SortByExecutionOrder(const GraphDef& input_graph_def,
                             GraphDef* output_graph_def) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_15(mht_15_v, 407, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "SortByExecutionOrder");
+
   const int num_nodes = input_graph_def.node_size();
   std::vector<int> ready;
   std::vector<int> pending_count;
@@ -264,6 +488,9 @@ Status SortByExecutionOrder(const GraphDef& input_graph_def,
 }
 
 string OpTypePattern::DebugString() const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_16(mht_16_v, 491, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "OpTypePattern::DebugString");
+
   string result = "{" + op + ", {";
   for (const OpTypePattern& input : inputs) {
     result += input.DebugString() + ",";
@@ -273,6 +500,9 @@ string OpTypePattern::DebugString() const {
 }
 
 string NodeMatch::DebugString() const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_17(mht_17_v, 503, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "NodeMatch::DebugString");
+
   string result = "{";
   result += node.DebugString();
   result += ", {";
@@ -284,12 +514,18 @@ string NodeMatch::DebugString() const {
 }
 
 GraphMatcher::GraphMatcher(const GraphDef& graph_def) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_18(mht_18_v, 517, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "GraphMatcher::GraphMatcher");
+
   SortByExecutionOrder(graph_def, &graph_def_).IgnoreError();
   MapNamesToNodes(graph_def_, &node_map_);
 }
 
 Status GraphMatcher::GetOpTypeMatches(const OpTypePattern& pattern,
                                       std::vector<NodeMatch>* matches) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_19(mht_19_v, 526, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "GraphMatcher::GetOpTypeMatches");
+
   std::set<string> matched_nodes;
   for (const NodeDef& node : graph_def_.node()) {
     // Skip any nodes that are already part of a match.
@@ -308,6 +544,9 @@ Status GraphMatcher::GetOpTypeMatches(const OpTypePattern& pattern,
 bool GraphMatcher::DoesOpTypeMatch(
     const NodeDef& node, const OpTypePattern& pattern,
     const std::set<string>& previously_matched_nodes, NodeMatch* match) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_20(mht_20_v, 547, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "GraphMatcher::DoesOpTypeMatch");
+
   VLOG(1) << "Looking at node " << node.DebugString();
   VLOG(1) << "pattern=" << pattern.DebugString();
   VLOG(1) << "match=" << match->DebugString();
@@ -366,6 +605,9 @@ Status ReplaceMatchingOpTypes(
                                const std::set<string>&, std::vector<NodeDef>*)>&
         node_generator,
     const ReplaceMatchingOpTypesOptions& options, GraphDef* output_graph_def) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_21(mht_21_v, 608, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "ReplaceMatchingOpTypes");
+
   // Start off by retrieving all the matching subgraphs.
   GraphMatcher matcher(input_graph_def);
   std::vector<NodeMatch> matches;
@@ -478,6 +720,9 @@ Status RenameNodeInputs(const GraphDef& input_graph_def,
                         const std::map<string, string>& inputs_to_rename,
                         const std::unordered_set<string>& nodes_to_ignore,
                         GraphDef* output_graph_def) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_22(mht_22_v, 723, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "RenameNodeInputs");
+
   std::map<string, std::vector<std::pair<string, string>>>
       canonical_inputs_to_rename;
   for (const auto& input_to_rename : inputs_to_rename) {
@@ -542,6 +787,9 @@ Status RenameNodeInputs(const GraphDef& input_graph_def,
 
 void CopyOriginalMatch(const NodeMatch& match,
                        std::vector<NodeDef>* new_nodes) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_23(mht_23_v, 790, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "CopyOriginalMatch");
+
   std::vector<NodeDef> old_nodes;
   MatchedNodesAsArray(match, &old_nodes);
   for (const NodeDef& old_node : old_nodes) {
@@ -550,12 +798,18 @@ void CopyOriginalMatch(const NodeMatch& match,
 }
 
 TransformRegistry* GetTransformRegistry() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_24(mht_24_v, 801, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "GetTransformRegistry");
+
   static TransformRegistry transform_registry;
   return &transform_registry;
 }
 
 void FindInvalidInputs(const GraphDef& graph_def,
                        std::vector<std::pair<string, string>>* invalid_inputs) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_25(mht_25_v, 810, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "FindInvalidInputs");
+
   std::map<string, const NodeDef*> node_map;
   MapNamesToNodes(graph_def, &node_map);
 
@@ -570,6 +824,9 @@ void FindInvalidInputs(const GraphDef& graph_def,
 }
 
 Status IsGraphValid(const GraphDef& graph_def) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_26(mht_26_v, 827, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "IsGraphValid");
+
   std::vector<std::pair<string, string>> invalid_inputs;
   FindInvalidInputs(graph_def, &invalid_inputs);
   if (!invalid_inputs.empty()) {
@@ -588,6 +845,9 @@ Status IsGraphValid(const GraphDef& graph_def) {
 
 Status GetInOutTypes(const NodeDef& node_def, DataTypeVector* inputs,
                      DataTypeVector* outputs) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_27(mht_27_v, 848, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "GetInOutTypes");
+
   const OpDef* op_def;
   TF_RETURN_IF_ERROR(OpRegistry::Global()->LookUpOpDef(node_def.op(), &op_def));
   TF_RETURN_IF_ERROR(InOutTypesForNode(node_def, *op_def, inputs, outputs));
@@ -595,6 +855,10 @@ Status GetInOutTypes(const NodeDef& node_def, DataTypeVector* inputs,
 }
 
 Status TensorShapeFromString(const string& shape_string, TensorShape* result) {
+   std::vector<std::string> mht_28_v;
+   mht_28_v.push_back("shape_string: \"" + shape_string + "\"");
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_28(mht_28_v, 859, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "TensorShapeFromString");
+
   if (shape_string.empty()) {
     return errors::InvalidArgument("Specified shape is empty.");
   }
@@ -614,6 +878,10 @@ Status TensorShapeFromString(const string& shape_string, TensorShape* result) {
 }
 
 int TransformFuncContext::CountParameters(const string& name) const {
+   std::vector<std::string> mht_29_v;
+   mht_29_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_29(mht_29_v, 882, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "TransformFuncContext::CountParameters");
+
   if (params.count(name)) {
     return params.at(name).size();
   } else {
@@ -624,6 +892,11 @@ int TransformFuncContext::CountParameters(const string& name) const {
 Status TransformFuncContext::GetOneStringParameter(const string& name,
                                                    const string& default_value,
                                                    string* result) const {
+   std::vector<std::string> mht_30_v;
+   mht_30_v.push_back("name: \"" + name + "\"");
+   mht_30_v.push_back("default_value: \"" + default_value + "\"");
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_30(mht_30_v, 897, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "TransformFuncContext::GetOneStringParameter");
+
   const int params_count = CountParameters(name);
   if (params_count == 0) {
     *result = default_value;
@@ -641,6 +914,10 @@ Status TransformFuncContext::GetOneStringParameter(const string& name,
 Status TransformFuncContext::GetOneInt32Parameter(const string& name,
                                                   int32_t default_value,
                                                   int32* result) const {
+   std::vector<std::string> mht_31_v;
+   mht_31_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_31(mht_31_v, 918, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "TransformFuncContext::GetOneInt32Parameter");
+
   const int params_count = CountParameters(name);
   if (params_count == 0) {
     *result = default_value;
@@ -658,6 +935,10 @@ Status TransformFuncContext::GetOneInt32Parameter(const string& name,
 Status TransformFuncContext::GetOneInt64Parameter(const string& name,
                                                   int64_t default_value,
                                                   int64_t* result) const {
+   std::vector<std::string> mht_32_v;
+   mht_32_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_32(mht_32_v, 939, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "TransformFuncContext::GetOneInt64Parameter");
+
   const int params_count = CountParameters(name);
   if (params_count == 0) {
     *result = default_value;
@@ -675,6 +956,10 @@ Status TransformFuncContext::GetOneInt64Parameter(const string& name,
 Status TransformFuncContext::GetOneFloatParameter(const string& name,
                                                   float default_value,
                                                   float* result) const {
+   std::vector<std::string> mht_33_v;
+   mht_33_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_33(mht_33_v, 960, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "TransformFuncContext::GetOneFloatParameter");
+
   const int params_count = CountParameters(name);
   if (params_count == 0) {
     *result = default_value;
@@ -693,6 +978,10 @@ Status TransformFuncContext::GetOneFloatParameter(const string& name,
 Status TransformFuncContext::GetOneBoolParameter(const string& name,
                                                  bool default_value,
                                                  bool* result) const {
+   std::vector<std::string> mht_34_v;
+   mht_34_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPStoolsPSgraph_transformsPStransform_utilsDTcc mht_34(mht_34_v, 982, "", "./tensorflow/tools/graph_transforms/transform_utils.cc", "TransformFuncContext::GetOneBoolParameter");
+
   const int params_count = CountParameters(name);
   if (params_count == 0) {
     *result = default_value;

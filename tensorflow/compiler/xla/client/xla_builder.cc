@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -63,6 +231,11 @@ static const char kNameSeparator = '.';
 // name, using separator as boundary between the initial base name part, and
 // the numeric identification.
 std::string GetBaseName(const std::string& name, char separator) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("name: \"" + name + "\"");
+   mht_0_v.push_back("separator: '" + std::string(1, separator) + "'");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_0(mht_0_v, 236, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "GetBaseName");
+
   auto pos = name.rfind(separator);
   CHECK_NE(pos, std::string::npos) << name;
   return name.substr(0, pos);
@@ -71,6 +244,11 @@ std::string GetBaseName(const std::string& name, char separator) {
 // Generates a fully qualified computation/instruction name.
 std::string GetFullName(const std::string& base_name, char separator,
                         int64_t id) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("base_name: \"" + base_name + "\"");
+   mht_1_v.push_back("separator: '" + std::string(1, separator) + "'");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_1(mht_1_v, 249, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "GetFullName");
+
   const char separator_str[] = {separator, '\0'};
   return StrCat(base_name, separator_str, id);
 }
@@ -80,11 +258,19 @@ std::string GetFullName(const std::string& base_name, char separator,
 template <typename T>
 void SetProtoIdAndName(T* entry, const std::string& base_name, char separator,
                        int64_t id) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("base_name: \"" + base_name + "\"");
+   mht_2_v.push_back("separator: '" + std::string(1, separator) + "'");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_2(mht_2_v, 263, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "SetProtoIdAndName");
+
   entry->set_id(id);
   entry->set_name(GetFullName(base_name, separator, id));
 }
 
 bool InstrIsSetBound(const HloInstructionProto* instr_proto) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_3(mht_3_v, 271, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "InstrIsSetBound");
+
   HloOpcode opcode = StringToHloOpcode(instr_proto->opcode()).ValueOrDie();
   if (opcode == HloOpcode::kCustomCall &&
       instr_proto->custom_call_target() == "SetBound") {
@@ -101,6 +287,10 @@ XlaOp XlaBuilderFriend::BuildFusion(XlaBuilder* builder,
                                     absl::Span<const XlaOp> operands,
                                     absl::string_view fusion_kind,
                                     const XlaComputation& fused_computation) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("fusion_kind: \"" + std::string(fusion_kind.data(), fusion_kind.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_4(mht_4_v, 291, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilderFriend::BuildFusion");
+
   return builder->ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     HloInstructionProto instr;
     instr.set_fusion_kind(std::string(fusion_kind));
@@ -116,6 +306,9 @@ XlaOp XlaBuilderFriend::BuildFusion(XlaBuilder* builder,
 
 XlaOp XlaBuilderFriend::BuildBitcast(XlaBuilder* builder, XlaOp operand,
                                      const Shape& shape) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_5(mht_5_v, 309, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilderFriend::BuildBitcast");
+
   return builder->ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     HloInstructionProto instr;
     *instr.mutable_shape() = shape.ToProto();
@@ -128,6 +321,9 @@ XlaOp XlaBuilderFriend::BuildRngGetAndUpdateState(XlaBuilder* builder,
 
                                                   int64_t delta,
                                                   const Shape& shape) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_6(mht_6_v, 324, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilderFriend::BuildRngGetAndUpdateState");
+
   return builder->ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     HloInstructionProto instr;
     instr.set_delta(delta);
@@ -138,31 +334,73 @@ XlaOp XlaBuilderFriend::BuildRngGetAndUpdateState(XlaBuilder* builder,
 }
 
 HloInstructionProto* XlaBuilderFriend::GetInstruction(XlaOp op) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_7(mht_7_v, 337, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilderFriend::GetInstruction");
+
   return &op.builder()
               ->instructions_[op.builder()->handle_to_index_[op.handle_]];
 }
 
 HloInstructionProto* XlaBuilderFriend::GetInstructionByHandle(
     XlaBuilder* builder, int64_t handle) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_8(mht_8_v, 346, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilderFriend::GetInstructionByHandle");
+
   return &builder->instructions_[builder->handle_to_index_[handle]];
 }
 
 }  // namespace internal
 
-XlaOp operator-(XlaOp x) { return Neg(x); }
-XlaOp operator+(XlaOp x, XlaOp y) { return Add(x, y); }
-XlaOp operator-(XlaOp x, XlaOp y) { return Sub(x, y); }
-XlaOp operator*(XlaOp x, XlaOp y) { return Mul(x, y); }
-XlaOp operator/(XlaOp x, XlaOp y) { return Div(x, y); }
-XlaOp operator%(XlaOp x, XlaOp y) { return Rem(x, y); }
+XlaOp operator-(XlaOp x) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_9(mht_9_v, 355, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "-");
+ return Neg(x); }
+XlaOp operator+(XlaOp x, XlaOp y) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_10(mht_10_v, 359, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "+");
+ return Add(x, y); }
+XlaOp operator-(XlaOp x, XlaOp y) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_11(mht_11_v, 363, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "-");
+ return Sub(x, y); }
+XlaOp operator*(XlaOp x, XlaOp y) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_12(mht_12_v, 367, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "*");
+ return Mul(x, y); }
+XlaOp operator/(XlaOp x, XlaOp y) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_13(mht_13_v, 371, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "/");
+ return Div(x, y); }
+XlaOp operator%(XlaOp x, XlaOp y) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_14(mht_14_v, 375, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "%");
+ return Rem(x, y); }
 
-XlaOp operator~(XlaOp x) { return Not(x); }
-XlaOp operator&(XlaOp x, XlaOp y) { return And(x, y); }
-XlaOp operator|(XlaOp x, XlaOp y) { return Or(x, y); }
-XlaOp operator^(XlaOp x, XlaOp y) { return Xor(x, y); }
-XlaOp operator<<(XlaOp x, XlaOp y) { return ShiftLeft(x, y); }
+XlaOp operator~(XlaOp x) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_15(mht_15_v, 380, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "operator~");
+ return Not(x); }
+XlaOp operator&(XlaOp x, XlaOp y) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_16(mht_16_v, 384, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "&");
+ return And(x, y); }
+XlaOp operator|(XlaOp x, XlaOp y) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_17(mht_17_v, 388, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "|");
+ return Or(x, y); }
+XlaOp operator^(XlaOp x, XlaOp y) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_18(mht_18_v, 392, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "^");
+ return Xor(x, y); }
+XlaOp operator<<(XlaOp x, XlaOp y) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_19(mht_19_v, 396, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "operator<<");
+ return ShiftLeft(x, y); }
 
 XlaOp operator>>(XlaOp x, XlaOp y) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_20(mht_20_v, 401, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "operator>>");
+
   XlaBuilder* builder = x.builder();
   return builder->ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const xla::Shape* shape, builder->GetShapePtr(x));
@@ -180,6 +418,9 @@ XlaOp operator>>(XlaOp x, XlaOp y) {
 }
 
 StatusOr<const Shape*> XlaBuilder::GetShapePtr(XlaOp op) const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_21(mht_21_v, 421, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::GetShapePtr");
+
   TF_RETURN_IF_ERROR(first_error_);
   TF_RETURN_IF_ERROR(CheckOpBuilder(op));
   auto it = handle_to_index_.find(op.handle());
@@ -190,12 +431,18 @@ StatusOr<const Shape*> XlaBuilder::GetShapePtr(XlaOp op) const {
 }
 
 StatusOr<Shape> XlaBuilder::GetShape(XlaOp op) const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_22(mht_22_v, 434, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::GetShape");
+
   TF_ASSIGN_OR_RETURN(const Shape* shape, GetShapePtr(op));
   return *shape;
 }
 
 StatusOr<std::vector<Shape>> XlaBuilder::GetOperandShapes(
     absl::Span<const XlaOp> operands) const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_23(mht_23_v, 443, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::GetOperandShapes");
+
   std::vector<Shape> operand_shapes;
   operand_shapes.reserve(operands.size());
   for (XlaOp operand : operands) {
@@ -206,12 +453,18 @@ StatusOr<std::vector<Shape>> XlaBuilder::GetOperandShapes(
 }
 
 std::string XlaBuilder::OpToString(XlaOp op) const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_24(mht_24_v, 456, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::OpToString");
+
   std::string s;
   ToStringHelper(&s, /*ident=*/0, op.handle());
   return s;
 }
 
 static std::string ShapeToString(const xla::ShapeProto& shape) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_25(mht_25_v, 465, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "ShapeToString");
+
   if (shape.tuple_shapes_size() > 1) {
     return absl::StrCat(
         "(",
@@ -226,6 +479,9 @@ static std::string ShapeToString(const xla::ShapeProto& shape) {
 
 void XlaBuilder::ToStringHelper(std::string* out, int ident,
                                 int64_t op_handle) const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_26(mht_26_v, 482, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::ToStringHelper");
+
   const HloInstructionProto& instr =
       *(LookUpInstructionByHandle(op_handle).ValueOrDie());
   absl::StrAppend(out, std::string(ident, ' '), instr.opcode(),
@@ -244,11 +500,21 @@ void XlaBuilder::ToStringHelper(std::string* out, int ident,
 }
 
 XlaBuilder::XlaBuilder(const std::string& computation_name)
-    : name_(computation_name) {}
+    : name_(computation_name) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("computation_name: \"" + computation_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_27(mht_27_v, 505, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::XlaBuilder");
+}
 
-XlaBuilder::~XlaBuilder() {}
+XlaBuilder::~XlaBuilder() {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_28(mht_28_v, 510, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::~XlaBuilder");
+}
 
 XlaOp XlaBuilder::ReportError(const Status& error) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_29(mht_29_v, 515, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::ReportError");
+
   CHECK(!error.ok());
   if (die_immediately_on_error_) {
     LOG(FATAL) << "error building computation: " << error;
@@ -262,6 +528,9 @@ XlaOp XlaBuilder::ReportError(const Status& error) {
 }
 
 XlaOp XlaBuilder::ReportErrorOrReturn(const StatusOr<XlaOp>& op) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_30(mht_30_v, 531, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::ReportErrorOrReturn");
+
   if (!first_error_.ok()) {
     return XlaOp(this);
   }
@@ -273,10 +542,16 @@ XlaOp XlaBuilder::ReportErrorOrReturn(const StatusOr<XlaOp>& op) {
 
 XlaOp XlaBuilder::ReportErrorOrReturn(
     const std::function<StatusOr<XlaOp>()>& op_creator) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_31(mht_31_v, 545, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::ReportErrorOrReturn");
+
   return ReportErrorOrReturn(op_creator());
 }
 
 StatusOr<ProgramShape> XlaBuilder::GetProgramShape(int64_t root_id) const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_32(mht_32_v, 552, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::GetProgramShape");
+
   TF_RETURN_IF_ERROR(first_error_);
   TF_ASSIGN_OR_RETURN(const HloInstructionProto* root_proto,
                       LookUpInstructionByHandle(root_id));
@@ -308,11 +583,17 @@ StatusOr<ProgramShape> XlaBuilder::GetProgramShape(int64_t root_id) const {
 }
 
 StatusOr<ProgramShape> XlaBuilder::GetProgramShape() const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_33(mht_33_v, 586, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::GetProgramShape");
+
   TF_RET_CHECK(!instructions_.empty());
   return GetProgramShape(instructions_.back().id());
 }
 
 StatusOr<ProgramShape> XlaBuilder::GetProgramShape(XlaOp root) const {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_34(mht_34_v, 594, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::GetProgramShape");
+
   if (root.builder_ != this) {
     return InvalidArgument("Given root operation is not in this computation.");
   }
@@ -322,6 +603,9 @@ StatusOr<ProgramShape> XlaBuilder::GetProgramShape(XlaOp root) const {
 void XlaBuilder::IsConstantVisitor(const int64_t op_handle, int depth,
                                    absl::flat_hash_set<int64_t>* visited,
                                    bool* is_constant) const {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_35(mht_35_v, 606, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::IsConstantVisitor");
+
   if (visited->contains(op_handle) || !*is_constant) {
     return;
   }
@@ -407,6 +691,9 @@ Status XlaBuilder::SetDynamicBinding(int64_t dynamic_size_param_num,
                                      int64_t target_param_num,
                                      ShapeIndex target_param_index,
                                      int64_t target_dim_num) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_36(mht_36_v, 694, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::SetDynamicBinding");
+
   bool param_exists = false;
   for (size_t index = 0; index < instructions_.size(); ++index) {
     HloInstructionProto& instr = instructions_[index];
@@ -443,6 +730,11 @@ Status XlaBuilder::SetDynamicBinding(int64_t dynamic_size_param_num,
 Status XlaBuilder::SetInstructionFrontendAttribute(const XlaOp op,
                                                    std::string attribute,
                                                    std::string value) {
+   std::vector<std::string> mht_37_v;
+   mht_37_v.push_back("attribute: \"" + attribute + "\"");
+   mht_37_v.push_back("value: \"" + value + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_37(mht_37_v, 735, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::SetInstructionFrontendAttribute");
+
   TF_ASSIGN_OR_RETURN(auto instr_proto, LookUpMutableInstruction(op));
   auto* frontend_attributes = instr_proto->mutable_frontend_attributes();
   (*frontend_attributes->mutable_map())[attribute] = std::move(value);
@@ -450,6 +742,9 @@ Status XlaBuilder::SetInstructionFrontendAttribute(const XlaOp op,
 }
 
 XlaComputation XlaBuilder::BuildAndNoteError() {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_38(mht_38_v, 745, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::BuildAndNoteError");
+
   DCHECK(parent_builder_ != nullptr);
   auto build_status = Build();
   if (!build_status.ok()) {
@@ -461,6 +756,9 @@ XlaComputation XlaBuilder::BuildAndNoteError() {
 }
 
 Status XlaBuilder::GetCurrentStatus() const {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_39(mht_39_v, 759, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::GetCurrentStatus");
+
   if (!first_error_.ok()) {
     std::string backtrace;
     first_error_backtrace_.Dump(tensorflow::DebugWriteToString, &backtrace);
@@ -470,12 +768,18 @@ Status XlaBuilder::GetCurrentStatus() const {
 }
 
 StatusOr<XlaComputation> XlaBuilder::Build(bool remove_dynamic_dimensions) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_40(mht_40_v, 771, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Build");
+
   TF_RETURN_IF_ERROR(GetCurrentStatus());
   return Build(instructions_.back().id(), remove_dynamic_dimensions);
 }
 
 StatusOr<XlaComputation> XlaBuilder::Build(XlaOp root,
                                            bool remove_dynamic_dimensions) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_41(mht_41_v, 780, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Build");
+
   if (root.builder_ != this) {
     return InvalidArgument("Given root operation is not in this computation.");
   }
@@ -484,6 +788,9 @@ StatusOr<XlaComputation> XlaBuilder::Build(XlaOp root,
 
 StatusOr<XlaComputation> XlaBuilder::Build(int64_t root_id,
                                            bool remove_dynamic_dimensions) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_42(mht_42_v, 791, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Build");
+
   TF_RETURN_IF_ERROR(GetCurrentStatus());
 
   // TODO(b/121223198): XLA backend cannot handle dynamic dimensions yet, remove
@@ -491,6 +798,9 @@ StatusOr<XlaComputation> XlaBuilder::Build(int64_t root_id,
   // the backend.
   if (remove_dynamic_dimensions) {
     std::function<void(Shape*)> remove_dynamic_dimension = [&](Shape* shape) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_43(mht_43_v, 801, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "lambda");
+
       if (shape->tuple_shapes_size() != 0) {
         for (int i = 0; i < shape->tuple_shapes_size(); ++i) {
           remove_dynamic_dimension(shape->mutable_tuple_shapes(i));
@@ -551,6 +861,9 @@ StatusOr<XlaComputation> XlaBuilder::Build(int64_t root_id,
 /* static */ Status XlaBuilder::PopulateInputOutputAlias(
     HloModuleProto* module, const ProgramShape& program_shape,
     const std::vector<InputOutputAlias>& input_output_aliases) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_44(mht_44_v, 864, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::PopulateInputOutputAlias");
+
   HloInputOutputAliasConfig config(program_shape.result());
   for (auto& alias : input_output_aliases) {
     // The HloInputOutputAliasConfig does not do parameter validation as it only
@@ -579,6 +892,9 @@ StatusOr<XlaComputation> XlaBuilder::Build(int64_t root_id,
 StatusOr<XlaOp> XlaBuilder::InDimBroadcast(
     const Shape& shape, XlaOp operand,
     absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_45(mht_45_v, 895, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::InDimBroadcast");
+
   TF_RETURN_IF_ERROR(first_error_);
 
   HloInstructionProto instr;
@@ -592,6 +908,9 @@ StatusOr<XlaOp> XlaBuilder::InDimBroadcast(
 
 StatusOr<XlaOp> XlaBuilder::AddBroadcastSequence(const Shape& output_shape,
                                                  XlaOp operand) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_46(mht_46_v, 911, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::AddBroadcastSequence");
+
   TF_RETURN_IF_ERROR(first_error_);
 
   TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
@@ -643,6 +962,9 @@ StatusOr<XlaOp> XlaBuilder::AddBroadcastSequence(const Shape& output_shape,
 }
 
 XlaOp XlaBuilder::UnaryOp(HloOpcode unop, XlaOp operand) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_47(mht_47_v, 965, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::UnaryOp");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
     TF_ASSIGN_OR_RETURN(
@@ -655,6 +977,9 @@ XlaOp XlaBuilder::BinaryOp(HloOpcode binop, XlaOp lhs, XlaOp rhs,
                            absl::Span<const int64_t> broadcast_dimensions,
                            absl::optional<ComparisonDirection> direction,
                            absl::optional<Comparison::Type> type) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_48(mht_48_v, 980, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::BinaryOp");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* lhs_shape, GetShapePtr(lhs));
     TF_ASSIGN_OR_RETURN(const Shape* rhs_shape, GetShapePtr(rhs));
@@ -733,6 +1058,9 @@ XlaOp XlaBuilder::BinaryOp(HloOpcode binop, XlaOp lhs, XlaOp rhs,
 
 XlaOp XlaBuilder::BinaryOpNoBroadcast(HloOpcode binop, const Shape& shape,
                                       XlaOp lhs, XlaOp rhs) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_49(mht_49_v, 1061, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::BinaryOpNoBroadcast");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     HloInstructionProto instr;
     *instr.mutable_shape() = shape.ToProto();
@@ -742,6 +1070,9 @@ XlaOp XlaBuilder::BinaryOpNoBroadcast(HloOpcode binop, const Shape& shape,
 
 StatusOr<XlaOp> XlaBuilder::Compare(const Shape& shape, XlaOp lhs, XlaOp rhs,
                                     ComparisonDirection direction) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_50(mht_50_v, 1073, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Compare");
+
   TF_ASSIGN_OR_RETURN(auto operand_shape, GetShape(lhs));
   return Compare(
       shape, lhs, rhs, direction,
@@ -751,6 +1082,9 @@ StatusOr<XlaOp> XlaBuilder::Compare(const Shape& shape, XlaOp lhs, XlaOp rhs,
 StatusOr<XlaOp> XlaBuilder::Compare(const Shape& shape, XlaOp lhs, XlaOp rhs,
                                     ComparisonDirection direction,
                                     Comparison::Type type) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_51(mht_51_v, 1085, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Compare");
+
   HloInstructionProto instr;
   instr.set_comparison_direction(ComparisonDirectionToString(direction));
   instr.set_comparison_type(ComparisonTypeToString(type));
@@ -759,6 +1093,9 @@ StatusOr<XlaOp> XlaBuilder::Compare(const Shape& shape, XlaOp lhs, XlaOp rhs,
 }
 
 XlaOp XlaBuilder::TernaryOp(HloOpcode triop, XlaOp lhs, XlaOp rhs, XlaOp ehs) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_52(mht_52_v, 1096, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::TernaryOp");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     XlaOp updated_lhs = lhs;
     XlaOp updated_rhs = rhs;
@@ -819,6 +1156,9 @@ XlaOp XlaBuilder::TernaryOp(HloOpcode triop, XlaOp lhs, XlaOp rhs, XlaOp ehs) {
 }
 
 XlaOp XlaBuilder::ConstantLiteral(const LiteralSlice& literal) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_53(mht_53_v, 1159, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::ConstantLiteral");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     if (literal.shape().IsArray() && literal.element_count() > 1 &&
         literal.IsAllFirst()) {
@@ -840,6 +1180,9 @@ XlaOp XlaBuilder::ConstantLiteral(const LiteralSlice& literal) {
 }
 
 XlaOp XlaBuilder::Iota(const Shape& shape, int64_t iota_dimension) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_54(mht_54_v, 1183, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Iota");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     HloInstructionProto instr;
     *instr.mutable_shape() = shape.ToProto();
@@ -849,11 +1192,17 @@ XlaOp XlaBuilder::Iota(const Shape& shape, int64_t iota_dimension) {
 }
 
 XlaOp XlaBuilder::Iota(PrimitiveType type, int64_t size) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_55(mht_55_v, 1195, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Iota");
+
   return Iota(ShapeUtil::MakeShape(type, {size}), /*iota_dimension=*/0);
 }
 
 XlaOp XlaBuilder::Call(const XlaComputation& computation,
                        absl::Span<const XlaOp> operands) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_56(mht_56_v, 1203, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Call");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     HloInstructionProto instr;
     std::vector<const Shape*> operand_shape_ptrs;
@@ -876,6 +1225,10 @@ XlaOp XlaBuilder::Call(const XlaComputation& computation,
 XlaOp XlaBuilder::Parameter(
     int64_t parameter_number, const Shape& shape, const std::string& name,
     const std::vector<bool>& replicated_at_leaf_buffers) {
+   std::vector<std::string> mht_57_v;
+   mht_57_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_57(mht_57_v, 1229, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Parameter");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     HloInstructionProto instr;
     if (!parameter_numbers_.insert(parameter_number).second) {
@@ -897,6 +1250,9 @@ XlaOp XlaBuilder::Parameter(
 
 XlaOp XlaBuilder::Broadcast(XlaOp operand,
                             absl::Span<const int64_t> broadcast_sizes) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_58(mht_58_v, 1253, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Broadcast");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
     TF_ASSIGN_OR_RETURN(
@@ -922,6 +1278,9 @@ XlaOp XlaBuilder::Broadcast(XlaOp operand,
 XlaOp XlaBuilder::BroadcastInDim(
     XlaOp operand, const absl::Span<const int64_t> out_dim_size,
     const absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_59(mht_59_v, 1281, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::BroadcastInDim");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
     // Output shape, in the case of degenerate broadcast, the out_dim_size is
@@ -971,6 +1330,9 @@ XlaOp XlaBuilder::BroadcastInDim(
 
 StatusOr<XlaOp> XlaBuilder::ReshapeInternal(const Shape& shape, XlaOp operand,
                                             int64_t inferred_dimension) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_60(mht_60_v, 1333, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::ReshapeInternal");
+
   TF_RETURN_IF_ERROR(first_error_);
 
   HloInstructionProto instr;
@@ -984,6 +1346,9 @@ StatusOr<XlaOp> XlaBuilder::ReshapeInternal(const Shape& shape, XlaOp operand,
 XlaOp XlaBuilder::Slice(XlaOp operand, absl::Span<const int64_t> start_indices,
                         absl::Span<const int64_t> limit_indices,
                         absl::Span<const int64_t> strides) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_61(mht_61_v, 1349, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Slice");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
     TF_ASSIGN_OR_RETURN(Shape shape, ShapeInference::InferSliceShape(
@@ -997,6 +1362,9 @@ StatusOr<XlaOp> XlaBuilder::SliceInternal(
     const Shape& shape, XlaOp operand, absl::Span<const int64_t> start_indices,
     absl::Span<const int64_t> limit_indices,
     absl::Span<const int64_t> strides) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_62(mht_62_v, 1365, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::SliceInternal");
+
   HloInstructionProto instr;
   *instr.mutable_shape() = shape.ToProto();
   for (int i = 0, end = start_indices.size(); i < end; i++) {
@@ -1011,6 +1379,9 @@ StatusOr<XlaOp> XlaBuilder::SliceInternal(
 XlaOp XlaBuilder::SliceInDim(XlaOp operand, int64_t start_index,
                              int64_t limit_index, int64_t stride,
                              int64_t dimno) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_63(mht_63_v, 1382, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::SliceInDim");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* shape, GetShapePtr(operand));
     std::vector<int64_t> starts(shape->rank(), 0);
@@ -1027,6 +1398,9 @@ XlaOp XlaBuilder::SliceInDim(XlaOp operand, int64_t start_index,
 XlaOp XlaBuilder::DynamicSlice(XlaOp operand,
                                absl::Span<const XlaOp> start_indices,
                                absl::Span<const int64_t> slice_sizes) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_64(mht_64_v, 1401, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::DynamicSlice");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
     std::vector<const Shape*> start_indices_shape_ptrs;
@@ -1045,6 +1419,9 @@ XlaOp XlaBuilder::DynamicSlice(XlaOp operand,
 StatusOr<XlaOp> XlaBuilder::DynamicSliceInternal(
     const Shape& shape, XlaOp operand, absl::Span<const XlaOp> start_indices,
     absl::Span<const int64_t> slice_sizes) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_65(mht_65_v, 1422, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::DynamicSliceInternal");
+
   HloInstructionProto instr;
   *instr.mutable_shape() = shape.ToProto();
 
@@ -1059,6 +1436,9 @@ StatusOr<XlaOp> XlaBuilder::DynamicSliceInternal(
 
 XlaOp XlaBuilder::DynamicUpdateSlice(XlaOp operand, XlaOp update,
                                      absl::Span<const XlaOp> start_indices) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_66(mht_66_v, 1439, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::DynamicUpdateSlice");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
     TF_ASSIGN_OR_RETURN(const Shape* update_shape, GetShapePtr(update));
@@ -1078,6 +1458,9 @@ XlaOp XlaBuilder::DynamicUpdateSlice(XlaOp operand, XlaOp update,
 StatusOr<XlaOp> XlaBuilder::DynamicUpdateSliceInternal(
     const Shape& shape, XlaOp operand, XlaOp update,
     absl::Span<const XlaOp> start_indices) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_67(mht_67_v, 1461, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::DynamicUpdateSliceInternal");
+
   HloInstructionProto instr;
   *instr.mutable_shape() = shape.ToProto();
 
@@ -1089,6 +1472,9 @@ StatusOr<XlaOp> XlaBuilder::DynamicUpdateSliceInternal(
 
 XlaOp XlaBuilder::ConcatInDim(absl::Span<const XlaOp> operands,
                               int64_t dimension) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_68(mht_68_v, 1475, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::ConcatInDim");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     std::vector<const Shape*> operand_shape_ptrs;
     TF_ASSIGN_OR_RETURN(const auto& operand_shapes, GetOperandShapes(operands));
@@ -1102,6 +1488,9 @@ XlaOp XlaBuilder::ConcatInDim(absl::Span<const XlaOp> operands,
 
 StatusOr<XlaOp> XlaBuilder::ConcatInDimInternal(
     const Shape& shape, absl::Span<const XlaOp> operands, int64_t dimension) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_69(mht_69_v, 1491, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::ConcatInDimInternal");
+
   HloInstructionProto instr;
   *instr.mutable_shape() = shape.ToProto();
 
@@ -1112,6 +1501,9 @@ StatusOr<XlaOp> XlaBuilder::ConcatInDimInternal(
 
 XlaOp XlaBuilder::Pad(XlaOp operand, XlaOp padding_value,
                       const PaddingConfig& padding_config) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_70(mht_70_v, 1504, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Pad");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
     TF_ASSIGN_OR_RETURN(const Shape* padding_value_shape,
@@ -1125,6 +1517,9 @@ XlaOp XlaBuilder::Pad(XlaOp operand, XlaOp padding_value,
 
 XlaOp XlaBuilder::PadInDim(XlaOp operand, XlaOp padding_value, int64_t dimno,
                            int64_t pad_lo, int64_t pad_hi) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_71(mht_71_v, 1520, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::PadInDim");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* shape, GetShapePtr(operand));
     PaddingConfig padding_config = MakeNoPaddingConfig(shape->rank());
@@ -1138,6 +1533,9 @@ XlaOp XlaBuilder::PadInDim(XlaOp operand, XlaOp padding_value, int64_t dimno,
 StatusOr<XlaOp> XlaBuilder::PadInternal(const Shape& shape, XlaOp operand,
                                         XlaOp padding_value,
                                         const PaddingConfig& padding_config) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_72(mht_72_v, 1536, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::PadInternal");
+
   HloInstructionProto instr;
   *instr.mutable_shape() = shape.ToProto();
   *instr.mutable_padding_config() = padding_config;
@@ -1148,6 +1546,9 @@ StatusOr<XlaOp> XlaBuilder::PadInternal(const Shape& shape, XlaOp operand,
 XlaOp XlaBuilder::Reshape(XlaOp operand, absl::Span<const int64_t> dimensions,
                           absl::Span<const int64_t> new_sizes,
                           int64_t inferred_dimension) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_73(mht_73_v, 1549, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Reshape");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
     TF_ASSIGN_OR_RETURN(const Shape shape, ShapeInference::InferReshapeShape(
@@ -1162,6 +1563,9 @@ XlaOp XlaBuilder::Reshape(XlaOp operand, absl::Span<const int64_t> dimensions,
 
 XlaOp XlaBuilder::Reshape(XlaOp operand, absl::Span<const int64_t> new_sizes,
                           int64_t inferred_dimension) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_74(mht_74_v, 1566, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Reshape");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* shape, GetShapePtr(operand));
     std::vector<int64_t> dimensions(shape->dimensions_size());
@@ -1172,6 +1576,9 @@ XlaOp XlaBuilder::Reshape(XlaOp operand, absl::Span<const int64_t> new_sizes,
 
 XlaOp XlaBuilder::Reshape(const Shape& shape, XlaOp operand,
                           int64_t inferred_dimension) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_75(mht_75_v, 1579, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Reshape");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     return ReshapeInternal(shape, operand, inferred_dimension);
   });
@@ -1181,6 +1588,9 @@ XlaOp XlaBuilder::DynamicReshape(XlaOp operand,
                                  absl::Span<const XlaOp> dim_sizes,
                                  absl::Span<const int64_t> new_size_bounds,
                                  const std::vector<bool>& dims_are_dynamic) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_76(mht_76_v, 1591, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::DynamicReshape");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
     std::vector<const Shape*> dim_size_shape_ptrs;
@@ -1209,6 +1619,9 @@ XlaOp XlaBuilder::DynamicReshape(XlaOp operand,
 
 XlaOp XlaBuilder::Collapse(XlaOp operand,
                            absl::Span<const int64_t> dimensions) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_77(mht_77_v, 1622, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Collapse");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     if (dimensions.size() <= 1) {
       // Not collapsing anything, trivially we can return the operand versus
@@ -1249,6 +1662,10 @@ XlaOp XlaBuilder::Collapse(XlaOp operand,
 }
 
 void XlaBuilder::Trace(const std::string& tag, XlaOp operand) {
+   std::vector<std::string> mht_78_v;
+   mht_78_v.push_back("tag: \"" + tag + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_78(mht_78_v, 1666, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Trace");
+
   ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     HloInstructionProto instr;
     *instr.mutable_shape() = ShapeUtil::MakeNil().ToProto();
@@ -1258,6 +1675,9 @@ void XlaBuilder::Trace(const std::string& tag, XlaOp operand) {
 }
 
 XlaOp XlaBuilder::Select(XlaOp pred, XlaOp on_true, XlaOp on_false) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_79(mht_79_v, 1678, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Select");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* true_shape, GetShapePtr(on_true));
     TF_ASSIGN_OR_RETURN(const Shape* false_shape, GetShapePtr(on_false));
@@ -1269,6 +1689,9 @@ XlaOp XlaBuilder::Select(XlaOp pred, XlaOp on_true, XlaOp on_false) {
 }
 
 XlaOp XlaBuilder::Tuple(absl::Span<const XlaOp> elements) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_80(mht_80_v, 1692, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Tuple");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     std::vector<const Shape*> operand_shape_ptrs;
     TF_ASSIGN_OR_RETURN(const auto& operand_shapes, GetOperandShapes(elements));
@@ -1283,12 +1706,18 @@ XlaOp XlaBuilder::Tuple(absl::Span<const XlaOp> elements) {
 
 StatusOr<XlaOp> XlaBuilder::TupleInternal(const Shape& shape,
                                           absl::Span<const XlaOp> elements) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_81(mht_81_v, 1709, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::TupleInternal");
+
   HloInstructionProto instr;
   *instr.mutable_shape() = shape.ToProto();
   return AddInstruction(std::move(instr), HloOpcode::kTuple, elements);
 }
 
 XlaOp XlaBuilder::GetTupleElement(XlaOp tuple_data, int64_t index) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_82(mht_82_v, 1718, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::GetTupleElement");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* tuple_shape, GetShapePtr(tuple_data));
     if (!tuple_shape->IsTuple()) {
@@ -1310,6 +1739,9 @@ XlaOp XlaBuilder::GetTupleElement(XlaOp tuple_data, int64_t index) {
 StatusOr<XlaOp> XlaBuilder::GetTupleElementInternal(const Shape& shape,
                                                     XlaOp tuple_data,
                                                     int64_t index) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_83(mht_83_v, 1742, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::GetTupleElementInternal");
+
   HloInstructionProto instr;
   *instr.mutable_shape() = shape.ToProto();
   instr.set_tuple_index(index);
@@ -1320,6 +1752,9 @@ StatusOr<XlaOp> XlaBuilder::GetTupleElementInternal(const Shape& shape,
 XlaOp XlaBuilder::Dot(XlaOp lhs, XlaOp rhs,
                       const PrecisionConfig* precision_config,
                       absl::optional<PrimitiveType> preferred_element_type) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_84(mht_84_v, 1755, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Dot");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* lhs_shape, GetShapePtr(lhs));
 
@@ -1336,6 +1771,9 @@ XlaOp XlaBuilder::DotGeneral(
     XlaOp lhs, XlaOp rhs, const DotDimensionNumbers& dimension_numbers,
     const PrecisionConfig* precision_config,
     absl::optional<PrimitiveType> preferred_element_type) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_85(mht_85_v, 1774, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::DotGeneral");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* lhs_shape, GetShapePtr(lhs));
     TF_ASSIGN_OR_RETURN(const Shape* rhs_shape, GetShapePtr(rhs));
@@ -1352,6 +1790,9 @@ StatusOr<XlaOp> XlaBuilder::DotGeneralInternal(
     const Shape& shape, XlaOp lhs, XlaOp rhs,
     const DotDimensionNumbers& dimension_numbers,
     const PrecisionConfig* precision_config) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_86(mht_86_v, 1793, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::DotGeneralInternal");
+
   HloInstructionProto instr;
   *instr.mutable_shape() = shape.ToProto();
   *instr.mutable_dot_dimension_numbers() = dimension_numbers;
@@ -1364,6 +1805,9 @@ StatusOr<XlaOp> XlaBuilder::DotGeneralInternal(
 Status XlaBuilder::VerifyConvolution(
     const Shape& lhs_shape, const Shape& rhs_shape,
     const ConvolutionDimensionNumbers& dimension_numbers) const {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_87(mht_87_v, 1808, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::VerifyConvolution");
+
   if (lhs_shape.rank() != rhs_shape.rank()) {
     return InvalidArgument(
         "Convolution arguments must have same number of "
@@ -1381,6 +1825,10 @@ Status XlaBuilder::VerifyConvolution(
 
   const auto check_spatial_dimensions = [&](absl::string_view field_name,
                                             absl::Span<const int64_t> numbers) {
+   std::vector<std::string> mht_88_v;
+   mht_88_v.push_back("field_name: \"" + std::string(field_name.data(), field_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_88(mht_88_v, 1829, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "lambda");
+
     if (numbers.size() != num_spatial_dims) {
       return InvalidArgument("Expected %d elements for %s, but got %d.",
                              num_spatial_dims, field_name, numbers.size());
@@ -1410,6 +1858,9 @@ XlaOp XlaBuilder::Conv(XlaOp lhs, XlaOp rhs,
                        int64_t batch_group_count,
                        const PrecisionConfig* precision_config,
                        absl::optional<PrimitiveType> preferred_element_type) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_89(mht_89_v, 1861, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Conv");
+
   return ConvWithGeneralDimensions(
       lhs, rhs, window_strides, padding,
       CreateDefaultConvDimensionNumbers(window_strides.size()),
@@ -1423,6 +1874,9 @@ XlaOp XlaBuilder::ConvWithGeneralPadding(
     int64_t feature_group_count, int64_t batch_group_count,
     const PrecisionConfig* precision_config,
     absl::optional<PrimitiveType> preferred_element_type) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_90(mht_90_v, 1877, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::ConvWithGeneralPadding");
+
   return ConvGeneral(lhs, rhs, window_strides, padding,
                      CreateDefaultConvDimensionNumbers(window_strides.size()),
                      feature_group_count, batch_group_count, precision_config,
@@ -1435,6 +1889,9 @@ XlaOp XlaBuilder::ConvWithGeneralDimensions(
     int64_t feature_group_count, int64_t batch_group_count,
     const PrecisionConfig* precision_config,
     absl::optional<PrimitiveType> preferred_element_type) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_91(mht_91_v, 1892, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::ConvWithGeneralDimensions");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* lhs_shape, GetShapePtr(lhs));
     TF_ASSIGN_OR_RETURN(const Shape* rhs_shape, GetShapePtr(rhs));
@@ -1474,6 +1931,9 @@ XlaOp XlaBuilder::ConvGeneral(
     int64_t feature_group_count, int64_t batch_group_count,
     const PrecisionConfig* precision_config,
     absl::optional<PrimitiveType> preferred_element_type) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_92(mht_92_v, 1934, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::ConvGeneral");
+
   return ConvGeneralDilated(lhs, rhs, window_strides, padding, {}, {},
                             dimension_numbers, feature_group_count,
                             batch_group_count, precision_config,
@@ -1489,6 +1949,9 @@ XlaOp XlaBuilder::ConvGeneralDilated(
     int64_t feature_group_count, int64_t batch_group_count,
     const PrecisionConfig* precision_config,
     absl::optional<PrimitiveType> preferred_element_type) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_93(mht_93_v, 1952, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::ConvGeneralDilated");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* lhs_shape, GetShapePtr(lhs));
     TF_ASSIGN_OR_RETURN(const Shape* rhs_shape, GetShapePtr(rhs));
@@ -1528,6 +1991,9 @@ StatusOr<HloInstructionProto> XlaBuilder::DynamicConvInstruction(
     int64_t feature_group_count, int64_t batch_group_count,
     const PrecisionConfig* precision_config, PaddingType padding_type,
     absl::optional<PrimitiveType> preferred_element_type) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_94(mht_94_v, 1994, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::DynamicConvInstruction");
+
   TF_ASSIGN_OR_RETURN(const Shape* lhs_shape, GetShapePtr(lhs));
   TF_ASSIGN_OR_RETURN(const Shape* rhs_shape, GetShapePtr(rhs));
   std::vector<int64_t> window_dimensions(
@@ -1572,6 +2038,9 @@ XlaOp XlaBuilder::DynamicConvInputGrad(
     int64_t feature_group_count, int64_t batch_group_count,
     const PrecisionConfig* precision_config, PaddingType padding_type,
     absl::optional<PrimitiveType> preferred_element_type) {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_95(mht_95_v, 2041, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::DynamicConvInputGrad");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(
         HloInstructionProto instr,
@@ -1597,6 +2066,9 @@ XlaOp XlaBuilder::DynamicConvKernelGrad(
     int64_t feature_group_count, int64_t batch_group_count,
     const PrecisionConfig* precision_config, PaddingType padding_type,
     absl::optional<PrimitiveType> preferred_element_type) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_96(mht_96_v, 2069, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::DynamicConvKernelGrad");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(
         HloInstructionProto instr,
@@ -1624,6 +2096,9 @@ XlaOp XlaBuilder::DynamicConvForward(
     int64_t feature_group_count, int64_t batch_group_count,
     const PrecisionConfig* precision_config, PaddingType padding_type,
     absl::optional<PrimitiveType> preferred_element_type) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_97(mht_97_v, 2099, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::DynamicConvForward");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(
         HloInstructionProto instr,
@@ -1646,6 +2121,9 @@ StatusOr<XlaOp> XlaBuilder::ConvGeneralDilatedInternal(
     const ConvolutionDimensionNumbers& dimension_numbers,
     int64_t feature_group_count, int64_t batch_group_count,
     const PrecisionConfig* precision_config) {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_98(mht_98_v, 2124, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::ConvGeneralDilatedInternal");
+
   HloInstructionProto instr;
   *instr.mutable_shape() = shape.ToProto();
 
@@ -1663,6 +2141,9 @@ StatusOr<XlaOp> XlaBuilder::ConvGeneralDilatedInternal(
 
 XlaOp XlaBuilder::Fft(XlaOp operand, const FftType fft_type,
                       const absl::Span<const int64_t> fft_length) {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_99(mht_99_v, 2144, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Fft");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
     TF_ASSIGN_OR_RETURN(Shape shape, ShapeInference::InferFftShape(
@@ -1674,6 +2155,9 @@ XlaOp XlaBuilder::Fft(XlaOp operand, const FftType fft_type,
 StatusOr<XlaOp> XlaBuilder::FftInternal(
     const Shape& shape, XlaOp operand, const FftType fft_type,
     const absl::Span<const int64_t> fft_length) {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_100(mht_100_v, 2158, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::FftInternal");
+
   HloInstructionProto instr;
   *instr.mutable_shape() = shape.ToProto();
   instr.set_fft_type(fft_type);
@@ -1686,6 +2170,9 @@ StatusOr<XlaOp> XlaBuilder::FftInternal(
 
 StatusOr<XlaOp> XlaBuilder::TriangularSolveInternal(
     const Shape& shape, XlaOp a, XlaOp b, TriangularSolveOptions options) {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_101(mht_101_v, 2173, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::TriangularSolveInternal");
+
   HloInstructionProto instr;
   *instr.mutable_triangular_solve_options() = std::move(options);
   *instr.mutable_shape() = shape.ToProto();
@@ -1695,6 +2182,9 @@ StatusOr<XlaOp> XlaBuilder::TriangularSolveInternal(
 
 StatusOr<XlaOp> XlaBuilder::CholeskyInternal(const Shape& shape, XlaOp a,
                                              bool lower) {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_102(mht_102_v, 2185, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::CholeskyInternal");
+
   HloInstructionProto instr;
   xla::CholeskyOptions& options = *instr.mutable_cholesky_options();
   options.set_lower(lower);
@@ -1704,6 +2194,10 @@ StatusOr<XlaOp> XlaBuilder::CholeskyInternal(const Shape& shape, XlaOp a,
 }
 
 XlaOp XlaBuilder::Infeed(const Shape& shape, const std::string& config) {
+   std::vector<std::string> mht_103_v;
+   mht_103_v.push_back("config: \"" + config + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_103(mht_103_v, 2198, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Infeed");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     HloInstructionProto instr;
     if (!LayoutUtil::HasLayout(shape)) {
@@ -1730,6 +2224,9 @@ XlaOp XlaBuilder::Infeed(const Shape& shape, const std::string& config) {
     // infeed.
     XlaOp token;
     auto make_token = [&]() {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_104(mht_104_v, 2227, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "lambda");
+
       HloInstructionProto token_instr;
       *token_instr.mutable_shape() = ShapeUtil::MakeTokenShape().ToProto();
       return AddInstruction(std::move(token_instr), HloOpcode::kAfterAll, {});
@@ -1778,6 +2275,10 @@ XlaOp XlaBuilder::Infeed(const Shape& shape, const std::string& config) {
 
 XlaOp XlaBuilder::InfeedWithToken(XlaOp token, const Shape& shape,
                                   const std::string& config) {
+   std::vector<std::string> mht_105_v;
+   mht_105_v.push_back("config: \"" + config + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_105(mht_105_v, 2279, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::InfeedWithToken");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     if (!LayoutUtil::HasLayout(shape)) {
       return InvalidArgument("Given shape to Infeed must have a layout");
@@ -1803,6 +2304,10 @@ XlaOp XlaBuilder::InfeedWithToken(XlaOp token, const Shape& shape,
 StatusOr<XlaOp> XlaBuilder::InfeedWithTokenInternal(
     const Shape& infeed_instruction_shape, XlaOp token,
     const std::string& config) {
+   std::vector<std::string> mht_106_v;
+   mht_106_v.push_back("config: \"" + config + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_106(mht_106_v, 2308, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::InfeedWithTokenInternal");
+
   HloInstructionProto instr;
   *instr.mutable_shape() = infeed_instruction_shape.ToProto();
   instr.set_infeed_config(config);
@@ -1811,6 +2316,10 @@ StatusOr<XlaOp> XlaBuilder::InfeedWithTokenInternal(
 
 void XlaBuilder::Outfeed(XlaOp operand, const Shape& shape_with_layout,
                          const std::string& outfeed_config) {
+   std::vector<std::string> mht_107_v;
+   mht_107_v.push_back("outfeed_config: \"" + outfeed_config + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_107(mht_107_v, 2320, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Outfeed");
+
   ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     HloInstructionProto instr;
 
@@ -1864,6 +2373,10 @@ void XlaBuilder::Outfeed(XlaOp operand, const Shape& shape_with_layout,
 XlaOp XlaBuilder::OutfeedWithToken(XlaOp operand, XlaOp token,
                                    const Shape& shape_with_layout,
                                    const std::string& outfeed_config) {
+   std::vector<std::string> mht_108_v;
+   mht_108_v.push_back("outfeed_config: \"" + outfeed_config + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_108(mht_108_v, 2377, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::OutfeedWithToken");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     // Check and set outfeed shape.
     if (!LayoutUtil::HasLayout(shape_with_layout)) {
@@ -1884,6 +2397,10 @@ XlaOp XlaBuilder::OutfeedWithToken(XlaOp operand, XlaOp token,
 StatusOr<XlaOp> XlaBuilder::OutfeedWithTokenInternal(
     XlaOp operand, XlaOp token, const Shape& shape_with_layout,
     const std::string& outfeed_config) {
+   std::vector<std::string> mht_109_v;
+   mht_109_v.push_back("outfeed_config: \"" + outfeed_config + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_109(mht_109_v, 2401, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::OutfeedWithTokenInternal");
+
   HloInstructionProto instr;
   *instr.mutable_shape() = ShapeUtil::MakeTokenShape().ToProto();
   *instr.mutable_outfeed_shape() = shape_with_layout.ToProto();
@@ -1893,6 +2410,9 @@ StatusOr<XlaOp> XlaBuilder::OutfeedWithTokenInternal(
 }
 
 XlaOp XlaBuilder::CreateToken() {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_110(mht_110_v, 2413, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::CreateToken");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     HloInstructionProto instr;
     *instr.mutable_shape() = ShapeUtil::MakeTokenShape().ToProto();
@@ -1901,6 +2421,9 @@ XlaOp XlaBuilder::CreateToken() {
 }
 
 XlaOp XlaBuilder::AfterAll(absl::Span<const XlaOp> tokens) {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_111(mht_111_v, 2424, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::AfterAll");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     if (tokens.empty()) {
       return InvalidArgument("AfterAll requires at least one operand");
@@ -1930,6 +2453,11 @@ XlaOp XlaBuilder::CustomCall(
     const Literal* literal, absl::optional<Window> window,
     absl::optional<ConvolutionDimensionNumbers> dnums,
     CustomCallSchedule schedule, CustomCallApiVersion api_version) {
+   std::vector<std::string> mht_112_v;
+   mht_112_v.push_back("call_target_name: \"" + call_target_name + "\"");
+   mht_112_v.push_back("opaque: \"" + opaque + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_112(mht_112_v, 2458, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::CustomCall");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     if (absl::StartsWith(call_target_name, "$")) {
       return InvalidArgument(
@@ -1977,6 +2505,11 @@ StatusOr<XlaOp> XlaBuilder::CustomCallInternal(
     const Literal* literal, absl::optional<Window> window,
     absl::optional<ConvolutionDimensionNumbers> dnums,
     CustomCallSchedule schedule, CustomCallApiVersion api_version) {
+   std::vector<std::string> mht_113_v;
+   mht_113_v.push_back("call_target_name: \"" + call_target_name + "\"");
+   mht_113_v.push_back("opaque: \"" + opaque + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_113(mht_113_v, 2510, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::CustomCallInternal");
+
   HloInstructionProto instr;
   // Bit of a hack: cudnn conv custom-calls are created through this API. Give
   // them a user-friendly name. (This has no effect on correctness, it's just
@@ -2034,6 +2567,11 @@ XlaOp XlaBuilder::CustomCall(
         output_operand_aliasing,
     const Literal* literal, CustomCallSchedule schedule,
     CustomCallApiVersion api_version) {
+   std::vector<std::string> mht_114_v;
+   mht_114_v.push_back("call_target_name: \"" + call_target_name + "\"");
+   mht_114_v.push_back("opaque: \"" + opaque + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_114(mht_114_v, 2572, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::CustomCall");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     HloInstructionProto instr;
     if (absl::StartsWith(call_target_name, "$")) {
@@ -2091,6 +2629,9 @@ XlaOp XlaBuilder::CustomCall(
 }
 
 XlaOp XlaBuilder::OptimizationBarrier(XlaOp operand) {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_115(mht_115_v, 2632, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::OptimizationBarrier");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
     Shape shape = *operand_shape;
@@ -2103,6 +2644,9 @@ XlaOp XlaBuilder::OptimizationBarrier(XlaOp operand) {
 
 XlaOp XlaBuilder::Transpose(XlaOp operand,
                             absl::Span<const int64_t> permutation) {
+   std::vector<std::string> mht_116_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_116(mht_116_v, 2647, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Transpose");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
     TF_ASSIGN_OR_RETURN(Shape shape, ShapeInference::InferTransposeShape(
@@ -2113,6 +2657,9 @@ XlaOp XlaBuilder::Transpose(XlaOp operand,
 
 StatusOr<XlaOp> XlaBuilder::TransposeInternal(
     const Shape& shape, XlaOp operand, absl::Span<const int64_t> permutation) {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_117(mht_117_v, 2660, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::TransposeInternal");
+
   HloInstructionProto instr;
   *instr.mutable_shape() = shape.ToProto();
   for (int64_t dim : permutation) {
@@ -2122,6 +2669,9 @@ StatusOr<XlaOp> XlaBuilder::TransposeInternal(
 }
 
 XlaOp XlaBuilder::Rev(XlaOp operand, absl::Span<const int64_t> dimensions) {
+   std::vector<std::string> mht_118_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_118(mht_118_v, 2672, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Rev");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
     TF_ASSIGN_OR_RETURN(Shape shape, ShapeInference::InferReverseShape(
@@ -2132,6 +2682,9 @@ XlaOp XlaBuilder::Rev(XlaOp operand, absl::Span<const int64_t> dimensions) {
 
 StatusOr<XlaOp> XlaBuilder::RevInternal(const Shape& shape, XlaOp operand,
                                         absl::Span<const int64_t> dimensions) {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_119(mht_119_v, 2685, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::RevInternal");
+
   HloInstructionProto instr;
   *instr.mutable_shape() = shape.ToProto();
   for (int64_t dim : dimensions) {
@@ -2143,6 +2696,9 @@ StatusOr<XlaOp> XlaBuilder::RevInternal(const Shape& shape, XlaOp operand,
 XlaOp XlaBuilder::Sort(absl::Span<const XlaOp> operands,
                        const XlaComputation& comparator, int64_t dimension,
                        bool is_stable) {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_120(mht_120_v, 2699, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Sort");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     std::vector<const Shape*> operand_shape_ptrs;
     TF_ASSIGN_OR_RETURN(std::vector<Shape> operand_shapes,
@@ -2159,6 +2715,9 @@ StatusOr<XlaOp> XlaBuilder::SortInternal(const Shape& shape,
                                          absl::Span<const XlaOp> operands,
                                          const XlaComputation& comparator,
                                          int64_t dimension, bool is_stable) {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_121(mht_121_v, 2718, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::SortInternal");
+
   HloInstructionProto instr;
   *instr.mutable_shape() = shape.ToProto();
   instr.set_is_stable(is_stable);
@@ -2173,6 +2732,9 @@ StatusOr<XlaOp> XlaBuilder::SortInternal(const Shape& shape,
 
 XlaOp XlaBuilder::ConvertElementType(XlaOp operand,
                                      PrimitiveType new_element_type) {
+   std::vector<std::string> mht_122_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_122(mht_122_v, 2735, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::ConvertElementType");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
     TF_ASSIGN_OR_RETURN(Shape shape, ShapeInference::InferConvertShape(
@@ -2183,6 +2745,9 @@ XlaOp XlaBuilder::ConvertElementType(XlaOp operand,
 
 XlaOp XlaBuilder::BitcastConvertType(XlaOp operand,
                                      PrimitiveType new_element_type) {
+   std::vector<std::string> mht_123_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_123(mht_123_v, 2748, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::BitcastConvertType");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
     TF_ASSIGN_OR_RETURN(Shape shape, ShapeInference::InferBitcastConvertShape(
@@ -2193,6 +2758,9 @@ XlaOp XlaBuilder::BitcastConvertType(XlaOp operand,
 
 StatusOr<XlaOp> XlaBuilder::BitcastConvertTypeInternal(const Shape& shape,
                                                        XlaOp operand) {
+   std::vector<std::string> mht_124_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_124(mht_124_v, 2761, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::BitcastConvertTypeInternal");
+
   HloInstructionProto instr;
   *instr.mutable_shape() = shape.ToProto();
   return AddInstruction(std::move(instr), HloOpcode::kBitcastConvert,
@@ -2200,6 +2768,9 @@ StatusOr<XlaOp> XlaBuilder::BitcastConvertTypeInternal(const Shape& shape,
 }
 
 XlaOp XlaBuilder::Clamp(XlaOp min, XlaOp operand, XlaOp max) {
+   std::vector<std::string> mht_125_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_125(mht_125_v, 2771, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Clamp");
+
   return TernaryOp(HloOpcode::kClamp, min, operand, max);
 }
 
@@ -2207,6 +2778,9 @@ XlaOp XlaBuilder::Map(absl::Span<const XlaOp> operands,
                       const XlaComputation& computation,
                       absl::Span<const int64_t> dimensions,
                       absl::Span<const XlaOp> static_operands) {
+   std::vector<std::string> mht_126_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_126(mht_126_v, 2781, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Map");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     if (!static_operands.empty()) {
       return Unimplemented("static_operands is not supported in Map");
@@ -2249,6 +2823,9 @@ XlaOp XlaBuilder::Map(absl::Span<const XlaOp> operands,
 XlaOp XlaBuilder::RngOp(RandomDistribution distribution,
                         absl::Span<const XlaOp> parameters,
                         const Shape& shape) {
+   std::vector<std::string> mht_127_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_127(mht_127_v, 2826, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::RngOp");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     // Check the number of parameters per RNG distribution.
     switch (distribution) {
@@ -2272,6 +2849,9 @@ XlaOp XlaBuilder::RngOp(RandomDistribution distribution,
 StatusOr<XlaOp> XlaBuilder::RngOpInternal(RandomDistribution distribution,
                                           absl::Span<const XlaOp> parameters,
                                           const Shape& shape) {
+   std::vector<std::string> mht_128_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_128(mht_128_v, 2852, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::RngOpInternal");
+
   HloInstructionProto instr;
   *instr.mutable_shape() = shape.ToProto();
   instr.set_distribution(distribution);
@@ -2280,15 +2860,24 @@ StatusOr<XlaOp> XlaBuilder::RngOpInternal(RandomDistribution distribution,
 }
 
 XlaOp XlaBuilder::RngNormal(XlaOp mu, XlaOp sigma, const Shape& shape) {
+   std::vector<std::string> mht_129_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_129(mht_129_v, 2863, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::RngNormal");
+
   return RngOp(RandomDistribution::RNG_NORMAL, {mu, sigma}, shape);
 }
 
 XlaOp XlaBuilder::RngUniform(XlaOp a, XlaOp b, const Shape& shape) {
+   std::vector<std::string> mht_130_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_130(mht_130_v, 2870, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::RngUniform");
+
   return RngOp(RandomDistribution::RNG_UNIFORM, {a, b}, shape);
 }
 
 XlaOp XlaBuilder::RngBitGenerator(RandomAlgorithm algorithm,
                                   XlaOp initial_state, const Shape& shape) {
+   std::vector<std::string> mht_131_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_131(mht_131_v, 2878, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::RngBitGenerator");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_RETURN_IF_ERROR(ShapeUtil::ValidateShapeWithOptionalLayout(shape));
     TF_ASSIGN_OR_RETURN(Shape state_shape, GetShape(initial_state));
@@ -2317,6 +2906,9 @@ XlaOp XlaBuilder::RngBitGenerator(RandomAlgorithm algorithm,
 StatusOr<XlaOp> XlaBuilder::RngBitGeneratorInternal(
     const Shape& full_result_shape, RandomAlgorithm algorithm,
     XlaOp initial_state) {
+   std::vector<std::string> mht_132_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_132(mht_132_v, 2909, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::RngBitGeneratorInternal");
+
   HloInstructionProto instr;
   *instr.mutable_shape() = full_result_shape.ToProto();
   instr.set_rng_algorithm(algorithm);
@@ -2326,6 +2918,9 @@ StatusOr<XlaOp> XlaBuilder::RngBitGeneratorInternal(
 
 XlaOp XlaBuilder::While(const XlaComputation& condition,
                         const XlaComputation& body, XlaOp init) {
+   std::vector<std::string> mht_133_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_133(mht_133_v, 2921, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::While");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     // Infer shape.
     TF_ASSIGN_OR_RETURN(const auto& body_program_shape, body.GetProgramShape());
@@ -2343,6 +2938,9 @@ StatusOr<XlaOp> XlaBuilder::WhileInternal(const Shape& shape,
                                           const XlaComputation& condition,
                                           const XlaComputation& body,
                                           XlaOp init) {
+   std::vector<std::string> mht_134_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_134(mht_134_v, 2941, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::WhileInternal");
+
   HloInstructionProto instr;
   *instr.mutable_shape() = shape.ToProto();
   // Body comes before condition computation in the vector.
@@ -2355,6 +2953,9 @@ XlaOp XlaBuilder::Gather(XlaOp input, XlaOp start_indices,
                          const GatherDimensionNumbers& dimension_numbers,
                          absl::Span<const int64_t> slice_sizes,
                          bool indices_are_sorted) {
+   std::vector<std::string> mht_135_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_135(mht_135_v, 2956, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Gather");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* input_shape, GetShapePtr(input));
     TF_ASSIGN_OR_RETURN(const Shape* start_indices_shape,
@@ -2371,6 +2972,9 @@ StatusOr<XlaOp> XlaBuilder::GatherInternal(
     const Shape& shape, XlaOp input, XlaOp start_indices,
     const GatherDimensionNumbers& dimension_numbers,
     absl::Span<const int64_t> slice_sizes, bool indices_are_sorted) {
+   std::vector<std::string> mht_136_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_136(mht_136_v, 2975, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::GatherInternal");
+
   HloInstructionProto instr;
   instr.set_indices_are_sorted(indices_are_sorted);
   *instr.mutable_shape() = shape.ToProto();
@@ -2387,6 +2991,9 @@ XlaOp XlaBuilder::Scatter(XlaOp input, XlaOp scatter_indices, XlaOp updates,
                           const XlaComputation& update_computation,
                           const ScatterDimensionNumbers& dimension_numbers,
                           bool indices_are_sorted, bool unique_indices) {
+   std::vector<std::string> mht_137_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_137(mht_137_v, 2994, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Scatter");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* input_shape, GetShapePtr(input));
     TF_ASSIGN_OR_RETURN(const Shape* scatter_indices_shape,
@@ -2409,6 +3016,9 @@ StatusOr<XlaOp> XlaBuilder::ScatterInternal(
     const XlaComputation& update_computation,
     const ScatterDimensionNumbers& dimension_numbers, bool indices_are_sorted,
     bool unique_indices) {
+   std::vector<std::string> mht_138_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_138(mht_138_v, 3019, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::ScatterInternal");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     HloInstructionProto instr;
     instr.set_indices_are_sorted(indices_are_sorted);
@@ -2426,6 +3036,9 @@ XlaOp XlaBuilder::Conditional(XlaOp predicate, XlaOp true_operand,
                               const XlaComputation& true_computation,
                               XlaOp false_operand,
                               const XlaComputation& false_computation) {
+   std::vector<std::string> mht_139_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_139(mht_139_v, 3039, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Conditional");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const xla::Shape* shape, GetShapePtr(predicate));
 
@@ -2446,6 +3059,9 @@ XlaOp XlaBuilder::Conditional(
     XlaOp branch_index,
     absl::Span<const XlaComputation* const> branch_computations,
     absl::Span<const XlaOp> branch_operands) {
+   std::vector<std::string> mht_140_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_140(mht_140_v, 3062, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Conditional");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const xla::Shape* shape, GetShapePtr(branch_index));
 
@@ -2462,6 +3078,9 @@ XlaOp XlaBuilder::ConditionalImpl(
     XlaOp branch_index,
     absl::Span<const XlaComputation* const> branch_computations,
     absl::Span<const XlaOp> branch_operands) {
+   std::vector<std::string> mht_141_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_141(mht_141_v, 3081, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::ConditionalImpl");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     HloInstructionProto instr;
 
@@ -2496,6 +3115,9 @@ XlaOp XlaBuilder::ConditionalImpl(
 }
 
 Status XlaBuilder::CheckOpBuilder(XlaOp op) const {
+   std::vector<std::string> mht_142_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_142(mht_142_v, 3118, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::CheckOpBuilder");
+
   if (this != op.builder()) {
     return InvalidArgument(
         "XlaOp with handle %d is built by builder '%s', but is trying to use "
@@ -2508,6 +3130,9 @@ Status XlaBuilder::CheckOpBuilder(XlaOp op) const {
 XlaOp XlaBuilder::Reduce(XlaOp operand, XlaOp init_value,
                          const XlaComputation& computation,
                          absl::Span<const int64_t> dimensions_to_reduce) {
+   std::vector<std::string> mht_143_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_143(mht_143_v, 3133, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Reduce");
+
   return Reduce(absl::Span<const XlaOp>({operand}),
                 absl::Span<const XlaOp>({init_value}), computation,
                 dimensions_to_reduce);
@@ -2517,6 +3142,9 @@ XlaOp XlaBuilder::Reduce(absl::Span<const XlaOp> operands,
                          absl::Span<const XlaOp> init_values,
                          const XlaComputation& computation,
                          absl::Span<const int64_t> dimensions_to_reduce) {
+   std::vector<std::string> mht_144_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_144(mht_144_v, 3145, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Reduce");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const ProgramShape& called_program_shape,
                         computation.GetProgramShape());
@@ -2545,6 +3173,9 @@ StatusOr<XlaOp> XlaBuilder::ReduceInternal(
     const Shape& shape, absl::Span<const XlaOp> all_operands,
     const XlaComputation& computation,
     absl::Span<const int64_t> dimensions_to_reduce) {
+   std::vector<std::string> mht_145_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_145(mht_145_v, 3176, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::ReduceInternal");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     HloInstructionProto instr;
     *instr.mutable_shape() = shape.ToProto();
@@ -2560,6 +3191,9 @@ StatusOr<XlaOp> XlaBuilder::ReduceInternal(
 
 XlaOp XlaBuilder::ReduceAll(XlaOp operand, XlaOp init_value,
                             const XlaComputation& computation) {
+   std::vector<std::string> mht_146_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_146(mht_146_v, 3194, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::ReduceAll");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
     std::vector<int64_t> all_dimnos(operand_shape->rank());
@@ -2573,6 +3207,9 @@ XlaOp XlaBuilder::ReduceWindow(XlaOp operand, XlaOp init_value,
                                absl::Span<const int64_t> window_dimensions,
                                absl::Span<const int64_t> window_strides,
                                Padding padding) {
+   std::vector<std::string> mht_147_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_147(mht_147_v, 3210, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::ReduceWindow");
+
   return ReduceWindow(absl::MakeSpan(&operand, 1),
                       absl::MakeSpan(&init_value, 1), computation,
                       window_dimensions, window_strides, padding);
@@ -2584,6 +3221,9 @@ XlaOp XlaBuilder::ReduceWindow(absl::Span<const XlaOp> operands,
                                absl::Span<const int64_t> window_dimensions,
                                absl::Span<const int64_t> window_strides,
                                Padding padding) {
+   std::vector<std::string> mht_148_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_148(mht_148_v, 3224, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::ReduceWindow");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     const Shape* operand_shape = nullptr;
     for (const auto& operand : operands) {
@@ -2637,6 +3277,9 @@ XlaOp XlaBuilder::ReduceWindowWithGeneralPadding(
     absl::Span<const int64_t> base_dilations,
     absl::Span<const int64_t> window_dilations,
     absl::Span<const std::pair<int64_t, int64_t>> padding) {
+   std::vector<std::string> mht_149_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_149(mht_149_v, 3280, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::ReduceWindowWithGeneralPadding");
+
   std::vector<const Shape*> operand_shapes, init_shapes;
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     if (operands.size() == 1) {
@@ -2682,6 +3325,9 @@ StatusOr<HloInstructionProto> XlaBuilder::ReduceWindowInternal(
     absl::Span<const int64_t> base_dilations,
     absl::Span<const int64_t> window_dilations,
     absl::Span<const std::pair<int64_t, int64_t>> padding) {
+   std::vector<std::string> mht_150_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_150(mht_150_v, 3328, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::ReduceWindowInternal");
+
   std::vector<const Shape*> operand_shapes, init_shapes;
   for (int i = 0; i < operands.size(); ++i) {
     const auto& operand = operands[i];
@@ -2712,6 +3358,9 @@ StatusOr<HloInstructionProto> XlaBuilder::ReduceWindowInternal(
 StatusOr<XlaOp> XlaBuilder::ReduceWindowInternal(
     const Shape& shape, XlaOp operand, XlaOp init_value,
     const XlaComputation& computation, Window window) {
+   std::vector<std::string> mht_151_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_151(mht_151_v, 3361, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::ReduceWindowInternal");
+
   HloInstructionProto instr;
   *instr.mutable_shape() = shape.ToProto();
   *instr.mutable_window() = std::move(window);
@@ -2723,6 +3372,9 @@ StatusOr<XlaOp> XlaBuilder::ReduceWindowInternal(
 
 XlaOp XlaBuilder::BatchNormTraining(XlaOp operand, XlaOp scale, XlaOp offset,
                                     float epsilon, int64_t feature_index) {
+   std::vector<std::string> mht_152_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_152(mht_152_v, 3375, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::BatchNormTraining");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     HloInstructionProto instr;
 
@@ -2746,6 +3398,9 @@ XlaOp XlaBuilder::BatchNormTraining(XlaOp operand, XlaOp scale, XlaOp offset,
 XlaOp XlaBuilder::BatchNormInference(XlaOp operand, XlaOp scale, XlaOp offset,
                                      XlaOp mean, XlaOp variance, float epsilon,
                                      int64_t feature_index) {
+   std::vector<std::string> mht_153_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_153(mht_153_v, 3401, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::BatchNormInference");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     HloInstructionProto instr;
 
@@ -2771,6 +3426,9 @@ XlaOp XlaBuilder::BatchNormInference(XlaOp operand, XlaOp scale, XlaOp offset,
 XlaOp XlaBuilder::BatchNormGrad(XlaOp operand, XlaOp scale, XlaOp batch_mean,
                                 XlaOp batch_var, XlaOp grad_output,
                                 float epsilon, int64_t feature_index) {
+   std::vector<std::string> mht_154_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_154(mht_154_v, 3429, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::BatchNormGrad");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     HloInstructionProto instr;
 
@@ -2800,6 +3458,9 @@ XlaOp XlaBuilder::AllGather(XlaOp operand, int64_t all_gather_dimension,
                             const absl::optional<ChannelHandle>& channel_id,
                             const absl::optional<Layout>& layout,
                             const absl::optional<bool> use_global_device_ids) {
+   std::vector<std::string> mht_155_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_155(mht_155_v, 3461, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::AllGather");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     HloInstructionProto instr;
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
@@ -2834,6 +3495,9 @@ XlaOp XlaBuilder::AllGather(XlaOp operand, int64_t all_gather_dimension,
 
 XlaOp XlaBuilder::CrossReplicaSum(
     XlaOp operand, absl::Span<const ReplicaGroup> replica_groups) {
+   std::vector<std::string> mht_156_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_156(mht_156_v, 3498, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::CrossReplicaSum");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* shape, GetShapePtr(operand));
     const Shape* element_shape;
@@ -2866,6 +3530,9 @@ XlaOp XlaBuilder::AllReduce(XlaOp operand, const XlaComputation& computation,
                             absl::Span<const ReplicaGroup> replica_groups,
                             const absl::optional<ChannelHandle>& channel_id,
                             const absl::optional<Shape>& shape_with_layout) {
+   std::vector<std::string> mht_157_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_157(mht_157_v, 3533, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::AllReduce");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     HloInstructionProto instr;
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
@@ -2944,6 +3611,9 @@ XlaOp XlaBuilder::ReduceScatter(
     const absl::optional<ChannelHandle>& channel_id,
     const absl::optional<Layout>& layout,
     const absl::optional<bool> use_global_device_ids) {
+   std::vector<std::string> mht_158_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_158(mht_158_v, 3614, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::ReduceScatter");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     HloInstructionProto instr;
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
@@ -3002,6 +3672,9 @@ XlaOp XlaBuilder::AllToAll(XlaOp operand, int64_t split_dimension,
                            int64_t concat_dimension, int64_t split_count,
                            absl::Span<const ReplicaGroup> replica_groups,
                            const absl::optional<Layout>& layout) {
+   std::vector<std::string> mht_159_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_159(mht_159_v, 3675, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::AllToAll");
+
   // Array all_to_all may need to violate layout constraint to be legal so use
   // the tuple version.
   if (layout.has_value()) {
@@ -3015,6 +3688,9 @@ XlaOp XlaBuilder::AllToAll(XlaOp operand, int64_t split_dimension,
 XlaOp XlaBuilder::AllToAllArray(XlaOp operand, int64_t split_dimension,
                                 int64_t concat_dimension, int64_t split_count,
                                 absl::Span<const ReplicaGroup> replica_groups) {
+   std::vector<std::string> mht_160_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_160(mht_160_v, 3691, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::AllToAllArray");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
     TF_ASSIGN_OR_RETURN(
@@ -3070,6 +3746,9 @@ XlaOp XlaBuilder::AllToAllTuple(XlaOp operand, int64_t split_dimension,
                                 int64_t concat_dimension, int64_t split_count,
                                 absl::Span<const ReplicaGroup> replica_groups,
                                 const absl::optional<Layout>& layout) {
+   std::vector<std::string> mht_161_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_161(mht_161_v, 3749, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::AllToAllTuple");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
 
@@ -3142,6 +3821,9 @@ XlaOp XlaBuilder::AllToAllTuple(XlaOp operand, int64_t split_dimension,
 XlaOp XlaBuilder::CollectivePermute(
     XlaOp operand,
     const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs) {
+   std::vector<std::string> mht_162_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_162(mht_162_v, 3824, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::CollectivePermute");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
     HloInstructionProto instr;
@@ -3162,6 +3844,9 @@ XlaOp XlaBuilder::CollectivePermute(
 }
 
 XlaOp XlaBuilder::ReplicaId() {
+   std::vector<std::string> mht_163_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_163(mht_163_v, 3847, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::ReplicaId");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     HloInstructionProto instr;
     *instr.mutable_shape() = ShapeUtil::MakeShape(U32, {}).ToProto();
@@ -3175,6 +3860,9 @@ XlaOp XlaBuilder::SelectAndScatter(XlaOp operand, const XlaComputation& select,
                                    Padding padding, XlaOp source,
                                    XlaOp init_value,
                                    const XlaComputation& scatter) {
+   std::vector<std::string> mht_164_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_164(mht_164_v, 3863, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::SelectAndScatter");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
 
@@ -3220,6 +3908,9 @@ StatusOr<HloInstructionProto> XlaBuilder::SelectAndScatterInternal(
     absl::Span<const int64_t> window_strides,
     absl::Span<const std::pair<int64_t, int64_t>> padding, XlaOp source,
     XlaOp init_value, const XlaComputation& scatter) {
+   std::vector<std::string> mht_165_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_165(mht_165_v, 3911, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::SelectAndScatterInternal");
+
   HloInstructionProto instr;
 
   TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
@@ -3250,6 +3941,9 @@ XlaOp XlaBuilder::SelectAndScatterWithGeneralPadding(
     absl::Span<const int64_t> window_strides,
     absl::Span<const std::pair<int64_t, int64_t>> padding, XlaOp source,
     XlaOp init_value, const XlaComputation& scatter) {
+   std::vector<std::string> mht_166_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_166(mht_166_v, 3944, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::SelectAndScatterWithGeneralPadding");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(HloInstructionProto instr,
                         SelectAndScatterInternal(
@@ -3263,6 +3957,9 @@ XlaOp XlaBuilder::SelectAndScatterWithGeneralPadding(
 
 XlaOp XlaBuilder::ReducePrecision(XlaOp operand, const int exponent_bits,
                                   const int mantissa_bits) {
+   std::vector<std::string> mht_167_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_167(mht_167_v, 3960, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::ReducePrecision");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
     TF_ASSIGN_OR_RETURN(Shape shape,
@@ -3277,6 +3974,9 @@ StatusOr<XlaOp> XlaBuilder::ReducePrecisionInternal(const Shape& shape,
                                                     XlaOp operand,
                                                     const int exponent_bits,
                                                     const int mantissa_bits) {
+   std::vector<std::string> mht_168_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_168(mht_168_v, 3977, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::ReducePrecisionInternal");
+
   HloInstructionProto instr;
   *instr.mutable_shape() = shape.ToProto();
   instr.set_exponent_bits(exponent_bits);
@@ -3286,6 +3986,9 @@ StatusOr<XlaOp> XlaBuilder::ReducePrecisionInternal(const Shape& shape,
 }
 
 void XlaBuilder::Send(XlaOp operand, const ChannelHandle& handle) {
+   std::vector<std::string> mht_169_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_169(mht_169_v, 3989, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Send");
+
   ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     // Send HLO takes two operands: a data operand and a token. Generate the
     // token to pass into the send.
@@ -3302,6 +4005,9 @@ void XlaBuilder::Send(XlaOp operand, const ChannelHandle& handle) {
 
 XlaOp XlaBuilder::SendWithToken(XlaOp operand, XlaOp token,
                                 const ChannelHandle& handle) {
+   std::vector<std::string> mht_170_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_170(mht_170_v, 4008, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::SendWithToken");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     if (handle.type() != ChannelHandle::DEVICE_TO_DEVICE) {
       return InvalidArgument("Send must use a device-to-device channel");
@@ -3329,6 +4035,9 @@ XlaOp XlaBuilder::SendWithToken(XlaOp operand, XlaOp token,
 }
 
 XlaOp XlaBuilder::Recv(const Shape& shape, const ChannelHandle& handle) {
+   std::vector<std::string> mht_171_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_171(mht_171_v, 4038, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Recv");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     // Recv HLO takes a single token operand. Generate the token to pass into
     // the Recv and RecvDone instructions.
@@ -3355,6 +4064,9 @@ XlaOp XlaBuilder::Recv(const Shape& shape, const ChannelHandle& handle) {
 
 XlaOp XlaBuilder::RecvWithToken(XlaOp token, const Shape& shape,
                                 const ChannelHandle& handle) {
+   std::vector<std::string> mht_172_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_172(mht_172_v, 4067, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::RecvWithToken");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     if (handle.type() != ChannelHandle::DEVICE_TO_DEVICE) {
       return InvalidArgument("Recv must use a device-to-device channel");
@@ -3384,6 +4096,9 @@ XlaOp XlaBuilder::RecvWithToken(XlaOp token, const Shape& shape,
 XlaOp XlaBuilder::SendToHost(XlaOp operand, XlaOp token,
                              const Shape& shape_with_layout,
                              const ChannelHandle& handle) {
+   std::vector<std::string> mht_173_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_173(mht_173_v, 4099, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::SendToHost");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     if (!LayoutUtil::HasLayout(shape_with_layout)) {
       return InvalidArgument("Shape passed to SendToHost must have a layout");
@@ -3430,6 +4145,9 @@ XlaOp XlaBuilder::SendToHost(XlaOp operand, XlaOp token,
 
 XlaOp XlaBuilder::RecvFromHost(XlaOp token, const Shape& shape,
                                const ChannelHandle& handle) {
+   std::vector<std::string> mht_174_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_174(mht_174_v, 4148, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::RecvFromHost");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     if (!LayoutUtil::HasLayout(shape)) {
       return InvalidArgument("Shape passed to RecvFromHost must have a layout");
@@ -3470,6 +4188,9 @@ XlaOp XlaBuilder::RecvFromHost(XlaOp token, const Shape& shape,
 }
 
 XlaOp XlaBuilder::GetDimensionSize(XlaOp operand, int64_t dimension) {
+   std::vector<std::string> mht_175_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_175(mht_175_v, 4191, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::GetDimensionSize");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     HloInstructionProto instr;
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
@@ -3488,6 +4209,9 @@ XlaOp XlaBuilder::GetDimensionSize(XlaOp operand, int64_t dimension) {
 }
 
 XlaOp XlaBuilder::RemoveDynamicDimension(XlaOp operand, int64_t dimension) {
+   std::vector<std::string> mht_176_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_176(mht_176_v, 4212, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::RemoveDynamicDimension");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     HloInstructionProto instr;
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
@@ -3504,6 +4228,9 @@ XlaOp XlaBuilder::RemoveDynamicDimension(XlaOp operand, int64_t dimension) {
 
 XlaOp XlaBuilder::SetDimensionSize(XlaOp operand, XlaOp val,
                                    int64_t dimension) {
+   std::vector<std::string> mht_177_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_177(mht_177_v, 4231, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::SetDimensionSize");
+
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
     TF_ASSIGN_OR_RETURN(const Shape* val_shape, GetShapePtr(val));
@@ -3518,6 +4245,9 @@ XlaOp XlaBuilder::SetDimensionSize(XlaOp operand, XlaOp val,
 StatusOr<XlaOp> XlaBuilder::SetDimensionSizeInternal(const Shape& shape,
                                                      XlaOp operand, XlaOp val,
                                                      int64_t dimension) {
+   std::vector<std::string> mht_178_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_178(mht_178_v, 4248, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::SetDimensionSizeInternal");
+
   TF_ASSIGN_OR_RETURN(const HloInstructionProto* val_proto,
                       LookUpInstruction(val));
   if (StringToHloOpcode(val_proto->opcode()).ValueOrDie() ==
@@ -3538,6 +4268,9 @@ StatusOr<XlaOp> XlaBuilder::SetDimensionSizeInternal(const Shape& shape,
 }
 
 StatusOr<bool> XlaBuilder::IsConstant(XlaOp operand) const {
+   std::vector<std::string> mht_179_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_179(mht_179_v, 4271, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::IsConstant");
+
   TF_RETURN_IF_ERROR(first_error_);
 
   // Verify that the handle is valid.
@@ -3551,6 +4284,9 @@ StatusOr<bool> XlaBuilder::IsConstant(XlaOp operand) const {
 
 StatusOr<XlaComputation> XlaBuilder::BuildConstantSubGraph(
     XlaOp root_op, bool dynamic_dimension_is_minus_one) {
+   std::vector<std::string> mht_180_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_180(mht_180_v, 4287, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::BuildConstantSubGraph");
+
   TF_ASSIGN_OR_RETURN(bool is_constant, IsConstant(root_op));
   if (!is_constant) {
     auto op_status = LookUpInstruction(root_op);
@@ -3598,6 +4334,9 @@ StatusOr<XlaComputation> XlaBuilder::BuildConstantSubGraph(
 
     auto default_behavior = [&related_ops, &worklist, &related_calls,
                              instr_proto]() {
+   std::vector<std::string> mht_181_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_181(mht_181_v, 4337, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "lambda");
+
       for (int64_t id : instr_proto->operand_ids()) {
         if (related_ops.insert(id).second) {
           worklist.push(id);
@@ -3740,6 +4479,10 @@ StatusOr<XlaComputation> XlaBuilder::BuildConstantSubGraph(
 
 std::unique_ptr<XlaBuilder> XlaBuilder::CreateSubBuilder(
     const std::string& computation_name) {
+   std::vector<std::string> mht_182_v;
+   mht_182_v.push_back("computation_name: \"" + computation_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_182(mht_182_v, 4483, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::CreateSubBuilder");
+
   auto sub_builder = absl::make_unique<XlaBuilder>(computation_name);
   sub_builder->parent_builder_ = this;
   sub_builder->die_immediately_on_error_ = this->die_immediately_on_error_;
@@ -3748,6 +4491,9 @@ std::unique_ptr<XlaBuilder> XlaBuilder::CreateSubBuilder(
 
 /* static */ ConvolutionDimensionNumbers
 XlaBuilder::CreateDefaultConvDimensionNumbers(int num_spatial_dims) {
+   std::vector<std::string> mht_183_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_183(mht_183_v, 4494, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::CreateDefaultConvDimensionNumbers");
+
   ConvolutionDimensionNumbers dimension_numbers;
   dimension_numbers.set_input_batch_dimension(kConvBatchDimension);
   dimension_numbers.set_input_feature_dimension(kConvFeatureDimension);
@@ -3767,6 +4513,9 @@ XlaBuilder::CreateDefaultConvDimensionNumbers(int num_spatial_dims) {
 
 /* static */ Status XlaBuilder::Validate(
     const ConvolutionDimensionNumbers& dnum) {
+   std::vector<std::string> mht_184_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_184(mht_184_v, 4516, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::Validate");
+
   if (dnum.input_spatial_dimensions_size() < 2) {
     return FailedPrecondition("input spacial dimension < 2: %d",
                               dnum.input_spatial_dimensions_size());
@@ -3819,6 +4568,9 @@ XlaBuilder::CreateDefaultConvDimensionNumbers(int num_spatial_dims) {
 StatusOr<XlaOp> XlaBuilder::AddInstruction(HloInstructionProto&& instr,
                                            HloOpcode opcode,
                                            absl::Span<const XlaOp> operands) {
+   std::vector<std::string> mht_185_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_185(mht_185_v, 4571, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::AddInstruction");
+
   TF_RETURN_IF_ERROR(first_error_);
 
   const int64_t handle = GetNextId();
@@ -3860,6 +4612,9 @@ StatusOr<XlaOp> XlaBuilder::AddInstruction(HloInstructionProto&& instr,
 
 StatusOr<XlaOp> XlaBuilder::AddOpWithShape(HloOpcode opcode, const Shape& shape,
                                            absl::Span<const XlaOp> operands) {
+   std::vector<std::string> mht_186_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_186(mht_186_v, 4615, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::AddOpWithShape");
+
   HloInstructionProto instr;
   *instr.mutable_shape() = shape.ToProto();
   return AddInstruction(std::move(instr), opcode, operands);
@@ -3867,6 +4622,9 @@ StatusOr<XlaOp> XlaBuilder::AddOpWithShape(HloOpcode opcode, const Shape& shape,
 
 void XlaBuilder::AddCalledComputation(const XlaComputation& computation,
                                       HloInstructionProto* instr) {
+   std::vector<std::string> mht_187_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_187(mht_187_v, 4625, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::AddCalledComputation");
+
   absl::flat_hash_map<int64_t, int64_t> remapped_ids;
   std::vector<HloComputationProto> imported_computations;
   imported_computations.reserve(computation.proto().computations_size());
@@ -3923,23 +4681,35 @@ void XlaBuilder::AddCalledComputation(const XlaComputation& computation,
 
 StatusOr<const HloInstructionProto*> XlaBuilder::LookUpInstruction(
     const XlaOp op) const {
+   std::vector<std::string> mht_188_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_188(mht_188_v, 4684, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::LookUpInstruction");
+
   TF_RETURN_IF_ERROR(first_error_);
   return LookUpInstructionInternal<const HloInstructionProto*>(op);
 }
 
 StatusOr<const HloInstructionProto*> XlaBuilder::LookUpInstructionByHandle(
     int64_t handle) const {
+   std::vector<std::string> mht_189_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_189(mht_189_v, 4693, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::LookUpInstructionByHandle");
+
   return LookUpInstructionByHandleInternal<const HloInstructionProto*>(handle);
 }
 
 StatusOr<HloInstructionProto*> XlaBuilder::LookUpMutableInstruction(
     const XlaOp op) {
+   std::vector<std::string> mht_190_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_190(mht_190_v, 4701, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::LookUpMutableInstruction");
+
   TF_RETURN_IF_ERROR(first_error_);
   return LookUpInstructionInternal<HloInstructionProto*>(op);
 }
 
 StatusOr<HloInstructionProto*> XlaBuilder::LookUpMutableInstructionByHandle(
     int64_t handle) {
+   std::vector<std::string> mht_191_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_191(mht_191_v, 4710, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "XlaBuilder::LookUpMutableInstructionByHandle");
+
   return LookUpInstructionByHandleInternal<HloInstructionProto*>(handle);
 }
 
@@ -3947,6 +4717,10 @@ StatusOr<HloInstructionProto*> XlaBuilder::LookUpMutableInstructionByHandle(
 // passed to the computation.
 XlaOp Parameter(XlaBuilder* builder, int64_t parameter_number,
                 const Shape& shape, const std::string& name) {
+   std::vector<std::string> mht_192_v;
+   mht_192_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_192(mht_192_v, 4721, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Parameter");
+
   std::vector<bool> empty_bools;
   return Parameter(builder, parameter_number, shape, name, empty_bools);
 }
@@ -3954,6 +4728,10 @@ XlaOp Parameter(XlaBuilder* builder, int64_t parameter_number,
 XlaOp Parameter(XlaBuilder* builder, int64_t parameter_number,
                 const Shape& shape, const std::string& name,
                 const std::vector<bool>& replicated_at_leaf_buffers) {
+   std::vector<std::string> mht_193_v;
+   mht_193_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_193(mht_193_v, 4732, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Parameter");
+
   return builder->Parameter(parameter_number, shape, name,
                             replicated_at_leaf_buffers);
 }
@@ -3961,52 +4739,82 @@ XlaOp Parameter(XlaBuilder* builder, int64_t parameter_number,
 // Enqueues a constant with the value of the given literal onto the
 // computation.
 XlaOp ConstantLiteral(XlaBuilder* builder, const LiteralSlice& literal) {
+   std::vector<std::string> mht_194_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_194(mht_194_v, 4742, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "ConstantLiteral");
+
   return builder->ConstantLiteral(literal);
 }
 
 XlaOp Broadcast(const XlaOp operand,
                 absl::Span<const int64_t> broadcast_sizes) {
+   std::vector<std::string> mht_195_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_195(mht_195_v, 4750, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Broadcast");
+
   return operand.builder()->Broadcast(operand, broadcast_sizes);
 }
 
 XlaOp BroadcastInDim(const XlaOp operand,
                      const absl::Span<const int64_t> out_dim_size,
                      const absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_196_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_196(mht_196_v, 4759, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "BroadcastInDim");
+
   return operand.builder()->BroadcastInDim(operand, out_dim_size,
                                            broadcast_dimensions);
 }
 
 XlaOp Copy(const XlaOp operand) {
+   std::vector<std::string> mht_197_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_197(mht_197_v, 4767, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Copy");
+
   return operand.builder()->UnaryOp(HloOpcode::kCopy, operand);
 }
 
 XlaOp Pad(const XlaOp operand, const XlaOp padding_value,
           const PaddingConfig& padding_config) {
+   std::vector<std::string> mht_198_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_198(mht_198_v, 4775, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Pad");
+
   return operand.builder()->Pad(operand, padding_value, padding_config);
 }
 
 XlaOp PadInDim(XlaOp operand, XlaOp padding_value, int64_t dimno,
                int64_t pad_lo, int64_t pad_hi) {
+   std::vector<std::string> mht_199_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_199(mht_199_v, 4783, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "PadInDim");
+
   return operand.builder()->PadInDim(operand, padding_value, dimno, pad_lo,
                                      pad_hi);
 }
 
 XlaOp Reshape(const XlaOp operand, absl::Span<const int64_t> dimensions,
               absl::Span<const int64_t> new_sizes) {
+   std::vector<std::string> mht_200_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_200(mht_200_v, 4792, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Reshape");
+
   return operand.builder()->Reshape(operand, dimensions, new_sizes);
 }
 
 XlaOp Reshape(const XlaOp operand, absl::Span<const int64_t> new_sizes) {
+   std::vector<std::string> mht_201_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_201(mht_201_v, 4799, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Reshape");
+
   return operand.builder()->Reshape(operand, new_sizes);
 }
 
 XlaOp Reshape(const Shape& shape, XlaOp operand) {
+   std::vector<std::string> mht_202_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_202(mht_202_v, 4806, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Reshape");
+
   return operand.builder()->Reshape(shape, operand);
 }
 
 XlaOp DynamicReshape(XlaOp operand, absl::Span<const XlaOp> dim_sizes,
                      absl::Span<const int64_t> new_size_bounds,
                      const std::vector<bool>& dims_are_dynamic) {
+   std::vector<std::string> mht_203_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_203(mht_203_v, 4815, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "DynamicReshape");
+
   return operand.builder()->DynamicReshape(operand, dim_sizes, new_size_bounds,
                                            dims_are_dynamic);
 }
@@ -4014,65 +4822,105 @@ XlaOp DynamicReshape(XlaOp operand, absl::Span<const XlaOp> dim_sizes,
 XlaOp ReshapeWithInferredDimension(XlaOp operand,
                                    absl::Span<const int64_t> new_sizes,
                                    int64_t inferred_dimension) {
+   std::vector<std::string> mht_204_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_204(mht_204_v, 4825, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "ReshapeWithInferredDimension");
+
   return operand.builder()->Reshape(operand, new_sizes, inferred_dimension);
 }
 
 XlaOp Collapse(const XlaOp operand, absl::Span<const int64_t> dimensions) {
+   std::vector<std::string> mht_205_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_205(mht_205_v, 4832, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Collapse");
+
   return operand.builder()->Collapse(operand, dimensions);
 }
 
 XlaOp Slice(const XlaOp operand, absl::Span<const int64_t> start_indices,
             absl::Span<const int64_t> limit_indices,
             absl::Span<const int64_t> strides) {
+   std::vector<std::string> mht_206_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_206(mht_206_v, 4841, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Slice");
+
   return operand.builder()->Slice(operand, start_indices, limit_indices,
                                   strides);
 }
 
 XlaOp SliceInDim(const XlaOp operand, int64_t start_index, int64_t limit_index,
                  int64_t stride, int64_t dimno) {
+   std::vector<std::string> mht_207_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_207(mht_207_v, 4850, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "SliceInDim");
+
   return operand.builder()->SliceInDim(operand, start_index, limit_index,
                                        stride, dimno);
 }
 
 XlaOp DynamicSlice(const XlaOp operand, absl::Span<const XlaOp> start_indices,
                    absl::Span<const int64_t> slice_sizes) {
+   std::vector<std::string> mht_208_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_208(mht_208_v, 4859, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "DynamicSlice");
+
   return operand.builder()->DynamicSlice(operand, start_indices, slice_sizes);
 }
 
 XlaOp DynamicUpdateSlice(const XlaOp operand, const XlaOp update,
                          absl::Span<const XlaOp> start_indices) {
+   std::vector<std::string> mht_209_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_209(mht_209_v, 4867, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "DynamicUpdateSlice");
+
   return operand.builder()->DynamicUpdateSlice(operand, update, start_indices);
 }
 
 XlaOp ConcatInDim(XlaBuilder* builder, absl::Span<const XlaOp> operands,
                   int64_t dimension) {
+   std::vector<std::string> mht_210_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_210(mht_210_v, 4875, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "ConcatInDim");
+
   return builder->ConcatInDim(operands, dimension);
 }
 
 void Trace(const std::string& tag, const XlaOp operand) {
+   std::vector<std::string> mht_211_v;
+   mht_211_v.push_back("tag: \"" + tag + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_211(mht_211_v, 4883, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Trace");
+
   return operand.builder()->Trace(tag, operand);
 }
 
 XlaOp Select(const XlaOp pred, const XlaOp on_true, const XlaOp on_false) {
+   std::vector<std::string> mht_212_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_212(mht_212_v, 4890, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Select");
+
   return pred.builder()->Select(pred, on_true, on_false);
 }
 
 XlaOp Tuple(XlaBuilder* builder, absl::Span<const XlaOp> elements) {
+   std::vector<std::string> mht_213_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_213(mht_213_v, 4897, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Tuple");
+
   return builder->Tuple(elements);
 }
 
 XlaOp GetTupleElement(const XlaOp tuple_data, int64_t index) {
+   std::vector<std::string> mht_214_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_214(mht_214_v, 4904, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "GetTupleElement");
+
   return tuple_data.builder()->GetTupleElement(tuple_data, index);
 }
 
 XlaOp Eq(const XlaOp lhs, const XlaOp rhs,
          absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_215_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_215(mht_215_v, 4912, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Eq");
+
   return Compare(lhs, rhs, broadcast_dimensions, ComparisonDirection::kEq);
 }
 
 static XlaOp CompareTotalOrder(const XlaOp lhs, const XlaOp rhs,
                                absl::Span<const int64_t> broadcast_dimensions,
                                ComparisonDirection comparison_direction) {
+   std::vector<std::string> mht_216_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_216(mht_216_v, 4921, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "CompareTotalOrder");
+
   auto b = lhs.builder();
   return b->ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(auto operand_shape, b->GetShape(lhs));
@@ -4088,61 +4936,94 @@ static XlaOp CompareTotalOrder(const XlaOp lhs, const XlaOp rhs,
 
 XlaOp EqTotalOrder(const XlaOp lhs, const XlaOp rhs,
                    absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_217_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_217(mht_217_v, 4939, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "EqTotalOrder");
+
   return CompareTotalOrder(lhs, rhs, broadcast_dimensions,
                            ComparisonDirection::kEq);
 }
 
 XlaOp Ne(const XlaOp lhs, const XlaOp rhs,
          absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_218_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_218(mht_218_v, 4948, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Ne");
+
   return Compare(lhs, rhs, broadcast_dimensions, ComparisonDirection::kNe);
 }
 
 XlaOp NeTotalOrder(const XlaOp lhs, const XlaOp rhs,
                    absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_219_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_219(mht_219_v, 4956, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "NeTotalOrder");
+
   return CompareTotalOrder(lhs, rhs, broadcast_dimensions,
                            ComparisonDirection::kNe);
 }
 
 XlaOp Ge(const XlaOp lhs, const XlaOp rhs,
          absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_220_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_220(mht_220_v, 4965, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Ge");
+
   return Compare(lhs, rhs, broadcast_dimensions, ComparisonDirection::kGe);
 }
 
 XlaOp GeTotalOrder(const XlaOp lhs, const XlaOp rhs,
                    absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_221_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_221(mht_221_v, 4973, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "GeTotalOrder");
+
   return CompareTotalOrder(lhs, rhs, broadcast_dimensions,
                            ComparisonDirection::kGe);
 }
 
 XlaOp Gt(const XlaOp lhs, const XlaOp rhs,
          absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_222_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_222(mht_222_v, 4982, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Gt");
+
   return Compare(lhs, rhs, broadcast_dimensions, ComparisonDirection::kGt);
 }
 
 XlaOp GtTotalOrder(const XlaOp lhs, const XlaOp rhs,
                    absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_223_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_223(mht_223_v, 4990, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "GtTotalOrder");
+
   return CompareTotalOrder(lhs, rhs, broadcast_dimensions,
                            ComparisonDirection::kGt);
 }
 
 XlaOp Le(const XlaOp lhs, const XlaOp rhs,
          absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_224_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_224(mht_224_v, 4999, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Le");
+
   return Compare(lhs, rhs, broadcast_dimensions, ComparisonDirection::kLe);
 }
 
 XlaOp LeTotalOrder(const XlaOp lhs, const XlaOp rhs,
                    absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_225_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_225(mht_225_v, 5007, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "LeTotalOrder");
+
   return CompareTotalOrder(lhs, rhs, broadcast_dimensions,
                            ComparisonDirection::kLe);
 }
 
 XlaOp Lt(const XlaOp lhs, const XlaOp rhs,
          absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_226_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_226(mht_226_v, 5016, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Lt");
+
   return Compare(lhs, rhs, broadcast_dimensions, ComparisonDirection::kLt);
 }
 
 XlaOp LtTotalOrder(const XlaOp lhs, const XlaOp rhs,
                    absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_227_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_227(mht_227_v, 5024, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "LtTotalOrder");
+
   return CompareTotalOrder(lhs, rhs, broadcast_dimensions,
                            ComparisonDirection::kLt);
 }
@@ -4150,6 +5031,9 @@ XlaOp LtTotalOrder(const XlaOp lhs, const XlaOp rhs,
 XlaOp Compare(const XlaOp lhs, const XlaOp rhs,
               absl::Span<const int64_t> broadcast_dimensions,
               ComparisonDirection direction) {
+   std::vector<std::string> mht_228_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_228(mht_228_v, 5034, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Compare");
+
   return lhs.builder()->BinaryOp(HloOpcode::kCompare, lhs, rhs,
                                  broadcast_dimensions, direction);
 }
@@ -4157,17 +5041,26 @@ XlaOp Compare(const XlaOp lhs, const XlaOp rhs,
 XlaOp Compare(const XlaOp lhs, const XlaOp rhs,
               absl::Span<const int64_t> broadcast_dimensions,
               ComparisonDirection direction, Comparison::Type compare_type) {
+   std::vector<std::string> mht_229_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_229(mht_229_v, 5044, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Compare");
+
   return lhs.builder()->BinaryOp(HloOpcode::kCompare, lhs, rhs,
                                  broadcast_dimensions, direction, compare_type);
 }
 
 XlaOp Compare(const XlaOp lhs, const XlaOp rhs, ComparisonDirection direction) {
+   std::vector<std::string> mht_230_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_230(mht_230_v, 5052, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Compare");
+
   return Compare(lhs, rhs, {}, direction);
 }
 
 XlaOp Dot(const XlaOp lhs, const XlaOp rhs,
           const PrecisionConfig* precision_config,
           absl::optional<PrimitiveType> preferred_element_type) {
+   std::vector<std::string> mht_231_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_231(mht_231_v, 5061, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Dot");
+
   return lhs.builder()->Dot(lhs, rhs, precision_config, preferred_element_type);
 }
 
@@ -4175,6 +5068,9 @@ XlaOp DotGeneral(const XlaOp lhs, const XlaOp rhs,
                  const DotDimensionNumbers& dimension_numbers,
                  const PrecisionConfig* precision_config,
                  absl::optional<PrimitiveType> preferred_element_type) {
+   std::vector<std::string> mht_232_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_232(mht_232_v, 5071, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "DotGeneral");
+
   return lhs.builder()->DotGeneral(lhs, rhs, dimension_numbers,
                                    precision_config, preferred_element_type);
 }
@@ -4184,6 +5080,9 @@ XlaOp Conv(const XlaOp lhs, const XlaOp rhs,
            int64_t feature_group_count, int64_t batch_group_count,
            const PrecisionConfig* precision_config,
            absl::optional<PrimitiveType> preferred_element_type) {
+   std::vector<std::string> mht_233_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_233(mht_233_v, 5083, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Conv");
+
   return lhs.builder()->Conv(lhs, rhs, window_strides, padding,
                              feature_group_count, batch_group_count,
                              precision_config, preferred_element_type);
@@ -4195,6 +5094,9 @@ XlaOp ConvWithGeneralPadding(
     int64_t feature_group_count, int64_t batch_group_count,
     const PrecisionConfig* precision_config,
     absl::optional<PrimitiveType> preferred_element_type) {
+   std::vector<std::string> mht_234_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_234(mht_234_v, 5097, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "ConvWithGeneralPadding");
+
   return lhs.builder()->ConvWithGeneralPadding(
       lhs, rhs, window_strides, padding, feature_group_count, batch_group_count,
       precision_config, preferred_element_type);
@@ -4206,6 +5108,9 @@ XlaOp ConvWithGeneralDimensions(
     int64_t feature_group_count, int64_t batch_group_count,
     const PrecisionConfig* precision_config,
     absl::optional<PrimitiveType> preferred_element_type) {
+   std::vector<std::string> mht_235_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_235(mht_235_v, 5111, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "ConvWithGeneralDimensions");
+
   return lhs.builder()->ConvWithGeneralDimensions(
       lhs, rhs, window_strides, padding, dimension_numbers, feature_group_count,
       batch_group_count, precision_config, preferred_element_type);
@@ -4218,6 +5123,9 @@ XlaOp ConvGeneral(const XlaOp lhs, const XlaOp rhs,
                   int64_t feature_group_count, int64_t batch_group_count,
                   const PrecisionConfig* precision_config,
                   absl::optional<PrimitiveType> preferred_element_type) {
+   std::vector<std::string> mht_236_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_236(mht_236_v, 5126, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "ConvGeneral");
+
   return lhs.builder()->ConvGeneral(
       lhs, rhs, window_strides, padding, dimension_numbers, feature_group_count,
       batch_group_count, precision_config, preferred_element_type);
@@ -4232,6 +5140,9 @@ XlaOp ConvGeneralDilated(const XlaOp lhs, const XlaOp rhs,
                          int64_t feature_group_count, int64_t batch_group_count,
                          const PrecisionConfig* precision_config,
                          absl::optional<PrimitiveType> preferred_element_type) {
+   std::vector<std::string> mht_237_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_237(mht_237_v, 5143, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "ConvGeneralDilated");
+
   return lhs.builder()->ConvGeneralDilated(
       lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
       dimension_numbers, feature_group_count, batch_group_count,
@@ -4248,6 +5159,9 @@ XlaOp DynamicConvInputGrad(
     int64_t feature_group_count, int64_t batch_group_count,
     const PrecisionConfig* precision_config, PaddingType padding_type,
     absl::optional<PrimitiveType> preferred_element_type) {
+   std::vector<std::string> mht_238_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_238(mht_238_v, 5162, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "DynamicConvInputGrad");
+
   return lhs.builder()->DynamicConvInputGrad(
       input_sizes, lhs, rhs, window_strides, padding, lhs_dilation,
       rhs_dilation, dimension_numbers, feature_group_count, batch_group_count,
@@ -4264,6 +5178,9 @@ XlaOp DynamicConvKernelGrad(
     int64_t feature_group_count, int64_t batch_group_count,
     const PrecisionConfig* precision_config, PaddingType padding_type,
     absl::optional<PrimitiveType> preferred_element_type) {
+   std::vector<std::string> mht_239_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_239(mht_239_v, 5181, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "DynamicConvKernelGrad");
+
   return activations.builder()->DynamicConvKernelGrad(
       activations, gradients, window_strides, padding, lhs_dilation,
       rhs_dilation, dimension_numbers, feature_group_count, batch_group_count,
@@ -4280,6 +5197,9 @@ XlaOp DynamicConvForward(const XlaOp lhs, const XlaOp rhs,
                          const PrecisionConfig* precision_config,
                          PaddingType padding_type,
                          absl::optional<PrimitiveType> preferred_element_type) {
+   std::vector<std::string> mht_240_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_240(mht_240_v, 5200, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "DynamicConvForward");
+
   return lhs.builder()->DynamicConvForward(
       lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
       dimension_numbers, feature_group_count, batch_group_count,
@@ -4288,12 +5208,18 @@ XlaOp DynamicConvForward(const XlaOp lhs, const XlaOp rhs,
 
 XlaOp Fft(const XlaOp operand, FftType fft_type,
           absl::Span<const int64_t> fft_length) {
+   std::vector<std::string> mht_241_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_241(mht_241_v, 5211, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Fft");
+
   return operand.builder()->Fft(operand, fft_type, fft_length);
 }
 
 XlaOp TriangularSolve(XlaOp a, XlaOp b, bool left_side, bool lower,
                       bool unit_diagonal,
                       TriangularSolveOptions::Transpose transpose_a) {
+   std::vector<std::string> mht_242_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_242(mht_242_v, 5220, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "TriangularSolve");
+
   XlaBuilder* builder = a.builder();
   return builder->ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* a_shape, builder->GetShapePtr(a));
@@ -4310,6 +5236,9 @@ XlaOp TriangularSolve(XlaOp a, XlaOp b, bool left_side, bool lower,
 }
 
 XlaOp Cholesky(XlaOp a, bool lower) {
+   std::vector<std::string> mht_243_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_243(mht_243_v, 5239, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Cholesky");
+
   XlaBuilder* builder = a.builder();
   return builder->ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* a_shape, builder->GetShapePtr(a));
@@ -4321,16 +5250,27 @@ XlaOp Cholesky(XlaOp a, bool lower) {
 
 XlaOp Infeed(XlaBuilder* builder, const Shape& shape,
              const std::string& config) {
+   std::vector<std::string> mht_244_v;
+   mht_244_v.push_back("config: \"" + config + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_244(mht_244_v, 5254, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Infeed");
+
   return builder->Infeed(shape, config);
 }
 
 void Outfeed(const XlaOp operand, const Shape& shape_with_layout,
              const std::string& outfeed_config) {
+   std::vector<std::string> mht_245_v;
+   mht_245_v.push_back("outfeed_config: \"" + outfeed_config + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_245(mht_245_v, 5263, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Outfeed");
+
   return operand.builder()->Outfeed(operand, shape_with_layout, outfeed_config);
 }
 
 XlaOp Call(XlaBuilder* builder, const XlaComputation& computation,
            absl::Span<const XlaOp> operands) {
+   std::vector<std::string> mht_246_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_246(mht_246_v, 5271, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Call");
+
   return builder->Call(computation, operands);
 }
 
@@ -4342,6 +5282,11 @@ XlaOp CustomCall(
         output_operand_aliasing,
     const Literal* literal, CustomCallSchedule schedule,
     CustomCallApiVersion api_version) {
+   std::vector<std::string> mht_247_v;
+   mht_247_v.push_back("call_target_name: \"" + call_target_name + "\"");
+   mht_247_v.push_back("opaque: \"" + opaque + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_247(mht_247_v, 5287, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "CustomCall");
+
   return builder->CustomCall(call_target_name, operands, shape, opaque,
                              /*operand_shapes_with_layout=*/absl::nullopt,
                              has_side_effect, output_operand_aliasing, literal,
@@ -4357,6 +5302,11 @@ XlaOp CustomCallWithComputation(
         output_operand_aliasing,
     const Literal* literal, CustomCallSchedule schedule,
     CustomCallApiVersion api_version) {
+   std::vector<std::string> mht_248_v;
+   mht_248_v.push_back("call_target_name: \"" + call_target_name + "\"");
+   mht_248_v.push_back("opaque: \"" + opaque + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_248(mht_248_v, 5307, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "CustomCallWithComputation");
+
   return builder->CustomCall(
       call_target_name, operands, computation, shape, opaque,
       /*operand_shapes_with_layout=*/absl::nullopt, has_side_effect,
@@ -4372,6 +5322,11 @@ XlaOp CustomCallWithLayout(
         output_operand_aliasing,
     const Literal* literal, CustomCallSchedule schedule,
     CustomCallApiVersion api_version) {
+   std::vector<std::string> mht_249_v;
+   mht_249_v.push_back("call_target_name: \"" + call_target_name + "\"");
+   mht_249_v.push_back("opaque: \"" + opaque + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_249(mht_249_v, 5327, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "CustomCallWithLayout");
+
   return builder->CustomCall(
       call_target_name, operands, shape, opaque, operand_shapes_with_layout,
       has_side_effect, output_operand_aliasing, literal,
@@ -4387,6 +5342,11 @@ XlaOp CustomCallWithConvDnums(
         output_operand_aliasing,
     const Literal* literal, Window window, ConvolutionDimensionNumbers dnums,
     CustomCallSchedule schedule, CustomCallApiVersion api_version) {
+   std::vector<std::string> mht_250_v;
+   mht_250_v.push_back("call_target_name: \"" + call_target_name + "\"");
+   mht_250_v.push_back("opaque: \"" + opaque + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_250(mht_250_v, 5347, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "CustomCallWithConvDnums");
+
   absl::optional<absl::Span<const Shape>> maybe_operand_shapes;
   if (!operand_shapes_with_layout.empty()) {
     maybe_operand_shapes = operand_shapes_with_layout;
@@ -4398,101 +5358,155 @@ XlaOp CustomCallWithConvDnums(
 }
 
 XlaOp OptimizationBarrier(XlaOp operand) {
+   std::vector<std::string> mht_251_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_251(mht_251_v, 5361, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "OptimizationBarrier");
+
   return operand.builder()->OptimizationBarrier(operand);
 }
 
 XlaOp Complex(const XlaOp lhs, const XlaOp rhs,
               absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_252_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_252(mht_252_v, 5369, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Complex");
+
   return lhs.builder()->BinaryOp(HloOpcode::kComplex, lhs, rhs,
                                  broadcast_dimensions);
 }
 
 XlaOp Conj(const XlaOp operand) {
+   std::vector<std::string> mht_253_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_253(mht_253_v, 5377, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Conj");
+
   return Complex(Real(operand), Neg(Imag(operand)));
 }
 
 XlaOp Add(const XlaOp lhs, const XlaOp rhs,
           absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_254_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_254(mht_254_v, 5385, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Add");
+
   return lhs.builder()->BinaryOp(HloOpcode::kAdd, lhs, rhs,
                                  broadcast_dimensions);
 }
 
 XlaOp Sub(const XlaOp lhs, const XlaOp rhs,
           absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_255_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_255(mht_255_v, 5394, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Sub");
+
   return lhs.builder()->BinaryOp(HloOpcode::kSubtract, lhs, rhs,
                                  broadcast_dimensions);
 }
 
 XlaOp Mul(const XlaOp lhs, const XlaOp rhs,
           absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_256_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_256(mht_256_v, 5403, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Mul");
+
   return lhs.builder()->BinaryOp(HloOpcode::kMultiply, lhs, rhs,
                                  broadcast_dimensions);
 }
 
 XlaOp Div(const XlaOp lhs, const XlaOp rhs,
           absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_257_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_257(mht_257_v, 5412, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Div");
+
   return lhs.builder()->BinaryOp(HloOpcode::kDivide, lhs, rhs,
                                  broadcast_dimensions);
 }
 
 XlaOp Rem(const XlaOp lhs, const XlaOp rhs,
           absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_258_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_258(mht_258_v, 5421, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Rem");
+
   return lhs.builder()->BinaryOp(HloOpcode::kRemainder, lhs, rhs,
                                  broadcast_dimensions);
 }
 
 XlaOp Max(const XlaOp lhs, const XlaOp rhs,
           absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_259_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_259(mht_259_v, 5430, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Max");
+
   return lhs.builder()->BinaryOp(HloOpcode::kMaximum, lhs, rhs,
                                  broadcast_dimensions);
 }
 
 XlaOp Min(const XlaOp lhs, const XlaOp rhs,
           absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_260_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_260(mht_260_v, 5439, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Min");
+
   return lhs.builder()->BinaryOp(HloOpcode::kMinimum, lhs, rhs,
                                  broadcast_dimensions);
 }
 
 XlaOp And(const XlaOp lhs, const XlaOp rhs,
           absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_261_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_261(mht_261_v, 5448, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "And");
+
   return lhs.builder()->BinaryOp(HloOpcode::kAnd, lhs, rhs,
                                  broadcast_dimensions);
 }
 
 XlaOp Or(const XlaOp lhs, const XlaOp rhs,
          absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_262_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_262(mht_262_v, 5457, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Or");
+
   return lhs.builder()->BinaryOp(HloOpcode::kOr, lhs, rhs,
                                  broadcast_dimensions);
 }
 
 XlaOp Xor(const XlaOp lhs, const XlaOp rhs,
           absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_263_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_263(mht_263_v, 5466, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Xor");
+
   return lhs.builder()->BinaryOp(HloOpcode::kXor, lhs, rhs,
                                  broadcast_dimensions);
 }
 
 XlaOp Not(const XlaOp operand) {
+   std::vector<std::string> mht_264_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_264(mht_264_v, 5474, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Not");
+
   return operand.builder()->UnaryOp(HloOpcode::kNot, operand);
 }
 
 XlaOp PopulationCount(const XlaOp operand) {
+   std::vector<std::string> mht_265_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_265(mht_265_v, 5481, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "PopulationCount");
+
   return operand.builder()->UnaryOp(HloOpcode::kPopulationCount, operand);
 }
 
 XlaOp ShiftLeft(const XlaOp lhs, const XlaOp rhs,
                 absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_266_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_266(mht_266_v, 5489, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "ShiftLeft");
+
   return lhs.builder()->BinaryOp(HloOpcode::kShiftLeft, lhs, rhs,
                                  broadcast_dimensions);
 }
 
 XlaOp ShiftRightArithmetic(const XlaOp lhs, const XlaOp rhs,
                            absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_267_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_267(mht_267_v, 5498, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "ShiftRightArithmetic");
+
   return lhs.builder()->BinaryOp(HloOpcode::kShiftRightArithmetic, lhs, rhs,
                                  broadcast_dimensions);
 }
 
 XlaOp ShiftRightLogical(const XlaOp lhs, const XlaOp rhs,
                         absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_268_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_268(mht_268_v, 5507, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "ShiftRightLogical");
+
   return lhs.builder()->BinaryOp(HloOpcode::kShiftRightLogical, lhs, rhs,
                                  broadcast_dimensions);
 }
@@ -4500,6 +5514,9 @@ XlaOp ShiftRightLogical(const XlaOp lhs, const XlaOp rhs,
 XlaOp Reduce(const XlaOp operand, const XlaOp init_value,
              const XlaComputation& computation,
              absl::Span<const int64_t> dimensions_to_reduce) {
+   std::vector<std::string> mht_269_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_269(mht_269_v, 5517, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Reduce");
+
   return operand.builder()->Reduce(operand, init_value, computation,
                                    dimensions_to_reduce);
 }
@@ -4510,12 +5527,18 @@ XlaOp Reduce(XlaBuilder* builder, absl::Span<const XlaOp> operands,
              absl::Span<const XlaOp> init_values,
              const XlaComputation& computation,
              absl::Span<const int64_t> dimensions_to_reduce) {
+   std::vector<std::string> mht_270_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_270(mht_270_v, 5530, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Reduce");
+
   return builder->Reduce(operands, init_values, computation,
                          dimensions_to_reduce);
 }
 
 XlaOp ReduceAll(const XlaOp operand, const XlaOp init_value,
                 const XlaComputation& computation) {
+   std::vector<std::string> mht_271_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_271(mht_271_v, 5539, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "ReduceAll");
+
   return operand.builder()->ReduceAll(operand, init_value, computation);
 }
 
@@ -4523,6 +5546,9 @@ XlaOp ReduceWindow(const XlaOp operand, const XlaOp init_value,
                    const XlaComputation& computation,
                    absl::Span<const int64_t> window_dimensions,
                    absl::Span<const int64_t> window_strides, Padding padding) {
+   std::vector<std::string> mht_272_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_272(mht_272_v, 5549, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "ReduceWindow");
+
   return operand.builder()->ReduceWindow(operand, init_value, computation,
                                          window_dimensions, window_strides,
                                          padding);
@@ -4533,6 +5559,9 @@ XlaOp ReduceWindow(absl::Span<const XlaOp> operands,
                    const XlaComputation& computation,
                    absl::Span<const int64_t> window_dimensions,
                    absl::Span<const int64_t> window_strides, Padding padding) {
+   std::vector<std::string> mht_273_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_273(mht_273_v, 5562, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "ReduceWindow");
+
   CHECK(!operands.empty());
   return operands[0].builder()->ReduceWindow(operands, init_values, computation,
                                              window_dimensions, window_strides,
@@ -4547,6 +5576,9 @@ XlaOp ReduceWindowWithGeneralPadding(
     absl::Span<const int64_t> base_dilations,
     absl::Span<const int64_t> window_dilations,
     absl::Span<const std::pair<int64_t, int64_t>> padding) {
+   std::vector<std::string> mht_274_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_274(mht_274_v, 5579, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "ReduceWindowWithGeneralPadding");
+
   return operand.builder()->ReduceWindowWithGeneralPadding(
       absl::MakeSpan(&operand, 1), absl::MakeSpan(&init_value, 1), computation,
       window_dimensions, window_strides, base_dilations, window_dilations,
@@ -4561,6 +5593,9 @@ XlaOp ReduceWindowWithGeneralPadding(
     absl::Span<const int64_t> base_dilations,
     absl::Span<const int64_t> window_dilations,
     absl::Span<const std::pair<int64_t, int64_t>> padding) {
+   std::vector<std::string> mht_275_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_275(mht_275_v, 5596, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "ReduceWindowWithGeneralPadding");
+
   CHECK(!operands.empty());
   return operands[0].builder()->ReduceWindowWithGeneralPadding(
       operands, init_values, computation, window_dimensions, window_strides,
@@ -4573,6 +5608,9 @@ XlaOp AllGather(const XlaOp operand, int64_t all_gather_dimension,
                 const absl::optional<ChannelHandle>& channel_id,
                 const absl::optional<Layout>& layout,
                 const absl::optional<bool> use_global_device_ids) {
+   std::vector<std::string> mht_276_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_276(mht_276_v, 5611, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "AllGather");
+
   return operand.builder()->AllGather(operand, all_gather_dimension,
                                       shard_count, replica_groups, channel_id,
                                       layout, use_global_device_ids);
@@ -4580,6 +5618,9 @@ XlaOp AllGather(const XlaOp operand, int64_t all_gather_dimension,
 
 XlaOp CrossReplicaSum(const XlaOp operand,
                       absl::Span<const ReplicaGroup> replica_groups) {
+   std::vector<std::string> mht_277_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_277(mht_277_v, 5621, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "CrossReplicaSum");
+
   return operand.builder()->CrossReplicaSum(operand, replica_groups);
 }
 
@@ -4587,6 +5628,9 @@ XlaOp AllReduce(const XlaOp operand, const XlaComputation& computation,
                 absl::Span<const ReplicaGroup> replica_groups,
                 const absl::optional<ChannelHandle>& channel_id,
                 const absl::optional<Shape>& shape_with_layout) {
+   std::vector<std::string> mht_278_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_278(mht_278_v, 5631, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "AllReduce");
+
   return operand.builder()->AllReduce(operand, computation, replica_groups,
                                       channel_id, shape_with_layout);
 }
@@ -4597,6 +5641,9 @@ XlaOp ReduceScatter(const XlaOp operand, const XlaComputation& computation,
                     const absl::optional<ChannelHandle>& channel_id,
                     const absl::optional<Layout>& layout,
                     const absl::optional<bool> use_global_device_ids) {
+   std::vector<std::string> mht_279_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_279(mht_279_v, 5644, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "ReduceScatter");
+
   return operand.builder()->ReduceScatter(
       operand, computation, scatter_dimension, shard_count, replica_groups,
       channel_id, layout, use_global_device_ids);
@@ -4606,6 +5653,9 @@ XlaOp AllToAll(const XlaOp operand, int64_t split_dimension,
                int64_t concat_dimension, int64_t split_count,
                absl::Span<const ReplicaGroup> replica_groups,
                const absl::optional<Layout>& layout) {
+   std::vector<std::string> mht_280_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_280(mht_280_v, 5656, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "AllToAll");
+
   return operand.builder()->AllToAll(operand, split_dimension, concat_dimension,
                                      split_count, replica_groups, layout);
 }
@@ -4614,6 +5664,9 @@ XlaOp AllToAllTuple(const XlaOp operand, int64_t split_dimension,
                     int64_t concat_dimension, int64_t split_count,
                     absl::Span<const ReplicaGroup> replica_groups,
                     const absl::optional<Layout>& layout) {
+   std::vector<std::string> mht_281_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_281(mht_281_v, 5667, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "AllToAllTuple");
+
   return operand.builder()->AllToAllTuple(operand, split_dimension,
                                           concat_dimension, split_count,
                                           replica_groups, layout);
@@ -4622,16 +5675,25 @@ XlaOp AllToAllTuple(const XlaOp operand, int64_t split_dimension,
 XlaOp CollectivePermute(
     const XlaOp operand,
     const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs) {
+   std::vector<std::string> mht_282_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_282(mht_282_v, 5678, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "CollectivePermute");
+
   return operand.builder()->CollectivePermute(operand, source_target_pairs);
 }
 
-XlaOp ReplicaId(XlaBuilder* builder) { return builder->ReplicaId(); }
+XlaOp ReplicaId(XlaBuilder* builder) {
+   std::vector<std::string> mht_283_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_283(mht_283_v, 5685, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "ReplicaId");
+ return builder->ReplicaId(); }
 
 XlaOp SelectAndScatter(const XlaOp operand, const XlaComputation& select,
                        absl::Span<const int64_t> window_dimensions,
                        absl::Span<const int64_t> window_strides,
                        Padding padding, const XlaOp source,
                        const XlaOp init_value, const XlaComputation& scatter) {
+   std::vector<std::string> mht_284_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_284(mht_284_v, 5694, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "SelectAndScatter");
+
   return operand.builder()->SelectAndScatter(operand, select, window_dimensions,
                                              window_strides, padding, source,
                                              init_value, scatter);
@@ -4643,113 +5705,203 @@ XlaOp SelectAndScatterWithGeneralPadding(
     absl::Span<const int64_t> window_strides,
     absl::Span<const std::pair<int64_t, int64_t>> padding, const XlaOp source,
     const XlaOp init_value, const XlaComputation& scatter) {
+   std::vector<std::string> mht_285_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_285(mht_285_v, 5708, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "SelectAndScatterWithGeneralPadding");
+
   return operand.builder()->SelectAndScatterWithGeneralPadding(
       operand, select, window_dimensions, window_strides, padding, source,
       init_value, scatter);
 }
 
 XlaOp Abs(const XlaOp operand) {
+   std::vector<std::string> mht_286_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_286(mht_286_v, 5717, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Abs");
+
   return operand.builder()->UnaryOp(HloOpcode::kAbs, operand);
 }
 
 XlaOp Atan2(const XlaOp lhs, const XlaOp rhs,
             absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_287_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_287(mht_287_v, 5725, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Atan2");
+
   return lhs.builder()->BinaryOp(HloOpcode::kAtan2, lhs, rhs,
                                  broadcast_dimensions);
 }
 
 XlaOp Exp(const XlaOp operand) {
+   std::vector<std::string> mht_288_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_288(mht_288_v, 5733, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Exp");
+
   return operand.builder()->UnaryOp(HloOpcode::kExp, operand);
 }
 XlaOp Expm1(const XlaOp operand) {
+   std::vector<std::string> mht_289_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_289(mht_289_v, 5739, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Expm1");
+
   return operand.builder()->UnaryOp(HloOpcode::kExpm1, operand);
 }
 XlaOp Floor(const XlaOp operand) {
+   std::vector<std::string> mht_290_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_290(mht_290_v, 5745, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Floor");
+
   return operand.builder()->UnaryOp(HloOpcode::kFloor, operand);
 }
 XlaOp Ceil(const XlaOp operand) {
+   std::vector<std::string> mht_291_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_291(mht_291_v, 5751, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Ceil");
+
   return operand.builder()->UnaryOp(HloOpcode::kCeil, operand);
 }
 XlaOp Round(const XlaOp operand) {
+   std::vector<std::string> mht_292_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_292(mht_292_v, 5757, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Round");
+
   return operand.builder()->UnaryOp(HloOpcode::kRoundNearestAfz, operand);
 }
 XlaOp Log(const XlaOp operand) {
+   std::vector<std::string> mht_293_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_293(mht_293_v, 5763, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Log");
+
   return operand.builder()->UnaryOp(HloOpcode::kLog, operand);
 }
 XlaOp Log1p(const XlaOp operand) {
+   std::vector<std::string> mht_294_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_294(mht_294_v, 5769, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Log1p");
+
   return operand.builder()->UnaryOp(HloOpcode::kLog1p, operand);
 }
 XlaOp Logistic(const XlaOp operand) {
+   std::vector<std::string> mht_295_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_295(mht_295_v, 5775, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Logistic");
+
   return operand.builder()->UnaryOp(HloOpcode::kLogistic, operand);
 }
 XlaOp Sign(const XlaOp operand) {
+   std::vector<std::string> mht_296_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_296(mht_296_v, 5781, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Sign");
+
   return operand.builder()->UnaryOp(HloOpcode::kSign, operand);
 }
 XlaOp Clz(const XlaOp operand) {
+   std::vector<std::string> mht_297_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_297(mht_297_v, 5787, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Clz");
+
   return operand.builder()->UnaryOp(HloOpcode::kClz, operand);
 }
 XlaOp Cos(const XlaOp operand) {
+   std::vector<std::string> mht_298_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_298(mht_298_v, 5793, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Cos");
+
   return operand.builder()->UnaryOp(HloOpcode::kCos, operand);
 }
 XlaOp Sin(const XlaOp operand) {
+   std::vector<std::string> mht_299_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_299(mht_299_v, 5799, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Sin");
+
   return operand.builder()->UnaryOp(HloOpcode::kSin, operand);
 }
 XlaOp Tanh(const XlaOp operand) {
+   std::vector<std::string> mht_300_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_300(mht_300_v, 5805, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Tanh");
+
   return operand.builder()->UnaryOp(HloOpcode::kTanh, operand);
 }
 XlaOp Real(const XlaOp operand) {
+   std::vector<std::string> mht_301_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_301(mht_301_v, 5811, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Real");
+
   return operand.builder()->UnaryOp(HloOpcode::kReal, operand);
 }
 XlaOp Imag(const XlaOp operand) {
+   std::vector<std::string> mht_302_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_302(mht_302_v, 5817, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Imag");
+
   return operand.builder()->UnaryOp(HloOpcode::kImag, operand);
 }
 XlaOp Sqrt(const XlaOp operand) {
+   std::vector<std::string> mht_303_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_303(mht_303_v, 5823, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Sqrt");
+
   return operand.builder()->UnaryOp(HloOpcode::kSqrt, operand);
 }
 XlaOp Cbrt(const XlaOp operand) {
+   std::vector<std::string> mht_304_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_304(mht_304_v, 5829, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Cbrt");
+
   return operand.builder()->UnaryOp(HloOpcode::kCbrt, operand);
 }
 XlaOp Rsqrt(const XlaOp operand) {
+   std::vector<std::string> mht_305_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_305(mht_305_v, 5835, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Rsqrt");
+
   return operand.builder()->UnaryOp(HloOpcode::kRsqrt, operand);
 }
 
 XlaOp Pow(const XlaOp lhs, const XlaOp rhs,
           absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_306_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_306(mht_306_v, 5843, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Pow");
+
   return lhs.builder()->BinaryOp(HloOpcode::kPower, lhs, rhs,
                                  broadcast_dimensions);
 }
 
 XlaOp IsFinite(const XlaOp operand) {
+   std::vector<std::string> mht_307_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_307(mht_307_v, 5851, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "IsFinite");
+
   return operand.builder()->UnaryOp(HloOpcode::kIsFinite, operand);
 }
 
 XlaOp ConvertElementType(const XlaOp operand, PrimitiveType new_element_type) {
+   std::vector<std::string> mht_308_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_308(mht_308_v, 5858, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "ConvertElementType");
+
   return operand.builder()->ConvertElementType(operand, new_element_type);
 }
 
 XlaOp BitcastConvertType(const XlaOp operand, PrimitiveType new_element_type) {
+   std::vector<std::string> mht_309_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_309(mht_309_v, 5865, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "BitcastConvertType");
+
   return operand.builder()->BitcastConvertType(operand, new_element_type);
 }
 
 XlaOp Neg(const XlaOp operand) {
+   std::vector<std::string> mht_310_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_310(mht_310_v, 5872, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Neg");
+
   return operand.builder()->UnaryOp(HloOpcode::kNegate, operand);
 }
 
 XlaOp Transpose(const XlaOp operand, absl::Span<const int64_t> permutation) {
+   std::vector<std::string> mht_311_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_311(mht_311_v, 5879, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Transpose");
+
   return operand.builder()->Transpose(operand, permutation);
 }
 
 XlaOp Rev(const XlaOp operand, absl::Span<const int64_t> dimensions) {
+   std::vector<std::string> mht_312_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_312(mht_312_v, 5886, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Rev");
+
   return operand.builder()->Rev(operand, dimensions);
 }
 
 XlaOp Sort(absl::Span<const XlaOp> operands, const XlaComputation& comparator,
            int64_t dimension, bool is_stable) {
+   std::vector<std::string> mht_313_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_313(mht_313_v, 5894, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Sort");
+
   return operands[0].builder()->Sort(operands, comparator, dimension,
                                      is_stable);
 }
 
 XlaOp Clamp(const XlaOp min, const XlaOp operand, const XlaOp max) {
+   std::vector<std::string> mht_314_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_314(mht_314_v, 5902, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Clamp");
+
   return min.builder()->Clamp(min, operand, max);
 }
 
@@ -4757,25 +5909,40 @@ XlaOp Map(XlaBuilder* builder, absl::Span<const XlaOp> operands,
           const XlaComputation& computation,
           absl::Span<const int64_t> dimensions,
           absl::Span<const XlaOp> static_operands) {
+   std::vector<std::string> mht_315_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_315(mht_315_v, 5912, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Map");
+
   return builder->Map(operands, computation, dimensions, static_operands);
 }
 
 XlaOp RngNormal(const XlaOp mu, const XlaOp sigma, const Shape& shape) {
+   std::vector<std::string> mht_316_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_316(mht_316_v, 5919, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "RngNormal");
+
   return mu.builder()->RngNormal(mu, sigma, shape);
 }
 
 XlaOp RngUniform(const XlaOp a, const XlaOp b, const Shape& shape) {
+   std::vector<std::string> mht_317_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_317(mht_317_v, 5926, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "RngUniform");
+
   return a.builder()->RngUniform(a, b, shape);
 }
 
 XlaOp RngBitGenerator(RandomAlgorithm algorithm, const XlaOp initial_state,
                       const Shape& shape) {
+   std::vector<std::string> mht_318_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_318(mht_318_v, 5934, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "RngBitGenerator");
+
   return initial_state.builder()->RngBitGenerator(algorithm, initial_state,
                                                   shape);
 }
 
 XlaOp While(const XlaComputation& condition, const XlaComputation& body,
             const XlaOp init) {
+   std::vector<std::string> mht_319_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_319(mht_319_v, 5943, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "While");
+
   return init.builder()->While(condition, body, init);
 }
 
@@ -4783,6 +5950,9 @@ XlaOp Conditional(const XlaOp predicate, const XlaOp true_operand,
                   const XlaComputation& true_computation,
                   const XlaOp false_operand,
                   const XlaComputation& false_computation) {
+   std::vector<std::string> mht_320_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_320(mht_320_v, 5953, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Conditional");
+
   return predicate.builder()->Conditional(predicate, true_operand,
                                           true_computation, false_operand,
                                           false_computation);
@@ -4791,12 +5961,18 @@ XlaOp Conditional(const XlaOp predicate, const XlaOp true_operand,
 XlaOp Conditional(const XlaOp branch_index,
                   absl::Span<const XlaComputation* const> branch_computations,
                   absl::Span<const XlaOp> branch_operands) {
+   std::vector<std::string> mht_321_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_321(mht_321_v, 5964, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Conditional");
+
   return branch_index.builder()->Conditional(branch_index, branch_computations,
                                              branch_operands);
 }
 
 XlaOp ReducePrecision(const XlaOp operand, const int exponent_bits,
                       const int mantissa_bits) {
+   std::vector<std::string> mht_322_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_322(mht_322_v, 5973, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "ReducePrecision");
+
   return operand.builder()->ReducePrecision(operand, exponent_bits,
                                             mantissa_bits);
 }
@@ -4804,6 +5980,9 @@ XlaOp ReducePrecision(const XlaOp operand, const int exponent_bits,
 XlaOp Gather(const XlaOp input, const XlaOp start_indices,
              const GatherDimensionNumbers& dimension_numbers,
              absl::Span<const int64_t> slice_sizes, bool indices_are_sorted) {
+   std::vector<std::string> mht_323_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_323(mht_323_v, 5983, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Gather");
+
   return input.builder()->Gather(input, start_indices, dimension_numbers,
                                  slice_sizes, indices_are_sorted);
 }
@@ -4812,62 +5991,100 @@ XlaOp Scatter(const XlaOp input, const XlaOp scatter_indices,
               const XlaOp updates, const XlaComputation& update_computation,
               const ScatterDimensionNumbers& dimension_numbers,
               bool indices_are_sorted, bool unique_indices) {
+   std::vector<std::string> mht_324_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_324(mht_324_v, 5994, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Scatter");
+
   return input.builder()->Scatter(input, scatter_indices, updates,
                                   update_computation, dimension_numbers,
                                   indices_are_sorted, unique_indices);
 }
 
 void Send(const XlaOp operand, const ChannelHandle& handle) {
+   std::vector<std::string> mht_325_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_325(mht_325_v, 6003, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Send");
+
   return operand.builder()->Send(operand, handle);
 }
 
 XlaOp Recv(XlaBuilder* builder, const Shape& shape,
            const ChannelHandle& handle) {
+   std::vector<std::string> mht_326_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_326(mht_326_v, 6011, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Recv");
+
   return builder->Recv(shape, handle);
 }
 
 XlaOp SendWithToken(const XlaOp operand, const XlaOp token,
                     const ChannelHandle& handle) {
+   std::vector<std::string> mht_327_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_327(mht_327_v, 6019, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "SendWithToken");
+
   return operand.builder()->SendWithToken(operand, token, handle);
 }
 
 XlaOp RecvWithToken(const XlaOp token, const Shape& shape,
                     const ChannelHandle& handle) {
+   std::vector<std::string> mht_328_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_328(mht_328_v, 6027, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "RecvWithToken");
+
   return token.builder()->RecvWithToken(token, shape, handle);
 }
 
 XlaOp SendToHost(const XlaOp operand, const XlaOp token,
                  const Shape& shape_with_layout, const ChannelHandle& handle) {
+   std::vector<std::string> mht_329_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_329(mht_329_v, 6035, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "SendToHost");
+
   return operand.builder()->SendToHost(operand, token, shape_with_layout,
                                        handle);
 }
 
 XlaOp RecvFromHost(const XlaOp token, const Shape& shape,
                    const ChannelHandle& handle) {
+   std::vector<std::string> mht_330_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_330(mht_330_v, 6044, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "RecvFromHost");
+
   return token.builder()->RecvFromHost(token, shape, handle);
 }
 
 XlaOp InfeedWithToken(const XlaOp token, const Shape& shape,
                       const std::string& config) {
+   std::vector<std::string> mht_331_v;
+   mht_331_v.push_back("config: \"" + config + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_331(mht_331_v, 6053, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "InfeedWithToken");
+
   return token.builder()->InfeedWithToken(token, shape, config);
 }
 
 XlaOp OutfeedWithToken(const XlaOp operand, const XlaOp token,
                        const Shape& shape_with_layout,
                        const std::string& outfeed_config) {
+   std::vector<std::string> mht_332_v;
+   mht_332_v.push_back("outfeed_config: \"" + outfeed_config + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_332(mht_332_v, 6063, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "OutfeedWithToken");
+
   return operand.builder()->OutfeedWithToken(operand, token, shape_with_layout,
                                              outfeed_config);
 }
 
-XlaOp CreateToken(XlaBuilder* builder) { return builder->CreateToken(); }
+XlaOp CreateToken(XlaBuilder* builder) {
+   std::vector<std::string> mht_333_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_333(mht_333_v, 6071, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "CreateToken");
+ return builder->CreateToken(); }
 
 XlaOp AfterAll(XlaBuilder* builder, absl::Span<const XlaOp> tokens) {
+   std::vector<std::string> mht_334_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_334(mht_334_v, 6076, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "AfterAll");
+
   return builder->AfterAll(tokens);
 }
 
 XlaOp BatchNormTraining(const XlaOp operand, const XlaOp scale,
                         const XlaOp offset, float epsilon,
                         int64_t feature_index) {
+   std::vector<std::string> mht_335_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_335(mht_335_v, 6085, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "BatchNormTraining");
+
   return operand.builder()->BatchNormTraining(operand, scale, offset, epsilon,
                                               feature_index);
 }
@@ -4876,6 +6093,9 @@ XlaOp BatchNormInference(const XlaOp operand, const XlaOp scale,
                          const XlaOp offset, const XlaOp mean,
                          const XlaOp variance, float epsilon,
                          int64_t feature_index) {
+   std::vector<std::string> mht_336_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_336(mht_336_v, 6096, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "BatchNormInference");
+
   return operand.builder()->BatchNormInference(
       operand, scale, offset, mean, variance, epsilon, feature_index);
 }
@@ -4884,28 +6104,46 @@ XlaOp BatchNormGrad(const XlaOp operand, const XlaOp scale,
                     const XlaOp batch_mean, const XlaOp batch_var,
                     const XlaOp grad_output, float epsilon,
                     int64_t feature_index) {
+   std::vector<std::string> mht_337_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_337(mht_337_v, 6107, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "BatchNormGrad");
+
   return operand.builder()->BatchNormGrad(operand, scale, batch_mean, batch_var,
                                           grad_output, epsilon, feature_index);
 }
 
 XlaOp Iota(XlaBuilder* builder, PrimitiveType type, int64_t size) {
+   std::vector<std::string> mht_338_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_338(mht_338_v, 6115, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Iota");
+
   return builder->Iota(type, size);
 }
 
 XlaOp Iota(XlaBuilder* builder, const Shape& shape, int64_t iota_dimension) {
+   std::vector<std::string> mht_339_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_339(mht_339_v, 6122, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "Iota");
+
   return builder->Iota(shape, iota_dimension);
 }
 
 XlaOp GetDimensionSize(const XlaOp operand, int64_t dimension) {
+   std::vector<std::string> mht_340_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_340(mht_340_v, 6129, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "GetDimensionSize");
+
   return operand.builder()->GetDimensionSize(operand, dimension);
 }
 
 XlaOp SetDimensionSize(const XlaOp operand, const XlaOp val,
                        int64_t dimension) {
+   std::vector<std::string> mht_341_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_341(mht_341_v, 6137, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "SetDimensionSize");
+
   return operand.builder()->SetDimensionSize(operand, val, dimension);
 }
 
 XlaOp RemoveDynamicDimension(const XlaOp operand, int64_t dimension) {
+   std::vector<std::string> mht_342_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTcc mht_342(mht_342_v, 6144, "", "./tensorflow/compiler/xla/client/xla_builder.cc", "RemoveDynamicDimension");
+
   return operand.builder()->RemoveDynamicDimension(operand, dimension);
 }
 

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,6 +206,11 @@ namespace toco {
 // Find the longest common prefix of two strings.
 absl::string_view FindLongestCommonPrefix(absl::string_view a,
                                           absl::string_view b) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("a: \"" + std::string(a.data(), a.size()) + "\"");
+   mht_0_v.push_back("b: \"" + std::string(b.data(), b.size()) + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_0(mht_0_v, 211, "", "./tensorflow/lite/toco/tooling_util.cc", "FindLongestCommonPrefix");
+
   if (a.empty() || b.empty()) return absl::string_view();
 
   const char* pa = a.data();
@@ -54,6 +227,9 @@ absl::string_view FindLongestCommonPrefix(absl::string_view a,
 }
 
 std::string LogName(const Operator& op) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_1(mht_1_v, 230, "", "./tensorflow/lite/toco/tooling_util.cc", "LogName");
+
   const std::string& opname = HelpfulOperatorTypeName(op);
   if (op.outputs.empty()) {
     return toco::port::StringF("{%s operator}", opname);
@@ -64,6 +240,9 @@ std::string LogName(const Operator& op) {
 }
 
 std::string ArrayDataTypeName(ArrayDataType data_type) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_2(mht_2_v, 243, "", "./tensorflow/lite/toco/tooling_util.cc", "ArrayDataTypeName");
+
   switch (data_type) {
     case ArrayDataType::kFloat:
       return "float";
@@ -97,6 +276,10 @@ std::string ArrayDataTypeName(ArrayDataType data_type) {
 }
 
 bool IsInputArray(const Model& model, const std::string& array_name) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("array_name: \"" + array_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_3(mht_3_v, 280, "", "./tensorflow/lite/toco/tooling_util.cc", "IsInputArray");
+
   for (const auto& input_array : model.flags.input_arrays()) {
     if (array_name == input_array.name()) {
       return true;
@@ -106,6 +289,10 @@ bool IsInputArray(const Model& model, const std::string& array_name) {
 }
 
 bool IsOutputArray(const Model& model, const std::string& array_name) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("array_name: \"" + array_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_4(mht_4_v, 293, "", "./tensorflow/lite/toco/tooling_util.cc", "IsOutputArray");
+
   for (const auto& output_array : model.flags.output_arrays()) {
     if (array_name == output_array) {
       return true;
@@ -115,6 +302,10 @@ bool IsOutputArray(const Model& model, const std::string& array_name) {
 }
 
 bool IsArrayConsumed(const Model& model, const std::string& name) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_5(mht_5_v, 306, "", "./tensorflow/lite/toco/tooling_util.cc", "IsArrayConsumed");
+
   if (GetOpWithInput(model, name)) {
     return true;
   }
@@ -130,6 +321,9 @@ bool IsArrayConsumed(const Model& model, const std::string& name) {
 }
 
 int CountTrueOutputs(const Model& model, const Operator& op) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_6(mht_6_v, 324, "", "./tensorflow/lite/toco/tooling_util.cc", "CountTrueOutputs");
+
   int count = 0;
   for (const std::string& output : op.outputs) {
     if (IsArrayConsumed(model, output)) {
@@ -140,6 +334,10 @@ int CountTrueOutputs(const Model& model, const Operator& op) {
 }
 
 int CountOpsWithInput(const Model& model, const std::string& array_name) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("array_name: \"" + array_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_7(mht_7_v, 338, "", "./tensorflow/lite/toco/tooling_util.cc", "CountOpsWithInput");
+
   int count = 0;
   for (const auto& op : model.operators) {
     for (auto& input : op->inputs) {
@@ -156,6 +354,10 @@ int CountOpsWithInput(const Model& model, const std::string& array_name) {
 }
 
 bool DeleteArrayIfUnused(const std::string& array_name, Model* model) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("array_name: \"" + array_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_8(mht_8_v, 358, "", "./tensorflow/lite/toco/tooling_util.cc", "DeleteArrayIfUnused");
+
   if (IsDiscardableArray(*model, array_name) &&
       CountOpsWithInput(*model, array_name) == 0 &&
       GetOpWithOutput(*model, array_name) == nullptr) {
@@ -167,6 +369,10 @@ bool DeleteArrayIfUnused(const std::string& array_name, Model* model) {
 
 bool DeleteArrayIfUnusedOutsideOfOp(const std::string& array_name,
                                     const Operator* op, Model* model) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("array_name: \"" + array_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_9(mht_9_v, 373, "", "./tensorflow/lite/toco/tooling_util.cc", "DeleteArrayIfUnusedOutsideOfOp");
+
   if (!IsDiscardableArray(*model, array_name)) {
     return false;
   }
@@ -187,6 +393,9 @@ bool DeleteArrayIfUnusedOutsideOfOp(const std::string& array_name,
 }
 
 void DeleteOpAndArrays(Model* model, const Operator* op) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_10(mht_10_v, 396, "", "./tensorflow/lite/toco/tooling_util.cc", "DeleteOpAndArrays");
+
   for (const std::string& array_name : op->inputs) {
     DeleteArrayIfUnusedOutsideOfOp(array_name, op, model);
   }
@@ -200,6 +409,10 @@ void DeleteOpAndArrays(Model* model, const Operator* op) {
 
 std::vector<std::unique_ptr<Operator>>::const_iterator FindOpWithOutput(
     const Model& model, const std::string& array_name) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("array_name: \"" + array_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_11(mht_11_v, 413, "", "./tensorflow/lite/toco/tooling_util.cc", "FindOpWithOutput");
+
   for (auto it = model.operators.begin(); it != model.operators.end(); ++it) {
     for (auto& output : it->get()->outputs) {
       if (output == array_name) {
@@ -212,6 +425,10 @@ std::vector<std::unique_ptr<Operator>>::const_iterator FindOpWithOutput(
 
 std::vector<std::unique_ptr<Operator>>::iterator FindOpWithOutput(
     Model& model, const std::string& array_name) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("array_name: \"" + array_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_12(mht_12_v, 429, "", "./tensorflow/lite/toco/tooling_util.cc", "FindOpWithOutput");
+
   for (auto it = model.operators.begin(); it != model.operators.end(); ++it) {
     for (auto& output : it->get()->outputs) {
       if (output == array_name) {
@@ -223,6 +440,10 @@ std::vector<std::unique_ptr<Operator>>::iterator FindOpWithOutput(
 }
 
 Operator* GetOpWithOutput(const Model& model, const std::string& array_name) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("array_name: \"" + array_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_13(mht_13_v, 444, "", "./tensorflow/lite/toco/tooling_util.cc", "GetOpWithOutput");
+
   auto it = FindOpWithOutput(model, array_name);
   return it == model.operators.end() ? nullptr : it->get();
 }
@@ -230,6 +451,10 @@ Operator* GetOpWithOutput(const Model& model, const std::string& array_name) {
 // GetFirstOpWithInput assumes that this finds the first op.
 std::vector<std::unique_ptr<Operator>>::const_iterator FindOpWithInput(
     const Model& model, const std::string& array_name) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("array_name: \"" + array_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_14(mht_14_v, 455, "", "./tensorflow/lite/toco/tooling_util.cc", "FindOpWithInput");
+
   for (auto it = model.operators.begin(); it != model.operators.end(); ++it) {
     for (auto& input : it->get()->inputs) {
       if (input == array_name) {
@@ -242,6 +467,10 @@ std::vector<std::unique_ptr<Operator>>::const_iterator FindOpWithInput(
 
 std::vector<std::unique_ptr<Operator>>::iterator FindOpWithInput(
     Model& model, const std::string& array_name) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("array_name: \"" + array_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_15(mht_15_v, 471, "", "./tensorflow/lite/toco/tooling_util.cc", "FindOpWithInput");
+
   for (auto it = model.operators.begin(); it != model.operators.end(); ++it) {
     for (auto& input : it->get()->inputs) {
       if (input == array_name) {
@@ -254,6 +483,9 @@ std::vector<std::unique_ptr<Operator>>::iterator FindOpWithInput(
 
 std::vector<std::unique_ptr<Operator>>::const_iterator FindOp(
     const Model& model, const Operator* op) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_16(mht_16_v, 486, "", "./tensorflow/lite/toco/tooling_util.cc", "FindOp");
+
   for (auto it = model.operators.begin(); it != model.operators.end(); ++it) {
     if (it->get() == op) {
       return it;
@@ -264,6 +496,9 @@ std::vector<std::unique_ptr<Operator>>::const_iterator FindOp(
 
 std::vector<std::unique_ptr<Operator>>::iterator FindOp(Model& model,
                                                         const Operator* op) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_17(mht_17_v, 499, "", "./tensorflow/lite/toco/tooling_util.cc", "FindOp");
+
   for (auto it = model.operators.begin(); it != model.operators.end(); ++it) {
     if (it->get() == op) {
       return it;
@@ -273,18 +508,31 @@ std::vector<std::unique_ptr<Operator>>::iterator FindOp(Model& model,
 }
 
 Operator* GetOpWithInput(const Model& model, const std::string& array_name) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("array_name: \"" + array_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_18(mht_18_v, 512, "", "./tensorflow/lite/toco/tooling_util.cc", "GetOpWithInput");
+
   auto it = FindOpWithInput(model, array_name);
   return it == model.operators.end() ? nullptr : it->get();
 }
 
 Operator* GetFirstOpWithInput(const Model& model,
                               const std::string& array_name) {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("array_name: \"" + array_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_19(mht_19_v, 522, "", "./tensorflow/lite/toco/tooling_util.cc", "GetFirstOpWithInput");
+
   auto it = FindOpWithInput(model, array_name);
   return it == model.operators.end() ? nullptr : it->get();
 }
 
 void ReplaceArrayUsage(Model* model, const std::string& old_array_name,
                        const std::string& new_array_name) {
+   std::vector<std::string> mht_20_v;
+   mht_20_v.push_back("old_array_name: \"" + old_array_name + "\"");
+   mht_20_v.push_back("new_array_name: \"" + new_array_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_20(mht_20_v, 533, "", "./tensorflow/lite/toco/tooling_util.cc", "ReplaceArrayUsage");
+
   for (auto& op_it : model->operators) {
     Operator* op = op_it.get();
     for (size_t i = 0; i < op->inputs.size(); ++i) {
@@ -302,6 +550,9 @@ void ReplaceArrayUsage(Model* model, const std::string& old_array_name,
 
 std::string FormatArraysList(const Model& model,
                              const std::vector<std::string>& list) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_21(mht_21_v, 553, "", "./tensorflow/lite/toco/tooling_util.cc", "FormatArraysList");
+
   if (list.empty()) {
     return "[]";
   }
@@ -322,6 +573,9 @@ std::string FormatArraysList(const Model& model,
 }
 
 const char* OperatorTypeName(OperatorType type) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_22(mht_22_v, 576, "", "./tensorflow/lite/toco/tooling_util.cc", "OperatorTypeName");
+
   switch (type) {
 #define HANDLE_OPERATORTYPENAME_CASE(c) \
   case OperatorType::k##c:              \
@@ -462,6 +716,9 @@ const char* OperatorTypeName(OperatorType type) {
 }
 
 std::string HelpfulOperatorTypeName(const Operator& op) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_23(mht_23_v, 719, "", "./tensorflow/lite/toco/tooling_util.cc", "HelpfulOperatorTypeName");
+
   if (op.type == OperatorType::kUnsupported) {
     return toco::port::StringF(
         "(Unsupported TensorFlow op: %s)",
@@ -471,6 +728,9 @@ std::string HelpfulOperatorTypeName(const Operator& op) {
 }
 
 bool OperatorSupportsFusedActivation(OperatorType type) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_24(mht_24_v, 731, "", "./tensorflow/lite/toco/tooling_util.cc", "OperatorSupportsFusedActivation");
+
   switch (type) {
     case OperatorType::kAdd:
     case OperatorType::kAveragePool:
@@ -491,6 +751,9 @@ bool OperatorSupportsFusedActivation(OperatorType type) {
 }
 
 void LogSummary(int log_level, const Model& model) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_25(mht_25_v, 754, "", "./tensorflow/lite/toco/tooling_util.cc", "LogSummary");
+
   VLOG(log_level) << "Operators summary (" << model.operators.size()
                   << " operators):";
   std::unordered_multiset<OperatorType> ops_by_type;
@@ -506,6 +769,10 @@ void LogSummary(int log_level, const Model& model) {
 }
 
 void LogArray(int log_level, const Model& model, const std::string& name) {
+   std::vector<std::string> mht_26_v;
+   mht_26_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_26(mht_26_v, 773, "", "./tensorflow/lite/toco/tooling_util.cc", "LogArray");
+
   VLOG(log_level) << "Array: " << name;
   if (!model.HasArray(name)) {
     VLOG(log_level) << "  DOES NOT EXIST";
@@ -550,6 +817,9 @@ void LogArray(int log_level, const Model& model, const std::string& name) {
 }
 
 void DumpGraphvizVideoFrame(const Model& model) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_27(mht_27_v, 820, "", "./tensorflow/lite/toco/tooling_util.cc", "DumpGraphvizVideoFrame");
+
   namespace port = toco::port;
 
   const auto& dump_options = *GraphVizDumpOptions::singleton();
@@ -588,6 +858,10 @@ void DumpGraphvizVideoFrame(const Model& model) {
 }
 
 void LogDump(int log_level, const std::string& message, const Model& model) {
+   std::vector<std::string> mht_28_v;
+   mht_28_v.push_back("message: \"" + message + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_28(mht_28_v, 862, "", "./tensorflow/lite/toco/tooling_util.cc", "LogDump");
+
   namespace port = toco::port;
   const auto& dump_options = *GraphVizDumpOptions::singleton();
 
@@ -636,6 +910,9 @@ void LogDump(int log_level, const std::string& message, const Model& model) {
 
 // Note remaining raw-array extension in ProcessTensorFlowReshapeOperator().
 void ExtendShape(Shape* shape, int new_shape_size) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_29(mht_29_v, 913, "", "./tensorflow/lite/toco/tooling_util.cc", "ExtendShape");
+
   CHECK_GE(new_shape_size, shape->dimensions_count());
   const int size_increase = new_shape_size - shape->dimensions_count();
   auto* shape_dims = shape->mutable_dims();
@@ -644,6 +921,9 @@ void ExtendShape(Shape* shape, int new_shape_size) {
 
 // TODO(b/62904716) Remove along with remaining uses.
 void UnextendShape(Shape* shape, int new_shape_size) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_30(mht_30_v, 924, "", "./tensorflow/lite/toco/tooling_util.cc", "UnextendShape");
+
   CHECK_LE(new_shape_size, shape->dimensions_count());
   const int size_reduction = shape->dimensions_count() - new_shape_size;
   for (int i = 0; i < size_reduction; i++) {
@@ -660,6 +940,9 @@ void UnextendShape(Shape* shape, int new_shape_size) {
 // doesn't make sense.
 template <typename Dims>
 void CheckValidShapeDimensions(const Dims& dims) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_31(mht_31_v, 943, "", "./tensorflow/lite/toco/tooling_util.cc", "CheckValidShapeDimensions");
+
   if (dims.size() == 1 && dims[0] == 0) {
     return;
   }
@@ -669,10 +952,16 @@ void CheckValidShapeDimensions(const Dims& dims) {
 }
 
 void CheckValidShape(const Shape& shape) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_32(mht_32_v, 955, "", "./tensorflow/lite/toco/tooling_util.cc", "CheckValidShape");
+
   CheckValidShapeDimensions(shape.dims());
 }
 
 bool IsNonEmpty(const Shape& shape) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_33(mht_33_v, 962, "", "./tensorflow/lite/toco/tooling_util.cc", "IsNonEmpty");
+
   for (int i = 0; i < shape.dimensions_count(); ++i) {
     if (shape.dims(i) < 1) return false;
   }
@@ -680,6 +969,9 @@ bool IsNonEmpty(const Shape& shape) {
 }
 
 void CheckNonEmptyShapeDimensions(const Shape& shape) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_34(mht_34_v, 972, "", "./tensorflow/lite/toco/tooling_util.cc", "CheckNonEmptyShapeDimensions");
+
   for (int i = 0; i < shape.dimensions_count(); ++i) {
     CHECK_GE(shape.dims()[i], 1) << "shape has dimension 0 at index << " << i
                                  << ". shape = " << ShapeToString(shape);
@@ -687,6 +979,9 @@ void CheckNonEmptyShapeDimensions(const Shape& shape) {
 }
 
 bool ShapesAgreeUpToBroadcasting(const Shape& shape0, const Shape& shape1) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_35(mht_35_v, 982, "", "./tensorflow/lite/toco/tooling_util.cc", "ShapesAgreeUpToBroadcasting");
+
   CheckNonEmptyShapeDimensions(shape0);
   CheckNonEmptyShapeDimensions(shape1);
 
@@ -715,6 +1010,9 @@ bool ShapesAgreeUpToBroadcasting(const Shape& shape0, const Shape& shape1) {
 }
 
 bool ShapesAgreeUpToExtending(const Shape& shape0, const Shape& shape1) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_36(mht_36_v, 1013, "", "./tensorflow/lite/toco/tooling_util.cc", "ShapesAgreeUpToExtending");
+
   CheckNonEmptyShapeDimensions(shape0);
   CheckNonEmptyShapeDimensions(shape1);
 
@@ -753,6 +1051,9 @@ bool ShapesAgreeUpToExtending(const Shape& shape0, const Shape& shape1) {
 }
 
 int RequiredBufferSizeForShape(const Shape& shape) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_37(mht_37_v, 1054, "", "./tensorflow/lite/toco/tooling_util.cc", "RequiredBufferSizeForShape");
+
   CheckValidShape(shape);
   int max_offset = 1;
   for (const auto& dim : shape.dims()) {
@@ -762,6 +1063,10 @@ int RequiredBufferSizeForShape(const Shape& shape) {
 }
 
 bool IsConstantParameterArray(const Model& model, const std::string& name) {
+   std::vector<std::string> mht_38_v;
+   mht_38_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_38(mht_38_v, 1067, "", "./tensorflow/lite/toco/tooling_util.cc", "IsConstantParameterArray");
+
   if (!model.HasArray(name)) {
     return false;
   }
@@ -772,6 +1077,9 @@ bool IsConstantParameterArray(const Model& model, const std::string& name) {
 namespace {
 template <ArrayDataType A>
 bool CompareArrayBuffers(const Array& lhs_array, const Array& rhs_array) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_39(mht_39_v, 1080, "", "./tensorflow/lite/toco/tooling_util.cc", "CompareArrayBuffers");
+
   CHECK(lhs_array.data_type == rhs_array.data_type) << "Data types must match";
   CHECK(lhs_array.buffer) << "LHS must be constant";
   CHECK(rhs_array.buffer) << "RHS must be constant";
@@ -788,6 +1096,9 @@ bool CompareArrayBuffers(const Array& lhs_array, const Array& rhs_array) {
 }
 
 bool HaveSameMinMax(const Array& lhs_array, const Array& rhs_array) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_40(mht_40_v, 1099, "", "./tensorflow/lite/toco/tooling_util.cc", "HaveSameMinMax");
+
   if (lhs_array.minmax || rhs_array.minmax) {
     if (!lhs_array.minmax || !rhs_array.minmax) {
       return false;
@@ -801,6 +1112,9 @@ bool HaveSameMinMax(const Array& lhs_array, const Array& rhs_array) {
 
 bool HaveSameQuantizationParams(const Array& lhs_array,
                                 const Array& rhs_array) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_41(mht_41_v, 1115, "", "./tensorflow/lite/toco/tooling_util.cc", "HaveSameQuantizationParams");
+
   if (lhs_array.quantization_params || rhs_array.quantization_params) {
     if (!lhs_array.quantization_params || !rhs_array.quantization_params) {
       return false;
@@ -815,6 +1129,9 @@ bool HaveSameQuantizationParams(const Array& lhs_array,
 }  // namespace
 
 bool CompareConstantArrays(const Array& lhs_array, const Array& rhs_array) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_42(mht_42_v, 1132, "", "./tensorflow/lite/toco/tooling_util.cc", "CompareConstantArrays");
+
   bool attrs_equal = lhs_array.shape() == rhs_array.shape() &&
                      lhs_array.data_type == rhs_array.data_type &&
                      lhs_array.final_data_type == rhs_array.final_data_type &&
@@ -861,12 +1178,19 @@ namespace {
 // Take an array name, which may be something like "name:3_5" and make it
 // acceptable as a TF node name, say "name_3_5";
 std::string SanitizeNameForTFNode(const std::string& array_name) {
+   std::vector<std::string> mht_43_v;
+   mht_43_v.push_back("array_name: \"" + array_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_43(mht_43_v, 1182, "", "./tensorflow/lite/toco/tooling_util.cc", "SanitizeNameForTFNode");
+
   auto node_name = array_name;
   std::replace(node_name.begin(), node_name.end(), ':', '_');
   return node_name;
 }
 
 void CheckInputArraysAreNotOutputArrays(const ModelFlags& model_flags) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_44(mht_44_v, 1191, "", "./tensorflow/lite/toco/tooling_util.cc", "CheckInputArraysAreNotOutputArrays");
+
   for (const auto& input_array : model_flags.input_arrays()) {
     for (const std::string& output_array : model_flags.output_arrays()) {
       QCHECK_NE(input_array.name(), output_array)
@@ -877,6 +1201,10 @@ void CheckInputArraysAreNotOutputArrays(const ModelFlags& model_flags) {
 }
 
 bool IsAsciiPrintable(const std::string& name) {
+   std::vector<std::string> mht_45_v;
+   mht_45_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_45(mht_45_v, 1205, "", "./tensorflow/lite/toco/tooling_util.cc", "IsAsciiPrintable");
+
   for (char c : name) {
     if (!absl::ascii_isprint(c)) {
       return false;
@@ -886,6 +1214,10 @@ bool IsAsciiPrintable(const std::string& name) {
 }
 
 std::string DumpAscii(const std::string& name) {
+   std::vector<std::string> mht_46_v;
+   mht_46_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_46(mht_46_v, 1218, "", "./tensorflow/lite/toco/tooling_util.cc", "DumpAscii");
+
   std::string result;
   port::AppendF(&result, "ASCII | Hex\n");
   port::AppendF(&result, "------+----\n");
@@ -900,6 +1232,9 @@ std::string DumpAscii(const std::string& name) {
 }
 
 void CheckNonAsciiIOArrays(const ModelFlags& model_flags) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_47(mht_47_v, 1235, "", "./tensorflow/lite/toco/tooling_util.cc", "CheckNonAsciiIOArrays");
+
   if (model_flags.allow_nonascii_arrays()) {
     return;
   }
@@ -921,6 +1256,9 @@ void CheckNonAsciiIOArrays(const ModelFlags& model_flags) {
 }
 
 void CheckNonExistentIOArrays(const Model& model) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_48(mht_48_v, 1259, "", "./tensorflow/lite/toco/tooling_util.cc", "CheckNonExistentIOArrays");
+
   // "non-existent" is interpreted in the stronger sense of
   // "not actually produced/consumed by an op".
   // Rationale: we have to artificially fix up TensorFlow graphs by creating
@@ -960,6 +1298,9 @@ void CheckNonExistentIOArrays(const Model& model) {
 }  // namespace
 
 void CheckNoMissingArray(const Model& model) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_49(mht_49_v, 1301, "", "./tensorflow/lite/toco/tooling_util.cc", "CheckNoMissingArray");
+
   for (const auto& op : model.operators) {
     for (const auto& input : op->inputs) {
       CHECK(model.HasArray(input) || model.optional_arrays.count(input))
@@ -973,6 +1314,9 @@ void CheckNoMissingArray(const Model& model) {
 }
 
 void FixNoMissingArray(Model* model) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_50(mht_50_v, 1317, "", "./tensorflow/lite/toco/tooling_util.cc", "FixNoMissingArray");
+
   for (const auto& op : model->operators) {
     for (const auto& input : op->inputs) {
       if (!model->HasArray(input) && !model->IsOptionalArray(input)) {
@@ -997,6 +1341,9 @@ void FixNoMissingArray(Model* model) {
 }
 
 void CheckNoOrphanedArray(const Model& model) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_51(mht_51_v, 1344, "", "./tensorflow/lite/toco/tooling_util.cc", "CheckNoOrphanedArray");
+
   std::unordered_set<std::string> arrays_without_known_use;
   for (const auto& array : model.GetArrayMap()) {
     if (IsDiscardableArray(model, array.first)) {
@@ -1024,6 +1371,9 @@ void CheckNoOrphanedArray(const Model& model) {
 }
 
 void FixNoOrphanedArray(Model* model) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_52(mht_52_v, 1374, "", "./tensorflow/lite/toco/tooling_util.cc", "FixNoOrphanedArray");
+
   std::unordered_set<std::string> arrays_without_known_use;
   for (const auto& array : model->GetArrayMap()) {
     arrays_without_known_use.insert(array.first);
@@ -1051,6 +1401,9 @@ void FixNoOrphanedArray(Model* model) {
 //
 // Check consistency of array fields, check name.
 void CheckEachArray(const Model& model) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_53(mht_53_v, 1404, "", "./tensorflow/lite/toco/tooling_util.cc", "CheckEachArray");
+
   for (const auto& array_entry : model.GetArrayMap()) {
     const auto& array = array_entry.second;
     // It's OK to have a buffer or an alloc, but not both.
@@ -1086,6 +1439,9 @@ void CheckEachArray(const Model& model) {
 }
 
 void CheckOperatorOrdering(const Model& model) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_54(mht_54_v, 1442, "", "./tensorflow/lite/toco/tooling_util.cc", "CheckOperatorOrdering");
+
   std::unordered_set<std::string> arrays_behind_us;
   for (const auto& array_entry : model.GetArrayMap()) {
     if (!GetOpWithOutput(model, array_entry.first)) {
@@ -1111,6 +1467,9 @@ void CheckOperatorOrdering(const Model& model) {
 }
 
 void FixOperatorOrdering(Model* model) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_55(mht_55_v, 1470, "", "./tensorflow/lite/toco/tooling_util.cc", "FixOperatorOrdering");
+
   std::unordered_set<std::string> arrays_behind_us;
   for (const auto& array_entry : model->GetArrayMap()) {
     if (!GetOpWithOutput(*model, array_entry.first)) {
@@ -1226,6 +1585,9 @@ void FixOperatorOrdering(Model* model) {
 }
 
 void CheckInvariants(const Model& model) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_56(mht_56_v, 1588, "", "./tensorflow/lite/toco/tooling_util.cc", "CheckInvariants");
+
   CheckInputArraysAreNotOutputArrays(model.flags);
   CheckNonAsciiIOArrays(model.flags);
   CheckNoMissingArray(model);
@@ -1236,6 +1598,10 @@ void CheckInvariants(const Model& model) {
 
 void CheckCountInRange(const ::toco::ModelFlags::ModelCheck& model_check,
                        const int count, const std::string& count_description) {
+   std::vector<std::string> mht_57_v;
+   mht_57_v.push_back("count_description: \"" + count_description + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_57(mht_57_v, 1602, "", "./tensorflow/lite/toco/tooling_util.cc", "CheckCountInRange");
+
   if (model_check.count_min() >= 0) {
     CHECK_GE(count, model_check.count_min())
         << "Mismatch in " << count_description << ": count  was " << count
@@ -1252,6 +1618,9 @@ void CheckCountInRange(const ::toco::ModelFlags::ModelCheck& model_check,
 }
 
 void CheckModelCounts(const Model& model) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_58(mht_58_v, 1621, "", "./tensorflow/lite/toco/tooling_util.cc", "CheckModelCounts");
+
   std::unordered_multiset<OperatorType> ops_by_type;
   std::unordered_map<std::string, OperatorType> op_type_by_name;
   if (model.flags.model_checks_size() == 0) {
@@ -1286,6 +1655,9 @@ void CheckModelCounts(const Model& model) {
 }
 
 void FixEdgeArrays(Model* model) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_59(mht_59_v, 1658, "", "./tensorflow/lite/toco/tooling_util.cc", "FixEdgeArrays");
+
   for (const std::string& output_array_name : model->flags.output_arrays()) {
     if (!GetOpWithOutput(*model, output_array_name)) {
       // Output has no operator producing it. Change that by inserting a copy.
@@ -1300,6 +1672,9 @@ void FixEdgeArrays(Model* model) {
 }
 
 void DedupeConstantArrays(Model* model, size_t min_size) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_60(mht_60_v, 1675, "", "./tensorflow/lite/toco/tooling_util.cc", "DedupeConstantArrays");
+
   // Walk all 0..N and compare with the remaining n+1..N.
   // This lets us avoid N^2 comparisons and erase duplicate arrays while
   // iterating.
@@ -1359,6 +1734,9 @@ void DedupeConstantArrays(Model* model, size_t min_size) {
 
 namespace {
 void CopyArrayAttribs(const Array& source_array, Array* target_array) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_61(mht_61_v, 1737, "", "./tensorflow/lite/toco/tooling_util.cc", "CopyArrayAttribs");
+
   target_array->data_type = source_array.data_type;
   target_array->final_data_type = source_array.final_data_type;
   if (source_array.has_shape()) {
@@ -1382,6 +1760,11 @@ void CopyArrayAttribs(const Array& source_array, Array* target_array) {
 
 void InsertCopyOperator(Model* model, const std::string& source_array_name,
                         const std::string& target_array_name) {
+   std::vector<std::string> mht_62_v;
+   mht_62_v.push_back("source_array_name: \"" + source_array_name + "\"");
+   mht_62_v.push_back("target_array_name: \"" + target_array_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_62(mht_62_v, 1765, "", "./tensorflow/lite/toco/tooling_util.cc", "InsertCopyOperator");
+
   // Reshape to the same size. This should be a no-op.
   const Array& source_array = model->GetArray(source_array_name);
   std::vector<int> shape = source_array.shape().dims();
@@ -1408,6 +1791,11 @@ void InsertCopyOperator(Model* model, const std::string& source_array_name,
 
 void CloneArray(Model* model, const std::string& source_array_name,
                 const std::string& target_array_name) {
+   std::vector<std::string> mht_63_v;
+   mht_63_v.push_back("source_array_name: \"" + source_array_name + "\"");
+   mht_63_v.push_back("target_array_name: \"" + target_array_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_63(mht_63_v, 1796, "", "./tensorflow/lite/toco/tooling_util.cc", "CloneArray");
+
   CHECK(!model->HasArray(target_array_name));
   const Array& source_array = model->GetArray(source_array_name);
   Array& target_array = model->GetOrCreateArray(target_array_name);
@@ -1463,6 +1851,9 @@ void CloneArray(Model* model, const std::string& source_array_name,
 
 void MakeArrayDims(int num_dims, int batch, int height, int width, int depth,
                    std::vector<int>* out_dims) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_64(mht_64_v, 1854, "", "./tensorflow/lite/toco/tooling_util.cc", "MakeArrayDims");
+
   CHECK(out_dims->empty());
   if (num_dims == 0) {
     return;
@@ -1483,6 +1874,10 @@ void MakeArrayDims(int num_dims, int batch, int height, int width, int depth,
 
 void CreateOrCheckRnnStateArray(const std::string& name, int size,
                                 int state_num_dims, Model* model) {
+   std::vector<std::string> mht_65_v;
+   mht_65_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_65(mht_65_v, 1878, "", "./tensorflow/lite/toco/tooling_util.cc", "CreateOrCheckRnnStateArray");
+
   int batch = 1;
   int num_dims = -1;
   if (state_num_dims > 0) {
@@ -1513,6 +1908,9 @@ void CreateOrCheckRnnStateArray(const std::string& name, int size,
 }
 
 void ResolveModelFlags(const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_66(mht_66_v, 1911, "", "./tensorflow/lite/toco/tooling_util.cc", "ResolveModelFlags");
+
   // Merge info about input_arrays from model_flags into model->flags
   for (const auto& specified_input_array : model_flags.input_arrays()) {
     toco::InputArray* dst_input_array = nullptr;
@@ -1714,6 +2112,9 @@ void ResolveModelFlags(const ModelFlags& model_flags, Model* model) {
 }
 
 void CheckIsReadyForQuantization(const Model& model) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_67(mht_67_v, 2115, "", "./tensorflow/lite/toco/tooling_util.cc", "CheckIsReadyForQuantization");
+
   for (const auto& op : model.operators) {
     for (const auto& input : op->inputs) {
       const auto& input_array = model.GetArray(input);
@@ -1746,6 +2147,9 @@ void CheckIsReadyForQuantization(const Model& model) {
 }
 
 int ElementSize(ArrayDataType data_type) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_68(mht_68_v, 2150, "", "./tensorflow/lite/toco/tooling_util.cc", "ElementSize");
+
   switch (data_type) {
     case ArrayDataType::kBool:
       return sizeof(bool);
@@ -1786,6 +2190,10 @@ int ElementSize(ArrayDataType data_type) {
 }
 
 void DropMinMax(Model* model, const std::string& array_name) {
+   std::vector<std::string> mht_69_v;
+   mht_69_v.push_back("array_name: \"" + array_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_69(mht_69_v, 2194, "", "./tensorflow/lite/toco/tooling_util.cc", "DropMinMax");
+
   auto& array = model->GetArray(array_name);
   if (!!array.minmax) {
     LOG(WARNING) << "Dropping MinMax information in array " << array_name
@@ -1796,6 +2204,10 @@ void DropMinMax(Model* model, const std::string& array_name) {
 
 bool IsAllocatableTransientArray(const Model& model,
                                  const std::string& array_name) {
+   std::vector<std::string> mht_70_v;
+   mht_70_v.push_back("array_name: \"" + array_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_70(mht_70_v, 2208, "", "./tensorflow/lite/toco/tooling_util.cc", "IsAllocatableTransientArray");
+
   // Optional array is not transient
   if (model.IsOptionalArray(array_name)) return false;
   // The model's input and output arrays are externally allocated.
@@ -1824,6 +2236,10 @@ bool IsAllocatableTransientArray(const Model& model,
 }
 
 std::string AvailableArrayName(const Model& model, const std::string& name) {
+   std::vector<std::string> mht_71_v;
+   mht_71_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_71(mht_71_v, 2240, "", "./tensorflow/lite/toco/tooling_util.cc", "AvailableArrayName");
+
   std::string sanitized_name = SanitizeNameForTFNode(name);
   if (!model.HasArray(sanitized_name) &&
       !model.IsOptionalArray(sanitized_name)) {
@@ -1845,6 +2261,9 @@ std::string AvailableArrayName(const Model& model, const std::string& name) {
 }
 
 std::string ShapeToString(const Shape& shape) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_72(mht_72_v, 2264, "", "./tensorflow/lite/toco/tooling_util.cc", "ShapeToString");
+
   if (shape.dimensions_count() == 0) {
     return "[]";
   }
@@ -1853,6 +2272,10 @@ std::string ShapeToString(const Shape& shape) {
 }
 
 void PrintArrayShape(Model* model, const std::string& name) {
+   std::vector<std::string> mht_73_v;
+   mht_73_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_73(mht_73_v, 2276, "", "./tensorflow/lite/toco/tooling_util.cc", "PrintArrayShape");
+
   if (!model->GetArray(name).has_shape()) {
     LOG(INFO) << name << " has no shape";
     return;
@@ -1862,6 +2285,10 @@ void PrintArrayShape(Model* model, const std::string& name) {
 }
 
 bool IsArrayFullyConnectedWeights(const Model& model, const std::string& name) {
+   std::vector<std::string> mht_74_v;
+   mht_74_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_74(mht_74_v, 2289, "", "./tensorflow/lite/toco/tooling_util.cc", "IsArrayFullyConnectedWeights");
+
   bool is_fc_weights = false;
   bool is_something_else = false;
   for (const auto& op : model.operators) {
@@ -1881,6 +2308,10 @@ bool IsArrayFullyConnectedWeights(const Model& model, const std::string& name) {
 
 std::string CreateInt32Array(Model* model, const std::string& param_name,
                              const std::vector<int>& value) {
+   std::vector<std::string> mht_75_v;
+   mht_75_v.push_back("param_name: \"" + param_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_75(mht_75_v, 2312, "", "./tensorflow/lite/toco/tooling_util.cc", "CreateInt32Array");
+
   auto param_array_name = AvailableArrayName(*model, param_name);
   auto& param_array = model->GetOrCreateArray(param_array_name);
   param_array.mutable_shape()->ReplaceDims({static_cast<int>(value.size())});
@@ -1896,6 +2327,9 @@ std::string CreateInt32Array(Model* model, const std::string& param_name,
 
 bool EstimateArithmeticOpsCount(const Model& model, const Operator& op,
                                 int64_t* result) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_76(mht_76_v, 2330, "", "./tensorflow/lite/toco/tooling_util.cc", "EstimateArithmeticOpsCount");
+
   switch (op.type) {
     case OperatorType::kFullyConnected:
     case OperatorType::kConv:
@@ -2024,6 +2458,9 @@ bool EstimateArithmeticOpsCount(const Model& model, const Operator& op,
 }
 
 bool EstimateArithmeticOpsCount(const Model& model, int64_t* result) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_77(mht_77_v, 2461, "", "./tensorflow/lite/toco/tooling_util.cc", "EstimateArithmeticOpsCount");
+
   int64_t total = 0;
   for (const auto& op : model.operators) {
     int64_t num_ops;
@@ -2037,6 +2474,9 @@ bool EstimateArithmeticOpsCount(const Model& model, int64_t* result) {
 }
 
 std::string FormattedNumber(int64_t x) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_78(mht_78_v, 2477, "", "./tensorflow/lite/toco/tooling_util.cc", "FormattedNumber");
+
   const int64_t million = 1000000;
   const int64_t billion = 1000000000;
   if (x < 10000) {
@@ -2050,6 +2490,9 @@ std::string FormattedNumber(int64_t x) {
 
 void GetShuffleShape(AxesOrder input_axes_order, AxesOrder output_axes_order,
                      std::vector<int>* shuffle) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_79(mht_79_v, 2493, "", "./tensorflow/lite/toco/tooling_util.cc", "GetShuffleShape");
+
   CHECK_EQ(AxesCount(input_axes_order), AxesCount(output_axes_order));
   shuffle->resize(4);
   for (int i = 0; i < 4; i++) {
@@ -2081,6 +2524,9 @@ void GetShuffleShape(AxesOrder input_axes_order, AxesOrder output_axes_order,
 
 void ExtendShuffle(const std::vector<int>& input_shuffle, int newdim,
                    std::vector<int>* extended_shuffle) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_80(mht_80_v, 2527, "", "./tensorflow/lite/toco/tooling_util.cc", "ExtendShuffle");
+
   *extended_shuffle = input_shuffle;
   CHECK(newdim >= input_shuffle.size());
   const int pad_size = newdim - input_shuffle.size();
@@ -2095,6 +2541,9 @@ void ExtendShuffle(const std::vector<int>& input_shuffle, int newdim,
 
 void ShuffleDims(const Shape& input_shape, AxesOrder input_axes_order,
                  AxesOrder output_axes_order, Shape* output_shape) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_81(mht_81_v, 2544, "", "./tensorflow/lite/toco/tooling_util.cc", "ShuffleDims");
+
   if (input_axes_order == AxesOrder::kHWIM &&
       output_axes_order == AxesOrder::k1HWO) {
     // This special case isn't just a permutation, the IM pair of dims get
@@ -2117,6 +2566,9 @@ void ShuffleArrayTemplate(const Shape& input_shape, AxesOrder input_axes_order,
                           AxesOrder output_axes_order,
                           const Shape& output_shape, const T* input_data,
                           T* output_data) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_82(mht_82_v, 2569, "", "./tensorflow/lite/toco/tooling_util.cc", "ShuffleArrayTemplate");
+
   if (input_axes_order == AxesOrder::kHWIM &&
       output_axes_order == AxesOrder::k1HWO) {
     // This special case isn't just a permutation, the IM pair of dims get
@@ -2190,6 +2642,9 @@ void ShuffleArrayTemplate(const Shape& input_shape, AxesOrder input_axes_order,
 void ShuffleArray(const Shape& input_shape, AxesOrder input_axes_order,
                   AxesOrder output_axes_order, const Shape& output_shape,
                   const uint8* input_data, uint8* output_data) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_83(mht_83_v, 2645, "", "./tensorflow/lite/toco/tooling_util.cc", "ShuffleArray");
+
   ShuffleArrayTemplate<uint8>(input_shape, input_axes_order, output_axes_order,
                               output_shape, input_data, output_data);
 }
@@ -2197,11 +2652,17 @@ void ShuffleArray(const Shape& input_shape, AxesOrder input_axes_order,
 void ShuffleArray(const Shape& input_shape, AxesOrder input_axes_order,
                   AxesOrder output_axes_order, const Shape& output_shape,
                   const float* input_data, float* output_data) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_84(mht_84_v, 2655, "", "./tensorflow/lite/toco/tooling_util.cc", "ShuffleArray");
+
   ShuffleArrayTemplate<float>(input_shape, input_axes_order, output_axes_order,
                               output_shape, input_data, output_data);
 }
 
 int AxesCount(AxesOrder axes_order) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_85(mht_85_v, 2663, "", "./tensorflow/lite/toco/tooling_util.cc", "AxesCount");
+
   switch (axes_order) {
     case AxesOrder::kOneAxis:
       return 1;
@@ -2228,6 +2689,10 @@ int AxesCount(AxesOrder axes_order) {
 }
 
 bool IsDiscardableArray(const Model& model, const std::string& array_name) {
+   std::vector<std::string> mht_86_v;
+   mht_86_v.push_back("array_name: \"" + array_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_86(mht_86_v, 2693, "", "./tensorflow/lite/toco/tooling_util.cc", "IsDiscardableArray");
+
   if (IsInputArray(model, array_name) || IsOutputArray(model, array_name)) {
     return false;
   }
@@ -2247,6 +2712,9 @@ bool IsDiscardableArray(const Model& model, const std::string& array_name) {
 bool ReshapeIsEquivalentToTranspose(const Model& model,
                                     const TensorFlowReshapeOperator* op,
                                     bool allow_extra_unary_dims) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_87(mht_87_v, 2715, "", "./tensorflow/lite/toco/tooling_util.cc", "ReshapeIsEquivalentToTranspose");
+
   CHECK(!op->shape.empty());
   CHECK(model.HasArray(op->inputs[0]));
   CHECK(model.HasArray(op->outputs[0]));
@@ -2274,6 +2742,9 @@ bool ReshapeIsEquivalentToTranspose(const Model& model,
 }
 
 void CheckFinalDataTypesSatisfied(const Model& model) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_88(mht_88_v, 2745, "", "./tensorflow/lite/toco/tooling_util.cc", "CheckFinalDataTypesSatisfied");
+
   for (const auto& array_entry : model.GetArrayMap()) {
     const auto& array = *array_entry.second;
     if (array.data_type == ArrayDataType::kBool) {
@@ -2296,6 +2767,9 @@ void CheckFinalDataTypesSatisfied(const Model& model) {
 }
 
 ArrayDataType ConvertIODataTypeToArrayDataType(IODataType type) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_89(mht_89_v, 2770, "", "./tensorflow/lite/toco/tooling_util.cc", "ConvertIODataTypeToArrayDataType");
+
   switch (type) {
     case FLOAT:
       return ArrayDataType::kFloat;
@@ -2338,6 +2812,9 @@ ArrayDataType ConvertIODataTypeToArrayDataType(IODataType type) {
 }
 
 void FinishBuildingRNNStates(Model* model) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_90(mht_90_v, 2815, "", "./tensorflow/lite/toco/tooling_util.cc", "FinishBuildingRNNStates");
+
   for (const auto& rnn_state : model->flags.rnn_states()) {
     if (!model->HasArray(rnn_state.back_edge_source_array()) ||
         !model->HasArray(rnn_state.state_array())) {
@@ -2375,6 +2852,9 @@ std::unordered_set<std::string> ScanArrayNames(
 }
 
 void UseArraysExtraInfo(Model* model, bool quantize_output) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_91(mht_91_v, 2855, "", "./tensorflow/lite/toco/tooling_util.cc", "UseArraysExtraInfo");
+
   for (const auto& entry : model->flags.arrays_extra_info().entries()) {
     const auto matches = ScanArrayNames(*model, entry);
     if (matches.empty()) {
@@ -2419,6 +2899,9 @@ void UseArraysExtraInfo(Model* model, bool quantize_output) {
 }
 
 void UndoWeightsShuffling(Model* model) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_92(mht_92_v, 2902, "", "./tensorflow/lite/toco/tooling_util.cc", "UndoWeightsShuffling");
+
   for (const auto& op : model->operators) {
     if (op->type != toco::OperatorType::kFullyConnected) {
       continue;
@@ -2466,6 +2949,9 @@ void UndoWeightsShuffling(Model* model) {
 }
 
 void CopyMinMaxAndQuantizationRelatedFields(const Array& src, Array* dst) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPSlitePStocoPStooling_utilDTcc mht_93(mht_93_v, 2952, "", "./tensorflow/lite/toco/tooling_util.cc", "CopyMinMaxAndQuantizationRelatedFields");
+
   if (src.minmax) {
     dst->GetOrCreateMinMax() = src.GetMinMax();
   }

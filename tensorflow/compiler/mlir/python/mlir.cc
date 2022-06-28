@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPSpythonPSmlirDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSpythonPSmlirDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPSpythonPSmlirDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -72,6 +240,9 @@ namespace {
 // All the passes we will make available to Python by default.
 // TODO(tf): this should be sharded instead of being monolithic like that.
 static void RegisterPasses() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSpythonPSmlirDTcc mht_0(mht_0_v, 243, "", "./tensorflow/compiler/mlir/python/mlir.cc", "RegisterPasses");
+
   static bool unique_registration = [] {
     mlir::registerAllPasses();
     mlir::registerTensorFlowPasses();
@@ -100,6 +271,10 @@ static void RegisterPasses() {
 std::string RunPassPipelineOnModule(mlir::ModuleOp module,
                                     const std::string &pass_pipeline,
                                     bool show_debug_info, TF_Status *status) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("pass_pipeline: \"" + pass_pipeline + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPSpythonPSmlirDTcc mht_1(mht_1_v, 275, "", "./tensorflow/compiler/mlir/python/mlir.cc", "RunPassPipelineOnModule");
+
   RegisterPasses();
   if (!pass_pipeline.empty()) {
     mlir::PassManager pm(module.getContext());
@@ -128,6 +303,11 @@ static std::string ImportGraphDefImpl(const std::string &proto,
                                       GraphDebugInfo &debug_info,
                                       GraphImportConfig &specs,
                                       TF_Status *status) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("proto: \"" + proto + "\"");
+   mht_2_v.push_back("pass_pipeline: \"" + pass_pipeline + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPSpythonPSmlirDTcc mht_2(mht_2_v, 308, "", "./tensorflow/compiler/mlir/python/mlir.cc", "ImportGraphDefImpl");
+
   GraphDef graphdef;
   auto s = tensorflow::LoadProtoFromBuffer(proto, &graphdef);
   if (!s.ok()) {
@@ -149,6 +329,11 @@ std::string ImportFunction(const std::string &functiondef_proto,
                            const std::string &pass_pipeline,
                            bool show_debug_info, TFE_Context *tfe_context,
                            TF_Status *status) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("functiondef_proto: \"" + functiondef_proto + "\"");
+   mht_3_v.push_back("pass_pipeline: \"" + pass_pipeline + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPSpythonPSmlirDTcc mht_3(mht_3_v, 334, "", "./tensorflow/compiler/mlir/python/mlir.cc", "ImportFunction");
+
   FunctionDef functiondef;
   auto s = tensorflow::LoadProtoFromBuffer(functiondef_proto, &functiondef);
   if (!s.ok()) {
@@ -188,6 +373,11 @@ std::string ImportFunction(const std::string &functiondef_proto,
 std::string ImportGraphDef(const std::string &proto,
                            const std::string &pass_pipeline,
                            bool show_debug_info, TF_Status *status) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("proto: \"" + proto + "\"");
+   mht_4_v.push_back("pass_pipeline: \"" + pass_pipeline + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPSpythonPSmlirDTcc mht_4(mht_4_v, 378, "", "./tensorflow/compiler/mlir/python/mlir.cc", "ImportGraphDef");
+
   GraphDebugInfo debug_info;
   GraphImportConfig specs;
   return ImportGraphDefImpl(proto, pass_pipeline, show_debug_info, debug_info,
@@ -200,6 +390,15 @@ std::string ImportGraphDef(const std::string &proto,
                            absl::string_view input_data_types,
                            absl::string_view input_data_shapes,
                            absl::string_view output_names, TF_Status *status) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("proto: \"" + proto + "\"");
+   mht_5_v.push_back("pass_pipeline: \"" + pass_pipeline + "\"");
+   mht_5_v.push_back("input_names: \"" + std::string(input_names.data(), input_names.size()) + "\"");
+   mht_5_v.push_back("input_data_types: \"" + std::string(input_data_types.data(), input_data_types.size()) + "\"");
+   mht_5_v.push_back("input_data_shapes: \"" + std::string(input_data_shapes.data(), input_data_shapes.size()) + "\"");
+   mht_5_v.push_back("output_names: \"" + std::string(output_names.data(), output_names.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPSpythonPSmlirDTcc mht_5(mht_5_v, 399, "", "./tensorflow/compiler/mlir/python/mlir.cc", "ImportGraphDef");
+
   std::vector<string> node_names = absl::StrSplit(input_names, ',');
   std::vector<string> node_dtypes = absl::StrSplit(input_data_types, ',');
   std::vector<string> node_shapes_str = absl::StrSplit(input_data_shapes, ':');
@@ -286,6 +485,11 @@ std::string ImportGraphDef(const std::string &proto,
 std::string ExperimentalConvertSavedModelToMlir(
     const std::string &saved_model_path, const std::string &exported_names_str,
     bool show_debug_info, TF_Status *status) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("saved_model_path: \"" + saved_model_path + "\"");
+   mht_6_v.push_back("exported_names_str: \"" + exported_names_str + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPSpythonPSmlirDTcc mht_6(mht_6_v, 490, "", "./tensorflow/compiler/mlir/python/mlir.cc", "ExperimentalConvertSavedModelToMlir");
+
   // Load the saved model into a SavedModelV2Bundle.
 
   tensorflow::SavedModelV2Bundle bundle;
@@ -315,6 +519,12 @@ std::string ExperimentalConvertSavedModelV1ToMlirLite(
     const std::string &saved_model_path, const std::string &exported_names_str,
     const std::string &tags, bool upgrade_legacy, bool show_debug_info,
     TF_Status *status) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("saved_model_path: \"" + saved_model_path + "\"");
+   mht_7_v.push_back("exported_names_str: \"" + exported_names_str + "\"");
+   mht_7_v.push_back("tags: \"" + tags + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPSpythonPSmlirDTcc mht_7(mht_7_v, 525, "", "./tensorflow/compiler/mlir/python/mlir.cc", "ExperimentalConvertSavedModelV1ToMlirLite");
+
   std::unordered_set<string> tag_set =
       absl::StrSplit(tags, ',', absl::SkipEmpty());
 
@@ -339,6 +549,12 @@ std::string ExperimentalConvertSavedModelV1ToMlir(
     const std::string &saved_model_path, const std::string &exported_names_str,
     const std::string &tags, bool lift_variables, bool upgrade_legacy,
     bool show_debug_info, TF_Status *status) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("saved_model_path: \"" + saved_model_path + "\"");
+   mht_8_v.push_back("exported_names_str: \"" + exported_names_str + "\"");
+   mht_8_v.push_back("tags: \"" + tags + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPSpythonPSmlirDTcc mht_8(mht_8_v, 555, "", "./tensorflow/compiler/mlir/python/mlir.cc", "ExperimentalConvertSavedModelV1ToMlir");
+
   // Load the saved model into a SavedModelBundle.
 
   std::unordered_set<string> tag_set =
@@ -388,6 +604,11 @@ std::string ExperimentalRunPassPipeline(const std::string &mlir_txt,
                                         const std::string &pass_pipeline,
                                         bool show_debug_info,
                                         TF_Status *status) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("mlir_txt: \"" + mlir_txt + "\"");
+   mht_9_v.push_back("pass_pipeline: \"" + pass_pipeline + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPSpythonPSmlirDTcc mht_9(mht_9_v, 609, "", "./tensorflow/compiler/mlir/python/mlir.cc", "ExperimentalRunPassPipeline");
+
   RegisterPasses();
   mlir::DialectRegistry registry;
   mlir::RegisterAllTensorFlowDialects(registry);

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,6 +220,9 @@ namespace cpu {
 namespace runtime {
 
 XfeedManager* GetXfeedManager(int device_ordinal) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_0(mht_0_v, 223, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "GetXfeedManager");
+
   static auto* managers = new absl::flat_hash_map<int, XfeedManager*>();
   static absl::Mutex* mutex = new absl::Mutex();
 
@@ -157,7 +328,10 @@ struct CollectivePermuteParticipantData : xla::ParticipantData {
                                    se::Stream* stream_p)
       : ParticipantData(rendezvous_key_p),
         device_ordinal(device_ordinal_p),
-        stream(stream_p) {}
+        stream(stream_p) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_1(mht_1_v, 332, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "CollectivePermuteParticipantData");
+}
 
   int64_t device_ordinal;
   se::Stream* stream;
@@ -168,6 +342,9 @@ struct CollectivePermuteParticipantData : xla::ParticipantData {
   std::vector<int> replica_ids_to_copy_to;
 
   std::string ToString() const override {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_2(mht_2_v, 345, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "ToString");
+
     return absl::StrFormat(
         "CollectivePermuteParticipantData{replica_id=%d, "
         "source_data=%p, destination_data=%p, byte_size=%d, "
@@ -182,7 +359,10 @@ struct AllToAllParticipantData : xla::ParticipantData {
                           int64_t device_ordinal_p, se::Stream* stream_p)
       : ParticipantData(rendezvous_key_p),
         device_ordinal(device_ordinal_p),
-        stream(stream_p) {}
+        stream(stream_p) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_3(mht_3_v, 363, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "AllToAllParticipantData");
+}
 
   int64_t device_ordinal;
   se::Stream* stream;
@@ -195,12 +375,21 @@ struct AllToAllParticipantData : xla::ParticipantData {
   std::vector<xla::GlobalDeviceId> devices_to_copy_to;
 
   std::string ToString() const override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_4(mht_4_v, 378, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "ToString");
+
     auto addr_formatter = [](std::string* out,
                              const se::DeviceMemoryBase& mem) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_5(mht_5_v, 383, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "lambda");
+
       absl::StrAppend(out, absl::StrFormat("%p", mem.opaque()));
     };
     auto device_formatter = [](std::string* out,
                                const xla::GlobalDeviceId& device) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_6(mht_6_v, 390, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "lambda");
+
       absl::StrAppend(out, device.value());
     };
     return absl::StrFormat(
@@ -231,6 +420,9 @@ xla::StatusOr<xla::Shape> DecodeSelfDescribingShapeConstant(
 }
 
 std::string ShapeString(const void* shape_ptr, int32_t shape_length) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_7(mht_7_v, 423, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "ShapeString");
+
   xla::StatusOr<xla::Shape> shape =
       DecodeSelfDescribingShapeConstant(shape_ptr, shape_length);
   if (shape.ok()) {
@@ -242,6 +434,9 @@ std::string ShapeString(const void* shape_ptr, int32_t shape_length) {
 // TODO(zhangqiaorjc): Prefer to make callers set and use device_ordinal
 // directly since callers may not have a Stream*.
 int GetDeviceOrdinal(const xla::ExecutableRunOptions* run_options) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_8(mht_8_v, 437, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "GetDeviceOrdinal");
+
   if (!run_options) {
     return 0;
   } else if (run_options->device_ordinal() != -1) {
@@ -256,6 +451,10 @@ extern "C" {
 
 ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY int __xla_cpu_runtime_PrintfToStderr(
     const char* format, ...) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("format: \"" + (format == nullptr ? std::string("nullptr") : std::string((char*)format)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_9(mht_9_v, 455, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "__xla_cpu_runtime_PrintfToStderr");
+
   VLOG(3) << "__xla_cpu_runtime_PrintfToStderr " << format;
   va_list args;
   va_start(args, format);
@@ -267,12 +466,19 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY int __xla_cpu_runtime_PrintfToStderr(
 ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY int64_t __xla_cpu_runtime_TracingStart(
     const void* /* xla::ExecutableRunOptions* */ run_options_ptr,
     const char* name) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("name: \"" + (name == nullptr ? std::string("nullptr") : std::string((char*)name)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_10(mht_10_v, 470, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "__xla_cpu_runtime_TracingStart");
+
   VLOG(3) << "TracingStart " << name;
   return tensorflow::profiler::TraceMe::ActivityStart(name);
 }
 
 ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_TracingEnd(
     const void* /* xla::ExecutableRunOptions* */ run_options_ptr, int64_t id) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_11(mht_11_v, 479, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "__xla_cpu_runtime_TracingEnd");
+
   VLOG(3) << "TracingEnd " << id;
   tensorflow::profiler::TraceMe::ActivityEnd(id);
 }
@@ -283,6 +489,9 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void*
 __xla_cpu_runtime_AcquireInfeedBufferForDequeue(
     const xla::ExecutableRunOptions* run_options, int32_t buffer_length,
     const void* shape, int32_t shape_length) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_12(mht_12_v, 492, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "__xla_cpu_runtime_AcquireInfeedBufferForDequeue");
+
   int device_ordinal = GetDeviceOrdinal(run_options);
 
   VLOG(2) << "AcquireInfeedBufferForDequeue: "
@@ -306,6 +515,9 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void
 __xla_cpu_runtime_ReleaseInfeedBufferAfterDequeue(
     const xla::ExecutableRunOptions* run_options, int32_t buffer_length,
     void* buffer_ptr, const void* shape_ptr, int32_t shape_length) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_13(mht_13_v, 518, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "__xla_cpu_runtime_ReleaseInfeedBufferAfterDequeue");
+
   int device_ordinal = GetDeviceOrdinal(run_options);
 
   VLOG(2) << "ReleaseInfeedBufferAfterDeque: "
@@ -324,6 +536,9 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void*
 __xla_cpu_runtime_AcquireOutfeedBufferForPopulation(
     const xla::ExecutableRunOptions* run_options, int32_t buffer_length,
     const void* shape_ptr, int32_t shape_length) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_14(mht_14_v, 539, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "__xla_cpu_runtime_AcquireOutfeedBufferForPopulation");
+
   int device_ordinal = GetDeviceOrdinal(run_options);
 
   VLOG(2) << "AcquireOutfeedBufferForPopulation: "
@@ -347,6 +562,9 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void
 __xla_cpu_runtime_ReleaseOutfeedBufferAfterPopulation(
     const xla::ExecutableRunOptions* run_options, int32_t buffer_length,
     void* buffer_ptr, const void* shape_ptr, int32_t shape_length) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_15(mht_15_v, 565, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "__xla_cpu_runtime_ReleaseOutfeedBufferAfterPopulation");
+
   int device_ordinal = GetDeviceOrdinal(run_options);
 
   VLOG(2) << "ReleaseOutfeedBufferAfterPopulation: "
@@ -367,7 +585,10 @@ class CpuAllToAllRendezvous
     : public xla::Rendezvous<AllToAllParticipantData, std::nullptr_t> {
  public:
   explicit CpuAllToAllRendezvous(const xla::RendezvousKey& k)
-      : xla::Rendezvous<AllToAllParticipantData, std::nullptr_t>(k) {}
+      : xla::Rendezvous<AllToAllParticipantData, std::nullptr_t>(k) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_16(mht_16_v, 589, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "CpuAllToAllRendezvous");
+}
 
  protected:
   xla::StatusOr<std::nullptr_t> RunCollectiveOp(
@@ -428,7 +649,10 @@ class CpuCollectivePermuteRendezvous
     : public xla::Rendezvous<CollectivePermuteParticipantData, std::nullptr_t> {
  public:
   explicit CpuCollectivePermuteRendezvous(const xla::RendezvousKey& k)
-      : xla::Rendezvous<CollectivePermuteParticipantData, std::nullptr_t>(k) {}
+      : xla::Rendezvous<CollectivePermuteParticipantData, std::nullptr_t>(k) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_17(mht_17_v, 653, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "CpuCollectivePermuteRendezvous");
+}
 
  protected:
   xla::StatusOr<std::nullptr_t> RunCollectiveOp(
@@ -470,7 +694,10 @@ class CpuAllReduceRendezvous
     : public xla::Rendezvous<xla::AllReduceParticipantData, std::nullptr_t> {
  public:
   explicit CpuAllReduceRendezvous(const xla::RendezvousKey& k)
-      : xla::Rendezvous<xla::AllReduceParticipantData, std::nullptr_t>(k) {}
+      : xla::Rendezvous<xla::AllReduceParticipantData, std::nullptr_t>(k) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_18(mht_18_v, 698, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "CpuAllReduceRendezvous");
+}
 
  protected:
   xla::StatusOr<std::nullptr_t> RunCollectiveOp(
@@ -518,6 +745,9 @@ class CpuAllReduceRendezvous
  private:
   template <xla::PrimitiveType PT>
   void DoAllReduce(xla::AllReduceParticipantData participant) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_19(mht_19_v, 748, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "DoAllReduce");
+
     using T = typename xla::primitive_util::PrimitiveTypeToNative<PT>::type;
     absl::MutexLock lock(&mu_);
     CHECK(!participants_.empty());
@@ -583,6 +813,9 @@ class CpuAllReduceRendezvous
 
   template <typename T>
   T GetInitialValue(xla::ReductionKind reduction_kind) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_20(mht_20_v, 816, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "GetInitialValue");
+
     switch (reduction_kind) {
       case xla::ReductionKind::SUM:
         return static_cast<T>(0);
@@ -607,6 +840,9 @@ class CpuAllReduceRendezvous
 
   template <typename T>
   T PerformReductionStep(xla::ReductionKind reduction_kind, T a, T b) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_21(mht_21_v, 843, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "PerformReductionStep");
+
     using SumProductType = typename SumProductTypeForReductionStep<
         T, std::is_integral<T>::value && std::is_signed<T>::value>::type;
     switch (reduction_kind) {
@@ -651,6 +887,9 @@ xla::RendezvousKey GetRendezvousKey(
     const xla::ExecutableRunOptions* run_options,
     std::vector<xla::ReplicaGroup> group, int32_t channel_id_present,
     absl::optional<bool> use_global_device_ids, int64_t op_id) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_22(mht_22_v, 890, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "GetRendezvousKey");
+
   const xla::DeviceAssignment& device_assignment =
       *run_options->device_assignment();
   int device_ordinal = GetDeviceOrdinal(run_options);
@@ -677,6 +916,9 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_AllToAll(
     int64_t op_id, const void* replica_groups_str,
     int32_t replica_groups_str_size, int32_t num_buffers, int64_t buffer_size,
     void** source_buffers, void** destination_buffers) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_23(mht_23_v, 919, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "__xla_cpu_runtime_AllToAll");
+
   int device_ordinal = GetDeviceOrdinal(run_options);
   absl::string_view replica_groups_serialized(
       static_cast<const char*>(replica_groups_str), replica_groups_str_size);
@@ -703,6 +945,9 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_AllToAll(
                                                  buffer_size);
   }
   auto make_cpu_rendezvous = [](const xla::RendezvousKey& k) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_24(mht_24_v, 948, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "lambda");
+
     return absl::make_unique<CpuAllToAllRendezvous>(k);
   };
   TF_CHECK_OK(CpuAllToAllRendezvous::SubmitParticipant(
@@ -720,6 +965,9 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_AllReduce(
     int32_t channel_id_present, int32_t use_global_device_ids, int64_t op_id,
     int32_t reduction_kind, const void* shape_ptr, int32_t shape_length,
     int32_t num_buffers, void** input_buffers, void** output_buffers) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_25(mht_25_v, 968, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "__xla_cpu_runtime_AllReduce");
+
   int device_ordinal = GetDeviceOrdinal(run_options);
   absl::string_view replica_groups_serialized(
       static_cast<const char*>(replica_groups_str), replica_groups_str_size);
@@ -752,6 +1000,9 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_AllReduce(
   }
 
   auto make_cpu_rendezvous = [](const xla::RendezvousKey& k) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_26(mht_26_v, 1003, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "lambda");
+
     return absl::make_unique<CpuAllReduceRendezvous>(k);
   };
 
@@ -766,6 +1017,9 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_AllReduce(
 
 ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_ReplicaId(
     const xla::ExecutableRunOptions* run_options, void* output_buffer) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_27(mht_27_v, 1020, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "__xla_cpu_runtime_ReplicaId");
+
   int device_ordinal = GetDeviceOrdinal(run_options);
   int32_t replica_id =
       run_options->device_assignment()
@@ -776,6 +1030,9 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_ReplicaId(
 
 ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_PartitionId(
     const xla::ExecutableRunOptions* run_options, void* output_buffer) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_28(mht_28_v, 1033, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "__xla_cpu_runtime_PartitionId");
+
   int device_ordinal = GetDeviceOrdinal(run_options);
   const xla::DeviceAssignment::LogicalID logical_id =
       run_options->device_assignment()
@@ -788,6 +1045,9 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_CollectivePermute(
     const xla::ExecutableRunOptions* run_options, int32_t channel_id_present,
     int64_t op_id, int32_t byte_size, void* input_buffer, void* output_buffer,
     const void* source_target_pairs, int32_t source_target_pairs_size) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_29(mht_29_v, 1048, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "__xla_cpu_runtime_CollectivePermute");
+
   int device_ordinal = GetDeviceOrdinal(run_options);
   absl::string_view source_target_pairs_serialized(
       static_cast<const char*>(source_target_pairs), source_target_pairs_size);
@@ -819,6 +1079,9 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_CollectivePermute(
   participant.byte_size = byte_size;
 
   auto make_cpu_rendezvous = [](const xla::RendezvousKey& k) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPScpu_runtimeDTcc mht_30(mht_30_v, 1082, "", "./tensorflow/compiler/xla/service/cpu/cpu_runtime.cc", "lambda");
+
     return absl::make_unique<CpuCollectivePermuteRendezvous>(k);
   };
   TF_CHECK_OK(

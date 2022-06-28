@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -65,6 +233,9 @@ namespace {
 
 ParseResult parseOneResultSameOperandTypeOp(OpAsmParser &parser,
                                             OperationState &result) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_0(mht_0_v, 236, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "parseOneResultSameOperandTypeOp");
+
   SmallVector<OpAsmParser::UnresolvedOperand, 2> ops;
   Type type;
   // If the operand list is in-between parentheses, then we have a generic form.
@@ -93,6 +264,9 @@ ParseResult parseOneResultSameOperandTypeOp(OpAsmParser &parser,
 }
 
 void printOneResultOp(Operation *op, OpAsmPrinter &p) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_1(mht_1_v, 267, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "printOneResultOp");
+
   assert(op->getNumResults() == 1 && "op should have one result");
 
   // If not all the operand and result types are the same, just use the
@@ -112,6 +286,9 @@ void printOneResultOp(Operation *op, OpAsmPrinter &p) {
 }
 
 Operation *getDefiningBroadcastArgsOp(Value operand) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_2(mht_2_v, 289, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "getDefiningBroadcastArgsOp");
+
   auto *defining_op = operand.getDefiningOp();
   if (!llvm::dyn_cast_or_null<TF::BroadcastToOp>(defining_op) &&
       !llvm::dyn_cast_or_null<TFL::BroadcastToOp>(defining_op)) {
@@ -136,6 +313,9 @@ Operation *getDefiningBroadcastArgsOp(Value operand) {
 // true.
 bool VerifyOperandsHaveSameShapesOrBroadcastableShape(
     Operation *op, ArrayRef<unsigned> indices, int max_bcast_rank) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_3(mht_3_v, 316, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "VerifyOperandsHaveSameShapesOrBroadcastableShape");
+
   if (indices.empty()) return true;
 
   // First, it checks there are any inputs that has unknown rank.
@@ -221,6 +401,9 @@ bool VerifyOperandsHaveSameShapesOrBroadcastableShape(
 
 // Return true when the given element_type is QI8.
 bool IsQI8Type(Type element_type) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_4(mht_4_v, 404, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "IsQI8Type");
+
   auto quantized_type = element_type.dyn_cast<QuantizedType>();
   return quantized_type != nullptr &&
          quantized_type.getStorageTypeIntegralWidth() == 8 &&
@@ -229,6 +412,9 @@ bool IsQI8Type(Type element_type) {
 
 // Return true when the given element_type is QUI8.
 bool IsQUI8Type(Type element_type) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_5(mht_5_v, 415, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "IsQUI8Type");
+
   auto quantized_type = element_type.dyn_cast<QuantizedType>();
   return quantized_type != nullptr &&
          quantized_type.getStorageTypeIntegralWidth() == 8 &&
@@ -237,6 +423,9 @@ bool IsQUI8Type(Type element_type) {
 
 // Return true when the given element_type is QI16.
 bool IsQI16Type(Type element_type) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_6(mht_6_v, 426, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "IsQI16Type");
+
   auto quantized_type = element_type.dyn_cast<QuantizedType>();
   return quantized_type != nullptr &&
          quantized_type.getStorageTypeIntegralWidth() == 16 &&
@@ -245,16 +434,25 @@ bool IsQI16Type(Type element_type) {
 
 // Return true when the given element_type is I32.
 bool IsI32Type(Type element_type) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_7(mht_7_v, 437, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "IsI32Type");
+
   return element_type.isInteger(32) && !element_type.isUnsignedInteger();
 }
 
 // Return true when the given element_type is I64.
 bool IsI64Type(Type element_type) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_8(mht_8_v, 445, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "IsI64Type");
+
   return element_type.isInteger(64) && !element_type.isUnsignedInteger();
 }
 
 // Return true if the value is a splat tensor constant zero.
 bool EqualsZero(Value value) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_9(mht_9_v, 453, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "EqualsZero");
+
   DenseElementsAttr constant;
   if (!matchPattern(value, m_Constant(&constant)) || !constant.isSplat()) {
     return false;
@@ -278,6 +476,9 @@ struct RemoveOptionalZeroBias : public OpRewritePattern<ConcreteOpType> {
 
   LogicalResult matchAndRewrite(ConcreteOpType op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_10(mht_10_v, 479, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "matchAndRewrite");
+
     if (EqualsZero(op.bias())) {
       auto none_value = rewriter.create<TFL::NoValueOp>(
           rewriter.getUnknownLoc(), rewriter.getNoneType(),
@@ -291,6 +492,9 @@ struct RemoveOptionalZeroBias : public OpRewritePattern<ConcreteOpType> {
 
 // Return true if the given Add operation has the CPU kernel supported shapes.
 bool VerifyAddOpShapeConstraints(AddOp op) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_11(mht_11_v, 495, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "VerifyAddOpShapeConstraints");
+
   auto element_type = getElementTypeOrSelf(op.output().getType());
 
   // Allows F32, QI8, QUI8 and I32 outputs when the operands have valid shapes,
@@ -313,6 +517,9 @@ bool VerifyAddOpShapeConstraints(AddOp op) {
 
 // Return true if the given Sub operation has the CPU kernel supported shapes.
 bool VerifySubOpShapeConstraints(SubOp op) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_12(mht_12_v, 520, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "VerifySubOpShapeConstraints");
+
   auto element_type = getElementTypeOrSelf(op.output().getType());
 
   // Allows F32, QUI8, and QI16 outputs when the operands have valid shapes,
@@ -337,6 +544,9 @@ bool VerifySubOpShapeConstraints(SubOp op) {
 
 // Return true if the given Mul operation has the CPU kernel supported shapes.
 bool VerifyMulOpShapeConstraints(MulOp op) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_13(mht_13_v, 547, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "VerifyMulOpShapeConstraints");
+
   auto element_type = getElementTypeOrSelf(op.output().getType());
 
   // Allows QI8 and QUI8 inputs up to five dimension broadcasting unless the
@@ -377,15 +587,24 @@ struct TensorFlowLiteInlinerInterface : public DialectInlinerInterface {
   // Allow all call operations to be inlined.
   bool isLegalToInline(Operation *call, Operation *callable,
                        bool wouldBeCloned) const final {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_14(mht_14_v, 590, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "isLegalToInline");
+
     return true;
   }
   bool isLegalToInline(Operation *op, Region *dest, bool wouldBeCloned,
                        BlockAndValueMapping &) const final {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_15(mht_15_v, 597, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "isLegalToInline");
+
     // No TFLite op restricts inlining today, revise as needed in the future.
     return true;
   }
   bool isLegalToInline(Region *dest, Region *src, bool wouldBeCloned,
                        BlockAndValueMapping &valueMapping) const final {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_16(mht_16_v, 605, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "isLegalToInline");
+
     return isa<WhileOp>(dest->getParentOp());
   }
 };
@@ -400,11 +619,17 @@ struct TensorFlowLiteDialectFoldInterface : public DialectFoldInterface {
   // In the TFLite dialect we materialize inside a while regions as slightly
   // more efficient computationally.
   bool shouldMaterializeInto(Region *region) const final {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_17(mht_17_v, 622, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "shouldMaterializeInto");
+
     return isa<WhileOp>(region->getParentOp());
   }
 };
 
 void TFLDialect::initialize() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_18(mht_18_v, 630, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "TFLDialect::initialize");
+
   addOperations<
 #define GET_OP_LIST
 #include "tensorflow/compiler/mlir/lite/ir/tfl_ops.cc.inc"
@@ -427,6 +652,9 @@ namespace {
 // For example, dimensions {2}, {1, 2}, and {3, 1, 2} are all suffixes to
 // {5, 4, 3, 1, 2}, while {1}, {5, 4}, and {1, 3, 2} are all not.
 inline bool IsTrailingDimensions(ArrayRef<int64_t> a, ArrayRef<int64_t> b) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_19(mht_19_v, 655, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "IsTrailingDimensions");
+
   if (a.size() > b.size()) return false;
 
   return std::equal(a.rbegin(), a.rend(), b.rbegin());
@@ -434,6 +662,9 @@ inline bool IsTrailingDimensions(ArrayRef<int64_t> a, ArrayRef<int64_t> b) {
 
 // Returns true if it is a shaped type of f32 elements.
 inline bool IsF32ShapedType(Type t) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_20(mht_20_v, 665, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "IsF32ShapedType");
+
   if (auto shaped_type = t.dyn_cast_or_null<ShapedType>()) {
     return shaped_type.getElementType().isF32();
   }
@@ -442,6 +673,9 @@ inline bool IsF32ShapedType(Type t) {
 
 // Returns true if it is a shaped type of bf16 elements.
 inline bool IsBF16ShapedType(Type t) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_21(mht_21_v, 676, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "IsBF16ShapedType");
+
   if (auto shaped_type = t.dyn_cast_or_null<ShapedType>()) {
     return shaped_type.getElementType().isBF16();
   }
@@ -462,6 +696,9 @@ inline std::vector<int64_t> GetPaddedShape(ArrayRef<int64_t> old_shape,
 // 'shape' is the original shape with padding to match result shape.
 int64_t GetElementIndex(const std::vector<int64_t> &shape,
                         const std::vector<int64_t> &current_index) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_22(mht_22_v, 699, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "GetElementIndex");
+
   int64_t ind = 0;
   int64_t mul = 1;
   for (int i = shape.size() - 1; i >= 0; --i) {
@@ -475,6 +712,9 @@ int64_t GetElementIndex(const std::vector<int64_t> &shape,
 // in the shape of 'result_shape'.
 void IncrementIndex(ArrayRef<int64_t> result_shape,
                     std::vector<int64_t> *current_index_ptr) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_23(mht_23_v, 715, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "IncrementIndex");
+
   std::vector<int64_t> &current_index = *current_index_ptr;
   for (int i = result_shape.size() - 1; i >= 0; --i) {
     current_index[i]++;
@@ -580,6 +820,9 @@ Attribute ConstFoldBinaryOp(
     Type result_type, ArrayRef<Attribute> operands,
     llvm::function_ref<APFloat(APFloat, APFloat)> float_calculate,
     llvm::function_ref<APInt(APInt, APInt)> int_calculate) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_24(mht_24_v, 823, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "ConstFoldBinaryOp");
+
   // Note: All types are wrapped in tensor types in TFlite. E.g., f32 is
   // represented as tensor<f32>. So we are only handling tensor types here.
   auto type = result_type.dyn_cast<ShapedType>();
@@ -606,6 +849,9 @@ Attribute ConstFoldBinaryOp(
 /// "tfl.logical_not".
 Attribute ConstFoldUnaryOp(Type result_type, Attribute operand,
                            llvm::function_ref<APFloat(APFloat)> calculate) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_25(mht_25_v, 852, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "ConstFoldUnaryOp");
+
   assert(IsF32ShapedType(result_type) || IsBF16ShapedType(result_type));
   auto result_shape_type = result_type.cast<ShapedType>();
 
@@ -628,6 +874,9 @@ Attribute ConstFoldUnaryOp(Type result_type, Attribute operand,
 
 void buildComparisonBinOp(Builder *builder, OperationState &result, Value lhs,
                           Value rhs) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_26(mht_26_v, 877, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "buildComparisonBinOp");
+
   auto result_type =
       OpTrait::util::getBroadcastedType(lhs.getType(), rhs.getType());
   if (!result_type)
@@ -648,6 +897,9 @@ void buildComparisonBinOp(Builder *builder, OperationState &result, Value lhs,
 void buildFusedBroadcastableBinOp(Builder *builder, OperationState &result,
                                   Value lhs, Value rhs,
                                   StringAttr fused_activation_function) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_27(mht_27_v, 900, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "buildFusedBroadcastableBinOp");
+
   auto result_type =
       OpTrait::util::getBroadcastedType(lhs.getType(), rhs.getType());
 
@@ -668,14 +920,23 @@ void buildFusedBroadcastableBinOp(Builder *builder, OperationState &result,
 //===----------------------------------------------------------------------===//
 
 OpFoldResult AddOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_28(mht_28_v, 923, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "AddOp::fold");
+
   // TODO(b/142478136): Handle fused ops.
   if (fused_activation_function() != "NONE") return {};
   return ConstFoldBinaryOp(
       getType(), operands, [](APFloat a, APFloat b) { return a + b; },
-      [](APInt a, APInt b) { return a + b; });
+      [](APInt a, APInt b) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_29(mht_29_v, 931, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "lambda");
+ return a + b; });
 }
 
 int64_t AddOp::GetArithmeticCount(Operation *op) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_30(mht_30_v, 937, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "AddOp::GetArithmeticCount");
+
   int64_t count;
   if (ArithmeticCountUtilHelper::GetFirstOutputCount(op, &count)) return count;
 
@@ -690,6 +951,9 @@ int64_t AddOp::GetArithmeticCount(Operation *op) {
 namespace {
 
 int64_t GetConcatenationOpAxis(ConcatenationOp op) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_31(mht_31_v, 954, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "GetConcatenationOpAxis");
+
   auto output_type = op.output().getType().cast<RankedTensorType>();
   int32_t axis = op.axis();
   if (axis < 0) axis += output_type.getRank();
@@ -712,6 +976,9 @@ LogicalResult VerifyConcatenationOpTypes(Operation *op,
                                          RankedTensorType output_type,
                                          ArrayRef<TensorType> operand_types,
                                          int64_t axis) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_32(mht_32_v, 979, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "VerifyConcatenationOpTypes");
+
   const int64_t output_rank = output_type.getRank();
 
   constexpr int64_t kDynamicSize = -1;
@@ -721,6 +988,9 @@ LogicalResult VerifyConcatenationOpTypes(Operation *op,
   result_dim_sizes[axis] = 0;
 
   auto FormatLoc = [&result_dim_sizes_loc](int64_t dim) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_33(mht_33_v, 991, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "lambda");
+
     const int64_t loc = result_dim_sizes_loc[dim];
     if (loc == -1) return std::string("output");
     return llvm::formatv("operand #{0}", loc).str();
@@ -790,6 +1060,9 @@ bool IsConcatenationOpConstFoldable(ConcatenationOp op,
                                     ArrayRef<Attribute> operands,
                                     RankedTensorType output_type,
                                     int64_t axis) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_34(mht_34_v, 1063, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "IsConcatenationOpConstFoldable");
+
   if (operands.empty()) return false;
   if (!output_type.hasStaticShape()) return false;
   if (axis < 0) return false;
@@ -802,6 +1075,9 @@ bool IsConcatenationOpConstFoldable(ConcatenationOp op,
 DenseElementsAttr ConstFoldConcatenateOpDense(ArrayRef<Attribute> operands,
                                               RankedTensorType output_type,
                                               int64_t axis) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_35(mht_35_v, 1078, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "ConstFoldConcatenateOpDense");
+
   const auto outer_dims = output_type.getShape().take_front(axis);
   const int64_t outer_size = std::accumulate(
       outer_dims.begin(), outer_dims.end(), 1, std::multiplies<int64_t>());
@@ -834,6 +1110,9 @@ DenseElementsAttr ConstFoldConcatenateOpDense(ArrayRef<Attribute> operands,
 }  // end anonymous namespace
 
 LogicalResult ConcatenationOp::verify() {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_36(mht_36_v, 1113, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "ConcatenationOp::verify");
+
   ConcatenationOp op = *this;
   auto output_type = op.output().getType().dyn_cast<RankedTensorType>();
 
@@ -853,6 +1132,9 @@ LogicalResult ConcatenationOp::verify() {
 }
 
 OpFoldResult ConcatenationOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_37(mht_37_v, 1135, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "ConcatenationOp::fold");
+
   if (fused_activation_function() == "NONE") {
     if (auto output_type = output().getType().dyn_cast<RankedTensorType>()) {
       const int64_t axis = GetConcatenationOpAxis(*this);
@@ -893,6 +1175,9 @@ OpFoldResult ConcatenationOp::fold(ArrayRef<Attribute> operands) {
 //===----------------------------------------------------------------------===//
 
 mlir::LogicalResult CustomOp::verify() {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_38(mht_38_v, 1178, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "CustomOp::verify");
+
   CustomOp op = *this;
   OpaqueElementsAttr opaque_attr =
       op.custom_option().cast<OpaqueElementsAttr>();
@@ -913,6 +1198,9 @@ LogicalResult CustomTfOp::inferReturnTypes(
     MLIRContext *, Optional<Location> location, ValueRange operands,
     DictionaryAttr attr, RegionRange ranges,
     SmallVectorImpl<Type> &inferredReturnTypes) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_39(mht_39_v, 1201, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "CustomTfOp::inferReturnTypes");
+
   CustomTfOpAdaptor op(operands, attr, ranges);
 
   if (op.getRegions().empty()) return success();
@@ -926,6 +1214,9 @@ LogicalResult CustomTfOp::inferReturnTypes(
 }
 
 bool CustomTfOp::isCompatibleReturnTypes(TypeRange lhs, TypeRange rhs) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_40(mht_40_v, 1217, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "CustomTfOp::isCompatibleReturnTypes");
+
   if (lhs.empty()) return true;
   if (lhs.size() != rhs.size() || lhs.size() != 1) return false;
   if (failed(mlir::verifyCompatibleShape(lhs[0], rhs[0]))) return false;
@@ -937,6 +1228,9 @@ bool CustomTfOp::isCompatibleReturnTypes(TypeRange lhs, TypeRange rhs) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult GatherOp::verify() {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_41(mht_41_v, 1231, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "GatherOp::verify");
+
   GatherOp op = *this;
   ShapedType params_type = op.params().getType().cast<ShapedType>();
   // TFLite gather kernel supports 1D string input only.
@@ -961,6 +1255,9 @@ struct ConvertBroadcastToReshape : public OpRewritePattern<BroadcastToOp> {
 
   LogicalResult matchAndRewrite(BroadcastToOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_42(mht_42_v, 1258, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "matchAndRewrite");
+
     auto input_type = op.input().getType().cast<ShapedType>();
     auto output_type = op.getType().cast<ShapedType>();
     if (!input_type.hasStaticShape() || !output_type.hasStaticShape() ||
@@ -976,6 +1273,9 @@ struct ConvertBroadcastToReshape : public OpRewritePattern<BroadcastToOp> {
 
 void BroadcastToOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                 MLIRContext *context) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_43(mht_43_v, 1276, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "BroadcastToOp::getCanonicalizationPatterns");
+
   results.add<ConvertBroadcastToReshape>(context);
 }
 
@@ -984,6 +1284,9 @@ void BroadcastToOp::getCanonicalizationPatterns(RewritePatternSet &results,
 //===----------------------------------------------------------------------===//
 
 LogicalResult FullyConnectedOp::verify() {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_44(mht_44_v, 1287, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "FullyConnectedOp::verify");
+
   FullyConnectedOp op = *this;
   ShapedType input_type = op.input().getType().cast<ShapedType>();
   ShapedType filter_type = op.filter().getType().cast<ShapedType>();
@@ -1032,6 +1335,9 @@ LogicalResult FullyConnectedOp::verify() {
 
 LogicalResult FullyConnectedOp::fold(ArrayRef<Attribute> operands,
                                      SmallVectorImpl<OpFoldResult> &results) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_45(mht_45_v, 1338, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "FullyConnectedOp::fold");
+
   assert(operands.size() == 3);
 
   // Folding not implemented with any activation function or any weight type
@@ -1130,10 +1436,16 @@ LogicalResult FullyConnectedOp::fold(ArrayRef<Attribute> operands,
 
 void FullyConnectedOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                    MLIRContext *context) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_46(mht_46_v, 1439, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "FullyConnectedOp::getCanonicalizationPatterns");
+
   results.add<RemoveOptionalZeroBias<FullyConnectedOp>>(context);
 }
 
 int64_t FullyConnectedOp::GetArithmeticCount(Operation *op) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_47(mht_47_v, 1446, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "FullyConnectedOp::GetArithmeticCount");
+
   int64_t count;
   if (ArithmeticCountUtilHelper::GetArithmeticCountForConvAndFullyconnectedOp(
           op, &count))
@@ -1148,6 +1460,9 @@ int64_t FullyConnectedOp::GetArithmeticCount(Operation *op) {
 
 void Conv2DOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                            MLIRContext *context) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_48(mht_48_v, 1463, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "Conv2DOp::getCanonicalizationPatterns");
+
   // TODO(b/180121750): Enable the pattern after the integration tests are
   // fixed.
   // results.add<RemoveOptionalZeroBias<Conv2DOp>>(context);
@@ -1156,6 +1471,9 @@ void Conv2DOp::getCanonicalizationPatterns(RewritePatternSet &results,
 static LogicalResult ComputeConvWindowedOutputSize(
     int64_t input_size, int64_t filter_size, int64_t dilation_rate,
     int64_t stride, tensorflow::Padding padding, int64_t *output_size) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_49(mht_49_v, 1474, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "ComputeConvWindowedOutputSize");
+
   int64_t pad_low;
   int64_t pad_high;
 
@@ -1171,6 +1489,9 @@ LogicalResult Conv2DOp::inferReturnTypes(
     MLIRContext *, Optional<Location> location, ValueRange operands,
     DictionaryAttr attr, RegionRange,
     SmallVectorImpl<Type> &inferredReturnTypes) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_50(mht_50_v, 1492, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "Conv2DOp::inferReturnTypes");
+
   Conv2DOpAdaptor op(operands, attr);
 
   const Value input = op.input();
@@ -1250,12 +1571,18 @@ LogicalResult Conv2DOp::inferReturnTypes(
 }
 
 bool Conv2DOp::isCompatibleReturnTypes(TypeRange lhs, TypeRange rhs) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_51(mht_51_v, 1574, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "Conv2DOp::isCompatibleReturnTypes");
+
   if (lhs.size() != rhs.size() || lhs.size() != 1) return false;
   if (failed(mlir::verifyCompatibleShape(lhs[0], rhs[0]))) return false;
   return true;
 }
 
 int64_t Conv2DOp::GetArithmeticCount(Operation *op) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_52(mht_52_v, 1583, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "Conv2DOp::GetArithmeticCount");
+
   int64_t count;
   if (ArithmeticCountUtilHelper::GetArithmeticCountForConvAndFullyconnectedOp(
           op, &count))
@@ -1270,12 +1597,18 @@ int64_t Conv2DOp::GetArithmeticCount(Operation *op) {
 
 void DepthwiseConv2DOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                     MLIRContext *context) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_53(mht_53_v, 1600, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "DepthwiseConv2DOp::getCanonicalizationPatterns");
+
   // TODO(b/180121750): Enable the pattern after the integration tests are
   // fixed.
   // results.add<RemoveOptionalZeroBias<DepthwiseConv2DOp>>(context);
 }
 
 int64_t DepthwiseConv2DOp::GetArithmeticCount(Operation *op) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_54(mht_54_v, 1609, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "DepthwiseConv2DOp::GetArithmeticCount");
+
   int64_t count;
   if (ArithmeticCountUtilHelper::GetArithmeticCountForConvAndFullyconnectedOp(
           op, &count))
@@ -1291,6 +1624,9 @@ int64_t DepthwiseConv2DOp::GetArithmeticCount(Operation *op) {
 static void BuildGatherOp(OpBuilder *builder, OperationState &result,
                           Value params, Value indices, IntegerAttr axis,
                           IntegerAttr batch_dims) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_55(mht_55_v, 1627, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "BuildGatherOp");
+
   auto params_type = params.getType().cast<TensorType>();
   auto indices_type = indices.getType().cast<TensorType>();
 
@@ -1374,6 +1710,9 @@ static void BuildGatherOp(OpBuilder *builder, OperationState &result,
 //===----------------------------------------------------------------------===//
 
 mlir::LogicalResult ScatterNdOp::verify() {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_56(mht_56_v, 1713, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "ScatterNdOp::verify");
+
   ScatterNdOp op = *this;
   auto indices = op.indices();
   auto updates = op.updates();
@@ -1467,6 +1806,9 @@ mlir::LogicalResult ScatterNdOp::verify() {
 //===----------------------------------------------------------------------===//
 
 OpFoldResult MulOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_57(mht_57_v, 1809, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "MulOp::fold");
+
   // TODO(b/142478136): Handle fused ops.
   if (fused_activation_function() != "NONE") return {};
 
@@ -1492,10 +1834,16 @@ OpFoldResult MulOp::fold(ArrayRef<Attribute> operands) {
   // Generic fallback with APFloat
   return ConstFoldBinaryOp(
       getType(), operands, [](APFloat a, APFloat b) { return a * b; },
-      [](APInt a, APInt b) { return a * b; });
+      [](APInt a, APInt b) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_58(mht_58_v, 1838, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "lambda");
+ return a * b; });
 }
 
 int64_t MulOp::GetArithmeticCount(Operation *op) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_59(mht_59_v, 1844, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "MulOp::GetArithmeticCount");
+
   int64_t count;
   if (ArithmeticCountUtilHelper::GetFirstOutputCount(op, &count)) return count;
 
@@ -1507,14 +1855,23 @@ int64_t MulOp::GetArithmeticCount(Operation *op) {
 //===----------------------------------------------------------------------===//
 
 OpFoldResult DivOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_60(mht_60_v, 1858, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "DivOp::fold");
+
   // TODO(b/142478136): Handle fused ops.
   if (fused_activation_function() != "NONE") return {};
   return ConstFoldBinaryOp(
       getType(), operands, [](APFloat a, APFloat b) { return a / b; },
-      [](APInt a, APInt b) { return a.sdiv(b); });
+      [](APInt a, APInt b) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_61(mht_61_v, 1866, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "lambda");
+ return a.sdiv(b); });
 }
 
 int64_t DivOp::GetArithmeticCount(Operation *op) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_62(mht_62_v, 1872, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "DivOp::GetArithmeticCount");
+
   int64_t count;
   if (ArithmeticCountUtilHelper::GetFirstOutputCount(op, &count)) return count;
 
@@ -1528,6 +1885,9 @@ int64_t DivOp::GetArithmeticCount(Operation *op) {
 // TODO(b/133486129): Implement shape inference for pack
 
 mlir::LogicalResult PackOp::verify() {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_63(mht_63_v, 1888, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "PackOp::verify");
+
   PackOp op = *this;
   // TODO(antiagainst): Implement other checks as in
   // tensorflow/lite/kernels/pack.cc
@@ -1565,6 +1925,9 @@ mlir::LogicalResult PackOp::verify() {
 //===----------------------------------------------------------------------===//
 
 mlir::LogicalResult PReluOp::verify() {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_64(mht_64_v, 1928, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "PReluOp::verify");
+
   PReluOp op = *this;
   auto input_type = op.input().getType().cast<ShapedType>();
   auto alpha_type = op.alpha().getType().cast<ShapedType>();
@@ -1613,15 +1976,24 @@ namespace {
 // category, after we have the infra for peephole passes.
 struct RemoveAdjacentReshape : public RewritePattern {
   RemoveAdjacentReshape(MLIRContext *context)
-      : RewritePattern(ReshapeOp::getOperationName(), 1, context) {}
+      : RewritePattern(ReshapeOp::getOperationName(), 1, context) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_65(mht_65_v, 1980, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "RemoveAdjacentReshape");
+}
 
   LogicalResult match(Operation *op) const override {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_66(mht_66_v, 1985, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "match");
+
     auto thisOp = cast<ReshapeOp>(op);
     auto prevOp = thisOp.getOperand(0).getDefiningOp();
     return isa_and_nonnull<ReshapeOp>(prevOp) ? success() : failure();
   }
 
   void rewrite(Operation *op, PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_67(mht_67_v, 1994, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "rewrite");
+
     auto thisOp = cast<ReshapeOp>(op);
     auto prevOp = cast<ReshapeOp>(thisOp.getOperand(0).getDefiningOp());
 
@@ -1645,6 +2017,9 @@ struct ConvertShapeTo1D : public OpRewritePattern<ReshapeOp> {
 
   LogicalResult matchAndRewrite(ReshapeOp reshape,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_68(mht_68_v, 2020, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "matchAndRewrite");
+
     if (!reshape.shape().hasOneUse()) return failure();
 
     DenseIntElementsAttr shape;
@@ -1673,6 +2048,9 @@ struct ConvertShapeTo1D : public OpRewritePattern<ReshapeOp> {
 };
 
 bool InputOutputHasSameShape(mlir::Type input_type, mlir::Type output_type) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_69(mht_69_v, 2051, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "InputOutputHasSameShape");
+
   auto input_shaped_type = input_type.dyn_cast_or_null<ShapedType>();
   if (!input_shaped_type || !input_shaped_type.hasStaticShape()) return false;
 
@@ -1685,6 +2063,9 @@ bool InputOutputHasSameShape(mlir::Type input_type, mlir::Type output_type) {
 }  // end anonymous namespace
 
 OpFoldResult ReshapeOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_70(mht_70_v, 2066, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "ReshapeOp::fold");
+
   // Remove identity reshape with both static result and input shape.
   auto result_type = getType().cast<ShapedType>();
   auto input_type = getOperand(0).getType().cast<ShapedType>();
@@ -1713,6 +2094,9 @@ OpFoldResult ReshapeOp::fold(ArrayRef<Attribute> operands) {
 
 void ReshapeOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                             MLIRContext *context) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_71(mht_71_v, 2097, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "ReshapeOp::getCanonicalizationPatterns");
+
   results.add<RemoveAdjacentReshape, ConvertShapeTo1D>(context);
 }
 
@@ -1722,6 +2106,9 @@ using ReshapeErrorHandler =
 LogicalResult GetReshapeOutputType(Value input, Value shape,
                                    ReshapeErrorHandler error_handler,
                                    TensorType &output_ty) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_72(mht_72_v, 2109, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "GetReshapeOutputType");
+
   auto input_ty = input.getType().cast<TensorType>();
   auto element_ty = input_ty.getElementType();
   output_ty = UnrankedTensorType::get(element_ty);
@@ -1813,6 +2200,9 @@ LogicalResult GetReshapeOutputType(Value input, Value shape,
 }
 
 mlir::LogicalResult ReshapeOp::verify() {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_73(mht_73_v, 2203, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "ReshapeOp::verify");
+
   ReshapeOp op = *this;
   auto error_handler = [&op](const llvm::Twine &message) -> LogicalResult {
     return op.emitOpError() << message;
@@ -1846,6 +2236,9 @@ LogicalResult ReshapeOp::inferReturnTypes(
     MLIRContext *context, Optional<Location> location, ValueRange operands,
     DictionaryAttr attr, RegionRange,
     SmallVectorImpl<Type> &inferredReturnTypes) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_74(mht_74_v, 2239, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "ReshapeOp::inferReturnTypes");
+
   ReshapeOpAdaptor op(operands, attr);
   const Value input = op.input();
   const Value shape = op.shape();
@@ -1870,6 +2263,9 @@ LogicalResult ReshapeOp::inferReturnTypes(
 }
 
 bool ReshapeOp::isCompatibleReturnTypes(TypeRange lhs, TypeRange rhs) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_75(mht_75_v, 2266, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "ReshapeOp::isCompatibleReturnTypes");
+
   if (lhs.size() != rhs.size() || lhs.size() != 1) return false;
   if (failed(mlir::verifyCompatibleShape(lhs[0], rhs[0]))) return false;
   return true;
@@ -1897,10 +2293,16 @@ bool ReshapeOp::isCompatibleReturnTypes(TypeRange lhs, TypeRange rhs) {
 // TODO(b/133341698): Move to tablegen when variadic is supported.
 struct RemoveRedundantUnpackPack : public RewritePattern {
   explicit RemoveRedundantUnpackPack(MLIRContext *context)
-      : RewritePattern(PackOp::getOperationName(), 2, context) {}
+      : RewritePattern(PackOp::getOperationName(), 2, context) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_76(mht_76_v, 2297, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "RemoveRedundantUnpackPack");
+}
 
   LogicalResult matchAndRewrite(Operation *op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_77(mht_77_v, 2303, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "matchAndRewrite");
+
     TFL::PackOp pack_op = cast<TFL::PackOp>(op);
     Operation *first_input = pack_op.getOperand(0).getDefiningOp();
     if (!first_input) return failure();
@@ -1935,9 +2337,15 @@ struct RemoveRedundantUnpackPack : public RewritePattern {
 // Replace PackOp with a reshape when there is only one operand.
 struct ReplacePackWithReshape : public RewritePattern {
   explicit ReplacePackWithReshape(MLIRContext *context)
-      : RewritePattern(PackOp::getOperationName(), 2, context) {}
+      : RewritePattern(PackOp::getOperationName(), 2, context) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_78(mht_78_v, 2341, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "ReplacePackWithReshape");
+}
   LogicalResult matchAndRewrite(Operation *op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_79(mht_79_v, 2346, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "matchAndRewrite");
+
     TFL::PackOp pack_op = cast<TFL::PackOp>(op);
     if (pack_op.getNumOperands() != 1) return failure();
 
@@ -1965,6 +2373,9 @@ struct ReplacePackWithReshape : public RewritePattern {
 
 void PackOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                          MLIRContext *context) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_80(mht_80_v, 2376, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "PackOp::getCanonicalizationPatterns");
+
   results.add<RemoveRedundantUnpackPack, ReplacePackWithReshape>(context);
 }
 
@@ -1973,6 +2384,9 @@ void PackOp::getCanonicalizationPatterns(RewritePatternSet &results,
 //===----------------------------------------------------------------------===//
 
 mlir::LogicalResult SliceOp::verify() {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_81(mht_81_v, 2387, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "SliceOp::verify");
+
   SliceOp op = *this;
   auto input_type = op.input().getType().cast<ShapedType>();
   auto begin_type = op.begin().getType().cast<ShapedType>();
@@ -2037,6 +2451,9 @@ mlir::LogicalResult SliceOp::verify() {
 TFL::ConstOp NarrowDownInt64InputValuesForOp(Operation *input_op,
                                              RankedTensorType value_type,
                                              Location loc, OpBuilder *builder) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_82(mht_82_v, 2454, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "NarrowDownInt64InputValuesForOp");
+
   if (input_op == nullptr) return nullptr;
 
   mlir::DenseIntElementsAttr attr;
@@ -2065,6 +2482,9 @@ struct CastDonwInt64BeginEndToInt32 : public OpRewritePattern<TFL::SliceOp> {
 
   LogicalResult matchAndRewrite(TFL::SliceOp slice_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_83(mht_83_v, 2485, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "matchAndRewrite");
+
     auto begin = slice_op.begin();
     auto size = slice_op.size();
     auto begin_type = begin.getType().dyn_cast_or_null<RankedTensorType>();
@@ -2100,6 +2520,9 @@ struct CastDonwInt64BeginEndToInt32 : public OpRewritePattern<TFL::SliceOp> {
 
 void SliceOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                           MLIRContext *context) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_84(mht_84_v, 2523, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "SliceOp::getCanonicalizationPatterns");
+
   results.add<CastDonwInt64BeginEndToInt32>(context);
 }
 
@@ -2108,6 +2531,9 @@ void SliceOp::getCanonicalizationPatterns(RewritePatternSet &results,
 //===----------------------------------------------------------------------===//
 
 OpFoldResult SqueezeOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_85(mht_85_v, 2534, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "SqueezeOp::fold");
+
   auto input_ty = input().getType().dyn_cast<RankedTensorType>();
   auto result_ty = getType().dyn_cast<RankedTensorType>();
 
@@ -2121,14 +2547,23 @@ OpFoldResult SqueezeOp::fold(ArrayRef<Attribute> operands) {
 //===----------------------------------------------------------------------===//
 
 OpFoldResult SubOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_86(mht_86_v, 2550, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "SubOp::fold");
+
   // TODO(b/142478136): Handle fused ops.
   if (fused_activation_function() != "NONE") return {};
   return ConstFoldBinaryOp(
       getType(), operands, [](APFloat a, APFloat b) { return a - b; },
-      [](APInt a, APInt b) { return a - b; });
+      [](APInt a, APInt b) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_87(mht_87_v, 2558, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "lambda");
+ return a - b; });
 }
 
 int64_t SubOp::GetArithmeticCount(Operation *op) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_88(mht_88_v, 2564, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "SubOp::GetArithmeticCount");
+
   int64_t count;
   if (ArithmeticCountUtilHelper::GetFirstOutputCount(op, &count)) return count;
 
@@ -2141,6 +2576,9 @@ int64_t SubOp::GetArithmeticCount(Operation *op) {
 
 static void BuildTopKOp(OpBuilder *builder, OperationState &result, Value input,
                         Value k) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_89(mht_89_v, 2579, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "BuildTopKOp");
+
   // Output size is only known if k is constant value. A negative dimension is
   // considered dynamic so use -1 here if k is not a constant value.
   int const_k = -1;
@@ -2171,6 +2609,9 @@ static void BuildTopKOp(OpBuilder *builder, OperationState &result, Value input,
 
 // Return true if the op has non-empty "minmax" attribute.
 static inline bool HasValidMinMaxAttribute(Operation *op) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_90(mht_90_v, 2612, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "HasValidMinMaxAttribute");
+
   auto minmax = op->getAttrOfType<ArrayAttr>("minmax");
   return minmax && minmax.getValue().size() == 2;
 }
@@ -2181,9 +2622,15 @@ namespace {
 /// and itself have "minmax" attribute set.
 struct DropFakeQuant : public RewritePattern {
   explicit DropFakeQuant(MLIRContext *context)
-      : RewritePattern(FakeQuantOp::getOperationName(), 1, context) {}
+      : RewritePattern(FakeQuantOp::getOperationName(), 1, context) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_91(mht_91_v, 2626, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "DropFakeQuant");
+}
 
   LogicalResult match(Operation *op) const override {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_92(mht_92_v, 2631, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "match");
+
     // We only match the op with valid "minmax" attribute.
     if (!HasValidMinMaxAttribute(op)) return failure();
 
@@ -2197,6 +2644,9 @@ struct DropFakeQuant : public RewritePattern {
   }
 
   void rewrite(Operation *op, PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_93(mht_93_v, 2647, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "rewrite");
+
     // Replace the matched FakeQuantOp by its primary operand.
     rewriter.replaceOp(op, op->getOperand(0));
   }
@@ -2205,6 +2655,9 @@ struct DropFakeQuant : public RewritePattern {
 
 void FakeQuantOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                               MLIRContext *context) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_94(mht_94_v, 2658, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "FakeQuantOp::getCanonicalizationPatterns");
+
   results.add<DropFakeQuant>(context);
 }
 
@@ -2218,6 +2671,9 @@ LogicalResult UnpackOp::inferReturnTypes(
     MLIRContext *context, Optional<Location> loc, ValueRange operands,
     DictionaryAttr attributes, RegionRange regions,
     SmallVectorImpl<Type> &inferredReturnTypes) {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_95(mht_95_v, 2674, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "UnpackOp::inferReturnTypes");
+
   UnpackOpAdaptor op(operands, attributes);
   // TODO(jpienaar): Refactor verify
   if (failed(op.verify(loc.hasValue() ? *loc : UnknownLoc::get(context))))
@@ -2272,6 +2728,9 @@ LogicalResult UnpackOp::inferReturnTypes(
 }
 
 bool UnpackOp::isCompatibleReturnTypes(TypeRange lhs, TypeRange rhs) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_96(mht_96_v, 2731, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "UnpackOp::isCompatibleReturnTypes");
+
   if (lhs.size() != rhs.size()) return false;
   for (auto pair : llvm::zip(lhs, rhs)) {
     if (failed(
@@ -2301,6 +2760,9 @@ static llvm::Optional<int64_t> ExtractConstantIntFromTensor(Value value) {
 // `tensor<3x2xi32>`.
 static RankedTensorType SubstituteRankedTensorTypeDimSize(
     RankedTensorType input_type, int64_t dim, int64_t dim_size) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_97(mht_97_v, 2763, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "SubstituteRankedTensorTypeDimSize");
+
   auto shape = input_type.getShape().vec();
   shape[dim] = dim_size;
   return RankedTensorType::get(shape, input_type.getElementType());
@@ -2311,6 +2773,9 @@ template <typename ExpectedOutputTypeGetter>
 static LogicalResult VerifySplitOpOutputTypes(
     Operation *op, int64_t num_splits,
     ExpectedOutputTypeGetter get_expected_output_type) {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_98(mht_98_v, 2776, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "VerifySplitOpOutputTypes");
+
   for (int64_t i = 0; i < num_splits; ++i) {
     auto expected_output_type = get_expected_output_type(i);
     Value output = op->getResult(i);
@@ -2323,6 +2788,9 @@ static LogicalResult VerifySplitOpOutputTypes(
 }
 
 mlir::LogicalResult SplitOp::verify() {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_99(mht_99_v, 2791, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "SplitOp::verify");
+
   SplitOp op = *this;
   int64_t num_splits = op.num_splits();
   if (op.getNumResults() != num_splits)
@@ -2360,6 +2828,9 @@ mlir::LogicalResult SplitOp::verify() {
 }
 
 mlir::LogicalResult SplitVOp::verify() {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_100(mht_100_v, 2831, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "SplitVOp::verify");
+
   SplitVOp op = *this;
   int64_t num_splits = op.num_splits();
   if (op.getNumResults() != num_splits)
@@ -2440,6 +2911,9 @@ mlir::LogicalResult SplitVOp::verify() {
   // Verifies result tensor types.
   auto get_expected_output_type = [input_type, split_dim,
                                    &size_splits](int64_t i) {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_101(mht_101_v, 2914, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "lambda");
+
     return SubstituteRankedTensorTypeDimSize(input_type, split_dim,
                                              size_splits[i]);
   };
@@ -2458,6 +2932,9 @@ mlir::LogicalResult SplitVOp::verify() {
 //===----------------------------------------------------------------------===//
 
 mlir::LogicalResult LSTMOp::verify() {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_102(mht_102_v, 2935, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "LSTMOp::verify");
+
   LSTMOp op = *this;
   auto operands = op.GetStatefulOperands();
   if (operands.size() != 2 || operands[0] != 18 || operands[1] != 19) {
@@ -2531,6 +3008,9 @@ struct RemoveLSTMOpZeroBias : public OpRewritePattern<LSTMOp> {
 
   LogicalResult matchAndRewrite(LSTMOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_103(mht_103_v, 3011, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "matchAndRewrite");
+
     if (EqualsZero(op.input_gate_bias())) {
       auto none_value = rewriter.create<TFL::NoValueOp>(
           rewriter.getUnknownLoc(), rewriter.getNoneType(),
@@ -2553,6 +3033,9 @@ struct RemoveLSTMOpZeroBias : public OpRewritePattern<LSTMOp> {
 
 void LSTMOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                          MLIRContext *context) {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_104(mht_104_v, 3036, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "LSTMOp::getCanonicalizationPatterns");
+
   results.add<RemoveLSTMOpZeroBias>(context);
 }
 
@@ -2561,6 +3044,9 @@ void LSTMOp::getCanonicalizationPatterns(RewritePatternSet &results,
 //===----------------------------------------------------------------------===//
 
 mlir::LogicalResult UnidirectionalSequenceLSTMOp::verify() {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_105(mht_105_v, 3047, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "UnidirectionalSequenceLSTMOp::verify");
+
   UnidirectionalSequenceLSTMOp op = *this;
   auto operands = op.GetStatefulOperands();
   if (operands.size() == 2 && operands[0] == 18 && operands[1] == 19) {
@@ -2573,6 +3059,9 @@ mlir::LogicalResult UnidirectionalSequenceLSTMOp::verify() {
 LogicalResult UnidirectionalSequenceLSTMOp::inferReturnTypes(
     MLIRContext *, Optional<Location>, ValueRange operands, DictionaryAttr attr,
     RegionRange, SmallVectorImpl<Type> &inferredReturnTypes) {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_106(mht_106_v, 3062, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "UnidirectionalSequenceLSTMOp::inferReturnTypes");
+
   Value input = operands[0];
   auto input_type = input.getType().dyn_cast_or_null<RankedTensorType>();
 
@@ -2627,6 +3116,9 @@ LogicalResult UnidirectionalSequenceLSTMOp::inferReturnTypes(
 
 bool UnidirectionalSequenceLSTMOp::isCompatibleReturnTypes(TypeRange lhs,
                                                            TypeRange rhs) {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_107(mht_107_v, 3119, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "UnidirectionalSequenceLSTMOp::isCompatibleReturnTypes");
+
   if (lhs.size() != rhs.size() || lhs.size() != 1) return false;
   if (failed(mlir::verifyCompatibleShape(lhs[0], rhs[0]))) return false;
   return true;
@@ -2637,6 +3129,9 @@ bool UnidirectionalSequenceLSTMOp::isCompatibleReturnTypes(TypeRange lhs,
 //===----------------------------------------------------------------------===//
 
 mlir::LogicalResult BidirectionalSequenceLSTMOp::verify() {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_108(mht_108_v, 3132, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "BidirectionalSequenceLSTMOp::verify");
+
   BidirectionalSequenceLSTMOp op = *this;
   auto operands = op.GetStatefulOperands();
   if (operands.size() == 4 && operands[0] == 35 && operands[1] == 36 &&
@@ -2652,6 +3147,9 @@ mlir::LogicalResult BidirectionalSequenceLSTMOp::verify() {
 //===----------------------------------------------------------------------===//
 
 mlir::LogicalResult UnidirectionalSequenceRNNOp::verify() {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_109(mht_109_v, 3150, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "UnidirectionalSequenceRNNOp::verify");
+
   UnidirectionalSequenceRNNOp op = *this;
   auto operands = op.GetStatefulOperands();
   if (operands.size() == 1 && operands[0] == 4) {
@@ -2666,6 +3164,9 @@ mlir::LogicalResult UnidirectionalSequenceRNNOp::verify() {
 //===----------------------------------------------------------------------===//
 
 mlir::LogicalResult SVDFOp::verify() {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_110(mht_110_v, 3167, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "SVDFOp::verify");
+
   SVDFOp op = *this;
   auto operands = op.GetStatefulOperands();
   if (operands.size() == 1 && operands[0] == 4) {
@@ -2679,6 +3180,9 @@ mlir::LogicalResult SVDFOp::verify() {
 //===----------------------------------------------------------------------===//
 
 OpFoldResult AbsOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_111(mht_111_v, 3183, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "AbsOp::fold");
+
   Type result_type = getType();
   // Only constant fold for tensor of f32 is implemented.
   if (!IsF32ShapedType(result_type)) return nullptr;
@@ -2692,6 +3196,9 @@ OpFoldResult AbsOp::fold(ArrayRef<Attribute> operands) {
 //===----------------------------------------------------------------------===//
 
 OpFoldResult NegOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_112(mht_112_v, 3199, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "NegOp::fold");
+
   Type result_type = getType();
   // Only constant fold for tensor of f32 is implemented.
   if (!IsF32ShapedType(result_type)) return nullptr;
@@ -2705,6 +3212,9 @@ OpFoldResult NegOp::fold(ArrayRef<Attribute> operands) {
 //===----------------------------------------------------------------------===//
 
 OpFoldResult SinOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_113_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_113(mht_113_v, 3215, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "SinOp::fold");
+
   Type result_type = getType();
   // Only constant fold for tensor of f32 is implemented.
   if (!IsF32ShapedType(result_type)) return nullptr;
@@ -2722,6 +3232,9 @@ OpFoldResult SinOp::fold(ArrayRef<Attribute> operands) {
 //===----------------------------------------------------------------------===//
 
 OpFoldResult CosOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_114_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_114(mht_114_v, 3235, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "CosOp::fold");
+
   Type result_type = getType();
   // Only constant fold for tensor of f32 is implemented.
   if (!IsF32ShapedType(result_type)) return nullptr;
@@ -2739,6 +3252,9 @@ OpFoldResult CosOp::fold(ArrayRef<Attribute> operands) {
 //===----------------------------------------------------------------------===//
 
 OpFoldResult LogOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_115(mht_115_v, 3255, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "LogOp::fold");
+
   Type result_type = getType();
   // Only constant fold for tensor of f32 is implemented.
   if (!IsF32ShapedType(result_type)) return nullptr;
@@ -2756,6 +3272,9 @@ OpFoldResult LogOp::fold(ArrayRef<Attribute> operands) {
 //===----------------------------------------------------------------------===//
 
 OpFoldResult ShapeOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_116_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_116(mht_116_v, 3275, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "ShapeOp::fold");
+
   auto input_type = input().getType().cast<ShapedType>();
   if (!input_type.hasStaticShape()) return nullptr;
 
@@ -2779,6 +3298,9 @@ OpFoldResult ShapeOp::fold(ArrayRef<Attribute> operands) {
 //===----------------------------------------------------------------------===//
 
 OpFoldResult SqrtOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_117(mht_117_v, 3301, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "SqrtOp::fold");
+
   Type result_type = getType();
   // Only constant fold for tensor of f32 is implemented.
   if (!IsF32ShapedType(result_type)) return nullptr;
@@ -2796,6 +3318,9 @@ OpFoldResult SqrtOp::fold(ArrayRef<Attribute> operands) {
 //===----------------------------------------------------------------------===//
 
 OpFoldResult RsqrtOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_118_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_118(mht_118_v, 3321, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "RsqrtOp::fold");
+
   Type result_type = getType();
   // Only constant fold for tensor of f32/bf16 is implemented.
   if (!IsF32ShapedType(result_type) && !IsBF16ShapedType(result_type))
@@ -2820,6 +3345,9 @@ OpFoldResult RsqrtOp::fold(ArrayRef<Attribute> operands) {
 //===----------------------------------------------------------------------===//
 
 OpFoldResult SquareOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_119(mht_119_v, 3348, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "SquareOp::fold");
+
   Type result_type = getType();
   // Only constant fold for tensor of f32 is implemented.
   if (!IsF32ShapedType(result_type)) return nullptr;
@@ -2833,6 +3361,9 @@ OpFoldResult SquareOp::fold(ArrayRef<Attribute> operands) {
 //===----------------------------------------------------------------------===//
 
 OpFoldResult RankOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_120(mht_120_v, 3364, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "RankOp::fold");
+
   assert(operands.size() == 1);
   auto result_type = getType().cast<ShapedType>();
   if (auto elements_attr = operands[0].dyn_cast_or_null<ElementsAttr>()) {
@@ -2859,12 +3390,18 @@ OpFoldResult RankOp::fold(ArrayRef<Attribute> operands) {
 //===----------------------------------------------------------------------===//
 
 OpFoldResult ConstOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_121(mht_121_v, 3393, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "ConstOp::fold");
+
   assert(operands.empty() && "constant has no operands");
   // Return the held attribute value.
   return value();
 }
 
 bool ConstOp::isCompatibleReturnTypes(TypeRange l, TypeRange r) {
+   std::vector<std::string> mht_122_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_122(mht_122_v, 3402, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "ConstOp::isCompatibleReturnTypes");
+
   // Allow the type inferred to not match exactly the inferred type as the
   // inferred type is from the element attribute's type while the op may have
   // gotten constructed from TF const op or be in a partial state of shape
@@ -2880,6 +3417,9 @@ struct FoldPseudoConstOp : public OpRewritePattern<ConstOp> {
 
   LogicalResult matchAndRewrite(ConstOp const_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_123_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_123(mht_123_v, 3420, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "matchAndRewrite");
+
     if (arith::ConstantOp::isBuildableWith(const_op.value(),
                                            const_op.getType())) {
       rewriter.replaceOpWithNewOp<arith::ConstantOp>(const_op,
@@ -2899,6 +3439,9 @@ struct FoldPseudoConstOp : public OpRewritePattern<ConstOp> {
 
 void ConstOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                           MLIRContext *context) {
+   std::vector<std::string> mht_124_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_124(mht_124_v, 3442, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "ConstOp::getCanonicalizationPatterns");
+
   results.add<FoldPseudoConstOp>(context);
 }
 
@@ -2907,6 +3450,9 @@ void ConstOp::getCanonicalizationPatterns(RewritePatternSet &results,
 //===----------------------------------------------------------------------===//
 
 OpFoldResult CastOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_125_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_125(mht_125_v, 3453, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "CastOp::fold");
+
   assert(operands.size() == 1);
   if (getElementTypeOrSelf(input()) == getElementTypeOrSelf(getType())) {
     return input();
@@ -2938,6 +3484,9 @@ OpFoldResult CastOp::fold(ArrayRef<Attribute> operands) {
   // type's signedness, we will determine whether or not sign extension is
   // needed.
   auto cast = [&](APInt value) {
+   std::vector<std::string> mht_126_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_126(mht_126_v, 3487, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "lambda");
+
     if (involves_bool) {
       // Handle boolean inputs or outputs explicitly as it doesn't have the same
       // behavior as extension or truncation.
@@ -2959,6 +3508,9 @@ OpFoldResult CastOp::fold(ArrayRef<Attribute> operands) {
 
 static void BuildSelectV2Op(Builder *builder, OperationState &result,
                             Value cond, Value x, Value y) {
+   std::vector<std::string> mht_127_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_127(mht_127_v, 3511, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "BuildSelectV2Op");
+
   auto operand_type =
       OpTrait::util::getBroadcastedType(x.getType(), y.getType());
 
@@ -3014,6 +3566,9 @@ namespace {
 // types.
 template <typename FloatOrInt>
 int GetLengthOfRange(FloatOrInt start, FloatOrInt limit, FloatOrInt delta) {
+   std::vector<std::string> mht_128_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_128(mht_128_v, 3569, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "GetLengthOfRange");
+
   // Refer to the implementation in
   // tensorflow/lite/kernels/range.cc.
   return std::is_integral<FloatOrInt>::value
@@ -3029,6 +3584,9 @@ template <typename FloatOrIntAtrr>
 DenseElementsAttr BuildConstRangeTensor(Type result_elem_type, int num_elements,
                                         FloatOrIntAtrr start_attr,
                                         FloatOrIntAtrr delta_attr) {
+   std::vector<std::string> mht_129_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_129(mht_129_v, 3587, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "BuildConstRangeTensor");
+
   using ValueType = typename FloatOrIntAtrr::ValueType;  // APInt or APFloat
   ValueType start = start_attr.getValue();
   ValueType delta = delta_attr.getValue();
@@ -3048,6 +3606,9 @@ DenseElementsAttr BuildConstRangeTensor(Type result_elem_type, int num_elements,
 }  // namespace
 
 OpFoldResult RangeOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_130_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_130(mht_130_v, 3609, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "RangeOp::fold");
+
   assert(operands.size() == 3);
   auto start_tensor = operands[0].dyn_cast_or_null<ElementsAttr>();
   auto limit_tensor = operands[1].dyn_cast_or_null<ElementsAttr>();
@@ -3086,6 +3647,9 @@ OpFoldResult RangeOp::fold(ArrayRef<Attribute> operands) {
 //===----------------------------------------------------------------------===//
 
 mlir::LogicalResult TransposeConvOp::verify() {
+   std::vector<std::string> mht_131_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_131(mht_131_v, 3650, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "TransposeConvOp::verify");
+
   TransposeConvOp op = *this;
   ShapedType output_type = op.output().getType().cast<ShapedType>();
   ShapedType output_shape_type = op.output_shape().getType().cast<ShapedType>();
@@ -3119,6 +3683,9 @@ mlir::LogicalResult TransposeConvOp::verify() {
 }
 
 int64_t TransposeConvOp::GetArithmeticCount(Operation *op) {
+   std::vector<std::string> mht_132_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_132(mht_132_v, 3686, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "TransposeConvOp::GetArithmeticCount");
+
   int64_t count = -1;
   auto transpose_conv = llvm::dyn_cast<TransposeConvOp>(op);
   auto input_type = transpose_conv.input()
@@ -3143,6 +3710,9 @@ int64_t TransposeConvOp::GetArithmeticCount(Operation *op) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult StridedSliceOp::verify() {
+   std::vector<std::string> mht_133_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_133(mht_133_v, 3713, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "StridedSliceOp::verify");
+
   StridedSliceOp op = *this;
   auto ranked_input_type = op.input().getType().dyn_cast<RankedTensorType>();
 
@@ -3180,6 +3750,9 @@ LogicalResult StridedSliceOp::verify() {
 }
 
 OpFoldResult StridedSliceOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_134_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_134(mht_134_v, 3753, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "StridedSliceOp::fold");
+
   // Currently only support all masks being 0.
   if (begin_mask() != 0 || end_mask() != 0 || ellipsis_mask() != 0 ||
       new_axis_mask() != 0 || shrink_axis_mask() != 0)
@@ -3239,6 +3812,9 @@ void ComputePermutation(ElementsAttr input_tensor, ArrayRef<int32_t> perm,
                         ArrayRef<int64_t> output_shape, int num_dimensions,
                         int output_axis, std::vector<uint64_t> *input_indices,
                         std::vector<Attribute> *new_values) {
+   std::vector<std::string> mht_135_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_135(mht_135_v, 3815, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "ComputePermutation");
+
   // Refer to the implementation of `Transpose` function in
   // tensorflow/lite/kernels/internal/reference/reference_ops.h
   assert(output_axis < num_dimensions);
@@ -3262,6 +3838,9 @@ void ComputePermutation(ElementsAttr input_tensor, ArrayRef<int32_t> perm,
 }  // namespace
 
 OpFoldResult TransposeOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_136_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_136(mht_136_v, 3841, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "TransposeOp::fold");
+
   assert(operands.size() == 2);
   auto input_tensor = operands[0].dyn_cast_or_null<ElementsAttr>();
   auto perm_tensor = operands[1].dyn_cast_or_null<ElementsAttr>();
@@ -3301,6 +3880,9 @@ OpFoldResult TransposeOp::fold(ArrayRef<Attribute> operands) {
 }
 
 mlir::LogicalResult TransposeOp::verify() {
+   std::vector<std::string> mht_137_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_137(mht_137_v, 3883, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "TransposeOp::verify");
+
   TransposeOp op = *this;
   auto input_type = op.input().getType().cast<ShapedType>();
   auto perm_type = op.perm().getType().cast<ShapedType>();
@@ -3371,6 +3953,9 @@ mlir::LogicalResult TransposeOp::verify() {
 
 static void BuildTransposeOp(OpBuilder *builder, OperationState &result,
                              Value input, Value perm) {
+   std::vector<std::string> mht_138_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_138(mht_138_v, 3956, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "BuildTransposeOp");
+
   // Output size is only known if input is ranked and perm is a constant.
   auto input_type = input.getType().cast<TensorType>();
   DenseIntElementsAttr perm_const;
@@ -3431,6 +4016,9 @@ static void BuildTransposeOp(OpBuilder *builder, OperationState &result,
 void IfOp::getSuccessorRegions(Optional<unsigned> index,
                                ArrayRef<Attribute> operands,
                                SmallVectorImpl<RegionSuccessor> &regions) {
+   std::vector<std::string> mht_139_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_139(mht_139_v, 4019, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "IfOp::getSuccessorRegions");
+
   // The `then` and the `else` region branch back to the parent operation.
   if (index.hasValue()) {
     regions.push_back(RegionSuccessor(getResults()));
@@ -3470,6 +4058,9 @@ struct PolyCallResultOperandsMatchAndImplicitCapture
 
   LogicalResult matchAndRewrite(PolyCallOp while_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_140_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_140(mht_140_v, 4061, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "matchAndRewrite");
+
     // Finish this.
     return success();
   }
@@ -3479,12 +4070,18 @@ struct PolyCallResultOperandsMatchAndImplicitCapture
 
 void PolyCallOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                              MLIRContext *context) {
+   std::vector<std::string> mht_141_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_141(mht_141_v, 4073, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "PolyCallOp::getCanonicalizationPatterns");
+
   results.add<PolyCallResultOperandsMatchAndImplicitCapture>(context);
 }
 
 void PolyCallOp::getSuccessorRegions(
     Optional<unsigned> index, ArrayRef<Attribute> operands,
     SmallVectorImpl<RegionSuccessor> &regions) {
+   std::vector<std::string> mht_142_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_142(mht_142_v, 4082, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "PolyCallOp::getSuccessorRegions");
+
   // Defaults to first region for TFLite execution.
 }
 
@@ -3493,6 +4090,9 @@ void PolyCallOp::getSuccessorRegions(
 //===----------------------------------------------------------------------===//
 
 LogicalResult WhileOp::verify() {
+   std::vector<std::string> mht_143_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_143(mht_143_v, 4093, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "WhileOp::verify");
+
   WhileOp op = *this;
   if (op.getNumOperands() != op.getNumResults())
     return op.emitOpError(llvm::formatv(
@@ -3527,6 +4127,9 @@ struct WhileResultOperandsMatchAndImplicitCapture
 
   LogicalResult matchAndRewrite(WhileOp while_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_144_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_144(mht_144_v, 4130, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "matchAndRewrite");
+
     // Replace values simply passed through the body with extern values
     // (in both body and condition regions as well as while result). The
     // block arguments of body and while match and so the corresponding cond
@@ -3631,12 +4234,21 @@ struct WhileResultOperandsMatchAndImplicitCapture
 
 void WhileOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                           MLIRContext *context) {
+   std::vector<std::string> mht_145_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_145(mht_145_v, 4237, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "WhileOp::getCanonicalizationPatterns");
+
   results.add<WhileResultOperandsMatchAndImplicitCapture>(context);
 }
 
-Region &WhileOp::getLoopBody() { return body(); }
+Region &WhileOp::getLoopBody() {
+   std::vector<std::string> mht_146_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_146(mht_146_v, 4244, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "WhileOp::getLoopBody");
+ return body(); }
 
 bool WhileOp::isDefinedOutsideOfLoop(Value value) {
+   std::vector<std::string> mht_147_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_147(mht_147_v, 4249, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "WhileOp::isDefinedOutsideOfLoop");
+
   // TODO(jpienaar): This is to overly conservative and disables anything other
   // than constant hoisting initially.
   return false;
@@ -3647,6 +4259,9 @@ bool WhileOp::isDefinedOutsideOfLoop(Value value) {
 //===----------------------------------------------------------------------===//
 
 int64_t LogisticOp::GetArithmeticCount(Operation *op) {
+   std::vector<std::string> mht_148_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_148(mht_148_v, 4262, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "LogisticOp::GetArithmeticCount");
+
   int64_t count;
   // As a very rough ballpark, the cost of evaluating a math function
   // such as tanh or logistic is about 32 multiplications, and about as
@@ -3663,6 +4278,9 @@ int64_t LogisticOp::GetArithmeticCount(Operation *op) {
 //===----------------------------------------------------------------------===//
 
 int64_t LogSoftmaxOp::GetArithmeticCount(Operation *op) {
+   std::vector<std::string> mht_149_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_149(mht_149_v, 4281, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "LogSoftmaxOp::GetArithmeticCount");
+
   int64_t count;
   // As a very rough ballpark, the cost of evaluating a math function
   // such as tanh or logistic is about 32 multiplications, and about as
@@ -3679,6 +4297,9 @@ int64_t LogSoftmaxOp::GetArithmeticCount(Operation *op) {
 //===----------------------------------------------------------------------===//
 
 int64_t SoftmaxOp::GetArithmeticCount(Operation *op) {
+   std::vector<std::string> mht_150_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_150(mht_150_v, 4300, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "SoftmaxOp::GetArithmeticCount");
+
   int64_t count;
   // As a very rough ballpark, the cost of evaluating a math function
   // such as tanh or logistic is about 32 multiplications, and about as
@@ -3695,6 +4316,9 @@ int64_t SoftmaxOp::GetArithmeticCount(Operation *op) {
 //===----------------------------------------------------------------------===//
 
 int64_t TanhOp::GetArithmeticCount(Operation *op) {
+   std::vector<std::string> mht_151_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_151(mht_151_v, 4319, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "TanhOp::GetArithmeticCount");
+
   int64_t count;
   // As a very rough ballpark, the cost of evaluating a math function
   // such as tanh or logistic is about 32 multiplications, and about as
@@ -3711,6 +4335,9 @@ int64_t TanhOp::GetArithmeticCount(Operation *op) {
 //===----------------------------------------------------------------------===//
 
 int64_t AddNOp::GetArithmeticCount(Operation *op) {
+   std::vector<std::string> mht_152_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_152(mht_152_v, 4338, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "AddNOp::GetArithmeticCount");
+
   int64_t count;
   if (ArithmeticCountUtilHelper::GetFirstOutputCount(op, &count)) {
     // AddN cost is roughly the same cost as N-1 Adds.
@@ -3726,6 +4353,9 @@ int64_t AddNOp::GetArithmeticCount(Operation *op) {
 //===----------------------------------------------------------------------===//
 
 int64_t AveragePool2DOp::GetArithmeticCount(Operation *op) {
+   std::vector<std::string> mht_153_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_153(mht_153_v, 4356, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "AveragePool2DOp::GetArithmeticCount");
+
   int64_t count;
   if (ArithmeticCountUtilHelper::GetFirstOutputCount(op, &count)) {
     auto avg_pool = llvm::dyn_cast<AveragePool2DOp>(op);
@@ -3740,6 +4370,9 @@ int64_t AveragePool2DOp::GetArithmeticCount(Operation *op) {
 //===----------------------------------------------------------------------===//
 
 int64_t MaxPool2DOp::GetArithmeticCount(Operation *op) {
+   std::vector<std::string> mht_154_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_154(mht_154_v, 4373, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "MaxPool2DOp::GetArithmeticCount");
+
   int64_t count;
   if (ArithmeticCountUtilHelper::GetFirstOutputCount(op, &count)) {
     auto max_pool = llvm::dyn_cast<MaxPool2DOp>(op);
@@ -3754,6 +4387,9 @@ int64_t MaxPool2DOp::GetArithmeticCount(Operation *op) {
 //===----------------------------------------------------------------------===//
 
 int64_t L2NormalizationOp::GetArithmeticCount(Operation *op) {
+   std::vector<std::string> mht_155_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_155(mht_155_v, 4390, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "L2NormalizationOp::GetArithmeticCount");
+
   int64_t count;
   // Computing the squared L2 norm is N multiply-adds so 2N ops,
   // then the single inverse-sqrt is negligible, then we multiply each
@@ -3770,6 +4406,9 @@ int64_t L2NormalizationOp::GetArithmeticCount(Operation *op) {
 //===----------------------------------------------------------------------===//
 
 OpFoldResult PadOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_156_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_156(mht_156_v, 4409, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "PadOp::fold");
+
   if (InputOutputHasSameShape(input().getType(), output().getType()))
     return input();
 
@@ -3781,6 +4420,9 @@ OpFoldResult PadOp::fold(ArrayRef<Attribute> operands) {
 //===----------------------------------------------------------------------===//
 
 OpFoldResult PadV2Op::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_157_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_157(mht_157_v, 4423, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "PadV2Op::fold");
+
   if (InputOutputHasSameShape(input().getType(), output().getType()))
     return input();
 
@@ -3792,10 +4434,16 @@ OpFoldResult PadV2Op::fold(ArrayRef<Attribute> operands) {
 //===----------------------------------------------------------------------===//
 
 OpFoldResult NoValueOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_158_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_158(mht_158_v, 4437, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "NoValueOp::fold");
+
   return valueAttr();
 }
 
 bool NoValueOp::isBuildableWith(Attribute value, Type type) {
+   std::vector<std::string> mht_159_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSirPStfl_opsDTcc mht_159(mht_159_v, 4444, "", "./tensorflow/compiler/mlir/lite/ir/tfl_ops.cc", "NoValueOp::isBuildableWith");
+
   return value.isa<UnitAttr>() && type.isa<NoneType>();
 }
 

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSinterpreter_builderDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSinterpreter_builderDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSinterpreter_builderDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -76,11 +244,17 @@ namespace {
 
 // Ensure that ErrorReporter is non-null.
 ErrorReporter* ValidateErrorReporter(ErrorReporter* e) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreter_builderDTcc mht_0(mht_0_v, 247, "", "./tensorflow/lite/interpreter_builder.cc", "ValidateErrorReporter");
+
   return e ? e : DefaultErrorReporter();
 }
 
 template <typename T>
 TfLiteStatus Copy(const T* data_ptr, TfLiteIntArray** arr) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreter_builderDTcc mht_1(mht_1_v, 255, "", "./tensorflow/lite/interpreter_builder.cc", "Copy");
+
   if (data_ptr->values() == nullptr) {
     return kTfLiteError;
   }
@@ -95,6 +269,9 @@ TfLiteStatus Copy(const T* data_ptr, TfLiteIntArray** arr) {
 
 TfLiteStatus ParseSparseIndexVector(const DimensionMetadata* src,
                                     TfLiteDimensionMetadata* tgt) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreter_builderDTcc mht_2(mht_2_v, 272, "", "./tensorflow/lite/interpreter_builder.cc", "ParseSparseIndexVector");
+
   if (src->array_segments() == nullptr || src->array_indices() == nullptr) {
     return kTfLiteError;
   }
@@ -144,6 +321,9 @@ std::map<std::string, uint32_t> GetMapFromTensorMap(
 }
 
 inline bool ShouldCreateLazyDelegateProviders(int num_fp32_tensors) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreter_builderDTcc mht_3(mht_3_v, 324, "", "./tensorflow/lite/interpreter_builder.cc", "ShouldCreateLazyDelegateProviders");
+
 #if defined(XNNPACK_DELEGATE_ENABLE_QS8) || defined(XNNPACK_DELEGATE_ENABLE_QU8)
   return true;
 #else
@@ -160,6 +340,9 @@ const char* kEmptyTensorName = "";
 // For flex delegate, see also the strong override in
 // lite/delegates/flex/delegate.cc.
 TFLITE_ATTRIBUTE_WEAK Interpreter::TfLiteDelegatePtr AcquireFlexDelegate() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreter_builderDTcc mht_4(mht_4_v, 343, "", "./tensorflow/lite/interpreter_builder.cc", "AcquireFlexDelegate");
+
   // TF_AcquireFlexDelegate isn't defined on Android, and the following block of
   // code would have no effect if TF_AcquireFlexDelegate isn't defined, so we
   // only enable that block for non-Android platforms.  Also, on Android 4.4
@@ -219,6 +402,9 @@ InterpreterBuilder::InterpreterBuilder(
       error_reporter_(ValidateErrorReporter(model.error_reporter())),
       metadata_(model.ReadAllMetadata()),
       allocation_(model.allocation()) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreter_builderDTcc mht_5(mht_5_v, 405, "", "./tensorflow/lite/interpreter_builder.cc", "InterpreterBuilder::InterpreterBuilder");
+
   if (options_experimental) {
     options_ = *options_experimental;
   }
@@ -231,14 +417,23 @@ InterpreterBuilder::InterpreterBuilder(
     : model_(model),
       op_resolver_(op_resolver),
       error_reporter_(ValidateErrorReporter(error_reporter)) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreter_builderDTcc mht_6(mht_6_v, 420, "", "./tensorflow/lite/interpreter_builder.cc", "InterpreterBuilder::InterpreterBuilder");
+
   if (options_experimental) {
     options_ = *options_experimental;
   }
 }
 
-InterpreterBuilder::~InterpreterBuilder() {}
+InterpreterBuilder::~InterpreterBuilder() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreter_builderDTcc mht_7(mht_7_v, 429, "", "./tensorflow/lite/interpreter_builder.cc", "InterpreterBuilder::~InterpreterBuilder");
+}
 
 TfLiteStatus InterpreterBuilder::BuildLocalIndexToRegistrationMapping() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreter_builderDTcc mht_8(mht_8_v, 434, "", "./tensorflow/lite/interpreter_builder.cc", "InterpreterBuilder::BuildLocalIndexToRegistrationMapping");
+
   TfLiteStatus status = kTfLiteOk;
   // Reset state.
   flatbuffer_op_index_to_registration_.clear();
@@ -300,6 +495,9 @@ std::vector<int> FlatBufferIntArrayToVector(T* flat_array) {
 class MallocDataAllocator : public BuiltinDataAllocator {
  public:
   void* Allocate(size_t size, size_t alignment_hint) override {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreter_builderDTcc mht_9(mht_9_v, 498, "", "./tensorflow/lite/interpreter_builder.cc", "Allocate");
+
 #ifdef TFLITE_USE_STD_ALIGNED_ALLOC
     // Ensure that alignment is a power of two and a multiple of sizeof(void *)
     // and that size is an integral multiple of alignment.
@@ -314,7 +512,10 @@ class MallocDataAllocator : public BuiltinDataAllocator {
     return malloc(size);
 #endif
   }
-  void Deallocate(void* data) override { free(data); }
+  void Deallocate(void* data) override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreter_builderDTcc mht_10(mht_10_v, 516, "", "./tensorflow/lite/interpreter_builder.cc", "Deallocate");
+ free(data); }
 };
 
 }  // namespace
@@ -322,6 +523,9 @@ class MallocDataAllocator : public BuiltinDataAllocator {
 TfLiteStatus InterpreterBuilder::ParseNodes(
     const flatbuffers::Vector<flatbuffers::Offset<Operator>>* operators,
     Subgraph* subgraph) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreter_builderDTcc mht_11(mht_11_v, 526, "", "./tensorflow/lite/interpreter_builder.cc", "InterpreterBuilder::ParseNodes");
+
   TfLiteStatus status = kTfLiteOk;
 
   // Reduce the number of redundant allocations
@@ -388,6 +592,9 @@ TfLiteStatus InterpreterBuilder::ParseNodes(
 TfLiteStatus InterpreterBuilder::ParseQuantization(
     const QuantizationParameters* src_quantization,
     TfLiteQuantization* quantization, const std::vector<int>& dims) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreter_builderDTcc mht_12(mht_12_v, 595, "", "./tensorflow/lite/interpreter_builder.cc", "InterpreterBuilder::ParseQuantization");
+
   quantization->type = kTfLiteNoQuantization;
   if (!src_quantization || !src_quantization->scale() ||
       src_quantization->scale()->size() == 0) {
@@ -453,6 +660,9 @@ TfLiteStatus InterpreterBuilder::ParseQuantization(
 
 TfLiteStatus InterpreterBuilder::ParseSparsity(
     const SparsityParameters* src_sparsity, TfLiteSparsity** sparsity_ptr) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreter_builderDTcc mht_13(mht_13_v, 663, "", "./tensorflow/lite/interpreter_builder.cc", "InterpreterBuilder::ParseSparsity");
+
   if (!src_sparsity) {
     return kTfLiteOk;
   }
@@ -523,6 +733,9 @@ TfLiteStatus InterpreterBuilder::ParseSignatureDefs(
     const flatbuffers::Vector<flatbuffers::Offset<SignatureDef>>*
         signature_def_list,
     Interpreter* interpreter) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreter_builderDTcc mht_14(mht_14_v, 736, "", "./tensorflow/lite/interpreter_builder.cc", "InterpreterBuilder::ParseSignatureDefs");
+
   if (signature_def_list == nullptr || signature_def_list->size() == 0) {
     return kTfLiteOk;
   }
@@ -565,6 +778,9 @@ TfLiteStatus InterpreterBuilder::ParseTensors(
     const flatbuffers::Vector<flatbuffers::Offset<Buffer>>* buffers,
     const flatbuffers::Vector<flatbuffers::Offset<Tensor>>* tensors,
     Subgraph* subgraph) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreter_builderDTcc mht_15(mht_15_v, 781, "", "./tensorflow/lite/interpreter_builder.cc", "InterpreterBuilder::ParseTensors");
+
   TfLiteStatus status = kTfLiteOk;
 
   // A little helper to get the names of inputs and outputs. Note that they
@@ -591,6 +807,9 @@ TfLiteStatus InterpreterBuilder::ParseTensors(
     }
     auto get_readonly_data = [&](const char** buffer_data,
                                  size_t* buffer_size) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreter_builderDTcc mht_16(mht_16_v, 810, "", "./tensorflow/lite/interpreter_builder.cc", "lambda");
+
       // TODO(aselle): Check what happens if we have an unspecified size
       // constant.
       *buffer_data = nullptr;
@@ -670,6 +889,9 @@ TfLiteStatus InterpreterBuilder::ParseTensors(
 }
 
 TfLiteStatus InterpreterBuilder::ApplyDelegates(Interpreter* interpreter) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreter_builderDTcc mht_17(mht_17_v, 892, "", "./tensorflow/lite/interpreter_builder.cc", "InterpreterBuilder::ApplyDelegates");
+
   // Apply Flex delegate if applicable.
   if (has_flex_op_) {
     if (Interpreter::TfLiteDelegatePtr flex_delegate = AcquireFlexDelegate()) {
@@ -687,6 +909,9 @@ TfLiteStatus InterpreterBuilder::ApplyDelegates(Interpreter* interpreter) {
 }
 
 TfLiteStatus InterpreterBuilder::SetNumThreads(int num_threads) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreter_builderDTcc mht_18(mht_18_v, 912, "", "./tensorflow/lite/interpreter_builder.cc", "InterpreterBuilder::SetNumThreads");
+
   if (num_threads < -1) {
     error_reporter_->Report(
         "num_threads should be >= 0 or just -1 to let TFLite runtime set the "
@@ -718,6 +943,9 @@ TfLiteStatus InterpreterBuilder::operator()(
   // Safe exit by deleting partially created interpreter, to reduce verbosity
   // on error conditions. Use by return cleanup_on_error();
   auto cleanup_and_error = [&interpreter]() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreter_builderDTcc mht_19(mht_19_v, 946, "", "./tensorflow/lite/interpreter_builder.cc", "lambda");
+
     interpreter->reset();
     return kTfLiteError;
   };
@@ -837,6 +1065,9 @@ TfLiteStatus InterpreterBuilder::operator()(
 }
 
 void InterpreterBuilder::AddDelegate(TfLiteDelegate* delegate) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSinterpreter_builderDTcc mht_20(mht_20_v, 1068, "", "./tensorflow/lite/interpreter_builder.cc", "InterpreterBuilder::AddDelegate");
+
   if (delegate == nullptr) {
     TF_LITE_REPORT_ERROR(error_reporter_, "Null delegate.");
   } else {

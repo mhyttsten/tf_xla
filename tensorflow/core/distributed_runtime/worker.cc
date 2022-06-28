@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,6 +200,9 @@ limitations under the License.
 namespace tensorflow {
 
 Worker::Worker(WorkerEnv* env) : env_(env), recent_request_ids_(100000) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc mht_0(mht_0_v, 203, "", "./tensorflow/core/distributed_runtime/worker.cc", "Worker::Worker");
+
   // Enable log history collection in StatusGroup so that recent warning and
   // error log messages will be attached to the root error status to be
   // forwarded to the master.
@@ -41,6 +212,9 @@ Worker::Worker(WorkerEnv* env) : env_(env), recent_request_ids_(100000) {
 void Worker::GetStatusAsync(CallOptions* opts, const GetStatusRequest* request,
                             GetStatusResponse* response, bool fail_fast,
                             StatusCallback done) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc mht_1(mht_1_v, 215, "", "./tensorflow/core/distributed_runtime/worker.cc", "Worker::GetStatusAsync");
+
   const DeviceMgr* dm = env_->device_mgr;
   std::vector<DeviceAttributes> devices;
   dm->ListDeviceAttributes(&devices);
@@ -54,6 +228,9 @@ void Worker::GetStatusAsync(CallOptions* opts, const GetStatusRequest* request,
 void Worker::CreateWorkerSessionAsync(const CreateWorkerSessionRequest* request,
                                       CreateWorkerSessionResponse* response,
                                       StatusCallback done) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc mht_2(mht_2_v, 231, "", "./tensorflow/core/distributed_runtime/worker.cc", "Worker::CreateWorkerSessionAsync");
+
   Status s = env_->session_mgr->CreateSession(
       request->session_handle(), request->server_def(),
       request->cluster_device_attributes(), request->isolate_session_state(),
@@ -65,6 +242,9 @@ void Worker::DeleteWorkerSessionAsync(CallOptions* opts,
                                       const DeleteWorkerSessionRequest* request,
                                       DeleteWorkerSessionResponse* response,
                                       StatusCallback done) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc mht_3(mht_3_v, 245, "", "./tensorflow/core/distributed_runtime/worker.cc", "Worker::DeleteWorkerSessionAsync");
+
   Status s = env_->session_mgr->DeleteSession(request->session_handle());
   done(s);
 }
@@ -72,6 +252,9 @@ void Worker::DeleteWorkerSessionAsync(CallOptions* opts,
 void Worker::RegisterGraphAsync(const RegisterGraphRequest* request,
                                 RegisterGraphResponse* response,
                                 StatusCallback done) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc mht_4(mht_4_v, 255, "", "./tensorflow/core/distributed_runtime/worker.cc", "Worker::RegisterGraphAsync");
+
   std::shared_ptr<WorkerSession> session;
   Status s;
   if (request->create_worker_session_called()) {
@@ -93,6 +276,9 @@ void Worker::RegisterGraphAsync(const RegisterGraphRequest* request,
 void Worker::DeregisterGraphAsync(const DeregisterGraphRequest* request,
                                   DeregisterGraphResponse* response,
                                   StatusCallback done) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc mht_5(mht_5_v, 279, "", "./tensorflow/core/distributed_runtime/worker.cc", "Worker::DeregisterGraphAsync");
+
   std::shared_ptr<WorkerSession> session;
   Status s;
   if (request->create_worker_session_called()) {
@@ -109,6 +295,9 @@ void Worker::DeregisterGraphAsync(const DeregisterGraphRequest* request,
 }
 
 void Worker::AbortStep(int64_t step_id) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc mht_6(mht_6_v, 298, "", "./tensorflow/core/distributed_runtime/worker.cc", "Worker::AbortStep");
+
   RemoteRendezvous* rendez = env_->rendezvous_mgr->Find(step_id);
   // Do not abort if it's a context global instance for eager op-by-op execution
   if (rendez->IsRemoteEagerContextDefault()) return;
@@ -125,6 +314,9 @@ void Worker::AbortStep(int64_t step_id) {
 Status Worker::PrepareRunGraph(RunGraphRequestWrapper* req,
                                GraphMgr::NamedTensors* in,
                                GraphMgr::NamedTensors* out) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc mht_7(mht_7_v, 317, "", "./tensorflow/core/distributed_runtime/worker.cc", "Worker::PrepareRunGraph");
+
   static Tensor empty_tensor(DT_FLOAT);
   if (req->num_sends() > 0) {
     Tensor val;
@@ -142,8 +334,14 @@ Status Worker::PrepareRunGraph(RunGraphRequestWrapper* req,
 void Worker::RunGraphAsync(CallOptions* opts, RunGraphRequestWrapper* request,
                            MutableRunGraphResponseWrapper* response,
                            StatusCallback done) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc mht_8(mht_8_v, 337, "", "./tensorflow/core/distributed_runtime/worker.cc", "Worker::RunGraphAsync");
+
   if (request->store_errors_in_response_body()) {
     done = [response, done](const Status& status) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc mht_9(mht_9_v, 342, "", "./tensorflow/core/distributed_runtime/worker.cc", "lambda");
+
       response->set_status(status);
       done(Status::OK());
     };
@@ -156,16 +354,25 @@ void Worker::RunGraphAsync(CallOptions* opts, RunGraphRequestWrapper* request,
 }
 
 MutableRunGraphRequestWrapper* Worker::CreateRunGraphRequest() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc mht_10(mht_10_v, 357, "", "./tensorflow/core/distributed_runtime/worker.cc", "Worker::CreateRunGraphRequest");
+
   return new InMemoryRunGraphRequest;
 }
 
 MutableRunGraphResponseWrapper* Worker::CreateRunGraphResponse() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc mht_11(mht_11_v, 364, "", "./tensorflow/core/distributed_runtime/worker.cc", "Worker::CreateRunGraphResponse");
+
   return new InMemoryRunGraphResponse;
 }
 
 void Worker::DoRunGraph(CallOptions* opts, RunGraphRequestWrapper* request,
                         MutableRunGraphResponseWrapper* response,
                         StatusCallback done) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc mht_12(mht_12_v, 373, "", "./tensorflow/core/distributed_runtime/worker.cc", "Worker::DoRunGraph");
+
   const int64_t step_id = request->step_id();
   TRACEPRINTF("RunGraph: %lld", step_id);
   Status s = recent_request_ids_.TrackUnique(request->request_id(),
@@ -264,6 +471,9 @@ void Worker::DoPartialRunGraph(CallOptions* opts,
                                RunGraphRequestWrapper* request,
                                MutableRunGraphResponseWrapper* response,
                                StatusCallback done) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc mht_13(mht_13_v, 474, "", "./tensorflow/core/distributed_runtime/worker.cc", "Worker::DoPartialRunGraph");
+
   const int64_t step_id = request->step_id();
   const string& graph_handle = request->graph_handle();
   TRACEPRINTF("PartialRunGraph: %lld", step_id);
@@ -290,6 +500,9 @@ void Worker::DoPartialRunGraph(CallOptions* opts,
   GraphMgr::NamedTensors* out = new GraphMgr::NamedTensors;
   s = PrepareRunGraph(request, &in, out);
   auto finish = [done, out, opts](const Status& s) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc mht_14(mht_14_v, 503, "", "./tensorflow/core/distributed_runtime/worker.cc", "lambda");
+
     opts->ClearCancelCallback();
     delete out;
     done(s);
@@ -354,6 +567,9 @@ void Worker::DoPartialRunGraph(CallOptions* opts,
 void Worker::CleanupGraphAsync(const CleanupGraphRequest* request,
                                CleanupGraphResponse* response,
                                StatusCallback done) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc mht_15(mht_15_v, 570, "", "./tensorflow/core/distributed_runtime/worker.cc", "Worker::CleanupGraphAsync");
+
   const int64_t step_id = request->step_id();
   env_->rendezvous_mgr->Cleanup(step_id);
   if (env_->collective_executor_mgr) {
@@ -371,6 +587,9 @@ void Worker::CleanupGraphAsync(const CleanupGraphRequest* request,
 void Worker::CleanupAllAsync(const CleanupAllRequest* request,
                              CleanupAllResponse* response,
                              StatusCallback done) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc mht_16(mht_16_v, 590, "", "./tensorflow/core/distributed_runtime/worker.cc", "Worker::CleanupAllAsync");
+
   std::vector<string> containers;
   for (const auto& c : request->container()) containers.push_back(c);
   env_->device_mgr->ClearContainers(containers);
@@ -379,16 +598,25 @@ void Worker::CleanupAllAsync(const CleanupAllRequest* request,
 
 void Worker::LoggingAsync(const LoggingRequest* request,
                           LoggingResponse* response, StatusCallback done) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc mht_17(mht_17_v, 601, "", "./tensorflow/core/distributed_runtime/worker.cc", "Worker::LoggingAsync");
+
   done(errors::Unimplemented("Logging"));
 }
 
 void Worker::TracingAsync(const TracingRequest* request,
                           TracingResponse* response, StatusCallback done) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc mht_18(mht_18_v, 609, "", "./tensorflow/core/distributed_runtime/worker.cc", "Worker::TracingAsync");
+
   done(errors::Unimplemented("Tracing"));
 }
 
 void Worker::RecvBufAsync(CallOptions* opts, const RecvBufRequest* request,
                           RecvBufResponse* response, StatusCallback done) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc mht_19(mht_19_v, 617, "", "./tensorflow/core/distributed_runtime/worker.cc", "Worker::RecvBufAsync");
+
   // The base Worker class does not implement RecvBufAsync because
   // it is not currently used for worker-to-worker communication. Use a
   // transport-specific implementation (such as `GrpcWorker::RecvBufAsync()`)
@@ -400,6 +628,9 @@ void Worker::CompleteGroupAsync(CallOptions* opts,
                                 const CompleteGroupRequest* request,
                                 CompleteGroupResponse* response,
                                 StatusCallback done) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc mht_20(mht_20_v, 631, "", "./tensorflow/core/distributed_runtime/worker.cc", "Worker::CompleteGroupAsync");
+
   if (!request->has_device_attributes()) {
     done(errors::Internal(
         "CompleteGroupRequest device_attributes is not set. Make sure you're "
@@ -440,6 +671,9 @@ void Worker::CompleteInstanceAsync(CallOptions* opts,
                                    const CompleteInstanceRequest* request,
                                    CompleteInstanceResponse* response,
                                    StatusCallback done) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc mht_21(mht_21_v, 674, "", "./tensorflow/core/distributed_runtime/worker.cc", "Worker::CompleteInstanceAsync");
+
   if (env_->collective_executor_mgr) {
     env_->collective_executor_mgr->GetParamResolver()->CompleteInstanceAsync(
         request, response, &cancellation_manager_, done);
@@ -452,6 +686,9 @@ void Worker::CompleteInstanceAsync(CallOptions* opts,
 void Worker::GetStepSequenceAsync(const GetStepSequenceRequest* request,
                                   GetStepSequenceResponse* response,
                                   StatusCallback done) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc mht_22(mht_22_v, 689, "", "./tensorflow/core/distributed_runtime/worker.cc", "Worker::GetStepSequenceAsync");
+
   if (env_->collective_executor_mgr) {
     env_->collective_executor_mgr->GetStepSequenceAsync(request, response,
                                                         done);
@@ -465,6 +702,9 @@ void Worker::GetStepSequenceAsync(const GetStepSequenceRequest* request,
 // device in "*src_dev".
 Status Worker::PrepareRecvTensor(const Rendezvous::ParsedKey& parsed,
                                  Device** src_dev) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc mht_23(mht_23_v, 705, "", "./tensorflow/core/distributed_runtime/worker.cc", "Worker::PrepareRecvTensor");
+
   // Figures out which device the tensor is hosted on.
   string local_name = DeviceNameUtils::LocalName(parsed.src_device);
   TF_RETURN_IF_ERROR(env_->device_mgr->LookupDevice(local_name, src_dev));
@@ -489,6 +729,9 @@ Status Worker::PrepareRecvTensor(const Rendezvous::ParsedKey& parsed,
 void Worker::RecvTensorAsync(CallOptions* opts,
                              const RecvTensorRequest* request,
                              TensorResponse* response, StatusCallback done) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSworkerDTcc mht_24(mht_24_v, 732, "", "./tensorflow/core/distributed_runtime/worker.cc", "Worker::RecvTensorAsync");
+
   // The base Worker class does not implement RecvTensorAsync, because
   // it is not currently used for worker-to-worker communication. Use a
   // transport-specific implementation (such as `GrpcWorker::RecvTensorAsync()`)

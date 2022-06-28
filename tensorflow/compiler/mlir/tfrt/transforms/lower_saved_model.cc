@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlower_saved_modelDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlower_saved_modelDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlower_saved_modelDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,6 +209,9 @@ constexpr char kCpuDeviceName[] =
     "/job:localhost/replica:0/task:0/device:CPU:0";
 
 bool IsSessionInitializer(mlir::func::FuncOp op) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlower_saved_modelDTcc mht_0(mht_0_v, 212, "", "./tensorflow/compiler/mlir/tfrt/transforms/lower_saved_model.cc", "IsSessionInitializer");
+
   auto session_initializer_op = mlir::tf_saved_model::GetSessionInitializerOp(
       op->getParentOfType<mlir::ModuleOp>());
   if (!session_initializer_op) return false;
@@ -54,6 +225,9 @@ bool IsSessionInitializer(mlir::func::FuncOp op) {
 }
 
 mlir::TF::ResourceHandle GetResourceHandle(mlir::Operation *op) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlower_saved_modelDTcc mht_1(mht_1_v, 228, "", "./tensorflow/compiler/mlir/tfrt/transforms/lower_saved_model.cc", "GetResourceHandle");
+
   llvm::StringRef device;
   if (auto attr = op->getAttrOfType<mlir::StringAttr>("device")) {
     device = attr.getValue();
@@ -95,6 +269,9 @@ void ReplaceHoistedValues(
     llvm::ArrayRef<std::pair<mlir::Value, mlir::TF::ResourceHandle>>
         hoisted_values,
     mlir::OpBuilder &builder) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlower_saved_modelDTcc mht_2(mht_2_v, 272, "", "./tensorflow/compiler/mlir/tfrt/transforms/lower_saved_model.cc", "ReplaceHoistedValues");
+
   struct HoistedValueInfo {
     llvm::SmallVector<mlir::Value, 4> hoisted_values;
     llvm::SmallVector<int64_t, 4> indices;
@@ -166,6 +343,9 @@ void ReplaceHoistedValues(
 }
 
 bool OnlyHasReadEffect(mlir::Operation *op) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlower_saved_modelDTcc mht_3(mht_3_v, 346, "", "./tensorflow/compiler/mlir/tfrt/transforms/lower_saved_model.cc", "OnlyHasReadEffect");
+
   auto interface = llvm::dyn_cast<mlir::MemoryEffectOpInterface>(op);
   if (!interface) return false;
   return interface.onlyHasEffect<mlir::MemoryEffects::Read>();
@@ -173,6 +353,9 @@ bool OnlyHasReadEffect(mlir::Operation *op) {
 
 bool CanHoist(const llvm::DenseSet<mlir::TF::ResourceHandle> &read_only_vars,
               mlir::Operation *op) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlower_saved_modelDTcc mht_4(mht_4_v, 356, "", "./tensorflow/compiler/mlir/tfrt/transforms/lower_saved_model.cc", "CanHoist");
+
   // return ops should not be hoisted.
   if (op->mightHaveTrait<mlir::OpTrait::IsTerminator>()) return false;
 
@@ -213,10 +396,16 @@ void HoistInvariantOpsInFunction(
     const llvm::DenseSet<mlir::TF::ResourceHandle> &read_only_vars,
     const mlir::TF::SideEffectAnalysis::Info &side_effect_analysis,
     mlir::OpBuilder &builder, HoistInfo &module_hoist_info) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlower_saved_modelDTcc mht_5(mht_5_v, 399, "", "./tensorflow/compiler/mlir/tfrt/transforms/lower_saved_model.cc", "HoistInvariantOpsInFunction");
+
   // Keep the hoisted ops in this function.
   llvm::DenseSet<mlir::Operation *> hoists;
 
   auto all_operands_in_hoists = [&module_hoist_info](mlir::Operation *op) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlower_saved_modelDTcc mht_6(mht_6_v, 406, "", "./tensorflow/compiler/mlir/tfrt/transforms/lower_saved_model.cc", "lambda");
+
     for (mlir::Value operand : op->getOperands()) {
       if (module_hoist_info.value_mapping.lookupOrNull(operand) == nullptr)
         return false;
@@ -226,6 +415,9 @@ void HoistInvariantOpsInFunction(
 
   auto all_control_predeccessors_in_hoists = [&hoists, &side_effect_analysis](
                                                  mlir::Operation *op) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlower_saved_modelDTcc mht_7(mht_7_v, 418, "", "./tensorflow/compiler/mlir/tfrt/transforms/lower_saved_model.cc", "lambda");
+
     auto preds = side_effect_analysis.DirectControlPredecessors(op);
     return std::all_of(
         preds.begin(), preds.end(),
@@ -285,6 +477,9 @@ void HoistInvariantOpsInFunction(
 
 void FindCalleesRecursive(const mlir::SymbolTable &symbol_table,
                           mlir::func::FuncOp func, llvm::StringSet<> &callees) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlower_saved_modelDTcc mht_8(mht_8_v, 480, "", "./tensorflow/compiler/mlir/tfrt/transforms/lower_saved_model.cc", "FindCalleesRecursive");
+
   assert(func);
   func.walk([&](mlir::Operation *op) {
     for (const auto &named_attr : op->getAttrs()) {
@@ -305,6 +500,9 @@ void FindCalleesRecursive(const mlir::SymbolTable &symbol_table,
 }
 
 void HoistInvariantOps(mlir::ModuleOp module) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlower_saved_modelDTcc mht_9(mht_9_v, 503, "", "./tensorflow/compiler/mlir/tfrt/transforms/lower_saved_model.cc", "HoistInvariantOps");
+
   mlir::SymbolTable symbol_table(module);
 
   // Find all resources used in non-init functions.
@@ -419,19 +617,34 @@ class LowerTFSavedModelPass
                                mlir::OperationPass<mlir::ModuleOp>> {
  public:
   explicit LowerTFSavedModelPass(bool hoist_invariant_ops) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlower_saved_modelDTcc mht_10(mht_10_v, 620, "", "./tensorflow/compiler/mlir/tfrt/transforms/lower_saved_model.cc", "LowerTFSavedModelPass");
+
     hoist_invariant_ops_ = hoist_invariant_ops;
   }
   LowerTFSavedModelPass() = default;
-  LowerTFSavedModelPass(const LowerTFSavedModelPass &) {}
+  LowerTFSavedModelPass(const LowerTFSavedModelPass &) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlower_saved_modelDTcc mht_11(mht_11_v, 627, "", "./tensorflow/compiler/mlir/tfrt/transforms/lower_saved_model.cc", "LowerTFSavedModelPass");
+}
 
   llvm::StringRef getArgument() const final {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlower_saved_modelDTcc mht_12(mht_12_v, 632, "", "./tensorflow/compiler/mlir/tfrt/transforms/lower_saved_model.cc", "getArgument");
+
     return "tfrt-lower-tf-savedmodel";
   }
   llvm::StringRef getDescription() const final {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlower_saved_modelDTcc mht_13(mht_13_v, 638, "", "./tensorflow/compiler/mlir/tfrt/transforms/lower_saved_model.cc", "getDescription");
+
     return "Lower tf-saved-model ops according to TFRT's requirements.";
   }
 
   void runOnOperation() override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlower_saved_modelDTcc mht_14(mht_14_v, 645, "", "./tensorflow/compiler/mlir/tfrt/transforms/lower_saved_model.cc", "runOnOperation");
+
     auto module = getOperation();
 
     // TODO(b/185928201): Create a standalone pass for hoisting invariant ops so
@@ -566,6 +779,9 @@ static llvm::SmallVector<unsigned, 4> CompareTypes(mlir::TypeRange x,
 
 mlir::LogicalResult LowerTFSavedModelPass::PromoteGlobalTensors(
     mlir::func::FuncOp op, const mlir::SymbolTable &symbol_table) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlower_saved_modelDTcc mht_15(mht_15_v, 782, "", "./tensorflow/compiler/mlir/tfrt/transforms/lower_saved_model.cc", "LowerTFSavedModelPass::PromoteGlobalTensors");
+
   for (int i = 0, e = op.getNumArguments(); i < e; ++i) {
     auto global_tensor_op = mlir::tf_saved_model::LookupBoundInputOfType<
         mlir::tf_saved_model::GlobalTensorOp>(op, i, symbol_table);
@@ -585,6 +801,9 @@ mlir::LogicalResult LowerTFSavedModelPass::PromoteGlobalTensors(
 mlir::LogicalResult LowerTFSavedModelPass::PromoteFunctionArgument(
     mlir::func::FuncOp func, unsigned arg_index, mlir::Type promoted_type,
     const mlir::SymbolTable &symbol_table) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlower_saved_modelDTcc mht_16(mht_16_v, 804, "", "./tensorflow/compiler/mlir/tfrt/transforms/lower_saved_model.cc", "LowerTFSavedModelPass::PromoteFunctionArgument");
+
   // Replace this argument before replacing its uses.
   auto &block = func.front();
   auto arg = block.getArgument(arg_index);
@@ -611,6 +830,9 @@ mlir::LogicalResult LowerTFSavedModelPass::PromoteFunctionArgument(
 mlir::LogicalResult LowerTFSavedModelPass::PromoteOpOperand(
     mlir::Operation *op, unsigned operand_number, mlir::Value promoted,
     const mlir::SymbolTable &symbol_table) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlower_saved_modelDTcc mht_17(mht_17_v, 833, "", "./tensorflow/compiler/mlir/tfrt/transforms/lower_saved_model.cc", "LowerTFSavedModelPass::PromoteOpOperand");
+
   // TODO(chky): Consider a more scalable way to handling all read-only ops.
 
   // If it is a ReadVariableOp, we just need to replace all its uses and erase
@@ -806,6 +1028,9 @@ mlir::LogicalResult LowerTFSavedModelPass::PromoteOpOperand(
 mlir::LogicalResult LowerTFSavedModelPass::PromoteValueUses(
     mlir::Value old, mlir::Value promoted,
     const mlir::SymbolTable &symbol_table) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlower_saved_modelDTcc mht_18(mht_18_v, 1031, "", "./tensorflow/compiler/mlir/tfrt/transforms/lower_saved_model.cc", "LowerTFSavedModelPass::PromoteValueUses");
+
   // Retrieve the current uses before replacing the uses as the use list can be
   // invalidated later.
   llvm::SmallVector<std::pair<mlir::Operation *, unsigned>, 4> uses;
@@ -838,9 +1063,15 @@ class ConvertReferenceVariableToResourceVariablePass
     : public mlir::PassWrapper<ConvertReferenceVariableToResourceVariablePass,
                                mlir::OperationPass<mlir::ModuleOp>> {
   llvm::StringRef getArgument() const final {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlower_saved_modelDTcc mht_19(mht_19_v, 1066, "", "./tensorflow/compiler/mlir/tfrt/transforms/lower_saved_model.cc", "getArgument");
+
     return "tfrt-convert-ref-variables";
   }
   llvm::StringRef getDescription() const final {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlower_saved_modelDTcc mht_20(mht_20_v, 1072, "", "./tensorflow/compiler/mlir/tfrt/transforms/lower_saved_model.cc", "getDescription");
+
     return "Convert reference variable to resource variables.";
   }
   void runOnOperation() override;
@@ -848,6 +1079,9 @@ class ConvertReferenceVariableToResourceVariablePass
 
 mlir::LogicalResult ConvertReferenceVariableToResourceVariable(
     mlir::TF::VariableV2Op var_op) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlower_saved_modelDTcc mht_21(mht_21_v, 1082, "", "./tensorflow/compiler/mlir/tfrt/transforms/lower_saved_model.cc", "ConvertReferenceVariableToResourceVariable");
+
   auto tensor_type =
       mlir::TF::DropRefType(var_op.ref().getType()).cast<mlir::TensorType>();
 
@@ -924,6 +1158,9 @@ mlir::LogicalResult ConvertReferenceVariableToResourceVariable(
 }
 
 void ConvertReferenceVariableToResourceVariablePass::runOnOperation() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPSlower_saved_modelDTcc mht_22(mht_22_v, 1161, "", "./tensorflow/compiler/mlir/tfrt/transforms/lower_saved_model.cc", "ConvertReferenceVariableToResourceVariablePass::runOnOperation");
+
   auto module = getOperation();
 
   // The key here is a tuple of device, container and shared_name to uniquely

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_parameter_converterDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_parameter_converterDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_parameter_converterDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -53,12 +221,18 @@ namespace {
 
 // Returns `dtype._type_enum`.
 Safe_PyObjectPtr GetAttr_TypeEnum(PyObject* dtype) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_parameter_converterDTcc mht_0(mht_0_v, 224, "", "./tensorflow/python/framework/python_api_parameter_converter.cc", "GetAttr_TypeEnum");
+
   static PyObject* attr = PY_STRING_INTERN_FROM_STRING("_type_enum");
   return Safe_PyObjectPtr(PyObject_GetAttr(dtype, attr));
 }
 
 // Returns `tensor.dtype`.
 Safe_PyObjectPtr GetAttr_DType(PyObject* tensor) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_parameter_converterDTcc mht_1(mht_1_v, 233, "", "./tensorflow/python/framework/python_api_parameter_converter.cc", "GetAttr_DType");
+
   static PyObject* attr = PY_STRING_INTERN_FROM_STRING("dtype");
   return Safe_PyObjectPtr(PyObject_GetAttr(tensor, attr));
 }
@@ -87,6 +261,9 @@ void RaiseTypeError(Args... args) {
 // is not a valid DType object).
 ABSL_MUST_USE_RESULT
 DataType DataTypeFromPyDType(PyObject* dtype) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_parameter_converterDTcc mht_2(mht_2_v, 264, "", "./tensorflow/python/framework/python_api_parameter_converter.cc", "DataTypeFromPyDType");
+
   if (!dtype) {
     return DT_INVALID;
   }
@@ -104,6 +281,9 @@ DataType DataTypeFromPyDType(PyObject* dtype) {
 // tensor, then do nothing.)  Returns false on exception.
 ABSL_MUST_USE_RESULT
 bool InferDType(PyObject* value, DataType& dtype) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_parameter_converterDTcc mht_3(mht_3_v, 284, "", "./tensorflow/python/framework/python_api_parameter_converter.cc", "InferDType");
+
   if (dtype != DT_INVALID) return true;  // Already have dtype.
 
   if (EagerTensor_CheckExact(value)) {
@@ -123,6 +303,9 @@ bool InferDType(PyObject* value, DataType& dtype) {
 // Returns true if `dtype` is in `ok_dtypes`, or `ok_dtypes` is null or empty.
 ABSL_MUST_USE_RESULT
 bool IsOkDType(DataType dtype, const std::vector<DataType>* ok_dtypes) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_parameter_converterDTcc mht_4(mht_4_v, 306, "", "./tensorflow/python/framework/python_api_parameter_converter.cc", "IsOkDType");
+
   return (ok_dtypes == nullptr || ok_dtypes->empty() ||
           std::find(ok_dtypes->begin(), ok_dtypes->end(), dtype) !=
               ok_dtypes->end());
@@ -158,6 +341,9 @@ bool ConvertToTensorInPlace(PyObject*& src, DataType& dtype,
                             const PythonAPIInfo& api_info, int param_index,
                             const std::vector<DataType>* ok_dtypes = nullptr,
                             DataType default_dtype = DT_INVALID) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_parameter_converterDTcc mht_5(mht_5_v, 344, "", "./tensorflow/python/framework/python_api_parameter_converter.cc", "ConvertToTensorInPlace");
+
   bool inferred_dtype = (dtype == DT_INVALID);
   Safe_PyObjectPtr converted = tensor_converter.Convert(src, dtype);
   if (!converted) {
@@ -197,6 +383,9 @@ bool ConvertToTensorInPlace(PyObject*& src, DataType& dtype,
 ABSL_MUST_USE_RESULT
 bool ConvertAttribute(const Attribute& attr, const PythonAPIInfo& api_info,
                       absl::Span<PyObject*> params) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_parameter_converterDTcc mht_6(mht_6_v, 386, "", "./tensorflow/python/framework/python_api_parameter_converter.cc", "ConvertAttribute");
+
   if (attr.index == -1) return true;  // Inferred attribute.
   PyObject* src = params[attr.index];
   Safe_PyObjectPtr converted = ConvertPyObjectToAttributeType(src, attr.type);
@@ -220,6 +409,9 @@ bool ConvertInputWithFixedDType(const InputWithFixedDType& input,
                                 const PythonTensorConverter& tensor_converter,
                                 const PythonAPIInfo& api_info,
                                 absl::Span<PyObject*> params) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_parameter_converterDTcc mht_7(mht_7_v, 412, "", "./tensorflow/python/framework/python_api_parameter_converter.cc", "ConvertInputWithFixedDType");
+
   DataType dtype = input.dtype;
   PyObject*& src = params[input.index];
   if (!input.is_list) {
@@ -248,6 +440,9 @@ bool ConvertInputsWithTypeAttr(const InputsWithTypeAttr& input,
                                const PythonAPIInfo& api_info,
                                absl::Span<PyObject*> params,
                                InferredAttributes* inferred_attrs) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_parameter_converterDTcc mht_8(mht_8_v, 443, "", "./tensorflow/python/framework/python_api_parameter_converter.cc", "ConvertInputsWithTypeAttr");
+
   DataType dtype = DT_INVALID;
   if (input.type_attr->index != -1) {
     // explicit type attribute
@@ -323,6 +518,9 @@ bool ConvertInputsWithTypeListAttr(
     const PythonTensorConverter& tensor_converter,
     const PythonAPIInfo& api_info, absl::Span<PyObject*> params,
     InferredAttributes* inferred_attrs) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_parameter_converterDTcc mht_9(mht_9_v, 521, "", "./tensorflow/python/framework/python_api_parameter_converter.cc", "ConvertInputsWithTypeListAttr");
+
   DCHECK(!input.tensor_list_params.empty());
 
   // Get the number of tensors from the first input list; and check that the
@@ -401,6 +599,9 @@ ABSL_MUST_USE_RESULT
 bool InferLengthAttributes(const absl::Span<PyObject*> params,
                            const PythonAPIInfo& api_info,
                            std::vector<int64_t>& inferred_length_attrs) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_parameter_converterDTcc mht_10(mht_10_v, 602, "", "./tensorflow/python/framework/python_api_parameter_converter.cc", "InferLengthAttributes");
+
   for (int i = 0; i < api_info.inputs_with_number_attrs().size(); ++i) {
     const auto& inputs = api_info.inputs_with_number_attrs()[i];
     DCHECK(!inputs.tensor_list_params.empty());
@@ -436,6 +637,9 @@ bool ConvertPythonAPIParameters(const PythonAPIInfo& api_info,
                                 const PythonTensorConverter& tensor_converter,
                                 absl::Span<PyObject*> params,
                                 InferredAttributes* inferred_attrs) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_parameter_converterDTcc mht_11(mht_11_v, 640, "", "./tensorflow/python/framework/python_api_parameter_converter.cc", "ConvertPythonAPIParameters");
+
   // Make room for inferred attributes.
   if (inferred_attrs) {
     inferred_attrs->types.resize(api_info.inferred_type_attrs().size());
@@ -475,6 +679,9 @@ bool ConvertPythonAPIParameters(const PythonAPIInfo& api_info,
 
 bool CopyPythonAPITensorLists(const PythonAPIInfo& api_info,
                               absl::Span<PyObject*> params) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_parameter_converterDTcc mht_12(mht_12_v, 682, "", "./tensorflow/python/framework/python_api_parameter_converter.cc", "CopyPythonAPITensorLists");
+
   for (const auto& input : api_info.inputs()) {
     if (input.is_list) {
       PyObject* src = params[input.index];

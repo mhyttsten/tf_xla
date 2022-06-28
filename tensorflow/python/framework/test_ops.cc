@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -129,6 +297,9 @@ class KernelLabelOp : public OpKernel {
   using OpKernel::OpKernel;
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc mht_0(mht_0_v, 300, "", "./tensorflow/python/framework/test_ops.cc", "Compute");
+
     Tensor* output;
     OP_REQUIRES_OK(ctx,
                    ctx->allocate_output("result", TensorShape({}), &output));
@@ -166,9 +337,15 @@ REGISTER_KERNEL_BUILDER(
 class GraphDefVersionOp : public OpKernel {
  public:
   explicit GraphDefVersionOp(OpKernelConstruction* ctx)
-      : OpKernel(ctx), graph_def_version_(ctx->graph_def_version()) {}
+      : OpKernel(ctx), graph_def_version_(ctx->graph_def_version()) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc mht_1(mht_1_v, 341, "", "./tensorflow/python/framework/test_ops.cc", "GraphDefVersionOp");
+}
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc mht_2(mht_2_v, 346, "", "./tensorflow/python/framework/test_ops.cc", "Compute");
+
     Tensor* output = nullptr;
     OP_REQUIRES_OK(ctx, ctx->allocate_output(0, TensorShape({}), &output));
     output->scalar<int>()() = graph_def_version_;
@@ -183,18 +360,30 @@ REGISTER_KERNEL_BUILDER(Name("GraphDefVersion").Device(DEVICE_CPU),
 
 class OldOp : public OpKernel {
  public:
-  explicit OldOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+  explicit OldOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc mht_3(mht_3_v, 364, "", "./tensorflow/python/framework/test_ops.cc", "OldOp");
+}
 
-  void Compute(OpKernelContext* ctx) override {}
+  void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc mht_4(mht_4_v, 369, "", "./tensorflow/python/framework/test_ops.cc", "Compute");
+}
 };
 
 REGISTER_KERNEL_BUILDER(Name("Old").Device(DEVICE_CPU), OldOp);
 
 class GetDeadlineOp : public OpKernel {
  public:
-  explicit GetDeadlineOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+  explicit GetDeadlineOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc mht_5(mht_5_v, 379, "", "./tensorflow/python/framework/test_ops.cc", "GetDeadlineOp");
+}
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc mht_6(mht_6_v, 384, "", "./tensorflow/python/framework/test_ops.cc", "Compute");
+
     if (!ctx->deadline()) {
       ctx->SetStatus(errors::InvalidArgument("Deadline has not ben set."));
     }
@@ -208,9 +397,15 @@ REGISTER_KERNEL_BUILDER(Name("GetDeadline").Device(DEVICE_CPU), GetDeadlineOp);
 
 class SleepOp : public OpKernel {
  public:
-  explicit SleepOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+  explicit SleepOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc mht_7(mht_7_v, 401, "", "./tensorflow/python/framework/test_ops.cc", "SleepOp");
+}
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc mht_8(mht_8_v, 406, "", "./tensorflow/python/framework/test_ops.cc", "Compute");
+
     absl::SleepFor(absl::Seconds(ctx->input(0).scalar<int>()()));
   }
 };
@@ -219,9 +414,15 @@ REGISTER_KERNEL_BUILDER(Name("SleepOp").Device(DEVICE_CPU), SleepOp);
 
 class SleepIdentityOp : public OpKernel {
  public:
-  explicit SleepIdentityOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+  explicit SleepIdentityOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc mht_9(mht_9_v, 418, "", "./tensorflow/python/framework/test_ops.cc", "SleepIdentityOp");
+}
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc mht_10(mht_10_v, 423, "", "./tensorflow/python/framework/test_ops.cc", "Compute");
+
     absl::SleepFor(absl::Seconds(ctx->input(0).scalar<int>()()));
     ctx->set_output(0, ctx->input(1));
   }
@@ -233,7 +434,10 @@ REGISTER_KERNEL_BUILDER(Name("SleepIdentityOp").Device(DEVICE_CPU),
 // Stubbed-out resource to test resource handle ops.
 class StubResource : public ResourceBase {
  public:
-  string DebugString() const override { return ""; }
+  string DebugString() const override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc mht_11(mht_11_v, 438, "", "./tensorflow/python/framework/test_ops.cc", "DebugString");
+ return ""; }
 };
 
 REGISTER_RESOURCE_HANDLE_KERNEL(StubResource);
@@ -243,9 +447,15 @@ REGISTER_KERNEL_BUILDER(Name("ResourceInitializedOp").Device(DEVICE_CPU),
 
 class ResourceCreateOp : public OpKernel {
  public:
-  explicit ResourceCreateOp(OpKernelConstruction* c) : OpKernel(c) {}
+  explicit ResourceCreateOp(OpKernelConstruction* c) : OpKernel(c) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc mht_12(mht_12_v, 451, "", "./tensorflow/python/framework/test_ops.cc", "ResourceCreateOp");
+}
 
   void Compute(OpKernelContext* c) override {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc mht_13(mht_13_v, 456, "", "./tensorflow/python/framework/test_ops.cc", "Compute");
+
     OP_REQUIRES_OK(c,
                    CreateResource(c, HandleFromInput(c, 0), new StubResource));
   }
@@ -257,9 +467,15 @@ REGISTER_KERNEL_BUILDER(Name("ResourceCreateOp").Device(DEVICE_CPU),
 // Uses a ResourceHandle to check its validity.
 class ResourceUsingOp : public OpKernel {
  public:
-  explicit ResourceUsingOp(OpKernelConstruction* context) : OpKernel(context) {}
+  explicit ResourceUsingOp(OpKernelConstruction* context) : OpKernel(context) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc mht_14(mht_14_v, 471, "", "./tensorflow/python/framework/test_ops.cc", "ResourceUsingOp");
+}
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc mht_15(mht_15_v, 476, "", "./tensorflow/python/framework/test_ops.cc", "Compute");
+
     StubResource* unused;
     OP_REQUIRES_OK(ctx, LookupResource<StubResource>(
                             ctx, HandleFromInput(ctx, 0), &unused));
@@ -272,9 +488,15 @@ REGISTER_KERNEL_BUILDER(Name("ResourceUsingOp").Device(DEVICE_CPU),
 class IsResourceHandleRefCountingOp : public OpKernel {
  public:
   explicit IsResourceHandleRefCountingOp(OpKernelConstruction* ctx)
-      : OpKernel(ctx) {}
+      : OpKernel(ctx) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc mht_16(mht_16_v, 492, "", "./tensorflow/python/framework/test_ops.cc", "IsResourceHandleRefCountingOp");
+}
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc mht_17(mht_17_v, 497, "", "./tensorflow/python/framework/test_ops.cc", "Compute");
+
     const auto& handle = HandleFromInput(ctx, 0);
     Tensor* output;
     OP_REQUIRES_OK(ctx, ctx->allocate_output(0, {}, &output));
@@ -288,9 +510,15 @@ REGISTER_KERNEL_BUILDER(Name("IsResourceHandleRefCounting").Device(DEVICE_CPU),
 // Duplicates a ResourceHandle as a weak ResourceHandle.
 class MakeWeakResourceHandleOp : public OpKernel {
  public:
-  explicit MakeWeakResourceHandleOp(OpKernelConstruction* c) : OpKernel(c) {}
+  explicit MakeWeakResourceHandleOp(OpKernelConstruction* c) : OpKernel(c) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc mht_18(mht_18_v, 514, "", "./tensorflow/python/framework/test_ops.cc", "MakeWeakResourceHandleOp");
+}
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc mht_19(mht_19_v, 519, "", "./tensorflow/python/framework/test_ops.cc", "Compute");
+
     Tensor tensor;
     ResourceHandleProto proto;
     HandleFromInput(ctx, 0).AsProto(&proto);
@@ -311,9 +539,15 @@ REGISTER_KERNEL_BUILDER(Name("MakeWeakResourceHandle").Device(DEVICE_DEFAULT),
 
 class TestAttrOp : public OpKernel {
  public:
-  explicit TestAttrOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
+  explicit TestAttrOp(OpKernelConstruction* ctx) : OpKernel(ctx) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc mht_20(mht_20_v, 543, "", "./tensorflow/python/framework/test_ops.cc", "TestAttrOp");
+}
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc mht_21(mht_21_v, 548, "", "./tensorflow/python/framework/test_ops.cc", "Compute");
+
     Tensor* output;
     OP_REQUIRES_OK(ctx, ctx->allocate_output(0, TensorShape({}), &output));
     output->scalar<float>()() = 1.0;
@@ -789,6 +1023,9 @@ class DevicePlacementOp : public OpKernel {
   using OpKernel::OpKernel;
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc mht_22(mht_22_v, 1026, "", "./tensorflow/python/framework/test_ops.cc", "Compute");
+
     Tensor* output;
     OP_REQUIRES_OK(ctx,
                    ctx->allocate_output("device", TensorShape({}), &output));
@@ -815,6 +1052,9 @@ class DTypeWithDefaultOp : public OpKernel {
   using OpKernel::OpKernel;
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc mht_23(mht_23_v, 1055, "", "./tensorflow/python/framework/test_ops.cc", "Compute");
+
     const Tensor& input = ctx->input(0);
     Tensor* output;
     OP_REQUIRES_OK(ctx,
@@ -839,6 +1079,9 @@ class IsTensorFloat32Enabled : public OpKernel {
   using OpKernel::OpKernel;
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPStest_opsDTcc mht_24(mht_24_v, 1082, "", "./tensorflow/python/framework/test_ops.cc", "Compute");
+
     Tensor* output;
     OP_REQUIRES_OK(ctx,
                    ctx->allocate_output("enabled", TensorShape({}), &output));

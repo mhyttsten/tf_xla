@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -73,7 +241,10 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
     input_->Ref();
   }
 
-  ~Dataset() override { input_->Unref(); }
+  ~Dataset() override {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc mht_0(mht_0_v, 245, "", "./tensorflow/core/kernels/data/prefetch_dataset_op.cc", "~Dataset");
+ input_->Unref(); }
 
   std::unique_ptr<IteratorBase> MakeIteratorInternal(
       const string& prefix) const override {
@@ -82,34 +253,58 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
   }
 
   const DataTypeVector& output_dtypes() const override {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc mht_1(mht_1_v, 256, "", "./tensorflow/core/kernels/data/prefetch_dataset_op.cc", "output_dtypes");
+
     return input_->output_dtypes();
   }
 
   const std::vector<PartialTensorShape>& output_shapes() const override {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc mht_2(mht_2_v, 263, "", "./tensorflow/core/kernels/data/prefetch_dataset_op.cc", "output_shapes");
+
     return input_->output_shapes();
   }
 
   string DebugString() const override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc mht_3(mht_3_v, 270, "", "./tensorflow/core/kernels/data/prefetch_dataset_op.cc", "DebugString");
+
     return name_utils::DatasetDebugString(kDatasetType);
   }
 
-  int64_t CardinalityInternal() const override { return input_->Cardinality(); }
+  int64_t CardinalityInternal() const override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc mht_4(mht_4_v, 277, "", "./tensorflow/core/kernels/data/prefetch_dataset_op.cc", "CardinalityInternal");
+ return input_->Cardinality(); }
 
   int64_t CardinalityInternal(CardinalityOptions options) const override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc mht_5(mht_5_v, 282, "", "./tensorflow/core/kernels/data/prefetch_dataset_op.cc", "CardinalityInternal");
+
     return input_->Cardinality(options);
   }
 
   Status InputDatasets(std::vector<const DatasetBase*>* inputs) const override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc mht_6(mht_6_v, 289, "", "./tensorflow/core/kernels/data/prefetch_dataset_op.cc", "InputDatasets");
+
     inputs->push_back(input_);
     return Status::OK();
   }
 
   Status CheckExternalState() const override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc mht_7(mht_7_v, 297, "", "./tensorflow/core/kernels/data/prefetch_dataset_op.cc", "CheckExternalState");
+
     return input_->CheckExternalState();
   }
 
   Status Get(OpKernelContext* ctx, int64 index,
              std::vector<Tensor>* out_tensors) const override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc mht_8(mht_8_v, 305, "", "./tensorflow/core/kernels/data/prefetch_dataset_op.cc", "Get");
+
     TF_RETURN_IF_ERROR(CheckRandomAccessCompatible(index));
     return input_->Get(ctx, index, out_tensors);
   }
@@ -118,6 +313,9 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
   Status AsGraphDefInternal(SerializationContext* ctx,
                             DatasetGraphDefBuilder* b,
                             Node** output) const override {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc mht_9(mht_9_v, 316, "", "./tensorflow/core/kernels/data/prefetch_dataset_op.cc", "AsGraphDefInternal");
+
     Node* input_graph_node = nullptr;
     TF_RETURN_IF_ERROR(b->AddInputDataset(ctx, input_, &input_graph_node));
     Node* buffer_size = nullptr;
@@ -154,15 +352,24 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
           buffer_size_(std::make_shared<model::SharedState>(
               legacy_autotune_ ? 0 : params.dataset->buffer_size_, mu_,
               cond_var_)) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc mht_10(mht_10_v, 355, "", "./tensorflow/core/kernels/data/prefetch_dataset_op.cc", "Iterator");
+
       slack_us_ = 0;
     }
 
     ~Iterator() override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc mht_11(mht_11_v, 362, "", "./tensorflow/core/kernels/data/prefetch_dataset_op.cc", "~Iterator");
+
       CancelThreads();
       if (deregister_fn_) deregister_fn_();
     }
 
     Status Initialize(IteratorContext* ctx) override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc mht_12(mht_12_v, 370, "", "./tensorflow/core/kernels/data/prefetch_dataset_op.cc", "Initialize");
+
       mutex_lock l(*mu_);
       interleave_depth_ = ctx->interleave_depth();
 
@@ -182,6 +389,9 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
     Status GetNextInternal(IteratorContext* ctx,
                            std::vector<Tensor>* out_tensors,
                            bool* end_of_sequence) override {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc mht_13(mht_13_v, 392, "", "./tensorflow/core/kernels/data/prefetch_dataset_op.cc", "GetNextInternal");
+
       const auto& stats_aggregator = ctx->stats_aggregator();
       {
         mutex_lock l(*mu_);
@@ -251,6 +461,9 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
 
     Status SaveInternal(SerializationContext* ctx,
                         IteratorStateWriter* writer) override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc mht_14(mht_14_v, 464, "", "./tensorflow/core/kernels/data/prefetch_dataset_op.cc", "SaveInternal");
+
       // Acquire both locks to ensure that the prefetch thread and
       // all GetNext threads are blocked.
       mutex_lock input_l(input_mu_);
@@ -277,6 +490,9 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
 
     Status RestoreInternal(IteratorContext* ctx,
                            IteratorStateReader* reader) override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc mht_15(mht_15_v, 493, "", "./tensorflow/core/kernels/data/prefetch_dataset_op.cc", "RestoreInternal");
+
       mutex_lock input_l(input_mu_);
       mutex_lock l(*mu_);
       DCHECK(buffer_.empty());
@@ -315,6 +531,9 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
     }
 
     data::TraceMeMetadata GetTraceMeMetadata() const override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc mht_16(mht_16_v, 534, "", "./tensorflow/core/kernels/data/prefetch_dataset_op.cc", "GetTraceMeMetadata");
+
       int64_t limit = -1, size = -1;
       data::TraceMeMetadata result;
       // NOTE: We only set the parallelism value if the lock can be acquired
@@ -361,7 +580,10 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
     // A buffer element comprises a status and (if that status is
     // OK) a vector of tensors, representing an element of the input dataset.
     struct BufferElement {
-      BufferElement() : uid(tensorflow::EnvTime::NowNanos()) {}
+      BufferElement() : uid(tensorflow::EnvTime::NowNanos()) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc mht_17(mht_17_v, 584, "", "./tensorflow/core/kernels/data/prefetch_dataset_op.cc", "BufferElement");
+}
 
       // The producer sets `status` if getting the input element fails.
       Status status;
@@ -387,6 +609,9 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
 
     Status Consume(IteratorContext* ctx, std::vector<Tensor>* out_tensors,
                    bool* end_of_sequence) TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc mht_18(mht_18_v, 612, "", "./tensorflow/core/kernels/data/prefetch_dataset_op.cc", "Consume");
+
       const auto& stats_aggregator = ctx->stats_aggregator();
       if (stats_aggregator) {
         double buffer_limit_ = buffer_limit();
@@ -452,6 +677,9 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
 
     Status EnsurePrefetchThreadStarted(IteratorContext* ctx)
         TF_EXCLUSIVE_LOCKS_REQUIRED(*mu_) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc mht_19(mht_19_v, 680, "", "./tensorflow/core/kernels/data/prefetch_dataset_op.cc", "EnsurePrefetchThreadStarted");
+
       if (!prefetch_thread_) {
         std::shared_ptr<IteratorContext> new_ctx =
             std::make_shared<IteratorContext>(*ctx);
@@ -465,6 +693,9 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
     //
     // It owns the iterator context passed to it.
     void PrefetchThread(const std::shared_ptr<IteratorContext>& ctx) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc mht_20(mht_20_v, 696, "", "./tensorflow/core/kernels/data/prefetch_dataset_op.cc", "PrefetchThread");
+
       RecordStart(ctx.get());
       auto cleanup = gtl::MakeCleanup([this, ctx] { RecordStop(ctx.get()); });
       // Keep track of where we are in an iteration "burst"
@@ -533,6 +764,9 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
 
     Status WriteStatus(IteratorStateWriter* writer, size_t index,
                        const Status& status) TF_EXCLUSIVE_LOCKS_REQUIRED(*mu_) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc mht_21(mht_21_v, 767, "", "./tensorflow/core/kernels/data/prefetch_dataset_op.cc", "WriteStatus");
+
       TF_RETURN_IF_ERROR(
           writer->WriteScalar(absl::StrCat(prefix(), "::", index), CodeKey(),
                               static_cast<int64_t>(status.code())));
@@ -546,6 +780,9 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
 
     Status ReadStatus(IteratorStateReader* reader, size_t index, Status* status)
         TF_EXCLUSIVE_LOCKS_REQUIRED(*mu_) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc mht_22(mht_22_v, 783, "", "./tensorflow/core/kernels/data/prefetch_dataset_op.cc", "ReadStatus");
+
       int64_t code_int;
       TF_RETURN_IF_ERROR(reader->ReadScalar(absl::StrCat(prefix(), "::", index),
                                             CodeKey(), &code_int));
@@ -563,9 +800,15 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
       return Status::OK();
     }
 
-    string CodeKey() { return absl::StrCat(kStatus, kCodeSuffix); }
+    string CodeKey() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc mht_23(mht_23_v, 804, "", "./tensorflow/core/kernels/data/prefetch_dataset_op.cc", "CodeKey");
+ return absl::StrCat(kStatus, kCodeSuffix); }
 
     string ErrorMessageKey() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc mht_24(mht_24_v, 809, "", "./tensorflow/core/kernels/data/prefetch_dataset_op.cc", "ErrorMessageKey");
+
       return absl::StrCat(kStatus, kErrorMessageSuffix);
     }
 
@@ -625,6 +868,9 @@ class PrefetchDatasetOp::Dataset : public DatasetBase {
 
 PrefetchDatasetOp::PrefetchDatasetOp(OpKernelConstruction* ctx)
     : UnaryDatasetOpKernel(ctx) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc mht_25(mht_25_v, 871, "", "./tensorflow/core/kernels/data/prefetch_dataset_op.cc", "PrefetchDatasetOp::PrefetchDatasetOp");
+
   if (ctx->HasAttr(kSlackPeriod)) {
     OP_REQUIRES_OK(ctx, ctx->GetAttr(kSlackPeriod, &slack_period_));
   }
@@ -638,6 +884,9 @@ PrefetchDatasetOp::PrefetchDatasetOp(OpKernelConstruction* ctx)
 
 void PrefetchDatasetOp::MakeDataset(OpKernelContext* ctx, DatasetBase* input,
                                     DatasetBase** output) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSprefetch_dataset_opDTcc mht_26(mht_26_v, 887, "", "./tensorflow/core/kernels/data/prefetch_dataset_op.cc", "PrefetchDatasetOp::MakeDataset");
+
   int64_t buffer_size = 0;
   OP_REQUIRES_OK(ctx,
                  ParseScalarArgument<int64_t>(ctx, kBufferSize, &buffer_size));

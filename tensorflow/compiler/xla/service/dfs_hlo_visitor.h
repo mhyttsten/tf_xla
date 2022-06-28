@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_DFS_HLO_VISITOR_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_DFS_HLO_VISITOR_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <type_traits>
 #include <vector>
@@ -63,8 +231,14 @@ class DfsHloVisitorBase {
       "HloInstruction*");
 
  public:
-  DfsHloVisitorBase() {}
-  virtual ~DfsHloVisitorBase() {}
+  DfsHloVisitorBase() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_0(mht_0_v, 235, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "DfsHloVisitorBase");
+}
+  virtual ~DfsHloVisitorBase() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_1(mht_1_v, 239, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "~DfsHloVisitorBase");
+}
 
   // These routines are self-descriptive, see class comment for usage
   // information.
@@ -76,38 +250,71 @@ class DfsHloVisitorBase {
   virtual Status HandleSelect(HloInstructionPtr hlo) = 0;
   virtual Status HandleTupleSelect(HloInstructionPtr hlo) = 0;
   virtual Status HandleMaximum(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_2(mht_2_v, 253, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleMaximum");
+
     return HandleElementwiseBinary(hlo);
   }
   virtual Status HandleMinimum(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_3(mht_3_v, 259, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleMinimum");
+
     return HandleElementwiseBinary(hlo);
   }
   virtual Status HandleConcatenate(HloInstructionPtr hlo) = 0;
   virtual Status HandleConvert(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_4(mht_4_v, 266, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleConvert");
+
     return HandleElementwiseUnary(hlo);
   }
   virtual Status HandleBitcastConvert(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_5(mht_5_v, 272, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleBitcastConvert");
+
     return HandleElementwiseUnary(hlo);
   }
   virtual Status HandleCopy(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_6(mht_6_v, 278, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleCopy");
+
     return HandleElementwiseUnary(hlo);
   }
   virtual Status HandleComplex(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_7(mht_7_v, 284, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleComplex");
+
     return HandleElementwiseBinary(hlo);
   }
   virtual Status HandleMultiply(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_8(mht_8_v, 290, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleMultiply");
+
     return HandleElementwiseBinary(hlo);
   }
   virtual Status HandleDot(HloInstructionPtr hlo) = 0;
   virtual Status HandlePower(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_9(mht_9_v, 297, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandlePower");
+
     return HandleElementwiseBinary(hlo);
   }
   virtual Status HandleSqrt(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_10(mht_10_v, 303, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleSqrt");
+
     return HandleElementwiseUnary(hlo);
   }
   virtual Status HandleRsqrt(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_11(mht_11_v, 309, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleRsqrt");
+
     return HandleElementwiseUnary(hlo);
   }
   virtual Status HandleCbrt(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_12(mht_12_v, 315, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleCbrt");
+
     return HandleElementwiseUnary(hlo);
   }
   virtual Status HandleConvolution(HloInstructionPtr hlo) = 0;
@@ -131,107 +338,209 @@ class DfsHloVisitorBase {
   virtual Status HandleGetDimensionSize(HloInstructionPtr hlo) = 0;
   virtual Status HandleSetDimensionSize(HloInstructionPtr hlo) = 0;
   virtual Status HandleCompare(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_13(mht_13_v, 341, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleCompare");
+
     return HandleElementwiseBinary(hlo);
   }
   virtual Status HandleAdd(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_14(mht_14_v, 347, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleAdd");
+
     return HandleElementwiseBinary(hlo);
   }
   virtual Status HandleDivide(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_15(mht_15_v, 353, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleDivide");
+
     return HandleElementwiseBinary(hlo);
   }
   virtual Status HandleRemainder(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_16(mht_16_v, 359, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleRemainder");
+
     return HandleElementwiseBinary(hlo);
   }
   virtual Status HandleSubtract(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_17(mht_17_v, 365, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleSubtract");
+
     return HandleElementwiseBinary(hlo);
   }
   virtual Status HandleAbs(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_18(mht_18_v, 371, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleAbs");
+
     return HandleElementwiseUnary(hlo);
   }
   virtual Status HandleAtan2(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_19(mht_19_v, 377, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleAtan2");
+
     return HandleElementwiseBinary(hlo);
   }
   virtual Status HandleRound(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_20(mht_20_v, 383, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleRound");
+
     return HandleElementwiseUnary(hlo);
   }
   virtual Status HandleLogistic(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_21(mht_21_v, 389, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleLogistic");
+
     return HandleElementwiseUnary(hlo);
   }
   virtual Status HandleSign(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_22(mht_22_v, 395, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleSign");
+
     return HandleElementwiseUnary(hlo);
   }
   virtual Status HandleNegate(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_23(mht_23_v, 401, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleNegate");
+
     return HandleElementwiseUnary(hlo);
   }
   virtual Status HandleExp(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_24(mht_24_v, 407, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleExp");
+
     return HandleElementwiseUnary(hlo);
   }
   virtual Status HandleExpm1(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_25(mht_25_v, 413, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleExpm1");
+
     return HandleElementwiseUnary(hlo);
   }
   virtual Status HandleFloor(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_26(mht_26_v, 419, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleFloor");
+
     return HandleElementwiseUnary(hlo);
   }
   virtual Status HandleCeil(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_27(mht_27_v, 425, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleCeil");
+
     return HandleElementwiseUnary(hlo);
   }
   virtual Status HandleLog(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_28(mht_28_v, 431, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleLog");
+
     return HandleElementwiseUnary(hlo);
   }
   virtual Status HandleClz(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_29(mht_29_v, 437, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleClz");
+
     return HandleElementwiseUnary(hlo);
   }
   virtual Status HandleLog1p(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_30(mht_30_v, 443, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleLog1p");
+
     return HandleElementwiseUnary(hlo);
   }
   virtual Status HandleCos(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_31(mht_31_v, 449, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleCos");
+
     return HandleElementwiseUnary(hlo);
   }
   virtual Status HandleSin(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_32(mht_32_v, 455, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleSin");
+
     return HandleElementwiseUnary(hlo);
   }
   virtual Status HandleTanh(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_33(mht_33_v, 461, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleTanh");
+
     return HandleElementwiseUnary(hlo);
   }
   virtual Status HandleReal(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_34(mht_34_v, 467, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleReal");
+
     return HandleElementwiseUnary(hlo);
   }
   virtual Status HandleImag(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_35(mht_35_v, 473, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleImag");
+
     return HandleElementwiseUnary(hlo);
   }
   virtual Status HandleIsFinite(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_36(mht_36_v, 479, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleIsFinite");
+
     return HandleElementwiseUnary(hlo);
   }
   virtual Status HandleAnd(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_37(mht_37_v, 485, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleAnd");
+
     return HandleElementwiseBinary(hlo);
   }
   virtual Status HandleNot(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_38(mht_38_v, 491, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleNot");
+
     return HandleElementwiseUnary(hlo);
   }
   virtual Status HandleOr(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_39(mht_39_v, 497, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleOr");
+
     return HandleElementwiseBinary(hlo);
   }
   virtual Status HandleXor(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_40(mht_40_v, 503, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleXor");
+
     return HandleElementwiseBinary(hlo);
   }
   virtual Status HandlePopulationCount(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_41(mht_41_v, 509, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandlePopulationCount");
+
     return HandleElementwiseUnary(hlo);
   }
   virtual Status HandleShiftLeft(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_42(mht_42_v, 515, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleShiftLeft");
+
     return HandleElementwiseBinary(hlo);
   }
   virtual Status HandleShiftRightArithmetic(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_43(mht_43_v, 521, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleShiftRightArithmetic");
+
     return HandleElementwiseBinary(hlo);
   }
   virtual Status HandleShiftRightLogical(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_44(mht_44_v, 527, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleShiftRightLogical");
+
     return HandleElementwiseBinary(hlo);
   }
 
   virtual Status HandleReducePrecision(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_45(mht_45_v, 534, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleReducePrecision");
+
     return HandleElementwiseUnary(hlo);
   }
 
   virtual Status HandleDomain(HloInstructionPtr hlo) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_46(mht_46_v, 541, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "HandleDomain");
+
     return HandleElementwiseUnary(hlo);
   }
 
@@ -304,6 +613,9 @@ class DfsHloVisitorBase {
   };
 
   VisitState GetVisitState(int id) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_47(mht_47_v, 616, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "GetVisitState");
+
     auto iter = visit_state_.find(id);
     if (iter == visit_state_.end()) {
       return VisitState::kNotVisited;
@@ -315,12 +627,21 @@ class DfsHloVisitorBase {
   // Resize internal state if necessary to hold state for ids <= num.
   // This call is purely a performance hint and can be omitted without
   // affecting correctness.
-  void ReserveVisitStates(int num) { visit_state_.reserve(num); }
-  size_t VisitStateCapacity() const { return visit_state_.capacity(); }
+  void ReserveVisitStates(int num) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_48(mht_48_v, 631, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "ReserveVisitStates");
+ visit_state_.reserve(num); }
+  size_t VisitStateCapacity() const {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_49(mht_49_v, 635, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "VisitStateCapacity");
+ return visit_state_.capacity(); }
 
   // Useful when we want to visit the same computation more than once with the
   // same visitor.
   void ResetVisitStates() {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_50(mht_50_v, 642, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "ResetVisitStates");
+
     // Clear the map, but don't resize the capacity across uses -- Calculating
     // and reserving space could be expensive, and we always use the same
     // module->instruction_count() as the capacity.
@@ -330,10 +651,16 @@ class DfsHloVisitorBase {
   // Useful when we want to free up the memory used by the visit state without
   // destroying the actual visitor subclass.
   void DestroyVisitState() {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_51(mht_51_v, 654, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "DestroyVisitState");
+
     visit_state_ = absl::flat_hash_map<int, VisitState>{};
   }
 
-  void SetVisitState(int id, VisitState state) { visit_state_[id] = state; }
+  void SetVisitState(int id, VisitState state) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_52(mht_52_v, 661, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "SetVisitState");
+ visit_state_[id] = state; }
 
   // Sets the visitation state of the given instruction as kVisiting.
   //
@@ -347,16 +674,25 @@ class DfsHloVisitorBase {
 
   // Returns whether the state of the given instruction is kVisiting.
   bool IsVisiting(const HloInstruction& instruction) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_53(mht_53_v, 677, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "IsVisiting");
+
     return GetVisitState(instruction) == kVisiting;
   }
 
   // Returns whether the state of the given instruction is kVisited.
   bool DidVisit(const HloInstruction& instruction) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_54(mht_54_v, 685, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "DidVisit");
+
     return GetVisitState(instruction) == kVisited;
   }
 
   // Returns whether the state of the given instruction is kNotVisited.
   bool NotVisited(const HloInstruction& instruction) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdfs_hlo_visitorDTh mht_55(mht_55_v, 693, "", "./tensorflow/compiler/xla/service/dfs_hlo_visitor.h", "NotVisited");
+
     return GetVisitState(instruction) == kNotVisited;
   }
 

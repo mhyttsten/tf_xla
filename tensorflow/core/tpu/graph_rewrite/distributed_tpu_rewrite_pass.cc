@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -103,7 +271,10 @@ static const char* const kPostDeviceRewriteAttr = "_post_device_rewrite";
 using NodeAndId = std::pair<const Node*, int>;
 
 struct NodeAndPort {
-  explicit NodeAndPort(Node* node, int port) : node(node), port(port) {}
+  explicit NodeAndPort(Node* node, int port) : node(node), port(port) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_0(mht_0_v, 275, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "NodeAndPort");
+}
 
   Node* node;
   // Port of the node, e.g. this can be the `src_output` index of an Edge.
@@ -118,10 +289,16 @@ class IntrusiveHeapLink {
   IntrusiveHeapLink() = default;
 
   // Only IntrusiveHeap and LinkAccess objects should make these objects.
-  explicit IntrusiveHeapLink(size_type pos) : pos_{pos} {}
+  explicit IntrusiveHeapLink(size_type pos) : pos_{pos} {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_1(mht_1_v, 293, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "IntrusiveHeapLink");
+}
 
   // Only IntrusiveHeap and LinkAccess should get the value.
-  size_type get() const { return pos_; }
+  size_type get() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_2(mht_2_v, 299, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "get");
+ return pos_; }
 
  private:
   size_type pos_{kNotMember};
@@ -129,14 +306,26 @@ class IntrusiveHeapLink {
 
 template <typename T, IntrusiveHeapLink T::*M>
 struct IntrusiveHeapDataMemberLinkAccess {
-  IntrusiveHeapLink Get(const T* elem) const { return elem->*M; }
-  void Set(T* elem, IntrusiveHeapLink link) const { elem->*M = link; }
+  IntrusiveHeapLink Get(const T* elem) const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_3(mht_3_v, 310, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "Get");
+ return elem->*M; }
+  void Set(T* elem, IntrusiveHeapLink link) const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_4(mht_4_v, 314, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "Set");
+ elem->*M = link; }
 };
 
 template <typename T>
 struct DefaultIntrusiveHeapLinkAccess {
-  IntrusiveHeapLink Get(const T* elem) const { return elem->heap; }
-  void Set(T* elem, IntrusiveHeapLink link) const { elem->heap = link; }
+  IntrusiveHeapLink Get(const T* elem) const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_5(mht_5_v, 322, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "Get");
+ return elem->heap; }
+  void Set(T* elem, IntrusiveHeapLink link) const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_6(mht_6_v, 326, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "Set");
+ elem->heap = link; }
 };
 
 template <typename T, typename PtrCompare,
@@ -156,20 +345,35 @@ class IntrusiveHeap {
       const pointer_compare_type& comp = pointer_compare_type(),
       const link_access_type& link_access = link_access_type(),
       const allocator_type& alloc = allocator_type())
-      : rep_(comp, link_access, alloc) {}
+      : rep_(comp, link_access, alloc) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_7(mht_7_v, 349, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "IntrusiveHeap");
+}
 
-  size_type size() const { return heap().size(); }
+  size_type size() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_8(mht_8_v, 354, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "size");
+ return heap().size(); }
 
-  bool empty() const { return heap().empty(); }
+  bool empty() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_9(mht_9_v, 359, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "empty");
+ return heap().empty(); }
 
   // Return the top element, but don't remove it.
   pointer top() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_10(mht_10_v, 365, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "top");
+
     DCHECK(!empty());
     return heap()[0];
   }
 
   // Remove the top() pointer from the heap and return it.
   pointer Pop() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_11(mht_11_v, 374, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "Pop");
+
     pointer t = top();
     Remove(t);
     return t;
@@ -177,6 +381,9 @@ class IntrusiveHeap {
 
   // Insert 't' into the heap.
   void Push(pointer t) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_12(mht_12_v, 384, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "Push");
+
     SetPositionOf(t, heap().size());
     heap().push_back(t);
     FixHeapUp(t);
@@ -184,6 +391,9 @@ class IntrusiveHeap {
 
   // Adjust the heap to accommodate changes in '*t'.
   void Adjust(pointer t) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_13(mht_13_v, 394, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "Adjust");
+
     DCHECK(Contains(t));
     size_type h = GetPositionOf(t);
     if (h != 0 && compare()(t, heap()[(h - 1) >> 1])) {
@@ -195,6 +405,9 @@ class IntrusiveHeap {
 
   // Remove the specified pointer from the heap.
   void Remove(pointer t) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_14(mht_14_v, 408, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "Remove");
+
     DCHECK(Contains(t));
     size_type h = GetPositionOf(t);
     SetPositionOf(t, IntrusiveHeapLink::kNotMember);
@@ -211,19 +424,34 @@ class IntrusiveHeap {
     Adjust(elem);  // Restore the heap invariant.
   }
 
-  void Clear() { heap().clear(); }
+  void Clear() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_15(mht_15_v, 428, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "Clear");
+ heap().clear(); }
 
   bool Contains(const_pointer t) const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_16(mht_16_v, 433, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "Contains");
+
     size_type h = GetPositionOf(t);
     return (h != IntrusiveHeapLink::kNotMember) && (h < size()) &&
            heap()[h] == t;
   }
 
-  void reserve(size_type n) { heap().reserve(n); }
+  void reserve(size_type n) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_17(mht_17_v, 442, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "reserve");
+ heap().reserve(n); }
 
-  size_type capacity() const { return heap().capacity(); }
+  size_type capacity() const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_18(mht_18_v, 447, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "capacity");
+ return heap().capacity(); }
 
-  allocator_type get_allocator() const { return rep_.heap_.get_allocator(); }
+  allocator_type get_allocator() const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_19(mht_19_v, 452, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "get_allocator");
+ return rep_.heap_.get_allocator(); }
 
  private:
   typedef std::vector<pointer, allocator_type> heap_type;
@@ -237,26 +465,50 @@ class IntrusiveHeap {
                  const allocator_type& alloc)
         : pointer_compare_type(cmp),
           link_access_type(link_access),
-          heap_(alloc) {}
+          heap_(alloc) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_20(mht_20_v, 469, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "Rep");
+}
     heap_type heap_;  // NOLINT
   };
 
-  const pointer_compare_type& compare() const { return rep_; }
+  const pointer_compare_type& compare() const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_21(mht_21_v, 476, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "compare");
+ return rep_; }
 
-  const link_access_type& link_access() const { return rep_; }
+  const link_access_type& link_access() const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_22(mht_22_v, 481, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "link_access");
+ return rep_; }
 
-  const heap_type& heap() const { return rep_.heap_; }
-  heap_type& heap() { return rep_.heap_; }
+  const heap_type& heap() const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_23(mht_23_v, 486, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "heap");
+ return rep_.heap_; }
+  heap_type& heap() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_24(mht_24_v, 490, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "heap");
+ return rep_.heap_; }
 
   size_type GetPositionOf(const_pointer t) const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_25(mht_25_v, 495, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "GetPositionOf");
+
     return link_access().Get(t).get();
   }
 
   void SetPositionOf(pointer t, size_type pos) const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_26(mht_26_v, 502, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "SetPositionOf");
+
     return link_access().Set(t, IntrusiveHeapLink(pos));
   }
 
   void FixHeapUp(pointer t) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_27(mht_27_v, 509, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "FixHeapUp");
+
     size_type h = GetPositionOf(t);
     while (h != 0) {
       size_type parent = (h - 1) >> 1;
@@ -272,6 +524,9 @@ class IntrusiveHeap {
   }
 
   void FixHeapDown(pointer t) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_28(mht_28_v, 527, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "FixHeapDown");
+
     size_type h = GetPositionOf(t);
     for (;;) {
       size_type kid = (h << 1) + 1;
@@ -297,17 +552,27 @@ class IntrusiveHeap {
 };
 
 string CoreDeviceLabel(int core) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_29(mht_29_v, 555, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "CoreDeviceLabel");
+
   return strings::StrCat("/device:", DEVICE_TPU_REPLICATED_CORE, ":", core);
 }
 
 // Creates a unique node name with a particular prefix.
 string UniqueNodeName(const StringPiece prefix, Graph* graph) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_30(mht_30_v, 563, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "UniqueNodeName");
+
   return graph->NewName(strings::StrCat(prefix, "/_", internal::GetNodeId()));
 }
 
 Status SetNodeDeviceForTPUCommunication(DeviceNameUtils::ParsedName device,
                                         const string& target_device_type,
                                         Node* node) {
+   std::vector<std::string> mht_31_v;
+   mht_31_v.push_back("target_device_type: \"" + target_device_type + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_31(mht_31_v, 573, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "SetNodeDeviceForTPUCommunication");
+
   TF_RET_CHECK(device.has_type && device.type == DEVICE_TPU_NODE);
   TF_RET_CHECK(device.has_id);
   TF_RET_CHECK(HasNodeAttr(node->def(), kXlaHasHostTransferAttrName));
@@ -331,6 +596,9 @@ Status FindTaggedNodes(
     std::map<string, DistributedTPURewritePass::OutsideCompilationNodeMap>*
         outside_compilation_nodes,
     std::map<string, std::vector<Node*>>* head_tail_outside_compilation_nodes) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_32(mht_32_v, 599, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "FindTaggedNodes");
+
   for (Node* node : graph->op_nodes()) {
     if (node->type_string() == "_TPUReplicate") {
       replicate_nodes->push_back(node);
@@ -431,6 +699,9 @@ class TensorDevicePlacer {
   TensorDevicePlacer(int64_t num_devices, const DataTypeVector& types,
                      const std::vector<InferredShape>& shapes)
       : index_nodes_(num_devices), sizes_(types.size()) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_33(mht_33_v, 702, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "TensorDevicePlacer");
+
     int64_t total_size = 0;
     int64_t num_defined = 0;
     for (int64_t i = 0; i < types.size(); ++i) {
@@ -459,6 +730,9 @@ class TensorDevicePlacer {
   // Reports that the argument/return-value at index has been assigned
   // by the user to a given device.
   void ReportDeviceAssigned(int64_t device, int64_t index) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_34(mht_34_v, 733, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "ReportDeviceAssigned");
+
     if (device >= index_nodes_.size()) {
       LOG(FATAL) << "Sharding assignment is out of bounds. "  // Crash OK
                     "Check that the number of nodes is properly set.";
@@ -471,6 +745,9 @@ class TensorDevicePlacer {
   // Retrieves the device at which the argument/return-value at index
   // should be assigned to.
   int64_t RetrieveAssignment(int64_t index) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_35(mht_35_v, 748, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "RetrieveAssignment");
+
     DeviceNode* node = heap_.top();
     int64_t device = node - index_nodes_.data();
     node->size += sizes_.at(index);
@@ -494,6 +771,9 @@ class TensorDevicePlacer {
 
   static int64_t GetInferredShapeSize(const InferredShape& ishape,
                                       DataType dtype) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_36(mht_36_v, 774, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "GetInferredShapeSize");
+
     return ishape.shape.IsFullyDefined()
                ? ishape.shape.num_elements() * DataTypeSize(dtype)
                : -1;
@@ -505,6 +785,9 @@ class TensorDevicePlacer {
 };
 
 Status ValidateCoreNumber(int64_t core, int64_t num_cores_per_replica) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_37(mht_37_v, 788, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "ValidateCoreNumber");
+
   if (core < 0 || core >= num_cores_per_replica) {
     return tensorflow::errors::InvalidArgument("Invalid core ID: ", core,
                                                ". The valid core IDs are [0..",
@@ -516,6 +799,9 @@ Status ValidateCoreNumber(int64_t core, int64_t num_cores_per_replica) {
 Status FindHostComputeKeyPlaceholderNodes(
     const Graph* graph, const std::vector<Node*>& replicate_nodes,
     std::unordered_map<string, Node*>* host_compute_key_placeholder_map) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_38(mht_38_v, 802, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "FindHostComputeKeyPlaceholderNodes");
+
   host_compute_key_placeholder_map->clear();
   for (const auto node : replicate_nodes) {
     (*host_compute_key_placeholder_map)[node->name()] = nullptr;
@@ -548,6 +834,9 @@ Status FindHostComputeKeyPlaceholderNodes(
 }
 
 Status ReplaceCompilationResultNodeWithIdentity(Graph* graph, Node** node) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_39(mht_39_v, 837, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "ReplaceCompilationResultNodeWithIdentity");
+
   Node* old_node = *node;
   // We want to replace the node with an identity node with the same name.
   const string& node_name = old_node->name();
@@ -584,6 +873,9 @@ Status ReplaceCompilationResultNodeWithIdentity(Graph* graph, Node** node) {
 
 Status GetStepMarkerLocation(const Node& replicate_node,
                              xla::DebugOptions::StepMarkerLocation* location) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_40(mht_40_v, 876, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "GetStepMarkerLocation");
+
   string step_marker_location_attr;
   TF_RETURN_IF_ERROR(GetNodeAttr(replicate_node.attrs(), "step_marker_location",
                                  &step_marker_location_attr));
@@ -603,6 +895,9 @@ Status GetStepMarkerLocation(const Node& replicate_node,
 // sharding attribute.
 Status GetDimensionIndicesAndNumSplitsFromSharding(
     const xla::OpSharding& sharding, std::map<int, int>* split_dimension_map) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_41(mht_41_v, 898, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "GetDimensionIndicesAndNumSplitsFromSharding");
+
   int64_t tensor_tile_rank = sharding.tile_assignment_dimensions_size();
   if (sharding.replicate_on_last_tile_dim()) {
     tensor_tile_rank--;
@@ -627,6 +922,10 @@ Status GetDimensionIndicesAndNumSplitsFromSharding(
 Status UpdateFunctionLibDefinition(const Graph& new_graph,
                                    const std::string& function_name,
                                    FunctionLibraryDefinition* flib_def) {
+   std::vector<std::string> mht_42_v;
+   mht_42_v.push_back("function_name: \"" + function_name + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_42(mht_42_v, 926, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "UpdateFunctionLibDefinition");
+
   FunctionDef graph_fdef;
   TF_RETURN_IF_ERROR(GraphToFunctionDef(new_graph, function_name, &graph_fdef));
   TF_RETURN_IF_ERROR(flib_def->ReplaceFunction(function_name, graph_fdef));
@@ -643,6 +942,9 @@ struct ShardedInputIndex {
   int argument_index;
 
   bool operator<(const ShardedInputIndex& rhs) const {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_43(mht_43_v, 945, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "operator<");
+
     return std::tie(replica_id, argument_index) <
            std::tie(rhs.replica_id, rhs.argument_index);
   }
@@ -652,6 +954,9 @@ struct ShardedPerHostInputIndex {
   string host_device;
   int argument_index;
   bool operator<(const ShardedPerHostInputIndex& rhs) const {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_44(mht_44_v, 957, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "operator<");
+
     return std::tie(host_device, argument_index) <
            std::tie(rhs.host_device, rhs.argument_index);
   }
@@ -784,6 +1089,9 @@ xla::StatusOr<Node*> CreateSplitNode(const int num_splits, const int dim,
 
 int64_t GetPadding(const int split_dim, const int num_splits,
                    const PartialTensorShape& partial_tensor_shape) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_45(mht_45_v, 1092, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "GetPadding");
+
   // If dim dimension is not defined, no uneven sharding support.
   if (partial_tensor_shape.dim_size(split_dim) <= 0) {
     return 0;
@@ -1319,6 +1627,9 @@ xla::StatusOr<Node*> CreateXlaConcatNode(
 // mode will be triggered, so we don't need to copy the data back to the host
 // to do the padding.
 Status SetPaddingNodesDevices(Graph* graph) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_46(mht_46_v, 1630, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "SetPaddingNodesDevices");
+
   for (Node* n : graph->op_nodes()) {
     bool tpu_padding_attr;
     if (n->type_string() == "Pad" &&
@@ -1356,6 +1667,9 @@ Status SetPaddingNodesDevices(Graph* graph) {
 }
 
 const string& AssignedOrRequestedDevice(const Node* node) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_47(mht_47_v, 1670, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "AssignedOrRequestedDevice");
+
   if (!node->assigned_device_name().empty()) {
     return node->assigned_device_name();
   }
@@ -1363,6 +1677,10 @@ const string& AssignedOrRequestedDevice(const Node* node) {
 }
 
 bool IsTpuDevice(const string& device_string) {
+   std::vector<std::string> mht_48_v;
+   mht_48_v.push_back("device_string: \"" + device_string + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_48(mht_48_v, 1681, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "IsTpuDevice");
+
   DeviceNameUtils::ParsedName device;
   return DeviceNameUtils::ParseFullName(device_string, &device) &&
          device.type == DEVICE_TPU_NODE;
@@ -1373,6 +1691,9 @@ bool IsTpuDevice(const string& device_string) {
 // mostly dummy ops like Identity-like ops or control flow related ops. However
 // people can add also add other ops like Pad to allow data stay on TPU.
 const absl::flat_hash_set<std::string>& PlaceOnTPUOpList() {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_49(mht_49_v, 1694, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "PlaceOnTPUOpList");
+
   static const auto place_on_tpu_ops = new absl::flat_hash_set<std::string>(
       {"Identity", "IdentityN", "Enter", "Exit", "Switch", "Merge",
        "NextIteration", "Shape", "_Retval"});
@@ -1389,6 +1710,9 @@ const absl::flat_hash_set<std::string>& PlaceOnTPUOpList() {
 //
 // Returns true if the node device has been changed, otherwise returns false.
 bool PlaceOpsOnTPU(Node* node) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_50(mht_50_v, 1713, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "PlaceOpsOnTPU");
+
   if (!AssignedOrRequestedDevice(node).empty() ||
       !PlaceOnTPUOpList().contains(node->type_string())) {
     return false;
@@ -1423,6 +1747,9 @@ bool PlaceOpsOnTPU(Node* node) {
 }
 
 xla::OpMetadata CreateOpMetadataFromNode(const Node& node) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_51(mht_51_v, 1750, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "CreateOpMetadataFromNode");
+
   xla::OpMetadata metadata;
   metadata.set_op_type(node.type_string());
   metadata.set_op_name(node.name());
@@ -1432,7 +1759,10 @@ xla::OpMetadata CreateOpMetadataFromNode(const Node& node) {
 // Helper struct holding node (nullable) and associated sharding.
 struct NodeAndSharding {
   explicit NodeAndSharding(const Node* node, const xla::OpSharding& sharding)
-      : node(node), sharding(sharding) {}
+      : node(node), sharding(sharding) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_52(mht_52_v, 1763, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "NodeAndSharding");
+}
 
   const Node* node;
   xla::OpSharding sharding;
@@ -1444,6 +1774,9 @@ Status ParseAndValidateSharding(const NodeAndSharding& node_and_sharding,
                                 const int num_cores_per_replica,
                                 int64_t* inferred_core_id,
                                 absl::optional<NodeAndSharding>* result) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_53(mht_53_v, 1777, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "ParseAndValidateSharding");
+
   if (node_and_sharding.sharding.type() == xla::OpSharding::MAXIMAL) {
     int64_t core_annotation =
         node_and_sharding.sharding.tile_assignment_devices(0);
@@ -1495,6 +1828,9 @@ Status ParseAndValidateSharding(const NodeAndSharding& node_and_sharding,
 // |input_node| or Cast/Identity op following the |input_node|.
 void FindNodesMaybeContainingShardingInfo(const Node& input_node,
                                           std::vector<const Node*>* nodes) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_54(mht_54_v, 1831, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "FindNodesMaybeContainingShardingInfo");
+
   if (input_node.IsIdentity() || input_node.type_string() == "Cast") {
     for (const Node* connected_node : input_node.out_nodes())
       FindNodesMaybeContainingShardingInfo(*connected_node, nodes);
@@ -1548,6 +1884,10 @@ Status ParseAndValidateShardingFromNeighbors(
     const int num_cores_per_replica, const std::string& arg_node_name,
     const Node& neighbor_node, int64_t* inferred_core_id, bool* is_fast_mem,
     absl::optional<NodeAndSharding>* result) {
+   std::vector<std::string> mht_55_v;
+   mht_55_v.push_back("arg_node_name: \"" + arg_node_name + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_55(mht_55_v, 1888, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "ParseAndValidateShardingFromNeighbors");
+
   if (neighbor_node.attrs().Find(TPU_FAST_MEM_ATTR) != nullptr) {
     *is_fast_mem = true;
     VLOG(2) << "place " << neighbor_node.name() << " on fast memory because "
@@ -1607,6 +1947,10 @@ static Status GetTPUDeviceNames(
     const string& replication_spec_string, const DeviceSet& device_set,
     string* tpu_compilation_device, int* num_tpus_per_task,
     std::vector<std::vector<Device*>>* tpu_devices) {
+   std::vector<std::string> mht_56_v;
+   mht_56_v.push_back("replication_spec_string: \"" + replication_spec_string + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_56(mht_56_v, 1951, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "GetTPUDeviceNames");
+
   // TODO(b/110910013) GetSystemDevice parses the spec and returns the name of
   // the tpu_system device, which we replace by the cpu device. We do this
   // replacement because we want to place the TPUCompileOp (and the compile
@@ -1634,6 +1978,10 @@ static Status ParseTopologyAttr(const string& topology_attr,
                                 const tpu::TpuTopologyExternal& tpu_topology,
                                 int num_tasks, int num_tpus_per_task,
                                 xla::Array4D<std::pair<int, int>>* topology) {
+   std::vector<std::string> mht_57_v;
+   mht_57_v.push_back("topology_attr: \"" + topology_attr + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_57(mht_57_v, 1982, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "ParseTopologyAttr");
+
   static_assert(4 == kTPUTopologyRank, "Assumes the topology rank is 4");
   tpu::TopologyProto proto;
   proto.ParseFromString(topology_attr);
@@ -1692,6 +2040,9 @@ static Status ParseDeviceAssignmentAttr(
     const tpu::TpuTopologyExternal& tpu_topology, int num_replicas,
     int num_cores_per_replica,
     xla::Array2D<tpu::TpuCoreLocationExternal>* device_assignment) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_58(mht_58_v, 2043, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "ParseDeviceAssignmentAttr");
+
   static_assert(4 == kTPUTopologyRank, "Assumes the topology rank is 4");
 
   const int64_t device_assignment_attr_size =
@@ -1753,6 +2104,9 @@ static Status BuildFullMeshDeviceAssignment(
     int num_tasks, int num_tpus_per_task,
     std::vector<std::vector<string>>* tf_device_assignment,
     std::vector<int>* devices_to_lock) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_59(mht_59_v, 2107, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "BuildFullMeshDeviceAssignment");
+
   // Assign TensorFlow devices to replicas arbitrarily.
   for (int i = 0; i < num_replicas; ++i) {
     int task = i / num_tpus_per_task;
@@ -1779,6 +2133,9 @@ static Status BuildGeneralDeviceAssignment(
     std::vector<std::vector<string>>* tf_device_assignment,
     std::vector<int>* devices_to_lock,
     std::unique_ptr<xla::DeviceAssignment>* xla_device_assignment) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_60(mht_60_v, 2136, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "BuildGeneralDeviceAssignment");
+
   // Assign TensorFlow devices to each computation's replicas according to
   // device_assignment and 'topology'.
   *xla_device_assignment = absl::make_unique<xla::DeviceAssignment>(
@@ -1819,6 +2176,10 @@ static Status BuildGeneralDeviceAssignment(
     std::vector<std::vector<string>>* tf_device_assignment,
     std::vector<int>* devices_to_lock,
     std::unique_ptr<xla::DeviceAssignment>* xla_device_assignment) {
+   std::vector<std::string> mht_61_v;
+   mht_61_v.push_back("topology_attr: \"" + topology_attr + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_61(mht_61_v, 2180, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::BuildDeviceAssignment");
+
   const int num_tasks = tpu_devices.size();
   const int num_tpu_devices = num_tasks * num_tpus_per_task;
   VLOG(2) << "num_tasks=" << num_tasks
@@ -1914,6 +2275,9 @@ Status DistributedTPURewritePass::GetComputationForTPUReplicateOp(
     const NameAttrList& function, FunctionLibraryRuntime* flr,
     Graph* computation, DataTypeVector* arg_types,
     DataTypeVector* retval_types) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_62(mht_62_v, 2278, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::GetComputationForTPUReplicateOp");
+
   FunctionLibraryRuntime::Handle handle;
 
   TF_RETURN_IF_ERROR(
@@ -1930,6 +2294,9 @@ Status DistributedTPURewritePass::GetComputationForTPUReplicateOp(
 // Grab the InferredShape corresponding to an edge input.
 static Status GetEdgeShape(const GraphShapeInfo& shape_info, const Edge& edge,
                            const InferredShape** info) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_63(mht_63_v, 2297, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "GetEdgeShape");
+
   auto it = shape_info.find(edge.src()->name());
   if (it == shape_info.end()) {
     return errors::InvalidArgument(
@@ -1945,6 +2312,9 @@ Status DistributedTPURewritePass::GetArgAndRetvalShapes(
     const GraphShapeInfo& shape_info, const Node& node,
     const ParameterInfo& params_info, std::vector<InferredShape>* arg_shapes,
     std::vector<InferredShape>* retval_shapes) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_64(mht_64_v, 2315, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::GetArgAndRetvalShapes");
+
   std::vector<const Edge*> input_edges;
   TF_RETURN_IF_ERROR(node.input_edges(&input_edges));
 
@@ -2064,6 +2434,9 @@ Status DistributedTPURewritePass::GetArgAndRetvalShapes(
 // Verifies that all nodes have legal sharding.
 static Status ValidateCoreNumbers(const Graph& graph,
                                   int num_cores_per_replica) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_65(mht_65_v, 2437, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "ValidateCoreNumbers");
+
   for (Node* n : graph.nodes()) {
     TF_ASSIGN_OR_RETURN(absl::optional<xla::OpSharding> sharding,
                         ParseShardingFromDevice(*n, num_cores_per_replica,
@@ -2077,6 +2450,9 @@ static Status InferXlaShardingFromNeighbors(
     CachedFunctionHandles* cached_function_handles,
     absl::optional<NodeAndSharding>* output_node_and_sharding,
     bool* is_fast_mem) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_66(mht_66_v, 2453, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "InferXlaShardingFromNeighbors");
+
   int64_t core = -1;
   absl::optional<NodeAndSharding> result;
   // We assume the variable has been allocated on fast memory if any consuming
@@ -2097,6 +2473,9 @@ static Status InferXlaShardingFromNeighbors(
     // and check nodes using this arg.
     std::function<Status(const Edge* call_edge)> parse_sharding_from_function =
         [&](const Edge* call_edge) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_67(mht_67_v, 2476, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "lambda");
+
           auto associated_functions = GetAssociatedFunctions(
               *call_edge->dst(), flr->GetFunctionLibraryDefinition());
           for (auto& associated_function : associated_functions) {
@@ -2135,6 +2514,9 @@ static Status InferXlaShardingFromNeighbors(
 }
 
 bool UseSpmdForXlaPartitioning(const Node* replicate_node) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_68(mht_68_v, 2517, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "UseSpmdForXlaPartitioning");
+
   bool spmd_attr;
   if (!replicate_node ||
       !TryGetNodeAttr(replicate_node->attrs(), "use_spmd_for_xla_partitioning",
@@ -2146,6 +2528,9 @@ bool UseSpmdForXlaPartitioning(const Node* replicate_node) {
 
 std::string FormatNodeAndShardingMsg(
     const absl::optional<NodeAndSharding>& node_and_sharding) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_69(mht_69_v, 2531, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "FormatNodeAndShardingMsg");
+
   DCHECK(node_and_sharding.has_value());
 
   xla::OpSharding sharding_no_metadata = node_and_sharding->sharding;
@@ -2171,6 +2556,9 @@ Status DistributedTPURewritePass::AssignArgsAndRetvalsToCores(
     std::vector<xla::OpSharding>* arg_sharding, std::vector<bool>* arg_fast_mem,
     std::vector<xla::OpSharding>* retval_sharding,
     std::vector<std::string>* arg_names) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_70(mht_70_v, 2559, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::AssignArgsAndRetvalsToCores");
+
   // Builds vectors of the argument and return nodes.
   std::vector<Node*> args(arg_types.size());
   std::vector<Node*> retvals(retval_types.size());
@@ -2503,6 +2891,9 @@ Status DistributedTPURewritePass::AssignArgsAndRetvalsToCores(
     const Node& replicate_node, const std::vector<InferredShape>& arg_shapes,
     const ParameterInfo& params_info, const std::vector<Node*>& variable_reads,
     Graph* graph, std::vector<Node*>* dynamic_shape_nodes) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_71(mht_71_v, 2894, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::BuildDynamicShapeNodes");
+
   dynamic_shape_nodes->clear();
 
   std::vector<const Edge*> replicate_input_edges;
@@ -2594,6 +2985,9 @@ Status DistributedTPURewritePass::AssignArgsAndRetvalsToCores(
 namespace {
 
 bool XlaBroadcastTypeSupported(const DataType dtype) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_72(mht_72_v, 2988, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "XlaBroadcastTypeSupported");
+
   return (dtype == DT_FLOAT || dtype == DT_BFLOAT16 || dtype == DT_INT32 ||
           dtype == DT_BOOL);
 }
@@ -2601,6 +2995,9 @@ bool XlaBroadcastTypeSupported(const DataType dtype) {
 bool XlaBroadcastKindSupported(
     const DistributedTPURewritePass::ParameterInfo& params_info,
     int param_num) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_73(mht_73_v, 2998, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "XlaBroadcastKindSupported");
+
   // NOTE: This is intended to cover non-sharded data parallel variables, for
   // training only. . Is it correct to just check if the arg_type is
   // DT_RESOURCE?
@@ -2615,6 +3012,9 @@ bool EnableXlaParamBroadcast(
     bool enable_xla_param_broadcast, bool mpmd,
     const DistributedTPURewritePass::ParameterInfo& params_info, int param_num,
     DataType dtype) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_74(mht_74_v, 3015, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "EnableXlaParamBroadcast");
+
   // Conditions necessary to use XLA collectives for arg broadcast:
   // 1. Globally enabled via enable_xla_param_broadcast.
   // 2. DataType must be supported.
@@ -2643,6 +3043,11 @@ Status DistributedTPURewritePass::BuildCompileNode(
     const xla::DeviceAssignment* xla_device_assignment,
     const std::vector<Node*>& dynamic_shape_nodes, Graph* graph,
     Node** compile_node, int64_t autotuner_thresh) {
+   std::vector<std::string> mht_75_v;
+   mht_75_v.push_back("session_handle: \"" + session_handle + "\"");
+   mht_75_v.push_back("compile_device: \"" + compile_device + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_75(mht_75_v, 3048, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::BuildCompileNode");
+
   VLOG(1) << "BuildCompileNode";
 
   tpu::TPUCompileMetadataProto proto;
@@ -2780,6 +3185,9 @@ Status DistributedTPURewritePass::BuildCompileNode(
 Status DistributedTPURewritePass::FindGuaranteedConstantInputs(
     const Node& node, const NameRangeMap& input_range_map,
     std::vector<Node*>* guaranteed_constants) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_76(mht_76_v, 3188, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::FindGuaranteedConstantInputs");
+
   std::vector<const Edge*> input_edges;
   TF_RETURN_IF_ERROR(node.input_edges(&input_edges));
   std::pair<int, int> variables_limits =
@@ -2793,6 +3201,9 @@ Status DistributedTPURewritePass::FindGuaranteedConstantInputs(
 Status DistributedTPURewritePass::FindVariableInputs(
     const Node& node, const NameRangeMap& input_range_map,
     std::vector<VariableInput>* variables) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_77(mht_77_v, 3204, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::FindVariableInputs");
+
   std::vector<const Edge*> input_edges;
   TF_RETURN_IF_ERROR(node.input_edges(&input_edges));
   std::pair<int, int> variables_limits = input_range_map.at("variables");
@@ -2849,6 +3260,10 @@ Status DistributedTPURewritePass::FindVariableInputs(
 // Builds a NoOp node, used for building control dependencies.
 static Status BuildNoopNode(const Node& source, StringPiece name,
                             const string& device, Graph* graph, Node** node) {
+   std::vector<std::string> mht_78_v;
+   mht_78_v.push_back("device: \"" + device + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_78(mht_78_v, 3264, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "BuildNoopNode");
+
   NodeDefBuilder builder(name, "NoOp", NodeDebugInfo(source));
   if (!device.empty()) {
     builder.Device(device);
@@ -2865,6 +3280,9 @@ static Status BuildNoopNode(const Node& source, StringPiece name,
 
 Status DistributedTPURewritePass::ConnectHostComputeNodes(
     Node* compile_node, Node* key_placeholder_node, Graph* graph) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_79(mht_79_v, 3283, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::ConnectHostComputeNodes");
+
   // First find all the downstream nodes of the key placeholder node, since we
   // want to delete the connecting edges from key_placeholder_node which would
   // invalidate the out_nodes iterator.
@@ -2902,6 +3320,9 @@ Status DistributedTPURewritePass::ConnectHostComputeNodes(
 Status DistributedTPURewritePass::BuildVariableReads(
     absl::Span<const VariableInput> variables, Node* control_predecessor,
     Graph* graph, std::vector<Node*>* variable_reads) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_80(mht_80_v, 3323, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::BuildVariableReads");
+
   variable_reads->resize(variables.size());
   for (int i = 0; i < variables.size(); ++i) {
     string name =
@@ -2930,6 +3351,9 @@ Status DistributedTPURewritePass::BuildVariableReads(
 
 bool DistributedTPURewritePass::ContainsResourceWriteOp(
     const Graph& graph, const FunctionLibraryDefinition& fld) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_81(mht_81_v, 3354, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::ContainsResourceWriteOp");
+
   for (const Node* n : graph.nodes()) {
     const XlaResourceOpInfo* op_info = GetResourceOpInfoForOp(n->type_string());
     if (op_info && op_info->kind() != XlaResourceOpKind::kRead) {
@@ -2953,12 +3377,19 @@ bool DistributedTPURewritePass::ContainsResourceWriteOp(
 Status DistributedTPURewritePass::BuildVariableWrites(
     absl::Span<const VariableInput> variables, Node* control_successor,
     absl::Span<const VariableWrite> variable_writes, Graph* graph) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_82(mht_82_v, 3380, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::BuildVariableWrites");
+
   CHECK_EQ(variables.size(), variable_writes.size());
   for (int i = 0; i < variables.size(); ++i) {
     const VariableWrite& write = variable_writes[i];
     NodeDebugInfo debug_info(*variables[i].node);
 
     auto name = [&](string suffix) {
+   std::vector<std::string> mht_83_v;
+   mht_83_v.push_back("suffix: \"" + suffix + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_83(mht_83_v, 3390, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "lambda");
+
       return graph->NewName(
           strings::StrCat(variables[i].node->name(), "/", suffix));
     };
@@ -3007,6 +3438,9 @@ namespace {
 // Computes the shape of the sharded tensor and modifies in place.
 Status ComputeShardedArgShapes(TensorShape* shape,
                                const xla::OpSharding& sharding) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_84(mht_84_v, 3441, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "ComputeShardedArgShapes");
+
   if (sharding.type() != xla::OpSharding::OTHER) {
     return Status::OK();
   }
@@ -3111,6 +3545,10 @@ Status CreatePartitionedDummyVarArgs(
     absl::btree_map<ShardedPerHostInputIndex, Node*>* per_host_index,
     std::map<ShardedInputIndex, ShardedInputInfo>*
         arg_index_to_sharded_input_map) {
+   std::vector<std::string> mht_85_v;
+   mht_85_v.push_back("device: \"" + device + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_85(mht_85_v, 3549, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "CreatePartitionedDummyVarArgs");
+
   ShardedInputIndex input_index{replica_id, orig_arg_num};
   auto iter = arg_index_to_sharded_input_map->find(input_index);
   if (iter != arg_index_to_sharded_input_map->end()) {
@@ -3279,6 +3717,9 @@ Status DistributedTPURewritePass::BuildExecuteNodes(
     Node* compile_node, const std::vector<Node*>& variable_reads,
     Node* control_predecessor, Node* control_successor, Node* multilock_acquire,
     std::vector<VariableWrite>* variable_writes, Graph* graph) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_86(mht_86_v, 3720, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::BuildExecuteNodes");
+
   VLOG(1) << "BuildExecuteNodes " << replicate_node.DebugString();
   TF_RET_CHECK(params_info.NumReplicas() == tpu_device_names.size());
 
@@ -3951,6 +4392,9 @@ Status DistributedTPURewritePass::BuildExecuteNodes(
     const DeviceNameUtils::ParsedName& tpu_device,
     const DeviceNameUtils::ParsedName& partial_device,
     NodeToNodeReplicasMap* node_images, Graph* graph) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_87(mht_87_v, 4395, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::CopyOutsideCompilationNodes");
+
   for (Node* node : outside_compilation_nodes) {
     NodeDef image_def = node->def();
     MergeDebugInfo(NodeDebugInfo(node->def()), &image_def);
@@ -3994,6 +4438,9 @@ Status DistributedTPURewritePass::BuildExecuteNodes(
     const HostComputeCoreMap& host_compute_core,
     const OutsideCompilationNodeMap& outside_compilation_nodes,
     NodeToNodeReplicasMap* node_images, Graph* graph) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_88(mht_88_v, 4441, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::ReplicateOutsideCompilationNodes");
+
   // Iterate over replicas.
   for (int i = 0; i < tf_device_assignment.size(); ++i) {
     const auto& core_devices = tf_device_assignment[i];
@@ -4044,6 +4491,9 @@ Status DistributedTPURewritePass::BuildExecuteNodes(
     const NodeToNodeReplicasMap& node_images,
     const std::unordered_map<string, Node*> outside_compilation_inputs,
     Graph* graph) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_89(mht_89_v, 4494, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::CopyOutsideCompilationEdges");
+
   for (Node* node : outside_compilation_nodes) {
     const auto& images = node_images.at(node);
     // Make a copy of all edges and iterate on "in_edges", because we might
@@ -4172,6 +4622,9 @@ Status DistributedTPURewritePass::BuildExecuteNodes(
     const NodeToNodeReplicasMap& node_images,
     const std::unordered_map<string, Node*> outside_compilation_inputs,
     Graph* graph) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_90(mht_90_v, 4625, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::ReplicateOutsideCompilationEdges");
+
   for (const auto& oc_cluster_iter : outside_compilation_nodes) {
     TF_RETURN_IF_ERROR(
         CopyOutsideCompilationEdges(oc_cluster_iter.second, node_images,
@@ -4182,6 +4635,9 @@ Status DistributedTPURewritePass::BuildExecuteNodes(
 
 /* static */ Status DistributedTPURewritePass::RemoveOutsideCompilationNodes(
     const NodeToNodeReplicasMap& node_images, Graph* graph) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_91(mht_91_v, 4638, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::RemoveOutsideCompilationNodes");
+
   for (const auto& iter : node_images) {
     if (iter.second.size() > 1) {
       // The cluster was replicated so remove the original node.
@@ -4196,6 +4652,9 @@ Status DistributedTPURewritePass::BuildExecuteNodes(
 DistributedTPURewritePass::LowerOutsideCompilationFunctionalNodes(
     Graph* g, FunctionLibraryDefinition& flib_def,
     const TPUReplicateDeviceNamesMapping& tpu_replicate_device_names_mapping) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_92(mht_92_v, 4655, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::LowerOutsideCompilationFunctionalNodes");
+
   bool modified = false;
   do {
     std::vector<Node*> nodes_to_lower;
@@ -4384,6 +4843,9 @@ DistributedTPURewritePass::LowerOutsideCompilationFunctionalNodes(
     const Node& replicate_node,
     const OutsideCompilationNodeMap& outside_compilation_nodes,
     HostComputeCoreMap* host_compute_core) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_93(mht_93_v, 4846, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::ParseHostComputeCores");
+
   std::vector<string> hc_core_string;
   TF_RETURN_IF_ERROR(GetNodeAttr(replicate_node.attrs(), "host_compute_core",
                                  &hc_core_string));
@@ -4406,6 +4868,9 @@ DistributedTPURewritePass::LowerOutsideCompilationFunctionalNodes(
     std::vector<int>* devices_to_lock,
     std::unique_ptr<xla::DeviceAssignment>* xla_device_assignment,
     string* tpu_compilation_device) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_94(mht_94_v, 4871, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::GetDeviceTopology");
+
   TF_RETURN_IF_ERROR(
       GetNodeAttr(replicate_node.attrs(), "num_replicas", num_replicas));
   if (*num_replicas < 1) {
@@ -4459,6 +4924,9 @@ DistributedTPURewritePass::LowerOutsideCompilationFunctionalNodes(
     Graph* graph, NameRangeMap* input_name_map, const NameAttrList** function,
     std::unique_ptr<Graph>* computation, DataTypeVector* arg_types,
     DataTypeVector* retval_types, ParameterInfo* params_info) {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_95(mht_95_v, 4927, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::GetIOTypes");
+
   DataTypeVector input_types, broadcast_input_types, guaranteed_constant_types;
   TF_RETURN_IF_ERROR(
       GetNodeAttr(replicate_node.attrs(), "Tinputs", &input_types));
@@ -4533,6 +5001,10 @@ DistributedTPURewritePass::LowerOutsideCompilationFunctionalNodes(
     const string& tpu_compilation_device, const Node& replicate_node,
     Graph* graph, Node** host_transfer_sequencer, Node** control_before,
     Node** control_after) {
+   std::vector<std::string> mht_96_v;
+   mht_96_v.push_back("tpu_compilation_device: \"" + tpu_compilation_device + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_96(mht_96_v, 5005, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::BuildSequencingNodes");
+
   *host_transfer_sequencer = nullptr;
 
   TF_RETURN_IF_ERROR(
@@ -4585,6 +5057,9 @@ DistributedTPURewritePass::LowerOutsideCompilationFunctionalNodes(
     Node* control_after, absl::Span<const VariableInput> variable_nodes,
     std::vector<Node*>* guaranteed_constant_nodes,
     std::vector<Node*>* variable_reads) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_97(mht_97_v, 5060, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::DealWithConstantsAndVariables");
+
   TF_RETURN_IF_ERROR(FindGuaranteedConstantInputs(
       replicate_node, input_name_map, guaranteed_constant_nodes));
 
@@ -4602,6 +5077,9 @@ DistributedTPURewritePass::BuildCompilationStatusReturnNodes(
     Node* replicate_node, Node* compile_node,
     absl::Span<const int> devices_to_lock, Node** control_after_compilation,
     Node** multilock_acquire, Graph* graph) {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_98(mht_98_v, 5080, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::BuildCompilationStatusReturnNodes");
+
   const Edge* compilation_edge = nullptr;
   for (const auto* e : replicate_node->out_edges()) {
     if (e->IsControlEdge() &&
@@ -4710,6 +5188,9 @@ DistributedTPURewritePass::BuildCompilationStatusReturnNodes(
 /* static */ Status DistributedTPURewritePass::UpdateHeadTailOutsideCompilation(
     const std::vector<std::vector<string>>& tf_device_assignment,
     const std::vector<Node*>& head_tail_outside_compilation_nodes) {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_99(mht_99_v, 5191, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::UpdateHeadTailOutsideCompilation");
+
   for (Node* node : head_tail_outside_compilation_nodes) {
     int replica_id;
     TF_RETURN_IF_ERROR(
@@ -4748,6 +5229,10 @@ DistributedTPURewritePass::BuildCompilationStatusReturnNodes(
     const GraphShapeInfo& shape_info,
     TPUReplicateDeviceNamesMapping* tpu_replicate_device_names_mapping,
     int64_t autotuner_thresh) {
+   std::vector<std::string> mht_100_v;
+   mht_100_v.push_back("session_handle: \"" + session_handle + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_100(mht_100_v, 5233, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::RewriteTPUReplicateNode");
+
   VLOG(2) << "Rewriting node " << replicate_node->name();
 
   // num_replicas and num_cores_per_replica are the 'virtual' replicas (copies
@@ -4910,6 +5395,9 @@ DistributedTPURewritePass::BuildCompilationStatusReturnNodes(
 DistributedTPURewritePass::PerformHostTrainingLoopOptimization(
     Graph* graph, FunctionLibraryDefinition* flib_def,
     FunctionLibraryRuntime* flr) {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_101(mht_101_v, 5398, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::PerformHostTrainingLoopOptimization");
+
   std::vector<tpu::HostTrainingLoopInfo> host_training_loops_info;
   Status s = tpu::DetectHostTrainingLoop(
       /*current_function_name=*/nullptr,
@@ -4953,12 +5441,18 @@ DistributedTPURewritePass::PerformHostTrainingLoopOptimization(
 
 Status DistributedTPURewritePass::PlaceUnassignedDeviceNodesOnTPUIfPossible(
     Graph* graph) {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_102(mht_102_v, 5444, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::PlaceUnassignedDeviceNodesOnTPUIfPossible");
+
   ReverseDFS(*graph, {}, PlaceOpsOnTPU);
   return Status::OK();
 }
 
 Status DistributedTPURewritePass::Run(
     const GraphOptimizationPassOptions& options) {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_103(mht_103_v, 5453, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::Run");
+
   VLOG(1) << "DistributedTPURewritePass::Run";
 
   Graph* graph = options.graph->get();
@@ -5096,6 +5590,9 @@ bool DistributedTPURewritePass::use_nd_sharding_ops_ = false;
     bool enable_cross_replica_sharding_mirrored_variables,
     bool enable_automatic_model_parallelism, bool enable_xla_param_broadcast,
     bool enable_multicore_locking, bool use_nd_sharding_ops) {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPScorePStpuPSgraph_rewritePSdistributed_tpu_rewrite_passDTcc mht_104(mht_104_v, 5593, "", "./tensorflow/core/tpu/graph_rewrite/distributed_tpu_rewrite_pass.cc", "DistributedTPURewritePass::SetDistributedTpuRewritePassOptions");
+
   distribute_vars_ = distribute_vars;
   allow_xla_spmd_partition_ = allow_xla_spmd_partition;
   replicate_inputs_outputs_by_default_for_xla_spmd_ =

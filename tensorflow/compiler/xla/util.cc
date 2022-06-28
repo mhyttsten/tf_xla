@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSutilDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSutilDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSutilDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -67,6 +235,9 @@ std::vector<int64_t> ToMixedRadix(const int64_t n,
 }
 
 Status WithLogBacktrace(const Status& status) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSutilDTcc mht_0(mht_0_v, 238, "", "./tensorflow/compiler/xla/util.cc", "WithLogBacktrace");
+
   CHECK(!status.ok());
   VLOG(1) << status.ToString();
   VLOG(2) << tensorflow::CurrentStackTrace();
@@ -81,12 +252,20 @@ ScopedLoggingTimer::ScopedLoggingTimer(absl::string_view label, bool enabled,
       line_(line),
       timer_stats_(timer_stats),
       enabled_(enabled) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("label: \"" + std::string(label.data(), label.size()) + "\"");
+   mht_1_v.push_back("file: \"" + (file == nullptr ? std::string("nullptr") : std::string((char*)file)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSutilDTcc mht_1(mht_1_v, 257, "", "./tensorflow/compiler/xla/util.cc", "ScopedLoggingTimer::ScopedLoggingTimer");
+
   if (enabled_) {
     start_micros_ = tensorflow::Env::Default()->NowMicros();
   }
 }
 
 void ScopedLoggingTimer::StopAndLog() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSutilDTcc mht_2(mht_2_v, 266, "", "./tensorflow/compiler/xla/util.cc", "ScopedLoggingTimer::StopAndLog");
+
   if (enabled_) {
     uint64_t end_micros = tensorflow::Env::Default()->NowMicros();
     double secs = (end_micros - start_micros_) / 1000000.0;
@@ -111,15 +290,26 @@ void ScopedLoggingTimer::StopAndLog() {
   }
 }
 
-ScopedLoggingTimer::~ScopedLoggingTimer() { StopAndLog(); }
+ScopedLoggingTimer::~ScopedLoggingTimer() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSutilDTcc mht_3(mht_3_v, 294, "", "./tensorflow/compiler/xla/util.cc", "ScopedLoggingTimer::~ScopedLoggingTimer");
+ StopAndLog(); }
 
 Status AddStatus(Status prior, absl::string_view context) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("context: \"" + std::string(context.data(), context.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSutilDTcc mht_4(mht_4_v, 300, "", "./tensorflow/compiler/xla/util.cc", "AddStatus");
+
   CHECK(!prior.ok());
   return Status{prior.code(),
                 absl::StrCat(context, ": ", prior.error_message())};
 }
 
 Status AppendStatus(Status prior, absl::string_view context) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("context: \"" + std::string(context.data(), context.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSutilDTcc mht_5(mht_5_v, 310, "", "./tensorflow/compiler/xla/util.cc", "AppendStatus");
+
   CHECK(!prior.ok());
   return Status{prior.code(),
                 absl::StrCat(prior.error_message(), ": ", context)};
@@ -127,6 +317,11 @@ Status AppendStatus(Status prior, absl::string_view context) {
 
 std::string Reindent(absl::string_view original,
                      const absl::string_view indentation) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("original: \"" + std::string(original.data(), original.size()) + "\"");
+   mht_6_v.push_back("indentation: \"" + std::string(indentation.data(), indentation.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSutilDTcc mht_6(mht_6_v, 322, "", "./tensorflow/compiler/xla/util.cc", "Reindent");
+
   std::vector<std::string> pieces =
       absl::StrSplit(absl::string_view(original.data(), original.size()), '\n');
   return absl::StrJoin(
@@ -137,6 +332,9 @@ std::string Reindent(absl::string_view original,
 
 template <typename FloatT>
 static void RoundTripNanPayload(FloatT value, std::string* result) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSutilDTcc mht_7(mht_7_v, 335, "", "./tensorflow/compiler/xla/util.cc", "RoundTripNanPayload");
+
   const int kPayloadBits = NanPayloadBits<FloatT>();
   if (std::isnan(value) && kPayloadBits > 0) {
     auto rep = absl::bit_cast<
@@ -150,6 +348,9 @@ static void RoundTripNanPayload(FloatT value, std::string* result) {
 
 template <typename FloatT>
 static std::string GenericRoundTripFpToString(FloatT value) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSutilDTcc mht_8(mht_8_v, 351, "", "./tensorflow/compiler/xla/util.cc", "GenericRoundTripFpToString");
+
   // TODO(majnemer): Remove this temporary variable once Eigen creates a symbol
   // definition for `max_digits10`.
   int max_decimal_digits = std::numeric_limits<FloatT>::max_digits10;
@@ -158,18 +359,27 @@ static std::string GenericRoundTripFpToString(FloatT value) {
 }
 
 std::string RoundTripFpToString(bfloat16 value) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSutilDTcc mht_9(mht_9_v, 362, "", "./tensorflow/compiler/xla/util.cc", "RoundTripFpToString");
+
   std::string result = GenericRoundTripFpToString(value);
   RoundTripNanPayload(value, &result);
   return result;
 }
 
 std::string RoundTripFpToString(half value) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSutilDTcc mht_10(mht_10_v, 371, "", "./tensorflow/compiler/xla/util.cc", "RoundTripFpToString");
+
   std::string result = GenericRoundTripFpToString(value);
   RoundTripNanPayload(value, &result);
   return result;
 }
 
 std::string RoundTripFpToString(float value) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSutilDTcc mht_11(mht_11_v, 380, "", "./tensorflow/compiler/xla/util.cc", "RoundTripFpToString");
+
   float parsed_result;
   std::string result =
       absl::StrFormat("%.*g", std::numeric_limits<float>::digits10, value);
@@ -181,6 +391,9 @@ std::string RoundTripFpToString(float value) {
 }
 
 std::string RoundTripFpToString(double value) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSutilDTcc mht_12(mht_12_v, 394, "", "./tensorflow/compiler/xla/util.cc", "RoundTripFpToString");
+
   double parsed_result;
   std::string result =
       absl::StrFormat("%.*g", std::numeric_limits<double>::digits10, value);
@@ -192,6 +405,9 @@ std::string RoundTripFpToString(double value) {
 }
 
 PaddingConfig MakeNoPaddingConfig(int64_t rank) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSutilDTcc mht_13(mht_13_v, 408, "", "./tensorflow/compiler/xla/util.cc", "MakeNoPaddingConfig");
+
   PaddingConfig padding_config;
   for (int64_t dnum = 0; dnum < rank; ++dnum) {
     auto dimension = padding_config.add_dimensions();
@@ -204,6 +420,9 @@ PaddingConfig MakeNoPaddingConfig(int64_t rank) {
 
 PaddingConfig MakeEdgePaddingConfig(
     absl::Span<const std::pair<int64_t, int64_t>> padding) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSutilDTcc mht_14(mht_14_v, 423, "", "./tensorflow/compiler/xla/util.cc", "MakeEdgePaddingConfig");
+
   PaddingConfig padding_config;
   for (const std::pair<int64_t, int64_t>& dim : padding) {
     auto dimension = padding_config.add_dimensions();
@@ -215,6 +434,9 @@ PaddingConfig MakeEdgePaddingConfig(
 }
 
 bool HasInteriorPadding(const PaddingConfig& config) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSutilDTcc mht_15(mht_15_v, 437, "", "./tensorflow/compiler/xla/util.cc", "HasInteriorPadding");
+
   for (const auto& dim : config.dimensions()) {
     if (dim.interior_padding() != 0) {
       return true;
@@ -226,6 +448,10 @@ bool HasInteriorPadding(const PaddingConfig& config) {
 namespace {
 std::string HumanReadableNumOps(double flops, double nanoseconds,
                                 absl::string_view op_prefix) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("op_prefix: \"" + std::string(op_prefix.data(), op_prefix.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSutilDTcc mht_16(mht_16_v, 452, "", "./tensorflow/compiler/xla/util.cc", "HumanReadableNumOps");
+
   if (nanoseconds == 0) {
     return absl::StrCat("NaN ", op_prefix, "OP/s");
   }
@@ -244,15 +470,26 @@ std::string HumanReadableNumOps(double flops, double nanoseconds,
 }  // namespace
 
 std::string HumanReadableNumFlops(double flops, double nanoseconds) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSutilDTcc mht_17(mht_17_v, 473, "", "./tensorflow/compiler/xla/util.cc", "HumanReadableNumFlops");
+
   return HumanReadableNumOps(flops, nanoseconds, "FL");
 }
 
 std::string HumanReadableNumTranscendentalOps(double trops,
                                               double nanoseconds) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSutilDTcc mht_18(mht_18_v, 481, "", "./tensorflow/compiler/xla/util.cc", "HumanReadableNumTranscendentalOps");
+
   return HumanReadableNumOps(trops, nanoseconds, "TR");
 }
 
 void LogLines(int sev, absl::string_view text, const char* fname, int lineno) {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("text: \"" + std::string(text.data(), text.size()) + "\"");
+   mht_19_v.push_back("fname: \"" + (fname == nullptr ? std::string("nullptr") : std::string((char*)fname)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSutilDTcc mht_19(mht_19_v, 490, "", "./tensorflow/compiler/xla/util.cc", "LogLines");
+
   const int orig_sev = sev;
   if (sev == tensorflow::FATAL) {
     sev = tensorflow::ERROR;
@@ -282,6 +519,9 @@ void LogLines(int sev, absl::string_view text, const char* fname, int lineno) {
 }
 
 int64_t Product(absl::Span<const int64_t> xs) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSutilDTcc mht_20(mht_20_v, 522, "", "./tensorflow/compiler/xla/util.cc", "Product");
+
   return std::accumulate(xs.begin(), xs.end(), static_cast<int64_t>(1),
                          std::multiplies<int64_t>());
 }
@@ -361,6 +601,9 @@ absl::InlinedVector<std::pair<int64_t, int64_t>, 8> CommonFactors(
 ConvertedDimensionNumbers ConvertDimensionNumbers(
     absl::Span<const int64_t> from_dimensions,
     absl::Span<const int64_t> from_sizes, absl::Span<const int64_t> to_sizes) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSutilDTcc mht_21(mht_21_v, 604, "", "./tensorflow/compiler/xla/util.cc", "ConvertDimensionNumbers");
+
   ConvertedDimensionNumbers dimensions;
   auto common_factors = CommonFactors(from_sizes, to_sizes);
   for (int64_t i = 0; i < common_factors.size() - 1; ++i) {
@@ -418,6 +661,10 @@ ConvertedDimensionNumbers ConvertDimensionNumbers(
   return dimensions;
 }
 std::string SanitizeFileName(std::string file_name) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("file_name: \"" + file_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSutilDTcc mht_22(mht_22_v, 665, "", "./tensorflow/compiler/xla/util.cc", "SanitizeFileName");
+
   for (char& c : file_name) {
     if (c == '/' || c == '\\' || c == '[' || c == ']' || c == ' ') {
       c = '_';

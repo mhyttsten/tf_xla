@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -56,14 +224,23 @@ class BoundaryVisitor {
  public:
   // start with an existing conditional computation.
   explicit BoundaryVisitor(HloInstruction* conditional) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_0(mht_0_v, 227, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "BoundaryVisitor");
+
     Boundary b(Boundary::Position::kInsideBranch);
     b.mutable_operands().push_back(conditional);
     worklist_.push_back(b);
   }
   // Start with an empty work list.
-  BoundaryVisitor() {}
+  BoundaryVisitor() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_1(mht_1_v, 236, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "BoundaryVisitor");
+}
   // Get next boundary to visit.
   Boundary PopNextBoundary() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_2(mht_2_v, 241, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "PopNextBoundary");
+
     CHECK(!worklist_.empty());
     Boundary b = worklist_.front();
     worklist_.pop_front();
@@ -77,11 +254,17 @@ class BoundaryVisitor {
     return b;
   }
   void AddToWorkList(const Boundary& b) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_3(mht_3_v, 257, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "AddToWorkList");
+
     CHECK(!b.operands().empty());
     worklist_.push_back(b);
   }
 
   bool HasNextBoundary() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_4(mht_4_v, 265, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "HasNextBoundary");
+
     while (!worklist_.empty()) {
       Boundary b = worklist_.front();
       if (!ContainsKey(visited_, b)) {
@@ -100,6 +283,9 @@ class BoundaryVisitor {
 
 template <class OpCollection>
 int64_t CountNonLeafOps(const OpCollection& ops) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_5(mht_5_v, 286, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "CountNonLeafOps");
+
   absl::flat_hash_set<HloInstruction*> op_set;
   for (auto op : ops) {
     if (!op_set.contains(op) && op->opcode() != HloOpcode::kConstant) {
@@ -114,6 +300,9 @@ int64_t CountNonLeafOps(const OpCollection& ops) {
 // of reuses This is used as a placeholder only, assuming all
 // instructions can be fused to enable data reuses
 int64_t ReusesCarriedBy(HloOpcode op, HloOpcode user) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_6(mht_6_v, 303, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "ReusesCarriedBy");
+
   // Reuses in some way work like forces that pull instructions
   // towards each other. We use a number 0-10 to classify how strong the force
   // is between a pair of operations. Given a group of instructions that can be
@@ -154,6 +343,9 @@ int64_t ReusesCarriedBy(HloOpcode op, HloOpcode user) {
 
 // Returns true if `op` is worth hoisting.
 bool WorthHoisting(HloOpcode op, HloOpcode child_op) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_7(mht_7_v, 346, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "WorthHoisting");
+
   // TOOD[b/169182921] The following cost model is rather incomplete. Will
   // need to extend to cover most of element-wise ops.
   switch (op) {
@@ -206,8 +398,14 @@ bool WorthHoisting(HloOpcode op, HloOpcode child_op) {
 bool InstructionWithinBranchIdentical(
     const std::vector<HloInstruction*>& instructions,
     bool is_layout_sensitive) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_8(mht_8_v, 401, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "InstructionWithinBranchIdentical");
+
   // Identical includes the shape of each operands are equal.
   auto eq_operand = [&](const HloInstruction* a, const HloInstruction* b) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_9(mht_9_v, 406, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "lambda");
+
     bool eq_operands = is_layout_sensitive
                            ? ShapeUtil::Equal(a->shape(), b->shape())
                            : ShapeUtil::Compatible(a->shape(), b->shape());
@@ -215,6 +413,9 @@ bool InstructionWithinBranchIdentical(
   };
 
   auto eq_computations = [](const HloComputation* a, const HloComputation* b) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_10(mht_10_v, 416, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "lambda");
+
     return *a == *b;
   };
 
@@ -250,6 +451,9 @@ bool InstructionWithinBranchIdentical(
 void CopyOutOfConditional(
     Boundary& boundary, HloInstruction* conditional,
     absl::flat_hash_map<Boundary, Boundary>& hoisted_boundaries) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_11(mht_11_v, 454, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "CopyOutOfConditional");
+
   CHECK(boundary.IsInsideBranch());
   absl::InlinedVector<HloInstruction*, 4> new_operands;
   // All of the branch operands should have the same opcode and shape, so just
@@ -282,6 +486,9 @@ void CopyOutOfConditional(
 void CopyIntoConditional(
     Boundary& boundary, HloInstruction* conditional,
     absl::flat_hash_map<Boundary, Boundary>& hoisted_boundaries) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_12(mht_12_v, 489, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "CopyIntoConditional");
+
   CHECK(boundary.IsOutsideBranch());
   CHECK_EQ(boundary.operands().size(), 1);
   int num_branches = conditional->branch_count();
@@ -440,6 +647,9 @@ absl::flat_hash_set<int64_t> FindSpecialConverts(HloInstruction* old_root,
 // conditional when the instructions are hoisted.
 Status RestructureConditionalInstruction(HloComputation* computation,
                                          HloInstruction* conditional) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_13(mht_13_v, 650, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "RestructureConditionalInstruction");
+
   HloInstruction* old_root = computation->root_instruction();
   std::vector<HloInstruction*> new_operands;
   int cur_index = 0;
@@ -616,6 +826,9 @@ StatusOr<bool> ConvertSpecialMove(HloInstruction* conditional,
 StatusOr<bool> ConditionalCodeMotion::MoveInstructionOut(
     HloInstruction* conditional, std::vector<Boundary>& to_move_out,
     std::vector<Boundary>& new_boundaries) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_14(mht_14_v, 829, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "ConditionalCodeMotion::MoveInstructionOut");
+
   if (to_move_out.empty()) {
     return false;
   }
@@ -723,6 +936,9 @@ StatusOr<bool> ConditionalCodeMotion::MoveInstructionOut(
 StatusOr<bool> ConditionalCodeMotion::MoveInstructionIn(
     HloInstruction* conditional, std::vector<Boundary>& to_move_in,
     std::vector<Boundary>& new_boundaries) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_15(mht_15_v, 939, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "ConditionalCodeMotion::MoveInstructionIn");
+
   if (to_move_in.empty()) {
     return false;
   }
@@ -924,6 +1140,10 @@ class GroupConnectedBoundaries {
   // to flip a zero. The msg parameter is only used for debugging purpposes.
   int64_t FlipMutation(int64_t* loc, const int64_t non_zero,
                        const std::string& msg) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("msg: \"" + msg + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_16(mht_16_v, 1144, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "FlipMutation");
+
     if (search_config_ == 0 || ContainsKey(flipped_, loc)) {
       VLOG(2) << "Configured not to search or loc is already flipped.";
       return *loc;
@@ -975,6 +1195,9 @@ class GroupConnectedBoundaries {
 
   static std::vector<int64_t>& EnsureSearchConfig(
       std::vector<int64_t>& search_config) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_17(mht_17_v, 1198, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "EnsureSearchConfig");
+
     if (search_config.empty()) {
       search_config.push_back(0);
     }
@@ -997,12 +1220,18 @@ class GroupConnectedBoundaries {
         search_config_vec_(EnsureSearchConfig(search_config)),
         search_config_(search_config_vec_.front()),
         search_subscript_(0) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_18(mht_18_v, 1223, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "GroupConnectedBoundaries");
+
     VLOG(2) << "Initializing Group Connected Boundaries\n";
   }
   // Returns estimation of potential reuses carried by a given pair of
   // instructions. Use different integers to classify different levels
   // of reuses. Assume all instructions can be fused to enable data reuses.
   int64_t ReusesCarriedBy(HloInstruction* op, HloInstruction* user) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_19(mht_19_v, 1232, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "ReusesCarriedBy");
+
     std::vector<int64_t>& curconfig =
         reuse_config_[static_cast<uint32_t>(op->opcode())];
     // Flip the reuse configuration if tuning the cost model.
@@ -1027,12 +1256,18 @@ class GroupConnectedBoundaries {
     return config;
   }
   void clear_recently_visited() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_20(mht_20_v, 1259, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "clear_recently_visited");
+
     for (const auto& boundary : new_boundaries_) {
       visited_count_.erase(boundary.operands()[0]);
     }
   }
   // Returns true if `instruction` is worth hoisting.
   bool WorthHoisting(HloInstruction* instruction, bool is_inside_branch) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_21(mht_21_v, 1268, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "WorthHoisting");
+
     // This is needed for the "moving-in" transformation, to prevent the root
     // of the parent computation (which contains the conditional) to be moved
     // inside the conditional.
@@ -1074,6 +1309,9 @@ class GroupConnectedBoundaries {
   }
 
   int64_t ReusesBeforeBoundary(HloInstruction* user) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_22(mht_22_v, 1312, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "ReusesBeforeBoundary");
+
     int64_t reuses = 0;
     for (auto op : user->operands()) {
       // The operand must be an instruction that is not going to be moved (if
@@ -1102,6 +1340,9 @@ class GroupConnectedBoundaries {
   }
 
   int64_t ReusesAfterBoundary(HloInstruction* user) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_23(mht_23_v, 1343, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "ReusesAfterBoundary");
+
     CHECK(user != nullptr);
     auto all_users = user->users();
     // For now, assume that if an instruction has multiple-consumers, it
@@ -1144,6 +1385,9 @@ class GroupConnectedBoundaries {
 
   int64_t BenefitForMovingBoundaries(const std::vector<Boundary>& boundaries,
                                      bool perform_reuse_analysis = true) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_24(mht_24_v, 1388, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "BenefitForMovingBoundaries");
+
     int64_t reuses_before = 0, reuses_after = 0;
     if (boundaries.size() == 1) {
       if (boundaries[0].IsOutsideBranch() &&
@@ -1232,6 +1476,9 @@ class GroupConnectedBoundaries {
   }
 
   Boundary GetNextBoundary(const Boundary& b, int64_t op_index) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_25(mht_25_v, 1479, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "GetNextBoundary");
+
     Boundary b2(b.GetPosition());
     for (int j = 0; j < b.operands().size(); ++j) {
       HloInstruction* inst = b.operands()[j];
@@ -1247,6 +1494,9 @@ class GroupConnectedBoundaries {
   // Checking whether it is safe to move a boundary when visited through a
   // dependent already considered for moving.
   bool IsSafeToMoveBoundary(const Boundary& next_boundary) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_26(mht_26_v, 1497, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "IsSafeToMoveBoundary");
+
     int64_t next_boundary_count =
         (next_boundary.IsInsideBranch())
             ? next_boundary.operands()[0]->user_count()
@@ -1293,6 +1543,9 @@ class GroupConnectedBoundaries {
   // considerations into separate function pointer parameters to improve
   // readability.
   void AddBoundaries(const Boundary& boundary) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_27(mht_27_v, 1546, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "AddBoundaries");
+
     BoundaryVisitor visitor;
     visitor.AddToWorkList(boundary);
     while (visitor.HasNextBoundary()) {
@@ -1350,6 +1603,9 @@ class GroupConnectedBoundaries {
     return connected_boundaries_;
   }
   void AddNewBoundaries(std::vector<Boundary>& b) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_28(mht_28_v, 1606, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "AddNewBoundaries");
+
     b.insert(b.end(), new_boundaries_.begin(), new_boundaries_.end());
   }
 };
@@ -1358,6 +1614,9 @@ ConditionalCodeMotion::Decision ConditionalCodeMotion::ConsiderCodeMotion(
     HloInstruction* conditional, const Boundary& cur_boundary,
     std::vector<Boundary>& to_move, std::vector<Boundary>& new_boundaries,
     absl::flat_hash_map<HloInstruction*, int>& visited_count) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_29(mht_29_v, 1617, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "ConditionalCodeMotion::ConsiderCodeMotion");
+
   GroupConnectedBoundaries connect(conditional, is_layout_sensitive_,
                                    visited_count, &move_config_, &reuse_config_,
                                    search_config_);
@@ -1390,6 +1649,9 @@ ConditionalCodeMotion::Decision ConditionalCodeMotion::ConsiderCodeMotion(
 }
 
 StatusOr<bool> ConditionalCodeMotion::Run(HloModule* module) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_30(mht_30_v, 1652, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "ConditionalCodeMotion::Run");
+
   VLOG(2) << "Begin a new pass of conditional code motion optimization.\n";
   // Use to support debugging of optimization, by disabling the opt after it has
   // been applied a pre-determined times (to isolate impact of transformations).
@@ -1552,6 +1814,9 @@ StatusOr<bool> ConditionalCodeMotion::Run(HloModule* module) {
           conditional_computations[branch_i]--;
           // Need to translate the analysis result to generate correct result.
           auto update_boundary = [&](Boundary& boundary) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_31(mht_31_v, 1817, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "lambda");
+
             auto cloned_instr =
                 clone_context.FindInstruction(boundary.operands()[i]);
             CHECK(cloned_instr != nullptr);
@@ -1646,6 +1911,9 @@ StatusOr<bool> ConditionalCodeMotion::Run(HloModule* module) {
 }
 
 void ConditionalCodeMotion::SetDefaultMoveConfig() {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_32(mht_32_v, 1914, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "ConditionalCodeMotion::SetDefaultMoveConfig");
+
   VLOG(2) << "search_config_index = " << search_config_index_ << "\n";
   VLOG(2) << "search_config_ size = " << search_config_.size() << "\n";
   int64_t cur_search_config = (search_config_index_ < 0 ||
@@ -1709,6 +1977,10 @@ void ConditionalCodeMotion::SetDefaultMoveConfig() {
 // decisions to flip, and how many decisions to skip in between the flips.
 void ConditionalCodeMotion::ParseSearchConfiguration(
     const std::string& search_config) {
+   std::vector<std::string> mht_33_v;
+   mht_33_v.push_back("search_config: \"" + search_config + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconditional_code_motionDTcc mht_33(mht_33_v, 1981, "", "./tensorflow/compiler/xla/service/conditional_code_motion.cc", "ConditionalCodeMotion::ParseSearchConfiguration");
+
   if (search_config.empty()) {
     return;
   }

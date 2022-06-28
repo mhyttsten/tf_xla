@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,7 +206,10 @@ template <typename T, bool BIG>
 struct Wrapper {
   T value;
   char big[BIG ? 256 : 1];
-  string TypeName() const { return "POD"; }
+  string TypeName() const {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_0(mht_0_v, 210, "", "./tensorflow/core/framework/variant_test.cc", "TypeName");
+ return "POD"; }
 };
 
 template <bool BIG>
@@ -50,21 +221,36 @@ using Float = Wrapper<float, BIG>;
 template <bool BIG>
 class MaybeAlive {
  public:
-  MaybeAlive() : alive_(false) {}
+  MaybeAlive() : alive_(false) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_1(mht_1_v, 225, "", "./tensorflow/core/framework/variant_test.cc", "MaybeAlive");
+}
 
   explicit MaybeAlive(bool alive) : alive_(alive) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_2(mht_2_v, 230, "", "./tensorflow/core/framework/variant_test.cc", "MaybeAlive");
+
     if (alive) ++live_counter_;
   }
 
   ~MaybeAlive() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_3(mht_3_v, 237, "", "./tensorflow/core/framework/variant_test.cc", "~MaybeAlive");
+
     if (alive_) --live_counter_;
   }
 
   MaybeAlive(const MaybeAlive& rhs) : alive_(rhs.alive_) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_4(mht_4_v, 244, "", "./tensorflow/core/framework/variant_test.cc", "MaybeAlive");
+
     if (alive_) ++live_counter_;
   }
 
   MaybeAlive& operator=(const MaybeAlive& rhs) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_5(mht_5_v, 251, "", "./tensorflow/core/framework/variant_test.cc", "=");
+
     if (this == &rhs) return *this;
     if (alive_) --live_counter_;
     alive_ = rhs.alive_;
@@ -73,11 +259,17 @@ class MaybeAlive {
   }
 
   MaybeAlive(MaybeAlive&& rhs) : alive_(false) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_6(mht_6_v, 262, "", "./tensorflow/core/framework/variant_test.cc", "MaybeAlive");
+
     alive_ = std::move(rhs.alive_);
     if (alive_) ++live_counter_;
   }
 
   MaybeAlive& operator=(MaybeAlive&& rhs) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_7(mht_7_v, 270, "", "./tensorflow/core/framework/variant_test.cc", "=");
+
     if (this == &rhs) return *this;
     if (alive_) --live_counter_;
     alive_ = std::move(rhs.alive_);
@@ -85,11 +277,23 @@ class MaybeAlive {
     return *this;
   }
 
-  static int LiveCounter() { return live_counter_; }
+  static int LiveCounter() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_8(mht_8_v, 281, "", "./tensorflow/core/framework/variant_test.cc", "LiveCounter");
+ return live_counter_; }
 
-  string TypeName() const { return "MaybeAlive"; }
-  void Encode(VariantTensorData* data) const {}
-  bool Decode(VariantTensorData data) { return false; }
+  string TypeName() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_9(mht_9_v, 286, "", "./tensorflow/core/framework/variant_test.cc", "TypeName");
+ return "MaybeAlive"; }
+  void Encode(VariantTensorData* data) const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_10(mht_10_v, 290, "", "./tensorflow/core/framework/variant_test.cc", "Encode");
+}
+  bool Decode(VariantTensorData data) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_11(mht_11_v, 294, "", "./tensorflow/core/framework/variant_test.cc", "Decode");
+ return false; }
 
  private:
   bool alive_;
@@ -105,21 +309,36 @@ int MaybeAlive<true>::live_counter_ = 0;
 template <bool BIG>
 class DeleteCounter {
  public:
-  DeleteCounter() : big_{}, counter_(nullptr) {}
-  explicit DeleteCounter(int* counter) : big_{}, counter_(counter) {}
+  DeleteCounter() : big_{}, counter_(nullptr) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_12(mht_12_v, 313, "", "./tensorflow/core/framework/variant_test.cc", "DeleteCounter");
+}
+  explicit DeleteCounter(int* counter) : big_{}, counter_(counter) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_13(mht_13_v, 317, "", "./tensorflow/core/framework/variant_test.cc", "DeleteCounter");
+}
   ~DeleteCounter() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_14(mht_14_v, 321, "", "./tensorflow/core/framework/variant_test.cc", "~DeleteCounter");
+
     if (counter_) ++*counter_;
   }
   // Need custom move operations because int* just gets copied on move, but we
   // need to clear counter_ on move.
   DeleteCounter& operator=(const DeleteCounter& rhs) = default;
   DeleteCounter& operator=(DeleteCounter&& rhs) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_15(mht_15_v, 330, "", "./tensorflow/core/framework/variant_test.cc", "=");
+
     if (this == &rhs) return *this;
     counter_ = rhs.counter_;
     rhs.counter_ = nullptr;
     return *this;
   }
   DeleteCounter(DeleteCounter&& rhs) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_16(mht_16_v, 339, "", "./tensorflow/core/framework/variant_test.cc", "DeleteCounter");
+
     counter_ = rhs.counter_;
     rhs.counter_ = nullptr;
   }
@@ -127,9 +346,18 @@ class DeleteCounter {
   char big_[BIG ? 256 : 1];
   int* counter_;
 
-  string TypeName() const { return "DeleteCounter"; }
-  void Encode(VariantTensorData* data) const {}
-  bool Decode(VariantTensorData data) { return false; }
+  string TypeName() const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_17(mht_17_v, 350, "", "./tensorflow/core/framework/variant_test.cc", "TypeName");
+ return "DeleteCounter"; }
+  void Encode(VariantTensorData* data) const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_18(mht_18_v, 354, "", "./tensorflow/core/framework/variant_test.cc", "Encode");
+}
+  bool Decode(VariantTensorData data) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_19(mht_19_v, 358, "", "./tensorflow/core/framework/variant_test.cc", "Decode");
+ return false; }
 };
 
 }  // end namespace
@@ -222,25 +450,43 @@ template <bool BIG>
 class MoveAndCopyCounter {
  public:
   MoveAndCopyCounter()
-      : big_{}, move_counter_(nullptr), copy_counter_(nullptr) {}
+      : big_{}, move_counter_(nullptr), copy_counter_(nullptr) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_20(mht_20_v, 454, "", "./tensorflow/core/framework/variant_test.cc", "MoveAndCopyCounter");
+}
   explicit MoveAndCopyCounter(int* move_counter, int* copy_counter)
-      : big_{}, move_counter_(move_counter), copy_counter_(copy_counter) {}
+      : big_{}, move_counter_(move_counter), copy_counter_(copy_counter) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_21(mht_21_v, 459, "", "./tensorflow/core/framework/variant_test.cc", "MoveAndCopyCounter");
+}
 
   MoveAndCopyCounter& operator=(const MoveAndCopyCounter& rhs) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_22(mht_22_v, 464, "", "./tensorflow/core/framework/variant_test.cc", "=");
+
     copy_counter_ = rhs.copy_counter_;
     if (copy_counter_) ++*copy_counter_;
     return *this;
   }
   MoveAndCopyCounter& operator=(MoveAndCopyCounter&& rhs) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_23(mht_23_v, 472, "", "./tensorflow/core/framework/variant_test.cc", "=");
+
     move_counter_ = rhs.move_counter_;
     if (move_counter_) ++*move_counter_;
     return *this;
   }
   MoveAndCopyCounter(MoveAndCopyCounter&& rhs) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_24(mht_24_v, 480, "", "./tensorflow/core/framework/variant_test.cc", "MoveAndCopyCounter");
+
     move_counter_ = rhs.move_counter_;
     if (move_counter_) ++*move_counter_;
   }
   MoveAndCopyCounter(const MoveAndCopyCounter& rhs) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_25(mht_25_v, 487, "", "./tensorflow/core/framework/variant_test.cc", "MoveAndCopyCounter");
+
     copy_counter_ = rhs.copy_counter_;
     if (copy_counter_) ++*copy_counter_;
   }
@@ -248,9 +494,18 @@ class MoveAndCopyCounter {
   int* move_counter_;
   int* copy_counter_;
 
-  string TypeName() const { return "MoveAndCopyCounter"; }
-  void Encode(VariantTensorData* data) const {}
-  bool Decode(VariantTensorData data) { return false; }
+  string TypeName() const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_26(mht_26_v, 498, "", "./tensorflow/core/framework/variant_test.cc", "TypeName");
+ return "MoveAndCopyCounter"; }
+  void Encode(VariantTensorData* data) const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_27(mht_27_v, 502, "", "./tensorflow/core/framework/variant_test.cc", "Encode");
+}
+  bool Decode(VariantTensorData data) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_28(mht_28_v, 506, "", "./tensorflow/core/framework/variant_test.cc", "Decode");
+ return false; }
 };
 
 }  // namespace
@@ -300,6 +555,9 @@ TEST(VariantTest, EmplaceBigAndSmallVariants) {
 
 template <bool BIG>
 void TestDestructOnVariantMove() {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_29(mht_29_v, 558, "", "./tensorflow/core/framework/variant_test.cc", "TestDestructOnVariantMove");
+
   CHECK_EQ(MaybeAlive<BIG>::LiveCounter(), 0);
   {
     Variant a = MaybeAlive<BIG>(true);
@@ -331,6 +589,9 @@ struct MayCreateAlignmentDifficulties {
 };
 
 bool M128AllEqual(const __m128& a, const __m128& b) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_30(mht_30_v, 592, "", "./tensorflow/core/framework/variant_test.cc", "M128AllEqual");
+
   return _mm_movemask_ps(_mm_cmpeq_ps(a, b)) == 0xf;
 }
 
@@ -373,6 +634,9 @@ TEST(VariantTest, BasicBig) { TestBasic<true>(); }
 
 template <bool BIG>
 void TestConstGet() {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_31(mht_31_v, 637, "", "./tensorflow/core/framework/variant_test.cc", "TestConstGet");
+
   Variant x;
   EXPECT_EQ(x.get<void>(), nullptr);
 
@@ -391,6 +655,9 @@ TEST(VariantTest, ConstGetBig) { TestConstGet<true>(); }
 
 template <bool BIG>
 void TestClear() {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_32(mht_32_v, 658, "", "./tensorflow/core/framework/variant_test.cc", "TestClear");
+
   Variant x;
   EXPECT_EQ(x.get<void>(), nullptr);
 
@@ -410,6 +677,9 @@ TEST(VariantTest, ClearBig) { TestClear<true>(); }
 
 template <bool BIG>
 void TestClearDeletes() {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_33(mht_33_v, 680, "", "./tensorflow/core/framework/variant_test.cc", "TestClearDeletes");
+
   Variant x;
   EXPECT_EQ(x.get<void>(), nullptr);
 
@@ -495,6 +765,9 @@ TEST(VariantTest, TensorProto) {
 
 template <bool BIG>
 void TestCopyValue() {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_34(mht_34_v, 768, "", "./tensorflow/core/framework/variant_test.cc", "TestCopyValue");
+
   Variant x, y;
   x = Int<BIG>{10};
   y = x;
@@ -509,6 +782,9 @@ TEST(VariantTest, CopyValueBig) { TestCopyValue<true>(); }
 
 template <bool BIG>
 void TestMoveValue() {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_35(mht_35_v, 785, "", "./tensorflow/core/framework/variant_test.cc", "TestMoveValue");
+
   Variant x;
   x = []() -> Variant {
     Variant y;
@@ -531,14 +807,23 @@ TEST(VariantTest, TypeMismatch) {
 }
 
 struct TensorList {
-  void Encode(VariantTensorData* data) const { data->tensors_ = vec; }
+  void Encode(VariantTensorData* data) const {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_36(mht_36_v, 811, "", "./tensorflow/core/framework/variant_test.cc", "Encode");
+ data->tensors_ = vec; }
 
   bool Decode(VariantTensorData data) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_37(mht_37_v, 816, "", "./tensorflow/core/framework/variant_test.cc", "Decode");
+
     vec = std::move(data.tensors_);
     return true;
   }
 
-  string TypeName() const { return "TensorList"; }
+  string TypeName() const {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_38(mht_38_v, 824, "", "./tensorflow/core/framework/variant_test.cc", "TypeName");
+ return "TensorList"; }
 
   std::vector<Tensor> vec;
 };
@@ -597,6 +882,9 @@ TEST(VariantTest, TensorListTest) {
 
 template <bool BIG>
 void TestVariantArray() {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_39(mht_39_v, 885, "", "./tensorflow/core/framework/variant_test.cc", "TestVariantArray");
+
   Variant x[2];
   x[0] = Int<BIG>{2};
   x[1] = Float<BIG>{2.0f};
@@ -611,12 +899,18 @@ TEST(VariantTest, VariantArrayBig) { TestVariantArray<true>(); }
 
 template <bool BIG>
 void PodUpdateTest() {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_40(mht_40_v, 902, "", "./tensorflow/core/framework/variant_test.cc", "PodUpdateTest");
+
   struct Pod {
     int x;
     float y;
     char big[BIG ? 256 : 1];
 
-    string TypeName() const { return "POD"; }
+    string TypeName() const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_41(mht_41_v, 911, "", "./tensorflow/core/framework/variant_test.cc", "TypeName");
+ return "POD"; }
   };
 
   Variant x = Pod{10, 20.f};
@@ -634,12 +928,18 @@ TEST(VariantTest, PodUpdateBig) { PodUpdateTest<true>(); }
 
 template <bool BIG>
 void TestEncodeDecodePod() {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_42(mht_42_v, 931, "", "./tensorflow/core/framework/variant_test.cc", "TestEncodeDecodePod");
+
   struct Pod {
     int x;
     float y;
     char big[BIG ? 256 : 1];
 
-    string TypeName() const { return "POD"; }
+    string TypeName() const {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSvariant_testDTcc mht_43(mht_43_v, 940, "", "./tensorflow/core/framework/variant_test.cc", "TypeName");
+ return "POD"; }
   };
 
   Variant x;

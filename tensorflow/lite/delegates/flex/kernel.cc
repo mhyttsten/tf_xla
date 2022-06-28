@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -76,21 +244,36 @@ struct TensorSource {
 class OpInputs {
  public:
   explicit OpInputs(const TfLiteIntArray* indexes) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_0(mht_0_v, 247, "", "./tensorflow/lite/delegates/flex/kernel.cc", "OpInputs");
+
     for (int index : TfLiteIntArrayView(indexes)) {
       inputs_.push_back(index);
     }
     forwardable_.resize(inputs_.size());
   }
-  ~OpInputs() {}
+  ~OpInputs() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_1(mht_1_v, 256, "", "./tensorflow/lite/delegates/flex/kernel.cc", "~OpInputs");
+}
 
-  int Size() const { return inputs_.size(); }
+  int Size() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_2(mht_2_v, 261, "", "./tensorflow/lite/delegates/flex/kernel.cc", "Size");
+ return inputs_.size(); }
 
-  int TfLiteIndex(int i) const { return inputs_[i]; }
+  int TfLiteIndex(int i) const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_3(mht_3_v, 266, "", "./tensorflow/lite/delegates/flex/kernel.cc", "TfLiteIndex");
+ return inputs_[i]; }
 
   // Given a map relating tensors to the node that originates them, populate a
   // list of sources for the tensors in this class.
   void InitializeTensorSources(
       const std::map<int, TensorSource>& tflite_tensor_sources) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_4(mht_4_v, 274, "", "./tensorflow/lite/delegates/flex/kernel.cc", "InitializeTensorSources");
+
     sources_.clear();
     for (int i : inputs_) {
       auto it = tflite_tensor_sources.find(i);
@@ -102,11 +285,20 @@ class OpInputs {
     }
   }
 
-  void SetForwardable(int i, bool v) { forwardable_[i] = v; }
+  void SetForwardable(int i, bool v) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_5(mht_5_v, 289, "", "./tensorflow/lite/delegates/flex/kernel.cc", "SetForwardable");
+ forwardable_[i] = v; }
 
-  bool IsForwardable(int i) const { return forwardable_[i]; }
+  bool IsForwardable(int i) const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_6(mht_6_v, 294, "", "./tensorflow/lite/delegates/flex/kernel.cc", "IsForwardable");
+ return forwardable_[i]; }
 
-  TensorSource GetTensorSource(int i) const { return sources_[i]; }
+  TensorSource GetTensorSource(int i) const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_7(mht_7_v, 299, "", "./tensorflow/lite/delegates/flex/kernel.cc", "GetTensorSource");
+ return sources_[i]; }
 
  private:
   std::vector<int> inputs_;
@@ -124,6 +316,9 @@ class OpInputs {
 class OpOutputs {
  public:
   explicit OpOutputs(const TfLiteIntArray* indexes) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_8(mht_8_v, 319, "", "./tensorflow/lite/delegates/flex/kernel.cc", "OpOutputs");
+
     for (int index : TfLiteIntArrayView(indexes)) {
       outputs_.push_back(index);
     }
@@ -134,6 +329,9 @@ class OpOutputs {
   // Stores information about which of the tensors in this class are also
   // outputs of the sugbraph.
   void InitializeGraphOutputs(const std::set<int>& subgraph_outputs) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_9(mht_9_v, 332, "", "./tensorflow/lite/delegates/flex/kernel.cc", "InitializeGraphOutputs");
+
     subgraph_outputs_.clear();
     for (int i : outputs_) {
       subgraph_outputs_.push_back(subgraph_outputs.count(i) > 0);
@@ -142,14 +340,29 @@ class OpOutputs {
 
   // Returns true if the tensor given by index 'i' is an output of the entire
   // subgraph.
-  bool IsSubgraphOutput(int i) const { return subgraph_outputs_[i]; }
+  bool IsSubgraphOutput(int i) const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_10(mht_10_v, 344, "", "./tensorflow/lite/delegates/flex/kernel.cc", "IsSubgraphOutput");
+ return subgraph_outputs_[i]; }
 
-  const tensorflow::Tensor& GetTensor(int i) const { return vector_[i]; }
-  tensorflow::Tensor ReleaseTensor(int i) { return std::move(vector_[i]); }
+  const tensorflow::Tensor& GetTensor(int i) const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_11(mht_11_v, 349, "", "./tensorflow/lite/delegates/flex/kernel.cc", "GetTensor");
+ return vector_[i]; }
+  tensorflow::Tensor ReleaseTensor(int i) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_12(mht_12_v, 353, "", "./tensorflow/lite/delegates/flex/kernel.cc", "ReleaseTensor");
+ return std::move(vector_[i]); }
 
-  int Size() const { return outputs_.size(); }
+  int Size() const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_13(mht_13_v, 358, "", "./tensorflow/lite/delegates/flex/kernel.cc", "Size");
+ return outputs_.size(); }
 
-  int TfLiteIndex(int i) const { return outputs_[i]; }
+  int TfLiteIndex(int i) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_14(mht_14_v, 363, "", "./tensorflow/lite/delegates/flex/kernel.cc", "TfLiteIndex");
+ return outputs_[i]; }
 
   tensorflow::gtl::InlinedVector<tensorflow::Tensor, 2>* GetTensors() {
     return &vector_;
@@ -180,35 +393,81 @@ struct OpDataInfo {
 class OpNode {
  public:
   OpNode(const TfLiteIntArray* inputs, const TfLiteIntArray* outputs)
-      : inputs_(inputs), outputs_(outputs) {}
+      : inputs_(inputs), outputs_(outputs) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_15(mht_15_v, 397, "", "./tensorflow/lite/delegates/flex/kernel.cc", "OpNode");
+}
   ~OpNode() = default;
 
-  const string& name() const { return name_; }
-  void set_name(const string& name) { name_ = name; }
+  const string& name() const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_16(mht_16_v, 403, "", "./tensorflow/lite/delegates/flex/kernel.cc", "name");
+ return name_; }
+  void set_name(const string& name) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_17(mht_17_v, 408, "", "./tensorflow/lite/delegates/flex/kernel.cc", "set_name");
+ name_ = name; }
 
-  int index() const { return index_; }
-  void set_index(int index) { index_ = index; }
+  int index() const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_18(mht_18_v, 413, "", "./tensorflow/lite/delegates/flex/kernel.cc", "index");
+ return index_; }
+  void set_index(int index) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_19(mht_19_v, 417, "", "./tensorflow/lite/delegates/flex/kernel.cc", "set_index");
+ index_ = index; }
 
-  const tensorflow::NodeDef& nodedef() const { return nodedef_; }
+  const tensorflow::NodeDef& nodedef() const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_20(mht_20_v, 422, "", "./tensorflow/lite/delegates/flex/kernel.cc", "nodedef");
+ return nodedef_; }
   const tensorflow::OpRegistrationData* op_reg_data() const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_21(mht_21_v, 426, "", "./tensorflow/lite/delegates/flex/kernel.cc", "op_reg_data");
+
     return op_reg_data_;
   }
 
-  const OpInputs& inputs() const { return inputs_; }
-  OpInputs* mutable_inputs() { return &inputs_; }
+  const OpInputs& inputs() const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_22(mht_22_v, 433, "", "./tensorflow/lite/delegates/flex/kernel.cc", "inputs");
+ return inputs_; }
+  OpInputs* mutable_inputs() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_23(mht_23_v, 437, "", "./tensorflow/lite/delegates/flex/kernel.cc", "mutable_inputs");
+ return &inputs_; }
 
-  const OpOutputs& outputs() const { return outputs_; }
-  OpOutputs* mutable_outputs() { return &outputs_; }
+  const OpOutputs& outputs() const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_24(mht_24_v, 442, "", "./tensorflow/lite/delegates/flex/kernel.cc", "outputs");
+ return outputs_; }
+  OpOutputs* mutable_outputs() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_25(mht_25_v, 446, "", "./tensorflow/lite/delegates/flex/kernel.cc", "mutable_outputs");
+ return &outputs_; }
 
-  int NumInputs() const { return inputs_.Size(); }
-  int NumOutputs() const { return outputs_.Size(); }
+  int NumInputs() const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_26(mht_26_v, 451, "", "./tensorflow/lite/delegates/flex/kernel.cc", "NumInputs");
+ return inputs_.Size(); }
+  int NumOutputs() const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_27(mht_27_v, 455, "", "./tensorflow/lite/delegates/flex/kernel.cc", "NumOutputs");
+ return outputs_.Size(); }
 
   const tensorflow::tfrt_stub::OpKernelRunner& op_kernel_runner() const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_28(mht_28_v, 460, "", "./tensorflow/lite/delegates/flex/kernel.cc", "op_kernel_runner");
+
     return op_kernel_runner_;
   }
 
   tensorflow::Status InitializeNodeDef(const void* custom_initial_data,
                                        int custom_initial_data_size) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_29(mht_29_v, 468, "", "./tensorflow/lite/delegates/flex/kernel.cc", "InitializeNodeDef");
+
     if (!custom_initial_data) {
       return tensorflow::errors::Internal(
           "Cannot convert empty data into a valid NodeDef");
@@ -238,6 +497,9 @@ class OpNode {
 
   tensorflow::Status BuildOpKernelRunner(
       tensorflow::EagerContext* eager_context) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_30(mht_30_v, 500, "", "./tensorflow/lite/delegates/flex/kernel.cc", "BuildOpKernelRunner");
+
     // Create tensorflow::OpKernel on host CPU.
     TF_ASSIGN_OR_RETURN(op_kernel_runner_,
                         tensorflow::tfrt_stub::OpKernelRunner::Create(
@@ -255,6 +517,9 @@ class OpNode {
   tensorflow::Status BuildOpKernelInputs(
       const BufferMap* buffer_map,
       tensorflow::tfrt_stub::OpKernelRunState* run_state) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_31(mht_31_v, 520, "", "./tensorflow/lite/delegates/flex/kernel.cc", "BuildOpKernelInputs");
+
     run_state->input_tf_tensors.resize(inputs_.Size());
     run_state->input_tf_tensor_values.resize(inputs_.Size());
 
@@ -294,6 +559,9 @@ class OpNode {
   bool ShouldPersistTensorflowTensor(TfLiteContext* context,
                                      const OpDataInfo* shared_info,
                                      int tensor_index, int node_index) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_32(mht_32_v, 562, "", "./tensorflow/lite/delegates/flex/kernel.cc", "ShouldPersistTensorflowTensor");
+
     TfLiteTensor* tensor = &context->tensors[tensor_index];
     // Always persist variant|resource|string tensors since they have special
     // storage requirement.
@@ -313,6 +581,9 @@ class OpNode {
                                   OpDataInfo* shared_info, TfLiteTensor* tensor,
                                   tensorflow::Tensor* tf_tensor,
                                   int tensor_index) const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_33(mht_33_v, 584, "", "./tensorflow/lite/delegates/flex/kernel.cc", "CopyToTfLiteTensor");
+
     if (tensor->allocation_type == kTfLiteDynamic) {
       // For dynamic tensors, update the TfLite tensor's shape information from
       // the Tensorflow tensor.
@@ -341,6 +612,9 @@ class OpNode {
   tensorflow::Status MaybePersistTensorflowOutputs(TfLiteContext* context,
                                                    OpDataInfo* shared_info,
                                                    int node_index) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_34(mht_34_v, 615, "", "./tensorflow/lite/delegates/flex/kernel.cc", "MaybePersistTensorflowOutputs");
+
     auto* tensors = outputs_.GetTensors();
 
     for (int i = 0; i < outputs_.Size(); ++i) {
@@ -397,6 +671,9 @@ struct OpData {
 tensorflow::Status DelegateKernel::ExecuteOpKernelRunner(
     tensorflow::tfrt_stub::OpKernelRunState* run_state, TfLiteContext* context,
     OpNode* node_data) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_35(mht_35_v, 674, "", "./tensorflow/lite/delegates/flex/kernel.cc", "DelegateKernel::ExecuteOpKernelRunner");
+
   const auto& op_kernel_runner = node_data->op_kernel_runner();
 
   if (op_kernel_runner.op_kernel()->num_outputs() != node_data->NumOutputs()) {
@@ -429,11 +706,20 @@ tensorflow::Status DelegateKernel::ExecuteOpKernelRunner(
       context, &(op_data_->shared_info), node_data->index());
 }
 
-DelegateKernel::DelegateKernel() : op_data_(new OpData) {}
-DelegateKernel::~DelegateKernel() {}
+DelegateKernel::DelegateKernel() : op_data_(new OpData) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_36(mht_36_v, 710, "", "./tensorflow/lite/delegates/flex/kernel.cc", "DelegateKernel::DelegateKernel");
+}
+DelegateKernel::~DelegateKernel() {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_37(mht_37_v, 714, "", "./tensorflow/lite/delegates/flex/kernel.cc", "DelegateKernel::~DelegateKernel");
+}
 
 TfLiteStatus DelegateKernel::Init(TfLiteContext* context,
                                   const TfLiteDelegateParams* params) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_38(mht_38_v, 720, "", "./tensorflow/lite/delegates/flex/kernel.cc", "DelegateKernel::Init");
+
   auto* flex_delegate_data =
       reinterpret_cast<FlexDelegate*>(params->delegate->data_)->mutable_data();
   op_data_->eager_context = flex_delegate_data->GetEagerContext();
@@ -518,6 +804,9 @@ TfLiteStatus DelegateKernel::Init(TfLiteContext* context,
 }
 
 TfLiteStatus DelegateKernel::Prepare(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_39(mht_39_v, 807, "", "./tensorflow/lite/delegates/flex/kernel.cc", "DelegateKernel::Prepare");
+
   TF_LITE_ENSURE_MSG(
       context, op_data_->eager_context != nullptr,
       "Failed to initialize eager context. This often happens when a CPU "
@@ -591,6 +880,9 @@ TfLiteStatus DelegateKernel::Prepare(TfLiteContext* context, TfLiteNode* node) {
 
 TfLiteStatus DelegateKernel::ValidateOutputTensorShapeConsistency(
     TfLiteContext* context) const {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_40(mht_40_v, 883, "", "./tensorflow/lite/delegates/flex/kernel.cc", "DelegateKernel::ValidateOutputTensorShapeConsistency");
+
   for (const auto& node_data : op_data_->nodes) {
     auto op_name = node_data->name().c_str();
     // Create an InferenceContext object.
@@ -678,11 +970,17 @@ TfLiteStatus DelegateKernel::ValidateOutputTensorShapeConsistency(
 }
 
 static tensorflow::CancellationManager* GetDefaultCancellationManager() {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_41(mht_41_v, 973, "", "./tensorflow/lite/delegates/flex/kernel.cc", "GetDefaultCancellationManager");
+
   static auto* const cancellation_manager = new tensorflow::CancellationManager;
   return cancellation_manager;
 }
 
 TfLiteStatus DelegateKernel::Eval(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSflexPSkernelDTcc mht_42(mht_42_v, 981, "", "./tensorflow/lite/delegates/flex/kernel.cc", "DelegateKernel::Eval");
+
   BufferMap* buffer_map = op_data_->shared_info.buffer_map;
 
   // Insert a tensor in the buffer map for all inputs that are not constant.

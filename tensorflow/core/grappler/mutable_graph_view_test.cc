@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,6 +203,9 @@ using FDH = FunctionDefHelper;
 
 void CompareNodeFanins(const MutableGraphView& graph, NodeDef* node,
                        absl::Span<const string> fanins) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc mht_0(mht_0_v, 206, "", "./tensorflow/core/grappler/mutable_graph_view_test.cc", "CompareNodeFanins");
+
   ASSERT_EQ(node->input_size(), fanins.size());
   for (int i = 0; i < node->input_size(); ++i) {
     TensorId tensor_id = ParseTensorName(fanins[i]);
@@ -55,6 +226,9 @@ void CompareNodeFanins(const MutableGraphView& graph, NodeDef* node,
 
 void CompareNodeFanouts(const MutableGraphView& graph, NodeDef* node,
                         absl::Span<const string> fanouts) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc mht_1(mht_1_v, 229, "", "./tensorflow/core/grappler/mutable_graph_view_test.cc", "CompareNodeFanouts");
+
   auto node_fanouts =
       graph.GetFanouts(*node, /*include_controlled_nodes=*/true);
   EXPECT_EQ(node_fanouts.size(), fanouts.size());
@@ -71,6 +245,12 @@ void CheckNode(const MutableGraphView& graph, absl::string_view node_name,
                absl::Span<const std::pair<string, FDH::AttrValueWrapper>> attrs,
                absl::Span<const string> fanins,
                absl::Span<const string> fanouts) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   mht_2_v.push_back("op: \"" + std::string(op.data(), op.size()) + "\"");
+   mht_2_v.push_back("device: \"" + std::string(device.data(), device.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc mht_2(mht_2_v, 251, "", "./tensorflow/core/grappler/mutable_graph_view_test.cc", "CheckNode");
+
   NodeDef* node = graph.GetNode(node_name);
   ASSERT_NE(node, nullptr);
   EXPECT_EQ(node->op(), op);
@@ -86,6 +266,9 @@ void CheckNode(const MutableGraphView& graph, absl::string_view node_name,
 }
 
 void CheckGraph(const MutableGraphView& mutable_graph) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc mht_3(mht_3_v, 269, "", "./tensorflow/core/grappler/mutable_graph_view_test.cc", "CheckGraph");
+
   GraphView immutable_graph(mutable_graph.graph());
   EXPECT_EQ(mutable_graph.graph()->node_size(),
             immutable_graph.graph()->node_size());
@@ -94,6 +277,9 @@ void CheckGraph(const MutableGraphView& mutable_graph) {
   auto check_edges =
       [](const absl::flat_hash_set<MutableGraphView::Edge>& mutable_edges,
          const absl::flat_hash_set<GraphView::Edge>& immutable_edges) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc mht_4(mht_4_v, 280, "", "./tensorflow/core/grappler/mutable_graph_view_test.cc", "lambda");
+
         EXPECT_EQ(mutable_edges.size(), immutable_edges.size());
         for (const auto& fanin_edge : mutable_edges) {
           GraphView::Edge immutable_edge(
@@ -322,6 +508,10 @@ void CheckUnmodifiedNodeFanins(
     const GraphDef& graph, absl::string_view node_to_exclude,
     const absl::flat_hash_map<string, std::vector<string>>&
         unmodified_node_inputs) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("node_to_exclude: \"" + std::string(node_to_exclude.data(), node_to_exclude.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc mht_5(mht_5_v, 512, "", "./tensorflow/core/grappler/mutable_graph_view_test.cc", "CheckUnmodifiedNodeFanins");
+
   for (const auto& node : graph.node()) {
     if (node.name() == node_to_exclude) {
       continue;
@@ -339,6 +529,12 @@ void TestUpdateNodeName(absl::string_view from_node_name, bool node_exists,
                         absl::string_view to_node_name, bool update_fanouts,
                         bool success, const string& error_msg,
                         absl::Span<const string> expected_fanins) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("from_node_name: \"" + std::string(from_node_name.data(), from_node_name.size()) + "\"");
+   mht_6_v.push_back("to_node_name: \"" + std::string(to_node_name.data(), to_node_name.size()) + "\"");
+   mht_6_v.push_back("error_msg: \"" + error_msg + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc mht_6(mht_6_v, 535, "", "./tensorflow/core/grappler/mutable_graph_view_test.cc", "TestUpdateNodeName");
+
   GraphDef graph_def = test::function::GDef(
       {NDef("a", "NotImportant", {}, {}), NDef("b", "NotImportant", {"a"}),
        NDef("c", "NotImportant", {}, {})},
@@ -445,6 +641,9 @@ TEST(MutableGraphViewTest, UpdateNodeNameWithFanouts) {
 }
 
 GraphDef SimpleSwapNodeNamesMutationGraph() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc mht_7(mht_7_v, 644, "", "./tensorflow/core/grappler/mutable_graph_view_test.cc", "SimpleSwapNodeNamesMutationGraph");
+
   return test::function::GDef(
       {NDef("a", "NotImportant", {}, {}), NDef("switch_1", "Switch", {"a"}),
        NDef("identity_1", "Identity", {"switch_1:1"}),
@@ -456,6 +655,9 @@ GraphDef SimpleSwapNodeNamesMutationGraph() {
 }
 
 void TestSwapNodeNames(bool update_fanouts) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc mht_8(mht_8_v, 658, "", "./tensorflow/core/grappler/mutable_graph_view_test.cc", "TestSwapNodeNames");
+
   GraphDef graph_def = SimpleSwapNodeNamesMutationGraph();
 
   MutableGraphView graph(&graph_def);
@@ -484,6 +686,9 @@ TEST(MutableGraphView, SwapNodeNames) {
 }
 
 void TestSwapNodeNamesWithSameNames(bool update_fanouts) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc mht_9(mht_9_v, 689, "", "./tensorflow/core/grappler/mutable_graph_view_test.cc", "TestSwapNodeNamesWithSameNames");
+
   GraphDef graph_def = SimpleSwapNodeNamesMutationGraph();
 
   MutableGraphView graph(&graph_def);
@@ -651,6 +856,9 @@ TEST(MutableGraphView, SwapNodeNamesNonSwitchAndSwitchAndUpdateFanouts) {
 }
 
 void TestSwapNodeNamesSimpleSelfLoop(bool update_fanouts) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc mht_10(mht_10_v, 859, "", "./tensorflow/core/grappler/mutable_graph_view_test.cc", "TestSwapNodeNamesSimpleSelfLoop");
+
   GraphDef graph_def = test::function::GDef(
       {NDef("a", "NotImportant", {"b:7"}), NDef("b", "NotImportant", {"a:10"})},
       /*funcs=*/{});
@@ -674,6 +882,12 @@ TEST(MutableGraphView, SwapNodeNamesSelfLoops) {
 void TestSwapNodeNamesError(absl::string_view from_node_name,
                             absl::string_view to_node_name, bool update_fanouts,
                             const string& error_msg) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("from_node_name: \"" + std::string(from_node_name.data(), from_node_name.size()) + "\"");
+   mht_11_v.push_back("to_node_name: \"" + std::string(to_node_name.data(), to_node_name.size()) + "\"");
+   mht_11_v.push_back("error_msg: \"" + error_msg + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc mht_11(mht_11_v, 888, "", "./tensorflow/core/grappler/mutable_graph_view_test.cc", "TestSwapNodeNamesError");
+
   GraphDef graph_def = SimpleSwapNodeNamesMutationGraph();
 
   MutableGraphView graph(&graph_def);
@@ -891,6 +1105,9 @@ TEST(MutableGraphViewTest, UpdateFanoutsToSwitchWithNoControlFromSwitch) {
 }
 
 GraphDef SimpleMutateFaninGraph() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc mht_12(mht_12_v, 1108, "", "./tensorflow/core/grappler/mutable_graph_view_test.cc", "SimpleMutateFaninGraph");
+
   // Actual node.op() is not important in this test.
   GraphDef graph_def = test::function::GDef(
       {NDef("a", "NotImportant", {}, {}), NDef("b", "NotImportant", {}, {}),
@@ -909,6 +1126,11 @@ void TestAddRegularFanin(absl::string_view node_name, bool node_exists,
                          const TensorId& fanin_to_add, bool success,
                          const string& error_msg,
                          absl::Span<const string> expected_fanins) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   mht_13_v.push_back("error_msg: \"" + error_msg + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc mht_13(mht_13_v, 1131, "", "./tensorflow/core/grappler/mutable_graph_view_test.cc", "TestAddRegularFanin");
+
   GraphDef graph_def = SimpleMutateFaninGraph();
 
   MutableGraphView graph(&graph_def);
@@ -1041,6 +1263,11 @@ void TestAddRegularFaninByPort(absl::string_view node_name, bool node_exists,
                                int port, const TensorId& fanin_to_add,
                                bool success, const string& error_msg,
                                absl::Span<const string> expected_fanins) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   mht_14_v.push_back("error_msg: \"" + error_msg + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc mht_14(mht_14_v, 1268, "", "./tensorflow/core/grappler/mutable_graph_view_test.cc", "TestAddRegularFaninByPort");
+
   GraphDef graph_def = SimpleMutateFaninGraph();
 
   MutableGraphView graph(&graph_def);
@@ -1183,6 +1410,10 @@ TEST(MutableGraphViewTest, AddRegularFaninByPort) {
 
 void CheckFanoutRemoved(const MutableGraphView& graph, const TensorId& fanin,
                         absl::string_view node_name) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc mht_15(mht_15_v, 1414, "", "./tensorflow/core/grappler/mutable_graph_view_test.cc", "CheckFanoutRemoved");
+
   MutableGraphView::OutputPort output_port =
       graph.GetOutputPort(fanin.node(), fanin.index());
   auto fanouts = graph.GetFanout(output_port);
@@ -1195,6 +1426,11 @@ void TestRemoveRegularFanin(absl::string_view node_name, bool node_exists,
                             const TensorId& fanin_to_remove, bool success,
                             const string& error_msg,
                             absl::Span<const string> expected_fanins) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   mht_16_v.push_back("error_msg: \"" + error_msg + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc mht_16(mht_16_v, 1431, "", "./tensorflow/core/grappler/mutable_graph_view_test.cc", "TestRemoveRegularFanin");
+
   GraphDef graph_def = SimpleMutateFaninGraph();
 
   MutableGraphView graph(&graph_def);
@@ -1337,6 +1573,11 @@ void TestRemoveRegularFaninByPort(absl::string_view node_name, bool node_exists,
                                   int port, bool success,
                                   const string& error_msg,
                                   absl::Span<const string> expected_fanins) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   mht_17_v.push_back("error_msg: \"" + error_msg + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc mht_17(mht_17_v, 1578, "", "./tensorflow/core/grappler/mutable_graph_view_test.cc", "TestRemoveRegularFaninByPort");
+
   GraphDef graph_def = SimpleMutateFaninGraph();
 
   MutableGraphView graph(&graph_def);
@@ -1440,6 +1681,11 @@ void TestRemoveAllFanins(absl::string_view node_name, bool node_exists,
                          bool keep_controlling_nodes, bool success,
                          const string& error_msg,
                          absl::Span<const string> expected_fanins) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   mht_18_v.push_back("error_msg: \"" + error_msg + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc mht_18(mht_18_v, 1686, "", "./tensorflow/core/grappler/mutable_graph_view_test.cc", "TestRemoveAllFanins");
+
   GraphDef graph_def = SimpleMutateFaninGraph();
 
   MutableGraphView graph(&graph_def);
@@ -1538,6 +1784,11 @@ void TestUpdateFanin(absl::string_view node_name, bool node_exists,
                      const TensorId& from_fanin, const TensorId& to_fanin,
                      bool success, const string& error_msg,
                      absl::Span<const string> expected_fanins) {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   mht_19_v.push_back("error_msg: \"" + error_msg + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc mht_19(mht_19_v, 1789, "", "./tensorflow/core/grappler/mutable_graph_view_test.cc", "TestUpdateFanin");
+
   GraphDef graph_def = SimpleMutateFaninGraph();
 
   MutableGraphView graph(&graph_def);
@@ -1679,6 +1930,9 @@ TEST(MutableGraphViewTest, UpdateFanin) {
 }
 
 void TestUpdateFaninFromFaninToNodeAsSwitchControl(const TensorId& fanin) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc mht_20(mht_20_v, 1933, "", "./tensorflow/core/grappler/mutable_graph_view_test.cc", "TestUpdateFaninFromFaninToNodeAsSwitchControl");
+
   string tensor_id_str = TensorIdToString(fanin);
   GraphDef graph_def = test::function::GDef(
       {NDef("a", "NotImportant", {}, {}), NDef("b", "Switch", {}, {}),
@@ -1716,6 +1970,11 @@ void TestUpdateRegularFaninByPort(absl::string_view node_name, bool node_exists,
                                   int port, const TensorId& fanin, bool success,
                                   const string& error_msg,
                                   absl::Span<const string> expected_fanins) {
+   std::vector<std::string> mht_21_v;
+   mht_21_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   mht_21_v.push_back("error_msg: \"" + error_msg + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc mht_21(mht_21_v, 1975, "", "./tensorflow/core/grappler/mutable_graph_view_test.cc", "TestUpdateRegularFaninByPort");
+
   GraphDef graph_def = SimpleMutateFaninGraph();
 
   MutableGraphView graph(&graph_def);
@@ -1880,6 +2139,11 @@ void TestSwapRegularFaninsByPorts(absl::string_view node_name, bool node_exists,
                                   int from_port, int to_port, bool success,
                                   const string& error_msg,
                                   absl::Span<const string> expected_fanins) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   mht_22_v.push_back("error_msg: \"" + error_msg + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc mht_22(mht_22_v, 2144, "", "./tensorflow/core/grappler/mutable_graph_view_test.cc", "TestSwapRegularFaninsByPorts");
+
   GraphDef graph_def = SimpleMutateFaninGraph();
 
   MutableGraphView graph(&graph_def);
@@ -2549,6 +2813,11 @@ TEST(MutableGraphViewTest, AddControllingFaninSwitchWithExistingAddedIdentity) {
 void TestAddControllingFaninSelfLoops(absl::string_view node_name,
                                       const TensorId& fanin,
                                       const string& error_msg) {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   mht_23_v.push_back("error_msg: \"" + error_msg + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc mht_23(mht_23_v, 2818, "", "./tensorflow/core/grappler/mutable_graph_view_test.cc", "TestAddControllingFaninSelfLoops");
+
   GraphDef graph_def = test::function::GDef(
       {NDef("a", "NotImportant", {}, {}),
        NDef("b", "Switch", {}, {{"T", DT_FLOAT}}),
@@ -2729,6 +2998,11 @@ TEST(MutableGraphViewTest, RemoveControllingFaninSelfLoop) {
 void TestUpdateAllRegularFaninsToControlling(
     absl::string_view node_name, bool node_exists, bool success,
     const string& error_msg, absl::Span<const string> expected_fanins) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   mht_24_v.push_back("error_msg: \"" + error_msg + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc mht_24(mht_24_v, 3003, "", "./tensorflow/core/grappler/mutable_graph_view_test.cc", "TestUpdateAllRegularFaninsToControlling");
+
   constexpr char kDevice[] = "/device:foo:0";
   GraphDef graph_def = test::function::GDef(
       {NDef("a", "NotImportant", {}, {}),
@@ -2854,6 +3128,9 @@ TEST(MutableGraphViewTest, DeleteNodes) {
 }
 
 GraphDef SimpleDeleteNodeGraph() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSmutable_graph_view_testDTcc mht_25(mht_25_v, 3131, "", "./tensorflow/core/grappler/mutable_graph_view_test.cc", "SimpleDeleteNodeGraph");
+
   // Actual node.op() is not important in this test.
   GraphDef graph_def = test::function::GDef(
       {NDef("a", "NotImportant", {}, {}), NDef("b", "NotImportant", {"a:2"}),

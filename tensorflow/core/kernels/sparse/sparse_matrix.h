@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_KERNELS_SPARSE_SPARSE_MATRIX_H_
 #define TENSORFLOW_CORE_KERNELS_SPARSE_SPARSE_MATRIX_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #define EIGEN_USE_THREADS
 
@@ -102,7 +270,10 @@ class CSRSparseMatrix {
  public:
   static constexpr const char kTypeName[] = "tensorflow::CSRSparseMatrix";
 
-  CSRSparseMatrix() : metadata_{false, DT_INVALID} {}
+  CSRSparseMatrix() : metadata_{false, DT_INVALID} {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_0(mht_0_v, 274, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "CSRSparseMatrix");
+}
 
   CSRSparseMatrix(const CSRSparseMatrix& rhs)
       : metadata_(rhs.metadata_),
@@ -111,6 +282,9 @@ class CSRSparseMatrix {
         row_pointers_(rhs.row_pointers_),
         col_indices_(rhs.col_indices_),
         values_(rhs.values_) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_1(mht_1_v, 285, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "CSRSparseMatrix");
+
     SetupVecs();
   }
 
@@ -121,6 +295,9 @@ class CSRSparseMatrix {
         row_pointers_(std::move(rhs.row_pointers_)),
         col_indices_(std::move(rhs.col_indices_)),
         values_(std::move(rhs.values_)) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_2(mht_2_v, 298, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "CSRSparseMatrix");
+
     SetupVecs();
     rhs.metadata_.validated = false;
     rhs.metadata_.dtype = DT_INVALID;
@@ -128,6 +305,9 @@ class CSRSparseMatrix {
   }
 
   CSRSparseMatrix& operator=(CSRSparseMatrix&& rhs) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_3(mht_3_v, 308, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "=");
+
     if (this == &rhs) return *this;
     metadata_ = rhs.metadata_;
     metadata_.validated = rhs.metadata_.validated;
@@ -149,6 +329,9 @@ class CSRSparseMatrix {
                                       const Tensor& col_indices,
                                       const Tensor& values,
                                       CSRSparseMatrix* matrix) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_4(mht_4_v, 332, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "CreateCSRSparseMatrix");
+
     *matrix = CSRSparseMatrix(dtype, dense_shape, batch_pointers, row_pointers,
                               col_indices, values);
     Status s = matrix->Validate();
@@ -158,12 +341,18 @@ class CSRSparseMatrix {
   }
 
   Status Validate() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_5(mht_5_v, 344, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "Validate");
+
     return ValidateTypesAndShapes(metadata_.dtype, dense_shape_,
                                   batch_pointers_, row_pointers_, col_indices_,
                                   values_);
   }
 
   void Clear() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_6(mht_6_v, 353, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "Clear");
+
     metadata_ = {false, DT_INVALID};
     dense_shape_ = Tensor();
     batch_pointers_ = Tensor();
@@ -174,6 +363,9 @@ class CSRSparseMatrix {
   }
 
   bool valid() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_7(mht_7_v, 366, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "valid");
+
     return metadata_.validated && dense_shape_.IsInitialized() &&
            batch_pointers_.IsInitialized() && row_pointers_.IsInitialized() &&
            col_indices_.IsInitialized() && values_.IsInitialized() &&
@@ -182,41 +374,65 @@ class CSRSparseMatrix {
   }
 
   DataType dtype() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_8(mht_8_v, 377, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "dtype");
+
     DCHECK(valid());
     return metadata_.dtype;
   }
 
   inline int dims() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_9(mht_9_v, 385, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "dims");
+
     DCHECK(valid());
     return dense_shape_.NumElements();
   }
 
   inline int nnz(int batch) const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_10(mht_10_v, 393, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "nnz");
+
     DCHECK_LT(batch, batch_size());
     return (*batch_pointers_vec_)(batch + 1) - (*batch_pointers_vec_)(batch);
   }
 
   inline int batch_offset(int batch) const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_11(mht_11_v, 401, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "batch_offset");
+
     DCHECK_LT(batch, batch_size());
     return (*batch_pointers_vec_)(batch);
   }
 
   inline int total_nnz() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_12(mht_12_v, 409, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "total_nnz");
+
     DCHECK(valid());
     return (*batch_pointers_vec_)(batch_size());
   }
 
   inline Tensor& dense_shape() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_13(mht_13_v, 417, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "dense_shape");
+
     DCHECK(valid());
     return dense_shape_;
   }
 
   inline const Tensor& dense_shape() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_14(mht_14_v, 425, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "dense_shape");
+
     DCHECK(valid());
     return dense_shape_;
   }
 
   inline TTypes<int32>::UnalignedVec row_pointers_vec(int batch) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_15(mht_15_v, 433, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "row_pointers_vec");
+
     DCHECK(valid());
     DCHECK_LT(batch, batch_size());
     const int64_t rows = dense_shape().vec<int64_t>()((dims() == 2) ? 0 : 1);
@@ -226,6 +442,9 @@ class CSRSparseMatrix {
   }
 
   inline TTypes<int32>::UnalignedConstVec row_pointers_vec(int batch) const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_16(mht_16_v, 445, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "row_pointers_vec");
+
     DCHECK(valid());
     DCHECK_LT(batch, batch_size());
     const int64_t rows = dense_shape().vec<int64_t>()((dims() == 2) ? 0 : 1);
@@ -235,6 +454,9 @@ class CSRSparseMatrix {
   }
 
   inline TTypes<int32>::UnalignedVec col_indices_vec(int batch) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_17(mht_17_v, 457, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "col_indices_vec");
+
     DCHECK(valid());
     DCHECK_LT(batch, batch_size());
     const int offset = (*batch_pointers_vec_)(batch);
@@ -244,6 +466,9 @@ class CSRSparseMatrix {
   }
 
   inline TTypes<int32>::UnalignedConstVec col_indices_vec(int batch) const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_18(mht_18_v, 469, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "col_indices_vec");
+
     DCHECK(valid());
     DCHECK_LT(batch, batch_size());
     const int offset = (*batch_pointers_vec_)(batch);
@@ -254,6 +479,9 @@ class CSRSparseMatrix {
 
   template <typename T>
   inline typename TTypes<T>::UnalignedVec values_vec(int batch) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_19(mht_19_v, 482, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "values_vec");
+
     DCHECK(valid());
     DCHECK_LT(batch, batch_size());
     const int offset = (*batch_pointers_vec_)(batch);
@@ -264,6 +492,9 @@ class CSRSparseMatrix {
 
   template <typename T>
   inline typename TTypes<T>::UnalignedConstVec values_vec(int batch) const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_20(mht_20_v, 495, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "values_vec");
+
     DCHECK(valid());
     DCHECK_LT(batch, batch_size());
     const int offset = (*batch_pointers_vec_)(batch);
@@ -273,58 +504,94 @@ class CSRSparseMatrix {
   }
 
   inline Tensor& row_pointers() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_21(mht_21_v, 507, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "row_pointers");
+
     DCHECK(valid());
     return row_pointers_;
   }
 
   inline const Tensor& row_pointers() const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_22(mht_22_v, 515, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "row_pointers");
+
     DCHECK(valid());
     return row_pointers_;
   }
 
   inline Tensor& col_indices() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_23(mht_23_v, 523, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "col_indices");
+
     DCHECK(valid());
     return col_indices_;
   }
 
   inline const Tensor& col_indices() const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_24(mht_24_v, 531, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "col_indices");
+
     DCHECK(valid());
     return col_indices_;
   }
 
   inline Tensor& values() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_25(mht_25_v, 539, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "values");
+
     DCHECK(valid());
     return values_;
   }
 
   inline const Tensor& values() const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_26(mht_26_v, 547, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "values");
+
     DCHECK(valid());
     return values_;
   }
 
   inline Tensor& batch_pointers() {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_27(mht_27_v, 555, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "batch_pointers");
+
     DCHECK(valid());
     return batch_pointers_;
   }
 
   inline const Tensor& batch_pointers() const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_28(mht_28_v, 563, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "batch_pointers");
+
     DCHECK(valid());
     return batch_pointers_;
   }
 
-  std::string TypeName() const { return kTypeName; }
+  std::string TypeName() const {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_29(mht_29_v, 571, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "TypeName");
+ return kTypeName; }
 
   // TODO(ebrevdo): A better debug string.
-  std::string DebugString() const { return dense_shape_.DebugString(); }
+  std::string DebugString() const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_30(mht_30_v, 577, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "DebugString");
+ return dense_shape_.DebugString(); }
 
   // Returns the number of elements.  This is equal to 1 if the
   // CSRSparseMatrix is a singleton matrix (dense_shape is length 2).
   int batch_size() const {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_31(mht_31_v, 584, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "batch_size");
+
     DCHECK(valid());
     return batch_pointers_.NumElements() - 1;
   }
 
   bool Decode(const VariantTensorData& p) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_32(mht_32_v, 592, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "Decode");
+
     if (p.tensors_.empty()) return false;
     Metadata metadata;
     if (!p.get_metadata(&metadata)) return false;
@@ -363,6 +630,9 @@ class CSRSparseMatrix {
   }
 
   void Encode(VariantTensorData* p) const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_33(mht_33_v, 633, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "Encode");
+
     DCHECK(valid());
 
     // Store metadata_ to p's metadata
@@ -382,6 +652,9 @@ class CSRSparseMatrix {
   static Status DeviceCopy(
       const CSRSparseMatrix& from, CSRSparseMatrix* to,
       const UnaryVariantOpRegistry::AsyncTensorDeviceCopyFn& copy) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_34(mht_34_v, 655, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "DeviceCopy");
+
     VLOG(2) << "DeviceCopy from type: " << DataTypeString(from.dtype())
             << " and shape: " << from.dense_shape().DebugString();
     Tensor to_row_ptr(DT_INT32);
@@ -405,9 +678,15 @@ class CSRSparseMatrix {
         batch_pointers_(batch_pointers),
         row_pointers_(row_pointers),
         col_indices_(col_indices),
-        values_(values) {}
+        values_(values) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_35(mht_35_v, 682, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "CSRSparseMatrix");
+}
 
   void SetupVecs() {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_36(mht_36_v, 687, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "SetupVecs");
+
     if (!metadata_.validated) return;
     batch_pointers_vec_.reset(
         new TTypes<int32>::Vec(batch_pointers_.vec<int32>()));
@@ -416,6 +695,9 @@ class CSRSparseMatrix {
   }
 
   void ClearVecs() {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_37(mht_37_v, 698, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "ClearVecs");
+
     batch_pointers_vec_.reset();
     row_pointers_vec_.reset();
     col_indices_vec_.reset();
@@ -427,6 +709,9 @@ class CSRSparseMatrix {
                                        const Tensor& row_pointers,
                                        const Tensor& col_indices,
                                        const Tensor& values) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_38(mht_38_v, 712, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "ValidateTypesAndShapes");
+
     // TODO(ebrevdo): Consider adding support for other floating point types
     // (namely, float16).
     if (dtype != DT_FLOAT && dtype != DT_DOUBLE && dtype != DT_COMPLEX64 &&
@@ -632,6 +917,9 @@ struct CSRComponent {
 template <typename T>
 Status ExtractVariantFromInput(OpKernelContext* ctx, int index,
                                const T** value) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparsePSsparse_matrixDTh mht_39(mht_39_v, 920, "", "./tensorflow/core/kernels/sparse/sparse_matrix.h", "ExtractVariantFromInput");
+
   const Tensor& input_t = ctx->input(index);
   const Variant& input_variant = input_t.scalar<Variant>()();
   *value = input_variant.get<T>();

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -75,6 +243,9 @@ namespace gpu {
 PLUGIN_REGISTRY_DEFINE_PLUGIN_ID(kCuBlasPlugin);
 
 static std::string ToString(cublasStatus_t status) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_0(mht_0_v, 246, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "ToString");
+
   switch (status) {
     case CUBLAS_STATUS_SUCCESS:
       return "CUBLAS_STATUS_SUCCESS";
@@ -121,13 +292,19 @@ class ScopedCublasPointerMode {
   // Parameters:
   //  handle: The cublas library handle to act upon in setting the pointer mode.
   explicit ScopedCublasPointerMode(cublasHandle_t handle)
-      : handle_(handle), ok_(false) {}
+      : handle_(handle), ok_(false) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_1(mht_1_v, 296, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "ScopedCublasPointerMode");
+}
 
   // Attempts the switch to the requested scoped pointer mode, new_mode.
   //
   // Note that when false is returned, an appropriate error has already been
   // logged.
   bool Init(cublasPointerMode_t new_mode) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_2(mht_2_v, 305, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "Init");
+
     cublasStatus_t ret = cublasGetPointerMode(handle_, &old_mode_);
     if (ret != CUBLAS_STATUS_SUCCESS) {
       LOG(ERROR) << "failed to get old cublas pointer mode: " << ToString(ret);
@@ -146,6 +323,9 @@ class ScopedCublasPointerMode {
   // Switches back to the prior pointer mode, if the switch operation was
   // successful in the first place.
   ~ScopedCublasPointerMode() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_3(mht_3_v, 326, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "~ScopedCublasPointerMode");
+
     if (ok_) {
       cublasStatus_t ret = cublasSetPointerMode(handle_, old_mode_);
       if (ret != CUBLAS_STATUS_SUCCESS) {
@@ -179,13 +359,19 @@ class ScopedCublasMathMode {
   // Parameters:
   //  handle: The cublas library handle to act upon in setting the math mode.
   explicit ScopedCublasMathMode(cublasHandle_t handle)
-      : handle_(handle), ok_(false) {}
+      : handle_(handle), ok_(false) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_4(mht_4_v, 363, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "ScopedCublasMathMode");
+}
 
   // Attempts the switch to the requested scoped math mode, new_mode.
   //
   // Note that when false is returned, an appropriate error has already been
   // logged.
   bool Init(cublasMath_t new_mode) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_5(mht_5_v, 372, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "Init");
+
     cublasStatus_t ret = cublasGetMathMode(handle_, &old_mode_);
     if (ret != CUBLAS_STATUS_SUCCESS) {
       LOG(ERROR) << "failed to get old cublas math mode: " << ToString(ret);
@@ -203,6 +389,9 @@ class ScopedCublasMathMode {
   // Switches back to the prior math mode, if the switch operation was
   // successful in the first place.
   ~ScopedCublasMathMode() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_6(mht_6_v, 392, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "~ScopedCublasMathMode");
+
     if (ok_) {
       cublasStatus_t ret = cublasSetMathMode(handle_, old_mode_);
       if (ret != CUBLAS_STATUS_SUCCESS) {
@@ -226,6 +415,9 @@ static const char *const kCublasNotInitializedExplanation =
     "not built with support for the GPU in your machine.";
 
 bool CUDABlas::Init() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_7(mht_7_v, 418, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::Init");
+
   gpu::ScopedActivateExecutorContext sac{parent_};
   cublasStatus_t ret = cublasCreate(&blas_);
   if (ret != CUBLAS_STATUS_SUCCESS) {
@@ -258,9 +450,15 @@ CUDABlas::CUDABlas(gpu::GpuExecutor *parent)
       blasLt_(nullptr)
 #endif
 {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_8(mht_8_v, 453, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::CUDABlas");
+
 }
 
 CUDABlas::~CUDABlas() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_9(mht_9_v, 459, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::~CUDABlas");
+
   if (blas_ != nullptr) {
     gpu::ScopedActivateExecutorContext sac{parent_};
     cublasDestroy(blas_);
@@ -274,6 +472,9 @@ CUDABlas::~CUDABlas() {
 }
 
 bool CUDABlas::SetStream(Stream *stream) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_10(mht_10_v, 475, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::SetStream");
+
   CHECK(stream != nullptr);
   CHECK(AsGpuStreamValue(stream) != nullptr);
   CHECK(blas_ != nullptr);
@@ -288,6 +489,9 @@ bool CUDABlas::SetStream(Stream *stream) {
 }
 
 cudaStream_t CUDABlas::CUDAStream(Stream *stream) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_11(mht_11_v, 492, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::CUDAStream");
+
   CHECK(stream != nullptr);
   CHECK(AsGpuStreamValue(stream) != nullptr);
   gpu::ScopedActivateExecutorContext sac{parent_};
@@ -299,6 +503,9 @@ namespace {
 // Helper functions transforming blas arguments into cuBLAS arguments.
 
 cublasOperation_t CUDABlasTranspose(blas::Transpose trans) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_12(mht_12_v, 506, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlasTranspose");
+
   switch (trans) {
     case blas::Transpose::kNoTranspose:
       return CUBLAS_OP_N;
@@ -312,6 +519,9 @@ cublasOperation_t CUDABlasTranspose(blas::Transpose trans) {
 }
 
 cublasFillMode_t CUDABlasUpperLower(blas::UpperLower uplo) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_13(mht_13_v, 522, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlasUpperLower");
+
   switch (uplo) {
     case blas::UpperLower::kUpper:
       return CUBLAS_FILL_MODE_UPPER;
@@ -323,6 +533,9 @@ cublasFillMode_t CUDABlasUpperLower(blas::UpperLower uplo) {
 }
 
 cublasDiagType_t CUDABlasDiagonal(blas::Diagonal diag) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_14(mht_14_v, 536, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlasDiagonal");
+
   switch (diag) {
     case blas::Diagonal::kUnit:
       return CUBLAS_DIAG_UNIT;
@@ -334,6 +547,9 @@ cublasDiagType_t CUDABlasDiagonal(blas::Diagonal diag) {
 }
 
 cublasSideMode_t CUDABlasSide(blas::Side side) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_15(mht_15_v, 550, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlasSide");
+
   switch (side) {
     case blas::Side::kLeft:
       return CUBLAS_SIDE_LEFT;
@@ -409,6 +625,9 @@ struct CUDADataType<std::complex<uint8>> {
 };
 
 cudaDataType_t CUDAComputationType(blas::ComputationType ty) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_16(mht_16_v, 628, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDAComputationType");
+
   switch (ty) {
     case blas::ComputationType::kF16:
       return CUDA_R_16F;
@@ -453,6 +672,9 @@ cublasComputeType_t CUBLASComputationType(blas::ComputationType ty) {
 
 blas::DataType GetScaleType(blas::DataType data_type,
                             blas::ComputationType compute_type) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_17(mht_17_v, 675, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "GetScaleType");
+
   bool is_complex = data_type == blas::DataType::kComplexFloat ||
                     data_type == blas::DataType::kComplexDouble;
   switch (compute_type) {
@@ -483,6 +705,9 @@ cublasLtPointerMode_t CUBLASPointerMode(blas::PointerMode pointer_mode) {
   }
 }
 cublasLtEpilogue_t CUBLASEpilogue(blas::Epilogue epilogue) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_18(mht_18_v, 708, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUBLASEpilogue");
+
   switch (epilogue) {
     case blas::Epilogue::kDefault:
       return CUBLASLT_EPILOGUE_DEFAULT;
@@ -522,6 +747,9 @@ cudaDataType_t GetCUDADataType(blas::DataType ty) {
 }
 
 int GetDataTypeSizeBytes(blas::DataType ty) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_19(mht_19_v, 750, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "GetDataTypeSizeBytes");
+
   switch (ty) {
     case blas::DataType::kHalf:
       return 2;
@@ -549,6 +777,9 @@ port::Status CUDABlas::DoBlasInternalImpl(FuncT cublas_func, Stream *stream,
                                           bool pointer_mode_host,
                                           cublasMath_t math_type,
                                           Args... args) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_20(mht_20_v, 780, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasInternalImpl");
+
   absl::MutexLock lock(&mu_);
 
   CHECK(blas_ != nullptr);
@@ -594,6 +825,9 @@ port::Status CUDABlas::DoBlasInternalImpl(FuncT cublas_func, Stream *stream,
 bool CUDABlas::DoBlasAsum(Stream *stream, uint64_t elem_count,
                           const DeviceMemory<float> &x, int incx,
                           DeviceMemory<float> *result) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_21(mht_21_v, 828, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasAsum");
+
   return DoBlasInternal(cublasSasum, stream, false /* = pointer_mode_host */,
                         elem_count, GpuMemory(x), incx,
                         GpuMemoryMutable(result));
@@ -602,6 +836,9 @@ bool CUDABlas::DoBlasAsum(Stream *stream, uint64_t elem_count,
 bool CUDABlas::DoBlasAsum(Stream *stream, uint64_t elem_count,
                           const DeviceMemory<double> &x, int incx,
                           DeviceMemory<double> *result) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_22(mht_22_v, 839, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasAsum");
+
   return DoBlasInternal(cublasDasum, stream, false /* = pointer_mode_host */,
                         elem_count, GpuMemory(x), incx,
                         GpuMemoryMutable(result));
@@ -610,6 +847,9 @@ bool CUDABlas::DoBlasAsum(Stream *stream, uint64_t elem_count,
 bool CUDABlas::DoBlasAsum(Stream *stream, uint64_t elem_count,
                           const DeviceMemory<std::complex<float>> &x, int incx,
                           DeviceMemory<float> *result) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_23(mht_23_v, 850, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasAsum");
+
   return DoBlasInternal(cublasScasum, stream, false /* = pointer_mode_host */,
                         elem_count, GpuComplex(GpuMemory(x)), incx,
                         GpuMemoryMutable(result));
@@ -618,6 +858,9 @@ bool CUDABlas::DoBlasAsum(Stream *stream, uint64_t elem_count,
 bool CUDABlas::DoBlasAsum(Stream *stream, uint64_t elem_count,
                           const DeviceMemory<std::complex<double>> &x, int incx,
                           DeviceMemory<double> *result) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_24(mht_24_v, 861, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasAsum");
+
   return DoBlasInternal(cublasDzasum, stream, false /* = pointer_mode_host */,
                         elem_count, GpuComplex(GpuMemory(x)), incx,
                         GpuMemoryMutable(result));
@@ -626,6 +869,9 @@ bool CUDABlas::DoBlasAsum(Stream *stream, uint64_t elem_count,
 bool CUDABlas::DoBlasAxpy(Stream *stream, uint64_t elem_count, float alpha,
                           const DeviceMemory<float> &x, int incx,
                           DeviceMemory<float> *y, int incy) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_25(mht_25_v, 872, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasAxpy");
+
   return DoBlasInternal(cublasSaxpy, stream, true /* = pointer_mode_host */,
                         elem_count, &alpha, GpuMemory(x), incx,
                         GpuMemoryMutable(y), incy);
@@ -634,6 +880,9 @@ bool CUDABlas::DoBlasAxpy(Stream *stream, uint64_t elem_count, float alpha,
 bool CUDABlas::DoBlasAxpy(Stream *stream, uint64_t elem_count, double alpha,
                           const DeviceMemory<double> &x, int incx,
                           DeviceMemory<double> *y, int incy) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_26(mht_26_v, 883, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasAxpy");
+
   return DoBlasInternal(cublasDaxpy, stream, true /* = pointer_mode_host */,
                         elem_count, &alpha, GpuMemory(x), incx,
                         GpuMemoryMutable(y), incy);
@@ -643,6 +892,9 @@ bool CUDABlas::DoBlasAxpy(Stream *stream, uint64_t elem_count,
                           std::complex<float> alpha,
                           const DeviceMemory<std::complex<float>> &x, int incx,
                           DeviceMemory<std::complex<float>> *y, int incy) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_27(mht_27_v, 895, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasAxpy");
+
   auto cb_alpha = GpuComplexValue(alpha);
   return DoBlasInternal(cublasCaxpy, stream, true /* = pointer_mode_host */,
                         elem_count, GpuComplex(&cb_alpha),
@@ -654,6 +906,9 @@ bool CUDABlas::DoBlasAxpy(Stream *stream, uint64_t elem_count,
                           std::complex<double> alpha,
                           const DeviceMemory<std::complex<double>> &x, int incx,
                           DeviceMemory<std::complex<double>> *y, int incy) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_28(mht_28_v, 909, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasAxpy");
+
   auto cb_alpha = GpuComplexValue(alpha);
   return DoBlasInternal(cublasZaxpy, stream, true /* = pointer_mode_host */,
                         elem_count, GpuComplex(&cb_alpha),
@@ -664,6 +919,9 @@ bool CUDABlas::DoBlasAxpy(Stream *stream, uint64_t elem_count,
 bool CUDABlas::DoBlasCopy(Stream *stream, uint64_t elem_count,
                           const DeviceMemory<float> &x, int incx,
                           DeviceMemory<float> *y, int incy) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_29(mht_29_v, 922, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasCopy");
+
   return DoBlasInternal(cublasScopy, stream, true /* = pointer_mode_host */,
                         elem_count, GpuMemory(x), incx, GpuMemoryMutable(y),
                         incy);
@@ -672,6 +930,9 @@ bool CUDABlas::DoBlasCopy(Stream *stream, uint64_t elem_count,
 bool CUDABlas::DoBlasCopy(Stream *stream, uint64_t elem_count,
                           const DeviceMemory<double> &x, int incx,
                           DeviceMemory<double> *y, int incy) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_30(mht_30_v, 933, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasCopy");
+
   return DoBlasInternal(cublasDcopy, stream, true /* = pointer_mode_host */,
                         elem_count, GpuMemory(x), incx, GpuMemoryMutable(y),
                         incy);
@@ -680,6 +941,9 @@ bool CUDABlas::DoBlasCopy(Stream *stream, uint64_t elem_count,
 bool CUDABlas::DoBlasCopy(Stream *stream, uint64_t elem_count,
                           const DeviceMemory<std::complex<float>> &x, int incx,
                           DeviceMemory<std::complex<float>> *y, int incy) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_31(mht_31_v, 944, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasCopy");
+
   return DoBlasInternal(cublasCcopy, stream, true /* = pointer_mode_host */,
                         elem_count, GpuComplex(GpuMemory(x)), incx,
                         GpuComplex(GpuMemoryMutable(y)), incy);
@@ -688,6 +952,9 @@ bool CUDABlas::DoBlasCopy(Stream *stream, uint64_t elem_count,
 bool CUDABlas::DoBlasCopy(Stream *stream, uint64_t elem_count,
                           const DeviceMemory<std::complex<double>> &x, int incx,
                           DeviceMemory<std::complex<double>> *y, int incy) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_32(mht_32_v, 955, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasCopy");
+
   return DoBlasInternal(cublasZcopy, stream, true /* = pointer_mode_host */,
                         elem_count, GpuComplex(GpuMemory(x)), incx,
                         GpuComplex(GpuMemoryMutable(y)), incy);
@@ -697,6 +964,9 @@ bool CUDABlas::DoBlasDot(Stream *stream, uint64_t elem_count,
                          const DeviceMemory<float> &x, int incx,
                          const DeviceMemory<float> &y, int incy,
                          DeviceMemory<float> *result) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_33(mht_33_v, 967, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasDot");
+
   return DoBlasInternal(cublasSdot, stream, false /* = pointer_mode_host */,
                         elem_count, GpuMemory(x), incx, GpuMemory(y), incy,
                         GpuMemoryMutable(result));
@@ -706,6 +976,9 @@ bool CUDABlas::DoBlasDot(Stream *stream, uint64_t elem_count,
                          const DeviceMemory<double> &x, int incx,
                          const DeviceMemory<double> &y, int incy,
                          DeviceMemory<double> *result) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_34(mht_34_v, 979, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasDot");
+
   return DoBlasInternal(cublasDdot, stream, false /* = pointer_mode_host */,
                         elem_count, GpuMemory(x), incx, GpuMemory(y), incy,
                         GpuMemoryMutable(result));
@@ -715,6 +988,9 @@ bool CUDABlas::DoBlasDotc(Stream *stream, uint64_t elem_count,
                           const DeviceMemory<std::complex<float>> &x, int incx,
                           const DeviceMemory<std::complex<float>> &y, int incy,
                           DeviceMemory<std::complex<float>> *result) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_35(mht_35_v, 991, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasDotc");
+
   return DoBlasInternal(cublasCdotc, stream, false /* = pointer_mode_host */,
                         elem_count, GpuComplex(GpuMemory(x)), incx,
                         GpuComplex(GpuMemory(y)), incy,
@@ -725,6 +1001,9 @@ bool CUDABlas::DoBlasDotc(Stream *stream, uint64_t elem_count,
                           const DeviceMemory<std::complex<double>> &x, int incx,
                           const DeviceMemory<std::complex<double>> &y, int incy,
                           DeviceMemory<std::complex<double>> *result) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_36(mht_36_v, 1004, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasDotc");
+
   return DoBlasInternal(cublasZdotc, stream, false /* = pointer_mode_host */,
                         elem_count, GpuComplex(GpuMemory(x)), incx,
                         GpuComplex(GpuMemory(y)), incy,
@@ -735,6 +1014,9 @@ bool CUDABlas::DoBlasDotu(Stream *stream, uint64_t elem_count,
                           const DeviceMemory<std::complex<float>> &x, int incx,
                           const DeviceMemory<std::complex<float>> &y, int incy,
                           DeviceMemory<std::complex<float>> *result) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_37(mht_37_v, 1017, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasDotu");
+
   return DoBlasInternal(cublasCdotu, stream, false /* = pointer_mode_host */,
                         elem_count, GpuComplex(GpuMemory(x)), incx,
                         GpuComplex(GpuMemory(y)), incy,
@@ -745,6 +1027,9 @@ bool CUDABlas::DoBlasDotu(Stream *stream, uint64_t elem_count,
                           const DeviceMemory<std::complex<double>> &x, int incx,
                           const DeviceMemory<std::complex<double>> &y, int incy,
                           DeviceMemory<std::complex<double>> *result) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_38(mht_38_v, 1030, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasDotu");
+
   return DoBlasInternal(cublasZdotu, stream, false /* = pointer_mode_host */,
                         elem_count, GpuComplex(GpuMemory(x)), incx,
                         GpuComplex(GpuMemory(y)), incy,
@@ -754,6 +1039,9 @@ bool CUDABlas::DoBlasDotu(Stream *stream, uint64_t elem_count,
 bool CUDABlas::DoBlasNrm2(Stream *stream, uint64_t elem_count,
                           const DeviceMemory<float> &x, int incx,
                           DeviceMemory<float> *result) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_39(mht_39_v, 1042, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasNrm2");
+
   return DoBlasInternal(cublasSnrm2, stream, false /* = pointer_mode_host */,
                         elem_count, GpuMemory(x), incx,
                         GpuMemoryMutable(result));
@@ -762,6 +1050,9 @@ bool CUDABlas::DoBlasNrm2(Stream *stream, uint64_t elem_count,
 bool CUDABlas::DoBlasNrm2(Stream *stream, uint64_t elem_count,
                           const DeviceMemory<double> &x, int incx,
                           DeviceMemory<double> *result) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_40(mht_40_v, 1053, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasNrm2");
+
   return DoBlasInternal(cublasDnrm2, stream, false /* = pointer_mode_host */,
                         elem_count, GpuMemory(x), incx,
                         GpuMemoryMutable(result));
@@ -770,6 +1061,9 @@ bool CUDABlas::DoBlasNrm2(Stream *stream, uint64_t elem_count,
 bool CUDABlas::DoBlasNrm2(Stream *stream, uint64_t elem_count,
                           const DeviceMemory<std::complex<float>> &x, int incx,
                           DeviceMemory<float> *result) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_41(mht_41_v, 1064, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasNrm2");
+
   return DoBlasInternal(cublasScnrm2, stream, false /* = pointer_mode_host */,
                         elem_count, GpuComplex(GpuMemory(x)), incx,
                         GpuMemoryMutable(result));
@@ -778,6 +1072,9 @@ bool CUDABlas::DoBlasNrm2(Stream *stream, uint64_t elem_count,
 bool CUDABlas::DoBlasNrm2(Stream *stream, uint64_t elem_count,
                           const DeviceMemory<std::complex<double>> &x, int incx,
                           DeviceMemory<double> *result) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_42(mht_42_v, 1075, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasNrm2");
+
   return DoBlasInternal(cublasDznrm2, stream, false /* = pointer_mode_host */,
                         elem_count, GpuComplex(GpuMemory(x)), incx,
                         GpuMemoryMutable(result));
@@ -786,6 +1083,9 @@ bool CUDABlas::DoBlasNrm2(Stream *stream, uint64_t elem_count,
 bool CUDABlas::DoBlasRot(Stream *stream, uint64_t elem_count,
                          DeviceMemory<float> *x, int incx,
                          DeviceMemory<float> *y, int incy, float c, float s) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_43(mht_43_v, 1086, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasRot");
+
   return DoBlasInternal(cublasSrot, stream, true /* = pointer_mode_host */,
                         elem_count, GpuMemoryMutable(x), incx,
                         GpuMemoryMutable(y), incy, &c, &s);
@@ -795,6 +1095,9 @@ bool CUDABlas::DoBlasRot(Stream *stream, uint64_t elem_count,
                          DeviceMemory<double> *x, int incx,
                          DeviceMemory<double> *y, int incy, double c,
                          double s) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_44(mht_44_v, 1098, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasRot");
+
   return DoBlasInternal(cublasDrot, stream, true /* = pointer_mode_host */,
                         elem_count, GpuMemoryMutable(x), incx,
                         GpuMemoryMutable(y), incy, &c, &s);
@@ -804,6 +1107,9 @@ bool CUDABlas::DoBlasRot(Stream *stream, uint64_t elem_count,
                          DeviceMemory<std::complex<float>> *x, int incx,
                          DeviceMemory<std::complex<float>> *y, int incy,
                          float c, float s) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_45(mht_45_v, 1110, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasRot");
+
   return DoBlasInternal(cublasCsrot, stream, true /* = pointer_mode_host */,
                         elem_count, GpuComplex(GpuMemoryMutable(x)), incx,
                         GpuComplex(GpuMemoryMutable(y)), incy, &c, &s);
@@ -813,6 +1119,9 @@ bool CUDABlas::DoBlasRot(Stream *stream, uint64_t elem_count,
                          DeviceMemory<std::complex<double>> *x, int incx,
                          DeviceMemory<std::complex<double>> *y, int incy,
                          double c, double s) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_46(mht_46_v, 1122, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasRot");
+
   return DoBlasInternal(cublasZdrot, stream, true /* = pointer_mode_host */,
                         elem_count, GpuComplex(GpuMemoryMutable(x)), incx,
                         GpuComplex(GpuMemoryMutable(y)), incy, &c, &s);
@@ -821,6 +1130,9 @@ bool CUDABlas::DoBlasRot(Stream *stream, uint64_t elem_count,
 bool CUDABlas::DoBlasRotg(Stream *stream, DeviceMemory<float> *a,
                           DeviceMemory<float> *b, DeviceMemory<float> *c,
                           DeviceMemory<float> *s) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_47(mht_47_v, 1133, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasRotg");
+
   return DoBlasInternal(cublasSrotg, stream, false /* = pointer_mode_host */,
                         GpuMemoryMutable(a), GpuMemoryMutable(b),
                         GpuMemoryMutable(c), GpuMemoryMutable(s));
@@ -829,6 +1141,9 @@ bool CUDABlas::DoBlasRotg(Stream *stream, DeviceMemory<float> *a,
 bool CUDABlas::DoBlasRotg(Stream *stream, DeviceMemory<double> *a,
                           DeviceMemory<double> *b, DeviceMemory<double> *c,
                           DeviceMemory<double> *s) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_48(mht_48_v, 1144, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasRotg");
+
   return DoBlasInternal(cublasDrotg, stream, false /* = pointer_mode_host */,
                         GpuComplex(GpuMemoryMutable(a)), GpuMemoryMutable(b),
                         GpuMemoryMutable(c), GpuMemoryMutable(s));
@@ -838,6 +1153,9 @@ bool CUDABlas::DoBlasRotg(Stream *stream, DeviceMemory<std::complex<float>> *a,
                           DeviceMemory<std::complex<float>> *b,
                           DeviceMemory<float> *c,
                           DeviceMemory<std::complex<float>> *s) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_49(mht_49_v, 1156, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasRotg");
+
   return DoBlasInternal(
       cublasCrotg, stream, false /* = pointer_mode_host */,
       GpuComplex(GpuMemoryMutable(a)), GpuComplex(GpuMemoryMutable(b)),
@@ -848,6 +1166,9 @@ bool CUDABlas::DoBlasRotg(Stream *stream, DeviceMemory<std::complex<double>> *a,
                           DeviceMemory<std::complex<double>> *b,
                           DeviceMemory<double> *c,
                           DeviceMemory<std::complex<double>> *s) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_50(mht_50_v, 1169, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasRotg");
+
   return DoBlasInternal(
       cublasZrotg, stream, false /* = pointer_mode_host */,
       GpuComplex(GpuMemoryMutable(a)), GpuComplex(GpuMemoryMutable(b)),
@@ -858,6 +1179,9 @@ bool CUDABlas::DoBlasRotm(Stream *stream, uint64_t elem_count,
                           DeviceMemory<float> *x, int incx,
                           DeviceMemory<float> *y, int incy,
                           const DeviceMemory<float> &param) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_51(mht_51_v, 1182, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasRotm");
+
   return DoBlasInternal(cublasSrotm, stream, false /* = pointer_mode_host */,
                         elem_count, GpuMemoryMutable(x), incx,
                         GpuMemoryMutable(y), incy, GpuMemory(param));
@@ -867,6 +1191,9 @@ bool CUDABlas::DoBlasRotm(Stream *stream, uint64_t elem_count,
                           DeviceMemory<double> *x, int incx,
                           DeviceMemory<double> *y, int incy,
                           const DeviceMemory<double> &param) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_52(mht_52_v, 1194, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasRotm");
+
   return DoBlasInternal(cublasDrotm, stream, false /* = pointer_mode_host */,
                         elem_count, GpuMemoryMutable(x), incx,
                         GpuMemoryMutable(y), incy, GpuMemory(param));
@@ -876,6 +1203,9 @@ bool CUDABlas::DoBlasRotmg(Stream *stream, DeviceMemory<float> *d1,
                            DeviceMemory<float> *d2, DeviceMemory<float> *x1,
                            const DeviceMemory<float> &y1,
                            DeviceMemory<float> *param) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_53(mht_53_v, 1206, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasRotmg");
+
   return DoBlasInternal(cublasSrotmg, stream, false /* = pointer_mode_host */,
                         GpuMemoryMutable(d1), GpuMemoryMutable(d2),
                         GpuMemoryMutable(x1), GpuMemory(y1),
@@ -886,6 +1216,9 @@ bool CUDABlas::DoBlasRotmg(Stream *stream, DeviceMemory<double> *d1,
                            DeviceMemory<double> *d2, DeviceMemory<double> *x1,
                            const DeviceMemory<double> &y1,
                            DeviceMemory<double> *param) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_54(mht_54_v, 1219, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasRotmg");
+
   return DoBlasInternal(cublasDrotmg, stream, false /* = pointer_mode_host */,
                         GpuMemoryMutable(d1), GpuMemoryMutable(d2),
                         GpuMemoryMutable(x1), GpuMemory(y1),
@@ -894,18 +1227,27 @@ bool CUDABlas::DoBlasRotmg(Stream *stream, DeviceMemory<double> *d1,
 
 bool CUDABlas::DoBlasScal(Stream *stream, uint64_t elem_count, float alpha,
                           DeviceMemory<float> *x, int incx) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_55(mht_55_v, 1230, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasScal");
+
   return DoBlasInternal(cublasSscal, stream, true /* = pointer_mode_host */,
                         elem_count, &alpha, GpuMemoryMutable(x), incx);
 }
 
 bool CUDABlas::DoBlasScal(Stream *stream, uint64_t elem_count, double alpha,
                           DeviceMemory<double> *x, int incx) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_56(mht_56_v, 1239, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasScal");
+
   return DoBlasInternal(cublasDscal, stream, true /* = pointer_mode_host */,
                         elem_count, &alpha, GpuMemoryMutable(x), incx);
 }
 
 bool CUDABlas::DoBlasScal(Stream *stream, uint64_t elem_count, float alpha,
                           DeviceMemory<std::complex<float>> *x, int incx) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_57(mht_57_v, 1248, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasScal");
+
   return DoBlasInternal(cublasCsscal, stream, true /* = pointer_mode_host */,
                         elem_count, &alpha, GpuComplex(GpuMemoryMutable(x)),
                         incx);
@@ -913,6 +1255,9 @@ bool CUDABlas::DoBlasScal(Stream *stream, uint64_t elem_count, float alpha,
 
 bool CUDABlas::DoBlasScal(Stream *stream, uint64_t elem_count, double alpha,
                           DeviceMemory<std::complex<double>> *x, int incx) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_58(mht_58_v, 1258, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasScal");
+
   return DoBlasInternal(cublasZdscal, stream, true /* = pointer_mode_host */,
                         elem_count, &alpha, GpuComplex(GpuMemoryMutable(x)),
                         incx);
@@ -921,6 +1266,9 @@ bool CUDABlas::DoBlasScal(Stream *stream, uint64_t elem_count, double alpha,
 bool CUDABlas::DoBlasScal(Stream *stream, uint64_t elem_count,
                           std::complex<float> alpha,
                           DeviceMemory<std::complex<float>> *x, int incx) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_59(mht_59_v, 1269, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasScal");
+
   auto cb_alpha = GpuComplexValue(alpha);
   return DoBlasInternal(cublasCscal, stream, true /* = pointer_mode_host */,
                         elem_count, GpuComplex(&cb_alpha),
@@ -930,6 +1278,9 @@ bool CUDABlas::DoBlasScal(Stream *stream, uint64_t elem_count,
 bool CUDABlas::DoBlasScal(Stream *stream, uint64_t elem_count,
                           std::complex<double> alpha,
                           DeviceMemory<std::complex<double>> *x, int incx) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_60(mht_60_v, 1281, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasScal");
+
   auto cb_alpha = GpuComplexValue(alpha);
   return DoBlasInternal(cublasZscal, stream, true /* = pointer_mode_host */,
                         elem_count, GpuComplex(&cb_alpha),
@@ -939,6 +1290,9 @@ bool CUDABlas::DoBlasScal(Stream *stream, uint64_t elem_count,
 bool CUDABlas::DoBlasSwap(Stream *stream, uint64_t elem_count,
                           DeviceMemory<float> *x, int incx,
                           DeviceMemory<float> *y, int incy) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_61(mht_61_v, 1293, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSwap");
+
   return DoBlasInternal(cublasSswap, stream, true /* = pointer_mode_host */,
                         elem_count, GpuMemoryMutable(x), incx,
                         GpuMemoryMutable(y), incy);
@@ -947,6 +1301,9 @@ bool CUDABlas::DoBlasSwap(Stream *stream, uint64_t elem_count,
 bool CUDABlas::DoBlasSwap(Stream *stream, uint64_t elem_count,
                           DeviceMemory<double> *x, int incx,
                           DeviceMemory<double> *y, int incy) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_62(mht_62_v, 1304, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSwap");
+
   return DoBlasInternal(cublasDswap, stream, true /* = pointer_mode_host */,
                         elem_count, GpuMemoryMutable(x), incx,
                         GpuMemoryMutable(y), incy);
@@ -955,6 +1312,9 @@ bool CUDABlas::DoBlasSwap(Stream *stream, uint64_t elem_count,
 bool CUDABlas::DoBlasSwap(Stream *stream, uint64_t elem_count,
                           DeviceMemory<std::complex<float>> *x, int incx,
                           DeviceMemory<std::complex<float>> *y, int incy) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_63(mht_63_v, 1315, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSwap");
+
   return DoBlasInternal(cublasCswap, stream, true /* = pointer_mode_host */,
                         elem_count, GpuComplex(GpuMemoryMutable(x)), incx,
                         GpuComplex(GpuMemoryMutable(y)), incy);
@@ -963,6 +1323,9 @@ bool CUDABlas::DoBlasSwap(Stream *stream, uint64_t elem_count,
 bool CUDABlas::DoBlasSwap(Stream *stream, uint64_t elem_count,
                           DeviceMemory<std::complex<double>> *x, int incx,
                           DeviceMemory<std::complex<double>> *y, int incy) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_64(mht_64_v, 1326, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSwap");
+
   return DoBlasInternal(cublasZswap, stream, true /* = pointer_mode_host */,
                         elem_count, GpuComplex(GpuMemoryMutable(x)), incx,
                         GpuComplex(GpuMemoryMutable(y)), incy);
@@ -971,6 +1334,9 @@ bool CUDABlas::DoBlasSwap(Stream *stream, uint64_t elem_count,
 bool CUDABlas::DoBlasIamax(Stream *stream, uint64_t elem_count,
                            const DeviceMemory<float> &x, int incx,
                            DeviceMemory<int> *result) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_65(mht_65_v, 1337, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasIamax");
+
   return DoBlasInternal(cublasIsamax, stream, false /* = pointer_mode_host */,
                         elem_count, GpuMemory(x), incx,
                         GpuMemoryMutable(result));
@@ -979,6 +1345,9 @@ bool CUDABlas::DoBlasIamax(Stream *stream, uint64_t elem_count,
 bool CUDABlas::DoBlasIamax(Stream *stream, uint64_t elem_count,
                            const DeviceMemory<double> &x, int incx,
                            DeviceMemory<int> *result) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_66(mht_66_v, 1348, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasIamax");
+
   return DoBlasInternal(cublasIdamax, stream, false /* = pointer_mode_host */,
                         elem_count, GpuMemory(x), incx,
                         GpuMemoryMutable(result));
@@ -987,6 +1356,9 @@ bool CUDABlas::DoBlasIamax(Stream *stream, uint64_t elem_count,
 bool CUDABlas::DoBlasIamax(Stream *stream, uint64_t elem_count,
                            const DeviceMemory<std::complex<float>> &x, int incx,
                            DeviceMemory<int> *result) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_67(mht_67_v, 1359, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasIamax");
+
   return DoBlasInternal(cublasIcamax, stream, false /* = pointer_mode_host */,
                         elem_count, GpuComplex(GpuMemory(x)), incx,
                         GpuMemoryMutable(result));
@@ -995,6 +1367,9 @@ bool CUDABlas::DoBlasIamax(Stream *stream, uint64_t elem_count,
 bool CUDABlas::DoBlasIamax(Stream *stream, uint64_t elem_count,
                            const DeviceMemory<std::complex<double>> &x,
                            int incx, DeviceMemory<int> *result) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_68(mht_68_v, 1370, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasIamax");
+
   return DoBlasInternal(cublasIzamax, stream, false /* = pointer_mode_host */,
                         elem_count, GpuComplex(GpuMemory(x)), incx,
                         GpuMemoryMutable(result));
@@ -1003,6 +1378,9 @@ bool CUDABlas::DoBlasIamax(Stream *stream, uint64_t elem_count,
 bool CUDABlas::DoBlasIamin(Stream *stream, uint64_t elem_count,
                            const DeviceMemory<float> &x, int incx,
                            DeviceMemory<int> *result) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_69(mht_69_v, 1381, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasIamin");
+
   return DoBlasInternal(cublasIsamin, stream, false /* = pointer_mode_host */,
                         elem_count, GpuComplex(GpuMemory(x)), incx,
                         GpuMemoryMutable(result));
@@ -1011,6 +1389,9 @@ bool CUDABlas::DoBlasIamin(Stream *stream, uint64_t elem_count,
 bool CUDABlas::DoBlasIamin(Stream *stream, uint64_t elem_count,
                            const DeviceMemory<double> &x, int incx,
                            DeviceMemory<int> *result) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_70(mht_70_v, 1392, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasIamin");
+
   return DoBlasInternal(cublasIdamin, stream, false /* = pointer_mode_host */,
                         elem_count, GpuComplex(GpuMemory(x)), incx,
                         GpuMemoryMutable(result));
@@ -1019,6 +1400,9 @@ bool CUDABlas::DoBlasIamin(Stream *stream, uint64_t elem_count,
 bool CUDABlas::DoBlasIamin(Stream *stream, uint64_t elem_count,
                            const DeviceMemory<std::complex<float>> &x, int incx,
                            DeviceMemory<int> *result) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_71(mht_71_v, 1403, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasIamin");
+
   return DoBlasInternal(cublasIcamin, stream, false /* = pointer_mode_host */,
                         elem_count, GpuComplex(GpuMemory(x)), incx,
                         GpuMemoryMutable(result));
@@ -1027,6 +1411,9 @@ bool CUDABlas::DoBlasIamin(Stream *stream, uint64_t elem_count,
 bool CUDABlas::DoBlasIamin(Stream *stream, uint64_t elem_count,
                            const DeviceMemory<std::complex<double>> &x,
                            int incx, DeviceMemory<int> *result) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_72(mht_72_v, 1414, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasIamin");
+
   return DoBlasInternal(cublasIzamin, stream, false /* = pointer_mode_host */,
                         elem_count, GpuComplex(GpuMemory(x)), incx,
                         GpuMemoryMutable(result));
@@ -1037,6 +1424,9 @@ bool CUDABlas::DoBlasGbmv(Stream *stream, blas::Transpose trans, uint64_t m,
                           const DeviceMemory<float> &a, int lda,
                           const DeviceMemory<float> &x, int incx, float beta,
                           DeviceMemory<float> *y, int incy) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_73(mht_73_v, 1427, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGbmv");
+
   return DoBlasInternal(cublasSgbmv, stream, true /* = pointer_mode_host */,
                         CUDABlasTranspose(trans), m, n, kl, ku, &alpha,
                         GpuMemory(a), lda, GpuMemory(x), incx, &beta,
@@ -1048,6 +1438,9 @@ bool CUDABlas::DoBlasGbmv(Stream *stream, blas::Transpose trans, uint64_t m,
                           const DeviceMemory<double> &a, int lda,
                           const DeviceMemory<double> &x, int incx, double beta,
                           DeviceMemory<double> *y, int incy) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_74(mht_74_v, 1441, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGbmv");
+
   return DoBlasInternal(cublasDgbmv, stream, true /* = pointer_mode_host */,
                         CUDABlasTranspose(trans), m, n, kl, ku, &alpha,
                         GpuMemory(a), lda, GpuMemory(x), incx, &beta,
@@ -1061,6 +1454,9 @@ bool CUDABlas::DoBlasGbmv(Stream *stream, blas::Transpose trans, uint64_t m,
                           const DeviceMemory<std::complex<float>> &x, int incx,
                           std::complex<float> beta,
                           DeviceMemory<std::complex<float>> *y, int incy) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_75(mht_75_v, 1457, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGbmv");
+
   auto cb_alpha = GpuComplexValue(alpha);
   auto cb_beta = GpuComplexValue(beta);
   return DoBlasInternal(cublasCgbmv, stream, true /* = pointer_mode_host */,
@@ -1077,6 +1473,9 @@ bool CUDABlas::DoBlasGbmv(Stream *stream, blas::Transpose trans, uint64_t m,
                           const DeviceMemory<std::complex<double>> &x, int incx,
                           std::complex<double> beta,
                           DeviceMemory<std::complex<double>> *y, int incy) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_76(mht_76_v, 1476, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGbmv");
+
   auto cb_alpha = GpuComplexValue(alpha);
   auto cb_beta = GpuComplexValue(beta);
   return DoBlasInternal(cublasZgbmv, stream, true /* = pointer_mode_host */,
@@ -1090,6 +1489,9 @@ bool CUDABlas::DoBlasGemv(Stream *stream, blas::Transpose trans, uint64_t m,
                           uint64_t n, float alpha, const DeviceMemory<float> &a,
                           int lda, const DeviceMemory<float> &x, int incx,
                           float beta, DeviceMemory<float> *y, int incy) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_77(mht_77_v, 1492, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGemv");
+
   return DoBlasInternal(cublasSgemv, stream, true /* = pointer_mode_host */,
                         CUDABlasTranspose(trans), m, n, &alpha, GpuMemory(a),
                         lda, GpuMemory(x), incx, &beta, GpuMemoryMutable(y),
@@ -1101,6 +1503,9 @@ bool CUDABlas::DoBlasGemv(Stream *stream, blas::Transpose trans, uint64_t m,
                           const DeviceMemory<double> &a, int lda,
                           const DeviceMemory<double> &x, int incx, double beta,
                           DeviceMemory<double> *y, int incy) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_78(mht_78_v, 1506, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGemv");
+
   return DoBlasInternal(cublasDgemv, stream, true /* = pointer_mode_host */,
                         CUDABlasTranspose(trans), m, n, &alpha, GpuMemory(a),
                         lda, GpuMemory(x), incx, &beta, GpuMemoryMutable(y),
@@ -1113,6 +1518,9 @@ bool CUDABlas::DoBlasGemv(Stream *stream, blas::Transpose trans, uint64_t m,
                           const DeviceMemory<std::complex<float>> &x, int incx,
                           std::complex<float> beta,
                           DeviceMemory<std::complex<float>> *y, int incy) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_79(mht_79_v, 1521, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGemv");
+
   auto cb_alpha = GpuComplexValue(alpha);
   auto cb_beta = GpuComplexValue(beta);
   return DoBlasInternal(cublasCgemv, stream, true /* = pointer_mode_host */,
@@ -1128,6 +1536,9 @@ bool CUDABlas::DoBlasGemv(Stream *stream, blas::Transpose trans, uint64_t m,
                           const DeviceMemory<std::complex<double>> &x, int incx,
                           std::complex<double> beta,
                           DeviceMemory<std::complex<double>> *y, int incy) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_80(mht_80_v, 1539, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGemv");
+
   auto cb_alpha = GpuComplexValue(alpha);
   auto cb_beta = GpuComplexValue(beta);
   return DoBlasInternal(cublasZgemv, stream, true /* = pointer_mode_host */,
@@ -1141,6 +1552,9 @@ bool CUDABlas::DoBlasGer(Stream *stream, uint64_t m, uint64 n, float alpha,
                          const DeviceMemory<float> &x, int incx,
                          const DeviceMemory<float> &y, int incy,
                          DeviceMemory<float> *a, int lda) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_81(mht_81_v, 1555, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGer");
+
   return DoBlasInternal(cublasSger, stream, true /* = pointer_mode_host */, m,
                         n, &alpha, GpuMemory(x), incx, GpuMemory(y), incy,
                         GpuMemoryMutable(a), lda);
@@ -1150,6 +1564,9 @@ bool CUDABlas::DoBlasGer(Stream *stream, uint64_t m, uint64 n, double alpha,
                          const DeviceMemory<double> &x, int incx,
                          const DeviceMemory<double> &y, int incy,
                          DeviceMemory<double> *a, int lda) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_82(mht_82_v, 1567, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGer");
+
   return DoBlasInternal(cublasDger, stream, true /* = pointer_mode_host */, m,
                         n, &alpha, GpuMemory(x), incx, GpuMemory(y), incy,
                         GpuMemoryMutable(a), lda);
@@ -1160,6 +1577,9 @@ bool CUDABlas::DoBlasGerc(Stream *stream, uint64_t m, uint64 n,
                           const DeviceMemory<std::complex<float>> &x, int incx,
                           const DeviceMemory<std::complex<float>> &y, int incy,
                           DeviceMemory<std::complex<float>> *a, int lda) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_83(mht_83_v, 1580, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGerc");
+
   auto cb_alpha = GpuComplexValue(alpha);
   return DoBlasInternal(cublasCgerc, stream, true /* = pointer_mode_host */, m,
                         n, GpuComplex(&cb_alpha), GpuComplex(GpuMemory(x)),
@@ -1172,6 +1592,9 @@ bool CUDABlas::DoBlasGerc(Stream *stream, uint64_t m, uint64 n,
                           const DeviceMemory<std::complex<double>> &x, int incx,
                           const DeviceMemory<std::complex<double>> &y, int incy,
                           DeviceMemory<std::complex<double>> *a, int lda) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_84(mht_84_v, 1595, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGerc");
+
   auto cb_alpha = GpuComplexValue(alpha);
   return DoBlasInternal(cublasZgerc, stream, true /* = pointer_mode_host */, m,
                         n, GpuComplex(&cb_alpha), GpuComplex(GpuMemory(x)),
@@ -1184,6 +1607,9 @@ bool CUDABlas::DoBlasGeru(Stream *stream, uint64_t m, uint64 n,
                           const DeviceMemory<std::complex<float>> &x, int incx,
                           const DeviceMemory<std::complex<float>> &y, int incy,
                           DeviceMemory<std::complex<float>> *a, int lda) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_85(mht_85_v, 1610, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGeru");
+
   auto cb_alpha = GpuComplexValue(alpha);
   return DoBlasInternal(cublasCgeru, stream, true /* = pointer_mode_host */, m,
                         n, GpuComplex(&cb_alpha), GpuComplex(GpuMemory(x)),
@@ -1196,6 +1622,9 @@ bool CUDABlas::DoBlasGeru(Stream *stream, uint64_t m, uint64 n,
                           const DeviceMemory<std::complex<double>> &x, int incx,
                           const DeviceMemory<std::complex<double>> &y, int incy,
                           DeviceMemory<std::complex<double>> *a, int lda) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_86(mht_86_v, 1625, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGeru");
+
   auto cb_alpha = GpuComplexValue(alpha);
   return DoBlasInternal(cublasZgeru, stream, true /* = pointer_mode_host */, m,
                         n, GpuComplex(&cb_alpha), GpuComplex(GpuMemory(x)),
@@ -1209,6 +1638,9 @@ bool CUDABlas::DoBlasHbmv(Stream *stream, blas::UpperLower uplo, uint64_t n,
                           const DeviceMemory<std::complex<float>> &x, int incx,
                           std::complex<float> beta,
                           DeviceMemory<std::complex<float>> *y, int incy) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_87(mht_87_v, 1641, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasHbmv");
+
   auto cb_alpha = GpuComplexValue(alpha);
   auto cb_beta = GpuComplexValue(beta);
   return DoBlasInternal(cublasChbmv, stream, true /* = pointer_mode_host */,
@@ -1224,6 +1656,9 @@ bool CUDABlas::DoBlasHbmv(Stream *stream, blas::UpperLower uplo, uint64_t n,
                           const DeviceMemory<std::complex<double>> &x, int incx,
                           std::complex<double> beta,
                           DeviceMemory<std::complex<double>> *y, int incy) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_88(mht_88_v, 1659, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasHbmv");
+
   auto cb_alpha = GpuComplexValue(alpha);
   auto cb_beta = GpuComplexValue(beta);
   return DoBlasInternal(cublasZhbmv, stream, true /* = pointer_mode_host */,
@@ -1239,6 +1674,9 @@ bool CUDABlas::DoBlasHemv(Stream *stream, blas::UpperLower uplo, uint64_t n,
                           const DeviceMemory<std::complex<float>> &x, int incx,
                           std::complex<float> beta,
                           DeviceMemory<std::complex<float>> *y, int incy) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_89(mht_89_v, 1677, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasHemv");
+
   auto cb_alpha = GpuComplexValue(alpha);
   auto cb_beta = GpuComplexValue(beta);
   return DoBlasInternal(cublasChemv, stream, true /* = pointer_mode_host */,
@@ -1254,6 +1692,9 @@ bool CUDABlas::DoBlasHemv(Stream *stream, blas::UpperLower uplo, uint64_t n,
                           const DeviceMemory<std::complex<double>> &x, int incx,
                           std::complex<double> beta,
                           DeviceMemory<std::complex<double>> *y, int incy) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_90(mht_90_v, 1695, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasHemv");
+
   auto cb_alpha = GpuComplexValue(alpha);
   auto cb_beta = GpuComplexValue(beta);
   return DoBlasInternal(cublasZhemv, stream, true /* = pointer_mode_host */,
@@ -1267,6 +1708,9 @@ bool CUDABlas::DoBlasHer(Stream *stream, blas::UpperLower uplo, uint64_t n,
                          float alpha,
                          const DeviceMemory<std::complex<float>> &x, int incx,
                          DeviceMemory<std::complex<float>> *a, int lda) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_91(mht_91_v, 1711, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasHer");
+
   return DoBlasInternal(cublasCher, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), n, &alpha,
                         GpuComplex(GpuMemory(x)), incx,
@@ -1277,6 +1721,9 @@ bool CUDABlas::DoBlasHer(Stream *stream, blas::UpperLower uplo, uint64_t n,
                          double alpha,
                          const DeviceMemory<std::complex<double>> &x, int incx,
                          DeviceMemory<std::complex<double>> *a, int lda) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_92(mht_92_v, 1724, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasHer");
+
   return DoBlasInternal(cublasZher, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), n, &alpha,
                         GpuComplex(GpuMemory(x)), incx,
@@ -1288,6 +1735,9 @@ bool CUDABlas::DoBlasHer2(Stream *stream, blas::UpperLower uplo, uint64_t n,
                           const DeviceMemory<std::complex<float>> &x, int incx,
                           const DeviceMemory<std::complex<float>> &y, int incy,
                           DeviceMemory<std::complex<float>> *a, int lda) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_93(mht_93_v, 1738, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasHer2");
+
   auto cb_alpha = GpuComplexValue(alpha);
   return DoBlasInternal(cublasCher2, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), n, GpuComplex(&cb_alpha),
@@ -1301,6 +1751,9 @@ bool CUDABlas::DoBlasHer2(Stream *stream, blas::UpperLower uplo, uint64_t n,
                           const DeviceMemory<std::complex<double>> &x, int incx,
                           const DeviceMemory<std::complex<double>> &y, int incy,
                           DeviceMemory<std::complex<double>> *a, int lda) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_94(mht_94_v, 1754, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasHer2");
+
   auto cb_alpha = GpuComplexValue(alpha);
   return DoBlasInternal(cublasZher2, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), n, GpuComplex(&cb_alpha),
@@ -1315,6 +1768,9 @@ bool CUDABlas::DoBlasHpmv(Stream *stream, blas::UpperLower uplo, uint64_t n,
                           const DeviceMemory<std::complex<float>> &x, int incx,
                           std::complex<float> beta,
                           DeviceMemory<std::complex<float>> *y, int incy) {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_95(mht_95_v, 1771, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasHpmv");
+
   auto cb_alpha = GpuComplexValue(alpha);
   auto cb_beta = GpuComplexValue(beta);
   return DoBlasInternal(cublasChpmv, stream, true /* = pointer_mode_host */,
@@ -1330,6 +1786,9 @@ bool CUDABlas::DoBlasHpmv(Stream *stream, blas::UpperLower uplo, uint64_t n,
                           const DeviceMemory<std::complex<double>> &x, int incx,
                           std::complex<double> beta,
                           DeviceMemory<std::complex<double>> *y, int incy) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_96(mht_96_v, 1789, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasHpmv");
+
   auto cb_alpha = GpuComplexValue(alpha);
   auto cb_beta = GpuComplexValue(beta);
   return DoBlasInternal(cublasZhpmv, stream, true /* = pointer_mode_host */,
@@ -1343,6 +1802,9 @@ bool CUDABlas::DoBlasHpr(Stream *stream, blas::UpperLower uplo, uint64_t n,
                          float alpha,
                          const DeviceMemory<std::complex<float>> &x, int incx,
                          DeviceMemory<std::complex<float>> *ap) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_97(mht_97_v, 1805, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasHpr");
+
   return DoBlasInternal(cublasChpr, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), n, &alpha,
                         GpuComplex(GpuMemory(x)), incx,
@@ -1353,6 +1815,9 @@ bool CUDABlas::DoBlasHpr(Stream *stream, blas::UpperLower uplo, uint64_t n,
                          double alpha,
                          const DeviceMemory<std::complex<double>> &x, int incx,
                          DeviceMemory<std::complex<double>> *ap) {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_98(mht_98_v, 1818, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasHpr");
+
   return DoBlasInternal(cublasZhpr, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), n, &alpha,
                         GpuComplex(GpuMemory(x)), incx,
@@ -1364,6 +1829,9 @@ bool CUDABlas::DoBlasHpr2(Stream *stream, blas::UpperLower uplo, uint64_t n,
                           const DeviceMemory<std::complex<float>> &x, int incx,
                           const DeviceMemory<std::complex<float>> &y, int incy,
                           DeviceMemory<std::complex<float>> *ap) {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_99(mht_99_v, 1832, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasHpr2");
+
   auto cb_alpha = GpuComplexValue(alpha);
   return DoBlasInternal(cublasChpr2, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), n, GpuComplex(&cb_alpha),
@@ -1377,6 +1845,9 @@ bool CUDABlas::DoBlasHpr2(Stream *stream, blas::UpperLower uplo, uint64_t n,
                           const DeviceMemory<std::complex<double>> &x, int incx,
                           const DeviceMemory<std::complex<double>> &y, int incy,
                           DeviceMemory<std::complex<double>> *ap) {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_100(mht_100_v, 1848, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasHpr2");
+
   auto cb_alpha = GpuComplexValue(alpha);
   return DoBlasInternal(cublasZhpr2, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), n, GpuComplex(&cb_alpha),
@@ -1389,6 +1860,9 @@ bool CUDABlas::DoBlasSbmv(Stream *stream, blas::UpperLower uplo, uint64_t n,
                           uint64_t k, float alpha, const DeviceMemory<float> &a,
                           int lda, const DeviceMemory<float> &x, int incx,
                           float beta, DeviceMemory<float> *y, int incy) {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_101(mht_101_v, 1863, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSbmv");
+
   return DoBlasInternal(cublasSsbmv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), n, k, &alpha, GpuMemory(a),
                         lda, GpuMemory(x), incx, &beta, GpuMemoryMutable(y),
@@ -1400,6 +1874,9 @@ bool CUDABlas::DoBlasSbmv(Stream *stream, blas::UpperLower uplo, uint64_t n,
                           const DeviceMemory<double> &a, int lda,
                           const DeviceMemory<double> &x, int incx, double beta,
                           DeviceMemory<double> *y, int incy) {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_102(mht_102_v, 1877, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSbmv");
+
   return DoBlasInternal(cublasDsbmv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), n, k, &alpha, GpuMemory(a),
                         lda, GpuMemory(x), incx, &beta, GpuMemoryMutable(y),
@@ -1410,6 +1887,9 @@ bool CUDABlas::DoBlasSpmv(Stream *stream, blas::UpperLower uplo, uint64_t n,
                           float alpha, const DeviceMemory<float> &ap,
                           const DeviceMemory<float> &x, int incx, float beta,
                           DeviceMemory<float> *y, int incy) {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_103(mht_103_v, 1890, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSpmv");
+
   return DoBlasInternal(cublasSspmv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), n, &alpha, GpuMemory(ap),
                         GpuMemory(x), incx, &beta, GpuMemoryMutable(y), incy);
@@ -1419,6 +1899,9 @@ bool CUDABlas::DoBlasSpmv(Stream *stream, blas::UpperLower uplo, uint64_t n,
                           double alpha, const DeviceMemory<double> &ap,
                           const DeviceMemory<double> &x, int incx, double beta,
                           DeviceMemory<double> *y, int incy) {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_104(mht_104_v, 1902, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSpmv");
+
   return DoBlasInternal(cublasDspmv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), n, &alpha, GpuMemory(ap),
                         GpuMemory(x), incx, &beta, GpuMemoryMutable(y), incy);
@@ -1427,6 +1910,9 @@ bool CUDABlas::DoBlasSpmv(Stream *stream, blas::UpperLower uplo, uint64_t n,
 bool CUDABlas::DoBlasSpr(Stream *stream, blas::UpperLower uplo, uint64_t n,
                          float alpha, const DeviceMemory<float> &x, int incx,
                          DeviceMemory<float> *ap) {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_105(mht_105_v, 1913, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSpr");
+
   return DoBlasInternal(cublasSspr, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), n, &alpha, GpuMemory(x), incx,
                         GpuMemoryMutable(ap));
@@ -1435,6 +1921,9 @@ bool CUDABlas::DoBlasSpr(Stream *stream, blas::UpperLower uplo, uint64_t n,
 bool CUDABlas::DoBlasSpr(Stream *stream, blas::UpperLower uplo, uint64_t n,
                          double alpha, const DeviceMemory<double> &x, int incx,
                          DeviceMemory<double> *ap) {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_106(mht_106_v, 1924, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSpr");
+
   return DoBlasInternal(cublasDspr, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), n, &alpha, GpuMemory(x), incx,
                         GpuMemoryMutable(ap));
@@ -1444,6 +1933,9 @@ bool CUDABlas::DoBlasSpr2(Stream *stream, blas::UpperLower uplo, uint64_t n,
                           float alpha, const DeviceMemory<float> &x, int incx,
                           const DeviceMemory<float> &y, int incy,
                           DeviceMemory<float> *ap) {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_107(mht_107_v, 1936, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSpr2");
+
   return DoBlasInternal(cublasSspr2, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), n, &alpha, GpuMemory(x), incx,
                         GpuMemory(y), incy, GpuMemoryMutable(ap));
@@ -1453,6 +1945,9 @@ bool CUDABlas::DoBlasSpr2(Stream *stream, blas::UpperLower uplo, uint64_t n,
                           double alpha, const DeviceMemory<double> &x, int incx,
                           const DeviceMemory<double> &y, int incy,
                           DeviceMemory<double> *ap) {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_108(mht_108_v, 1948, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSpr2");
+
   return DoBlasInternal(cublasDspr2, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), n, &alpha, GpuMemory(x), incx,
                         GpuMemory(y), incy, GpuMemoryMutable(ap));
@@ -1462,6 +1957,9 @@ bool CUDABlas::DoBlasSymv(Stream *stream, blas::UpperLower uplo, uint64_t n,
                           float alpha, const DeviceMemory<float> &a, int lda,
                           const DeviceMemory<float> &x, int incx, float beta,
                           DeviceMemory<float> *y, int incy) {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_109(mht_109_v, 1960, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSymv");
+
   return DoBlasInternal(cublasSsymv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), n, &alpha, GpuMemory(a), lda,
                         GpuMemory(x), incx, &beta, GpuMemoryMutable(y), incy);
@@ -1471,6 +1969,9 @@ bool CUDABlas::DoBlasSymv(Stream *stream, blas::UpperLower uplo, uint64_t n,
                           double alpha, const DeviceMemory<double> &a, int lda,
                           const DeviceMemory<double> &x, int incx, double beta,
                           DeviceMemory<double> *y, int incy) {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_110(mht_110_v, 1972, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSymv");
+
   return DoBlasInternal(cublasDsymv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), n, &alpha, GpuMemory(a), lda,
                         GpuMemory(x), incx, &beta, GpuMemoryMutable(y), incy);
@@ -1479,6 +1980,9 @@ bool CUDABlas::DoBlasSymv(Stream *stream, blas::UpperLower uplo, uint64_t n,
 bool CUDABlas::DoBlasSyr(Stream *stream, blas::UpperLower uplo, uint64_t n,
                          float alpha, const DeviceMemory<float> &x, int incx,
                          DeviceMemory<float> *a, int lda) {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_111(mht_111_v, 1983, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSyr");
+
   return DoBlasInternal(cublasSsyr, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), n, &alpha, GpuMemory(x), incx,
                         GpuMemoryMutable(a), lda);
@@ -1487,6 +1991,9 @@ bool CUDABlas::DoBlasSyr(Stream *stream, blas::UpperLower uplo, uint64_t n,
 bool CUDABlas::DoBlasSyr(Stream *stream, blas::UpperLower uplo, uint64_t n,
                          double alpha, const DeviceMemory<double> &x, int incx,
                          DeviceMemory<double> *a, int lda) {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_112(mht_112_v, 1994, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSyr");
+
   return DoBlasInternal(cublasDsyr, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), n, &alpha, GpuMemory(x), incx,
                         GpuMemoryMutable(a), lda);
@@ -1496,6 +2003,9 @@ bool CUDABlas::DoBlasSyr2(Stream *stream, blas::UpperLower uplo, uint64_t n,
                           float alpha, const DeviceMemory<float> &x, int incx,
                           const DeviceMemory<float> &y, int incy,
                           DeviceMemory<float> *a, int lda) {
+   std::vector<std::string> mht_113_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_113(mht_113_v, 2006, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSyr2");
+
   return DoBlasInternal(cublasSsyr2, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), n, &alpha, GpuMemory(x), incx,
                         GpuMemory(y), incy, GpuMemoryMutable(a), lda);
@@ -1505,6 +2015,9 @@ bool CUDABlas::DoBlasSyr2(Stream *stream, blas::UpperLower uplo, uint64_t n,
                           double alpha, const DeviceMemory<double> &x, int incx,
                           const DeviceMemory<double> &y, int incy,
                           DeviceMemory<double> *a, int lda) {
+   std::vector<std::string> mht_114_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_114(mht_114_v, 2018, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSyr2");
+
   return DoBlasInternal(cublasDsyr2, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), n, &alpha, GpuMemory(x), incx,
                         GpuMemory(y), incy, GpuMemoryMutable(a), lda);
@@ -1514,6 +2027,9 @@ bool CUDABlas::DoBlasTbmv(Stream *stream, blas::UpperLower uplo,
                           blas::Transpose trans, blas::Diagonal diag,
                           uint64_t n, uint64_t k, const DeviceMemory<float> &a,
                           int lda, DeviceMemory<float> *x, int incx) {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_115(mht_115_v, 2030, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTbmv");
+
   return DoBlasInternal(cublasStbmv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans),
                         CUDABlasDiagonal(diag), n, k, GpuMemory(a), lda,
@@ -1524,6 +2040,9 @@ bool CUDABlas::DoBlasTbmv(Stream *stream, blas::UpperLower uplo,
                           blas::Transpose trans, blas::Diagonal diag,
                           uint64_t n, uint64_t k, const DeviceMemory<double> &a,
                           int lda, DeviceMemory<double> *x, int incx) {
+   std::vector<std::string> mht_116_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_116(mht_116_v, 2043, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTbmv");
+
   return DoBlasInternal(cublasDtbmv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans),
                         CUDABlasDiagonal(diag), n, k, GpuMemory(a), lda,
@@ -1535,6 +2054,9 @@ bool CUDABlas::DoBlasTbmv(Stream *stream, blas::UpperLower uplo,
                           uint64_t n, uint64_t k,
                           const DeviceMemory<std::complex<float>> &a, int lda,
                           DeviceMemory<std::complex<float>> *x, int incx) {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_117(mht_117_v, 2057, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTbmv");
+
   return DoBlasInternal(cublasCtbmv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans),
                         CUDABlasDiagonal(diag), n, k, GpuComplex(GpuMemory(a)),
@@ -1546,6 +2068,9 @@ bool CUDABlas::DoBlasTbmv(Stream *stream, blas::UpperLower uplo,
                           uint64_t n, uint64_t k,
                           const DeviceMemory<std::complex<double>> &a, int lda,
                           DeviceMemory<std::complex<double>> *x, int incx) {
+   std::vector<std::string> mht_118_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_118(mht_118_v, 2071, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTbmv");
+
   return DoBlasInternal(cublasZtbmv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans),
                         CUDABlasDiagonal(diag), n, k, GpuComplex(GpuMemory(a)),
@@ -1556,6 +2081,9 @@ bool CUDABlas::DoBlasTbsv(Stream *stream, blas::UpperLower uplo,
                           blas::Transpose trans, blas::Diagonal diag,
                           uint64_t n, uint64_t k, const DeviceMemory<float> &a,
                           int lda, DeviceMemory<float> *x, int incx) {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_119(mht_119_v, 2084, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTbsv");
+
   return DoBlasInternal(cublasStbsv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans),
                         CUDABlasDiagonal(diag), n, k, GpuMemory(a), lda,
@@ -1566,6 +2094,9 @@ bool CUDABlas::DoBlasTbsv(Stream *stream, blas::UpperLower uplo,
                           blas::Transpose trans, blas::Diagonal diag,
                           uint64_t n, uint64_t k, const DeviceMemory<double> &a,
                           int lda, DeviceMemory<double> *x, int incx) {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_120(mht_120_v, 2097, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTbsv");
+
   return DoBlasInternal(cublasDtbsv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans),
                         CUDABlasDiagonal(diag), n, k, GpuMemory(a), lda,
@@ -1577,6 +2108,9 @@ bool CUDABlas::DoBlasTbsv(Stream *stream, blas::UpperLower uplo,
                           uint64_t n, uint64_t k,
                           const DeviceMemory<std::complex<float>> &a, int lda,
                           DeviceMemory<std::complex<float>> *x, int incx) {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_121(mht_121_v, 2111, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTbsv");
+
   return DoBlasInternal(cublasCtbsv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans),
                         CUDABlasDiagonal(diag), n, k, GpuComplex(GpuMemory(a)),
@@ -1588,6 +2122,9 @@ bool CUDABlas::DoBlasTbsv(Stream *stream, blas::UpperLower uplo,
                           uint64_t n, uint64_t k,
                           const DeviceMemory<std::complex<double>> &a, int lda,
                           DeviceMemory<std::complex<double>> *x, int incx) {
+   std::vector<std::string> mht_122_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_122(mht_122_v, 2125, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTbsv");
+
   return DoBlasInternal(cublasZtbsv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans),
                         CUDABlasDiagonal(diag), n, k, GpuComplex(GpuMemory(a)),
@@ -1598,6 +2135,9 @@ bool CUDABlas::DoBlasTpmv(Stream *stream, blas::UpperLower uplo,
                           blas::Transpose trans, blas::Diagonal diag,
                           uint64_t n, const DeviceMemory<float> &ap,
                           DeviceMemory<float> *x, int incx) {
+   std::vector<std::string> mht_123_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_123(mht_123_v, 2138, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTpmv");
+
   return DoBlasInternal(cublasStpmv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans),
                         CUDABlasDiagonal(diag), n, GpuMemory(ap),
@@ -1608,6 +2148,9 @@ bool CUDABlas::DoBlasTpmv(Stream *stream, blas::UpperLower uplo,
                           blas::Transpose trans, blas::Diagonal diag,
                           uint64_t n, const DeviceMemory<double> &ap,
                           DeviceMemory<double> *x, int incx) {
+   std::vector<std::string> mht_124_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_124(mht_124_v, 2151, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTpmv");
+
   return DoBlasInternal(cublasDtpmv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans),
                         CUDABlasDiagonal(diag), n, GpuMemory(ap),
@@ -1619,6 +2162,9 @@ bool CUDABlas::DoBlasTpmv(Stream *stream, blas::UpperLower uplo,
                           uint64_t n,
                           const DeviceMemory<std::complex<float>> &ap,
                           DeviceMemory<std::complex<float>> *x, int incx) {
+   std::vector<std::string> mht_125_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_125(mht_125_v, 2165, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTpmv");
+
   return DoBlasInternal(cublasCtpmv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans),
                         CUDABlasDiagonal(diag), n, GpuComplex(GpuMemory(ap)),
@@ -1630,6 +2176,9 @@ bool CUDABlas::DoBlasTpmv(Stream *stream, blas::UpperLower uplo,
                           uint64_t n,
                           const DeviceMemory<std::complex<double>> &ap,
                           DeviceMemory<std::complex<double>> *x, int incx) {
+   std::vector<std::string> mht_126_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_126(mht_126_v, 2179, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTpmv");
+
   return DoBlasInternal(cublasZtpmv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans),
                         CUDABlasDiagonal(diag), n, GpuComplex(GpuMemory(ap)),
@@ -1640,6 +2189,9 @@ bool CUDABlas::DoBlasTpsv(Stream *stream, blas::UpperLower uplo,
                           blas::Transpose trans, blas::Diagonal diag,
                           uint64_t n, const DeviceMemory<float> &ap,
                           DeviceMemory<float> *x, int incx) {
+   std::vector<std::string> mht_127_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_127(mht_127_v, 2192, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTpsv");
+
   return DoBlasInternal(cublasStpsv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans),
                         CUDABlasDiagonal(diag), n, GpuMemory(ap),
@@ -1650,6 +2202,9 @@ bool CUDABlas::DoBlasTpsv(Stream *stream, blas::UpperLower uplo,
                           blas::Transpose trans, blas::Diagonal diag,
                           uint64_t n, const DeviceMemory<double> &ap,
                           DeviceMemory<double> *x, int incx) {
+   std::vector<std::string> mht_128_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_128(mht_128_v, 2205, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTpsv");
+
   return DoBlasInternal(cublasDtpsv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans),
                         CUDABlasDiagonal(diag), n, GpuMemory(ap),
@@ -1661,6 +2216,9 @@ bool CUDABlas::DoBlasTpsv(Stream *stream, blas::UpperLower uplo,
                           uint64_t n,
                           const DeviceMemory<std::complex<float>> &ap,
                           DeviceMemory<std::complex<float>> *x, int incx) {
+   std::vector<std::string> mht_129_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_129(mht_129_v, 2219, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTpsv");
+
   return DoBlasInternal(cublasCtpsv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans),
                         CUDABlasDiagonal(diag), n, GpuComplex(GpuMemory(ap)),
@@ -1672,6 +2230,9 @@ bool CUDABlas::DoBlasTpsv(Stream *stream, blas::UpperLower uplo,
                           uint64_t n,
                           const DeviceMemory<std::complex<double>> &ap,
                           DeviceMemory<std::complex<double>> *x, int incx) {
+   std::vector<std::string> mht_130_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_130(mht_130_v, 2233, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTpsv");
+
   return DoBlasInternal(cublasZtpsv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans),
                         CUDABlasDiagonal(diag), n, GpuComplex(GpuMemory(ap)),
@@ -1682,6 +2243,9 @@ bool CUDABlas::DoBlasTrmv(Stream *stream, blas::UpperLower uplo,
                           blas::Transpose trans, blas::Diagonal diag,
                           uint64_t n, const DeviceMemory<float> &a, int lda,
                           DeviceMemory<float> *x, int incx) {
+   std::vector<std::string> mht_131_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_131(mht_131_v, 2246, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTrmv");
+
   return DoBlasInternal(cublasStrmv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans),
                         CUDABlasDiagonal(diag), n, GpuMemory(a), lda,
@@ -1692,6 +2256,9 @@ bool CUDABlas::DoBlasTrmv(Stream *stream, blas::UpperLower uplo,
                           blas::Transpose trans, blas::Diagonal diag,
                           uint64_t n, const DeviceMemory<double> &a, int lda,
                           DeviceMemory<double> *x, int incx) {
+   std::vector<std::string> mht_132_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_132(mht_132_v, 2259, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTrmv");
+
   return DoBlasInternal(cublasDtrmv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans),
                         CUDABlasDiagonal(diag), n, GpuMemory(a), lda,
@@ -1703,6 +2270,9 @@ bool CUDABlas::DoBlasTrmv(Stream *stream, blas::UpperLower uplo,
                           uint64_t n,
                           const DeviceMemory<std::complex<float>> &a, int lda,
                           DeviceMemory<std::complex<float>> *x, int incx) {
+   std::vector<std::string> mht_133_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_133(mht_133_v, 2273, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTrmv");
+
   return DoBlasInternal(cublasCtrmv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans),
                         CUDABlasDiagonal(diag), n, GpuComplex(GpuMemory(a)),
@@ -1714,6 +2284,9 @@ bool CUDABlas::DoBlasTrmv(Stream *stream, blas::UpperLower uplo,
                           uint64_t n,
                           const DeviceMemory<std::complex<double>> &a, int lda,
                           DeviceMemory<std::complex<double>> *x, int incx) {
+   std::vector<std::string> mht_134_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_134(mht_134_v, 2287, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTrmv");
+
   return DoBlasInternal(cublasZtrmv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans),
                         CUDABlasDiagonal(diag), n, GpuComplex(GpuMemory(a)),
@@ -1724,6 +2297,9 @@ bool CUDABlas::DoBlasTrsv(Stream *stream, blas::UpperLower uplo,
                           blas::Transpose trans, blas::Diagonal diag,
                           uint64_t n, const DeviceMemory<float> &a, int lda,
                           DeviceMemory<float> *x, int incx) {
+   std::vector<std::string> mht_135_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_135(mht_135_v, 2300, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTrsv");
+
   return DoBlasInternal(cublasStrsv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans),
                         CUDABlasDiagonal(diag), n, GpuMemory(a), lda,
@@ -1734,6 +2310,9 @@ bool CUDABlas::DoBlasTrsv(Stream *stream, blas::UpperLower uplo,
                           blas::Transpose trans, blas::Diagonal diag,
                           uint64_t n, const DeviceMemory<double> &a, int lda,
                           DeviceMemory<double> *x, int incx) {
+   std::vector<std::string> mht_136_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_136(mht_136_v, 2313, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTrsv");
+
   return DoBlasInternal(cublasDtrsv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans),
                         CUDABlasDiagonal(diag), n, GpuMemory(a), lda,
@@ -1745,6 +2324,9 @@ bool CUDABlas::DoBlasTrsv(Stream *stream, blas::UpperLower uplo,
                           uint64_t n,
                           const DeviceMemory<std::complex<float>> &a, int lda,
                           DeviceMemory<std::complex<float>> *x, int incx) {
+   std::vector<std::string> mht_137_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_137(mht_137_v, 2327, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTrsv");
+
   return DoBlasInternal(cublasCtrsv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans),
                         CUDABlasDiagonal(diag), n, GpuComplex(GpuMemory(a)),
@@ -1756,6 +2338,9 @@ bool CUDABlas::DoBlasTrsv(Stream *stream, blas::UpperLower uplo,
                           uint64_t n,
                           const DeviceMemory<std::complex<double>> &a, int lda,
                           DeviceMemory<std::complex<double>> *x, int incx) {
+   std::vector<std::string> mht_138_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_138(mht_138_v, 2341, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTrsv");
+
   return DoBlasInternal(cublasZtrsv, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans),
                         CUDABlasDiagonal(diag), n, GpuComplex(GpuMemory(a)),
@@ -1769,6 +2354,9 @@ port::Status CUDABlas::DoBlasGemm(Stream *stream, blas::Transpose transa,
                                   int lda, const DeviceMemoryBase &b, int ldb,
                                   const void *beta, DeviceMemoryBase *c,
                                   int ldc) {
+   std::vector<std::string> mht_139_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_139(mht_139_v, 2357, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGemm");
+
   cublasMath_t math_type = CUBLAS_DEFAULT_MATH;
 
 #if CUDA_VERSION < 11000
@@ -1903,6 +2491,9 @@ bool CUDABlas::DoBlasGemvWithProfiling(
     const DeviceMemory<float> &a, int lda, const DeviceMemory<float> &x,
     int incx, float beta, DeviceMemory<float> *y, int incy,
     blas::ProfileResult *output_profile_result) {
+   std::vector<std::string> mht_140_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_140(mht_140_v, 2494, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGemvWithProfiling");
+
   return DoBlasGemvWithProfilingImpl(stream, trans, m, n, alpha, a, lda, x,
                                      incx, beta, y, incy,
                                      output_profile_result);
@@ -1913,6 +2504,9 @@ bool CUDABlas::DoBlasGemvWithProfiling(
     const DeviceMemory<double> &a, int lda, const DeviceMemory<double> &x,
     int incx, double beta, DeviceMemory<double> *y, int incy,
     blas::ProfileResult *output_profile_result) {
+   std::vector<std::string> mht_141_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_141(mht_141_v, 2507, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGemvWithProfiling");
+
   return DoBlasGemvWithProfilingImpl(stream, trans, m, n, alpha, a, lda, x,
                                      incx, beta, y, incy,
                                      output_profile_result);
@@ -1924,6 +2518,9 @@ bool CUDABlas::DoBlasGemvWithProfiling(
     int lda, const DeviceMemory<std::complex<float>> &x, int incx,
     std::complex<float> beta, DeviceMemory<std::complex<float>> *y, int incy,
     blas::ProfileResult *output_profile_result) {
+   std::vector<std::string> mht_142_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_142(mht_142_v, 2521, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGemvWithProfiling");
+
   return DoBlasGemvWithProfilingImpl(stream, trans, m, n, alpha, a, lda, x,
                                      incx, beta, y, incy,
                                      output_profile_result);
@@ -1935,6 +2532,9 @@ bool CUDABlas::DoBlasGemvWithProfiling(
     int lda, const DeviceMemory<std::complex<double>> &x, int incx,
     std::complex<double> beta, DeviceMemory<std::complex<double>> *y, int incy,
     blas::ProfileResult *output_profile_result) {
+   std::vector<std::string> mht_143_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_143(mht_143_v, 2535, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGemvWithProfiling");
+
   return DoBlasGemvWithProfilingImpl(stream, trans, m, n, alpha, a, lda, x,
                                      incx, beta, y, incy,
                                      output_profile_result);
@@ -1946,6 +2546,9 @@ bool CUDABlas::DoBlasGemmWithProfiling(
     int lda, const DeviceMemory<Eigen::half> &b, int ldb, float beta,
     DeviceMemory<Eigen::half> *c, int ldc,
     blas::ProfileResult *output_profile_result) {
+   std::vector<std::string> mht_144_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_144(mht_144_v, 2549, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGemmWithProfiling");
+
   return DoBlasGemmWithProfilingImpl(stream, transa, transb, m, n, k, alpha, a,
                                      lda, b, ldb, beta, c, ldc,
                                      output_profile_result);
@@ -1956,6 +2559,9 @@ bool CUDABlas::DoBlasGemmWithProfiling(
     uint64_t n, uint64 k, float alpha, const DeviceMemory<float> &a, int lda,
     const DeviceMemory<float> &b, int ldb, float beta, DeviceMemory<float> *c,
     int ldc, blas::ProfileResult *output_profile_result) {
+   std::vector<std::string> mht_145_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_145(mht_145_v, 2562, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGemmWithProfiling");
+
   return DoBlasGemmWithProfilingImpl(stream, transa, transb, m, n, k, alpha, a,
                                      lda, b, ldb, beta, c, ldc,
                                      output_profile_result);
@@ -1967,6 +2573,9 @@ bool CUDABlas::DoBlasGemmWithProfiling(
     const DeviceMemory<double> &b, int ldb, double beta,
     DeviceMemory<double> *c, int ldc,
     blas::ProfileResult *output_profile_result) {
+   std::vector<std::string> mht_146_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_146(mht_146_v, 2576, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGemmWithProfiling");
+
   return DoBlasGemmWithProfilingImpl(stream, transa, transb, m, n, k, alpha, a,
                                      lda, b, ldb, beta, c, ldc,
                                      output_profile_result);
@@ -1979,6 +2588,9 @@ bool CUDABlas::DoBlasGemmWithProfiling(
     const DeviceMemory<std::complex<float>> &b, int ldb,
     std::complex<float> beta, DeviceMemory<std::complex<float>> *c, int ldc,
     blas::ProfileResult *output_profile_result) {
+   std::vector<std::string> mht_147_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_147(mht_147_v, 2591, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGemmWithProfiling");
+
   return DoBlasGemmWithProfilingImpl(stream, transa, transb, m, n, k, alpha, a,
                                      lda, b, ldb, beta, c, ldc,
                                      output_profile_result);
@@ -1991,6 +2603,9 @@ bool CUDABlas::DoBlasGemmWithProfiling(
     const DeviceMemory<std::complex<double>> &b, int ldb,
     std::complex<double> beta, DeviceMemory<std::complex<double>> *c, int ldc,
     blas::ProfileResult *output_profile_result) {
+   std::vector<std::string> mht_148_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_148(mht_148_v, 2606, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGemmWithProfiling");
+
   return DoBlasGemmWithProfilingImpl(stream, transa, transb, m, n, k, alpha, a,
                                      lda, b, ldb, beta, c, ldc,
                                      output_profile_result);
@@ -2002,6 +2617,9 @@ bool CUDABlas::DoBlasGemvWithProfilingImpl(
     const DeviceMemory<T> &a, int lda, const DeviceMemory<T> &x, int incx,
     const T &beta, DeviceMemory<T> *y, int incy,
     blas::ProfileResult *output_profile_result) {
+   std::vector<std::string> mht_149_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_149(mht_149_v, 2620, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGemvWithProfilingImpl");
+
   std::unique_ptr<GpuTimer, GpuTimerDeleter> timer;
   if (output_profile_result != nullptr) {
     timer.reset(new GpuTimer(parent_));
@@ -2063,6 +2681,9 @@ bool CUDABlas::DoBlasGemmWithProfilingImpl(
 }
 
 static bool UsesTensorOps(blas::AlgorithmType algo) {
+   std::vector<std::string> mht_150_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_150(mht_150_v, 2684, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "UsesTensorOps");
+
 #if CUDA_VERSION >= 9000
   cublasGemmAlgo_t cublas_algo = static_cast<cublasGemmAlgo_t>(algo);
   return cublas_algo >= CUBLAS_GEMM_DEFAULT_TENSOR_OP;
@@ -2152,6 +2773,9 @@ StartGpuTimerForProfile(Stream *stream, GpuExecutor *executor,
 static port::Status PopulateProfileFromTimer(
     GpuTimer *timer, blas::AlgorithmType algorithm,
     blas::ProfileResult *output_profile_result, Stream *stream) {
+   std::vector<std::string> mht_151_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_151(mht_151_v, 2776, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "PopulateProfileFromTimer");
+
   if (timer) {
     // GpuTimer will CHECK-fail if we Stop() it while the stream is in an error
     // state.
@@ -2173,6 +2797,9 @@ port::Status CUDABlas::DoBlasGemmWithAlgorithm(
     blas::DataType type_b, int ldb, const void *beta, DeviceMemoryBase *c,
     blas::DataType type_c, int ldc, blas::ComputationType computation_type,
     blas::AlgorithmType algorithm, blas::ProfileResult *output_profile_result) {
+   std::vector<std::string> mht_152_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_152(mht_152_v, 2800, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGemmWithAlgorithm");
+
   TF_ASSIGN_OR_RETURN(cublasMath_t math_type,
                       GetMathTypeForGemmEx(stream, algorithm, type_a, type_b));
 
@@ -2203,6 +2830,9 @@ port::Status CUDABlas::DoBlasGemmStridedBatchedWithAlgorithm(
     DeviceMemoryBase *c, blas::DataType type_c, int ldc, int64_t stride_c,
     int batch_count, blas::ComputationType computation_type,
     blas::AlgorithmType algorithm, blas::ProfileResult *output_profile_result) {
+   std::vector<std::string> mht_153_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_153(mht_153_v, 2833, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGemmStridedBatchedWithAlgorithm");
+
   TF_ASSIGN_OR_RETURN(cublasMath_t math_type,
                       GetMathTypeForGemmEx(stream, algorithm, type_a, type_b));
   TF_ASSIGN_OR_RETURN(auto timer, StartGpuTimerForProfile(
@@ -2250,6 +2880,9 @@ port::Status CUDABlas::DoBlasGemmStridedBatchedWithAlgorithm(
 
 bool CUDABlas::GetBlasGemmAlgorithms(
     std::vector<blas::AlgorithmType> *out_algorithms) {
+   std::vector<std::string> mht_154_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_154(mht_154_v, 2883, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::GetBlasGemmAlgorithms");
+
   // cublasGemmAlgo_t (and the function that accepts this type, cublasGemmEx)
   // were first introduced in CUDA 8.
   //
@@ -2322,6 +2955,9 @@ namespace {
 // cublas-specific type.
 template <typename T>
 T inline GpuComplexValue(T v) {
+   std::vector<std::string> mht_155_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_155(mht_155_v, 2958, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "GpuComplexValue");
+
   return v;
 }
 }  // namespace
@@ -2334,6 +2970,9 @@ port::Status CUDABlas::DoBlasGemmBatchedInternal(
     const port::ArraySlice<DeviceMemory<T> *> &b_ptrs_to_wrappers, int ldb,
     Scalar beta, const port::ArraySlice<DeviceMemory<T> *> &c_ptrs_to_wrappers,
     int ldc, int batch_count, ScratchAllocator *scratch_allocator) {
+   std::vector<std::string> mht_156_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_156(mht_156_v, 2973, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGemmBatchedInternal");
+
   std::vector<T *> a_raw_ptrs, b_raw_ptrs, c_raw_ptrs;
   for (int i = 0; i < batch_count; ++i) {
     a_raw_ptrs.push_back(static_cast<T *>(a_ptrs_to_wrappers[i]->opaque()));
@@ -2470,6 +3109,9 @@ bool CUDABlas::DoBlasGemmBatched(
     const port::ArraySlice<DeviceMemory<Eigen::half> *> &b_array, int ldb,
     float beta, const port::ArraySlice<DeviceMemory<Eigen::half> *> &c_array,
     int ldc, int batch_count, ScratchAllocator *scratch_allocator) {
+   std::vector<std::string> mht_157_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_157(mht_157_v, 3112, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGemmBatched");
+
   // Note: The func passed here (cublasSgemmBatched) is not actually called,
   // due to special handling of fp16 inside DoBlasGemmBatchedInternal.
   port::Status status = DoBlasGemmBatchedInternal(
@@ -2488,6 +3130,9 @@ bool CUDABlas::DoBlasGemmBatched(
     const port::ArraySlice<DeviceMemory<float> *> &b_array, int ldb, float beta,
     const port::ArraySlice<DeviceMemory<float> *> &c_array, int ldc,
     int batch_count, ScratchAllocator *scratch_allocator) {
+   std::vector<std::string> mht_158_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_158(mht_158_v, 3133, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGemmBatched");
+
   port::Status status = DoBlasGemmBatchedInternal(
       cublasSgemmBatched, stream, transa, transb, m, n, k, alpha, a_array, lda,
       b_array, ldb, beta, c_array, ldc, batch_count, scratch_allocator);
@@ -2504,6 +3149,9 @@ bool CUDABlas::DoBlasGemmBatched(
     const port::ArraySlice<DeviceMemory<double> *> &b_array, int ldb,
     double beta, const port::ArraySlice<DeviceMemory<double> *> &c_array,
     int ldc, int batch_count, ScratchAllocator *scratch_allocator) {
+   std::vector<std::string> mht_159_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_159(mht_159_v, 3152, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGemmBatched");
+
   port::Status status = DoBlasGemmBatchedInternal(
       cublasDgemmBatched, stream, transa, transb, m, n, k, alpha, a_array, lda,
       b_array, ldb, beta, c_array, ldc, batch_count, scratch_allocator);
@@ -2522,6 +3170,9 @@ bool CUDABlas::DoBlasGemmBatched(
     int ldb, std::complex<float> beta,
     const port::ArraySlice<DeviceMemory<std::complex<float>> *> &c_array,
     int ldc, int batch_count, ScratchAllocator *scratch_allocator) {
+   std::vector<std::string> mht_160_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_160(mht_160_v, 3173, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGemmBatched");
+
   port::Status status = DoBlasGemmBatchedInternal(
       cublasCgemmBatched, stream, transa, transb, m, n, k, alpha, a_array, lda,
       b_array, ldb, beta, c_array, ldc, batch_count, scratch_allocator);
@@ -2540,6 +3191,9 @@ bool CUDABlas::DoBlasGemmBatched(
     int ldb, std::complex<double> beta,
     const port::ArraySlice<DeviceMemory<std::complex<double>> *> &c_array,
     int ldc, int batch_count, ScratchAllocator *scratch_allocator) {
+   std::vector<std::string> mht_161_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_161(mht_161_v, 3194, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGemmBatched");
+
   port::Status status = DoBlasGemmBatchedInternal(
       cublasZgemmBatched, stream, transa, transb, m, n, k, alpha, a_array, lda,
       b_array, ldb, beta, c_array, ldc, batch_count, scratch_allocator);
@@ -2555,6 +3209,9 @@ port::Status CUDABlas::DoBlasGemmStridedBatched(
     const DeviceMemoryBase &a, int lda, int64_t stride_a,
     const DeviceMemoryBase &b, int ldb, int64_t stride_b, const void *beta,
     DeviceMemoryBase *c, int ldc, int64_t stride_c, int batch_count) {
+   std::vector<std::string> mht_162_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_162(mht_162_v, 3212, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasGemmStridedBatched");
+
   cublasMath_t math_type = CUBLAS_DEFAULT_MATH;
 #if CUDA_VERSION < 11000
   if (dtype == dnn::kHalf) {
@@ -2697,6 +3354,9 @@ bool CUDABlas::DoBlasHemm(Stream *stream, blas::Side side,
                           const DeviceMemory<std::complex<float>> &b, int ldb,
                           std::complex<float> beta,
                           DeviceMemory<std::complex<float>> *c, int ldc) {
+   std::vector<std::string> mht_163_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_163(mht_163_v, 3357, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasHemm");
+
   auto cb_alpha = GpuComplexValue(alpha);
   auto cb_beta = GpuComplexValue(beta);
   return DoBlasInternal(cublasChemm, stream, true /* = pointer_mode_host */,
@@ -2713,6 +3373,9 @@ bool CUDABlas::DoBlasHemm(Stream *stream, blas::Side side,
                           const DeviceMemory<std::complex<double>> &b, int ldb,
                           std::complex<double> beta,
                           DeviceMemory<std::complex<double>> *c, int ldc) {
+   std::vector<std::string> mht_164_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_164(mht_164_v, 3376, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasHemm");
+
   auto cb_alpha = GpuComplexValue(alpha);
   auto cb_beta = GpuComplexValue(beta);
   return DoBlasInternal(cublasZhemm, stream, true /* = pointer_mode_host */,
@@ -2728,6 +3391,9 @@ bool CUDABlas::DoBlasHerk(Stream *stream, blas::UpperLower uplo,
                           const DeviceMemory<std::complex<float>> &a, int lda,
                           float beta, DeviceMemory<std::complex<float>> *c,
                           int ldc) {
+   std::vector<std::string> mht_165_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_165(mht_165_v, 3394, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasHerk");
+
   return DoBlasInternal(cublasCherk, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans), n,
                         k, &alpha, GpuComplex(GpuMemory(a)), lda, &beta,
@@ -2740,6 +3406,9 @@ bool CUDABlas::DoBlasHerk(Stream *stream, blas::UpperLower uplo,
                           const DeviceMemory<std::complex<double>> &a, int lda,
                           double beta, DeviceMemory<std::complex<double>> *c,
                           int ldc) {
+   std::vector<std::string> mht_166_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_166(mht_166_v, 3409, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasHerk");
+
   return DoBlasInternal(cublasZherk, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans), n,
                         k, &alpha, GpuComplex(GpuMemory(a)), lda, &beta,
@@ -2753,6 +3422,9 @@ bool CUDABlas::DoBlasHer2k(Stream *stream, blas::UpperLower uplo,
                            const DeviceMemory<std::complex<float>> &b, int ldb,
                            float beta, DeviceMemory<std::complex<float>> *c,
                            int ldc) {
+   std::vector<std::string> mht_167_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_167(mht_167_v, 3425, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasHer2k");
+
   auto cb_alpha = GpuComplexValue(alpha);
   return DoBlasInternal(cublasCher2k, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans), n,
@@ -2768,6 +3440,9 @@ bool CUDABlas::DoBlasHer2k(Stream *stream, blas::UpperLower uplo,
                            const DeviceMemory<std::complex<double>> &b, int ldb,
                            double beta, DeviceMemory<std::complex<double>> *c,
                            int ldc) {
+   std::vector<std::string> mht_168_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_168(mht_168_v, 3443, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasHer2k");
+
   auto cb_alpha = GpuComplexValue(alpha);
   return DoBlasInternal(cublasZher2k, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans), n,
@@ -2781,6 +3456,9 @@ bool CUDABlas::DoBlasSymm(Stream *stream, blas::Side side,
                           float alpha, const DeviceMemory<float> &a, int lda,
                           const DeviceMemory<float> &b, int ldb, float beta,
                           DeviceMemory<float> *c, int ldc) {
+   std::vector<std::string> mht_169_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_169(mht_169_v, 3459, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSymm");
+
   return DoBlasInternal(cublasSsymm, stream, true /* = pointer_mode_host */,
                         CUDABlasSide(side), CUDABlasUpperLower(uplo), m, n,
                         &alpha, GpuMemory(a), lda, GpuMemory(b), ldb, &beta,
@@ -2792,6 +3470,9 @@ bool CUDABlas::DoBlasSymm(Stream *stream, blas::Side side,
                           double alpha, const DeviceMemory<double> &a, int lda,
                           const DeviceMemory<double> &b, int ldb, double beta,
                           DeviceMemory<double> *c, int ldc) {
+   std::vector<std::string> mht_170_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_170(mht_170_v, 3473, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSymm");
+
   return DoBlasInternal(cublasDsymm, stream, true /* = pointer_mode_host */,
                         CUDABlasSide(side), CUDABlasUpperLower(uplo), m, n,
                         &alpha, GpuMemory(a), lda, GpuMemory(b), ldb, &beta,
@@ -2805,6 +3486,9 @@ bool CUDABlas::DoBlasSymm(Stream *stream, blas::Side side,
                           const DeviceMemory<std::complex<float>> &b, int ldb,
                           std::complex<float> beta,
                           DeviceMemory<std::complex<float>> *c, int ldc) {
+   std::vector<std::string> mht_171_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_171(mht_171_v, 3489, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSymm");
+
   auto cb_alpha = GpuComplexValue(alpha);
   auto cb_beta = GpuComplexValue(beta);
   return DoBlasInternal(cublasCsymm, stream, true /* = pointer_mode_host */,
@@ -2821,6 +3505,9 @@ bool CUDABlas::DoBlasSymm(Stream *stream, blas::Side side,
                           const DeviceMemory<std::complex<double>> &b, int ldb,
                           std::complex<double> beta,
                           DeviceMemory<std::complex<double>> *c, int ldc) {
+   std::vector<std::string> mht_172_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_172(mht_172_v, 3508, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSymm");
+
   auto cb_alpha = GpuComplexValue(alpha);
   auto cb_beta = GpuComplexValue(beta);
   return DoBlasInternal(cublasZsymm, stream, true /* = pointer_mode_host */,
@@ -2834,6 +3521,9 @@ bool CUDABlas::DoBlasSyrk(Stream *stream, blas::UpperLower uplo,
                           blas::Transpose trans, uint64_t n, uint64 k,
                           float alpha, const DeviceMemory<float> &a, int lda,
                           float beta, DeviceMemory<float> *c, int ldc) {
+   std::vector<std::string> mht_173_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_173(mht_173_v, 3524, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSyrk");
+
   return DoBlasInternal(cublasSsyrk, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans), n,
                         k, &alpha, GpuMemory(a), lda, &beta,
@@ -2844,6 +3534,9 @@ bool CUDABlas::DoBlasSyrk(Stream *stream, blas::UpperLower uplo,
                           blas::Transpose trans, uint64_t n, uint64 k,
                           double alpha, const DeviceMemory<double> &a, int lda,
                           double beta, DeviceMemory<double> *c, int ldc) {
+   std::vector<std::string> mht_174_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_174(mht_174_v, 3537, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSyrk");
+
   return DoBlasInternal(cublasDsyrk, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans), n,
                         k, &alpha, GpuMemory(a), lda, &beta,
@@ -2856,6 +3549,9 @@ bool CUDABlas::DoBlasSyrk(Stream *stream, blas::UpperLower uplo,
                           const DeviceMemory<std::complex<float>> &a, int lda,
                           std::complex<float> beta,
                           DeviceMemory<std::complex<float>> *c, int ldc) {
+   std::vector<std::string> mht_175_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_175(mht_175_v, 3552, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSyrk");
+
   auto cb_alpha = GpuComplexValue(alpha);
   auto cb_beta = GpuComplexValue(beta);
   return DoBlasInternal(cublasCsyrk, stream, true /* = pointer_mode_host */,
@@ -2871,6 +3567,9 @@ bool CUDABlas::DoBlasSyrk(Stream *stream, blas::UpperLower uplo,
                           const DeviceMemory<std::complex<double>> &a, int lda,
                           std::complex<double> beta,
                           DeviceMemory<std::complex<double>> *c, int ldc) {
+   std::vector<std::string> mht_176_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_176(mht_176_v, 3570, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSyrk");
+
   auto cb_alpha = GpuComplexValue(alpha);
   auto cb_beta = GpuComplexValue(beta);
   return DoBlasInternal(cublasZsyrk, stream, true /* = pointer_mode_host */,
@@ -2885,6 +3584,9 @@ bool CUDABlas::DoBlasSyr2k(Stream *stream, blas::UpperLower uplo,
                            float alpha, const DeviceMemory<float> &a, int lda,
                            const DeviceMemory<float> &b, int ldb, float beta,
                            DeviceMemory<float> *c, int ldc) {
+   std::vector<std::string> mht_177_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_177(mht_177_v, 3587, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSyr2k");
+
   return DoBlasInternal(cublasSsyr2k, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans), n,
                         k, &alpha, GpuMemory(a), lda, GpuMemory(b), ldb, &beta,
@@ -2896,6 +3598,9 @@ bool CUDABlas::DoBlasSyr2k(Stream *stream, blas::UpperLower uplo,
                            double alpha, const DeviceMemory<double> &a, int lda,
                            const DeviceMemory<double> &b, int ldb, double beta,
                            DeviceMemory<double> *c, int ldc) {
+   std::vector<std::string> mht_178_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_178(mht_178_v, 3601, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSyr2k");
+
   return DoBlasInternal(cublasDsyr2k, stream, true /* = pointer_mode_host */,
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(trans), n,
                         k, &alpha, GpuMemory(a), lda, GpuMemory(b), ldb, &beta,
@@ -2909,6 +3614,9 @@ bool CUDABlas::DoBlasSyr2k(Stream *stream, blas::UpperLower uplo,
                            const DeviceMemory<std::complex<float>> &b, int ldb,
                            std::complex<float> beta,
                            DeviceMemory<std::complex<float>> *c, int ldc) {
+   std::vector<std::string> mht_179_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_179(mht_179_v, 3617, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSyr2k");
+
   auto cb_alpha = GpuComplexValue(alpha);
   auto cb_beta = GpuComplexValue(beta);
   return DoBlasInternal(cublasCsyr2k, stream, true /* = pointer_mode_host */,
@@ -2925,6 +3633,9 @@ bool CUDABlas::DoBlasSyr2k(Stream *stream, blas::UpperLower uplo,
                            const DeviceMemory<std::complex<double>> &b, int ldb,
                            std::complex<double> beta,
                            DeviceMemory<std::complex<double>> *c, int ldc) {
+   std::vector<std::string> mht_180_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_180(mht_180_v, 3636, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasSyr2k");
+
   auto cb_alpha = GpuComplexValue(alpha);
   auto cb_beta = GpuComplexValue(beta);
   return DoBlasInternal(cublasZsyr2k, stream, true /* = pointer_mode_host */,
@@ -2939,6 +3650,9 @@ bool CUDABlas::DoBlasTrmm(Stream *stream, blas::Side side,
                           blas::Diagonal diag, uint64_t m, uint64 n,
                           float alpha, const DeviceMemory<float> &a, int lda,
                           DeviceMemory<float> *b, int ldb) {
+   std::vector<std::string> mht_181_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_181(mht_181_v, 3653, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTrmm");
+
   return DoBlasInternal(cublasStrmm, stream, true /* = pointer_mode_host */,
                         CUDABlasSide(side), CUDABlasUpperLower(uplo),
                         CUDABlasTranspose(transa), CUDABlasDiagonal(diag), m, n,
@@ -2951,6 +3665,9 @@ bool CUDABlas::DoBlasTrmm(Stream *stream, blas::Side side,
                           blas::Diagonal diag, uint64_t m, uint64 n,
                           double alpha, const DeviceMemory<double> &a, int lda,
                           DeviceMemory<double> *b, int ldb) {
+   std::vector<std::string> mht_182_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_182(mht_182_v, 3668, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTrmm");
+
   return DoBlasInternal(cublasDtrmm, stream, true /* = pointer_mode_host */,
                         CUDABlasSide(side), CUDABlasUpperLower(uplo),
                         CUDABlasTranspose(transa), CUDABlasDiagonal(diag), m, n,
@@ -2964,6 +3681,9 @@ bool CUDABlas::DoBlasTrmm(Stream *stream, blas::Side side,
                           std::complex<float> alpha,
                           const DeviceMemory<std::complex<float>> &a, int lda,
                           DeviceMemory<std::complex<float>> *b, int ldb) {
+   std::vector<std::string> mht_183_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_183(mht_183_v, 3684, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTrmm");
+
   auto cb_alpha = GpuComplexValue(alpha);
   return DoBlasInternal(cublasCtrmm, stream, true /* = pointer_mode_host */,
                         CUDABlasSide(side), CUDABlasUpperLower(uplo),
@@ -2979,6 +3699,9 @@ bool CUDABlas::DoBlasTrmm(Stream *stream, blas::Side side,
                           std::complex<double> alpha,
                           const DeviceMemory<std::complex<double>> &a, int lda,
                           DeviceMemory<std::complex<double>> *b, int ldb) {
+   std::vector<std::string> mht_184_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_184(mht_184_v, 3702, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTrmm");
+
   auto cb_alpha = GpuComplexValue(alpha);
   return DoBlasInternal(cublasZtrmm, stream, true /* = pointer_mode_host */,
                         CUDABlasSide(side), CUDABlasUpperLower(uplo),
@@ -2993,6 +3716,9 @@ bool CUDABlas::DoBlasTrsm(Stream *stream, blas::Side side,
                           blas::Diagonal diag, uint64_t m, uint64 n,
                           float alpha, const DeviceMemory<float> &a, int lda,
                           DeviceMemory<float> *b, int ldb) {
+   std::vector<std::string> mht_185_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_185(mht_185_v, 3719, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTrsm");
+
   return DoBlasInternal(cublasStrsm, stream, true /* = pointer_mode_host */,
                         CUDABlasSide(side), CUDABlasUpperLower(uplo),
                         CUDABlasTranspose(transa), CUDABlasDiagonal(diag), m, n,
@@ -3004,6 +3730,9 @@ bool CUDABlas::DoBlasTrsm(Stream *stream, blas::Side side,
                           blas::Diagonal diag, uint64_t m, uint64 n,
                           double alpha, const DeviceMemory<double> &a, int lda,
                           DeviceMemory<double> *b, int ldb) {
+   std::vector<std::string> mht_186_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_186(mht_186_v, 3733, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTrsm");
+
   return DoBlasInternal(cublasDtrsm, stream, true /* = pointer_mode_host */,
                         CUDABlasSide(side), CUDABlasUpperLower(uplo),
                         CUDABlasTranspose(transa), CUDABlasDiagonal(diag), m, n,
@@ -3016,6 +3745,9 @@ bool CUDABlas::DoBlasTrsm(Stream *stream, blas::Side side,
                           std::complex<float> alpha,
                           const DeviceMemory<std::complex<float>> &a, int lda,
                           DeviceMemory<std::complex<float>> *b, int ldb) {
+   std::vector<std::string> mht_187_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_187(mht_187_v, 3748, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTrsm");
+
   auto cb_alpha = GpuComplexValue(alpha);
   return DoBlasInternal(cublasCtrsm, stream, true /* = pointer_mode_host */,
                         CUDABlasSide(side), CUDABlasUpperLower(uplo),
@@ -3030,6 +3762,9 @@ bool CUDABlas::DoBlasTrsm(Stream *stream, blas::Side side,
                           std::complex<double> alpha,
                           const DeviceMemory<std::complex<double>> &a, int lda,
                           DeviceMemory<std::complex<double>> *b, int ldb) {
+   std::vector<std::string> mht_188_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_188(mht_188_v, 3765, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTrsm");
+
   auto cb_alpha = GpuComplexValue(alpha);
   return DoBlasInternal(cublasZtrsm, stream, true /* = pointer_mode_host */,
                         CUDABlasSide(side), CUDABlasUpperLower(uplo),
@@ -3044,6 +3779,9 @@ bool CUDABlas::DoBlasTrsmBatched(Stream *stream, blas::Side side,
                                  float alpha, const DeviceMemory<float *> &as,
                                  int lda, DeviceMemory<float *> *bs, int ldb,
                                  int batch_count) {
+   std::vector<std::string> mht_189_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_189(mht_189_v, 3782, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTrsmBatched");
+
   return DoBlasInternal(cublasStrsmBatched, stream,
                         true /* = pointer_mode_host */, CUDABlasSide(side),
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(transa),
@@ -3057,6 +3795,9 @@ bool CUDABlas::DoBlasTrsmBatched(Stream *stream, blas::Side side,
                                  double alpha, const DeviceMemory<double *> &as,
                                  int lda, DeviceMemory<double *> *bs, int ldb,
                                  int batch_count) {
+   std::vector<std::string> mht_190_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_190(mht_190_v, 3798, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTrsmBatched");
+
   return DoBlasInternal(cublasDtrsmBatched, stream,
                         true /* = pointer_mode_host */, CUDABlasSide(side),
                         CUDABlasUpperLower(uplo), CUDABlasTranspose(transa),
@@ -3072,6 +3813,9 @@ bool CUDABlas::DoBlasTrsmBatched(Stream *stream, blas::Side side,
                                  int lda,
                                  DeviceMemory<std::complex<float> *> *bs,
                                  int ldb, int batch_count) {
+   std::vector<std::string> mht_191_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_191(mht_191_v, 3816, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTrsmBatched");
+
   auto cb_alpha = GpuComplexValue(alpha);
   return DoBlasInternal(
       cublasCtrsmBatched, stream, true /* = pointer_mode_host */,
@@ -3089,6 +3833,9 @@ bool CUDABlas::DoBlasTrsmBatched(Stream *stream, blas::Side side,
                                  int lda,
                                  DeviceMemory<std::complex<double> *> *bs,
                                  int ldb, int batch_count) {
+   std::vector<std::string> mht_192_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_192(mht_192_v, 3836, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::DoBlasTrsmBatched");
+
   auto cb_alpha = GpuComplexValue(alpha);
   return DoBlasInternal(
       cublasZtrsmBatched, stream, true /* = pointer_mode_host */,
@@ -3107,6 +3854,9 @@ template <typename T>
 inline port::Status SetCublasLtAttr(cublasLtMatrixLayout_t handle,
                                     cublasLtMatrixLayoutAttribute_t attr,
                                     const T &value) {
+   std::vector<std::string> mht_193_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_193(mht_193_v, 3857, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "SetCublasLtAttr");
+
   cublasStatus_t status =
       cublasLtMatrixLayoutSetAttribute(handle, attr, &value, sizeof(T));
   if (status != CUBLAS_STATUS_SUCCESS) {
@@ -3122,6 +3872,9 @@ template <typename T>
 inline port::Status SetCublasLtAttr(cublasLtMatmulAlgo_t *handle,
                                     cublasLtMatmulAlgoConfigAttributes_t attr,
                                     const T &value) {
+   std::vector<std::string> mht_194_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_194(mht_194_v, 3875, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "SetCublasLtAttr");
+
   cublasStatus_t status =
       cublasLtMatmulAlgoConfigSetAttribute(handle, attr, &value, sizeof(T));
   if (status != CUBLAS_STATUS_SUCCESS) {
@@ -3137,6 +3890,9 @@ template <typename T>
 inline port::Status SetCublasLtAttr(cublasLtMatmulPreference_t handle,
                                     cublasLtMatmulPreferenceAttributes_t attr,
                                     const T &value) {
+   std::vector<std::string> mht_195_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_195(mht_195_v, 3893, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "SetCublasLtAttr");
+
   cublasStatus_t status =
       cublasLtMatmulPreferenceSetAttribute(handle, attr, &value, sizeof(value));
   if (status != CUBLAS_STATUS_SUCCESS) {
@@ -3152,6 +3908,9 @@ template <typename T>
 inline bool GetCublasLtAttr(const cublasLtMatmulAlgo_t *handle,
                             cublasLtMatmulAlgoConfigAttributes_t attr,
                             T *value) {
+   std::vector<std::string> mht_196_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_196(mht_196_v, 3911, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "GetCublasLtAttr");
+
   auto mutable_handle = const_cast<cublasLtMatmulAlgo_t *>(handle);
   size_t bytes_written = 0;
   return cublasLtMatmulAlgoConfigGetAttribute(mutable_handle, attr, value,
@@ -3162,10 +3921,16 @@ inline bool GetCublasLtAttr(const cublasLtMatmulAlgo_t *handle,
 
 template <typename T>
 inline const T &ValueForStrCat(const T &value) {
+   std::vector<std::string> mht_197_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_197(mht_197_v, 3924, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "ValueForStrCat");
+
   return value;
 }
 template <typename T>
 inline absl::Hex ValueForStrCat(T *ptr) {
+   std::vector<std::string> mht_198_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_198(mht_198_v, 3931, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "ValueForStrCat");
+
   return absl::Hex(reinterpret_cast<uintptr_t>(ptr));
 }
 
@@ -3173,6 +3938,9 @@ template <typename T>
 inline port::Status SetCublasLtAttr(cublasLtMatmulDesc_t handle,
                                     cublasLtMatmulDescAttributes_t attr,
                                     const T &value) {
+   std::vector<std::string> mht_199_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_199(mht_199_v, 3941, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "SetCublasLtAttr");
+
   cublasStatus_t status =
       cublasLtMatmulDescSetAttribute(handle, attr, &value, sizeof(value));
   if (status != CUBLAS_STATUS_SUCCESS) {
@@ -3260,6 +4028,9 @@ port::StatusOr<UniqueLayoutDesc> CreateCublasLtLayoutDesc(
 port::Status AllocateWorkspace(void **workspace,
                                ScratchAllocator *scratch_allocator,
                                size_t num_bytes) {
+   std::vector<std::string> mht_200_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_200(mht_200_v, 4031, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "AllocateWorkspace");
+
   SE_ASSIGN_OR_RETURN(DeviceMemory<uint8> workspace_bytes,
                       scratch_allocator->AllocateBytes(num_bytes));
   *workspace = (void *)GpuMemoryMutable(&workspace_bytes);
@@ -3270,28 +4041,46 @@ template <typename T>
 blas::ComputationType ToComputationType();
 template <>
 blas::ComputationType ToComputationType<Eigen::half>() {
+   std::vector<std::string> mht_201_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_201(mht_201_v, 4044, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "ToComputationType<Eigen::half>");
+
   return blas::ComputationType::kF16;
 }
 template <>
 blas::ComputationType ToComputationType<float>() {
+   std::vector<std::string> mht_202_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_202(mht_202_v, 4051, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "ToComputationType<float>");
+
   return blas::ComputationType::kF32;
 }
 template <>
 blas::ComputationType ToComputationType<double>() {
+   std::vector<std::string> mht_203_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_203(mht_203_v, 4058, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "ToComputationType<double>");
+
   return blas::ComputationType::kF64;
 }
 template <>
 blas::ComputationType ToComputationType<std::complex<float>>() {
+   std::vector<std::string> mht_204_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_204(mht_204_v, 4065, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "ToComputationType<std::complex<float>>");
+
   return blas::ComputationType::kComplexF32;
 }
 template <>
 blas::ComputationType ToComputationType<std::complex<double>>() {
+   std::vector<std::string> mht_205_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_205(mht_205_v, 4072, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "ToComputationType<std::complex<double>>");
+
   return blas::ComputationType::kComplexF64;
 }
 
 class CUDABlasLtMatmulPlan final : public blas::IBlasLtMatmulPlan {
  public:
   port::Status init(const blas::BlasLtMatmulPlanParams &p) {
+   std::vector<std::string> mht_206_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_206(mht_206_v, 4081, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "init");
+
     params_ = p;
     scale_type_ = GetScaleType(p.c_type, p.computation_type);
     SE_ASSIGN_OR_RETURN(
@@ -3338,32 +4127,77 @@ class CUDABlasLtMatmulPlan final : public blas::IBlasLtMatmulPlan {
     return port::Status::OK();
   }
 
-  cublasLtMatmulDesc_t op_desc() const { return op_desc_.get(); }
-  cublasLtMatrixLayout_t a_desc() const { return a_desc_.get(); }
-  cublasLtMatrixLayout_t b_desc() const { return b_desc_.get(); }
-  cublasLtMatrixLayout_t c_desc() const { return c_desc_.get(); }
-  cublasLtMatrixLayout_t d_desc() const { return d_desc_.get(); }
+  cublasLtMatmulDesc_t op_desc() const {
+   std::vector<std::string> mht_207_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_207(mht_207_v, 4131, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "op_desc");
+ return op_desc_.get(); }
+  cublasLtMatrixLayout_t a_desc() const {
+   std::vector<std::string> mht_208_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_208(mht_208_v, 4135, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "a_desc");
+ return a_desc_.get(); }
+  cublasLtMatrixLayout_t b_desc() const {
+   std::vector<std::string> mht_209_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_209(mht_209_v, 4139, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "b_desc");
+ return b_desc_.get(); }
+  cublasLtMatrixLayout_t c_desc() const {
+   std::vector<std::string> mht_210_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_210(mht_210_v, 4143, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "c_desc");
+ return c_desc_.get(); }
+  cublasLtMatrixLayout_t d_desc() const {
+   std::vector<std::string> mht_211_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_211(mht_211_v, 4147, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "d_desc");
+ return d_desc_.get(); }
   cublasLtMatrixLayout_t a_remainder_desc() const {
+   std::vector<std::string> mht_212_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_212(mht_212_v, 4151, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "a_remainder_desc");
+
     return a_remainder_desc_.get();
   }
   cublasLtMatrixLayout_t b_remainder_desc() const {
+   std::vector<std::string> mht_213_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_213(mht_213_v, 4157, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "b_remainder_desc");
+
     return b_remainder_desc_.get();
   }
   cublasLtMatrixLayout_t c_remainder_desc() const {
+   std::vector<std::string> mht_214_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_214(mht_214_v, 4163, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "c_remainder_desc");
+
     return c_remainder_desc_.get();
   }
   cublasLtMatrixLayout_t d_remainder_desc() const {
+   std::vector<std::string> mht_215_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_215(mht_215_v, 4169, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "d_remainder_desc");
+
     return d_remainder_desc_.get();
   }
 
-  const blas::BlasLtMatmulPlanParams &params() const { return params_; }
-  blas::DataType scale_type() const { return scale_type_; }
-  blas::DataType ab_type() const override { return params_.ab_type; }
-  blas::DataType c_type() const override { return params_.c_type; }
+  const blas::BlasLtMatmulPlanParams &params() const {
+   std::vector<std::string> mht_216_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_216(mht_216_v, 4176, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "params");
+ return params_; }
+  blas::DataType scale_type() const {
+   std::vector<std::string> mht_217_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_217(mht_217_v, 4180, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "scale_type");
+ return scale_type_; }
+  blas::DataType ab_type() const override {
+   std::vector<std::string> mht_218_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_218(mht_218_v, 4184, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "ab_type");
+ return params_.ab_type; }
+  blas::DataType c_type() const override {
+   std::vector<std::string> mht_219_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_219(mht_219_v, 4188, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "c_type");
+ return params_.c_type; }
   int capped_batch_count() const {
+   std::vector<std::string> mht_220_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_220(mht_220_v, 4192, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "capped_batch_count");
+
     return std::min(params_.batch_count, kMaxBatchCount);
   }
-  int remainder_batch_count() const { return remainder_batch_count_; }
+  int remainder_batch_count() const {
+   std::vector<std::string> mht_221_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_221(mht_221_v, 4198, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "remainder_batch_count");
+ return remainder_batch_count_; }
 
   // Note: Must be const to satisfy API. This is always called before the plan
   // is executed, so the state change is not observed in subsequent executions.
@@ -3393,6 +4227,9 @@ class CUDABlasLtMatmulPlan final : public blas::IBlasLtMatmulPlan {
 /*static*/ constexpr int CUDABlasLtMatmulPlan::kMaxBatchCount;
 
 bool CUDABlasLtMatmulPlan::SetBiasPointer(const void *bias) const {
+   std::vector<std::string> mht_222_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_222(mht_222_v, 4230, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlasLtMatmulPlan::SetBiasPointer");
+
   return SetCublasLtAttr(op_desc_.get(), CUBLASLT_MATMUL_DESC_BIAS_POINTER,
                          bias)
       .ok();
@@ -3402,15 +4239,30 @@ class CUDABlasLtMatmulAlgorithm final : public blas::IBlasLtMatmulAlgorithm {
  public:
   CUDABlasLtMatmulAlgorithm(blas::AlgorithmType index,
                             cublasLtMatmulAlgo_t algo, size_t workspace_size)
-      : index_(index), algo_(algo), workspace_size_(workspace_size) {}
+      : index_(index), algo_(algo), workspace_size_(workspace_size) {
+   std::vector<std::string> mht_223_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_223(mht_223_v, 4243, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlasLtMatmulAlgorithm");
+}
 
-  blas::AlgorithmType index() const override { return index_; }
+  blas::AlgorithmType index() const override {
+   std::vector<std::string> mht_224_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_224(mht_224_v, 4248, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "index");
+ return index_; }
 
-  size_t workspace_size() const override { return workspace_size_; }
+  size_t workspace_size() const override {
+   std::vector<std::string> mht_225_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_225(mht_225_v, 4253, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "workspace_size");
+ return workspace_size_; }
 
-  const cublasLtMatmulAlgo_t *algo() const { return &algo_; }
+  const cublasLtMatmulAlgo_t *algo() const {
+   std::vector<std::string> mht_226_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_226(mht_226_v, 4258, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "algo");
+ return &algo_; }
 
   int algo_id() const {
+   std::vector<std::string> mht_227_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_227(mht_227_v, 4263, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "algo_id");
+
     int id;
     GetCublasLtAttr(&algo_, CUBLASLT_ALGO_CONFIG_ID, &id);
     return id;
@@ -3444,6 +4296,9 @@ port::StatusOr<UniqueMatmulPreference> CreateCublasLtMatmulPreference(
   // in rare cases select an algo that does not support the specified stride.
   // Specifying the alignment requirements manually like this avoids the issue.
   auto get_alignment_bytes = [](int64_t stride, blas::DataType dtype) {
+   std::vector<std::string> mht_228_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_228(mht_228_v, 4299, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "lambda");
+
     return (stride & -stride) * GetDataTypeSizeBytes(dtype);
   };
   if (cuda_plan.params().stride_a) {
@@ -3479,6 +4334,9 @@ port::StatusOr<UniqueMatmulPreference> CreateCublasLtMatmulPreference(
 
 port::StatusOr<std::unique_ptr<blas::IBlasLtMatmulPlan>>
 CUDABlas::CreateBlasLtMatmulPlan(const blas::BlasLtMatmulPlanParams &p) {
+   std::vector<std::string> mht_229_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_229(mht_229_v, 4337, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::CreateBlasLtMatmulPlan");
+
 #if CUDA_VERSION >= 11000
   auto cuda_plan = std::make_unique<CUDABlasLtMatmulPlan>();
   SE_RETURN_IF_ERROR(cuda_plan->init(p));
@@ -3497,6 +4355,9 @@ CUDABlas::GetBlasLtMatmulAlgorithmsInternal(const blas::IBlasLtMatmulPlan *plan,
                                             size_t max_workspace_size,
                                             int max_algorithm_count,
                                             bool for_remainder_batch) {
+   std::vector<std::string> mht_230_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_230(mht_230_v, 4358, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::GetBlasLtMatmulAlgorithmsInternal");
+
   SE_ASSIGN_OR_RETURN(UniqueMatmulPreference preference,
                       CreateCublasLtMatmulPreference(plan, max_workspace_size));
 
@@ -3547,6 +4408,9 @@ port::StatusOr<std::vector<std::unique_ptr<blas::IBlasLtMatmulAlgorithm>>>
 CUDABlas::GetBlasLtMatmulAlgorithms(const blas::IBlasLtMatmulPlan *plan,
                                     size_t max_workspace_size,
                                     int max_algorithm_count) {
+   std::vector<std::string> mht_231_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_231(mht_231_v, 4411, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::GetBlasLtMatmulAlgorithms");
+
 #if CUDA_VERSION >= 11000
   return GetBlasLtMatmulAlgorithmsInternal(plan, max_workspace_size,
                                            max_algorithm_count);
@@ -3777,6 +4641,9 @@ bool CUDABlas::DoBlasLtMatmul(
 }
 
 port::Status CUDABlas::GetVersion(std::string *version) {
+   std::vector<std::string> mht_232_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_232(mht_232_v, 4644, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "CUDABlas::GetVersion");
+
   absl::MutexLock lock(&mu_);
 
   int v;
@@ -3791,6 +4658,9 @@ port::Status CUDABlas::GetVersion(std::string *version) {
 }  // namespace gpu
 
 void initialize_cublas() {
+   std::vector<std::string> mht_233_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_blasDTcc mht_233(mht_233_v, 4661, "", "./tensorflow/stream_executor/cuda/cuda_blas.cc", "initialize_cublas");
+
   port::Status status =
       PluginRegistry::Instance()->RegisterFactory<PluginRegistry::BlasFactory>(
           cuda::kCudaPlatformId, gpu::kCuBlasPlugin, "cuBLAS",

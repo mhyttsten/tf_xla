@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,6 +209,9 @@ REGISTER_NO_GRADIENT_OP("OneHot");
 Status PackGrad(const Scope& scope, const Operation& op,
                 const std::vector<Output>& grad_inputs,
                 std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_0(mht_0_v, 212, "", "./tensorflow/cc/gradients/array_grad.cc", "PackGrad");
+
   int N;
   TF_RETURN_IF_ERROR(GetNodeAttr(op.node()->attrs(), "N", &N));
   int axis;
@@ -58,6 +229,9 @@ REGISTER_GRADIENT_OP("Pack", PackGrad);
 Status UnpackGrad(const Scope& scope, const Operation& op,
                   const std::vector<Output>& grad_inputs,
                   std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_1(mht_1_v, 232, "", "./tensorflow/cc/gradients/array_grad.cc", "UnpackGrad");
+
   int axis;
   TF_RETURN_IF_ERROR(GetNodeAttr(op.node()->attrs(), "axis", &axis));
   grad_outputs->push_back(Stack(scope, grad_inputs, Stack::Axis(axis)));
@@ -68,6 +242,9 @@ REGISTER_GRADIENT_OP("Unpack", UnpackGrad);
 Status IdentityGrad(const Scope& scope, const Operation& op,
                     const std::vector<Output>& grad_inputs,
                     std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_2(mht_2_v, 245, "", "./tensorflow/cc/gradients/array_grad.cc", "IdentityGrad");
+
   grad_outputs->push_back(Identity(scope, grad_inputs[0]));
   return scope.status();
 }
@@ -76,6 +253,9 @@ REGISTER_GRADIENT_OP("Identity", IdentityGrad);
 Status RefIdentityGrad(const Scope& scope, const Operation& op,
                        const std::vector<Output>& grad_inputs,
                        std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_3(mht_3_v, 256, "", "./tensorflow/cc/gradients/array_grad.cc", "RefIdentityGrad");
+
   grad_outputs->push_back(Identity(scope, grad_inputs[0]));
   return scope.status();
 }
@@ -84,6 +264,9 @@ REGISTER_GRADIENT_OP("RefIdentity", RefIdentityGrad);
 Status QuantizeAndDequantizeGrad(const Scope& scope, const Operation& op,
                                  const std::vector<Output>& grad_inputs,
                                  std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_4(mht_4_v, 267, "", "./tensorflow/cc/gradients/array_grad.cc", "QuantizeAndDequantizeGrad");
+
   grad_outputs->push_back(Identity(scope, grad_inputs[0]));
   return scope.status();
 }
@@ -93,6 +276,9 @@ Status QuantizeAndDequantizeV4GradHelper(const Scope& scope,
                                          const Operation& op,
                                          const std::vector<Output>& grad_inputs,
                                          std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_5(mht_5_v, 279, "", "./tensorflow/cc/gradients/array_grad.cc", "QuantizeAndDequantizeV4GradHelper");
+
   Input input = Shape(scope, op.input(0));
   Input input_min = op.input(1);
   Input input_max = op.input(2);
@@ -112,6 +298,9 @@ REGISTER_GRADIENT_OP("QuantizeAndDequantizeV4",
 Status QuantizeAndDequantizeV3Grad(const Scope& scope, const Operation& op,
                                    const std::vector<Output>& grad_inputs,
                                    std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_6(mht_6_v, 301, "", "./tensorflow/cc/gradients/array_grad.cc", "QuantizeAndDequantizeV3Grad");
+
   grad_outputs->push_back(Identity(scope, grad_inputs[0]));
   grad_outputs->push_back(NoGradient());
   grad_outputs->push_back(NoGradient());
@@ -123,6 +312,9 @@ REGISTER_GRADIENT_OP("QuantizeAndDequantizeV3", QuantizeAndDequantizeV3Grad);
 Status SplitGrad(const Scope& scope, const Operation& op,
                  const std::vector<Output>& grad_inputs,
                  std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_7(mht_7_v, 315, "", "./tensorflow/cc/gradients/array_grad.cc", "SplitGrad");
+
   grad_outputs->push_back(NoGradient());
   grad_outputs->push_back(Concat(scope, grad_inputs, op.input(0)));
   return scope.status();
@@ -132,6 +324,9 @@ REGISTER_GRADIENT_OP("Split", SplitGrad);
 Status SplitVGrad(const Scope& scope, const Operation& op,
                   const std::vector<Output>& grad_inputs,
                   std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_8(mht_8_v, 327, "", "./tensorflow/cc/gradients/array_grad.cc", "SplitVGrad");
+
   if (op.num_inputs() < 3) {
     return errors::InvalidArgument("SplitV requires 3 arguments");
   }
@@ -146,6 +341,9 @@ REGISTER_GRADIENT_OP("SplitV", SplitVGrad);
 Status FillGrad(const Scope& scope, const Operation& op,
                 const std::vector<Output>& grad_inputs,
                 std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_9(mht_9_v, 344, "", "./tensorflow/cc/gradients/array_grad.cc", "FillGrad");
+
   // y = fill(fill_shape, x)
   // No gradient returned for the fill_shape argument.
   grad_outputs->push_back(NoGradient());
@@ -164,6 +362,9 @@ REGISTER_GRADIENT_OP("Fill", FillGrad);
 Status DiagGrad(const Scope& scope, const Operation& op,
                 const std::vector<Output>& grad_inputs,
                 std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_10(mht_10_v, 365, "", "./tensorflow/cc/gradients/array_grad.cc", "DiagGrad");
+
   grad_outputs->push_back(DiagPart(scope, grad_inputs[0]));
   return scope.status();
 }
@@ -172,6 +373,9 @@ REGISTER_GRADIENT_OP("Diag", DiagGrad);
 Status DiagPartGrad(const Scope& scope, const Operation& op,
                     const std::vector<Output>& grad_inputs,
                     std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_11(mht_11_v, 376, "", "./tensorflow/cc/gradients/array_grad.cc", "DiagPartGrad");
+
   grad_outputs->push_back(Diag(scope, grad_inputs[0]));
   return scope.status();
 }
@@ -180,6 +384,9 @@ REGISTER_GRADIENT_OP("DiagPart", DiagPartGrad);
 Status MatrixDiagGrad(const Scope& scope, const Operation& op,
                       const std::vector<Output>& grad_inputs,
                       std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_12(mht_12_v, 387, "", "./tensorflow/cc/gradients/array_grad.cc", "MatrixDiagGrad");
+
   grad_outputs->push_back(MatrixDiagPart(scope, grad_inputs[0]));
   return scope.status();
 }
@@ -188,6 +395,9 @@ REGISTER_GRADIENT_OP("MatrixDiag", MatrixDiagGrad);
 Status MatrixBandPartGrad(const Scope& scope, const Operation& op,
                           const std::vector<Output>& grad_inputs,
                           std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_13(mht_13_v, 398, "", "./tensorflow/cc/gradients/array_grad.cc", "MatrixBandPartGrad");
+
   auto num_lower = op.input(1);
   auto num_upper = op.input(2);
   grad_outputs->push_back(
@@ -201,6 +411,9 @@ REGISTER_GRADIENT_OP("MatrixBandPart", MatrixBandPartGrad);
 Status GatherNdGrad(const Scope& scope, const Operation& op,
                     const std::vector<Output>& grad_inputs,
                     std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_14(mht_14_v, 414, "", "./tensorflow/cc/gradients/array_grad.cc", "GatherNdGrad");
+
   auto ref = op.input(0);
   auto ref_shape = Shape(scope, ref);
   auto indices = op.input(1);
@@ -213,6 +426,9 @@ REGISTER_GRADIENT_OP("GatherNd", GatherNdGrad);
 Status CheckNumericsGrad(const Scope& scope, const Operation& op,
                          const std::vector<Output>& grad_inputs,
                          std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_15(mht_15_v, 429, "", "./tensorflow/cc/gradients/array_grad.cc", "CheckNumericsGrad");
+
   string message;
   TF_RETURN_IF_ERROR(GetNodeAttr(op.node()->attrs(), "message", &message));
   string err_msg = strings::StrCat(
@@ -226,6 +442,9 @@ REGISTER_GRADIENT_OP("CheckNumerics", CheckNumericsGrad);
 Status ReshapeGrad(const Scope& scope, const Operation& op,
                    const std::vector<Output>& grad_inputs,
                    std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_16(mht_16_v, 445, "", "./tensorflow/cc/gradients/array_grad.cc", "ReshapeGrad");
+
   auto input_shape = Shape(scope, op.input(0));
   grad_outputs->push_back(Reshape(scope, grad_inputs[0], input_shape));
   grad_outputs->push_back(NoGradient());
@@ -236,6 +455,9 @@ REGISTER_GRADIENT_OP("Reshape", ReshapeGrad);
 Status ExpandDimsGrad(const Scope& scope, const Operation& op,
                       const std::vector<Output>& grad_inputs,
                       std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_17(mht_17_v, 458, "", "./tensorflow/cc/gradients/array_grad.cc", "ExpandDimsGrad");
+
   auto input_shape = Shape(scope, op.input(0));
   grad_outputs->push_back(Reshape(scope, grad_inputs[0], input_shape));
   grad_outputs->push_back(NoGradient());
@@ -246,6 +468,9 @@ REGISTER_GRADIENT_OP("ExpandDims", ExpandDimsGrad);
 Status SqueezeGrad(const Scope& scope, const Operation& op,
                    const std::vector<Output>& grad_inputs,
                    std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_18(mht_18_v, 471, "", "./tensorflow/cc/gradients/array_grad.cc", "SqueezeGrad");
+
   auto input_shape = Shape(scope, op.input(0));
   grad_outputs->push_back(Reshape(scope, grad_inputs[0], input_shape));
   return scope.status();
@@ -255,6 +480,9 @@ REGISTER_GRADIENT_OP("Squeeze", SqueezeGrad);
 Status TransposeGrad(const Scope& scope, const Operation& op,
                      const std::vector<Output>& grad_inputs,
                      std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_19(mht_19_v, 483, "", "./tensorflow/cc/gradients/array_grad.cc", "TransposeGrad");
+
   auto inverted_perm = InvertPermutation(scope, op.input(1));
   grad_outputs->push_back(Transpose(scope, grad_inputs[0], inverted_perm));
   grad_outputs->push_back(NoGradient());
@@ -265,6 +493,9 @@ REGISTER_GRADIENT_OP("Transpose", TransposeGrad);
 Status ReverseSequenceGrad(const Scope& scope, const Operation& op,
                            const std::vector<Output>& grad_inputs,
                            std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_20(mht_20_v, 496, "", "./tensorflow/cc/gradients/array_grad.cc", "ReverseSequenceGrad");
+
   auto seq_lengths = op.input(1);
   int batch_dim;
   TF_RETURN_IF_ERROR(GetNodeAttr(op.node()->attrs(), "batch_dim", &batch_dim));
@@ -281,6 +512,9 @@ REGISTER_GRADIENT_OP("ReverseSequence", ReverseSequenceGrad);
 Status ReverseGrad(const Scope& scope, const Operation& op,
                    const std::vector<Output>& grad_inputs,
                    std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_21(mht_21_v, 515, "", "./tensorflow/cc/gradients/array_grad.cc", "ReverseGrad");
+
   auto reverse_dims = op.input(1);
   grad_outputs->push_back(Reverse(scope, grad_inputs[0], reverse_dims));
   grad_outputs->push_back(NoGradient());
@@ -291,6 +525,9 @@ REGISTER_GRADIENT_OP("ReverseV2", ReverseGrad);
 Status ScatterNdGrad(const Scope& scope, const Operation& op,
                      const std::vector<Output>& grad_inputs,
                      std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_22(mht_22_v, 528, "", "./tensorflow/cc/gradients/array_grad.cc", "ScatterNdGrad");
+
   auto indices = op.input(0);
   grad_outputs->push_back(NoGradient());
   grad_outputs->push_back(GatherNd(scope, grad_inputs[0], indices));
@@ -302,6 +539,9 @@ REGISTER_GRADIENT_OP("ScatterNd", ScatterNdGrad);
 Status ScatterNdNonAliasingAddGrad(const Scope& scope, const Operation& op,
                                    const std::vector<Output>& grad_inputs,
                                    std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_23(mht_23_v, 542, "", "./tensorflow/cc/gradients/array_grad.cc", "ScatterNdNonAliasingAddGrad");
+
   auto indices = op.input(1);
   grad_outputs->push_back(Identity(scope, grad_inputs[0]));
   grad_outputs->push_back(NoGradient());
@@ -314,6 +554,9 @@ template <bool IsPadV2>
 Status PadGrad(const Scope& scope, const Operation& op,
                const std::vector<Output>& grad_inputs,
                std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_24(mht_24_v, 557, "", "./tensorflow/cc/gradients/array_grad.cc", "PadGrad");
+
   auto x = op.input(0);
   auto a = op.input(1);  // [Rank(x), 2]
   // Takes a slice of a. The 1st column. [Rank(x), 1].
@@ -335,6 +578,9 @@ REGISTER_GRADIENT_OP("PadV2", PadGrad<true>);
 Status SpaceToBatchGrad(const Scope& scope, const Operation& op,
                         const std::vector<Output>& grad_inputs,
                         std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_25(mht_25_v, 581, "", "./tensorflow/cc/gradients/array_grad.cc", "SpaceToBatchGrad");
+
   int block_size;
   TF_RETURN_IF_ERROR(
       GetNodeAttr(op.node()->attrs(), "block_size", &block_size));
@@ -348,6 +594,9 @@ REGISTER_GRADIENT_OP("SpaceToBatch", SpaceToBatchGrad);
 Status SpaceToBatchNDGrad(const Scope& scope, const Operation& op,
                           const std::vector<Output>& grad_inputs,
                           std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_26(mht_26_v, 597, "", "./tensorflow/cc/gradients/array_grad.cc", "SpaceToBatchNDGrad");
+
   grad_outputs->push_back(
       BatchToSpaceND(scope, grad_inputs[0], op.input(1), op.input(2)));
   grad_outputs->push_back(NoGradient());
@@ -359,6 +608,9 @@ REGISTER_GRADIENT_OP("SpaceToBatchND", SpaceToBatchNDGrad);
 Status BatchToSpaceGrad(const Scope& scope, const Operation& op,
                         const std::vector<Output>& grad_inputs,
                         std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_27(mht_27_v, 611, "", "./tensorflow/cc/gradients/array_grad.cc", "BatchToSpaceGrad");
+
   int block_size;
   TF_RETURN_IF_ERROR(
       GetNodeAttr(op.node()->attrs(), "block_size", &block_size));
@@ -372,6 +624,9 @@ REGISTER_GRADIENT_OP("BatchToSpace", BatchToSpaceGrad);
 Status BatchToSpaceNDGrad(const Scope& scope, const Operation& op,
                           const std::vector<Output>& grad_inputs,
                           std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_28(mht_28_v, 627, "", "./tensorflow/cc/gradients/array_grad.cc", "BatchToSpaceNDGrad");
+
   grad_outputs->push_back(
       SpaceToBatchND(scope, grad_inputs[0], op.input(1), op.input(2)));
   grad_outputs->push_back(NoGradient());
@@ -383,6 +638,9 @@ REGISTER_GRADIENT_OP("BatchToSpaceND", BatchToSpaceNDGrad);
 Status SpaceToDepthGrad(const Scope& scope, const Operation& op,
                         const std::vector<Output>& grad_inputs,
                         std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_29(mht_29_v, 641, "", "./tensorflow/cc/gradients/array_grad.cc", "SpaceToDepthGrad");
+
   int block_size;
   TF_RETURN_IF_ERROR(
       GetNodeAttr(op.node()->attrs(), "block_size", &block_size));
@@ -394,6 +652,9 @@ REGISTER_GRADIENT_OP("SpaceToDepth", SpaceToDepthGrad);
 Status DepthToSpaceGrad(const Scope& scope, const Operation& op,
                         const std::vector<Output>& grad_inputs,
                         std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_30(mht_30_v, 655, "", "./tensorflow/cc/gradients/array_grad.cc", "DepthToSpaceGrad");
+
   int block_size;
   TF_RETURN_IF_ERROR(
       GetNodeAttr(op.node()->attrs(), "block_size", &block_size));
@@ -405,6 +666,9 @@ REGISTER_GRADIENT_OP("DepthToSpace", DepthToSpaceGrad);
 Status MirrorPadGrad(const Scope& scope, const Operation& op,
                      const std::vector<Output>& grad_inputs,
                      std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_31(mht_31_v, 669, "", "./tensorflow/cc/gradients/array_grad.cc", "MirrorPadGrad");
+
   string mode;
   TF_RETURN_IF_ERROR(GetNodeAttr(op.node()->attrs(), "mode", &mode));
   grad_outputs->push_back(tensorflow::ops::internal::MirrorPadGrad(
@@ -418,6 +682,9 @@ REGISTER_GRADIENT_OP("MirrorPad", MirrorPadGrad);
 Status MirrorPadGradGrad(const Scope& scope, const Operation& op,
                          const std::vector<Output>& grad_inputs,
                          std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_32(mht_32_v, 685, "", "./tensorflow/cc/gradients/array_grad.cc", "MirrorPadGradGrad");
+
   string mode;
   TF_RETURN_IF_ERROR(GetNodeAttr(op.node()->attrs(), "mode", &mode));
   grad_outputs->push_back(MirrorPad(scope, grad_inputs[0], op.input(1), mode));
@@ -429,6 +696,9 @@ REGISTER_GRADIENT_OP("MirrorPadGrad", MirrorPadGradGrad);
 Status StridedSliceGradHelper(const Scope& scope, const Operation& op,
                               const std::vector<Output>& grad_inputs,
                               std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_33(mht_33_v, 699, "", "./tensorflow/cc/gradients/array_grad.cc", "StridedSliceGradHelper");
+
   Input x = Shape(scope, op.input(0));
   Input begin = op.input(1);
   Input end = op.input(2);
@@ -465,6 +735,9 @@ REGISTER_GRADIENT_OP("StridedSlice", StridedSliceGradHelper);
 Status SliceGrad(const Scope& scope, const Operation& op,
                  const std::vector<Output>& grad_inputs,
                  std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_34(mht_34_v, 738, "", "./tensorflow/cc/gradients/array_grad.cc", "SliceGrad");
+
   // Propagate the incoming gradient along all the selected values,
   // and zero everywhere else. Use the Pad operator for this.
   //
@@ -519,6 +792,9 @@ Status ConcatGradHelper(const Scope& scope, const Operation& op,
                         std::vector<Output>* grad_outputs,
                         int start_value_index, int end_value_index,
                         int dim_index) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_35(mht_35_v, 795, "", "./tensorflow/cc/gradients/array_grad.cc", "ConcatGradHelper");
+
   if (end_value_index >= op.num_inputs()) {
     return errors::Internal("Invalid input index");
   }
@@ -561,6 +837,9 @@ Status ConcatGradHelper(const Scope& scope, const Operation& op,
 Status ConcatV2Grad(const Scope& scope, const Operation& op,
                     const std::vector<Output>& grad_inputs,
                     std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_36(mht_36_v, 840, "", "./tensorflow/cc/gradients/array_grad.cc", "ConcatV2Grad");
+
   return ConcatGradHelper(scope, op, grad_inputs, grad_outputs,
                           /*start_value_index=*/0,
                           /*end_value_index=*/op.num_inputs() - 1,
@@ -572,6 +851,9 @@ REGISTER_GRADIENT_OP("ConcatV2", ConcatV2Grad);
 Status BroadcastToGrad(const Scope& scope, const Operation& op,
                        const std::vector<Output>& grad_inputs,
                        std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_37(mht_37_v, 854, "", "./tensorflow/cc/gradients/array_grad.cc", "BroadcastToGrad");
+
   if (grad_inputs.size() != 1) {
     return errors::InvalidArgument("BroadcastTo grad should have 1 grad input");
   }
@@ -592,6 +874,9 @@ REGISTER_GRADIENT_OP("BroadcastTo", BroadcastToGrad);
 Status TileGrad(const Scope& scope, const Operation& op,
                 const std::vector<Output>& grad_inputs,
                 std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_38(mht_38_v, 877, "", "./tensorflow/cc/gradients/array_grad.cc", "TileGrad");
+
   if (op.num_inputs() != 2) {
     return errors::InvalidArgument("Tile requires 2 inputs");
   }
@@ -624,12 +909,18 @@ REGISTER_GRADIENT_OP("Tile", TileGrad);
 
 // Create a constant of the provided d_type;
 Output ConstHelper(const Scope& scope, int value, DataType d_type) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_39(mht_39_v, 912, "", "./tensorflow/cc/gradients/array_grad.cc", "ConstHelper");
+
   return Cast(scope, Const(scope, value), d_type);
 }
 
 // Adds the batch offsets to the given indices and returns the results.
 Output GetBatchIndices(const Scope& scope, const Output& params_shape,
                        const Output& indices, int batch_dims) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_40(mht_40_v, 921, "", "./tensorflow/cc/gradients/array_grad.cc", "GetBatchIndices");
+
   Output batch_indices = indices;
   auto indices_ndims = Rank(scope, indices);
   auto casted_params_shape = Cast(scope, params_shape, indices.type());
@@ -658,6 +949,9 @@ Output GetBatchIndices(const Scope& scope, const Output& params_shape,
 
 Output BatchGatherGrad(const Scope& scope, Output params_shape, Output values,
                        Output indices, int batch_dims, Output gather_dim_size) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_41(mht_41_v, 952, "", "./tensorflow/cc/gradients/array_grad.cc", "BatchGatherGrad");
+
   // Axis is the first non-batch dimension.
   auto indices_size = ExpandDims(scope, Size(scope, indices), 0);
   Output outer_shape, flat_values_shape;
@@ -688,6 +982,9 @@ Output BatchGatherGrad(const Scope& scope, Output params_shape, Output values,
 Status GatherV2Grad(const Scope& scope, const Operation& op,
                     const std::vector<Output>& grad_inputs,
                     std::vector<Output>* grad_outputs) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSccPSgradientsPSarray_gradDTcc mht_42(mht_42_v, 985, "", "./tensorflow/cc/gradients/array_grad.cc", "GatherV2Grad");
+
   if (op.num_inputs() != 3) {
     return errors::InvalidArgument("Gather requires 3 inputs");
   }

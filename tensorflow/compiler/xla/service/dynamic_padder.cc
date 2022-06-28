@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdynamic_padderDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdynamic_padderDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdynamic_padderDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -232,6 +400,9 @@ StatusOr<bool> ReplaceSetBound(HloInstruction* instr) {
 
 bool ShouldSkipPadOnOperand(const HloInstruction* inst, int64_t operand_num,
                             int64_t dimension) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdynamic_padderDTcc mht_0(mht_0_v, 403, "", "./tensorflow/compiler/xla/service/dynamic_padder.cc", "ShouldSkipPadOnOperand");
+
   switch (inst->opcode()) {
     case HloOpcode::kConvolution: {
       if (operand_num == 0) {
@@ -289,6 +460,9 @@ bool ShouldSkipPadOnOperand(const HloInstruction* inst, int64_t operand_num,
 HloInstruction* PadWithScalar(HloInstruction* inst, int64_t dim,
                               HloInstruction* dynamic_size,
                               HloInstruction* padding_scalar) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdynamic_padderDTcc mht_1(mht_1_v, 463, "", "./tensorflow/compiler/xla/service/dynamic_padder.cc", "PadWithScalar");
+
   CHECK(inst != nullptr && dynamic_size != nullptr &&
         padding_scalar != nullptr);
   const Shape mask_shape =
@@ -317,6 +491,9 @@ HloInstruction* GenerateBinaryMask(
     absl::Span<const int64_t> output_dims,
     absl::Span<HloInstruction*> output_dynamic_dims, HloInstruction* one,
     HloInstruction* zero, bool split_input) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdynamic_padderDTcc mht_2(mht_2_v, 494, "", "./tensorflow/compiler/xla/service/dynamic_padder.cc", "GenerateBinaryMask");
+
   Shape input_shape =
       split_input ? reshape->operand(0)->shape() : reshape->shape();
   Shape output_shape =
@@ -899,6 +1076,9 @@ HloInstruction* RewriteInputWithDynamicPadding(
     HloInstruction* conv, HloInstruction* input, HloInstruction* padding_value,
     absl::Span<HloInstruction*> padding_before, Window* input_window,
     std::function<int64_t(int64_t)> window_dim_to_shape_dim) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdynamic_padderDTcc mht_3(mht_3_v, 1079, "", "./tensorflow/compiler/xla/service/dynamic_padder.cc", "RewriteInputWithDynamicPadding");
+
   HloInstruction* zero_s32 = conv->AddInstruction(
       HloInstruction::CreateConstant(LiteralUtil::Zero(S32)));
   // Padded shape represents the bounded shape after dynamic padding.
@@ -1647,6 +1827,9 @@ StatusOr<bool> RewriteDynamicReshape(
   // flatten-unflatten pair.
   bool need_flatten_unflatten = false;
   auto is_dynamic_dimension = [&](int64_t dim) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdynamic_padderDTcc mht_4(mht_4_v, 1830, "", "./tensorflow/compiler/xla/service/dynamic_padder.cc", "lambda");
+
     HloInstruction* operand_dynamic_size =
         dynamic_dimension_inference->GetDynamicSize(reshape, {}, dim);
     return operand_dynamic_size != nullptr ||
@@ -1655,6 +1838,9 @@ StatusOr<bool> RewriteDynamicReshape(
 
   auto should_skip_common_factor_group = [&](DimensionVector input_dims,
                                              DimensionVector output_dims) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdynamic_padderDTcc mht_5(mht_5_v, 1841, "", "./tensorflow/compiler/xla/service/dynamic_padder.cc", "lambda");
+
     if (input_dims.empty() || output_dims.empty()) {
       return true;
     }
@@ -1831,6 +2017,9 @@ StatusOr<HloInstruction*> InsertPadToStaticOnInstruction(HloInstruction* inst) {
 }
 
 Status InsertPadToStaticAfterModuleInputs(HloModule* module) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdynamic_padderDTcc mht_6(mht_6_v, 2020, "", "./tensorflow/compiler/xla/service/dynamic_padder.cc", "InsertPadToStaticAfterModuleInputs");
+
   std::vector<HloInstruction*> params;
   HloComputation* entry = module->entry_computation();
   for (int64_t i = 0; i < entry->num_parameters(); ++i) {
@@ -1870,7 +2059,10 @@ class DynamicShapeRemovingVisitor : public DfsHloVisitorWithDefault {
           op_supports_dynamism_handler,
       DynamicDimensionInference* dynamic_dimension_inference)
       : op_supports_dynamism_handler_(op_supports_dynamism_handler),
-        dynamic_dimension_inference_(dynamic_dimension_inference) {}
+        dynamic_dimension_inference_(dynamic_dimension_inference) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdynamic_padderDTcc mht_7(mht_7_v, 2063, "", "./tensorflow/compiler/xla/service/dynamic_padder.cc", "DynamicShapeRemovingVisitor");
+}
 
   Status DefaultAction(HloInstruction* hlo) override;
 
@@ -1886,6 +2078,9 @@ class DynamicShapeRemovingVisitor : public DfsHloVisitorWithDefault {
                         op_supports_dynamism_handler,
                     DynamicDimensionInference* dynamic_shape_inference,
                     bool require_dynamic_output) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdynamic_padderDTcc mht_8(mht_8_v, 2081, "", "./tensorflow/compiler/xla/service/dynamic_padder.cc", "Run");
+
     DynamicShapeRemovingVisitor visitor(op_supports_dynamism_handler,
                                         dynamic_shape_inference);
     TF_RETURN_IF_ERROR(computation->Accept(&visitor));
@@ -1919,6 +2114,9 @@ class DynamicShapeRemovingVisitor : public DfsHloVisitorWithDefault {
 
 StatusOr<HloInstruction*> DynamicShapeRemovingVisitor::ConvertToDynamic(
     HloInstruction* inst) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdynamic_padderDTcc mht_9(mht_9_v, 2117, "", "./tensorflow/compiler/xla/service/dynamic_padder.cc", "DynamicShapeRemovingVisitor::ConvertToDynamic");
+
   const Shape& shape = inst->shape();
   if (shape.IsTuple()) {
     std::vector<HloInstruction*> dynamic_operands;
@@ -1959,6 +2157,9 @@ StatusOr<HloInstruction*> DynamicShapeRemovingVisitor::ConvertToDynamic(
 
 StatusOr<HloInstruction*> DynamicShapeRemovingVisitor::ConvertToStatic(
     HloInstruction* inst) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdynamic_padderDTcc mht_10(mht_10_v, 2160, "", "./tensorflow/compiler/xla/service/dynamic_padder.cc", "DynamicShapeRemovingVisitor::ConvertToStatic");
+
   const Shape& shape = inst->shape();
   CHECK(shape.is_dynamic());
   if (shape.IsTuple()) {
@@ -1998,6 +2199,9 @@ StatusOr<HloInstruction*> DynamicShapeRemovingVisitor::ConvertToStatic(
 }
 
 Status DynamicShapeRemovingVisitor::DefaultAction(HloInstruction* hlo) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdynamic_padderDTcc mht_11(mht_11_v, 2202, "", "./tensorflow/compiler/xla/service/dynamic_padder.cc", "DynamicShapeRemovingVisitor::DefaultAction");
+
   const bool input_is_dynamic = absl::c_any_of(
       hlo->operands(),
       [](const HloInstruction* hlo) { return hlo->shape().is_dynamic(); });
@@ -2057,12 +2261,18 @@ Status DynamicShapeRemovingVisitor::DefaultAction(HloInstruction* hlo) {
 }
 
 Status DynamicShapeRemovingVisitor::HandleGetTupleElement(HloInstruction* hlo) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdynamic_padderDTcc mht_12(mht_12_v, 2264, "", "./tensorflow/compiler/xla/service/dynamic_padder.cc", "DynamicShapeRemovingVisitor::HandleGetTupleElement");
+
   *hlo->mutable_shape() =
       hlo->operand(0)->shape().tuple_shapes(hlo->tuple_index());
   return Status::OK();
 }
 
 Status DynamicShapeRemovingVisitor::HandleTuple(HloInstruction* hlo) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdynamic_padderDTcc mht_13(mht_13_v, 2273, "", "./tensorflow/compiler/xla/service/dynamic_padder.cc", "DynamicShapeRemovingVisitor::HandleTuple");
+
   for (int64_t i = 0; i < hlo->operand_count(); ++i) {
     *hlo->mutable_shape()->mutable_tuple_shapes(i) = hlo->operand(i)->shape();
   }
@@ -2070,10 +2280,16 @@ Status DynamicShapeRemovingVisitor::HandleTuple(HloInstruction* hlo) {
 }
 
 Status DynamicShapeRemovingVisitor::HandleParameter(HloInstruction* hlo) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdynamic_padderDTcc mht_14(mht_14_v, 2283, "", "./tensorflow/compiler/xla/service/dynamic_padder.cc", "DynamicShapeRemovingVisitor::HandleParameter");
+
   return Status::OK();
 }
 
 Status DynamicShapeRemovingVisitor::HandleCustomCall(HloInstruction* hlo) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdynamic_padderDTcc mht_15(mht_15_v, 2290, "", "./tensorflow/compiler/xla/service/dynamic_padder.cc", "DynamicShapeRemovingVisitor::HandleCustomCall");
+
   if (hlo->custom_call_target() == "SliceToDynamic" ||
       hlo->custom_call_target() == "PadToStatic") {
     // Those ops support are created to handle dynamic tensors so by their
@@ -2087,6 +2303,9 @@ Status DynamicShapeRemovingVisitor::HandleCustomCall(HloInstruction* hlo) {
 }  // namespace
 
 StatusOr<bool> DynamicPadder::Run(HloModule* module) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSdynamic_padderDTcc mht_16(mht_16_v, 2306, "", "./tensorflow/compiler/xla/service/dynamic_padder.cc", "DynamicPadder::Run");
+
   bool changed = false;
   VLOG(2) << "Pre DynamicPadder HLO:";
   XLA_VLOG_LINES(2, module->ToString());

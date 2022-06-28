@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSpythonPSoptimizePScalibration_wrapperDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSpythonPSoptimizePScalibration_wrapperDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSpythonPSoptimizePScalibration_wrapperDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -59,12 +227,18 @@ std::unique_ptr<tflite::ModelT> CreateMutableModel(const tflite::Model& model) {
 }
 
 bool NoOpModel(const tflite::FlatBufferModel& model) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSoptimizePScalibration_wrapperDTcc mht_0(mht_0_v, 230, "", "./tensorflow/lite/python/optimize/calibration_wrapper.cc", "NoOpModel");
+
   return model->subgraphs()->size() == 1 &&
          (!model->subgraphs()->begin()->operators() ||
           model->subgraphs()->begin()->operators()->size() == 0);
 }
 
 inline TensorType TfLiteTypeToSchemaType(TfLiteType type) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSoptimizePScalibration_wrapperDTcc mht_1(mht_1_v, 239, "", "./tensorflow/lite/python/optimize/calibration_wrapper.cc", "TfLiteTypeToSchemaType");
+
   switch (type) {
     case kTfLiteNoType:
       return TensorType_FLOAT32;  // TODO(b/129336260): No schema type for none.
@@ -108,6 +282,10 @@ inline TensorType TfLiteTypeToSchemaType(TfLiteType type) {
 
 bool RegisterCustomOpByName(const char* registerer_name,
                             tflite::MutableOpResolver* resolver) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("registerer_name: \"" + (registerer_name == nullptr ? std::string("nullptr") : std::string((char*)registerer_name)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSpythonPSoptimizePScalibration_wrapperDTcc mht_2(mht_2_v, 286, "", "./tensorflow/lite/python/optimize/calibration_wrapper.cc", "RegisterCustomOpByName");
+
   // Registerer functions take a pointer to a BuiltinOpResolver as an input
   // parameter and return void.
   // TODO(b/137576229): We should implement this functionality in a more
@@ -154,6 +332,9 @@ absl::optional<std::vector<int>> ConvertInputShapeToVector(
 }  // namespace
 
 PyObject* AddIntermediateTensors(PyObject* data) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSoptimizePScalibration_wrapperDTcc mht_3(mht_3_v, 335, "", "./tensorflow/lite/python/optimize/calibration_wrapper.cc", "AddIntermediateTensors");
+
   using tflite::interpreter_wrapper::PythonErrorReporter;
   char* buf = nullptr;
   Py_ssize_t length;
@@ -202,11 +383,20 @@ CalibrationWrapper::CalibrationWrapper(
       resolver_(std::move(resolver)),
       model_(std::move(model)),
       reader_(std::move(reader)),
-      model_str_(std::move(model_str)) {}
+      model_str_(std::move(model_str)) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSoptimizePScalibration_wrapperDTcc mht_4(mht_4_v, 387, "", "./tensorflow/lite/python/optimize/calibration_wrapper.cc", "CalibrationWrapper::CalibrationWrapper");
+}
 
-CalibrationWrapper::~CalibrationWrapper() {}
+CalibrationWrapper::~CalibrationWrapper() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSoptimizePScalibration_wrapperDTcc mht_5(mht_5_v, 392, "", "./tensorflow/lite/python/optimize/calibration_wrapper.cc", "CalibrationWrapper::~CalibrationWrapper");
+}
 
 PyObject* CalibrationWrapper::Prepare() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSoptimizePScalibration_wrapperDTcc mht_6(mht_6_v, 397, "", "./tensorflow/lite/python/optimize/calibration_wrapper.cc", "CalibrationWrapper::Prepare");
+
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
   TFLITE_PY_CHECK(interpreter_->AllocateTensors());
   TFLITE_PY_CHECK(interpreter_->ResetVariableTensors());
@@ -214,6 +404,10 @@ PyObject* CalibrationWrapper::Prepare() {
 }
 
 PyObject* CalibrationWrapper::Prepare(std::string signature_key) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("signature_key: \"" + signature_key + "\"");
+   MHTracer_DTPStensorflowPSlitePSpythonPSoptimizePScalibration_wrapperDTcc mht_7(mht_7_v, 408, "", "./tensorflow/lite/python/optimize/calibration_wrapper.cc", "CalibrationWrapper::Prepare");
+
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
   SignatureRunner* runner =
       interpreter_->GetSignatureRunner(signature_key.c_str());
@@ -229,6 +423,10 @@ PyObject* CalibrationWrapper::Prepare(std::string signature_key) {
 
 PyObject* CalibrationWrapper::Prepare(PyObject* input_shapes,
                                       std::string signature_key) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("signature_key: \"" + signature_key + "\"");
+   MHTracer_DTPStensorflowPSlitePSpythonPSoptimizePScalibration_wrapperDTcc mht_8(mht_8_v, 427, "", "./tensorflow/lite/python/optimize/calibration_wrapper.cc", "CalibrationWrapper::Prepare");
+
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
   if (!PyList_Check(input_shapes)) {
     PyErr_Format(PyExc_ValueError,
@@ -269,6 +467,9 @@ PyObject* CalibrationWrapper::Prepare(PyObject* input_shapes,
 }
 
 PyObject* CalibrationWrapper::Prepare(PyObject* input_shapes) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSoptimizePScalibration_wrapperDTcc mht_9(mht_9_v, 470, "", "./tensorflow/lite/python/optimize/calibration_wrapper.cc", "CalibrationWrapper::Prepare");
+
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
   if (!PyList_Check(input_shapes)) {
     PyErr_Format(PyExc_ValueError,
@@ -302,6 +503,10 @@ PyObject* CalibrationWrapper::Prepare(PyObject* input_shapes) {
 
 PyObject* CalibrationWrapper::FeedTensor(PyObject* input_value,
                                          std::string signature_key) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("signature_key: \"" + signature_key + "\"");
+   MHTracer_DTPStensorflowPSlitePSpythonPSoptimizePScalibration_wrapperDTcc mht_10(mht_10_v, 507, "", "./tensorflow/lite/python/optimize/calibration_wrapper.cc", "CalibrationWrapper::FeedTensor");
+
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
   if (!PyList_Check(input_value)) {
     PyErr_Format(PyExc_ValueError,
@@ -341,6 +546,9 @@ PyObject* CalibrationWrapper::FeedTensor(PyObject* input_value,
 }
 
 PyObject* CalibrationWrapper::FeedTensor(PyObject* input_value) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSoptimizePScalibration_wrapperDTcc mht_11(mht_11_v, 549, "", "./tensorflow/lite/python/optimize/calibration_wrapper.cc", "CalibrationWrapper::FeedTensor");
+
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
   if (!PyList_Check(input_value)) {
     PyErr_Format(PyExc_ValueError,
@@ -374,6 +582,10 @@ PyObject* CalibrationWrapper::FeedTensor(PyObject* input_value) {
 
 PyObject* CalibrationWrapper::SetTensor(int index, PyObject* value,
                                         std::string signature_key) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("signature_key: \"" + signature_key + "\"");
+   MHTracer_DTPStensorflowPSlitePSpythonPSoptimizePScalibration_wrapperDTcc mht_12(mht_12_v, 586, "", "./tensorflow/lite/python/optimize/calibration_wrapper.cc", "CalibrationWrapper::SetTensor");
+
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
   std::unique_ptr<PyObject, PyDecrefDeleter> array_safe(
       PyArray_FromAny(value, nullptr, 0, 0, NPY_ARRAY_CARRAY, nullptr));
@@ -462,6 +674,9 @@ PyObject* CalibrationWrapper::SetTensor(int index, PyObject* value,
 }
 
 PyObject* CalibrationWrapper::SetTensor(int index, PyObject* value) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSoptimizePScalibration_wrapperDTcc mht_13(mht_13_v, 677, "", "./tensorflow/lite/python/optimize/calibration_wrapper.cc", "CalibrationWrapper::SetTensor");
+
   TFLITE_PY_ENSURE_VALID_INTERPRETER();
 
   std::unique_ptr<PyObject, PyDecrefDeleter> array_safe(
@@ -542,6 +757,9 @@ PyObject* CalibrationWrapper::SetTensor(int index, PyObject* value) {
 }
 
 PyObject* CalibrationWrapper::Calibrate() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSoptimizePScalibration_wrapperDTcc mht_14(mht_14_v, 760, "", "./tensorflow/lite/python/optimize/calibration_wrapper.cc", "CalibrationWrapper::Calibrate");
+
   auto tflite_model = CreateMutableModel(*model_->GetModel());
   reader_->AddCalibrationToModel(tflite_model.get(), /*update=*/false);
   flatbuffers::FlatBufferBuilder builder;
@@ -557,6 +775,9 @@ PyObject* CalibrationWrapper::QuantizeModel(int input_py_type,
                                             bool allow_float,
                                             int activations_py_type,
                                             int bias_py_type) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSoptimizePScalibration_wrapperDTcc mht_15(mht_15_v, 778, "", "./tensorflow/lite/python/optimize/calibration_wrapper.cc", "CalibrationWrapper::QuantizeModel");
+
   return QuantizeModel(input_py_type, output_py_type, allow_float,
                        activations_py_type, bias_py_type,
                        /*disable_per_channel=*/false);
@@ -565,6 +786,9 @@ PyObject* CalibrationWrapper::QuantizeModel(int input_py_type,
 PyObject* CalibrationWrapper::QuantizeModel(
     int input_py_type, int output_py_type, bool allow_float,
     int activations_py_type, int bias_py_type, bool disable_per_channel) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSoptimizePScalibration_wrapperDTcc mht_16(mht_16_v, 789, "", "./tensorflow/lite/python/optimize/calibration_wrapper.cc", "CalibrationWrapper::QuantizeModel");
+
   if (NoOpModel(*model_)) {
     return python_utils::ConvertToPyString(model_str_->data(),
                                            model_str_->size());
@@ -607,6 +831,10 @@ PyObject* CalibrationWrapper::QuantizeModel(int input_py_type,
                                             int output_py_type,
                                             bool allow_float,
                                             const char* operator_output_name) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("operator_output_name: \"" + (operator_output_name == nullptr ? std::string("nullptr") : std::string((char*)operator_output_name)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSpythonPSoptimizePScalibration_wrapperDTcc mht_17(mht_17_v, 835, "", "./tensorflow/lite/python/optimize/calibration_wrapper.cc", "CalibrationWrapper::QuantizeModel");
+
   string op_name = std::string(operator_output_name);
 
   TfLiteType input_type = python_utils::TfLiteTypeFromPyType(input_py_type);
@@ -638,6 +866,9 @@ PyObject* CalibrationWrapper::QuantizeModel(int input_py_type,
     PyObject* data, const std::vector<std::string>& registerers_by_name,
     const std::vector<std::function<void(uintptr_t)>>& registerers_by_func,
     std::string* error_msg) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSpythonPSoptimizePScalibration_wrapperDTcc mht_18(mht_18_v, 869, "", "./tensorflow/lite/python/optimize/calibration_wrapper.cc", "CalibrationWrapper::CreateWrapperCPPFromBuffer");
+
   using tflite::interpreter_wrapper::PythonErrorReporter;
   char* buf = nullptr;
   Py_ssize_t length;

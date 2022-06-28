@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_EXECUTABLE_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_EXECUTABLE_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <memory>
 #include <set>
@@ -59,22 +227,34 @@ namespace xla {
 class ExecutionInput {
  public:
   explicit ExecutionInput(xla::Shape shape) : buffers_(std::move(shape)) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_0(mht_0_v, 230, "", "./tensorflow/compiler/xla/service/executable.h", "ExecutionInput");
+
     SetHostShape(ShapeUtil::DeviceShapeToHostShape(buffers_.shape()));
   }
   // TODO(b/170310047): remove this overload.
   ExecutionInput(xla::Shape shape, xla::Shape host_shape)
       : buffers_(std::move(shape)) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_1(mht_1_v, 238, "", "./tensorflow/compiler/xla/service/executable.h", "ExecutionInput");
+
     SetHostShape(ShapeUtil::DeviceShapeToHostShape(buffers_.shape()));
   }
 
   explicit ExecutionInput(ShapeTree<MaybeOwningDeviceMemory> buffers)
       : buffers_(std::move(buffers)) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_2(mht_2_v, 246, "", "./tensorflow/compiler/xla/service/executable.h", "ExecutionInput");
+
     SetHostShape(ShapeUtil::DeviceShapeToHostShape(buffers_.shape()));
   }
   // TODO(b/170310047): remove this overload.
   ExecutionInput(ShapeTree<MaybeOwningDeviceMemory> buffers,
                  xla::Shape host_shape)
       : buffers_(std::move(buffers)) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_3(mht_3_v, 255, "", "./tensorflow/compiler/xla/service/executable.h", "ExecutionInput");
+
     SetHostShape(ShapeUtil::DeviceShapeToHostShape(buffers_.shape()));
   }
 
@@ -85,10 +265,16 @@ class ExecutionInput {
   ExecutionInput& operator=(ExecutionInput&&) = default;
 
   const Shape& shape() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_4(mht_4_v, 268, "", "./tensorflow/compiler/xla/service/executable.h", "shape");
+
     return dynamic_shape_ != nullptr ? *dynamic_shape_ : buffers_.shape();
   }
 
   const Shape& host_shape() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_5(mht_5_v, 275, "", "./tensorflow/compiler/xla/service/executable.h", "host_shape");
+
     return host_shape_ != nullptr ? *host_shape_ : shape();
   }
 
@@ -98,6 +284,9 @@ class ExecutionInput {
       se::DeviceMemoryAllocator* allocator, int device_ordinal) const;
 
   void SetBuffer(const ShapeIndex& index, MaybeOwningDeviceMemory buffer) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_6(mht_6_v, 287, "", "./tensorflow/compiler/xla/service/executable.h", "SetBuffer");
+
     *buffers_.mutable_element(index) = std::move(buffer);
   }
 
@@ -105,29 +294,53 @@ class ExecutionInput {
                         MaybeOwningDeviceMemory buffer);
 
   void SetUnownedIndex(const ShapeIndex& index) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_7(mht_7_v, 297, "", "./tensorflow/compiler/xla/service/executable.h", "SetUnownedIndex");
+
     unowned_indices_.insert(index);
   }
 
   void ClearUnownedIndex(const ShapeIndex& index) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_8(mht_8_v, 304, "", "./tensorflow/compiler/xla/service/executable.h", "ClearUnownedIndex");
+
     unowned_indices_.erase(index);
   }
 
-  const std::set<ShapeIndex>& unowned_indices() { return unowned_indices_; }
+  const std::set<ShapeIndex>& unowned_indices() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_9(mht_9_v, 311, "", "./tensorflow/compiler/xla/service/executable.h", "unowned_indices");
+ return unowned_indices_; }
 
-  const ShapeTree<MaybeOwningDeviceMemory>& Buffers() const { return buffers_; }
+  const ShapeTree<MaybeOwningDeviceMemory>& Buffers() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_10(mht_10_v, 316, "", "./tensorflow/compiler/xla/service/executable.h", "Buffers");
+ return buffers_; }
 
-  ShapeTree<MaybeOwningDeviceMemory>* MutableBuffers() { return &buffers_; }
+  ShapeTree<MaybeOwningDeviceMemory>* MutableBuffers() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_11(mht_11_v, 321, "", "./tensorflow/compiler/xla/service/executable.h", "MutableBuffers");
+ return &buffers_; }
 
   MaybeOwningDeviceMemory* MutableBuffer(const ShapeIndex& index) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_12(mht_12_v, 326, "", "./tensorflow/compiler/xla/service/executable.h", "MutableBuffer");
+
     return buffers_.mutable_element(index);
   }
 
   const MaybeOwningDeviceMemory& Buffer(const ShapeIndex& index) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_13(mht_13_v, 333, "", "./tensorflow/compiler/xla/service/executable.h", "Buffer");
+
     return buffers_.element(index);
   }
 
  private:
   void SetHostShape(xla::Shape host_shape) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_14(mht_14_v, 341, "", "./tensorflow/compiler/xla/service/executable.h", "SetHostShape");
+
     if (shape() != host_shape) {
       host_shape_ = absl::make_unique<Shape>(std::move(host_shape));
     }
@@ -146,22 +359,37 @@ class ExecutionInput {
 class ExecutionOutput {
  public:
   explicit ExecutionOutput(ScopedShapedBuffer result)
-      : result_(std::move(result)) {}
+      : result_(std::move(result)) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_15(mht_15_v, 363, "", "./tensorflow/compiler/xla/service/executable.h", "ExecutionOutput");
+}
   ExecutionOutput(ScopedShapedBuffer result,
                   std::vector<se::OwningDeviceMemory> to_be_released)
       : result_(std::move(result)),
-        to_be_released_(std::move(to_be_released)) {}
+        to_be_released_(std::move(to_be_released)) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_16(mht_16_v, 370, "", "./tensorflow/compiler/xla/service/executable.h", "ExecutionOutput");
+}
   // TODO(b/170310047): remove this overload.
   ExecutionOutput(Shape on_host_shape, Shape on_device_shape,
                   se::DeviceMemoryAllocator* allocator, int device_ordinal)
-      : result_(std::move(on_device_shape), allocator, device_ordinal) {}
+      : result_(std::move(on_device_shape), allocator, device_ordinal) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_17(mht_17_v, 377, "", "./tensorflow/compiler/xla/service/executable.h", "ExecutionOutput");
+}
   ExecutionOutput(Shape on_device_shape, se::DeviceMemoryAllocator* allocator,
                   int device_ordinal)
-      : result_(std::move(on_device_shape), allocator, device_ordinal) {}
+      : result_(std::move(on_device_shape), allocator, device_ordinal) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_18(mht_18_v, 383, "", "./tensorflow/compiler/xla/service/executable.h", "ExecutionOutput");
+}
   ExecutionOutput(ExecutionOutput&&) = default;
   ExecutionOutput& operator=(ExecutionOutput&&) = default;
 
   ~ExecutionOutput() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_19(mht_19_v, 390, "", "./tensorflow/compiler/xla/service/executable.h", "~ExecutionOutput");
+
     // If the ExecutionOutput has not been committed, and if there are aliased
     // indices, clear them off the ScopedShapedBuffer to prevent them to be
     // released.
@@ -171,30 +399,51 @@ class ExecutionOutput {
   }
 
   void AddAliasedIndex(ShapeIndex index) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_20(mht_20_v, 402, "", "./tensorflow/compiler/xla/service/executable.h", "AddAliasedIndex");
+
     aliased_indices_.push_back(std::move(index));
   }
 
   void AddToBeReleased(se::OwningDeviceMemory mem) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_21(mht_21_v, 409, "", "./tensorflow/compiler/xla/service/executable.h", "AddToBeReleased");
+
     to_be_released_.push_back(std::move(mem));
   }
 
   // Should be called once it is known that the execute operation succeeded,
   // before returning the ExecutionOutput to the caller.
   ExecutionOutput& Commit() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_22(mht_22_v, 418, "", "./tensorflow/compiler/xla/service/executable.h", "Commit");
+
     aliased_indices_.clear();
     return *this;
   }
 
-  const ScopedShapedBuffer& Result() const { return result_; }
+  const ScopedShapedBuffer& Result() const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_23(mht_23_v, 426, "", "./tensorflow/compiler/xla/service/executable.h", "Result");
+ return result_; }
 
-  ScopedShapedBuffer* MutableResult() { return &result_; }
+  ScopedShapedBuffer* MutableResult() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_24(mht_24_v, 431, "", "./tensorflow/compiler/xla/service/executable.h", "MutableResult");
+ return &result_; }
 
   ScopedShapedBuffer ConsumeResult() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_25(mht_25_v, 436, "", "./tensorflow/compiler/xla/service/executable.h", "ConsumeResult");
+
     aliased_indices_.clear();
     return std::move(result_);
   }
 
   const std::vector<se::OwningDeviceMemory>& ToBeReleased() const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_26(mht_26_v, 444, "", "./tensorflow/compiler/xla/service/executable.h", "ToBeReleased");
+
     return to_be_released_;
   }
 
@@ -231,7 +480,10 @@ class ExecutionOutput {
 class Executable {
  public:
   explicit Executable(std::shared_ptr<HloModule> hlo_module)
-      : hlo_module_(std::move(hlo_module)) {}
+      : hlo_module_(std::move(hlo_module)) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_27(mht_27_v, 484, "", "./tensorflow/compiler/xla/service/executable.h", "Executable");
+}
 
   // TODO(b/172012028): Remove this constructor.
   explicit Executable(
@@ -241,10 +493,16 @@ class Executable {
       : hlo_module_(std::move(hlo_module)),
         hlo_profile_printer_data_(std::move(hlo_profile_printer_data)),
         hlo_profile_index_map_(std::move(hlo_profile_index_map)) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_28(mht_28_v, 496, "", "./tensorflow/compiler/xla/service/executable.h", "Executable");
+
     CHECK_EQ(hlo_profile_printer_data_.get() == nullptr,
              hlo_profile_index_map_.get() == nullptr);
   }
-  virtual ~Executable() {}
+  virtual ~Executable() {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_29(mht_29_v, 503, "", "./tensorflow/compiler/xla/service/executable.h", "~Executable");
+}
 
   // Enqueues the compilation result on the provided stream, passing the given
   // arguments. This call is blocking and returns after the execution is done.
@@ -308,6 +566,9 @@ class Executable {
   virtual Status PopulateExecutionProfile(
       ExecutionProfile* execution_profile,
       HloExecutionProfile* hlo_execution_profile, se::Stream* stream) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_30(mht_30_v, 569, "", "./tensorflow/compiler/xla/service/executable.h", "PopulateExecutionProfile");
+
     return Status::OK();
   }
 
@@ -331,11 +592,17 @@ class Executable {
       std::vector<ExecutionInput> arguments);
 
   const HloProfilePrinterData& hlo_profile_printer_data() const {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_31(mht_31_v, 595, "", "./tensorflow/compiler/xla/service/executable.h", "hlo_profile_printer_data");
+
     CHECK(hlo_profiling_enabled());
     return *hlo_profile_printer_data_;
   }
 
   const HloProfileIndexMap& hlo_profile_index_map() const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_32(mht_32_v, 603, "", "./tensorflow/compiler/xla/service/executable.h", "hlo_profile_index_map");
+
     CHECK(hlo_profiling_enabled());
     return *hlo_profile_index_map_;
   }
@@ -344,19 +611,34 @@ class Executable {
   // enabled. If not, the caller should not expect an hlo_execution_profile
   // passed to ExecuteOnStream above to be populated during execution.
   bool hlo_profiling_enabled() const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_33(mht_33_v, 614, "", "./tensorflow/compiler/xla/service/executable.h", "hlo_profiling_enabled");
+
     return hlo_profile_printer_data_ != nullptr;
   }
 
-  HloModule& module() const { return *hlo_module_; }
+  HloModule& module() const {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_34(mht_34_v, 621, "", "./tensorflow/compiler/xla/service/executable.h", "module");
+ return *hlo_module_; }
   std::shared_ptr<HloModule> shared_module() const { return hlo_module_; }
 
-  const bool has_module() const { return hlo_module_ != nullptr; }
+  const bool has_module() const {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_35(mht_35_v, 627, "", "./tensorflow/compiler/xla/service/executable.h", "has_module");
+ return hlo_module_ != nullptr; }
 
-  const HloModuleConfig& module_config() const { return hlo_module_->config(); }
+  const HloModuleConfig& module_config() const {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_36(mht_36_v, 632, "", "./tensorflow/compiler/xla/service/executable.h", "module_config");
+ return hlo_module_->config(); }
 
   // The shape (including layout) that results from this execution. This is the
   // shape of the DeviceMemoryBase result value in ExecuteOnStream above.
   const Shape& result_shape() const {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_37(mht_37_v, 639, "", "./tensorflow/compiler/xla/service/executable.h", "result_shape");
+
     return hlo_module_->config().entry_computation_layout().result_shape();
   }
 
@@ -368,13 +650,29 @@ class Executable {
 
   // Dumping helpers.
   void set_hlo_proto(std::unique_ptr<xla::HloProto> hlo_proto) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_38(mht_38_v, 653, "", "./tensorflow/compiler/xla/service/executable.h", "set_hlo_proto");
+
     hlo_proto_ = std::move(hlo_proto);
   }
-  bool dumping_snapshot() const { return hlo_proto_ != nullptr; }
-  HloProto const* hlo_proto() const { return hlo_proto_.get(); }
+  bool dumping_snapshot() const {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_39(mht_39_v, 659, "", "./tensorflow/compiler/xla/service/executable.h", "dumping_snapshot");
+ return hlo_proto_ != nullptr; }
+  HloProto const* hlo_proto() const {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_40(mht_40_v, 663, "", "./tensorflow/compiler/xla/service/executable.h", "hlo_proto");
+ return hlo_proto_.get(); }
 
-  std::string& debug_info() { return debug_info_; }
+  std::string& debug_info() {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_41(mht_41_v, 668, "", "./tensorflow/compiler/xla/service/executable.h", "debug_info");
+ return debug_info_; }
   void set_debug_info(const std::string& debug_info) {
+   std::vector<std::string> mht_42_v;
+   mht_42_v.push_back("debug_info: \"" + debug_info + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_42(mht_42_v, 673, "", "./tensorflow/compiler/xla/service/executable.h", "set_debug_info");
+
     debug_info_ = debug_info;
   }
   // Gather unused but donated buffers, return them to the caller of this API.

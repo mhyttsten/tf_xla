@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -70,6 +238,9 @@ namespace tensorflow {
 // element is T.
 Status ArgNumType(AttrSlice attrs, const OpDef::ArgDef& arg_def,
                   bool* is_type_list, DataTypeVector* dtypes) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_0(mht_0_v, 241, "", "./tensorflow/core/framework/function.cc", "ArgNumType");
+
   dtypes->clear();
   if (!arg_def.type_list_attr().empty()) {
     const AttrValue* v = attrs.Find(arg_def.type_list_attr());
@@ -114,10 +285,17 @@ namespace {
 
 template <typename T>
 void AddAttr(const string& name, const T& val, NodeDef* ndef) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_1(mht_1_v, 289, "", "./tensorflow/core/framework/function.cc", "AddAttr");
+
   SetAttrValue(val, &((*ndef->mutable_attr())[name]));
 }
 
 Status ValidateSignatureWithAttrs(const OpDef& sig, AttrSlice attr_values) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_2(mht_2_v, 296, "", "./tensorflow/core/framework/function.cc", "ValidateSignatureWithAttrs");
+
   // attr_values should specify all attrs defined in fdef, except for those
   // which have a default value
   for (const auto& attr : sig.attr()) {
@@ -167,6 +345,9 @@ class FunctionInstantiationHelper {
   FunctionInstantiationHelper(GetFunctionSignature get_function,
                               InstantiationResult* result)
       : get_function_(std ::move(get_function)), result_(*result) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_3(mht_3_v, 348, "", "./tensorflow/core/framework/function.cc", "FunctionInstantiationHelper");
+
     result_.nodes.clear();
   }
 
@@ -177,6 +358,9 @@ class FunctionInstantiationHelper {
                             const FunctionDef::ArgAttrs* arg_attrs,
                             bool ints_on_device,
                             int64_t resource_arg_unique_id) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_4(mht_4_v, 361, "", "./tensorflow/core/framework/function.cc", "BuildInputArgIndex");
+
     bool is_type_list;
     DataTypeVector dtypes;
     TF_RETURN_IF_ERROR(
@@ -225,6 +409,9 @@ class FunctionInstantiationHelper {
 
   Status BuildNodeOutputIndex(const NodeDef& node, AttrSlice attrs,
                               const int arg_index) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_5(mht_5_v, 412, "", "./tensorflow/core/framework/function.cc", "BuildNodeOutputIndex");
+
     const OpDef* node_sig = nullptr;
     TF_RETURN_IF_ERROR(get_function_(node.op(), &node_sig));
     if (node_sig->output_arg_size() == 0) {
@@ -254,6 +441,9 @@ class FunctionInstantiationHelper {
   }
 
   Status InstantiateNode(const NodeDef& fnode, AttrSlice attrs) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_6(mht_6_v, 444, "", "./tensorflow/core/framework/function.cc", "InstantiateNode");
+
     const OpDef* fnode_sig = nullptr;
     TF_CHECK_OK(get_function_(fnode.op(), &fnode_sig));
     NodeDef* gnode = AddNode(fnode.name());
@@ -361,6 +551,9 @@ class FunctionInstantiationHelper {
       const OpDef::ArgDef& ret_def, AttrSlice attrs,
       const ::tensorflow::protobuf::Map<string, string>& ret_map,
       bool ints_on_device, int* ret_index) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_7(mht_7_v, 554, "", "./tensorflow/core/framework/function.cc", "AddReturnNode");
+
     auto ret_iter = ret_map.find(ret_def.name());
     if (ret_iter == ret_map.end()) {
       return errors::InvalidArgument("Return ", ret_def.name(), " missing.");
@@ -403,6 +596,9 @@ class FunctionInstantiationHelper {
   // Adds the actual node inputs to the result graph by converting indexes to
   // the node names.
   void AddNodeInputs() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_8(mht_8_v, 599, "", "./tensorflow/core/framework/function.cc", "AddNodeInputs");
+
     for (int i = 0; i < result_.nodes.size(); i++) {
       NodeInfo& node_info = nodes_[i];
       for (const auto& p : node_info.data_inputs) {
@@ -437,6 +633,10 @@ class FunctionInstantiationHelper {
 
   // Adds an item into the input name index.
   Status AddItem(const string& name, const NameInfoItem& item) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_9(mht_9_v, 637, "", "./tensorflow/core/framework/function.cc", "AddItem");
+
     if (!index_.insert({name, item}).second) {
       return errors::InvalidArgument(
           strings::StrCat("Duplicated ", item.is_func_arg ? "arg" : "ret",
@@ -447,19 +647,32 @@ class FunctionInstantiationHelper {
   }
 
   const NameInfoItem* GetItemOrNull(const string& name) const {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_10(mht_10_v, 651, "", "./tensorflow/core/framework/function.cc", "GetItemOrNull");
+
     return gtl::FindOrNull(index_, name);
   }
 
   string Dep(int node_index) const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_11(mht_11_v, 658, "", "./tensorflow/core/framework/function.cc", "Dep");
+
     return strings::StrCat("^", Name(node_index));
   }
 
   string Name(int node_index) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_12(mht_12_v, 665, "", "./tensorflow/core/framework/function.cc", "Name");
+
     CHECK_LT(node_index, nodes_.size());
     return nodes_[node_index].name;
   }
 
   string Name(int node_index, int output_index) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_13(mht_13_v, 673, "", "./tensorflow/core/framework/function.cc", "Name");
+
     if (output_index == 0) {
       return Name(node_index);
     } else {
@@ -468,6 +681,10 @@ class FunctionInstantiationHelper {
   }
 
   NodeDef* AddNode(const string& name) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_14(mht_14_v, 685, "", "./tensorflow/core/framework/function.cc", "AddNode");
+
     result_.nodes.emplace_back();
     NodeDef* gnode = &result_.nodes.back();
     gnode->set_name(name);
@@ -477,12 +694,18 @@ class FunctionInstantiationHelper {
   }
 
   void AddInput(int node_index, int output_node, int output_index) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_15(mht_15_v, 697, "", "./tensorflow/core/framework/function.cc", "AddInput");
+
     CHECK_LT(node_index, nodes_.size());
     nodes_[node_index].data_inputs.push_back(
         std::make_pair(output_node, output_index));
   }
 
   void AddDep(int node_index, int dep_index) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_16(mht_16_v, 706, "", "./tensorflow/core/framework/function.cc", "AddDep");
+
     CHECK_LT(node_index, nodes_.size());
     nodes_[node_index].control_inputs.push_back(dep_index);
   }
@@ -506,6 +729,9 @@ class FunctionInstantiationHelper {
 
 // Various helpers Print(proto) to print relevant protos to ascii.
 string Print(const OpDef::ArgDef& arg) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_17(mht_17_v, 732, "", "./tensorflow/core/framework/function.cc", "Print");
+
   string out;
   strings::StrAppend(&out, arg.name(), ":");
   if (arg.is_ref()) strings::StrAppend(&out, "Ref(");
@@ -527,6 +753,9 @@ string Print(const OpDef::ArgDef& arg) {
 // looking up functions using the canonical representation.
 string Print(const AttrValue& attr_value,
              const bool hash_string_attrs = false) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_18(mht_18_v, 756, "", "./tensorflow/core/framework/function.cc", "Print");
+
   if (attr_value.value_case() == AttrValue::kType) {
     return DataTypeString(attr_value.type());
   } else if ((attr_value.value_case() == AttrValue::kList) &&
@@ -557,6 +786,9 @@ string Print(const AttrValue& attr_value,
 
 // TODO(josh11b): Merge this with SummarizeNodeDef().
 string Print(const NodeDef& n) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_19(mht_19_v, 789, "", "./tensorflow/core/framework/function.cc", "Print");
+
   string out;
   strings::StrAppend(&out, n.name(), " = ", n.op());
   if (n.attr_size() > 0) {
@@ -595,6 +827,9 @@ string Print(const NodeDef& n) {
 }
 
 string Print(const FunctionDef& fdef) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_20(mht_20_v, 830, "", "./tensorflow/core/framework/function.cc", "Print");
+
   string out;
   const OpDef& sig = fdef.signature();
   strings::StrAppend(&out, "\n", sig.name());
@@ -636,6 +871,9 @@ string Print(const FunctionDef& fdef) {
 }
 
 string Print(gtl::ArraySlice<const NodeDef*> nodes) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_21(mht_21_v, 874, "", "./tensorflow/core/framework/function.cc", "Print");
+
   std::vector<const NodeDef*> arg;
   std::vector<const NodeDef*> ret;
   std::vector<const NodeDef*> body;
@@ -651,6 +889,9 @@ string Print(gtl::ArraySlice<const NodeDef*> nodes) {
     }
   }
   auto comp = [](const NodeDef* x, const NodeDef* y) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_22(mht_22_v, 892, "", "./tensorflow/core/framework/function.cc", "lambda");
+
     int xi;
     TF_CHECK_OK(GetNodeAttr(*x, "index", &xi));
     int yi;
@@ -662,6 +903,9 @@ string Print(gtl::ArraySlice<const NodeDef*> nodes) {
   string out;
   strings::StrAppend(&out, "\n(");
   auto get_type_and_device = [](const NodeDef& n) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_23(mht_23_v, 906, "", "./tensorflow/core/framework/function.cc", "lambda");
+
     DataType dt;
     if (!TryGetNodeAttr(n, "T", &dt)) {
       dt = DT_INVALID;
@@ -719,6 +963,10 @@ string Print(gtl::ArraySlice<const NodeDef*> nodes) {
 Status AddDefaultAttrs(const string& op,
                        const GetFunctionSignature& get_function,
                        AttrValueMap* attrs) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("op: \"" + op + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_24(mht_24_v, 967, "", "./tensorflow/core/framework/function.cc", "AddDefaultAttrs");
+
   const OpDef* op_def = nullptr;
   TF_RETURN_IF_ERROR(get_function(op, &op_def));
   AttrSlice attr_slice(attrs);
@@ -737,6 +985,9 @@ Status AddDefaultAttrs(const string& op,
 Status InstantiateFunction(const FunctionDef& fdef, AttrSlice attr_values,
                            GetFunctionSignature get_function,
                            InstantiationResult* result) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_25(mht_25_v, 988, "", "./tensorflow/core/framework/function.cc", "InstantiateFunction");
+
   if (VLOG_IS_ON(5)) {
     const auto& signature = fdef.signature();
     VLOG(5) << "Instantiate function definition: name=" << signature.name()
@@ -777,6 +1028,9 @@ Status InstantiateFunction(const FunctionDef& fdef, AttrSlice attr_values,
   }
 
   auto substitute = [attr_values, &sig](StringPiece name, AttrValue* val) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_26(mht_26_v, 1031, "", "./tensorflow/core/framework/function.cc", "lambda");
+
     // Look for a specified value...
     if (const AttrValue* v = attr_values.Find(name)) {
       *val = *v;
@@ -847,9 +1101,15 @@ Status InstantiateFunction(const FunctionDef& fdef, AttrSlice attr_values,
   return Status::OK();
 }
 
-string DebugString(const FunctionDef& func_def) { return Print(func_def); }
+string DebugString(const FunctionDef& func_def) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_27(mht_27_v, 1105, "", "./tensorflow/core/framework/function.cc", "DebugString");
+ return Print(func_def); }
 
 string DebugString(const GraphDef& instantiated_func_def) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_28(mht_28_v, 1110, "", "./tensorflow/core/framework/function.cc", "DebugString");
+
   std::vector<const NodeDef*> ptrs;
   for (const NodeDef& n : instantiated_func_def.node()) {
     ptrs.push_back(&n);
@@ -858,6 +1118,9 @@ string DebugString(const GraphDef& instantiated_func_def) {
 }
 
 string DebugString(gtl::ArraySlice<NodeDef> instantiated_func_nodes) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_29(mht_29_v, 1121, "", "./tensorflow/core/framework/function.cc", "DebugString");
+
   std::vector<const NodeDef*> ptrs;
   for (const NodeDef& n : instantiated_func_nodes) {
     ptrs.push_back(&n);
@@ -866,6 +1129,9 @@ string DebugString(gtl::ArraySlice<NodeDef> instantiated_func_nodes) {
 }
 
 string DebugStringWhole(const GraphDef& gdef) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_30(mht_30_v, 1132, "", "./tensorflow/core/framework/function.cc", "DebugStringWhole");
+
   string ret;
   for (const auto& fdef : gdef.library().function()) {
     strings::StrAppend(&ret, Print(fdef));
@@ -895,6 +1161,9 @@ std::map<string, AttrValue> GetSetAttrs(const FunctionDef& fdef) {
 }  // end namespace
 
 bool FunctionDefsEqual(const FunctionDef& f1, const FunctionDef& f2) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_31(mht_31_v, 1164, "", "./tensorflow/core/framework/function.cc", "FunctionDefsEqual");
+
   if (!OpDefEqual(f1.signature(), f2.signature())) return false;
 
   std::map<string, AttrValue> f1_attrs = GetSetAttrs(f1);
@@ -924,6 +1193,9 @@ bool FunctionDefsEqual(const FunctionDef& f1, const FunctionDef& f2) {
 }
 
 uint64 FunctionDefHash(const FunctionDef& fdef) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_32(mht_32_v, 1196, "", "./tensorflow/core/framework/function.cc", "FunctionDefHash");
+
   // signature
   uint64 h = OpDefHash(fdef.signature());
 
@@ -960,6 +1232,9 @@ static constexpr const char* const kExecutorAttr = "_executor";
 /* static */
 string FunctionLibraryRuntime::ExecutorType(const InstantiateOptions& options,
                                             AttrSlice attrs) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_33(mht_33_v, 1235, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryRuntime::ExecutorType");
+
   if (!options.executor_type.empty()) {
     return options.executor_type;
   } else if (const AttrValue* executor_attr = attrs.Find(kExecutorAttr)) {
@@ -981,9 +1256,17 @@ class AttrKeyAndValue {
       : key_name_(key_name),
         key_suffix_(key_suffix),
         value_op_(value_op),
-        value_(std::move(value)) {}
+        value_(std::move(value)) {
+   std::vector<std::string> mht_34_v;
+   mht_34_v.push_back("key_name: \"" + std::string(key_name.data(), key_name.size()) + "\"");
+   mht_34_v.push_back("value: \"" + value + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_34(mht_34_v, 1262, "", "./tensorflow/core/framework/function.cc", "AttrKeyAndValue");
+}
 
   bool operator<(const AttrKeyAndValue& b) const {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_35(mht_35_v, 1267, "", "./tensorflow/core/framework/function.cc", "operator<");
+
     if (key_name_ != b.key_name_) {
       return key_name_ < b.key_name_;
     } else if (key_suffix_ != b.key_suffix_) {
@@ -994,6 +1277,9 @@ class AttrKeyAndValue {
   }
 
   void AppendTo(bool first, string* s) const {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_36(mht_36_v, 1280, "", "./tensorflow/core/framework/function.cc", "AppendTo");
+
     absl::string_view v;
     bool add_escaped = false;
     if ((value_op_ == kCEscape) && NeedsEscaping(value_)) {
@@ -1015,6 +1301,10 @@ class AttrKeyAndValue {
 
  private:
   static bool NeedsEscaping(const string& s) {
+   std::vector<std::string> mht_37_v;
+   mht_37_v.push_back("s: \"" + s + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_37(mht_37_v, 1305, "", "./tensorflow/core/framework/function.cc", "NeedsEscaping");
+
     for (auto c : s) {
       if (!isalnum(c) && (c != ' ')) {
         return true;
@@ -1033,6 +1323,9 @@ class AttrKeyAndValue {
 string GetFunctionResourceInputDevice(
     const Tensor& input, const int arg_index, const FunctionDef& function_def,
     absl::flat_hash_map<string, std::vector<string>>* composite_devices) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_38(mht_38_v, 1326, "", "./tensorflow/core/framework/function.cc", "GetFunctionResourceInputDevice");
+
   const auto& handles = input.flat<ResourceHandle>();
   const ResourceHandle& handle0 = handles(0);
   string composite_device;
@@ -1057,6 +1350,10 @@ string GetFunctionResourceInputDevice(
 
 string Canonicalize(const string& funcname, AttrSlice attrs,
                     const FunctionLibraryRuntime::InstantiateOptions& options) {
+   std::vector<std::string> mht_39_v;
+   mht_39_v.push_back("funcname: \"" + funcname + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_39(mht_39_v, 1354, "", "./tensorflow/core/framework/function.cc", "Canonicalize");
+
   absl::InlinedVector<AttrKeyAndValue, 8> entries;
   entries.reserve(attrs.size() + static_cast<int>(!options.target.empty()) +
                   options.input_devices.size());
@@ -1119,6 +1416,10 @@ string Canonicalize(const string& funcname, AttrSlice attrs,
 }
 
 string Canonicalize(const string& funcname, AttrSlice attrs) {
+   std::vector<std::string> mht_40_v;
+   mht_40_v.push_back("funcname: \"" + funcname + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_40(mht_40_v, 1420, "", "./tensorflow/core/framework/function.cc", "Canonicalize");
+
   static const FunctionLibraryRuntime::InstantiateOptions* kEmptyOptions =
       new FunctionLibraryRuntime::InstantiateOptions;
   return Canonicalize(funcname, attrs, *kEmptyOptions);
@@ -1128,13 +1429,22 @@ FunctionCallFrame::FunctionCallFrame(DataTypeSlice arg_types,
                                      DataTypeSlice ret_types)
     : arg_types_(arg_types.begin(), arg_types.end()),
       ret_types_(ret_types.begin(), ret_types.end()) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_41(mht_41_v, 1432, "", "./tensorflow/core/framework/function.cc", "FunctionCallFrame::FunctionCallFrame");
+
   args_.resize(arg_types_.size());
   rets_.resize(ret_types_.size());
 }
 
-FunctionCallFrame::~FunctionCallFrame() {}
+FunctionCallFrame::~FunctionCallFrame() {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_42(mht_42_v, 1440, "", "./tensorflow/core/framework/function.cc", "FunctionCallFrame::~FunctionCallFrame");
+}
 
 Status FunctionCallFrame::SetArgs(gtl::ArraySlice<Tensor> args) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_43(mht_43_v, 1445, "", "./tensorflow/core/framework/function.cc", "FunctionCallFrame::SetArgs");
+
   // Input type checks.
   if (args.size() != arg_types_.size()) {
     return errors::InvalidArgument("Expects ", arg_types_.size(),
@@ -1153,6 +1463,9 @@ Status FunctionCallFrame::SetArgs(gtl::ArraySlice<Tensor> args) {
 }
 
 Status FunctionCallFrame::GetRetvals(std::vector<Tensor>* rets) const {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_44(mht_44_v, 1466, "", "./tensorflow/core/framework/function.cc", "FunctionCallFrame::GetRetvals");
+
   rets->clear();
   rets->reserve(rets_.size());
   for (size_t i = 0; i < rets_.size(); ++i) {
@@ -1168,6 +1481,9 @@ Status FunctionCallFrame::GetRetvals(std::vector<Tensor>* rets) const {
 
 Status FunctionCallFrame::ConsumeRetvals(std::vector<Tensor>* rets,
                                          bool allow_dead_tensors) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_45(mht_45_v, 1484, "", "./tensorflow/core/framework/function.cc", "FunctionCallFrame::ConsumeRetvals");
+
   rets->clear();
   rets->reserve(rets_.size());
   for (size_t i = 0; i < rets_.size(); ++i) {
@@ -1183,6 +1499,9 @@ Status FunctionCallFrame::ConsumeRetvals(std::vector<Tensor>* rets,
 }
 
 Status FunctionCallFrame::GetArg(int index, const Tensor** val) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_46(mht_46_v, 1502, "", "./tensorflow/core/framework/function.cc", "FunctionCallFrame::GetArg");
+
   if (index < 0 || static_cast<size_t>(index) >= args_.size()) {
     return errors::InvalidArgument("GetArg ", index, " is not within [0, ",
                                    args_.size(), ")");
@@ -1192,6 +1511,9 @@ Status FunctionCallFrame::GetArg(int index, const Tensor** val) {
 }
 
 Status FunctionCallFrame::SetRetval(int index, const Tensor& val) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_47(mht_47_v, 1514, "", "./tensorflow/core/framework/function.cc", "FunctionCallFrame::SetRetval");
+
   if (index < 0 || static_cast<size_t>(index) >= rets_.size()) {
     return errors::InvalidArgument("SetRetval ", index, " is not within [0, ",
                                    rets_.size(), ")");
@@ -1224,6 +1546,9 @@ FunctionLibraryDefinition::FunctionDefAndOpRegistration::
 FunctionLibraryDefinition::FunctionLibraryDefinition(
     const FunctionLibraryDefinition& other)
     : default_registry_(other.default_registry_) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_48(mht_48_v, 1549, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::FunctionLibraryDefinition");
+
   tf_shared_lock l(other.mu_);
   function_defs_ = other.function_defs_;
   func_grad_ = other.func_grad_;
@@ -1234,6 +1559,9 @@ FunctionLibraryDefinition::FunctionLibraryDefinition(
     const FunctionDefLibrary& def_lib)
     : default_registry_(default_registry),
       function_defs_(def_lib.function_size()) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_49(mht_49_v, 1562, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::FunctionLibraryDefinition");
+
   for (const auto& fdef : def_lib.function()) {
     // The latter function definition wins.
     auto& ptr = function_defs_[fdef.signature().name()];
@@ -1244,14 +1572,25 @@ FunctionLibraryDefinition::FunctionLibraryDefinition(
   }
 }
 
-FunctionLibraryDefinition::~FunctionLibraryDefinition() {}
+FunctionLibraryDefinition::~FunctionLibraryDefinition() {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_50(mht_50_v, 1576, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::~FunctionLibraryDefinition");
+}
 
 bool FunctionLibraryDefinition::Contains(const string& func) const {
+   std::vector<std::string> mht_51_v;
+   mht_51_v.push_back("func: \"" + func + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_51(mht_51_v, 1582, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::Contains");
+
   tf_shared_lock l(mu_);
   return function_defs_.find(func) != function_defs_.end();
 }
 
 const FunctionDef* FunctionLibraryDefinition::Find(const string& func) const {
+   std::vector<std::string> mht_52_v;
+   mht_52_v.push_back("func: \"" + func + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_52(mht_52_v, 1591, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::Find");
+
   tf_shared_lock l(mu_);
   auto result = FindHelper(func);
   if (result) {
@@ -1263,6 +1602,10 @@ const FunctionDef* FunctionLibraryDefinition::Find(const string& func) const {
 
 std::shared_ptr<FunctionLibraryDefinition::FunctionDefAndOpRegistration>
 FunctionLibraryDefinition::FindHelper(const string& func) const {
+   std::vector<std::string> mht_53_v;
+   mht_53_v.push_back("func: \"" + func + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_53(mht_53_v, 1606, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::FindHelper");
+
   auto iter = function_defs_.find(func);
   if (iter == function_defs_.end()) {
     return nullptr;
@@ -1273,6 +1616,9 @@ FunctionLibraryDefinition::FindHelper(const string& func) const {
 
 Status FunctionLibraryDefinition::AddFunctionDef(
     const FunctionDef& fdef, const StackTracesMap& stack_traces) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_54(mht_54_v, 1619, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::AddFunctionDef");
+
   mutex_lock l(mu_);
   bool added;
   return AddFunctionDefHelper(fdef, stack_traces, &added);
@@ -1280,6 +1626,9 @@ Status FunctionLibraryDefinition::AddFunctionDef(
 
 Status FunctionLibraryDefinition::AddFunctionDefHelper(
     const FunctionDef& fdef, const StackTracesMap& stack_traces, bool* added) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_55(mht_55_v, 1629, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::AddFunctionDefHelper");
+
   *added = false;
   std::shared_ptr<FunctionDefAndOpRegistration>& entry =
       function_defs_[fdef.signature().name()];
@@ -1306,6 +1655,9 @@ Status FunctionLibraryDefinition::AddFunctionDefHelper(
 
 Status FunctionLibraryDefinition::AddHelper(
     std::shared_ptr<FunctionDefAndOpRegistration> registration, bool* added) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_56(mht_56_v, 1658, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::AddHelper");
+
   *added = false;
   std::shared_ptr<FunctionDefAndOpRegistration>& entry =
       function_defs_[registration->fdef.signature().name()];
@@ -1334,6 +1686,10 @@ Status FunctionLibraryDefinition::AddHelper(
 
 Status FunctionLibraryDefinition::CopyFunctionDefFrom(
     const string& func, const FunctionLibraryDefinition& other) {
+   std::vector<std::string> mht_57_v;
+   mht_57_v.push_back("func: \"" + func + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_57(mht_57_v, 1690, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::CopyFunctionDefFrom");
+
   if (default_registry_ != other.default_registry_) {
     return errors::InvalidArgument(
         "Cannot copy function '", func,
@@ -1368,6 +1724,9 @@ Status FunctionLibraryDefinition::CopyFunctionDefFrom(
 }
 
 Status FunctionLibraryDefinition::AddGradientDef(const GradientDef& grad) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_58(mht_58_v, 1727, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::AddGradientDef");
+
   mutex_lock l(mu_);
   bool added;
   return AddGradientDefHelper(grad, &added);
@@ -1375,6 +1734,9 @@ Status FunctionLibraryDefinition::AddGradientDef(const GradientDef& grad) {
 
 Status FunctionLibraryDefinition::AddGradientDefHelper(const GradientDef& grad,
                                                        bool* added) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_59(mht_59_v, 1737, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::AddGradientDefHelper");
+
   *added = false;
   string* entry = &func_grad_[grad.function_name()];
   if (!entry->empty()) {
@@ -1394,6 +1756,9 @@ Status FunctionLibraryDefinition::AddGradientDefHelper(const GradientDef& grad,
 
 Status FunctionLibraryDefinition::AddLibrary(
     const FunctionLibraryDefinition& other) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_60(mht_60_v, 1759, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::AddLibrary");
+
   // Clone `other` to ensure thread-safety (grabbing `other`'s lock for
   // the duration of the function could lead to deadlock).
   FunctionLibraryDefinition clone(other);
@@ -1439,6 +1804,9 @@ Status FunctionLibraryDefinition::AddLibrary(
 
 Status FunctionLibraryDefinition::AddLibrary(
     const FunctionDefLibrary& lib_def) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_61(mht_61_v, 1807, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::AddLibrary");
+
   // Remember the funcs and grads that we added successfully so that
   // we can roll them back on error.
   mutex_lock l(mu_);
@@ -1478,6 +1846,10 @@ Status FunctionLibraryDefinition::AddLibrary(
 Status FunctionLibraryDefinition::ReplaceFunction(
     const string& func, const FunctionDef& fdef,
     const StackTracesMap& stack_traces) {
+   std::vector<std::string> mht_62_v;
+   mht_62_v.push_back("func: \"" + func + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_62(mht_62_v, 1850, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::ReplaceFunction");
+
   mutex_lock l(mu_);
   bool added;
   TF_RETURN_IF_ERROR(RemoveFunctionHelper(func));
@@ -1486,6 +1858,9 @@ Status FunctionLibraryDefinition::ReplaceFunction(
 }
 
 Status FunctionLibraryDefinition::ReplaceGradient(const GradientDef& grad) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_63(mht_63_v, 1861, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::ReplaceGradient");
+
   mutex_lock l(mu_);
   bool added;
   TF_RETURN_IF_ERROR(RemoveGradient(grad.function_name()));
@@ -1494,12 +1869,20 @@ Status FunctionLibraryDefinition::ReplaceGradient(const GradientDef& grad) {
 }
 
 Status FunctionLibraryDefinition::RemoveFunction(const string& func) {
+   std::vector<std::string> mht_64_v;
+   mht_64_v.push_back("func: \"" + func + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_64(mht_64_v, 1873, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::RemoveFunction");
+
   mutex_lock l(mu_);
   TF_RETURN_IF_ERROR(RemoveFunctionHelper(func));
   return Status::OK();
 }
 
 Status FunctionLibraryDefinition::RemoveFunctionHelper(const string& func) {
+   std::vector<std::string> mht_65_v;
+   mht_65_v.push_back("func: \"" + func + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_65(mht_65_v, 1883, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::RemoveFunctionHelper");
+
   const auto& i = function_defs_.find(func);
   if (i == function_defs_.end()) {
     return errors::InvalidArgument("Tried to remove non-existent function '",
@@ -1510,12 +1893,19 @@ Status FunctionLibraryDefinition::RemoveFunctionHelper(const string& func) {
 }
 
 void FunctionLibraryDefinition::Clear() {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_66(mht_66_v, 1896, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::Clear");
+
   mutex_lock l(mu_);
   function_defs_.clear();
   func_grad_.clear();
 }
 
 Status FunctionLibraryDefinition::RemoveGradient(const string& func) {
+   std::vector<std::string> mht_67_v;
+   mht_67_v.push_back("func: \"" + func + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_67(mht_67_v, 1906, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::RemoveGradient");
+
   const auto& i = func_grad_.find(func);
   if (i == func_grad_.end()) {
     return errors::InvalidArgument("Tried to remove non-existent gradient '",
@@ -1528,6 +1918,9 @@ Status FunctionLibraryDefinition::RemoveGradient(const string& func) {
 Status FunctionLibraryDefinition::Remove(
     const std::vector<string>& funcs,
     const std::vector<string>& funcs_with_grads) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_68(mht_68_v, 1921, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::Remove");
+
   Status s;
   for (const string& f : funcs) {
     s = RemoveFunctionHelper(f);
@@ -1545,16 +1938,28 @@ Status FunctionLibraryDefinition::Remove(
 }
 
 string FunctionLibraryDefinition::FindGradient(const string& func) const {
+   std::vector<std::string> mht_69_v;
+   mht_69_v.push_back("func: \"" + func + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_69(mht_69_v, 1942, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::FindGradient");
+
   tf_shared_lock l(mu_);
   return gtl::FindWithDefault(func_grad_, func, "");
 }
 
 string FunctionLibraryDefinition::FindGradientHelper(const string& func) const {
+   std::vector<std::string> mht_70_v;
+   mht_70_v.push_back("func: \"" + func + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_70(mht_70_v, 1951, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::FindGradientHelper");
+
   return gtl::FindWithDefault(func_grad_, func, "");
 }
 
 Status FunctionLibraryDefinition::LookUp(
     const string& op, const OpRegistrationData** op_reg_data) const {
+   std::vector<std::string> mht_71_v;
+   mht_71_v.push_back("op: \"" + op + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_71(mht_71_v, 1960, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::LookUp");
+
   tf_shared_lock l(mu_);
   auto iter = function_defs_.find(op);
   if (iter != function_defs_.end()) {
@@ -1565,6 +1970,9 @@ Status FunctionLibraryDefinition::LookUp(
 }
 
 string FunctionLibraryDefinition::UniqueFunctionName(StringPiece prefix) const {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_72(mht_72_v, 1973, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::UniqueFunctionName");
+
   tf_shared_lock l(mu_);
   int index = 0;
   string name = strings::StrCat(prefix, index);
@@ -1577,6 +1985,9 @@ string FunctionLibraryDefinition::UniqueFunctionName(StringPiece prefix) const {
 
 const FunctionDef* FunctionLibraryDefinition::GetAttrImpl(
     const NodeDef& ndef) const {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_73(mht_73_v, 1988, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::GetAttrImpl");
+
   if (ndef.op() != kGradientOp) {
     // If 'ndef' calls a function and the function's def has the attr,
     // returns it.
@@ -1612,6 +2023,9 @@ const FunctionDef* FunctionLibraryDefinition::GetAttrImpl(
 }
 
 std::vector<string> FunctionLibraryDefinition::ListFunctionNames() const {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_74(mht_74_v, 2026, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::ListFunctionNames");
+
   std::vector<string> function_names;
   tf_shared_lock l(mu_);
   function_names.reserve(function_defs_.size());
@@ -1622,6 +2036,9 @@ std::vector<string> FunctionLibraryDefinition::ListFunctionNames() const {
 }
 
 FunctionDefLibrary FunctionLibraryDefinition::ToProto() const {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_75(mht_75_v, 2039, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::ToProto");
+
   FunctionDefLibrary lib;
   tf_shared_lock l(mu_);
   for (const auto& f : function_defs_) {
@@ -1638,6 +2055,10 @@ FunctionDefLibrary FunctionLibraryDefinition::ToProto() const {
 template <typename T>
 Status FunctionLibraryDefinition::GetAttr(const NodeDef& ndef,
                                           const string& attr, T* value) const {
+   std::vector<std::string> mht_76_v;
+   mht_76_v.push_back("attr: \"" + attr + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_76(mht_76_v, 2059, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::GetAttr");
+
   const FunctionDef* fdef = GetAttrImpl(ndef);
   if (fdef && TryGetNodeAttr(AttrSlice(&fdef->attr()), attr, value)) {
     return Status::OK();
@@ -1648,6 +2069,10 @@ Status FunctionLibraryDefinition::GetAttr(const NodeDef& ndef,
 template <typename T>
 Status FunctionLibraryDefinition::GetAttr(const Node& node, const string& attr,
                                           T* value) const {
+   std::vector<std::string> mht_77_v;
+   mht_77_v.push_back("attr: \"" + attr + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_77(mht_77_v, 2073, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::GetAttr");
+
   return GetAttr(node.def(), attr, value);
 }
 
@@ -1682,6 +2107,10 @@ std::set<string> ReachableFunctions(
 
   // Add reachable and not already processed functions to the functions queue.
   const auto add_to_func_queue = [&](const string& func_name) {
+   std::vector<std::string> mht_78_v;
+   mht_78_v.push_back("func_name: \"" + func_name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_78(mht_78_v, 2111, "", "./tensorflow/core/framework/function.cc", "lambda");
+
     const FunctionDef* func = flib.Find(func_name);
     if (func && reachable_funcs.find(func_name) == reachable_funcs.end()) {
       func_queue.push_back(func);
@@ -1691,6 +2120,10 @@ std::set<string> ReachableFunctions(
   // If any function with certain API name is reachable, all the other functions
   // with same API name should also be checked.
   const auto add_function_with_api_interface = [&](const string& api_name) {
+   std::vector<std::string> mht_79_v;
+   mht_79_v.push_back("api_name: \"" + api_name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_79(mht_79_v, 2124, "", "./tensorflow/core/framework/function.cc", "lambda");
+
     if (!reachable_api_interface.contains(api_name)) {
       reachable_api_interface.insert(api_name);
       for (const auto& func_name : flib.ListFunctionNames()) {
@@ -1706,6 +2139,9 @@ std::set<string> ReachableFunctions(
 
   // Add all the functions that are reachable from the given node to the queue.
   const auto process_node = [&](const NodeDef& node) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_80(mht_80_v, 2142, "", "./tensorflow/core/framework/function.cc", "lambda");
+
     // Node itself can be a call to the function.
     add_to_func_queue(node.op());
 
@@ -1758,6 +2194,9 @@ std::set<string> ReachableFunctions(
 FunctionLibraryDefinition ReachableFunctionLibraryDefinition(
     const FunctionLibraryDefinition& flib,
     const protobuf::RepeatedPtrField<NodeDef>& nodes) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_81(mht_81_v, 2197, "", "./tensorflow/core/framework/function.cc", "ReachableFunctionLibraryDefinition");
+
   std::set<string> reachable_funcs = ReachableFunctions(flib, nodes);
 
   FunctionLibraryDefinition reachable_flib(flib.default_registry(),
@@ -1785,6 +2224,9 @@ FunctionLibraryDefinition ReachableFunctionLibraryDefinition(
 
 string AllocatorAttributesToString(
     const std::vector<AllocatorAttributes>& attrs) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_82(mht_82_v, 2227, "", "./tensorflow/core/framework/function.cc", "AllocatorAttributesToString");
+
   string result("[");
   // AllocatorAttribute::DebugString produces around 85 bytes now.
   result.reserve(100 * attrs.size());
@@ -1799,21 +2241,33 @@ string AllocatorAttributesToString(
   return result;
 }
 
-const char* IsSet(void* ptr) { return ptr == nullptr ? "unset" : "set"; }
+const char* IsSet(void* ptr) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_83(mht_83_v, 2245, "", "./tensorflow/core/framework/function.cc", "IsSet");
+ return ptr == nullptr ? "unset" : "set"; }
 
 }  // namespace
 
 FunctionLibraryDefinition FunctionLibraryDefinition::ReachableDefinitions(
     const GraphDef& graph) const {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_84(mht_84_v, 2253, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::ReachableDefinitions");
+
   return ReachableFunctionLibraryDefinition(*this, graph.node());
 }
 
 FunctionLibraryDefinition FunctionLibraryDefinition::ReachableDefinitions(
     const FunctionDef& func) const {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_85(mht_85_v, 2261, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryDefinition::ReachableDefinitions");
+
   return ReachableFunctionLibraryDefinition(*this, func.node_def());
 }
 
 string FunctionLibraryRuntime::Options::DebugString() const {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_86(mht_86_v, 2268, "", "./tensorflow/core/framework/function.cc", "FunctionLibraryRuntime::Options::DebugString");
+
   return absl::StrCat(
       "FLR::Options(step_id=", step_id, " rendezvous=", IsSet(rendezvous),
       " cancellation_manager=", IsSet(cancellation_manager),
@@ -1828,6 +2282,9 @@ string FunctionLibraryRuntime::Options::DebugString() const {
 }
 
 void FunctionDefHelper::AttrValueWrapper::InitFromString(StringPiece val) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_87(mht_87_v, 2285, "", "./tensorflow/core/framework/function.cc", "FunctionDefHelper::AttrValueWrapper::InitFromString");
+
   if (val.size() >= 2 && val[0] == '$') {
     proto.set_placeholder(val.data() + 1, val.size() - 1);
   } else {
@@ -1838,6 +2295,10 @@ void FunctionDefHelper::AttrValueWrapper::InitFromString(StringPiece val) {
 FunctionDefHelper::AttrValueWrapper FunctionDefHelper::FunctionRef(
     const string& name,
     gtl::ArraySlice<std::pair<string, AttrValueWrapper>> attrs) {
+   std::vector<std::string> mht_88_v;
+   mht_88_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_88(mht_88_v, 2299, "", "./tensorflow/core/framework/function.cc", "FunctionDefHelper::FunctionRef");
+
   AttrValueWrapper ret;
   ret.proto.mutable_func()->set_name(name);
   for (const auto& a : attrs) {
@@ -1847,6 +2308,9 @@ FunctionDefHelper::AttrValueWrapper FunctionDefHelper::FunctionRef(
 }
 
 NodeDef FunctionDefHelper::Node::ToNodeDef() const {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_89(mht_89_v, 2311, "", "./tensorflow/core/framework/function.cc", "FunctionDefHelper::Node::ToNodeDef");
+
   NodeDef n;
   n.set_op(this->op);
   n.set_name(GetName());
@@ -1880,6 +2344,10 @@ FunctionDef FunctionDefHelper::Create(
     gtl::ArraySlice<Node> node_def,
     gtl::ArraySlice<std::pair<string, string>> ret_def,
     gtl::ArraySlice<std::pair<string, string>> control_ret_def) {
+   std::vector<std::string> mht_90_v;
+   mht_90_v.push_back("function_name: \"" + function_name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_90(mht_90_v, 2348, "", "./tensorflow/core/framework/function.cc", "FunctionDefHelper::Create");
+
   FunctionDef fdef;
 
   // Signature
@@ -1929,6 +2397,10 @@ FunctionDef FunctionDefHelper::Create(
     gtl::ArraySlice<string> out_def, gtl::ArraySlice<string> attr_def,
     gtl::ArraySlice<Node> node_def,
     gtl::ArraySlice<std::pair<string, string>> ret_def) {
+   std::vector<std::string> mht_91_v;
+   mht_91_v.push_back("function_name: \"" + function_name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_91(mht_91_v, 2401, "", "./tensorflow/core/framework/function.cc", "FunctionDefHelper::Create");
+
   return Create(function_name, in_def, out_def, attr_def, node_def, ret_def,
                 /*control_ret_def=*/{});
 }
@@ -1939,6 +2411,10 @@ FunctionDef FunctionDefHelper::Define(const string& name,
                                       gtl::ArraySlice<string> ret_def,
                                       gtl::ArraySlice<string> attr_def,
                                       gtl::ArraySlice<Node> node_def) {
+   std::vector<std::string> mht_92_v;
+   mht_92_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_92(mht_92_v, 2415, "", "./tensorflow/core/framework/function.cc", "FunctionDefHelper::Define");
+
   FunctionDef fdef;
   OpDefBuilder b(name);
   for (const auto& a : arg_def) b.Input(a);
@@ -2007,6 +2483,9 @@ FunctionDef FunctionDefHelper::Define(gtl::ArraySlice<string> arg_def,
                                       gtl::ArraySlice<string> ret_def,
                                       gtl::ArraySlice<string> attr_def,
                                       gtl::ArraySlice<Node> node_def) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_93(mht_93_v, 2486, "", "./tensorflow/core/framework/function.cc", "FunctionDefHelper::Define");
+
   return Define("_", arg_def, ret_def, attr_def, node_def);
 }
 
@@ -2015,17 +2494,28 @@ namespace gradient {
 typedef std::unordered_map<string, Creator> OpGradFactory;
 
 OpGradFactory* GetOpGradFactory() {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_94(mht_94_v, 2497, "", "./tensorflow/core/framework/function.cc", "GetOpGradFactory");
+
   static OpGradFactory* factory = new OpGradFactory;
   return factory;
 }
 
 bool RegisterOp(const string& op, Creator func) {
+   std::vector<std::string> mht_95_v;
+   mht_95_v.push_back("op: \"" + op + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_95(mht_95_v, 2506, "", "./tensorflow/core/framework/function.cc", "RegisterOp");
+
   CHECK(GetOpGradFactory()->insert({op, func}).second)
       << "Duplicated gradient for " << op;
   return true;
 }
 
 Status GetOpGradientCreator(const string& op, Creator* creator) {
+   std::vector<std::string> mht_96_v;
+   mht_96_v.push_back("op: \"" + op + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunctionDTcc mht_96(mht_96_v, 2516, "", "./tensorflow/core/framework/function.cc", "GetOpGradientCreator");
+
   auto fac = GetOpGradFactory();
   auto iter = fac->find(op);
   if (iter == fac->end()) {

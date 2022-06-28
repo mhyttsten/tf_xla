@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSdistributed_runtimePScollective_param_resolver_distributed_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScollective_param_resolver_distributed_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSdistributed_runtimePScollective_param_resolver_distributed_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,9 +206,18 @@ static std::unique_ptr<Device> NewDevice(const string& type,
                                          const string& name) {
   class FakeDevice : public Device {
    public:
-    explicit FakeDevice(const DeviceAttributes& attr) : Device(nullptr, attr) {}
-    Status Sync() override { return Status::OK(); }
-    Allocator* GetAllocator(AllocatorAttributes) override { return nullptr; }
+    explicit FakeDevice(const DeviceAttributes& attr) : Device(nullptr, attr) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScollective_param_resolver_distributed_testDTcc mht_0(mht_0_v, 210, "", "./tensorflow/core/distributed_runtime/collective_param_resolver_distributed_test.cc", "FakeDevice");
+}
+    Status Sync() override {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScollective_param_resolver_distributed_testDTcc mht_1(mht_1_v, 214, "", "./tensorflow/core/distributed_runtime/collective_param_resolver_distributed_test.cc", "Sync");
+ return Status::OK(); }
+    Allocator* GetAllocator(AllocatorAttributes) override {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScollective_param_resolver_distributed_testDTcc mht_2(mht_2_v, 218, "", "./tensorflow/core/distributed_runtime/collective_param_resolver_distributed_test.cc", "GetAllocator");
+ return nullptr; }
   };
   DeviceAttributes attr;
   attr.set_name(name);
@@ -56,11 +233,19 @@ class FakeCache : public TestWorkerCache {
   // worker.
   bool GetDeviceLocalityNonBlocking(const string& device,
                                     DeviceLocality* locality) override {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("device: \"" + device + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScollective_param_resolver_distributed_testDTcc mht_3(mht_3_v, 237, "", "./tensorflow/core/distributed_runtime/collective_param_resolver_distributed_test.cc", "GetDeviceLocalityNonBlocking");
+
     return false;
   }
 
   void GetDeviceLocalityAsync(const string& device, DeviceLocality* locality,
                               StatusCallback done) override {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("device: \"" + device + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScollective_param_resolver_distributed_testDTcc mht_4(mht_4_v, 246, "", "./tensorflow/core/distributed_runtime/collective_param_resolver_distributed_test.cc", "GetDeviceLocalityAsync");
+
     string task_name;
     string dev_part;
     if (!DeviceNameUtils::SplitDeviceName(device, &task_name, &dev_part)) {
@@ -94,19 +279,31 @@ class FakeCache : public TestWorkerCache {
 class FakeNcclCommunicator : public NcclCommunicatorInterface {
  public:
   // We only need to define GenerateCommunicatorKey().
-  string GenerateCommunicatorKey() override { return "mock-communicator-key"; }
+  string GenerateCommunicatorKey() override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScollective_param_resolver_distributed_testDTcc mht_5(mht_5_v, 283, "", "./tensorflow/core/distributed_runtime/collective_param_resolver_distributed_test.cc", "GenerateCommunicatorKey");
+ return "mock-communicator-key"; }
 
   void Enqueue(std::shared_ptr<CollectiveContext> col_ctx,
                StatusCallback done) override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScollective_param_resolver_distributed_testDTcc mht_6(mht_6_v, 289, "", "./tensorflow/core/distributed_runtime/collective_param_resolver_distributed_test.cc", "Enqueue");
+
     done(Status::OK());
   }
 
-  void StartAbort(const Status& s) override {}
+  void StartAbort(const Status& s) override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScollective_param_resolver_distributed_testDTcc mht_7(mht_7_v, 296, "", "./tensorflow/core/distributed_runtime/collective_param_resolver_distributed_test.cc", "StartAbort");
+}
 };
 
 class DeviceResDistTest : public ::testing::Test {
  public:
   ~DeviceResDistTest() override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScollective_param_resolver_distributed_testDTcc mht_8(mht_8_v, 304, "", "./tensorflow/core/distributed_runtime/collective_param_resolver_distributed_test.cc", "~DeviceResDistTest");
+
     for (auto& name_param : cp_) {
       name_param.second->Unref();
     }
@@ -115,6 +312,10 @@ class DeviceResDistTest : public ::testing::Test {
  protected:
   void DefineWorkers(int num_workers, int num_devices,
                      const string& device_type, bool nccl) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("device_type: \"" + device_type + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScollective_param_resolver_distributed_testDTcc mht_9(mht_9_v, 316, "", "./tensorflow/core/distributed_runtime/collective_param_resolver_distributed_test.cc", "DefineWorkers");
+
     for (int w = 0; w < num_workers; ++w) {
       string name = strings::StrCat("/job:worker/replica:0/task:", w);
       DefineWorker(name, device_type, num_devices, nccl);
@@ -123,6 +324,11 @@ class DeviceResDistTest : public ::testing::Test {
 
   void DefineWorker(const string& worker_name, const string& device_type,
                     int num_devices, bool nccl) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("worker_name: \"" + worker_name + "\"");
+   mht_10_v.push_back("device_type: \"" + device_type + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScollective_param_resolver_distributed_testDTcc mht_10(mht_10_v, 329, "", "./tensorflow/core/distributed_runtime/collective_param_resolver_distributed_test.cc", "DefineWorker");
+
     ConfigProto config;
     config.mutable_experimental()->set_collective_group_leader(
         "/job:worker/replica:0/task:0");
@@ -164,6 +370,10 @@ class DeviceResDistTest : public ::testing::Test {
                               const string& device_type,
                               CollectiveType coll_type = REDUCTION_COLLECTIVE,
                               int source_rank = 0) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("device_type: \"" + device_type + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScollective_param_resolver_distributed_testDTcc mht_11(mht_11_v, 374, "", "./tensorflow/core/distributed_runtime/collective_param_resolver_distributed_test.cc", "DefineCollectiveParams");
+
     for (int wi = 0; wi < num_workers; ++wi) {
       string task_name = strings::StrCat("/job:worker/replica:0/task:", wi);
       for (int di = 0; di < num_devices; ++di) {
@@ -181,6 +391,10 @@ class DeviceResDistTest : public ::testing::Test {
                                            const string& device_type,
                                            CollectiveType coll_type,
                                            bool is_source) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("device_type: \"" + device_type + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScollective_param_resolver_distributed_testDTcc mht_12(mht_12_v, 395, "", "./tensorflow/core/distributed_runtime/collective_param_resolver_distributed_test.cc", "CreateCollectiveParams");
+
     const int kGroupKey = 5;
     const int kInstanceKey = 3;
     auto* cp = new CollectiveParams();
@@ -198,6 +412,9 @@ class DeviceResDistTest : public ::testing::Test {
   }
 
   void IssueRequests(int num_workers, int num_devices) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScollective_param_resolver_distributed_testDTcc mht_13(mht_13_v, 415, "", "./tensorflow/core/distributed_runtime/collective_param_resolver_distributed_test.cc", "IssueRequests");
+
     {
       mutex_lock l(mu_);
       num_done_ = 0;
@@ -214,6 +431,11 @@ class DeviceResDistTest : public ::testing::Test {
 
   void IssueRequest(const string& task_name, const string& device_name,
                     int group_size) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("task_name: \"" + task_name + "\"");
+   mht_14_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScollective_param_resolver_distributed_testDTcc mht_14(mht_14_v, 436, "", "./tensorflow/core/distributed_runtime/collective_param_resolver_distributed_test.cc", "IssueRequest");
+
     Device* device = nullptr;
     TF_CHECK_OK(device_mgrs_[task_name]->LookupDevice(device_name, &device));
     CollectiveParams* cp = cp_[device_name];
@@ -234,6 +456,9 @@ class DeviceResDistTest : public ::testing::Test {
   }
 
   void ValidateCollectiveParams(int num_workers, int num_devices) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScollective_param_resolver_distributed_testDTcc mht_15(mht_15_v, 459, "", "./tensorflow/core/distributed_runtime/collective_param_resolver_distributed_test.cc", "ValidateCollectiveParams");
+
     int device_count = num_workers * num_devices;
     {
       mutex_lock l(mu_);
@@ -272,6 +497,10 @@ class DeviceResDistTest : public ::testing::Test {
   }
 
   void ValidateDeviceResolver(const CollectiveParams& cp, const string& task) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("task: \"" + task + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScollective_param_resolver_distributed_testDTcc mht_16(mht_16_v, 501, "", "./tensorflow/core/distributed_runtime/collective_param_resolver_distributed_test.cc", "ValidateDeviceResolver");
+
     for (const CollGroupMember& member : cp.group.members) {
       DeviceAttributes attributes;
       TF_ASSERT_OK(dev_resolvers_[task]->GetDeviceAttributes(
@@ -283,6 +512,10 @@ class DeviceResDistTest : public ::testing::Test {
                      const string& device_type, bool nccl,
                      CollectiveType coll_type = REDUCTION_COLLECTIVE,
                      bool is_source = false) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("device_type: \"" + device_type + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScollective_param_resolver_distributed_testDTcc mht_17(mht_17_v, 516, "", "./tensorflow/core/distributed_runtime/collective_param_resolver_distributed_test.cc", "RestartWorker");
+
     string worker_name =
         strings::StrCat("/job:worker/replica:0/task:", worker_idx);
     DefineWorker(worker_name, device_type, num_devices, nccl);

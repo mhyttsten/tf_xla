@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_UTIL_GPU_DEVICE_FUNCTIONS_H_
 #define TENSORFLOW_CORE_UTIL_GPU_DEVICE_FUNCTIONS_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 /**
  * Wrappers and helpers for CUDA device code.
@@ -67,7 +235,10 @@ using cudaError_t = int;
 #define gpuEventDisableTiming hipEventDisableTiming
 #define gpuDeviceSynchronize hipDeviceSynchronize
 #define gpuFree hipFree
-static std::string cudaGetErrorString(int err) { return std::to_string(err); }
+static std::string cudaGetErrorString(int err) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_0(mht_0_v, 239, "", "./tensorflow/core/util/gpu_device_functions.h", "cudaGetErrorString");
+ return std::to_string(err); }
 #endif
 
 #define TF_RETURN_IF_CUDA_ERROR(result)                   \
@@ -108,8 +279,14 @@ namespace detail {
 template <typename T>
 class GpuGridRange {
   struct Iterator {
-    __device__ Iterator(T index, T delta) : index_(index), delta_(delta) {}
-    __device__ T operator*() const { return index_; }
+    __device__ Iterator(T index, T delta) : index_(index), delta_(delta) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_1(mht_1_v, 283, "", "./tensorflow/core/util/gpu_device_functions.h", "Iterator");
+}
+    __device__ T operator*() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_2(mht_2_v, 287, "", "./tensorflow/core/util/gpu_device_functions.h", "*");
+ return index_; }
     __device__ Iterator& operator++() {
       index_ += delta_;
       return *this;
@@ -135,10 +312,19 @@ class GpuGridRange {
 
  public:
   __device__ GpuGridRange(T begin, T delta, T end)
-      : begin_(begin), delta_(delta), end_(end) {}
+      : begin_(begin), delta_(delta), end_(end) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_3(mht_3_v, 316, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuGridRange");
+}
 
-  __device__ Iterator begin() const { return Iterator{begin_, delta_}; }
-  __device__ Iterator end() const { return Iterator{end_, 0}; }
+  __device__ Iterator begin() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_4(mht_4_v, 321, "", "./tensorflow/core/util/gpu_device_functions.h", "begin");
+ return Iterator{begin_, delta_}; }
+  __device__ Iterator end() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_5(mht_5_v, 325, "", "./tensorflow/core/util/gpu_device_functions.h", "end");
+ return Iterator{end_, 0}; }
 
  private:
   T begin_;
@@ -192,6 +378,9 @@ __device__ const unsigned kGpuWarpAll = 0xffffffff;
 
 // Returns the warp lane ID of the calling thread
 __device__ inline unsigned GpuLaneId() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_6(mht_6_v, 381, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuLaneId");
+
   unsigned int lane_id;
 #if GOOGLE_CUDA
 #if __clang__
@@ -220,6 +409,9 @@ namespace detail {
 // we are validating. Run on Pascal if you suspect that the mask is incorrect.
 __device__ inline bool GpuValidateShuffleSyncMask(unsigned mask,
                                                   unsigned src_lane) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_7(mht_7_v, 412, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuValidateShuffleSyncMask");
+
   unsigned src_dst_mask = 1u << GpuLaneId() | 1u << src_lane;
 #if CUDA_VERSION >= 9000
   unsigned src_lane_mask = __shfl_sync(mask, mask, src_lane);
@@ -238,6 +430,9 @@ CREATE_CUDA_DEVICE_FUNCTION_ALIAS(GpuValidateShuffleSyncMask,
 
 // Returns the actual source lane for shuffle.
 __device__ inline unsigned GpuShuffleGetSrcLane(int src_lane, int width) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_8(mht_8_v, 433, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuShuffleGetSrcLane");
+
   int lane_id = GpuLaneId();
   int lane_base = lane_id & ~width + 1;
   int lane_offset = src_lane & width - 1;
@@ -247,6 +442,9 @@ CREATE_CUDA_DEVICE_FUNCTION_ALIAS(GpuShuffleGetSrcLane, CudaShuffleGetSrcLane);
 
 // Returns the source lane for shuffle up.
 __device__ inline unsigned GpuShuffleUpGetSrcLane(unsigned delta, int width) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_9(mht_9_v, 445, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuShuffleUpGetSrcLane");
+
   unsigned lane_id = GpuLaneId();
   if ((lane_id & width - 1) < delta) {
     return lane_id;
@@ -258,6 +456,9 @@ CREATE_CUDA_DEVICE_FUNCTION_ALIAS(GpuShuffleUpGetSrcLane,
 
 // Returns the source lane for shuffle down.
 __device__ inline unsigned GpuShuffleDownGetSrcLane(unsigned delta, int width) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_10(mht_10_v, 459, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuShuffleDownGetSrcLane");
+
   unsigned lane_id = GpuLaneId();
   if ((lane_id & width - 1) + delta >= width) {
     return lane_id;
@@ -269,6 +470,9 @@ CREATE_CUDA_DEVICE_FUNCTION_ALIAS(GpuShuffleDownGetSrcLane,
 
 // Returns the source lane for shuffle xor.
 __device__ inline unsigned GpuShuffleXorGetSrcLane(int lane_mask, int width) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_11(mht_11_v, 473, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuShuffleXorGetSrcLane");
+
   int lane_id = GpuLaneId();
   int src_lane = lane_id ^ lane_mask;
   if (src_lane > (lane_id | width - 1)) {
@@ -291,6 +495,9 @@ CREATE_CUDA_DEVICE_FUNCTION_ALIAS(GpuShuffleXorGetSrcLane,
 
 // Wrapper for __syncwarp. No-op for CUDA 8 and earlier.
 __device__ inline void GpuSyncWarp(unsigned mask = kCudaWarpAll) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_12(mht_12_v, 498, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuSyncWarp");
+
   assert(mask & 1u << GpuLaneId());
 #if CUDA_VERSION >= 9000
   __syncwarp(mask);
@@ -301,6 +508,9 @@ CREATE_CUDA_DEVICE_FUNCTION_ALIAS(GpuSyncWarp, CudaSyncWarp);
 // Wrapper for __ballot_sync. All threads in 'mask' must call this function in
 // convergence, see comment above for details.
 __device__ inline unsigned GpuBallotSync(unsigned mask, int pred) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_13(mht_13_v, 511, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuBallotSync");
+
   assert(mask & 1u << GpuLaneId());
 #if CUDA_VERSION >= 9000
   return __ballot_sync(mask, pred);
@@ -313,6 +523,9 @@ CREATE_CUDA_DEVICE_FUNCTION_ALIAS(GpuBallotSync, CudaBallotSync);
 // Wrapper for __any_sync. All threads in 'mask' must call this function in
 // convergence, see comment above for details.
 __device__ inline int GpuAnySync(unsigned mask, int pred) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_14(mht_14_v, 526, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuAnySync");
+
   assert(mask & 1u << GpuLaneId());
 #if CUDA_VERSION >= 9000
   return __any_sync(mask, pred);
@@ -325,6 +538,9 @@ CREATE_CUDA_DEVICE_FUNCTION_ALIAS(GpuAnySync, CudaAnySync);
 // Wrapper for __all_sync. All threads in 'mask' must call this function in
 // convergence, see comment above for details.
 __device__ inline int GpuAllSync(unsigned mask, int pred) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_15(mht_15_v, 541, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuAllSync");
+
   assert(mask & 1u << GpuLaneId());
 #if CUDA_VERSION >= 9000
   return __all_sync(mask, pred);
@@ -339,6 +555,9 @@ CREATE_CUDA_DEVICE_FUNCTION_ALIAS(GpuAllSync, CudaAllSync);
 template <typename T>
 __device__ T GpuShuffleSync(unsigned mask, T value, int src_lane,
                             int width = warpSize) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_16(mht_16_v, 558, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuShuffleSync");
+
   assert(!(width & width - 1));
   assert(detail::GpuValidateShuffleSyncMask(
       mask, detail::GpuShuffleGetSrcLane(src_lane, width)));
@@ -354,6 +573,9 @@ __device__ T GpuShuffleSync(unsigned mask, T value, int src_lane,
 // See b/69446944.
 __device__ inline double GpuShuffleSync(unsigned mask, double value,
                                         int src_lane, int width = warpSize) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_17(mht_17_v, 576, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuShuffleSync");
+
 #if GOOGLE_CUDA
   auto tmp = __double_as_longlong(value);
   auto lo = static_cast<unsigned>(tmp);
@@ -378,6 +600,9 @@ CREATE_CUDA_DEVICE_FUNCTION_ALIAS(GpuShuffleSync, CudaShuffleSync);
 template <typename T>
 __device__ inline T GpuShuffleUpSync(unsigned mask, T value, unsigned delta,
                                      int width = warpSize) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_18(mht_18_v, 603, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuShuffleUpSync");
+
   assert(!(width & width - 1));
   assert(detail::GpuValidateShuffleSyncMask(
       mask, detail::GpuShuffleUpGetSrcLane(delta, width)));
@@ -394,6 +619,9 @@ __device__ inline T GpuShuffleUpSync(unsigned mask, T value, unsigned delta,
 __device__ inline double GpuShuffleUpSync(unsigned mask, double value,
                                           unsigned delta,
                                           int width = warpSize) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_19(mht_19_v, 622, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuShuffleUpSync");
+
 #if GOOGLE_CUDA
   auto tmp = __double_as_longlong(value);
   auto lo = static_cast<unsigned>(tmp);
@@ -418,6 +646,9 @@ CREATE_CUDA_DEVICE_FUNCTION_ALIAS(GpuShuffleUpSync, CudaShuffleUpSync);
 template <typename T>
 __device__ inline T GpuShuffleDownSync(unsigned mask, T value, unsigned delta,
                                        int width = warpSize) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_20(mht_20_v, 649, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuShuffleDownSync");
+
   assert(!(width & width - 1));
   assert(detail::GpuValidateShuffleSyncMask(
       mask, detail::GpuShuffleDownGetSrcLane(delta, width)));
@@ -434,6 +665,9 @@ __device__ inline T GpuShuffleDownSync(unsigned mask, T value, unsigned delta,
 __device__ inline double GpuShuffleDownSync(unsigned mask, double value,
                                             unsigned delta,
                                             int width = warpSize) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_21(mht_21_v, 668, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuShuffleDownSync");
+
 #if GOOGLE_CUDA
   auto tmp = __double_as_longlong(value);
   auto lo = static_cast<unsigned>(tmp);
@@ -458,6 +692,9 @@ CREATE_CUDA_DEVICE_FUNCTION_ALIAS(GpuShuffleDownSync, CudaShuffleDownSync);
 template <typename T>
 __device__ T GpuShuffleXorSync(unsigned mask, T value, int lane_mask,
                                int width = warpSize) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_22(mht_22_v, 695, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuShuffleXorSync");
+
   assert(!(width & width - 1));
   assert(detail::GpuValidateShuffleSyncMask(
       mask, detail::GpuShuffleXorGetSrcLane(lane_mask, width)));
@@ -478,6 +715,9 @@ __device__ inline Eigen::half GpuShuffleXorSync(unsigned mask,
                                                 Eigen::half value,
                                                 int lane_mask,
                                                 int width = warpSize) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_23(mht_23_v, 718, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuShuffleXorSync");
+
   assert(!(width & width - 1));
   assert(detail::GpuValidateShuffleSyncMask(
       mask, detail::GpuShuffleXorGetSrcLane(lane_mask, width)));
@@ -516,6 +756,9 @@ CREATE_CUDA_DEVICE_FUNCTION_ALIAS(GpuShuffleXorSync, CudaShuffleXorSync);
 // Wrapper for __ldg.
 template <typename T>
 __host__ __device__ T GpuLdg(const T* address) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_24(mht_24_v, 759, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuLdg");
+
 #if __CUDA_ARCH__ >= 350
   return __ldg(address);
 #else
@@ -524,6 +767,9 @@ __host__ __device__ T GpuLdg(const T* address) {
 }
 
 __host__ __device__ inline bool GpuLdg(const bool* address) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_25(mht_25_v, 770, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuLdg");
+
   return GpuLdg(reinterpret_cast<const char*>(address)) != 0;
 }
 
@@ -553,6 +799,9 @@ CREATE_CUDA_DEVICE_FUNCTION_ALIAS(GpuLdg, CudaLdg);
 // not guaranteed to be zero until the next kernel launch.
 template <typename T>
 __global__ void SetZero(const int count, T* __restrict__ ptr) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_26(mht_26_v, 802, "", "./tensorflow/core/util/gpu_device_functions.h", "SetZero");
+
   // Check that the grid is one dimensional and index doesn't overflow.
   assert(blockDim.y == 1);
   assert(blockDim.z == 1);
@@ -592,6 +841,9 @@ CREATE_CUDA_DEVICE_FUNCTION_ALIAS(GpuAtomicCasHelper, CudaAtomicCasHelper);
 // correctly).
 template <typename F>
 __device__ float GpuAtomicCasHelper(float* ptr, F accumulate) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_27(mht_27_v, 844, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuAtomicCasHelper");
+
   return __int_as_float(
       GpuAtomicCasHelper(reinterpret_cast<int32*>(ptr), [accumulate](int32 a) {
         return __float_as_int(accumulate(__int_as_float(a)));
@@ -599,6 +851,9 @@ __device__ float GpuAtomicCasHelper(float* ptr, F accumulate) {
 }
 template <typename F>
 __device__ double GpuAtomicCasHelper(double* ptr, F accumulate) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_28(mht_28_v, 854, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuAtomicCasHelper");
+
 #if TENSORFLOW_USE_ROCM
   // FIXME: remove the workaround below once bug is fixed.
   // HIP has a bug in the implementation of __longlong_as_double
@@ -633,6 +888,9 @@ __device__ double GpuAtomicCasHelper(double* ptr, F accumulate) {
 // Note: Assumes little endian.
 template <typename F>
 __device__ Eigen::half GpuAtomicCasHelper(Eigen::half* ptr, F accumulate) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_29(mht_29_v, 891, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuAtomicCasHelper");
+
 #if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__)
   static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, "Not little endian");
 #endif
@@ -665,6 +923,9 @@ __device__ Eigen::half GpuAtomicCasHelper(Eigen::half* ptr, F accumulate) {
 
 template <typename F>
 __device__ long long GpuAtomicCasHelper(long long* ptr, F accumulate) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_30(mht_30_v, 926, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuAtomicCasHelper");
+
   return static_cast<long long>(
       GpuAtomicCasHelper(reinterpret_cast<unsigned long long*>(ptr),
                          [accumulate](unsigned long long a) {
@@ -706,6 +967,9 @@ using CudaSupportedType = typename CudaSupportedTypeImpl<T>::type;
 
 template <typename T>
 __device__ CudaSupportedType<T>* ToCudaSupportedPtr(T* ptr) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_31(mht_31_v, 970, "", "./tensorflow/core/util/gpu_device_functions.h", "ToCudaSupportedPtr");
+
   return reinterpret_cast<CudaSupportedType<T>*>(ptr);
 }
 
@@ -721,6 +985,9 @@ __device__ detail::ToTypeIfConvertible<U, T> GpuAtomicAdd(T* ptr, U value) {
 
 __device__ inline Eigen::half GpuAtomicAdd(Eigen::half* ptr,
                                            Eigen::half value) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_32(mht_32_v, 988, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuAtomicAdd");
+
   return detail::GpuAtomicCasHelper(
       ptr, [value](Eigen::half a) { return a + value; });
 }
@@ -764,24 +1031,39 @@ __device__ detail::ToTypeIfConvertible<U, T> GpuAtomicSub(T* ptr, U value) {
 
 // Specializations of substraction which add the negative value.
 __device__ inline float GpuAtomicSub(float* ptr, float value) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_33(mht_33_v, 1034, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuAtomicSub");
+
   return GpuAtomicAdd(ptr, -value);
 }
 
 __device__ inline double GpuAtomicSub(double* ptr, double value) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_34(mht_34_v, 1041, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuAtomicSub");
+
   return GpuAtomicAdd(ptr, -value);
 }
 
 __device__ inline int64_t GpuAtomicSub(int64_t* ptr, int64_t value) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_35(mht_35_v, 1048, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuAtomicSub");
+
   return GpuAtomicAdd(ptr, -value);
 }
 
 __device__ inline tensorflow::uint64 GpuAtomicSub(tensorflow::uint64* ptr,
                                                   tensorflow::uint64 value) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_36(mht_36_v, 1056, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuAtomicSub");
+
   return GpuAtomicAdd(ptr, -static_cast<int64_t>(value));
 }
 
 __device__ inline Eigen::half GpuAtomicSub(Eigen::half* ptr,
                                            Eigen::half value) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_37(mht_37_v, 1064, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuAtomicSub");
+
   return detail::GpuAtomicCasHelper(
       ptr, [value](Eigen::half a) { return a - value; });
 }
@@ -814,6 +1096,9 @@ __device__ inline float GpuAtomicMax(float* ptr, float value) {
 }
 
 __device__ inline double GpuAtomicMax(double* ptr, double value) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_38(mht_38_v, 1099, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuAtomicMax");
+
   return detail::GpuAtomicCasHelper(
       ptr, [value](double a) { return fmax(a, value); });
 }
@@ -826,6 +1111,9 @@ __device__ inline float GpuAtomicMax(float* ptr, float value) {
 }
 
 __device__ inline double GpuAtomicMax(double* ptr, double value) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_39(mht_39_v, 1114, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuAtomicMax");
+
   return detail::GpuAtomicCasHelper(
       ptr, [value](double a) { return max(a, value); });
 }
@@ -834,6 +1122,9 @@ __device__ inline double GpuAtomicMax(double* ptr, double value) {
 
 __device__ inline Eigen::half GpuAtomicMax(Eigen::half* ptr,
                                            Eigen::half value) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_40(mht_40_v, 1125, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuAtomicMax");
+
   return detail::GpuAtomicCasHelper(
       ptr, [value](Eigen::half a) { return max(a, value); });
 }
@@ -841,12 +1132,18 @@ __device__ inline Eigen::half GpuAtomicMax(Eigen::half* ptr,
 #if TENSORFLOW_USE_ROCM || (__CUDA_ARCH__ < 320)
 __device__ inline tensorflow::uint64 GpuAtomicMax(tensorflow::uint64* ptr,
                                                   tensorflow::uint64 value) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_41(mht_41_v, 1135, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuAtomicMax");
+
   return detail::GpuAtomicCasHelper(
       detail::ToCudaSupportedPtr(ptr),
       [value](tensorflow::uint64 a) { return max(a, value); });
 }
 
 __device__ inline int64_t GpuAtomicMax(int64_t* ptr, int64_t value) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_42(mht_42_v, 1144, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuAtomicMax");
+
   return detail::GpuAtomicCasHelper(
       detail::ToCudaSupportedPtr(ptr),
       [value](int64_t a) { return max(a, value); });
@@ -881,6 +1178,9 @@ __device__ inline float GpuAtomicMin(float* ptr, float value) {
 }
 
 __device__ inline double GpuAtomicMin(double* ptr, double value) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_43(mht_43_v, 1181, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuAtomicMin");
+
   return detail::GpuAtomicCasHelper(
       ptr, [value](double a) { return fmin(a, value); });
 }
@@ -893,6 +1193,9 @@ __device__ inline float GpuAtomicMin(float* ptr, float value) {
 }
 
 __device__ inline double GpuAtomicMin(double* ptr, double value) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_44(mht_44_v, 1196, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuAtomicMin");
+
   return detail::GpuAtomicCasHelper(
       ptr, [value](double a) { return min(a, value); });
 }
@@ -901,6 +1204,9 @@ __device__ inline double GpuAtomicMin(double* ptr, double value) {
 
 __device__ inline Eigen::half GpuAtomicMin(Eigen::half* ptr,
                                            Eigen::half value) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_45(mht_45_v, 1207, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuAtomicMin");
+
   return detail::GpuAtomicCasHelper(
       ptr, [value](Eigen::half a) { return min(a, value); });
 }
@@ -908,12 +1214,18 @@ __device__ inline Eigen::half GpuAtomicMin(Eigen::half* ptr,
 #if TENSORFLOW_USE_ROCM || (__CUDA_ARCH__ < 320)
 __device__ inline tensorflow::uint64 GpuAtomicMin(tensorflow::uint64* ptr,
                                                   tensorflow::uint64 value) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_46(mht_46_v, 1217, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuAtomicMin");
+
   return detail::GpuAtomicCasHelper(
       detail::ToCudaSupportedPtr(ptr),
       [value](tensorflow::uint64 a) { return min(a, value); });
 }
 
 __device__ inline int64_t GpuAtomicMin(int64_t* ptr, int64_t value) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSutilPSgpu_device_functionsDTh mht_47(mht_47_v, 1226, "", "./tensorflow/core/util/gpu_device_functions.h", "GpuAtomicMin");
+
   return detail::GpuAtomicCasHelper(
       detail::ToCudaSupportedPtr(ptr),
       [value](int64_t a) { return min(a, value); });

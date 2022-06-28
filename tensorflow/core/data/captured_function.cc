@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,19 +220,32 @@ constexpr char kAllowSmallFunctionOptimizations[] =
 class SimpleStepStatsCollector : public StepStatsCollectorInterface {
  public:
   void IncrementProcessingTime(int64_t delta) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_0(mht_0_v, 223, "", "./tensorflow/core/data/captured_function.cc", "IncrementProcessingTime");
+
     mutex_lock l(mu_);
     processing_time_ += delta;
   }
 
   NodeExecStatsInterface* CreateNodeExecStats(const NodeDef* node) override {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_1(mht_1_v, 231, "", "./tensorflow/core/data/captured_function.cc", "CreateNodeExecStats");
+
     return new SimpleNodeExecStats(this);
   }
 
   string ReportAllocsOnResourceExhausted(const string& err) override {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("err: \"" + err + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_2(mht_2_v, 239, "", "./tensorflow/core/data/captured_function.cc", "ReportAllocsOnResourceExhausted");
+
     return "";
   }
 
   int64_t processing_time() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_3(mht_3_v, 246, "", "./tensorflow/core/data/captured_function.cc", "processing_time");
+
     tf_shared_lock l(mu_);
     return processing_time_;
   }
@@ -73,33 +254,64 @@ class SimpleStepStatsCollector : public StepStatsCollectorInterface {
   class SimpleNodeExecStats : public NodeExecStatsInterface {
    public:
     explicit SimpleNodeExecStats(SimpleStepStatsCollector* step_stats_collector)
-        : step_stats_collector_(step_stats_collector) {}
+        : step_stats_collector_(step_stats_collector) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_4(mht_4_v, 258, "", "./tensorflow/core/data/captured_function.cc", "SimpleNodeExecStats");
+}
 
     void Done(const string& device) override {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("device: \"" + device + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_5(mht_5_v, 264, "", "./tensorflow/core/data/captured_function.cc", "Done");
+
       step_stats_collector_->IncrementProcessingTime(end_time_ns_ -
                                                      start_time_ns_);
       delete this;
     }
 
     void RecordExecutorStarted() override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_6(mht_6_v, 273, "", "./tensorflow/core/data/captured_function.cc", "RecordExecutorStarted");
+
       start_time_ns_ = absl::GetCurrentTimeNanos();
     }
 
-    void RecordComputeStarted() override {}
+    void RecordComputeStarted() override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_7(mht_7_v, 280, "", "./tensorflow/core/data/captured_function.cc", "RecordComputeStarted");
+}
 
-    void RecordComputeEnded() override {}
+    void RecordComputeEnded() override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_8(mht_8_v, 285, "", "./tensorflow/core/data/captured_function.cc", "RecordComputeEnded");
+}
 
     void RecordExecutorEnded() override {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_9(mht_9_v, 290, "", "./tensorflow/core/data/captured_function.cc", "RecordExecutorEnded");
+
       end_time_ns_ = absl::GetCurrentTimeNanos();
     }
 
-    bool TrackAllocations() const override { return false; }
+    bool TrackAllocations() const override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_10(mht_10_v, 297, "", "./tensorflow/core/data/captured_function.cc", "TrackAllocations");
+ return false; }
 
-    void SetMemory(OpKernelContext* ctx) override {}
+    void SetMemory(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_11(mht_11_v, 302, "", "./tensorflow/core/data/captured_function.cc", "SetMemory");
+}
 
-    void SetOutput(int slot, const Tensor* tensor) override {}
+    void SetOutput(int slot, const Tensor* tensor) override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_12(mht_12_v, 307, "", "./tensorflow/core/data/captured_function.cc", "SetOutput");
+}
 
-    void SetScheduled(int64_t nanos) override {}
+    void SetScheduled(int64_t nanos) override {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_13(mht_13_v, 312, "", "./tensorflow/core/data/captured_function.cc", "SetScheduled");
+}
 
    private:
     int64_t start_time_ns_ = 0;
@@ -113,6 +325,9 @@ class SimpleStepStatsCollector : public StepStatsCollectorInterface {
 
 Status GetCapturedInput(const CapturedFunction* const func, int index,
                         const Tensor** out) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_14(mht_14_v, 328, "", "./tensorflow/core/data/captured_function.cc", "GetCapturedInput");
+
   if (TF_PREDICT_FALSE(index >= func->captured_inputs().size())) {
     return errors::OutOfRange(
         "Out of range access to captured inputs for function ",
@@ -127,6 +342,9 @@ Status RunShortCircuit(const ShortCircuitInfo& info,
                        const std::vector<Tensor>& args,
                        const CapturedFunction* const func,
                        std::vector<Tensor>* rets) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_15(mht_15_v, 345, "", "./tensorflow/core/data/captured_function.cc", "RunShortCircuit");
+
   VLOG(3) << "Running function " << func->func().name() << " short circuit";
   const int num_args = args.size();
   rets->reserve(info.indices.size());
@@ -146,6 +364,9 @@ Status RunShortCircuit(const ShortCircuitInfo& info,
 Status RunShortCircuit(const ShortCircuitInfo& info, std::vector<Tensor>&& args,
                        const CapturedFunction* const func,
                        std::vector<Tensor>* rets) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_16(mht_16_v, 367, "", "./tensorflow/core/data/captured_function.cc", "RunShortCircuit");
+
   VLOG(3) << "Running function " << func->func().name() << " short circuit";
   const int num_args = args.size();
   rets->reserve(info.indices.size());
@@ -169,6 +390,9 @@ Status RunShortCircuit(const ShortCircuitInfo& info, std::vector<Tensor>&& args,
 Status CreateShortCircuitInfo(OpKernelConstruction* ctx,
                               const NameAttrList& func,
                               ShortCircuitInfo* info) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_17(mht_17_v, 393, "", "./tensorflow/core/data/captured_function.cc", "CreateShortCircuitInfo");
+
   auto& indices = info->indices;
 
   FunctionLibraryRuntime::Handle fn_handle;
@@ -228,6 +452,10 @@ Status CreateShortCircuitInfo(OpKernelConstruction* ctx,
 Status CreateFunctionLibraryDefinition(
     const FunctionLibraryDefinition* lib_def, const string& func_name,
     std::unique_ptr<FunctionLibraryDefinition>* result) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("func_name: \"" + func_name + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_18(mht_18_v, 456, "", "./tensorflow/core/data/captured_function.cc", "CreateFunctionLibraryDefinition");
+
   DCHECK(lib_def != nullptr);
   const FunctionDef* fdef = lib_def->Find(func_name);
   if (TF_PREDICT_FALSE(fdef == nullptr)) {
@@ -241,6 +469,10 @@ Status CreateFunctionLibraryDefinition(
 
 Status LookupFunction(const FunctionLibraryDefinition& lib_def,
                       const string& name, const FunctionDef** fdef) {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_19(mht_19_v, 473, "", "./tensorflow/core/data/captured_function.cc", "LookupFunction");
+
   *fdef = lib_def.Find(name);
   if (*fdef == nullptr) {
     return errors::InvalidArgument(
@@ -253,10 +485,16 @@ Status LookupFunction(const FunctionLibraryDefinition& lib_def,
 class CallFrameBase : public CallFrameInterface {
  public:
   explicit CallFrameBase(DataTypeSlice ret_types)
-      : ret_types_(ret_types), retvals_(ret_types.size()) {}
+      : ret_types_(ret_types), retvals_(ret_types.size()) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_20(mht_20_v, 489, "", "./tensorflow/core/data/captured_function.cc", "CallFrameBase");
+}
 
   // Caller methods.
   Status ConsumeRetvals(std::vector<Tensor>* retvals) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_21(mht_21_v, 495, "", "./tensorflow/core/data/captured_function.cc", "ConsumeRetvals");
+
     retvals->reserve(retvals_.size());
     int i = 0;
     for (auto&& val : retvals_) {
@@ -269,10 +507,16 @@ class CallFrameBase : public CallFrameInterface {
     return Status::OK();
   }
 
-  size_t num_retvals() const override { return retvals_.size(); }
+  size_t num_retvals() const override {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_22(mht_22_v, 511, "", "./tensorflow/core/data/captured_function.cc", "num_retvals");
+ return retvals_.size(); }
 
   // Callee methods.
   Status SetRetval(int index, const Tensor& val) override {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_23(mht_23_v, 517, "", "./tensorflow/core/data/captured_function.cc", "SetRetval");
+
     const int retvals_size = retvals_.size();
     if (index < retvals_size && val.dtype() == ret_types_[index] &&
         !retvals_[index]) {
@@ -305,14 +549,23 @@ class OwnedArgsCallFrame : public CallFrameBase {
                      DataTypeSlice ret_types)
       : CallFrameBase(ret_types),
         args_(std::move(args)),
-        captured_inputs_(captured_inputs) {}
+        captured_inputs_(captured_inputs) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_24(mht_24_v, 553, "", "./tensorflow/core/data/captured_function.cc", "OwnedArgsCallFrame");
+}
 
   size_t num_args() const override {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_25(mht_25_v, 558, "", "./tensorflow/core/data/captured_function.cc", "num_args");
+
     return args_.size() + captured_inputs_->size();
   }
 
   // Callee methods.
   Status GetArg(int index, const Tensor** val) override {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_26(mht_26_v, 566, "", "./tensorflow/core/data/captured_function.cc", "GetArg");
+
     const int args_size = args_.size();
     const int captured_inputs_size = captured_inputs_->size();
     if (index < args_size) {
@@ -329,11 +582,17 @@ class OwnedArgsCallFrame : public CallFrameBase {
   // Since we own the argument tensors in `args_`, we can implement
   // `ConsumeArg()` for those arguments.
   void ConsumeArg(int index, Tensor* val) override {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_27(mht_27_v, 585, "", "./tensorflow/core/data/captured_function.cc", "ConsumeArg");
+
     DCHECK_GE(index, 0);
     DCHECK_LT(index, args_.size());
     *val = std::move(args_[index]);
   }
   bool CanConsumeArg(int index) const override {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_28(mht_28_v, 593, "", "./tensorflow/core/data/captured_function.cc", "CanConsumeArg");
+
     return index >= 0 && index < static_cast<int>(args_.size());
   }
 
@@ -349,14 +608,23 @@ class BorrowedArgsCallFrame : public CallFrameBase {
                         DataTypeSlice ret_types)
       : CallFrameBase(ret_types),
         args_(args),
-        captured_inputs_(captured_inputs) {}
+        captured_inputs_(captured_inputs) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_29(mht_29_v, 612, "", "./tensorflow/core/data/captured_function.cc", "BorrowedArgsCallFrame");
+}
 
   size_t num_args() const override {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_30(mht_30_v, 617, "", "./tensorflow/core/data/captured_function.cc", "num_args");
+
     return args_.size() + captured_inputs_->size();
   }
 
   // Callee methods.
   Status GetArg(int index, const Tensor** val) override {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_31(mht_31_v, 625, "", "./tensorflow/core/data/captured_function.cc", "GetArg");
+
     const int args_size = args_.size();
     const int captured_inputs_size = captured_inputs_->size();
     if (index < args_size) {
@@ -382,6 +650,9 @@ Status MakeIteratorFromInputElement(
     const std::vector<Tensor>& input_element, int64_t thread_index,
     const InstantiatedCapturedFunction& inst_captured_func, StringPiece prefix,
     std::unique_ptr<IteratorBase>* out_iterator) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_32(mht_32_v, 653, "", "./tensorflow/core/data/captured_function.cc", "MakeIteratorFromInputElement");
+
   return MakeIteratorFromInputElement(ctx, parent, input_element, thread_index,
                                       inst_captured_func, prefix, out_iterator,
                                       /*node=*/nullptr);
@@ -393,6 +664,9 @@ Status MakeIteratorFromInputElement(
     const InstantiatedCapturedFunction& inst_captured_func, StringPiece prefix,
     std::unique_ptr<IteratorBase>* out_iterator,
     const std::shared_ptr<model::Node>& node) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_33(mht_33_v, 667, "", "./tensorflow/core/data/captured_function.cc", "MakeIteratorFromInputElement");
+
   std::vector<Tensor> return_values;
 
   TF_RETURN_IF_ERROR(inst_captured_func.RunWithBorrowedArgs(
@@ -417,6 +691,9 @@ Status MakeIteratorFromInputElement(
 }
 
 IteratorContext MakeNestedIteratorContext(IteratorContext* ctx) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_34(mht_34_v, 694, "", "./tensorflow/core/data/captured_function.cc", "MakeNestedIteratorContext");
+
   // Strip out any split providers so that they don't apply to sub-iterators.
   if (ctx->split_providers().empty()) {
     return *ctx;
@@ -430,6 +707,10 @@ IteratorContext MakeNestedIteratorContext(IteratorContext* ctx) {
 Status FunctionMetadata::Create(
     OpKernelConstruction* ctx, const string& func_name, Params params,
     std::shared_ptr<FunctionMetadata>* out_metadata) {
+   std::vector<std::string> mht_35_v;
+   mht_35_v.push_back("func_name: \"" + func_name + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_35(mht_35_v, 711, "", "./tensorflow/core/data/captured_function.cc", "FunctionMetadata::Create");
+
   NameAttrList func;
   TF_RETURN_IF_ERROR(ctx->GetAttr(func_name, &func));
   return Create(ctx, std::move(func), params, out_metadata);
@@ -438,6 +719,9 @@ Status FunctionMetadata::Create(
 Status FunctionMetadata::Create(
     OpKernelConstruction* ctx, NameAttrList&& func, Params params,
     std::shared_ptr<FunctionMetadata>* out_metadata) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_36(mht_36_v, 722, "", "./tensorflow/core/data/captured_function.cc", "FunctionMetadata::Create");
+
   out_metadata->reset(new FunctionMetadata(std::move(func), params));
   TF_RETURN_IF_ERROR(CreateFunctionLibraryDefinition(
       ctx->function_library()->GetFunctionLibraryDefinition(),
@@ -456,6 +740,9 @@ Status FunctionMetadata::Create(
     return Status::OK();
   }
   auto validate_arg = [](const OpDef::ArgDef& arg) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_37(mht_37_v, 743, "", "./tensorflow/core/data/captured_function.cc", "lambda");
+
     if (!arg.number_attr().empty() || !arg.type_list_attr().empty()) {
       VLOG(1) << "Disabling multi-device execution for a function with "
               << "a vector argument " << arg.name() << ".";
@@ -483,6 +770,10 @@ Status CapturedFunction::Create(
     OpKernelContext* ctx, std::shared_ptr<const FunctionMetadata> metadata,
     const string& argument_name,
     std::unique_ptr<CapturedFunction>* out_function) {
+   std::vector<std::string> mht_38_v;
+   mht_38_v.push_back("argument_name: \"" + argument_name + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_38(mht_38_v, 774, "", "./tensorflow/core/data/captured_function.cc", "CapturedFunction::Create");
+
   OpInputList inputs;
   TF_RETURN_IF_ERROR(ctx->input_list(argument_name, &inputs));
   std::vector<Tensor> captured_inputs(inputs.begin(), inputs.end());
@@ -495,6 +786,9 @@ Status CapturedFunction::Create(
     OpKernelContext* ctx, std::shared_ptr<const FunctionMetadata> metadata,
     std::vector<Tensor>&& captured_inputs,
     std::unique_ptr<CapturedFunction>* out_function) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_39(mht_39_v, 789, "", "./tensorflow/core/data/captured_function.cc", "CapturedFunction::Create");
+
   *out_function = absl::WrapUnique(
       new CapturedFunction(std::move(metadata), std::move(captured_inputs)));
   return Status::OK();
@@ -504,6 +798,9 @@ Status CapturedFunction::AddToGraph(
     SerializationContext* ctx, DatasetBase::DatasetGraphDefBuilder* b,
     std::vector<Node*>* other_arguments,
     DataTypeVector* other_arguments_types) const {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_40(mht_40_v, 801, "", "./tensorflow/core/data/captured_function.cc", "CapturedFunction::AddToGraph");
+
   other_arguments->reserve(captured_inputs_.size());
   other_arguments_types->reserve(captured_inputs_.size());
   for (const Tensor& t : captured_inputs_) {
@@ -526,6 +823,9 @@ Status CapturedFunction::AddToGraph(
 Status CapturedFunction::Instantiate(
     IteratorContext* ctx, std::unique_ptr<InstantiatedCapturedFunction>*
                               instantiated_captured_function) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_41(mht_41_v, 826, "", "./tensorflow/core/data/captured_function.cc", "CapturedFunction::Instantiate");
+
   return CapturedFunction::Instantiate(InstantiateCapturedFunctionParams(ctx),
                                        instantiated_captured_function);
 }
@@ -536,6 +836,9 @@ Status CapturedFunction::Instantiate(
     InstantiateCapturedFunctionParams params,
     std::unique_ptr<InstantiatedCapturedFunction>*
         instantiated_captured_function) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_42(mht_42_v, 839, "", "./tensorflow/core/data/captured_function.cc", "CapturedFunction::Instantiate");
+
   // The context's runtime will be used for all subsequent calls.
   FunctionLibraryRuntime* lib = params.flr;
   FunctionLibraryRuntime::InstantiateOptions inst_opts;
@@ -680,6 +983,9 @@ Status CapturedFunction::Instantiate(
 }
 
 Status CapturedFunction::CheckExternalState() const {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_43(mht_43_v, 986, "", "./tensorflow/core/data/captured_function.cc", "CapturedFunction::CheckExternalState");
+
   for (const auto& name : lib_def()->ListFunctionNames()) {
     TF_RETURN_IF_ERROR(
         IsFunctionStateful(*lib_def(), *(lib_def()->Find(name))));
@@ -691,10 +997,16 @@ CapturedFunction::CapturedFunction(
     std::shared_ptr<const FunctionMetadata> metadata,
     std::vector<Tensor> captured_inputs)
     : metadata_(std::move(metadata)),
-      captured_inputs_(std::move(captured_inputs)) {}
+      captured_inputs_(std::move(captured_inputs)) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_44(mht_44_v, 1001, "", "./tensorflow/core/data/captured_function.cc", "CapturedFunction::CapturedFunction");
+}
 
 Status CapturedFunction::IsMultiDevice(FunctionLibraryRuntime* flr,
                                        bool* is_multi_device) const {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_45(mht_45_v, 1007, "", "./tensorflow/core/data/captured_function.cc", "CapturedFunction::IsMultiDevice");
+
   if (!metadata_->use_multi_device_function()) {
     *is_multi_device = false;
     return Status::OK();
@@ -774,17 +1086,26 @@ InstantiatedCapturedFunction::InstantiatedCapturedFunction(
       ret_types_(std::move(ret_types)),
       captured_runner_(std::move(runner)),
       captured_func_(captured_func),
-      is_multi_device_(is_multi_device) {}
+      is_multi_device_(is_multi_device) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_46(mht_46_v, 1090, "", "./tensorflow/core/data/captured_function.cc", "InstantiatedCapturedFunction::InstantiatedCapturedFunction");
+}
 
 Status InstantiatedCapturedFunction::Run(IteratorContext* ctx,
                                          std::vector<Tensor>&& args,
                                          std::vector<Tensor>* rets) const {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_47(mht_47_v, 1097, "", "./tensorflow/core/data/captured_function.cc", "InstantiatedCapturedFunction::Run");
+
   return Run(ctx, std::move(args), rets, /*node=*/nullptr);
 }
 
 Status InstantiatedCapturedFunction::Run(
     IteratorContext* ctx, std::vector<Tensor>&& args, std::vector<Tensor>* rets,
     const std::shared_ptr<model::Node>& node) const {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_48(mht_48_v, 1106, "", "./tensorflow/core/data/captured_function.cc", "InstantiatedCapturedFunction::Run");
+
   auto& info = captured_func_->short_circuit_info();
   if (!info.indices.empty()) {
     return RunShortCircuit(info, std::move(args), captured_func_, rets);
@@ -842,12 +1163,18 @@ Status InstantiatedCapturedFunction::Run(
 Status InstantiatedCapturedFunction::RunWithBorrowedArgs(
     IteratorContext* ctx, const std::vector<Tensor>& args,
     std::vector<Tensor>* ret) const {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_49(mht_49_v, 1166, "", "./tensorflow/core/data/captured_function.cc", "InstantiatedCapturedFunction::RunWithBorrowedArgs");
+
   return RunWithBorrowedArgs(ctx, args, ret, /*node=*/nullptr);
 }
 
 Status InstantiatedCapturedFunction::RunWithBorrowedArgs(
     IteratorContext* ctx, const std::vector<Tensor>& args,
     std::vector<Tensor>* rets, const std::shared_ptr<model::Node>& node) const {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_50(mht_50_v, 1175, "", "./tensorflow/core/data/captured_function.cc", "InstantiatedCapturedFunction::RunWithBorrowedArgs");
+
   auto& info = captured_func_->short_circuit_info();
   if (!info.indices.empty()) {
     return RunShortCircuit(info, args, captured_func_, rets);
@@ -903,6 +1230,9 @@ Status InstantiatedCapturedFunction::RunWithBorrowedArgs(
 
 Status InstantiatedCapturedFunction::RunInstantiated(
     const std::vector<Tensor>& args, std::vector<Tensor>* rets) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_51(mht_51_v, 1233, "", "./tensorflow/core/data/captured_function.cc", "InstantiatedCapturedFunction::RunInstantiated");
+
   auto& info = captured_func_->short_circuit_info();
   if (!info.indices.empty()) {
     return RunShortCircuit(info, args, captured_func_, rets);
@@ -936,6 +1266,9 @@ void InstantiatedCapturedFunction::RunAsync(
     IteratorContext* ctx, std::vector<Tensor>&& args, std::vector<Tensor>* rets,
     FunctionLibraryRuntime::DoneCallback done,
     const std::shared_ptr<model::Node>& node) const {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_52(mht_52_v, 1269, "", "./tensorflow/core/data/captured_function.cc", "InstantiatedCapturedFunction::RunAsync");
+
   auto& info = captured_func_->short_circuit_info();
   if (!info.indices.empty()) {
     // Run the `done` callback on a threadpool thread, because it will
@@ -1032,6 +1365,9 @@ void InstantiatedCapturedFunction::RunAsync(
 }
 
 bool InstantiatedCapturedFunction::ShouldCreateRendezvous() const {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSdataPScaptured_functionDTcc mht_53(mht_53_v, 1368, "", "./tensorflow/core/data/captured_function.cc", "InstantiatedCapturedFunction::ShouldCreateRendezvous");
+
   // Rendezvous should only be created by the FLR for non-CPU single-device
   // functions. For multi-device functions the appropriate rendezvous will be
   // created by the process FLR.

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -45,6 +213,9 @@ class BidirectionalLSTMOpModel : public SingleOpModel {
         n_bw_output_(n_output),
         sequence_length_(sequence_length),
         quantize_weights_(quantize_weights) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_0(mht_0_v, 216, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "BidirectionalLSTMOpModel");
+
     input_ = AddInput(TensorType_FLOAT32);
     const auto weight_type =
         quantize_weights_ ? TensorType_UINT8 : TensorType_FLOAT32;
@@ -210,6 +381,9 @@ class BidirectionalLSTMOpModel : public SingleOpModel {
   }
 
   void PopulateWeightTensor(int tensor_id, const std::vector<float>& f) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_1(mht_1_v, 384, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "PopulateWeightTensor");
+
     if (quantize_weights_) {
       SymmetricQuantizeAndPopulate(tensor_id, f);
     } else {
@@ -219,114 +393,183 @@ class BidirectionalLSTMOpModel : public SingleOpModel {
 
   // Set weights in forward and backward cells to be the same.
   void SetInputToInputWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_2(mht_2_v, 396, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "SetInputToInputWeights");
+
     PopulateWeightTensor(fw_input_to_input_weights_, f);
     PopulateWeightTensor(bw_input_to_input_weights_, f);
   }
 
   void SetInputToForgetWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_3(mht_3_v, 404, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "SetInputToForgetWeights");
+
     PopulateWeightTensor(fw_input_to_forget_weights_, f);
     PopulateWeightTensor(bw_input_to_forget_weights_, f);
   }
 
   void SetInputToCellWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_4(mht_4_v, 412, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "SetInputToCellWeights");
+
     PopulateWeightTensor(fw_input_to_cell_weights_, f);
     PopulateWeightTensor(bw_input_to_cell_weights_, f);
   }
 
   void SetInputToOutputWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_5(mht_5_v, 420, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "SetInputToOutputWeights");
+
     PopulateWeightTensor(fw_input_to_output_weights_, f);
     PopulateWeightTensor(bw_input_to_output_weights_, f);
   }
 
   void SetRecurrentToInputWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_6(mht_6_v, 428, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "SetRecurrentToInputWeights");
+
     PopulateWeightTensor(fw_recurrent_to_input_weights_, f);
     PopulateWeightTensor(bw_recurrent_to_input_weights_, f);
   }
 
   void SetRecurrentToForgetWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_7(mht_7_v, 436, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "SetRecurrentToForgetWeights");
+
     PopulateWeightTensor(fw_recurrent_to_forget_weights_, f);
     PopulateWeightTensor(bw_recurrent_to_forget_weights_, f);
   }
 
   void SetRecurrentToCellWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_8(mht_8_v, 444, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "SetRecurrentToCellWeights");
+
     PopulateWeightTensor(fw_recurrent_to_cell_weights_, f);
     PopulateWeightTensor(bw_recurrent_to_cell_weights_, f);
   }
 
   void SetRecurrentToOutputWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_9(mht_9_v, 452, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "SetRecurrentToOutputWeights");
+
     PopulateWeightTensor(fw_recurrent_to_output_weights_, f);
     PopulateWeightTensor(bw_recurrent_to_output_weights_, f);
   }
 
   void SetCellToInputWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_10(mht_10_v, 460, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "SetCellToInputWeights");
+
     PopulateWeightTensor(fw_cell_to_input_weights_, f);
     PopulateWeightTensor(bw_cell_to_input_weights_, f);
   }
 
   void SetCellToForgetWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_11(mht_11_v, 468, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "SetCellToForgetWeights");
+
     PopulateWeightTensor(fw_cell_to_forget_weights_, f);
     PopulateWeightTensor(bw_cell_to_forget_weights_, f);
   }
 
   void SetCellToOutputWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_12(mht_12_v, 476, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "SetCellToOutputWeights");
+
     PopulateWeightTensor(fw_cell_to_output_weights_, f);
     PopulateWeightTensor(bw_cell_to_output_weights_, f);
   }
 
   void SetInputGateBias(const std::vector<float>& f) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_13(mht_13_v, 484, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "SetInputGateBias");
+
     PopulateTensor(fw_input_gate_bias_, f);
     PopulateTensor(bw_input_gate_bias_, f);
   }
 
   void SetForgetGateBias(const std::vector<float>& f) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_14(mht_14_v, 492, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "SetForgetGateBias");
+
     PopulateTensor(fw_forget_gate_bias_, f);
     PopulateTensor(bw_forget_gate_bias_, f);
   }
 
   void SetCellBias(const std::vector<float>& f) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_15(mht_15_v, 500, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "SetCellBias");
+
     PopulateTensor(fw_cell_gate_bias_, f);
     PopulateTensor(bw_cell_gate_bias_, f);
   }
 
   void SetOutputGateBias(const std::vector<float>& f) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_16(mht_16_v, 508, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "SetOutputGateBias");
+
     PopulateTensor(fw_output_gate_bias_, f);
     PopulateTensor(bw_output_gate_bias_, f);
   }
 
   void SetProjectionWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_17(mht_17_v, 516, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "SetProjectionWeights");
+
     PopulateWeightTensor(fw_projection_weights_, f);
     PopulateWeightTensor(bw_projection_weights_, f);
   }
 
   void SetProjectionBias(const std::vector<float>& f) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_18(mht_18_v, 524, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "SetProjectionBias");
+
     PopulateTensor(fw_projection_bias_, f);
     PopulateTensor(bw_projection_bias_, f);
   }
 
   void SetInput(int offset, float* begin, float* end) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_19(mht_19_v, 532, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "SetInput");
+
     PopulateTensor(input_, offset, begin, end);
   }
 
   void SetAuxInput(int offset, float* begin, float* end) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_20(mht_20_v, 539, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "SetAuxInput");
+
     PopulateTensor(aux_input_, offset, begin, end);
   }
 
   void SetAuxInputToInputWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_21(mht_21_v, 546, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "SetAuxInputToInputWeights");
+
     PopulateWeightTensor(fw_aux_input_to_input_weights_, f);
     PopulateWeightTensor(bw_aux_input_to_input_weights_, f);
   }
 
   void SetAuxInputToForgetWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_22(mht_22_v, 554, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "SetAuxInputToForgetWeights");
+
     PopulateWeightTensor(fw_aux_input_to_forget_weights_, f);
     PopulateWeightTensor(bw_aux_input_to_forget_weights_, f);
   }
 
   void SetAuxInputToCellWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_23(mht_23_v, 562, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "SetAuxInputToCellWeights");
+
     PopulateWeightTensor(fw_aux_input_to_cell_weights_, f);
     PopulateWeightTensor(bw_aux_input_to_cell_weights_, f);
   }
 
   void SetAuxInputToOutputWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_24(mht_24_v, 570, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "SetAuxInputToOutputWeights");
+
     PopulateWeightTensor(fw_aux_input_to_output_weights_, f);
     PopulateWeightTensor(bw_aux_input_to_output_weights_, f);
   }
@@ -334,13 +577,34 @@ class BidirectionalLSTMOpModel : public SingleOpModel {
   std::vector<float> GetFwOutput() { return ExtractVector<float>(fw_output_); }
   std::vector<float> GetBwOutput() { return ExtractVector<float>(bw_output_); }
 
-  int num_inputs() { return n_input_; }
-  int num_fw_outputs() { return n_fw_output_; }
-  int num_bw_outputs() { return n_bw_output_; }
-  int num_fw_cells() { return n_fw_cell_; }
-  int num_bw_cells() { return n_bw_cell_; }
-  int num_batches() { return n_batch_; }
-  int sequence_length() { return sequence_length_; }
+  int num_inputs() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_25(mht_25_v, 581, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "num_inputs");
+ return n_input_; }
+  int num_fw_outputs() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_26(mht_26_v, 585, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "num_fw_outputs");
+ return n_fw_output_; }
+  int num_bw_outputs() {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_27(mht_27_v, 589, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "num_bw_outputs");
+ return n_bw_output_; }
+  int num_fw_cells() {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_28(mht_28_v, 593, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "num_fw_cells");
+ return n_fw_cell_; }
+  int num_bw_cells() {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_29(mht_29_v, 597, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "num_bw_cells");
+ return n_bw_cell_; }
+  int num_batches() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_30(mht_30_v, 601, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "num_batches");
+ return n_batch_; }
+  int sequence_length() {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSbidirectional_sequence_lstm_testDTcc mht_31(mht_31_v, 605, "", "./tensorflow/lite/kernels/bidirectional_sequence_lstm_test.cc", "sequence_length");
+ return sequence_length_; }
 
  private:
   int input_;

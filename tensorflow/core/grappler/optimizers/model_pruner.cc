@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmodel_prunerDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmodel_prunerDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmodel_prunerDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,6 +204,9 @@ namespace grappler {
 namespace {
 
 bool IsTrivialIdentity(const NodeDef& node, const GraphView& graph_view) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmodel_prunerDTcc mht_0(mht_0_v, 207, "", "./tensorflow/core/grappler/optimizers/model_pruner.cc", "IsTrivialIdentity");
+
   for (const auto input :
        graph_view.GetFanins(node, /*include_controlling_nodes=*/true)) {
     if (input.port_id == Graph::kControlSlot) {
@@ -58,6 +229,9 @@ bool IsTrivialIdentity(const NodeDef& node, const GraphView& graph_view) {
 }
 
 bool IsTrivialOp(const NodeDef& node, const GraphView& graph_view) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmodel_prunerDTcc mht_1(mht_1_v, 232, "", "./tensorflow/core/grappler/optimizers/model_pruner.cc", "IsTrivialOp");
+
   // Remove the stop gradient nodes since they serve no purpose once the graph
   // is built. Also remove Identity ops.
   if (IsStopGradient(node)) {
@@ -80,6 +254,9 @@ bool IsTrivialOp(const NodeDef& node, const GraphView& graph_view) {
 
 bool RemovalIncreasesEdgeCount(const NodeDef& node,
                                const GraphView& graph_view) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmodel_prunerDTcc mht_2(mht_2_v, 257, "", "./tensorflow/core/grappler/optimizers/model_pruner.cc", "RemovalIncreasesEdgeCount");
+
   int in_degree =
       graph_view.NumFanins(node, /*include_controlling_nodes=*/true);
   int out_degree =
@@ -89,6 +266,9 @@ bool RemovalIncreasesEdgeCount(const NodeDef& node,
 
 bool IsOutputPortRefValue(const NodeDef& node, int port_id,
                           const OpRegistryInterface& op_registry) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmodel_prunerDTcc mht_3(mht_3_v, 269, "", "./tensorflow/core/grappler/optimizers/model_pruner.cc", "IsOutputPortRefValue");
+
   const OpRegistrationData* op_reg_data = nullptr;
   Status s = op_registry.LookUp(node.op(), &op_reg_data);
   if (s.ok()) {
@@ -104,6 +284,9 @@ bool IsOutputPortRefValue(const NodeDef& node, int port_id,
 bool CanRemoveNode(const NodeDef& node, const GraphView& graph_view,
                    const absl::flat_hash_set<string>& function_names,
                    const OpRegistryInterface& op_registry) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmodel_prunerDTcc mht_4(mht_4_v, 287, "", "./tensorflow/core/grappler/optimizers/model_pruner.cc", "CanRemoveNode");
+
   if (IsNoOp(node) &&
       (node.input().empty() ||
        graph_view.NumFanouts(node, /*include_controlled_nodes=*/true) == 0)) {
@@ -147,6 +330,9 @@ void ForwardInputsInternal(
     bool add_as_control, NodeDef* new_node,
     const absl::flat_hash_map<string, const NodeDef*>& optimized_nodes,
     const GraphView& graph_view) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmodel_prunerDTcc mht_5(mht_5_v, 333, "", "./tensorflow/core/grappler/optimizers/model_pruner.cc", "ForwardInputsInternal");
+
   // To speed things up, use the optimized version of the node if
   // available.
   auto itr = optimized_nodes.find(node.name());
@@ -181,6 +367,9 @@ void ForwardInputs(const NodeDef& original_node,
                    NodeDef* new_node,
                    absl::flat_hash_map<string, const NodeDef*>* optimized_nodes,
                    const GraphView& graph_view) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmodel_prunerDTcc mht_6(mht_6_v, 370, "", "./tensorflow/core/grappler/optimizers/model_pruner.cc", "ForwardInputs");
+
   // Forwards inputs of nodes to be deleted to their respective outputs.
   ForwardInputsInternal(original_node, nodes_to_delete,
                         /*add_as_control=*/false, new_node, *optimized_nodes,
@@ -274,6 +463,9 @@ absl::flat_hash_map<string, absl::flat_hash_set<int>> IdentityNTerminalPorts(
 
 string NewIdentityFromIdentityN(int pos, const NodeDef& identity_n,
                                 GraphDef* graph, NodeMap* node_map) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmodel_prunerDTcc mht_7(mht_7_v, 466, "", "./tensorflow/core/grappler/optimizers/model_pruner.cc", "NewIdentityFromIdentityN");
+
   // TODO(lyandy): Migrate over to GrapplerOptimizerStage and use
   // OptimizedNodeName for new node name.
   string new_node_name =
@@ -299,6 +491,9 @@ Status RewriteIdentityNAndInputsOutputs(
     NodeDef* node, int num_non_control_inputs,
     const absl::flat_hash_set<int>& terminal_ports, GraphDef* graph,
     NodeMap* node_map) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmodel_prunerDTcc mht_8(mht_8_v, 494, "", "./tensorflow/core/grappler/optimizers/model_pruner.cc", "RewriteIdentityNAndInputsOutputs");
+
   // Rewrite IdentityN node and associated inputs and outputs. For inputs and
   // outputs that don't lead to a terminal node, a new Identity node is created
   // and those inputs and outputs are rewritten to use the new Identity node as
@@ -387,6 +582,9 @@ Status RewriteIdentityNAndInputsOutputs(
 Status SplitIdentityNInputs(GraphDef* graph,
                             const std::vector<string>& terminal_nodes,
                             bool* updated_graph) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmodel_prunerDTcc mht_9(mht_9_v, 585, "", "./tensorflow/core/grappler/optimizers/model_pruner.cc", "SplitIdentityNInputs");
+
   // For inputs of IdentityN nodes that do not lead to a terminal node, remove
   // them from IdentityN and create new individual Identity nodes. This will
   // allow ModelPruner to possibly remove nodes in the transitive fanin of the
@@ -420,6 +618,9 @@ Status SplitIdentityNInputs(GraphDef* graph,
 
 Status ModelPruner::Optimize(Cluster* cluster, const GrapplerItem& item,
                              GraphDef* optimized_graph) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSmodel_prunerDTcc mht_10(mht_10_v, 621, "", "./tensorflow/core/grappler/optimizers/model_pruner.cc", "ModelPruner::Optimize");
+
   const std::unordered_set<string> nodes_to_preserve = item.NodesToPreserve();
 
   // Prune all the nodes that won't be executed, ie all the nodes that aren't in

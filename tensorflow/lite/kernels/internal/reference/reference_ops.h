@@ -14,6 +14,174 @@ limitations under the License.
 ==============================================================================*/
 #ifndef TENSORFLOW_LITE_KERNELS_INTERNAL_REFERENCE_REFERENCE_OPS_H_
 #define TENSORFLOW_LITE_KERNELS_INTERNAL_REFERENCE_REFERENCE_OPS_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <stdint.h>
 #include <sys/types.h>
@@ -93,6 +261,9 @@ namespace reference_ops {
 template <typename T>
 inline void Relu(const RuntimeShape& input_shape, const T* input_data,
                  const RuntimeShape& output_shape, T* output_data) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh mht_0(mht_0_v, 264, "", "./tensorflow/lite/kernels/internal/reference/reference_ops.h", "Relu");
+
   const int flat_size = MatchingFlatSize(input_shape, output_shape);
   for (int i = 0; i < flat_size; ++i) {
     const T val = input_data[i];
@@ -105,6 +276,9 @@ inline void Relu(const RuntimeShape& input_shape, const T* input_data,
 template <typename T>
 inline void Relu1(const RuntimeShape& input_shape, const T* input_data,
                   const RuntimeShape& output_shape, T* output_data) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh mht_1(mht_1_v, 279, "", "./tensorflow/lite/kernels/internal/reference/reference_ops.h", "Relu1");
+
   ruy::profiler::ScopeLabel label("Relu1 (not fused)");
   const int flat_size = MatchingFlatSize(input_shape, output_shape);
   for (int i = 0; i < flat_size; ++i) {
@@ -118,6 +292,9 @@ inline void Relu1(const RuntimeShape& input_shape, const T* input_data,
 
 inline void Relu6(const RuntimeShape& input_shape, const float* input_data,
                   const RuntimeShape& output_shape, float* output_data) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh mht_2(mht_2_v, 295, "", "./tensorflow/lite/kernels/internal/reference/reference_ops.h", "Relu6");
+
   ruy::profiler::ScopeLabel label("Relu6 (not fused)");
   const int flat_size = MatchingFlatSize(input_shape, output_shape);
   for (int i = 0; i < flat_size; ++i) {
@@ -133,6 +310,9 @@ template <typename T>
 inline void ReluX(const tflite::ReluParams& params,
                   const RuntimeShape& input_shape, const T* input_data,
                   const RuntimeShape& output_shape, T* output_data) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh mht_3(mht_3_v, 313, "", "./tensorflow/lite/kernels/internal/reference/reference_ops.h", "ReluX");
+
   ruy::profiler::ScopeLabel label("Quantized ReluX (not fused)");
   const int flat_size = MatchingFlatSize(input_shape, output_shape);
   for (int i = 0; i < flat_size; ++i) {
@@ -151,6 +331,9 @@ template <typename T>
 inline void ReluX(const tflite::ActivationParams& params,
                   const RuntimeShape& input_shape, const T* input_data,
                   const RuntimeShape& output_shape, T* output_data) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh mht_4(mht_4_v, 334, "", "./tensorflow/lite/kernels/internal/reference/reference_ops.h", "ReluX");
+
   ruy::profiler::ScopeLabel label("Quantized ReluX (not fused)");
   const int flat_size = MatchingFlatSize(input_shape, output_shape);
   const T max_value = params.quantized_activation_max;
@@ -175,6 +358,9 @@ inline void BroadcastMulFivefold(const ArithmeticParams& unswitched_params,
                                  const uint8* unswitched_input2_data,
                                  const RuntimeShape& output_shape,
                                  uint8* output_data) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh mht_5(mht_5_v, 361, "", "./tensorflow/lite/kernels/internal/reference/reference_ops.h", "BroadcastMulFivefold");
+
   ArithmeticParams switched_params = unswitched_params;
   switched_params.input1_offset = unswitched_params.input2_offset;
   switched_params.input2_offset = unswitched_params.input1_offset;
@@ -224,6 +410,9 @@ inline void Mul(const ArithmeticParams& params,
                 const RuntimeShape& input1_shape, const int16* input1_data,
                 const RuntimeShape& input2_shape, const int16* input2_data,
                 const RuntimeShape& output_shape, int16* output_data) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh mht_6(mht_6_v, 413, "", "./tensorflow/lite/kernels/internal/reference/reference_ops.h", "Mul");
+
   ruy::profiler::ScopeLabel label("Mul/Int16");
 
   const int flat_size =
@@ -243,6 +432,9 @@ inline void Mul(const ArithmeticParams& params,
                 const RuntimeShape& input1_shape, const int16* input1_data,
                 const RuntimeShape& input2_shape, const int16* input2_data,
                 const RuntimeShape& output_shape, uint8* output_data) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh mht_7(mht_7_v, 435, "", "./tensorflow/lite/kernels/internal/reference/reference_ops.h", "Mul");
+
   ruy::profiler::ScopeLabel label("Mul/Int16Uint8");
   int32 output_offset = params.output_offset;
   int32 output_activation_min = params.quantized_activation_min;
@@ -272,6 +464,9 @@ inline void Sub16(const ArithmeticParams& params,
                   const RuntimeShape& input1_shape, const int16_t* input1_data,
                   const RuntimeShape& input2_shape, const int16_t* input2_data,
                   const RuntimeShape& output_shape, int16_t* output_data) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh mht_8(mht_8_v, 467, "", "./tensorflow/lite/kernels/internal/reference/reference_ops.h", "Sub16");
+
   ruy::profiler::ScopeLabel label("Sub/Int16");
   const int input1_shift = params.input1_shift;
   const int flat_size =
@@ -320,6 +515,9 @@ template <typename Scalar>
 void Pack(const PackParams& params, const RuntimeShape* const* input_shapes,
           const Scalar* const* input_data, const RuntimeShape& output_shape,
           Scalar* output_data) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh mht_9(mht_9_v, 518, "", "./tensorflow/lite/kernels/internal/reference/reference_ops.h", "Pack");
+
   ruy::profiler::ScopeLabel label("Pack");
   const int dimensions = output_shape.DimensionsCount();
   int axis = params.axis;
@@ -348,6 +546,9 @@ template <typename Scalar>
 void Unpack(const UnpackParams& params, const RuntimeShape& input_shape,
             const Scalar* input_data, const RuntimeShape& output_shape,
             Scalar* const* output_datas) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh mht_10(mht_10_v, 549, "", "./tensorflow/lite/kernels/internal/reference/reference_ops.h", "Unpack");
+
   ruy::profiler::ScopeLabel label("Unpack");
   const int dimensions = input_shape.DimensionsCount();
   const int outputs_count = params.num_split;
@@ -382,6 +583,9 @@ void PackWithScaling(const PackParams& params,
                      const RuntimeShape* const* input_shapes,
                      const uint8* const* input_data,
                      const RuntimeShape& output_shape, uint8* output_data) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh mht_11(mht_11_v, 586, "", "./tensorflow/lite/kernels/internal/reference/reference_ops.h", "PackWithScaling");
+
   ruy::profiler::ScopeLabel label("PackWithScaling");
   const int dimensions = output_shape.DimensionsCount();
   int axis = params.axis;
@@ -432,6 +636,9 @@ void DepthConcatenation(const ConcatenationParams& params,
                         const RuntimeShape* const* input_shapes,
                         const Scalar* const* input_data,
                         const RuntimeShape& output_shape, Scalar* output_data) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh mht_12(mht_12_v, 639, "", "./tensorflow/lite/kernels/internal/reference/reference_ops.h", "DepthConcatenation");
+
   ruy::profiler::ScopeLabel label("DepthConcatenation");
   auto params_copy = params;
   params_copy.axis = 3;
@@ -443,6 +650,9 @@ template <typename Scalar>
 void Split(const SplitParams& params, const RuntimeShape& input_shape,
            const Scalar* input_data, const RuntimeShape* const* output_shapes,
            Scalar* const* output_data) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh mht_13(mht_13_v, 653, "", "./tensorflow/lite/kernels/internal/reference/reference_ops.h", "Split");
+
   ruy::profiler::ScopeLabel label("Split");
   const int split_dimensions = input_shape.DimensionsCount();
   int axis = params.axis < 0 ? params.axis + split_dimensions : params.axis;
@@ -483,6 +693,9 @@ void Split(const SplitParams& params, const RuntimeShape& input_shape,
 }
 
 inline int NodeOffset(int b, int h, int w, int height, int width) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh mht_14(mht_14_v, 696, "", "./tensorflow/lite/kernels/internal/reference/reference_ops.h", "NodeOffset");
+
   return (b * height + h) * width + w;
 }
 
@@ -490,6 +703,9 @@ inline void LocalResponseNormalization(
     const tflite::LocalResponseNormalizationParams& op_params,
     const RuntimeShape& input_shape, const float* input_data,
     const RuntimeShape& output_shape, float* output_data) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh mht_15(mht_15_v, 706, "", "./tensorflow/lite/kernels/internal/reference/reference_ops.h", "LocalResponseNormalization");
+
   const int trailing_dim = input_shape.DimensionsCount() - 1;
   const int outer_size =
       MatchingFlatSizeSkipDim(input_shape, trailing_dim, output_shape);
@@ -515,6 +731,9 @@ inline void LocalResponseNormalization(
 inline void Dequantize(const RuntimeShape& input_shape,
                        const Eigen::half* input_data,
                        const RuntimeShape& output_shape, float* output_data) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh mht_16(mht_16_v, 734, "", "./tensorflow/lite/kernels/internal/reference/reference_ops.h", "Dequantize");
+
   const int flat_size = MatchingFlatSize(input_shape, output_shape);
   for (int i = 0; i < flat_size; i++) {
     output_data[i] = static_cast<float>(input_data[i]);
@@ -524,6 +743,9 @@ inline void Dequantize(const RuntimeShape& input_shape,
 inline void FakeQuant(const tflite::FakeQuantParams& op_params,
                       const RuntimeShape& input_shape, const float* input_data,
                       const RuntimeShape& output_shape, float* output_data) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh mht_17(mht_17_v, 746, "", "./tensorflow/lite/kernels/internal/reference/reference_ops.h", "FakeQuant");
+
   ruy::profiler::ScopeLabel label("FakeQuant");
   float rmin = op_params.minmax.min;
   float rmax = op_params.minmax.max;
@@ -556,6 +778,9 @@ struct GatherNdHelperResult {
 // Returns common values being used on both `GatherNd` and `GatherNdString`.
 inline GatherNdHelperResult GatherNdHelper(const RuntimeShape& params_shape,
                                            const RuntimeShape& indices_shape) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh mht_18(mht_18_v, 781, "", "./tensorflow/lite/kernels/internal/reference/reference_ops.h", "GatherNdHelper");
+
   GatherNdHelperResult ret;
   ret.n_slices = 1;
   ret.slice_size = 1;
@@ -671,6 +896,9 @@ template <typename T>
 void Minimum(const RuntimeShape& input1_shape, const T* input1_data,
              const T* input2_data, const RuntimeShape& output_shape,
              T* output_data) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh mht_19(mht_19_v, 899, "", "./tensorflow/lite/kernels/internal/reference/reference_ops.h", "Minimum");
+
   const int flat_size = MatchingFlatSize(input1_shape, output_shape);
 
   auto min_value = input2_data[0];
@@ -685,6 +913,9 @@ template <typename T>
 inline void Minimum(const RuntimeShape& input1_shape, const T* input1_data,
                     const RuntimeShape&, const T* input2_data,
                     const RuntimeShape& output_shape, T* output_data) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh mht_20(mht_20_v, 916, "", "./tensorflow/lite/kernels/internal/reference/reference_ops.h", "Minimum");
+
   // Drop shape of second input: not needed.
   Minimum(input1_shape, input1_data, input2_data, output_shape, output_data);
 }
@@ -693,6 +924,9 @@ template <typename T>
 void Maximum(const RuntimeShape& input1_shape, const T* input1_data,
              const T* input2_data, const RuntimeShape& output_shape,
              T* output_data) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh mht_21(mht_21_v, 927, "", "./tensorflow/lite/kernels/internal/reference/reference_ops.h", "Maximum");
+
   const int flat_size = MatchingFlatSize(input1_shape, output_shape);
 
   auto max_value = input2_data[0];
@@ -707,6 +941,9 @@ template <typename T>
 inline void Maximum(const RuntimeShape& input1_shape, const T* input1_data,
                     const RuntimeShape&, const T* input2_data,
                     const RuntimeShape& output_shape, T* output_data) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh mht_22(mht_22_v, 944, "", "./tensorflow/lite/kernels/internal/reference/reference_ops.h", "Maximum");
+
   // Drop shape of second input: not needed.
   Maximum(input1_shape, input1_data, input2_data, output_shape, output_data);
 }
@@ -905,6 +1142,9 @@ template <typename T>
 inline void Pow(const RuntimeShape& input1_shape, const T* input1_data,
                 const RuntimeShape& input2_shape, const T* input2_data,
                 const RuntimeShape& output_shape, T* output_data) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh mht_23(mht_23_v, 1145, "", "./tensorflow/lite/kernels/internal/reference/reference_ops.h", "Pow");
+
   const int flat_size =
       MatchingFlatSize(input1_shape, input2_shape, output_shape);
   for (int i = 0; i < flat_size; ++i) {
@@ -919,6 +1159,9 @@ inline void BroadcastPow4DSlow(const RuntimeShape& unextended_input1_shape,
                                const T* input2_data,
                                const RuntimeShape& unextended_output_shape,
                                T* output_data) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh mht_24(mht_24_v, 1162, "", "./tensorflow/lite/kernels/internal/reference/reference_ops.h", "BroadcastPow4DSlow");
+
   TFLITE_DCHECK_LE(unextended_input1_shape.DimensionsCount(), 4);
   TFLITE_DCHECK_LE(unextended_input2_shape.DimensionsCount(), 4);
   TFLITE_DCHECK_LE(unextended_output_shape.DimensionsCount(), 4);
@@ -950,6 +1193,9 @@ template <typename Scalar>
 void Reverse(int axis, const RuntimeShape& input_shape,
              const Scalar* input_data, const RuntimeShape& output_shape,
              Scalar* output_data) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh mht_25(mht_25_v, 1196, "", "./tensorflow/lite/kernels/internal/reference/reference_ops.h", "Reverse");
+
   ruy::profiler::ScopeLabel label("Reverse");
 
   int outer_size = 1;
@@ -1057,6 +1303,9 @@ inline void SegmentSum(const RuntimeShape& input_shape, const T* input_data,
                        const RuntimeShape& segment_ids_shape,
                        const int32_t* segment_ids_data,
                        const RuntimeShape& output_shape, T* output_data) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSreferencePSreference_opsDTh mht_26(mht_26_v, 1306, "", "./tensorflow/lite/kernels/internal/reference/reference_ops.h", "SegmentSum");
+
   const int segment_flat_size =
       MatchingFlatSizeSkipDim(input_shape, 0, output_shape);
 

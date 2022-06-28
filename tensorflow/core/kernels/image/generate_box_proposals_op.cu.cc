@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSimagePSgenerate_box_proposals_opDTcuDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSgenerate_box_proposals_opDTcuDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSimagePSgenerate_box_proposals_opDTcuDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,6 +219,10 @@ __global__ void GeneratePreNMSUprightBoxesKernel(
     const float bbox_xform_clip, float4* d_out_boxes,
     const int prenms_nboxes,  // leading dimension of out_boxes
     char* d_boxes_keep_flags) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("d_boxes_keep_flags: \"" + (d_boxes_keep_flags == nullptr ? std::string("nullptr") : std::string((char*)d_boxes_keep_flags)) + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSgenerate_box_proposals_opDTcuDTcc mht_0(mht_0_v, 223, "", "./tensorflow/core/kernels/image/generate_box_proposals_op.cu.cc", "GeneratePreNMSUprightBoxesKernel");
+
   // constants to calculate offsets in to the input and output arrays.
   const int anchor_stride = height * width;              // Stride of Anchor
   const int height_stride = width * num_anchors;         // Stride of height
@@ -147,6 +319,9 @@ __global__ void WriteUprightBoxesOutput(
     const GpuLaunchConfig nboxes, const float4* d_image_boxes,
     const float* d_image_scores, const int* d_image_boxes_keep_list,
     const int n_rois, float* d_image_out_rois, float* d_image_out_rois_probs) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSgenerate_box_proposals_opDTcuDTcc mht_1(mht_1_v, 322, "", "./tensorflow/core/kernels/image/generate_box_proposals_op.cu.cc", "WriteUprightBoxesOutput");
+
   CUDA_1D_KERNEL_LOOP(i, nboxes.virtual_thread_count) {
     if (i < n_rois) {  // copy rois to output
       const int ibox = d_image_boxes_keep_list[i];
@@ -173,6 +348,9 @@ __global__ void WriteUprightBoxesOutput(
 
 template <typename T>
 Status ResetTensor(Tensor* t, const Eigen::GpuDevice& d) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSgenerate_box_proposals_opDTcuDTcc mht_2(mht_2_v, 351, "", "./tensorflow/core/kernels/image/generate_box_proposals_op.cu.cc", "ResetTensor");
+
   GpuLaunchConfig zconfig = GetGpuLaunchConfig(t->NumElements(), d);
   return GpuLaunchKernel(SetZero<T>, zconfig.block_count,
                          zconfig.thread_per_block, 0, d.stream(),
@@ -188,6 +366,9 @@ Status AllocateGenerationTempTensors(
     Tensor* dev_boxes, Tensor* dev_boxes_keep_flags, int num_images,
     int conv_layer_nboxes, size_t cub_temp_storage_bytes,
     int num_boxes_to_generate, int box_dim) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSgenerate_box_proposals_opDTcuDTcc mht_3(mht_3_v, 369, "", "./tensorflow/core/kernels/image/generate_box_proposals_op.cu.cc", "AllocateGenerationTempTensors");
+
   auto d = context->eigen_gpu_device();
   TF_RETURN_IF_ERROR(context->allocate_temp(
       DataType::DT_INT32, TensorShape({num_images, conv_layer_nboxes}),
@@ -225,6 +406,9 @@ Status AllocatePreNMSTempTensors(
     Tensor* dev_postnms_rois, Tensor* dev_postnms_rois_probs,
     Tensor* dev_prenms_nboxes, int num_images, int num_boxes_to_generate,
     int box_dim, int post_nms_topn, int pre_nms_topn) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSgenerate_box_proposals_opDTcuDTcc mht_4(mht_4_v, 409, "", "./tensorflow/core/kernels/image/generate_box_proposals_op.cu.cc", "AllocatePreNMSTempTensors");
+
   auto d = context->eigen_gpu_device();
   TF_RETURN_IF_ERROR(context->allocate_temp(
       DataType::DT_FLOAT, TensorShape({box_dim * num_boxes_to_generate}),
@@ -265,6 +449,9 @@ Status AllocatePreNMSTempTensors(
 __global__ void InitializeDataKernel(const Gpu2DLaunchConfig config,
                                      int* d_image_offsets,
                                      int* d_boxes_keys_iota) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSgenerate_box_proposals_opDTcuDTcc mht_5(mht_5_v, 452, "", "./tensorflow/core/kernels/image/generate_box_proposals_op.cu.cc", "InitializeDataKernel");
+
   const int image_size = config.virtual_thread_count.x;
   const int num_images = config.virtual_thread_count.y;
   CUDA_AXIS_KERNEL_LOOP(img_idx, config.virtual_thread_count.y, Y) {
@@ -288,6 +475,9 @@ class GenerateBoundingBoxProposals : public tensorflow::OpKernel {
   explicit GenerateBoundingBoxProposals(
       tensorflow::OpKernelConstruction* context)
       : OpKernel(context) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSgenerate_box_proposals_opDTcuDTcc mht_6(mht_6_v, 478, "", "./tensorflow/core/kernels/image/generate_box_proposals_op.cu.cc", "GenerateBoundingBoxProposals");
+
     OP_REQUIRES_OK(context, context->GetAttr("post_nms_topn", &post_nms_topn_));
     OP_REQUIRES(context, post_nms_topn_ > 0,
                 errors::InvalidArgument("post_nms_topn can't be 0 or less"));
@@ -296,6 +486,9 @@ class GenerateBoundingBoxProposals : public tensorflow::OpKernel {
 
   template <typename T>
   Status GetScalarValue(OpKernelContext* context, int input, T* value) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSgenerate_box_proposals_opDTcuDTcc mht_7(mht_7_v, 489, "", "./tensorflow/core/kernels/image/generate_box_proposals_op.cu.cc", "GetScalarValue");
+
     const Tensor& scalar_tensor = context->input(input);
     if (!TensorShapeUtils::IsScalar(scalar_tensor.shape())) {
       return errors::InvalidArgument("Expected a scalar in input ", input,
@@ -307,6 +500,9 @@ class GenerateBoundingBoxProposals : public tensorflow::OpKernel {
   }
 
   void Compute(tensorflow::OpKernelContext* context) override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSgenerate_box_proposals_opDTcuDTcc mht_8(mht_8_v, 503, "", "./tensorflow/core/kernels/image/generate_box_proposals_op.cu.cc", "Compute");
+
     VLOG(1) << "Starting Compute " << name();
     const auto scores = context->input(0);
     const auto bbox_deltas = context->input(1);

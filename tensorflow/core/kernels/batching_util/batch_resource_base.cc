@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,6 +212,11 @@ namespace {
 // TODO(b/181883417): Replace with RecordPaddingSizeV2.
 void RecordPaddingSize(int32_t padding_size, const string& model_name,
                        int32_t execution_batch_size, const string& op_name) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("model_name: \"" + model_name + "\"");
+   mht_0_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_0(mht_0_v, 217, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "RecordPaddingSize");
+
   static auto* cell = tensorflow::monitoring::PercentileSampler<3>::New(
       {"/tensorflow/serving/batching/padding_size",
        "Tracks the padding size distribution on batches by model_name (if "
@@ -57,6 +230,11 @@ void RecordPaddingSize(int32_t padding_size, const string& model_name,
 
 void RecordPaddingSizeV2(int32_t padding_size, const string& model_name,
                          int32_t execution_batch_size, const string& op_name) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("model_name: \"" + model_name + "\"");
+   mht_1_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_1(mht_1_v, 235, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "RecordPaddingSizeV2");
+
   static auto* cell = tensorflow::monitoring::Sampler<3>::New(
       {"/tensorflow/serving/batching/padding_size_v2",
        "Tracks the padding size distribution on batches by model_name (if "
@@ -72,6 +250,11 @@ void RecordPaddingSizeV2(int32_t padding_size, const string& model_name,
 // TODO(b/181883417): Replace with RecordInputBatchSizeV2.
 void RecordInputBatchSize(int32_t batch_size, const string& model_name,
                           const string& op_name) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("model_name: \"" + model_name + "\"");
+   mht_2_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_2(mht_2_v, 255, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "RecordInputBatchSize");
+
   static auto* cell = tensorflow::monitoring::PercentileSampler<2>::New(
       {"/tensorflow/serving/batching/input_batch_size",
        "Tracks the batch size distribution on the inputs by model_name (if "
@@ -84,6 +267,11 @@ void RecordInputBatchSize(int32_t batch_size, const string& model_name,
 
 void RecordInputBatchSizeV2(int32_t batch_size, const string& model_name,
                             const string& op_name) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("model_name: \"" + model_name + "\"");
+   mht_3_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_3(mht_3_v, 272, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "RecordInputBatchSizeV2");
+
   static auto* cell = tensorflow::monitoring::Sampler<2>::New(
       {"/tensorflow/serving/batching/input_batch_size_v2",
        "Tracks the batch size distribution on the inputs by model_name (if "
@@ -98,6 +286,11 @@ void RecordInputBatchSizeV2(int32_t batch_size, const string& model_name,
 // Record the actual batch size without padding.
 void RecordBatchSize(int32_t batch_size, const string& model_name,
                      const string& op_name) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("model_name: \"" + model_name + "\"");
+   mht_4_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_4(mht_4_v, 291, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "RecordBatchSize");
+
   static auto* cell = tensorflow::monitoring::Sampler<2>::New(
       {"/tensorflow/serving/batching/batch_size",
        "Tracks the batch size distribution on the batch result by model_name "
@@ -109,6 +302,11 @@ void RecordBatchSize(int32_t batch_size, const string& model_name,
 
 void RecordProcessedBatchSize(int32_t batch_size, const string& model_name,
                               const string& op_name) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("model_name: \"" + model_name + "\"");
+   mht_5_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_5(mht_5_v, 307, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "RecordProcessedBatchSize");
+
   static auto* cell = tensorflow::monitoring::PercentileSampler<2>::New(
       {"/tensorflow/serving/batching/processed_batch_size",
        "Tracks the batch size distribution on processing by model_name (if "
@@ -122,6 +320,11 @@ void RecordProcessedBatchSize(int32_t batch_size, const string& model_name,
 // Export the exact number instead of the distribution of processed batch size.
 void RecordProcessedBatchSizeV2(int32_t batch_size, const string& model_name,
                                 const string& op_name) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("model_name: \"" + model_name + "\"");
+   mht_6_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_6(mht_6_v, 325, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "RecordProcessedBatchSizeV2");
+
   static auto* cell = monitoring::Counter<3>::New(
       "/tensorflow/serving/batching/processed_batch_size_v2",
       "Tracks the batch size on processing by model_name and op name (if "
@@ -134,6 +337,11 @@ void RecordProcessedBatchSizeV2(int32_t batch_size, const string& model_name,
 // TODO(b/181883417): Replace with RecordBatchDelayUsV2.
 void RecordBatchDelayUs(int64_t batch_delay_us, const string& model_name,
                         const string& op_name, int32_t batch_size) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("model_name: \"" + model_name + "\"");
+   mht_7_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_7(mht_7_v, 342, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "RecordBatchDelayUs");
+
   static auto* cell = monitoring::PercentileSampler<3>::New(
       {"/tensorflow/serving/batching/batch_delay_us",
        "Tracks the batching delay (in microseconds) for inputs by model_name "
@@ -147,6 +355,11 @@ void RecordBatchDelayUs(int64_t batch_delay_us, const string& model_name,
 
 void RecordBatchDelayUsV2(int64_t batch_delay_us, const string& model_name,
                           const string& op_name, int32_t batch_size) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("model_name: \"" + model_name + "\"");
+   mht_8_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_8(mht_8_v, 360, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "RecordBatchDelayUsV2");
+
   static auto* cell = tensorflow::monitoring::Sampler<3>::New(
       {"/tensorflow/serving/batching/batch_delay_us_v2",
        "Tracks the batching delay (in microseconds) for inputs by model_name "
@@ -162,6 +375,11 @@ void RecordBatchDelayUsV2(int64_t batch_delay_us, const string& model_name,
 void RecordBatchParamBatchTimeoutMicros(int64_t batch_timeout_micros,
                                         const string& model_name,
                                         const string& op_name) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("model_name: \"" + model_name + "\"");
+   mht_9_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_9(mht_9_v, 380, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "RecordBatchParamBatchTimeoutMicros");
+
   static auto* cell = monitoring::Gauge<int64_t, 2>::New(
       "/tensorflow/serving/batching/batch_timeout_micros",
       "Tracks how long a request can wait before being processed by a batch.",
@@ -172,6 +390,11 @@ void RecordBatchParamBatchTimeoutMicros(int64_t batch_timeout_micros,
 void RecordBatchParamMaxBatchSize(int64_t max_batch_size,
                                   const string& model_name,
                                   const string& op_name) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("model_name: \"" + model_name + "\"");
+   mht_10_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_10(mht_10_v, 395, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "RecordBatchParamMaxBatchSize");
+
   static auto* cell = monitoring::Gauge<int64_t, 2>::New(
       "/tensorflow/serving/batching/max_batch_size",
       "Tracks the maximum size of a batch.", "model_name", "op_name");
@@ -181,6 +404,11 @@ void RecordBatchParamMaxBatchSize(int64_t max_batch_size,
 void RecordBatchParamMaxEnqueuedBatches(int64_t max_enqueued_batches,
                                         const string& model_name,
                                         const string& op_name) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("model_name: \"" + model_name + "\"");
+   mht_11_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_11(mht_11_v, 409, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "RecordBatchParamMaxEnqueuedBatches");
+
   static auto* cell = monitoring::Gauge<int64_t, 2>::New(
       "/tensorflow/serving/batching/max_enqueued_batches",
       "Tracks the maximum number of enqueued batches.", "model_name",
@@ -191,6 +419,12 @@ void RecordBatchParamMaxEnqueuedBatches(int64_t max_enqueued_batches,
 void RecordBatchParamAllowedBatchSizes(const string& allowed_batch_sizes,
                                        const string& model_name,
                                        const string& op_name) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("allowed_batch_sizes: \"" + allowed_batch_sizes + "\"");
+   mht_12_v.push_back("model_name: \"" + model_name + "\"");
+   mht_12_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_12(mht_12_v, 425, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "RecordBatchParamAllowedBatchSizes");
+
   static auto* cell = monitoring::Gauge<string, 2>::New(
       "/tensorflow/serving/batching/allowed_batch_sizes",
       "Tracks the sizes that are allowed to form a batch.", "model_name",
@@ -199,6 +433,9 @@ void RecordBatchParamAllowedBatchSizes(const string& allowed_batch_sizes,
 }
 
 const string& GetModelName(OpKernelContext* ctx) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_13(mht_13_v, 436, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "GetModelName");
+
   static string* kModelNameUnset = new string("model_name_unset");
   if (!ctx->session_metadata()) return *kModelNameUnset;
   if (ctx->session_metadata()->name().empty()) return *kModelNameUnset;
@@ -210,6 +447,9 @@ const string& GetModelName(OpKernelContext* ctx) {
 std::unique_ptr<BatchResourceBase::BatchTask>
 BatchResourceBase::BatchTask::CreateSplitTask(
     int split_index, AsyncOpKernel::DoneCallback done_callback) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_14(mht_14_v, 450, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "BatchResourceBase::BatchTask::CreateSplitTask");
+
   std::unique_ptr<BatchTask> task = CreateDerivedTask();
 
   task->guid = this->guid;
@@ -235,6 +475,10 @@ using TensorMatrix = std::vector<std::vector<Tensor>>;
 Status BatchResourceBase::RegisterInput(
     int64_t guid, OpKernelContext* context, const string& batcher_queue_name,
     AsyncOpKernel::DoneCallback done_callback) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("batcher_queue_name: \"" + batcher_queue_name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_15(mht_15_v, 479, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "BatchResourceBase::RegisterInput");
+
   std::unique_ptr<BatchTask> batch_components;
   TF_RETURN_IF_ERROR(CreateBatchTask(context, &batch_components));
   batch_components->start_time = EnvTime::NowNanos();
@@ -318,6 +562,9 @@ BatchResourceBase::GetBatcherQueueOptions(
     int32_t batch_timeout_micros, int32_t max_enqueued_batches,
     const std::vector<int32>& allowed_batch_sizes,
     bool enable_large_batch_splitting) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_16(mht_16_v, 565, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "BatchResourceBase::GetBatcherQueueOptions");
+
   BatcherT::QueueOptions batcher_queue_options;
   batcher_queue_options.input_batch_size_limit = max_batch_size;
   batcher_queue_options.max_enqueued_batches = max_enqueued_batches;
@@ -349,6 +596,9 @@ BatchResourceBase::GetAdaptiveBatcherQueueOptions(
     int32_t max_batch_size, int32_t batch_timeout_micros,
     int32_t max_enqueued_batches, bool enable_large_batch_splitting,
     const std::vector<int32>& allowed_batch_sizes) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_17(mht_17_v, 599, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "BatchResourceBase::GetAdaptiveBatcherQueueOptions");
+
   AdaptiveBatcherT::QueueOptions batcher_queue_options;
   batcher_queue_options.max_input_task_size =
       absl::make_optional(max_batch_size);
@@ -374,6 +624,9 @@ BatchResourceBase::GetAdaptiveBatcherQueueOptions(
 }
 
 /*static*/ Status BatchResourceBase::ValidateBatch(const BatchT& batch) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_18(mht_18_v, 627, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "BatchResourceBase::ValidateBatch");
+
   for (int task_idx = 0; task_idx < batch.num_tasks(); ++task_idx) {
     const BatchResourceBase::BatchTask& task = batch.task(task_idx);
 
@@ -390,6 +643,9 @@ BatchResourceBase::GetAdaptiveBatcherQueueOptions(
 // or equal to 'batch_size'. If 'allowed_batch_sizes_' is empty, simply
 // returns 'batch_size'.
 int BatchResourceBase::RoundToLowestAllowedBatchSize(int batch_size) const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_19(mht_19_v, 646, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "BatchResourceBase::RoundToLowestAllowedBatchSize");
+
   if (allowed_batch_sizes_.empty()) {
     return batch_size;
   }
@@ -407,6 +663,9 @@ int BatchResourceBase::RoundToLowestAllowedBatchSize(int batch_size) const {
 Status BatchResourceBase::ConcatInputTensors(
     const BatchT& batch, OpKernelContext* context,
     std::vector<Tensor>* concatenated_tensors) const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_20(mht_20_v, 666, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "BatchResourceBase::ConcatInputTensors");
+
   if (batch.num_tasks() == 0) {
     return errors::InvalidArgument("Empty batch.");
   }
@@ -475,6 +734,9 @@ Status BatchResourceBase::ConcatInputTensors(
 /*static*/ Status BatchResourceBase::SplitInputTask(
     std::unique_ptr<BatchTask>* input_task_ptr, int open_batch_remaining_slot,
     int max_batch_size, std::vector<std::unique_ptr<BatchTask>>* output_tasks) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_21(mht_21_v, 737, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "BatchResourceBase::SplitInputTask");
+
   BatchTask& input_task = *(*input_task_ptr);
   const int64_t input_task_size = input_task.size();
 
@@ -487,6 +749,9 @@ Status BatchResourceBase::ConcatInputTensors(
   std::function<void()> split_task_done_callback =
       [done_callback = input_task.done_callback, output = input_task.output,
        op_kernel_context = input_task.context, status = shared_status]() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_22(mht_22_v, 752, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "lambda");
+
         const int num_output = op_kernel_context->num_outputs();
         for (int i = 0; i < num_output; ++i) {
           Tensor output_tensor;
@@ -569,6 +834,9 @@ Status BatchResourceBase::ConcatInputTensors(
 
 Status BatchResourceBase::SplitOutputTensors(
     const std::vector<Tensor>& combined_outputs, BatchT* batch) const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_23(mht_23_v, 837, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "BatchResourceBase::SplitOutputTensors");
+
   DCHECK_GE(batch->num_tasks(), 1);
   if (batch->num_tasks() < 1) {
     return errors::Internal("Batch size expected to be positive; was ",
@@ -641,6 +909,9 @@ Status BatchResourceBase::SplitOutputTensors(
 }
 
 void BatchResourceBase::ProcessFuncBatch(std::unique_ptr<BatchT> batch) const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_24(mht_24_v, 912, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "BatchResourceBase::ProcessFuncBatch");
+
   if (batch->empty()) {
     return;
   }
@@ -667,6 +938,9 @@ void BatchResourceBase::ProcessFuncBatch(std::unique_ptr<BatchT> batch) const {
   int64_t processed_size = batch->size();
   auto cleanup_fn = [&cleanup_done, &batch, &processed_size,
                      &batch_cost_measurements](const Status& status) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_25(mht_25_v, 941, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "lambda");
+
     if (cleanup_done) {
       return;
     }
@@ -743,6 +1017,9 @@ void BatchResourceBase::ProcessFuncBatch(std::unique_ptr<BatchT> batch) const {
 
 // Processes a batch of one or more BatchTask entries.
 void BatchResourceBase::ProcessBatch(std::unique_ptr<BatchT> batch) const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_26(mht_26_v, 1020, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "BatchResourceBase::ProcessBatch");
+
   if (batch->empty()) {
     return;
   }
@@ -829,6 +1106,9 @@ void BatchResourceBase::ProcessBatch(std::unique_ptr<BatchT> batch) const {
 /*static*/ Status BatchResourceBase::EmitIndexTensor(OpKernelContext* context,
                                                      const BatchT& batch,
                                                      int output_index) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_27(mht_27_v, 1109, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "BatchResourceBase::EmitIndexTensor");
+
   const TensorShape index_shape({batch.num_tasks(), 3});
   Tensor* index = nullptr;
   TF_RETURN_IF_ERROR(
@@ -849,6 +1129,10 @@ void BatchResourceBase::ProcessBatch(std::unique_ptr<BatchT> batch) const {
 // creates it.
 Status BatchResourceBase::LookupOrCreateBatcherQueue(const string& queue_name,
                                                      BatcherQueueT** queue) {
+   std::vector<std::string> mht_28_v;
+   mht_28_v.push_back("queue_name: \"" + queue_name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_28(mht_28_v, 1133, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "BatchResourceBase::LookupOrCreateBatcherQueue");
+
   mutex_lock l(batcher_queues_mu_);
 
   auto it = batcher_queues_.find(queue_name);
@@ -859,6 +1143,9 @@ Status BatchResourceBase::LookupOrCreateBatcherQueue(const string& queue_name,
 
   std::unique_ptr<BatcherQueueT> new_queue;
   auto process_batch_callback = [this](std::unique_ptr<BatchT> batch) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_29(mht_29_v, 1146, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "lambda");
+
     if (!has_process_batch_function_) {
       ProcessBatch(std::move(batch));
     } else {
@@ -882,6 +1169,9 @@ Status BatchResourceBase::LookupOrCreateBatcherQueue(const string& queue_name,
 Status BatchResourceBase::CreateBatchTask(
     OpKernelContext* context,
     std::unique_ptr<BatchResourceBase::BatchTask>* output) const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_30(mht_30_v, 1172, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "BatchResourceBase::CreateBatchTask");
+
   *output = absl::make_unique<BatchResourceBase::BatchTask>();
   return Status::OK();
 }
@@ -889,6 +1179,9 @@ Status BatchResourceBase::CreateBatchTask(
 void BatchResourceBase::SplitBatchCosts(
     std::vector<std::unique_ptr<CostMeasurement>>& batch_cost_measurements,
     const int64_t processed_size, BatchT& batch) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSbatch_resource_baseDTcc mht_31(mht_31_v, 1182, "", "./tensorflow/core/kernels/batching_util/batch_resource_base.cc", "BatchResourceBase::SplitBatchCosts");
+
   for (auto& batch_cost_measurement : batch_cost_measurements) {
     if (batch_cost_measurement->GetTotalCost() <= absl::ZeroDuration()) {
       return;

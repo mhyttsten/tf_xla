@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,6 +218,9 @@ namespace tensorflow {
 namespace {
 
 xla::XlaComputation ReturnDynamicR1() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_0(mht_0_v, 221, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "ReturnDynamicR1");
+
   xla::XlaBuilder builder("ReturnDynamicR1");
   auto p0 = xla::Parameter(&builder, 0,
                            xla::ShapeUtil::MakeShape(xla::F32, {4}), "P0");
@@ -63,6 +234,9 @@ xla::XlaComputation ReturnDynamicR1() {
 }
 
 xla::XlaComputation ReturnDynamicR2() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_1(mht_1_v, 237, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "ReturnDynamicR2");
+
   xla::XlaBuilder builder("ReturnDynamicR2");
   auto p0 = xla::Parameter(&builder, 0,
                            xla::ShapeUtil::MakeShape(xla::F32, {2, 4}), "P0");
@@ -77,6 +251,9 @@ xla::XlaComputation ReturnDynamicR2() {
 }
 
 xla::XlaComputation AcceptDynamicR1() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_2(mht_2_v, 254, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "AcceptDynamicR1");
+
   xla::XlaBuilder builder("AcceptDynamicR1");
   xla::Shape dyn_shape = xla::ShapeUtil::MakeShape(xla::F32, {4});
   dyn_shape.set_dynamic_dimension(0, true);
@@ -87,6 +264,9 @@ xla::XlaComputation AcceptDynamicR1() {
 }
 
 xla::XlaComputation AcceptDynamicR2() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_3(mht_3_v, 267, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "AcceptDynamicR2");
+
   xla::XlaBuilder builder("AcceptDynamicR2");
   xla::Shape dyn_shape;
   dyn_shape = xla::ShapeUtil::MakeShape(xla::F32, {2, 4});
@@ -97,6 +277,9 @@ xla::XlaComputation AcceptDynamicR2() {
 }
 
 xla::XlaComputation ReturnDynamicR1Tuple() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_4(mht_4_v, 280, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "ReturnDynamicR1Tuple");
+
   xla::XlaBuilder builder("ReturnDynamicR1Tuple");
   auto p0 = xla::Parameter(&builder, 0,
                            xla::ShapeUtil::MakeShape(xla::F32, {4}), "P0");
@@ -114,6 +297,9 @@ xla::XlaComputation ReturnDynamicR1Tuple() {
 }
 
 xla::XlaComputation AcceptDynamicR1Tuple() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_5(mht_5_v, 300, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "AcceptDynamicR1Tuple");
+
   xla::XlaBuilder builder("AcceptDynamicR1");
   xla::Shape dyn_shape = xla::ShapeUtil::MakeShape(xla::F32, {4});
   dyn_shape.set_dynamic_dimension(0, true);
@@ -130,6 +316,9 @@ xla::XlaComputation AcceptDynamicR1Tuple() {
 
 template <typename T>
 xla::LiteralProto CreateR0(T v) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_6(mht_6_v, 319, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "CreateR0");
+
   auto array = xla::LiteralUtil::CreateR0<T>(v);
   return array.ToProto();
 }
@@ -137,6 +326,9 @@ xla::LiteralProto CreateR0(T v) {
 class XrtClientSession : public ClientSession {
  public:
   explicit XrtClientSession(const Scope& scope) : ClientSession(scope) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_7(mht_7_v, 329, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "XrtClientSession");
+
     auto clear_all = ops::XRTReleaseAllAllocations(scope);
     std::vector<Tensor> outputs;
     TF_CHECK_OK(Run(ClientSession::FeedType(), {}, {clear_all}, &outputs));
@@ -147,6 +339,9 @@ string* xla_test_device_ptr;  // initial value set in main()
 string* xla_platform_ptr;     // initial value set in main()
 
 string DeviceFromFlag() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_8(mht_8_v, 342, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "DeviceFromFlag");
+
   string xla_test_device = *xla_test_device_ptr;
   return absl::StrCat("/device:", xla_test_device, ":0");
 }
@@ -160,6 +355,9 @@ std::vector<int> GetAttrLayout(absl::Span<const int64_t> minor_to_mayor) {
 }
 
 xla::LiteralProto TwoElementTuple() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_9(mht_9_v, 358, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "TwoElementTuple");
+
   auto array = xla::LiteralUtil::CreateR1<float>({1.0f, 3.0f});
   auto matrix = xla::LiteralUtil::CreateR2({{4, 5}, {6, 7}});
   auto tuple = xla::LiteralUtil::MakeTuple({&array, &matrix});
@@ -167,6 +365,9 @@ xla::LiteralProto TwoElementTuple() {
 }
 
 xla::LiteralProto BasedTwoElementTuple(float base) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_10(mht_10_v, 368, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "BasedTwoElementTuple");
+
   auto array = xla::LiteralUtil::CreateR1<float>({base, base + 1});
   auto matrix = xla::LiteralUtil::CreateR2<float>(
       {{base + 2, base + 3}, {base + 4, base + 5}});
@@ -175,11 +376,17 @@ xla::LiteralProto BasedTwoElementTuple(float base) {
 }
 
 xla::LiteralProto ScalarLiteral() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_11(mht_11_v, 379, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "ScalarLiteral");
+
   auto scalar = xla::LiteralUtil::CreateR0<float>(12.0f);
   return scalar.ToProto();
 }
 
 xla::LiteralProto NestedTuple() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_12(mht_12_v, 387, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "NestedTuple");
+
   auto array = xla::LiteralUtil::CreateR1<float>({1.0f, 3.0f});
   auto matrix = xla::LiteralUtil::CreateR2({{4, 5}, {6, 7}});
   auto tuple = xla::LiteralUtil::MakeTuple({&array, &matrix});
@@ -189,6 +396,9 @@ xla::LiteralProto NestedTuple() {
 }
 
 xla::LiteralProto MakeTuple0() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_13(mht_13_v, 399, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "MakeTuple0");
+
   auto scalar = xla::LiteralUtil::CreateR0<float>(12.0f);
   auto array = xla::LiteralUtil::CreateR1<float>({1.0f, 3.0f});
   auto matrix = xla::LiteralUtil::CreateR2({{4, 5}, {6, 7}});
@@ -199,6 +409,9 @@ xla::LiteralProto MakeTuple0() {
 }
 
 xla::LiteralProto FloatVector(absl::Span<const float> v) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_14(mht_14_v, 412, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "FloatVector");
+
   auto array = xla::LiteralUtil::CreateR1<float>(v);
   return array.ToProto();
 }
@@ -206,11 +419,17 @@ xla::LiteralProto FloatVector(absl::Span<const float> v) {
 xla::LiteralProto FloatMatrix(
     std::initializer_list<std::initializer_list<float>> v,
     const xla::Layout& layout) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_15(mht_15_v, 422, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "FloatMatrix");
+
   auto array = xla::LiteralUtil::CreateR2WithLayout<float>(v, layout);
   return array.ToProto();
 }
 
 xla::Literal ReadOutputLiteral(const std::vector<Tensor>& outputs, size_t idx) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_16(mht_16_v, 430, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "ReadOutputLiteral");
+
   xla::LiteralProto response;
   CHECK(ParseFromTString(outputs[idx].scalar<tstring>()(), &response));
   return xla::Literal::CreateFromProto(response).ValueOrDie();
@@ -218,6 +437,9 @@ xla::Literal ReadOutputLiteral(const std::vector<Tensor>& outputs, size_t idx) {
 
 bool CompareLiteralProtos(const xla::LiteralProto& a,
                           const xla::LiteralProto& b) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_17(mht_17_v, 440, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "CompareLiteralProtos");
+
   auto l_a = xla::Literal::CreateFromProto(a).ValueOrDie();
   auto l_b = xla::Literal::CreateFromProto(b).ValueOrDie();
   bool equal = l_a == l_b;
@@ -231,6 +453,9 @@ bool CompareLiteralProtos(const xla::LiteralProto& a,
 
 bool CompareLiteralToLiteralProto(const xla::Literal& a,
                                   const xla::LiteralProto& b) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_18(mht_18_v, 456, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "CompareLiteralToLiteralProto");
+
   auto l_b = xla::Literal::CreateFromProto(b).ValueOrDie();
   bool equal = a == l_b;
   if (!equal) {
@@ -242,6 +467,9 @@ bool CompareLiteralToLiteralProto(const xla::Literal& a,
 }
 
 bool CompareLiterals(const xla::Literal& a, const xla::Literal& b) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_19(mht_19_v, 470, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "CompareLiterals");
+
   bool equal = a == b;
   if (!equal) {
     LOG(INFO) << "Literals don't match:\n"
@@ -252,6 +480,9 @@ bool CompareLiterals(const xla::Literal& a, const xla::Literal& b) {
 }
 
 xla::XlaComputation OnePlusTwo() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_20(mht_20_v, 483, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "OnePlusTwo");
+
   xla::XlaBuilder builder("OnePlusTwo");
   auto c0 = xla::ConstantR0(&builder, 1.0f);
   auto c1 = xla::ConstantR0(&builder, 2.0f);
@@ -260,6 +491,9 @@ xla::XlaComputation OnePlusTwo() {
 }
 
 xla::XlaComputation AddAndScale() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_21(mht_21_v, 494, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "AddAndScale");
+
   xla::XlaBuilder builder("AddAndScale");
   auto p0 = xla::Parameter(&builder, 0,
                            xla::ShapeUtil::MakeShape(xla::F32, {2}), "P0");
@@ -272,6 +506,9 @@ xla::XlaComputation AddAndScale() {
 }
 
 xla::XlaComputation SubAndScale() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_22(mht_22_v, 509, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "SubAndScale");
+
   xla::XlaBuilder builder("SubAndScale");
   auto p0 = xla::Parameter(&builder, 0,
                            xla::ShapeUtil::MakeShape(xla::F32, {2}), "P0");
@@ -284,6 +521,9 @@ xla::XlaComputation SubAndScale() {
 }
 
 xla::XlaComputation Dot() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_23(mht_23_v, 524, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "Dot");
+
   xla::XlaBuilder builder("Dot");
   auto p0 = xla::Parameter(
       &builder, 0,
@@ -299,6 +539,9 @@ xla::XlaComputation Dot() {
 }
 
 xla::XlaComputation AddS64() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_24(mht_24_v, 542, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "AddS64");
+
   xla::XlaBuilder builder("AddS64");
   auto p0 = xla::Parameter(&builder, 0, xla::ShapeUtil::MakeShape(xla::S64, {}),
                            "P0");
@@ -309,6 +552,9 @@ xla::XlaComputation AddS64() {
 }
 
 xla::XlaComputation AddAndTuple() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_25(mht_25_v, 555, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "AddAndTuple");
+
   xla::XlaBuilder builder("AddAndTuple");
   auto p0 = xla::Parameter(&builder, 0,
                            xla::ShapeUtil::MakeShape(xla::F32, {2}), "P0");
@@ -320,6 +566,9 @@ xla::XlaComputation AddAndTuple() {
 }
 
 xla::XlaComputation AddAndSubTuple() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_26(mht_26_v, 569, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "AddAndSubTuple");
+
   xla::XlaBuilder builder("AddAndSubTuple");
   auto p0 = xla::Parameter(&builder, 0, xla::ShapeUtil::MakeShape(xla::F32, {}),
                            "P0");
@@ -333,6 +582,9 @@ xla::XlaComputation AddAndSubTuple() {
 
 xla::XlaComputation BroadcastComputation(const xla::Shape& shape,
                                          absl::Span<const int64_t> dimensions) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_27(mht_27_v, 585, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "BroadcastComputation");
+
   xla::XlaBuilder builder("BroadcastComputation");
   auto p0 = xla::Parameter(&builder, 0, shape, "P0");
   xla::Broadcast(p0, dimensions);
@@ -340,6 +592,9 @@ xla::XlaComputation BroadcastComputation(const xla::Shape& shape,
 }
 
 xla::XlaComputation IsEqualComputation(const xla::Shape& shape) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_28(mht_28_v, 595, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "IsEqualComputation");
+
   xla::XlaBuilder builder("IsEqualComputation");
   auto p0 = xla::Parameter(&builder, 0, shape, "P0");
   auto p1 = xla::Parameter(&builder, 1, shape, "P1");
@@ -353,6 +608,9 @@ xla::XlaComputation IsEqualComputation(const xla::Shape& shape) {
 
 void StoreComputationSnapshot(const xla::XlaComputation& computation,
                               xla::HloSnapshot* dst) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_29(mht_29_v, 611, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "StoreComputationSnapshot");
+
   auto snapshot = computation.Snapshot().ValueOrDie();
   *dst = *snapshot;
 }
@@ -360,6 +618,9 @@ void StoreComputationSnapshot(const xla::XlaComputation& computation,
 xla::ProgramShape XlaCompiledProgramShape(
     const xla::XlaComputation& computation,
     const xla::ProgramShape& input_program_shape) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_30(mht_30_v, 621, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "XlaCompiledProgramShape");
+
   se::Platform* platform =
       xla::PlatformUtil::GetPlatform(*xla_platform_ptr).ValueOrDie();
   xla::LocalClient* client =
@@ -881,6 +1142,9 @@ TEST(RawApiTest, ExecuteChainedOpByOp) {
   Scope root = Scope::NewRootScope().WithDevice(DeviceFromFlag());
 
   auto make_computation = [](const std::function<xla::XlaComputation()>& fn) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_31(mht_31_v, 1145, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "lambda");
+
     xrt::XLAComputation c;
     auto config = c.mutable_config();
     auto shapes = config->mutable_program_shape();
@@ -951,6 +1215,9 @@ TEST(RawApiTest, ExecuteChained) {
   Scope root = Scope::NewRootScope().WithDevice(DeviceFromFlag());
 
   auto make_computation = [](const std::function<xla::XlaComputation()>& fn) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_32(mht_32_v, 1218, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "lambda");
+
     xrt::XLAComputation c;
     auto config = c.mutable_config();
     auto shapes = config->mutable_program_shape();
@@ -2235,6 +2502,9 @@ TEST(RawApiTest, TestMemoryInfo) {
 }  // namespace tensorflow
 
 int main(int argc, char** argv) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPStestsPSraw_api_testDTcc mht_33(mht_33_v, 2505, "", "./tensorflow/compiler/xrt/tests/raw_api_test.cc", "main");
+
   tensorflow::xla_test_device_ptr = new tensorflow::string("XLA_CPU");
   tensorflow::xla_platform_ptr = new tensorflow::string("CPU");
   std::vector<tensorflow::Flag> flag_list = {

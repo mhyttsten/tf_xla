@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,6 +197,9 @@ namespace mlir {
 namespace chlo {
 
 Value getConstantLikeMaxFiniteValue(OpBuilder& b, Location loc, Value val) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc mht_0(mht_0_v, 200, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/chlo_ops.cc", "getConstantLikeMaxFiniteValue");
+
   auto ty = getElementTypeOrSelf(val.getType()).cast<FloatType>();
   return getConstantLike(
       b, loc, llvm::APFloat::getLargest(ty.getFloatSemantics()), val);
@@ -36,6 +207,9 @@ Value getConstantLikeMaxFiniteValue(OpBuilder& b, Location loc, Value val) {
 
 Value getConstantLikeInfValue(OpBuilder& b, Location loc, Value val,
                               bool negative) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc mht_1(mht_1_v, 210, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/chlo_ops.cc", "getConstantLikeInfValue");
+
   auto ty = getElementTypeOrSelf(val.getType()).cast<FloatType>();
   return getConstantLike(
       b, loc, llvm::APFloat::getInf(ty.getFloatSemantics(), negative), val);
@@ -43,6 +217,9 @@ Value getConstantLikeInfValue(OpBuilder& b, Location loc, Value val,
 
 Value getConstantLikeSmallestFiniteValue(OpBuilder& b, Location loc,
                                          Value val) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc mht_2(mht_2_v, 220, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/chlo_ops.cc", "getConstantLikeSmallestFiniteValue");
+
   auto ty = getElementTypeOrSelf(val.getType()).cast<FloatType>();
   return getConstantLike(
       b, loc, llvm::APFloat::getSmallest(ty.getFloatSemantics()), val);
@@ -50,6 +227,9 @@ Value getConstantLikeSmallestFiniteValue(OpBuilder& b, Location loc,
 
 Value getConstantLike(OpBuilder& b, Location loc, const APFloat& constant,
                       Value val) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc mht_3(mht_3_v, 230, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/chlo_ops.cc", "getConstantLike");
+
   Type ty = getElementTypeOrSelf(val.getType());
   return b.create<ConstantLikeOp>(loc, b.getFloatAttr(ty, constant), val);
 }
@@ -63,6 +243,9 @@ namespace {
 ShapedTypeComponents GetBroadcastType(
     Type x, Type y, Type element_type,
     DenseIntElementsAttr broadcast_dimensions_attr) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc mht_4(mht_4_v, 246, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/chlo_ops.cc", "GetBroadcastType");
+
   auto x_ranked = x.dyn_cast<RankedTensorType>();
   auto y_ranked = y.dyn_cast<RankedTensorType>();
   if (!x_ranked || !y_ranked) {
@@ -120,6 +303,9 @@ LogicalResult InferBroadcastBinaryOpReturnTypeComponents(
     MLIRContext* context, Optional<Location> location, ValueRange operands,
     DictionaryAttr attributes, Type element_type,
     SmallVectorImpl<ShapedTypeComponents>& inferredReturnShapes) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc mht_5(mht_5_v, 306, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/chlo_ops.cc", "InferBroadcastBinaryOpReturnTypeComponents");
+
   // Find broadcast_dimensions.
   DenseIntElementsAttr broadcast_dimensions =
       attributes.get("broadcast_dimensions")
@@ -140,6 +326,9 @@ LogicalResult InferBroadcastBinaryOpReturnTypeComponents(
 LogicalResult ReifyBroadcastBinaryOpReturnTypeShapes(
     OpBuilder& builder, Operation* op, ValueRange operands,
     SmallVectorImpl<Value>& result) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc mht_6(mht_6_v, 329, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/chlo_ops.cc", "ReifyBroadcastBinaryOpReturnTypeShapes");
+
   assert(operands.size() == 2 && "expect binary op");
   auto loc = op->getLoc();
   auto lhs = operands[0];
@@ -176,6 +365,9 @@ LogicalResult BroadcastComplexOp::inferReturnTypeComponents(
     MLIRContext* context, Optional<Location> location, ValueShapeRange operands,
     DictionaryAttr attributes, RegionRange /*regions*/,
     SmallVectorImpl<ShapedTypeComponents>& inferedReturnShapes) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc mht_7(mht_7_v, 368, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/chlo_ops.cc", "BroadcastComplexOp::inferReturnTypeComponents");
+
   ShapedType lhs_type = operands[0].getType().dyn_cast<ShapedType>();
   if (!lhs_type) {
     return emitOptionalError(location, "expected ShapedType");
@@ -188,6 +380,9 @@ LogicalResult BroadcastComplexOp::inferReturnTypeComponents(
 LogicalResult BroadcastComplexOp::reifyReturnTypeShapes(
     OpBuilder& builder, ValueRange operands,
     SmallVectorImpl<Value>& reifiedReturnShapes) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc mht_8(mht_8_v, 383, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/chlo_ops.cc", "BroadcastComplexOp::reifyReturnTypeShapes");
+
   return ReifyBroadcastBinaryOpReturnTypeShapes(builder, getOperation(),
                                                 operands, reifiedReturnShapes);
 }
@@ -201,6 +396,9 @@ void BroadcastCompareOp::build(OpBuilder& builder, OperationState& result,
                                DenseIntElementsAttr broadcast_dimensions,
                                mhlo::ComparisonDirection comparison_direction,
                                mhlo::ComparisonType compare_type) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc mht_9(mht_9_v, 399, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/chlo_ops.cc", "BroadcastCompareOp::build");
+
   build(builder, result, lhs, rhs, broadcast_dimensions,
         mhlo::ComparisonDirectionAttr::get(builder.getContext(),
                                            comparison_direction),
@@ -211,6 +409,9 @@ LogicalResult BroadcastCompareOp::inferReturnTypeComponents(
     MLIRContext* context, Optional<Location> location, ValueShapeRange operands,
     DictionaryAttr attributes, RegionRange /*regions*/,
     SmallVectorImpl<ShapedTypeComponents>& inferedReturnShapes) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc mht_10(mht_10_v, 412, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/chlo_ops.cc", "BroadcastCompareOp::inferReturnTypeComponents");
+
   Type element_type = IntegerType::get(context, 1);
   return InferBroadcastBinaryOpReturnTypeComponents(context, location, operands,
                                                     attributes, element_type,
@@ -220,6 +421,9 @@ LogicalResult BroadcastCompareOp::inferReturnTypeComponents(
 LogicalResult BroadcastCompareOp::reifyReturnTypeShapes(
     OpBuilder& builder, ValueRange operands,
     SmallVectorImpl<Value>& reifiedReturnShapes) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc mht_11(mht_11_v, 424, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/chlo_ops.cc", "BroadcastCompareOp::reifyReturnTypeShapes");
+
   return ReifyBroadcastBinaryOpReturnTypeShapes(builder, getOperation(),
                                                 operands, reifiedReturnShapes);
 }
@@ -229,6 +433,9 @@ LogicalResult BroadcastCompareOp::reifyReturnTypeShapes(
 //===----------------------------------------------------------------------===//
 
 static Type getIsInfLikeReturnType(Value operand) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc mht_12(mht_12_v, 436, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/chlo_ops.cc", "getIsInfLikeReturnType");
+
   Builder b(operand.getContext());
   return mhlo::getSameShapeTensorType(operand.getType().cast<TensorType>(),
                                       b.getI1Type());
@@ -237,6 +444,9 @@ static Type getIsInfLikeReturnType(Value operand) {
 LogicalResult IsInfOp::inferReturnTypes(
     MLIRContext* /*ctx*/, Optional<Location>, ValueRange operands,
     DictionaryAttr, RegionRange, SmallVectorImpl<Type>& inferredReturnTypes) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc mht_13(mht_13_v, 447, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/chlo_ops.cc", "IsInfOp::inferReturnTypes");
+
   inferredReturnTypes.push_back(getIsInfLikeReturnType(operands.front()));
   return success();
 }
@@ -248,6 +458,9 @@ LogicalResult IsInfOp::inferReturnTypes(
 LogicalResult IsNegInfOp::inferReturnTypes(
     MLIRContext* /*ctx*/, Optional<Location>, ValueRange operands,
     DictionaryAttr, RegionRange, SmallVectorImpl<Type>& inferredReturnTypes) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc mht_14(mht_14_v, 461, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/chlo_ops.cc", "IsNegInfOp::inferReturnTypes");
+
   inferredReturnTypes.push_back(getIsInfLikeReturnType(operands.front()));
   return success();
 }
@@ -259,6 +472,9 @@ LogicalResult IsNegInfOp::inferReturnTypes(
 LogicalResult IsPosInfOp::inferReturnTypes(
     MLIRContext* /*ctx*/, Optional<Location>, ValueRange operands,
     DictionaryAttr, RegionRange, SmallVectorImpl<Type>& inferredReturnTypes) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc mht_15(mht_15_v, 475, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/chlo_ops.cc", "IsPosInfOp::inferReturnTypes");
+
   inferredReturnTypes.push_back(getIsInfLikeReturnType(operands.front()));
   return success();
 }
@@ -315,6 +531,9 @@ LogicalResult ConstantLikeOp::verify() {
 // MinimumBroadcastShapesOp
 //===----------------------------------------------------------------------===//
 LogicalResult MinimumBroadcastShapesOp::verify() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc mht_16(mht_16_v, 534, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/chlo_ops.cc", "MinimumBroadcastShapesOp::verify");
+
   // Check that the number of operands matches the number of outputs.
   unsigned result_shapes_count = results().size();
   unsigned operand_shapes_count = shapes().size();
@@ -335,6 +554,9 @@ LogicalResult ConstantLikeOp::inferReturnTypeComponents(
     ValueShapeRange operands, DictionaryAttr attributes,
     RegionRange /*regions*/,
     SmallVectorImpl<ShapedTypeComponents>& inferedReturnShapes) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc mht_17(mht_17_v, 557, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/chlo_ops.cc", "ConstantLikeOp::inferReturnTypeComponents");
+
   ConstantLikeOp::Adaptor op(operands, attributes);
   if (failed(op.verify(location.getValue()))) return failure();
   Type element_type = op.value().getType();
@@ -351,11 +573,17 @@ LogicalResult ConstantLikeOp::inferReturnTypeComponents(
 LogicalResult ConstantLikeOp::reifyReturnTypeShapes(
     OpBuilder& builder, ValueRange operands,
     SmallVectorImpl<Value>& reifiedReturnShapes) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc mht_18(mht_18_v, 576, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/chlo_ops.cc", "ConstantLikeOp::reifyReturnTypeShapes");
+
   return ::mlir::mhlo::deriveShapeFromOperand(
       &builder, getOperation(), operands.front(), &reifiedReturnShapes);
 }
 
 OpFoldResult ConstantLikeOp::fold(ArrayRef<Attribute> /*operands*/) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc mht_19(mht_19_v, 584, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/chlo_ops.cc", "ConstantLikeOp::fold");
+
   auto op_type = operand().getType().cast<ShapedType>();
   if (!op_type.hasStaticShape()) return {};
   auto type = RankedTensorType::get(op_type.getShape(), value().getType());
@@ -366,6 +594,9 @@ LogicalResult BroadcastSelectOp::inferReturnTypeComponents(
     MLIRContext*, Optional<Location> location, ValueShapeRange operands,
     DictionaryAttr, RegionRange,
     SmallVectorImpl<ShapedTypeComponents>& inferredReturnShapes) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc mht_20(mht_20_v, 597, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/chlo_ops.cc", "BroadcastSelectOp::inferReturnTypeComponents");
+
   BroadcastSelectOp::Adaptor op(operands.getValues());
   auto pred_type = op.pred().getType().dyn_cast<ShapedType>();
   auto on_true_type = op.on_true().getType().dyn_cast<ShapedType>();
@@ -391,6 +622,9 @@ LogicalResult BroadcastSelectOp::inferReturnTypeComponents(
 
 LogicalResult BroadcastSelectOp::reifyReturnTypeShapes(
     OpBuilder& builder, ValueRange operands, SmallVectorImpl<Value>& result) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc mht_21(mht_21_v, 625, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/chlo_ops.cc", "BroadcastSelectOp::reifyReturnTypeShapes");
+
   result.push_back(hlo::ComputeNaryElementwiseBroadcastingResultExtents(
       getLoc(), operands, builder));
   return success();
@@ -403,6 +637,9 @@ LogicalResult BroadcastSelectOp::reifyReturnTypeShapes(
 void RankSpecializationClusterOp::getSuccessorRegions(
     Optional<unsigned> index, ArrayRef<Attribute> /*operands*/,
     SmallVectorImpl<RegionSuccessor>& regions) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc mht_22(mht_22_v, 640, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/chlo_ops.cc", "RankSpecializationClusterOp::getSuccessorRegions");
+
   // RankSpecializationClusterOp has unconditional control flows into the region
   // and back to the parent, so return the correct RegionSuccessor purely based
   // on the index being None or 0.
@@ -414,6 +651,9 @@ void RankSpecializationClusterOp::getSuccessorRegions(
 }
 
 LogicalResult RankSpecializationClusterOp::verify() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc mht_23(mht_23_v, 654, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/chlo_ops.cc", "RankSpecializationClusterOp::verify");
+
   if (body().getArgumentTypes() != getOperandTypes())
     return emitOpError() << "block argument types must match operand types";
 
@@ -449,6 +689,9 @@ namespace chlo {
 Operation* HloClientDialect::materializeConstant(OpBuilder& builder,
                                                  Attribute value, Type type,
                                                  Location loc) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc mht_24(mht_24_v, 692, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/chlo_ops.cc", "HloClientDialect::materializeConstant");
+
   // Mirror MHLO dialect here.
   if (value.isa<ElementsAttr>())
     return builder.create<mhlo::ConstOp>(loc, type, value.cast<ElementsAttr>());
@@ -456,6 +699,9 @@ Operation* HloClientDialect::materializeConstant(OpBuilder& builder,
 }
 
 void HloClientDialect::initialize() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPSchlo_opsDTcc mht_25(mht_25_v, 702, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/chlo_ops.cc", "HloClientDialect::initialize");
+
   addOperations<
 #define GET_OP_LIST
 #include "mlir-hlo/Dialect/mhlo/IR/chlo_ops.cc.inc"

@@ -17,6 +17,174 @@ limitations under the License.
 
 #ifndef FLATBUFFERS_GENERATED_SERIALIZATION_TFLITE_GPU_CL_DATA_H_
 #define FLATBUFFERS_GENERATED_SERIALIZATION_TFLITE_GPU_CL_DATA_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSserialization_generatedDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSserialization_generatedDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSserialization_generatedDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include "flatbuffers/flatbuffers.h"
 #include "tensorflow/lite/delegates/gpu/common/gpu_model_generated.h"
@@ -39,11 +207,20 @@ struct BinaryProgram FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_FINGERPRINT = 4,
     VT_BINARY = 6
   };
-  uint64_t fingerprint() const { return GetField<uint64_t>(VT_FINGERPRINT, 0); }
+  uint64_t fingerprint() const {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSserialization_generatedDTh mht_0(mht_0_v, 211, "", "./tensorflow/lite/delegates/gpu/cl/serialization_generated.h", "fingerprint");
+ return GetField<uint64_t>(VT_FINGERPRINT, 0); }
   const flatbuffers::Vector<uint8_t> *binary() const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSserialization_generatedDTh mht_1(mht_1_v, 215, "", "./tensorflow/lite/delegates/gpu/cl/serialization_generated.h", "binary");
+
     return GetPointer<const flatbuffers::Vector<uint8_t> *>(VT_BINARY);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSserialization_generatedDTh mht_2(mht_2_v, 221, "", "./tensorflow/lite/delegates/gpu/cl/serialization_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<uint64_t>(verifier, VT_FINGERPRINT) &&
            VerifyOffset(verifier, VT_BINARY) &&
@@ -56,13 +233,22 @@ struct BinaryProgramBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_fingerprint(uint64_t fingerprint) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSserialization_generatedDTh mht_3(mht_3_v, 236, "", "./tensorflow/lite/delegates/gpu/cl/serialization_generated.h", "add_fingerprint");
+
     fbb_.AddElement<uint64_t>(BinaryProgram::VT_FINGERPRINT, fingerprint, 0);
   }
   void add_binary(flatbuffers::Offset<flatbuffers::Vector<uint8_t>> binary) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSserialization_generatedDTh mht_4(mht_4_v, 242, "", "./tensorflow/lite/delegates/gpu/cl/serialization_generated.h", "add_binary");
+
     fbb_.AddOffset(BinaryProgram::VT_BINARY, binary);
   }
   explicit BinaryProgramBuilder(flatbuffers::FlatBufferBuilder &_fbb)
       : fbb_(_fbb) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSserialization_generatedDTh mht_5(mht_5_v, 249, "", "./tensorflow/lite/delegates/gpu/cl/serialization_generated.h", "BinaryProgramBuilder");
+
     start_ = fbb_.StartTable();
   }
   flatbuffers::Offset<BinaryProgram> Finish() {
@@ -99,29 +285,47 @@ struct InferenceContext FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_FINGERPRINTS_PER_NODE = 12
   };
   const tflite::gpu::data::GpuModel *gpu_model() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSserialization_generatedDTh mht_6(mht_6_v, 288, "", "./tensorflow/lite/delegates/gpu/cl/serialization_generated.h", "gpu_model");
+
     return GetPointer<const tflite::gpu::data::GpuModel *>(VT_GPU_MODEL);
   }
   const flatbuffers::String *driver_version() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSserialization_generatedDTh mht_7(mht_7_v, 294, "", "./tensorflow/lite/delegates/gpu/cl/serialization_generated.h", "driver_version");
+
     return GetPointer<const flatbuffers::String *>(VT_DRIVER_VERSION);
   }
   const flatbuffers::Vector<
       flatbuffers::Offset<tflite::gpu::cl::data::BinaryProgram>>
       *binary_programs() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSserialization_generatedDTh mht_8(mht_8_v, 302, "", "./tensorflow/lite/delegates/gpu/cl/serialization_generated.h", "binary_programs");
+
     return GetPointer<const flatbuffers::Vector<
         flatbuffers::Offset<tflite::gpu::cl::data::BinaryProgram>> *>(
         VT_BINARY_PROGRAMS);
   }
   const flatbuffers::Vector<flatbuffers::Offset<tflite::gpu::data::Int3>>
       *tuned_work_group_sizes_per_node() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSserialization_generatedDTh mht_9(mht_9_v, 311, "", "./tensorflow/lite/delegates/gpu/cl/serialization_generated.h", "tuned_work_group_sizes_per_node");
+
     return GetPointer<const flatbuffers::Vector<
         flatbuffers::Offset<tflite::gpu::data::Int3>> *>(
         VT_TUNED_WORK_GROUP_SIZES_PER_NODE);
   }
   const flatbuffers::Vector<uint64_t> *fingerprints_per_node() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSserialization_generatedDTh mht_10(mht_10_v, 319, "", "./tensorflow/lite/delegates/gpu/cl/serialization_generated.h", "fingerprints_per_node");
+
     return GetPointer<const flatbuffers::Vector<uint64_t> *>(
         VT_FINGERPRINTS_PER_NODE);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSserialization_generatedDTh mht_11(mht_11_v, 326, "", "./tensorflow/lite/delegates/gpu/cl/serialization_generated.h", "Verify");
+
     return VerifyTableStart(verifier) && VerifyOffset(verifier, VT_GPU_MODEL) &&
            verifier.VerifyTable(gpu_model()) &&
            VerifyOffset(verifier, VT_DRIVER_VERSION) &&
@@ -144,33 +348,51 @@ struct InferenceContextBuilder {
   flatbuffers::uoffset_t start_;
   void add_gpu_model(
       flatbuffers::Offset<tflite::gpu::data::GpuModel> gpu_model) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSserialization_generatedDTh mht_12(mht_12_v, 351, "", "./tensorflow/lite/delegates/gpu/cl/serialization_generated.h", "add_gpu_model");
+
     fbb_.AddOffset(InferenceContext::VT_GPU_MODEL, gpu_model);
   }
   void add_driver_version(
       flatbuffers::Offset<flatbuffers::String> driver_version) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSserialization_generatedDTh mht_13(mht_13_v, 358, "", "./tensorflow/lite/delegates/gpu/cl/serialization_generated.h", "add_driver_version");
+
     fbb_.AddOffset(InferenceContext::VT_DRIVER_VERSION, driver_version);
   }
   void add_binary_programs(
       flatbuffers::Offset<flatbuffers::Vector<
           flatbuffers::Offset<tflite::gpu::cl::data::BinaryProgram>>>
           binary_programs) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSserialization_generatedDTh mht_14(mht_14_v, 367, "", "./tensorflow/lite/delegates/gpu/cl/serialization_generated.h", "add_binary_programs");
+
     fbb_.AddOffset(InferenceContext::VT_BINARY_PROGRAMS, binary_programs);
   }
   void add_tuned_work_group_sizes_per_node(
       flatbuffers::Offset<
           flatbuffers::Vector<flatbuffers::Offset<tflite::gpu::data::Int3>>>
           tuned_work_group_sizes_per_node) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSserialization_generatedDTh mht_15(mht_15_v, 376, "", "./tensorflow/lite/delegates/gpu/cl/serialization_generated.h", "add_tuned_work_group_sizes_per_node");
+
     fbb_.AddOffset(InferenceContext::VT_TUNED_WORK_GROUP_SIZES_PER_NODE,
                    tuned_work_group_sizes_per_node);
   }
   void add_fingerprints_per_node(
       flatbuffers::Offset<flatbuffers::Vector<uint64_t>>
           fingerprints_per_node) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSserialization_generatedDTh mht_16(mht_16_v, 385, "", "./tensorflow/lite/delegates/gpu/cl/serialization_generated.h", "add_fingerprints_per_node");
+
     fbb_.AddOffset(InferenceContext::VT_FINGERPRINTS_PER_NODE,
                    fingerprints_per_node);
   }
   explicit InferenceContextBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSserialization_generatedDTh mht_17(mht_17_v, 393, "", "./tensorflow/lite/delegates/gpu/cl/serialization_generated.h", "InferenceContextBuilder");
+
     start_ = fbb_.StartTable();
   }
   flatbuffers::Offset<InferenceContext> Finish() {
@@ -233,32 +455,50 @@ inline flatbuffers::Offset<InferenceContext> CreateInferenceContextDirect(
 }
 
 inline const tflite::gpu::cl::data::InferenceContext *GetInferenceContext(const void *buf) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSserialization_generatedDTh mht_18(mht_18_v, 458, "", "./tensorflow/lite/delegates/gpu/cl/serialization_generated.h", "GetInferenceContext");
+
   return flatbuffers::GetRoot<tflite::gpu::cl::data::InferenceContext>(buf);
 }
 
 inline const tflite::gpu::cl::data::InferenceContext *GetSizePrefixedInferenceContext(const void *buf) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSserialization_generatedDTh mht_19(mht_19_v, 465, "", "./tensorflow/lite/delegates/gpu/cl/serialization_generated.h", "GetSizePrefixedInferenceContext");
+
   return flatbuffers::GetSizePrefixedRoot<tflite::gpu::cl::data::InferenceContext>(buf);
 }
 
 inline bool VerifyInferenceContextBuffer(
     flatbuffers::Verifier &verifier) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSserialization_generatedDTh mht_20(mht_20_v, 473, "", "./tensorflow/lite/delegates/gpu/cl/serialization_generated.h", "VerifyInferenceContextBuffer");
+
   return verifier.VerifyBuffer<tflite::gpu::cl::data::InferenceContext>(nullptr);
 }
 
 inline bool VerifySizePrefixedInferenceContextBuffer(
     flatbuffers::Verifier &verifier) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSserialization_generatedDTh mht_21(mht_21_v, 481, "", "./tensorflow/lite/delegates/gpu/cl/serialization_generated.h", "VerifySizePrefixedInferenceContextBuffer");
+
   return verifier.VerifySizePrefixedBuffer<tflite::gpu::cl::data::InferenceContext>(nullptr);
 }
 
 inline void FinishInferenceContextBuffer(
     flatbuffers::FlatBufferBuilder &fbb,
     flatbuffers::Offset<tflite::gpu::cl::data::InferenceContext> root) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSserialization_generatedDTh mht_22(mht_22_v, 490, "", "./tensorflow/lite/delegates/gpu/cl/serialization_generated.h", "FinishInferenceContextBuffer");
+
   fbb.Finish(root);
 }
 
 inline void FinishSizePrefixedInferenceContextBuffer(
     flatbuffers::FlatBufferBuilder &fbb,
     flatbuffers::Offset<tflite::gpu::cl::data::InferenceContext> root) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSserialization_generatedDTh mht_23(mht_23_v, 499, "", "./tensorflow/lite/delegates/gpu/cl/serialization_generated.h", "FinishSizePrefixedInferenceContextBuffer");
+
   fbb.FinishSizePrefixed(root);
 }
 

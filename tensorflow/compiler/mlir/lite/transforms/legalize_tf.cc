@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -76,24 +244,39 @@ constexpr char kTfLiteInputIndices[] = "_tflite_input_indices";
 // Legalize operations in functions.
 class LegalizeTF : public PassWrapper<LegalizeTF, OperationPass<FuncOp>> {
   void getDependentDialects(DialectRegistry& registry) const override {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_0(mht_0_v, 247, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "getDependentDialects");
+
     registry.insert<quant::QuantizationDialect, TFL::TensorFlowLiteDialect>();
   }
 
  public:
   LegalizeTF() = default;
-  LegalizeTF(const LegalizeTF&) {}
+  LegalizeTF(const LegalizeTF&) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_1(mht_1_v, 256, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "LegalizeTF");
+}
   explicit LegalizeTF(bool run_tfl_runtime_verification,
                       bool preserve_assert_op) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_2(mht_2_v, 261, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "LegalizeTF");
+
     run_tfl_runtime_verification_ = run_tfl_runtime_verification;
     preserve_assert_op_ = preserve_assert_op;
   }
 
   StringRef getArgument() const final {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_3(mht_3_v, 269, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "getArgument");
+
     // This is the argument used to refer to the pass in
     // the textual format (on the commandline for example).
     return "tfl-legalize-tf";
   }
   StringRef getDescription() const final {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_4(mht_4_v, 277, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "getDescription");
+
     // This is a brief description of the pass.
     return "Legalize from TensorFlow to TensorFlow Lite dialect";
   }
@@ -113,6 +296,9 @@ class LegalizeTF : public PassWrapper<LegalizeTF, OperationPass<FuncOp>> {
 
 // Returns true if all tensor value in `values` has static shape and same shape.
 bool HasSameStaticShapes(Operation* op) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_5(mht_5_v, 299, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "HasSameStaticShapes");
+
   auto values = op->getOperands();
   int index = 0;
   ArrayRef<int64_t> shape;
@@ -135,6 +321,9 @@ bool HasSameStaticShapes(Operation* op) {
 
 // Util that casts 'val' to Int32 by adding a cast Op.
 Value CreateCastToInt32(Value val, Location loc, PatternRewriter& rewriter) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_6(mht_6_v, 324, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "CreateCastToInt32");
+
   IntegerType new_ele_type = rewriter.getIntegerType(32);
   if (auto shaped_type = val.getType().dyn_cast<RankedTensorType>()) {
     ShapedType new_type =
@@ -149,6 +338,9 @@ Value CreateCastToInt32(Value val, Location loc, PatternRewriter& rewriter) {
 
 // Get shape of an operand or result, support both dynamic and static shape.
 Value GetShape(Value input, Location loc, PatternRewriter& rewriter) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_7(mht_7_v, 341, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "GetShape");
+
   auto shaped_type = input.getType().cast<ShapedType>();
   if (shaped_type.hasStaticShape()) {
     auto static_shape = shaped_type.getShape();
@@ -216,6 +408,9 @@ LogicalResult ConvertToI32Attr(IntegerAttr attr, IntegerAttr* attr_i32) {
 
 LogicalResult ConvertTFConcatV2Op::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_8(mht_8_v, 411, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "ConvertTFConcatV2Op::matchAndRewrite");
+
   auto tf_concat_op = cast<TF::ConcatV2Op>(op);
 
   auto values = tf_concat_op.values();
@@ -238,6 +433,9 @@ LogicalResult ConvertTFConcatV2Op::matchAndRewrite(
 
 LogicalResult ConvertTFMatMulOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_9(mht_9_v, 436, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "ConvertTFMatMulOp::matchAndRewrite");
+
   auto tf_matmul_op = cast<TF::MatMulOp>(op);
   auto lhs = op->getOperand(0);
   auto rhs = op->getOperand(1);
@@ -286,6 +484,9 @@ LogicalResult ConvertTFMatMulOp::matchAndRewrite(
 
 LogicalResult ConvertTFPackOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_10(mht_10_v, 487, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "ConvertTFPackOp::matchAndRewrite");
+
   auto tf_pack_op = cast<TF::PackOp>(op);
 
   SmallVector<Value, 4> values(tf_pack_op.values());
@@ -301,6 +502,9 @@ LogicalResult ConvertTFPackOp::matchAndRewrite(
 
 LogicalResult ConvertTFSplitOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_11(mht_11_v, 505, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "ConvertTFSplitOp::matchAndRewrite");
+
   auto tf_split_op = cast<TF::SplitOp>(op);
 
   // Number of splits cannot be negative.
@@ -314,6 +518,9 @@ LogicalResult ConvertTFSplitOp::matchAndRewrite(
 
 LogicalResult ConvertTFSplitVOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_12(mht_12_v, 521, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "ConvertTFSplitVOp::matchAndRewrite");
+
   auto tf_splitv_op = cast<TF::SplitVOp>(op);
 
   // Number of splits cannot be negative.
@@ -327,6 +534,9 @@ LogicalResult ConvertTFSplitVOp::matchAndRewrite(
 
 LogicalResult ConvertTFUnpackOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_13(mht_13_v, 537, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "ConvertTFUnpackOp::matchAndRewrite");
+
   auto tf_unpack_op = cast<TF::UnpackOp>(op);
 
   auto input = tf_unpack_op.value();
@@ -341,6 +551,9 @@ LogicalResult ConvertTFUnpackOp::matchAndRewrite(
 
 LogicalResult ConvertTFConv3DOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_14(mht_14_v, 554, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "ConvertTFConv3DOp::matchAndRewrite");
+
   if (!TFDataFormatIsNDHWC(op)) return failure();
 
   auto tf_op = cast<TF::Conv3DOp>(op);
@@ -381,6 +594,9 @@ LogicalResult ConvertTFConv3DOp::matchAndRewrite(
 
 LogicalResult ConvertTFConv3DBackpropInputV2Op::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_15(mht_15_v, 597, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "ConvertTFConv3DBackpropInputV2Op::matchAndRewrite");
+
   if (!TFDataFormatIsNDHWC(op)) return failure();
 
   auto tf_op = cast<TF::Conv3DBackpropInputV2Op>(op);
@@ -431,6 +647,9 @@ LogicalResult ConvertTFConv3DBackpropInputV2Op::matchAndRewrite(
 // to call `rewriter::replaceOpWihNewOp`, which is not a const member function.
 template <typename MatrixDiagV2OrV3Op>
 bool ConvertTFMatrixDiagV2orV3(Operation* op, PatternRewriter* rewriter) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_16(mht_16_v, 650, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "ConvertTFMatrixDiagV2orV3");
+
   auto tf_matrix_diag_v2_or_v3_op = cast<MatrixDiagV2OrV3Op>(op);
 
   if (tf_matrix_diag_v2_or_v3_op.getNumOperands() != 5) return false;
@@ -488,6 +707,9 @@ bool ConvertTFMatrixDiagV2orV3(Operation* op, PatternRewriter* rewriter) {
 
 LogicalResult ConvertTFMatrixDiagV2Op::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_17(mht_17_v, 710, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "ConvertTFMatrixDiagV2Op::matchAndRewrite");
+
   if (ConvertTFMatrixDiagV2orV3<TF::MatrixDiagV2Op>(op, &rewriter))
     return success();
   return failure();
@@ -495,6 +717,9 @@ LogicalResult ConvertTFMatrixDiagV2Op::matchAndRewrite(
 
 LogicalResult ConvertTFMatrixDiagV3Op::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_18(mht_18_v, 720, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "ConvertTFMatrixDiagV3Op::matchAndRewrite");
+
   if (ConvertTFMatrixDiagV2orV3<TF::MatrixDiagV3Op>(op, &rewriter))
     return success();
   return failure();
@@ -503,6 +728,9 @@ LogicalResult ConvertTFMatrixDiagV3Op::matchAndRewrite(
 // TF Lite doesn't support Assert, we just drop the assert from the graph.
 LogicalResult ConvertTFAssertOp::matchAndRewrite(
     Operation* op, PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_19(mht_19_v, 731, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "ConvertTFAssertOp::matchAndRewrite");
+
   rewriter.eraseOp(op);
   return success();
 }
@@ -510,10 +738,16 @@ LogicalResult ConvertTFAssertOp::matchAndRewrite(
 // Legalize unidirectional sequence lstm.
 struct LegalizeUnidirectionalSequenceLstm : public RewritePattern {
   explicit LegalizeUnidirectionalSequenceLstm(MLIRContext* context)
-      : RewritePattern(kUnidirectionalSequenceLstm, 1, context) {}
+      : RewritePattern(kUnidirectionalSequenceLstm, 1, context) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_20(mht_20_v, 742, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "LegalizeUnidirectionalSequenceLstm");
+}
 
   LogicalResult matchAndRewrite(Operation* op,
                                 PatternRewriter& rewriter) const override {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_21(mht_21_v, 748, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "matchAndRewrite");
+
     auto tflite_indices_attr =
         op->getAttrOfType<ArrayAttr>(kTfLiteInputIndices);
     if (!tflite_indices_attr) return failure();
@@ -577,10 +811,16 @@ struct LegalizeUnidirectionalSequenceLstm : public RewritePattern {
 // Legalize unidirectional seqeucen rnn.
 struct LegalizeUnidirectionalSequenceRnn : public RewritePattern {
   explicit LegalizeUnidirectionalSequenceRnn(MLIRContext* context)
-      : RewritePattern(kUnidirectionalSequenceRnn, 1, context) {}
+      : RewritePattern(kUnidirectionalSequenceRnn, 1, context) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_22(mht_22_v, 815, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "LegalizeUnidirectionalSequenceRnn");
+}
 
   LogicalResult matchAndRewrite(Operation* op,
                                 PatternRewriter& rewriter) const override {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_23(mht_23_v, 821, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "matchAndRewrite");
+
     auto tflite_indices_attr =
         op->getAttrOfType<ArrayAttr>(kTfLiteInputIndices);
     if (!tflite_indices_attr) return failure();
@@ -643,6 +883,9 @@ class ApplyExplicitBroadcasting : public OpRewritePattern<SourceOp> {
 
   LogicalResult rewriteOpWithDynamicInput(Operation* op,
                                           PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_24(mht_24_v, 886, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "rewriteOpWithDynamicInput");
+
     auto lhs = op->getOperand(0);
     auto rhs = op->getOperand(1);
     auto out = op->getResult(0);
@@ -698,6 +941,9 @@ class ApplyExplicitBroadcasting : public OpRewritePattern<SourceOp> {
 
   LogicalResult matchAndRewrite(SourceOp src_op,
                                 PatternRewriter& rewriter) const override {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_25(mht_25_v, 944, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "matchAndRewrite");
+
     Operation* op = static_cast<Operation*>(src_op);
     auto lhs = op->getOperand(0);
     auto rhs = op->getOperand(1);
@@ -763,6 +1009,9 @@ class ApplyExplicitBroadcasting<TF::SelectV2Op>
 
   LogicalResult rewriteOpWithDynamicInput(Operation* op,
                                           PatternRewriter& rewriter) const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_26(mht_26_v, 1012, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "rewriteOpWithDynamicInput");
+
     auto cond = op->getOperand(0);
     auto lhs = op->getOperand(1);
     auto rhs = op->getOperand(2);
@@ -836,6 +1085,9 @@ class ApplyExplicitBroadcasting<TF::SelectV2Op>
 
   LogicalResult matchAndRewrite(TF::SelectV2Op src_op,
                                 PatternRewriter& rewriter) const override {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_27(mht_27_v, 1088, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "matchAndRewrite");
+
     Operation* op = static_cast<Operation*>(src_op);
     auto cond = op->getOperand(0);
     auto lhs = op->getOperand(1);
@@ -910,6 +1162,9 @@ class ApplyExplicitBroadcasting<TF::SelectV2Op>
 
 void addPatterns(MLIRContext* context, RewritePatternSet& patterns,
                  bool preserve_assert_op) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_28(mht_28_v, 1165, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "addPatterns");
+
   // Add TF->TF lowering patterns.
   TF::PopulateLoweringTFPatterns(context, &patterns);
 
@@ -928,6 +1183,9 @@ void addPatterns(MLIRContext* context, RewritePatternSet& patterns,
 
 bool applyPatterns(FuncOp func, ConversionTarget& target,
                    FrozenRewritePatternSet& frozenPatterns) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_29(mht_29_v, 1186, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "applyPatterns");
+
   // Keep trying to convert.
   // TODO(karimnosseir): This is similar to what apply greedy patterns does.
   // Look if there is a function that tries until it converge.
@@ -942,6 +1200,9 @@ bool applyPatterns(FuncOp func, ConversionTarget& target,
 }
 
 void LegalizeTF::runOnOperation() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlegalize_tfDTcc mht_30(mht_30_v, 1203, "", "./tensorflow/compiler/mlir/lite/transforms/legalize_tf.cc", "LegalizeTF::runOnOperation");
+
   auto* context = &getContext();
   auto func = getOperation();
 

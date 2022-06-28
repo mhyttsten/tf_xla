@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSdepthwiseconv_quantized_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSdepthwiseconv_quantized_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSdepthwiseconv_quantized_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -91,10 +259,16 @@ struct TestParam {
         test_depth_multiplier(::testing::get<5>(param_tuple)),
         output_rounding(::testing::get<6>(param_tuple)),
         num_threads(::testing::get<7>(param_tuple)),
-        loose_tolerance(::testing::get<8>(param_tuple)) {}
+        loose_tolerance(::testing::get<8>(param_tuple)) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSdepthwiseconv_quantized_testDTcc mht_0(mht_0_v, 263, "", "./tensorflow/lite/kernels/internal/depthwiseconv_quantized_test.cc", "TestParam");
+}
 
   static std::string TestNameSuffix(
       const ::testing::TestParamInfo<TestParamTuple>& info) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSdepthwiseconv_quantized_testDTcc mht_1(mht_1_v, 269, "", "./tensorflow/lite/kernels/internal/depthwiseconv_quantized_test.cc", "TestNameSuffix");
+
     const TestParam param(info.param);
     return absl::Substitute(
         "invocation_$0_quantization_$1_stride_$2_pad_$3_depth_mult_$4",
@@ -130,6 +304,9 @@ inline void DispatchDepthwiseConvGeneral(
     const RuntimeShape& output_shape,
     typename QuantizationTypeImpl<quantization_type>::ExternalType* output_data,
     int thread_start, int thread_end, int thread_dim) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSdepthwiseconv_quantized_testDTcc mht_2(mht_2_v, 307, "", "./tensorflow/lite/kernels/internal/depthwiseconv_quantized_test.cc", "DispatchDepthwiseConvGeneral");
+
   optimized_ops::depthwise_conv::DepthwiseConvGeneral(
       params, input_shape, input_data, filter_shape, filter_data, bias_shape,
       bias_data, output_shape, output_data, thread_start, thread_end,
@@ -145,6 +322,9 @@ inline void DispatchDepthwiseConvGeneral<QuantizationType::kPerChannelInt8>(
     const std::int32_t* output_multiplier_adjust,
     const RuntimeShape& output_shape, int8* output_data, int thread_start,
     int thread_end, int thread_dim) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSdepthwiseconv_quantized_testDTcc mht_3(mht_3_v, 325, "", "./tensorflow/lite/kernels/internal/depthwiseconv_quantized_test.cc", "DispatchDepthwiseConvGeneral<QuantizationType::kPerChannelInt8>");
+
   optimized_integer_ops::depthwise_conv::DepthwiseConvGeneral(
       params, output_multiplier_adjust, output_shift_adjust, input_shape,
       input_data, filter_shape, filter_data, bias_shape, bias_data,
@@ -164,6 +344,9 @@ inline void DispatchDepthwiseConvImpl(
     const RuntimeShape& output_shape,
     typename QuantizationTypeImpl<quantization_type>::ExternalType*
         output_data) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSdepthwiseconv_quantized_testDTcc mht_4(mht_4_v, 347, "", "./tensorflow/lite/kernels/internal/depthwiseconv_quantized_test.cc", "DispatchDepthwiseConvImpl");
+
   switch (test_param.forced_invocation) {
     case DepthwiseConvImplementation::kUseNeon3x3: {
 // Enable for arm64 except for the Nvidia Linux 4 Tegra (L4T) running on
@@ -367,6 +550,9 @@ inline void DispatchDepthwiseConvImpl<QuantizationType::kPerChannelInt8>(
     const RuntimeShape& output_shape,
     typename QuantizationTypeImpl<
         QuantizationType::kPerChannelInt8>::ExternalType* output_data) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSdepthwiseconv_quantized_testDTcc mht_5(mht_5_v, 553, "", "./tensorflow/lite/kernels/internal/depthwiseconv_quantized_test.cc", "DispatchDepthwiseConvImpl<QuantizationType::kPerChannelInt8>");
+
   static constexpr QuantizationType quantization_type =
       QuantizationType::kPerChannelInt8;
 
@@ -534,6 +720,9 @@ inline void DispatchDepthwiseConv(
     const RuntimeShape& output_shape,
     typename QuantizationTypeImpl<quantization_type>::ExternalType*
         output_data) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSdepthwiseconv_quantized_testDTcc mht_6(mht_6_v, 723, "", "./tensorflow/lite/kernels/internal/depthwiseconv_quantized_test.cc", "DispatchDepthwiseConv");
+
   DispatchDepthwiseConvImpl<quantization_type>(
       test_param, params, input_shape, input_data, filter_shape, filter_data,
       bias_shape, bias_data, output_shape, output_data);
@@ -550,6 +739,9 @@ struct ReferenceRunner<QuantizationType::kNonPerChannelUint8> {
       const uint8* filter_data, const RuntimeShape& filter_shape,
       const std::int32_t* bias_data, const RuntimeShape& bias_shape,
       const RuntimeShape& output_shape, uint8* reference_output_data) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSdepthwiseconv_quantized_testDTcc mht_7(mht_7_v, 742, "", "./tensorflow/lite/kernels/internal/depthwiseconv_quantized_test.cc", "Run");
+
     switch (test_param.output_rounding) {
       case DepthwiseConvOutputRounding::kUpward:
         reference_ops::depthwise_conv::DepthwiseConvBasicKernel<
@@ -581,6 +773,9 @@ struct ReferenceRunner<QuantizationType::kPerChannelInt8> {
       const int8* filter_data, const RuntimeShape& filter_shape,
       const std::int32_t* bias_data, const RuntimeShape& bias_shape,
       const RuntimeShape& output_shape, int8* reference_output_data) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSdepthwiseconv_quantized_testDTcc mht_8(mht_8_v, 776, "", "./tensorflow/lite/kernels/internal/depthwiseconv_quantized_test.cc", "Run");
+
     switch (test_param.output_rounding) {
       case DepthwiseConvOutputRounding::kUpward:
         reference_ops::depthwise_conv::DepthwiseConvBasicKernel<
@@ -622,6 +817,9 @@ int TestOneDepthwiseConvWithGivenOutputShift(
     const std::int32_t* output_multiplier_adjust, int output_shift,
     std::int32_t output_activation_min, std::int32_t output_activation_max,
     const RuntimeShape& output_shape) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSdepthwiseconv_quantized_testDTcc mht_9(mht_9_v, 820, "", "./tensorflow/lite/kernels/internal/depthwiseconv_quantized_test.cc", "TestOneDepthwiseConvWithGivenOutputShift");
+
   const int output_buffer_size = output_shape.FlatSize();
   std::vector<typename QuantizationTypeImpl<quantization_type>::ExternalType>
       output_data(output_buffer_size, 42);
@@ -760,6 +958,9 @@ void TestOneDepthwiseConvBisectOutputShift(
     int output_activation_bisect_start, int output_activation_bisect_end,
     std::int32_t output_activation_min, std::int32_t output_activation_max,
     const RuntimeShape& output_shape) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSdepthwiseconv_quantized_testDTcc mht_10(mht_10_v, 961, "", "./tensorflow/lite/kernels/internal/depthwiseconv_quantized_test.cc", "TestOneDepthwiseConvBisectOutputShift");
+
   ASSERT_LT(output_activation_bisect_start, output_activation_bisect_end)
       << "Bisection failed ?!?!";
   int output_shift_bisect_midpoint =
@@ -818,6 +1019,9 @@ void TestOneDepthwiseConv(
     const std::int32_t* output_multiplier_adjust,
     std::int32_t output_activation_min, std::int32_t output_activation_max,
     const RuntimeShape& output_shape) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSdepthwiseconv_quantized_testDTcc mht_11(mht_11_v, 1022, "", "./tensorflow/lite/kernels/internal/depthwiseconv_quantized_test.cc", "TestOneDepthwiseConv");
+
   TestOneDepthwiseConvBisectOutputShift<quantization_type>(
       test_param, input_data, input_shape, input_offset, filter_data,
       filter_shape, filter_offset, bias_data, bias_shape, stride, padding_type,
@@ -833,6 +1037,9 @@ bool TryTestDepthwiseConv(const TestParam& test_param,
                           int depth_multiplier, int stride,
                           int dilation_width_factor, int dilation_height_factor,
                           PaddingType padding_type) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSdepthwiseconv_quantized_testDTcc mht_12(mht_12_v, 1040, "", "./tensorflow/lite/kernels/internal/depthwiseconv_quantized_test.cc", "TryTestDepthwiseConv");
+
   const int output_depth = input_depth * depth_multiplier;
   // The optimized DepthwiseConv implementation currently uses a fixed-size
   // accumulator buffer on the stack, with that size. This currently means
@@ -949,6 +1156,9 @@ bool TryTestDepthwiseConv(const TestParam& test_param,
 // to loop until a test has been run.
 bool TryTestOneDepthwiseConv(const TestParam& test_param,
                              ParamsSpecialization params_specialization) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSdepthwiseconv_quantized_testDTcc mht_13(mht_13_v, 1159, "", "./tensorflow/lite/kernels/internal/depthwiseconv_quantized_test.cc", "TryTestOneDepthwiseConv");
+
   // We have to pick a lot of positive values, where we are particularly
   // interested in small values because they are most likely to be special
   // cases in optimized implementations, and secondarily because they allow
@@ -976,6 +1186,9 @@ bool TryTestOneDepthwiseConv(const TestParam& test_param,
 // Tests parameters for the 3x3 filter kernel.
 bool TryTestOneDepthwiseConv3x3Filter(
     const TestParam& test_param, ParamsSpecialization params_specialization) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSdepthwiseconv_quantized_testDTcc mht_14(mht_14_v, 1189, "", "./tensorflow/lite/kernels/internal/depthwiseconv_quantized_test.cc", "TryTestOneDepthwiseConv3x3Filter");
+
   const int batch = ExponentialRandomPositiveInt(0.9f, 3, 20);
   const int input_depth = 8 * ExponentialRandomPositiveInt(0.9f, 10, 50);
   int input_width = ExponentialRandomPositiveInt(0.9f, 20, 200);
@@ -1018,6 +1231,9 @@ bool TryTestOneDepthwiseConv3x3Filter(
 // Tests with parameters suited to dot-product-NEON 3x3 filter kernels.
 bool TryTestOneNeonDot3x3(const TestParam& test_param,
                           ParamsSpecialization params_specialization) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSdepthwiseconv_quantized_testDTcc mht_15(mht_15_v, 1234, "", "./tensorflow/lite/kernels/internal/depthwiseconv_quantized_test.cc", "TryTestOneNeonDot3x3");
+
   const CoverageExtension coverage_extension = static_cast<CoverageExtension>(
       UniformRandomInt(0, static_cast<int>(CoverageExtension::kNumOptions)));
 
@@ -1053,6 +1269,9 @@ bool TryTestOneNeonDot3x3(const TestParam& test_param,
 
 void TestOneDepthwiseConv(DepthwiseConvImplementation forced_invocation,
                           DepthwiseConvOutputRounding output_rounding) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSdepthwiseconv_quantized_testDTcc mht_16(mht_16_v, 1272, "", "./tensorflow/lite/kernels/internal/depthwiseconv_quantized_test.cc", "TestOneDepthwiseConv");
+
   TestParam test_param;
   test_param.forced_invocation = forced_invocation;
   test_param.output_rounding = output_rounding;
@@ -1063,6 +1282,9 @@ void TestOneDepthwiseConv(DepthwiseConvImplementation forced_invocation,
 void TestOneDepthwiseConv3x3Filter(
     DepthwiseConvImplementation forced_invocation,
     DepthwiseConvOutputRounding output_rounding) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSdepthwiseconv_quantized_testDTcc mht_17(mht_17_v, 1285, "", "./tensorflow/lite/kernels/internal/depthwiseconv_quantized_test.cc", "TestOneDepthwiseConv3x3Filter");
+
   TestParam test_param;
   test_param.forced_invocation = forced_invocation;
   test_param.output_rounding = output_rounding;
@@ -1072,6 +1294,9 @@ void TestOneDepthwiseConv3x3Filter(
 }
 
 void TestOneNeonDot3x3(const TestParam& test_param) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSdepthwiseconv_quantized_testDTcc mht_18(mht_18_v, 1297, "", "./tensorflow/lite/kernels/internal/depthwiseconv_quantized_test.cc", "TestOneNeonDot3x3");
+
 #if defined(__aarch64__) && !defined(GOOGLE_L4T) && defined(__ANDROID__) && \
     defined(__clang__)
   CpuFlags cpu_flags;

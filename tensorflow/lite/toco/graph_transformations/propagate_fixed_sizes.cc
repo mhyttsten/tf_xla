@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,6 +205,9 @@ void ComputeConvSizes(const Shape& input_shape, int output_depth, int kwidth,
                       int dilation_width_factor, int dilation_height_factor,
                       PaddingType padding_type, Shape* output_shape,
                       FixedPadding* fixed_padding) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_0(mht_0_v, 208, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ComputeConvSizes");
+
   const int input_width = input_shape.dims(2);
   const int input_height = input_shape.dims(1);
   const int batch = input_shape.dims(0);
@@ -84,6 +255,9 @@ void ComputeConvSizes(const Shape& input_shape, int output_depth, int kwidth,
 void ComputeBinaryOperatorOutputSize(const Shape& input_shape_x,
                                      const Shape& input_shape_y,
                                      Array* output_array) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_1(mht_1_v, 258, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ComputeBinaryOperatorOutputSize");
+
   // This matches the code in BroadcastBinaryOpShapeFn from tensorflow.
   // It zips together the two input shapes and pads with 1 to make them the
   // same length. For each dimension we broadcast if either dimension is 1 and
@@ -123,6 +297,9 @@ void ComputeBinaryOperatorOutputSize(const Shape& input_shape_x,
 }
 
 void ProcessConvOperator(Model* model, ConvOperator* op) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_2(mht_2_v, 300, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessConvOperator");
+
   const auto& input_array = model->GetArray(op->inputs[0]);
   // Yield until input dims have been resolved.
   if (!input_array.has_shape()) {
@@ -164,6 +341,9 @@ void ProcessConvOperator(Model* model, ConvOperator* op) {
 }
 
 void ProcessTransposeConvOperator(Model* model, TransposeConvOperator* op) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_3(mht_3_v, 344, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessTransposeConvOperator");
+
   // TransposeConv is unique in that it is specifically given the output shape
   // as a 1D array on it's 1st input. Resolving the output shape is as easy
   // as waiting for this input to be resolved. However, we also have to
@@ -250,6 +430,9 @@ void ProcessTransposeConvOperator(Model* model, TransposeConvOperator* op) {
 }
 
 void ProcessDepthwiseConvOperator(Model* model, DepthwiseConvOperator* op) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_4(mht_4_v, 433, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessDepthwiseConvOperator");
+
   const auto& input_array = model->GetArray(op->inputs[0]);
   // Yield until input dims have been resolved.
   if (!input_array.has_shape()) {
@@ -292,6 +475,9 @@ void ProcessDepthwiseConvOperator(Model* model, DepthwiseConvOperator* op) {
 }
 
 void ProcessDepthToSpaceOperator(Model* model, DepthToSpaceOperator* op) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_5(mht_5_v, 478, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessDepthToSpaceOperator");
+
   const auto& input_array = model->GetArray(op->inputs[0]);
   // Yield until input dims have been resolved.
   if (!input_array.has_shape()) {
@@ -315,6 +501,9 @@ void ProcessDepthToSpaceOperator(Model* model, DepthToSpaceOperator* op) {
 }
 
 void ProcessSpaceToDepthOperator(Model* model, SpaceToDepthOperator* op) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_6(mht_6_v, 504, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessSpaceToDepthOperator");
+
   const auto& input_array = model->GetArray(op->inputs[0]);
   // Yield until input dims have been resolved.
   if (!input_array.has_shape()) {
@@ -339,6 +528,9 @@ void ProcessSpaceToDepthOperator(Model* model, SpaceToDepthOperator* op) {
 }
 
 void ProcessOpWithShapeInput(Model* model, Operator* op) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_7(mht_7_v, 531, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessOpWithShapeInput");
+
   CHECK_EQ(op->outputs.size(), 1);
   auto& output_array = model->GetArray(op->outputs[0]);
   if (output_array.has_shape()) {
@@ -365,6 +557,9 @@ void ProcessOpWithShapeInput(Model* model, Operator* op) {
 }
 
 void ProcessFullyConnectedOperator(Model* model, FullyConnectedOperator* op) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_8(mht_8_v, 560, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessFullyConnectedOperator");
+
   const auto& input_array = model->GetArray(op->inputs[0]);
   // Yield until input dims have been resolved.
   if (!input_array.has_shape()) {
@@ -393,6 +588,9 @@ void ProcessFullyConnectedOperator(Model* model, FullyConnectedOperator* op) {
 
 void ProcessTensorFlowReshapeOperator(Model* model,
                                       TensorFlowReshapeOperator* op) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_9(mht_9_v, 591, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessTensorFlowReshapeOperator");
+
   auto& output_array = model->GetArray(op->outputs[0]);
   if (output_array.has_shape()) {
     // We have already run
@@ -462,6 +660,9 @@ void ProcessTensorFlowReshapeOperator(Model* model,
 }
 
 void ProcessSimpleOperator(Model* model, Operator* op, int input_index) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_10(mht_10_v, 663, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessSimpleOperator");
+
   const auto& input_array = model->GetArray(op->inputs[input_index]);
   // Yield until input dims have been resolved.
   if (!input_array.has_shape()) {
@@ -478,6 +679,9 @@ void ProcessSimpleOperator(Model* model, Operator* op, int input_index) {
 }
 
 void ProcessSimpleBinaryOperator(Model* model, Operator* op) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_11(mht_11_v, 682, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessSimpleBinaryOperator");
+
   CHECK_EQ(op->inputs.size(), 2);
   const auto& input0_array = model->GetArray(op->inputs[0]);
   const auto& input1_array = model->GetArray(op->inputs[1]);
@@ -492,6 +696,9 @@ void ProcessSimpleBinaryOperator(Model* model, Operator* op) {
 }
 
 void ProcessSelectOperator(Model* model, SelectOperator* op) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_12(mht_12_v, 699, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessSelectOperator");
+
   // Yield until all input dims have been resolved.
   for (const auto& input : op->inputs) {
     const auto& input_array = model->GetArray(input);
@@ -507,6 +714,9 @@ void ProcessSelectOperator(Model* model, SelectOperator* op) {
 }
 
 void ProcessAddNOperator(Model* model, Operator* op) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_13(mht_13_v, 717, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessAddNOperator");
+
   // Yield until all input dims have been resolved.
   //
   // TODO(myenik): Since AddN does not support broadcasting, maybe we could
@@ -529,6 +739,9 @@ void ProcessAddNOperator(Model* model, Operator* op) {
 }
 
 bool KeepDims(const Operator& op) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_14(mht_14_v, 742, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "KeepDims");
+
   switch (op.type) {
     case OperatorType::kReduceMin:  //  Reduction Min
       return static_cast<const TensorFlowMinOperator&>(op).keep_dims;
@@ -549,6 +762,9 @@ bool KeepDims(const Operator& op) {
 }
 
 void ProcessTensorFlowReductionOperator(Model* model, Operator* op) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_15(mht_15_v, 765, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessTensorFlowReductionOperator");
+
   CHECK_LE(op->inputs.size(), 2);
   auto& output_array = model->GetArray(op->outputs[0]);
   if (output_array.has_shape()) {
@@ -607,6 +823,9 @@ void ProcessTensorFlowReductionOperator(Model* model, Operator* op) {
 }
 
 void ProcessSliceOperator(Model* model, SliceOperator* op) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_16(mht_16_v, 826, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessSliceOperator");
+
   CHECK_EQ(op->inputs.size(), 3);
   CHECK_EQ(op->outputs.size(), 1);
 
@@ -637,6 +856,9 @@ void ProcessSliceOperator(Model* model, SliceOperator* op) {
 }
 
 void ProcessReorderAxesOperator(Model* model, ReorderAxesOperator* op) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_17(mht_17_v, 859, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessReorderAxesOperator");
+
   const std::string& input_name = op->inputs[0];
   const auto& input_array = model->GetArray(input_name);
   // Yield until input dims have been resolved.
@@ -651,6 +873,9 @@ void ProcessReorderAxesOperator(Model* model, ReorderAxesOperator* op) {
 }
 
 void ProcessConcatenationOperator(Model* model, ConcatenationOperator* op) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_18(mht_18_v, 876, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessConcatenationOperator");
+
   // Yield until input dims have been resolved.
   for (const auto& input_name : op->inputs) {
     auto& input_array = model->GetArray(input_name);
@@ -692,6 +917,9 @@ void ProcessConcatenationOperator(Model* model, ConcatenationOperator* op) {
 }
 
 void ProcessRangeOperator(Model* model, RangeOperator* op) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_19(mht_19_v, 920, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessRangeOperator");
+
   CHECK_EQ(op->inputs.size(), 3);
   const auto& start_array = model->GetArray(op->inputs[0]);
   if (!start_array.has_shape()) {
@@ -754,6 +982,9 @@ void ProcessRangeOperator(Model* model, RangeOperator* op) {
 }
 
 void ProcessTensorFlowSplitOperator(Model* model, TensorFlowSplitOperator* op) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_20(mht_20_v, 985, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessTensorFlowSplitOperator");
+
   CHECK_EQ(op->inputs.size(), 2);
   const std::string& input_name = op->inputs[1];
   const auto& input_array = model->GetArray(input_name);
@@ -800,6 +1031,9 @@ void ProcessTensorFlowSplitOperator(Model* model, TensorFlowSplitOperator* op) {
 
 void ProcessTensorFlowSplitVOperator(Model* model,
                                      TensorFlowSplitVOperator* op) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_21(mht_21_v, 1034, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessTensorFlowSplitVOperator");
+
   CHECK_EQ(op->inputs.size(), 3);
 
   const auto& input_array = model->GetArray(op->inputs[0]);
@@ -890,6 +1124,9 @@ void ProcessTensorFlowSplitVOperator(Model* model,
 }
 
 void ProcessAveragePoolOperator(Model* model, AveragePoolOperator* op) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_22(mht_22_v, 1127, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessAveragePoolOperator");
+
   const std::string& input_name = op->inputs[0];
   const auto& input_array = model->GetArray(input_name);
   // Yield until input dims have been resolved.
@@ -907,6 +1144,9 @@ void ProcessAveragePoolOperator(Model* model, AveragePoolOperator* op) {
 }
 
 void ProcessMaxPoolOperator(Model* model, MaxPoolOperator* op) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_23(mht_23_v, 1147, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessMaxPoolOperator");
+
   const std::string& input_name = op->inputs[0];
   const auto& input_array = model->GetArray(input_name);
   // Yield until input dims have been resolved.
@@ -924,6 +1164,9 @@ void ProcessMaxPoolOperator(Model* model, MaxPoolOperator* op) {
 }
 
 void ProcessL2PoolOperator(Model* model, L2PoolOperator* op) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_24(mht_24_v, 1167, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessL2PoolOperator");
+
   const std::string& input_name = op->inputs[0];
   const auto& input_array = model->GetArray(input_name);
   // Yield until input dims have been resolved.
@@ -943,6 +1186,9 @@ void ProcessL2PoolOperator(Model* model, L2PoolOperator* op) {
 }
 
 void ProcessResizeBilinearOperator(Model* model, ResizeBilinearOperator* op) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_25(mht_25_v, 1189, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessResizeBilinearOperator");
+
   CHECK_EQ(op->inputs.size(), 2);
   CHECK_EQ(op->outputs.size(), 1);
 
@@ -971,6 +1217,9 @@ void ProcessResizeBilinearOperator(Model* model, ResizeBilinearOperator* op) {
 
 void ProcessResizeNearestNeighborOperator(Model* model,
                                           ResizeNearestNeighborOperator* op) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_26(mht_26_v, 1220, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessResizeNearestNeighborOperator");
+
   CHECK_EQ(op->inputs.size(), 2);
   CHECK_EQ(op->outputs.size(), 1);
 
@@ -998,6 +1247,9 @@ void ProcessResizeNearestNeighborOperator(Model* model,
 }
 
 void ProcessLstmCellOperator(Model* model, LstmCellOperator* op) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_27(mht_27_v, 1250, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessLstmCellOperator");
+
   // Only required for compact LstmCell with default NUM_INPUTS of inputs.
   if (op->inputs.size() != LstmCellOperator::NUM_INPUTS) return;
 
@@ -1079,6 +1331,9 @@ void ProcessLstmCellOperator(Model* model, LstmCellOperator* op) {
 
 void ProcessUnidirectionalSequenceLstmOperator(
     Model* model, UnidirectionalSequenceLstmOperator* op) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_28(mht_28_v, 1334, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessUnidirectionalSequenceLstmOperator");
+
   auto& output_array = model->GetArray(op->outputs[0]);
   if (output_array.has_shape()) {
     // Shape already propagated
@@ -1128,6 +1383,9 @@ void ProcessUnidirectionalSequenceLstmOperator(
 
 void ProcessUnidirectionalSequenceRnnOperator(
     Model* model, UnidirectionalSequenceRnnOperator* op) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_29(mht_29_v, 1386, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessUnidirectionalSequenceRnnOperator");
+
   auto& output_array = model->GetArray(op->outputs[0]);
   if (output_array.has_shape()) {
     // Shape already propagated.
@@ -1172,6 +1430,9 @@ void ProcessUnidirectionalSequenceRnnOperator(
 
 void ProcessBidirectionalSequenceLstmOperator(
     Model* model, BidirectionalSequenceLstmOperator* op) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_30(mht_30_v, 1433, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessBidirectionalSequenceLstmOperator");
+
   // We assume time major.
   auto& fw_output_array = model->GetArray(op->outputs[0]);
   auto& bw_output_array = model->GetArray(op->outputs[1]);
@@ -1228,6 +1489,9 @@ void ProcessBidirectionalSequenceLstmOperator(
 
 void ProcessBidirectionalSequenceRnnOperator(
     Model* model, BidirectionalSequenceRnnOperator* op) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_31(mht_31_v, 1492, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessBidirectionalSequenceRnnOperator");
+
   // We assume time major.
   auto& fw_output_array = model->GetArray(op->outputs[0]);
   auto& bw_output_array = model->GetArray(op->outputs[1]);
@@ -1279,6 +1543,9 @@ void ProcessBidirectionalSequenceRnnOperator(
 }
 
 void ProcessSpaceToBatchNDOperator(Model* model, SpaceToBatchNDOperator* op) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_32(mht_32_v, 1546, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessSpaceToBatchNDOperator");
+
   const auto& input_array = model->GetArray(op->inputs[0]);
   // Yield until input dims have been resolved.
   if (!input_array.has_shape()) {
@@ -1335,6 +1602,9 @@ void ProcessSpaceToBatchNDOperator(Model* model, SpaceToBatchNDOperator* op) {
 }
 
 void ProcessBatchToSpaceNDOperator(Model* model, BatchToSpaceNDOperator* op) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_33(mht_33_v, 1605, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessBatchToSpaceNDOperator");
+
   const auto& input_array = model->GetArray(op->inputs[0]);
   // Yield until input dims have been resolved.
   if (!input_array.has_shape()) {
@@ -1388,6 +1658,9 @@ void ProcessBatchToSpaceNDOperator(Model* model, BatchToSpaceNDOperator* op) {
 }
 
 void ProcessGatherOperator(Model* model, GatherOperator* op) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_34(mht_34_v, 1661, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessGatherOperator");
+
   const auto& input_array = model->GetArray(op->inputs[0]);
   const auto& indices_array = model->GetArray(op->inputs[1]);
   auto& output_array = model->GetArray(op->outputs[0]);
@@ -1429,6 +1702,9 @@ void ProcessGatherOperator(Model* model, GatherOperator* op) {
 }
 
 void ProcessGatherNdOperator(Model* model, GatherNdOperator* op) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_35(mht_35_v, 1705, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessGatherNdOperator");
+
   const auto& input_array = model->GetArray(op->inputs[0]);
   const auto& indices_array = model->GetArray(op->inputs[1]);
   auto& output_array = model->GetArray(op->outputs[0]);
@@ -1461,6 +1737,9 @@ void ProcessGatherNdOperator(Model* model, GatherNdOperator* op) {
 }
 
 void ProcessTopkV2Operator(Model* model, TopKV2Operator* op) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_36(mht_36_v, 1740, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessTopkV2Operator");
+
   const auto& input_values = model->GetArray(op->inputs[0]);
   const auto& input_k = model->GetArray(op->inputs[1]);
   auto& output_values = model->GetArray(op->outputs[0]);
@@ -1494,6 +1773,9 @@ void ProcessTopkV2Operator(Model* model, TopKV2Operator* op) {
 }
 
 void ProcessPadOperator(Model* model, PadOperator* op) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_37(mht_37_v, 1776, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessPadOperator");
+
   CHECK_EQ(op->inputs.size(), 2);
   CHECK_EQ(op->outputs.size(), 1);
 
@@ -1520,6 +1802,9 @@ void ProcessPadOperator(Model* model, PadOperator* op) {
 }
 
 void ProcessPadV2Operator(Model* model, PadV2Operator* op) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_38(mht_38_v, 1805, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessPadV2Operator");
+
   CHECK_EQ(op->inputs.size(), 3);
   CHECK_EQ(op->outputs.size(), 1);
 
@@ -1546,6 +1831,9 @@ void ProcessPadV2Operator(Model* model, PadV2Operator* op) {
 }
 
 void ProcessRankOperator(Model* model, TensorFlowRankOperator* op) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_39(mht_39_v, 1834, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessRankOperator");
+
   CHECK_GE(op->inputs.size(), 1);
   CHECK_EQ(op->outputs.size(), 1);
   auto& output_array = model->GetArray(op->outputs[0]);
@@ -1572,6 +1860,9 @@ void ProcessRankOperator(Model* model, TensorFlowRankOperator* op) {
 }
 
 void ProcessShapeOperator(Model* model, TensorFlowShapeOperator* op) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_40(mht_40_v, 1863, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessShapeOperator");
+
   CHECK_GE(op->inputs.size(), 1);
   CHECK_EQ(op->outputs.size(), 1);
   auto& output_array = model->GetArray(op->outputs[0]);
@@ -1598,6 +1889,9 @@ void ProcessShapeOperator(Model* model, TensorFlowShapeOperator* op) {
 }
 
 void ProcessPackOperator(Model* model, PackOperator* op) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_41(mht_41_v, 1892, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessPackOperator");
+
   CHECK_GE(op->inputs.size(), 1);
   CHECK_EQ(op->outputs.size(), 1);
   auto& output_array = model->GetArray(op->outputs[0]);
@@ -1635,6 +1929,9 @@ void ProcessPackOperator(Model* model, PackOperator* op) {
 }
 
 void ProcessStridedSliceOperator(Model* model, StridedSliceOperator* op) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_42(mht_42_v, 1932, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessStridedSliceOperator");
+
   CHECK_GE(op->inputs.size(), 1);
   CHECK_EQ(op->outputs.size(), 1);
   auto& output_array = model->GetArray(op->outputs[0]);
@@ -1721,6 +2018,9 @@ void ProcessStridedSliceOperator(Model* model, StridedSliceOperator* op) {
 }
 
 void ProcessSqueezeOperator(Model* model, SqueezeOperator* op) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_43(mht_43_v, 2021, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessSqueezeOperator");
+
   CHECK_EQ(op->inputs.size(), 1);
   CHECK_EQ(op->outputs.size(), 1);
 
@@ -1752,6 +2052,9 @@ void ProcessSqueezeOperator(Model* model, SqueezeOperator* op) {
 }
 
 void ProcessSvdfOperator(Model* model, SvdfOperator* op) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_44(mht_44_v, 2055, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessSvdfOperator");
+
   CHECK(op->inputs.size() == 4 || op->inputs.size() == 5);
   const auto& input_array = model->GetArray(op->inputs[0]);
   if (!input_array.has_shape()) return;
@@ -1781,6 +2084,9 @@ void ProcessSvdfOperator(Model* model, SvdfOperator* op) {
 }
 
 void ProcessTransposeOperator(Model* model, TransposeOperator* op) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_45(mht_45_v, 2087, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessTransposeOperator");
+
   auto& output_array = model->GetArray(op->outputs[0]);
   if (output_array.has_shape()) {
     // We have already run
@@ -1822,6 +2128,9 @@ void ProcessTransposeOperator(Model* model, TransposeOperator* op) {
 
 template <typename Op>
 void ProcessArgMinMaxOperator(Model* model, Op* op) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_46(mht_46_v, 2131, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessArgMinMaxOperator");
+
   CHECK_EQ(op->inputs.size(), 2);
   const auto& input_array = model->GetArray(op->inputs[0]);
   // Yield until input dims have been resolved.
@@ -1869,6 +2178,9 @@ void ProcessArgMinMaxOperator(Model* model, Op* op) {
 }
 
 void ProcessSparseToDenseOperator(Model* model, SparseToDenseOperator* op) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_47(mht_47_v, 2181, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessSparseToDenseOperator");
+
   CHECK_EQ(op->inputs.size(), 4);
 
   const Array& output_shape_array = model->GetArray(op->inputs[1]);
@@ -1900,6 +2212,9 @@ void ProcessSparseToDenseOperator(Model* model, SparseToDenseOperator* op) {
 }
 
 void ProcessTileOperator(Model* model, TensorFlowTileOperator* op) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_48(mht_48_v, 2215, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessTileOperator");
+
   CHECK_EQ(op->inputs.size(), 2);
   CHECK_EQ(op->outputs.size(), 1);
 
@@ -1942,6 +2257,9 @@ void ProcessTileOperator(Model* model, TensorFlowTileOperator* op) {
 }
 
 void ProcessOneHotOperator(Model* model, OneHotOperator* op) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_49(mht_49_v, 2260, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessOneHotOperator");
+
   CHECK_EQ(op->inputs.size(), 4);
   CHECK_EQ(op->outputs.size(), 1);
   auto& output_array = model->GetArray(op->outputs[0]);
@@ -1997,6 +2315,9 @@ void ProcessOneHotOperator(Model* model, OneHotOperator* op) {
 }
 
 void ProcessUnpackOperator(Model* model, UnpackOperator* op) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_50(mht_50_v, 2318, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessUnpackOperator");
+
   CHECK_EQ(op->inputs.size(), 1);
   const auto& input_array = model->GetArray(op->inputs[0]);
   // Yield until input dims have been resolved.
@@ -2023,6 +2344,9 @@ void ProcessUnpackOperator(Model* model, UnpackOperator* op) {
 }
 
 void ProcessMirrorPadOperator(Model* model, MirrorPadOperator* op) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_51(mht_51_v, 2347, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessMirrorPadOperator");
+
   CHECK_EQ(op->inputs.size(), 2);
   const auto& input_array = model->GetArray(op->inputs[0]);
   const auto& padding_matrix = model->GetArray(op->inputs[1]);
@@ -2068,6 +2392,9 @@ void ProcessMirrorPadOperator(Model* model, MirrorPadOperator* op) {
 }
 
 void ProcessUniqueOperator(Model* model, UniqueOperator* op) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_52(mht_52_v, 2395, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessUniqueOperator");
+
   const auto& input_array = model->GetArray(op->inputs[0]);
   // We have 2 outputs, the shape of the index tensor, is the same size
   // as the input array. The unique values tensor, is unknown until runtime.
@@ -2082,6 +2409,9 @@ void ProcessUniqueOperator(Model* model, UniqueOperator* op) {
 }
 
 void ProcessMatrixDiagOperator(Model* model, MatrixDiagOperator* op) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_53(mht_53_v, 2412, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessMatrixDiagOperator");
+
   CHECK_EQ(op->inputs.size(), 1);
   CHECK_EQ(op->outputs.size(), 1);
   auto& input_array = model->GetArray(op->inputs[0]);
@@ -2104,6 +2434,9 @@ void ProcessMatrixDiagOperator(Model* model, MatrixDiagOperator* op) {
 }
 
 void ProcessMatrixSetDiagOperator(Model* model, MatrixSetDiagOperator* op) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_54(mht_54_v, 2437, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessMatrixSetDiagOperator");
+
   CHECK_EQ(op->inputs.size(), 2);
   CHECK_EQ(op->outputs.size(), 1);
   auto& input_array = model->GetArray(op->inputs[0]);
@@ -2119,6 +2452,9 @@ void ProcessMatrixSetDiagOperator(Model* model, MatrixSetDiagOperator* op) {
 }
 
 void ProcessScatterNdOperator(Model* model, ScatterNdOperator* op) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_55(mht_55_v, 2455, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "ProcessScatterNdOperator");
+
   CHECK_EQ(op->inputs.size(), 3);
   CHECK_EQ(op->outputs.size(), 1);
   auto& shape_array = model->GetArray(op->inputs[2]);
@@ -2144,6 +2480,9 @@ void ProcessScatterNdOperator(Model* model, ScatterNdOperator* op) {
 ::tensorflow::Status PropagateFixedSizes::Run(Model* model,
                                               std::size_t op_index,
                                               bool* modified) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSgraph_transformationsPSpropagate_fixed_sizesDTcc mht_56(mht_56_v, 2483, "", "./tensorflow/lite/toco/graph_transformations/propagate_fixed_sizes.cc", "PropagateFixedSizes::Run");
+
   *modified = false;
   auto it = model->operators.begin() + op_index;
   auto* op = it->get();

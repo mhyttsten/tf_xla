@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSpythonPSutilPStf_stackDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSpythonPSutilPStf_stackDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSpythonPSutilPStf_stackDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -64,7 +232,10 @@ using StringSet = absl::flat_hash_set<std::string>;
 // Python wrapper for a SourceMap.
 class PyBindSourceMap {
  public:
-  PyBindSourceMap() : source_map_(std::make_shared<SourceMap>()) {}
+  PyBindSourceMap() : source_map_(std::make_shared<SourceMap>()) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSpythonPSutilPStf_stackDTcc mht_0(mht_0_v, 236, "", "./tensorflow/python/util/tf_stack.cc", "PyBindSourceMap");
+}
 
   // Shares ownership with whoever captures traces in the scope of this map.
   std::shared_ptr<SourceMap> source_map_;
@@ -73,7 +244,10 @@ class PyBindSourceMap {
 // Python wrapper for a FileSet.
 class PyBindFileSet {
  public:
-  PyBindFileSet() : file_set_(std::make_shared<StringSet>()) {}
+  PyBindFileSet() : file_set_(std::make_shared<StringSet>()) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSpythonPSutilPStf_stackDTcc mht_1(mht_1_v, 248, "", "./tensorflow/python/util/tf_stack.cc", "PyBindFileSet");
+}
 
   // Shares ownership with whoever captures traces in the scope of this set.
   std::shared_ptr<StringSet> file_set_;
@@ -83,6 +257,9 @@ class PyBindFileSet {
 //
 // Precondition: must be holding Python GIL.
 py::str LineContents(const StackFrame& frame) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSpythonPSutilPStf_stackDTcc mht_2(mht_2_v, 260, "", "./tensorflow/python/util/tf_stack.cc", "LineContents");
+
   DCheckPyGilStateForStackTrace();
   // Pointers are to avoid static destruction of pybind::object, which
   // occurs in uncontrollable states.
@@ -118,6 +295,9 @@ std::string StackFrameToString(
     const StackFrame& frame,
     const AbstractStackTrace::TracePrintingOptions& opts,
     int shared_prefix_size = 0) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSpythonPSutilPStf_stackDTcc mht_3(mht_3_v, 298, "", "./tensorflow/python/util/tf_stack.cc", "StackFrameToString");
+
   std::string out = absl::StrFormat(
       "File \"%s\", line %d, in %s",
       absl::StrContains(frame.file_name, kFilenameToIgnorePrefix)
@@ -143,15 +323,24 @@ class StackTraceWrapper : public AbstractStackTrace {
                     const std::shared_ptr<StringSet>& filter)
       : captured_(std::move(captured)),
         source_map_(source_map),
-        filter_(filter) {}
+        filter_(filter) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSpythonPSutilPStf_stackDTcc mht_4(mht_4_v, 327, "", "./tensorflow/python/util/tf_stack.cc", "StackTraceWrapper");
+}
 
   explicit StackTraceWrapper(absl::Span<StackFrame const> stack_frames)
       : stack_frames_cache_(std::vector<StackFrame>(stack_frames.begin(),
-                                                    stack_frames.end())) {}
+                                                    stack_frames.end())) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSpythonPSutilPStf_stackDTcc mht_5(mht_5_v, 334, "", "./tensorflow/python/util/tf_stack.cc", "StackTraceWrapper");
+}
 
   static StackTraceWrapper ExtractStack(
       const std::shared_ptr<SourceMap>& source_map,
       const std::shared_ptr<StringSet>& filter) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSpythonPSutilPStf_stackDTcc mht_6(mht_6_v, 341, "", "./tensorflow/python/util/tf_stack.cc", "ExtractStack");
+
     return StackTraceWrapper{StackTrace::Capture(-1), source_map, filter};
   }
 
@@ -188,6 +377,9 @@ class StackTraceWrapper : public AbstractStackTrace {
   }
 
   StackFrame LastUserFrame() const override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSpythonPSutilPStf_stackDTcc mht_7(mht_7_v, 380, "", "./tensorflow/python/util/tf_stack.cc", "LastUserFrame");
+
     if (last_stack_frame_cache_) {
       return *last_stack_frame_cache_;
     }
@@ -206,6 +398,9 @@ class StackTraceWrapper : public AbstractStackTrace {
   }
 
   std::string ToString(const TracePrintingOptions& opts) const override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSpythonPSutilPStf_stackDTcc mht_8(mht_8_v, 401, "", "./tensorflow/python/util/tf_stack.cc", "ToString");
+
     std::vector<std::string> files_to_find_prefix;
     for (const StackFrame& frame : ToFrames()) {
       if (!absl::StrContains(frame.file_name, kFilenameToIgnorePrefix)) {
@@ -232,6 +427,9 @@ class StackTraceWrapper : public AbstractStackTrace {
 
   StackTraceWrapper(StackTraceWrapper&&) = default;
   ~StackTraceWrapper() override {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSpythonPSutilPStf_stackDTcc mht_9(mht_9_v, 430, "", "./tensorflow/python/util/tf_stack.cc", "~StackTraceWrapper");
+
     PyGILState_STATE state = PyGILState_Ensure();
     captured_.Clear();
     source_map_.reset();
@@ -243,6 +441,9 @@ class StackTraceWrapper : public AbstractStackTrace {
   static std::string ToStringHelper(absl::Span<StackFrame const> stack_frames,
                                     const TracePrintingOptions& opts,
                                     int shared_prefix_size) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSpythonPSutilPStf_stackDTcc mht_10(mht_10_v, 444, "", "./tensorflow/python/util/tf_stack.cc", "ToStringHelper");
+
     return absl::StrJoin(
         stack_frames, "\n", [&](std::string* out, const StackFrame& frame) {
           absl::StrAppend(out,
@@ -251,6 +452,10 @@ class StackTraceWrapper : public AbstractStackTrace {
   }
 
   bool StackTraceFiltering(const char* file_name) const {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("file_name: \"" + (file_name == nullptr ? std::string("nullptr") : std::string((char*)file_name)) + "\"");
+   MHTracer_DTPStensorflowPSpythonPSutilPStf_stackDTcc mht_11(mht_11_v, 456, "", "./tensorflow/python/util/tf_stack.cc", "StackTraceFiltering");
+
     return filter_->contains(file_name);
   }
 

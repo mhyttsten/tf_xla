@@ -14,6 +14,174 @@ limitations under the License.
 ==============================================================================*/
 #ifndef TENSORFLOW_LITE_KERNELS_INTERNAL_COMMON_H_
 #define TENSORFLOW_LITE_KERNELS_INTERNAL_COMMON_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #ifndef ALLOW_SLOW_GENERIC_DEPTHWISECONV_FALLBACK
 #ifdef GEMMLOWP_ALLOW_SLOW_SCALAR_FALLBACK
@@ -35,6 +203,9 @@ constexpr int kReverseShift = -1;
 inline void GetActivationMinMax(FusedActivationFunctionType ac,
                                 float* output_activation_min,
                                 float* output_activation_max) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_0(mht_0_v, 206, "", "./tensorflow/lite/kernels/internal/common.h", "GetActivationMinMax");
+
   switch (ac) {
     case FusedActivationFunctionType::kNone:
       *output_activation_min = std::numeric_limits<float>::lowest();
@@ -58,6 +229,9 @@ inline void GetActivationMinMax(FusedActivationFunctionType ac,
 template <typename T>
 inline T ActivationFunctionWithMinMax(T x, T output_activation_min,
                                       T output_activation_max) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_1(mht_1_v, 232, "", "./tensorflow/lite/kernels/internal/common.h", "ActivationFunctionWithMinMax");
+
   using std::max;
   using std::min;
   return min(max(x, output_activation_min), output_activation_max);
@@ -66,6 +240,9 @@ inline T ActivationFunctionWithMinMax(T x, T output_activation_min,
 // Legacy function, left for compatibility only.
 template <FusedActivationFunctionType Ac>
 float ActivationFunction(float x) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_2(mht_2_v, 243, "", "./tensorflow/lite/kernels/internal/common.h", "ActivationFunction");
+
   float output_activation_min, output_activation_max;
   GetActivationMinMax(Ac, &output_activation_min, &output_activation_max);
   return ActivationFunctionWithMinMax(x, output_activation_min,
@@ -75,6 +252,9 @@ float ActivationFunction(float x) {
 inline void BiasAndClamp(float clamp_min, float clamp_max, int bias_size,
                          const float* bias_data, int array_size,
                          float* array_data) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_3(mht_3_v, 255, "", "./tensorflow/lite/kernels/internal/common.h", "BiasAndClamp");
+
   if (bias_size == 0) return;
   // Note: see b/132215220: in May 2019 we thought it would be OK to replace
   // this with the Eigen one-liner:
@@ -159,12 +339,18 @@ inline int32_t MultiplyByQuantizedMultiplier(int32_t x,
 
 inline int32_t MultiplyByQuantizedMultiplierSmallerThanOneExp(
     int32_t x, int32_t quantized_multiplier, int shift) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_4(mht_4_v, 342, "", "./tensorflow/lite/kernels/internal/common.h", "MultiplyByQuantizedMultiplierSmallerThanOneExp");
+
   TFLITE_DCHECK_LE(shift, 0);
   return MultiplyByQuantizedMultiplier(x, quantized_multiplier, shift);
 }
 
 inline int32_t MultiplyByQuantizedMultiplierGreaterThanOne(
     int32_t x, int32_t quantized_multiplier, int shift) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_5(mht_5_v, 351, "", "./tensorflow/lite/kernels/internal/common.h", "MultiplyByQuantizedMultiplierGreaterThanOne");
+
   TFLITE_DCHECK_GE(shift, 0);
   return MultiplyByQuantizedMultiplier(x, quantized_multiplier, shift);
 }
@@ -172,6 +358,9 @@ inline int32_t MultiplyByQuantizedMultiplierGreaterThanOne(
 inline int32_t MultiplyByQuantizedMultiplier(int64_t x,
                                              int32_t quantized_multiplier,
                                              int shift) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_6(mht_6_v, 361, "", "./tensorflow/lite/kernels/internal/common.h", "MultiplyByQuantizedMultiplier");
+
   // Inputs:
   // - quantized_multiplier has fixed point at bit 31
   // - shift is -31 to +7 (negative for right shift)
@@ -243,6 +432,9 @@ inline int32_t MultiplyByQuantizedMultiplierSmallerThanOneExp(
 
 inline int32_t MultiplyByQuantizedMultiplierGreaterThanOne(
     int32_t x, int32_t quantized_multiplier, int left_shift) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_7(mht_7_v, 435, "", "./tensorflow/lite/kernels/internal/common.h", "MultiplyByQuantizedMultiplierGreaterThanOne");
+
   using gemmlowp::SaturatingRoundingDoublingHighMul;
   return SaturatingRoundingDoublingHighMul(x * (1 << left_shift),
                                            quantized_multiplier);
@@ -251,6 +443,9 @@ inline int32_t MultiplyByQuantizedMultiplierGreaterThanOne(
 inline int32_t MultiplyByQuantizedMultiplier(int32_t x,
                                              int32_t quantized_multiplier,
                                              int shift) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_8(mht_8_v, 446, "", "./tensorflow/lite/kernels/internal/common.h", "MultiplyByQuantizedMultiplier");
+
   using gemmlowp::RoundingDivideByPOT;
   using gemmlowp::SaturatingRoundingDoublingHighMul;
   int left_shift = shift > 0 ? shift : 0;
@@ -263,6 +458,9 @@ inline int32_t MultiplyByQuantizedMultiplier(int32_t x,
 inline int32_t MultiplyByQuantizedMultiplier(int64_t x,
                                              int32_t quantized_multiplier,
                                              int shift) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_9(mht_9_v, 461, "", "./tensorflow/lite/kernels/internal/common.h", "MultiplyByQuantizedMultiplier");
+
   // Inputs:
   // - quantized_multiplier has fixed point at bit 31
   // - shift is -31 to +7 (negative for right shift)
@@ -347,6 +545,9 @@ int CountLeadingZeros(T integer_input) {
 
 template <typename T>
 inline int CountLeadingSignBits(T integer_input) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_10(mht_10_v, 548, "", "./tensorflow/lite/kernels/internal/common.h", "CountLeadingSignBits");
+
   static_assert(std::is_signed<T>::value, "Only signed integer types handled.");
 #if defined(__GNUC__) && !defined(__clang__)
   return integer_input ? __builtin_clrsb(integer_input)
@@ -364,6 +565,9 @@ inline int CountLeadingSignBits(T integer_input) {
 // Use "count leading zeros" helper functions to do a fast Floor(log_2(x)).
 template <typename Integer>
 inline Integer FloorLog2(Integer n) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_11(mht_11_v, 568, "", "./tensorflow/lite/kernels/internal/common.h", "FloorLog2");
+
   static_assert(std::is_integral<Integer>::value, "");
   static_assert(std::is_signed<Integer>::value, "");
   static_assert(sizeof(Integer) == 4 || sizeof(Integer) == 8, "");
@@ -452,6 +656,9 @@ inline void gen_lut(FloatT (*func)(FloatT), FloatT input_min, FloatT input_max,
 template <typename LutOutT>
 inline LutOutT lut_lookup_with_interpolation(int16_t value,
                                              const LutOutT* lut) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_12(mht_12_v, 659, "", "./tensorflow/lite/kernels/internal/common.h", "lut_lookup_with_interpolation");
+
   static_assert(std::is_same<LutOutT, int8_t>::value ||
                     std::is_same<LutOutT, int16_t>::value,
                 "Only LUTs with int8 or int16 outputs are supported.");
@@ -475,24 +682,36 @@ inline LutOutT lut_lookup_with_interpolation(int16_t value,
 // int16_t -> int16_t table lookup with interpolation
 // LUT must have 513 values
 inline int16_t lut_lookup(int16_t value, const int16_t* lut) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_13(mht_13_v, 685, "", "./tensorflow/lite/kernels/internal/common.h", "lut_lookup");
+
   return lut_lookup_with_interpolation(value, lut);
 }
 
 // int16_t -> int8_t table lookup with interpolation
 // LUT must have 513 values
 inline int8_t lut_lookup(int16_t value, const int8_t* lut) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_14(mht_14_v, 694, "", "./tensorflow/lite/kernels/internal/common.h", "lut_lookup");
+
   return lut_lookup_with_interpolation(value, lut);
 }
 
 // int8_t -> int8_t table lookup without interpolation
 // LUT must have 256 values
 inline int8_t lut_lookup(int8_t value, const int8_t* lut) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_15(mht_15_v, 703, "", "./tensorflow/lite/kernels/internal/common.h", "lut_lookup");
+
   return lut[128 + value];
 }
 
 // int8_t -> int16_t table lookup without interpolation
 // LUT must have 256 values
 inline int16_t lut_lookup(int8_t value, const int16_t* lut) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_16(mht_16_v, 712, "", "./tensorflow/lite/kernels/internal/common.h", "lut_lookup");
+
   return lut[128 + value];
 }
 
@@ -531,12 +750,18 @@ static const uint16_t sigmoid_table_uint16[256] = {
 // TODO(b/77858996): Add these to gemmlowp.
 template <typename IntegerType>
 IntegerType SaturatingAddNonGemmlowp(IntegerType a, IntegerType b) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_17(mht_17_v, 753, "", "./tensorflow/lite/kernels/internal/common.h", "SaturatingAddNonGemmlowp");
+
   static_assert(std::is_same<IntegerType, void>::value, "unimplemented");
   return a;
 }
 
 template <>
 inline std::int32_t SaturatingAddNonGemmlowp(std::int32_t a, std::int32_t b) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_18(mht_18_v, 762, "", "./tensorflow/lite/kernels/internal/common.h", "SaturatingAddNonGemmlowp");
+
   std::int64_t a64 = a;
   std::int64_t b64 = b;
   std::int64_t sum = a64 + b64;
@@ -557,12 +782,18 @@ gemmlowp::FixedPoint<tRawType, tIntegerBits> SaturatingAddNonGemmlowp(
 
 template <typename IntegerType>
 IntegerType SaturatingSub(IntegerType a, IntegerType b) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_19(mht_19_v, 785, "", "./tensorflow/lite/kernels/internal/common.h", "SaturatingSub");
+
   static_assert(std::is_same<IntegerType, void>::value, "unimplemented");
   return a;
 }
 
 template <>
 inline std::int16_t SaturatingSub(std::int16_t a, std::int16_t b) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_20(mht_20_v, 794, "", "./tensorflow/lite/kernels/internal/common.h", "SaturatingSub");
+
   std::int32_t a32 = a;
   std::int32_t b32 = b;
   std::int32_t diff = a32 - b32;
@@ -573,6 +804,9 @@ inline std::int16_t SaturatingSub(std::int16_t a, std::int16_t b) {
 
 template <>
 inline std::int32_t SaturatingSub(std::int32_t a, std::int32_t b) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_21(mht_21_v, 807, "", "./tensorflow/lite/kernels/internal/common.h", "SaturatingSub");
+
   std::int64_t a64 = a;
   std::int64_t b64 = b;
   std::int64_t diff = a64 - b64;
@@ -594,6 +828,9 @@ gemmlowp::FixedPoint<tRawType, tIntegerBits> SaturatingSub(
 
 template <typename IntegerType>
 IntegerType SaturatingRoundingMultiplyByPOTParam(IntegerType x, int exponent) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_22(mht_22_v, 831, "", "./tensorflow/lite/kernels/internal/common.h", "SaturatingRoundingMultiplyByPOTParam");
+
   if (exponent == 0) {
     return x;
   }
@@ -631,6 +868,9 @@ SaturatingRoundingMultiplyByPOTParam(
 // Convert int32_t multiplier to int16_t with rounding.
 inline void DownScaleInt32ToInt16Multiplier(int32_t multiplier_int32_t,
                                             int16_t* multiplier_int16_t) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_23(mht_23_v, 871, "", "./tensorflow/lite/kernels/internal/common.h", "DownScaleInt32ToInt16Multiplier");
+
   TFLITE_DCHECK_GE(multiplier_int32_t, 0);
   static constexpr int32_t kRoundingOffset = 1 << 15;
   if (multiplier_int32_t >=
@@ -764,6 +1004,9 @@ log_x_for_x_greater_than_or_equal_to_1(
 
 inline int32_t GetReciprocal(int32_t x, int x_integer_digits,
                              int* num_bits_over_unit) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_24(mht_24_v, 1007, "", "./tensorflow/lite/kernels/internal/common.h", "GetReciprocal");
+
   int headroom_plus_one = CountLeadingZeros(static_cast<uint32_t>(x));
   // This is the number of bits to the left of the binary point above 1.0.
   // Consider x=1.25.  In that case shifted_scale=0.8 and
@@ -782,6 +1025,9 @@ inline int32_t GetReciprocal(int32_t x, int x_integer_digits,
 inline void GetInvSqrtQuantizedMultiplierExp(int32_t input, int reverse_shift,
                                              int32_t* output_inv_sqrt,
                                              int* output_shift) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_25(mht_25_v, 1028, "", "./tensorflow/lite/kernels/internal/common.h", "GetInvSqrtQuantizedMultiplierExp");
+
   TFLITE_DCHECK_GE(input, 0);
   if (input <= 1) {
     // Handle the input value 1 separately to avoid overflow in that case
@@ -866,6 +1112,9 @@ struct NdArrayDesc {
 // Same as Offset(), except takes as NdArrayDesc<N> instead of Dims<N>.
 inline int SubscriptToIndex(const NdArrayDesc<4>& desc, int i0, int i1, int i2,
                             int i3) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_26(mht_26_v, 1115, "", "./tensorflow/lite/kernels/internal/common.h", "SubscriptToIndex");
+
   TFLITE_DCHECK(i0 >= 0 && i0 < desc.extents[0]);
   TFLITE_DCHECK(i1 >= 0 && i1 < desc.extents[1]);
   TFLITE_DCHECK(i2 >= 0 && i2 < desc.extents[2]);
@@ -875,12 +1124,18 @@ inline int SubscriptToIndex(const NdArrayDesc<4>& desc, int i0, int i1, int i2,
 }
 
 inline int SubscriptToIndex(const NdArrayDesc<5>& desc, int indexes[5]) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_27(mht_27_v, 1127, "", "./tensorflow/lite/kernels/internal/common.h", "SubscriptToIndex");
+
   return indexes[0] * desc.strides[0] + indexes[1] * desc.strides[1] +
          indexes[2] * desc.strides[2] + indexes[3] * desc.strides[3] +
          indexes[4] * desc.strides[4];
 }
 
 inline int SubscriptToIndex(const NdArrayDesc<8>& desc, int indexes[8]) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_28(mht_28_v, 1136, "", "./tensorflow/lite/kernels/internal/common.h", "SubscriptToIndex");
+
   return indexes[0] * desc.strides[0] + indexes[1] * desc.strides[1] +
          indexes[2] * desc.strides[2] + indexes[3] * desc.strides[3] +
          indexes[4] * desc.strides[4] + indexes[5] * desc.strides[5] +
@@ -914,6 +1169,9 @@ inline void NdArrayDescsForElementwiseBroadcast(const Dims<N>& input0_dims,
                                                 const Dims<N>& input1_dims,
                                                 NdArrayDesc<N>* desc0_out,
                                                 NdArrayDesc<N>* desc1_out) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_29(mht_29_v, 1172, "", "./tensorflow/lite/kernels/internal/common.h", "NdArrayDescsForElementwiseBroadcast");
+
   TFLITE_DCHECK(desc0_out != nullptr);
   TFLITE_DCHECK(desc1_out != nullptr);
 
@@ -948,6 +1206,9 @@ inline void NdArrayDescsForElementwiseBroadcast(const Dims<N>& input0_dims,
 template <int N>
 inline void CopyDimsToDesc(const RuntimeShape& input_shape,
                            NdArrayDesc<N>* desc_out) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_30(mht_30_v, 1209, "", "./tensorflow/lite/kernels/internal/common.h", "CopyDimsToDesc");
+
   int desc_stride = 1;
   for (int i = N - 1; i >= 0; --i) {
     desc_out->extents[i] = input_shape.Dims(i);
@@ -960,6 +1221,9 @@ template <int N>
 inline void NdArrayDescsForElementwiseBroadcast(
     const RuntimeShape& input0_shape, const RuntimeShape& input1_shape,
     NdArrayDesc<N>* desc0_out, NdArrayDesc<N>* desc1_out) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_31(mht_31_v, 1224, "", "./tensorflow/lite/kernels/internal/common.h", "NdArrayDescsForElementwiseBroadcast");
+
   TFLITE_DCHECK(desc0_out != nullptr);
   TFLITE_DCHECK(desc1_out != nullptr);
 
@@ -994,6 +1258,9 @@ inline void NdArrayDescsForElementwiseBroadcast(
     const RuntimeShape& input0_shape, const RuntimeShape& input1_shape,
     const RuntimeShape& input2_shape, NdArrayDesc<N>* desc0_out,
     NdArrayDesc<N>* desc1_out, NdArrayDesc<N>* desc2_out) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_32(mht_32_v, 1261, "", "./tensorflow/lite/kernels/internal/common.h", "NdArrayDescsForElementwiseBroadcast");
+
   TFLITE_DCHECK(desc0_out != nullptr);
   TFLITE_DCHECK(desc1_out != nullptr);
   TFLITE_DCHECK(desc2_out != nullptr);
@@ -1055,6 +1322,9 @@ inline void NdArrayDescsForElementwiseBroadcast(
 template <int N, int DIM, typename Calc>
 typename std::enable_if<DIM != N - 1, void>::type NDOpsHelperImpl(
     const NdArrayDesc<N>& output, const Calc& calc, int indexes[N]) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_33(mht_33_v, 1325, "", "./tensorflow/lite/kernels/internal/common.h", "NDOpsHelperImpl");
+
   for (indexes[DIM] = 0; indexes[DIM] < output.extents[DIM]; ++indexes[DIM]) {
     NDOpsHelperImpl<N, DIM + 1, Calc>(output, calc, indexes);
   }
@@ -1063,6 +1333,9 @@ typename std::enable_if<DIM != N - 1, void>::type NDOpsHelperImpl(
 template <int N, int DIM, typename Calc>
 typename std::enable_if<DIM == N - 1, void>::type NDOpsHelperImpl(
     const NdArrayDesc<N>& output, const Calc& calc, int indexes[N]) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_34(mht_34_v, 1336, "", "./tensorflow/lite/kernels/internal/common.h", "NDOpsHelperImpl");
+
   for (indexes[DIM] = 0; indexes[DIM] < output.extents[DIM]; ++indexes[DIM]) {
     calc(indexes);
   }
@@ -1101,6 +1374,9 @@ Integer RoundUp(Integer i) {
 // Returns the quotient a / b rounded up ('ceil') to the nearest integer.
 template <typename Integer>
 Integer CeilQuotient(Integer a, Integer b) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_35(mht_35_v, 1377, "", "./tensorflow/lite/kernels/internal/common.h", "CeilQuotient");
+
   return (a + b - 1) / b;
 }
 
@@ -1115,6 +1391,9 @@ Integer CeilQuotient(Integer a, Integer b) {
 template <int KernelRows>
 inline int LegacyHowManyThreads(int max_num_threads, int rows, int cols,
                                 int depth) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_36(mht_36_v, 1394, "", "./tensorflow/lite/kernels/internal/common.h", "LegacyHowManyThreads");
+
   // Early-exit in the default case where multi-threading is disabled.
   if (max_num_threads == 1) {
     return 1;
@@ -1146,6 +1425,9 @@ inline int LegacyHowManyThreads(int max_num_threads, int rows, int cols,
 
 template <typename T>
 void optimized_ops_preload_l1_stream(const T* ptr) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_37(mht_37_v, 1428, "", "./tensorflow/lite/kernels/internal/common.h", "optimized_ops_preload_l1_stream");
+
 #ifdef __GNUC__
   // builtin offered by GCC-compatible compilers including clang
   __builtin_prefetch(ptr, /* 0 means read */ 0, /* 0 means no locality */ 0);
@@ -1156,6 +1438,9 @@ void optimized_ops_preload_l1_stream(const T* ptr) {
 
 template <typename T>
 void optimized_ops_preload_l1_keep(const T* ptr) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_38(mht_38_v, 1441, "", "./tensorflow/lite/kernels/internal/common.h", "optimized_ops_preload_l1_keep");
+
 #ifdef __GNUC__
   // builtin offered by GCC-compatible compilers including clang
   __builtin_prefetch(ptr, /* 0 means read */ 0, /* 3 means high locality */ 3);
@@ -1166,6 +1451,9 @@ void optimized_ops_preload_l1_keep(const T* ptr) {
 
 template <typename T>
 void optimized_ops_prefetch_write_l1_keep(const T* ptr) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPScommonDTh mht_39(mht_39_v, 1454, "", "./tensorflow/lite/kernels/internal/common.h", "optimized_ops_prefetch_write_l1_keep");
+
 #ifdef __GNUC__
   // builtin offered by GCC-compatible compilers including clang
   __builtin_prefetch(ptr, /* 1 means write */ 1, /* 3 means high locality */ 3);

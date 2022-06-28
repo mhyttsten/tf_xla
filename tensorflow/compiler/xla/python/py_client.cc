@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpy_clientDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpy_clientDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpy_clientDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,10 +209,16 @@ namespace xla {
 namespace py = pybind11;
 
 PyClient::PyClient(std::unique_ptr<PjRtClient> pjrt_client)
-    : PyClient(std::shared_ptr<PjRtClient>(std::move(pjrt_client))) {}
+    : PyClient(std::shared_ptr<PjRtClient>(std::move(pjrt_client))) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpy_clientDTcc mht_0(mht_0_v, 213, "", "./tensorflow/compiler/xla/python/py_client.cc", "PyClient::PyClient");
+}
 
 PyClient::PyClient(std::shared_ptr<PjRtClient> pjrt_client)
     : pjrt_client_(std::move(pjrt_client)) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpy_clientDTcc mht_1(mht_1_v, 219, "", "./tensorflow/compiler/xla/python/py_client.cc", "PyClient::PyClient");
+
   CHECK(pjrt_client_ != nullptr);
   buffers_.resize(pjrt_client_->device_count());
   for (PjRtDevice* device : pjrt_client_->addressable_devices()) {
@@ -55,11 +229,17 @@ PyClient::PyClient(std::shared_ptr<PjRtClient> pjrt_client)
 }
 
 PyClient::~PyClient() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpy_clientDTcc mht_2(mht_2_v, 232, "", "./tensorflow/compiler/xla/python/py_client.cc", "PyClient::~PyClient");
+
   py::gil_scoped_release gil;
   pjrt_client_ = nullptr;
 }
 
 std::vector<ClientAndPtr<PjRtDevice>> PyClient::Devices() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpy_clientDTcc mht_3(mht_3_v, 240, "", "./tensorflow/compiler/xla/python/py_client.cc", "PyClient::Devices");
+
   std::vector<ClientAndPtr<PjRtDevice>> devices;
   auto span = pjrt_client_->devices();
   devices.reserve(span.size());
@@ -70,6 +250,9 @@ std::vector<ClientAndPtr<PjRtDevice>> PyClient::Devices() {
 }
 
 std::vector<ClientAndPtr<PjRtDevice>> PyClient::LocalDevices() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpy_clientDTcc mht_4(mht_4_v, 253, "", "./tensorflow/compiler/xla/python/py_client.cc", "PyClient::LocalDevices");
+
   std::vector<ClientAndPtr<PjRtDevice>> devices;
   devices.reserve(pjrt_client_->addressable_devices().size());
   for (PjRtDevice* device : pjrt_client_->addressable_devices()) {
@@ -79,6 +262,9 @@ std::vector<ClientAndPtr<PjRtDevice>> PyClient::LocalDevices() {
 }
 
 std::vector<py::object> PyClient::LiveBuffers() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpy_clientDTcc mht_5(mht_5_v, 265, "", "./tensorflow/compiler/xla/python/py_client.cc", "PyClient::LiveBuffers");
+
   CHECK(PyGILState_Check());
   std::vector<py::object> buffers;
   for (PyBuffer* device_buffers : buffers_) {
@@ -93,6 +279,9 @@ std::vector<py::object> PyClient::LiveBuffers() {
 }
 
 std::vector<py::object> PyClient::LiveBuffersOnDevice(PjRtDevice* device) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpy_clientDTcc mht_6(mht_6_v, 282, "", "./tensorflow/compiler/xla/python/py_client.cc", "PyClient::LiveBuffersOnDevice");
+
   CHECK_EQ(device->client(), pjrt_client());
   CHECK(PyGILState_Check());
   std::vector<py::object> buffers;
@@ -106,6 +295,9 @@ std::vector<py::object> PyClient::LiveBuffersOnDevice(PjRtDevice* device) {
 }
 
 std::vector<std::shared_ptr<PyExecutable>> PyClient::LiveExecutables() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpy_clientDTcc mht_7(mht_7_v, 298, "", "./tensorflow/compiler/xla/python/py_client.cc", "PyClient::LiveExecutables");
+
   CHECK(PyGILState_Check());
   std::vector<std::shared_ptr<PyExecutable>> executables;
   for (PyExecutable* exec = executables_; exec; exec = exec->next_) {
@@ -117,6 +309,9 @@ std::vector<std::shared_ptr<PyExecutable>> PyClient::LiveExecutables() {
 }
 
 Status PyClient::Defragment() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpy_clientDTcc mht_8(mht_8_v, 312, "", "./tensorflow/compiler/xla/python/py_client.cc", "PyClient::Defragment");
+
   CHECK(PyGILState_Check());
   switch (pjrt_client_->runtime_type()) {
     case PjRtRuntimeType::kTfrt:
@@ -173,6 +368,9 @@ Status PyClient::Defragment() {
 
 StatusOr<std::vector<std::vector<ClientAndPtr<PjRtDevice>>>>
 PyClient::GetDefaultDeviceAssignment(int num_replicas, int num_partitions) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpy_clientDTcc mht_9(mht_9_v, 371, "", "./tensorflow/compiler/xla/python/py_client.cc", "PyClient::GetDefaultDeviceAssignment");
+
   TF_ASSIGN_OR_RETURN(
       DeviceAssignment device_assignment,
       pjrt_client_->GetDefaultDeviceAssignment(num_replicas, num_partitions));
@@ -192,6 +390,9 @@ PyClient::GetDefaultDeviceAssignment(int num_replicas, int num_partitions) {
 
 StatusOr<std::vector<ClientAndPtr<PjRtDevice>>>
 PyClient::GetDefaultDeviceAssignment1D(int num_replicas) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpy_clientDTcc mht_10(mht_10_v, 393, "", "./tensorflow/compiler/xla/python/py_client.cc", "PyClient::GetDefaultDeviceAssignment1D");
+
   TF_ASSIGN_OR_RETURN(DeviceAssignment device_assignment,
                       pjrt_client_->GetDefaultDeviceAssignment(
                           num_replicas, /*num_partitions=*/1));
@@ -208,6 +409,9 @@ PyClient::GetDefaultDeviceAssignment1D(int num_replicas) {
 StatusOr<py::object> PyClient::BufferFromPyval(
     pybind11::handle argument, PjRtDevice* device, bool force_copy,
     PjRtClient::HostBufferSemantics host_buffer_semantics) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpy_clientDTcc mht_11(mht_11_v, 412, "", "./tensorflow/compiler/xla/python/py_client.cc", "PyClient::BufferFromPyval");
+
   if (device == nullptr) {
     TF_RET_CHECK(!pjrt_client_->addressable_devices().empty());
     device = pjrt_client_->addressable_devices().front();
@@ -264,6 +468,9 @@ StatusOr<py::object> PyClient::BufferFromPyval(
 
 StatusOr<std::shared_ptr<PyExecutable>> PyClient::Compile(
     const XlaComputation& computation, CompileOptions options) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpy_clientDTcc mht_12(mht_12_v, 471, "", "./tensorflow/compiler/xla/python/py_client.cc", "PyClient::Compile");
+
   std::unique_ptr<PjRtExecutable> executable;
   absl::optional<std::string> fingerprint;
   {
@@ -281,6 +488,10 @@ StatusOr<std::shared_ptr<PyExecutable>> PyClient::Compile(
 
 StatusOr<std::shared_ptr<PyExecutable>> PyClient::CompileMlir(
     std::string mlir_module, CompileOptions options) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("mlir_module: \"" + mlir_module + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpy_clientDTcc mht_13(mht_13_v, 492, "", "./tensorflow/compiler/xla/python/py_client.cc", "PyClient::CompileMlir");
+
   std::unique_ptr<PjRtExecutable> executable;
   absl::optional<std::string> fingerprint;
   {
@@ -301,11 +512,18 @@ StatusOr<std::shared_ptr<PyExecutable>> PyClient::CompileMlir(
 
 StatusOr<py::bytes> PyClient::SerializeExecutable(
     const PyExecutable& executable) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpy_clientDTcc mht_14(mht_14_v, 515, "", "./tensorflow/compiler/xla/python/py_client.cc", "PyClient::SerializeExecutable");
+
   return pjrt_client_->SerializeExecutable(executable.pjrt_executable());
 }
 
 StatusOr<std::shared_ptr<PyExecutable>> PyClient::DeserializeExecutable(
     const std::string& serialized, CompileOptions options) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("serialized: \"" + serialized + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpy_clientDTcc mht_15(mht_15_v, 524, "", "./tensorflow/compiler/xla/python/py_client.cc", "PyClient::DeserializeExecutable");
+
   std::unique_ptr<PjRtExecutable> executable;
   absl::optional<std::string> fingerprint;
   {
@@ -345,6 +563,9 @@ bool HeapProfileKey::operator==(const HeapProfileKey& other) const {
 
 template <typename H>
 H AbslHashValue(H h, const HeapProfileKey& key) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpy_clientDTcc mht_16(mht_16_v, 566, "", "./tensorflow/compiler/xla/python/py_client.cc", "AbslHashValue");
+
   if (key.traceback) {
     h = H::combine(std::move(h), key.traceback->raw_frames());
   }
@@ -355,6 +576,9 @@ H AbslHashValue(H h, const HeapProfileKey& key) {
 }  // namespace
 
 StatusOr<py::bytes> PyClient::HeapProfile() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpy_clientDTcc mht_17(mht_17_v, 579, "", "./tensorflow/compiler/xla/python/py_client.cc", "PyClient::HeapProfile");
+
   CHECK(PyGILState_Check());
   absl::flat_hash_set<PjRtBuffer*> buffer_set;
   absl::flat_hash_map<HeapProfileKey, int64_t> entries;
@@ -447,7 +671,10 @@ class CpuCallback {
       : callable_(std::move(callable)),
         args_(std::move(args)),
         results_(std::move(results)),
-        transpose_cache_(/*capacity=*/16) {}
+        transpose_cache_(/*capacity=*/16) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpy_clientDTcc mht_18(mht_18_v, 675, "", "./tensorflow/compiler/xla/python/py_client.cc", "CpuCallback");
+}
 
   void Call(void* result, void** arg_ptrs);
 
@@ -459,6 +686,9 @@ class CpuCallback {
 };
 
 void CpuCallback::Call(void* result, void** arg_ptrs) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpy_clientDTcc mht_19(mht_19_v, 689, "", "./tensorflow/compiler/xla/python/py_client.cc", "CpuCallback::Call");
+
   absl::Span<void* const> inputs(arg_ptrs, args_.size());
   absl::Span<void* const> outputs(reinterpret_cast<void**>(result),
                                   results_.size());
@@ -527,6 +757,9 @@ void CpuCallback::Call(void* result, void** arg_ptrs) {
 }
 
 extern "C" void XlaPythonCpuCallback(void* output, void** inputs) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpy_clientDTcc mht_20(mht_20_v, 760, "", "./tensorflow/compiler/xla/python/py_client.cc", "XlaPythonCpuCallback");
+
   CpuCallback* callback =
       absl::bit_cast<CpuCallback*>(*static_cast<uintptr_t*>(inputs[0]));
   callback->Call(output, inputs + 1);
@@ -541,6 +774,9 @@ StatusOr<std::pair<XlaOp, pybind11::object>> PyClient::EmitPythonCallback(
     pybind11::function callable, XlaBuilder& builder,
     absl::Span<XlaOp const> operands, absl::Span<Shape const> result_shapes,
     absl::optional<std::vector<Shape>> operand_layouts, bool has_side_effect) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpythonPSpy_clientDTcc mht_21(mht_21_v, 777, "", "./tensorflow/compiler/xla/python/py_client.cc", "PyClient::EmitPythonCallback");
+
   if (pjrt_client_->platform_id() != CpuId()) {
     return Unimplemented("EmitPythonCallback is only implemented on CPU");
   }

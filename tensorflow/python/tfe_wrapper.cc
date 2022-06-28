@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");;
@@ -94,14 +262,23 @@ namespace tensorflow {
 // pybind11 custom type caster.
 
 TFE_Context* InputTFE_Context(const py::handle& ctx) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_0(mht_0_v, 265, "", "./tensorflow/python/tfe_wrapper.cc", "InputTFE_Context");
+
   return static_cast<TFE_Context*>(PyCapsule_GetPointer(ctx.ptr(), nullptr));
 }
 
 PyObject* OutputTFE_Context(TFE_Context* context) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_1(mht_1_v, 272, "", "./tensorflow/python/tfe_wrapper.cc", "OutputTFE_Context");
+
   return PyCapsule_New(context, nullptr, TFE_DeleteContextCapsule);
 }
 
 TF_Buffer* ProtoStringToTFBuffer(PyObject* input) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_2(mht_2_v, 279, "", "./tensorflow/python/tfe_wrapper.cc", "ProtoStringToTFBuffer");
+
   // Convert a Python string object to TF_Buffer.
   char* c_string;
   Py_ssize_t py_size;
@@ -119,6 +296,9 @@ TF_Buffer* ProtoStringToTFBuffer(PyObject* input) {
 // converter is also only used once in `TFE_Py_ExecuteCancelable_wrapper`.
 TFE_InputTensorHandles InputTFE_InputTensorHandles(
     const py::handle& input_tensors) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_3(mht_3_v, 299, "", "./tensorflow/python/tfe_wrapper.cc", "InputTFE_InputTensorHandles");
+
   TFE_InputTensorHandles input_tensor_handles;
   if (input_tensors.ptr() != Py_None) {
     if (!PyList_Check(input_tensors.ptr())) {
@@ -230,6 +410,9 @@ TFE_InputTensorHandles InputTFE_InputTensorHandles(
 // This function actually takes a number rather than an output Tensor holder.
 TFE_OutputTensorHandles InputTFE_OutputTensorHandles(
     const py::handle& num_outputs) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_4(mht_4_v, 413, "", "./tensorflow/python/tfe_wrapper.cc", "InputTFE_OutputTensorHandles");
+
   TFE_OutputTensorHandles output_tensor_handles;
 #if PY_MAJOR_VERSION < 3
   if (!PyInt_Check(num_outputs.ptr())) {
@@ -271,6 +454,10 @@ TFE_OutputTensorHandles InputTFE_OutputTensorHandles(
 }
 
 tensorflow::Device* GetMatchedDevice(py::handle& ctx, const char* device_name) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("device_name: \"" + (device_name == nullptr ? std::string("nullptr") : std::string((char*)device_name)) + "\"");
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_5(mht_5_v, 458, "", "./tensorflow/python/tfe_wrapper.cc", "GetMatchedDevice");
+
   auto* context = reinterpret_cast<tensorflow::ImmediateExecutionContext*>(
       tensorflow::InputTFE_Context(ctx));
 
@@ -317,6 +504,9 @@ tensorflow::Device* GetMatchedDevice(py::handle& ctx, const char* device_name) {
 // `EagerTensor`.
 py::object TFE_Py_PackEagerTensors_wrapper(const py::handle& context,
                                            const py::handle& tensors) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_6(mht_6_v, 507, "", "./tensorflow/python/tfe_wrapper.cc", "TFE_Py_PackEagerTensors_wrapper");
+
   TFE_Context* ctx = tensorflow::InputTFE_Context(context);
   TFE_InputTensorHandles handles = InputTFE_InputTensorHandles(tensors);
   tensorflow::Safe_TF_StatusPtr status = tensorflow::make_safe(TF_NewStatus());
@@ -335,6 +525,11 @@ py::object TFE_Py_ExecuteCancelable_wrapper(
     const py::handle& inputs, const py::handle& attrs,
     tensorflow::CancellationManager* cancellation_manager,
     const py::handle& num_outputs) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("device_name: \"" + (device_name == nullptr ? std::string("nullptr") : std::string((char*)device_name)) + "\"");
+   mht_7_v.push_back("op_name: \"" + (op_name == nullptr ? std::string("nullptr") : std::string((char*)op_name)) + "\"");
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_7(mht_7_v, 530, "", "./tensorflow/python/tfe_wrapper.cc", "TFE_Py_ExecuteCancelable_wrapper");
+
   TFE_Context* ctx = tensorflow::InputTFE_Context(context);
   TFE_InputTensorHandles input_tensor_handles =
       InputTFE_InputTensorHandles(inputs);
@@ -357,6 +552,9 @@ py::object TFE_Py_ExecuteCancelable_wrapper(
 }
 
 static py::object TF_ListPhysicalDevices() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_8(mht_8_v, 555, "", "./tensorflow/python/tfe_wrapper.cc", "TF_ListPhysicalDevices");
+
   std::vector<string> devices;
   tensorflow::Status s =
       tensorflow::DeviceFactory::ListAllPhysicalDevices(&devices);
@@ -372,6 +570,9 @@ static py::object TF_ListPhysicalDevices() {
 }
 
 static py::object TF_ListPluggablePhysicalDevices() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_9(mht_9_v, 573, "", "./tensorflow/python/tfe_wrapper.cc", "TF_ListPluggablePhysicalDevices");
+
   std::vector<string> devices;
   tensorflow::Status s =
       tensorflow::DeviceFactory::ListPluggablePhysicalDevices(&devices);
@@ -397,6 +598,9 @@ static std::unordered_map<string, string> TF_GetDeviceDetails(int index) {
 }
 
 static py::object TFE_ClearScalarCache() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_10(mht_10_v, 601, "", "./tensorflow/python/tfe_wrapper.cc", "TFE_ClearScalarCache");
+
   tensorflow::TFE_TensorHandleCache::Get()->Clear();
   return py::none();
 }
@@ -406,6 +610,12 @@ static py::bytes TFE_GetCompilerIr(py::handle& ctx,
                                    const char* concrete_function_name,
                                    const char* stage, const char* device_name,
                                    py::handle& inputs) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("concrete_function_name: \"" + (concrete_function_name == nullptr ? std::string("nullptr") : std::string((char*)concrete_function_name)) + "\"");
+   mht_11_v.push_back("stage: \"" + (stage == nullptr ? std::string("nullptr") : std::string((char*)stage)) + "\"");
+   mht_11_v.push_back("device_name: \"" + (device_name == nullptr ? std::string("nullptr") : std::string((char*)device_name)) + "\"");
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_11(mht_11_v, 616, "", "./tensorflow/python/tfe_wrapper.cc", "TFE_GetCompilerIr");
+
   EagerContext* context = ContextFromInterface(
       reinterpret_cast<ImmediateExecutionContext*>(InputTFE_Context(ctx)));
 
@@ -486,62 +696,119 @@ class EagerContextThreadLocalDataWrapper {
                                               py::handle is_eager,
                                               py::handle device_spec)
       : py_eager_context_(py_eager_context.ptr()) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_12(mht_12_v, 699, "", "./tensorflow/python/tfe_wrapper.cc", "EagerContextThreadLocalDataWrapper");
+
     tensorflow::MakeEagerContextThreadLocalData(
         py_eager_context.ptr(), is_eager.ptr(), device_spec.ptr());
   }
 
   ~EagerContextThreadLocalDataWrapper() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_13(mht_13_v, 707, "", "./tensorflow/python/tfe_wrapper.cc", "~EagerContextThreadLocalDataWrapper");
+
     tensorflow::DestroyEagerContextThreadLocalData(py_eager_context_);
   }
 
-  bool get_is_eager() const { return GetData()->is_eager; }
-  void set_is_eager(bool v) { GetData()->is_eager = v; }
+  bool get_is_eager() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_14(mht_14_v, 714, "", "./tensorflow/python/tfe_wrapper.cc", "get_is_eager");
+ return GetData()->is_eager; }
+  void set_is_eager(bool v) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_15(mht_15_v, 718, "", "./tensorflow/python/tfe_wrapper.cc", "set_is_eager");
+ GetData()->is_eager = v; }
 
   bool get_invoking_op_callbacks() const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_16(mht_16_v, 723, "", "./tensorflow/python/tfe_wrapper.cc", "get_invoking_op_callbacks");
+
     return GetData()->invoking_op_callbacks;
   }
   void set_invoking_op_callbacks(bool v) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_17(mht_17_v, 729, "", "./tensorflow/python/tfe_wrapper.cc", "set_invoking_op_callbacks");
+
     GetData()->invoking_op_callbacks = v;
   }
 
   py::object get_device_name() const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_18(mht_18_v, 736, "", "./tensorflow/python/tfe_wrapper.cc", "get_device_name");
+
     return GetPyObject(&GetData()->device_name);
   }
   void set_device_name(py::handle v) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_19(mht_19_v, 742, "", "./tensorflow/python/tfe_wrapper.cc", "set_device_name");
+
     SetPyObject(v, &GetData()->device_name);
   }
 
   py::object get_scope_name() const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_20(mht_20_v, 749, "", "./tensorflow/python/tfe_wrapper.cc", "get_scope_name");
+
     return GetPyObject(&GetData()->scope_name);
   }
-  void set_scope_name(py::handle v) { SetPyObject(v, &GetData()->scope_name); }
+  void set_scope_name(py::handle v) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_21(mht_21_v, 755, "", "./tensorflow/python/tfe_wrapper.cc", "set_scope_name");
+ SetPyObject(v, &GetData()->scope_name); }
 
   py::object get_device_spec() const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_22(mht_22_v, 760, "", "./tensorflow/python/tfe_wrapper.cc", "get_device_spec");
+
     return GetPyObject(&GetData()->device_spec);
   }
   void set_device_spec(py::handle v) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_23(mht_23_v, 766, "", "./tensorflow/python/tfe_wrapper.cc", "set_device_spec");
+
     SetPyObject(v, &GetData()->device_spec);
   }
 
   py::object get_function_call_options() const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_24(mht_24_v, 773, "", "./tensorflow/python/tfe_wrapper.cc", "get_function_call_options");
+
     return GetPyObject(&GetData()->function_call_options);
   }
   void set_function_call_options(py::handle v) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_25(mht_25_v, 779, "", "./tensorflow/python/tfe_wrapper.cc", "set_function_call_options");
+
     SetPyObject(v, &GetData()->function_call_options);
   }
 
-  py::handle get_executor() const { return GetPyObject(&GetData()->executor); }
-  void set_executor(py::handle v) { SetPyObject(v, &GetData()->executor); }
+  py::handle get_executor() const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_26(mht_26_v, 786, "", "./tensorflow/python/tfe_wrapper.cc", "get_executor");
+ return GetPyObject(&GetData()->executor); }
+  void set_executor(py::handle v) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_27(mht_27_v, 790, "", "./tensorflow/python/tfe_wrapper.cc", "set_executor");
+ SetPyObject(v, &GetData()->executor); }
 
   py::object get_op_callbacks() const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_28(mht_28_v, 795, "", "./tensorflow/python/tfe_wrapper.cc", "get_op_callbacks");
+
     return GetPyObject(&GetData()->op_callbacks);
   }
   void set_op_callbacks(py::handle v) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_29(mht_29_v, 801, "", "./tensorflow/python/tfe_wrapper.cc", "set_op_callbacks");
+
     SetPyObject(v, &GetData()->op_callbacks);
   }
 
  private:
   tensorflow::EagerContextThreadLocalData* GetData() const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_30(mht_30_v, 809, "", "./tensorflow/python/tfe_wrapper.cc", "GetData");
+
     auto* result =
         tensorflow::GetEagerContextThreadLocalData(py_eager_context_);
     if (!result) {
@@ -551,10 +818,16 @@ class EagerContextThreadLocalDataWrapper {
   }
 
   py::object GetPyObject(tensorflow::Safe_PyObjectPtr* obj) const {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_31(mht_31_v, 821, "", "./tensorflow/python/tfe_wrapper.cc", "GetPyObject");
+
     return pybind11::reinterpret_borrow<py::object>(obj->get());
   }
 
   void SetPyObject(py::handle value, tensorflow::Safe_PyObjectPtr* ptr) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSpythonPStfe_wrapperDTcc mht_32(mht_32_v, 828, "", "./tensorflow/python/tfe_wrapper.cc", "SetPyObject");
+
     Py_INCREF(value.ptr());
     ptr->reset(value.ptr());
   }

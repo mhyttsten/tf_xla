@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -56,7 +224,10 @@ class MklEltwiseFwdParams {
         src_md(src_md),
         alg_kind(alg_kind),
         alpha(alpha),
-        beta(beta) {}
+        beta(beta) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_0(mht_0_v, 228, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "MklEltwiseFwdParams");
+}
 };
 
 template <typename T>
@@ -64,19 +235,28 @@ class MklEltwiseFwdPrimitive : public MklPrimitive {
  public:
   explicit MklEltwiseFwdPrimitive(const MklEltwiseFwdParams<T>& fwdParams)
       : MklPrimitive(engine(engine::kind::cpu, 0)) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_1(mht_1_v, 238, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "MklEltwiseFwdPrimitive");
+
     // create eltwise primitive
     if (context_.eltwise_fwd == nullptr) {
       Setup(fwdParams);
     }
   }
 
-  ~MklEltwiseFwdPrimitive() {}
+  ~MklEltwiseFwdPrimitive() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_2(mht_2_v, 248, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "~MklEltwiseFwdPrimitive");
+}
 
   // Eltwise forward execute
   //   src_data:  input data buffer of src
   //   dst_data:  output data buffer of dst
   void Execute(const T* src_data, T* dst_data,
                std::shared_ptr<stream> fwd_stream) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_3(mht_3_v, 257, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "Execute");
+
 #ifdef DNNL_AARCH64_USE_ACL
     mutex_lock lock(primitive_execution_mu_);
 #endif
@@ -131,11 +311,17 @@ class MklEltwiseFwdPrimitive : public MklPrimitive {
           fwd_pd(nullptr),
           src_md(nullptr),
           dst_md(nullptr),
-          eltwise_fwd(nullptr) {}
+          eltwise_fwd(nullptr) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_4(mht_4_v, 315, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "EltwiseFwdContext");
+}
   };
 
   // Eltwise forward primitive setup
   void Setup(const MklEltwiseFwdParams<T>& fwdParams) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_5(mht_5_v, 322, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "Setup");
+
     // create memory descriptors for eltwise data with specified format
     context_.src_md.reset(new memory::desc(fwdParams.src_md.data));
 
@@ -170,6 +356,9 @@ class MklEltwiseFwdPrimitiveFactory : public MklPrimitiveFactory<T> {
  public:
   static MklEltwiseFwdPrimitive<T>* Get(
       const MklEltwiseFwdParams<T>& fwdParams) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_6(mht_6_v, 359, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "Get");
+
     MklEltwiseFwdPrimitive<T>* eltwise_forward = nullptr;
 
     // Get a eltwise fwd primitive from the cached pool
@@ -186,15 +375,27 @@ class MklEltwiseFwdPrimitiveFactory : public MklPrimitiveFactory<T> {
   }
 
   static MklEltwiseFwdPrimitiveFactory& GetInstance() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_7(mht_7_v, 378, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "GetInstance");
+
     static MklEltwiseFwdPrimitiveFactory instance_;
     return instance_;
   }
 
  private:
-  MklEltwiseFwdPrimitiveFactory() {}
-  ~MklEltwiseFwdPrimitiveFactory() {}
+  MklEltwiseFwdPrimitiveFactory() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_8(mht_8_v, 387, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "MklEltwiseFwdPrimitiveFactory");
+}
+  ~MklEltwiseFwdPrimitiveFactory() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_9(mht_9_v, 391, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "~MklEltwiseFwdPrimitiveFactory");
+}
 
   static string CreateKey(const MklEltwiseFwdParams<T>& fwdParams) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_10(mht_10_v, 396, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "CreateKey");
+
     string prefix = "eltwise_fwd";
     FactoryKeyCreator key_creator;
     key_creator.AddAsKey(prefix);
@@ -206,12 +407,18 @@ class MklEltwiseFwdPrimitiveFactory : public MklPrimitiveFactory<T> {
   }
 
   MklPrimitive* GetEltwiseFwd(const MklEltwiseFwdParams<T>& fwdParams) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_11(mht_11_v, 410, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "GetEltwiseFwd");
+
     string key = CreateKey(fwdParams);
     return this->GetOp(key);
   }
 
   void SetEltwiseFwd(const MklEltwiseFwdParams<T>& fwdParams,
                      MklPrimitive* op) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_12(mht_12_v, 419, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "SetEltwiseFwd");
+
     string key = CreateKey(fwdParams);
     this->SetOp(key, op);
   }
@@ -237,7 +444,10 @@ class MklEltwiseBwdParams {
         alg_kind(alg_kind),
         alpha(alpha),
         beta(beta),
-        forward_input_type(forward_input_type) {}
+        forward_input_type(forward_input_type) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_13(mht_13_v, 448, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "MklEltwiseBwdParams");
+}
 };
 
 template <typename T>
@@ -245,13 +455,19 @@ class MklEltwiseBwdPrimitive : public MklPrimitive {
  public:
   explicit MklEltwiseBwdPrimitive(const MklEltwiseBwdParams<T>& bwdParams)
       : MklPrimitive(engine(engine::kind::cpu, 0)) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_14(mht_14_v, 458, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "MklEltwiseBwdPrimitive");
+
     // create eltwise primitive
     if (context_.eltwise_bwd == nullptr) {
       Setup(bwdParams);
     }
   }
 
-  ~MklEltwiseBwdPrimitive() {}
+  ~MklEltwiseBwdPrimitive() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_15(mht_15_v, 468, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "~MklEltwiseBwdPrimitive");
+}
 
   // Eltwise backward execute
   //   src_data:       input data buffer of src
@@ -259,6 +475,9 @@ class MklEltwiseBwdPrimitive : public MklPrimitive {
   //   diff_src_data:  output data buffer of diff_src
   void Execute(const T* src_data, const T* diff_dst_data, T* diff_src_data,
                std::shared_ptr<stream> bwd_stream) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_16(mht_16_v, 478, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "Execute");
+
 #ifdef DNNL_AARCH64_USE_ACL
     mutex_lock lock(primitive_execution_mu_);
 #endif
@@ -327,11 +546,17 @@ class MklEltwiseBwdPrimitive : public MklPrimitive {
           fwd_desc(nullptr),
           fwd_pd(nullptr),
           bwd_pd(nullptr),
-          eltwise_bwd(nullptr) {}
+          eltwise_bwd(nullptr) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_17(mht_17_v, 550, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "EltwiseBwdContext");
+}
   };
 
   // Eltwise backward primitive setup
   void Setup(const MklEltwiseBwdParams<T>& bwdParams) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_18(mht_18_v, 557, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "Setup");
+
     // Create memory descriptors for eltwise data w/ no specified format
     context_.src_md.reset(new memory::desc(bwdParams.common_md.data));
     context_.diff_dst_md.reset(new memory::desc(bwdParams.common_md.data));
@@ -376,12 +601,21 @@ class MklEltwiseBwdPrimitive : public MklPrimitive {
 template <typename T>
 class MklEltwiseBwdPrimitiveFactory : public MklPrimitiveFactory<T> {
  private:
-  MklEltwiseBwdPrimitiveFactory() {}
-  ~MklEltwiseBwdPrimitiveFactory() {}
+  MklEltwiseBwdPrimitiveFactory() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_19(mht_19_v, 605, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "MklEltwiseBwdPrimitiveFactory");
+}
+  ~MklEltwiseBwdPrimitiveFactory() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_20(mht_20_v, 609, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "~MklEltwiseBwdPrimitiveFactory");
+}
 
  public:
   static MklEltwiseBwdPrimitive<T>* Get(
       const MklEltwiseBwdParams<T>& bwdParams) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_21(mht_21_v, 616, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "Get");
+
     MklEltwiseBwdPrimitive<T>* eltwise_backward = nullptr;
 
     // try to find a suitable one in pool
@@ -398,12 +632,18 @@ class MklEltwiseBwdPrimitiveFactory : public MklPrimitiveFactory<T> {
   }
 
   static MklEltwiseBwdPrimitiveFactory& GetInstance() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_22(mht_22_v, 635, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "GetInstance");
+
     static MklEltwiseBwdPrimitiveFactory instance_;
     return instance_;
   }
 
  private:
   static string CreateKey(const MklEltwiseBwdParams<T>& bwdParams) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_23(mht_23_v, 644, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "CreateKey");
+
     string prefix = "eltwise_bwd";
     FactoryKeyCreator key_creator;
     key_creator.AddAsKey(prefix);
@@ -415,12 +655,18 @@ class MklEltwiseBwdPrimitiveFactory : public MklPrimitiveFactory<T> {
   }
 
   MklPrimitive* GetEltwiseBwd(const MklEltwiseBwdParams<T>& bwdParams) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_24(mht_24_v, 658, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "GetEltwiseBwd");
+
     string key = CreateKey(bwdParams);
     return this->GetOp(key);
   }
 
   void SetEltwiseBwd(const MklEltwiseBwdParams<T>& bwdParams,
                      MklPrimitive* op) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_25(mht_25_v, 667, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "SetEltwiseBwd");
+
     string key = CreateKey(bwdParams);
     this->SetOp(key, op);
   }
@@ -431,13 +677,22 @@ typedef Eigen::ThreadPoolDevice CPUDevice;
 template <typename Device, typename T, algorithm alg_kind>
 class MklReluOpBase : public OpKernel {
  public:
-  ~MklReluOpBase() {}
+  ~MklReluOpBase() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_26(mht_26_v, 681, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "~MklReluOpBase");
+}
 
   explicit MklReluOpBase(OpKernelConstruction* context, float alpha, float beta)
-      : OpKernel(context), alpha_(alpha), beta_(beta) {}
+      : OpKernel(context), alpha_(alpha), beta_(beta) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_27(mht_27_v, 687, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "MklReluOpBase");
+}
   virtual void Compute_Scalar(OpKernelContext* context) = 0;
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_28(mht_28_v, 693, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "Compute");
+
     try {
       const size_t src_index = 0;  // index of src input tensor
       const size_t dst_index = 0;  // index of dst output tensor
@@ -559,11 +814,17 @@ class MklReluOpBase : public OpKernel {
 template <typename Device, typename T, algorithm alg_kind>
 class MklReluGradOpBase : public OpKernel {
  public:
-  ~MklReluGradOpBase() {}
+  ~MklReluGradOpBase() {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_29(mht_29_v, 818, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "~MklReluGradOpBase");
+}
 
   explicit MklReluGradOpBase(OpKernelConstruction* context, float alpha,
                              float beta)
-      : OpKernel(context), alpha_(alpha), beta_(beta) {}
+      : OpKernel(context), alpha_(alpha), beta_(beta) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_30(mht_30_v, 825, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "MklReluGradOpBase");
+}
 
   virtual void Compute_Scalar(OpKernelContext* context) = 0;
 
@@ -576,15 +837,30 @@ class MklReluGradOpBase : public OpKernel {
   //
   // Src below refers to a tensor that gradient op receives from forward
   // operator. From Relu-family ops, it is 'x'; while for TanhGrad, it is 'y'.
-  virtual int GetDiffDstIndex() const { return 0; }
-  virtual int GetSrcIndex() const { return 1; }
-  virtual int GetDiffSrcIndex() const { return 0; }
+  virtual int GetDiffDstIndex() const {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_31(mht_31_v, 841, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "GetDiffDstIndex");
+ return 0; }
+  virtual int GetSrcIndex() const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_32(mht_32_v, 845, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "GetSrcIndex");
+ return 1; }
+  virtual int GetDiffSrcIndex() const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_33(mht_33_v, 849, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "GetDiffSrcIndex");
+ return 0; }
   // What is the type of input tensor that grad op receives from forward op --
   // is it 'x' (SRC) or 'y' (DST). For Relu-family, it is 'x', so fwd op SRC.
 
-  virtual int GetTypeOfInputTensorFromFwdOp() const { return DNNL_ARG_SRC; }
+  virtual int GetTypeOfInputTensorFromFwdOp() const {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_34(mht_34_v, 856, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "GetTypeOfInputTensorFromFwdOp");
+ return DNNL_ARG_SRC; }
 
   void Compute(OpKernelContext* context) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_35(mht_35_v, 861, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "Compute");
+
     try {
       MklDnnData<T> src(&cpu_engine);
       MklDnnData<T> diff_dst(&cpu_engine);
@@ -764,13 +1040,22 @@ template <typename Device, typename T>
 class MklReluOp
     : public MklReluOpBase<Device, T, dnnl::algorithm::eltwise_relu> {
  public:
-  ~MklReluOp() {}
+  ~MklReluOp() {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_36(mht_36_v, 1044, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "~MklReluOp");
+}
 
   explicit MklReluOp(OpKernelConstruction* context)
       : MklReluOpBase<Device, T, dnnl::algorithm::eltwise_relu>(context, 0.0f,
-                                                                0.0f) {}
+                                                                0.0f) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_37(mht_37_v, 1051, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "MklReluOp");
+}
 
   virtual void Compute_Scalar(OpKernelContext* context) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_38(mht_38_v, 1056, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "Compute_Scalar");
+
     const size_t src_index = 0;  // index of src input tensor
     const size_t dst_index = 0;  // index of dst output tensor
     const Tensor& src_tensor = MklGetInput(context, src_index);
@@ -795,13 +1080,22 @@ template <typename Device, typename T>
 class MklReluGradOp
     : public MklReluGradOpBase<Device, T, dnnl::algorithm::eltwise_relu> {
  public:
-  ~MklReluGradOp() {}
+  ~MklReluGradOp() {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_39(mht_39_v, 1084, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "~MklReluGradOp");
+}
 
   explicit MklReluGradOp(OpKernelConstruction* context)
       : MklReluGradOpBase<Device, T, dnnl::algorithm::eltwise_relu>(
-            context, 0.0f, 0.0f) {}
+            context, 0.0f, 0.0f) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_40(mht_40_v, 1091, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "MklReluGradOp");
+}
 
   virtual void Compute_Scalar(OpKernelContext* context) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_41(mht_41_v, 1096, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "Compute_Scalar");
+
     const size_t diff_dst_index = 0;  // index of diff_dst input tensor
     const size_t src_index = 1;       // index of src input tensor
     const size_t diff_src_index = 0;  // index of diff_src output tensor
@@ -831,13 +1125,22 @@ class MklReluGradOp
 template <typename Device, typename T>
 class MklEluOp : public MklReluOpBase<Device, T, dnnl::algorithm::eltwise_elu> {
  public:
-  ~MklEluOp() {}
+  ~MklEluOp() {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_42(mht_42_v, 1129, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "~MklEluOp");
+}
 
   explicit MklEluOp(OpKernelConstruction* context)
       : MklReluOpBase<Device, T, dnnl::algorithm::eltwise_elu>(context, 0.0f,
-                                                               0.0f) {}
+                                                               0.0f) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_43(mht_43_v, 1136, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "MklEluOp");
+}
 
   virtual void Compute_Scalar(OpKernelContext* context) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_44(mht_44_v, 1141, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "Compute_Scalar");
+
     const size_t src_index = 0;  // index of src input tensor
     const size_t dst_index = 0;  // index of dst output tensor
     const Tensor& src_tensor = MklGetInput(context, src_index);
@@ -866,13 +1169,22 @@ template <typename Device, typename T>
 class MklEluGradOp
     : public MklReluGradOpBase<Device, T, dnnl::algorithm::eltwise_elu> {
  public:
-  ~MklEluGradOp() {}
+  ~MklEluGradOp() {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_45(mht_45_v, 1173, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "~MklEluGradOp");
+}
 
   explicit MklEluGradOp(OpKernelConstruction* context)
       : MklReluGradOpBase<Device, T, dnnl::algorithm::eltwise_elu>(
-            context, 0.0f, 0.0f) {}
+            context, 0.0f, 0.0f) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_46(mht_46_v, 1180, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "MklEluGradOp");
+}
 
   virtual void Compute_Scalar(OpKernelContext* context) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_47(mht_47_v, 1185, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "Compute_Scalar");
+
     const size_t diff_dst_index = 0;  // index of diff_dst input tensor
     const size_t src_index = 1;       // index of src input tensor
     const size_t diff_src_index = 0;  // index of diff_src output tensor
@@ -912,13 +1224,22 @@ template <typename Device, typename T>
 class MklTanhOp
     : public MklReluOpBase<Device, T, dnnl::algorithm::eltwise_tanh> {
  public:
-  ~MklTanhOp() {}
+  ~MklTanhOp() {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_48(mht_48_v, 1228, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "~MklTanhOp");
+}
 
   explicit MklTanhOp(OpKernelConstruction* context)
       : MklReluOpBase<Device, T, dnnl::algorithm::eltwise_tanh>(context, 0.0f,
-                                                                0.0f) {}
+                                                                0.0f) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_49(mht_49_v, 1235, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "MklTanhOp");
+}
 
   virtual void Compute_Scalar(OpKernelContext* context) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_50(mht_50_v, 1240, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "Compute_Scalar");
+
     const size_t src_index = 0;  // index of src input tensor
     const size_t dst_index = 0;  // index of dst output tensor
     const Tensor& src_tensor = MklGetInput(context, src_index);
@@ -947,21 +1268,42 @@ class MklTanhGradOp
     : public MklReluGradOpBase<Device, T,
                                dnnl::algorithm::eltwise_tanh_use_dst_for_bwd> {
  public:
-  ~MklTanhGradOp() {}
+  ~MklTanhGradOp() {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_51(mht_51_v, 1272, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "~MklTanhGradOp");
+}
 
   explicit MklTanhGradOp(OpKernelConstruction* context)
       : MklReluGradOpBase<Device, T,
                           dnnl::algorithm::eltwise_tanh_use_dst_for_bwd>(
-            context, 0.0f, 0.0f) {}
+            context, 0.0f, 0.0f) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_52(mht_52_v, 1280, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "MklTanhGradOp");
+}
 
-  virtual int GetDiffDstIndex() const { return 1; }
-  virtual int GetSrcIndex() const { return 0; }
-  virtual int GetDiffSrcIndex() const { return 0; }
+  virtual int GetDiffDstIndex() const {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_53(mht_53_v, 1285, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "GetDiffDstIndex");
+ return 1; }
+  virtual int GetSrcIndex() const {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_54(mht_54_v, 1289, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "GetSrcIndex");
+ return 0; }
+  virtual int GetDiffSrcIndex() const {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_55(mht_55_v, 1293, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "GetDiffSrcIndex");
+ return 0; }
 
   // TanhGrad gets 'y' from Tanh, where 'y' is output of Tanh(x).
-  virtual int GetTypeOfInputTensorFromFwdOp() const { return DNNL_ARG_DST; }
+  virtual int GetTypeOfInputTensorFromFwdOp() const {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_56(mht_56_v, 1299, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "GetTypeOfInputTensorFromFwdOp");
+ return DNNL_ARG_DST; }
 
   virtual void Compute_Scalar(OpKernelContext* context) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_57(mht_57_v, 1304, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "Compute_Scalar");
+
     // NOTE: Order of y and dy for Tanh is reverse of that for Relu/Elu/other
     // element-wise ops. Tanh is math op in Tensorflow; others are NN ops.
     const size_t diff_dst_index = GetDiffDstIndex();
@@ -997,13 +1339,22 @@ template <typename Device, typename T>
 class MklRelu6Op
     : public MklReluOpBase<Device, T, dnnl::algorithm::eltwise_bounded_relu> {
  public:
-  ~MklRelu6Op() {}
+  ~MklRelu6Op() {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_58(mht_58_v, 1343, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "~MklRelu6Op");
+}
 
   explicit MklRelu6Op(OpKernelConstruction* context)
       : MklReluOpBase<Device, T, dnnl::algorithm::eltwise_bounded_relu>(
-            context, RELU6_UPPER_BOUND, 0.0f) {}
+            context, RELU6_UPPER_BOUND, 0.0f) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_59(mht_59_v, 1350, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "MklRelu6Op");
+}
 
   virtual void Compute_Scalar(OpKernelContext* context) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_60(mht_60_v, 1355, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "Compute_Scalar");
+
     const size_t src_index = 0;  // index of src input tensor
     const size_t dst_index = 0;  // index of dst output tensor
     const Tensor& src_tensor = MklGetInput(context, src_index);
@@ -1028,13 +1379,22 @@ class MklRelu6GradOp
     : public MklReluGradOpBase<Device, T,
                                dnnl::algorithm::eltwise_bounded_relu> {
  public:
-  ~MklRelu6GradOp() {}
+  ~MklRelu6GradOp() {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_61(mht_61_v, 1383, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "~MklRelu6GradOp");
+}
 
   explicit MklRelu6GradOp(OpKernelConstruction* context)
       : MklReluGradOpBase<Device, T, dnnl::algorithm::eltwise_bounded_relu>(
-            context, RELU6_UPPER_BOUND, 0.0f) {}
+            context, RELU6_UPPER_BOUND, 0.0f) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_62(mht_62_v, 1390, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "MklRelu6GradOp");
+}
 
   virtual void Compute_Scalar(OpKernelContext* context) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_63(mht_63_v, 1395, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "Compute_Scalar");
+
     const size_t diff_dst_index = 0;  // index of diff_dst input tensor
     const size_t src_index = 1;       // index of src input tensor
     const size_t diff_src_index = 0;  // index of diff_src output tensor
@@ -1063,11 +1423,17 @@ template <typename Device, typename T>
 class MklLeakyReluOp
     : public MklReluOpBase<Device, T, dnnl::algorithm::eltwise_relu> {
  public:
-  ~MklLeakyReluOp() {}
+  ~MklLeakyReluOp() {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_64(mht_64_v, 1427, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "~MklLeakyReluOp");
+}
 
   explicit MklLeakyReluOp(OpKernelConstruction* context)
       : MklReluOpBase<Device, T, dnnl::algorithm::eltwise_relu>(context, 0.0f,
                                                                 0.0f) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_65(mht_65_v, 1434, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "MklLeakyReluOp");
+
     float alpha;
     OP_REQUIRES_OK(context, context->GetAttr("alpha", &alpha));
     OP_REQUIRES(
@@ -1080,6 +1446,9 @@ class MklLeakyReluOp
   }
 
   virtual void Compute_Scalar(OpKernelContext* context) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_66(mht_66_v, 1449, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "Compute_Scalar");
+
     const size_t src_index = 0;  // index of src input tensor
     const size_t dst_index = 0;  // index of dst output tensor
     const Tensor& src_tensor = MklGetInput(context, src_index);
@@ -1102,11 +1471,17 @@ template <typename Device, typename T>
 class MklLeakyReluGradOp
     : public MklReluGradOpBase<Device, T, dnnl::algorithm::eltwise_relu> {
  public:
-  ~MklLeakyReluGradOp() {}
+  ~MklLeakyReluGradOp() {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_67(mht_67_v, 1475, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "~MklLeakyReluGradOp");
+}
 
   explicit MklLeakyReluGradOp(OpKernelConstruction* context)
       : MklReluGradOpBase<Device, T, dnnl::algorithm::eltwise_relu>(
             context, 0.0f, 0.0f) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_68(mht_68_v, 1482, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "MklLeakyReluGradOp");
+
     float alpha;
     OP_REQUIRES_OK(context, context->GetAttr("alpha", &alpha));
     OP_REQUIRES(
@@ -1119,6 +1494,9 @@ class MklLeakyReluGradOp
   }
 
   virtual void Compute_Scalar(OpKernelContext* context) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_relu_opDTcc mht_69(mht_69_v, 1497, "", "./tensorflow/core/kernels/mkl/mkl_relu_op.cc", "Compute_Scalar");
+
     const size_t diff_dst_index = 0;  // index of diff_dst input tensor
     const size_t src_index = 1;       // index of src input tensor
     const size_t diff_src_index = 0;  // index of diff_src output tensor

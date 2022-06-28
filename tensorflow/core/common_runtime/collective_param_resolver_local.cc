@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,16 +220,26 @@ CollectiveParamResolverLocal::CollectiveParamResolverLocal(
       nccl_communicator_(nccl_communicator),
       task_name_(task_name),
       gpu_ring_order_(
-          config.gpu_options().experimental().collective_ring_order()) {}
+          config.gpu_options().experimental().collective_ring_order()) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("task_name: \"" + task_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc mht_0(mht_0_v, 225, "", "./tensorflow/core/common_runtime/collective_param_resolver_local.cc", "CollectiveParamResolverLocal::CollectiveParamResolverLocal");
+}
 
 void CollectiveParamResolverLocal::CompleteGroupAsync(
     const DeviceAttributes& device, CollGroupParams* group_params,
     CancellationManager* cancel_mgr, const StatusCallback& done) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc mht_1(mht_1_v, 232, "", "./tensorflow/core/common_runtime/collective_param_resolver_local.cc", "CollectiveParamResolverLocal::CompleteGroupAsync");
+
   CompleteGroupLocal(device, group_params, cancel_mgr, done);
 }
 
 namespace {
 const char* GetCollectiveName(const CollectiveParams* cp, bool nccl) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc mht_2(mht_2_v, 240, "", "./tensorflow/core/common_runtime/collective_param_resolver_local.cc", "GetCollectiveName");
+
   switch (cp->instance.type) {
     case BROADCAST_COLLECTIVE:
       return nccl ? "NcclBroadcast" : "HierarchicalTreeBroadcast";
@@ -84,6 +262,10 @@ const char* GetCollectiveName(const CollectiveParams* cp, bool nccl) {
 }
 
 string TaskNameFromDeviceName(const string& device_name) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc mht_3(mht_3_v, 266, "", "./tensorflow/core/common_runtime/collective_param_resolver_local.cc", "TaskNameFromDeviceName");
+
   DeviceNameUtils::ParsedName parsed_device;
   CHECK(DeviceNameUtils::ParseFullName(device_name, &parsed_device));
   string task_name;
@@ -98,6 +280,9 @@ struct RankFormatter {
 };
 
 Status CheckUserSpecifiedRanks(const std::vector<CollGroupMember> members) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc mht_4(mht_4_v, 283, "", "./tensorflow/core/common_runtime/collective_param_resolver_local.cc", "CheckUserSpecifiedRanks");
+
   absl::flat_hash_set<int> user_ranks = {};
   bool at_least_one_member_with_no_rank = false;
   bool at_least_one_member_with_user_rank = false;
@@ -130,6 +315,9 @@ Status CheckUserSpecifiedRanks(const std::vector<CollGroupMember> members) {
 void CollectiveParamResolverLocal::CompleteGroupLocal(
     const DeviceAttributes& device, CollGroupParams* group_params,
     CancellationManager* cancel_mgr, StatusCallback done) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc mht_5(mht_5_v, 318, "", "./tensorflow/core/common_runtime/collective_param_resolver_local.cc", "CollectiveParamResolverLocal::CompleteGroupLocal");
+
   VLOG(1) << "CompleteGroup device=" << device.name() << ": "
           << group_params->ToString();
   std::vector<StatusCallback> to_be_called;
@@ -179,6 +367,9 @@ void CollectiveParamResolverLocal::CompleteGroupLocal(
     }
     done = [cancel_mgr, token,
             original_done = std::move(done)](const Status& status) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc mht_6(mht_6_v, 370, "", "./tensorflow/core/common_runtime/collective_param_resolver_local.cc", "lambda");
+
       cancel_mgr->TryDeregisterCallback(token);
       original_done(status);
     };
@@ -309,6 +500,9 @@ typedef std::unordered_map<string, TaskDeviceMap> GlobalDeviceMap;
 
 // Create a populated GlobalDeviceMap from CollInstanceParams and localities.
 GlobalDeviceMap BuildDevRecs(const CollGroupParams& gp) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc mht_7(mht_7_v, 503, "", "./tensorflow/core/common_runtime/collective_param_resolver_local.cc", "BuildDevRecs");
+
   GlobalDeviceMap gdm;
   CHECK_EQ(gp.members.size(), gp.members.size());
   for (int i = 0; i < gp.members.size(); ++i) {
@@ -325,6 +519,10 @@ GlobalDeviceMap BuildDevRecs(const CollGroupParams& gp) {
 }
 
 bool ParseRingOrder(const string& gpu_ring_order_str, TaskDeviceMap* tdm) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("gpu_ring_order_str: \"" + gpu_ring_order_str + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc mht_8(mht_8_v, 523, "", "./tensorflow/core/common_runtime/collective_param_resolver_local.cc", "ParseRingOrder");
+
   std::vector<string> split_gpu_ring_order_str =
       str_util::Split(gpu_ring_order_str, ',');
   if (split_gpu_ring_order_str.size() != tdm->size()) return false;
@@ -356,6 +554,10 @@ bool ParseRingOrder(const string& gpu_ring_order_str, TaskDeviceMap* tdm) {
 }
 
 void OrderTaskDeviceMap(const string& gpu_ring_order, TaskDeviceMap* tdm) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("gpu_ring_order: \"" + gpu_ring_order + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc mht_9(mht_9_v, 558, "", "./tensorflow/core/common_runtime/collective_param_resolver_local.cc", "OrderTaskDeviceMap");
+
   CHECK_GT(tdm->size(), 0);  // Should never be called with 0 devices
 
   // If a valid ring order has been passed in via ConfigProto, use that.
@@ -441,6 +643,10 @@ void OrderTaskDeviceMap(const string& gpu_ring_order, TaskDeviceMap* tdm) {
 // algorithm.
 GlobalDeviceMap EstablishGlobalRank(const CollGroupParams& gp,
                                     const string& gpu_ring_order) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("gpu_ring_order: \"" + gpu_ring_order + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc mht_10(mht_10_v, 647, "", "./tensorflow/core/common_runtime/collective_param_resolver_local.cc", "EstablishGlobalRank");
+
   VLOG(1) << "EstablishGlobalRank";
   GlobalDeviceMap gdm = BuildDevRecs(gp);
   for (auto& iter : gdm) {
@@ -467,6 +673,9 @@ GlobalDeviceMap EstablishGlobalRank(const CollGroupParams& gp,
 // gp->same_num_devices_per_task.  Requires gp->task_names
 // be sorted.
 void SetDevPerTask(CollGroupParams* gp) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc mht_11(mht_11_v, 676, "", "./tensorflow/core/common_runtime/collective_param_resolver_local.cc", "SetDevPerTask");
+
   gp->num_devices_per_task.clear();
   for (const CollGroupMember& member : gp->members) {
     gp->num_devices_per_task[member.task]++;
@@ -486,6 +695,9 @@ void SetDevPerTask(CollGroupParams* gp) {
 }  // namespace
 
 void CollectiveParamResolverLocal::FinishGroup(GroupRec* gr) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc mht_12(mht_12_v, 698, "", "./tensorflow/core/common_runtime/collective_param_resolver_local.cc", "CollectiveParamResolverLocal::FinishGroup");
+
   // Populate group member task and is_local.
   for (CollGroupMember& member : gr->group.members) {
     member.task = TaskNameFromDeviceName(member.device.name());
@@ -500,6 +712,9 @@ void CollectiveParamResolverLocal::FinishGroup(GroupRec* gr) {
 }
 
 void CollectiveParamResolverLocal::CancelGroup(int32 group_key) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc mht_13(mht_13_v, 715, "", "./tensorflow/core/common_runtime/collective_param_resolver_local.cc", "CollectiveParamResolverLocal::CancelGroup");
+
   std::vector<StatusCallback> pending_done;
   GroupRec* gr = nullptr;
   {
@@ -527,6 +742,10 @@ void CollectiveParamResolverLocal::CancelGroup(int32 group_key) {
 
 void CollectiveParamResolverLocal::SetDefaultRank(const string& device,
                                                   CollectiveParams* cp) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("device: \"" + device + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc mht_14(mht_14_v, 746, "", "./tensorflow/core/common_runtime/collective_param_resolver_local.cc", "CollectiveParamResolverLocal::SetDefaultRank");
+
   CHECK_EQ(cp->group.group_size, cp->group.members.size()) << cp->ToString();
   for (int i = 0; i < cp->group.group_size; ++i) {
     if (cp->group.members[i].device.name() == device) {
@@ -541,6 +760,9 @@ void CollectiveParamResolverLocal::SetDefaultRank(const string& device,
 
 void CollectiveParamResolverLocal::InitInstanceSharedParams(
     const CollectiveParams* cp, InstanceRec* ir) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc mht_15(mht_15_v, 763, "", "./tensorflow/core/common_runtime/collective_param_resolver_local.cc", "CollectiveParamResolverLocal::InitInstanceSharedParams");
+
   ir->shared->instance = cp->instance;
   ir->shared->default_rank = -1;
 }
@@ -550,6 +772,9 @@ void CollectiveParamResolverLocal::InitInstanceSharedParams(
 // TensorFlow runtime.  This set of devices may be a superset of the devices
 // participating in this instance of collectives.
 void CollectiveParamResolverLocal::CompleteDefaultRanking(CollGroupParams* gp) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc mht_16(mht_16_v, 775, "", "./tensorflow/core/common_runtime/collective_param_resolver_local.cc", "CollectiveParamResolverLocal::CompleteDefaultRanking");
+
   // Sort gp->member to avoid indeterminism.
   std::sort(gp->members.begin(), gp->members.end(),
             [](const CollGroupMember& lhs, const CollGroupMember& rhs) {
@@ -582,6 +807,9 @@ void CollectiveParamResolverLocal::CompleteDefaultRanking(CollGroupParams* gp) {
 CollectiveParamResolverLocal::InstanceRec*
 CollectiveParamResolverLocal::GetOrCreateInstanceRec(CollectiveParams* cp,
                                                      bool* created) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc mht_17(mht_17_v, 810, "", "./tensorflow/core/common_runtime/collective_param_resolver_local.cc", "CollectiveParamResolverLocal::GetOrCreateInstanceRec");
+
   *created = false;
   InstanceRec* irec = nullptr;
   {
@@ -620,6 +848,9 @@ CollectiveParamResolverLocal::GetOrCreateInstanceRec(CollectiveParams* cp,
 
 Status CollectiveParamResolverLocal::LookupGroup(int32_t group_key,
                                                  CollGroupParams* group) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc mht_18(mht_18_v, 851, "", "./tensorflow/core/common_runtime/collective_param_resolver_local.cc", "CollectiveParamResolverLocal::LookupGroup");
+
   mutex_lock l(group_mu_);
   auto group_rec = group_table_.find(group_key);
   if (group_rec == group_table_.end()) {
@@ -644,6 +875,9 @@ Status CollectiveParamResolverLocal::LookupGroup(int32_t group_key,
 void CollectiveParamResolverLocal::CompleteParamsAsync(
     const DeviceAttributes& device, CollectiveParams* cp,
     CancellationManager* cancel_mgr, const StatusCallback& done) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc mht_19(mht_19_v, 878, "", "./tensorflow/core/common_runtime/collective_param_resolver_local.cc", "CollectiveParamResolverLocal::CompleteParamsAsync");
+
   VLOG(1) << "CompleteParams local " << device.name() << " for " << cp << ": "
           << cp->ToString();
   if (cp->run_group_initialization) {
@@ -670,6 +904,9 @@ void CollectiveParamResolverLocal::CompleteParamsAsync(
 void CollectiveParamResolverLocal::CompleteInstanceAsync(
     const CompleteInstanceRequest* request, CompleteInstanceResponse* response,
     CancellationManager* cancel_mgr, const StatusCallback& done) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc mht_20(mht_20_v, 907, "", "./tensorflow/core/common_runtime/collective_param_resolver_local.cc", "CollectiveParamResolverLocal::CompleteInstanceAsync");
+
   done(
       errors::Internal("CompleteInstance is not implemented by "
                        "CollectiveParamResolverLocal which is "
@@ -680,6 +917,9 @@ void CollectiveParamResolverLocal::CompleteInstanceAsync(
 // implementation.  The ideal way would depend upon the topology and link
 // strength before picking a particular implementation.
 void CollectiveParamResolverLocal::AssignCollectiveType(CollectiveParams* cp) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc mht_21(mht_21_v, 920, "", "./tensorflow/core/common_runtime/collective_param_resolver_local.cc", "CollectiveParamResolverLocal::AssignCollectiveType");
+
   // We use the NCCL implementation if this is an environment which supports
   // NCCL, i.e. `LookupParamResolverInstance` for `NcclReduce` returns OK, and
   // also if indicated either in `ConfigProto` or `communication_hint`.
@@ -699,6 +939,10 @@ void CollectiveParamResolverLocal::AssignCollectiveType(CollectiveParams* cp) {
 
 void CollectiveParamResolverLocal::CompleteInstanceLocal(
     const string& device, CollectiveParams* cp, const StatusCallback& done) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("device: \"" + device + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc mht_22(mht_22_v, 943, "", "./tensorflow/core/common_runtime/collective_param_resolver_local.cc", "CollectiveParamResolverLocal::CompleteInstanceLocal");
+
   VLOG(1) << "CompleteInstanceLocal " << device
           << " instance_key: " << cp->instance.instance_key << " group_key "
           << cp->group.group_key;
@@ -724,6 +968,10 @@ void CollectiveParamResolverLocal::CompleteInstanceLocal(
 void CollectiveParamResolverLocal::CompleteInstanceFromInitializedIRec(
     const string& device, CollectiveParams* cp, InstanceRec* ir,
     const StatusCallback& done) {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("device: \"" + device + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc mht_23(mht_23_v, 972, "", "./tensorflow/core/common_runtime/collective_param_resolver_local.cc", "CollectiveParamResolverLocal::CompleteInstanceFromInitializedIRec");
+
   auto expected_shape = cp->instance.shape;
   Status status;
   // Populate the fields common across instance.
@@ -787,6 +1035,9 @@ void CollectiveParamResolverLocal::CompleteInstanceFromInitializedIRec(
 void CollectiveParamResolverLocal::WaitForGroup(InstanceRec* ir,
                                                 CollectiveParams* cp,
                                                 const IRConsumer& f) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc mht_24(mht_24_v, 1038, "", "./tensorflow/core/common_runtime/collective_param_resolver_local.cc", "CollectiveParamResolverLocal::WaitForGroup");
+
   std::vector<IRConsumer> ready_waiters;
   do {
     mutex_lock l(ir->mu);
@@ -836,6 +1087,9 @@ void CollectiveParamResolverLocal::WaitForGroup(InstanceRec* ir,
 }
 
 void CollectiveParamResolverLocal::StartAbort(const Status& s) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc mht_25(mht_25_v, 1090, "", "./tensorflow/core/common_runtime/collective_param_resolver_local.cc", "CollectiveParamResolverLocal::StartAbort");
+
   {
     mutex_lock l(status_mu_);
     if (!status_.ok()) {
@@ -850,6 +1104,9 @@ void CollectiveParamResolverLocal::StartAbort(const Status& s) {
 }
 
 void CollectiveParamResolverLocal::StartAbortLocal(const Status& s) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePScollective_param_resolver_localDTcc mht_26(mht_26_v, 1107, "", "./tensorflow/core/common_runtime/collective_param_resolver_local.cc", "CollectiveParamResolverLocal::StartAbortLocal");
+
   std::vector<StatusCallback> pending_done;
   {
     mutex_lock l(group_mu_);

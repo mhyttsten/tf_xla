@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,6 +218,11 @@ GrapplerFunctionItem::GrapplerFunctionItem(
       output_args_(std::move(output_args)),
       control_outputs_(std::move(control_outputs)),
       is_stateful_(is_stateful) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("func_name: \"" + func_name + "\"");
+   mht_0_v.push_back("description: \"" + description + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_0(mht_0_v, 223, "", "./tensorflow/core/grappler/utils/functions.cc", "GrapplerFunctionItem::GrapplerFunctionItem");
+
   id = std::move(func_name);
   graph = std::move(function_body);
   graph.mutable_versions()->set_producer(graph_def_version);
@@ -72,62 +245,113 @@ GrapplerFunctionItem::GrapplerFunctionItem(
   optimization_options().allow_pruning_stateful_and_dataset_ops = false;
 }
 
-const string& GrapplerFunctionItem::description() const { return description_; }
+const string& GrapplerFunctionItem::description() const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_1(mht_1_v, 249, "", "./tensorflow/core/grappler/utils/functions.cc", "GrapplerFunctionItem::description");
+ return description_; }
 
 const std::vector<InputArgInstantiation>& GrapplerFunctionItem::inputs() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_2(mht_2_v, 254, "", "./tensorflow/core/grappler/utils/functions.cc", "GrapplerFunctionItem::inputs");
+
   return input_args_;
 }
 
 const InputArgInstantiation& GrapplerFunctionItem::input(int i) const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_3(mht_3_v, 261, "", "./tensorflow/core/grappler/utils/functions.cc", "GrapplerFunctionItem::input");
+
   return input_args_[i];
 }
 
 const std::size_t GrapplerFunctionItem::input_size() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_4(mht_4_v, 268, "", "./tensorflow/core/grappler/utils/functions.cc", "GrapplerFunctionItem::input_size");
+
   return input_args_.size();
 }
 
 const std::vector<OutputArgInstantiation>& GrapplerFunctionItem::outputs()
     const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_5(mht_5_v, 276, "", "./tensorflow/core/grappler/utils/functions.cc", "GrapplerFunctionItem::outputs");
+
   return output_args_;
 }
 
 const OutputArgInstantiation& GrapplerFunctionItem::output(int i) const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_6(mht_6_v, 283, "", "./tensorflow/core/grappler/utils/functions.cc", "GrapplerFunctionItem::output");
+
   return output_args_[i];
 }
 
 const std::size_t GrapplerFunctionItem::output_size() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_7(mht_7_v, 290, "", "./tensorflow/core/grappler/utils/functions.cc", "GrapplerFunctionItem::output_size");
+
   return output_args_.size();
 }
 
 const std::vector<ControlOutput>& GrapplerFunctionItem::control_outputs()
     const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_8(mht_8_v, 298, "", "./tensorflow/core/grappler/utils/functions.cc", "GrapplerFunctionItem::control_outputs");
+
   return control_outputs_;
 }
 
 const std::size_t GrapplerFunctionItem::control_output_size() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_9(mht_9_v, 305, "", "./tensorflow/core/grappler/utils/functions.cc", "GrapplerFunctionItem::control_output_size");
+
   return control_outputs_.size();
 }
 
-const AttrSlice& GrapplerFunctionItem::func_attr() const { return func_attr_; }
+const AttrSlice& GrapplerFunctionItem::func_attr() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_10(mht_10_v, 312, "", "./tensorflow/core/grappler/utils/functions.cc", "GrapplerFunctionItem::func_attr");
+ return func_attr_; }
 
 const std::vector<const FunctionDef::ArgAttrs*>&
 GrapplerFunctionItem::arg_attr() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_11(mht_11_v, 318, "", "./tensorflow/core/grappler/utils/functions.cc", "GrapplerFunctionItem::arg_attr");
+
   return arg_attr_;
 }
 
-const GraphDef& GrapplerFunctionItem::function_body() const { return graph; }
+const GraphDef& GrapplerFunctionItem::function_body() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_12(mht_12_v, 325, "", "./tensorflow/core/grappler/utils/functions.cc", "GrapplerFunctionItem::function_body");
+ return graph; }
 
-GraphDef& GrapplerFunctionItem::mutable_function_body() { return graph; }
+GraphDef& GrapplerFunctionItem::mutable_function_body() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_13(mht_13_v, 330, "", "./tensorflow/core/grappler/utils/functions.cc", "GrapplerFunctionItem::mutable_function_body");
+ return graph; }
 
-bool GrapplerFunctionItem::is_stateful() const { return is_stateful_; }
+bool GrapplerFunctionItem::is_stateful() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_14(mht_14_v, 335, "", "./tensorflow/core/grappler/utils/functions.cc", "GrapplerFunctionItem::is_stateful");
+ return is_stateful_; }
 
 GrapplerFunctionItem& GrapplerFunctionItem::SwapFunctionBody(GraphDef&& other) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_15(mht_15_v, 340, "", "./tensorflow/core/grappler/utils/functions.cc", "GrapplerFunctionItem::SwapFunctionBody");
+
   graph = std::move(other);
   return *this;
 }
 
 bool HasParametrizedType(const FunctionDef& func) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_16(mht_16_v, 348, "", "./tensorflow/core/grappler/utils/functions.cc", "HasParametrizedType");
+
   const auto is_type_parametrized = [](const OpDef::ArgDef& arg) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_17(mht_17_v, 352, "", "./tensorflow/core/grappler/utils/functions.cc", "lambda");
+
     return !arg.type_attr().empty() || !arg.number_attr().empty() ||
            !arg.type_list_attr().empty();
   };
@@ -139,7 +363,13 @@ bool HasParametrizedType(const FunctionDef& func) {
 }
 
 bool HasParametrizedBody(const FunctionDef& func) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_18(mht_18_v, 366, "", "./tensorflow/core/grappler/utils/functions.cc", "HasParametrizedBody");
+
   const auto is_parametrized = [&](const NodeDef& node) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_19(mht_19_v, 370, "", "./tensorflow/core/grappler/utils/functions.cc", "lambda");
+
     for (const auto& attr : node.attr()) {
       if (!attr.second.placeholder().empty()) return true;
     }
@@ -150,12 +380,18 @@ bool HasParametrizedBody(const FunctionDef& func) {
 }
 
 bool IsParametrized(const FunctionDef& func) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_20(mht_20_v, 383, "", "./tensorflow/core/grappler/utils/functions.cc", "IsParametrized");
+
   return HasParametrizedType(func) || HasParametrizedBody(func);
 }
 
 Status InstantiationTypeParameters(
     const FunctionDef& func, const AttrSlice& func_instantiation_attr,
     absl::flat_hash_map<string, DataType>* type_parameters) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_21(mht_21_v, 392, "", "./tensorflow/core/grappler/utils/functions.cc", "InstantiationTypeParameters");
+
   if (!type_parameters->empty()) {
     return errors::InvalidArgument("Type parameters output map must be empty");
   }
@@ -192,6 +428,9 @@ Status InstantiationTypeParameters(
 Status InstantiationBodyParameters(
     const FunctionDef& func, const AttrSlice& func_instantiation_attr,
     absl::flat_hash_map<string, AttrValue>* body_parameters) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_22(mht_22_v, 431, "", "./tensorflow/core/grappler/utils/functions.cc", "InstantiationBodyParameters");
+
   if (!body_parameters->empty()) {
     return errors::InvalidArgument("Body parameters output map must be empty");
   }
@@ -223,6 +462,9 @@ Status MakeGrapplerFunctionItem(const FunctionDef& func,
                                 const FunctionLibraryDefinition& flib,
                                 const int graph_def_version,
                                 GrapplerFunctionItem* item) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_23(mht_23_v, 465, "", "./tensorflow/core/grappler/utils/functions.cc", "MakeGrapplerFunctionItem");
+
   const OpDef& signature = func.signature();
 
   if (signature.name().empty()) {
@@ -307,12 +549,18 @@ Status MakeGrapplerFunctionItem(const FunctionDef& func,
                                 const FunctionLibraryDefinition& flib,
                                 const int graph_def_version,
                                 GrapplerFunctionItem* item) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_24(mht_24_v, 552, "", "./tensorflow/core/grappler/utils/functions.cc", "MakeGrapplerFunctionItem");
+
   return MakeGrapplerFunctionItem(func, AttrSlice(), flib, graph_def_version,
                                   item);
 }
 
 Status ReplaceInputWithConst(const NodeDef& input_const, int input_index,
                              GrapplerFunctionItem* item) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_25(mht_25_v, 561, "", "./tensorflow/core/grappler/utils/functions.cc", "ReplaceInputWithConst");
+
   if (!IsConstant(input_const)) {
     return errors::InvalidArgument("Input node is not a constant: ",
                                    SummarizeNodeDef(input_const));
@@ -355,6 +603,9 @@ Status ReplaceInputWithConst(const NodeDef& input_const, int input_index,
 Status RemoveFunctionOutputs(const absl::flat_hash_set<int>& remove_outputs,
                              GrapplerFunctionItem* item,
                              std::vector<std::pair<int, int>>* output_mapping) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_26(mht_26_v, 606, "", "./tensorflow/core/grappler/utils/functions.cc", "RemoveFunctionOutputs");
+
   DCHECK(output_mapping->empty());
 
   // Do some sanity checking of the removed outputs positions.
@@ -369,6 +620,9 @@ Status RemoveFunctionOutputs(const absl::flat_hash_set<int>& remove_outputs,
 
   absl::flat_hash_set<const OutputArgInstantiation*> remove_output_args;
   const auto is_remove_output_arg = [&](const OutputArgInstantiation& output) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_27(mht_27_v, 623, "", "./tensorflow/core/grappler/utils/functions.cc", "lambda");
+
     return remove_output_args.find(&output) != remove_output_args.end();
   };
 
@@ -430,10 +684,16 @@ class MakeFunctionDefHelper {
   Status AsFunctionDefNode(NodeDef* function_body_node) const;
 
   bool IsInputNode(const NodeDef& node) const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_28(mht_28_v, 687, "", "./tensorflow/core/grappler/utils/functions.cc", "IsInputNode");
+
     return input_nodes_.contains(node.name());
   }
 
   bool IsOutputNode(const NodeDef& node) const {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_29(mht_29_v, 694, "", "./tensorflow/core/grappler/utils/functions.cc", "IsOutputNode");
+
     return output_nodes_.contains(node.name());
   }
 
@@ -446,6 +706,9 @@ class MakeFunctionDefHelper {
 
 Status MakeFunctionDefHelper::Initialize(
     const GrapplerFunctionItem& item, const FunctionLibraryDefinition& flib) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_30(mht_30_v, 709, "", "./tensorflow/core/grappler/utils/functions.cc", "MakeFunctionDefHelper::Initialize");
+
   for (const InputArgInstantiation& input_arg : item.inputs()) {
     input_nodes_.insert(input_arg.node_name);
   }
@@ -469,6 +732,10 @@ Status MakeFunctionDefHelper::Initialize(
 
 Status MakeFunctionDefHelper::AsFunctionDefInput(const string& graph_def_input,
                                                  string* func_def_input) const {
+   std::vector<std::string> mht_31_v;
+   mht_31_v.push_back("graph_def_input: \"" + graph_def_input + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_31(mht_31_v, 736, "", "./tensorflow/core/grappler/utils/functions.cc", "MakeFunctionDefHelper::AsFunctionDefInput");
+
   if (IsControlInput(graph_def_input)) {
     *func_def_input = graph_def_input;
     return Status::OK();
@@ -507,6 +774,9 @@ Status MakeFunctionDefHelper::AsFunctionDefInput(const string& graph_def_input,
 
 Status MakeFunctionDefHelper::AsFunctionDefNode(
     NodeDef* function_body_node) const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_32(mht_32_v, 777, "", "./tensorflow/core/grappler/utils/functions.cc", "MakeFunctionDefHelper::AsFunctionDefNode");
+
   string func_def_input;
 
   for (int i = 0; i < function_body_node->input_size(); ++i) {
@@ -523,6 +793,9 @@ Status MakeFunctionDefHelper::AsFunctionDefNode(
 Status MakeFunctionDef(const GrapplerFunctionItem& item,
                        const FunctionLibraryDefinition& flib,
                        FunctionDef* func) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSfunctionsDTcc mht_33(mht_33_v, 796, "", "./tensorflow/core/grappler/utils/functions.cc", "MakeFunctionDef");
+
   func->mutable_signature()->set_name(item.id);
   func->mutable_signature()->set_description(item.description());
   func->mutable_signature()->set_is_stateful(item.is_stateful());

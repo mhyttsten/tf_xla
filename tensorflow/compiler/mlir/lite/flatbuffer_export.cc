@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2022 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -200,12 +368,18 @@ static StatusOr<tflite::TensorType> GetTFLiteType(Type type,
 }
 
 static bool IsConst(Operation* op) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_0(mht_0_v, 371, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "IsConst");
+
   return isa<mlir::func::ConstantOp, mlir::arith::ConstantOp, mlir::TF::ConstOp,
              tfl::ConstOp, tfl::QConstOp, tfl::SparseConstOp,
              tfl::SparseQConstOp, mlir::TFL::NoValueOp>(op);
 }
 
 static bool IsTFResourceOp(Operation* op) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_1(mht_1_v, 380, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "IsTFResourceOp");
+
   for (const auto& operand : op->getOperands()) {
     auto elementType = getElementTypeOrSelf(operand.getType());
     if (elementType.isa<mlir::TF::ResourceType>()) {
@@ -223,11 +397,18 @@ static bool IsTFResourceOp(Operation* op) {
 
 // Returns whether the current op is not supported by the TF Lite runtime.
 static bool IsUnsupportedFlexOp(const std::string& op_name) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_2(mht_2_v, 401, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "IsUnsupportedFlexOp");
+
   return op_name == "PartitionedCall" || op_name == "StatefulPartitionedCall";
 }
 
 // Create description of operation that could not be converted.
 static std::string GetOpDescriptionForDebug(Operation* inst) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_3(mht_3_v, 409, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "GetOpDescriptionForDebug");
+
   const int kLargeElementsAttr = 16;
   std::string op_str;
   llvm::raw_string_ostream os(op_str);
@@ -280,6 +461,10 @@ static std::string GetOpDescriptionForDebug(Operation* inst) {
 static std::string GetOpsSummary(
     const std::map<std::string, std::set<std::string>>& ops,
     const std::string& summary_title) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("summary_title: \"" + summary_title + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_4(mht_4_v, 465, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "GetOpsSummary");
+
   std::string op_str;
   llvm::raw_string_ostream os(op_str);
 
@@ -304,6 +489,9 @@ static std::string GetOpsSummary(
 
 template <typename T>
 static bool HasValidTFLiteType(Value value, T& error_handler) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_5(mht_5_v, 492, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "HasValidTFLiteType");
+
   // None type is allowed to represent unspecified operands.
   if (value.getType().isa<NoneType>()) return true;
 
@@ -336,6 +524,9 @@ static bool HasValidTFLiteType(Value value, T& error_handler) {
 // MLIR module, consider inlining these validation checks at the place where
 // these invariants are assumed instead of checking upfront.
 static bool IsValidTFLiteMlirModule(ModuleOp module) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_6(mht_6_v, 527, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "IsValidTFLiteMlirModule");
+
   MLIRContext* context = module.getContext();
 
   // Verify that module has a function named main.
@@ -508,6 +699,9 @@ class Translator {
         metadata_(metadata),
         supported_backends_(toco_flags.supported_backends().begin(),
                             toco_flags.supported_backends().end()) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_7(mht_7_v, 702, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator");
+
     // The first buffer must be empty according to the schema definition.
     empty_buffer_ = tflite::CreateBuffer(builder_);
     buffers_.push_back(empty_buffer_);
@@ -697,6 +891,9 @@ class Translator {
 };
 
 bool Translator::EstimateArithmeticCount(int64_t* count) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_8(mht_8_v, 894, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator::EstimateArithmeticCount");
+
   int64_t result = 0;
   bool encounter_undetermined_mac = false;
   module_->walk([&](mlir::TFL::TflArithmeticCountOpInterface op) {
@@ -713,11 +910,17 @@ bool Translator::EstimateArithmeticCount(int64_t* count) {
 }
 
 std::string Translator::UniqueName(mlir::Value val) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_9(mht_9_v, 913, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator::UniqueName");
+
   return std::string(name_mapper_.GetUniqueName(val));
 }
 
 Optional<BufferOffset<tflite::Buffer>> Translator::BuildBuffer(
     Operation* inst) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_10(mht_10_v, 921, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator::BuildBuffer");
+
   ElementsAttr attr;
   if (auto cst = dyn_cast<mlir::arith::ConstantOp>(inst)) {
     // arith::ConstantOp have ElementAttr at this point due to validation of the
@@ -771,6 +974,10 @@ Optional<BufferOffset<tflite::Buffer>> Translator::BuildBuffer(
 
 Optional<BufferOffset<tflite::Tensor>> Translator::BuildTensorFromType(
     mlir::Type type, const std::string& name) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_11(mht_11_v, 978, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator::BuildTensorFromType");
+
   auto tensor_type = type.cast<TensorType>();
 
   if (!tensor_type.hasStaticShape()) {
@@ -806,6 +1013,10 @@ Optional<BufferOffset<tflite::Tensor>> Translator::BuildTensor(
     Value value, const std::string& name, unsigned buffer_idx,
     const Optional<BufferOffset<tflite::QuantizationParameters>>&
         quant_parameters) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_12(mht_12_v, 1017, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator::BuildTensor");
+
   auto type = value.getType().cast<TensorType>();
 
   // TFLite requires tensor shape only for the inputs and constants.
@@ -813,6 +1024,9 @@ Optional<BufferOffset<tflite::Tensor>> Translator::BuildTensor(
   auto check_shape =
       [&](llvm::ArrayRef<int64_t> shape_ref) -> mlir::LogicalResult {
     auto is_out_of_range = [](int64_t dim) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_13(mht_13_v, 1027, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "lambda");
+
       return dim > std::numeric_limits<int32_t>::max();
     };
 
@@ -917,6 +1131,9 @@ Optional<BufferOffset<tflite::Tensor>> Translator::BuildTensor(
 BufferOffset<tflite::Operator> Translator::BuildIfOperator(
     mlir::TF::IfOp op, const std::vector<int32_t>& operands,
     const std::vector<int32_t>& results) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_14(mht_14_v, 1134, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator::BuildIfOperator");
+
   auto opcode_index = GetOpcodeIndex("if", tflite::BuiltinOperator_IF);
   int then_subgraph_index = subgraph_index_map_.at(op.then_branch().str());
   int else_subgraph_index = subgraph_index_map_.at(op.else_branch().str());
@@ -933,6 +1150,9 @@ BufferOffset<tflite::Operator> Translator::BuildIfOperator(
 BufferOffset<tflite::Operator> Translator::BuildCallOnceOperator(
     mlir::TFL::CallOnceOp op, const std::vector<int32_t>& operands,
     const std::vector<int32_t>& results) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_15(mht_15_v, 1153, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator::BuildCallOnceOperator");
+
   auto opcode_index =
       GetOpcodeIndex("call_once", tflite::BuiltinOperator_CALL_ONCE);
   int init_subgraph_index =
@@ -949,6 +1169,9 @@ BufferOffset<tflite::Operator> Translator::BuildCallOnceOperator(
 Optional<BufferOffset<tflite::Operator>> Translator::BuildWhileOperator(
     mlir::TFL::WhileOp op, const std::vector<int32_t>& operands,
     const std::vector<int32_t>& results) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_16(mht_16_v, 1172, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator::BuildWhileOperator");
+
   auto opcode_index = GetOpcodeIndex("while", tflite::BuiltinOperator_WHILE);
   auto get_call_index = [&](mlir::Block& b) -> Optional<int> {
     if (b.getOperations().size() != 2) return llvm::None;
@@ -975,6 +1198,9 @@ Optional<BufferOffset<tflite::Operator>> Translator::BuildWhileOperator(
 BufferOffset<tflite::Operator> Translator::BuildNumericVerifyOperator(
     mlir::TFL::NumericVerifyOp op, const std::vector<int32_t>& operands,
     const std::vector<int32_t>& results) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_17(mht_17_v, 1201, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator::BuildNumericVerifyOperator");
+
   float tolerance = op.tolerance().convertToFloat();
   bool log_if_failed = op.log_if_failed();
   auto fbb = absl::make_unique<flexbuffers::Builder>();
@@ -997,6 +1223,9 @@ BufferOffset<tflite::Operator> Translator::BuildNumericVerifyOperator(
 BufferOffset<tflite::Operator> Translator::BuildCustomOperator(
     Operation* inst, mlir::TFL::CustomOp op,
     const std::vector<int32_t>& operands, const std::vector<int32_t>& results) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_18(mht_18_v, 1226, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator::BuildCustomOperator");
+
   const std::string attrs =
       op.custom_option().cast<mlir::OpaqueElementsAttr>().getValue().str();
   std::vector<uint8_t> custom_option_vector(attrs.size());
@@ -1013,6 +1242,9 @@ BufferOffset<tflite::Operator> Translator::BuildCustomOperator(
 
 Optional<CustomOptionsOffset> Translator::CreateFlexOpCustomOptions(
     const ::tensorflow::NodeDef& node_def, const mlir::Location& loc) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_19(mht_19_v, 1245, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator::CreateFlexOpCustomOptions");
+
   std::string node_def_str;
   if (!node_def.SerializeToString(&node_def_str)) {
     return emitError(loc, "failed to serialize tensorflow node_def"),
@@ -1030,6 +1262,9 @@ Optional<CustomOptionsOffset> Translator::CreateFlexOpCustomOptions(
 
 Optional<CustomOptionsOffset> Translator::CreateCustomOpCustomOptions(
     const ::tensorflow::NodeDef& node_def, const mlir::Location& loc) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_20(mht_20_v, 1265, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator::CreateCustomOpCustomOptions");
+
   auto flex_builder = CreateFlexBuilderWithNodeAttrs(node_def, loc);
   return builder_.CreateVector(flex_builder->GetBuffer());
 }
@@ -1037,6 +1272,9 @@ Optional<CustomOptionsOffset> Translator::CreateCustomOpCustomOptions(
 std::unique_ptr<flexbuffers::Builder>
 Translator::CreateFlexBuilderWithNodeAttrs(
     const ::tensorflow::NodeDef& node_def, const mlir::Location& loc) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_21(mht_21_v, 1275, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator::CreateFlexBuilderWithNodeAttrs");
+
   auto flex_builder = absl::make_unique<flexbuffers::Builder>();
   size_t map_start = flex_builder->StartMap();
   using Item = std::pair<std::string, ::tensorflow::AttrValue>;
@@ -1107,6 +1345,10 @@ Translator::CreateFlexBuilderWithNodeAttrs(
 
 uint32_t Translator::GetOpcodeIndex(const std::string& op_name,
                                     tflite::BuiltinOperator builtin) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_22(mht_22_v, 1349, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator::GetOpcodeIndex");
+
   auto it = opcode_index_map_.insert({op_name, 0});
 
   // If the insert succeeded, the opcode has not been created already. Create a
@@ -1129,6 +1371,9 @@ Optional<BufferOffset<tflite::Operator>> Translator::BuildOperator(
     Operation* inst, std::vector<int32_t> operands,
     const std::vector<int32_t>& results,
     const std::vector<int32_t>& intermediates) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_23(mht_23_v, 1374, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator::BuildOperator");
+
   const auto* dialect = inst->getDialect();
   if (!dialect) {
     inst->emitOpError("dialect is not registered");
@@ -1298,6 +1543,9 @@ Optional<BufferOffset<tflite::Operator>> Translator::BuildOperator(
 }
 
 void Translator::InitializeNamesFromAttribute(FuncOp fn, bool* has_input_attr) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_24(mht_24_v, 1546, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator::InitializeNamesFromAttribute");
+
   auto dict_attr = fn->getAttrOfType<mlir::DictionaryAttr>("tf.entry_function");
   if (!dict_attr) return;
 
@@ -1334,6 +1582,9 @@ void Translator::InitializeNamesFromAttribute(FuncOp fn, bool* has_input_attr) {
 }
 
 bool Translator::IsStatefulOperand(mlir::Operation* op, int operand_index) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_25(mht_25_v, 1585, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator::IsStatefulOperand");
+
   std::vector<int> operand_indices;
   if (!mlir::TFL::IsStatefulOp(op, &operand_indices)) return false;
   return absl::c_find(operand_indices, operand_index) != operand_indices.end();
@@ -1342,6 +1593,9 @@ bool Translator::IsStatefulOperand(mlir::Operation* op, int operand_index) {
 BufferOffset<tflite::QuantizationParameters>
 Translator::GetQuantizationForQuantStatsOpOutput(
     mlir::quant::StatisticsOp stats_op) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_26(mht_26_v, 1596, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator::GetQuantizationForQuantStatsOpOutput");
+
   auto layer_stats = stats_op.layerStats().cast<mlir::DenseFPElementsAttr>();
   Optional<mlir::ElementsAttr> axis_stats = stats_op.axisStats();
   Optional<uint64_t> axis = stats_op.axis();
@@ -1370,6 +1624,10 @@ Translator::GetQuantizationForQuantStatsOpOutput(
 
 Optional<BufferOffset<tflite::SubGraph>> Translator::BuildSubGraph(
     const std::string& name, Region* region, const int index) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_27(mht_27_v, 1628, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator::BuildSubGraph");
+
   bool has_input_attr = false;
   if (auto fn = dyn_cast<FuncOp>(region->getParentOp())) {
     InitializeNamesFromAttribute(fn, &has_input_attr);
@@ -1381,6 +1639,10 @@ Optional<BufferOffset<tflite::SubGraph>> Translator::BuildSubGraph(
   // on failure.
   auto build_tensor_and_buffer = [&](Value value, const int subgraph_index,
                                      const std::string& tensor_name) {
+   std::vector<std::string> mht_28_v;
+   mht_28_v.push_back("tensor_name: \"" + tensor_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_28(mht_28_v, 1643, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "lambda");
+
     // NoneType represents optional and may be skipped here.
     if (value.getType().isa<NoneType>()) {
       return true;
@@ -1547,6 +1809,9 @@ Optional<BufferOffset<tflite::SubGraph>> Translator::BuildSubGraph(
 
 BufferOffset<tflite::Metadata> Translator::BuildMetadata(StringRef name,
                                                          StringRef content) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_29(mht_29_v, 1812, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator::BuildMetadata");
+
   auto buffer_index = buffers_.size();
   auto buffer_data = builder_.CreateVector(
       reinterpret_cast<const uint8_t*>(content.data()), content.size());
@@ -1556,6 +1821,9 @@ BufferOffset<tflite::Metadata> Translator::BuildMetadata(StringRef name,
 
 Optional<VectorBufferOffset<BufferOffset<tflite::Metadata>>>
 Translator::CreateMetadataVector() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_30(mht_30_v, 1824, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator::CreateMetadataVector");
+
   auto dict_attr = module_->getAttrOfType<mlir::DictionaryAttr>("tfl.metadata");
   std::vector<BufferOffset<tflite::Metadata>> metadata;
   if (dict_attr) {
@@ -1705,6 +1973,9 @@ std::vector<SignatureDefData> BuildSignaturedef(
 
 std::vector<BufferOffset<tflite::TensorMap>> Translator::GetList(
     const int subgraph_index, const std::map<std::string, std::string>& items) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_31(mht_31_v, 1976, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator::GetList");
+
   std::vector<BufferOffset<tflite::TensorMap>> result;
   for (const auto& item : items) {
     auto name_buf = builder_.CreateString(item.first);
@@ -1720,6 +1991,9 @@ std::vector<BufferOffset<tflite::TensorMap>> Translator::GetList(
 Optional<VectorBufferOffset<BufferOffset<tflite::SignatureDef>>>
 Translator::CreateSignatureDefs(
     const std::vector<SignatureDefData>& signature_defs) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_32(mht_32_v, 1994, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator::CreateSignatureDefs");
+
   std::vector<BufferOffset<tflite::SignatureDef>> signature_defs_buffer;
   // When we export each function in the module op, intentionally, we export the
   // entry functions at the beginning of the subgraph list and the
@@ -1746,6 +2020,9 @@ Translator::CreateSignatureDefs(
 }
 
 bool UpdateEntryFunction(ModuleOp module) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_33(mht_33_v, 2023, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "UpdateEntryFunction");
+
   if (module.lookupSymbol<FuncOp>("main") != nullptr) {
     // We already have an entry function.
     return true;
@@ -1775,6 +2052,9 @@ Optional<std::string> Translator::Translate(
     const std::unordered_set<std::string>& tags,
     OpOrArgNameMapper* op_or_arg_name_mapper,
     const std::map<std::string, std::string>& metadata) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_34(mht_34_v, 2055, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator::Translate");
+
   OpOrArgLocNameMapper default_op_or_arg_name_mapper;
   if (!op_or_arg_name_mapper)
     op_or_arg_name_mapper = &default_op_or_arg_name_mapper;
@@ -1786,6 +2066,9 @@ Optional<std::string> Translator::Translate(
 }
 
 bool Translator::CheckGpuDelegateCompatibility(uint8_t* model_buffer_pointer) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_35(mht_35_v, 2069, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator::CheckGpuDelegateCompatibility");
+
   bool gpu_compatibile = true;
   auto model = tflite::GetModel(model_buffer_pointer);
   auto subgraphs = model->subgraphs();
@@ -1812,6 +2095,9 @@ bool Translator::CheckGpuDelegateCompatibility(uint8_t* model_buffer_pointer) {
 }
 
 Optional<std::string> Translator::TranslateInternal() {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_36(mht_36_v, 2098, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator::TranslateInternal");
+
   // A list of named regions in the module with main function being the first in
   // the list. The main function is required as the first subgraph in the model
   // is entry point for the model.
@@ -2030,6 +2316,9 @@ Optional<std::string> Translator::TranslateInternal() {
 
 BufferOffset<tflite::SparsityParameters> Translator::BuildSparsityParameters(
     const mlir::TFL::SparsityParameterAttr& s_attr) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_37(mht_37_v, 2319, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "Translator::BuildSparsityParameters");
+
   const int dim_size = s_attr.dim_metadata().size();
   std::vector<flatbuffers::Offset<tflite::DimensionMetadata>> fb_dim_metadata(
       dim_size);
@@ -2134,6 +2423,9 @@ namespace tflite {
 bool MlirToFlatBufferTranslateFunction(mlir::ModuleOp module,
                                        const FlatbufferExportOptions& options,
                                        std::string* serialized_flatbuffer) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePSflatbuffer_exportDTcc mht_38(mht_38_v, 2426, "", "./tensorflow/compiler/mlir/lite/flatbuffer_export.cc", "MlirToFlatBufferTranslateFunction");
+
   auto maybe_translated = Translator::Translate(
       module, options.toco_flags, options.saved_model_tags,
       options.op_or_arg_name_mapper, options.metadata);

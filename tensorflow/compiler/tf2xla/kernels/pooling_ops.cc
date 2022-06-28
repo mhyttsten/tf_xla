@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSpooling_opsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSpooling_opsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSpooling_opsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,6 +218,9 @@ class PoolingOp : public XlaOpKernel {
       : XlaOpKernel(ctx),
         num_spatial_dims_(num_spatial_dims),
         reduction_type_(reduction_type) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSpooling_opsDTcc mht_0(mht_0_v, 221, "", "./tensorflow/compiler/tf2xla/kernels/pooling_ops.cc", "PoolingOp");
+
     if (ctx->num_inputs() == 1) {
       std::vector<int32> ksize_int;
       std::vector<int32> stride_int;
@@ -79,7 +250,10 @@ class PoolingOp : public XlaOpKernel {
         ctx, DataTypeToPrimitiveType(reduction_type_, &xla_reduction_type_));
   }
 
-  int num_dims() const { return num_spatial_dims_ + 2; }
+  int num_dims() const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSpooling_opsDTcc mht_1(mht_1_v, 254, "", "./tensorflow/compiler/tf2xla/kernels/pooling_ops.cc", "num_dims");
+ return num_spatial_dims_ + 2; }
 
  protected:
   StatusOr<std::vector<int64_t>> GetKernelSize(XlaOpKernelContext* ctx) {
@@ -144,6 +318,9 @@ class PoolingOp : public XlaOpKernel {
 // library.
 xla::TensorFormat XlaTensorFormat(tensorflow::TensorFormat data_format,
                                   int num_spatial_dims) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSpooling_opsDTcc mht_2(mht_2_v, 321, "", "./tensorflow/compiler/tf2xla/kernels/pooling_ops.cc", "XlaTensorFormat");
+
   int num_dims = num_spatial_dims + 2;
   int batch_dimension = GetTensorBatchDimIndex(num_dims, data_format);
   int feature_dimension = GetTensorFeatureDimIndex(num_dims, data_format);
@@ -162,6 +339,9 @@ class MaxPoolOp : public PoolingOp {
   MaxPoolOp(OpKernelConstruction* ctx, int num_spatial_dims)
       : PoolingOp(ctx, /*num_spatial_dims=*/num_spatial_dims,
                   /*reduction_type=*/ctx->input_type(0)) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSpooling_opsDTcc mht_3(mht_3_v, 342, "", "./tensorflow/compiler/tf2xla/kernels/pooling_ops.cc", "MaxPoolOp");
+
     std::string data_format_str;
     OP_REQUIRES_OK(ctx, ctx->GetAttr("data_format", &data_format_str));
     OP_REQUIRES(ctx, FormatFromString(data_format_str, &data_format_),
@@ -174,6 +354,9 @@ class MaxPoolOp : public PoolingOp {
   }
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSpooling_opsDTcc mht_4(mht_4_v, 357, "", "./tensorflow/compiler/tf2xla/kernels/pooling_ops.cc", "Compile");
+
     auto ksize_or_error = GetKernelSize(ctx);
     OP_REQUIRES_OK(ctx, ksize_or_error.status());
     std::vector<int64_t> ksize = ksize_or_error.ValueOrDie();
@@ -235,7 +418,10 @@ class MaxPoolOp : public PoolingOp {
 class MaxPool2DOp : public MaxPoolOp {
  public:
   explicit MaxPool2DOp(OpKernelConstruction* ctx)
-      : MaxPoolOp(ctx, /*num_spatial_dims=*/2) {}
+      : MaxPoolOp(ctx, /*num_spatial_dims=*/2) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSpooling_opsDTcc mht_5(mht_5_v, 422, "", "./tensorflow/compiler/tf2xla/kernels/pooling_ops.cc", "MaxPool2DOp");
+}
 };
 REGISTER_XLA_OP(Name("MaxPool"), MaxPool2DOp);
 REGISTER_XLA_OP(Name("MaxPoolV2")
@@ -246,7 +432,10 @@ REGISTER_XLA_OP(Name("MaxPoolV2")
 class MaxPool3DOp : public MaxPoolOp {
  public:
   explicit MaxPool3DOp(OpKernelConstruction* ctx)
-      : MaxPoolOp(ctx, /*num_spatial_dims=*/3) {}
+      : MaxPoolOp(ctx, /*num_spatial_dims=*/3) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSpooling_opsDTcc mht_6(mht_6_v, 436, "", "./tensorflow/compiler/tf2xla/kernels/pooling_ops.cc", "MaxPool3DOp");
+}
 };
 REGISTER_XLA_OP(Name("MaxPool3D"), MaxPool3DOp);
 
@@ -256,6 +445,9 @@ class AvgPoolOp : public PoolingOp {
       : PoolingOp(ctx, /*num_spatial_dims=*/num_spatial_dims,
                   /*reduction_type=*/
                   XlaHelpers::SumAccumulationType(ctx->input_type(0))) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSpooling_opsDTcc mht_7(mht_7_v, 448, "", "./tensorflow/compiler/tf2xla/kernels/pooling_ops.cc", "AvgPoolOp");
+
     string data_format_str;
     OP_REQUIRES_OK(ctx, ctx->GetAttr("data_format", &data_format_str));
     OP_REQUIRES(ctx, FormatFromString(data_format_str, &data_format_),
@@ -263,6 +455,9 @@ class AvgPoolOp : public PoolingOp {
   }
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSpooling_opsDTcc mht_8(mht_8_v, 458, "", "./tensorflow/compiler/tf2xla/kernels/pooling_ops.cc", "Compile");
+
     auto ksize_or_error = GetKernelSize(ctx);
     OP_REQUIRES_OK(ctx, ksize_or_error.status());
     std::vector<int64_t> ksize = ksize_or_error.ValueOrDie();
@@ -296,7 +491,10 @@ class AvgPoolOp : public PoolingOp {
 class AvgPool2DOp : public AvgPoolOp {
  public:
   explicit AvgPool2DOp(OpKernelConstruction* ctx)
-      : AvgPoolOp(ctx, /*num_spatial_dims=*/2) {}
+      : AvgPoolOp(ctx, /*num_spatial_dims=*/2) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSpooling_opsDTcc mht_9(mht_9_v, 495, "", "./tensorflow/compiler/tf2xla/kernels/pooling_ops.cc", "AvgPool2DOp");
+}
 };
 REGISTER_XLA_OP(Name("AvgPool"), AvgPool2DOp);
 
@@ -312,6 +510,9 @@ class MaxPoolGradOp : public XlaOpKernel {
  public:
   MaxPoolGradOp(OpKernelConstruction* ctx, int num_spatial_dims)
       : XlaOpKernel(ctx), num_spatial_dims_(num_spatial_dims) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSpooling_opsDTcc mht_10(mht_10_v, 513, "", "./tensorflow/compiler/tf2xla/kernels/pooling_ops.cc", "MaxPoolGradOp");
+
     if (ctx->num_inputs() == 3) {
       OP_REQUIRES_OK(ctx, ctx->GetAttr("ksize", &ksize_));
       OP_REQUIRES_OK(ctx, ctx->GetAttr("strides", &stride_));
@@ -329,9 +530,15 @@ class MaxPoolGradOp : public XlaOpKernel {
                               "deterministic XLA implementation."));
   }
 
-  int num_dims() const { return num_spatial_dims_ + 2; }
+  int num_dims() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSpooling_opsDTcc mht_11(mht_11_v, 534, "", "./tensorflow/compiler/tf2xla/kernels/pooling_ops.cc", "num_dims");
+ return num_spatial_dims_ + 2; }
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSpooling_opsDTcc mht_12(mht_12_v, 539, "", "./tensorflow/compiler/tf2xla/kernels/pooling_ops.cc", "Compile");
+
     if (ctx->num_inputs() != 3) {
       OP_REQUIRES(
           ctx, ctx->num_inputs() == 5,
@@ -422,6 +629,9 @@ class MaxPool2DGradOp : public MaxPoolGradOp {
  public:
   explicit MaxPool2DGradOp(OpKernelConstruction* ctx)
       : MaxPoolGradOp(ctx, /*num_spatial_dims=*/2) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSpooling_opsDTcc mht_13(mht_13_v, 632, "", "./tensorflow/compiler/tf2xla/kernels/pooling_ops.cc", "MaxPool2DGradOp");
+
     string data_format;
     OP_REQUIRES_OK(ctx, ctx->GetAttr("data_format", &data_format));
     OP_REQUIRES(ctx, FormatFromString(data_format, &data_format_),
@@ -441,6 +651,9 @@ class AvgPoolGradOp : public XlaOpKernel {
  public:
   AvgPoolGradOp(OpKernelConstruction* ctx, int num_spatial_dims)
       : XlaOpKernel(ctx), num_spatial_dims_(num_spatial_dims) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSpooling_opsDTcc mht_14(mht_14_v, 654, "", "./tensorflow/compiler/tf2xla/kernels/pooling_ops.cc", "AvgPoolGradOp");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("ksize", &ksize_));
     OP_REQUIRES(ctx, ksize_.size() == num_dims(),
                 errors::InvalidArgument("Sliding window ksize field must "
@@ -465,9 +678,15 @@ class AvgPoolGradOp : public XlaOpKernel {
                 errors::InvalidArgument("Invalid data format"));
   }
 
-  int num_dims() const { return num_spatial_dims_ + 2; }
+  int num_dims() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSpooling_opsDTcc mht_15(mht_15_v, 682, "", "./tensorflow/compiler/tf2xla/kernels/pooling_ops.cc", "num_dims");
+ return num_spatial_dims_ + 2; }
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSpooling_opsDTcc mht_16(mht_16_v, 687, "", "./tensorflow/compiler/tf2xla/kernels/pooling_ops.cc", "Compile");
+
     TensorShape gradients_shape;
     OP_REQUIRES_OK(
         ctx, ctx->ConstantInputAsShape(0, &gradients_shape,
@@ -523,7 +742,10 @@ class AvgPoolGradOp : public XlaOpKernel {
 class AvgPool2DGradOp : public AvgPoolGradOp {
  public:
   explicit AvgPool2DGradOp(OpKernelConstruction* ctx)
-      : AvgPoolGradOp(ctx, /*num_spatial_dims=*/2) {}
+      : AvgPoolGradOp(ctx, /*num_spatial_dims=*/2) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSpooling_opsDTcc mht_17(mht_17_v, 746, "", "./tensorflow/compiler/tf2xla/kernels/pooling_ops.cc", "AvgPool2DGradOp");
+}
 };
 REGISTER_XLA_OP(
     Name("AvgPoolGrad").CompileTimeConstantInput("orig_input_shape"),
@@ -532,7 +754,10 @@ REGISTER_XLA_OP(
 class AvgPool3DGradOp : public AvgPoolGradOp {
  public:
   explicit AvgPool3DGradOp(OpKernelConstruction* ctx)
-      : AvgPoolGradOp(ctx, /*num_spatial_dims=*/3) {}
+      : AvgPoolGradOp(ctx, /*num_spatial_dims=*/3) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSpooling_opsDTcc mht_18(mht_18_v, 758, "", "./tensorflow/compiler/tf2xla/kernels/pooling_ops.cc", "AvgPool3DGradOp");
+}
 };
 REGISTER_XLA_OP(
     Name("AvgPool3DGrad").CompileTimeConstantInput("orig_input_shape"),
@@ -542,6 +767,9 @@ class MaxPoolGradGradOp : public XlaOpKernel {
  public:
   MaxPoolGradGradOp(OpKernelConstruction* ctx, int num_spatial_dims)
       : XlaOpKernel(ctx), num_spatial_dims_(num_spatial_dims) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSpooling_opsDTcc mht_19(mht_19_v, 770, "", "./tensorflow/compiler/tf2xla/kernels/pooling_ops.cc", "MaxPoolGradGradOp");
+
     if (ctx->num_inputs() == 3) {
       OP_REQUIRES_OK(ctx, ctx->GetAttr("ksize", &ksize_));
       OP_REQUIRES_OK(ctx, ctx->GetAttr("strides", &stride_));
@@ -553,9 +781,15 @@ class MaxPoolGradGradOp : public XlaOpKernel {
             "XLA does not support maxpoolgradgrad with explicit padding."));
   }
 
-  int num_dims() const { return num_spatial_dims_ + 2; }
+  int num_dims() const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSpooling_opsDTcc mht_20(mht_20_v, 785, "", "./tensorflow/compiler/tf2xla/kernels/pooling_ops.cc", "num_dims");
+ return num_spatial_dims_ + 2; }
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSpooling_opsDTcc mht_21(mht_21_v, 790, "", "./tensorflow/compiler/tf2xla/kernels/pooling_ops.cc", "Compile");
+
     if (ctx->num_inputs() != 3) {
       OP_REQUIRES(
           ctx, ctx->num_inputs() == 5,
@@ -701,6 +935,9 @@ class MaxPool2DGradGradOp : public MaxPoolGradGradOp {
  public:
   explicit MaxPool2DGradGradOp(OpKernelConstruction* ctx)
       : MaxPoolGradGradOp(ctx, /*num_spatial_dims=*/2) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSpooling_opsDTcc mht_22(mht_22_v, 938, "", "./tensorflow/compiler/tf2xla/kernels/pooling_ops.cc", "MaxPool2DGradGradOp");
+
     string data_format;
     OP_REQUIRES_OK(ctx, ctx->GetAttr("data_format", &data_format));
     OP_REQUIRES(ctx, FormatFromString(data_format, &data_format_),
@@ -719,6 +956,9 @@ class MaxPool3DGradGradOp : public MaxPoolGradGradOp {
  public:
   explicit MaxPool3DGradGradOp(OpKernelConstruction* ctx)
       : MaxPoolGradGradOp(ctx, /*num_spatial_dims=*/3) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPSpooling_opsDTcc mht_23(mht_23_v, 959, "", "./tensorflow/compiler/tf2xla/kernels/pooling_ops.cc", "MaxPool3DGradGradOp");
+
     string data_format;
     OP_REQUIRES_OK(ctx, ctx->GetAttr("data_format", &data_format));
     OP_REQUIRES(ctx, FormatFromString(data_format, &data_format_),

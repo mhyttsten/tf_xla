@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,6 +197,9 @@ namespace tflite {
 namespace gpu {
 namespace {
 std::string GetReadImageFromDataType(DataType data_type) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_0(mht_0_v, 200, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "GetReadImageFromDataType");
+
   if (data_type == DataType::FLOAT32) {
     return "read_imagef";
   } else if (data_type == DataType::FLOAT16) {
@@ -45,6 +216,9 @@ std::string GetReadImageFromDataType(DataType data_type) {
 }
 
 DataType ToClTextureType(DataType data_type) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_1(mht_1_v, 219, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "ToClTextureType");
+
   switch (data_type) {
     case DataType::FLOAT32:
     case DataType::FLOAT16:
@@ -63,6 +237,9 @@ DataType ToClTextureType(DataType data_type) {
 }
 
 std::string GetWriteImageFromDataType(DataType data_type) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_2(mht_2_v, 240, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "GetWriteImageFromDataType");
+
   if (data_type == DataType::FLOAT32) {
     return "write_imagef";
   } else if (data_type == DataType::FLOAT16) {
@@ -79,6 +256,9 @@ std::string GetWriteImageFromDataType(DataType data_type) {
 }
 
 std::string AddressModeToCLSampler(AddressMode address_mode) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_3(mht_3_v, 259, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "AddressModeToCLSampler");
+
   switch (address_mode) {
     case AddressMode::kDontCare:
       return "smp_none";
@@ -89,6 +269,9 @@ std::string AddressModeToCLSampler(AddressMode address_mode) {
 
 std::string GetConvertionForImage(const GpuInfo& gpu_info, DataType src_type,
                                   DataType dst_type) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_4(mht_4_v, 272, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "GetConvertionForImage");
+
   DataType interm_type = src_type;
   if (gpu_info.IsApiOpenCl()) {
     if (src_type == DataType::FLOAT16 && dst_type == DataType::FLOAT32) {
@@ -104,6 +287,9 @@ std::string GetConvertionForImage(const GpuInfo& gpu_info, DataType src_type,
 std::string GetConvertion(const GpuInfo& gpu_info,
                           TensorStorageType storage_type, DataType src_type,
                           DataType dst_type) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_5(mht_5_v, 290, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "GetConvertion");
+
   if (storage_type == TensorStorageType::BUFFER) {
     return GetTypeConvertion(gpu_info, src_type, dst_type, 4);
   } else {
@@ -112,6 +298,10 @@ std::string GetConvertion(const GpuInfo& gpu_info,
 }
 
 void MayBeAddConvertion(const std::string& conversion, std::string* result) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("conversion: \"" + conversion + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_6(mht_6_v, 302, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "MayBeAddConvertion");
+
   if (!conversion.empty()) {
     *result = conversion + "(" + *result + ")";
   }
@@ -120,6 +310,9 @@ void MayBeAddConvertion(const std::string& conversion, std::string* result) {
 }  // namespace
 
 std::string ToString(TensorStorageType type) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_7(mht_7_v, 313, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "ToString");
+
   switch (type) {
     case TensorStorageType::UNKNOWN:
       return "TensorStorageType::UNKNOWN";
@@ -148,8 +341,14 @@ TensorDescriptor::TensorDescriptor(TensorDescriptor&& desc)
       use_buffer_for_write_only_image_buffer(
           desc.use_buffer_for_write_only_image_buffer),
       shape(desc.shape),
-      data(std::move(desc.data)) {}
+      data(std::move(desc.data)) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_8(mht_8_v, 345, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::TensorDescriptor");
+}
 TensorDescriptor& TensorDescriptor::operator=(TensorDescriptor&& desc) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_9(mht_9_v, 349, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "=");
+
   if (this != &desc) {
     std::swap(data_type, desc.data_type);
     std::swap(storage_type, desc.storage_type);
@@ -166,6 +365,9 @@ TensorDescriptor& TensorDescriptor::operator=(TensorDescriptor&& desc) {
 }
 
 GPUResources TensorDescriptor::GetGPUResources(const GpuInfo& gpu_info) const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_10(mht_10_v, 368, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::GetGPUResources");
+
   GPUResources resources;
   resources.ints.push_back("slice_stride");
   if (HasAxis(Axis::WIDTH)) {
@@ -246,6 +448,10 @@ GPUResources TensorDescriptor::GetGPUResources(const GpuInfo& gpu_info) const {
 absl::Status TensorDescriptor::PerformConstExpr(const GpuInfo& gpu_info,
                                                 const std::string& const_expr,
                                                 std::string* result) const {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("const_expr: \"" + const_expr + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_11(mht_11_v, 452, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::PerformConstExpr");
+
   if (const_expr == "type" || const_expr == "scalar_type") {
     const int vec_size = const_expr == "scalar_type" ? 1 : 4;
     *result = GetTypeDeclaration(gpu_info, data_type, vec_size);
@@ -264,6 +470,10 @@ absl::Status TensorDescriptor::PerformSelector(
     const GpuInfo& gpu_info, const std::string& selector,
     const std::vector<std::string>& args,
     const std::vector<std::string>& template_args, std::string* result) const {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("selector: \"" + selector + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_12(mht_12_v, 474, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::PerformSelector");
+
   if (selector == "Width") {
     *result = "width";
     return absl::OkStatus();
@@ -328,6 +538,9 @@ absl::Status TensorDescriptor::PerformSelector(
 absl::Status TensorDescriptor::PerformReadSelector(
     const GpuInfo& gpu_info, const std::vector<std::string>& args,
     const std::vector<std::string>& template_args, std::string* result) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_13(mht_13_v, 541, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::PerformReadSelector");
+
   DataType read_as_type = data_type;
   RETURN_IF_ERROR(
       MaybeGetDataTypeFromTemplateArgs(template_args, &read_as_type));
@@ -359,6 +572,9 @@ absl::Status TensorDescriptor::PerformReadSelector(
 absl::Status TensorDescriptor::PerformReadNearestSelector(
     const GpuInfo& gpu_info, const std::vector<std::string>& args,
     std::string* result) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_14(mht_14_v, 575, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::PerformReadNearestSelector");
+
   if (IsBatchedWidth()) {
     return absl::NotFoundError(
         "ReadNearest can not be used with BatchedWidth.");
@@ -396,6 +612,9 @@ absl::Status TensorDescriptor::PerformReadNearestSelector(
 absl::Status TensorDescriptor::PerformReadBilinearSelector(
     const GpuInfo& gpu_info, const std::vector<std::string>& args,
     std::string* result) const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_15(mht_15_v, 615, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::PerformReadBilinearSelector");
+
   if (IsBatchedWidth()) {
     return absl::NotFoundError(
         "ReadBilinear can not be used with BatchedWidth.");
@@ -473,6 +692,9 @@ absl::Status TensorDescriptor::PerformReadBilinearSelector(
 absl::Status TensorDescriptor::PerformReadPerChannelSelector(
     const GpuInfo& gpu_info, const std::vector<std::string>& args,
     const std::vector<std::string>& template_args, std::string* result) const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_16(mht_16_v, 695, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::PerformReadPerChannelSelector");
+
   std::vector<std::string> coord_args =
       std::vector<std::string>(args.begin() + 1, args.end());
   int channels_index = 0;
@@ -517,6 +739,9 @@ absl::Status TensorDescriptor::PerformReadPerChannelSelector(
 absl::Status TensorDescriptor::GetLinkingContextFromWriteSelector(
     const std::vector<std::string>& args, std::string* value_name,
     std::string* x_coord, std::string* y_coord, std::string* s_coord) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_17(mht_17_v, 742, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::GetLinkingContextFromWriteSelector");
+
   std::string xc;
   std::string yc;
   std::string zc;
@@ -540,6 +765,9 @@ absl::Status TensorDescriptor::GetLinkingContextFromWriteSelector(
 absl::Status TensorDescriptor::PerformWriteSelector(
     const GpuInfo& gpu_info, const std::vector<std::string>& args,
     const std::vector<std::string>& template_args, std::string* result) const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_18(mht_18_v, 768, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::PerformWriteSelector");
+
   std::string xc;
   std::string yc;
   std::string zc;
@@ -559,6 +787,9 @@ absl::Status TensorDescriptor::PerformWriteSelector(
 absl::Status TensorDescriptor::PerformWriteLinearSelector(
     const GpuInfo& gpu_info, const std::vector<std::string>& args,
     const std::vector<std::string>& template_args, std::string* result) const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_19(mht_19_v, 790, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::PerformWriteLinearSelector");
+
   if (storage_type != TensorStorageType::BUFFER &&
       storage_type != TensorStorageType::IMAGE_BUFFER) {
     return absl::InvalidArgumentError(
@@ -577,6 +808,9 @@ absl::Status TensorDescriptor::PerformWriteLinearSelector(
 absl::Status TensorDescriptor::PerformWrite2DSelector(
     const GpuInfo& gpu_info, const std::vector<std::string>& args,
     const std::vector<std::string>& template_args, std::string* result) const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_20(mht_20_v, 811, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::PerformWrite2DSelector");
+
   if (storage_type != TensorStorageType::TEXTURE_2D) {
     return absl::InvalidArgumentError(
         "Write2D selector can be used only with 2d "
@@ -594,6 +828,9 @@ absl::Status TensorDescriptor::PerformWrite2DSelector(
 std::string TensorDescriptor::Read(
     const GpuInfo& gpu_info, DataType read_as_type,
     const std::vector<std::string>& coords) const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_21(mht_21_v, 831, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::Read");
+
   const std::string conversion =
       GetConvertion(gpu_info, storage_type, data_type, read_as_type);
   if (gpu_info.IsApiOpenCl() &&
@@ -706,6 +943,10 @@ std::string TensorDescriptor::Read(
 std::string TensorDescriptor::Write(
     const GpuInfo& gpu_info, DataType write_type, const std::string& var_name,
     const std::vector<std::string>& coords) const {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("var_name: \"" + var_name + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_22(mht_22_v, 947, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::Write");
+
   bool is_texture_write = storage_type == TensorStorageType::IMAGE_BUFFER ||
                           storage_type == TensorStorageType::TEXTURE_2D ||
                           storage_type == TensorStorageType::TEXTURE_ARRAY ||
@@ -827,6 +1068,9 @@ std::string TensorDescriptor::Write(
 
 absl::Status TensorDescriptor::PerformGetAddressSelector(
     const std::vector<std::string>& args, std::string* result) const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_23(mht_23_v, 1071, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::PerformGetAddressSelector");
+
   std::string xc;
   std::string yc;
   std::string zc;
@@ -844,6 +1088,9 @@ absl::Status TensorDescriptor::PerformGetAddressSelector(
 
 absl::Status TensorDescriptor::PerformGetPtrWithSliceOffsetSelector(
     const std::vector<std::string>& args, std::string* result) const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_24(mht_24_v, 1091, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::PerformGetPtrWithSliceOffsetSelector");
+
   if (storage_type != TensorStorageType::BUFFER) {
     return absl::InvalidArgumentError(
         "GetPtrWithSliceOffset selector can be used only with BUFFER");
@@ -859,6 +1106,9 @@ absl::Status TensorDescriptor::PerformGetPtrWithSliceOffsetSelector(
 
 absl::Status TensorDescriptor::PerformGetWHOffsetSelector(
     const std::vector<std::string>& args, std::string* result) const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_25(mht_25_v, 1109, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::PerformGetWHOffsetSelector");
+
   if (storage_type != TensorStorageType::BUFFER &&
       storage_type != TensorStorageType::IMAGE_BUFFER) {
     return absl::InvalidArgumentError(
@@ -888,6 +1138,9 @@ absl::Status TensorDescriptor::PerformGetWHOffsetSelector(
 
 absl::Status TensorDescriptor::PerformGetHandleSelector(
     const std::vector<std::string>& args, std::string* result) const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_26(mht_26_v, 1141, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::PerformGetHandleSelector");
+
   if (!args.empty()) {
     return absl::NotFoundError(
         absl::StrCat("GetHandle does not require arguments, but ", args.size(),
@@ -921,11 +1174,19 @@ absl::Status TensorDescriptor::PerformGetHandleSelector(
 
 std::string TensorDescriptor::DeclareAddress(const std::string& var_name,
                                              const std::string& address) const {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("var_name: \"" + var_name + "\"");
+   mht_27_v.push_back("address: \"" + address + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_27(mht_27_v, 1179, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::DeclareAddress");
+
   return absl::StrCat(StorageTypeToAddressType(), " ", var_name, " = ", address,
                       ";");
 }
 
 std::string TensorDescriptor::StorageTypeToAddressType() const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_28(mht_28_v, 1187, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::StorageTypeToAddressType");
+
   switch (storage_type) {
     case TensorStorageType::BUFFER:
     case TensorStorageType::IMAGE_BUFFER:
@@ -943,6 +1204,12 @@ std::string TensorDescriptor::StorageTypeToAddressType() const {
 
 std::vector<std::string> TensorDescriptor::GetPhysicalCoordsWHS(
     const std::string& x, const std::string& y, const std::string& s) const {
+   std::vector<std::string> mht_29_v;
+   mht_29_v.push_back("x: \"" + x + "\"");
+   mht_29_v.push_back("y: \"" + y + "\"");
+   mht_29_v.push_back("s: \"" + s + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_29(mht_29_v, 1210, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::GetPhysicalCoordsWHS");
+
   switch (storage_type) {
     case TensorStorageType::BUFFER:
     case TensorStorageType::IMAGE_BUFFER:
@@ -967,6 +1234,13 @@ std::vector<std::string> TensorDescriptor::GetPhysicalCoordsWHS(
 std::vector<std::string> TensorDescriptor::GetPhysicalCoordsWHSB(
     const std::string& x, const std::string& y, const std::string& s,
     const std::string& b) const {
+   std::vector<std::string> mht_30_v;
+   mht_30_v.push_back("x: \"" + x + "\"");
+   mht_30_v.push_back("y: \"" + y + "\"");
+   mht_30_v.push_back("s: \"" + s + "\"");
+   mht_30_v.push_back("b: \"" + b + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_30(mht_30_v, 1241, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::GetPhysicalCoordsWHSB");
+
   switch (storage_type) {
     case TensorStorageType::BUFFER:
     case TensorStorageType::IMAGE_BUFFER:
@@ -993,6 +1267,13 @@ std::vector<std::string> TensorDescriptor::GetPhysicalCoordsWHSB(
 std::vector<std::string> TensorDescriptor::GetPhysicalCoordsWHDS(
     const std::string& x, const std::string& y, const std::string& z,
     const std::string& s) const {
+   std::vector<std::string> mht_31_v;
+   mht_31_v.push_back("x: \"" + x + "\"");
+   mht_31_v.push_back("y: \"" + y + "\"");
+   mht_31_v.push_back("z: \"" + z + "\"");
+   mht_31_v.push_back("s: \"" + s + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_31(mht_31_v, 1274, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::GetPhysicalCoordsWHDS");
+
   switch (storage_type) {
     case TensorStorageType::BUFFER:
     case TensorStorageType::IMAGE_BUFFER:
@@ -1019,6 +1300,14 @@ std::vector<std::string> TensorDescriptor::GetPhysicalCoordsWHDS(
 std::vector<std::string> TensorDescriptor::GetPhysicalCoordsWHDSB(
     const std::string& x, const std::string& y, const std::string& z,
     const std::string& s, const std::string& b) const {
+   std::vector<std::string> mht_32_v;
+   mht_32_v.push_back("x: \"" + x + "\"");
+   mht_32_v.push_back("y: \"" + y + "\"");
+   mht_32_v.push_back("z: \"" + z + "\"");
+   mht_32_v.push_back("s: \"" + s + "\"");
+   mht_32_v.push_back("b: \"" + b + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_32(mht_32_v, 1308, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::GetPhysicalCoordsWHDSB");
+
   switch (storage_type) {
     case TensorStorageType::BUFFER:
     case TensorStorageType::IMAGE_BUFFER:
@@ -1047,6 +1336,14 @@ std::vector<std::string> TensorDescriptor::GetPhysicalCoordsWHDSB(
 std::string TensorDescriptor::GetGlobalAddressNoDeclaration(
     const std::string& xc, const std::string& yc, const std::string& zc,
     const std::string& sc, const std::string& bc) const {
+   std::vector<std::string> mht_33_v;
+   mht_33_v.push_back("xc: \"" + xc + "\"");
+   mht_33_v.push_back("yc: \"" + yc + "\"");
+   mht_33_v.push_back("zc: \"" + zc + "\"");
+   mht_33_v.push_back("sc: \"" + sc + "\"");
+   mht_33_v.push_back("bc: \"" + bc + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_33(mht_33_v, 1344, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::GetGlobalAddressNoDeclaration");
+
   auto coords = GetPhysicalCoords(xc, yc, zc, sc, bc);
   switch (storage_type) {
     case TensorStorageType::BUFFER:
@@ -1068,6 +1365,14 @@ std::string TensorDescriptor::GetGlobalAddressNoDeclaration(
 std::vector<std::string> TensorDescriptor::GetPhysicalCoords(
     const std::string& xc, const std::string& yc, const std::string& zc,
     const std::string& sc, const std::string& bc) const {
+   std::vector<std::string> mht_34_v;
+   mht_34_v.push_back("xc: \"" + xc + "\"");
+   mht_34_v.push_back("yc: \"" + yc + "\"");
+   mht_34_v.push_back("zc: \"" + zc + "\"");
+   mht_34_v.push_back("sc: \"" + sc + "\"");
+   mht_34_v.push_back("bc: \"" + bc + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_34(mht_34_v, 1373, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::GetPhysicalCoords");
+
   if (layout == Layout::HWC || (IsBatchedWidth() && layout == Layout::BHWC)) {
     return GetPhysicalCoordsWHS(xc, yc, sc);
   } else if (layout == Layout::BHWC) {
@@ -1084,6 +1389,9 @@ std::vector<std::string> TensorDescriptor::GetPhysicalCoords(
 
 absl::Status TensorDescriptor::MaybeGetDataTypeFromTemplateArgs(
     const std::vector<std::string>& template_args, DataType* result) const {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_35(mht_35_v, 1392, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::MaybeGetDataTypeFromTemplateArgs");
+
   for (const auto& template_arg : template_args) {
     std::string read_type = template_arg;
     if (read_type == "FLT" || read_type == "ACCUM_FLT") {
@@ -1126,6 +1434,9 @@ absl::Status TensorDescriptor::MaybeGetDataTypeFromTemplateArgs(
 }
 
 bool TensorDescriptor::HasAxis(Axis axis) const {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_36(mht_36_v, 1437, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::HasAxis");
+
   if (axis == Axis::WIDTH || axis == Axis::HEIGHT || axis == Axis::CHANNELS) {
     return true;
   }
@@ -1141,6 +1452,9 @@ bool TensorDescriptor::HasAxis(Axis axis) const {
 }
 
 int TensorDescriptor::GetWidthSize(BHWDC shape) const {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_37(mht_37_v, 1455, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::GetWidthSize");
+
   int width = shape.w;
   auto it = state_vars_.find("BatchedWidth");
   if (it != state_vars_.end() && it->second == "true") {
@@ -1158,6 +1472,9 @@ int TensorDescriptor::GetWidthSize(BHWDC shape) const {
 }
 
 int TensorDescriptor::GetSliceStrideSize(BHWDC shape) const {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_38(mht_38_v, 1475, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::GetSliceStrideSize");
+
   if (IsBatchedWidth()) {
     return GetWidthSize(shape) * shape.h;
   } else {
@@ -1170,6 +1487,9 @@ int TensorDescriptor::GetSliceStrideSize(BHWDC shape) const {
 }
 
 void TensorDescriptor::SetAddressMode(AddressMode mode) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_39(mht_39_v, 1490, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::SetAddressMode");
+
   if (mode == AddressMode::kZero) {
     state_vars_["TextureMode"] = "ZERO";
   } else {
@@ -1182,6 +1502,9 @@ bool TensorDescriptor::ParseCoordsFromArgs(const std::vector<std::string>& args,
                                            std::string* yc, std::string* zc,
                                            std::string* sc,
                                            std::string* bc) const {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_40(mht_40_v, 1505, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::ParseCoordsFromArgs");
+
   if (HasAxis(Axis::WIDTH)) {
     if (offset >= args.size()) return false;
     *xc = args[offset++];
@@ -1214,11 +1537,17 @@ bool TensorDescriptor::ParseCoordsFromArgs(const std::vector<std::string>& args,
 }
 
 bool TensorDescriptor::IsBatchedWidth() const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_41(mht_41_v, 1540, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::IsBatchedWidth");
+
   auto it = state_vars_.find("BatchedWidth");
   return it != state_vars_.end() && it->second == "true";
 }
 
 AddressMode TensorDescriptor::AddressModeFromState() const {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_42(mht_42_v, 1548, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::AddressModeFromState");
+
   auto it = state_vars_.find("TextureMode");
   if (it != state_vars_.end()) {
     if (it->second == "ZERO") {
@@ -1232,6 +1561,9 @@ AddressMode TensorDescriptor::AddressModeFromState() const {
 }
 
 size_t TensorDescriptor::GetSizeInBytesForShape(const BHWDC& shape5d) const {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_43(mht_43_v, 1564, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::GetSizeInBytesForShape");
+
   int aligned_channels = storage_type == TensorStorageType::SINGLE_TEXTURE_2D
                              ? shape5d.c
                              : AlignByN(shape5d.c, 4);
@@ -1242,6 +1574,9 @@ size_t TensorDescriptor::GetSizeInBytesForShape(const BHWDC& shape5d) const {
 
 int TensorDescriptor::GetLinearIndex(const BHWDC& shape5d, int b, int x, int y,
                                      int d, int s, int sub_c) const {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_44(mht_44_v, 1577, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::GetLinearIndex");
+
   const int slices = DivideRoundUp(shape5d.c, 4);
   switch (storage_type) {
     case TensorStorageType::BUFFER:
@@ -1268,17 +1603,26 @@ int TensorDescriptor::GetLinearIndex(const BHWDC& shape5d, int b, int x, int y,
 
 void TensorDescriptor::UploadData(
     const tflite::gpu::Tensor<HWC, DataType::FLOAT32>& src) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_45(mht_45_v, 1606, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::UploadData");
+
   shape = BHWDC(1, src.shape.h, src.shape.w, 1, src.shape.c);
   UploadData(src.data.data());
 }
 
 void TensorDescriptor::UploadData(
     const tflite::gpu::Tensor<Linear, DataType::FLOAT32>& src) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_46(mht_46_v, 1615, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::UploadData");
+
   shape = BHWDC(1, 1, 1, 1, src.shape.v);
   UploadData(src.data.data());
 }
 
 bool TensorDescriptor::SupportsZeroClamp(const Axis& axis) const {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_47(mht_47_v, 1623, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::SupportsZeroClamp");
+
   switch (storage_type) {
     case TensorStorageType::UNKNOWN:
       return false;
@@ -1295,6 +1639,9 @@ bool TensorDescriptor::SupportsZeroClamp(const Axis& axis) const {
 }
 
 bool TensorDescriptor::CanReadOutOfBorder(const Axis& axis) const {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_48(mht_48_v, 1642, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::CanReadOutOfBorder");
+
   switch (storage_type) {
     case TensorStorageType::UNKNOWN:
       return false;
@@ -1310,16 +1657,25 @@ bool TensorDescriptor::CanReadOutOfBorder(const Axis& axis) const {
 }
 
 bool TensorDescriptor::IsLinear() const {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_49(mht_49_v, 1660, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::IsLinear");
+
   return storage_type == TensorStorageType::BUFFER ||
          storage_type == TensorStorageType::IMAGE_BUFFER;
 }
 
 bool TensorDescriptor::ReturnsZeroForNegOneRead() const {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_50(mht_50_v, 1668, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::ReturnsZeroForNegOneRead");
+
   return storage_type == TensorStorageType::IMAGE_BUFFER;
 }
 
 absl::Status TensorDescriptor::CanCreateTensorWithShape(
     const GpuInfo& gpu_info, const BHWDC& shape) const {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_51(mht_51_v, 1676, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::CanCreateTensorWithShape");
+
   const int slices = DivideRoundUp(shape.c, 4);
   const uint64_t allocation_size = GetSizeInBytesForShape(shape);
   const std::string common_desc = "Shape - " + ToString(shape) +
@@ -1466,6 +1822,9 @@ absl::Status TensorDescriptor::CanCreateTensorWithShape(
 
 absl::Status TensorDescriptor::CanCreateTensorWithShape(
     const GpuInfo& gpu_info, const BHWC& shape) const {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPStaskPStensor_descDTcc mht_52(mht_52_v, 1825, "", "./tensorflow/lite/delegates/gpu/common/task/tensor_desc.cc", "TensorDescriptor::CanCreateTensorWithShape");
+
   const BHWDC shape5D(shape.b, shape.h, shape.w, 1, shape.c);
   return CanCreateTensorWithShape(gpu_info, shape5D);
 }

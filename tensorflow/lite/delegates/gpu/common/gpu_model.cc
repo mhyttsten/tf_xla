@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,6 +204,9 @@ namespace gpu {
 namespace {
 bool IsReady(const absl::flat_hash_set<ValueId>& ready_tensors,
              const GpuNode& node) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_0(mht_0_v, 207, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "IsReady");
+
   for (const ValueId in_id : node.inputs) {
     if (ready_tensors.find(in_id) == ready_tensors.end()) {
       return false;
@@ -45,6 +216,9 @@ bool IsReady(const absl::flat_hash_set<ValueId>& ready_tensors,
 }
 
 absl::Status MergeGpuNodes(GpuNode* src, GpuNode* dst) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_1(mht_1_v, 219, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "MergeGpuNodes");
+
   for (int j = 1; j < src->inputs.size(); ++j) {
     dst->inputs.push_back(src->inputs[j]);
   }
@@ -86,6 +260,9 @@ flatbuffers::Offset<data::GpuNode> Encode(
 }
 
 absl::Status Decode(const data::GpuNode* fb_node, GpuNode* node) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_2(mht_2_v, 263, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "Decode");
+
   GPUOperation op;
   RETURN_IF_ERROR(Decode(fb_node->gpu_op(), &op));
   node->gpu_operation = absl::make_unique<GPUOperation>(std::move(op));
@@ -103,6 +280,9 @@ absl::Status Decode(const data::GpuNode* fb_node, GpuNode* node) {
 bool IsAssociativeLinkableOp(const Node& node,
                              const std::vector<Value*>& inputs,
                              const std::vector<Value*>& outputs) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_3(mht_3_v, 283, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "IsAssociativeLinkableOp");
+
   if (inputs.size() == 1) {
     return false;
   }
@@ -134,6 +314,9 @@ absl::Status CheckExternalTensorDescription(const GpuInfo& gpu_info,
                                             const TensorDescriptor& tensor_desc,
                                             const BHWC& shape,
                                             DataType data_type) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_4(mht_4_v, 317, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "CheckExternalTensorDescription");
+
   if (tensor_desc.data_type != data_type) {
     return absl::InvalidArgumentError(
         "Global precision and precision of predefined/external tensors must be "
@@ -176,17 +359,35 @@ absl::Status CheckExternalTensorDescription(const GpuInfo& gpu_info,
 // GraphFloat32)
 class TensorReserver {
  public:
-  TensorReserver() : next_(0) {}
+  TensorReserver() : next_(0) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_5(mht_5_v, 363, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "TensorReserver");
+}
   ValueId Add(const TensorDescriptor& dummy) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_6(mht_6_v, 367, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "Add");
+
     reservations_[next_] = dummy;
     return next_++;
   }
   void Add(ValueId id, const TensorDescriptor& dummy) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_7(mht_7_v, 374, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "Add");
+
     reservations_[id] = dummy;
   }
-  ValueId GetNewId() { return next_++; }
-  void SetNext(ValueId id) { next_ = id; }
-  TensorDescriptor Get(ValueId id) { return reservations_[id]; }
+  ValueId GetNewId() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_8(mht_8_v, 380, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "GetNewId");
+ return next_++; }
+  void SetNext(ValueId id) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_9(mht_9_v, 384, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "SetNext");
+ next_ = id; }
+  TensorDescriptor Get(ValueId id) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_10(mht_10_v, 388, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "Get");
+ return reservations_[id]; }
 
  public:
   absl::flat_hash_map<ValueId, TensorDescriptor> reservations_;
@@ -197,6 +398,9 @@ absl::Status ReserveGraphTensors(const CreateGpuModelInfo& create_info,
                                  const GpuInfo& gpu_info,
                                  const GraphFloat32& graph,
                                  TensorReserver* tensor_reserver) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_11(mht_11_v, 401, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "ReserveGraphTensors");
+
   ValueId max_id = 0;
   auto tensors = graph.values();
   auto data_type = DeduceDataTypeFromPrecision(create_info.precision);
@@ -269,6 +473,9 @@ absl::Status ConvertOperations(const GpuInfo& gpu_info,
                                const CreateGpuModelInfo& create_info,
                                TensorReserver* tensor_reserver,
                                GpuModel* gpu_model) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_12(mht_12_v, 476, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "ConvertOperations");
+
   std::map<ValueId, TensorDescriptor> tensor_descriptors;
   const auto values = graph.values();
   for (auto value : values) {
@@ -391,6 +598,9 @@ absl::Status ConvertOperations(const GpuInfo& gpu_info,
 }
 
 absl::Status MergeNodes(GpuModel* gpu_model) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_13(mht_13_v, 601, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "MergeNodes");
+
   absl::flat_hash_set<ValueId> ready_tensors;
   for (const auto& input : gpu_model->input_ids_and_refs) {
     ready_tensors.insert(input.first);
@@ -438,6 +648,9 @@ absl::Status MergeNodes(GpuModel* gpu_model) {
 }
 
 void CopyExternals(const GraphFloat32& graph, GpuModel* gpu_model) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_14(mht_14_v, 651, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "CopyExternals");
+
   const auto inputs = graph.inputs();
   for (const auto& value : inputs) {
     gpu_model->input_ids_and_refs.push_back({value->id, value->tensor.ref});
@@ -456,6 +669,9 @@ void CopyExternals(const GraphFloat32& graph, GpuModel* gpu_model) {
 
 // Removing tensors that was fused in complex operations
 void RemoveUnusedTensors(GpuModel* gpu_model) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_15(mht_15_v, 672, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "RemoveUnusedTensors");
+
   absl::flat_hash_set<ValueId> used_tensors;
   for (const auto& node : gpu_model->nodes) {
     for (const auto& id : node.inputs) {
@@ -479,22 +695,49 @@ void RemoveUnusedTensors(GpuModel* gpu_model) {
 // GpuOperations. Specifically, BindArguments and RecalculateGridSize must be
 // executed.
 absl::Status ResolvePolymorphicArgs(GpuModel* gpu_model) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_16(mht_16_v, 698, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "ResolvePolymorphicArgs");
+
   class DummySpatialTensor : public GpuSpatialTensor {
    public:
     DummySpatialTensor() = default;
     explicit DummySpatialTensor(const BHWDC& shape,
                                 const TensorDescriptor& tensor_desc)
-        : shape_(shape), tensor_desc_(tensor_desc) {}
+        : shape_(shape), tensor_desc_(tensor_desc) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_17(mht_17_v, 707, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "DummySpatialTensor");
+}
     ~DummySpatialTensor() override = default;
 
-    int Width() const override { return shape_.w; }
-    int Height() const override { return shape_.h; }
-    int Depth() const override { return shape_.d; }
-    int Channels() const override { return shape_.c; }
-    int Slices() const override { return DivideRoundUp(shape_.c, 4); }
-    int Batch() const override { return shape_.b; }
+    int Width() const override {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_18(mht_18_v, 713, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "Width");
+ return shape_.w; }
+    int Height() const override {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_19(mht_19_v, 717, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "Height");
+ return shape_.h; }
+    int Depth() const override {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_20(mht_20_v, 721, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "Depth");
+ return shape_.d; }
+    int Channels() const override {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_21(mht_21_v, 725, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "Channels");
+ return shape_.c; }
+    int Slices() const override {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_22(mht_22_v, 729, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "Slices");
+ return DivideRoundUp(shape_.c, 4); }
+    int Batch() const override {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_23(mht_23_v, 733, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "Batch");
+ return shape_.b; }
 
-    TensorDescriptor GetDescriptor() const override { return tensor_desc_; }
+    TensorDescriptor GetDescriptor() const override {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_24(mht_24_v, 738, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "GetDescriptor");
+ return tensor_desc_; }
 
    private:
     BHWDC shape_;
@@ -528,6 +771,9 @@ absl::Status ResolvePolymorphicArgs(GpuModel* gpu_model) {
 absl::Status GraphToGpuModel(const GraphFloat32& graph,
                              const CreateGpuModelInfo& create_info,
                              const GpuInfo& gpu_info, GpuModel* gpu_model) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_25(mht_25_v, 774, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "GraphToGpuModel");
+
   TensorReserver tensor_reserver;
   RETURN_IF_ERROR(
       ReserveGraphTensors(create_info, gpu_info, graph, &tensor_reserver));
@@ -610,6 +856,9 @@ flatbuffers::Offset<data::GpuModel> Encode(
 }
 
 absl::Status Decode(const data::GpuModel* fb_gpu_model, GpuModel* gpu_model) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_26(mht_26_v, 859, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "Decode");
+
   gpu_model->nodes.resize(fb_gpu_model->nodes()->size());
   int counter = 0;
   for (auto node_fb : *fb_gpu_model->nodes()) {
@@ -644,6 +893,9 @@ absl::Status Decode(const data::GpuModel* fb_gpu_model, GpuModel* gpu_model) {
 }
 
 absl::Status RunGraphTransformsForGpuModel(GraphFloat32* graph) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_modelDTcc mht_27(mht_27_v, 896, "", "./tensorflow/lite/delegates/gpu/common/gpu_model.cc", "RunGraphTransformsForGpuModel");
+
   auto merge_padding_transform = NewMergePaddingWithAdd();
   auto add_bias_transform = NewAddBias();
   auto pooling_to_reduce_op = NewGlobalPoolingToReduceOp();

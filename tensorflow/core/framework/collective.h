@@ -14,6 +14,174 @@ limitations under the License.
 ==============================================================================*/
 #ifndef TENSORFLOW_CORE_FRAMEWORK_COLLECTIVE_H_
 #define TENSORFLOW_CORE_FRAMEWORK_COLLECTIVE_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSframeworkPScollectiveDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSframeworkPScollectiveDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSframeworkPScollectiveDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <string>
 #include <vector>
@@ -87,7 +255,10 @@ struct CollGroupParams {
   CollGroupRuntimeDetails runtime_details;
   string ToString() const;
   CollGroupParams()
-      : group_key(0), group_size(0), device_type(DEVICE_CPU), num_tasks(0) {}
+      : group_key(0), group_size(0), device_type(DEVICE_CPU), num_tasks(0) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScollectiveDTh mht_0(mht_0_v, 259, "", "./tensorflow/core/framework/collective.h", "CollGroupParams");
+}
 };
 
 // The best implementation of a collective op depends on many factors
@@ -162,7 +333,10 @@ class CollectiveExecutor;
 // Interface that provides resolution of device localities.
 class DeviceResolverInterface {
  public:
-  virtual ~DeviceResolverInterface() {}
+  virtual ~DeviceResolverInterface() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScollectiveDTh mht_1(mht_1_v, 337, "", "./tensorflow/core/framework/collective.h", "~DeviceResolverInterface");
+}
 
   // Populates *attributes with the DeviceAttributes of the specified device.
   virtual Status GetDeviceAttributes(const string& device,
@@ -181,7 +355,10 @@ class DeviceResolverInterface {
 // Interface that provides resolution of shared CollectiveParams fields.
 class ParamResolverInterface {
  public:
-  virtual ~ParamResolverInterface() {}
+  virtual ~ParamResolverInterface() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScollectiveDTh mht_2(mht_2_v, 359, "", "./tensorflow/core/framework/collective.h", "~ParamResolverInterface");
+}
 
   // Called by each collective op at first execution in order to fill out
   // the CollectiveParams structure with data gathered from the full
@@ -221,7 +398,10 @@ class ParamResolverInterface {
 // coordinated step_ids to use in such cases.
 class StepSequenceInterface {
  public:
-  virtual ~StepSequenceInterface() {}
+  virtual ~StepSequenceInterface() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScollectiveDTh mht_3(mht_3_v, 402, "", "./tensorflow/core/framework/collective.h", "~StepSequenceInterface");
+}
 
   // Used with a distributed implementation to coordinate step_id
   // sequences across tasks.
@@ -251,7 +431,10 @@ class NcclCommunicatorInterface;
 // instances and various distributed resolution capabilities.
 class CollectiveExecutorMgrInterface : public StepSequenceInterface {
  public:
-  virtual ~CollectiveExecutorMgrInterface() {}
+  virtual ~CollectiveExecutorMgrInterface() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScollectiveDTh mht_4(mht_4_v, 435, "", "./tensorflow/core/framework/collective.h", "~CollectiveExecutorMgrInterface");
+}
 
   // Returns the step-specific CollectiveExecutor, creating if one does not
   // already exist.  The caller assumes ownership of one Ref on the object.
@@ -274,7 +457,10 @@ class CollectiveExecutorMgrInterface : public StepSequenceInterface {
 // types.
 class CollectiveRemoteAccess {
  public:
-  virtual ~CollectiveRemoteAccess() {}
+  virtual ~CollectiveRemoteAccess() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScollectiveDTh mht_5(mht_5_v, 461, "", "./tensorflow/core/framework/collective.h", "~CollectiveRemoteAccess");
+}
 
   virtual void RecvFromPeer(const string& peer_device, const string& peer_task,
                             bool peer_is_local, const string& key,
@@ -310,11 +496,18 @@ class CollectiveRemoteAccess {
 // described by a CollectiveParams object.
 class CollectiveExecutor : public core::RefCounted {
  public:
-  virtual void StartAbort(const Status& s) {}
+  virtual void StartAbort(const Status& s) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScollectiveDTh mht_6(mht_6_v, 500, "", "./tensorflow/core/framework/collective.h", "StartAbort");
+}
 
   virtual void ExecuteAsync(OpKernelContext* ctx,
                             const CollectiveParams* col_params,
                             const string& exec_key, StatusCallback done) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("exec_key: \"" + exec_key + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPScollectiveDTh mht_7(mht_7_v, 508, "", "./tensorflow/core/framework/collective.h", "ExecuteAsync");
+
     done(errors::Internal(
         "A collective Op has been called in a context in which "
         "a CollectiveExecutor has not been provided."));
@@ -324,6 +517,9 @@ class CollectiveExecutor : public core::RefCounted {
                                    CollectiveParams* cp,
                                    CancellationManager* cancel_mgr,
                                    StatusCallback done) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScollectiveDTh mht_8(mht_8_v, 520, "", "./tensorflow/core/framework/collective.h", "CompleteParamsAsync");
+
     done(errors::Internal(
         "A collective Op has been called in a context in which "
         "a CollectiveExecutor has not been provided."));
@@ -333,18 +529,27 @@ class CollectiveExecutor : public core::RefCounted {
                                   CollGroupParams* group_params,
                                   CancellationManager* cancel_mgr,
                                   StatusCallback done) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScollectiveDTh mht_9(mht_9_v, 532, "", "./tensorflow/core/framework/collective.h", "CompleteGroupAsync");
+
     return cem_->GetParamResolver()->CompleteGroupAsync(device, group_params,
                                                         cancel_mgr, done);
   }
 
   virtual Status LookupGroup(int32_t group_key, CollGroupParams* group) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScollectiveDTh mht_10(mht_10_v, 540, "", "./tensorflow/core/framework/collective.h", "LookupGroup");
+
     return cem_->GetParamResolver()->LookupGroup(group_key, group);
   }
 
   // Runs the potentially-blocking closure/expensive callback.
   virtual void RunClosure(std::function<void()> closure) = 0;
 
-  virtual CollectiveRemoteAccess* remote_access() { return nullptr; }
+  virtual CollectiveRemoteAccess* remote_access() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScollectiveDTh mht_11(mht_11_v, 550, "", "./tensorflow/core/framework/collective.h", "remote_access");
+ return nullptr; }
 
   // `WaitForDependencies` and `Launched` are used for fine-grained control of
   // execution order between collective instances.  These functions are intended
@@ -355,11 +560,17 @@ class CollectiveExecutor : public core::RefCounted {
   // `WaitForDependencies` will block until it is safe to continue the callee's
   // execution, where safety is defined as: ordered with respect to the
   // collective instances defined in the callee's `wait_for` attribute.
-  virtual void WaitForDependencies(const CollectiveParams& col_params) {}
+  virtual void WaitForDependencies(const CollectiveParams& col_params) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScollectiveDTh mht_12(mht_12_v, 564, "", "./tensorflow/core/framework/collective.h", "WaitForDependencies");
+}
   // `UnblockDependencies` unblocks the dependent collective instances by
   // recording that this caller's device has completed the critical portion of
   // the collective execution.
-  virtual void UnblockDependencies(const CollectiveParams& col_params) {}
+  virtual void UnblockDependencies(const CollectiveParams& col_params) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScollectiveDTh mht_13(mht_13_v, 571, "", "./tensorflow/core/framework/collective.h", "UnblockDependencies");
+}
 
   // Used to designate an invalid group or instance key.
   static int64_t kInvalidId;
@@ -368,10 +579,19 @@ class CollectiveExecutor : public core::RefCounted {
   class Handle {
    public:
     explicit Handle(CollectiveExecutor* ce, bool inherit_ref) : ce_(ce) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScollectiveDTh mht_14(mht_14_v, 582, "", "./tensorflow/core/framework/collective.h", "Handle");
+
       if (!inherit_ref) ce->Ref();
     }
-    ~Handle() { ce_->Unref(); }
-    CollectiveExecutor* get() const { return ce_; }
+    ~Handle() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScollectiveDTh mht_15(mht_15_v, 588, "", "./tensorflow/core/framework/collective.h", "~Handle");
+ ce_->Unref(); }
+    CollectiveExecutor* get() const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScollectiveDTh mht_16(mht_16_v, 592, "", "./tensorflow/core/framework/collective.h", "get");
+ return ce_; }
 
    private:
     CollectiveExecutor* ce_;
@@ -379,7 +599,10 @@ class CollectiveExecutor : public core::RefCounted {
 
  protected:
   explicit CollectiveExecutor(CollectiveExecutorMgrInterface* cem)
-      : cem_(cem) {}
+      : cem_(cem) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScollectiveDTh mht_17(mht_17_v, 603, "", "./tensorflow/core/framework/collective.h", "CollectiveExecutor");
+}
 
   // For use only by derived classes
   static OpKernelContext::Params* CtxParams(OpKernelContext* ctx);
@@ -498,6 +721,10 @@ class CollectiveRegistration {
  public:
   CollectiveRegistration(const string& collective_name,
                          CollectiveRegistry::Factory factory) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("collective_name: \"" + collective_name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPScollectiveDTh mht_18(mht_18_v, 725, "", "./tensorflow/core/framework/collective.h", "CollectiveRegistration");
+
     TF_CHECK_OK(CollectiveRegistry::Register(collective_name, factory));
   }
 };

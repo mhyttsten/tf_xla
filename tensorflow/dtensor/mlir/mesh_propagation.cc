@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSdtensorPSmlirPSmesh_propagationDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSmesh_propagationDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSdtensorPSmlirPSmesh_propagationDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2022 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -54,6 +222,9 @@ namespace {
 // attributes.
 mlir::LogicalResult ExtractMeshFromBlockArgument(mlir::BlockArgument block_arg,
                                                  absl::optional<Mesh>* out) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSmesh_propagationDTcc mht_0(mht_0_v, 225, "", "./tensorflow/dtensor/mlir/mesh_propagation.cc", "ExtractMeshFromBlockArgument");
+
   auto func_op = mlir::dyn_cast_or_null<mlir::func::FuncOp>(
       block_arg.getOwner()->getParentOp());
   if (!func_op) {
@@ -88,6 +259,9 @@ mlir::LogicalResult ExtractMeshFromBlockArgument(mlir::BlockArgument block_arg,
 // Extracts mesh of operation that produces `value`.
 mlir::LogicalResult ExtractMeshFromOpOutput(mlir::Value value,
                                             absl::optional<Mesh>* out) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSmesh_propagationDTcc mht_1(mht_1_v, 262, "", "./tensorflow/dtensor/mlir/mesh_propagation.cc", "ExtractMeshFromOpOutput");
+
   auto input_op = value.getDefiningOp();
   if (!input_op) return mlir::success();
 
@@ -116,6 +290,9 @@ mlir::LogicalResult ExtractMeshFromOpOutput(mlir::Value value,
 mlir::LogicalResult ExtractMeshFromOperand(
     const llvm::DenseMap<mlir::OpOperand*, std::vector<mlir::Value>>& producers,
     mlir::OpOperand* operand, absl::optional<Mesh>* out) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSmesh_propagationDTcc mht_2(mht_2_v, 293, "", "./tensorflow/dtensor/mlir/mesh_propagation.cc", "ExtractMeshFromOperand");
+
   mlir::Value operand_value = operand->get();
 
   const auto check_and_assign_mesh =
@@ -189,6 +366,9 @@ mlir::LogicalResult InferMeshFromInputs(
     const llvm::DenseMap<mlir::OpOperand*, std::vector<mlir::Value>>& producers,
     mlir::tf_device::ClusterOp cluster, absl::optional<Mesh>* mesh,
     llvm::SmallVector<mlir::OpOperand*, 8>* inputs_with_inferred_mesh) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSmesh_propagationDTcc mht_3(mht_3_v, 369, "", "./tensorflow/dtensor/mlir/mesh_propagation.cc", "InferMeshFromInputs");
+
   auto result = mlir::success();
 
   // If `cluster` wraps a `tf.CopyToMesh` op, do not infer mesh from it's
@@ -268,6 +448,9 @@ StatusOr<absl::optional<Mesh>> ExtractMeshFromFuctionOutput(
 mlir::LogicalResult InferMeshFromConsumers(
     mlir::tf_device::ClusterOp cluster, absl::optional<Mesh>* mesh,
     llvm::SmallVector<mlir::OpOperand*, 8>* consumers_with_mesh) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSmesh_propagationDTcc mht_4(mht_4_v, 451, "", "./tensorflow/dtensor/mlir/mesh_propagation.cc", "InferMeshFromConsumers");
+
   for (auto& use_value : cluster.getOperation()->getUses()) {
     mlir::Operation* consumer = use_value.getOwner();
 
@@ -331,6 +514,9 @@ mlir::LogicalResult InferFunctionDefaultMesh(
     const llvm::DenseMap<mlir::OpOperand*, std::vector<mlir::Value>>& producers,
     mlir::func::FuncOp function, mlir::OpBuilder* builder,
     absl::optional<mlir::StringAttr>* inferred_default_mesh) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSmesh_propagationDTcc mht_5(mht_5_v, 517, "", "./tensorflow/dtensor/mlir/mesh_propagation.cc", "InferFunctionDefaultMesh");
+
   auto terminator = function.getCallableRegion()->front().getTerminator();
   for (auto& result_value : terminator->getOpOperands()) {
     auto result_defining_op = result_value.get().getDefiningOp();
@@ -383,6 +569,9 @@ void AnnotateFunctionArgumentsWithMeshInformation(
     const Mesh& mesh,
     const llvm::SmallVector<mlir::OpOperand*, 8>& input_values_from_mesh,
     mlir::func::FuncOp function, mlir::OpBuilder* builder) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSmesh_propagationDTcc mht_6(mht_6_v, 572, "", "./tensorflow/dtensor/mlir/mesh_propagation.cc", "AnnotateFunctionArgumentsWithMeshInformation");
+
   for (auto value : input_values_from_mesh) {
     function.setArgAttr(value->getOperandNumber(), kCustomDeviceMeshAttr,
                         builder->getStringAttr(mesh.ToString()));
@@ -396,6 +585,9 @@ mlir::LogicalResult AnnotateFunctionReturnValuesWithMeshInformation(
     const llvm::SmallVector<mlir::OpOperand*, 8>& return_values_from_mesh,
     mlir::Operation* callsite_operation,
     mlir::func::FuncOp function_to_annotate, mlir::OpBuilder* builder) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSmesh_propagationDTcc mht_7(mht_7_v, 588, "", "./tensorflow/dtensor/mlir/mesh_propagation.cc", "AnnotateFunctionReturnValuesWithMeshInformation");
+
   for (auto value : return_values_from_mesh) {
     absl::optional<mlir::StringAttr> result_mesh_attribute;
     if (llvm::isa<mlir::func::ReturnOp>(value->getOwner())) {
@@ -438,6 +630,9 @@ mlir::LogicalResult AnnotateFunctionReturnValuesWithMeshInformation(
 struct DTensorMeshPropagation
     : public DTensorMeshPropagationBase<DTensorMeshPropagation> {
   void runOnOperation() override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSmesh_propagationDTcc mht_8(mht_8_v, 633, "", "./tensorflow/dtensor/mlir/mesh_propagation.cc", "runOnOperation");
+
     mlir::MLIRContext& context = getContext();
     mlir::OpBuilder builder(&context);
     auto module = getOperation();
@@ -512,6 +707,9 @@ mlir::LogicalResult
 DTensorMeshPropagation::PropagateDefaultMeshToUnAssignedClusters(
     const llvm::DenseMap<mlir::OpOperand*, std::vector<mlir::Value>>& producers,
     mlir::func::FuncOp function, mlir::OpBuilder* builder, bool* mesh_changed) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSmesh_propagationDTcc mht_9(mht_9_v, 710, "", "./tensorflow/dtensor/mlir/mesh_propagation.cc", "DTensorMeshPropagation::PropagateDefaultMeshToUnAssignedClusters");
+
   absl::optional<mlir::StringAttr> mesh;
   if (mlir::failed(
           InferFunctionDefaultMesh(producers, function, builder, &mesh)))
@@ -550,6 +748,9 @@ mlir::LogicalResult DTensorMeshPropagation::PropagateMeshFromInputs(
     const llvm::DenseMap<mlir::OpOperand*, std::vector<mlir::Value>>& producers,
     mlir::tf_device::ClusterOp cluster, mlir::OpBuilder* builder,
     bool* mesh_changed) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSmesh_propagationDTcc mht_10(mht_10_v, 751, "", "./tensorflow/dtensor/mlir/mesh_propagation.cc", "DTensorMeshPropagation::PropagateMeshFromInputs");
+
   // If operation inside a mesh cluster is not a callable operation and
   // mesh is already specified on a cluster, do nothing.
   auto inner_func = MaybeFindFunction(&cluster.GetBody().front());
@@ -610,6 +811,9 @@ mlir::LogicalResult DTensorMeshPropagation::PropagateMeshFromConsumers(
     const llvm::DenseMap<mlir::OpOperand*, std::vector<mlir::Value>>& producers,
     mlir::tf_device::ClusterOp cluster, mlir::OpBuilder* builder,
     bool* mesh_changed) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSmesh_propagationDTcc mht_11(mht_11_v, 814, "", "./tensorflow/dtensor/mlir/mesh_propagation.cc", "DTensorMeshPropagation::PropagateMeshFromConsumers");
+
   mlir::Operation* op_inside_cluster = &cluster.GetBody().front();
   auto inner_func = MaybeFindFunction(op_inside_cluster);
   auto cluster_mesh = cluster->getAttrOfType<mlir::StringAttr>(kMeshAttr);
@@ -660,6 +864,9 @@ mlir::LogicalResult DTensorMeshPropagation::PropagateMeshFromConsumers(
 mlir::LogicalResult DTensorMeshPropagation::PropagateMesh(
     const llvm::DenseMap<mlir::OpOperand*, std::vector<mlir::Value>>& producers,
     mlir::func::FuncOp function, mlir::OpBuilder* builder, bool* mesh_changed) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSmesh_propagationDTcc mht_12(mht_12_v, 867, "", "./tensorflow/dtensor/mlir/mesh_propagation.cc", "DTensorMeshPropagation::PropagateMesh");
+
   // Iterate clusters in topological order propagating mesh from operations'
   // inputs.
   llvm::SmallVector<mlir::tf_device::ClusterOp, 8> cluster_ops;

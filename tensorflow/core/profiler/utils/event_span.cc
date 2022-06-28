@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSevent_spanDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSevent_spanDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSevent_spanDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,11 +209,17 @@ struct EventBoundary {
   // True if this is the start of the event; False if this is the end.
   bool is_start;
   EventBoundary(uint64 time_ps, EventType type, bool is_start)
-      : time_ps(time_ps), type(type), is_start(is_start) {}
+      : time_ps(time_ps), type(type), is_start(is_start) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSevent_spanDTcc mht_0(mht_0_v, 213, "", "./tensorflow/core/profiler/utils/event_span.cc", "EventBoundary");
+}
 };
 
 // Returns true if EventBoundary a should appear before EventBoundary b.
 bool CmpEventBoundaries(const EventBoundary& a, const EventBoundary& b) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSevent_spanDTcc mht_1(mht_1_v, 220, "", "./tensorflow/core/profiler/utils/event_span.cc", "CmpEventBoundaries");
+
   if (a.time_ps == b.time_ps) {
     if (a.is_start == b.is_start) {
       // Puts the higher-priority type before the lower-priority type if they
@@ -85,12 +259,18 @@ class PriorityTracker {
 
  public:
   PriorityTracker() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSevent_spanDTcc mht_2(mht_2_v, 262, "", "./tensorflow/core/profiler/utils/event_span.cc", "PriorityTracker");
+
     current_max_priority_ = UNKNOWN_TIME;
     priority_count_.resize(LAST_EVENT_TYPE + 1, 0);
   }
   // Updates current_max_priority_ and priority_count_[] given the boundary.
   // Returns the new current_max_priority_.
   EventType Update(const EventBoundary& boundary) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSevent_spanDTcc mht_3(mht_3_v, 271, "", "./tensorflow/core/profiler/utils/event_span.cc", "Update");
+
     EventType event_type = boundary.type;
     bool is_start = boundary.is_start;
     if (is_start) {
@@ -127,6 +307,9 @@ using GenericEventTypeStrMap =
     absl::flat_hash_map<GenericEventType, absl::string_view>;
 
 const GenericEventTypeStrMap& GetGenericEventTypeStrMap() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSevent_spanDTcc mht_4(mht_4_v, 310, "", "./tensorflow/core/profiler/utils/event_span.cc", "GetGenericEventTypeStrMap");
+
   static const auto* generic_event_type_str_map = new GenericEventTypeStrMap({
       {kDeviceCompute, "Device compute"},
       {kDeviceToDevice, "Device to device"},
@@ -145,10 +328,16 @@ const GenericEventTypeStrMap& GetGenericEventTypeStrMap() {
 }  // namespace
 
 absl::string_view GetGenericEventTypeStr(GenericEventType event_type) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSevent_spanDTcc mht_5(mht_5_v, 331, "", "./tensorflow/core/profiler/utils/event_span.cc", "GetGenericEventTypeStr");
+
   return GetGenericEventTypeStrMap().at(event_type);
 }
 
 std::string PrintEventType(EventType event_type) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSevent_spanDTcc mht_6(mht_6_v, 338, "", "./tensorflow/core/profiler/utils/event_span.cc", "PrintEventType");
+
   switch (event_type) {
     case UNKNOWN_TIME:
       return "unknown_time";
@@ -184,11 +373,17 @@ std::string PrintEventType(EventType event_type) {
 }
 
 std::string PrintEventTypeSpan(const EventTypeSpan& event_type_span) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSevent_spanDTcc mht_7(mht_7_v, 376, "", "./tensorflow/core/profiler/utils/event_span.cc", "PrintEventTypeSpan");
+
   return absl::StrCat("(", PrintEventType(event_type_span.type), ", ",
                       event_type_span.span.DebugString(), ")");
 }
 
 absl::string_view PrintStepMarkerType(StepMarkerType type) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSevent_spanDTcc mht_8(mht_8_v, 384, "", "./tensorflow/core/profiler/utils/event_span.cc", "PrintStepMarkerType");
+
   switch (type) {
     case StepMarkerType::kExplicitHostStepMarker:
       return "ExplicitHostStepMarker";
@@ -200,12 +395,18 @@ absl::string_view PrintStepMarkerType(StepMarkerType type) {
 }
 
 std::string PrintStepMarker(const StepMarker& step_marker) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSevent_spanDTcc mht_9(mht_9_v, 398, "", "./tensorflow/core/profiler/utils/event_span.cc", "PrintStepMarker");
+
   return absl::StrCat("(", PrintStepMarkerType(step_marker.type), ", ",
                       step_marker.event_name, ", ",
                       step_marker.span.DebugString(), ")");
 }
 
 std::string PrintStepEvents(const StepEvents& step_events) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSevent_spanDTcc mht_10(mht_10_v, 407, "", "./tensorflow/core/profiler/utils/event_span.cc", "PrintStepEvents");
+
   std::vector<int64_t> step_ids;
   step_ids.reserve(step_events.size());
   for (const auto& id_details : step_events) {
@@ -223,6 +424,9 @@ std::string PrintStepEvents(const StepEvents& step_events) {
 }
 
 void CombineStepEvents(const StepEvents& src, StepEvents* dst) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSevent_spanDTcc mht_11(mht_11_v, 427, "", "./tensorflow/core/profiler/utils/event_span.cc", "CombineStepEvents");
+
   for (const auto& step_details : src) {
     int64_t step_id = step_details.first;
     const StepDetails& src_details = step_details.second;
@@ -250,6 +454,9 @@ std::vector<EventTypeSpan> ToNonOverlappedEvents(
 
 // Converts from overlapped step-events to non-overlapped step-events.
 StepEvents ToNonOverlappedStepEvents(const StepEvents& overlapped_step_events) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSevent_spanDTcc mht_12(mht_12_v, 457, "", "./tensorflow/core/profiler/utils/event_span.cc", "ToNonOverlappedStepEvents");
+
   StepEvents non_overlapped_step_events;
   for (const auto& step_events : overlapped_step_events) {
     const auto& step_id = step_events.first;
@@ -260,12 +467,21 @@ StepEvents ToNonOverlappedStepEvents(const StepEvents& overlapped_step_events) {
   return non_overlapped_step_events;
 }
 
-void StepDetails::AddMarker(const StepMarker& m) { markers_.push_back(m); }
+void StepDetails::AddMarker(const StepMarker& m) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSevent_spanDTcc mht_13(mht_13_v, 471, "", "./tensorflow/core/profiler/utils/event_span.cc", "StepDetails::AddMarker");
+ markers_.push_back(m); }
 
-void StepDetails::AddEvent(const EventTypeSpan& e) { events_.push_back(e); }
+void StepDetails::AddEvent(const EventTypeSpan& e) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSevent_spanDTcc mht_14(mht_14_v, 476, "", "./tensorflow/core/profiler/utils/event_span.cc", "StepDetails::AddEvent");
+ events_.push_back(e); }
 
 void StepDetails::AggregateDeviceMemoryTransfers(
     const std::vector<DeviceMemoryTransfer> device_memory_transfers) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSevent_spanDTcc mht_15(mht_15_v, 482, "", "./tensorflow/core/profiler/utils/event_span.cc", "StepDetails::AggregateDeviceMemoryTransfers");
+
   if (device_memory_transfers.size() != device_memory_transfers_.size()) {
     return;  // Sanity check.
   }
@@ -283,12 +499,18 @@ void StepDetails::AggregateDeviceMemoryTransfers(
 }
 
 void StepDetails::AddCollectiveOpEvent(uint64 core_id, const AllReduceInfo& e) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSevent_spanDTcc mht_16(mht_16_v, 502, "", "./tensorflow/core/profiler/utils/event_span.cc", "StepDetails::AddCollectiveOpEvent");
+
   *collectives_[core_id].add_all_reduce_info() = e;
 }
 
 void StepDetails::AddDeviceMemoryTransferEvent(EventType event_type,
                                                const Timespan& time_span,
                                                uint64 bytes) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSevent_spanDTcc mht_17(mht_17_v, 511, "", "./tensorflow/core/profiler/utils/event_span.cc", "StepDetails::AddDeviceMemoryTransferEvent");
+
   int index = 0;
   switch (event_type) {
     case HOST_TO_DEVICE:
@@ -313,6 +535,9 @@ void StepDetails::AddDeviceMemoryTransferEvent(EventType event_type,
 }
 
 Timespan StepDetails::StepTime() const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSevent_spanDTcc mht_18(mht_18_v, 538, "", "./tensorflow/core/profiler/utils/event_span.cc", "StepDetails::StepTime");
+
   Timespan max_host_step_time;
   Timespan max_device_step_time;
   for (const auto& marker : markers_) {
@@ -338,6 +563,9 @@ Timespan StepDetails::StepTime() const {
 }
 
 StepDetails StepDetails::ToNonOverlapped() const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSevent_spanDTcc mht_19(mht_19_v, 566, "", "./tensorflow/core/profiler/utils/event_span.cc", "StepDetails::ToNonOverlapped");
+
   StepDetails non_overlapped_step_details;
   non_overlapped_step_details.markers_ = markers_;
   non_overlapped_step_details.events_ = ToNonOverlappedEvents(events_);
@@ -349,6 +577,9 @@ StepDetails StepDetails::ToNonOverlapped() const {
 }
 
 void StepDetails::Combine(const StepDetails& other) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSevent_spanDTcc mht_20(mht_20_v, 580, "", "./tensorflow/core/profiler/utils/event_span.cc", "StepDetails::Combine");
+
   markers_.insert(markers_.end(), other.markers_.begin(), other.markers_.end());
   events_.insert(events_.end(), other.events_.begin(), other.events_.end());
   collectives_.insert(other.collectives_.begin(), other.collectives_.end());
@@ -357,6 +588,9 @@ void StepDetails::Combine(const StepDetails& other) {
 }
 
 std::string StepDetails::DebugString() const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSevent_spanDTcc mht_21(mht_21_v, 591, "", "./tensorflow/core/profiler/utils/event_span.cc", "StepDetails::DebugString");
+
   std::string result = "([";
   for (int i = 0, end = markers_.size(); i < end; i++) {
     if (i > 0) absl::StrAppend(&result, ", ");
@@ -398,6 +632,9 @@ bool operator==(const StepEvents& a, const StepEvents& b) {
 
 PrecisionStats ComputePrecisionStats(
     const StepEvents& nonoverlapped_step_events) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSevent_spanDTcc mht_22(mht_22_v, 635, "", "./tensorflow/core/profiler/utils/event_span.cc", "ComputePrecisionStats");
+
   int64_t compute_32bit_ps = 0;
   int64_t compute_16bit_ps = 0;
   for (const auto& id_details : nonoverlapped_step_events) {

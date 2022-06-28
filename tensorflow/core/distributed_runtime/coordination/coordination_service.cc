@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -58,14 +226,25 @@ constexpr size_t kOngoingBarriersSoftLimit = 20;
 constexpr char kHealthCheckThread[] = "CoordinationServiceHealthCheck";
 
 std::string GetTaskName(absl::string_view job_name, int task_id) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("job_name: \"" + std::string(job_name.data(), job_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_0(mht_0_v, 230, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "GetTaskName");
+
   return strings::StrCat("/job:", job_name, "/replica:", 0, "/task:", task_id);
 }
 
 std::string GetTaskName(const CoordinatedTask& task) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_1(mht_1_v, 237, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "GetTaskName");
+
   return GetTaskName(task.job_name(), task.task_id());
 }
 
 CoordinatedTask GetTaskFromName(absl::string_view task_name) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("task_name: \"" + std::string(task_name.data(), task_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_2(mht_2_v, 245, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "GetTaskFromName");
+
   DeviceNameUtils::ParsedName parsed;
   DeviceNameUtils::ParseFullName(task_name, &parsed);
   CoordinatedTask task;
@@ -75,6 +254,9 @@ CoordinatedTask GetTaskFromName(absl::string_view task_name) {
 }
 
 bool is_multi_client_leader(const ServerDef& server_def) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_3(mht_3_v, 257, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "is_multi_client_leader");
+
   const auto& config = server_def.default_session_config();
   const std::string& leader =
       config.experimental().coordination_config().service_leader();
@@ -115,7 +297,10 @@ class CoordinationServiceStandaloneImpl : public CoordinationServiceInterface {
   CoordinationServiceStandaloneImpl(
       std::unique_ptr<CoordinationClientCache> client_cache, Env* env,
       const ServerDef& server_def);
-  ~CoordinationServiceStandaloneImpl() override { Stop(); }
+  ~CoordinationServiceStandaloneImpl() override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_4(mht_4_v, 301, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "~CoordinationServiceStandaloneImpl");
+ Stop(); }
 
   Status RegisterTask(const CoordinatedTask& task,
                       uint64_t incarnation) override;
@@ -203,8 +388,14 @@ class CoordinationServiceStandaloneImpl : public CoordinationServiceInterface {
       RESTARTED,
     };
 
-    State GetState() { return state_; }
-    Status GetStatus() { return status_; }
+    State GetState() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_5(mht_5_v, 392, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "GetState");
+ return state_; }
+    Status GetStatus() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_6(mht_6_v, 396, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "GetStatus");
+ return status_; }
     void SetConnected(uint64_t task_incarnation);
     void Disconnect(uint64_t grace_period_duration_us);
     Status RecordHeartbeat(uint64_t task_incarnation);
@@ -274,6 +465,9 @@ class CoordinationServiceStandaloneImpl : public CoordinationServiceInterface {
 
 void CoordinationServiceStandaloneImpl::TaskState::SetConnected(
     uint64_t task_incarnation) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_7(mht_7_v, 468, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::TaskState::SetConnected");
+
   state_ = State::CONNECTED;
   status_ = Status::OK();
   task_incarnation_ = task_incarnation;
@@ -283,6 +477,9 @@ void CoordinationServiceStandaloneImpl::TaskState::SetConnected(
 
 void CoordinationServiceStandaloneImpl::TaskState::Disconnect(
     uint64_t grace_period_duration_us) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_8(mht_8_v, 480, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::TaskState::Disconnect");
+
   disconnect_grace_period_us_ =
       Env::Default()->NowMicros() + grace_period_duration_us;
   state_ = State::DISCONNECTED;
@@ -291,6 +488,9 @@ void CoordinationServiceStandaloneImpl::TaskState::Disconnect(
 
 void CoordinationServiceStandaloneImpl::TaskState::SetError(
     const Status status) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_9(mht_9_v, 491, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::TaskState::SetError");
+
   if (state_ == State::ERROR) return;
   state_ = State::ERROR;
   status_ = status;
@@ -298,6 +498,9 @@ void CoordinationServiceStandaloneImpl::TaskState::SetError(
 
 Status CoordinationServiceStandaloneImpl::TaskState::RecordHeartbeat(
     uint64_t task_incarnation) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_10(mht_10_v, 501, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::TaskState::RecordHeartbeat");
+
   if (!status_.ok()) return status_;
   if (task_incarnation != task_incarnation_) {
     return MakeCoordinationError(errors::Aborted(
@@ -310,6 +513,9 @@ Status CoordinationServiceStandaloneImpl::TaskState::RecordHeartbeat(
 }
 
 int64 CoordinationServiceStandaloneImpl::TaskState::TimeSinceLastHeartbeatMs() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_11(mht_11_v, 516, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::TaskState::TimeSinceLastHeartbeatMs");
+
   mutex_lock l(last_heartbeat_mu_);
   return (Env::Default()->NowMicros() - last_heartbeat_us_) / 1000;
 }
@@ -321,16 +527,27 @@ uint64_t CoordinationServiceStandaloneImpl::TaskState::
 
 absl::flat_hash_set<std::string>
 CoordinationServiceStandaloneImpl::TaskState::GetOngoingBarriers() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_12(mht_12_v, 530, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::TaskState::GetOngoingBarriers");
+
   return ongoing_barriers_for_task_;
 }
 
 void CoordinationServiceStandaloneImpl::TaskState::JoinBarrier(
     absl::string_view barrier_id) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("barrier_id: \"" + std::string(barrier_id.data(), barrier_id.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_13(mht_13_v, 539, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::TaskState::JoinBarrier");
+
   ongoing_barriers_for_task_.emplace(barrier_id);
 }
 
 void CoordinationServiceStandaloneImpl::TaskState::ExitBarrier(
     absl::string_view barrier_id) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("barrier_id: \"" + std::string(barrier_id.data(), barrier_id.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_14(mht_14_v, 548, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::TaskState::ExitBarrier");
+
   ongoing_barriers_for_task_.erase(barrier_id);
 }
 CoordinationServiceStandaloneImpl::CoordinationServiceStandaloneImpl(
@@ -351,6 +568,9 @@ CoordinationServiceStandaloneImpl::CoordinationServiceStandaloneImpl(
                                  .experimental()
                                  .coordination_config()
                                  .shutdown_barrier_timeout_in_ms())) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_15(mht_15_v, 571, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::CoordinationServiceStandaloneImpl");
+
   const auto& configs =
       server_def.default_session_config().experimental().coordination_config();
   const std::unordered_set<std::string> coordinated_jobs(
@@ -373,8 +593,14 @@ CoordinationServiceStandaloneImpl::CoordinationServiceStandaloneImpl(
 // Checks both heartbeat and barrier timeouts in the same thread, since threads
 // are a constrained resource.
 void CoordinationServiceStandaloneImpl::StartCheckStaleness() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_16(mht_16_v, 596, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::StartCheckStaleness");
+
   check_staleness_thread_.reset(
       env_.StartThread({}, kHealthCheckThread, [this]() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_17(mht_17_v, 601, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "lambda");
+
         const bool has_service_to_client_connection = client_cache_ != nullptr;
         // Used to store stale tasks and barriers.
         std::vector<absl::string_view> stale_task_names;
@@ -458,6 +684,9 @@ void CoordinationServiceStandaloneImpl::StartCheckStaleness() {
 }
 
 void CoordinationServiceStandaloneImpl::Stop(bool shut_staleness_thread) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_18(mht_18_v, 687, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::Stop");
+
   // Remove access to singleton before clearing internal state.
   *GetCoordinationServiceInstancePtr() = nullptr;
   {
@@ -491,6 +720,9 @@ void CoordinationServiceStandaloneImpl::Stop(bool shut_staleness_thread) {
 
 Status CoordinationServiceStandaloneImpl::RegisterTask(
     const CoordinatedTask& task, uint64_t incarnation) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_19(mht_19_v, 723, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::RegisterTask");
+
   const std::string& task_name = GetTaskName(task);
 
   Status status;
@@ -525,6 +757,9 @@ Status CoordinationServiceStandaloneImpl::RegisterTask(
 void CoordinationServiceStandaloneImpl::WaitForAllTasks(
     const CoordinatedTask& task, const CoordinationServiceDeviceInfo& devices,
     StatusCallback done) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_20(mht_20_v, 760, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::WaitForAllTasks");
+
   {
     mutex_lock l(state_mu_);
     cluster_devices_.MergeFrom(devices);
@@ -535,6 +770,9 @@ void CoordinationServiceStandaloneImpl::WaitForAllTasks(
 
 void CoordinationServiceStandaloneImpl::ShutdownTaskAsync(
     const CoordinatedTask& task, StatusCallback done) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_21(mht_21_v, 773, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::ShutdownTaskAsync");
+
   if (shutdown_barrier_timeout_ > absl::ZeroDuration()) {
     // Impose shutdown barrier so that all tasks can disconnect together.
     BarrierAsync(shutdown_barrier_id_, shutdown_barrier_timeout_, task, {},
@@ -552,12 +790,18 @@ void CoordinationServiceStandaloneImpl::ShutdownTaskAsync(
 
 Status CoordinationServiceStandaloneImpl::ResetTask(
     const CoordinatedTask& task) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_22(mht_22_v, 793, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::ResetTask");
+
   mutex_lock l(state_mu_);
   return DisconnectTask(task);
 }
 
 Status CoordinationServiceStandaloneImpl::DisconnectTask(
     const CoordinatedTask& task) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_23(mht_23_v, 802, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::DisconnectTask");
+
   const std::string task_name = GetTaskName(task);
   // Check if task is valid and not already disconnected.
   if (!cluster_state_.contains(task_name)) {
@@ -584,15 +828,24 @@ Status CoordinationServiceStandaloneImpl::DisconnectTask(
 
 const CoordinationServiceDeviceInfo&
 CoordinationServiceStandaloneImpl::ListClusterDevices() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_24(mht_24_v, 831, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::ListClusterDevices");
+
   return cluster_devices_;
 }
 
 uint64_t CoordinationServiceStandaloneImpl::GetServiceIncarnation() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_25(mht_25_v, 838, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::GetServiceIncarnation");
+
   return service_incarnation_;
 }
 
 Status CoordinationServiceStandaloneImpl::ReportTaskError(
     const CoordinatedTask& task, Status error) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_26(mht_26_v, 846, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::ReportTaskError");
+
   const std::string& task_name = GetTaskName(task);
   {
     mutex_lock l(state_mu_);
@@ -613,6 +866,9 @@ Status CoordinationServiceStandaloneImpl::ReportTaskError(
 
 Status CoordinationServiceStandaloneImpl::RecordHeartbeat(
     const CoordinatedTask& task, uint64_t incarnation) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_27(mht_27_v, 869, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::RecordHeartbeat");
+
   const std::string& task_name = GetTaskName(task);
   Status s = Status::OK();
   {
@@ -652,6 +908,9 @@ Status CoordinationServiceStandaloneImpl::RecordHeartbeat(
 
 void CoordinationServiceStandaloneImpl::ReportServiceErrorToTaskAsync(
     const CoordinatedTask& destination_task, Status error) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_28(mht_28_v, 911, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::ReportServiceErrorToTaskAsync");
+
   assert(!error.ok());
 
   // Don't report error if there is no service-to-client connection.
@@ -684,6 +943,9 @@ void CoordinationServiceStandaloneImpl::ReportServiceErrorToTaskAsync(
 
 void CoordinationServiceStandaloneImpl::PropagateError(
     const CoordinatedTask& source_task, bool is_reported_by_task) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_29(mht_29_v, 946, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::PropagateError");
+
   Status error;
   {
     mutex_lock l(state_mu_);
@@ -744,6 +1006,9 @@ void CoordinationServiceStandaloneImpl::PropagateError(
 // in the key path are separated by exactly one slack ('/').
 // E.g., ///a//b/c// --> a/b/c
 std::string NormalizeKey(const StringPiece orig_key) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_30(mht_30_v, 1009, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "NormalizeKey");
+
   std::string norm_key = std::string(orig_key);
   const char* src = norm_key.c_str();
   std::string::iterator dst = norm_key.begin();
@@ -769,6 +1034,11 @@ std::string NormalizeKey(const StringPiece orig_key) {
 
 Status CoordinationServiceStandaloneImpl::InsertKeyValue(
     const std::string& key, const std::string& value) {
+   std::vector<std::string> mht_31_v;
+   mht_31_v.push_back("key: \"" + key + "\"");
+   mht_31_v.push_back("value: \"" + value + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_31(mht_31_v, 1039, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::InsertKeyValue");
+
   const std::string& norm_key = NormalizeKey(key);
   mutex_lock l(kv_mu_);
   if (kv_store_.find(norm_key) != kv_store_.end()) {
@@ -788,6 +1058,10 @@ Status CoordinationServiceStandaloneImpl::InsertKeyValue(
 
 StatusOr<std::string> CoordinationServiceStandaloneImpl::GetKeyValue(
     const std::string& key) {
+   std::vector<std::string> mht_32_v;
+   mht_32_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_32(mht_32_v, 1062, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::GetKeyValue");
+
   absl::Notification n;
   StatusOr<std::string> result;
   GetKeyValueAsync(key, [&](const StatusOr<std::string>& status_or_value) {
@@ -800,6 +1074,10 @@ StatusOr<std::string> CoordinationServiceStandaloneImpl::GetKeyValue(
 
 void CoordinationServiceStandaloneImpl::GetKeyValueAsync(
     const std::string& key, StatusOrValueCallback done) {
+   std::vector<std::string> mht_33_v;
+   mht_33_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_33(mht_33_v, 1078, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::GetKeyValueAsync");
+
   const std::string& norm_key = NormalizeKey(key);
   mutex_lock l(kv_mu_);
   const auto& iter = kv_store_.find(norm_key);
@@ -817,6 +1095,10 @@ void CoordinationServiceStandaloneImpl::GetKeyValueAsync(
 
 Status CoordinationServiceStandaloneImpl::DeleteKeyValue(
     const std::string& key) {
+   std::vector<std::string> mht_34_v;
+   mht_34_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_34(mht_34_v, 1099, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::DeleteKeyValue");
+
   const std::string& norm_key = NormalizeKey(key);
   mutex_lock l(kv_mu_);
   // Delete directory: find key range that match directory prefix
@@ -838,6 +1120,10 @@ Status CoordinationServiceStandaloneImpl::DeleteKeyValue(
 
 void CoordinationServiceStandaloneImpl::SetTaskError(
     absl::string_view task_name, Status error) {
+   std::vector<std::string> mht_35_v;
+   mht_35_v.push_back("task_name: \"" + std::string(task_name.data(), task_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_35(mht_35_v, 1124, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::SetTaskError");
+
   cluster_state_[task_name]->SetError(error);
   for (const auto& barrier_id :
        cluster_state_[task_name]->GetOngoingBarriers()) {
@@ -853,6 +1139,10 @@ void CoordinationServiceStandaloneImpl::BarrierAsync(
     const CoordinatedTask& task,
     const std::vector<CoordinatedTask>& participating_tasks,
     StatusCallback done) {
+   std::vector<std::string> mht_36_v;
+   mht_36_v.push_back("barrier_id: \"" + barrier_id + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_36(mht_36_v, 1143, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::BarrierAsync");
+
   mutex_lock l(state_mu_);
   auto pair = barriers_.try_emplace(barrier_id);
   auto it = pair.first;
@@ -973,6 +1263,10 @@ void CoordinationServiceStandaloneImpl::BarrierAsync(
 
 Status CoordinationServiceStandaloneImpl::CancelBarrier(
     const std::string& barrier_id, const CoordinatedTask& task) {
+   std::vector<std::string> mht_37_v;
+   mht_37_v.push_back("barrier_id: \"" + barrier_id + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_37(mht_37_v, 1267, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::CancelBarrier");
+
   mutex_lock l(state_mu_);
   auto it = barriers_.find(barrier_id);
   // Barrier not found.
@@ -999,6 +1293,10 @@ Status CoordinationServiceStandaloneImpl::CancelBarrier(
 // Mark barrier as passed.
 void CoordinationServiceStandaloneImpl::PassBarrier(
     absl::string_view barrier_id, Status result, BarrierState* barrier) {
+   std::vector<std::string> mht_38_v;
+   mht_38_v.push_back("barrier_id: \"" + std::string(barrier_id.data(), barrier_id.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_38(mht_38_v, 1297, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::PassBarrier");
+
   barrier->passed = true;
   barrier->result = result;
   // Special hook for device propagation barrier to set global device ids.
@@ -1052,6 +1350,9 @@ bool CoordinationServiceStandaloneImpl::ValidateTaskArgs(
     const absl::flat_hash_map<CoordinatedTask, bool, CoordinatedTaskHash,
                               CoordinatedTaskEqual>& tasks_at_barrier,
     int64_t cluster_size) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_39(mht_39_v, 1353, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::ValidateTaskArgs");
+
   if (tasks_args.empty()) {
     return tasks_at_barrier.size() == cluster_size;
   } else if (tasks_at_barrier.size() != tasks_args.size()) {
@@ -1067,6 +1368,9 @@ bool CoordinationServiceStandaloneImpl::ValidateTaskArgs(
 }
 
 void CoordinationServiceStandaloneImpl::SetXlaGlobalDeviceIds() {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePScoordinationPScoordination_serviceDTcc mht_40(mht_40_v, 1371, "", "./tensorflow/core/distributed_runtime/coordination/coordination_service.cc", "CoordinationServiceStandaloneImpl::SetXlaGlobalDeviceIds");
+
   // No-op if TF devices are specified.
   if (cluster_devices_.has_xla()) {
     int global_id = 0;

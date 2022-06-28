@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,6 +198,9 @@ typedef FunctionDefHelper FDH;
 
 GraphDef GDef(gtl::ArraySlice<NodeDef> nodes,
               gtl::ArraySlice<FunctionDef> funcs) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_0(mht_0_v, 201, "", "./tensorflow/core/framework/function_testlib.cc", "GDef");
+
   GraphDef g;
   VersionDef* versions = g.mutable_versions();
   versions->set_producer(TF_GRAPH_DEF_VERSION);
@@ -48,6 +219,10 @@ GraphDef GDef(gtl::ArraySlice<NodeDef> nodes,
 NodeDef NDef(StringPiece name, StringPiece op, gtl::ArraySlice<string> inputs,
              gtl::ArraySlice<std::pair<string, FDH::AttrValueWrapper>> attrs,
              const string& device) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("device: \"" + device + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_1(mht_1_v, 223, "", "./tensorflow/core/framework/function_testlib.cc", "NDef");
+
   NodeDef n;
   n.set_name(string(name));
   n.set_op(string(op));
@@ -59,6 +234,9 @@ NodeDef NDef(StringPiece name, StringPiece op, gtl::ArraySlice<string> inputs,
 }
 
 FunctionDef NonZero() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_2(mht_2_v, 237, "", "./tensorflow/core/framework/function_testlib.cc", "NonZero");
+
   return FDH::Define(
       // Name
       "NonZero",
@@ -75,6 +253,9 @@ FunctionDef NonZero() {
 }
 
 FunctionDef IsZero() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_3(mht_3_v, 256, "", "./tensorflow/core/framework/function_testlib.cc", "IsZero");
+
   const Tensor kZero = test::AsScalar<int64_t>(0);
   return FDH::Define(
       // Name
@@ -93,6 +274,9 @@ FunctionDef IsZero() {
 }
 
 FunctionDef RandomUniform() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_4(mht_4_v, 277, "", "./tensorflow/core/framework/function_testlib.cc", "RandomUniform");
+
   const Tensor kZero = test::AsScalar<int64_t>(0);
 
   return FDH::Define(
@@ -119,6 +303,9 @@ FunctionDef RandomUniform() {
 }
 
 FunctionDef XTimesTwo() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_5(mht_5_v, 306, "", "./tensorflow/core/framework/function_testlib.cc", "XTimesTwo");
+
   const Tensor kTwo = test::AsScalar<int64_t>(2);
   return FDH::Define(
       // Name
@@ -138,6 +325,9 @@ FunctionDef XTimesTwo() {
 }
 
 FunctionDef TwoDeviceMult() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_6(mht_6_v, 328, "", "./tensorflow/core/framework/function_testlib.cc", "TwoDeviceMult");
+
   const Tensor kTwo = test::AsScalar<int64_t>(2);
   const Tensor kThree = test::AsScalar<int64_t>(3);
   return FDH::Create(
@@ -178,6 +368,9 @@ FunctionDef TwoDeviceMult() {
 }
 
 FunctionDef TwoDeviceInputOutput() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_7(mht_7_v, 371, "", "./tensorflow/core/framework/function_testlib.cc", "TwoDeviceInputOutput");
+
   const Tensor kTwo = test::AsScalar<float>(2);
   const Tensor kThree = test::AsScalar<float>(3);
   return FDH::Create(
@@ -210,6 +403,9 @@ FunctionDef TwoDeviceInputOutput() {
 }
 
 FunctionDef FuncWithListInput() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_8(mht_8_v, 406, "", "./tensorflow/core/framework/function_testlib.cc", "FuncWithListInput");
+
   const Tensor kTwo = test::AsScalar<float>(2);
   return FDH::Create(
       // Name
@@ -228,6 +424,9 @@ FunctionDef FuncWithListInput() {
 }
 
 FunctionDef FuncWithListOutput() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_9(mht_9_v, 427, "", "./tensorflow/core/framework/function_testlib.cc", "FuncWithListOutput");
+
   const Tensor kTwo = test::AsScalar<float>(2);
   return FDH::Create(
       // Name
@@ -246,6 +445,9 @@ FunctionDef FuncWithListOutput() {
 }
 
 FunctionDef XAddX() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_10(mht_10_v, 448, "", "./tensorflow/core/framework/function_testlib.cc", "XAddX");
+
   return FDH::Define(
       // Name
       "XAddX",
@@ -262,6 +464,9 @@ FunctionDef XAddX() {
 }
 
 FunctionDef XAddY() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_11(mht_11_v, 467, "", "./tensorflow/core/framework/function_testlib.cc", "XAddY");
+
   return FDH::Define(
       // Name
       "XAddY",
@@ -278,6 +483,9 @@ FunctionDef XAddY() {
 }
 
 FunctionDef XTimesTwoInt32() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_12(mht_12_v, 486, "", "./tensorflow/core/framework/function_testlib.cc", "XTimesTwoInt32");
+
   const Tensor kTwo = test::AsScalar<int64_t>(2);
   return FDH::Define(
       // Name
@@ -298,6 +506,9 @@ FunctionDef XTimesTwoInt32() {
 }
 
 FunctionDef XTimesFour() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_13(mht_13_v, 509, "", "./tensorflow/core/framework/function_testlib.cc", "XTimesFour");
+
   return FDH::Create(
       // Name
       "XTimesFour",
@@ -316,6 +527,9 @@ FunctionDef XTimesFour() {
 }
 
 FunctionDef XTimes16() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_14(mht_14_v, 530, "", "./tensorflow/core/framework/function_testlib.cc", "XTimes16");
+
   return FDH::Create(
       // Name
       "XTimes16",
@@ -334,6 +548,9 @@ FunctionDef XTimes16() {
 }
 
 FunctionDef WXPlusB() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_15(mht_15_v, 551, "", "./tensorflow/core/framework/function_testlib.cc", "WXPlusB");
+
   return FDH::Define(
       // Name
       "WXPlusB",
@@ -352,6 +569,9 @@ FunctionDef WXPlusB() {
 }
 
 FunctionDef Swap() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_16(mht_16_v, 572, "", "./tensorflow/core/framework/function_testlib.cc", "Swap");
+
   return FDH::Define(
       // Name
       "Swap",
@@ -367,6 +587,9 @@ FunctionDef Swap() {
 }
 
 FunctionDef EmptyBodySwap() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_17(mht_17_v, 590, "", "./tensorflow/core/framework/function_testlib.cc", "EmptyBodySwap");
+
   return FDH::Create(
       // Name
       "EmptyBodySwap",
@@ -383,6 +606,9 @@ FunctionDef EmptyBodySwap() {
 }
 
 FunctionDef ResourceOutput() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_18(mht_18_v, 609, "", "./tensorflow/core/framework/function_testlib.cc", "ResourceOutput");
+
   const Tensor kTwo = test::AsScalar<float>(2);
   return FDH::Create(
       // Name
@@ -402,6 +628,9 @@ FunctionDef ResourceOutput() {
 }
 
 FunctionDef ResourceIdentity() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_19(mht_19_v, 631, "", "./tensorflow/core/framework/function_testlib.cc", "ResourceIdentity");
+
   return FDH::Create(
       // Name
       "ResourceIdentity",
@@ -418,6 +647,9 @@ FunctionDef ResourceIdentity() {
 }
 
 FunctionDef ReadResourceVariable() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_20(mht_20_v, 650, "", "./tensorflow/core/framework/function_testlib.cc", "ReadResourceVariable");
+
   return FDH::Create(
       // Name
       "ReadResourceVariable",
@@ -435,6 +667,9 @@ FunctionDef ReadResourceVariable() {
 }
 
 FunctionDef ControlFlow() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_21(mht_21_v, 670, "", "./tensorflow/core/framework/function_testlib.cc", "ControlFlow");
+
   return FDH::Create(
       // Name
       "ControlFlow",
@@ -451,6 +686,9 @@ FunctionDef ControlFlow() {
 }
 
 FunctionDef InvalidControlFlow() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_22(mht_22_v, 689, "", "./tensorflow/core/framework/function_testlib.cc", "InvalidControlFlow");
+
   return FDH::Create(
       // Name
       "InvalidControlFlow",
@@ -468,6 +706,9 @@ FunctionDef InvalidControlFlow() {
 }
 
 FunctionDef LessThanOrEqualToN(int64_t N) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_23(mht_23_v, 709, "", "./tensorflow/core/framework/function_testlib.cc", "LessThanOrEqualToN");
+
   const Tensor kN = test::AsScalar<int64_t>(N);
   return FDH::Define(
       // Name
@@ -487,6 +728,9 @@ FunctionDef LessThanOrEqualToN(int64_t N) {
 }
 
 FunctionDef XPlusOneXTimesY() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_24(mht_24_v, 731, "", "./tensorflow/core/framework/function_testlib.cc", "XPlusOneXTimesY");
+
   const Tensor kOne = test::AsScalar<int64_t>(1);
   return FDH::Define(
       // Name
@@ -505,6 +749,9 @@ FunctionDef XPlusOneXTimesY() {
 }
 
 FunctionDef XYXLessThanOrEqualToN(int64_t N) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_25(mht_25_v, 752, "", "./tensorflow/core/framework/function_testlib.cc", "XYXLessThanOrEqualToN");
+
   const Tensor kN = test::AsScalar<int64_t>(N);
   return FDH::Define(
       // Name
@@ -524,6 +771,9 @@ FunctionDef XYXLessThanOrEqualToN(int64_t N) {
 }
 
 FunctionDef RandomUniformLess() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_26(mht_26_v, 774, "", "./tensorflow/core/framework/function_testlib.cc", "RandomUniformLess");
+
   const Tensor kZero = test::AsScalar<int32>(0);
   const Tensor kOne = test::AsScalar<int32>(1);
   const Tensor k005 = test::AsScalar<float>(0.05);
@@ -583,6 +833,9 @@ FunctionDef RandomUniformLess() {
 }
 
 FunctionDef MakeRangeDataset() {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_27(mht_27_v, 836, "", "./tensorflow/core/framework/function_testlib.cc", "MakeRangeDataset");
+
   return FDH::Define(
       /*name=*/"MakeRangeDataset",
       /*arg_def=*/{"start: int64", "stop: int64", "step: int64"},
@@ -599,6 +852,9 @@ FunctionDef MakeRangeDataset() {
 }
 
 FunctionDef MakeBatchDataset() {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_28(mht_28_v, 855, "", "./tensorflow/core/framework/function_testlib.cc", "MakeBatchDataset");
+
   return FDH::Define(
       /*name=*/"MakeBatchDataset",
       /*arg_def=*/
@@ -618,6 +874,9 @@ FunctionDef MakeBatchDataset() {
 }
 
 FunctionDef MakeMapDataset(bool has_other_args) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_29(mht_29_v, 877, "", "./tensorflow/core/framework/function_testlib.cc", "MakeMapDataset");
+
   std::vector<string> args = {"input_dataset: variant"};
   std::vector<string> inputs = {"input_dataset"};
   if (has_other_args) {
@@ -649,6 +908,9 @@ FunctionDef MakeMapDataset(bool has_other_args) {
 }
 
 FunctionDef MakeTakeDataset() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_30(mht_30_v, 911, "", "./tensorflow/core/framework/function_testlib.cc", "MakeTakeDataset");
+
   return FDH::Define(
       // Name
       "TakeDataset",
@@ -667,6 +929,9 @@ FunctionDef MakeTakeDataset() {
 }
 
 FunctionDef MakeTensorSliceDataset() {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_31(mht_31_v, 932, "", "./tensorflow/core/framework/function_testlib.cc", "MakeTensorSliceDataset");
+
   return FDH::Define(
       // Name
       "MakeTensorSliceDataset",
@@ -685,6 +950,9 @@ FunctionDef MakeTensorSliceDataset() {
 }
 
 FunctionDef Unique() {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_32(mht_32_v, 953, "", "./tensorflow/core/framework/function_testlib.cc", "Unique");
+
   return FDH::Create(
       // Name
       "GetUnique",
@@ -702,6 +970,9 @@ FunctionDef Unique() {
 }
 
 void FunctionTestSchedClosure(std::function<void()> fn) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSfunction_testlibDTcc mht_33(mht_33_v, 973, "", "./tensorflow/core/framework/function_testlib.cc", "FunctionTestSchedClosure");
+
   static thread::ThreadPool* w =
       new thread::ThreadPool(Env::Default(), "Test", 8);
   w->Schedule(std::move(fn));

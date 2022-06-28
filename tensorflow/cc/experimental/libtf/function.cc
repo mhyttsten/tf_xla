@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSccPSexperimentalPSlibtfPSfunctionDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSccPSexperimentalPSlibtfPSfunctionDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSccPSexperimentalPSlibtfPSfunctionDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,6 +212,9 @@ tensorflow::Status ExecuteFunction(
     AbstractFunctionPtr trace, AbstractContext* ctx,
     absl::Span<tensorflow::AbstractTensorHandle* const> inputs,
     absl::Span<tensorflow::AbstractTensorHandle*> outputs) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSccPSexperimentalPSlibtfPSfunctionDTcc mht_0(mht_0_v, 215, "", "./tensorflow/cc/experimental/libtf/function.cc", "ExecuteFunction");
+
   // TODO(srbs): Provide a function execution API on ctx so that we do not
   // expose the internals of how functions are to be executed here.
   std::string fname;
@@ -67,6 +238,9 @@ tensorflow::Status ExecuteFunction(
 }
 
 Status VerifySupportedSignature(TaggedValue signature) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSccPSexperimentalPSlibtfPSfunctionDTcc mht_1(mht_1_v, 241, "", "./tensorflow/cc/experimental/libtf/function.cc", "VerifySupportedSignature");
+
   if (signature.type() == TaggedValue::Type::TENSOR_SPEC) {
     return Status::OK();
   }
@@ -84,6 +258,9 @@ Status VerifySupportedSignature(TaggedValue signature) {
 }
 
 Status VerifySupportedArgs(TaggedValue args) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSccPSexperimentalPSlibtfPSfunctionDTcc mht_2(mht_2_v, 261, "", "./tensorflow/cc/experimental/libtf/function.cc", "VerifySupportedArgs");
+
   if (args.type() == TaggedValue::Type::TENSOR) {
     return Status::OK();
   }
@@ -103,6 +280,9 @@ Status VerifySupportedArgs(TaggedValue args) {
 Status Function::RegisterTrace(AbstractFunctionPtr fn,
                                TaggedValue input_signature,
                                TaggedValue output_signature) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSccPSexperimentalPSlibtfPSfunctionDTcc mht_3(mht_3_v, 283, "", "./tensorflow/cc/experimental/libtf/function.cc", "Function::RegisterTrace");
+
   TF_RETURN_IF_ERROR(VerifySupportedSignature(input_signature));
   TF_RETURN_IF_ERROR(VerifySupportedSignature(output_signature));
   concrete_fns_.push_back({fn, input_signature, output_signature});
@@ -110,6 +290,9 @@ Status Function::RegisterTrace(AbstractFunctionPtr fn,
 }
 
 bool Match(TaggedValue signature, TaggedValue value) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSccPSexperimentalPSlibtfPSfunctionDTcc mht_4(mht_4_v, 293, "", "./tensorflow/cc/experimental/libtf/function.cc", "Match");
+
   // TODO(b/187216309): Extend this to handle more elaborate signatures and
   // values.
   switch (signature.type()) {
@@ -150,6 +333,9 @@ bool Match(TaggedValue signature, TaggedValue value) {
 // TODO(b/190203981): Move to a separate nest-like library.
 void Flatten(const TaggedValue& value,
              std::vector<AbstractTensorHandle*>* flat_args) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSccPSexperimentalPSlibtfPSfunctionDTcc mht_5(mht_5_v, 336, "", "./tensorflow/cc/experimental/libtf/function.cc", "Flatten");
+
   if (value.type() == TaggedValue::Type::TENSOR) {
     flat_args->emplace_back(value.tensor().get());
   } else if (value.type() == TaggedValue::Type::TUPLE) {
@@ -205,6 +391,9 @@ StatusOr<TaggedValue> Unflatten(
 }
 
 size_t GetFlatSize(const TaggedValue& value) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSccPSexperimentalPSlibtfPSfunctionDTcc mht_6(mht_6_v, 394, "", "./tensorflow/cc/experimental/libtf/function.cc", "GetFlatSize");
+
   if (value.type() == TaggedValue::Type::TUPLE) {
     size_t result = 0;
     for (const auto& t : value.tuple()) {
@@ -229,6 +418,9 @@ size_t GetFlatSize(const TaggedValue& value) {
 
 StatusOr<TaggedValue> Function::Execute(AbstractContext* ctx,
                                         TaggedValue value) const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSccPSexperimentalPSlibtfPSfunctionDTcc mht_7(mht_7_v, 421, "", "./tensorflow/cc/experimental/libtf/function.cc", "Function::Execute");
+
   TF_RETURN_IF_ERROR(VerifySupportedArgs(value));
   TF_ASSIGN_OR_RETURN(auto concrete_fn, GetConcreteFunction(value));
   std::vector<AbstractTensorHandle*> args;
@@ -247,6 +439,9 @@ StatusOr<TaggedValue> Function::Execute(AbstractContext* ctx,
 
 StatusOr<Function::ConcreteFunction> Function::GetConcreteFunction(
     TaggedValue value) const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSccPSexperimentalPSlibtfPSfunctionDTcc mht_8(mht_8_v, 442, "", "./tensorflow/cc/experimental/libtf/function.cc", "Function::GetConcreteFunction");
+
   if (concrete_fns_.empty()) {
     return tensorflow::errors::FailedPrecondition(
         "No registered ConcreteFunctions.");

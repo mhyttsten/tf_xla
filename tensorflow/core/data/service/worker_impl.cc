@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSdataPSservicePSworker_implDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSworker_implDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSdataPSservicePSworker_implDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -75,6 +243,9 @@ using WorkerConfig = experimental::WorkerConfig;
 // data will be serialized as TensorProtos.
 Status MoveElementToResponse(std::vector<Tensor>&& element,
                              GetElementResponse& resp) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSworker_implDTcc mht_0(mht_0_v, 246, "", "./tensorflow/core/data/service/worker_impl.cc", "MoveElementToResponse");
+
   if (element.size() != 1 || element[0].dtype() != DT_VARIANT ||
       !TensorShapeUtils::IsScalar(element[0].shape())) {
     for (const auto& component : element) {
@@ -96,6 +267,9 @@ Status MoveElementToResponse(std::vector<Tensor>&& element,
 }
 
 WorkerConfig ApplyWorkerDefaults(const WorkerConfig& config) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSworker_implDTcc mht_1(mht_1_v, 270, "", "./tensorflow/core/data/service/worker_impl.cc", "ApplyWorkerDefaults");
+
   WorkerConfig new_config(config);
   if (new_config.heartbeat_interval_ms() == 0) {
     new_config.set_heartbeat_interval_ms(kDefaultHeartBeatIntervalMs);
@@ -113,10 +287,16 @@ LocalWorkers::AddressToWorkerMap* LocalWorkers::local_workers_ =
 
 DataServiceWorkerImpl::DataServiceWorkerImpl(const WorkerConfig& config)
     : config_(ApplyWorkerDefaults(config)), worker_uid_(port::JobUid()) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSworker_implDTcc mht_2(mht_2_v, 290, "", "./tensorflow/core/data/service/worker_impl.cc", "DataServiceWorkerImpl::DataServiceWorkerImpl");
+
   metrics::RecordTFDataServiceWorkerCreated();
 }
 
 DataServiceWorkerImpl::~DataServiceWorkerImpl() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSworker_implDTcc mht_3(mht_3_v, 297, "", "./tensorflow/core/data/service/worker_impl.cc", "DataServiceWorkerImpl::~DataServiceWorkerImpl");
+
   mutex_lock l(mu_);
   cancelled_ = true;
   task_completion_cv_.notify_one();
@@ -125,6 +305,11 @@ DataServiceWorkerImpl::~DataServiceWorkerImpl() {
 
 Status DataServiceWorkerImpl::Start(const std::string& worker_address,
                                     const std::string& transfer_address) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("worker_address: \"" + worker_address + "\"");
+   mht_4_v.push_back("transfer_address: \"" + transfer_address + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSworker_implDTcc mht_4(mht_4_v, 310, "", "./tensorflow/core/data/service/worker_impl.cc", "DataServiceWorkerImpl::Start");
+
   VLOG(3) << "Starting tf.data service worker at address " << worker_address;
   TF_RETURN_IF_ERROR(ValidateWorkerConfig());
   worker_address_ = worker_address;
@@ -148,15 +333,24 @@ Status DataServiceWorkerImpl::Start(const std::string& worker_address,
             << config_.dispatcher_address();
   task_completion_thread_ = absl::WrapUnique(
       Env::Default()->StartThread({}, "data-service-worker-task-completion",
-                                  [this]() { TaskCompletionThread(); }));
+                                  [this]() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSworker_implDTcc mht_5(mht_5_v, 337, "", "./tensorflow/core/data/service/worker_impl.cc", "lambda");
+ TaskCompletionThread(); }));
   heartbeat_thread_ = absl::WrapUnique(Env::Default()->StartThread(
-      {}, "data-service-worker-heartbeat", [this]() { HeartbeatThread(); }));
+      {}, "data-service-worker-heartbeat", [this]() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSworker_implDTcc mht_6(mht_6_v, 342, "", "./tensorflow/core/data/service/worker_impl.cc", "lambda");
+ HeartbeatThread(); }));
   mutex_lock l(mu_);
   registered_ = true;
   return Status::OK();
 }
 
 void DataServiceWorkerImpl::Stop() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSworker_implDTcc mht_7(mht_7_v, 351, "", "./tensorflow/core/data/service/worker_impl.cc", "DataServiceWorkerImpl::Stop");
+
   std::vector<std::shared_ptr<Task>> tasks;
   {
     mutex_lock l(mu_);
@@ -179,6 +373,9 @@ void DataServiceWorkerImpl::Stop() {
 }
 
 Status DataServiceWorkerImpl::ValidateWorkerConfig() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSworker_implDTcc mht_8(mht_8_v, 376, "", "./tensorflow/core/data/service/worker_impl.cc", "DataServiceWorkerImpl::ValidateWorkerConfig");
+
   const bool any_tag_is_empty = absl::c_any_of(
       config_.worker_tags(),
       [](const std::string& worker_tag) { return worker_tag.empty(); });
@@ -194,6 +391,9 @@ Status DataServiceWorkerImpl::ValidateWorkerConfig() const {
 
 Status DataServiceWorkerImpl::GetElementResult(
     const GetElementRequest* request, struct GetElementResult* result) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSworker_implDTcc mht_9(mht_9_v, 394, "", "./tensorflow/core/data/service/worker_impl.cc", "DataServiceWorkerImpl::GetElementResult");
+
   Task* task = nullptr;
   {
     mutex_lock l(mu_);
@@ -249,6 +449,9 @@ Status DataServiceWorkerImpl::GetElementResult(
 
 Status DataServiceWorkerImpl::ProcessTask(const ProcessTaskRequest* request,
                                           ProcessTaskResponse* response) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSworker_implDTcc mht_10(mht_10_v, 452, "", "./tensorflow/core/data/service/worker_impl.cc", "DataServiceWorkerImpl::ProcessTask");
+
   mutex_lock l(mu_);
   const TaskDef& task = request->task();
   VLOG(3) << "Received request to process task " << task.task_id();
@@ -257,6 +460,9 @@ Status DataServiceWorkerImpl::ProcessTask(const ProcessTaskRequest* request,
 
 Status DataServiceWorkerImpl::ProcessTaskInternal(const TaskDef& task_def)
     TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSworker_implDTcc mht_11(mht_11_v, 463, "", "./tensorflow/core/data/service/worker_impl.cc", "DataServiceWorkerImpl::ProcessTaskInternal");
+
   std::shared_ptr<Task>& task = tasks_[task_def.task_id()];
   if (task) {
     VLOG(1) << "Received request to process already-processed task "
@@ -272,6 +478,9 @@ Status DataServiceWorkerImpl::ProcessTaskInternal(const TaskDef& task_def)
 
 Status DataServiceWorkerImpl::EnsureTaskInitialized(
     DataServiceWorkerImpl::Task& task) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSworker_implDTcc mht_12(mht_12_v, 481, "", "./tensorflow/core/data/service/worker_impl.cc", "DataServiceWorkerImpl::EnsureTaskInitialized");
+
   if (task.task_def.worker_address() != worker_address_) {
     return errors::Internal(absl::Substitute(
         "Dispatcher's worker address $0 does not match worker's address $1.",
@@ -299,6 +508,9 @@ Status DataServiceWorkerImpl::EnsureTaskInitialized(
 
 StatusOr<DatasetDef> DataServiceWorkerImpl::GetDatasetDef(
     const TaskDef& task_def) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSworker_implDTcc mht_13(mht_13_v, 511, "", "./tensorflow/core/data/service/worker_impl.cc", "DataServiceWorkerImpl::GetDatasetDef");
+
   switch (task_def.dataset_case()) {
     case TaskDef::kDatasetDef:
       return task_def.dataset_def();
@@ -322,6 +534,9 @@ StatusOr<DatasetDef> DataServiceWorkerImpl::GetDatasetDef(
 StatusOr<std::unique_ptr<standalone::Dataset>>
 DataServiceWorkerImpl::MakeDataset(const DatasetDef& dataset_def,
                                    const TaskDef& task_def) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSworker_implDTcc mht_14(mht_14_v, 537, "", "./tensorflow/core/data/service/worker_impl.cc", "DataServiceWorkerImpl::MakeDataset");
+
   TF_ASSIGN_OR_RETURN(AutoShardRewriter auto_shard_rewriter,
                       AutoShardRewriter::Create(task_def));
   // `ApplyAutoShardRewrite` does nothing if auto-sharding is disabled.
@@ -337,6 +552,9 @@ DataServiceWorkerImpl::MakeDataset(const DatasetDef& dataset_def,
 StatusOr<std::unique_ptr<standalone::Iterator>>
 DataServiceWorkerImpl::MakeDatasetIterator(standalone::Dataset& dataset,
                                            const TaskDef& task_def) const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSworker_implDTcc mht_15(mht_15_v, 555, "", "./tensorflow/core/data/service/worker_impl.cc", "DataServiceWorkerImpl::MakeDatasetIterator");
+
   std::unique_ptr<standalone::Iterator> iterator;
   if (IsNoShard(task_def.processing_mode_def()) ||
       IsStaticShard(task_def.processing_mode_def())) {
@@ -377,6 +595,9 @@ void DataServiceWorkerImpl::StopTask(Task& task) TF_LOCKS_EXCLUDED(mu_) {
 
 Status DataServiceWorkerImpl::GetElement(const GetElementRequest* request,
                                          GetElementResponse* response) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSworker_implDTcc mht_16(mht_16_v, 598, "", "./tensorflow/core/data/service/worker_impl.cc", "DataServiceWorkerImpl::GetElement");
+
   VLOG(3) << "Received GetElement request for task " << request->task_id();
   struct GetElementResult result;
   TF_RETURN_IF_ERROR(GetElementResult(request, &result));
@@ -392,6 +613,9 @@ Status DataServiceWorkerImpl::GetElement(const GetElementRequest* request,
 
 Status DataServiceWorkerImpl::GetWorkerTasks(
     const GetWorkerTasksRequest* request, GetWorkerTasksResponse* response) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSworker_implDTcc mht_17(mht_17_v, 616, "", "./tensorflow/core/data/service/worker_impl.cc", "DataServiceWorkerImpl::GetWorkerTasks");
+
   mutex_lock l(mu_);
   for (const auto& it : tasks_) {
     Task* task = it.second.get();
@@ -551,6 +775,10 @@ void DataServiceWorkerImpl::DeleteLocalTask(const TaskInfo& task_info)
 
 void LocalWorkers::Add(absl::string_view worker_address,
                        std::shared_ptr<DataServiceWorkerImpl> worker) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("worker_address: \"" + std::string(worker_address.data(), worker_address.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSworker_implDTcc mht_18(mht_18_v, 779, "", "./tensorflow/core/data/service/worker_impl.cc", "LocalWorkers::Add");
+
   DCHECK(worker != nullptr) << "Adding a nullptr local worker is disallowed.";
   VLOG(1) << "Register local worker at address " << worker_address;
   mutex_lock l(mu_);
@@ -559,6 +787,10 @@ void LocalWorkers::Add(absl::string_view worker_address,
 
 std::shared_ptr<DataServiceWorkerImpl> LocalWorkers::Get(
     absl::string_view worker_address) {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("worker_address: \"" + std::string(worker_address.data(), worker_address.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSworker_implDTcc mht_19(mht_19_v, 791, "", "./tensorflow/core/data/service/worker_impl.cc", "LocalWorkers::Get");
+
   tf_shared_lock l(mu_);
   AddressToWorkerMap::const_iterator it = local_workers_->find(worker_address);
   if (it == local_workers_->end()) {
@@ -568,11 +800,18 @@ std::shared_ptr<DataServiceWorkerImpl> LocalWorkers::Get(
 }
 
 bool LocalWorkers::Empty() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSworker_implDTcc mht_20(mht_20_v, 803, "", "./tensorflow/core/data/service/worker_impl.cc", "LocalWorkers::Empty");
+
   tf_shared_lock l(mu_);
   return local_workers_->empty();
 }
 
 void LocalWorkers::Remove(absl::string_view worker_address) {
+   std::vector<std::string> mht_21_v;
+   mht_21_v.push_back("worker_address: \"" + std::string(worker_address.data(), worker_address.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPSservicePSworker_implDTcc mht_21(mht_21_v, 812, "", "./tensorflow/core/data/service/worker_impl.cc", "LocalWorkers::Remove");
+
   VLOG(1) << "Remove local worker at address " << worker_address;
   mutex_lock l(mu_);
   local_workers_->erase(worker_address);

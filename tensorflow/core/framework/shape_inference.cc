@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,6 +212,9 @@ InferenceContext::InferenceContext(
         std::unique_ptr<std::vector<std::pair<PartialTensorShape, DataType>>>>&
         input_handle_shapes_and_types)
     : graph_def_version_(graph_def_version), attrs_(attrs) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_0(mht_0_v, 215, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::InferenceContext");
+
   std::vector<ShapeHandle> input_tensors_as_shape_handles;
   input_tensors_as_shape_handles.reserve(input_tensors_as_shapes.size());
   for (const PartialTensorShape& p : input_tensors_as_shapes) {
@@ -95,6 +266,9 @@ InferenceContext::InferenceContext(
     std::vector<std::unique_ptr<std::vector<ShapeAndType>>>
         input_handle_shapes_and_types)
     : graph_def_version_(graph_def_version), attrs_(attrs) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_1(mht_1_v, 269, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::InferenceContext");
+
   PreInputInit(op_def, input_tensors, input_tensors_as_shapes);
   if (!construction_status_.ok()) return;
   inputs_ = input_shapes;
@@ -102,10 +276,16 @@ InferenceContext::InferenceContext(
   PostInputInit(std::move(input_handle_shapes_and_types));
 }
 
-InferenceContext::~InferenceContext() {}
+InferenceContext::~InferenceContext() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_2(mht_2_v, 280, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::~InferenceContext");
+}
 
 Status InferenceContext::Run(
     const std::function<Status(shape_inference::InferenceContext* c)>& fn) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_3(mht_3_v, 286, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::Run");
+
   ForgetMerges();
   Status s = fn(this);
   if (!s.ok()) {
@@ -122,6 +302,9 @@ Status InferenceContext::Run(
 
 Status InferenceContext::set_output(StringPiece output_name,
                                     const std::vector<ShapeHandle>& shapes) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_4(mht_4_v, 305, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::set_output");
+
   auto result = output_name_map_.find(output_name);
   if (result == output_name_map_.end()) {
     return errors::InvalidArgument("Unknown output name: ", output_name);
@@ -142,6 +325,9 @@ Status InferenceContext::set_output(StringPiece output_name,
 
 Status InferenceContext::input(StringPiece input_name,
                                std::vector<ShapeHandle>* output) const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_5(mht_5_v, 328, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::input");
+
   const auto result = input_name_map_.find(input_name);
   if (result == input_name_map_.end()) {
     return errors::InvalidArgument("Unknown input name: ", input_name);
@@ -156,6 +342,9 @@ Status InferenceContext::input(StringPiece input_name,
 
 Status InferenceContext::output(StringPiece output_name,
                                 std::vector<ShapeHandle>* output) const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_6(mht_6_v, 345, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::output");
+
   const auto result = output_name_map_.find(output_name);
   if (result == output_name_map_.end()) {
     return errors::InvalidArgument("Unknown output name: ", output_name);
@@ -171,6 +360,9 @@ Status InferenceContext::output(StringPiece output_name,
 void InferenceContext::PreInputInit(
     const OpDef& op_def, const std::vector<const Tensor*>& input_tensors,
     const std::vector<ShapeHandle>& input_tensors_as_shapes) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_7(mht_7_v, 363, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::PreInputInit");
+
   // TODO(mdan): This is also done at graph construction. Run only here instead?
   Status s = full_type::SpecializeType(attrs_, op_def, ret_types_);
   if (!s.ok()) {
@@ -194,6 +386,9 @@ void InferenceContext::PreInputInit(
 }
 
 Status InferenceContext::ExpandOutputs(int new_output_size) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_8(mht_8_v, 389, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::ExpandOutputs");
+
   const int outputs_size = outputs_.size();
   if (new_output_size < outputs_size) {
     return errors::InvalidArgument("Trying to reduce number of outputs of op.");
@@ -205,6 +400,9 @@ Status InferenceContext::ExpandOutputs(int new_output_size) {
 
 void InferenceContext::PostInputInit(
     std::vector<std::unique_ptr<std::vector<ShapeAndType>>> input_handle_data) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_9(mht_9_v, 403, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::PostInputInit");
+
   int num_inputs_from_node_def = 0;
   for (const auto& e : input_name_map_) {
     num_inputs_from_node_def =
@@ -239,6 +437,9 @@ void InferenceContext::PostInputInit(
 
 void InferenceContext::ShapeHandleToProto(ShapeHandle handle,
                                           TensorShapeProto* proto) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_10(mht_10_v, 440, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::ShapeHandleToProto");
+
   if (!RankKnown(handle)) {
     proto->set_unknown_rank(true);
     return;
@@ -256,6 +457,9 @@ void InferenceContext::ShapeHandleToProto(ShapeHandle handle,
 }
 
 bool InferenceContext::FullyDefined(ShapeHandle s) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_11(mht_11_v, 460, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::FullyDefined");
+
   if (!RankKnown(s)) return false;
   for (int i = 0; i < Rank(s); ++i) {
     if (!ValueKnown(Dim(s, i))) return false;
@@ -264,6 +468,9 @@ bool InferenceContext::FullyDefined(ShapeHandle s) {
 }
 
 DimensionHandle InferenceContext::NumElements(ShapeHandle s) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_12(mht_12_v, 471, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::NumElements");
+
   const auto rank = Rank(s);
   if (rank == kUnknownRank) return UnknownDim();
   bool found_unknown = false;
@@ -286,6 +493,9 @@ DimensionHandle InferenceContext::NumElements(ShapeHandle s) {
 }
 
 string InferenceContext::DebugString(ShapeHandle s) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_13(mht_13_v, 496, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::DebugString");
+
   if (RankKnown(s)) {
     std::vector<string> vals;
     for (auto d : s->dims_) vals.push_back(DebugString(d));
@@ -296,20 +506,32 @@ string InferenceContext::DebugString(ShapeHandle s) {
 }
 
 string InferenceContext::DebugString(DimensionHandle d) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_14(mht_14_v, 509, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::DebugString");
+
   return ValueKnown(d) ? strings::StrCat(Value(d)) : "?";
 }
 
 string InferenceContext::DebugString() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_15(mht_15_v, 516, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::DebugString");
+
   return strings::StrCat("InferenceContext for node: ", attrs_.SummarizeNode());
 }
 
 string InferenceContext::DebugString(const ShapeAndType& shape_and_type) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_16(mht_16_v, 523, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::DebugString");
+
   return strings::StrCat(DebugString(shape_and_type.shape), ":",
                          DataTypeString(shape_and_type.dtype));
 }
 
 string InferenceContext::DebugString(
     gtl::ArraySlice<ShapeAndType> shape_and_types) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_17(mht_17_v, 532, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::DebugString");
+
   std::vector<string> pieces;
   for (const ShapeAndType& s : shape_and_types) {
     pieces.push_back(DebugString(s));
@@ -319,6 +541,9 @@ string InferenceContext::DebugString(
 
 Status InferenceContext::WithRank(ShapeHandle shape, int64_t rank,
                                   ShapeHandle* out) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_18(mht_18_v, 544, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::WithRank");
+
   if (rank > kint32max) {
     return errors::InvalidArgument("Rank cannot exceed kint32max");
   }
@@ -344,6 +569,9 @@ Status InferenceContext::WithRank(ShapeHandle shape, int64_t rank,
 
 Status InferenceContext::WithRankAtLeast(ShapeHandle shape, int64_t rank,
                                          ShapeHandle* out) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_19(mht_19_v, 572, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::WithRankAtLeast");
+
   if (rank > kint32max) {
     return errors::InvalidArgument("Rank cannot exceed kint32max");
   }
@@ -359,6 +587,9 @@ Status InferenceContext::WithRankAtLeast(ShapeHandle shape, int64_t rank,
 
 Status InferenceContext::WithRankAtMost(ShapeHandle shape, int64_t rank,
                                         ShapeHandle* out) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_20(mht_20_v, 590, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::WithRankAtMost");
+
   if (rank > kint32max) {
     return errors::InvalidArgument("Rank cannot exceed kint32max");
   }
@@ -374,6 +605,9 @@ Status InferenceContext::WithRankAtMost(ShapeHandle shape, int64_t rank,
 
 Status InferenceContext::WithValue(DimensionHandle dim, int64_t value,
                                    DimensionHandle* out) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_21(mht_21_v, 608, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::WithValue");
+
   const int64_t existing = Value(dim);
   if (existing == value) {
     *out = dim;
@@ -390,6 +624,9 @@ Status InferenceContext::WithValue(DimensionHandle dim, int64_t value,
 
 void InferenceContext::Relax(DimensionHandle d_old, DimensionHandle d_new,
                              DimensionHandle* out) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_22(mht_22_v, 627, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::Relax");
+
   if (d_old.SameHandle(d_new)) {
     *out = d_old;
   } else if (!ValueKnown(d_old) && !ValueKnown(d_new)) {
@@ -416,6 +653,9 @@ void InferenceContext::Relax(DimensionHandle d_old, DimensionHandle d_new,
 
 Status InferenceContext::Merge(DimensionHandle d0, DimensionHandle d1,
                                DimensionHandle* out) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_23(mht_23_v, 656, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::Merge");
+
   if (d0.SameHandle(d1)) {
     *out = d0;
     return Status::OK();
@@ -440,6 +680,9 @@ Status InferenceContext::Merge(DimensionHandle d0, DimensionHandle d1,
 Status InferenceContext::MergePrefix(ShapeHandle s, ShapeHandle prefix,
                                      ShapeHandle* s_out,
                                      ShapeHandle* prefix_out) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_24(mht_24_v, 683, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::MergePrefix");
+
   *s_out = *prefix_out = nullptr;
   if (!RankKnown(prefix) || !RankKnown(s)) {
     *s_out = s;
@@ -465,6 +708,9 @@ Status InferenceContext::MergePrefix(ShapeHandle s, ShapeHandle prefix,
 
 void InferenceContext::Relax(ShapeHandle s_old, ShapeHandle s_new,
                              ShapeHandle* out) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_25(mht_25_v, 711, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::Relax");
+
   if (s_old.SameHandle(s_new)) {
     *out = s_old;
     return;
@@ -510,6 +756,9 @@ void InferenceContext::Relax(ShapeHandle s_old, ShapeHandle s_new,
 
 Status InferenceContext::Merge(ShapeHandle s0, ShapeHandle s1,
                                ShapeHandle* out) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_26(mht_26_v, 759, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::Merge");
+
   if (s0.SameHandle(s1)) {
     *out = s0;
     return Status::OK();
@@ -579,16 +828,25 @@ Status InferenceContext::Merge(ShapeHandle s0, ShapeHandle s1,
 
 Status InferenceContext::Subshape(ShapeHandle s, int64_t start,
                                   ShapeHandle* out) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_27(mht_27_v, 831, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::Subshape");
+
   return Subshape(s, start, std::numeric_limits<int64_t>::max() /* end */, out);
 }
 
 Status InferenceContext::Subshape(ShapeHandle s, int64_t start, int64_t end,
                                   ShapeHandle* out) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_28(mht_28_v, 839, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::Subshape");
+
   return Subshape(s, start, end, 1 /* stride */, out);
 }
 
 Status InferenceContext::Subshape(ShapeHandle s, int64_t start, int64_t end,
                                   int64_t stride, ShapeHandle* out) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_29(mht_29_v, 847, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::Subshape");
+
   int64_t start_in = start;
   int64_t end_in = end;
 
@@ -649,6 +907,9 @@ Status InferenceContext::Subshape(ShapeHandle s, int64_t start, int64_t end,
 
 Status InferenceContext::Concatenate(ShapeHandle s1, ShapeHandle s2,
                                      ShapeHandle* out) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_30(mht_30_v, 910, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::Concatenate");
+
   if (!RankKnown(s1) || !RankKnown(s2)) {
     return ReturnUnknownShape(out);
   }
@@ -664,6 +925,9 @@ Status InferenceContext::Concatenate(ShapeHandle s1, ShapeHandle s2,
 
 Status InferenceContext::ReplaceDim(ShapeHandle s, int64_t dim_index_in,
                                     DimensionHandle new_dim, ShapeHandle* out) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_31(mht_31_v, 928, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::ReplaceDim");
+
   if (!RankKnown(s)) {
     return ReturnUnknownShape(out);
   }
@@ -684,11 +948,17 @@ Status InferenceContext::ReplaceDim(ShapeHandle s, int64_t dim_index_in,
 
 ShapeHandle InferenceContext::MakeShape(
     const std::vector<DimensionHandle>& dims) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_32(mht_32_v, 951, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::MakeShape");
+
   return shape_manager_.MakeShape(dims);
 }
 
 ShapeHandle InferenceContext::MakeShape(
     std::initializer_list<DimensionOrConstant> dims) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_33(mht_33_v, 959, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::MakeShape");
+
   std::vector<DimensionHandle> dims_actual;
   dims_actual.reserve(dims.size());
   for (const DimensionOrConstant& d : dims) {
@@ -699,10 +969,16 @@ ShapeHandle InferenceContext::MakeShape(
 }
 
 ShapeHandle InferenceContext::UnknownShape() {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_34(mht_34_v, 972, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::UnknownShape");
+
   return shape_manager_.UnknownShape();
 }
 
 ShapeHandle InferenceContext::UnknownShapeOfRank(int64_t rank) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_35(mht_35_v, 979, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::UnknownShapeOfRank");
+
   CHECK_LE(rank, kint32max) << "rank must be less than kint32max";
   if (rank == kUnknownRank) {
     return UnknownShape();
@@ -715,19 +991,31 @@ ShapeHandle InferenceContext::UnknownShapeOfRank(int64_t rank) {
   return MakeShape(dims);
 }
 
-ShapeHandle InferenceContext::Scalar() { return MakeShape({}); }
+ShapeHandle InferenceContext::Scalar() {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_36(mht_36_v, 995, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::Scalar");
+ return MakeShape({}); }
 
 ShapeHandle InferenceContext::Vector(DimensionOrConstant dim) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_37(mht_37_v, 1000, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::Vector");
+
   return MakeShape({dim});
 }
 
 ShapeHandle InferenceContext::Matrix(DimensionOrConstant dim1,
                                      DimensionOrConstant dim2) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_38(mht_38_v, 1008, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::Matrix");
+
   return MakeShape({dim1, dim2});
 }
 
 Status InferenceContext::MakeShapeFromShapeTensorTreatScalarAsUnknownShape(
     int input_idx, ShapeHandle* out) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_39(mht_39_v, 1016, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::MakeShapeFromShapeTensorTreatScalarAsUnknownShape");
+
   ShapeHandle input_shape;
   TF_RETURN_IF_ERROR(WithRankAtMost(input(input_idx), 1, &input_shape));
 
@@ -747,6 +1035,9 @@ Status InferenceContext::MakeShapeFromShapeTensorTreatScalarAsUnknownShape(
 
 Status InferenceContext::MakeShapeFromShapeTensor(int input_idx,
                                                   ShapeHandle* out) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_40(mht_40_v, 1038, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::MakeShapeFromShapeTensor");
+
   ShapeHandle input_shape;
   TF_RETURN_IF_ERROR(WithRank(input(input_idx), 1, &input_shape));
 
@@ -767,6 +1058,9 @@ Status InferenceContext::MakeShapeFromShapeTensor(int input_idx,
 Status InferenceContext::MakeShapeFromTensor(const Tensor* t,
                                              ShapeHandle tensor_shape,
                                              ShapeHandle* out) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_41(mht_41_v, 1061, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::MakeShapeFromTensor");
+
   return InternalMakeShapeFromTensor(
       false /* treat_unknown_scalar_tensor_as_unknown_shape */, t, tensor_shape,
       out);
@@ -775,6 +1069,9 @@ Status InferenceContext::MakeShapeFromTensor(const Tensor* t,
 Status InferenceContext::InternalMakeShapeFromTensor(
     bool treat_unknown_scalar_tensor_as_unknown_shape, const Tensor* t,
     ShapeHandle tensor_shape, ShapeHandle* out) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_42(mht_42_v, 1072, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::InternalMakeShapeFromTensor");
+
   // Only callers who have set
   if (!treat_unknown_scalar_tensor_as_unknown_shape) {
     TF_RETURN_IF_ERROR(WithRank(tensor_shape, 1, &tensor_shape));
@@ -886,6 +1183,9 @@ Status InferenceContext::InternalMakeShapeFromTensor(
 
 Status InferenceContext::MakeShapeFromPartialTensorShape(
     const PartialTensorShape& partial_shape, ShapeHandle* out) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_43(mht_43_v, 1186, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::MakeShapeFromPartialTensorShape");
+
   *out = nullptr;
   if (partial_shape.dims() == -1) {
     return ReturnUnknownShape(out);
@@ -902,12 +1202,18 @@ Status InferenceContext::MakeShapeFromPartialTensorShape(
 
 Status InferenceContext::MakeShapeFromTensorShape(const TensorShape& shape,
                                                   ShapeHandle* out) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_44(mht_44_v, 1205, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::MakeShapeFromTensorShape");
+
   return MakeShapeFromPartialTensorShape(PartialTensorShape(shape.dim_sizes()),
                                          out);
 }
 
 Status InferenceContext::MakeShapeFromShapeProto(const TensorShapeProto& proto,
                                                  ShapeHandle* out) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_45(mht_45_v, 1214, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::MakeShapeFromShapeProto");
+
   *out = nullptr;
   TF_RETURN_IF_ERROR(PartialTensorShape::IsValidShape(proto));
   PartialTensorShape partial_shape(proto);
@@ -915,6 +1221,9 @@ Status InferenceContext::MakeShapeFromShapeProto(const TensorShapeProto& proto,
 }
 
 Status InferenceContext::GetScalarFromTensor(const Tensor* t, int64_t* val) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_46(mht_46_v, 1224, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::GetScalarFromTensor");
+
   // Caller must ensure that <t> is not NULL.
   const int rank = t->dims();
   if (rank != 0) {
@@ -934,6 +1243,9 @@ Status InferenceContext::GetScalarFromTensor(const Tensor* t, int64_t* val) {
 
 Status InferenceContext::GetScalarFromTensor(const Tensor* t, int64_t idx,
                                              int64_t* val) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_47(mht_47_v, 1246, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::GetScalarFromTensor");
+
   // Caller must ensure that <t> is not NULL.
   const int rank = t->dims();
   if (rank != 1) {
@@ -963,6 +1275,9 @@ Status InferenceContext::GetScalarFromTensor(const Tensor* t, int64_t idx,
 
 // Returns a new dimension whose value is given by a scalar input tensor.
 Status InferenceContext::MakeDimForScalarInput(int idx, DimensionHandle* out) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_48(mht_48_v, 1278, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::MakeDimForScalarInput");
+
   int64_t val;
   const Tensor* t = input_tensor(idx);
   if (t == nullptr) {
@@ -980,6 +1295,9 @@ Status InferenceContext::MakeDimForScalarInput(int idx, DimensionHandle* out) {
 
 Status InferenceContext::MakeDimForScalarInputWithNegativeIndexing(
     int idx, int input_rank, DimensionHandle* out) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_49(mht_49_v, 1298, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::MakeDimForScalarInputWithNegativeIndexing");
+
   int64_t val;
   const Tensor* t = input_tensor(idx);
   if (t == nullptr) {
@@ -1010,6 +1328,9 @@ Status InferenceContext::MakeDimForScalarInputWithNegativeIndexing(
 Status InferenceContext::Divide(DimensionHandle dividend,
                                 DimensionOrConstant divisor,
                                 bool evenly_divisible, DimensionHandle* out) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_50(mht_50_v, 1331, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::Divide");
+
   const int64_t divisor_value = Value(divisor);
   if (divisor_value == 1) {
     *out = dividend;
@@ -1034,6 +1355,9 @@ Status InferenceContext::Divide(DimensionHandle dividend,
 
 Status InferenceContext::Add(DimensionHandle first, DimensionOrConstant second,
                              DimensionHandle* out) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_51(mht_51_v, 1358, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::Add");
+
   const int64_t first_value = Value(first);
   const int64_t second_value = Value(second);
   // Special cases.
@@ -1061,6 +1385,9 @@ Status InferenceContext::Add(DimensionHandle first, DimensionOrConstant second,
 Status InferenceContext::Subtract(DimensionHandle first,
                                   DimensionOrConstant second,
                                   DimensionHandle* out) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_52(mht_52_v, 1388, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::Subtract");
+
   const int64_t first_value = Value(first);
   const int64_t second_value = Value(second);
   // Special cases.
@@ -1084,6 +1411,9 @@ Status InferenceContext::Subtract(DimensionHandle first,
 Status InferenceContext::Multiply(DimensionHandle first,
                                   DimensionOrConstant second,
                                   DimensionHandle* out) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_53(mht_53_v, 1414, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::Multiply");
+
   const int64_t first_value = Value(first);
   const int64_t second_value = Value(second);
   // Special cases.
@@ -1112,6 +1442,9 @@ Status InferenceContext::Multiply(DimensionHandle first,
 
 Status InferenceContext::Min(DimensionHandle first, DimensionOrConstant second,
                              DimensionHandle* out) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_54(mht_54_v, 1445, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::Min");
+
   const int64_t first_value = Value(first);
   const int64_t second_value = Value(second);
   if (first_value == 0) {
@@ -1132,6 +1465,9 @@ Status InferenceContext::Min(DimensionHandle first, DimensionOrConstant second,
 
 Status InferenceContext::Max(DimensionHandle first, DimensionOrConstant second,
                              DimensionHandle* out) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_55(mht_55_v, 1468, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::Max");
+
   const int64_t first_value = Value(first);
   const int64_t second_value = Value(second);
   if (first_value == kUnknownDim || second_value == kUnknownDim) {
@@ -1147,6 +1483,9 @@ Status InferenceContext::Max(DimensionHandle first, DimensionOrConstant second,
 }
 
 Status InferenceContext::AttachContext(const Status& status) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_56(mht_56_v, 1486, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::AttachContext");
+
   std::vector<string> input_shapes;
   input_shapes.reserve(inputs_.size());
   for (const ShapeHandle& input_shape : inputs_) {
@@ -1195,6 +1534,9 @@ Status InferenceContext::AttachContext(const Status& status) {
 bool InferenceContext::MergeHandleShapesAndTypes(
     const std::vector<ShapeAndType>& shapes_and_types,
     std::vector<ShapeAndType>* to_update) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_57(mht_57_v, 1537, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::MergeHandleShapesAndTypes");
+
   if (shapes_and_types.size() != to_update->size()) {
     return false;
   }
@@ -1232,6 +1574,9 @@ bool InferenceContext::MergeHandleShapesAndTypes(
 
 bool InferenceContext::MergeOutputHandleShapesAndTypes(
     int idx, const std::vector<ShapeAndType>& shapes_and_types) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_58(mht_58_v, 1577, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::MergeOutputHandleShapesAndTypes");
+
   if (output_handle_shapes_and_types_[idx] == nullptr) {
     output_handle_shapes_and_types_[idx].reset(
         new std::vector<ShapeAndType>(shapes_and_types));
@@ -1243,6 +1588,9 @@ bool InferenceContext::MergeOutputHandleShapesAndTypes(
 
 bool InferenceContext::MergeInputHandleShapesAndTypes(
     int idx, const std::vector<ShapeAndType>& shapes_and_types) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_59(mht_59_v, 1591, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::MergeInputHandleShapesAndTypes");
+
   if (input_handle_shapes_and_types_[idx] == nullptr) {
     input_handle_shapes_and_types_[idx].reset(
         new std::vector<ShapeAndType>(shapes_and_types));
@@ -1255,6 +1603,9 @@ bool InferenceContext::MergeInputHandleShapesAndTypes(
 bool InferenceContext::RelaxHandleShapesAndMergeTypes(
     const std::vector<ShapeAndType>& shapes_and_types,
     std::vector<ShapeAndType>* to_update) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_60(mht_60_v, 1606, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::RelaxHandleShapesAndMergeTypes");
+
   if (shapes_and_types.size() != to_update->size()) {
     return false;
   }
@@ -1278,6 +1629,9 @@ bool InferenceContext::RelaxHandleShapesAndMergeTypes(
 
 bool InferenceContext::RelaxOutputHandleShapesAndMergeTypes(
     int idx, const std::vector<ShapeAndType>& shapes_and_types) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_61(mht_61_v, 1632, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::RelaxOutputHandleShapesAndMergeTypes");
+
   if (output_handle_shapes_and_types_[idx] == nullptr) {
     output_handle_shapes_and_types_[idx].reset(
         new std::vector<ShapeAndType>(shapes_and_types));
@@ -1289,6 +1643,9 @@ bool InferenceContext::RelaxOutputHandleShapesAndMergeTypes(
 
 bool InferenceContext::RelaxInputHandleShapesAndMergeTypes(
     int idx, const std::vector<ShapeAndType>& shapes_and_types) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_62(mht_62_v, 1646, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::RelaxInputHandleShapesAndMergeTypes");
+
   if (input_handle_shapes_and_types_[idx] == nullptr) {
     input_handle_shapes_and_types_[idx].reset(
         new std::vector<ShapeAndType>(shapes_and_types));
@@ -1301,19 +1658,31 @@ bool InferenceContext::RelaxInputHandleShapesAndMergeTypes(
 // -----------------------------------------------------------------------------
 // ShapeManager
 // -----------------------------------------------------------------------------
-InferenceContext::ShapeManager::ShapeManager() {}
+InferenceContext::ShapeManager::ShapeManager() {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_63(mht_63_v, 1662, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::ShapeManager::ShapeManager");
+}
 InferenceContext::ShapeManager::~ShapeManager() {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_64(mht_64_v, 1666, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::ShapeManager::~ShapeManager");
+
   for (auto* s : all_shapes_) delete s;
   for (auto* d : all_dims_) delete d;
 }
 
 ShapeHandle InferenceContext::ShapeManager::MakeShape(
     const std::vector<DimensionHandle>& dims) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_65(mht_65_v, 1675, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::ShapeManager::MakeShape");
+
   all_shapes_.push_back(new Shape(dims));
   return all_shapes_.back();
 }
 
 ShapeHandle InferenceContext::ShapeManager::UnknownShape() {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSshape_inferenceDTcc mht_66(mht_66_v, 1683, "", "./tensorflow/core/framework/shape_inference.cc", "InferenceContext::ShapeManager::UnknownShape");
+
   all_shapes_.push_back(new Shape());
   return all_shapes_.back();
 }

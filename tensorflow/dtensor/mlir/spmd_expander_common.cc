@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSdtensorPSmlirPSspmd_expander_commonDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSspmd_expander_commonDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSdtensorPSmlirPSspmd_expander_commonDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2022 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -97,6 +265,9 @@ StatusOr<mlir::TensorType> GlobalTypeFromLocalType(
 Status CreateSplitOp(const int num_split, const int split_dimension,
                      const mlir::Location location, mlir::Value src_input,
                      mlir::OpBuilder* builder, mlir::TF::SplitOp* split_op) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSspmd_expander_commonDTcc mht_0(mht_0_v, 268, "", "./tensorflow/dtensor/mlir/spmd_expander_common.cc", "CreateSplitOp");
+
   // Creates a const op to hold split dimension value.
   auto split_dim_type =
       mlir::RankedTensorType::get({}, builder->getIntegerType(32));
@@ -319,6 +490,9 @@ StatusOr<absl::optional<Layout>> GetMergedOperandLayout(
 }
 
 mlir::Value GetForwardedDTensorLayoutInput(mlir::Value value) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSspmd_expander_commonDTcc mht_1(mht_1_v, 493, "", "./tensorflow/dtensor/mlir/spmd_expander_common.cc", "GetForwardedDTensorLayoutInput");
+
   auto layout_op =
       llvm::dyn_cast_or_null<mlir::TF::DTensorLayout>(value.getDefiningOp());
   if (!layout_op) return value;
@@ -400,6 +574,9 @@ llvm::SmallVector<mlir::OpOperand*, 4> TraceUseToNextTFOp(
 mlir::LogicalResult GetFuncToCaller(
     mlir::ModuleOp module,
     llvm::DenseMap<llvm::StringRef, mlir::Operation*>& func_to_caller) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSspmd_expander_commonDTcc mht_2(mht_2_v, 577, "", "./tensorflow/dtensor/mlir/spmd_expander_common.cc", "GetFuncToCaller");
+
   // For now this is a 1:1 mapping and we will error out if a function is called
   // by more than one op. The layout code assumes there is 1:many relationship
   // between producers and consumers. If we allow a function to be called
@@ -429,6 +606,9 @@ mlir::LogicalResult GetFuncToCaller(
 mlir::LogicalResult PopulateConsumersFromModule(
     mlir::ModuleOp* module, mlir::Dialect* tf_dialect,
     llvm::DenseMap<mlir::Value, std::vector<mlir::OpOperand*>>& consumers) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSspmd_expander_commonDTcc mht_3(mht_3_v, 609, "", "./tensorflow/dtensor/mlir/spmd_expander_common.cc", "PopulateConsumersFromModule");
+
   mlir::func::FuncOp main_func =
       module->lookupSymbol<mlir::func::FuncOp>("main");
   llvm::DenseMap<llvm::StringRef, mlir::Operation*> func_to_caller;
@@ -538,6 +718,9 @@ StatusOr<mlir::Value> GetMeshCoordinatesFromCluster(
 }
 
 mlir::LogicalResult ValidateMetadataAttributes(mlir::Operation* op) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSspmd_expander_commonDTcc mht_4(mht_4_v, 721, "", "./tensorflow/dtensor/mlir/spmd_expander_common.cc", "ValidateMetadataAttributes");
+
   // If cluster function has attributes containing inferred layout of resource
   // handle arguments, then add the attributes to the newly created
   // StatefulPartitonedCallOp.
@@ -576,6 +759,9 @@ mlir::LogicalResult ValidateMetadataAttributes(mlir::Operation* op) {
 }
 
 void RemoveUnusedClusterResults(mlir::tf_device::ClusterOp cluster) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSspmd_expander_commonDTcc mht_5(mht_5_v, 762, "", "./tensorflow/dtensor/mlir/spmd_expander_common.cc", "RemoveUnusedClusterResults");
+
   llvm::SmallVector<mlir::OpResult, 4> new_result_values;
   llvm::SmallVector<mlir::Value, 4> result_producing_values;
   new_result_values.reserve(cluster->getNumResults());
@@ -634,6 +820,10 @@ std::atomic<int32> dtensor_controlflow_function_counter{0};
 
 mlir::StringAttr GetUniqueControlflowFnName(const std::string& prefix,
                                             mlir::OpBuilder& builder) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("prefix: \"" + prefix + "\"");
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSspmd_expander_commonDTcc mht_6(mht_6_v, 824, "", "./tensorflow/dtensor/mlir/spmd_expander_common.cc", "GetUniqueControlflowFnName");
+
   int32 unique_id = dtensor_controlflow_function_counter++;
   return builder.getStringAttr(
       absl::StrCat(prefix, "_dtensor_function_", unique_id));
@@ -641,6 +831,9 @@ mlir::StringAttr GetUniqueControlflowFnName(const std::string& prefix,
 
 Status SetBuilderInsertionAfterValue(mlir::Value value,
                                      mlir::OpBuilder& builder) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSspmd_expander_commonDTcc mht_7(mht_7_v, 834, "", "./tensorflow/dtensor/mlir/spmd_expander_common.cc", "SetBuilderInsertionAfterValue");
+
   if (value.isa<mlir::OpResult>()) {
     builder.setInsertionPointAfterValue(value);
     return Status::OK();
@@ -661,6 +854,9 @@ Status SetBuilderInsertionAfterValue(mlir::Value value,
 }
 
 Status PrintTensor(mlir::Value value, const std::string& format_string = "%s") {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSspmd_expander_commonDTcc mht_8(mht_8_v, 857, "", "./tensorflow/dtensor/mlir/spmd_expander_common.cc", "PrintTensor");
+
   mlir::OpBuilder builder(value.getContext());
   builder.setInsertionPointAfterValue(value);
   TF_ASSIGN_OR_RETURN(mlir::Value device_id, DeviceId(value));
@@ -679,6 +875,9 @@ Status PrintTensor(mlir::Value value, const std::string& format_string = "%s") {
 
 Status ExtractConstStringVectorFromValue(
     mlir::Value value, llvm::SmallVectorImpl<std::string>& out_vector) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSspmd_expander_commonDTcc mht_9(mht_9_v, 878, "", "./tensorflow/dtensor/mlir/spmd_expander_common.cc", "ExtractConstStringVectorFromValue");
+
   value = GetForwardedDTensorLayoutInput(value);
   mlir::DenseStringElementsAttr attr;
   if (!matchPattern(value, m_Constant(&attr))) {
@@ -710,11 +909,17 @@ StatusOr<std::string> ExtractConstScalarStringFromValue(mlir::Value value) {
 
 TopologicalIterator::TopologicalIterator(mlir::func::FuncOp main_func)
     : ops_to_visit_{&main_func.front().front()} {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSspmd_expander_commonDTcc mht_10(mht_10_v, 912, "", "./tensorflow/dtensor/mlir/spmd_expander_common.cc", "TopologicalIterator::TopologicalIterator");
+
   funcs_visited_.insert(main_func.getName());
   funcs_visited_in_call_stack_.insert(main_func.getName());
 }
 
 mlir::Operation* TopologicalIterator::next() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSspmd_expander_commonDTcc mht_11(mht_11_v, 920, "", "./tensorflow/dtensor/mlir/spmd_expander_common.cc", "TopologicalIterator::next");
+
   if (!hasNext()) return nullptr;
 
   auto* op = ops_to_visit_.pop_back_val();
@@ -754,7 +959,10 @@ mlir::Operation* TopologicalIterator::next() {
   return op;
 }
 
-bool TopologicalIterator::hasNext() { return !ops_to_visit_.empty(); }
+bool TopologicalIterator::hasNext() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSspmd_expander_commonDTcc mht_12(mht_12_v, 963, "", "./tensorflow/dtensor/mlir/spmd_expander_common.cc", "TopologicalIterator::hasNext");
+ return !ops_to_visit_.empty(); }
 
 }  // namespace dtensor
 }  // namespace tensorflow

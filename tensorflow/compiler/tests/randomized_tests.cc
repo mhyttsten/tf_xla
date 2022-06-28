@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -88,6 +256,10 @@ bool tf_xla_test_use_jit = true;
 bool tf_xla_test_use_mlir = false;
 
 string LocalDeviceToFullDeviceName(const string& device) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("device: \"" + device + "\"");
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_0(mht_0_v, 260, "", "./tensorflow/compiler/tests/randomized_tests.cc", "LocalDeviceToFullDeviceName");
+
   return absl::StrCat("/job:localhost/replica:0/task:0/device:", device);
 }
 
@@ -147,7 +319,10 @@ class OpTestBuilder {
     std::vector<int64_t> dims;
   };
 
-  const std::vector<InputDescription>& inputs() const { return inputs_; }
+  const std::vector<InputDescription>& inputs() const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_1(mht_1_v, 323, "", "./tensorflow/compiler/tests/randomized_tests.cc", "inputs");
+ return inputs_; }
 
  private:
   NodeDef node_def_;
@@ -155,10 +330,17 @@ class OpTestBuilder {
 };
 
 OpTestBuilder::OpTestBuilder(const string& op_name) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_2(mht_2_v, 334, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTestBuilder::OpTestBuilder");
+
   node_def_.set_op(op_name);
 }
 
 OpTestBuilder& OpTestBuilder::Input(const Tensor& tensor) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_3(mht_3_v, 341, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTestBuilder::Input");
+
   VLOG(1) << "Adding input: " << tensor.DebugString();
   InputDescription input;
   input.tensor = tensor;
@@ -167,6 +349,9 @@ OpTestBuilder& OpTestBuilder::Input(const Tensor& tensor) {
 }
 
 OpTestBuilder& OpTestBuilder::RandomInput(DataType type) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_4(mht_4_v, 352, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTestBuilder::RandomInput");
+
   VLOG(1) << "Adding random input: " << type;
   InputDescription input;
   input.type = type;
@@ -176,6 +361,9 @@ OpTestBuilder& OpTestBuilder::RandomInput(DataType type) {
 
 OpTestBuilder& OpTestBuilder::RandomInput(DataType type,
                                           std::vector<int64_t> dims) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_5(mht_5_v, 364, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTestBuilder::RandomInput");
+
   VLOG(1) << "Adding input: " << type << " " << TensorShape(dims).DebugString();
   InputDescription input;
   input.type = type;
@@ -187,6 +375,9 @@ OpTestBuilder& OpTestBuilder::RandomInput(DataType type,
 
 OpTestBuilder& OpTestBuilder::RandomUniqueInput(DataType type,
                                                 std::vector<int64_t> dims) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_6(mht_6_v, 378, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTestBuilder::RandomUniqueInput");
+
   VLOG(1) << "Adding input: " << type << " " << TensorShape(dims).DebugString();
   InputDescription input;
   input.type = type;
@@ -199,6 +390,9 @@ OpTestBuilder& OpTestBuilder::RandomUniqueInput(DataType type,
 
 OpTestBuilder& OpTestBuilder::VariadicInput(
     const std::vector<Tensor>& tensors) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_7(mht_7_v, 393, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTestBuilder::VariadicInput");
+
   VLOG(1) << "Adding variadic input of length " << tensors.size() << ":";
   for (auto& t : tensors) {
     Input(t);
@@ -208,6 +402,10 @@ OpTestBuilder& OpTestBuilder::VariadicInput(
 
 template <class T>
 OpTestBuilder& OpTestBuilder::Attr(absl::string_view attr_name, T&& value) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("attr_name: \"" + std::string(attr_name.data(), attr_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_8(mht_8_v, 406, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTestBuilder::Attr");
+
   AddNodeAttr(attr_name, std::forward<T>(value), &node_def_);
   return *this;
 }
@@ -215,6 +413,10 @@ OpTestBuilder& OpTestBuilder::Attr(absl::string_view attr_name, T&& value) {
 template <class T>
 OpTestBuilder& OpTestBuilder::Attr(absl::string_view attr_name,
                                    std::initializer_list<T> value) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("attr_name: \"" + std::string(attr_name.data(), attr_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_9(mht_9_v, 417, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTestBuilder::Attr");
+
   Attr<std::initializer_list<T>>(attr_name, std::move(value));
   return *this;
 }
@@ -224,6 +426,11 @@ Status OpTestBuilder::BuildGraph(const string& name_prefix,
                                  GraphDef* graphdef, NodeDef** test_node_def,
                                  std::vector<string>* inputs,
                                  std::vector<string>* outputs) const {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("name_prefix: \"" + name_prefix + "\"");
+   mht_10_v.push_back("device: \"" + device + "\"");
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_10(mht_10_v, 431, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTestBuilder::BuildGraph");
+
   OpRegistryInterface* op_registry = OpRegistry::Global();
 
   const OpDef* op_def;
@@ -467,7 +674,10 @@ class OpTest : public ::testing::Test {
   // Converts an int64 vector to an int32 vector.
   std::vector<int32> AsInt32s(const std::vector<int64_t>& int64s);
 
-  std::mt19937& generator() { return *generator_; }
+  std::mt19937& generator() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_11(mht_11_v, 678, "", "./tensorflow/compiler/tests/randomized_tests.cc", "generator");
+ return *generator_; }
 
   // Run the test case described by 'builder' with and without XLA and check
   // that the outputs are close. Tensors x and y are close if they have the same
@@ -490,6 +700,9 @@ class OpTest : public ::testing::Test {
 };
 
 OpTest::OpTest() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_12(mht_12_v, 703, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::OpTest");
+
   // Creates a random-number generator for the test case. Use the value of
   // --tf_xla_random_seed as the seed, if provided.
   int64_t s = tf_xla_random_seed;
@@ -517,12 +730,18 @@ namespace {
 template <typename T>
 Tensor TensorFromValues(DataType dtype, absl::Span<const int64_t> shape,
                         absl::Span<T> vals) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_13(mht_13_v, 733, "", "./tensorflow/compiler/tests/randomized_tests.cc", "TensorFromValues");
+
   Tensor tensor(dtype, TensorShape(shape));
   test::FillValues<T>(&tensor, vals);
   return tensor;
 }
 
 int64_t ShapeNumVals(absl::Span<const int64_t> shape) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_14(mht_14_v, 742, "", "./tensorflow/compiler/tests/randomized_tests.cc", "ShapeNumVals");
+
   int64_t num_vals = 1;
   for (int i = 0; i < shape.size(); ++i) {
     num_vals *= shape[i];
@@ -537,8 +756,14 @@ int64_t ShapeNumVals(absl::Span<const int64_t> shape) {
 template <typename T>
 class TensorGenerator {
  public:
-  explicit TensorGenerator(OpTest& test) : test_(test) {}
-  virtual ~TensorGenerator() {}
+  explicit TensorGenerator(OpTest& test) : test_(test) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_15(mht_15_v, 760, "", "./tensorflow/compiler/tests/randomized_tests.cc", "TensorGenerator");
+}
+  virtual ~TensorGenerator() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_16(mht_16_v, 764, "", "./tensorflow/compiler/tests/randomized_tests.cc", "~TensorGenerator");
+}
   virtual DataType dtype() = 0;
   virtual void RandomVals(absl::optional<T> lo, absl::optional<T> hi,
                           bool needs_unique_values,
@@ -547,6 +772,9 @@ class TensorGenerator {
   Tensor RandomTensor(absl::optional<T> lo, absl::optional<T> hi,
                       bool needs_unique_values,
                       absl::Span<const int64_t> shape) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_17(mht_17_v, 775, "", "./tensorflow/compiler/tests/randomized_tests.cc", "RandomTensor");
+
     absl::FixedArray<T> vals(ShapeNumVals(shape));
     RandomVals(lo, hi, needs_unique_values, vals);
     return TensorFromValues<T>(dtype(), shape, absl::Span<T>(vals));
@@ -575,11 +803,20 @@ class TensorGenerator {
 
 class TensorGeneratorFloat : public TensorGenerator<float> {
  public:
-  explicit TensorGeneratorFloat(OpTest& test) : TensorGenerator(test) {}
-  DataType dtype() override { return DT_FLOAT; }
+  explicit TensorGeneratorFloat(OpTest& test) : TensorGenerator(test) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_18(mht_18_v, 807, "", "./tensorflow/compiler/tests/randomized_tests.cc", "TensorGeneratorFloat");
+}
+  DataType dtype() override {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_19(mht_19_v, 811, "", "./tensorflow/compiler/tests/randomized_tests.cc", "dtype");
+ return DT_FLOAT; }
   void RandomVals(absl::optional<float> lo, absl::optional<float> hi,
                   bool needs_unique_values,
                   absl::FixedArray<float>& vals) override {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_20(mht_20_v, 817, "", "./tensorflow/compiler/tests/randomized_tests.cc", "RandomVals");
+
     absl::flat_hash_set<float> already_generated;
     std::uniform_real_distribution<float> distribution(lo.value_or(-1.0f),
                                                        hi.value_or(1.0f));
@@ -596,11 +833,20 @@ class TensorGeneratorFloat : public TensorGenerator<float> {
 
 class TensorGeneratorDouble : public TensorGenerator<double> {
  public:
-  explicit TensorGeneratorDouble(OpTest& test) : TensorGenerator(test) {}
-  DataType dtype() override { return DT_DOUBLE; }
+  explicit TensorGeneratorDouble(OpTest& test) : TensorGenerator(test) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_21(mht_21_v, 837, "", "./tensorflow/compiler/tests/randomized_tests.cc", "TensorGeneratorDouble");
+}
+  DataType dtype() override {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_22(mht_22_v, 841, "", "./tensorflow/compiler/tests/randomized_tests.cc", "dtype");
+ return DT_DOUBLE; }
   void RandomVals(absl::optional<double> lo, absl::optional<double> hi,
                   bool needs_unique_values,
                   absl::FixedArray<double>& vals) override {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_23(mht_23_v, 847, "", "./tensorflow/compiler/tests/randomized_tests.cc", "RandomVals");
+
     absl::flat_hash_set<double> already_generated;
     std::uniform_real_distribution<double> distribution(lo.value_or(-1.0),
                                                         hi.value_or(1.0));
@@ -617,11 +863,20 @@ class TensorGeneratorDouble : public TensorGenerator<double> {
 
 class TensorGeneratorComplex64 : public TensorGenerator<complex64> {
  public:
-  explicit TensorGeneratorComplex64(OpTest& test) : TensorGenerator(test) {}
-  DataType dtype() override { return DT_COMPLEX64; }
+  explicit TensorGeneratorComplex64(OpTest& test) : TensorGenerator(test) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_24(mht_24_v, 867, "", "./tensorflow/compiler/tests/randomized_tests.cc", "TensorGeneratorComplex64");
+}
+  DataType dtype() override {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_25(mht_25_v, 871, "", "./tensorflow/compiler/tests/randomized_tests.cc", "dtype");
+ return DT_COMPLEX64; }
   void RandomVals(absl::optional<complex64> lo, absl::optional<complex64> hi,
                   bool needs_unique_values,
                   absl::FixedArray<complex64>& vals) override {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_26(mht_26_v, 877, "", "./tensorflow/compiler/tests/randomized_tests.cc", "RandomVals");
+
     absl::flat_hash_set<std::pair<float, float>> already_generated;
     if (lo || hi) {
       LOG(FATAL) << "Lower or upper bounds are not supported for complex64.";
@@ -643,11 +898,20 @@ class TensorGeneratorComplex64 : public TensorGenerator<complex64> {
 
 class TensorGeneratorInt32 : public TensorGenerator<int32> {
  public:
-  explicit TensorGeneratorInt32(OpTest& test) : TensorGenerator(test) {}
-  DataType dtype() override { return DT_INT32; }
+  explicit TensorGeneratorInt32(OpTest& test) : TensorGenerator(test) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_27(mht_27_v, 902, "", "./tensorflow/compiler/tests/randomized_tests.cc", "TensorGeneratorInt32");
+}
+  DataType dtype() override {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_28(mht_28_v, 906, "", "./tensorflow/compiler/tests/randomized_tests.cc", "dtype");
+ return DT_INT32; }
   void RandomVals(absl::optional<int32> lo, absl::optional<int32> hi,
                   bool needs_unique_values,
                   absl::FixedArray<int32>& vals) override {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_29(mht_29_v, 912, "", "./tensorflow/compiler/tests/randomized_tests.cc", "RandomVals");
+
     absl::flat_hash_set<int32> already_generated;
     std::uniform_int_distribution<int32> distribution(lo.value_or(-(1 << 20)),
                                                       hi.value_or(1 << 20));
@@ -664,11 +928,20 @@ class TensorGeneratorInt32 : public TensorGenerator<int32> {
 
 class TensorGeneratorInt64 : public TensorGenerator<int64> {
  public:
-  explicit TensorGeneratorInt64(OpTest& test) : TensorGenerator(test) {}
-  DataType dtype() override { return DT_INT64; }
+  explicit TensorGeneratorInt64(OpTest& test) : TensorGenerator(test) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_30(mht_30_v, 932, "", "./tensorflow/compiler/tests/randomized_tests.cc", "TensorGeneratorInt64");
+}
+  DataType dtype() override {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_31(mht_31_v, 936, "", "./tensorflow/compiler/tests/randomized_tests.cc", "dtype");
+ return DT_INT64; }
   void RandomVals(absl::optional<int64> lo, absl::optional<int64> hi,
                   bool needs_unique_values,
                   absl::FixedArray<int64>& vals) override {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_32(mht_32_v, 942, "", "./tensorflow/compiler/tests/randomized_tests.cc", "RandomVals");
+
     absl::flat_hash_set<int64_t> already_generated;
     std::uniform_int_distribution<int64_t> distribution(
         lo.value_or(-(1LL << 40)), hi.value_or(1LL << 40));
@@ -685,11 +958,20 @@ class TensorGeneratorInt64 : public TensorGenerator<int64> {
 
 class TensorGeneratorBool : public TensorGenerator<bool> {
  public:
-  explicit TensorGeneratorBool(OpTest& test) : TensorGenerator(test) {}
-  DataType dtype() override { return DT_BOOL; }
+  explicit TensorGeneratorBool(OpTest& test) : TensorGenerator(test) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_33(mht_33_v, 962, "", "./tensorflow/compiler/tests/randomized_tests.cc", "TensorGeneratorBool");
+}
+  DataType dtype() override {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_34(mht_34_v, 966, "", "./tensorflow/compiler/tests/randomized_tests.cc", "dtype");
+ return DT_BOOL; }
   void RandomVals(absl::optional<bool> lo, absl::optional<bool> hi,
                   bool needs_unique_values,
                   absl::FixedArray<bool>& vals) override {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_35(mht_35_v, 972, "", "./tensorflow/compiler/tests/randomized_tests.cc", "RandomVals");
+
     absl::flat_hash_set<bool> already_generated;
     if (lo || hi) {
       LOG(FATAL) << "Lower or upper bounds are not supported for bool.";
@@ -707,6 +989,9 @@ class TensorGeneratorBool : public TensorGenerator<bool> {
 };
 
 void OpTest::Repeatedly(const std::function<TestResult(void)>& fn) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_36(mht_36_v, 992, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::Repeatedly");
+
   int const max_repetitions = tf_xla_test_repetitions;
   int valid_test_runs = 0;
   // We run up to 100 * max_repetitions times; the idea is that if we roll the
@@ -740,16 +1025,25 @@ void OpTest::Repeatedly(const std::function<TestResult(void)>& fn) {
 
 template <typename T>
 T OpTest::Choose(absl::Span<const T> candidates) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_37(mht_37_v, 1028, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::Choose");
+
   std::uniform_int_distribution<size_t> d(0, candidates.size() - 1);
   return candidates[d(generator())];
 }
 
 int64_t OpTest::RandomDim(int64_t min, int64_t max) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_38(mht_38_v, 1036, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::RandomDim");
+
   std::uniform_int_distribution<int64_t> size_distribution(min, max - 1);
   return size_distribution(generator());
 }
 
 bool OpTest::TensorSizeIsOk(absl::Span<const int64_t> dims) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_39(mht_39_v, 1044, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::TensorSizeIsOk");
+
   int64_t size = 1LL;
   for (int64_t dim : dims) {
     size *= dim;
@@ -759,6 +1053,9 @@ bool OpTest::TensorSizeIsOk(absl::Span<const int64_t> dims) {
 
 std::vector<int64_t> OpTest::RandomDims(int min_rank, int max_rank,
                                         int64_t min_size, int64_t max_size) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_40(mht_40_v, 1056, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::RandomDims");
+
   CHECK_LE(0, min_rank);
   CHECK_LE(min_rank, max_rank);
   std::uniform_int_distribution<int> rank_distribution(min_rank, max_rank);
@@ -777,11 +1074,17 @@ std::vector<int64_t> OpTest::RandomDims(int min_rank, int max_rank,
 }
 
 bool OpTest::RandomBool() {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_41(mht_41_v, 1077, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::RandomBool");
+
   std::bernoulli_distribution d(0.5);
   return d(generator());
 }
 
 int64_t OpTest::RandomSeed() {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_42(mht_42_v, 1085, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::RandomSeed");
+
   std::uniform_int_distribution<int64_t> seed_dist(
       std::numeric_limits<int64_t>::min(), std::numeric_limits<int64_t>::max());
   int64_t seed = seed_dist(generator());
@@ -791,6 +1094,9 @@ int64_t OpTest::RandomSeed() {
 
 Tensor OpTest::RandomTensor(DataType dtype, bool needs_unique_values,
                             absl::Span<const int64_t> shape) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_43(mht_43_v, 1097, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::RandomTensor");
+
   switch (dtype) {
     case DT_FLOAT:
       return TensorGeneratorFloat(*this).RandomTensor(
@@ -816,11 +1122,17 @@ Tensor OpTest::RandomTensor(DataType dtype, bool needs_unique_values,
 }
 
 Tensor OpTest::RandomTensor(DataType dtype) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_44(mht_44_v, 1125, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::RandomTensor");
+
   return RandomTensor(dtype, /*needs_unique_values=*/false, RandomDims());
 }
 
 Tensor OpTest::RandomNonNegativeTensor(DataType dtype,
                                        absl::Span<const int64_t> shape) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_45(mht_45_v, 1133, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::RandomNonNegativeTensor");
+
   switch (dtype) {
     case DT_FLOAT:
       return TensorGeneratorFloat(*this).RandomTensor({0.0f}, {}, false, shape);
@@ -837,6 +1149,9 @@ Tensor OpTest::RandomNonNegativeTensor(DataType dtype,
 }
 
 Tensor OpTest::RandomNonNegativeTensor(DataType dtype) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_46(mht_46_v, 1152, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::RandomNonNegativeTensor");
+
   return RandomNonNegativeTensor(dtype, RandomDims());
 }
 
@@ -844,6 +1159,9 @@ template <typename T>
 Tensor OpTest::RandomBoundedTensor(DataType dtype, T lo, T hi,
                                    bool needs_unique_values,
                                    absl::Span<const int64_t> shape) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_47(mht_47_v, 1162, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::RandomBoundedTensor");
+
   switch (dtype) {
     case DT_FLOAT:
       return TensorGeneratorFloat(*this).RandomTensor(
@@ -866,11 +1184,17 @@ Tensor OpTest::RandomBoundedTensor(DataType dtype, T lo, T hi,
 template <typename T>
 Tensor OpTest::RandomBoundedTensor(DataType dtype, T lo, T hi,
                                    bool needs_unique_values) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_48(mht_48_v, 1187, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::RandomBoundedTensor");
+
   return RandomBoundedTensor<T>(dtype, lo, hi, needs_unique_values,
                                 RandomDims());
 }
 
 Tensor OpTest::RandomBoundedTensor(DataType dtype, Tensor lo, Tensor hi) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_49(mht_49_v, 1195, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::RandomBoundedTensor");
+
   TensorShape shape = lo.shape();
   if (hi.shape() != shape) {
     LOG(FATAL) << "hi and lo do not have the same shape in RandomBoundedTensor";
@@ -961,6 +1285,9 @@ std::pair<Tensor, Tensor> OpTest::RandomLteTensors(DataType dtype) {
 }
 
 std::vector<int64_t> OpTest::BroadcastableToDims(std::vector<int64_t> dims) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_50(mht_50_v, 1288, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::BroadcastableToDims");
+
   if (dims.empty()) return dims;
 
   // Remove some dimensions from the front of 'dims'.
@@ -982,6 +1309,9 @@ std::vector<int64_t> OpTest::BroadcastableToDims(std::vector<int64_t> dims) {
 
 std::pair<std::vector<int64_t>, std::vector<int64_t>> OpTest::BroadcastableDims(
     std::vector<int64_t> dims) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_51(mht_51_v, 1312, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::BroadcastableDims");
+
   auto bdims = BroadcastableToDims(dims);
   // Possibly swap the roles of 'dims' and 'bdims'.
   std::bernoulli_distribution random_bool;
@@ -993,10 +1323,16 @@ std::pair<std::vector<int64_t>, std::vector<int64_t>> OpTest::BroadcastableDims(
 
 std::pair<std::vector<int64_t>, std::vector<int64_t>>
 OpTest::BroadcastableDims() {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_52(mht_52_v, 1326, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::BroadcastableDims");
+
   return BroadcastableDims(RandomDims(0, 3));
 }
 
 Tensor OpTest::RandomReductionIndices(int rank) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_53(mht_53_v, 1333, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::RandomReductionIndices");
+
   std::bernoulli_distribution random_bool;
   std::vector<int32> indices;
   for (int i = 0; i < rank; ++i) {
@@ -1009,6 +1345,9 @@ Tensor OpTest::RandomReductionIndices(int rank) {
 
 // Helper that converts 'values' to an int32 or int64 Tensor.
 static Tensor AsIntTensor(DataType dtype, const std::vector<int64_t>& values) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_54(mht_54_v, 1348, "", "./tensorflow/compiler/tests/randomized_tests.cc", "AsIntTensor");
+
   switch (dtype) {
     case DT_INT32: {
       std::vector<int32> values32(values.begin(), values.end());
@@ -1023,6 +1362,9 @@ static Tensor AsIntTensor(DataType dtype, const std::vector<int64_t>& values) {
 
 OpTest::BatchMatMulArguments OpTest::ChooseBatchMatMulArguments(
     bool broadcastable_batch) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_55(mht_55_v, 1365, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::ChooseBatchMatMulArguments");
+
   BatchMatMulArguments a;
   a.dtype = Choose<DataType>({DT_FLOAT, DT_COMPLEX64});
 
@@ -1057,6 +1399,9 @@ OpTest::BatchMatMulArguments OpTest::ChooseBatchMatMulArguments(
 }
 
 OpTest::ConcatArguments OpTest::ChooseConcatArguments(bool int64_idx_allowed) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_56(mht_56_v, 1402, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::ChooseConcatArguments");
+
   ConcatArguments a;
 
   std::bernoulli_distribution random_bool;
@@ -1083,6 +1428,9 @@ OpTest::ConcatArguments OpTest::ChooseConcatArguments(bool int64_idx_allowed) {
 }
 
 OpTest::EinsumArguments OpTest::ChooseEinsumArguments() {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_57(mht_57_v, 1431, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::ChooseEinsumArguments");
+
   EinsumArguments a;
 
   enum EinsumType { matmul, batchmatmul, dot, outer };
@@ -1126,6 +1474,9 @@ OpTest::EinsumArguments OpTest::ChooseEinsumArguments() {
 }
 
 OpTest::GatherArguments OpTest::ChooseGatherArguments(bool axis_0) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_58(mht_58_v, 1477, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::ChooseGatherArguments");
+
   GatherArguments a;
 
   a.axis_type = DT_INT32;
@@ -1153,6 +1504,9 @@ OpTest::GatherArguments OpTest::ChooseGatherArguments(bool axis_0) {
 }
 
 OpTest::PadArguments OpTest::ChoosePadArguments() {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_59(mht_59_v, 1507, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::ChoosePadArguments");
+
   PadArguments a;
 
   a.input_type = Choose<DataType>(kAllXlaTypes);
@@ -1180,6 +1534,9 @@ OpTest::PadArguments OpTest::ChoosePadArguments() {
 }
 
 OpTest::ScatterArguments OpTest::ChooseScatterArguments() {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_60(mht_60_v, 1537, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::ChooseScatterArguments");
+
   ScatterArguments a;
 
   a.type = Choose<DataType>(kAllXlaTypes);
@@ -1209,6 +1566,9 @@ OpTest::ScatterArguments OpTest::ChooseScatterArguments() {
 }
 
 OpTest::SliceArguments OpTest::ChooseSliceArguments(bool neg_one_size) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_61(mht_61_v, 1569, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::ChooseSliceArguments");
+
   SliceArguments a;
 
   a.type = Choose<DataType>(kAllXlaTypes);
@@ -1232,6 +1592,9 @@ OpTest::SliceArguments OpTest::ChooseSliceArguments(bool neg_one_size) {
 
 OpTest::WindowedSpatialDims OpTest::ChooseWindowedSpatialDims(
     int num_spatial_dims) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_62(mht_62_v, 1595, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::ChooseWindowedSpatialDims");
+
   WindowedSpatialDims d;
   d.padding = Choose<Padding>({SAME, VALID});
   std::uniform_int_distribution<int> random_int(1, 5);
@@ -1259,6 +1622,9 @@ OpTest::WindowedSpatialDims OpTest::ChooseWindowedSpatialDims(
 }
 
 OpTest::XlaDotArguments OpTest::ChooseXlaDotArguments() {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_63(mht_63_v, 1625, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::ChooseXlaDotArguments");
+
   std::vector<int64_t> batch_dims = RandomDims(0, 2);
   std::vector<int64_t> contracting_dims = RandomDims(0, 2);
   std::vector<int64_t> lhs_outer_dims = RandomDims(0, 2);
@@ -1296,6 +1662,9 @@ OpTest::XlaDotArguments OpTest::ChooseXlaDotArguments() {
 std::vector<int64_t> OpTest::ImageDims(
     TensorFormat format, int batch, int feature,
     const std::vector<int64_t>& spatial_dims) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_64(mht_64_v, 1665, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::ImageDims");
+
   std::vector<int64_t> dims;
   switch (format) {
     case FORMAT_NHWC:
@@ -1319,6 +1688,9 @@ std::vector<int64_t> OpTest::ImageDims(
 }
 
 std::vector<int32> OpTest::AsInt32s(const std::vector<int64_t>& int64s) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_65(mht_65_v, 1691, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::AsInt32s");
+
   return std::vector<int32>(int64s.begin(), int64s.end());
 }
 
@@ -1326,16 +1698,25 @@ std::vector<int32> OpTest::AsInt32s(const std::vector<int64_t>& int64s) {
 
 template <typename T>
 double Abs(T x) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_66(mht_66_v, 1701, "", "./tensorflow/compiler/tests/randomized_tests.cc", "Abs");
+
   return std::fabs(x);
 }
 
 template <>
 double Abs<complex64>(complex64 x) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_67(mht_67_v, 1709, "", "./tensorflow/compiler/tests/randomized_tests.cc", "Abs<complex64>");
+
   return std::abs(x);
 }
 
 template <typename T>
 bool IsClose(const T& x, const T& y, double atol, double rtol) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_68(mht_68_v, 1717, "", "./tensorflow/compiler/tests/randomized_tests.cc", "IsClose");
+
   if (std::isnan(x) && std::isnan(y)) return true;
   if (x == y) return true;  // Allow inf == inf.
   return Abs(x - y) < atol + rtol * Abs(x);
@@ -1344,6 +1725,9 @@ bool IsClose(const T& x, const T& y, double atol, double rtol) {
 template <>
 bool IsClose<complex64>(const complex64& x, const complex64& y, double atol,
                         double rtol) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_69(mht_69_v, 1728, "", "./tensorflow/compiler/tests/randomized_tests.cc", "IsClose<complex64>");
+
   if (std::isnan(x.real()) && std::isnan(y.real())) {
     if (std::isnan(x.imag()) && std::isnan(y.imag())) {
       return true;
@@ -1360,16 +1744,25 @@ bool IsClose<complex64>(const complex64& x, const complex64& y, double atol,
 
 template <typename T>
 string Str(T x) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_70(mht_70_v, 1747, "", "./tensorflow/compiler/tests/randomized_tests.cc", "Str");
+
   return absl::StrCat(x);
 }
 template <>
 string Str<complex64>(complex64 x) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_71(mht_71_v, 1754, "", "./tensorflow/compiler/tests/randomized_tests.cc", "Str<complex64>");
+
   return absl::StrCat("(", x.real(), ", ", x.imag(), ")");
 }
 
 template <typename T>
 Status TensorsAreCloseImpl(const Tensor& x, const Tensor& y, double atol,
                            double rtol) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_72(mht_72_v, 1763, "", "./tensorflow/compiler/tests/randomized_tests.cc", "TensorsAreCloseImpl");
+
   auto Tx = x.flat<T>();
   auto Ty = y.flat<T>();
   for (int i = 0; i < Tx.size(); ++i) {
@@ -1386,6 +1779,9 @@ Status TensorsAreCloseImpl(const Tensor& x, const Tensor& y, double atol,
 
 template <typename T>
 Status TensorsAreEqualImpl(const Tensor& x, const Tensor& y) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_73(mht_73_v, 1782, "", "./tensorflow/compiler/tests/randomized_tests.cc", "TensorsAreEqualImpl");
+
   auto Tx = x.flat<T>();
   auto Ty = y.flat<T>();
   for (int i = 0; i < Tx.size(); ++i) {
@@ -1399,6 +1795,9 @@ Status TensorsAreEqualImpl(const Tensor& x, const Tensor& y) {
 }
 
 Status TensorsAreEqualImplBfloat16(const Tensor& x, const Tensor& y) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_74(mht_74_v, 1798, "", "./tensorflow/compiler/tests/randomized_tests.cc", "TensorsAreEqualImplBfloat16");
+
   auto Tx = x.flat<bfloat16>();
   auto Ty = y.flat<bfloat16>();
   for (int i = 0; i < Tx.size(); ++i) {
@@ -1418,6 +1817,9 @@ Status TensorsAreEqualImplBfloat16(const Tensor& x, const Tensor& y) {
 // tensors the values must match exactly.
 Status TensorsAreClose(const Tensor& a, const Tensor& b, double atol,
                        double rtol) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_75(mht_75_v, 1820, "", "./tensorflow/compiler/tests/randomized_tests.cc", "TensorsAreClose");
+
   if (a.dtype() != b.dtype()) {
     return errors::InvalidArgument(absl::StrCat(
         "Tensors have different types: ", DataTypeString(a.dtype()), " and ",
@@ -1451,6 +1853,9 @@ Status TensorsAreClose(const Tensor& a, const Tensor& b, double atol,
 
 OpTest::TestResult OpTest::ExpectTfAndXlaOutputsAreClose(
     const OpTestBuilder& builder, double atol, double rtol) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_76(mht_76_v, 1856, "", "./tensorflow/compiler/tests/randomized_tests.cc", "OpTest::ExpectTfAndXlaOutputsAreClose");
+
   const std::vector<OpTestBuilder::InputDescription>& inputs = builder.inputs();
   std::vector<Tensor> input_tensors;
   input_tensors.reserve(inputs.size());
@@ -3111,6 +3516,9 @@ TEST_F(OpTest, Lgamma) {
 TEST_F(OpTest, LinSpace) {
   Repeatedly([this]() {
     auto ToScalar = [](DataType type, int x) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_77(mht_77_v, 3519, "", "./tensorflow/compiler/tests/randomized_tests.cc", "lambda");
+
       if (type == DT_INT32) return test::AsScalar<int32>(x);
       return test::AsScalar<int64_t>(x);
     };
@@ -3721,6 +4129,9 @@ TEST_F(OpTest, RandomUniform) {
 TEST_F(OpTest, Range) {
   Repeatedly([this]() {
     auto ToScalar = [](DataType type, int x) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_78(mht_78_v, 4132, "", "./tensorflow/compiler/tests/randomized_tests.cc", "lambda");
+
       if (type == DT_INT32) return test::AsScalar<int32>(x);
       if (type == DT_INT64) return test::AsScalar<int64_t>(x);
       if (type == DT_FLOAT) return test::AsScalar<float>(x);
@@ -4832,6 +5243,9 @@ TEST_F(OpTest, FusedBatchNormTraining) {
 }  // namespace tensorflow
 
 int main(int argc, char** argv) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScompilerPStestsPSrandomized_testsDTcc mht_79(mht_79_v, 5246, "", "./tensorflow/compiler/tests/randomized_tests.cc", "main");
+
   tensorflow::tf_xla_test_device_ptr = new tensorflow::string("GPU:0");
   tensorflow::tf_xla_reference_device_ptr = new tensorflow::string("CPU:0");
   std::vector<tensorflow::Flag> flag_list = {

@@ -17,6 +17,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_COMPILER_XLA_PRIMITIVE_UTIL_H_
 #define TENSORFLOW_COMPILER_XLA_PRIMITIVE_UTIL_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSprimitive_utilDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSprimitive_utilDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSprimitive_utilDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <string>
 #include <type_traits>
@@ -46,6 +214,9 @@ int OverflowExponent(PrimitiveType type);
 // template parameter native type (eg, float).
 template <typename NativeT>
 PrimitiveType NativeToPrimitiveType() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSprimitive_utilDTh mht_0(mht_0_v, 217, "", "./tensorflow/compiler/xla/primitive_util.h", "NativeToPrimitiveType");
+
   // Make the expression depend on the template parameter NativeT so
   // that this compile-time error only appears if this function is
   // instantiated with some concrete type that is not specialized
@@ -60,80 +231,125 @@ PrimitiveType NativeToPrimitiveType() {
 // header.
 template <>
 inline PrimitiveType NativeToPrimitiveType<bool>() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSprimitive_utilDTh mht_1(mht_1_v, 234, "", "./tensorflow/compiler/xla/primitive_util.h", "NativeToPrimitiveType<bool>");
+
   return PRED;
 }
 
 // Unsigned integer
 template <>
 inline PrimitiveType NativeToPrimitiveType<uint8_t>() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSprimitive_utilDTh mht_2(mht_2_v, 243, "", "./tensorflow/compiler/xla/primitive_util.h", "NativeToPrimitiveType<uint8_t>");
+
   return U8;
 }
 
 template <>
 inline PrimitiveType NativeToPrimitiveType<uint16_t>() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSprimitive_utilDTh mht_3(mht_3_v, 251, "", "./tensorflow/compiler/xla/primitive_util.h", "NativeToPrimitiveType<uint16_t>");
+
   return U16;
 }
 
 template <>
 inline PrimitiveType NativeToPrimitiveType<uint32_t>() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSprimitive_utilDTh mht_4(mht_4_v, 259, "", "./tensorflow/compiler/xla/primitive_util.h", "NativeToPrimitiveType<uint32_t>");
+
   return U32;
 }
 
 template <>
 inline PrimitiveType NativeToPrimitiveType<uint64_t>() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSprimitive_utilDTh mht_5(mht_5_v, 267, "", "./tensorflow/compiler/xla/primitive_util.h", "NativeToPrimitiveType<uint64_t>");
+
   return U64;
 }
 
 // Signed integer
 template <>
 inline PrimitiveType NativeToPrimitiveType<int8_t>() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSprimitive_utilDTh mht_6(mht_6_v, 276, "", "./tensorflow/compiler/xla/primitive_util.h", "NativeToPrimitiveType<int8_t>");
+
   return S8;
 }
 
 template <>
 inline PrimitiveType NativeToPrimitiveType<int16_t>() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSprimitive_utilDTh mht_7(mht_7_v, 284, "", "./tensorflow/compiler/xla/primitive_util.h", "NativeToPrimitiveType<int16_t>");
+
   return S16;
 }
 
 template <>
 inline PrimitiveType NativeToPrimitiveType<int32_t>() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSprimitive_utilDTh mht_8(mht_8_v, 292, "", "./tensorflow/compiler/xla/primitive_util.h", "NativeToPrimitiveType<int32_t>");
+
   return S32;
 }
 
 template <>
 inline PrimitiveType NativeToPrimitiveType<int64_t>() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSprimitive_utilDTh mht_9(mht_9_v, 300, "", "./tensorflow/compiler/xla/primitive_util.h", "NativeToPrimitiveType<int64_t>");
+
   return S64;
 }
 
 // Floating point
 template <>
 inline PrimitiveType NativeToPrimitiveType<float>() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSprimitive_utilDTh mht_10(mht_10_v, 309, "", "./tensorflow/compiler/xla/primitive_util.h", "NativeToPrimitiveType<float>");
+
   return F32;
 }
 
 template <>
 inline PrimitiveType NativeToPrimitiveType<double>() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSprimitive_utilDTh mht_11(mht_11_v, 317, "", "./tensorflow/compiler/xla/primitive_util.h", "NativeToPrimitiveType<double>");
+
   return F64;
 }
 
 template <>
 inline PrimitiveType NativeToPrimitiveType<half>() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSprimitive_utilDTh mht_12(mht_12_v, 325, "", "./tensorflow/compiler/xla/primitive_util.h", "NativeToPrimitiveType<half>");
+
   return F16;
 }
 
 template <>
 inline PrimitiveType NativeToPrimitiveType<bfloat16>() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSprimitive_utilDTh mht_13(mht_13_v, 333, "", "./tensorflow/compiler/xla/primitive_util.h", "NativeToPrimitiveType<bfloat16>");
+
   return BF16;
 }
 
 // Complex
 template <>
 inline PrimitiveType NativeToPrimitiveType<complex64>() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSprimitive_utilDTh mht_14(mht_14_v, 342, "", "./tensorflow/compiler/xla/primitive_util.h", "NativeToPrimitiveType<complex64>");
+
   return C64;
 }
 
 template <>
 inline PrimitiveType NativeToPrimitiveType<complex128>() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSprimitive_utilDTh mht_15(mht_15_v, 350, "", "./tensorflow/compiler/xla/primitive_util.h", "NativeToPrimitiveType<complex128>");
+
   return C128;
 }
 
@@ -168,9 +384,15 @@ PrimitiveType ComplexComponentType(PrimitiveType complex_type);
 // point types; otherwise, checks that they have the same element type
 // and returns it.
 inline PrimitiveType HigherPrecisionType(PrimitiveType a, PrimitiveType b) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSprimitive_utilDTh mht_16(mht_16_v, 387, "", "./tensorflow/compiler/xla/primitive_util.h", "HigherPrecisionType");
+
   // Returns a tuple where the elements are lexicographically ordered in terms
   // of importance.
   auto type_properties = [](PrimitiveType type) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSprimitive_utilDTh mht_17(mht_17_v, 393, "", "./tensorflow/compiler/xla/primitive_util.h", "lambda");
+
     auto component_type =
         IsComplexType(type) ? ComplexComponentType(type) : type;
     return std::make_tuple(
@@ -204,6 +426,9 @@ inline PrimitiveType HigherPrecisionType(PrimitiveType a, PrimitiveType b) {
 // Returns true if a convert from from_type to to_type loses no precision.
 inline bool CastPreservesValues(PrimitiveType from_type,
                                 PrimitiveType to_type) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSprimitive_utilDTh mht_18(mht_18_v, 429, "", "./tensorflow/compiler/xla/primitive_util.h", "CastPreservesValues");
+
   // * -> *
   if (from_type == to_type) {
     return true;

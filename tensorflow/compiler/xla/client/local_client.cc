@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -48,12 +216,18 @@ LocalExecutable::LocalExecutable(std::unique_ptr<Executable> executable,
     : executable_(std::move(executable)),
       backend_(backend),
       build_options_(std::move(build_options)) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc mht_0(mht_0_v, 219, "", "./tensorflow/compiler/xla/client/local_client.cc", "LocalExecutable::LocalExecutable");
+
   CHECK_GE(build_options_.device_ordinal(), 0)
       << "Must have a valid device ordinal that the executable was built for.";
 }
 
 Status LocalExecutable::ValidateExecutionOptions(
     const ExecutableRunOptions& run_options, const Backend& backend) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc mht_1(mht_1_v, 228, "", "./tensorflow/compiler/xla/client/local_client.cc", "LocalExecutable::ValidateExecutionOptions");
+
   if (run_options.stream() != nullptr) {
     if (!run_options.stream()->ok()) {
       return InvalidArgument("stream is uninitialized or in an error state");
@@ -119,6 +293,9 @@ Status LocalExecutable::ValidateExecutionOptions(
 StatusOr<std::pair<ServiceExecutableRunOptions, StreamPool::Ptr>>
 LocalExecutable::RunHelper(const absl::Span<const Shape* const> argument_shapes,
                            ExecutableRunOptions run_options) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc mht_2(mht_2_v, 296, "", "./tensorflow/compiler/xla/client/local_client.cc", "LocalExecutable::RunHelper");
+
   const ComputationLayout& computation_layout =
       executable_->module_config().entry_computation_layout();
 
@@ -175,6 +352,9 @@ LocalExecutable::RunHelper(const absl::Span<const Shape* const> argument_shapes,
 StatusOr<ScopedShapedBuffer> LocalExecutable::Run(
     const absl::Span<const ShapedBuffer* const> arguments,
     ExecutableRunOptions run_options) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc mht_3(mht_3_v, 355, "", "./tensorflow/compiler/xla/client/local_client.cc", "LocalExecutable::Run");
+
   std::vector<const Shape*> argument_shapes;
   argument_shapes.reserve(arguments.size());
   for (const ShapedBuffer* const arg : arguments) {
@@ -188,6 +368,9 @@ StatusOr<ScopedShapedBuffer> LocalExecutable::Run(
 
 StatusOr<ExecutionOutput> LocalExecutable::Run(
     std::vector<ExecutionInput> arguments, ExecutableRunOptions run_options) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc mht_4(mht_4_v, 371, "", "./tensorflow/compiler/xla/client/local_client.cc", "LocalExecutable::Run");
+
   std::vector<const Shape*> argument_shapes;
   argument_shapes.reserve(arguments.size());
   for (const ExecutionInput& arg : arguments) {
@@ -225,10 +408,16 @@ static void DumpOutputsAndSaveSnapshot(const Backend* backend,
                                        const ShapedBuffer& outputs,
                                        std::shared_ptr<HloSnapshot> snapshot,
                                        se::Stream* stream) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc mht_5(mht_5_v, 411, "", "./tensorflow/compiler/xla/client/local_client.cc", "DumpOutputsAndSaveSnapshot");
+
   auto literal = std::make_shared<Literal>(outputs.on_host_shape());
   backend->transfer_manager()->TransferLiteralFromDevice(
       stream, outputs, literal.get(),
       [snapshot{std::move(snapshot)}, literal](Status status) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc mht_6(mht_6_v, 418, "", "./tensorflow/compiler/xla/client/local_client.cc", "lambda");
+
         if (status.ok()) {
           *snapshot->mutable_result() = literal->ToProto();
         } else {
@@ -243,6 +432,9 @@ static void DumpOutputsAndSaveSnapshot(const Backend* backend,
 StatusOr<ScopedShapedBuffer> LocalExecutable::RunAsync(
     const absl::Span<const ShapedBuffer* const> arguments,
     ExecutableRunOptions run_options) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc mht_7(mht_7_v, 435, "", "./tensorflow/compiler/xla/client/local_client.cc", "LocalExecutable::RunAsync");
+
   std::vector<const Shape*> argument_shapes;
   argument_shapes.reserve(arguments.size());
   for (const ShapedBuffer* const arg : arguments) {
@@ -271,6 +463,9 @@ StatusOr<ScopedShapedBuffer> LocalExecutable::RunAsync(
 
 static ShapedBuffer MaybeOwningShapeTreeToShapedBuffer(
     const ShapeTree<MaybeOwningDeviceMemory>& tree, int device_ordinal) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc mht_8(mht_8_v, 466, "", "./tensorflow/compiler/xla/client/local_client.cc", "MaybeOwningShapeTreeToShapedBuffer");
+
   ShapedBuffer result(tree.shape(), device_ordinal);
   auto it = tree.begin();
   auto out_it = result.buffers().begin();
@@ -283,6 +478,9 @@ static ShapedBuffer MaybeOwningShapeTreeToShapedBuffer(
 StatusOr<ExecutionOutput> LocalExecutable::RunAsync(
     absl::Span<Shape const* const> argument_host_shapes,
     std::vector<ExecutionInput> arguments, ExecutableRunOptions run_options) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc mht_9(mht_9_v, 481, "", "./tensorflow/compiler/xla/client/local_client.cc", "LocalExecutable::RunAsync");
+
   if (argument_host_shapes.size() != arguments.size()) {
     return InvalidArgument(
         "Number of argument host shapes not equal to number of arguments (%d "
@@ -324,6 +522,9 @@ StatusOr<ExecutionOutput> LocalExecutable::RunAsync(
 
 StatusOr<ExecutionOutput> LocalExecutable::RunAsync(
     std::vector<ExecutionInput> arguments, ExecutableRunOptions run_options) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc mht_10(mht_10_v, 525, "", "./tensorflow/compiler/xla/client/local_client.cc", "LocalExecutable::RunAsync");
+
   std::vector<const Shape*> argument_shapes;
   argument_shapes.reserve(arguments.size());
   for (const ExecutionInput& arg : arguments) {
@@ -333,26 +534,44 @@ StatusOr<ExecutionOutput> LocalExecutable::RunAsync(
 }
 
 se::Platform* LocalClient::platform() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc mht_11(mht_11_v, 537, "", "./tensorflow/compiler/xla/client/local_client.cc", "LocalClient::platform");
+
   return local_service_->backend().platform();
 }
 
 int LocalClient::device_count() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc mht_12(mht_12_v, 544, "", "./tensorflow/compiler/xla/client/local_client.cc", "LocalClient::device_count");
+
   return local_service_->backend().device_count();
 }
 
 bool LocalClient::device_ordinal_supported(int device_ordinal) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc mht_13(mht_13_v, 551, "", "./tensorflow/compiler/xla/client/local_client.cc", "LocalClient::device_ordinal_supported");
+
   return local_service_->backend().device_ordinal_supported(device_ordinal);
 }
 
 int LocalClient::default_device_ordinal() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc mht_14(mht_14_v, 558, "", "./tensorflow/compiler/xla/client/local_client.cc", "LocalClient::default_device_ordinal");
+
   return local_service_->backend().default_device_ordinal();
 }
 
 const Backend& LocalClient::backend() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc mht_15(mht_15_v, 565, "", "./tensorflow/compiler/xla/client/local_client.cc", "LocalClient::backend");
+
   return local_service_->backend();
 }
 
 Backend* LocalClient::mutable_backend() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc mht_16(mht_16_v, 572, "", "./tensorflow/compiler/xla/client/local_client.cc", "LocalClient::mutable_backend");
+
   return local_service_->mutable_backend();
 }
 
@@ -388,6 +607,9 @@ StatusOr<std::vector<std::unique_ptr<LocalExecutable>>> LocalClient::Compile(
     const XlaComputation& computation,
     const absl::Span<const Shape* const> argument_layouts,
     const ExecutableBuildOptions& options) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc mht_17(mht_17_v, 610, "", "./tensorflow/compiler/xla/client/local_client.cc", "LocalClient::Compile");
+
   TF_ASSIGN_OR_RETURN(ExecutableBuildOptions updated_options,
                       UpdateBuildOptions(options, default_device_ordinal()));
   TF_ASSIGN_OR_RETURN(std::vector<std::unique_ptr<Executable>> executables,
@@ -411,6 +633,9 @@ LocalClient::CompileAheadOfTime(
     const XlaComputation& computation,
     const absl::Span<const Shape* const> argument_layouts,
     const ExecutableBuildOptions& options) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc mht_18(mht_18_v, 636, "", "./tensorflow/compiler/xla/client/local_client.cc", "LocalClient::CompileAheadOfTime");
+
   TF_ASSIGN_OR_RETURN(ExecutableBuildOptions updated_options,
                       UpdateBuildOptions(options, default_device_ordinal()));
   TF_ASSIGN_OR_RETURN(
@@ -424,6 +649,10 @@ LocalClient::CompileAheadOfTime(
 StatusOr<std::unique_ptr<LocalExecutable>> LocalClient::Load(
     const std::string& serialized_aot_result,
     const ExecutableBuildOptions& options) {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("serialized_aot_result: \"" + serialized_aot_result + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc mht_19(mht_19_v, 653, "", "./tensorflow/compiler/xla/client/local_client.cc", "LocalClient::Load");
+
   TF_ASSIGN_OR_RETURN(ExecutableBuildOptions updated_options,
                       UpdateBuildOptions(options, default_device_ordinal()));
   TF_ASSIGN_OR_RETURN(
@@ -446,6 +675,9 @@ StatusOr<std::unique_ptr<LocalExecutable>> LocalClient::Load(
 StatusOr<ScopedShapedBuffer> LocalClient::LiteralToShapedBuffer(
     const LiteralSlice& literal, int device_ordinal,
     se::DeviceMemoryAllocator* allocator) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc mht_20(mht_20_v, 678, "", "./tensorflow/compiler/xla/client/local_client.cc", "LocalClient::LiteralToShapedBuffer");
+
   if (allocator == nullptr) {
     allocator = backend().memory_allocator();
   }
@@ -461,6 +693,9 @@ StatusOr<ScopedShapedBuffer> LocalClient::LiteralToShapedBuffer(
 
 StatusOr<Literal> LocalClient::ShapedBufferToLiteral(
     const ShapedBuffer& shaped_buffer) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc mht_21(mht_21_v, 696, "", "./tensorflow/compiler/xla/client/local_client.cc", "LocalClient::ShapedBufferToLiteral");
+
   TF_ASSIGN_OR_RETURN(auto stream, mutable_backend()->BorrowStream(
                                        shaped_buffer.device_ordinal()));
   return backend().transfer_manager()->TransferLiteralFromDevice(stream.get(),
@@ -469,11 +704,17 @@ StatusOr<Literal> LocalClient::ShapedBufferToLiteral(
 
 StatusOr<const ShapedBuffer*> LocalClient::GlobalDataToShapedBuffer(
     const GlobalDataHandle& data, int replica_number) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc mht_22(mht_22_v, 707, "", "./tensorflow/compiler/xla/client/local_client.cc", "LocalClient::GlobalDataToShapedBuffer");
+
   return local_service_->GlobalDataToShapedBuffer(data, replica_number);
 }
 
 Status LocalClient::TransferToInfeedLocal(const LiteralSlice& literal,
                                           int device_ordinal) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc mht_23(mht_23_v, 715, "", "./tensorflow/compiler/xla/client/local_client.cc", "LocalClient::TransferToInfeedLocal");
+
   TF_ASSIGN_OR_RETURN(se::StreamExecutor * executor,
                       backend().stream_executor(device_ordinal));
   return backend().transfer_manager()->TransferLiteralToInfeed(executor,
@@ -482,6 +723,9 @@ Status LocalClient::TransferToInfeedLocal(const LiteralSlice& literal,
 
 Status LocalClient::TransferFromOutfeedLocal(int device_ordinal,
                                              MutableBorrowingLiteral literal) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc mht_24(mht_24_v, 726, "", "./tensorflow/compiler/xla/client/local_client.cc", "LocalClient::TransferFromOutfeedLocal");
+
   TF_ASSIGN_OR_RETURN(se::StreamExecutor * executor,
                       backend().stream_executor(device_ordinal));
   return backend().transfer_manager()->TransferLiteralFromOutfeed(executor,
@@ -489,11 +733,17 @@ Status LocalClient::TransferFromOutfeedLocal(int device_ordinal,
 }
 
 StatusOr<int> LocalClient::ReplicaNumberToDeviceOrdinal(int replica_number) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc mht_25(mht_25_v, 736, "", "./tensorflow/compiler/xla/client/local_client.cc", "LocalClient::ReplicaNumberToDeviceOrdinal");
+
   return local_service_->ReplicaNumberToDeviceOrdinal(replica_number);
 }
 
 StatusOr<TransferToServerResponse> LocalClient::TransferToLocalServer(
     const ::xla::BorrowingLiteral& literal, int device_ordinal) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlocal_clientDTcc mht_26(mht_26_v, 744, "", "./tensorflow/compiler/xla/client/local_client.cc", "LocalClient::TransferToLocalServer");
+
   const ::xla::Shape& shape = literal.shape();
 
   TF_ASSIGN_OR_RETURN(::xla::ScopedShapedBuffer shaped_buffer,

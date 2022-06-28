@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -134,9 +302,15 @@ TEST(ModelBuilderTest, ConvertTfLiteTensorToTensorRefFailsForRankGT3) {
 class DelegatedInterpreter {
  public:
   explicit DelegatedInterpreter(int num_nodes) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_0(mht_0_v, 305, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "DelegatedInterpreter");
+
     exec_plan_ = TfLiteIntArrayCreate(num_nodes);
   }
   virtual ~DelegatedInterpreter() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_1(mht_1_v, 311, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "~DelegatedInterpreter");
+
     TfLiteIntArrayFree(exec_plan_);
     for (auto params : delegate_params_) {
       TfLiteIntArrayFree(params.nodes_to_replace);
@@ -147,7 +321,10 @@ class DelegatedInterpreter {
 
   // Get the TfLiteContext to be mocked for swapping out functions that have to
   // be called inside delegate (i.e. in delegate kernel mode).
-  TfLiteContext* context() { return interpreter_.primary_subgraph().context(); }
+  TfLiteContext* context() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_2(mht_2_v, 325, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "context");
+ return interpreter_.primary_subgraph().context(); }
 
   // node(int) and registration(int) are used to implement
   // GetNodeAndRegistration.  We can't implement those using
@@ -160,17 +337,26 @@ class DelegatedInterpreter {
   // the private GetNodeAndRegistration method in Subgraph as public,
   // or making this class a friend of Subgraph.
   TfLiteNode* node(int index) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_3(mht_3_v, 340, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "node");
+
     const std::pair<TfLiteNode, TfLiteRegistration>* node_and_registration =
         interpreter_.primary_subgraph().node_and_registration(index);
     return const_cast<TfLiteNode*>(&node_and_registration->first);
   }
   TfLiteRegistration* registration(int index) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_4(mht_4_v, 348, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "registration");
+
     const std::pair<TfLiteNode, TfLiteRegistration>* node_and_registration =
         interpreter_.primary_subgraph().node_and_registration(index);
     return const_cast<TfLiteRegistration*>(&node_and_registration->second);
   }
 
   TfLiteIntArray* exec_plan() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_5(mht_5_v, 357, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "exec_plan");
+
     // This simulates how TFLite's GetExecutionPlan invalidates previous
     // output before returning new data.
     const int num_nodes = exec_plan_->size;
@@ -181,11 +367,20 @@ class DelegatedInterpreter {
     return exec_plan_;
   }
   TfLiteDelegateParams* add_delegate_params() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_6(mht_6_v, 370, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "add_delegate_params");
+
     delegate_params_.push_back(TfLiteDelegateParams());
     return &delegate_params_.back();
   }
-  TfLiteDelegateParams* delegate_params() { return &delegate_params_.front(); }
-  int num_delegate_params() { return delegate_params_.size(); }
+  TfLiteDelegateParams* delegate_params() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_7(mht_7_v, 377, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "delegate_params");
+ return &delegate_params_.front(); }
+  int num_delegate_params() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_8(mht_8_v, 381, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "num_delegate_params");
+ return delegate_params_.size(); }
 
  protected:
   Interpreter interpreter_;
@@ -204,6 +399,9 @@ class InterpreterFp16 : public DelegatedInterpreter {
   explicit InterpreterFp16(TfLiteBuiltinOperator op,
                            bool const_dequantize_inputs = true)
       : DelegatedInterpreter(3) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_9(mht_9_v, 402, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "InterpreterFp16");
+
     void* builtin_data = malloc(sizeof(int));
     EXPECT_EQ(interpreter_.AddTensors(5), kTfLiteOk);
     EXPECT_EQ(interpreter_.SetInputs({0, 1}), kTfLiteOk);
@@ -230,9 +428,16 @@ class InterpreterFp16 : public DelegatedInterpreter {
     // Add a node that GPU delegate can parse.
     const TfLiteRegistration reg_op0 = {
         [](TfLiteContext* context, const char* buffer, size_t length) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_10(mht_10_v, 432, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
           return reinterpret_cast<void*>(new int(1));
         },
         [](TfLiteContext* context, void* buffer) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_11(mht_11_v, 438, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
           delete reinterpret_cast<int*>(buffer);
         },
         nullptr,
@@ -315,12 +520,18 @@ TEST(ModelBuilderTest, GetOpsToReplaceAcceptsFp16DequantizeNodes) {
   // for similar functions to permit direct calling of GetOpsToReplace.
   context->GetExecutionPlan = [](struct TfLiteContext* context,
                                  TfLiteIntArray** execution_plan) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_12(mht_12_v, 523, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
     *execution_plan = interpreter_fp16_add_op->exec_plan();
     return kTfLiteOk;
   };
   context->GetNodeAndRegistration = [](struct TfLiteContext*, int node_index,
                                        TfLiteNode** node,
                                        TfLiteRegistration** registration) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_13(mht_13_v, 532, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
     *node = interpreter_fp16_add_op->node(node_index);
     *registration = interpreter_fp16_add_op->registration(node_index);
     return kTfLiteOk;
@@ -328,6 +539,9 @@ TEST(ModelBuilderTest, GetOpsToReplaceAcceptsFp16DequantizeNodes) {
   context->PreviewDelegatePartitioning =
       [](struct TfLiteContext* context, const TfLiteIntArray* nodes_to_replace,
          TfLiteDelegateParams** partition_params_array, int* num_partitions) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_14(mht_14_v, 542, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
         // The partitioner should accept only the Add op initially.
         EXPECT_EQ(nodes_to_replace->size, 1);
         // Single partition output.
@@ -372,12 +586,18 @@ TEST(ModelBuilderTest, GetOpsToReplaceRejectsNonConstantFp16DequantizeNodes) {
   // for similar functions to permit direct calling of GetOpsToReplace.
   context->GetExecutionPlan = [](struct TfLiteContext* context,
                                  TfLiteIntArray** execution_plan) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_15(mht_15_v, 589, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
     *execution_plan = interpreter_fp16_non_constant->exec_plan();
     return kTfLiteOk;
   };
   context->GetNodeAndRegistration = [](struct TfLiteContext*, int node_index,
                                        TfLiteNode** node,
                                        TfLiteRegistration** registration) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_16(mht_16_v, 598, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
     *node = interpreter_fp16_non_constant->node(node_index);
     *registration = interpreter_fp16_non_constant->registration(node_index);
     return kTfLiteOk;
@@ -385,6 +605,9 @@ TEST(ModelBuilderTest, GetOpsToReplaceRejectsNonConstantFp16DequantizeNodes) {
   context->PreviewDelegatePartitioning =
       [](struct TfLiteContext* context, const TfLiteIntArray* nodes_to_replace,
          TfLiteDelegateParams** partition_params_array, int* num_partitions) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_17(mht_17_v, 608, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
         // The partitioner should accept only the Add op initially.
         EXPECT_EQ(nodes_to_replace->size, 1);
         // Single partition output.
@@ -435,12 +658,18 @@ TEST(ModelBuilderTest, GetOpsToReplaceRejectsFp16DequantizeNodes) {
   // for similar functions to permit direct calling of GetOpsToReplace.
   context->GetExecutionPlan = [](struct TfLiteContext* context,
                                  TfLiteIntArray** execution_plan) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_18(mht_18_v, 661, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
     *execution_plan = interpreter_fp16_gt_op->exec_plan();
     return kTfLiteOk;
   };
   context->GetNodeAndRegistration = [](struct TfLiteContext*, int node_index,
                                        TfLiteNode** node,
                                        TfLiteRegistration** registration) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_19(mht_19_v, 670, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
     *node = interpreter_fp16_gt_op->node(node_index);
     *registration = interpreter_fp16_gt_op->registration(node_index);
     return kTfLiteOk;
@@ -448,6 +677,9 @@ TEST(ModelBuilderTest, GetOpsToReplaceRejectsFp16DequantizeNodes) {
   context->PreviewDelegatePartitioning =
       [](struct TfLiteContext* context, const TfLiteIntArray* nodes_to_replace,
          TfLiteDelegateParams** partition_params_array, int* num_partitions) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_20(mht_20_v, 680, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
         // No selected nodes.
         EXPECT_EQ(nodes_to_replace->size, 0);
         *partition_params_array = nullptr;
@@ -475,6 +707,9 @@ TEST(ModelBuilderTest, GetOpsToReplaceRejectsFp16DequantizeNodes) {
 class InterpreterFp32 : public DelegatedInterpreter {
  public:
   InterpreterFp32() : DelegatedInterpreter(2) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_21(mht_21_v, 710, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "InterpreterFp32");
+
     void* builtin_data = malloc(sizeof(int));
     EXPECT_EQ(interpreter_.AddTensors(4), kTfLiteOk);
     EXPECT_EQ(interpreter_.SetInputs({0, 2}), kTfLiteOk);
@@ -496,9 +731,16 @@ class InterpreterFp32 : public DelegatedInterpreter {
     // Add a node that GPU delegate can parse.
     const TfLiteRegistration reg_add0 = {
         [](TfLiteContext* context, const char* buffer, size_t length) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_22(mht_22_v, 735, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
           return reinterpret_cast<void*>(new int(1));
         },
         [](TfLiteContext* context, void* buffer) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_23(mht_23_v, 741, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
           delete reinterpret_cast<int*>(buffer);
         },
         nullptr,
@@ -549,12 +791,18 @@ TEST(ModelBuilderTest, GetOpsToReplaceDoesNotPruneUint8) {
   // for similar functions to permit direct calling of GetOpsToReplace.
   context->GetExecutionPlan = [](struct TfLiteContext* context,
                                  TfLiteIntArray** execution_plan) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_24(mht_24_v, 794, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
     *execution_plan = interpreter_fp32->exec_plan();
     return kTfLiteOk;
   };
   context->GetNodeAndRegistration = [](struct TfLiteContext*, int node_index,
                                        TfLiteNode** node,
                                        TfLiteRegistration** registration) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_25(mht_25_v, 803, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
     *node = interpreter_fp32->node(node_index);
     *registration = interpreter_fp32->registration(node_index);
     return kTfLiteOk;
@@ -562,6 +810,9 @@ TEST(ModelBuilderTest, GetOpsToReplaceDoesNotPruneUint8) {
   context->PreviewDelegatePartitioning =
       [](struct TfLiteContext* context, const TfLiteIntArray* nodes_to_replace,
          TfLiteDelegateParams** partition_params_array, int* num_partitions) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_26(mht_26_v, 813, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
         auto params = interpreter_fp32->add_delegate_params();
         params->nodes_to_replace = TfLiteIntArrayCreate(1);
         params->nodes_to_replace->data[0] = 1;
@@ -590,6 +841,9 @@ TEST(ModelBuilderTest, GetOpsToReplaceDoesNotPruneUint8) {
 class Interpreter2Fp32 : public DelegatedInterpreter {
  public:
   Interpreter2Fp32() : DelegatedInterpreter(4) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_27(mht_27_v, 844, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "Interpreter2Fp32");
+
     void* builtin_data = malloc(sizeof(int));
     EXPECT_EQ(interpreter_.AddTensors(8), kTfLiteOk);
     EXPECT_EQ(interpreter_.SetInputs({0, 2, 4, 6}), kTfLiteOk);
@@ -611,9 +865,16 @@ class Interpreter2Fp32 : public DelegatedInterpreter {
     // Add an ADD node that GPU delegate can parse.
     const TfLiteRegistration reg_add0 = {
         [](TfLiteContext* context, const char* buffer, size_t length) {
+   std::vector<std::string> mht_28_v;
+   mht_28_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_28(mht_28_v, 869, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
           return reinterpret_cast<void*>(new int(1));
         },
         [](TfLiteContext* context, void* buffer) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_29(mht_29_v, 875, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
           delete reinterpret_cast<int*>(buffer);
         },
         nullptr,
@@ -642,9 +903,16 @@ class Interpreter2Fp32 : public DelegatedInterpreter {
 
     const TfLiteRegistration reg_add1 = {
         [](TfLiteContext* context, const char* buffer, size_t length) {
+   std::vector<std::string> mht_30_v;
+   mht_30_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_30(mht_30_v, 907, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
           return reinterpret_cast<void*>(new int[2]);
         },
         [](TfLiteContext* context, void* buffer) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_31(mht_31_v, 913, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
           delete reinterpret_cast<int*>(buffer);
         },
         nullptr,
@@ -716,12 +984,18 @@ TEST(ModelBuilderTest, GetOpsToReplaceMultiplePartitions) {
   // for similar functions to permit direct calling of GetOpsToReplace.
   context->GetExecutionPlan = [](struct TfLiteContext* context,
                                  TfLiteIntArray** execution_plan) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_32(mht_32_v, 987, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
     *execution_plan = interpreter2_fp32->exec_plan();
     return kTfLiteOk;
   };
   context->GetNodeAndRegistration = [](struct TfLiteContext*, int node_index,
                                        TfLiteNode** node,
                                        TfLiteRegistration** registration) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_33(mht_33_v, 996, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
     *node = interpreter2_fp32->node(node_index);
     *registration = interpreter2_fp32->registration(node_index);
     return kTfLiteOk;
@@ -729,6 +1003,9 @@ TEST(ModelBuilderTest, GetOpsToReplaceMultiplePartitions) {
   context->PreviewDelegatePartitioning =
       [](struct TfLiteContext* context, const TfLiteIntArray* nodes_to_replace,
          TfLiteDelegateParams** partition_params_array, int* num_partitions) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_34(mht_34_v, 1006, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
         auto params = interpreter2_fp32->add_delegate_params();
         params->nodes_to_replace = TfLiteIntArrayCreate(1);
         params->nodes_to_replace->data[0] = 1;
@@ -768,6 +1045,9 @@ class InterpreterMultiNode : public DelegatedInterpreter {
  public:
   explicit InterpreterMultiNode(bool both_ops_supported = true)
       : DelegatedInterpreter(5) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_35(mht_35_v, 1048, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "InterpreterMultiNode");
+
     void* builtin_data = malloc(sizeof(int));
     EXPECT_EQ(interpreter_.AddTensors(8), kTfLiteOk);
     EXPECT_EQ(interpreter_.SetInputs({0, 1, 2}), kTfLiteOk);
@@ -792,9 +1072,16 @@ class InterpreterMultiNode : public DelegatedInterpreter {
       // Add 2 ADD ops.
       const TfLiteRegistration reg_add0 = {
           [](TfLiteContext* context, const char* buffer, size_t length) {
+   std::vector<std::string> mht_36_v;
+   mht_36_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_36(mht_36_v, 1076, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
             return reinterpret_cast<void*>(new int(1));
           },
           [](TfLiteContext* context, void* buffer) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_37(mht_37_v, 1082, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
             delete reinterpret_cast<int*>(buffer);
           },
           nullptr,
@@ -810,9 +1097,16 @@ class InterpreterMultiNode : public DelegatedInterpreter {
 
       const TfLiteRegistration reg_add1 = {
           [](TfLiteContext* context, const char* buffer, size_t length) {
+   std::vector<std::string> mht_38_v;
+   mht_38_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_38(mht_38_v, 1101, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
             return reinterpret_cast<void*>(new int(1));
           },
           [](TfLiteContext* context, void* buffer) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_39(mht_39_v, 1107, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
             delete reinterpret_cast<int*>(buffer);
           },
           nullptr,
@@ -829,9 +1123,16 @@ class InterpreterMultiNode : public DelegatedInterpreter {
       // Add the GREATER op node that GPU delegate doesn't support.
       const TfLiteRegistration reg_greater = {
           [](TfLiteContext* context, const char* buffer, size_t length) {
+   std::vector<std::string> mht_40_v;
+   mht_40_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_40(mht_40_v, 1127, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
             return reinterpret_cast<void*>(new int(1));
           },
           [](TfLiteContext* context, void* buffer) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_41(mht_41_v, 1133, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
             delete reinterpret_cast<int*>(buffer);
           },
           nullptr,
@@ -848,9 +1149,16 @@ class InterpreterMultiNode : public DelegatedInterpreter {
       // Add the ADD op node that GPU delegate supports.
       const TfLiteRegistration reg_add0 = {
           [](TfLiteContext* context, const char* buffer, size_t length) {
+   std::vector<std::string> mht_42_v;
+   mht_42_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_42(mht_42_v, 1153, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
             return reinterpret_cast<void*>(new int(1));
           },
           [](TfLiteContext* context, void* buffer) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_43(mht_43_v, 1159, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
             delete reinterpret_cast<int*>(buffer);
           },
           nullptr,
@@ -934,12 +1242,18 @@ TEST(ModelBuilderTest,
   // for similar functions to permit direct calling of GetOpsToReplace.
   context->GetExecutionPlan = [](struct TfLiteContext* context,
                                  TfLiteIntArray** execution_plan) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_44(mht_44_v, 1245, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
     *execution_plan = interpreter_mn->exec_plan();
     return kTfLiteOk;
   };
   context->GetNodeAndRegistration = [](struct TfLiteContext*, int node_index,
                                        TfLiteNode** node,
                                        TfLiteRegistration** registration) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_45(mht_45_v, 1254, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
     *node = interpreter_mn->node(node_index);
     *registration = interpreter_mn->registration(node_index);
     return kTfLiteOk;
@@ -947,6 +1261,9 @@ TEST(ModelBuilderTest,
   context->PreviewDelegatePartitioning =
       [](struct TfLiteContext* context, const TfLiteIntArray* nodes_to_replace,
          TfLiteDelegateParams** partition_params_array, int* num_partitions) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_46(mht_46_v, 1264, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
         // The FP16GraphPartitioner should only mark the ADD op as accepted.
         EXPECT_EQ(nodes_to_replace->size, 1);
         EXPECT_EQ(nodes_to_replace->data[0], 4);
@@ -1002,12 +1319,18 @@ TEST(ModelBuilderTest,
   // for similar functions to permit direct calling of GetOpsToReplace.
   context->GetExecutionPlan = [](struct TfLiteContext* context,
                                  TfLiteIntArray** execution_plan) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_47(mht_47_v, 1322, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
     *execution_plan = interpreter_mn2->exec_plan();
     return kTfLiteOk;
   };
   context->GetNodeAndRegistration = [](struct TfLiteContext*, int node_index,
                                        TfLiteNode** node,
                                        TfLiteRegistration** registration) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_48(mht_48_v, 1331, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
     *node = interpreter_mn2->node(node_index);
     *registration = interpreter_mn2->registration(node_index);
     return kTfLiteOk;
@@ -1016,6 +1339,9 @@ TEST(ModelBuilderTest,
   context->PreviewDelegatePartitioning =
       [](struct TfLiteContext* context, const TfLiteIntArray* nodes_to_replace,
          TfLiteDelegateParams** partition_params_array, int* num_partitions) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_49(mht_49_v, 1342, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
         // The FP16GraphPartitioner should only mark both ADD ops as accepted.
         EXPECT_EQ(nodes_to_replace->size, 2);
         EXPECT_EQ(nodes_to_replace->data[0], 3);
@@ -1080,6 +1406,9 @@ TEST(ModelBuilderTest,
 class InterpreterQuantized : public DelegatedInterpreter {
  public:
   InterpreterQuantized() : DelegatedInterpreter(4) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_50(mht_50_v, 1409, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "InterpreterQuantized");
+
     void* builtin_data = malloc(sizeof(int));
     EXPECT_EQ(interpreter_.AddTensors(6), kTfLiteOk);
     EXPECT_EQ(interpreter_.SetInputs({0, 3}), kTfLiteOk);
@@ -1114,9 +1443,16 @@ class InterpreterQuantized : public DelegatedInterpreter {
     // ADD
     const TfLiteRegistration reg_add0 = {
         [](TfLiteContext* context, const char* buffer, size_t length) {
+   std::vector<std::string> mht_51_v;
+   mht_51_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_51(mht_51_v, 1447, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
           return reinterpret_cast<void*>(new int(1));
         },
         [](TfLiteContext* context, void* buffer) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_52(mht_52_v, 1453, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
           delete reinterpret_cast<int*>(buffer);
         },
         nullptr,
@@ -1200,12 +1536,18 @@ TEST(ModelBuilderTest, GetOpsToReplace_AllowQuantOps) {
   // for similar functions to permit direct calling of GetOpsToReplace.
   context->GetExecutionPlan = [](struct TfLiteContext* context,
                                  TfLiteIntArray** execution_plan) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_53(mht_53_v, 1539, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
     *execution_plan = interpreter_quant->exec_plan();
     return kTfLiteOk;
   };
   context->GetNodeAndRegistration = [](struct TfLiteContext*, int node_index,
                                        TfLiteNode** node,
                                        TfLiteRegistration** registration) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_54(mht_54_v, 1548, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
     *node = interpreter_quant->node(node_index);
     *registration = interpreter_quant->registration(node_index);
     return kTfLiteOk;
@@ -1213,6 +1555,9 @@ TEST(ModelBuilderTest, GetOpsToReplace_AllowQuantOps) {
   context->PreviewDelegatePartitioning =
       [](struct TfLiteContext* context, const TfLiteIntArray* nodes_to_replace,
          TfLiteDelegateParams** partition_params_array, int* num_partitions) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_55(mht_55_v, 1558, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
         if (nodes_to_replace->size == 0) {
           *num_partitions = 0;
           return kTfLiteOk;
@@ -1273,12 +1618,18 @@ TEST(ModelBuilderTest, GetOpsToReplaceAcceptsSplitOpCl) {
   // for similar functions to permit direct calling of GetOpsToReplace.
   context->GetExecutionPlan = [](struct TfLiteContext* context,
                                  TfLiteIntArray** execution_plan) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_56(mht_56_v, 1621, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
     *execution_plan = interpreter_fp16_split_op->exec_plan();
     return kTfLiteOk;
   };
   context->GetNodeAndRegistration = [](struct TfLiteContext*, int node_index,
                                        TfLiteNode** node,
                                        TfLiteRegistration** registration) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_57(mht_57_v, 1630, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
     *node = interpreter_fp16_split_op->node(node_index);
     *registration = interpreter_fp16_split_op->registration(node_index);
     return kTfLiteOk;
@@ -1286,6 +1637,9 @@ TEST(ModelBuilderTest, GetOpsToReplaceAcceptsSplitOpCl) {
   context->PreviewDelegatePartitioning =
       [](struct TfLiteContext* context, const TfLiteIntArray* nodes_to_replace,
          TfLiteDelegateParams** partition_params_array, int* num_partitions) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_58(mht_58_v, 1640, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
         // The partitioner should accept only the Add op initially.
         EXPECT_EQ(nodes_to_replace->size, 1);
         // Single partition output.
@@ -1330,12 +1684,18 @@ TEST(ModelBuilderTest, GetOpsToReplaceRejectsSplitOpGl) {
   // for similar functions to permit direct calling of GetOpsToReplace.
   context->GetExecutionPlan = [](struct TfLiteContext* context,
                                  TfLiteIntArray** execution_plan) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_59(mht_59_v, 1687, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
     *execution_plan = interpreter_fp16_split_op2->exec_plan();
     return kTfLiteOk;
   };
   context->GetNodeAndRegistration = [](struct TfLiteContext*, int node_index,
                                        TfLiteNode** node,
                                        TfLiteRegistration** registration) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_60(mht_60_v, 1696, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
     *node = interpreter_fp16_split_op2->node(node_index);
     *registration = interpreter_fp16_split_op2->registration(node_index);
     return kTfLiteOk;
@@ -1343,6 +1703,9 @@ TEST(ModelBuilderTest, GetOpsToReplaceRejectsSplitOpGl) {
   context->PreviewDelegatePartitioning =
       [](struct TfLiteContext* context, const TfLiteIntArray* nodes_to_replace,
          TfLiteDelegateParams** partition_params_array, int* num_partitions) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_61(mht_61_v, 1706, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "lambda");
+
         // No selected nodes.
         EXPECT_EQ(nodes_to_replace->size, 0);
         *partition_params_array = nullptr;
@@ -1376,6 +1739,9 @@ class StubTfLiteContext : public TfLiteContext {
   StubTfLiteContext(const int builtin_code, const int op_version,
                     const int num_inputs)
       : TfLiteContext({0}) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_62(mht_62_v, 1742, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "StubTfLiteContext");
+
     // Stub execution plan
     exec_plan_ = TfLiteIntArrayCreate(3);
     for (int i = 0; i < 3; ++i) exec_plan_->data[i] = i;
@@ -1432,6 +1798,9 @@ class StubTfLiteContext : public TfLiteContext {
     this->GetNodeAndRegistration = StubGetNodeAndRegistration;
   }
   ~StubTfLiteContext() {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_63(mht_63_v, 1801, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "~StubTfLiteContext");
+
     for (auto& node : nodes_) {
       TfLiteIntArrayFree(node.inputs);
       TfLiteIntArrayFree(node.outputs);
@@ -1445,18 +1814,39 @@ class StubTfLiteContext : public TfLiteContext {
     TfLiteIntArrayFree(exec_plan_);
   }
 
-  TfLiteIntArray* exec_plan() const { return exec_plan_; }
-  TfLiteNode* node() { return &nodes_[1]; }
-  TfLiteRegistration* registration() { return &registrations_[1]; }
-  TfLiteNode* node(int node_index) { return &nodes_[node_index]; }
+  TfLiteIntArray* exec_plan() const {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_64(mht_64_v, 1818, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "exec_plan");
+ return exec_plan_; }
+  TfLiteNode* node() {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_65(mht_65_v, 1822, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "node");
+ return &nodes_[1]; }
+  TfLiteRegistration* registration() {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_66(mht_66_v, 1826, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "registration");
+ return &registrations_[1]; }
+  TfLiteNode* node(int node_index) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_67(mht_67_v, 1830, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "node");
+ return &nodes_[node_index]; }
   TfLiteRegistration* registration(int reg_index) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_68(mht_68_v, 1834, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "registration");
+
     return &registrations_[reg_index];
   }
-  TfLiteTensor* tensor(int tensor_index) { return &tensors_[tensor_index]; }
+  TfLiteTensor* tensor(int tensor_index) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_69(mht_69_v, 1840, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "tensor");
+ return &tensors_[tensor_index]; }
 
  private:
   static TfLiteStatus StubGetExecutionPlan(TfLiteContext* context,
                                            TfLiteIntArray** execution_plan) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_70(mht_70_v, 1847, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "StubGetExecutionPlan");
+
     StubTfLiteContext* stub = reinterpret_cast<StubTfLiteContext*>(context);
     *execution_plan = stub->exec_plan();
     return kTfLiteOk;
@@ -1465,6 +1855,9 @@ class StubTfLiteContext : public TfLiteContext {
   static TfLiteStatus StubGetNodeAndRegistration(
       TfLiteContext* context, int node_index, TfLiteNode** node,
       TfLiteRegistration** registration) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSmodel_builder_testDTcc mht_71(mht_71_v, 1858, "", "./tensorflow/lite/delegates/gpu/common/model_builder_test.cc", "StubGetNodeAndRegistration");
+
     StubTfLiteContext* stub = reinterpret_cast<StubTfLiteContext*>(context);
     *node = stub->node(node_index);
     *registration = stub->registration(node_index);

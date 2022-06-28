@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,10 +217,17 @@ using absl::StrJoin;
 
 // Returns true if no element is present in slice more than once.
 bool AllUnique(absl::Span<const int64_t> slice) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_0(mht_0_v, 220, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "AllUnique");
+
   return std::set<int64_t>(slice.begin(), slice.end()).size() == slice.size();
 }
 
 Status ExpectArray(const Shape& shape, absl::string_view op_type) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("op_type: \"" + std::string(op_type.data(), op_type.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_1(mht_1_v, 228, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ExpectArray");
+
   if (!shape.IsArray()) {
     return InvalidArgument("Expected array argument for %s, but got %s.",
                            std::string(op_type), ShapeUtil::HumanString(shape));
@@ -64,6 +239,9 @@ Status VerifyReducerShape(const ProgramShape& reducer_shape,
                           absl::Span<const Shape* const> init_value_shapes,
                           absl::Span<const PrimitiveType> input_element_types,
                           int64_t inputs) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_2(mht_2_v, 242, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "VerifyReducerShape");
+
   if (reducer_shape.parameters_size() != inputs * 2) {
     return InvalidArgument(
         "Reduction function must take %d parameters, but "
@@ -228,11 +406,17 @@ StatusOr<PrimitiveType> MaybeUpcast(
 
 /* static */ StatusOr<Shape> ShapeInference::InferUnaryOpShape(
     HloOpcode opcode, const HloInstruction* operand) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_3(mht_3_v, 409, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferUnaryOpShape");
+
   return InferUnaryOpShape(opcode, operand->shape());
 }
 
 /* static */ StatusOr<Shape> ShapeInference::InferUnaryOpShape(
     HloOpcode opcode, const Shape& shape) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_4(mht_4_v, 417, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferUnaryOpShape");
+
   // There is no copy operation at the proto level, so handle copy explicitly.
   // A domain shape is the same as the input one.
   if (opcode == HloOpcode::kCopy || opcode == HloOpcode::kDomain) {
@@ -361,6 +545,9 @@ StatusOr<PrimitiveType> MaybeUpcast(
 
 /* static */ StatusOr<Shape> ShapeInference::InferConcatOpShape(
     absl::Span<const Shape* const> arg_shapes, const int64_t dimension) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_5(mht_5_v, 548, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferConcatOpShape");
+
   if (arg_shapes.empty()) {
     return InvalidArgument("Concatenate expects at least one argument.");
   }
@@ -430,6 +617,9 @@ StatusOr<PrimitiveType> MaybeUpcast(
 
 /* static */ StatusOr<Shape> ShapeInference::InferConvertShape(
     const Shape& operand_shape, PrimitiveType new_element_type) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_6(mht_6_v, 620, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferConvertShape");
+
   auto old_element_type = operand_shape.element_type();
   if (primitive_util::IsComplexType(old_element_type) &&
       !primitive_util::IsComplexType(new_element_type)) {
@@ -454,6 +644,9 @@ StatusOr<PrimitiveType> MaybeUpcast(
 
 /* static */ StatusOr<Shape> ShapeInference::InferBitcastConvertShape(
     const Shape& operand_shape, PrimitiveType new_element_type) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_7(mht_7_v, 647, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferBitcastConvertShape");
+
   auto old_element_type = operand_shape.element_type();
   if (primitive_util::IsComplexType(old_element_type) !=
       primitive_util::IsComplexType(new_element_type)) {
@@ -509,6 +702,9 @@ StatusOr<PrimitiveType> MaybeUpcast(
 /* static */ StatusOr<Shape> ShapeInference::InferReducePrecisionShape(
     const Shape& operand_shape, const int exponent_bits,
     const int mantissa_bits) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_8(mht_8_v, 705, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferReducePrecisionShape");
+
   if (!ShapeUtil::ElementIsFloating(operand_shape)) {
     return InvalidArgument(
         "Expected element type in shape to be floating point for "
@@ -533,6 +729,9 @@ StatusOr<PrimitiveType> MaybeUpcast(
 /* static */ StatusOr<Shape> ShapeInference::InferPadShape(
     const Shape& operand_shape, const Shape& padding_value_shape,
     const PaddingConfig& padding_config) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_9(mht_9_v, 732, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferPadShape");
+
   if (!operand_shape.IsArray()) {
     return InvalidArgument(
         "Pad operation does not support tuple-shape operands.");
@@ -601,6 +800,9 @@ namespace {
 Status ValidateDotDimensionNumbers(
     const Shape& lhs, const Shape& rhs,
     const DotDimensionNumbers& dimension_numbers) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_10(mht_10_v, 803, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ValidateDotDimensionNumbers");
+
   // Check that dimension numbers are in range.
   auto dims_in_range = [](const int64_t rank,
                           absl::Span<const int64_t> contracting_dims,
@@ -653,6 +855,9 @@ Status ValidateDotDimensionNumbers(
     const Shape& lhs, const Shape& rhs,
     const DotDimensionNumbers& dimension_numbers,
     absl::optional<PrimitiveType> preferred_element_type) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_11(mht_11_v, 858, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferDotOpShape");
+
   TF_RETURN_IF_ERROR(ExpectArray(lhs, "lhs of dot"));
   TF_RETURN_IF_ERROR(ExpectArray(rhs, "rhs of dot"));
 
@@ -752,6 +957,9 @@ Status ValidateDotDimensionNumbers(
 ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
                                                        const Shape& lhs,
                                                        const Shape& rhs) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_12(mht_12_v, 960, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferDegenerateDimensionBroadcastShape");
+
   TF_RET_CHECK(lhs.rank() == rhs.rank());
 
   // The shapes have to be compatible. That is, if some dimension d has a
@@ -789,6 +997,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 /* static */ StatusOr<Shape> ShapeInference::InferInDimBroadcastShape(
     const Shape& smaller_shape, const Shape& larger_shape,
     absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_13(mht_13_v, 1000, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferInDimBroadcastShape");
+
   if (broadcast_dimensions.empty() && !ShapeUtil::IsScalar(smaller_shape)) {
     // Reject "magic" inference for binops on different shapes, requiring
     // the user to provide an explicit broadcast dimension in this case.
@@ -906,6 +1117,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 /* static */ StatusOr<Shape> ShapeInference::InferElementwiseBinaryOpShape(
     HloOpcode operation, const Shape& lhs, const Shape& rhs,
     absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_14(mht_14_v, 1120, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferElementwiseBinaryOpShape");
+
   TF_RETURN_IF_ERROR(ExpectArray(lhs, "lhs of elementwise binary operation"));
   TF_RETURN_IF_ERROR(ExpectArray(rhs, "rhs of elementwise binary operation"));
 
@@ -961,6 +1175,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 
 /* static */ StatusOr<Shape> ShapeInference::InferBinaryOpShape(
     HloOpcode opcode, const HloInstruction* lhs, const HloInstruction* rhs) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_15(mht_15_v, 1178, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferBinaryOpShape");
+
   return InferBinaryOpShape(opcode, lhs->shape(), rhs->shape(),
                             /*broadcast_dimensions=*/{});
 }
@@ -968,6 +1185,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 /* static */ StatusOr<Shape> ShapeInference::InferBinaryOpShape(
     HloOpcode opcode, const Shape& lhs, const Shape& rhs,
     absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_16(mht_16_v, 1188, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferBinaryOpShape");
+
   VLOG(2) << StrFormat(
       "inferring shape for <%s>(%s, %s) with broadcast_dimensions={%s}",
       HloOpcodeString(opcode), ShapeUtil::HumanStringWithLayout(lhs),
@@ -1053,11 +1273,17 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 /* static */ StatusOr<Shape> ShapeInference::InferTernaryOpShape(
     HloOpcode opcode, const HloInstruction* lhs, const HloInstruction* rhs,
     const HloInstruction* ehs) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_17(mht_17_v, 1276, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferTernaryOpShape");
+
   return InferTernaryOpShape(opcode, lhs->shape(), rhs->shape(), ehs->shape());
 }
 
 /* static */ StatusOr<Shape> ShapeInference::InferTernaryOpShape(
     HloOpcode opcode, const Shape& lhs, const Shape& rhs, const Shape& ehs) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_18(mht_18_v, 1284, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferTernaryOpShape");
+
   TF_DCHECK_OK(ShapeUtil::ValidateShapeWithOptionalLayout(lhs));
   TF_DCHECK_OK(ShapeUtil::ValidateShapeWithOptionalLayout(rhs));
   TF_DCHECK_OK(ShapeUtil::ValidateShapeWithOptionalLayout(ehs));
@@ -1075,6 +1301,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 
 /* static */ StatusOr<Shape> ShapeInference::InferVariadicOpShape(
     HloOpcode opcode, absl::Span<const HloInstruction* const> operands) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_19(mht_19_v, 1304, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferVariadicOpShape");
+
   std::vector<const Shape*> operand_shapes;
   operand_shapes.reserve(operands.size());
   for (const HloInstruction* operand : operands) {
@@ -1085,6 +1314,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 
 /* static */ StatusOr<Shape> ShapeInference::InferVariadicOpShape(
     HloOpcode opcode, absl::Span<const Shape* const> operand_shapes) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_20(mht_20_v, 1317, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferVariadicOpShape");
+
   for (const Shape* shape : operand_shapes) {
     TF_DCHECK_OK(ShapeUtil::ValidateShapeWithOptionalLayout(*shape));
   }
@@ -1128,6 +1360,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 /* static */ StatusOr<Shape> ShapeInference::InferMapShape(
     absl::Span<const Shape* const> arg_shapes, const ProgramShape& to_apply,
     absl::Span<const int64_t> dimensions) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_21(mht_21_v, 1363, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferMapShape");
+
   if (arg_shapes.empty()) {
     return InvalidArgument("Map expects at least one argument.");
   }
@@ -1223,6 +1458,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 /* static */ StatusOr<Shape> ShapeInference::InferBatchNormTrainingShape(
     const Shape& operand_shape, const Shape& scale_shape,
     const Shape& offset_shape, int64_t feature_index) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_22(mht_22_v, 1461, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferBatchNormTrainingShape");
+
   TF_RETURN_IF_ERROR(
       ExpectArray(operand_shape, "operand of batch norm training"));
   TF_RETURN_IF_ERROR(
@@ -1329,6 +1567,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
     const Shape& operand_shape, const Shape& scale_shape,
     const Shape& offset_shape, const Shape& mean_shape,
     const Shape& variance_shape, int64_t feature_index) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_23(mht_23_v, 1570, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferBatchNormInferenceShape");
+
   TF_RETURN_IF_ERROR(
       ExpectArray(operand_shape, "operand of batch norm inference"));
   TF_RETURN_IF_ERROR(
@@ -1473,6 +1714,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
     const Shape& operand_shape, const Shape& scale_shape,
     const Shape& mean_shape, const Shape& var_shape,
     const Shape& output_grad_shape, int64_t feature_index) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_24(mht_24_v, 1717, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferBatchNormGradShape");
+
   TF_RETURN_IF_ERROR(ExpectArray(operand_shape, "operand of batch norm grad"));
   TF_RETURN_IF_ERROR(
       ExpectArray(scale_shape, "scale input of batch norm grad"));
@@ -1630,6 +1874,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
     int64_t batch_group_count, const Window& window,
     const ConvolutionDimensionNumbers& dnums,
     absl::optional<PrimitiveType> preferred_element_type) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_25(mht_25_v, 1877, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferConvolveShape");
+
   TF_RETURN_IF_ERROR(ExpectArray(lhs, "lhs of convolution"));
   TF_RETURN_IF_ERROR(ExpectArray(rhs, "rhs of convolution"));
 
@@ -1717,6 +1964,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
   std::iota(expected_dnums.begin(), expected_dnums.end(), 0);
 
   const auto in_range = [num_dims](int64_t i) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_26(mht_26_v, 1967, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "lambda");
+
     return 0 <= i && i < num_dims;
   };
   if (!absl::c_all_of(input_dnums, in_range) ||
@@ -1888,6 +2138,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 /* static */ StatusOr<Shape> ShapeInference::InferFftShape(
     const Shape& in, const FftType fft_type,
     const absl::Span<const int64_t> fft_length) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_27(mht_27_v, 2141, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferFftShape");
+
   const int64_t fft_rank = fft_length.size();
   if (fft_rank < 1 || fft_rank > 3) {
     return InvalidArgument("FFT only supports ranks 1-3; got %d.", fft_rank);
@@ -1976,6 +2229,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 
 /* static */ StatusOr<Shape> ShapeInference::InferTriangularSolveShape(
     const Shape& a, const Shape& b, const TriangularSolveOptions& options) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_28(mht_28_v, 2232, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferTriangularSolveShape");
+
   if ((!ShapeUtil::ElementIsFloating(a) && !ShapeUtil::ElementIsComplex(a)) ||
       a.element_type() != b.element_type()) {
     return InvalidArgument(
@@ -2027,6 +2283,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 
 /* static */ StatusOr<Shape> ShapeInference::InferCholeskyShape(
     const Shape& a) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_29(mht_29_v, 2286, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferCholeskyShape");
+
   if (!ShapeUtil::ElementIsFloating(a) && !ShapeUtil::ElementIsComplex(a)) {
     return InvalidArgument(
         "Expected element type in shape to be floating or complex for "
@@ -2049,6 +2308,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 /* static */ StatusOr<Shape> ShapeInference::InferAllGatherShape(
     absl::Span<const Shape* const> operand_shapes, int64_t all_gather_dimension,
     int64_t shard_count) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_30(mht_30_v, 2311, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferAllGatherShape");
+
   TF_RET_CHECK(all_gather_dimension >= 0);
   TF_RET_CHECK(shard_count > 0);
 
@@ -2073,6 +2335,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 /* static */ StatusOr<Shape> ShapeInference::InferAllGatherStartShape(
     absl::Span<const Shape* const> operand_shapes, int64_t all_gather_dimension,
     int64_t shard_count) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_31(mht_31_v, 2338, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferAllGatherStartShape");
+
   TF_ASSIGN_OR_RETURN(
       Shape ag_shape,
       InferAllGatherShape(operand_shapes, all_gather_dimension, shard_count));
@@ -2092,11 +2357,17 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 
 /* static */ StatusOr<Shape> ShapeInference::InferAllGatherDoneShape(
     const Shape& all_gather_start_shape) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_32(mht_32_v, 2360, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferAllGatherDoneShape");
+
   return ShapeUtil::GetTupleElementShape(all_gather_start_shape, 1);
 }
 
 /* static */ StatusOr<Shape> ShapeInference::InferAllReduceShape(
     absl::Span<const Shape* const> operand_shapes) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_33(mht_33_v, 2368, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferAllReduceShape");
+
   for (const Shape* operand_shape : operand_shapes) {
     TF_RETURN_IF_ERROR(
         ExpectArray(*operand_shape, "operand of cross replica sum"));
@@ -2115,6 +2386,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 /* static */ StatusOr<Shape> ShapeInference::InferReduceScatterShape(
     absl::Span<const Shape* const> operand_shapes, int64_t scatter_dimension,
     int64_t shard_count) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_34(mht_34_v, 2389, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferReduceScatterShape");
+
   TF_RET_CHECK(scatter_dimension >= 0);
   TF_RET_CHECK(shard_count > 0);
 
@@ -2149,11 +2423,17 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 
 /* static */ StatusOr<Shape> ShapeInference::InferAllReduceStartShape(
     absl::Span<const Shape* const> operand_shapes) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_35(mht_35_v, 2426, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferAllReduceStartShape");
+
   return InferAllReduceShape(operand_shapes);
 }
 
 /* static */ StatusOr<Shape> ShapeInference::InferAllReduceDoneShape(
     const Shape& operand_shape) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_36(mht_36_v, 2434, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferAllReduceDoneShape");
+
   // The returned value from AllReduceDone is the operand forwarded.
   return operand_shape;
 }
@@ -2161,6 +2441,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 /* static */ StatusOr<Shape> ShapeInference::InferAllToAllShape(
     const Shape& shape, int64_t split_dimension, int64_t concat_dimension,
     int64_t split_count) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_37(mht_37_v, 2444, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferAllToAllShape");
+
   TF_RET_CHECK(split_count > 0);
   if (split_dimension >= shape.rank() || split_dimension < 0) {
     return InvalidArgument(
@@ -2187,6 +2470,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 
 /* static */ StatusOr<Shape> ShapeInference::InferAllToAllTupleShape(
     absl::Span<const Shape* const> operand_shapes) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_38(mht_38_v, 2473, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferAllToAllTupleShape");
+
   // An Alltoall HLO instruction receives N operands (with the same shape) and
   // returns a tuple that contains N array shapes.
   TF_RET_CHECK(!operand_shapes.empty());
@@ -2206,6 +2492,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 
 /* static */ StatusOr<Shape> ShapeInference::InferCollectivePermuteShape(
     absl::Span<const Shape* const> operand_shapes) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_39(mht_39_v, 2495, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferCollectivePermuteShape");
+
   if (operand_shapes.size() == 1) {
     TF_RETURN_IF_ERROR(
         ExpectArray(*(operand_shapes[0]), "operand of collective-permute"));
@@ -2218,6 +2507,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 
 /* static */ StatusOr<Shape> ShapeInference::InferCollectivePermuteStartShape(
     absl::Span<const Shape* const> operand_shapes) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_40(mht_40_v, 2510, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferCollectivePermuteStartShape");
+
   if (operand_shapes.size() == 1) {
     TF_RETURN_IF_ERROR(ExpectArray(*(operand_shapes[0]),
                                    "operand of collective-permute-start"));
@@ -2234,6 +2526,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 
 /* static */ StatusOr<Shape> ShapeInference::InferCollectivePermuteDoneShape(
     const Shape& operand_shape) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_41(mht_41_v, 2529, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferCollectivePermuteDoneShape");
+
   TF_RET_CHECK(operand_shape.IsTuple());
   return ShapeUtil::GetTupleElementShape(operand_shape, 1);
 }
@@ -2242,6 +2537,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
     absl::Span<const Shape* const> arg_shapes,
     absl::Span<const int64_t> dimensions_to_reduce,
     const ProgramShape& to_apply) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_42(mht_42_v, 2540, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferReduceShape");
+
   if (arg_shapes.empty()) {
     return InvalidArgument("Reduce must have at least 2 arguments, has 0");
   }
@@ -2318,6 +2616,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 /* static */ StatusOr<Shape> ShapeInference::InferReduceWindowShape(
     const Shape& operand_shape, const Shape& init_value_shape,
     const Window& window, const ProgramShape& to_apply_shape) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_43(mht_43_v, 2619, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferReduceWindowShape");
+
   TF_RETURN_IF_ERROR(VerifyReducerShape(to_apply_shape, {&init_value_shape},
                                         {operand_shape.element_type()},
                                         /*inputs=*/1));
@@ -2328,6 +2629,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
     absl::Span<const Shape* const> operands,
     absl::Span<const Shape* const> init_values, const Window& window,
     const ProgramShape& to_apply_shape) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_44(mht_44_v, 2632, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferReduceWindowShape");
+
   auto number_of_input = operands.size();
   // Check that all of the reduced tensors have the same dimensions. The element
   // types may be different.
@@ -2368,6 +2672,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 /* static */ StatusOr<Shape> ShapeInference::InferReduceWindowShape(
     const Shape& operand_shape, const Shape& init_value_shape,
     const Window& window) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_45(mht_45_v, 2675, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferReduceWindowShape");
+
   TF_RETURN_IF_ERROR(ExpectArray(operand_shape, "operand of reduce-window"));
   return InferWindowOutputShape(operand_shape, window,
                                 init_value_shape.element_type());
@@ -2377,6 +2684,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
     const Shape& operand_shape, const ProgramShape& select_shape,
     const Window& window, const Shape& source_shape,
     const Shape& init_value_shape, const ProgramShape& scatter_shape) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_46(mht_46_v, 2687, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferSelectAndScatterShape");
+
   TF_RETURN_IF_ERROR(
       ExpectArray(operand_shape, "operand of select-and-scatter"));
 
@@ -2434,6 +2744,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 
 /* static */ StatusOr<Shape> ShapeInference::InferGetDimensionSizeShape(
     const Shape& shape, int64_t dimension) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_47(mht_47_v, 2747, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferGetDimensionSizeShape");
+
   if (dimension < 0 || dimension >= shape.rank()) {
     return InvalidArgument("GetDimensionSize dimension out of bounds: %d.",
                            dimension);
@@ -2453,6 +2766,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 
 /* static */ StatusOr<Shape> ShapeInference::InferSetDimensionSizeShape(
     const Shape& shape, const Shape& val_shape, int64_t dimension) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_48(mht_48_v, 2769, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferSetDimensionSizeShape");
+
   if (dimension < 0 || dimension >= shape.rank()) {
     return InvalidArgument("SetDimensionSize dimension out of bounds: %d.",
                            dimension);
@@ -2483,7 +2799,14 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
     absl::Span<const std::pair<int64_t, int64_t>> padding,
     absl::Span<const int64_t> lhs_dilation,
     absl::Span<const int64_t> rhs_dilation) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_49(mht_49_v, 2802, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferWindowFromDimensions");
+
   const auto verify_size = [&](const size_t x, const char* x_name) {
+   std::vector<std::string> mht_50_v;
+   mht_50_v.push_back("x_name: \"" + (x_name == nullptr ? std::string("nullptr") : std::string((char*)x_name)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_50(mht_50_v, 2807, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "lambda");
+
     if (x == 0 || x == window_dimensions.size()) {
       return Status::OK();
     } else {
@@ -2534,7 +2857,14 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 /* static */ StatusOr<Shape> ShapeInference::InferSliceShape(
     const Shape& arg, absl::Span<const int64_t> starts,
     absl::Span<const int64_t> limits, absl::Span<const int64_t> strides) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_51(mht_51_v, 2860, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferSliceShape");
+
   auto error = [&](const std::string& message) {
+   std::vector<std::string> mht_52_v;
+   mht_52_v.push_back("message: \"" + message + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_52(mht_52_v, 2865, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "lambda");
+
     return InvalidArgument(
         "%s in slice operation; argument shape: %s; starts: {%s}; limits: "
         "{%s}; strides: {%s}.",
@@ -2607,6 +2937,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 /* static */ StatusOr<Shape> ShapeInference::InferDynamicSliceShape(
     const Shape& operand_shape, absl::Span<const Shape> start_index_shapes,
     absl::Span<const int64_t> slice_sizes, bool allow_scalar_indices) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_53(mht_53_v, 2940, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferDynamicSliceShape");
+
   TF_RETURN_IF_ERROR(ExpectArray(operand_shape, "operand of dynamic slice"));
   auto number_of_indices = start_index_shapes.size();
   // TODO(b/118437727): Remove this path.
@@ -2709,6 +3042,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 /* static */ StatusOr<Shape> ShapeInference::InferDynamicUpdateSliceShape(
     const Shape& operand_shape, const Shape& update_shape,
     absl::Span<const Shape> start_index_shapes, bool allow_scalar_indices) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_54(mht_54_v, 3045, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferDynamicUpdateSliceShape");
+
   TF_RETURN_IF_ERROR(
       ExpectArray(operand_shape, "operand of dynamic update slice"));
   TF_RETURN_IF_ERROR(
@@ -2845,6 +3181,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 
 /*static */ StatusOr<Shape> ShapeInference::InferReverseShape(
     const Shape& operand_shape, absl::Span<const int64_t> dimensions) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_55(mht_55_v, 3184, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferReverseShape");
+
   TF_RETURN_IF_ERROR(ExpectArray(operand_shape, "operand of reverse"));
   if (!AllUnique(dimensions)) {
     return InvalidArgument("a dimension number is duplicated in reverse");
@@ -2861,6 +3200,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 
 /* static */ StatusOr<Shape> ShapeInference::InferGetTupleElementShape(
     const Shape& arg, int64_t index) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_56(mht_56_v, 3203, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferGetTupleElementShape");
+
   if (!arg.IsTuple()) {
     return InvalidArgument(
         "Cannot infer shape: attempting to index into non-tuple: %s.",
@@ -2880,6 +3222,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 /* static */ StatusOr<Shape> ShapeInference::InferWhileShape(
     const ProgramShape& condition, const ProgramShape& body,
     const Shape& init) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_57(mht_57_v, 3225, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferWhileShape");
+
   // Check the number of parameters for given computations.
   if (condition.parameters_size() != 1) {
     return InvalidArgument("Condition must take 1 arguments; got %d.",
@@ -2891,6 +3236,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
   }
 
   auto shape_string = [&]() {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_58(mht_58_v, 3239, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "lambda");
+
     return StrFormat(
         "Condition: %s; body: %s; init: %s.", ShapeUtil::HumanString(condition),
         ShapeUtil::HumanString(body), ShapeUtil::HumanString(init));
@@ -2918,6 +3266,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
     const Shape& branch_index,
     absl::Span<const ProgramShape> branch_computations,
     absl::Span<const Shape> branch_operands) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_59(mht_59_v, 3269, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferConditionalShape");
+
   if (!ShapeUtil::Compatible(branch_index, ShapeUtil::MakeShape(PRED, {})) &&
       !ShapeUtil::Compatible(branch_index, ShapeUtil::MakeShape(S32, {}))) {
     return InvalidArgument("branch_index must be bool or int32_t; got %s.",
@@ -2939,6 +3290,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
     if (!ShapeUtil::Compatible(branch_computations[j].parameters(0),
                                branch_operands[j])) {
       auto shape_string = [&]() {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_60(mht_60_v, 3293, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "lambda");
+
         return StrFormat("operand: %s; computation: %s",
                          ShapeUtil::HumanString(branch_operands[j]),
                          ShapeUtil::HumanString(branch_computations[j]));
@@ -2952,6 +3306,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
     if (!ShapeUtil::Compatible(branch_computations[0].result(),
                                branch_computations[j].result())) {
       auto shape_string = [&]() {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_61(mht_61_v, 3309, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "lambda");
+
         return StrFormat(
             "branch 0 computation result: %s; branch %d computation result: %s",
             ShapeUtil::HumanString(branch_computations[0].result()), j,
@@ -2991,6 +3348,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 
 /* static */ StatusOr<Shape> ShapeInference::InferBroadcastShape(
     const Shape& operand, absl::Span<const int64_t> broadcast_sizes) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_62(mht_62_v, 3351, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferBroadcastShape");
+
   TF_RETURN_IF_ERROR(ExpectArray(operand, "operand of broadcast"));
   for (int64_t size : broadcast_sizes) {
     if (size < 0) {
@@ -3016,6 +3376,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 /* static */ StatusOr<Shape> ShapeInference::InferBroadcastShape(
     const Shape& operand_shape, const Shape& output_shape,
     absl::Span<const int64_t> broadcast_dimensions) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_63(mht_63_v, 3379, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferBroadcastShape");
+
   TF_RETURN_IF_ERROR(ExpectArray(operand_shape, "operand of broadcast"));
   TF_RETURN_IF_ERROR(ExpectArray(output_shape, "operand of broadcast"));
   const int64_t operand_rank = operand_shape.rank();
@@ -3069,6 +3432,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
     const Shape& operand, absl::Span<const Shape* const> dim_size_shapes,
     absl::Span<const int64_t> new_size_bounds,
     const std::vector<bool>& dims_are_dynamic) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_64(mht_64_v, 3435, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferDynamicReshapeShape");
+
   if (new_size_bounds.size() != dims_are_dynamic.size()) {
     return InvalidArgument(
         "DynamicReshape has to have the same number of elements in new_sizes "
@@ -3100,6 +3466,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 /* static */ StatusOr<Shape> ShapeInference::InferReshapeShape(
     const Shape& operand, absl::Span<const int64_t> dimensions,
     absl::Span<const int64_t> new_sizes, int64_t inferred_dimension) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_65(mht_65_v, 3469, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferReshapeShape");
+
   TF_RETURN_IF_ERROR(ExpectArray(operand, "reshape"));
 
   Shape inferred_shape =
@@ -3251,6 +3620,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 
 /* static */ StatusOr<Shape> ShapeInference::InferTransposeShape(
     const Shape& operand, absl::Span<const int64_t> dimensions) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_66(mht_66_v, 3623, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferTransposeShape");
+
   TF_RETURN_IF_ERROR(ExpectArray(operand, "transpose"));
 
   if (dimensions.size() != operand.rank() || !IsPermutation(dimensions)) {
@@ -3268,6 +3640,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 
 /* static */ StatusOr<Shape> ShapeInference::InferClampShape(
     const Shape& min, const Shape& operand, const Shape& max) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_67(mht_67_v, 3643, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferClampShape");
+
   TF_RETURN_IF_ERROR(ExpectArray(min, "clamp min"));
   TF_RETURN_IF_ERROR(ExpectArray(operand, "clamp operand"));
   TF_RETURN_IF_ERROR(ExpectArray(max, "clamp max"));
@@ -3283,6 +3658,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 
 /* static */ StatusOr<Shape> ShapeInference::InferSelectShape(
     const Shape& pred, const Shape& on_true, const Shape& on_false) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_68(mht_68_v, 3661, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferSelectShape");
+
   TF_RETURN_IF_ERROR(ExpectArray(pred, "select pred"));
   TF_RETURN_IF_ERROR(ExpectArray(on_true, "select on-true"));
   TF_RETURN_IF_ERROR(ExpectArray(on_false, "select on-false"));
@@ -3313,6 +3691,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 
 /* static */ StatusOr<Shape> ShapeInference::InferTupleSelectShape(
     const Shape& pred, const Shape& on_true, const Shape& on_false) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_69(mht_69_v, 3694, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferTupleSelectShape");
+
   // Select only defines the top-level buffer, so if it's a tuple, the two
   // input must match exactly.
   if (!ShapeUtil::Compatible(on_true, on_false)) {
@@ -3335,6 +3716,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 
 /* static */ StatusOr<Shape> ShapeInference::InferCallShape(
     absl::Span<const Shape* const> arg_shapes, const ProgramShape& to_apply) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_70(mht_70_v, 3719, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferCallShape");
+
   // The applied function's arity equals the number of arguments.
   if (arg_shapes.size() != to_apply.parameters_size()) {
     std::string computation_signature = ShapeUtil::HumanString(to_apply);
@@ -3369,6 +3753,9 @@ ShapeInference::InferDegenerateDimensionBroadcastShape(HloOpcode operation,
 static Status ValidateGatherDimensionNumbers(
     const Shape& input_shape, absl::Span<const int64_t> start_indices_shape,
     const GatherDimensionNumbers& dim_numbers) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_71(mht_71_v, 3756, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ValidateGatherDimensionNumbers");
+
   if (!absl::c_is_sorted(dim_numbers.offset_dims())) {
     return InvalidArgument(
         "Output window dimensions in gather op must be ascending; got: %s.",
@@ -3461,6 +3848,9 @@ static Status ValidateGatherDimensionNumbers(
     const Shape& input_shape, const Shape& start_indices_shape,
     const GatherDimensionNumbers& gather_dim_numbers,
     absl::Span<const int64_t> slice_sizes) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_72(mht_72_v, 3851, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferGatherShape");
+
   TF_RETURN_IF_ERROR(
       ExpectArray(input_shape, "input tensor operand of gather op"));
   TF_RETURN_IF_ERROR(
@@ -3602,6 +3992,9 @@ namespace {
 Status ValidateScatterDimensionNumbers(
     const Shape& operand_shape, absl::Span<const int64_t> scatter_indices_shape,
     const Shape& updates_shape, const ScatterDimensionNumbers& dim_numbers) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_73(mht_73_v, 3995, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ValidateScatterDimensionNumbers");
+
   // Validate update_window_dims in ScatterDimensionNumbers.
   if (!absl::c_is_sorted(dim_numbers.update_window_dims())) {
     return InvalidArgument(
@@ -3697,6 +4090,9 @@ Status ValidateScatterDimensionNumbers(
     const Shape& operand_shape, const Shape& scatter_indices_shape,
     const Shape& updates_shape, const ProgramShape& to_apply_shape,
     const ScatterDimensionNumbers& scatter_dim_numbers) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSshape_inferenceDTcc mht_74(mht_74_v, 4093, "", "./tensorflow/compiler/xla/service/shape_inference.cc", "ShapeInference::InferScatterShape");
+
   TF_RETURN_IF_ERROR(
       ExpectArray(operand_shape, "operand tensor of scatter op"));
   TF_RETURN_IF_ERROR(

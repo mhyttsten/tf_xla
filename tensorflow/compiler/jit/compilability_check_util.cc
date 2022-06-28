@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -68,21 +236,34 @@ namespace {
 constexpr char kXlaOutsideCompilationAttr[] = "_xla_outside_compilation";
 
 bool HasResourceInput(const Node& node) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc mht_0(mht_0_v, 239, "", "./tensorflow/compiler/jit/compilability_check_util.cc", "HasResourceInput");
+
   return absl::c_count(node.input_types(), DT_RESOURCE) != 0;
 }
 
 void LogNotCompilable(const Node& node, absl::string_view reason = "") {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc mht_1(mht_1_v, 246, "", "./tensorflow/compiler/jit/compilability_check_util.cc", "LogNotCompilable");
+
   VLOG(3) << "Found uncompilable node " << node.name() << " (op "
           << node.type_string() << ")" << (reason.empty() ? "" : ": ")
           << reason;
 }
 
 bool IsInOutsideCompilationCluster(const Node& n) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc mht_2(mht_2_v, 255, "", "./tensorflow/compiler/jit/compilability_check_util.cc", "IsInOutsideCompilationCluster");
+
   return n.attrs().Find(kXlaOutsideCompilationAttr) != nullptr;
 }
 
 Status MakeCallNodeFromAttribute(const Node& node, const std::string& attr_name,
                                  NodeDef* node_def) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("attr_name: \"" + attr_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc mht_3(mht_3_v, 264, "", "./tensorflow/compiler/jit/compilability_check_util.cc", "MakeCallNodeFromAttribute");
+
   const NameAttrList* name_attr;
   TF_RETURN_IF_ERROR(GetNodeAttr(node.attrs(), attr_name, &name_attr));
   node_def->set_op(name_attr->name());
@@ -121,7 +302,10 @@ class SinglePassSearch {
   // Does not take ownership of `values`. `values` must outlive this.
   // `values` must be sorted.
   explicit SinglePassSearch(absl::Span<int const> values)
-      : current_index_(0), values_(values) {}
+      : current_index_(0), values_(values) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc mht_4(mht_4_v, 306, "", "./tensorflow/compiler/jit/compilability_check_util.cc", "SinglePassSearch");
+}
 
   // Scans forward in the vector looking for "value", updating the internal
   // position in to the vector.
@@ -129,6 +313,9 @@ class SinglePassSearch {
   // position.
   // Not thread-safe.
   bool ScanForValue(int value) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc mht_5(mht_5_v, 316, "", "./tensorflow/compiler/jit/compilability_check_util.cc", "ScanForValue");
+
     while (current_index_ < values_.size() &&
            values_[current_index_] <= value) {
       if (values_[current_index_] == value) {
@@ -152,6 +339,9 @@ RecursiveCompilabilityChecker::FindUncompilableNodes(
     const Node& node, FunctionLibraryRuntime* lib_runtime,
     const std::vector<RecursiveCompilabilityChecker::StackFrame>*
         node_stack_trace) const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc mht_6(mht_6_v, 342, "", "./tensorflow/compiler/jit/compilability_check_util.cc", "RecursiveCompilabilityChecker::FindUncompilableNodes");
+
   std::vector<StackFrameView> stack_trace;
   // If `node_stack_trace` is provided, that means `node` is inside
   // a function body, and therefore, arg nodes and retval nodes are
@@ -173,6 +363,9 @@ RecursiveCompilabilityChecker::FindUncompilableNodes(
 
 bool RecursiveCompilabilityChecker::HasXLAKernel(
     const Node& node, string* uncompilable_reason) const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc mht_7(mht_7_v, 366, "", "./tensorflow/compiler/jit/compilability_check_util.cc", "RecursiveCompilabilityChecker::HasXLAKernel");
+
   // There is a SymbolicGradient kernel on the XLA_JIT device, but the gradient
   // is really a kind of function call and will be handled by
   // IsCompilableCall().
@@ -217,6 +410,9 @@ bool RecursiveCompilabilityChecker::IsCompilableIf(
     NameAttrList* encapsulating_function,
     RecursiveCompilabilityChecker::UncompilableNodesMap* uncompilable_nodes)
     const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc mht_8(mht_8_v, 413, "", "./tensorflow/compiler/jit/compilability_check_util.cc", "RecursiveCompilabilityChecker::IsCompilableIf");
+
   bool is_compilable = true;
   is_compilable &= ExtractNodeDefAndCheckCompilability(
       if_node, "then_branch", "if_then", encapsulating_function, lib_runtime,
@@ -236,6 +432,9 @@ bool RecursiveCompilabilityChecker::IsCompilableCase(
     NameAttrList* encapsulating_function,
     RecursiveCompilabilityChecker::UncompilableNodesMap* uncompilable_nodes)
     const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc mht_9(mht_9_v, 435, "", "./tensorflow/compiler/jit/compilability_check_util.cc", "RecursiveCompilabilityChecker::IsCompilableCase");
+
   StatusOr<std::vector<NodeDef>> calls =
       MakeCallNodesFromAttribute(case_node, "branches", "branch");
   if (!calls.ok()) {
@@ -263,6 +462,9 @@ bool RecursiveCompilabilityChecker::IsCompilableWhile(
     NameAttrList* encapsulating_function,
     RecursiveCompilabilityChecker::UncompilableNodesMap* uncompilable_nodes)
     const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc mht_10(mht_10_v, 465, "", "./tensorflow/compiler/jit/compilability_check_util.cc", "RecursiveCompilabilityChecker::IsCompilableWhile");
+
   bool is_compilable = true;
   is_compilable &= ExtractNodeDefAndCheckCompilability(
       while_node, "cond", "while_cond", encapsulating_function, lib_runtime,
@@ -284,6 +486,11 @@ bool RecursiveCompilabilityChecker::ExtractNodeDefAndCheckCompilability(
     std::vector<StackFrameView>* stack_trace,
     RecursiveCompilabilityChecker::UncompilableNodesMap* uncompilable_nodes)
     const {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("attr_name: \"" + attr_name + "\"");
+   mht_11_v.push_back("call_name: \"" + call_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc mht_11(mht_11_v, 491, "", "./tensorflow/compiler/jit/compilability_check_util.cc", "RecursiveCompilabilityChecker::ExtractNodeDefAndCheckCompilability");
+
   NodeDef call;
   call.set_name(call_name);
   if (!MakeCallNodeFromAttribute(node, attr_name, &call).ok()) {
@@ -313,6 +520,9 @@ bool RecursiveCompilabilityChecker::IsCompilableCall(
     NameAttrList* encapsulating_function,
     RecursiveCompilabilityChecker::UncompilableNodesMap* uncompilable_nodes)
     const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc mht_12(mht_12_v, 523, "", "./tensorflow/compiler/jit/compilability_check_util.cc", "RecursiveCompilabilityChecker::IsCompilableCall");
+
   if (stack_trace->size() > kMaxRecursionDepth) {
     std::string uncompilable_reason = "function depth limit exceeded";
     MaybeMarkUncompilableNode(uncompilable_reason, *stack_trace,
@@ -357,12 +567,18 @@ bool RecursiveCompilabilityChecker::IsCompilableCall(
 }
 
 bool RecursiveCompilabilityChecker::OpIsInaccurate(const Node& node) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc mht_13(mht_13_v, 570, "", "./tensorflow/compiler/jit/compilability_check_util.cc", "RecursiveCompilabilityChecker::OpIsInaccurate");
+
   // b/127344411: SelfAdjointEigV2 and Svd precision issues.
   return node.type_string() == "SelfAdjointEigV2" ||
          node.type_string() == "Svd";
 }
 
 bool RecursiveCompilabilityChecker::OpIsSlow(const Node& node) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc mht_14(mht_14_v, 579, "", "./tensorflow/compiler/jit/compilability_check_util.cc", "RecursiveCompilabilityChecker::OpIsSlow");
+
   // b/128001705: SelfAdjointEigV2 and Svd performance issues.
   // b/135640736: MatrixInverse performance issues.
   // b/111271662: MatrixSolve performance issues.
@@ -382,6 +598,9 @@ bool RecursiveCompilabilityChecker::IsCompilableNode(
     NameAttrList* encapsulating_function,
     RecursiveCompilabilityChecker::UncompilableNodesMap* uncompilable_nodes)
     const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc mht_15(mht_15_v, 601, "", "./tensorflow/compiler/jit/compilability_check_util.cc", "RecursiveCompilabilityChecker::IsCompilableNode");
+
   auto stack_depth = stack_trace->size();
 
   if (op_filter_.allow_outside_compiled && IsInOutsideCompilationCluster(node))
@@ -560,6 +779,9 @@ bool RecursiveCompilabilityChecker::IsCompilableNode(
 
 RecursiveCompilabilityChecker::OperationFilter CreateOperationFilter(
     const XlaOpRegistry::DeviceRegistration& registration) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc mht_16(mht_16_v, 782, "", "./tensorflow/compiler/jit/compilability_check_util.cc", "CreateOperationFilter");
+
   RecursiveCompilabilityChecker::OperationFilter op_filter;
   op_filter.allow_resource_ops_in_called_functions =
       registration.cluster_resource_variable_ops_unsafely;
@@ -581,6 +803,10 @@ RecursiveCompilabilityChecker::OperationFilter CreateOperationFilter(
     const std::vector<StackFrameView>& stack_trace,
     NameAttrList* encapsulating_function,
     RecursiveCompilabilityChecker::UncompilableNodesMap* uncompilable_nodes) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("reason: \"" + std::string(reason.data(), reason.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc mht_17(mht_17_v, 807, "", "./tensorflow/compiler/jit/compilability_check_util.cc", "RecursiveCompilabilityChecker::MaybeMarkUncompilableNode");
+
   if (!uncompilable_nodes) return;
 
   UncompilableNodeInfo node_info;
@@ -613,11 +839,18 @@ RecursiveCompilabilityChecker::OperationFilter CreateOperationFilter(
 // Returns `true` iff node has a given `attr` set to `true`. Returns `false`
 // both for the missing attr, and the attr set to `false`.
 static bool HasBoolAttr(const NodeDef& node, const char* attr) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("attr: \"" + (attr == nullptr ? std::string("nullptr") : std::string((char*)attr)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc mht_18(mht_18_v, 843, "", "./tensorflow/compiler/jit/compilability_check_util.cc", "HasBoolAttr");
+
   const auto& it = node.attr().find(attr);
   return it != node.attr().end() && it->second.b();
 }
 
 bool CanCreateXlaKernel(const NodeDef& node_def) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc mht_19(mht_19_v, 851, "", "./tensorflow/compiler/jit/compilability_check_util.cc", "CanCreateXlaKernel");
+
   return HasBoolAttr(node_def, kXlaMustCompileAttr);
 }
 
@@ -626,6 +859,9 @@ Status GetBodyAndConstantsAndResources(FunctionLibraryRuntime* flr,
                                        const FunctionBody** fbody,
                                        std::vector<int>* constant_arg_indices,
                                        std::vector<int>* resource_arg_indices) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc mht_20(mht_20_v, 862, "", "./tensorflow/compiler/jit/compilability_check_util.cc", "GetBodyAndConstantsAndResources");
+
   FunctionLibraryRuntime::Handle handle;
   TF_RETURN_IF_ERROR(
       flr->Instantiate(function.name(), AttrSlice(&function.attr()), &handle));
@@ -660,6 +896,9 @@ tensorflow::MemoryTypeVector GetInputMemoryTypes(
     const tensorflow::FunctionBody* fbody,
     absl::Span<int const> constant_arg_indices,
     absl::Span<int const> resource_arg_indices) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc mht_21(mht_21_v, 899, "", "./tensorflow/compiler/jit/compilability_check_util.cc", "GetInputMemoryTypes");
+
   // Set input and output memory types.
   tensorflow::MemoryTypeVector input_memory_types(fbody->arg_types.size(),
                                                   tensorflow::DEVICE_MEMORY);
@@ -684,6 +923,9 @@ tensorflow::MemoryTypeVector GetInputMemoryTypes(
 
 tensorflow::MemoryTypeVector GetOutputMemoryTypes(
     const tensorflow::FunctionBody* fbody) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc mht_22(mht_22_v, 926, "", "./tensorflow/compiler/jit/compilability_check_util.cc", "GetOutputMemoryTypes");
+
   tensorflow::MemoryTypeVector output_memory_types(fbody->ret_types.size(),
                                                    tensorflow::DEVICE_MEMORY);
   for (size_t i = 0; i < fbody->ret_types.size(); ++i) {
@@ -727,6 +969,9 @@ static auto const ops_triggering_xla_compilation =
                                          "XlaWhile"};
 
 static bool NodeCanTriggerXlaCompilation(const NodeDef& node) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc mht_23(mht_23_v, 972, "", "./tensorflow/compiler/jit/compilability_check_util.cc", "NodeCanTriggerXlaCompilation");
+
   return node.attr().find(kXlaClusterIdAttr) != node.attr().end() ||
          HasBoolAttr(node, kXlaMustCompileAttr) ||
          HasBoolAttr(node, kXlaCompileAttr) ||
@@ -736,6 +981,9 @@ static bool NodeCanTriggerXlaCompilation(const NodeDef& node) {
 }
 
 bool CanTriggerXlaCompilation(const GraphDef& graph) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPScompilability_check_utilDTcc mht_24(mht_24_v, 984, "", "./tensorflow/compiler/jit/compilability_check_util.cc", "CanTriggerXlaCompilation");
+
   for (const FunctionDef& function : graph.library().function()) {
     for (const NodeDef& node : function.node_def()) {
       if (NodeCanTriggerXlaCompilation(node)) {

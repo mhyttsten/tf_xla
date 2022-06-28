@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSncclPSnccl_manager_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_manager_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSncclPSnccl_manager_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,7 +220,10 @@ class NcclManagerTest : public ::testing::Test {
   // A single all-reduce to apply.
   struct TestCase {
     TestCase(int num_nodes, int num_ranks_per_node)
-        : num_nodes(num_nodes), num_ranks_per_node(num_ranks_per_node) {}
+        : num_nodes(num_nodes), num_ranks_per_node(num_ranks_per_node) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_manager_testDTcc mht_0(mht_0_v, 224, "", "./tensorflow/core/nccl/nccl_manager_test.cc", "TestCase");
+}
     std::vector<Tensor> ins;
     std::vector<Tensor> outs;
     Tensor expected;
@@ -66,6 +237,9 @@ class NcclManagerTest : public ::testing::Test {
   };
 
   static void SetUpTestSuite() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_manager_testDTcc mht_1(mht_1_v, 240, "", "./tensorflow/core/nccl/nccl_manager_test.cc", "SetUpTestSuite");
+
     setenv("NCCL_DEBUG", "INFO", 1 /* replace */);
     setenv("NCCL_LAUNCH_MODE", "PARALLEL", 1 /* replace */);
     devices_ = new std::vector<std::unique_ptr<BaseGPUDevice>>(GetGPUDevices());
@@ -77,15 +251,24 @@ class NcclManagerTest : public ::testing::Test {
   }
 
   void SetUp() override {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_manager_testDTcc mht_2(mht_2_v, 254, "", "./tensorflow/core/nccl/nccl_manager_test.cc", "SetUp");
+
     ASSERT_GT(devices_->size(), 0) << "No GPUs found";
     ASSERT_NE(work_queue_, nullptr);
   }
 
-  static int32 NumGPUs() { return static_cast<int32>(devices_->size()); }
+  static int32 NumGPUs() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_manager_testDTcc mht_3(mht_3_v, 262, "", "./tensorflow/core/nccl/nccl_manager_test.cc", "NumGPUs");
+ return static_cast<int32>(devices_->size()); }
 
   // Let N = #GPUs.  When N is even, num_nodes=2 and num_ranks_per_node=N/2.
   // When N is odd, num_nodes=2 and num_ranks_per_node=(N-1)/2.
   static void PopulateMultiNodeParams(int* num_nodes, int* num_ranks_per_node) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_manager_testDTcc mht_4(mht_4_v, 269, "", "./tensorflow/core/nccl/nccl_manager_test.cc", "PopulateMultiNodeParams");
+
     const auto num_gpus = NumGPUs();
     CHECK_GT(num_gpus, 1);
     *num_nodes = 2;
@@ -97,6 +280,9 @@ class NcclManagerTest : public ::testing::Test {
   }
 
   static void TearDownTestSuite() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_manager_testDTcc mht_5(mht_5_v, 283, "", "./tensorflow/core/nccl/nccl_manager_test.cc", "TearDownTestSuite");
+
     delete devices_;
     delete work_queue_;
   }
@@ -104,6 +290,9 @@ class NcclManagerTest : public ::testing::Test {
   TestCase* MakeReductionTestCase(int num_nodes, int num_ranks_per_node,
                                   ncclRedOp_t reduction_op, TensorShape shape,
                                   float value_offset) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_manager_testDTcc mht_6(mht_6_v, 293, "", "./tensorflow/core/nccl/nccl_manager_test.cc", "MakeReductionTestCase");
+
     TestCase* test_case = new TestCase(num_nodes, num_ranks_per_node);
     test_case->expected = Tensor(data_type_, shape);
     if (reduction_op == ncclProd) {
@@ -164,6 +353,9 @@ class NcclManagerTest : public ::testing::Test {
 
   TestCase* MakeGatherTestCase(int num_nodes, int num_ranks_per_node,
                                TensorShape in_shape, TensorShape out_shape) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_manager_testDTcc mht_7(mht_7_v, 356, "", "./tensorflow/core/nccl/nccl_manager_test.cc", "MakeGatherTestCase");
+
     TestCase* test_case = new TestCase(num_nodes, num_ranks_per_node);
     test_case->expected = Tensor(data_type_, out_shape);
     test::FillFn<Scalar>(&test_case->expected,
@@ -210,6 +402,9 @@ class NcclManagerTest : public ::testing::Test {
   TestCase* MakeBroadcastTestCase(int num_nodes, int num_ranks_per_node,
                                   TensorShape shape, int src_node, int src_rank,
                                   bool in_place) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_manager_testDTcc mht_8(mht_8_v, 405, "", "./tensorflow/core/nccl/nccl_manager_test.cc", "MakeBroadcastTestCase");
+
     TestCase* test_case = new TestCase(num_nodes, num_ranks_per_node);
     test_case->expected = Tensor(data_type_, shape);
     test::FillFn<Scalar>(&test_case->expected,
@@ -246,6 +441,9 @@ class NcclManagerTest : public ::testing::Test {
 
   // Waits for the done callback to be called for each participant.
   void WaitForTestCompletion(TestCase* test_case) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_manager_testDTcc mht_9(mht_9_v, 444, "", "./tensorflow/core/nccl/nccl_manager_test.cc", "WaitForTestCompletion");
+
     mutex_lock l(test_case->mu);
     while (test_case->num_completed != test_case->outs.size()) {
       test_case->done_cv.wait(l);
@@ -253,6 +451,9 @@ class NcclManagerTest : public ::testing::Test {
   }
 
   void VerifyResults(TestCase* test_case) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_manager_testDTcc mht_10(mht_10_v, 454, "", "./tensorflow/core/nccl/nccl_manager_test.cc", "VerifyResults");
+
     WaitForTestCompletion(test_case);
     TF_ASSERT_OK(test_case->final_status);
     // Copy memory to host and verify.
@@ -279,13 +480,22 @@ class NcclManagerTest : public ::testing::Test {
   }
 
   void VerifyError(TestCase* test_case) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_manager_testDTcc mht_11(mht_11_v, 483, "", "./tensorflow/core/nccl/nccl_manager_test.cc", "VerifyError");
+
     WaitForTestCompletion(test_case);
     LOG(INFO) << test_case->final_status;
     EXPECT_EQ(test_case->final_status.code(), error::INTERNAL);
   }
 
   NcclManager::DoneCallback CreateDoneCallback(TestCase* test_case) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_manager_testDTcc mht_12(mht_12_v, 492, "", "./tensorflow/core/nccl/nccl_manager_test.cc", "CreateDoneCallback");
+
     return [this, test_case](Status s) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_manager_testDTcc mht_13(mht_13_v, 496, "", "./tensorflow/core/nccl/nccl_manager_test.cc", "lambda");
+
       mutex_lock l(test_case->mu);
       test_case->final_status.Update(s);
       if (++test_case->num_completed == test_case->outs.size()) {
@@ -301,12 +511,18 @@ class NcclManagerTest : public ::testing::Test {
 
   void RunMultiNodeAllReduceTest(const int num_nodes,
                                  const int num_ranks_per_node) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_manager_testDTcc mht_14(mht_14_v, 514, "", "./tensorflow/core/nccl/nccl_manager_test.cc", "RunMultiNodeAllReduceTest");
+
     std::vector<NodeState> node_states(num_nodes);
     RunMultiNodeAllReduceTest(node_states, num_ranks_per_node);
   }
 
   void RunMultiNodeAllReduceTest(std::vector<NodeState>& node_states,
                                  const int num_ranks_per_node) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_manager_testDTcc mht_15(mht_15_v, 523, "", "./tensorflow/core/nccl/nccl_manager_test.cc", "RunMultiNodeAllReduceTest");
+
     const int num_nodes = node_states.size();
     const int num_global_ranks = num_nodes * num_ranks_per_node;
     const string collective_key = "allreduce";
@@ -363,6 +579,9 @@ class NcclManagerTest : public ::testing::Test {
                                  const int num_ranks_per_node,
                                  const int src_node, const int src_local_rank,
                                  const bool in_place) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_manager_testDTcc mht_16(mht_16_v, 582, "", "./tensorflow/core/nccl/nccl_manager_test.cc", "RunMultiNodeBroadcastTest");
+
     const int num_global_ranks = num_nodes * num_ranks_per_node;
     const int src_global_rank = src_node * num_ranks_per_node + src_local_rank;
     const string collective_key = "broadcast";
@@ -379,6 +598,9 @@ class NcclManagerTest : public ::testing::Test {
         auto rank_fn = [this, node, num_ranks_per_node, num_global_ranks,
                         src_global_rank, local_rank, &node_states,
                         &collective_key, &communicator_key, &test_case]() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_manager_testDTcc mht_17(mht_17_v, 601, "", "./tensorflow/core/nccl/nccl_manager_test.cc", "lambda");
+
           auto* device = GetDevice(num_ranks_per_node, node, local_rank);
           auto* info = device->tensorflow_accelerator_device_info();
           auto* stream = device->tensorflow_accelerator_device_info()->stream;
@@ -419,11 +641,17 @@ class NcclManagerTest : public ::testing::Test {
   }
 
   static int GlobalRank(int num_ranks_per_node, int node, int local_rank) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_manager_testDTcc mht_18(mht_18_v, 644, "", "./tensorflow/core/nccl/nccl_manager_test.cc", "GlobalRank");
+
     return node * num_ranks_per_node + local_rank;
   }
 
   static BaseGPUDevice* GetDevice(int num_ranks_per_node, int node,
                                   int local_rank) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_manager_testDTcc mht_19(mht_19_v, 652, "", "./tensorflow/core/nccl/nccl_manager_test.cc", "GetDevice");
+
     const int device_idx = GlobalRank(num_ranks_per_node, node, local_rank);
     CHECK_LT(device_idx, devices_->size());
     return (*devices_)[device_idx].get();
@@ -433,6 +661,9 @@ class NcclManagerTest : public ::testing::Test {
 
  private:
   static Allocator* GpuAllocator(BaseGPUDevice* device) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_manager_testDTcc mht_20(mht_20_v, 664, "", "./tensorflow/core/nccl/nccl_manager_test.cc", "GpuAllocator");
+
     return device->GetAllocator(AllocatorAttributes());
   }
 
@@ -532,6 +763,9 @@ TYPED_TEST(NcclManagerTest, MultipleCallers) {
     const int to_schedule = case_and_rank.size();
     for (int i = 0; i < to_schedule; ++i) {
       auto fn = [&]() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_manager_testDTcc mht_21(mht_21_v, 766, "", "./tensorflow/core/nccl/nccl_manager_test.cc", "lambda");
+
         int rank;
         int test_num;
         {
@@ -875,6 +1109,10 @@ TYPED_TEST(NcclManagerTest, AbortThenReset) {
   ncclRedOp_t reduction_op = static_cast<ncclRedOp_t>(0);
   auto node_fn = [&](TestCase* test_case, int node,
                      const string& communicator_key) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("communicator_key: \"" + communicator_key + "\"");
+   MHTracer_DTPStensorflowPScorePSncclPSnccl_manager_testDTcc mht_22(mht_22_v, 1113, "", "./tensorflow/core/nccl/nccl_manager_test.cc", "lambda");
+
     auto* device = this->GetDevice(/* num_ranks_per_node */ 1, node,
                                    /* local_rank */ 0);
     auto* info = device->tensorflow_accelerator_device_info();

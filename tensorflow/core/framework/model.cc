@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,6 +204,9 @@ namespace {
 
 // Returns true if all parameters have reached their max values.
 bool AreAllParametersMax(const Model::ModelParameters& parameters) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_0(mht_0_v, 207, "", "./tensorflow/core/framework/model.cc", "AreAllParametersMax");
+
   for (const auto& pair : parameters) {
     if (pair.second->value < pair.second->max) {
       return false;
@@ -46,6 +217,9 @@ bool AreAllParametersMax(const Model::ModelParameters& parameters) {
 
 // Records the ram usage of hill climbing algorithm.
 void RecordAutotuneRamUsage(int64 ram_budget, double max_buffered_bytes) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_1(mht_1_v, 220, "", "./tensorflow/core/framework/model.cc", "RecordAutotuneRamUsage");
+
   if (ram_budget == 0) {
     return;
   }
@@ -63,16 +237,25 @@ void RecordAutotuneRamUsage(int64 ram_budget, double max_buffered_bytes) {
 }
 
 // Helper function for node traversal that doesn't skip any nodes.
-inline bool IsAnyNode(const std::shared_ptr<Node> node) { return true; }
+inline bool IsAnyNode(const std::shared_ptr<Node> node) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_2(mht_2_v, 241, "", "./tensorflow/core/framework/model.cc", "IsAnyNode");
+ return true; }
 
 // Helper function for node traversal that filters out nodes for which
 // autotuning is disabled.
 inline bool IsAutotuneNode(const std::shared_ptr<Node> node) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_3(mht_3_v, 248, "", "./tensorflow/core/framework/model.cc", "IsAutotuneNode");
+
   return node->autotune();
 }
 
 // Wrapper for the square function to reduce verbosity.
-inline double Square(double x) { return x * x; }
+inline double Square(double x) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_4(mht_4_v, 256, "", "./tensorflow/core/framework/model.cc", "Square");
+ return x * x; }
 
 // Collects "essential" parallelism parameters and buffer size parameters in the
 // tree rooted in the given node. Which parallelism parameters are essential is
@@ -83,6 +266,9 @@ inline void CollectParameters(std::shared_ptr<Node> node,
                               const Node::ModelParameters& parameters,
                               Node::ModelParameters* parallelism_parameters,
                               Node::ModelParameters* buffer_size_parameters) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_5(mht_5_v, 269, "", "./tensorflow/core/framework/model.cc", "CollectParameters");
+
   // Parallelism parameter is considered to be essential if the corresponding
   // transformations's processing time is greater than essential rate times the
   // average transformation self processing time.
@@ -107,6 +293,9 @@ inline void CollectParameters(std::shared_ptr<Node> node,
 // minimal and maximum values.
 inline void UpdateParameterValues(const Node::ParameterGradients& gradients,
                                   Node::ModelParameters* parameters) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_6(mht_6_v, 296, "", "./tensorflow/core/framework/model.cc", "UpdateParameterValues");
+
   // Gradient descent step size.
   constexpr double kDescentStep = 0.1L;
   double new_value;
@@ -142,6 +331,9 @@ inline void UpdateParameterValues(const Node::ParameterGradients& gradients,
 // Copies the parameter values (which are for optimization tuning) and updates
 // the state values (which are for the input pipeline to follow).
 inline void UpdateStateValues(Node::ModelParameters* parameters) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_7(mht_7_v, 334, "", "./tensorflow/core/framework/model.cc", "UpdateStateValues");
+
   for (auto& pair : *parameters) {
     auto& parameter = pair.second;
     VLOG(2) << "Setting tunable parameter " << pair.first
@@ -155,6 +347,9 @@ inline void UpdateStateValues(Node::ModelParameters* parameters) {
 // Recursively produces protos for nodes in a subtree of `output` node and
 // appends them to nodes of the given model.
 Status ModelToProtoHelper(std::shared_ptr<Node> output, ModelProto* model) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_8(mht_8_v, 350, "", "./tensorflow/core/framework/model.cc", "ModelToProtoHelper");
+
   model->set_output(output->id());
   std::list<std::shared_ptr<Node>> to_serialize = {output};
   auto& nodes = *model->mutable_nodes();
@@ -171,6 +366,9 @@ Status ModelToProtoHelper(std::shared_ptr<Node> output, ModelProto* model) {
 
 // Recursively produces node tree rooted in `output` from the given model proto.
 Status ModelFromProtoHelper(ModelProto model, std::shared_ptr<Node>* output) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_9(mht_9_v, 369, "", "./tensorflow/core/framework/model.cc", "ModelFromProtoHelper");
+
   TF_RETURN_IF_ERROR(Node::FromProto(model.nodes().at(model.output()),
                                      /*output=*/nullptr, output));
   std::list<std::shared_ptr<Node>> to_restore_inputs = {*output};
@@ -197,7 +395,10 @@ class InterleaveMany : public Node {
  public:
   using Node::Node;
 
-  virtual ~InterleaveMany() {}
+  virtual ~InterleaveMany() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_10(mht_10_v, 399, "", "./tensorflow/core/framework/model.cc", "~InterleaveMany");
+}
 
  protected:
   std::shared_ptr<Node> Clone(std::shared_ptr<Node> output) const override
@@ -296,6 +497,9 @@ class InterleaveMany : public Node {
   }
 
   Status ToProto(ModelProto::Node* node_proto) const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_11(mht_11_v, 500, "", "./tensorflow/core/framework/model.cc", "ToProto");
+
     TF_RETURN_IF_ERROR(Node::ToProto(node_proto));
     node_proto->set_node_class(NodeClass::INTERLEAVE_MANY);
     return Status::OK();
@@ -312,12 +516,18 @@ class AsyncInterleaveMany : public Node {
   AsyncInterleaveMany(Node::Args args,
                       std::vector<std::shared_ptr<Parameter>> parameters)
       : Node(args) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_12(mht_12_v, 519, "", "./tensorflow/core/framework/model.cc", "AsyncInterleaveMany");
+
     for (auto& parameter : parameters) {
       parameters_[parameter->name] = std::move(parameter);
     }
   }
 
-  virtual ~AsyncInterleaveMany() {}
+  virtual ~AsyncInterleaveMany() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_13(mht_13_v, 528, "", "./tensorflow/core/framework/model.cc", "~AsyncInterleaveMany");
+}
 
  protected:
   std::shared_ptr<Node> Clone(std::shared_ptr<Node> output) const override
@@ -465,6 +675,9 @@ class AsyncInterleaveMany : public Node {
   }
 
   Status ToProto(ModelProto::Node* node_proto) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_14(mht_14_v, 678, "", "./tensorflow/core/framework/model.cc", "ToProto");
+
     TF_RETURN_IF_ERROR(Node::ToProto(node_proto));
     node_proto->set_node_class(NodeClass::ASYNC_INTERLEAVE_MANY);
     return Status::OK();
@@ -473,9 +686,15 @@ class AsyncInterleaveMany : public Node {
 
 class KnownRatio : public Node {
  public:
-  KnownRatio(Node::Args args, double ratio) : Node(args), ratio_(ratio) {}
+  KnownRatio(Node::Args args, double ratio) : Node(args), ratio_(ratio) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_15(mht_15_v, 690, "", "./tensorflow/core/framework/model.cc", "KnownRatio");
+}
 
-  virtual ~KnownRatio() {}
+  virtual ~KnownRatio() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_16(mht_16_v, 695, "", "./tensorflow/core/framework/model.cc", "~KnownRatio");
+}
 
  protected:
   std::shared_ptr<Node> Clone(std::shared_ptr<Node> output) const override
@@ -555,6 +774,9 @@ class KnownRatio : public Node {
   }
 
   Status ToProto(ModelProto::Node* node_proto) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_17(mht_17_v, 777, "", "./tensorflow/core/framework/model.cc", "ToProto");
+
     TF_RETURN_IF_ERROR(Node::ToProto(node_proto));
     node_proto->set_node_class(NodeClass::KNOWN_RATIO);
     node_proto->set_ratio(ratio_);
@@ -570,16 +792,28 @@ class AsyncRatio : public Node {
   AsyncRatio(Node::Args args, double ratio, double memory_ratio,
              std::vector<std::shared_ptr<Parameter>> parameters)
       : Node(args), ratio_(ratio), memory_ratio_(memory_ratio) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_18(mht_18_v, 795, "", "./tensorflow/core/framework/model.cc", "AsyncRatio");
+
     for (auto& parameter : parameters) {
       parameters_[parameter->name] = std::move(parameter);
     }
   }
 
-  virtual ~AsyncRatio() {}
+  virtual ~AsyncRatio() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_19(mht_19_v, 804, "", "./tensorflow/core/framework/model.cc", "~AsyncRatio");
+}
 
  protected:
-  virtual double Ratio() const { return ratio_; }
-  double MemoryRatio() const { return memory_ratio_; }
+  virtual double Ratio() const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_20(mht_20_v, 810, "", "./tensorflow/core/framework/model.cc", "Ratio");
+ return ratio_; }
+  double MemoryRatio() const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_21(mht_21_v, 814, "", "./tensorflow/core/framework/model.cc", "MemoryRatio");
+ return memory_ratio_; }
 
   // The input time is the sum of inherited input time and parallelism adjusted
   // self processing time, divided by `Ratio()`.
@@ -789,7 +1023,10 @@ class UnknownRatio : public Node {
  public:
   using Node::Node;
 
-  virtual ~UnknownRatio() {}
+  virtual ~UnknownRatio() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_22(mht_22_v, 1027, "", "./tensorflow/core/framework/model.cc", "~UnknownRatio");
+}
 
  protected:
   std::shared_ptr<Node> Clone(std::shared_ptr<Node> output) const override
@@ -883,6 +1120,9 @@ class UnknownRatio : public Node {
   }
 
   Status ToProto(ModelProto::Node* node_proto) const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_23(mht_23_v, 1123, "", "./tensorflow/core/framework/model.cc", "ToProto");
+
     TF_RETURN_IF_ERROR(Node::ToProto(node_proto));
     node_proto->set_node_class(NodeClass::UNKNOWN_RATIO);
     return Status::OK();
@@ -893,7 +1133,10 @@ class Unknown : public Node {
  public:
   using Node::Node;
 
-  virtual ~Unknown() {}
+  virtual ~Unknown() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_24(mht_24_v, 1137, "", "./tensorflow/core/framework/model.cc", "~Unknown");
+}
 
  protected:
   std::shared_ptr<Node> Clone(std::shared_ptr<Node> output) const override
@@ -937,6 +1180,9 @@ class Unknown : public Node {
   }
 
   Status ToProto(ModelProto::Node* node_proto) const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_25(mht_25_v, 1183, "", "./tensorflow/core/framework/model.cc", "ToProto");
+
     TF_RETURN_IF_ERROR(Node::ToProto(node_proto));
     node_proto->set_node_class(NodeClass::UNKNOWN);
     return Status::OK();
@@ -947,9 +1193,15 @@ class AsyncKnownRatio : public AsyncRatio {
  public:
   AsyncKnownRatio(Node::Args args, double ratio, double memory_ratio,
                   std::vector<std::shared_ptr<Parameter>> parameters)
-      : AsyncRatio(args, ratio, memory_ratio, parameters) {}
+      : AsyncRatio(args, ratio, memory_ratio, parameters) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_26(mht_26_v, 1197, "", "./tensorflow/core/framework/model.cc", "AsyncKnownRatio");
+}
 
-  virtual ~AsyncKnownRatio() {}
+  virtual ~AsyncKnownRatio() {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_27(mht_27_v, 1202, "", "./tensorflow/core/framework/model.cc", "~AsyncKnownRatio");
+}
 
  protected:
   std::shared_ptr<Node> Clone(std::shared_ptr<Node> output) const override
@@ -964,6 +1216,9 @@ class AsyncKnownRatio : public AsyncRatio {
   }
 
   Status ToProto(ModelProto::Node* node_proto) const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_28(mht_28_v, 1219, "", "./tensorflow/core/framework/model.cc", "ToProto");
+
     TF_RETURN_IF_ERROR(Node::ToProto(node_proto));
     node_proto->set_node_class(NodeClass::ASYNC_KNOWN_RATIO);
     node_proto->set_ratio(Ratio());
@@ -976,9 +1231,15 @@ class AsyncUnknownRatio : public AsyncRatio {
  public:
   AsyncUnknownRatio(Node::Args args,
                     std::vector<std::shared_ptr<Parameter>> parameters)
-      : AsyncRatio(args, /*ratio=*/0.0, /*memory_ratio=*/0.0, parameters) {}
+      : AsyncRatio(args, /*ratio=*/0.0, /*memory_ratio=*/0.0, parameters) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_29(mht_29_v, 1235, "", "./tensorflow/core/framework/model.cc", "AsyncUnknownRatio");
+}
 
-  virtual ~AsyncUnknownRatio() {}
+  virtual ~AsyncUnknownRatio() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_30(mht_30_v, 1240, "", "./tensorflow/core/framework/model.cc", "~AsyncUnknownRatio");
+}
 
  protected:
   double Ratio() const TF_SHARED_LOCKS_REQUIRED(mu_) override {
@@ -1005,6 +1266,9 @@ class AsyncUnknownRatio : public AsyncRatio {
   }
 
   Status ToProto(ModelProto::Node* node_proto) const {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_31(mht_31_v, 1269, "", "./tensorflow/core/framework/model.cc", "ToProto");
+
     TF_RETURN_IF_ERROR(Node::ToProto(node_proto));
     node_proto->set_node_class(NodeClass::ASYNC_UNKNOWN_RATIO);
     return Status::OK();
@@ -1073,6 +1337,9 @@ double Node::ComputeWaitTime(const double& producer_time,
                              double* producer_time_derivative,
                              double* consumer_time_derivative,
                              double* buffer_size_derivative) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_32(mht_32_v, 1340, "", "./tensorflow/core/framework/model.cc", "Node::ComputeWaitTime");
+
   // If we set x=`consumer_time`, y=`producer_time`, n=`buffer_size`,
   // p=`p_buffer_empty`, T=`wait_time`, then we have:
   // if y = 0, then p = 0;
@@ -1208,6 +1475,9 @@ double Node::ComputeWaitTime(const double& producer_time,
 }
 
 Node::ModelParameters Node::CollectTunableParametersLocked() const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_33(mht_33_v, 1478, "", "./tensorflow/core/framework/model.cc", "Node::CollectTunableParametersLocked");
+
   Node::ModelParameters parameters;
   // Collect tunable parameters from the leaves of the nodes tree to the root.
   for (const auto& node :
@@ -1220,11 +1490,17 @@ Node::ModelParameters Node::CollectTunableParametersLocked() const {
 }
 
 Node::ModelParameters Node::CollectTunableParameters() const {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_34(mht_34_v, 1493, "", "./tensorflow/core/framework/model.cc", "Node::CollectTunableParameters");
+
   tf_shared_lock l(mu_);
   return CollectTunableParametersLocked();
 }
 
 string Node::DebugString() const {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_35(mht_35_v, 1501, "", "./tensorflow/core/framework/model.cc", "Node::DebugString");
+
   absl::flat_hash_map<string, string> debug_strings;
   tf_shared_lock l(mu_);
   // Build up the debug string from the leaves of the nodes tree to the root.
@@ -1239,6 +1515,9 @@ string Node::DebugString() const {
 }
 
 void Node::FlushMetrics() {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_36(mht_36_v, 1518, "", "./tensorflow/core/framework/model.cc", "Node::FlushMetrics");
+
   if (!record_metrics_) {
     return;
   }
@@ -1249,6 +1528,9 @@ void Node::FlushMetrics() {
 
 double Node::OutputTime(Node::NodeValues* input_times,
                         Node::ParameterGradients* gradients) const {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_37(mht_37_v, 1531, "", "./tensorflow/core/framework/model.cc", "Node::OutputTime");
+
   // To store the output time gradient w.r.t. input time (if `gradients` is not
   // `nullptr`) and the output time for each node.
   Node::NodeValues output_time_gradients, output_times;
@@ -1279,6 +1561,9 @@ double Node::OutputTime(Node::NodeValues* input_times,
 }
 
 std::shared_ptr<Node> Node::Snapshot() const {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_38(mht_38_v, 1564, "", "./tensorflow/core/framework/model.cc", "Node::Snapshot");
+
   NodePairList node_pairs;
   auto result = SnapshotHelper(nullptr, &node_pairs);
 
@@ -1294,11 +1579,17 @@ std::shared_ptr<Node> Node::Snapshot() const {
 }
 
 double Node::SelfProcessingTime() const {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_39(mht_39_v, 1582, "", "./tensorflow/core/framework/model.cc", "Node::SelfProcessingTime");
+
   tf_shared_lock l(mu_);
   return SelfProcessingTimeLocked();
 }
 
 double Node::TotalBufferedBytes() const {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_40(mht_40_v, 1590, "", "./tensorflow/core/framework/model.cc", "Node::TotalBufferedBytes");
+
   Node::NodeValues total_bytes;
   tf_shared_lock l(mu_);
   // Compute total buffered bytes from the leaves of the nodes tree to the root.
@@ -1313,6 +1604,9 @@ double Node::TotalBufferedBytes() const {
 }
 
 double Node::TotalMaximumBufferedBytes() const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_41(mht_41_v, 1607, "", "./tensorflow/core/framework/model.cc", "Node::TotalMaximumBufferedBytes");
+
   Node::NodeValues total_bytes;
   tf_shared_lock l(mu_);
   // Compute total maximum buffered bytes from the leaves of the nodes tree
@@ -1328,6 +1622,9 @@ double Node::TotalMaximumBufferedBytes() const {
 }
 
 double Node::TotalProcessingTime(Node::NodeValues* processing_times) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_42(mht_42_v, 1625, "", "./tensorflow/core/framework/model.cc", "Node::TotalProcessingTime");
+
   // Create a hash map to store the per-element CPU time spent in the subtree
   // rooted in each node.
   Node::NodeValues total_processing_times;
@@ -1346,6 +1643,9 @@ double Node::TotalProcessingTime(Node::NodeValues* processing_times) {
 }
 
 double Node::AverageBufferedElementSize() const {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_43(mht_43_v, 1646, "", "./tensorflow/core/framework/model.cc", "Node::AverageBufferedElementSize");
+
   DCHECK_GE(num_elements_, 0);
   DCHECK_GE(buffered_elements_, 0);
   if (num_elements_ <= 0) {
@@ -1377,6 +1677,9 @@ double Node::AverageBufferedElementSize() const {
 }
 
 double Node::OutputTimeForInputs(const Node::NodeValues& output_times) const {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_44(mht_44_v, 1680, "", "./tensorflow/core/framework/model.cc", "Node::OutputTimeForInputs");
+
   double sum = 0;
   for (auto& input : inputs_) {
     // Inputs for which autotuning is disabled are excluded.
@@ -1389,6 +1692,9 @@ double Node::OutputTimeForInputs(const Node::NodeValues& output_times) const {
 
 double Node::OutputTimeGradientsForInputs(
     const Node::NodeValues& output_time_gradients) const {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_45(mht_45_v, 1695, "", "./tensorflow/core/framework/model.cc", "Node::OutputTimeGradientsForInputs");
+
   double sum = 0;
   for (auto& input : inputs_) {
     // Inputs for which autotuning is disabled are excluded.
@@ -1402,6 +1708,9 @@ double Node::OutputTimeGradientsForInputs(
 
 double Node::TotalProcessingTimeForInputs(
     const Node::NodeValues& total_processing_times) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_46(mht_46_v, 1711, "", "./tensorflow/core/framework/model.cc", "Node::TotalProcessingTimeForInputs");
+
   // If the number of elements produced by an input is smaller than this
   // constant, then its processing time is estimated using a weighted average
   // of the empirical processing time and processing time history.
@@ -1441,6 +1750,9 @@ double Node::TotalProcessingTimeForInputs(
 }
 
 double Node::SelfProcessingTimeLocked() const {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_47(mht_47_v, 1753, "", "./tensorflow/core/framework/model.cc", "Node::SelfProcessingTimeLocked");
+
   if (num_elements_ == 0) {
     return 0;
   }
@@ -1522,6 +1834,9 @@ void Node::DebugStringHelper(absl::flat_hash_map<string, string>* debug_strings)
 
 std::shared_ptr<Node> Node::SnapshotHelper(
     std::shared_ptr<Node> cloned_output, Node::NodePairList* node_pairs) const {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_48(mht_48_v, 1837, "", "./tensorflow/core/framework/model.cc", "Node::SnapshotHelper");
+
   tf_shared_lock l(mu_);
 
   // Clone current node(`this`), also set clone of its output node
@@ -1587,6 +1902,9 @@ double Node::MaximumBufferedBytes() const TF_SHARED_LOCKS_REQUIRED(mu_) {
 }
 
 Status Node::ToProto(ModelProto::Node* node_proto) const {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_49(mht_49_v, 1905, "", "./tensorflow/core/framework/model.cc", "Node::ToProto");
+
   tf_shared_lock l(mu_);
   node_proto->set_id(id_);
   node_proto->set_name(name_);
@@ -1619,6 +1937,9 @@ Status Node::ToProto(ModelProto::Node* node_proto) const {
 
 Status Node::FromProtoHelper(ModelProto::Node node_proto,
                              std::shared_ptr<Node> node) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_50(mht_50_v, 1940, "", "./tensorflow/core/framework/model.cc", "Node::FromProtoHelper");
+
   tf_shared_lock l(node->mu_);
   node->autotune_.store(node_proto.autotune());
   node->buffered_bytes_.store(node_proto.buffered_bytes());
@@ -1655,6 +1976,9 @@ Status Node::FromProtoHelper(ModelProto::Node node_proto,
 Status Node::FromProto(ModelProto::Node node_proto,
                        std::shared_ptr<Node> output,
                        std::shared_ptr<Node>* node) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_51(mht_51_v, 1979, "", "./tensorflow/core/framework/model.cc", "Node::FromProto");
+
   // Note that parameters are restored in `FromProtoHelper`.
   Args args = {node_proto.id(), node_proto.name(), std::move(output)};
   switch (node_proto.node_class()) {
@@ -1687,12 +2011,18 @@ Status Node::FromProto(ModelProto::Node node_proto,
 }
 
 Model::Model() : optimization_period_ms_(kOptimizationPeriodMinMs) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_52(mht_52_v, 2014, "", "./tensorflow/core/framework/model.cc", "Model::Model");
+
   model_gauge_cell_ = metrics::GetTFDataModelGauge(
       strings::StrCat(reinterpret_cast<uint64>(this)));
   model_gauge_cell_->Set([&]() { return DebugString(); });
 }
 
 Model::~Model() {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_53(mht_53_v, 2023, "", "./tensorflow/core/framework/model.cc", "Model::~Model");
+
   // Before the model is destroyed, we record an empty string in the gauge to
   // prevent race condition where the gauge callback is called after the Model
   // is destroyed.
@@ -1702,6 +2032,10 @@ Model::~Model() {
 void Model::AddNode(Node::Factory factory, const string& name,
                     std::shared_ptr<Node> parent,
                     std::shared_ptr<Node>* out_node) {
+   std::vector<std::string> mht_54_v;
+   mht_54_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_54(mht_54_v, 2036, "", "./tensorflow/core/framework/model.cc", "Model::AddNode");
+
   // The name captures the sequence of iterators joined by `::`. We only use the
   // last element of the sequence as the name node.
   auto node_name = str_util::Split(name, ':', str_util::SkipEmpty()).back();
@@ -1724,6 +2058,9 @@ void Model::AddNode(Node::Factory factory, const string& name,
 }
 
 void Model::FlushMetrics() {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_55(mht_55_v, 2061, "", "./tensorflow/core/framework/model.cc", "Model::FlushMetrics");
+
   std::deque<std::shared_ptr<Node>> queue;
   {
     tf_shared_lock l(mu_);
@@ -1742,6 +2079,9 @@ void Model::FlushMetrics() {
 void Model::Optimize(AutotuneAlgorithm algorithm, int64_t cpu_budget,
                      int64_t ram_budget, double model_input_time,
                      CancellationManager* cancellation_manager) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_56(mht_56_v, 2082, "", "./tensorflow/core/framework/model.cc", "Model::Optimize");
+
   std::shared_ptr<Node> snapshot;
   {
     tf_shared_lock l(mu_);
@@ -1776,6 +2116,9 @@ void Model::Optimize(AutotuneAlgorithm algorithm, int64_t cpu_budget,
 }
 
 void Model::RemoveNode(std::shared_ptr<Node> node) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_57(mht_57_v, 2119, "", "./tensorflow/core/framework/model.cc", "Model::RemoveNode");
+
   mutex_lock l(mu_);
   if (node) {
     if (node->output()) {
@@ -1787,6 +2130,9 @@ void Model::RemoveNode(std::shared_ptr<Node> node) {
 
 Model::ModelParameters Model::CollectTunableParameters(
     std::shared_ptr<Node> node) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_58(mht_58_v, 2133, "", "./tensorflow/core/framework/model.cc", "Model::CollectTunableParameters");
+
   return node->CollectTunableParameters();
 }
 
@@ -1796,6 +2142,9 @@ bool Model::ShouldStop(int64_t cpu_budget, int64_t ram_budget,
                        const Model::ModelParameters& buffer_size_parameters,
                        std::shared_ptr<Node> snapshot,
                        bool* cpu_budget_reached) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_59(mht_59_v, 2145, "", "./tensorflow/core/framework/model.cc", "Model::ShouldStop");
+
   if (!(*cpu_budget_reached)) {
     // If those essential transformations' parallelism reaches the CPU
     // budget, we will only tune the buffer size parameters in future
@@ -1819,6 +2168,9 @@ bool Model::ShouldStop(int64_t cpu_budget, int64_t ram_budget,
 Status Model::OptimizeLoop(AutotuneAlgorithm algorithm, int64_t cpu_budget,
                            int64_t ram_budget,
                            CancellationManager* cancellation_manager) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_60(mht_60_v, 2171, "", "./tensorflow/core/framework/model.cc", "Model::OptimizeLoop");
+
   std::function<void()> unused;
   TF_RETURN_IF_ERROR(RegisterCancellationCallback(
       cancellation_manager,
@@ -1869,6 +2221,9 @@ void Model::OptimizeGradientDescent(
     std::shared_ptr<Node> snapshot,
     const OptimizationParams& optimization_params,
     CancellationManager* cancellation_manager) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_61(mht_61_v, 2224, "", "./tensorflow/core/framework/model.cc", "Model::OptimizeGradientDescent");
+
   VLOG(2) << "Starting optimization of tunable parameters with Gradient "
              "Descent.";
   auto parameters = CollectTunableParameters(snapshot);
@@ -1936,6 +2291,9 @@ void Model::OptimizeHillClimbHelper(
     std::shared_ptr<Node> snapshot,
     const OptimizationParams& optimization_params,
     CancellationManager* cancellation_manager, StopPredicate should_stop) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_62(mht_62_v, 2294, "", "./tensorflow/core/framework/model.cc", "Model::OptimizeHillClimbHelper");
+
   VLOG(2) << "Starting optimization of tunable parameters with Hill Climb.";
   const double processing_time = TotalProcessingTime(snapshot);
   auto parameters = CollectTunableParameters(snapshot);
@@ -1995,10 +2353,16 @@ void Model::OptimizeHillClimbHelper(
 void Model::OptimizeHillClimb(std::shared_ptr<Node> snapshot,
                               const OptimizationParams& optimization_params,
                               CancellationManager* cancellation_manager) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_63(mht_63_v, 2356, "", "./tensorflow/core/framework/model.cc", "Model::OptimizeHillClimb");
+
   auto should_stop = [&optimization_params](const ModelParameters& parameters,
                                             double processing_time,
                                             double output_time,
                                             double buffered_bytes) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_64(mht_64_v, 2363, "", "./tensorflow/core/framework/model.cc", "lambda");
+
     const bool all_max = AreAllParametersMax(parameters);
     const bool output_time_budget_exceeded =
         output_time < processing_time / optimization_params.cpu_budget();
@@ -2023,10 +2387,16 @@ void Model::OptimizeMaxParallelism(
     std::shared_ptr<Node> snapshot,
     const OptimizationParams& optimization_params,
     CancellationManager* cancellation_manager) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_65(mht_65_v, 2390, "", "./tensorflow/core/framework/model.cc", "Model::OptimizeMaxParallelism");
+
   auto should_stop = [&optimization_params](const ModelParameters& parameters,
                                             double processing_time,
                                             double output_time,
                                             double buffered_bytes) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_66(mht_66_v, 2397, "", "./tensorflow/core/framework/model.cc", "lambda");
+
     const bool all_max = AreAllParametersMax(parameters);
     const bool ram_budget_exceeded =
         buffered_bytes > optimization_params.ram_budget();
@@ -2044,6 +2414,9 @@ void Model::OptimizeMaxParallelism(
 
 double Model::OutputTime(std::shared_ptr<Node> node, double model_input_time,
                          Model::ParameterGradients* gradients) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_67(mht_67_v, 2417, "", "./tensorflow/core/framework/model.cc", "Model::OutputTime");
+
   // To store the input time for each node.
   Model::NodeValues input_times = {{kModelInputTimeKey, model_input_time}};
 
@@ -2058,24 +2431,39 @@ double Model::OutputTime(std::shared_ptr<Node> node, double model_input_time,
 }
 
 double Model::TotalBufferedBytes(std::shared_ptr<Node> node) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_68(mht_68_v, 2434, "", "./tensorflow/core/framework/model.cc", "Model::TotalBufferedBytes");
+
   return node->TotalBufferedBytes();
 }
 
 double Model::TotalMaximumBufferedBytes(std::shared_ptr<Node> node) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_69(mht_69_v, 2441, "", "./tensorflow/core/framework/model.cc", "Model::TotalMaximumBufferedBytes");
+
   return node->TotalMaximumBufferedBytes();
 }
 
 double Model::TotalProcessingTime(std::shared_ptr<Node> node) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_70(mht_70_v, 2448, "", "./tensorflow/core/framework/model.cc", "Model::TotalProcessingTime");
+
   return node->TotalProcessingTime(/*processing_times=*/nullptr);
 }
 
 Status Model::ToProto(ModelProto* model_proto) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_71(mht_71_v, 2455, "", "./tensorflow/core/framework/model.cc", "Model::ToProto");
+
   tf_shared_lock l(mu_);
   model_proto->set_id_counter(id_counter_);
   return ModelToProtoHelper(output_, model_proto);
 }
 
 Status Model::FromProto(ModelProto model_proto, std::unique_ptr<Model>* model) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_72(mht_72_v, 2464, "", "./tensorflow/core/framework/model.cc", "Model::FromProto");
+
   std::unique_ptr<Model> restored_model = std::make_unique<Model>();
   mutex_lock l(restored_model->mu_);
   TF_RETURN_IF_ERROR(
@@ -2087,6 +2475,10 @@ Status Model::FromProto(ModelProto model_proto, std::unique_ptr<Model>* model) {
 
 Status Model::Save(const string& fname, std::shared_ptr<Node> snapshot,
                    const OptimizationParams& optimization_params) {
+   std::vector<std::string> mht_73_v;
+   mht_73_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_73(mht_73_v, 2479, "", "./tensorflow/core/framework/model.cc", "Model::Save");
+
   ModelProto model_proto;
   std::unique_ptr<Model> model_snapshot = std::make_unique<Model>();
   {
@@ -2103,6 +2495,10 @@ Status Model::Save(const string& fname, std::shared_ptr<Node> snapshot,
 
 Status Model::Load(const string& fname, std::unique_ptr<Model>* model,
                    OptimizationParams* optimization_params) {
+   std::vector<std::string> mht_74_v;
+   mht_74_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_74(mht_74_v, 2499, "", "./tensorflow/core/framework/model.cc", "Model::Load");
+
   ModelProto model_proto;
   TF_RETURN_IF_ERROR(
       ReadTextOrBinaryProto(Env::Default(), fname, &model_proto));
@@ -2114,6 +2510,9 @@ Status Model::Load(const string& fname, std::unique_ptr<Model>* model,
 }
 
 std::string Model::DebugString() {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPSmodelDTcc mht_75(mht_75_v, 2513, "", "./tensorflow/core/framework/model.cc", "Model::DebugString");
+
   constexpr int64_t kMinSecondsBetweenCalls = 30;
   if (absl::Now() < cache_until_) return cached_debug_string_;
   std::shared_ptr<Node> snapshot;

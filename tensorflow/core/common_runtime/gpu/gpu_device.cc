@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -119,11 +287,21 @@ using se::rocm::ScopedActivateExecutorContext;
 class EigenGpuStreamDevice : public ::Eigen::StreamInterface {
  public:
   EigenGpuStreamDevice()
-      : scratch_(nullptr), semaphore_(nullptr), context_(nullptr) {}
-  ~EigenGpuStreamDevice() override {}
+      : scratch_(nullptr), semaphore_(nullptr), context_(nullptr) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_0(mht_0_v, 291, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "EigenGpuStreamDevice");
+}
+  ~EigenGpuStreamDevice() override {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_1(mht_1_v, 295, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "~EigenGpuStreamDevice");
+}
   void Reinitialize(OpKernelContext* context, const gpuStream_t* gpu_stream,
                     TfDeviceId tf_device_id, ::tensorflow::Allocator* alloc,
                     char* scratch) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("scratch: \"" + (scratch == nullptr ? std::string("nullptr") : std::string((char*)scratch)) + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_2(mht_2_v, 302, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "Reinitialize");
+
     if (LogMemory::IsEnabled()) {
       operation_ = context->op_kernel().name() + "/EigenAllocator";
       step_id_ = context->step_id();
@@ -140,12 +318,21 @@ class EigenGpuStreamDevice : public ::Eigen::StreamInterface {
     device_prop_ = &Eigen::GetGpuDeviceProperties(platform_device_id.value());
   }
 
-  const gpuStream_t& stream() const override { return *stream_; }
+  const gpuStream_t& stream() const override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_3(mht_3_v, 322, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "stream");
+ return *stream_; }
   const gpuDeviceProp_t& deviceProperties() const override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_4(mht_4_v, 326, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "deviceProperties");
+
     return *device_prop_;
   }
 
   void* allocate(size_t num_bytes) const override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_5(mht_5_v, 333, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "allocate");
+
     void* ret = allocator_->AllocateRaw(32 /* alignment */, num_bytes);
     if (ret == nullptr) {
       if (context_) {
@@ -165,6 +352,9 @@ class EigenGpuStreamDevice : public ::Eigen::StreamInterface {
     return ret;
   }
   void deallocate(void* buffer) const override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_6(mht_6_v, 355, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "deallocate");
+
     if (LogMemory::IsEnabled() && buffer != nullptr) {
       LogMemory::RecordRawDeallocation(operation_, step_id_, buffer, allocator_,
                                        true);
@@ -182,19 +372,29 @@ class EigenGpuStreamDevice : public ::Eigen::StreamInterface {
 
   // Return a pointer to a per stream scratchpad of 1024 bytes residing
   // in global memory.
-  void* scratchpad() const override { return scratch_; }
+  void* scratchpad() const override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_7(mht_7_v, 376, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "scratchpad");
+ return scratch_; }
 
   // Return a semaphore. The semaphore is initially initialized to 0, and
   // each kernel using it is responsible for resetting to 0 upon completion
   // to maintain the invariant that the semaphore is always equal to 0 upon
   // each kernel start.
-  unsigned int* semaphore() const override { return semaphore_; }
+  unsigned int* semaphore() const override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_8(mht_8_v, 385, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "semaphore");
+ return semaphore_; }
 
  private:
   struct AsyncFreeData {
     AsyncFreeData(::tensorflow::Allocator* a, void* p, const string& o,
                   const int64_t s)
-        : allocator_(a), address_(p), operation_(o), step_id_(s) {}
+        : allocator_(a), address_(p), operation_(o), step_id_(s) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("o: \"" + o + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_9(mht_9_v, 395, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "AsyncFreeData");
+}
     ::tensorflow::Allocator* allocator_;
     void* address_;
     const string operation_;
@@ -244,6 +444,9 @@ class BaseGPUDevice::StreamGroupFactory {
                                           int stream_group_within_gpu,
                                           se::StreamExecutor* executor,
                                           const GPUOptions& options) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_10(mht_10_v, 447, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "GetOrCreate");
+
     mutex_lock guard(lock_);
     StreamGroup* group =
         &streams_[key_type(tf_device_id.value(), stream_group_within_gpu)];
@@ -302,12 +505,18 @@ class BaseGPUDevice::StreamGroupFactory {
   // Returns a reference to the StreamGroupFactory singleton. Note that this is
   // never destroyed, so the objects it owns are never deleted.
   static StreamGroupFactory& Global() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_11(mht_11_v, 508, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "Global");
+
     static StreamGroupFactory* instance = new StreamGroupFactory();
     return *instance;
   }
 
   // Helper method for unit tests to reset the streams. Never use in production.
   void TestOnlyReset() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_12(mht_12_v, 517, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "TestOnlyReset");
+
     mutex_lock guard(lock_);
     for (auto& item : streams_) {
       auto& stream = item.second;
@@ -344,6 +553,9 @@ class BaseGPUDevice::StreamGroupFactory {
   // Returns priority for the given virtual GPU id from the session options.
   // Returns 0 if no virtual devices are specified.
   int GetPriority(int tf_device_id, const GPUOptions& options) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_13(mht_13_v, 556, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "GetPriority");
+
     int id = tf_device_id;
     int i = 0;
     int priority = 0;
@@ -364,6 +576,9 @@ class BaseGPUDevice::StreamGroupFactory {
 
   // Returns a Stream with the underlying GPUStream with the given priority.
   se::Stream* GetStream(se::StreamExecutor* executor, int priority) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_14(mht_14_v, 579, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "GetStream");
+
     auto stream = new se::Stream(executor);
     static_cast<stream_executor::gpu::GpuStream*>(stream->implementation())
         ->SetPriority(priority);
@@ -394,6 +609,11 @@ BaseGPUDevice::BaseGPUDevice(const SessionOptions& options, const string& name,
       scoped_allocator_mgr_(new ScopedAllocatorMgr(name)),
       tf_device_id_(tf_device_id),
       sync_every_op_(sync_every_op) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("name: \"" + name + "\"");
+   mht_15_v.push_back("physical_device_desc: \"" + physical_device_desc + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_15(mht_15_v, 614, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDevice::BaseGPUDevice");
+
   // XLA device IDs for GPUs are arbitrary but must be unique, so we hash device
   // names (which include a replica index even for multi-client).
   set_xla_global_id(Fingerprint32(name) % std::numeric_limits<int32_t>::max());
@@ -401,6 +621,9 @@ BaseGPUDevice::BaseGPUDevice(const SessionOptions& options, const string& name,
 }
 
 BaseGPUDevice::~BaseGPUDevice() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_16(mht_16_v, 624, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDevice::~BaseGPUDevice");
+
   delete gpu_device_info_;
   if (scratch_) gpu_allocator_->DeallocateRaw(scratch_);
   device_context_->Unref();
@@ -408,6 +631,9 @@ BaseGPUDevice::~BaseGPUDevice() {
 
 // This should be idempotent if already initialized.
 Status BaseGPUDevice::InitScratchBuffers() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_17(mht_17_v, 634, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDevice::InitScratchBuffers");
+
   mutex_lock l(scratch_init_mutex_);
   if (!scratch_) {
     DCHECK(stream_);
@@ -430,6 +656,9 @@ Status BaseGPUDevice::InitScratchBuffers() {
 }
 
 Status BaseGPUDevice::Init(const SessionOptions& options) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_18(mht_18_v, 659, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDevice::Init");
+
   auto executor_status = DeviceIdUtil::ExecutorForTfDeviceId(
       DEVICE_GPU, GPUMachineManager(), tf_device_id_);
   if (!executor_status.status().ok()) {
@@ -552,6 +781,9 @@ Status BaseGPUDevice::Init(const SessionOptions& options) {
 
 string BaseGPUDevice::ComputeOpKernelDebugString(const OpKernel& op_kernel,
                                                  const int& stream_id) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_19(mht_19_v, 784, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDevice::ComputeOpKernelDebugString");
+
   return strings::StrCat(op_kernel.name(), " op ", op_kernel.type_string(),
                          " on GPU ", tf_device_id_.value(), " stream[",
                          stream_id, "]");
@@ -559,6 +791,9 @@ string BaseGPUDevice::ComputeOpKernelDebugString(const OpKernel& op_kernel,
 
 namespace {
 const absl::flat_hash_set<std::string>* GetOpsToLogFromEnv() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_20(mht_20_v, 794, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "GetOpsToLogFromEnv");
+
   auto* result = new absl::flat_hash_set<std::string>;
   const char* env = getenv("TF_GPU_DEBUG_OPS_TO_LOG");
   if (!env) {
@@ -576,6 +811,9 @@ const absl::flat_hash_set<std::string>* GetOpsToLogFromEnv() {
 }
 
 bool ShouldLogInputsAndOutputs(OpKernel* op_kernel) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_21(mht_21_v, 814, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "ShouldLogInputsAndOutputs");
+
   static const absl::flat_hash_set<std::string>& ops_to_log =
       *GetOpsToLogFromEnv();
   return ops_to_log.count(op_kernel->type_string());
@@ -583,6 +821,9 @@ bool ShouldLogInputsAndOutputs(OpKernel* op_kernel) {
 }  // namespace
 
 Tensor BaseGPUDevice::CopyGpuTensorToHostDebugOnly(const Tensor& gpu_tensor) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_22(mht_22_v, 824, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDevice::CopyGpuTensorToHostDebugOnly");
+
   Tensor host_tensor(gpu_tensor.dtype(), gpu_tensor.shape());
   CHECK(device_context_->stream()
             ->ThenMemcpy(host_tensor.data(),
@@ -595,6 +836,9 @@ Tensor BaseGPUDevice::CopyGpuTensorToHostDebugOnly(const Tensor& gpu_tensor) {
 }
 
 void BaseGPUDevice::LogInputs(OpKernel* op_kernel, OpKernelContext* context) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_23(mht_23_v, 839, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDevice::LogInputs");
+
   LOG(INFO) << "Inputs for " << op_kernel->name() << " (total "
             << context->num_inputs() << "):";
   for (int i = 0; i < context->num_inputs(); i++) {
@@ -614,6 +858,9 @@ void BaseGPUDevice::LogInputs(OpKernel* op_kernel, OpKernelContext* context) {
 }
 
 void BaseGPUDevice::LogOutputs(OpKernel* op_kernel, OpKernelContext* context) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_24(mht_24_v, 861, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDevice::LogOutputs");
+
   if (!context->status().ok()) {
     LOG(INFO) << op_kernel->name()
               << " failed: " << context->status().error_message();
@@ -640,6 +887,9 @@ void BaseGPUDevice::LogOutputs(OpKernel* op_kernel, OpKernelContext* context) {
 }
 
 void BaseGPUDevice::Compute(OpKernel* op_kernel, OpKernelContext* context) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_25(mht_25_v, 890, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDevice::Compute");
+
   // NOTE(tucker): We need to discriminate between Eigen GPU
   // operations and all others.  If an operation is Eigen
   // implemented (or otherwise tries to launch a GPU kernel
@@ -723,6 +973,9 @@ void BaseGPUDevice::Compute(OpKernel* op_kernel, OpKernelContext* context) {
 }
 
 Status BaseGPUDevice::Sync() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_26(mht_26_v, 976, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDevice::Sync");
+
   DCHECK_NE(stream_, nullptr);
 
   // Device::Sync is supposed to block until all operations queued on the device
@@ -737,6 +990,9 @@ Status BaseGPUDevice::Sync() {
 void BaseGPUDevice::ComputeAsync(AsyncOpKernel* op_kernel,
                                  OpKernelContext* context,
                                  AsyncOpKernel::DoneCallback done) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_27(mht_27_v, 993, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDevice::ComputeAsync");
+
   GPUDeviceContext* gpu_device_context = device_context_;
   if (context->op_device_context() != nullptr) {
     gpu_device_context =
@@ -756,6 +1012,9 @@ void BaseGPUDevice::ComputeAsync(AsyncOpKernel* op_kernel,
     AsyncOpKernel::DoneCallback parent_done = done;
     done = [this, parent_done, should_log_inputs_and_outputs, op_kernel,
             context]() {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_28(mht_28_v, 1015, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "lambda");
+
       LogOutputs(op_kernel, context);
       parent_done();
     };
@@ -768,6 +1027,9 @@ void BaseGPUDevice::ComputeAsync(AsyncOpKernel* op_kernel,
 Status BaseGPUDevice::MaybeCopyTensorToGPU(
     const AllocatorAttributes& alloc_attrs, const Tensor& from, Tensor* to,
     StatusCallback done) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_29(mht_29_v, 1030, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDevice::MaybeCopyTensorToGPU");
+
   if (alloc_attrs.on_host()) {
     *to = from;
     done(Status::OK());
@@ -782,6 +1044,9 @@ Status BaseGPUDevice::MaybeCopyTensorToGPU(
     AllocationAttributes allocation_attr;
     uint64 safe_alloc_frontier = 0;
     std::function<uint64()> freed_by_func = [this, &safe_alloc_frontier]() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_30(mht_30_v, 1047, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "lambda");
+
       safe_alloc_frontier = SafeAllocFrontier(safe_alloc_frontier);
       return safe_alloc_frontier;
     };
@@ -802,6 +1067,9 @@ Status BaseGPUDevice::MaybeCopyTensorToGPU(
     }
 
     auto wrapped_done = [to, copy, done = std::move(done)](const Status& s) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_31(mht_31_v, 1070, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "lambda");
+
       if (s.ok()) {
         *to = std::move(*copy);
       }
@@ -820,6 +1088,9 @@ Status BaseGPUDevice::MaybeCopyTensorToGPU(
 Status BaseGPUDevice::MakeTensorFromProto(const TensorProto& tensor_proto,
                                           const AllocatorAttributes alloc_attrs,
                                           Tensor* tensor) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_32(mht_32_v, 1091, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDevice::MakeTensorFromProto");
+
   AllocatorAttributes attr;
   attr.set_on_host(true);
   attr.set_gpu_compatible(true);
@@ -843,6 +1114,9 @@ Status BaseGPUDevice::MakeTensorFromProto(const TensorProto& tensor_proto,
     Status copy_status;
     auto copier = [this, &alloc_attrs, &notifications, &copy_status](
                       const Tensor& from, Tensor* to) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_33(mht_33_v, 1117, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "lambda");
+
       // Copier isn't run in a multithreaded environment, so we don't
       // have to worry about the notifications list being modified in parallel.
       notifications.emplace_back();
@@ -888,6 +1162,9 @@ void BaseGPUDevice::CopyTensorInSameDevice(const Tensor* input_tensor,
                                            Tensor* output_tensor,
                                            const DeviceContext* device_context,
                                            StatusCallback done) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_34(mht_34_v, 1165, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDevice::CopyTensorInSameDevice");
+
   GPUUtil::CopyGPUTensorToSameGPU(static_cast<Device*>(this), device_context,
                                   input_tensor, output_tensor, std::move(done));
 }
@@ -895,16 +1172,26 @@ void BaseGPUDevice::CopyTensorInSameDevice(const Tensor* input_tensor,
 namespace {
 class ConcretePerOpGpuDevice : public PerOpGpuDevice {
  public:
-  ConcretePerOpGpuDevice() : device_(&stream_device_) {}
+  ConcretePerOpGpuDevice() : device_(&stream_device_) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_35(mht_35_v, 1176, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "ConcretePerOpGpuDevice");
+}
 
   void Reinitialize(OpKernelContext* context, const gpuStream_t* gpu_stream,
                     TfDeviceId tf_device_id, Allocator* base_allocator,
                     char* scratch) {
+   std::vector<std::string> mht_36_v;
+   mht_36_v.push_back("scratch: \"" + (scratch == nullptr ? std::string("nullptr") : std::string((char*)scratch)) + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_36(mht_36_v, 1184, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "Reinitialize");
+
     stream_device_.Reinitialize(context, gpu_stream, tf_device_id,
                                 base_allocator, scratch);
   }
 
-  const Eigen::GpuDevice& device() const override { return device_; }
+  const Eigen::GpuDevice& device() const override {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_37(mht_37_v, 1192, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "device");
+ return device_; }
 
  private:
   EigenGpuStreamDevice stream_device_;
@@ -916,6 +1203,9 @@ Status VerifyVirtualDeviceSettings(
     const std::vector<PlatformDeviceId>& visible_gpu_order,
     const std::vector<PlatformDeviceId>& valid_platform_device_ids,
     const std::map<int, std::pair<int, int>>& supported_priority_ranges) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_38(mht_38_v, 1206, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "VerifyVirtualDeviceSettings");
+
   const auto& virtual_devices = gpu_options.experimental().virtual_devices();
   CHECK(!virtual_devices.empty());
   if (gpu_options.per_process_gpu_memory_fraction() > 0) {
@@ -996,6 +1286,9 @@ Status VerifyVirtualDeviceSettings(
 }
 
 int64_t MinSystemMemory(int64_t available_memory, int cc_major) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_39(mht_39_v, 1289, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "MinSystemMemory");
+
   // We use the following heuristic for now:
   //
   // If the available_memory is < 2GiB, we allocate 225MiB to system memory.
@@ -1043,6 +1336,9 @@ int64_t MinSystemMemory(int64_t available_memory, int cc_major) {
 Status SingleVirtualDeviceMemoryLimit(const GPUOptions& gpu_options,
                                       PlatformDeviceId platform_device_id,
                                       int64_t* memory_limit) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_40(mht_40_v, 1339, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "SingleVirtualDeviceMemoryLimit");
+
   int64_t total_memory = 0;
   int64_t available_memory = 0;
   se::StreamExecutor* se = DeviceIdUtil::ExecutorForPlatformDeviceId(
@@ -1116,6 +1412,9 @@ Status SingleVirtualDeviceMemoryLimit(const GPUOptions& gpu_options,
 void BaseGPUDevice::ReinitializeDevice(OpKernelContext* context,
                                        PerOpGpuDevice* device, int stream_id,
                                        Allocator* allocator) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_41(mht_41_v, 1415, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDevice::ReinitializeDevice");
+
   ConcretePerOpGpuDevice* concrete_device =
       static_cast<ConcretePerOpGpuDevice*>(device);
   DCHECK(concrete_device);
@@ -1127,6 +1426,9 @@ void BaseGPUDevice::ReinitializeDevice(OpKernelContext* context,
 }
 
 PerOpGpuDevice* BaseGPUDevice::MakeGpuDevice() {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_42(mht_42_v, 1429, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDevice::MakeGpuDevice");
+
   return new ConcretePerOpGpuDevice();
 }
 
@@ -1134,6 +1436,9 @@ Status BaseGPUDevice::ReinitializeGpuDevice(OpKernelContext* context,
                                             PerOpGpuDevice* device,
                                             DeviceContext* dc,
                                             Allocator* allocator) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_43(mht_43_v, 1439, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDevice::ReinitializeGpuDevice");
+
   TF_RETURN_IF_ERROR(InitScratchBuffers());
   if (dc) {
     const GPUDeviceContext* gpu_dc = static_cast<GPUDeviceContext*>(dc);
@@ -1150,6 +1455,9 @@ Status BaseGPUDevice::ReinitializeGpuDevice(OpKernelContext* context,
 
 Allocator* BaseGPUDevice::GetScopedAllocator(AllocatorAttributes attr,
                                              int64_t step_id) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_44(mht_44_v, 1458, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDevice::GetScopedAllocator");
+
   if (attr.scope_id > 0) {
     return scoped_allocator_mgr_->GetContainer(step_id)->GetInstance(
         attr.scope_id);
@@ -1163,6 +1471,9 @@ const int BaseGPUDeviceFactory::InterconnectMap::kSameDeviceStrength = 1000;
 const int BaseGPUDeviceFactory::InterconnectMap::kStreamExecutorStrength = 1;
 
 Status BaseGPUDeviceFactory::CacheDeviceIds() {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_45(mht_45_v, 1474, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDeviceFactory::CacheDeviceIds");
+
   if (!cached_device_ids_.empty()) {
     return Status::OK();
   }
@@ -1185,6 +1496,9 @@ Status BaseGPUDeviceFactory::CacheDeviceIds() {
 }
 
 Status BaseGPUDeviceFactory::ListPhysicalDevices(std::vector<string>* devices) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_46(mht_46_v, 1499, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDeviceFactory::ListPhysicalDevices");
+
   TF_RETURN_IF_ERROR(CacheDeviceIds());
   for (PlatformDeviceId platform_device_id : cached_device_ids_) {
     const string device_name =
@@ -1197,6 +1511,9 @@ Status BaseGPUDeviceFactory::ListPhysicalDevices(std::vector<string>* devices) {
 
 Status BaseGPUDeviceFactory::GetDeviceDetails(
     int device_index, std::unordered_map<string, string>* details) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_47(mht_47_v, 1514, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDeviceFactory::GetDeviceDetails");
+
   TF_RETURN_IF_ERROR(CacheDeviceIds());
 
   if (device_index < 0 || device_index > cached_device_ids_.size()) {
@@ -1226,6 +1543,10 @@ Status BaseGPUDeviceFactory::GetDeviceDetails(
 Status BaseGPUDeviceFactory::CreateDevices(
     const SessionOptions& options, const string& name_prefix,
     std::vector<std::unique_ptr<Device>>* devices) {
+   std::vector<std::string> mht_48_v;
+   mht_48_v.push_back("name_prefix: \"" + name_prefix + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_48(mht_48_v, 1547, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDeviceFactory::CreateDevices");
+
   TF_RETURN_IF_ERROR(ValidateGPUMachineManager());
   se::Platform* gpu_manager = GPUMachineManager();
   if (gpu_manager == nullptr) {
@@ -1458,6 +1779,9 @@ Status BaseGPUDeviceFactory::CreateDevices(
 
 static string GetShortDeviceDescription(PlatformDeviceId platform_device_id,
                                         const se::DeviceDescription& desc) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_49(mht_49_v, 1782, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "GetShortDeviceDescription");
+
 #if GOOGLE_CUDA
   // LINT.IfChange
   return strings::StrCat(
@@ -1477,6 +1801,10 @@ Status BaseGPUDeviceFactory::CreateGPUDevice(
     TfDeviceId tf_device_id, int64_t memory_limit,
     const DeviceLocality& dev_locality, size_t num_tf_gpus,
     std::vector<std::unique_ptr<Device>>* devices) {
+   std::vector<std::string> mht_50_v;
+   mht_50_v.push_back("name_prefix: \"" + name_prefix + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_50(mht_50_v, 1805, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDeviceFactory::CreateGPUDevice");
+
   CHECK_GE(tf_device_id.value(), 0);
   const string device_name =
       strings::StrCat(name_prefix, "/device:GPU:", tf_device_id.value());
@@ -1566,6 +1894,9 @@ GetPeerAccessMap(se::Platform* platform,
 Status BaseGPUDeviceFactory::GetInterconnectMaps(
     const std::vector<PlatformDeviceId>& visible_gpu_order,
     se::Platform* gpu_manager, std::vector<InterconnectMap>* maps) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_51(mht_51_v, 1897, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDeviceFactory::GetInterconnectMaps");
+
   // The default interconnect map is obtained from the StreamExecutor.
   auto access_map = GetPeerAccessMap(gpu_manager, visible_gpu_order);
   maps->resize(1);
@@ -1586,6 +1917,9 @@ Status BaseGPUDeviceFactory::GetInterconnectMaps(
 Status BaseGPUDeviceFactory::GetDeviceLocalities(
     int num_tf_gpus, const std::vector<InterconnectMap>& interconnects,
     LocalityMap* localities) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_52(mht_52_v, 1920, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDeviceFactory::GetDeviceLocalities");
+
   std::vector<TfDeviceId> all_tf_device_ids;
   all_tf_device_ids.reserve(num_tf_gpus);
   for (int i = 0; i < num_tf_gpus; ++i) {
@@ -1668,6 +2002,9 @@ Status BaseGPUDeviceFactory::GetDeviceLocalities(
 static int GetDefaultMinGPUMultiprocessorCount(
     se::Platform* gpu_manager,
     const std::vector<PlatformDeviceId>& visible_gpu_order) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_53(mht_53_v, 2005, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "GetDefaultMinGPUMultiprocessorCount");
+
   static const int kDefaultMinGPUMultiprocessorCount = 8;
 
   // Find the highest multi-processor count across all visible GPUs.
@@ -1693,6 +2030,9 @@ static int GetDefaultMinGPUMultiprocessorCount(
 static int GetMinGPUMultiprocessorCount(
     se::Platform* gpu_manager,
     const std::vector<PlatformDeviceId>& visible_gpu_order) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_54(mht_54_v, 2033, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "GetMinGPUMultiprocessorCount");
+
   const char* tf_min_gpu_core_count = getenv("TF_MIN_GPU_MULTIPROCESSOR_COUNT");
 
   if (tf_min_gpu_core_count == nullptr ||
@@ -1721,6 +2061,10 @@ namespace {
 
 se::CudaComputeCapability ComputeCapabilityFromString(
     const std::string& version_name) {
+   std::vector<std::string> mht_55_v;
+   mht_55_v.push_back("version_name: \"" + version_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_55(mht_55_v, 2065, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "ComputeCapabilityFromString");
+
   int major_part, minor_part;
   size_t dot_pos = version_name.find('.');
   CHECK(dot_pos != string::npos)
@@ -1760,6 +2104,9 @@ std::vector<se::CudaComputeCapability> GetSupportedCudaComputeCapabilities() {
 
 Status BaseGPUDeviceFactory::EnablePeerAccess(
     const std::vector<PlatformDeviceId>& visible_gpu_order) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_56(mht_56_v, 2107, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDeviceFactory::EnablePeerAccess");
+
   se::Platform* gpu_manager = GPUMachineManager();
   int possible_peer_count = 0;
   int enabled_peer_count = 0;
@@ -1805,6 +2152,9 @@ Status BaseGPUDeviceFactory::EnablePeerAccess(
 Status BaseGPUDeviceFactory::GetValidDeviceIds(
     const std::vector<PlatformDeviceId>& visible_gpu_order,
     std::vector<PlatformDeviceId>* ids) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_57(mht_57_v, 2155, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDeviceFactory::GetValidDeviceIds");
+
   se::Platform* gpu_manager = GPUMachineManager();
   for (int i = 0; i < visible_gpu_order.size(); ++i) {
     int visible_gpu_id = visible_gpu_order[i].value();
@@ -1961,6 +2311,9 @@ Status BaseGPUDeviceFactory::GetValidDeviceIds(
 }
 
 uint64 BaseGPUDevice::SafeAllocFrontier(uint64 old_value) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_58(mht_58_v, 2314, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDevice::SafeAllocFrontier");
+
   if (timestamped_allocator_) {
     return kernel_tracker_->LastTerminatedCount(old_value);
   } else {
@@ -1969,6 +2322,9 @@ uint64 BaseGPUDevice::SafeAllocFrontier(uint64 old_value) {
 }
 
 int BaseGPUDevice::PendingKernels() {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_59(mht_59_v, 2325, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDevice::PendingKernels");
+
   if (kernel_tracker_) {
     return kernel_tracker_->NumPending();
   }
@@ -1976,10 +2332,16 @@ int BaseGPUDevice::PendingKernels() {
 }
 
 void BaseGPUDevice::TestOnlyReset() {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_60(mht_60_v, 2335, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "BaseGPUDevice::TestOnlyReset");
+
   StreamGroupFactory::Global().TestOnlyReset();
 }
 
 uint64 GPUKernelTracker::MaybeQueue(OpKernelContext* ctx) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_61(mht_61_v, 2342, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "GPUKernelTracker::MaybeQueue");
+
   mutex_lock l(mu_);
   ++ops_since_last_;
   int64_t mem_used =
@@ -2006,6 +2368,9 @@ uint64 GPUKernelTracker::MaybeQueue(OpKernelContext* ctx) {
 }
 
 void GPUKernelTracker::RecordQueued(uint64 queued_count, int weight) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_62(mht_62_v, 2371, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "GPUKernelTracker::RecordQueued");
+
   VLOG(2) << "RecordQueued queued_count=" << queued_count
           << " first_available_=" << first_available_
           << " last_completed_=" << last_completed_
@@ -2053,6 +2418,9 @@ void GPUKernelTracker::RecordQueued(uint64 queued_count, int weight) {
 // compacted) memory.  So queue an event on the compute stream to ensure the
 // frontier does advance.
 void GPUKernelTracker::MaybeQueueProgressEvent() {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_63(mht_63_v, 2421, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "GPUKernelTracker::MaybeQueueProgressEvent");
+
   mutex_lock l(mu_);
   if (num_pending_ == 0) {
     uint64 new_count = timing_counter_->next();
@@ -2063,6 +2431,9 @@ void GPUKernelTracker::MaybeQueueProgressEvent() {
 }
 
 void GPUKernelTracker::RecordTerminated(uint64 queued_count) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgpuPSgpu_deviceDTcc mht_64(mht_64_v, 2434, "", "./tensorflow/core/common_runtime/gpu/gpu_device.cc", "GPUKernelTracker::RecordTerminated");
+
   mutex_lock l(mu_);
   VLOG(2) << this << " RecordTerminated queued_count=" << queued_count
           << " first_available_=" << first_available_

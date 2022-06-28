@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_HLO_EVALUATOR_TYPED_VISITOR_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_HLO_EVALUATOR_TYPED_VISITOR_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <bitset>
 #include <cmath>
@@ -123,6 +291,9 @@ template <typename ReturnT, typename ElementwiseT = ReturnT>
 class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
  private:
   Status UnsupportedTypeError(HloInstruction* instruction) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_0(mht_0_v, 294, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "UnsupportedTypeError");
+
     return InvalidArgument(
         "Unsupported type for %s: %s", HloOpcodeString(instruction->opcode()),
         PrimitiveType_Name(instruction->shape().element_type()));
@@ -151,13 +322,19 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
  public:
-  explicit HloEvaluatorTypedVisitor(HloEvaluator* p) : parent_(p) {}
+  explicit HloEvaluatorTypedVisitor(HloEvaluator* p) : parent_(p) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_1(mht_1_v, 326, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HloEvaluatorTypedVisitor");
+}
 
   // The following higher-order functions convert a function with ElementwiseT
   // to a function with ReturnT.
   std::function<ReturnT(ReturnT)> ConvertUnaryFunction(
       const std::function<ElementwiseT(ElementwiseT)>& unary_op) {
     return [&unary_op](ReturnT arg) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_2(mht_2_v, 335, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "lambda");
+
       return static_cast<ReturnT>(unary_op(static_cast<ElementwiseT>(arg)));
     };
   }
@@ -165,6 +342,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
       const std::function<ElementwiseT(ElementwiseT, ElementwiseT)>&
           binary_op) {
     return [&binary_op](ReturnT arg1, ReturnT arg2) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_3(mht_3_v, 345, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "lambda");
+
       return static_cast<ReturnT>(binary_op(static_cast<ElementwiseT>(arg1),
                                             static_cast<ElementwiseT>(arg2)));
     };
@@ -173,6 +353,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
       const std::function<ElementwiseT(ElementwiseT, ElementwiseT,
                                        ElementwiseT)>& ternary_op) {
     return [&ternary_op](ReturnT arg1, ReturnT arg2, ReturnT arg3) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_4(mht_4_v, 356, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "lambda");
+
       return static_cast<ReturnT>(ternary_op(static_cast<ElementwiseT>(arg1),
                                              static_cast<ElementwiseT>(arg2),
                                              static_cast<ElementwiseT>(arg3)));
@@ -180,6 +363,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status DefaultAction(HloInstruction* hlo_instruction) override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_5(mht_5_v, 366, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "DefaultAction");
+
     return Unimplemented("unhandled HLO ops for HloEvaluator: %s.",
                          HloOpcodeString(hlo_instruction->opcode()));
   }
@@ -223,6 +409,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleAbs(HloInstruction* abs) override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_6(mht_6_v, 412, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleAbs");
+
     // If the operand is of C64 type, the return type of abs will be F32.
     // However, ElementwiseT would still be the return type, F32, and thus
     // specifying the ElementwiseT explicitly as C64 is needed below.
@@ -254,6 +443,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleRound(HloInstruction* round) override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_7(mht_7_v, 446, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleRound");
+
     return HandleRound<ReturnT>(round);
   }
 
@@ -276,10 +468,16 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleCeil(HloInstruction* ceil) override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_8(mht_8_v, 471, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleCeil");
+
     return HandleCeil<ReturnT>(ceil);
   }
 
   Status HandleConvert(HloInstruction* convert) override {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_9(mht_9_v, 478, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleConvert");
+
     const HloInstruction* operand = convert->operand(0);
     TF_RET_CHECK(ShapeUtil::SameDimensions(operand->shape(), convert->shape()));
     TF_ASSIGN_OR_RETURN(Literal result,
@@ -290,6 +488,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleBitcastConvert(HloInstruction* convert) override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_10(mht_10_v, 491, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleBitcastConvert");
+
     const HloInstruction* operand = convert->operand(0);
     TF_ASSIGN_OR_RETURN(Literal result,
                         parent_->GetEvaluatedLiteralFor(operand).BitcastConvert(
@@ -300,6 +501,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleExp(HloInstruction* exp) override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_11(mht_11_v, 504, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleExp");
+
     TF_ASSIGN_OR_RETURN(parent_->evaluated_[exp],
                         ElementWiseUnaryOp(exp, [](ElementwiseT elem_operand) {
                           return std::exp(elem_operand);
@@ -327,6 +531,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleExpm1(HloInstruction* floor) override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_12(mht_12_v, 534, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleExpm1");
+
     return HandleExpm1<ReturnT>(floor);
   }
 
@@ -350,10 +557,16 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleFloor(HloInstruction* floor) override {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_13(mht_13_v, 560, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleFloor");
+
     return HandleFloor<ReturnT>(floor);
   }
 
   Status HandleLog(HloInstruction* log) override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_14(mht_14_v, 567, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleLog");
+
     TF_ASSIGN_OR_RETURN(parent_->evaluated_[log],
                         ElementWiseUnaryOp(log, [](ElementwiseT elem_operand) {
                           return std::log(elem_operand);
@@ -381,6 +594,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleLog1p(HloInstruction* log1p) override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_15(mht_15_v, 597, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleLog1p");
+
     return HandleLog1p<ReturnT>(log1p);
   }
 
@@ -425,6 +641,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleNot(HloInstruction* not_) override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_16(mht_16_v, 644, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleNot");
+
     return HandleNot<ElementwiseT>(not_);
   }
 
@@ -455,10 +674,16 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleNegate(HloInstruction* negate) override {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_17(mht_17_v, 677, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleNegate");
+
     return HandleNegate<ReturnT>(negate);
   }
 
   Status HandleLogistic(HloInstruction* logistic) override {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_18(mht_18_v, 684, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleLogistic");
+
     TF_ASSIGN_OR_RETURN(
         parent_->evaluated_[logistic],
         ElementWiseUnaryOp(logistic, [](ElementwiseT elem_operand) {
@@ -511,6 +736,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleSign(HloInstruction* sign) override {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_19(mht_19_v, 739, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleSign");
+
     return HandleSign<ReturnT>(sign);
   }
 
@@ -548,10 +776,16 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleAtan2(HloInstruction* atan2) override {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_20(mht_20_v, 779, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleAtan2");
+
     return HandleAtan2<ElementwiseT>(atan2);
   }
 
   Status HandleTanh(HloInstruction* tanh) override {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_21(mht_21_v, 786, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleTanh");
+
     TF_ASSIGN_OR_RETURN(parent_->evaluated_[tanh],
                         ElementWiseUnaryOp(tanh, [](ElementwiseT elem_operand) {
                           return std::tanh(elem_operand);
@@ -560,6 +794,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleMultiply(HloInstruction* multiply) override {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_22(mht_22_v, 797, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleMultiply");
+
     TF_ASSIGN_OR_RETURN(
         parent_->evaluated_[multiply],
         ElementWiseBinaryOp(
@@ -571,6 +808,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleSubtract(HloInstruction* subtract) override {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_23(mht_23_v, 811, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleSubtract");
+
     TF_ASSIGN_OR_RETURN(
         parent_->evaluated_[subtract],
         ElementWiseBinaryOp(
@@ -582,6 +822,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleAdd(HloInstruction* add) override {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_24(mht_24_v, 825, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleAdd");
+
     TF_ASSIGN_OR_RETURN(parent_->evaluated_[add],
                         ElementWiseBinaryOp(add, [](ElementwiseT lhs_elem,
                                                     ElementwiseT rhs_elem) {
@@ -641,6 +884,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleDivide(HloInstruction* divide) override {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_25(mht_25_v, 887, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleDivide");
+
     return HandleDivide<ElementwiseT>(divide);
   }
 
@@ -675,6 +921,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleMaximum(HloInstruction* maximum) override {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_26(mht_26_v, 924, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleMaximum");
+
     return HandleMaximum<ElementwiseT>(maximum);
   }
 
@@ -711,10 +960,16 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleMinimum(HloInstruction* minimum) override {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_27(mht_27_v, 963, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleMinimum");
+
     return HandleMinimum<ElementwiseT>(minimum);
   }
 
   Status HandlePower(HloInstruction* power) override {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_28(mht_28_v, 970, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandlePower");
+
     TF_ASSIGN_OR_RETURN(
         parent_->evaluated_[power],
         ElementWiseBinaryOp(
@@ -727,6 +982,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleSqrt(HloInstruction* sqrt) override {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_29(mht_29_v, 985, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleSqrt");
+
     TF_ASSIGN_OR_RETURN(parent_->evaluated_[sqrt],
                         ElementWiseUnaryOp(sqrt, [](ElementwiseT elem_operand) {
                           return std::sqrt(elem_operand);
@@ -763,10 +1021,16 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleCbrt(HloInstruction* cbrt) override {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_30(mht_30_v, 1024, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleCbrt");
+
     return HandleCbrt<ElementwiseT>(cbrt);
   }
 
   Status HandleRsqrt(HloInstruction* rsqrt) override {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_31(mht_31_v, 1031, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleRsqrt");
+
     TF_ASSIGN_OR_RETURN(
         parent_->evaluated_[rsqrt],
         ElementWiseUnaryOp(rsqrt, [](ElementwiseT elem_operand) {
@@ -828,6 +1092,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleRemainder(HloInstruction* remainder) override {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_32(mht_32_v, 1095, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleRemainder");
+
     return HandleRemainder<ElementwiseT>(remainder);
   }
 
@@ -857,6 +1124,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleAnd(HloInstruction* and_) override {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_33(mht_33_v, 1127, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleAnd");
+
     return HandleAnd<ElementwiseT>(and_);
   }
 
@@ -886,6 +1156,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleOr(HloInstruction* or_) override {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_34(mht_34_v, 1159, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleOr");
+
     return HandleOr<ElementwiseT>(or_);
   }
 
@@ -915,6 +1188,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleXor(HloInstruction* xor_) override {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_35(mht_35_v, 1191, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleXor");
+
     return HandleXor<ElementwiseT>(xor_);
   }
 
@@ -941,6 +1217,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleShiftLeft(HloInstruction* shl) override {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_36(mht_36_v, 1220, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleShiftLeft");
+
     return HandleShiftLeft<ElementwiseT>(shl);
   }
   template <typename NativeT,
@@ -971,6 +1250,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleShiftRightArithmetic(HloInstruction* shra) override {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_37(mht_37_v, 1253, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleShiftRightArithmetic");
+
     return HandleShiftRightArithmetic<ElementwiseT>(shra);
   }
 
@@ -1002,6 +1284,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleShiftRightLogical(HloInstruction* shrl) override {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_38(mht_38_v, 1287, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleShiftRightLogical");
+
     return HandleShiftRightLogical<ElementwiseT>(shrl);
   }
 
@@ -1014,6 +1299,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   Status HandleClamp(HloInstruction* clamp) {
     std::function<ElementwiseT(ElementwiseT, ElementwiseT, ElementwiseT)>
         clamp_op = [](ElementwiseT low, ElementwiseT value, ElementwiseT high) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_39(mht_39_v, 1302, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "lambda");
+
           return static_cast<ElementwiseT>(
               std::min(high, std::max(value, low)));
         };
@@ -1031,6 +1319,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   Status HandleClamp(HloInstruction* clamp) {
     std::function<ElementwiseT(ElementwiseT, ElementwiseT, ElementwiseT)>
         clamp_op = [](ElementwiseT low, ElementwiseT value, ElementwiseT high) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_40(mht_40_v, 1322, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "lambda");
+
           if (std::isnan(low) || std::isnan(high) || std::isnan(value)) {
             return static_cast<ElementwiseT>(NAN);
           }
@@ -1052,14 +1343,23 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleClamp(HloInstruction* clamp) override {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_41(mht_41_v, 1346, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleClamp");
+
     return HandleClamp<ElementwiseT>(clamp);
   }
 
   Status HandleSelect(HloInstruction* select) override {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_42(mht_42_v, 1353, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleSelect");
+
     CHECK(!ShapeUtil::IsScalar(select->operand(0)->shape()));
     CHECK(select->shape().IsArray());
     std::function<ReturnT(bool, ReturnT, ReturnT)> select_op =
         [](bool pred, ReturnT on_true, ReturnT on_false) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_43(mht_43_v, 1360, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "lambda");
+
           if (pred) {
             return on_true;
           }
@@ -1071,6 +1371,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleReverse(HloInstruction* reverse) override {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_44(mht_44_v, 1374, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleReverse");
+
     const auto result_shape = reverse->shape();
     const auto reverse_dimensions = reverse->dimensions();
 
@@ -1103,6 +1406,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   Status HandleConvolutionWithLiterals(HloInstruction* conv,
                                        const Literal& lhs_literal,
                                        const Literal& rhs_literal) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_45(mht_45_v, 1409, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleConvolutionWithLiterals");
+
     const auto& window = conv->window();
     const Shape& result_shape = conv->shape();
     const Shape& lhs_shape = lhs_literal.shape();
@@ -1143,6 +1449,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
                  &lhs_dim_multipliers, &rhs_dim_multipliers, lhs_literal_data,
                  rhs_literal_data, feature_group_count,
                  batch_group_count](const absl::Span<const int64_t> out_index) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_46(mht_46_v, 1452, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "lambda");
+
       // Dimension number applicable for input (lhs).
       const int64_t input_batch_dim = dnums.input_batch_dimension();
       const int64_t input_z_dim = dnums.input_feature_dimension();
@@ -1282,6 +1591,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleConvolution(HloInstruction* conv) override {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_47(mht_47_v, 1594, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleConvolution");
+
     auto lhs = conv->operand(0);
     auto rhs = conv->operand(1);
     const auto& window = conv->window();
@@ -1341,6 +1653,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleDot(HloInstruction* dot) override {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_48(mht_48_v, 1656, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleDot");
+
     if (dot->dot_dimension_numbers().rhs_contracting_dimensions_size() == 1 &&
         parent_->use_fast_path_ &&
         ShapeUtil::SameElementType(dot->operand(0)->shape(), dot->shape()) &&
@@ -1424,6 +1739,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   Status HandleDotSlowPathWithLiterals(HloInstruction* dot,
                                        const Literal& lhs_literal,
                                        const Literal& rhs_literal) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_49(mht_49_v, 1742, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleDotSlowPathWithLiterals");
+
     const auto& dnums = dot->dot_dimension_numbers();
 
     const auto lhs_rank = lhs_literal.shape().rank();
@@ -1518,6 +1836,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleDotSlowPath(HloInstruction* dot) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_50(mht_50_v, 1839, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleDotSlowPath");
+
     auto lhs = dot->operand(0);
     auto rhs = dot->operand(1);
     CHECK(dot->shape().IsArray());
@@ -1548,6 +1869,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandlePad(HloInstruction* pad) override {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_51(mht_51_v, 1872, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandlePad");
+
     CHECK(pad->operand(0)->shape().IsArray());
     // Padding value must be scalar.
     CHECK(ShapeUtil::IsScalar(pad->operand(1)->shape()));
@@ -1582,6 +1906,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
     const PaddingConfig& pad_config = pad->padding_config();
 
     auto func = [&](absl::Span<const int64_t> input_index) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_52(mht_52_v, 1909, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "lambda");
+
       for (auto i = 0; i < input_index.size(); ++i) {
         // Interior padding occurs logically before edge padding, so in the case
         // of negative edge padding elements are removed from the
@@ -1614,6 +1941,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleDynamicSlice(HloInstruction* dynamic_slice) override {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_53(mht_53_v, 1944, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleDynamicSlice");
+
     auto operand = dynamic_slice->operand(0);
     auto start_indices = dynamic_slice->operand(1);
     auto result_shape = dynamic_slice->shape();
@@ -1676,6 +2006,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
 
   Status HandleDynamicUpdateSlice(
       HloInstruction* dynamic_update_slice) override {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_54(mht_54_v, 2009, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleDynamicUpdateSlice");
+
     auto operand = dynamic_update_slice->operand(0);
     auto update = dynamic_update_slice->operand(1);
     auto start_indices = dynamic_update_slice->operand(2);
@@ -1777,6 +2110,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleMap(HloInstruction* map) override {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_55(mht_55_v, 2113, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleMap");
+
     switch (map->operand(0)->shape().element_type()) {
       case PRED: {
         TF_ASSIGN_OR_RETURN(parent_->evaluated_[map], MapImpl<bool>(map));
@@ -1850,10 +2186,16 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleSort(HloInstruction* sort) override {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_56(mht_56_v, 2189, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleSort");
+
     return UnsupportedTypeError(sort);
   }
 
   Status HandleSelectAndScatter(HloInstruction* select_and_scatter) override {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_57(mht_57_v, 2196, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleSelectAndScatter");
+
     auto operand = select_and_scatter->operand(0);
     auto source = select_and_scatter->operand(1);
     const Window& window = select_and_scatter->window();
@@ -1959,6 +2301,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleReduceWindow(HloInstruction* reduce_window) override {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_58(mht_58_v, 2304, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleReduceWindow");
+
     auto* reduce_window_instr = Cast<HloReduceWindowInstruction>(reduce_window);
     const Window& window = reduce_window->window();
     HloComputation* function = reduce_window->to_apply();
@@ -2096,6 +2441,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   // to 0.
   ShapeUtil::IndexIterationSpace IterationSpaceForUpdateScatterIndices(
       const Shape& updates_shape, const ScatterDimensionNumbers& dim_numbers) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_59(mht_59_v, 2444, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "IterationSpaceForUpdateScatterIndices");
+
     int64_t updates_rank = updates_shape.dimensions_size();
     std::vector<int64_t> index_base(updates_rank, 0);
     std::vector<int64_t> index_count(updates_rank, 1);
@@ -2115,6 +2463,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   // to 0.
   ShapeUtil::IndexIterationSpace IterationSpaceForUpdateWindowIndices(
       const Shape& updates_shape, const ScatterDimensionNumbers& dim_numbers) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_60(mht_60_v, 2466, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "IterationSpaceForUpdateWindowIndices");
+
     int64_t updates_rank = updates_shape.dimensions_size();
     std::vector<int64_t> index_base(updates_rank, 0);
     std::vector<int64_t> index_count(updates_rank, 1);
@@ -2145,6 +2496,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
         const ScatterDimensionNumbers* dim_numbers, const Shape& input_shape,
         const Shape& updates_shape, const Literal* scatter_indices)
         : dim_numbers_(*dim_numbers), scatter_indices_(*scatter_indices) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_61(mht_61_v, 2499, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "UpdateScatterIndexToInputIndex");
+
       for (int64_t i = 0; i < updates_shape.dimensions_size(); i++) {
         update_dim_is_scatter_dims_.push_back(
             !absl::c_binary_search(dim_numbers_.update_window_dims(), i));
@@ -2198,6 +2552,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
     // dimension we iterate over in FetchIndexVector.
     void PropagateUpdateIndexScatterDimsToIndexVectorIndex(
         absl::Span<const int64_t> update_index) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_62(mht_62_v, 2555, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "PropagateUpdateIndexScatterDimsToIndexVectorIndex");
+
       int64_t index_vector_index_i = 0;
       for (int64_t i = 0, e = update_index.size(); i < e; i++) {
         if (!update_dim_is_scatter_dims_[i]) {
@@ -2215,6 +2572,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
     // Populates index_vector_ by iterating over scatter_indices_ according to
     // index_vector_index_.
     Status FetchIndexVector() {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_63(mht_63_v, 2575, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "FetchIndexVector");
+
       int64_t index_vector_dim = dim_numbers_.index_vector_dim();
       for (int64_t i = 0, e = index_vector_.size(); i < e; i++) {
         index_vector_index_[index_vector_dim] = i;
@@ -2226,6 +2586,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
 
     // Populates input_index_.
     void PropagateIndexVectorToInputIndex() {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_64(mht_64_v, 2589, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "PropagateIndexVectorToInputIndex");
+
       for (int64_t i = 0, e = input_index_.size(); i < e; i++) {
         if (input_dim_value_to_index_vector_[i] != -1) {
           input_index_[i] = index_vector_[input_dim_value_to_index_vector_[i]];
@@ -2274,6 +2637,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
     explicit UpdateWindowIndexToInputIndex(
         const ScatterDimensionNumbers& dim_numbers, const Shape& input_shape,
         const Shape& updates_shape) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_65(mht_65_v, 2640, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "UpdateWindowIndexToInputIndex");
+
       std::vector<int64_t> window_index_to_update_index;
       int64_t update_index_count = 0;
       for (int64_t i = 0; i < updates_shape.dimensions_size(); i++) {
@@ -2315,6 +2681,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
     // Returns for a given 'input_dim' the corresponding update dimension index,
     // or -1 if 'input_dim' is an elided window dimension.
     int64_t input_dim_value_to_update_index(int64_t input_dim) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_66(mht_66_v, 2684, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "input_dim_value_to_update_index");
+
       return input_dim_value_to_update_index_[input_dim];
     }
 
@@ -2323,6 +2692,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
     // mutating input_index_ in place.
     void PropagateUpdateIndexWindowDimsToInputIndex(
         absl::Span<const int64_t> update_index) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_67(mht_67_v, 2695, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "PropagateUpdateIndexWindowDimsToInputIndex");
+
       for (int64_t i = 0, e = input_index_.size(); i < e; i++) {
         if (input_dim_value_to_update_index_[i] != -1) {
           input_index_[i] = update_index[input_dim_value_to_update_index_[i]];
@@ -2344,6 +2716,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   };
 
   Status HandleScatter(HloInstruction* scatter) override {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_68(mht_68_v, 2719, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleScatter");
+
     const ScatterDimensionNumbers& dim_numbers =
         scatter->scatter_dimension_numbers();
     const Literal& operand =
@@ -2449,6 +2824,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleSlice(HloInstruction* slice) override {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_69(mht_69_v, 2827, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleSlice");
+
     auto operand = slice->operand(0);
     const Shape& shape = slice->shape();
     TF_ASSIGN_OR_RETURN(auto inferred_return_shape,
@@ -2463,6 +2841,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
     const int64_t rank = operand->shape().rank();
     const Literal& operand_literal = parent_->GetEvaluatedLiteralFor(operand);
     auto func = [&](absl::Span<const int64_t> out_index) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_70(mht_70_v, 2844, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "lambda");
+
       DimensionVector operand_index(rank);
       for (int64_t i = 0; i < rank; ++i) {
         operand_index[i] =
@@ -2502,6 +2883,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleClz(HloInstruction* clz) override {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_71(mht_71_v, 2886, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleClz");
+
     return HandleClz<ElementwiseT>(clz);
   }
 
@@ -2528,6 +2912,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandlePopulationCount(HloInstruction* popcnt) override {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_72(mht_72_v, 2915, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandlePopulationCount");
+
     return HandlePopulationCount<ElementwiseT>(popcnt);
   }
 
@@ -2550,6 +2937,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleSin(HloInstruction* sin) override {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_73(mht_73_v, 2940, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleSin");
+
     return HandleSin<ElementwiseT>(sin);
   }
 
@@ -2572,6 +2962,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleCos(HloInstruction* cos) override {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_74(mht_74_v, 2965, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleCos");
+
     return HandleCos<ElementwiseT>(cos);
   }
 
@@ -2685,6 +3078,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   }
 
   Status HandleReducePrecision(HloInstruction* reduce_precision) override {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_75(mht_75_v, 3081, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleReducePrecision");
+
     return HandleReducePrecision<ElementwiseT>(reduce_precision);
   }
 
@@ -2717,6 +3113,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
     return UnsupportedTypeError(iota);
   }
   Status HandleIota(HloInstruction* iota) override {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_76(mht_76_v, 3116, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleIota");
+
     return HandleIota<ReturnT>(iota);
   }
 
@@ -2827,6 +3226,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
     return Status::OK();
   }
   Status HandleRng(HloInstruction* random) override {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_77(mht_77_v, 3229, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "HandleRng");
+
     return HandleRng<ReturnT>(random);
   }
 
@@ -2841,6 +3243,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
   //
   // This lets you calculate LI given the multidimensional indices in any order.
   static DimensionVector MakeDimMultipliers(const Shape& shape) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_78(mht_78_v, 3246, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "MakeDimMultipliers");
+
     DimensionVector v(shape.rank());
     int64_t scale = 1;
     for (auto dim : LayoutUtil::MinorToMajor(shape)) {
@@ -2858,6 +3263,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
       const Shape& window_shape, const Window& window, const Shape& base_shape,
       const absl::Span<const int64_t> window_count_index,
       const std::function<void(const std::vector<int64_t>&)>& f) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_79(mht_79_v, 3266, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "IterateThroughWindow");
+
     const int64_t rank = base_shape.rank();
     DimensionVector window_index(rank);
     std::fill(window_index.begin(), window_index.end(), 0);
@@ -2956,6 +3364,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
     std::vector<int64_t> result_index(rank, 0);
 
     auto func = [&](absl::Span<const int64_t> update_index) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_80(mht_80_v, 3367, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "lambda");
+
       std::transform(update_index.begin(), update_index.end(), start.begin(),
                      result_index.begin(), std::plus<int64_t>());
       result.Set<ReturnT>(result_index,
@@ -3038,6 +3449,9 @@ class HloEvaluatorTypedVisitor : public DfsHloVisitorWithDefault {
 
   template <typename NativeT>
   static bool IsShiftOutOfBounds(NativeT rhs) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_typed_visitorDTh mht_81(mht_81_v, 3452, "", "./tensorflow/compiler/xla/service/hlo_evaluator_typed_visitor.h", "IsShiftOutOfBounds");
+
     typedef typename std::make_unsigned<NativeT>::type UnsignedT;
     UnsignedT lhs_size_unsigned = sizeof(NativeT) * CHAR_BIT;
     UnsignedT rhs_unsigned = static_cast<UnsignedT>(rhs);

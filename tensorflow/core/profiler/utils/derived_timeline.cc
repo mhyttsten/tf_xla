@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSderived_timelineDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSderived_timelineDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSderived_timelineDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,6 +217,9 @@ const absl::string_view kAnnotationDelimiter = "::";
 XEvent CreateXEvent(const XEventMetadata& metadata, int64_t offset_ps,
                     int64_t duration_ps, int64_t group_id_stat_metadata_id,
                     absl::optional<int64_t> group_id) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSderived_timelineDTcc mht_0(mht_0_v, 220, "", "./tensorflow/core/profiler/utils/derived_timeline.cc", "CreateXEvent");
+
   XEvent event;
   event.set_metadata_id(metadata.id());
   // TODO(b/150498419): Normalize with the line start time.
@@ -63,6 +234,9 @@ XEvent CreateXEvent(const XEventMetadata& metadata, int64_t offset_ps,
 }
 
 int64_t GroupIdOrInvalid(absl::optional<int64_t> group_id) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSderived_timelineDTcc mht_1(mht_1_v, 237, "", "./tensorflow/core/profiler/utils/derived_timeline.cc", "GroupIdOrInvalid");
+
   if (group_id)
     return *group_id;
   else
@@ -77,6 +251,11 @@ void ProcessTfOpEvent(absl::string_view tf_op_full_name,
                       XPlaneBuilder* plane_builder,
                       DerivedXLineBuilder* tf_name_scope_line_builder,
                       DerivedXLineBuilder* tf_op_line_builder) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("tf_op_full_name: \"" + std::string(tf_op_full_name.data(), tf_op_full_name.size()) + "\"");
+   mht_2_v.push_back("low_level_event_name: \"" + std::string(low_level_event_name.data(), low_level_event_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSderived_timelineDTcc mht_2(mht_2_v, 256, "", "./tensorflow/core/profiler/utils/derived_timeline.cc", "ProcessTfOpEvent");
+
   int64_t group_id_stat_metadata_id =
       plane_builder->GetOrCreateStatMetadata(GetStatTypeStr(StatType::kGroupId))
           ->id();
@@ -108,6 +287,10 @@ DerivedXLineBuilder::DerivedXLineBuilder(
     XPlaneBuilder* plane, int64_t line_id, absl::string_view name,
     int64_t timestamp_ns, std::vector<DerivedXLineBuilder*> dependent_lines)
     : line_(plane->GetOrCreateLine(line_id)) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSderived_timelineDTcc mht_3(mht_3_v, 291, "", "./tensorflow/core/profiler/utils/derived_timeline.cc", "DerivedXLineBuilder::DerivedXLineBuilder");
+
   line_.SetName(name);
   line_.SetTimestampNs(timestamp_ns);
   dependent_lines_ = std::move(dependent_lines);
@@ -117,6 +300,10 @@ DerivedXLineBuilder::DerivedXLineBuilder(
 void DerivedXLineBuilder::ExpandOrAddLevelEvent(
     const XEvent& event, int64_t group_id,
     absl::string_view low_level_event_name, int level) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("low_level_event_name: \"" + std::string(low_level_event_name.data(), low_level_event_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSderived_timelineDTcc mht_4(mht_4_v, 304, "", "./tensorflow/core/profiler/utils/derived_timeline.cc", "DerivedXLineBuilder::ExpandOrAddLevelEvent");
+
   int64_t offset_ps = event.offset_ps();
   int64_t duration_ps = event.duration_ps();
   auto& last_event = last_event_by_level_[level];
@@ -158,6 +345,9 @@ void DerivedXLineBuilder::ExpandOrAddLevelEvent(
 }
 
 void DerivedXLineBuilder::ResetLastEvents(int level) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSderived_timelineDTcc mht_5(mht_5_v, 348, "", "./tensorflow/core/profiler/utils/derived_timeline.cc", "DerivedXLineBuilder::ResetLastEvents");
+
   for (int i = level, end = last_event_by_level_.size(); i < end; ++i) {
     last_event_by_level_[i] = absl::nullopt;
     last_eventinfo_by_level_[i] = absl::nullopt;
@@ -168,6 +358,9 @@ void DerivedXLineBuilder::ResetLastEvents(int level) {
 void DeriveEventsFromAnnotations(const SymbolResolver& symbol_resolver,
                                  const GroupMetadataMap& group_metadata_map,
                                  XPlane* device_trace, bool step_info_only) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSderived_timelineDTcc mht_6(mht_6_v, 361, "", "./tensorflow/core/profiler/utils/derived_timeline.cc", "DeriveEventsFromAnnotations");
+
   // Merge and sort events by Timespan as they come from different lines.
   std::vector<XEventVisitor> events;
   uint64 start_timestamp_ns = 0;
@@ -302,6 +495,9 @@ void DeriveEventsFromAnnotations(const SymbolResolver& symbol_resolver,
 void DeriveEventsFromHostTrace(const XPlane* host_trace,
                                const GroupMetadataMap& group_metadata_map,
                                std::vector<XPlane*> device_traces) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSderived_timelineDTcc mht_7(mht_7_v, 498, "", "./tensorflow/core/profiler/utils/derived_timeline.cc", "DeriveEventsFromHostTrace");
+
   struct GroupLaunchInfo {  // "Group" normally means step.
     Timespan timespan;
     int32 num_launches = 0;
@@ -393,11 +589,19 @@ void DeriveEventsFromHostTrace(const XPlane* host_trace,
 
 void GenerateDerivedTimeLines(const GroupMetadataMap& group_metadata_map,
                               XSpace* space, bool step_info_only) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSderived_timelineDTcc mht_8(mht_8_v, 592, "", "./tensorflow/core/profiler/utils/derived_timeline.cc", "GenerateDerivedTimeLines");
+
   // TODO(profiler): Once we capture HLO protos for xla/gpu, we should use that
   // to look up tensorflow op name from hlo_module/hlo_op.
   auto dummy_symbol_resolver =
       [](absl::optional<uint64_t> program_id, absl::string_view hlo_module,
-         absl::string_view hlo_op) { return tensorflow::profiler::Symbol(); };
+         absl::string_view hlo_op) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("hlo_module: \"" + std::string(hlo_module.data(), hlo_module.size()) + "\"");
+   mht_9_v.push_back("hlo_op: \"" + std::string(hlo_op.data(), hlo_op.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSderived_timelineDTcc mht_9(mht_9_v, 602, "", "./tensorflow/core/profiler/utils/derived_timeline.cc", "lambda");
+ return tensorflow::profiler::Symbol(); };
   std::vector<XPlane*> device_traces =
       FindMutablePlanesWithPrefix(space, kGpuPlanePrefix);
   for (XPlane* plane : device_traces) {

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,6 +212,9 @@ namespace {
 
 // Creates stat metadata for the stats which may be added by grouping.
 void CreateStatMetadata(XPlane* plane) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_0(mht_0_v, 215, "", "./tensorflow/core/profiler/utils/group_events.cc", "CreateStatMetadata");
+
   XPlaneBuilder builder(plane);
   builder.GetOrCreateStatMetadata(GetStatTypeStr(StatType::kGroupId));
   builder.GetOrCreateStatMetadata(GetStatTypeStr(StatType::kStepName));
@@ -62,6 +233,9 @@ absl::optional<int64_t> GetKernelEventType(bool is_host_plane,
 }
 
 int64_t GetEventType(bool is_host_plane, const EventNode& event) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_1(mht_1_v, 236, "", "./tensorflow/core/profiler/utils/group_events.cc", "GetEventType");
+
   if (absl::optional<int64_t> event_type = event.GetEventVisitor().Type()) {
     return *event_type;
   } else if (absl::optional<int64_t> kernel_event_type =
@@ -77,6 +251,9 @@ int64_t GetEventType(bool is_host_plane, const EventNode& event) {
 }
 
 void SetContextGroup(EventNode* event, ContextGroupMap* context_groups) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_2(mht_2_v, 254, "", "./tensorflow/core/profiler/utils/group_events.cc", "SetContextGroup");
+
   auto producer = event->GetProducerContext();
   if (producer.has_value()) {
     ((*context_groups)[producer->type][producer->id])
@@ -90,6 +267,9 @@ void SetContextGroup(EventNode* event, ContextGroupMap* context_groups) {
 }
 
 void ConnectContextGroups(const ContextGroupMap& context_groups) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_3(mht_3_v, 270, "", "./tensorflow/core/profiler/utils/group_events.cc", "ConnectContextGroups");
+
   for (auto& type_id_group : context_groups) {
     for (auto& id_group : type_id_group.second) {
       const ContextGroup& group = id_group.second;
@@ -111,6 +291,9 @@ std::unique_ptr<XEvent> CreateVirtualEvent(const XStat& step_id_stat,
 }
 
 bool HasFunctionRun(EventNode* event_node) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_4(mht_4_v, 294, "", "./tensorflow/core/profiler/utils/group_events.cc", "HasFunctionRun");
+
   for (EventNode* child : event_node->GetChildren()) {
     if (child->GetEventVisitor().Type() == HostEventType::kFunctionRun) {
       return true;
@@ -120,6 +303,9 @@ bool HasFunctionRun(EventNode* event_node) {
 }
 
 bool IsImplicitRootEvent(const XEventVisitor& event) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_5(mht_5_v, 306, "", "./tensorflow/core/profiler/utils/group_events.cc", "IsImplicitRootEvent");
+
   static const auto* const kImplicitRootEvents =
       new absl::flat_hash_set<int64_t>{
           HostEventType::kFunctionRun, HostEventType::kSessionRun,
@@ -130,6 +316,9 @@ bool IsImplicitRootEvent(const XEventVisitor& event) {
 
 void ProcessRootEvent(int64_t group_id, EventNode* root_event,
                       GroupMetadataMap* group_metadata_map) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_6(mht_6_v, 319, "", "./tensorflow/core/profiler/utils/group_events.cc", "ProcessRootEvent");
+
   root_event->PropagateGroupId(group_id, group_metadata_map);
   std::string group_name = root_event->GetGroupName();
   // TODO(jihochoi): change event name instead.
@@ -217,6 +406,9 @@ absl::optional<ContextTypeAndId> GetLegacyConsumerContext(
 }
 
 bool IsLegacyRootEvent(const XEventVisitor& event) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_7(mht_7_v, 409, "", "./tensorflow/core/profiler/utils/group_events.cc", "IsLegacyRootEvent");
+
   static const auto* const kRootEvents = new absl::flat_hash_set<int64_t>{
       HostEventType::kTraceContext, HostEventType::kFunctionRun,
       HostEventType::kSessionRun, HostEventType::kRunGraph};
@@ -228,6 +420,9 @@ using Comparator = std::function<bool(const EventNode*)>;
 const EventNode* FindParentWithComparator(const Comparator& comparator,
                                           const EventNode* node,
                                           bool include_self) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_8(mht_8_v, 423, "", "./tensorflow/core/profiler/utils/group_events.cc", "FindParentWithComparator");
+
   std::queue<const EventNode*> nodes;
   absl::flat_hash_set<const EventNode*> seen = {node};
   if (include_self) {
@@ -253,10 +448,16 @@ const EventNode* FindParentWithComparator(const Comparator& comparator,
 
 // Returns true if it has JAX-related events.
 bool HasJaxEvent(const EventNodeMap& event_node_map) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_9(mht_9_v, 451, "", "./tensorflow/core/profiler/utils/group_events.cc", "HasJaxEvent");
+
   return event_node_map.contains(HostEventType::kExecuteOnLocalDevices);
 }
 
 bool IsIteratorEventType(absl::optional<int64_t> event_type) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_10(mht_10_v, 458, "", "./tensorflow/core/profiler/utils/group_events.cc", "IsIteratorEventType");
+
   return event_type == HostEventType::kIterator ||
          event_type == HostEventType::kDeviceInputPipelineSecondIterator;
 }
@@ -265,6 +466,9 @@ bool IsIteratorEventType(absl::optional<int64_t> event_type) {
 
 // Returns true if TF's loop ops exist in the given XSpace's metadata.
 bool CheckLoopOp(const XSpace& space) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_11(mht_11_v, 469, "", "./tensorflow/core/profiler/utils/group_events.cc", "CheckLoopOp");
+
   for (const XPlane& plane : space.planes()) {
     for (const auto& event_metadata : plane.event_metadata()) {
       absl::optional<int64_t> event_type =
@@ -291,6 +495,9 @@ EventNode::EventNode(const XPlaneVisitor* plane, XLine* raw_line,
       visitor_(plane, raw_line, raw_event),
       raw_line_(raw_line),
       raw_event_(raw_event) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_12(mht_12_v, 498, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventNode::EventNode");
+
   absl::optional<int> producer_type;
   absl::optional<uint64> producer_id;
   absl::optional<int> consumer_type;
@@ -347,10 +554,16 @@ EventNode::EventNode(const XPlaneVisitor* plane, XLine* raw_line,
 
 EventNode::EventNode(const EventNode& event_node)
     : EventNode(event_node.plane_, event_node.raw_line_,
-                event_node.raw_event_) {}
+                event_node.raw_event_) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_13(mht_13_v, 558, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventNode::EventNode");
+}
 
 absl::optional<XStatVisitor> EventNode::GetContextStat(
     int64_t stat_type) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_14(mht_14_v, 564, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventNode::GetContextStat");
+
   std::queue<const EventNode*> nodes;
   absl::flat_hash_set<const EventNode*> seen = {this};
   nodes.push(this);
@@ -370,6 +583,9 @@ absl::optional<XStatVisitor> EventNode::GetContextStat(
 }
 
 std::string EventNode::GetGroupName() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_15(mht_15_v, 586, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventNode::GetGroupName");
+
   std::string name;
   if (absl::optional<XStatVisitor> stat =
           GetContextStat(StatType::kGraphType)) {
@@ -389,18 +605,27 @@ std::string EventNode::GetGroupName() const {
 }
 
 XStat* EventNode::FindOrAddStatByType(int64_t stat_type) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_16(mht_16_v, 608, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventNode::FindOrAddStatByType");
+
   const XStatMetadata* stat_metadata = plane_->GetStatMetadataByType(stat_type);
   DCHECK(stat_metadata != nullptr);
   return FindOrAddMutableStat(*stat_metadata, raw_event_);
 }
 
 void EventNode::SetGroupId(int64_t group_id) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_17(mht_17_v, 617, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventNode::SetGroupId");
+
   group_id_ = group_id;
   FindOrAddStatByType(StatType::kGroupId)->set_int64_value(group_id);
 }
 
 void EventNode::PropagateGroupId(int64_t group_id,
                                  GroupMetadataMap* group_metadata_map) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_18(mht_18_v, 626, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventNode::PropagateGroupId");
+
   std::queue<EventNode*> nodes;
   absl::flat_hash_set<EventNode*> seen = {this};
   nodes.push(this);
@@ -425,12 +650,19 @@ void EventNode::PropagateGroupId(int64_t group_id,
 }
 
 void EventNode::AddStepName(absl::string_view step_name) {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("step_name: \"" + std::string(step_name.data(), step_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_19(mht_19_v, 654, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventNode::AddStepName");
+
   FindOrAddStatByType(StatType::kStepName)
       ->set_str_value(step_name.data(), step_name.size());
 }
 
 void EventNode::AddSelectedGroupIds(
     const GroupMetadataMap& group_metadata_map) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_20(mht_20_v, 663, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventNode::AddSelectedGroupIds");
+
   const auto& group_metadata = group_metadata_map.at(*group_id_);
   std::vector<int64_t> group_ids;
   group_ids.reserve(1 + group_metadata.parents.size() +
@@ -446,15 +678,24 @@ void EventNode::AddSelectedGroupIds(
 }
 
 void EventNode::SetIsEager(bool is_eager) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_21(mht_21_v, 681, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventNode::SetIsEager");
+
   FindOrAddStatByType(StatType::kIsEager)->set_int64_value(is_eager ? 1 : 0);
 }
 
 bool EventNode::IsCompiledFunc() const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_22(mht_22_v, 688, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventNode::IsCompiledFunc");
+
   auto is_func = visitor_.GetStat(StatType::kIsFunc);
   return !is_func || is_func->IntValue();
 }
 
 bool EventNode::IsEager() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_23(mht_23_v, 696, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventNode::IsEager");
+
   /* Both eager mode (op-by-op) and non-eager mode (eager functions) of eager
    * executions are unified and forward to TF1 executor now. Therefore we will
    * check following conditions:
@@ -472,6 +713,9 @@ bool EventNode::IsEager() {
 }
 
 const EventNode* EventNode::FindParent(int64_t event_type) const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_24(mht_24_v, 716, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventNode::FindParent");
+
   return FindParentWithComparator(
       [event_type](const EventNode* node) {
         return node->GetEventVisitor().Type() == event_type;
@@ -481,6 +725,9 @@ const EventNode* EventNode::FindParent(int64_t event_type) const {
 
 void EventForest::ConnectIntraThread(XPlane* plane, XPlaneVisitor* visitor,
                                      ContextGroupMap* context_groups) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_25(mht_25_v, 728, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventForest::ConnectIntraThread");
+
   // TODO(b/149095099): avoid string comparison.
   bool is_host_plane = (visitor->Name() == kHostThreadsPlaneName);
   for (auto& line : *plane->mutable_lines()) {
@@ -511,6 +758,9 @@ void EventForest::ConnectIntraThread(XPlane* plane, XPlaneVisitor* visitor,
 
 void EventForest::ConnectInterThread(
     const std::vector<InterThreadConnectInfo>& connect_info_list) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_26(mht_26_v, 761, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventForest::ConnectInterThread");
+
   for (const auto& connect_info : connect_info_list) {
     absl::flat_hash_map<std::vector<uint64>, EventNode*> connect_map;
     const std::vector<int64_t>& parent_stat_types =
@@ -557,6 +807,9 @@ void EventForest::ConnectInterThread(
 
 // Returns whether a root event needs grouping.
 bool RootNeedsGrouping(const EventNode* root) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_27(mht_27_v, 810, "", "./tensorflow/core/profiler/utils/group_events.cc", "RootNeedsGrouping");
+
   // No grouping is needed if it is already grouped.
   if (root->GetGroupId().has_value()) return false;
   // If there is a parent node with the same root level, skip grouping at <root>
@@ -575,6 +828,9 @@ bool RootNeedsGrouping(const EventNode* root) {
 
 // Sorts root events based on root level and timestamp.
 void SortRootEventList(EventList* event_list) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_28(mht_28_v, 831, "", "./tensorflow/core/profiler/utils/group_events.cc", "SortRootEventList");
+
   absl::c_sort(*event_list, [](const EventNode* e1, const EventNode* e2) {
     // If two root events have the same root level, the root event with an
     // earlier timestamp will be processed first. Otherwise, the event with a
@@ -586,6 +842,9 @@ void SortRootEventList(EventList* event_list) {
 }
 
 void EventForest::CreateEventGroups() {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_29(mht_29_v, 845, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventForest::CreateEventGroups");
+
   // Create a group for each TF loop iteration in non-JAX profiles.
   int64_t group_id = 0;
   if (!HasJaxEvent(event_node_map_) && !tf_loop_root_events_.empty()) {
@@ -622,6 +881,9 @@ void EventForest::CreateEventGroups() {
 }
 
 void EventForest::MarkEagerlyExecutedGpuKernels() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_30(mht_30_v, 884, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventForest::MarkEagerlyExecutedGpuKernels");
+
   auto kernel_execute_event_node_list =
       gtl::FindOrNull(event_node_map_, HostEventType::kKernelExecute);
   if (!kernel_execute_event_node_list) return;
@@ -631,6 +893,9 @@ void EventForest::MarkEagerlyExecutedGpuKernels() {
 }
 
 void EventForest::MarkEagerlyExecutedCpuTfOps() {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_31(mht_31_v, 896, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventForest::MarkEagerlyExecutedCpuTfOps");
+
   auto tf_op_run_event_node_list =
       gtl::FindOrNull(event_node_map_, HostEventType::kTfOpRun);
   if (!tf_op_run_event_node_list) return;
@@ -640,6 +905,9 @@ void EventForest::MarkEagerlyExecutedCpuTfOps() {
 }
 
 void EventForest::ProcessTfDataSteps() {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_32(mht_32_v, 908, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventForest::ProcessTfDataSteps");
+
   const int64_t tf_data_event_types[] = {
       HostEventType::kTfDataCapturedFunctionRun,
       HostEventType::kTfDataCapturedFunctionRunAsync,
@@ -658,6 +926,9 @@ void EventForest::ProcessTfDataSteps() {
 }
 
 void EventForest::ProcessTensorFlowLoop() {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_33(mht_33_v, 929, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventForest::ProcessTensorFlowLoop");
+
   struct TensorFlowLoopIteration {
     EventNode* first_event = nullptr;
     std::vector<EventNode*> events;
@@ -715,6 +986,9 @@ void EventForest::ProcessTensorFlowLoop() {
 }
 
 void EventForest::ProcessWorker() {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_34(mht_34_v, 989, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventForest::ProcessWorker");
+
   auto eager_kernel_execute_event_list =
       gtl::FindOrNull(event_node_map_, HostEventType::kEagerKernelExecute);
   if (!eager_kernel_execute_event_list) return;
@@ -733,6 +1007,9 @@ void EventForest::ProcessWorker() {
 }
 
 void EventForest::ProcessModelIds() {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_35(mht_35_v, 1010, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventForest::ProcessModelIds");
+
   const int64_t model_id_event_type_list[] = {HostEventType::kSessionRun,
                                               HostEventType::kTfrtModelRun};
   for (const int64_t event_type : model_id_event_type_list) {
@@ -752,6 +1029,9 @@ void EventForest::ProcessModelIds() {
 void EventForest::AddPlane(
     const std::function<XPlaneVisitor(const XPlane*)> visitor_factory,
     XPlane* plane) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_36(mht_36_v, 1032, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventForest::AddPlane");
+
   CreateStatMetadata(plane);
   planes_.push_back({plane, visitor_factory(plane)});
 }
@@ -759,6 +1039,9 @@ void EventForest::AddPlane(
 void EventForest::AddSpace(
     const std::function<XPlaneVisitor(const XPlane*)> visitor_factory,
     XSpace* space) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_37(mht_37_v, 1042, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventForest::AddSpace");
+
   for (XPlane& plane : *space->mutable_planes()) {
     AddPlane(visitor_factory, &plane);
   }
@@ -767,6 +1050,9 @@ void EventForest::AddSpace(
 void EventForest::AddPlanes(
     const std::function<XPlaneVisitor(const XPlane*)> visitor_factory,
     const std::vector<XPlane*>& planes) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_38(mht_38_v, 1053, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventForest::AddPlanes");
+
   for (XPlane* plane : planes) {
     AddPlane(visitor_factory, plane);
   }
@@ -774,6 +1060,9 @@ void EventForest::AddPlanes(
 
 void EventForest::ConnectEvents(
     const std::vector<InterThreadConnectInfo>& connect_info_list) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_39(mht_39_v, 1063, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventForest::ConnectEvents");
+
   ContextGroupMap context_groups;
   for (auto& plane_visitor : planes_) {
     ConnectIntraThread(plane_visitor.first, &plane_visitor.second,
@@ -784,6 +1073,9 @@ void EventForest::ConnectEvents(
 }
 
 void EventForest::ConnectTfDataEvents() {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_40(mht_40_v, 1076, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventForest::ConnectTfDataEvents");
+
   absl::flat_hash_map<
       std::pair<int64_t /*iterator_id*/, int64_t /*element_id*/>,
       std::vector<EventNode*>>
@@ -858,6 +1150,9 @@ void EventForest::ConnectTfDataEvents() {
 }
 
 void EventForest::GroupEvents() {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_41(mht_41_v, 1153, "", "./tensorflow/core/profiler/utils/group_events.cc", "EventForest::GroupEvents");
+
   ProcessTfDataSteps();
   ProcessTensorFlowLoop();
   ProcessWorker();
@@ -882,6 +1177,9 @@ std::vector<InterThreadConnectInfo> CreateInterThreadConnectInfoList() {
 }
 
 void GroupTfEvents(XSpace* space, EventForest* event_forest) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_42(mht_42_v, 1180, "", "./tensorflow/core/profiler/utils/group_events.cc", "GroupTfEvents");
+
   if (CheckLoopOp(*space)) {
     // TODO(b/154510598): Support TF's loop ops.
     return;
@@ -894,6 +1192,9 @@ void GroupTfEvents(XSpace* space, EventForest* event_forest) {
 }
 
 void GroupTfEvents(XSpace* space) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSutilsPSgroup_eventsDTcc mht_43(mht_43_v, 1195, "", "./tensorflow/core/profiler/utils/group_events.cc", "GroupTfEvents");
+
   EventForest event_forest;
   GroupTfEvents(space, &event_forest);
 }

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePStoolsPSbenchmarkPSbenchmark_modelDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePStoolsPSbenchmarkPSbenchmark_modelDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePStoolsPSbenchmarkPSbenchmark_modelDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,6 +198,9 @@ using tensorflow::Stat;
 constexpr int kMemoryCheckIntervalMs = 50;
 
 BenchmarkParams BenchmarkModel::DefaultParams() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSbenchmarkPSbenchmark_modelDTcc mht_0(mht_0_v, 201, "", "./tensorflow/lite/tools/benchmark/benchmark_model.cc", "BenchmarkModel::DefaultParams");
+
   BenchmarkParams params;
   params.AddParam("num_runs", BenchmarkParam::Create<int32_t>(50));
   params.AddParam("min_secs", BenchmarkParam::Create<float>(1.0f));
@@ -51,9 +222,15 @@ BenchmarkParams BenchmarkModel::DefaultParams() {
   return params;
 }
 
-BenchmarkModel::BenchmarkModel() : params_(DefaultParams()) {}
+BenchmarkModel::BenchmarkModel() : params_(DefaultParams()) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSbenchmarkPSbenchmark_modelDTcc mht_1(mht_1_v, 226, "", "./tensorflow/lite/tools/benchmark/benchmark_model.cc", "BenchmarkModel::BenchmarkModel");
+}
 
 void BenchmarkLoggingListener::OnBenchmarkEnd(const BenchmarkResults& results) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSbenchmarkPSbenchmark_modelDTcc mht_2(mht_2_v, 231, "", "./tensorflow/lite/tools/benchmark/benchmark_model.cc", "BenchmarkLoggingListener::OnBenchmarkEnd");
+
   auto inference_us = results.inference_time_us();
   auto init_us = results.startup_latency_us();
   auto warmup_us = results.warmup_time_us();
@@ -83,6 +260,9 @@ void BenchmarkLoggingListener::OnBenchmarkEnd(const BenchmarkResults& results) {
 }
 
 std::vector<Flag> BenchmarkModel::GetFlags() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSbenchmarkPSbenchmark_modelDTcc mht_3(mht_3_v, 263, "", "./tensorflow/lite/tools/benchmark/benchmark_model.cc", "BenchmarkModel::GetFlags");
+
   return {
       CreateFlag<int32_t>(
           "num_runs", &params_,
@@ -143,6 +323,9 @@ std::vector<Flag> BenchmarkModel::GetFlags() {
 }
 
 void BenchmarkModel::LogParams() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSbenchmarkPSbenchmark_modelDTcc mht_4(mht_4_v, 326, "", "./tensorflow/lite/tools/benchmark/benchmark_model.cc", "BenchmarkModel::LogParams");
+
   const bool verbose = params_.Get<bool>("verbose");
   TFLITE_LOG(INFO) << "Log parameter values verbosely: [" << verbose << "]";
 
@@ -168,13 +351,22 @@ void BenchmarkModel::LogParams() {
                       "Memory footprint check interval (ms)", verbose);
 }
 
-TfLiteStatus BenchmarkModel::PrepareInputData() { return kTfLiteOk; }
+TfLiteStatus BenchmarkModel::PrepareInputData() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSbenchmarkPSbenchmark_modelDTcc mht_5(mht_5_v, 355, "", "./tensorflow/lite/tools/benchmark/benchmark_model.cc", "BenchmarkModel::PrepareInputData");
+ return kTfLiteOk; }
 
-TfLiteStatus BenchmarkModel::ResetInputsAndOutputs() { return kTfLiteOk; }
+TfLiteStatus BenchmarkModel::ResetInputsAndOutputs() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSbenchmarkPSbenchmark_modelDTcc mht_6(mht_6_v, 360, "", "./tensorflow/lite/tools/benchmark/benchmark_model.cc", "BenchmarkModel::ResetInputsAndOutputs");
+ return kTfLiteOk; }
 
 Stat<int64_t> BenchmarkModel::Run(int min_num_times, float min_secs,
                                   float max_secs, RunType run_type,
                                   TfLiteStatus* invoke_status) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSbenchmarkPSbenchmark_modelDTcc mht_7(mht_7_v, 367, "", "./tensorflow/lite/tools/benchmark/benchmark_model.cc", "BenchmarkModel::Run");
+
   Stat<int64_t> run_stats;
   TFLITE_LOG(INFO) << "Running benchmark for at least " << min_num_times
                    << " iterations and at least " << min_secs << " seconds but"
@@ -223,6 +415,9 @@ Stat<int64_t> BenchmarkModel::Run(int min_num_times, float min_secs,
 }
 
 TfLiteStatus BenchmarkModel::ValidateParams() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSbenchmarkPSbenchmark_modelDTcc mht_8(mht_8_v, 418, "", "./tensorflow/lite/tools/benchmark/benchmark_model.cc", "BenchmarkModel::ValidateParams");
+
   if (params_.Get<bool>("report_peak_memory_footprint")) {
     const int32_t interval =
         params_.Get<int32_t>("memory_footprint_check_interval_ms");
@@ -240,11 +435,17 @@ TfLiteStatus BenchmarkModel::ValidateParams() {
 }
 
 TfLiteStatus BenchmarkModel::Run(int argc, char** argv) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSbenchmarkPSbenchmark_modelDTcc mht_9(mht_9_v, 438, "", "./tensorflow/lite/tools/benchmark/benchmark_model.cc", "BenchmarkModel::Run");
+
   TF_LITE_ENSURE_STATUS(ParseFlags(argc, argv));
   return Run();
 }
 
 TfLiteStatus BenchmarkModel::Run() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSbenchmarkPSbenchmark_modelDTcc mht_10(mht_10_v, 446, "", "./tensorflow/lite/tools/benchmark/benchmark_model.cc", "BenchmarkModel::Run");
+
   TF_LITE_ENSURE_STATUS(ValidateParams());
 
   LogParams();
@@ -307,6 +508,9 @@ TfLiteStatus BenchmarkModel::Run() {
 }
 
 TfLiteStatus BenchmarkModel::ParseFlags(int* argc, char** argv) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSbenchmarkPSbenchmark_modelDTcc mht_11(mht_11_v, 511, "", "./tensorflow/lite/tools/benchmark/benchmark_model.cc", "BenchmarkModel::ParseFlags");
+
   auto flag_list = GetFlags();
   const bool parse_result =
       Flags::Parse(argc, const_cast<const char**>(argv), flag_list);
@@ -334,6 +538,9 @@ TfLiteStatus BenchmarkModel::ParseFlags(int* argc, char** argv) {
 
 std::unique_ptr<profiling::memory::MemoryUsageMonitor>
 BenchmarkModel::MayCreateMemoryUsageMonitor() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSbenchmarkPSbenchmark_modelDTcc mht_12(mht_12_v, 541, "", "./tensorflow/lite/tools/benchmark/benchmark_model.cc", "BenchmarkModel::MayCreateMemoryUsageMonitor");
+
   if (!params_.Get<bool>("report_peak_memory_footprint")) return nullptr;
 
   return std::unique_ptr<profiling::memory::MemoryUsageMonitor>(

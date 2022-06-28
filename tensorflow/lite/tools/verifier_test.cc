@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePStoolsPSverifier_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePStoolsPSverifier_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePStoolsPSverifier_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,14 +212,27 @@ static const char* kSparseTensorTestModel =
 
 class MockErrorReporter : public ErrorReporter {
  public:
-  MockErrorReporter() : buffer_size_(0) {}
+  MockErrorReporter() : buffer_size_(0) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSverifier_testDTcc mht_0(mht_0_v, 216, "", "./tensorflow/lite/tools/verifier_test.cc", "MockErrorReporter");
+}
   int Report(const char* format, va_list args) override {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("format: \"" + (format == nullptr ? std::string("nullptr") : std::string((char*)format)) + "\"");
+   MHTracer_DTPStensorflowPSlitePStoolsPSverifier_testDTcc mht_1(mht_1_v, 221, "", "./tensorflow/lite/tools/verifier_test.cc", "Report");
+
     buffer_size_ = vsnprintf(buffer_, kBufferSize, format, args);
     return buffer_size_;
   }
-  int GetBufferSize() { return buffer_size_; }
+  int GetBufferSize() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSverifier_testDTcc mht_2(mht_2_v, 228, "", "./tensorflow/lite/tools/verifier_test.cc", "GetBufferSize");
+ return buffer_size_; }
 
-  string GetAsString() const { return string(buffer_, buffer_size_); }
+  string GetAsString() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSverifier_testDTcc mht_3(mht_3_v, 233, "", "./tensorflow/lite/tools/verifier_test.cc", "GetAsString");
+ return string(buffer_, buffer_size_); }
 
  private:
   static constexpr int kBufferSize = 256;
@@ -63,12 +244,18 @@ class MockErrorReporter : public ErrorReporter {
 class TfLiteFlatbufferModelBuilder {
  public:
   TfLiteFlatbufferModelBuilder() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSverifier_testDTcc mht_4(mht_4_v, 247, "", "./tensorflow/lite/tools/verifier_test.cc", "TfLiteFlatbufferModelBuilder");
+
     buffers_.push_back(
         CreateBuffer(builder_, builder_.CreateVector(std::vector<uint8_t>{})));
   }
 
   TfLiteFlatbufferModelBuilder(const std::vector<BuiltinOperator>& builtin_ops,
                                const std::vector<std::string>& custom_ops) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSverifier_testDTcc mht_5(mht_5_v, 256, "", "./tensorflow/lite/tools/verifier_test.cc", "TfLiteFlatbufferModelBuilder");
+
     buffers_.push_back(
         CreateBuffer(builder_, builder_.CreateVector(std::vector<uint8_t>{})));
 
@@ -83,6 +270,10 @@ class TfLiteFlatbufferModelBuilder {
   void AddTensor(const std::vector<int>& shape, tflite::TensorType type,
                  const std::vector<uint8_t>& buffer, const char* name,
                  const bool is_variable = false) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("name: \"" + (name == nullptr ? std::string("nullptr") : std::string((char*)name)) + "\"");
+   MHTracer_DTPStensorflowPSlitePStoolsPSverifier_testDTcc mht_6(mht_6_v, 274, "", "./tensorflow/lite/tools/verifier_test.cc", "AddTensor");
+
     int buffer_index = 0;
     if (!buffer.empty()) {
       buffer_index = buffers_.size();
@@ -102,6 +293,10 @@ class TfLiteFlatbufferModelBuilder {
   void AddOperator(const std::vector<int32_t>& inputs,
                    const std::vector<int32_t>& outputs,
                    tflite::BuiltinOperator builtin_op, const char* custom_op) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("custom_op: \"" + (custom_op == nullptr ? std::string("nullptr") : std::string((char*)custom_op)) + "\"");
+   MHTracer_DTPStensorflowPSlitePStoolsPSverifier_testDTcc mht_7(mht_7_v, 297, "", "./tensorflow/lite/tools/verifier_test.cc", "AddOperator");
+
     operator_codes_.push_back(
         CreateOperatorCodeDirect(builder_, builtin_op, custom_op));
     operators_.push_back(CreateOperator(
@@ -119,6 +314,9 @@ class TfLiteFlatbufferModelBuilder {
   void FinishModel(const std::vector<int32_t>& inputs,
                    const std::vector<int32_t>& outputs,
                    BuilderMode mode = kBuilderModeDefault) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSverifier_testDTcc mht_8(mht_8_v, 317, "", "./tensorflow/lite/tools/verifier_test.cc", "FinishModel");
+
     auto subgraph = std::vector<flatbuffers::Offset<SubGraph>>({CreateSubGraph(
         builder_, CreateVector(tensors_, mode), CreateVector(inputs, mode),
         CreateVector(outputs, mode), CreateVector(operators_, mode),
@@ -131,16 +329,25 @@ class TfLiteFlatbufferModelBuilder {
   }
 
   bool Verify() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSverifier_testDTcc mht_9(mht_9_v, 332, "", "./tensorflow/lite/tools/verifier_test.cc", "Verify");
+
     return tflite::Verify(builder_.GetBufferPointer(), builder_.GetSize(),
                           &mock_reporter_);
   }
 
   bool VerifyWithOpResolver() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSverifier_testDTcc mht_10(mht_10_v, 340, "", "./tensorflow/lite/tools/verifier_test.cc", "VerifyWithOpResolver");
+
     return tflite::Verify(builder_.GetBufferPointer(), builder_.GetSize(),
                           resolver_, &mock_reporter_);
   }
 
-  string GetErrorString() { return mock_reporter_.GetAsString(); }
+  string GetErrorString() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSverifier_testDTcc mht_11(mht_11_v, 348, "", "./tensorflow/lite/tools/verifier_test.cc", "GetErrorString");
+ return mock_reporter_.GetAsString(); }
 
  private:
   template <typename T>

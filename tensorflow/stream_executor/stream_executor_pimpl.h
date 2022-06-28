@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_STREAM_EXECUTOR_STREAM_EXECUTOR_PIMPL_H_
 #define TENSORFLOW_STREAM_EXECUTOR_STREAM_EXECUTOR_PIMPL_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSstream_executorPSstream_executor_pimplDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSstream_executorPSstream_executor_pimplDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSstream_executorPSstream_executor_pimplDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <atomic>
 #include <memory>
@@ -90,7 +258,10 @@ class StreamExecutor {
   PlatformKind platform_kind() const { return platform_kind_; }
 
   // Returns a reference to the platform that created this executor.
-  const Platform* platform() const { return platform_; }
+  const Platform* platform() const {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstream_executor_pimplDTh mht_0(mht_0_v, 262, "", "./tensorflow/stream_executor/stream_executor_pimpl.h", "platform");
+ return platform_; }
 
   // Retrieves (loads) a kernel for the platform this StreamExecutor is acting
   // upon, if one exists.
@@ -269,6 +440,9 @@ class StreamExecutor {
   template <class T>
   port::Status SynchronousMemcpyH2D(port::ArraySlice<T> host_src,
                                     DeviceMemoryBase* device_dst) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstream_executor_pimplDTh mht_1(mht_1_v, 443, "", "./tensorflow/stream_executor/stream_executor_pimpl.h", "SynchronousMemcpyH2D");
+
     auto host_size = host_src.size() * sizeof(T);
     CHECK(device_dst->size() == 0 || device_dst->size() >= host_size);
     return SynchronousMemcpyH2D(host_src.begin(), host_size, device_dst);
@@ -284,6 +458,9 @@ class StreamExecutor {
   template <typename T>
   port::Status SynchronousMemcpyD2H(const DeviceMemory<T>& device_src,
                                     port::MutableArraySlice<T> host_dst) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstream_executor_pimplDTh mht_2(mht_2_v, 461, "", "./tensorflow/stream_executor/stream_executor_pimpl.h", "SynchronousMemcpyD2H");
+
     auto host_size = host_dst.size() * sizeof(T);
     CHECK(device_src.size() == 0 || host_size >= device_src.size());
     return SynchronousMemcpyD2H(device_src, host_size, host_dst.begin());
@@ -458,7 +635,10 @@ class StreamExecutor {
 
   // Returns the device ordinal that this StreamExecutor was initialized with.
   // Meaningless before initialization.
-  int device_ordinal() const { return device_ordinal_; }
+  int device_ordinal() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstream_executor_pimplDTh mht_3(mht_3_v, 639, "", "./tensorflow/stream_executor/stream_executor_pimpl.h", "device_ordinal");
+ return device_ordinal_; }
 
   // Returns a borrowed pointer to the underlying StreamExecutor implementation.
   internal::StreamExecutorInterface* implementation();
@@ -548,7 +728,10 @@ class StreamExecutor {
 
   // Return an allocator which delegates to this stream executor for memory
   // allocation.
-  StreamExecutorMemoryAllocator* GetAllocator() { return &allocator_; }
+  StreamExecutorMemoryAllocator* GetAllocator() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstream_executor_pimplDTh mht_4(mht_4_v, 732, "", "./tensorflow/stream_executor/stream_executor_pimpl.h", "GetAllocator");
+ return &allocator_; }
 
  private:
   template <typename BeginCallT, typename CompleteCallT, typename ReturnT,
@@ -777,9 +960,15 @@ class ScopedModuleHandle {
  public:
   explicit ScopedModuleHandle(StreamExecutor* executor,
                               ModuleHandle module_handle)
-      : executor_(executor), module_handle_(module_handle) {}
+      : executor_(executor), module_handle_(module_handle) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstream_executor_pimplDTh mht_5(mht_5_v, 964, "", "./tensorflow/stream_executor/stream_executor_pimpl.h", "ScopedModuleHandle");
+}
 
   ScopedModuleHandle(ScopedModuleHandle&& other) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstream_executor_pimplDTh mht_6(mht_6_v, 969, "", "./tensorflow/stream_executor/stream_executor_pimpl.h", "ScopedModuleHandle");
+
     executor_ = other.executor_;
     module_handle_ = other.module_handle_;
     other.executor_ = nullptr;
@@ -787,6 +976,9 @@ class ScopedModuleHandle {
   }
 
   ScopedModuleHandle& operator=(ScopedModuleHandle&& other) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstream_executor_pimplDTh mht_7(mht_7_v, 979, "", "./tensorflow/stream_executor/stream_executor_pimpl.h", "=");
+
     executor_ = other.executor_;
     module_handle_ = other.module_handle_;
     other.executor_ = nullptr;
@@ -795,6 +987,9 @@ class ScopedModuleHandle {
   }
 
   ~ScopedModuleHandle() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstream_executor_pimplDTh mht_8(mht_8_v, 990, "", "./tensorflow/stream_executor/stream_executor_pimpl.h", "~ScopedModuleHandle");
+
     if (static_cast<bool>(module_handle_)) {
       CHECK(executor_->UnloadModule(module_handle_));
     }
@@ -831,6 +1026,9 @@ StreamExecutor::CreateTypedKernel(absl::string_view kernel_name,
 template <typename T>
 inline DeviceMemory<T> StreamExecutor::AllocateArray(uint64_t element_count,
                                                      int64_t memory_space) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstream_executor_pimplDTh mht_9(mht_9_v, 1029, "", "./tensorflow/stream_executor/stream_executor_pimpl.h", "StreamExecutor::AllocateArray");
+
   uint64_t bytes = sizeof(T) * element_count;
   return DeviceMemory<T>(Allocate(bytes, memory_space));
 }
@@ -838,6 +1036,10 @@ inline DeviceMemory<T> StreamExecutor::AllocateArray(uint64_t element_count,
 template <typename T>
 inline port::StatusOr<DeviceMemory<T>> StreamExecutor::GetSymbol(
     const std::string& symbol_name, ModuleHandle module_handle) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("symbol_name: \"" + symbol_name + "\"");
+   MHTracer_DTPStensorflowPSstream_executorPSstream_executor_pimplDTh mht_10(mht_10_v, 1040, "", "./tensorflow/stream_executor/stream_executor_pimpl.h", "StreamExecutor::GetSymbol");
+
   port::StatusOr<DeviceMemoryBase> untyped_symbol =
       GetUntypedSymbol(symbol_name, module_handle);
   if (!untyped_symbol.ok()) {
@@ -851,12 +1053,18 @@ ScopedDeviceMemory<ElemT>::ScopedDeviceMemory(StreamExecutor* parent,
                                               DeviceMemoryBase value)
     : wrapped_(value),
       device_ordinal_(parent->device_ordinal()),
-      allocator_(parent->GetAllocator()) {}
+      allocator_(parent->GetAllocator()) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstream_executor_pimplDTh mht_11(mht_11_v, 1057, "", "./tensorflow/stream_executor/stream_executor_pimpl.h", "ScopedDeviceMemory<ElemT>::ScopedDeviceMemory");
+}
 
 template <typename ElemT>
 ScopedDeviceMemory<ElemT>::ScopedDeviceMemory(
     StreamExecutor* parent, std::initializer_list<ElemT> values)
     : ScopedDeviceMemory(parent, parent->AllocateArray<ElemT>(values.size())) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstream_executor_pimplDTh mht_12(mht_12_v, 1065, "", "./tensorflow/stream_executor/stream_executor_pimpl.h", "ScopedDeviceMemory<ElemT>::ScopedDeviceMemory");
+
   if (ptr() != nullptr) {
     std::vector<ElemT> local(values);
     if (!parent->SynchronousMemcpy(ptr(), const_cast<const ElemT*>(&local[0]),
@@ -868,6 +1076,9 @@ ScopedDeviceMemory<ElemT>::ScopedDeviceMemory(
 
 template <typename T>
 DeviceMemory<T> StreamExecutor::AllocateZeroed() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstream_executor_pimplDTh mht_13(mht_13_v, 1079, "", "./tensorflow/stream_executor/stream_executor_pimpl.h", "StreamExecutor::AllocateZeroed");
+
   DeviceMemoryBase buf = Allocate(sizeof(T), /*memory_space=*/0);
   if (buf.is_null()) {
     return DeviceMemory<T>{};
@@ -887,6 +1098,9 @@ template <typename T>
 DeviceMemory<T> StreamExecutor::GetSubBuffer(DeviceMemory<T>* parent,
                                              uint64_t element_offset,
                                              uint64_t element_count) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSstream_executorPSstream_executor_pimplDTh mht_14(mht_14_v, 1101, "", "./tensorflow/stream_executor/stream_executor_pimpl.h", "StreamExecutor::GetSubBuffer");
+
   if (element_offset + element_count > parent->ElementCount()) {
     LOG(ERROR) << "requested sub-buffer allocation (offset + size) is greater "
                << "than parent allocation size: (" << element_offset << " + "

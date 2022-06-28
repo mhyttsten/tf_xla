@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -85,21 +253,33 @@ namespace {
 struct LowerStaticTensorListPass
     : public PassWrapper<LowerStaticTensorListPass, OperationPass<ModuleOp>> {
   LowerStaticTensorListPass() = default;
-  LowerStaticTensorListPass(const LowerStaticTensorListPass &) {}
+  LowerStaticTensorListPass(const LowerStaticTensorListPass &) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_0(mht_0_v, 257, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "LowerStaticTensorListPass");
+}
   explicit LowerStaticTensorListPass(bool allow_tensorlist_pass_through,
                                      bool default_to_single_batch,
                                      bool enable_dynamic_update_slice) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_1(mht_1_v, 263, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "LowerStaticTensorListPass");
+
     this->allow_tensorlist_pass_through = allow_tensorlist_pass_through;
     this->default_to_single_batch = default_to_single_batch;
     this->enable_dynamic_update_slice = enable_dynamic_update_slice;
   }
 
   StringRef getArgument() const final {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_2(mht_2_v, 272, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "getArgument");
+
     // This is the argument used to refer to the pass in
     // the textual format (on the commandline for example).
     return "tfl-lower-static-tensor-list";
   }
   StringRef getDescription() const final {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_3(mht_3_v, 280, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "getDescription");
+
     // This is a brief description of the pass.
     return "Lower TensorList ops within TensorFlow Lite dialect";
   }
@@ -131,6 +311,9 @@ struct LowerStaticTensorListPass
 
 Value CreateI32SplatConst(Location loc, PatternRewriter *rewriter,
                           ArrayRef<int64_t> shape, int32_t val) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_4(mht_4_v, 314, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "CreateI32SplatConst");
+
   RankedTensorType type =
       RankedTensorType::get(shape, rewriter->getIntegerType(32));
   DenseElementsAttr attr =
@@ -140,6 +323,9 @@ Value CreateI32SplatConst(Location loc, PatternRewriter *rewriter,
 
 Value CreateI64SplatConst(Location loc, PatternRewriter *rewriter,
                           ArrayRef<int64_t> shape, int64_t val) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_5(mht_5_v, 326, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "CreateI64SplatConst");
+
   RankedTensorType type =
       RankedTensorType::get(shape, rewriter->getIntegerType(64));
   DenseElementsAttr attr =
@@ -149,6 +335,9 @@ Value CreateI64SplatConst(Location loc, PatternRewriter *rewriter,
 
 Value CreateI32SplatTensor(Location loc, PatternRewriter *rewriter,
                            Value shape_tensor, int32_t val) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_6(mht_6_v, 338, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "CreateI32SplatTensor");
+
   Value scalar_val = CreateI32SplatConst(loc, rewriter, {}, val);
   return rewriter->create<TF::FillOp>(
       loc, RankedTensorType::get({-1}, rewriter->getIntegerType(32)),
@@ -159,6 +348,9 @@ Value CreateI32SplatTensor(Location loc, PatternRewriter *rewriter,
 // the given type if it is a ranked type.
 Type PrependLeadingDimIfRanked(int64_t dim, Type type,
                                PatternRewriter *rewriter) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_7(mht_7_v, 351, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "PrependLeadingDimIfRanked");
+
   Type dtype = getElementTypeOrSelf(type);
   if (RankedTensorType ty = type.dyn_cast<RankedTensorType>()) {
     llvm::SmallVector<int64_t, 4> shape = {dim};
@@ -170,6 +362,9 @@ Type PrependLeadingDimIfRanked(int64_t dim, Type type,
 
 Type GetTensorTypeForTensorList(Type element_type, TF::VariantType handle_dtype,
                                 PatternRewriter *rewriter) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_8(mht_8_v, 365, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "GetTensorTypeForTensorList");
+
   // If the variant type in the output handle has item shape available, use it
   // to derive the output shape by setting unknown leading dimension.
   // Otherwise, result type will be of unranked type.
@@ -213,6 +408,9 @@ TF::SliceOp CreateSliceOpForTensorList(Location loc, Value input_list,
                                        Value start_index, Value size,
                                        Value item_rank, Type result_type,
                                        PatternRewriter *rewriter) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_9(mht_9_v, 411, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "CreateSliceOpForTensorList");
+
   // Create the start position of slice. This is done by concatenating
   // `start_index` and `partial_start_position` together.
   IntegerType shape_dtype = rewriter->getIntegerType(32);
@@ -273,6 +471,9 @@ struct ConvertConst : public OpConversionPattern<TF::ConstOp> {
   LogicalResult matchAndRewrite(
       TF::ConstOp op, OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_10(mht_10_v, 474, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "matchAndRewrite");
+
     // Verify that the opaque elements attribute contains tensor of type variant
     // and scalar shape. The variant type should hold a TensorList.
     auto opaque_attr = op.value().dyn_cast<OpaqueElementsAttr>();
@@ -342,11 +543,17 @@ struct ConvertTensorListSetItem
   explicit ConvertTensorListSetItem(MLIRContext *context,
                                     bool enable_dynamic_update_slice = false)
       : OpConversionPattern<TF::TensorListSetItemOp>(context),
-        enable_dynamic_update_slice(enable_dynamic_update_slice) {}
+        enable_dynamic_update_slice(enable_dynamic_update_slice) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_11(mht_11_v, 547, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "ConvertTensorListSetItem");
+}
 
   LogicalResult matchAndRewrite(
       TF::TensorListSetItemOp op, OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_12(mht_12_v, 554, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "matchAndRewrite");
+
     if (enable_dynamic_update_slice) {
       return matchAndRewriteImplWithDynamicUpdateSlice(op, adaptor, rewriter);
     } else {
@@ -369,6 +576,9 @@ struct ConvertTensorListSetItem
   LogicalResult matchAndRewriteImplWithSliceAndConcat(
       TF::TensorListSetItemOp op, OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_13(mht_13_v, 579, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "matchAndRewriteImplWithSliceAndConcat");
+
     Location loc = op.getLoc();
     Value input = adaptor.getOperands()[0];
     Value index = adaptor.getOperands()[1];
@@ -426,6 +636,9 @@ struct ConvertTensorListSetItem
   LogicalResult matchAndRewriteImplWithDynamicUpdateSlice(
       TF::TensorListSetItemOp op, OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_14(mht_14_v, 639, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "matchAndRewriteImplWithDynamicUpdateSlice");
+
     Location loc = op.getLoc();
     Value input = adaptor.getOperands()[0];
     Value index = adaptor.getOperands()[1];
@@ -486,6 +699,9 @@ struct ConvertTensorListInitOp : public TensorListOpConverterBase<OpT> {
   LogicalResult matchAndRewrite(
       OpT op, typename OpT::Adaptor adaptor,
       ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_15(mht_15_v, 702, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "matchAndRewrite");
+
     Type dtype = op.element_dtype();
     if (!(dtype.isF16() || dtype.isF32() || dtype.isF64() ||
           dtype.isInteger(1) || dtype.isInteger(8) || dtype.isInteger(16) ||
@@ -655,10 +871,16 @@ struct ConvertTensorListReserve
                                     bool allow_tensorlist_pass_through,
                                     bool default_to_single_batch)
       : ConvertTensorListInitOp(context, allow_tensorlist_pass_through,
-                                default_to_single_batch) {}
+                                default_to_single_batch) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_16(mht_16_v, 875, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "ConvertTensorListReserve");
+}
 
   Value GetNumElements(TF::TensorListReserveOp op, ValueRange operands,
                        PatternRewriter *rewriter) const override {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_17(mht_17_v, 881, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "GetNumElements");
+
     Value scalar_zero = CreateI32SplatConst(op.getLoc(), rewriter, {}, 0);
     Type shape_dtype = getElementTypeOrSelf(op.element_shape().getType());
     Value num_elements = operands[1];
@@ -689,10 +911,16 @@ struct ConvertEmptyTensorList
                                   bool allow_tensorlist_pass_through,
                                   bool default_to_single_batch)
       : ConvertTensorListInitOp(context, allow_tensorlist_pass_through,
-                                default_to_single_batch) {}
+                                default_to_single_batch) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_18(mht_18_v, 915, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "ConvertEmptyTensorList");
+}
 
   Value GetNumElements(TF::EmptyTensorListOp op, ValueRange operands,
                        PatternRewriter *rewriter) const override {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_19(mht_19_v, 921, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "GetNumElements");
+
     return CreateI32SplatConst(op.getLoc(), rewriter, {1}, 0);
   }
 };
@@ -704,6 +932,9 @@ struct ConvertTensorListPushBack
   LogicalResult matchAndRewrite(
       TF::TensorListPushBackOp op, OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_20(mht_20_v, 935, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "matchAndRewrite");
+
     Value input_handle = adaptor.getOperands()[0];
     Value item = adaptor.getOperands()[1];
 
@@ -745,6 +976,9 @@ struct ConvertTensorListResize
   LogicalResult matchAndRewrite(
       TF::TensorListResizeOp op, OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_21(mht_21_v, 979, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "matchAndRewrite");
+
     Value input_handle = adaptor.getOperands()[0];
     Value size = adaptor.getOperands()[1];
 
@@ -828,6 +1062,9 @@ struct ConvertTensorListResize
   void CreateCondTrueBranch(TF::TensorListResizeOp resize_op, Type shape_dtype,
                             Type result_type, FuncOp branch_func,
                             ConversionPatternRewriter *rewriter) const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_22(mht_22_v, 1065, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "CreateCondTrueBranch");
+
     auto guard = OpBuilder::InsertionGuard(*rewriter);
     auto inputs = branch_func.getFunctionType().getInputs();
     Block *block = rewriter->createBlock(
@@ -866,6 +1103,9 @@ struct ConvertTensorListResize
   void CreateCondFalseBranch(Location loc, Type shape_dtype, Type result_type,
                              FuncOp branch_func,
                              ConversionPatternRewriter *rewriter) const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_23(mht_23_v, 1106, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "CreateCondFalseBranch");
+
     // When the input tensorlist's size is larger or equal than the requested
     // size, the else branch is executed.
     // Slice the first 'size' rows from the input tensorlist.
@@ -902,6 +1142,9 @@ struct ConvertTensorListGetItem
   LogicalResult matchAndRewrite(
       TF::TensorListGetItemOp op, OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_24(mht_24_v, 1145, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "matchAndRewrite");
+
     Value input = adaptor.getOperands()[0];
     Value index = adaptor.getOperands()[1];
     rewriter.replaceOpWithNewOp<TF::GatherOp>(op, op.getType(), input, index,
@@ -917,6 +1160,9 @@ struct ConvertTensorListLength
   LogicalResult matchAndRewrite(
       TF::TensorListLengthOp op, OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_25(mht_25_v, 1163, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "matchAndRewrite");
+
     Location loc = op.getLoc();
     Value input_handle = adaptor.getOperands()[0];
 
@@ -937,6 +1183,9 @@ struct ConvertTensorListStack
   LogicalResult matchAndRewrite(
       TF::TensorListStackOp op, OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_26(mht_26_v, 1186, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "matchAndRewrite");
+
     Location loc = op.getLoc();
     Value input = adaptor.getOperands()[0];
     Value element_shape = adaptor.getOperands()[1];
@@ -985,6 +1234,9 @@ struct ConvertTensorListConcatV2
   LogicalResult matchAndRewrite(
       TF::TensorListConcatV2Op op, OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_27(mht_27_v, 1237, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "matchAndRewrite");
+
     Location loc = op.getLoc();
     Value input = adaptor.getOperands()[0];
     Value element_shape = adaptor.getOperands()[1];
@@ -1046,6 +1298,9 @@ struct ConvertIdentity : public OpConversionPattern<TF::IdentityOp> {
   LogicalResult matchAndRewrite(
       TF::IdentityOp op, OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_28(mht_28_v, 1301, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "matchAndRewrite");
+
     Value input = adaptor.getOperands()[0];
     rewriter.replaceOpWithNewOp<TF::IdentityOp>(
         op, input.getType(), adaptor.getOperands(), op->getAttrs());
@@ -1059,6 +1314,9 @@ struct ConvertReturn : public OpConversionPattern<func::ReturnOp> {
   LogicalResult matchAndRewrite(
       func::ReturnOp op, OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_29(mht_29_v, 1317, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "matchAndRewrite");
+
     rewriter.updateRootInPlace(op,
                                [&] { op->setOperands(adaptor.getOperands()); });
     return success();
@@ -1071,6 +1329,9 @@ struct ConvertYield : public OpConversionPattern<TF::YieldOp> {
   LogicalResult matchAndRewrite(
       TF::YieldOp op, OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_30(mht_30_v, 1332, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "matchAndRewrite");
+
     rewriter.updateRootInPlace(op,
                                [&] { op->setOperands(adaptor.getOperands()); });
     return success();
@@ -1080,6 +1341,9 @@ struct ConvertYield : public OpConversionPattern<TF::YieldOp> {
 // Returns an unranked tensor type with an element of the same type as `value`
 // if `type` is a tensor of variant. Otherwise, returns `type` unmodified.
 Type VariantToUnrankedTensorType(Type type, Value value) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_31(mht_31_v, 1344, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "VariantToUnrankedTensorType");
+
   TF::VariantType variant_ty =
       getElementTypeOrSelf(type).dyn_cast<TF::VariantType>();
   if (!variant_ty) {
@@ -1103,6 +1367,9 @@ Type VariantToUnrankedTensorType(Type type, Value value) {
 
 // Returns true if we can deduce the type is tensorlist.
 bool IsTensorListType(Type type, llvm::Optional<Value> value) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_32(mht_32_v, 1370, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "IsTensorListType");
+
   TF::VariantType variant_ty =
       getElementTypeOrSelf(type).dyn_cast<TF::VariantType>();
   if (!variant_ty) {
@@ -1170,6 +1437,9 @@ void UpdateTensorListTypes(
     const llvm::SmallSet<int, 4> &resized_tensor_list_index,
     ArrayRef<Type> types, R &&range, ValueRange operands,
     llvm::SmallVectorImpl<Type> *updated_types) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_33(mht_33_v, 1440, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "UpdateTensorListTypes");
+
   int i = 0;
   for (const auto it : llvm::zip(types, range, operands)) {
     if (tensor_list_index.count(i)) {
@@ -1194,6 +1464,9 @@ template <typename R>
 void ChangeVariantToUnrankedTensorType(
     const llvm::SmallSet<int, 4> &tensor_list_index, ArrayRef<Type> types,
     R &&range, llvm::SmallVectorImpl<Type> *updated_types) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_34(mht_34_v, 1467, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "ChangeVariantToUnrankedTensorType");
+
   int i = 0;
   for (const auto it : llvm::zip(types, range)) {
     if (tensor_list_index.count(i)) {
@@ -1211,6 +1484,9 @@ void UpdateFunctionAndRegionType(ConversionPatternRewriter &rewriter,
                                  FuncOp func,
                                  llvm::ArrayRef<Type> updated_argument_types,
                                  llvm::ArrayRef<Type> updated_result_types) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_35(mht_35_v, 1487, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "UpdateFunctionAndRegionType");
+
   // Change `func`'s argument type to `unranked_argument_types`. If its
   // return types contain a `DT_VARIANT`, change it to the unranked type
   // derived from the corresponding argument.
@@ -1234,6 +1510,9 @@ LogicalResult UpdateFunctionTypesForWhileOp(
     ConversionPatternRewriter &rewriter, TF::WhileOp op, ValueRange operands,
     const llvm::SmallSet<int, 4> &tensor_list_args,
     const llvm::SmallSet<int, 4> &resized_tensor_lists) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_36(mht_36_v, 1513, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "UpdateFunctionTypesForWhileOp");
+
   int func_index = 0;
   for (FuncOp func : {op.cond_function(), op.body_function()}) {
     ++func_index;
@@ -1280,6 +1559,9 @@ LogicalResult UpdateFunctionTypesForIfOp(
     const llvm::SmallSet<int, 4> &tensor_list_args,
     const llvm::SmallSet<int, 4> &resized_tensor_lists,
     llvm::ArrayRef<Type> updated_result_types) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_37(mht_37_v, 1562, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "UpdateFunctionTypesForIfOp");
+
   for (FuncOp func : {op.else_function(), op.then_function()}) {
     if (!func) continue;
 
@@ -1363,6 +1645,9 @@ void UpdateTensorListResultTypesForIf(
     const llvm::DenseMap<int, int> &tensor_list_map, ArrayRef<Type> types,
     R &&range, ValueRange operands,
     llvm::SmallVectorImpl<Type> *updated_types) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_38(mht_38_v, 1648, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "UpdateTensorListResultTypesForIf");
+
   int i = 0;
   for (const auto it : llvm::zip(types, range)) {
     if (!tensor_list_index.count(i)) {
@@ -1393,6 +1678,9 @@ struct ConvertIf : public OpConversionPattern<TF::IfOp> {
   LogicalResult matchAndRewrite(
       TF::IfOp op, OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_39(mht_39_v, 1681, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "matchAndRewrite");
+
     // Find all Tensor List arugments.
     auto tensor_list_args = GetTensorListArgumentsIndex(op.else_function());
     auto tensor_list_results = GetTensorListResultsIndex(op.else_function());
@@ -1430,6 +1718,9 @@ struct ConvertWhile : public OpConversionPattern<TF::WhileOp> {
   LogicalResult matchAndRewrite(
       TF::WhileOp op, OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_40(mht_40_v, 1721, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "matchAndRewrite");
+
     // Find all Tensor List arugments.
     auto tensor_list_args = GetTensorListArgumentsIndex(op.body_function());
 
@@ -1466,6 +1757,9 @@ struct ConvertWhileRegion : public OpConversionPattern<TF::WhileRegionOp> {
   LogicalResult matchAndRewrite(
       TF::WhileRegionOp op, OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_41(mht_41_v, 1760, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "matchAndRewrite");
+
     llvm::SmallVector<Type, 8> result_types;
     result_types.reserve(op.getNumOperands());
     // Change all DT_VARIANT result types to unranked tensor type.
@@ -1514,7 +1808,13 @@ void LowerStaticTensorListPass::runOnOperation() {
   // Partial legalization is used below to still allow ops with variant types
   // still.
   auto is_legal = [](Operation *op) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_42(mht_42_v, 1811, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "lambda");
+
     auto is_not_variant = [](Type ty) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_43(mht_43_v, 1815, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "lambda");
+
       return !ty.cast<ShapedType>().getElementType().isa<TF::VariantType>();
     };
     return llvm::all_of(op->getOperandTypes(), is_not_variant) &&
@@ -1582,6 +1882,9 @@ void LowerStaticTensorListPass::runOnOperation() {
 std::unique_ptr<OperationPass<ModuleOp>> TFL::CreateLowerStaticTensorListPass(
     bool allow_tensorlist_pass_through, bool default_to_single_batch,
     bool enable_dynamic_update_slice) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSlitePStransformsPSlower_static_tensor_listDTcc mht_44(mht_44_v, 1885, "", "./tensorflow/compiler/mlir/lite/transforms/lower_static_tensor_list.cc", "TFL::CreateLowerStaticTensorListPass");
+
   return std::make_unique<LowerStaticTensorListPass>(
       allow_tensorlist_pass_through, default_to_single_batch,
       enable_dynamic_update_slice);

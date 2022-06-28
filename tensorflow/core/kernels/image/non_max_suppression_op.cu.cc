@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSimagePSnon_max_suppression_opDTcuDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSnon_max_suppression_opDTcuDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSimagePSnon_max_suppression_opDTcuDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -65,6 +233,9 @@ constexpr int kNmsChunkSize = 2000;
 
 template <typename T>
 __device__ EIGEN_STRONG_INLINE void Swap(T& a, T& b) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSnon_max_suppression_opDTcuDTcc mht_0(mht_0_v, 236, "", "./tensorflow/core/kernels/image/non_max_suppression_op.cu.cc", "Swap");
+
   T c(a);
   a = b;
   b = c;
@@ -75,6 +246,9 @@ template <typename T>
 __device__ EIGEN_STRONG_INLINE bool OverThreshold(const Box* a, const Box* b,
                                                   const float a_area,
                                                   const T iou_threshold) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSnon_max_suppression_opDTcuDTcc mht_1(mht_1_v, 249, "", "./tensorflow/core/kernels/image/non_max_suppression_op.cu.cc", "OverThreshold");
+
   const float b_area = (b->x2 - b->x1) * (b->y2 - b->y1);
   if (a_area == 0.0f || b_area == 0.0f) return false;
   const float xx1 = fmaxf(a->x1, b->x1);
@@ -100,15 +274,24 @@ template <bool flip_box>
 __device__ EIGEN_STRONG_INLINE void Flipped(Box& box);
 
 template <>
-__device__ EIGEN_STRONG_INLINE void Flipped<false>(Box& box) {}
+__device__ EIGEN_STRONG_INLINE void Flipped<false>(Box& box) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSnon_max_suppression_opDTcuDTcc mht_2(mht_2_v, 278, "", "./tensorflow/core/kernels/image/non_max_suppression_op.cu.cc", "Flipped<false>");
+}
 
 template <>
 __device__ EIGEN_STRONG_INLINE void Flipped<true>(Box& box) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSnon_max_suppression_opDTcuDTcc mht_3(mht_3_v, 284, "", "./tensorflow/core/kernels/image/non_max_suppression_op.cu.cc", "Flipped<true>");
+
   if (box.x1 > box.x2) Swap(box.x1, box.x2);
   if (box.y1 > box.y2) Swap(box.y1, box.y2);
 }
 template <typename T>
 __device__ EIGEN_STRONG_INLINE bool CheckBit(T* bit_mask, uint32 bit) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSnon_max_suppression_opDTcuDTcc mht_4(mht_4_v, 292, "", "./tensorflow/core/kernels/image/non_max_suppression_op.cu.cc", "CheckBit");
+
   constexpr uint32 kNumBits = 8 * sizeof(T);
   return (bit_mask[bit / kNumBits] >> (bit % kNumBits)) & 1;
 }
@@ -119,6 +302,10 @@ __device__ EIGEN_STRONG_INLINE bool CheckBit(T* bit_mask, uint32 bit) {
 __global__ void NMSReduce(const int* bitmask, const int bit_mask_len,
                           const int num_boxes, const int max_boxes,
                           char* result_mask) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("result_mask: \"" + (result_mask == nullptr ? std::string("nullptr") : std::string((char*)result_mask)) + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSnon_max_suppression_opDTcuDTcc mht_5(mht_5_v, 306, "", "./tensorflow/core/kernels/image/non_max_suppression_op.cu.cc", "NMSReduce");
+
   extern __shared__ int local[];
   // Set global mask to accept all boxes.
   for (int box : GpuGridRangeX(bit_mask_len)) {
@@ -223,7 +410,10 @@ __launch_bounds__(kNmsBlockDim* kNmsBlockDim, 4) __global__
 // time
 template <typename Index>
 __device__ EIGEN_STRONG_INLINE void SelectHelper(const Index i_selected,
-                                                 const Index i_original) {}
+                                                 const Index i_original) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSnon_max_suppression_opDTcuDTcc mht_6(mht_6_v, 414, "", "./tensorflow/core/kernels/image/non_max_suppression_op.cu.cc", "SelectHelper");
+}
 
 template <typename Index, typename T, typename... Args>
 __device__ EIGEN_STRONG_INLINE void SelectHelper(const Index i_selected,
@@ -250,6 +440,9 @@ __global__ void IndexMultiSelect(const int num_elements, const Index* indices,
 
 template <typename T>
 __global__ void Iota(const int num_elements, const T offset, T* to_fill) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSnon_max_suppression_opDTcuDTcc mht_7(mht_7_v, 443, "", "./tensorflow/core/kernels/image/non_max_suppression_op.cu.cc", "Iota");
+
   for (int idx : GpuGridRangeX(num_elements)) {
     to_fill[idx] = static_cast<T>(idx) + offset;
   }
@@ -260,7 +453,10 @@ __global__ void Iota(const int num_elements, const T offset, T* to_fill) {
 struct GreaterThanCubOp {
   float threshold_;
   __host__ __device__ __forceinline__ GreaterThanCubOp(float threshold)
-      : threshold_(threshold) {}
+      : threshold_(threshold) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSnon_max_suppression_opDTcuDTcc mht_8(mht_8_v, 457, "", "./tensorflow/core/kernels/image/non_max_suppression_op.cu.cc", "GreaterThanCubOp");
+}
   __host__ __device__ __forceinline__ bool operator()(const float& val) const {
     return (val > threshold_);
   }
@@ -316,6 +512,9 @@ Status DoNMS(OpKernelContext* context, const Tensor& boxes,
              const Tensor& scores, const int64_t max_output_size,
              const float iou_threshold_val, const float score_threshold,
              bool pad_to_max_output, int* num_saved_outputs) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSnon_max_suppression_opDTcuDTcc mht_9(mht_9_v, 515, "", "./tensorflow/core/kernels/image/non_max_suppression_op.cu.cc", "DoNMS");
+
   int num_boxes = boxes.dim_size(0);
   size_t cub_sort_temp_storage_bytes = 0;
   auto cuda_stream = GetGpuStream(context);
@@ -457,6 +656,9 @@ Status DoNMS(OpKernelContext* context, const Tensor& boxes,
 Status CheckValidInputs(const Tensor& boxes, const Tensor& scores,
                         const Tensor& max_output_size,
                         const Tensor& iou_threshold) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSnon_max_suppression_opDTcuDTcc mht_10(mht_10_v, 659, "", "./tensorflow/core/kernels/image/non_max_suppression_op.cu.cc", "CheckValidInputs");
+
   if (!TensorShapeUtils::IsScalar(max_output_size.shape())) {
     return errors::InvalidArgument("max_output_size must be 0-D, got shape ",
                                    max_output_size.shape().DebugString(),
@@ -503,9 +705,15 @@ Status CheckValidInputs(const Tensor& boxes, const Tensor& scores,
 class NonMaxSuppressionV2GPUOp : public OpKernel {
  public:
   explicit NonMaxSuppressionV2GPUOp(OpKernelConstruction* context)
-      : OpKernel(context) {}
+      : OpKernel(context) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSnon_max_suppression_opDTcuDTcc mht_11(mht_11_v, 709, "", "./tensorflow/core/kernels/image/non_max_suppression_op.cu.cc", "NonMaxSuppressionV2GPUOp");
+}
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSnon_max_suppression_opDTcuDTcc mht_12(mht_12_v, 714, "", "./tensorflow/core/kernels/image/non_max_suppression_op.cu.cc", "Compute");
+
     // boxes: [num_boxes, 4]
     const Tensor& boxes = context->input(0);
     // scores: [num_boxes]
@@ -542,9 +750,15 @@ class NonMaxSuppressionV2GPUOp : public OpKernel {
 class NonMaxSuppressionV3GPUOp : public OpKernel {
  public:
   explicit NonMaxSuppressionV3GPUOp(OpKernelConstruction* context)
-      : OpKernel(context) {}
+      : OpKernel(context) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSnon_max_suppression_opDTcuDTcc mht_13(mht_13_v, 754, "", "./tensorflow/core/kernels/image/non_max_suppression_op.cu.cc", "NonMaxSuppressionV3GPUOp");
+}
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSnon_max_suppression_opDTcuDTcc mht_14(mht_14_v, 759, "", "./tensorflow/core/kernels/image/non_max_suppression_op.cu.cc", "Compute");
+
     // boxes: [num_boxes, 4]
     const Tensor& boxes = context->input(0);
     // scores: [num_boxes]
@@ -585,11 +799,17 @@ class NonMaxSuppressionV4GPUOp : public OpKernel {
  public:
   explicit NonMaxSuppressionV4GPUOp(OpKernelConstruction* context)
       : OpKernel(context) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSnon_max_suppression_opDTcuDTcc mht_15(mht_15_v, 802, "", "./tensorflow/core/kernels/image/non_max_suppression_op.cu.cc", "NonMaxSuppressionV4GPUOp");
+
     OP_REQUIRES_OK(context, context->GetAttr("pad_to_max_output_size",
                                              &pad_to_max_output_size_));
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSnon_max_suppression_opDTcuDTcc mht_16(mht_16_v, 810, "", "./tensorflow/core/kernels/image/non_max_suppression_op.cu.cc", "Compute");
+
     // boxes: [num_boxes, 4]
     const Tensor& boxes = context->input(0);
     // scores: [num_boxes]
@@ -646,6 +866,9 @@ class NonMaxSuppressionV4GPUOp : public OpKernel {
 Status NmsGpu(const float* d_sorted_boxes_float_ptr, const int num_boxes,
               const float iou_threshold, int* d_selected_indices, int* h_nkeep,
               OpKernelContext* context, const int max_boxes, bool flip_boxes) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSimagePSnon_max_suppression_opDTcuDTcc mht_17(mht_17_v, 869, "", "./tensorflow/core/kernels/image/non_max_suppression_op.cu.cc", "NmsGpu");
+
   // Making sure we respect the __align(16)__
   // we promised to the compiler.
   auto iptr = reinterpret_cast<std::uintptr_t>(d_sorted_boxes_float_ptr);

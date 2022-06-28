@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -109,6 +277,9 @@ constexpr char kEnableNativeOpsAttr[] = "TFRT_TEST_enable_native_ops";
 constexpr char kEnableGrapplerAttr[] = "TFRT_TEST_enable_grappler";
 
 TensorMetadata CreateMetadata(DType dtype, absl::Span<const Index> dim_sizes) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_0(mht_0_v, 280, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "CreateMetadata");
+
   return TensorMetadata(
       DType(dtype),
       TensorShape(llvm::ArrayRef<Index>(
@@ -116,6 +287,9 @@ TensorMetadata CreateMetadata(DType dtype, absl::Span<const Index> dim_sizes) {
 }
 
 tensorflow::DataType ConvertDType(DType kind) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_1(mht_1_v, 290, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ConvertDType");
+
   switch (kind) {
     case DType::UI8:
       return tensorflow::DT_UINT8;
@@ -170,6 +344,9 @@ tensorflow::DataType ConvertDType(DType kind) {
 }
 
 DType ConvertDType(tensorflow::DataType dtype) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_2(mht_2_v, 347, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ConvertDType");
+
   switch (dtype) {
     case tensorflow::DT_UINT8:
       return static_cast<DType>(DType::UI8);
@@ -223,6 +400,9 @@ DType ConvertDType(tensorflow::DataType dtype) {
 }
 
 OpAttrType ConvertDTypeToOpAttrType(tensorflow::DataType dtype) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_3(mht_3_v, 403, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ConvertDTypeToOpAttrType");
+
   switch (dtype) {
     case tensorflow::DT_UINT8:
       return OpAttrType::UI8;
@@ -264,6 +444,11 @@ OpAttrType ConvertDTypeToOpAttrType(tensorflow::DataType dtype) {
 void GetFuncAttr(const OpAttrs& op_attrs, const std::string& op_name,
                  const tensorflow::FunctionLibraryDefinition& func_lib_def,
                  string_view attr_name, bool* value) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("op_name: \"" + op_name + "\"");
+   mht_4_v.push_back("attr_name: \"" + std::string(attr_name.data(), attr_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_4(mht_4_v, 449, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "GetFuncAttr");
+
   bool success = op_attrs.Get(attr_name, value);
   if (success) {
     DVLOG(2) << "Caller explicitly specifies " << attr_name.str()
@@ -287,12 +472,18 @@ void GetFuncAttr(const OpAttrs& op_attrs, const std::string& op_name,
 }
 
 int64_t GetNextLocationId() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_5(mht_5_v, 475, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "GetNextLocationId");
+
   static std::atomic<int64_t> id(0);
   return id.fetch_add(1, std::memory_order_relaxed);
 }
 }  // namespace
 
 tensorflow::DataType TensorInterface::Type() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_6(mht_6_v, 484, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "TensorInterface::Type");
+
   auto kind = tensor_.get().metadata().dtype;
   if (kind == DType::Unsupported) {
     assert(llvm::isa<tensorflow::tfd::RuntimeFallbackTensor>(tensor_.get()));
@@ -303,13 +494,22 @@ tensorflow::DataType TensorInterface::Type() const {
   return ConvertDType(kind);
 }
 
-int TensorInterface::NumDims() const { return tensor_.get().shape().GetRank(); }
+int TensorInterface::NumDims() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_7(mht_7_v, 498, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "TensorInterface::NumDims");
+ return tensor_.get().shape().GetRank(); }
 
 int64_t TensorInterface::Dim(int dim_index) const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_8(mht_8_v, 503, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "TensorInterface::Dim");
+
   return tensor_.get().shape().GetDimensionSize(dim_index);
 }
 
 int64_t TensorInterface::NumElements() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_9(mht_9_v, 510, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "TensorInterface::NumElements");
+
   if (!tensor_) {
     return static_cast<int64_t>(tf_tensor_.NumElements());
   }
@@ -317,10 +517,16 @@ int64_t TensorInterface::NumElements() const {
 }
 
 size_t TensorInterface::ByteSize() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_10(mht_10_v, 520, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "TensorInterface::ByteSize");
+
   return tensor_.get().metadata().GetHostSizeInBytes();
 }
 
 void* TensorInterface::Data() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_11(mht_11_v, 527, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "TensorInterface::Data");
+
   if (!tensor_) {
     return tensorflow::TensorCApi::Buffer(tf_tensor_)->data();
   } else {
@@ -330,9 +536,15 @@ void* TensorInterface::Data() const {
 }
 
 // TFRT DenseHostTensor is always aligned
-bool TensorInterface::IsAligned() const { return true; }
+bool TensorInterface::IsAligned() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_12(mht_12_v, 540, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "TensorInterface::IsAligned");
+ return true; }
 
 bool TensorInterface::CanMove() const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_13(mht_13_v, 545, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "TensorInterface::CanMove");
+
   // It is safe to move the Tensor if and only if we own the unique reference to
   // the tensor buffer.
   auto& dht = tensor_.get<DenseHostTensor>();
@@ -340,6 +552,9 @@ bool TensorInterface::CanMove() const {
 }
 
 std::string TensorInterface::SummarizeValue() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_14(mht_14_v, 555, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "TensorInterface::SummarizeValue");
+
   if (!tensor_) {
     return tf_tensor_.SummarizeValue(/*max_entries=*/3, /*print_v2=*/true);
   } else {
@@ -351,22 +566,34 @@ std::string TensorInterface::SummarizeValue() const {
 }
 
 AsyncValueRef<Tensor> TensorInterface::TensorRef() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_15(mht_15_v, 569, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "TensorInterface::TensorRef");
+
   return tensor_.CopyRef();
 }
 
 TensorHandleInterface::TensorHandleInterface(Value&& v, TfrtContext* context)
     : ImmediateExecutionTensorHandle(kTfrt),
       context_(*context),
-      value_(std::move(v)) {}
+      value_(std::move(v)) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_16(mht_16_v, 579, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "TensorHandleInterface::TensorHandleInterface");
+}
 
 TensorHandleInterface::TensorHandleInterface(tensorflow::DataType dtype,
                                              Value&& v, TfrtContext* context)
     : ImmediateExecutionTensorHandle(kTfrt),
       dtype_(dtype),
       context_(*context),
-      value_(std::move(v)) {}
+      value_(std::move(v)) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_17(mht_17_v, 589, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "TensorHandleInterface::TensorHandleInterface");
+}
 
 tensorflow::DataType TensorHandleInterface::DataType() const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_18(mht_18_v, 594, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "TensorHandleInterface::DataType");
+
   // If dtype_ field is set, use it instead of waiting for the underlying
   // TensorHandle's metadata to be available.
   if (dtype_) {
@@ -400,6 +627,9 @@ tensorflow::DataType TensorHandleInterface::DataType() const {
 }
 
 tensorflow::Status TensorHandleInterface::TensorHandleStatus() const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_19(mht_19_v, 630, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "TensorHandleInterface::TensorHandleStatus");
+
   if (context_.IsAsync()) {
     return tensorflow::Status::OK();
   } else {
@@ -429,6 +659,9 @@ tensorflow::Status TensorHandleInterface::TensorHandleStatus() const {
 
 tensorflow::Status TensorHandleInterface::Shape(
     tensorflow::PartialTensorShape* shape) const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_20(mht_20_v, 662, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "TensorHandleInterface::Shape");
+
   auto metadata = Metadata();
   if (!metadata.hasValue()) {
     return CreateTfErrorStatus(
@@ -445,6 +678,9 @@ tensorflow::Status TensorHandleInterface::Shape(
 }
 
 tensorflow::Status TensorHandleInterface::NumDims(int* num_dims) const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_21(mht_21_v, 681, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "TensorHandleInterface::NumDims");
+
   auto metadata = Metadata();
   if (!metadata.hasValue()) {
     return CreateTfErrorStatus(
@@ -457,6 +693,9 @@ tensorflow::Status TensorHandleInterface::NumDims(int* num_dims) const {
 
 tensorflow::Status TensorHandleInterface::NumElements(
     int64_t* num_elements) const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_22(mht_22_v, 696, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "TensorHandleInterface::NumElements");
+
   auto metadata = Metadata();
   if (!metadata.hasValue()) {
     return CreateTfErrorStatus(
@@ -469,6 +708,9 @@ tensorflow::Status TensorHandleInterface::NumElements(
 
 tensorflow::Status TensorHandleInterface::Dim(int dim_index,
                                               int64_t* dim) const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_23(mht_23_v, 711, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "TensorHandleInterface::Dim");
+
   auto metadata = Metadata();
   if (!metadata.hasValue()) {
     return CreateTfErrorStatus(
@@ -481,6 +723,9 @@ tensorflow::Status TensorHandleInterface::Dim(int dim_index,
 
 const char* TensorHandleInterface::DeviceName(
     tensorflow::Status* status) const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_24(mht_24_v, 726, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "TensorHandleInterface::DeviceName");
+
   auto& th = value_.get<TensorHandle>();
   if (!th.IsDeviceAvailable()) {
     context_.GetHostContext()->Await(th.GetAsyncDevice().CopyRCRef());
@@ -494,11 +739,17 @@ const char* TensorHandleInterface::DeviceName(
 
 const char* TensorHandleInterface::BackingDeviceName(
     tensorflow::Status* status) const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_25(mht_25_v, 742, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "TensorHandleInterface::BackingDeviceName");
+
   return DeviceName(status);
 }
 
 const char* TensorHandleInterface::DeviceType(
     tensorflow::Status* status) const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_26(mht_26_v, 750, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "TensorHandleInterface::DeviceType");
+
   auto& th = value_.get<TensorHandle>();
   if (!th.IsDeviceAvailable()) {
     context_.GetHostContext()->Await(th.GetAsyncDevice().CopyRCRef());
@@ -512,6 +763,9 @@ const char* TensorHandleInterface::DeviceType(
 
 tensorflow::AbstractTensorInterface* TensorHandleInterface::Resolve(
     tensorflow::Status* status) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_27(mht_27_v, 766, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "TensorHandleInterface::Resolve");
+
   auto* host_ctx = context_.GetHostContext();
   auto host_device_ref = host_ctx->GetHostDeviceRef();
   auto& th = value_.get<TensorHandle>();
@@ -562,6 +816,9 @@ tensorflow::AbstractTensorInterface* TensorHandleInterface::Resolve(
 }
 
 llvm::Optional<const TensorMetadata*> TensorHandleInterface::Metadata() const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_28(mht_28_v, 819, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "TensorHandleInterface::Metadata");
+
   auto& th = value_.get<TensorHandle>();
   if (!th.IsMetadataAvailable()) {
     context_.GetHostContext()->Await(th.GetAsyncMetadata().CopyRCRef());
@@ -579,6 +836,9 @@ ContextInterface::ContextInterface(
     : ImmediateExecutionContext(kTfrt),
       context_(opts, default_device_placement_policy, is_async),
       use_tfrt_distributed_runtime_(use_tfrt_distributed_runtime) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_29(mht_29_v, 839, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::ContextInterface");
+
   LOG(INFO) << "TFRT Enabled";
   metrics::AddTFRTVersionMetric();
 
@@ -589,9 +849,15 @@ ContextInterface::ContextInterface(
   run_metadata_ = std::make_unique<tensorflow::RunMetadata>();
 }
 
-ContextInterface::~ContextInterface() {}
+ContextInterface::~ContextInterface() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_30(mht_30_v, 853, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::~ContextInterface");
+}
 
 AsyncValueRef<Chain>* ContextInterface::GetChain() {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_31(mht_31_v, 858, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::GetChain");
+
   auto thread_id = std::this_thread::get_id();
   {
     tensorflow::tf_shared_lock l(chain_map_mu_);
@@ -612,6 +878,9 @@ AsyncValueRef<Chain>* ContextInterface::GetChain() {
 
 template <typename T>
 static TensorInterface* MakeScalarTensor(T value, HostContext* host) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_32(mht_32_v, 881, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "MakeScalarTensor");
+
   // The TensorInterface implementation assumes the tensor is a DenseHostTensor,
   // so we need to use a DenseHostTensor to represent a scalar tensor.
   TensorMetadata md(GetDType<T>(), {});
@@ -630,36 +899,58 @@ static TensorInterface* MakeScalarTensor(T value, HostContext* host) {
 
 tensorflow::AbstractTensorInterface* ContextInterface::CreateInt64Scalar(
     int64_t value) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_33(mht_33_v, 902, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::CreateInt64Scalar");
+
   return MakeScalarTensor(value, GetHostContext());
 }
 
 tensorflow::AbstractTensorInterface* ContextInterface::CreateUint64Scalar(
     uint64_t value) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_34(mht_34_v, 910, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::CreateUint64Scalar");
+
   return MakeScalarTensor(value, GetHostContext());
 }
 
 tensorflow::AbstractTensorInterface* ContextInterface::CreateInt32Scalar(
     int32_t value) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_35(mht_35_v, 918, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::CreateInt32Scalar");
+
   return MakeScalarTensor(value, GetHostContext());
 }
 
 tensorflow::AbstractTensorInterface* ContextInterface::CreateFloatScalar(
     float value) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_36(mht_36_v, 926, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::CreateFloatScalar");
+
   return MakeScalarTensor(value, GetHostContext());
 }
 
 tensorflow::AbstractTensorInterface* ContextInterface::CreateDoubleScalar(
     double value) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_37(mht_37_v, 934, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::CreateDoubleScalar");
+
   return MakeScalarTensor(value, GetHostContext());
 }
 
 tensorflow::AbstractTensorInterface* ContextInterface::CreateHalfScalar(
     Eigen::half value) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_38(mht_38_v, 942, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::CreateHalfScalar");
+
   return MakeScalarTensor(value, GetHostContext());
 }
 
 tensorflow::AbstractTensorInterface* ContextInterface::CreateStringScalar(
     tensorflow::tstring value) {
+   std::vector<std::string> mht_39_v;
+   mht_39_v.push_back("value: \"" + (std::string)value + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_39(mht_39_v, 951, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::CreateStringScalar");
+
   auto* host = GetHostContext();
   TensorMetadata md(DType(DType::String), {});
   auto t = StringHostTensor::MakeConstructedAsyncValueRef(md, host);
@@ -675,16 +966,25 @@ tensorflow::AbstractTensorInterface* ContextInterface::CreateStringScalar(
 
 tensorflow::AbstractTensorInterface* ContextInterface::CreateComplex128Scalar(
     tensorflow::complex128 value) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_40(mht_40_v, 969, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::CreateComplex128Scalar");
+
   return MakeScalarTensor(value, GetHostContext());
 }
 
 tensorflow::AbstractTensorInterface* ContextInterface::CreateBoolScalar(
     bool value) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_41(mht_41_v, 977, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::CreateBoolScalar");
+
   return MakeScalarTensor(value, GetHostContext());
 }
 
 tensorflow::AbstractTensorInterface* ContextInterface::CreateTensor(
     tensorflow::DataType dtype, absl::Span<const int64_t> dim_sizes) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_42(mht_42_v, 985, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::CreateTensor");
+
   std::vector<Index> dimvec(dim_sizes.size());
   for (int i = 0; i < dim_sizes.size(); ++i) {
     dimvec[i] = static_cast<int64_t>(dim_sizes[i]);
@@ -751,6 +1051,9 @@ tensorflow::AbstractTensorInterface* ContextInterface::CreateTensor(
 tensorflow::AbstractTensorInterface* ContextInterface::CreateTensor(
     tensorflow::DataType dtype, const int64_t* dims, int num_dims, void* data,
     size_t len, MemoryReleaser memory_releaser, void* memory_releaser_arg) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_43(mht_43_v, 1054, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::CreateTensor");
+
   TensorMetadata metadata(ConvertDType(dtype),
                           {dims, static_cast<size_t>(num_dims)});
   RCReference<HostBuffer> buffer = HostBuffer::CreateFromExternal(
@@ -766,10 +1069,16 @@ tensorflow::AbstractTensorInterface* ContextInterface::CreateTensor(
   return new TensorInterface(std::move(dht));
 }
 
-bool ContextInterface::UsesTFRT() { return true; }
+bool ContextInterface::UsesTFRT() {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_44(mht_44_v, 1073, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::UsesTFRT");
+ return true; }
 
 tensorflow::ImmediateExecutionTensorHandle* ContextInterface::CreateLocalHandle(
     tensorflow::AbstractTensorInterface* t) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_45(mht_45_v, 1079, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::CreateLocalHandle");
+
   auto* tensor_interface = down_cast<TensorInterface*>(t);
   auto* host = GetHostContext();
 
@@ -849,6 +1158,10 @@ tensorflow::ImmediateExecutionTensorHandle* ContextInterface::CreateLocalHandle(
 tensorflow::ImmediateExecutionTensorHandle*
 ContextInterface::CreateLocalHandleFromTFTensor(tensorflow::Tensor& t,
                                                 const char* d_name) {
+   std::vector<std::string> mht_46_v;
+   mht_46_v.push_back("d_name: \"" + (d_name == nullptr ? std::string("nullptr") : std::string((char*)d_name)) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_46(mht_46_v, 1162, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::CreateLocalHandleFromTFTensor");
+
   auto* host = GetHostContext();
   // Create RuntimeFallbackTensor from a TF Tensor, and then create
   // the according TensorHandleInterface.
@@ -878,6 +1191,9 @@ ContextInterface::CreateLocalHandleFromTFTensor(tensorflow::Tensor& t,
 tensorflow::ImmediateExecutionTensorHandle*
 ContextInterface::TFTensorHandleFromInterface(
     tensorflow::ImmediateExecutionTensorHandle* handle) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_47(mht_47_v, 1194, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::TFTensorHandleFromInterface");
+
   TensorHandle th = tfrt::tf::TensorHandleFromInterface(handle)->Handle();
   AsyncValue* tensor_av = th.GetAsyncTensor();
   if (tensor_av->IsUnavailable()) GetHostContext()->Await(FormRef(tensor_av));
@@ -904,6 +1220,9 @@ ContextInterface::TFTensorHandleFromInterface(
 }
 
 tensorflow::ImmediateExecutionOperation* ContextInterface::CreateOperation() {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_48(mht_48_v, 1223, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::CreateOperation");
+
   return new OperationInterface(this);
 }
 
@@ -911,6 +1230,9 @@ tensorflow::ImmediateExecutionOperation* ContextInterface::CreateOperation() {
 // supported.
 tensorflow::Status ContextInterface::RegisterFunction(
     tensorflow::AbstractFunction* f) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_49(mht_49_v, 1233, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::RegisterFunction");
+
   tensorflow::FunctionDef* fdef;
   TF_RETURN_IF_ERROR(f->GetFunctionDef(&fdef));
   if (!fdef) {
@@ -922,11 +1244,17 @@ tensorflow::Status ContextInterface::RegisterFunction(
 
 void ContextInterface::ListDevices(
     std::vector<tensorflow::DeviceAttributes>* devices) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_50(mht_50_v, 1247, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::ListDevices");
+
   context_.GetEagerContext()->ListDevices(devices);
 }
 
 tensorflow::Status ContextInterface::AddDevices(
     std::vector<std::unique_ptr<tensorflow::Device>> devices) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_51(mht_51_v, 1255, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::AddDevices");
+
   if (!devices.empty() && devices[0]->device_type() != "CPU")
     return tensorflow::errors::InvalidArgument(
         "Device: ", devices[0]->device_type(), " is not allowed to be added ",
@@ -943,16 +1271,28 @@ tensorflow::Status ContextInterface::AddDevices(
 }
 
 void ContextInterface::ClearCachesAndThreadExecutors() {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_52(mht_52_v, 1274, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::ClearCachesAndThreadExecutors");
+
   GetEagerContext()->ClearCachesAndThreadExecutors();
   GetHostContext()->Quiesce();
 }
 
-void ContextInterface::StartStep() { GetEagerContext()->StartStep(); }
+void ContextInterface::StartStep() {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_53(mht_53_v, 1282, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::StartStep");
+ GetEagerContext()->StartStep(); }
 
-void ContextInterface::EndStep() { GetEagerContext()->EndStep(); }
+void ContextInterface::EndStep() {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_54(mht_54_v, 1287, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::EndStep");
+ GetEagerContext()->EndStep(); }
 
 tensorflow::Status ContextInterface::EnableCollectiveOps(
     const tensorflow::ServerDef& server_def) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_55(mht_55_v, 1293, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::EnableCollectiveOps");
+
   if (use_tfrt_distributed_runtime_) {
     return distributed_manager_->EnableCollectiveOps(server_def);
   }
@@ -1009,6 +1349,9 @@ tensorflow::Status ContextInterface::EnableCollectiveOps(
 tensorflow::Status ContextInterface::BuildFunctionRequestContext(
     tensorflow::tfrt_stub::OpKernelRunnerTable* runner_table,
     RCReference<tfrt::RequestContext>* request_context) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_56(mht_56_v, 1352, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::BuildFunctionRequestContext");
+
   auto* step_container = GetEagerContext()->StepContainer();
   RequestContextBuilder request_context_builder(
       GetHostContext(), GetResourceContext(), step_container->StepId());
@@ -1030,6 +1373,9 @@ tensorflow::Status ContextInterface::BuildFunctionRequestContext(
 
 tensorflow::Status ContextInterface::BuildOpRequestContext(
     RCReference<tfrt::RequestContext>* request_context) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_57(mht_57_v, 1376, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::BuildOpRequestContext");
+
   return BuildFunctionRequestContext(/*runner_table=*/nullptr, request_context);
 }
 
@@ -1037,6 +1383,10 @@ tensorflow::ImmediateExecutionTensorHandle*
 ContextInterface::CopyTensorHandleToDevice(
     tensorflow::ImmediateExecutionTensorHandle* handle, const char* device_name,
     tensorflow::Status* status) {
+   std::vector<std::string> mht_58_v;
+   mht_58_v.push_back("device_name: \"" + (device_name == nullptr ? std::string("nullptr") : std::string((char*)device_name)) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_58(mht_58_v, 1387, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::CopyTensorHandleToDevice");
+
   auto* host_ctx = GetHostContext();
 
   TensorHandle src_th = tfrt::tf::TensorHandleFromInterface(handle)->Handle();
@@ -1088,20 +1438,33 @@ ContextInterface::CopyTensorHandleToDevice(
 
 tensorflow::Status ContextInterface::AddFunctionDef(
     const tensorflow::FunctionDef& fdef) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_59(mht_59_v, 1441, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::AddFunctionDef");
+
   return GetEagerContext()->AddFunctionDef(fdef);
 }
 
 tensorflow::Status ContextInterface::AddFunctionDefWithStackTraces(
     const tensorflow::FunctionDef& fdef,
     const tensorflow::StackTracesMap& stack_traces) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_60(mht_60_v, 1450, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::AddFunctionDefWithStackTraces");
+
   return GetEagerContext()->AddFunctionDefWithStackTraces(fdef, stack_traces);
 }
 
 std::vector<std::string> ContextInterface::ListFunctionNames() {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_61(mht_61_v, 1457, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::ListFunctionNames");
+
   return GetEagerContext()->ListFunctionNames();
 }
 
 tensorflow::Status ContextInterface::RemoveFunction(const std::string& func) {
+   std::vector<std::string> mht_62_v;
+   mht_62_v.push_back("func: \"" + func + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_62(mht_62_v, 1465, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::RemoveFunction");
+
   // TODO(tfrt-devs): We need to ensure all invocations of this function is
   // finished before removing it.
   function_cache_.RemoveFunction(func);
@@ -1110,45 +1473,74 @@ tensorflow::Status ContextInterface::RemoveFunction(const std::string& func) {
 
 const tensorflow::FunctionDef* ContextInterface::FindFunctionDef(
     const std::string& name) const {
+   std::vector<std::string> mht_63_v;
+   mht_63_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_63(mht_63_v, 1477, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::FindFunctionDef");
+
   return GetEagerContext()->FindFunctionDef(name);
 }
 
 const tensorflow::DeviceNameUtils::ParsedName&
 ContextInterface::HostCPUParsedName() const {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_64(mht_64_v, 1485, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::HostCPUParsedName");
+
   return context_.HostCPUParsedName();
 }
 
 const std::string& ContextInterface::HostCPUName() const {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_65(mht_65_v, 1492, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::HostCPUName");
+
   return context_.GetEagerContext()->HostCPUName();
 }
 
 tensorflow::CustomDeviceOpHandler&
 ContextInterface::GetCustomDeviceOpHandler() {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_66(mht_66_v, 1500, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::GetCustomDeviceOpHandler");
+
   return context_.GetEagerContext()->GetCustomDeviceOpHandler();
 }
 
 tensorflow::Status ContextInterface::RegisterCustomDevice(
     const std::string& name, std::unique_ptr<tensorflow::CustomDevice> device) {
+   std::vector<std::string> mht_67_v;
+   mht_67_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_67(mht_67_v, 1509, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::RegisterCustomDevice");
+
   return context_.GetEagerContext()->RegisterCustomDevice(name,
                                                           std::move(device));
 }
 
 tensorflow::FunctionLibraryDefinition* ContextInterface::FuncLibDef() {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_68(mht_68_v, 1517, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::FuncLibDef");
+
   return context_.GetEagerContext()->FuncLibDef();
 }
 
 void ContextInterface::SetReuseRendezvousForFunctions(
     bool reuse_rendezvous_for_functions) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_69(mht_69_v, 1525, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::SetReuseRendezvousForFunctions");
+
   // TODO(fishx): This feature doesn't work properly in TFRT yet. Fix it.
   context_.GetEagerContext()->SetReuseRendezvousForFunctions(
       reuse_rendezvous_for_functions);
 }
 
 void ContextInterface::ResetGlobalRendezvousForFunction() {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_70(mht_70_v, 1534, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::ResetGlobalRendezvousForFunction");
+
   context_.GetEagerContext()->ResetGlobalRendezvousForFunction();
 }
 
 std::vector<std::string> ContextInterface::GetLoggedOpsTestonly() {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_71(mht_71_v, 1541, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::GetLoggedOpsTestonly");
+
   const auto& ret = GetHostContext()
                         ->GetOrCreateSharedContext<tensorflow::tfd::OpLogger>()
                         .GetLoggedOps();
@@ -1156,43 +1548,73 @@ std::vector<std::string> ContextInterface::GetLoggedOpsTestonly() {
 }
 
 HostContext* ContextInterface::GetHostContext() {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_72(mht_72_v, 1551, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::GetHostContext");
+
   return GetCoreRuntime()->GetHostContext();
 }
 
 tensorflow::EagerContext* ContextInterface::GetEagerContext() {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_73(mht_73_v, 1558, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::GetEagerContext");
+
   return context_.GetEagerContext();
 }
 
 const tensorflow::EagerContext* ContextInterface::GetEagerContext() const {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_74(mht_74_v, 1565, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::GetEagerContext");
+
   return context_.GetEagerContext();
 }
 
 CoreRuntime* ContextInterface::GetCoreRuntime() {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_75(mht_75_v, 1572, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::GetCoreRuntime");
+
   return context_.GetCoreRuntime();
 }
 
-TfrtContext* ContextInterface::GetTfrtContext() { return &context_; }
+TfrtContext* ContextInterface::GetTfrtContext() {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_76(mht_76_v, 1579, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::GetTfrtContext");
+ return &context_; }
 
 OpHandler* ContextInterface::GetFallbackOpHandler() {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_77(mht_77_v, 1584, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::GetFallbackOpHandler");
+
   return context_.GetFallbackOpHandler();
 }
 
 ResourceContext* ContextInterface::GetResourceContext() {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_78(mht_78_v, 1591, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::GetResourceContext");
+
   return context_.GetResourceContext();
 }
 
 tensorflow::Status ContextInterface::SelectOpHandlerFromArguments(
     const tensorflow::ImmediateExecutionOperation& op, OpHandler** op_handler) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_79(mht_79_v, 1599, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::SelectOpHandlerFromArguments");
+
   return op_handler_selector_->SelectFromArguments(op, op_handler);
 }
 
 tensorflow::Status ContextInterface::SelectOpHandlerFromNodeDef(
     const tensorflow::ImmediateExecutionOperation& op, const NodeDef* node_def,
     OpHandler** op_handler) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_80(mht_80_v, 1608, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::SelectOpHandlerFromNodeDef");
+
   return op_handler_selector_->SelectFromNodeDef(op, node_def, op_handler);
 }
 
 std::unique_ptr<tensorflow::RunMetadata> ContextInterface::ExportRunMetadata() {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_81(mht_81_v, 1615, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::ExportRunMetadata");
+
   mutex_lock l(run_metadata_mu_);
 
   // NOTE(fishx): We need to merge run_metadata from TF Eager Context because
@@ -1207,6 +1629,10 @@ std::unique_ptr<tensorflow::RunMetadata> ContextInterface::ExportRunMetadata() {
 
 tensorflow::Status ContextInterface::RunMetadataRecordFunction(
     const std::string& func_name) {
+   std::vector<std::string> mht_82_v;
+   mht_82_v.push_back("func_name: \"" + func_name + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_82(mht_82_v, 1633, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::RunMetadataRecordFunction");
+
   const tensorflow::FunctionDef* fdef =
       GetEagerContext()->FindFunctionDef(func_name);
   if (fdef == nullptr) {
@@ -1234,15 +1660,24 @@ tensorflow::Status ContextInterface::RunMetadataRecordFunction(
 
 void ContextInterface::SetExecutorForThread(
     tensorflow::EagerExecutor* executor) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_83(mht_83_v, 1663, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "ContextInterface::SetExecutorForThread");
+
   GetEagerContext()->SetExecutorForThread(executor);
 }
 
 tfrt::Location AbortLocationHandler::GetCurrentLocation() {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_84(mht_84_v, 1670, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "AbortLocationHandler::GetCurrentLocation");
+
   return tfrt::Location(this, GetNextLocationId());
 }
 
 void OpAttrsInterface::GetNameAttrList(
     tensorflow::NameAttrList* name_and_attrs) const {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_85(mht_85_v, 1678, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OpAttrsInterface::GetNameAttrList");
+
   fallback_attrs_->FillAttrValueMap(name_and_attrs->mutable_attr());
   name_and_attrs->set_name(fallback_attrs_->op_name());
 }
@@ -1250,26 +1685,46 @@ void OpAttrsInterface::GetNameAttrList(
 Status OpAttrsInterface::GetTypeList(
     absl::string_view attr_name,
     absl::InlinedVector<tensorflow::DataType, 4>* type_list) const {
+   std::vector<std::string> mht_86_v;
+   mht_86_v.push_back("attr_name: \"" + std::string(attr_name.data(), attr_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_86(mht_86_v, 1689, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OpAttrsInterface::GetTypeList");
+
   return tensorflow::errors::Unimplemented("OpAttrsInterface::GetTypeList");
 }
 
 bool OpAttrsInterface::GetInt(absl::string_view attr_name,
                               int64_t* result) const {
+   std::vector<std::string> mht_87_v;
+   mht_87_v.push_back("attr_name: \"" + std::string(attr_name.data(), attr_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_87(mht_87_v, 1698, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OpAttrsInterface::GetInt");
+
   return attrs_->Get<int64_t>({attr_name.data(), attr_name.size()}, result);
 }
 
 bool OpAttrsInterface::GetFloat(absl::string_view attr_name,
                                 float* result) const {
+   std::vector<std::string> mht_88_v;
+   mht_88_v.push_back("attr_name: \"" + std::string(attr_name.data(), attr_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_88(mht_88_v, 1707, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OpAttrsInterface::GetFloat");
+
   return attrs_->Get<float>({attr_name.data(), attr_name.size()}, result);
 }
 
 bool OpAttrsInterface::GetBool(absl::string_view attr_name,
                                bool* result) const {
+   std::vector<std::string> mht_89_v;
+   mht_89_v.push_back("attr_name: \"" + std::string(attr_name.data(), attr_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_89(mht_89_v, 1716, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OpAttrsInterface::GetBool");
+
   return attrs_->Get<bool>({attr_name.data(), attr_name.size()}, result);
 }
 
 bool OpAttrsInterface::GetType(absl::string_view attr_name,
                                tensorflow::DataType* result) const {
+   std::vector<std::string> mht_90_v;
+   mht_90_v.push_back("attr_name: \"" + std::string(attr_name.data(), attr_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_90(mht_90_v, 1725, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OpAttrsInterface::GetType");
+
   auto optional_type =
       attrs_->GetOptional<OpAttrType>({attr_name.data(), attr_name.size()});
   if (!optional_type.hasValue()) return false;
@@ -1280,10 +1735,18 @@ bool OpAttrsInterface::GetType(absl::string_view attr_name,
 OperationInterface::OperationInterface(ContextInterface* context)
     : ImmediateExecutionOperation(kTfrt),
       op_attrs_(&attrs_, &fallback_attrs_),
-      context_(context) {}
+      context_(context) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_91(mht_91_v, 1739, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::OperationInterface");
+}
 
 tensorflow::Status OperationInterface::Reset(const char* op,
                                              const char* raw_device_name) {
+   std::vector<std::string> mht_92_v;
+   mht_92_v.push_back("op: \"" + (op == nullptr ? std::string("nullptr") : std::string((char*)op)) + "\"");
+   mht_92_v.push_back("raw_device_name: \"" + (raw_device_name == nullptr ? std::string("nullptr") : std::string((char*)raw_device_name)) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_92(mht_92_v, 1747, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::Reset");
+
   op_name_ = op;
   args_.clear();
   attrs_.Reset();
@@ -1300,6 +1763,9 @@ tensorflow::Status OperationInterface::Reset(const char* op,
 
 tensorflow::Status OperationInterface::Execute(
     absl::Span<tensorflow::AbstractTensorHandle*> retvals, int* num_retvals) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_93(mht_93_v, 1766, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::Execute");
+
   tensorflow::profiler::TraceMe trace(
       [&] {
         return absl::StrCat("TFRT_Execute:", Name(), " device:", DeviceName());
@@ -1428,6 +1894,9 @@ tensorflow::Status OperationInterface::Execute(
 }
 
 tensorflow::Status OperationInterface::Initialize() {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_94(mht_94_v, 1897, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::Initialize");
+
   CoreRuntime* corert = context_->GetCoreRuntime();
   if (!is_function_) {
     // Obtain input arguments' dtype attrs as part of the cache key.
@@ -1556,6 +2025,10 @@ tensorflow::Status OperationInterface::Initialize() {
 }
 
 tensorflow::Status OperationInterface::SetDeviceName(const char* name) {
+   std::vector<std::string> mht_95_v;
+   mht_95_v.push_back("name: \"" + (name == nullptr ? std::string("nullptr") : std::string((char*)name)) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_95(mht_95_v, 2029, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::SetDeviceName");
+
   if (op_ && name != device_name_) {
     return tensorflow::errors::Internal(
         "Failed to update device name. Right now TFRT cannot update device "
@@ -1567,6 +2040,9 @@ tensorflow::Status OperationInterface::SetDeviceName(const char* name) {
 
 tensorflow::Status OperationInterface::AddInput(
     tensorflow::AbstractTensorHandle* input) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_96(mht_96_v, 2043, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::AddInput");
+
   tensorflow::ImmediateExecutionTensorHandle* h =
       down_cast<tensorflow::ImmediateExecutionTensorHandle*>(input);
   // TODO(b/175427838): It would be nice to be able to use tensorflow::isa here.
@@ -1582,6 +2058,9 @@ tensorflow::Status OperationInterface::AddInput(
 
 tensorflow::Status OperationInterface::SetInput(
     size_t index, tensorflow::ImmediateExecutionTensorHandle* input) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_97(mht_97_v, 2061, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::SetInput");
+
   if (index >= args_.size()) {
     return tensorflow::errors::InvalidArgument("Index >= inputs.size: %d >= %d",
                                                index, args_.size());
@@ -1602,12 +2081,18 @@ tensorflow::Status OperationInterface::SetInput(
 
 tensorflow::Status OperationInterface::AddInputList(
     absl::Span<tensorflow::AbstractTensorHandle* const> inputs) {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_98(mht_98_v, 2084, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::AddInputList");
+
   return tensorflow::errors::Unimplemented(
       "Unimplemented OperationInterface::AddInputList");
 }
 
 absl::Span<tensorflow::ImmediateExecutionTensorHandle* const>
 OperationInterface::GetInputs() const {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_99(mht_99_v, 2093, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::GetInputs");
+
   return absl::MakeSpan(
       reinterpret_cast<tensorflow::ImmediateExecutionTensorHandle* const*>(
           args_.data()),
@@ -1617,6 +2102,11 @@ OperationInterface::GetInputs() const {
 tensorflow::Status OperationInterface::SetAttrString(const char* attr_name,
                                                      const char* data,
                                                      size_t length) {
+   std::vector<std::string> mht_100_v;
+   mht_100_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   mht_100_v.push_back("data: \"" + (data == nullptr ? std::string("nullptr") : std::string((char*)data)) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_100(mht_100_v, 2107, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::SetAttrString");
+
   fallback_attrs_.Set(attr_name, tensorflow::StringPiece(data, length));
   if (attrs_.SetString(attr_name, string_view(data, length)))
     return tensorflow::Status::OK();
@@ -1626,6 +2116,10 @@ tensorflow::Status OperationInterface::SetAttrString(const char* attr_name,
 
 tensorflow::Status OperationInterface::SetAttrInt(const char* attr_name,
                                                   int64_t value) {
+   std::vector<std::string> mht_101_v;
+   mht_101_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_101(mht_101_v, 2120, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::SetAttrInt");
+
   fallback_attrs_.Set(attr_name, static_cast<int64_t>(value));
   if (attrs_.Set(attr_name, value)) return tensorflow::Status::OK();
   return tensorflow::errors::Internal("OperationInterface::SetAttrInt failed");
@@ -1633,6 +2127,10 @@ tensorflow::Status OperationInterface::SetAttrInt(const char* attr_name,
 
 tensorflow::Status OperationInterface::SetAttrFloat(const char* attr_name,
                                                     float value) {
+   std::vector<std::string> mht_102_v;
+   mht_102_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_102(mht_102_v, 2131, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::SetAttrFloat");
+
   fallback_attrs_.Set(attr_name, value);
   if (attrs_.Set(attr_name, value)) return tensorflow::Status::OK();
   return tensorflow::errors::Internal(
@@ -1641,6 +2139,10 @@ tensorflow::Status OperationInterface::SetAttrFloat(const char* attr_name,
 
 tensorflow::Status OperationInterface::SetAttrBool(const char* attr_name,
                                                    bool value) {
+   std::vector<std::string> mht_103_v;
+   mht_103_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_103(mht_103_v, 2143, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::SetAttrBool");
+
   fallback_attrs_.Set(attr_name, value);
   if (attrs_.Set(attr_name, value)) return tensorflow::Status::OK();
   return tensorflow::errors::Internal("OperationInterface::SetAttrBool failed");
@@ -1648,6 +2150,10 @@ tensorflow::Status OperationInterface::SetAttrBool(const char* attr_name,
 
 tensorflow::Status OperationInterface::SetAttrType(const char* attr_name,
                                                    tensorflow::DataType value) {
+   std::vector<std::string> mht_104_v;
+   mht_104_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_104(mht_104_v, 2154, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::SetAttrType");
+
   fallback_attrs_.Set(attr_name, value);
   if (value == tensorflow::DT_INVALID) {
     return tensorflow::errors::InvalidArgument(
@@ -1670,6 +2176,10 @@ tensorflow::Status OperationInterface::SetAttrType(const char* attr_name,
 tensorflow::Status OperationInterface::SetAttrShape(const char* attr_name,
                                                     const int64_t* dims,
                                                     const int num_dims) {
+   std::vector<std::string> mht_105_v;
+   mht_105_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_105(mht_105_v, 2180, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::SetAttrShape");
+
   // NOTE: This is copied from EagerOperation::SetAttrShape.
   // TODO(b/154554118): Remove the duplication.
   if (num_dims > tensorflow::TensorShape::MaxDimensions()) {
@@ -1708,6 +2218,10 @@ tensorflow::Status OperationInterface::SetAttrShape(const char* attr_name,
 
 tensorflow::Status OperationInterface::SetAttrFunction(
     const char* attr_name, const tensorflow::AbstractOperation* value) {
+   std::vector<std::string> mht_106_v;
+   mht_106_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_106(mht_106_v, 2222, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::SetAttrFunction");
+
   auto* value_operation = down_cast<const OperationInterface*>(value);
   // TODO(b/165412867): Set fallback_attrs_ for eager device placement.
   // Consider removing this and rely on TFRT OpAttrs.
@@ -1725,6 +2239,11 @@ tensorflow::Status OperationInterface::SetAttrFunction(
 
 tensorflow::Status OperationInterface::SetAttrFunctionName(
     const char* attr_name, const char* data, size_t length) {
+   std::vector<std::string> mht_107_v;
+   mht_107_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   mht_107_v.push_back("data: \"" + (data == nullptr ? std::string("nullptr") : std::string((char*)data)) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_107(mht_107_v, 2244, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::SetAttrFunctionName");
+
   // TODO(b/165412867): Set fallback_attrs_ for eager device placement.
   // Consider removing this and rely on TFRT OpAttrs.
   tensorflow::AttrValue attr_value;
@@ -1741,6 +2260,9 @@ tensorflow::Status OperationInterface::SetAttrFunctionName(
 static size_t SerializeTFETensorToDenseAttr(
     tensorflow::AbstractTensorInterface* tensor,
     tfrt::BefAttrEncoder* encoder) {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_108(mht_108_v, 2263, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "SerializeTFETensorToDenseAttr");
+
   std::vector<uint8_t> data;
 
   const auto element_type =
@@ -1757,6 +2279,10 @@ static size_t SerializeTFETensorToDenseAttr(
 
 tensorflow::Status OperationInterface::SetAttrTensor(
     const char* attr_name, tensorflow::AbstractTensorInterface* tensor) {
+   std::vector<std::string> mht_109_v;
+   mht_109_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_109(mht_109_v, 2283, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::SetAttrTensor");
+
   tfrt::BefAttrEncoder encoder;
   const size_t offset = SerializeTFETensorToDenseAttr(tensor, &encoder);
   auto buffer = encoder.TakeResult();
@@ -1770,6 +2296,10 @@ tensorflow::Status OperationInterface::SetAttrTensor(
 tensorflow::Status OperationInterface::SetAttrStringList(
     const char* attr_name, const void* const* values, const size_t* lengths,
     int num_values) {
+   std::vector<std::string> mht_110_v;
+   mht_110_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_110(mht_110_v, 2300, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::SetAttrStringList");
+
   std::vector<tensorflow::StringPiece> v(num_values);
   for (int i = 0; i < num_values; ++i) {
     v[i] = tensorflow::StringPiece(static_cast<const char*>(values[i]),
@@ -1792,6 +2322,10 @@ tensorflow::Status OperationInterface::SetAttrStringList(
 tensorflow::Status OperationInterface::SetAttrFloatList(const char* attr_name,
                                                         const float* values,
                                                         int num_values) {
+   std::vector<std::string> mht_111_v;
+   mht_111_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_111(mht_111_v, 2326, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::SetAttrFloatList");
+
   fallback_attrs_.Set(
       attr_name, tensorflow::gtl::ArraySlice<const float>(values, num_values));
 
@@ -1804,6 +2338,10 @@ tensorflow::Status OperationInterface::SetAttrFloatList(const char* attr_name,
 tensorflow::Status OperationInterface::SetAttrIntList(const char* attr_name,
                                                       const int64_t* values,
                                                       int num_values) {
+   std::vector<std::string> mht_112_v;
+   mht_112_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_112(mht_112_v, 2342, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::SetAttrIntList");
+
   fallback_attrs_.Set(
       attr_name, tensorflow::gtl::ArraySlice<const int64_t>(
                      reinterpret_cast<const int64_t*>(values), num_values));
@@ -1817,6 +2355,10 @@ tensorflow::Status OperationInterface::SetAttrIntList(const char* attr_name,
 
 tensorflow::Status OperationInterface::SetAttrTypeList(
     const char* attr_name, const tensorflow::DataType* values, int num_values) {
+   std::vector<std::string> mht_113_v;
+   mht_113_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_113(mht_113_v, 2359, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::SetAttrTypeList");
+
   fallback_attrs_.Set(attr_name,
                       tensorflow::gtl::ArraySlice<const tensorflow::DataType>(
                           values, num_values));
@@ -1838,6 +2380,11 @@ tensorflow::Status OperationInterface::SetAttrTypeList(
 
 tensorflow::Status OperationInterface::SetAttrBoolList(
     const char* attr_name, const unsigned char* values, int num_values) {
+   std::vector<std::string> mht_114_v;
+   mht_114_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   mht_114_v.push_back("values: \"" + (values == nullptr ? std::string("nullptr") : std::string((char*)values)) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_114(mht_114_v, 2385, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::SetAttrBoolList");
+
   std::unique_ptr<bool[]> b(new bool[num_values]);
   for (int i = 0; i < num_values; ++i) {
     b[i] = values[i];
@@ -1863,6 +2410,10 @@ tensorflow::Status OperationInterface::SetAttrShapeList(const char* attr_name,
                                                         const int64_t** dims,
                                                         const int* num_dims,
                                                         int num_values) {
+   std::vector<std::string> mht_115_v;
+   mht_115_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_115(mht_115_v, 2414, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::SetAttrShapeList");
+
   std::unique_ptr<tensorflow::TensorShapeProto[]> proto(
       new tensorflow::TensorShapeProto[num_values]);
   for (int i = 0; i < num_values; ++i) {
@@ -1900,6 +2451,10 @@ tensorflow::Status OperationInterface::SetAttrShapeList(const char* attr_name,
 
 tensorflow::Status OperationInterface::SetAttrFunctionList(
     const char* attr_name, absl::Span<const AbstractOperation*> values) {
+   std::vector<std::string> mht_116_v;
+   mht_116_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_116(mht_116_v, 2455, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::SetAttrFunctionList");
+
   size_t num_values = values.size();
   std::vector<const void*> func_attrs(num_values);
   std::vector<size_t> lengths(num_values);
@@ -1925,21 +2480,35 @@ tensorflow::Status OperationInterface::SetAttrFunctionList(
 
 tensorflow::Status OperationInterface::InputLength(const char* input_name,
                                                    int* length) {
+   std::vector<std::string> mht_117_v;
+   mht_117_v.push_back("input_name: \"" + (input_name == nullptr ? std::string("nullptr") : std::string((char*)input_name)) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_117(mht_117_v, 2484, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::InputLength");
+
   return tensorflow::errors::Unimplemented(
       "Unimplemented OperationInterface::InputLength");
 }
 
 tensorflow::Status OperationInterface::OutputLength(const char* output_name,
                                                     int* length) {
+   std::vector<std::string> mht_118_v;
+   mht_118_v.push_back("output_name: \"" + (output_name == nullptr ? std::string("nullptr") : std::string((char*)output_name)) + "\"");
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_118(mht_118_v, 2494, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::OutputLength");
+
   return tensorflow::errors::Unimplemented(
       "Unimplemented OperationInterface::OutputLength");
 }
 
 const tensorflow::AbstractOpAttrs* OperationInterface::GetOpAttrs() const {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_119(mht_119_v, 2502, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::GetOpAttrs");
+
   return &op_attrs_;
 }
 
 void OperationInterface::AddAttrs(const tensorflow::AbstractOpAttrs* op_attrs) {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_120(mht_120_v, 2509, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::AddAttrs");
+
   auto* tfrt_op_attrs = down_cast<const OpAttrsInterface*>(op_attrs);
   tfrt_op_attrs->GetAttrs()->IterateEntries(
       [this](const OpAttrsRawEntry& entry) {
@@ -1950,6 +2519,9 @@ void OperationInterface::AddAttrs(const tensorflow::AbstractOpAttrs* op_attrs) {
 }
 
 void OperationInterface::MaybeInferInputAttrs() {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTcc mht_121(mht_121_v, 2522, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.cc", "OperationInterface::MaybeInferInputAttrs");
+
   if (!op_def_) return;
   for (int i = 0; i < args_.size(); i++) {
     auto* handle = args_[i].get();

@@ -17,6 +17,174 @@ limitations under the License.
 
 #ifndef FLATBUFFERS_GENERATED_CONFIGURATIONFORGENERATION_TFLITE_H_
 #define FLATBUFFERS_GENERATED_CONFIGURATIONFORGENERATION_TFLITE_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include "flatbuffers/flatbuffers.h"
 
@@ -163,6 +331,9 @@ inline const ExecutionPreference (&EnumValuesExecutionPreference())[4] {
 }
 
 inline const char * const *EnumNamesExecutionPreference() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_0(mht_0_v, 334, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNamesExecutionPreference");
+
   static const char * const names[5] = {
     "ANY",
     "LOW_LATENCY",
@@ -174,6 +345,9 @@ inline const char * const *EnumNamesExecutionPreference() {
 }
 
 inline const char *EnumNameExecutionPreference(ExecutionPreference e) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_1(mht_1_v, 348, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNameExecutionPreference");
+
   if (flatbuffers::IsOutRange(e, ExecutionPreference_ANY, ExecutionPreference_FORCE_CPU)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesExecutionPreference()[index];
@@ -207,6 +381,9 @@ inline const Delegate (&EnumValuesDelegate())[8] {
 }
 
 inline const char * const *EnumNamesDelegate() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_2(mht_2_v, 384, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNamesDelegate");
+
   static const char * const names[9] = {
     "NONE",
     "NNAPI",
@@ -222,6 +399,9 @@ inline const char * const *EnumNamesDelegate() {
 }
 
 inline const char *EnumNameDelegate(Delegate e) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_3(mht_3_v, 402, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNameDelegate");
+
   if (flatbuffers::IsOutRange(e, Delegate_NONE, Delegate_CORE_ML)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesDelegate()[index];
@@ -247,6 +427,9 @@ inline const NNAPIExecutionPreference (&EnumValuesNNAPIExecutionPreference())[4]
 }
 
 inline const char * const *EnumNamesNNAPIExecutionPreference() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_4(mht_4_v, 430, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNamesNNAPIExecutionPreference");
+
   static const char * const names[5] = {
     "UNDEFINED",
     "NNAPI_LOW_POWER",
@@ -258,6 +441,9 @@ inline const char * const *EnumNamesNNAPIExecutionPreference() {
 }
 
 inline const char *EnumNameNNAPIExecutionPreference(NNAPIExecutionPreference e) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_5(mht_5_v, 444, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNameNNAPIExecutionPreference");
+
   if (flatbuffers::IsOutRange(e, NNAPIExecutionPreference_UNDEFINED, NNAPIExecutionPreference_NNAPI_SUSTAINED_SPEED)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesNNAPIExecutionPreference()[index];
@@ -283,6 +469,9 @@ inline const NNAPIExecutionPriority (&EnumValuesNNAPIExecutionPriority())[4] {
 }
 
 inline const char * const *EnumNamesNNAPIExecutionPriority() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_6(mht_6_v, 472, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNamesNNAPIExecutionPriority");
+
   static const char * const names[5] = {
     "NNAPI_PRIORITY_UNDEFINED",
     "NNAPI_PRIORITY_LOW",
@@ -294,6 +483,9 @@ inline const char * const *EnumNamesNNAPIExecutionPriority() {
 }
 
 inline const char *EnumNameNNAPIExecutionPriority(NNAPIExecutionPriority e) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_7(mht_7_v, 486, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNameNNAPIExecutionPriority");
+
   if (flatbuffers::IsOutRange(e, NNAPIExecutionPriority_NNAPI_PRIORITY_UNDEFINED, NNAPIExecutionPriority_NNAPI_PRIORITY_HIGH)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesNNAPIExecutionPriority()[index];
@@ -317,6 +509,9 @@ inline const GPUBackend (&EnumValuesGPUBackend())[3] {
 }
 
 inline const char * const *EnumNamesGPUBackend() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_8(mht_8_v, 512, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNamesGPUBackend");
+
   static const char * const names[4] = {
     "UNSET",
     "OPENCL",
@@ -327,6 +522,9 @@ inline const char * const *EnumNamesGPUBackend() {
 }
 
 inline const char *EnumNameGPUBackend(GPUBackend e) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_9(mht_9_v, 525, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNameGPUBackend");
+
   if (flatbuffers::IsOutRange(e, GPUBackend_UNSET, GPUBackend_OPENGL)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesGPUBackend()[index];
@@ -352,6 +550,9 @@ inline const GPUInferencePriority (&EnumValuesGPUInferencePriority())[4] {
 }
 
 inline const char * const *EnumNamesGPUInferencePriority() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_10(mht_10_v, 553, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNamesGPUInferencePriority");
+
   static const char * const names[5] = {
     "GPU_PRIORITY_AUTO",
     "GPU_PRIORITY_MAX_PRECISION",
@@ -363,6 +564,9 @@ inline const char * const *EnumNamesGPUInferencePriority() {
 }
 
 inline const char *EnumNameGPUInferencePriority(GPUInferencePriority e) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_11(mht_11_v, 567, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNameGPUInferencePriority");
+
   if (flatbuffers::IsOutRange(e, GPUInferencePriority_GPU_PRIORITY_AUTO, GPUInferencePriority_GPU_PRIORITY_MIN_MEMORY_USAGE)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesGPUInferencePriority()[index];
@@ -384,6 +588,9 @@ inline const GPUInferenceUsage (&EnumValuesGPUInferenceUsage())[2] {
 }
 
 inline const char * const *EnumNamesGPUInferenceUsage() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_12(mht_12_v, 591, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNamesGPUInferenceUsage");
+
   static const char * const names[3] = {
     "GPU_INFERENCE_PREFERENCE_FAST_SINGLE_ANSWER",
     "GPU_INFERENCE_PREFERENCE_SUSTAINED_SPEED",
@@ -393,6 +600,9 @@ inline const char * const *EnumNamesGPUInferenceUsage() {
 }
 
 inline const char *EnumNameGPUInferenceUsage(GPUInferenceUsage e) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_13(mht_13_v, 603, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNameGPUInferenceUsage");
+
   if (flatbuffers::IsOutRange(e, GPUInferenceUsage_GPU_INFERENCE_PREFERENCE_FAST_SINGLE_ANSWER, GPUInferenceUsage_GPU_INFERENCE_PREFERENCE_SUSTAINED_SPEED)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesGPUInferenceUsage()[index];
@@ -416,6 +626,9 @@ inline const EnabledDevices (&EnumValuesEnabledDevices())[2] {
 }
 
 inline const char * const *EnumNamesEnabledDevices() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_14(mht_14_v, 629, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNamesEnabledDevices");
+
   static const char * const names[3] = {
     "DEVICES_ALL",
     "DEVICES_WITH_NEURAL_ENGINE",
@@ -425,6 +638,9 @@ inline const char * const *EnumNamesEnabledDevices() {
 }
 
 inline const char *EnumNameEnabledDevices(EnabledDevices e) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_15(mht_15_v, 641, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNameEnabledDevices");
+
   if (flatbuffers::IsOutRange(e, EnabledDevices_DEVICES_ALL, EnabledDevices_DEVICES_WITH_NEURAL_ENGINE)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesEnabledDevices()[index];
@@ -454,6 +670,9 @@ inline const PlatformType (&EnumValuesPlatformType())[4] {
 }
 
 inline const char * const *EnumNamesPlatformType() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_16(mht_16_v, 673, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNamesPlatformType");
+
   static const char * const names[5] = {
     "MMIO",
     "REFERENCE",
@@ -465,6 +684,9 @@ inline const char * const *EnumNamesPlatformType() {
 }
 
 inline const char *EnumNamePlatformType(PlatformType e) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_17(mht_17_v, 687, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNamePlatformType");
+
   if (flatbuffers::IsOutRange(e, PlatformType_MMIO, PlatformType_REMOTE_SIMULATOR)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesPlatformType()[index];
@@ -500,6 +722,9 @@ inline const EdgeTpuPowerState (&EnumValuesEdgeTpuPowerState())[8] {
 }
 
 inline const char * const *EnumNamesEdgeTpuPowerState() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_18(mht_18_v, 725, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNamesEdgeTpuPowerState");
+
   static const char * const names[9] = {
     "UNDEFINED_POWERSTATE",
     "TPU_CORE_OFF",
@@ -515,6 +740,9 @@ inline const char * const *EnumNamesEdgeTpuPowerState() {
 }
 
 inline const char *EnumNameEdgeTpuPowerState(EdgeTpuPowerState e) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_19(mht_19_v, 743, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNameEdgeTpuPowerState");
+
   if (flatbuffers::IsOutRange(e, EdgeTpuPowerState_UNDEFINED_POWERSTATE, EdgeTpuPowerState_OVER_DRIVE)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesEdgeTpuPowerState()[index];
@@ -542,6 +770,9 @@ inline const FloatTruncationType (&EnumValuesFloatTruncationType())[4] {
 }
 
 inline const char * const *EnumNamesFloatTruncationType() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_20(mht_20_v, 773, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNamesFloatTruncationType");
+
   static const char * const names[5] = {
     "UNSPECIFIED",
     "NO_TRUNCATION",
@@ -553,6 +784,9 @@ inline const char * const *EnumNamesFloatTruncationType() {
 }
 
 inline const char *EnumNameFloatTruncationType(FloatTruncationType e) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_21(mht_21_v, 787, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNameFloatTruncationType");
+
   if (flatbuffers::IsOutRange(e, FloatTruncationType_UNSPECIFIED, FloatTruncationType_HALF)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesFloatTruncationType()[index];
@@ -576,6 +810,9 @@ inline const QosClass (&EnumValuesQosClass())[3] {
 }
 
 inline const char * const *EnumNamesQosClass() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_22(mht_22_v, 813, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNamesQosClass");
+
   static const char * const names[4] = {
     "QOS_UNDEFINED",
     "BEST_EFFORT",
@@ -586,6 +823,9 @@ inline const char * const *EnumNamesQosClass() {
 }
 
 inline const char *EnumNameQosClass(QosClass e) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_23(mht_23_v, 826, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNameQosClass");
+
   if (flatbuffers::IsOutRange(e, QosClass_QOS_UNDEFINED, QosClass_REALTIME)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesQosClass()[index];
@@ -617,6 +857,9 @@ inline const Performance (&EnumValuesPerformance())[5] {
 }
 
 inline const char * const *EnumNamesPerformance() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_24(mht_24_v, 860, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNamesPerformance");
+
   static const char * const names[6] = {
     "UNDEFINED",
     "MAXIMUM",
@@ -629,6 +872,9 @@ inline const char * const *EnumNamesPerformance() {
 }
 
 inline const char *EnumNamePerformance(Performance e) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_25(mht_25_v, 875, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNamePerformance");
+
   if (flatbuffers::IsOutRange(e, Performance_UNDEFINED, Performance_LOW)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesPerformance()[index];
@@ -660,6 +906,9 @@ inline const BenchmarkEventType (&EnumValuesBenchmarkEventType())[6] {
 }
 
 inline const char * const *EnumNamesBenchmarkEventType() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_26(mht_26_v, 909, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNamesBenchmarkEventType");
+
   static const char * const names[7] = {
     "UNDEFINED_BENCHMARK_EVENT_TYPE",
     "START",
@@ -673,6 +922,9 @@ inline const char * const *EnumNamesBenchmarkEventType() {
 }
 
 inline const char *EnumNameBenchmarkEventType(BenchmarkEventType e) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_27(mht_27_v, 925, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNameBenchmarkEventType");
+
   if (flatbuffers::IsOutRange(e, BenchmarkEventType_UNDEFINED_BENCHMARK_EVENT_TYPE, BenchmarkEventType_RECOVERED_ERROR)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesBenchmarkEventType()[index];
@@ -696,6 +948,9 @@ inline const BenchmarkStage (&EnumValuesBenchmarkStage())[3] {
 }
 
 inline const char * const *EnumNamesBenchmarkStage() {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_28(mht_28_v, 951, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNamesBenchmarkStage");
+
   static const char * const names[4] = {
     "UNKNOWN",
     "INITIALIZATION",
@@ -706,6 +961,9 @@ inline const char * const *EnumNamesBenchmarkStage() {
 }
 
 inline const char *EnumNameBenchmarkStage(BenchmarkStage e) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_29(mht_29_v, 964, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EnumNameBenchmarkStage");
+
   if (flatbuffers::IsOutRange(e, BenchmarkStage_UNKNOWN, BenchmarkStage_INFERENCE)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesBenchmarkStage()[index];
@@ -720,6 +978,9 @@ struct ComputeSettingsT : public flatbuffers::NativeTable {
   std::unique_ptr<tflite::MinibenchmarkSettingsT> settings_to_test_locally;
   ComputeSettingsT()
       : preference(tflite::ExecutionPreference_ANY) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_30(mht_30_v, 981, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "ComputeSettingsT");
+
   }
 };
 
@@ -733,21 +994,39 @@ struct ComputeSettings FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_SETTINGS_TO_TEST_LOCALLY = 12
   };
   tflite::ExecutionPreference preference() const {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_31(mht_31_v, 997, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "preference");
+
     return static_cast<tflite::ExecutionPreference>(GetField<int32_t>(VT_PREFERENCE, 0));
   }
   const tflite::TFLiteSettings *tflite_settings() const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_32(mht_32_v, 1003, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "tflite_settings");
+
     return GetPointer<const tflite::TFLiteSettings *>(VT_TFLITE_SETTINGS);
   }
   const flatbuffers::String *model_namespace_for_statistics() const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_33(mht_33_v, 1009, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "model_namespace_for_statistics");
+
     return GetPointer<const flatbuffers::String *>(VT_MODEL_NAMESPACE_FOR_STATISTICS);
   }
   const flatbuffers::String *model_identifier_for_statistics() const {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_34(mht_34_v, 1015, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "model_identifier_for_statistics");
+
     return GetPointer<const flatbuffers::String *>(VT_MODEL_IDENTIFIER_FOR_STATISTICS);
   }
   const tflite::MinibenchmarkSettings *settings_to_test_locally() const {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_35(mht_35_v, 1021, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "settings_to_test_locally");
+
     return GetPointer<const tflite::MinibenchmarkSettings *>(VT_SETTINGS_TO_TEST_LOCALLY);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_36(mht_36_v, 1027, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_PREFERENCE) &&
            VerifyOffset(verifier, VT_TFLITE_SETTINGS) &&
@@ -769,22 +1048,40 @@ struct ComputeSettingsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_preference(tflite::ExecutionPreference preference) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_37(mht_37_v, 1051, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_preference");
+
     fbb_.AddElement<int32_t>(ComputeSettings::VT_PREFERENCE, static_cast<int32_t>(preference), 0);
   }
   void add_tflite_settings(flatbuffers::Offset<tflite::TFLiteSettings> tflite_settings) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_38(mht_38_v, 1057, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_tflite_settings");
+
     fbb_.AddOffset(ComputeSettings::VT_TFLITE_SETTINGS, tflite_settings);
   }
   void add_model_namespace_for_statistics(flatbuffers::Offset<flatbuffers::String> model_namespace_for_statistics) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_39(mht_39_v, 1063, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_model_namespace_for_statistics");
+
     fbb_.AddOffset(ComputeSettings::VT_MODEL_NAMESPACE_FOR_STATISTICS, model_namespace_for_statistics);
   }
   void add_model_identifier_for_statistics(flatbuffers::Offset<flatbuffers::String> model_identifier_for_statistics) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_40(mht_40_v, 1069, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_model_identifier_for_statistics");
+
     fbb_.AddOffset(ComputeSettings::VT_MODEL_IDENTIFIER_FOR_STATISTICS, model_identifier_for_statistics);
   }
   void add_settings_to_test_locally(flatbuffers::Offset<tflite::MinibenchmarkSettings> settings_to_test_locally) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_41(mht_41_v, 1075, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_settings_to_test_locally");
+
     fbb_.AddOffset(ComputeSettings::VT_SETTINGS_TO_TEST_LOCALLY, settings_to_test_locally);
   }
   explicit ComputeSettingsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_42(mht_42_v, 1082, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "ComputeSettingsBuilder");
+
     start_ = fbb_.StartTable();
   }
   ComputeSettingsBuilder &operator=(const ComputeSettingsBuilder &);
@@ -854,6 +1151,9 @@ struct NNAPISettingsT : public flatbuffers::NativeTable {
         allow_fp16_precision_for_fp32(false),
         use_burst_computation(false),
         support_library_handle(0) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_43(mht_43_v, 1154, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "NNAPISettingsT");
+
   }
 };
 
@@ -874,42 +1174,81 @@ struct NNAPISettings FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_SUPPORT_LIBRARY_HANDLE = 26
   };
   const flatbuffers::String *accelerator_name() const {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_44(mht_44_v, 1177, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "accelerator_name");
+
     return GetPointer<const flatbuffers::String *>(VT_ACCELERATOR_NAME);
   }
   const flatbuffers::String *cache_directory() const {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_45(mht_45_v, 1183, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "cache_directory");
+
     return GetPointer<const flatbuffers::String *>(VT_CACHE_DIRECTORY);
   }
   const flatbuffers::String *model_token() const {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_46(mht_46_v, 1189, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "model_token");
+
     return GetPointer<const flatbuffers::String *>(VT_MODEL_TOKEN);
   }
   tflite::NNAPIExecutionPreference execution_preference() const {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_47(mht_47_v, 1195, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "execution_preference");
+
     return static_cast<tflite::NNAPIExecutionPreference>(GetField<int32_t>(VT_EXECUTION_PREFERENCE, 0));
   }
   int32_t no_of_nnapi_instances_to_cache() const {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_48(mht_48_v, 1201, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "no_of_nnapi_instances_to_cache");
+
     return GetField<int32_t>(VT_NO_OF_NNAPI_INSTANCES_TO_CACHE, 0);
   }
   const tflite::FallbackSettings *fallback_settings() const {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_49(mht_49_v, 1207, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "fallback_settings");
+
     return GetPointer<const tflite::FallbackSettings *>(VT_FALLBACK_SETTINGS);
   }
   bool allow_nnapi_cpu_on_android_10_plus() const {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_50(mht_50_v, 1213, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "allow_nnapi_cpu_on_android_10_plus");
+
     return GetField<uint8_t>(VT_ALLOW_NNAPI_CPU_ON_ANDROID_10_PLUS, 0) != 0;
   }
   tflite::NNAPIExecutionPriority execution_priority() const {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_51(mht_51_v, 1219, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "execution_priority");
+
     return static_cast<tflite::NNAPIExecutionPriority>(GetField<int32_t>(VT_EXECUTION_PRIORITY, 0));
   }
   bool allow_dynamic_dimensions() const {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_52(mht_52_v, 1225, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "allow_dynamic_dimensions");
+
     return GetField<uint8_t>(VT_ALLOW_DYNAMIC_DIMENSIONS, 0) != 0;
   }
   bool allow_fp16_precision_for_fp32() const {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_53(mht_53_v, 1231, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "allow_fp16_precision_for_fp32");
+
     return GetField<uint8_t>(VT_ALLOW_FP16_PRECISION_FOR_FP32, 0) != 0;
   }
   bool use_burst_computation() const {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_54(mht_54_v, 1237, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "use_burst_computation");
+
     return GetField<uint8_t>(VT_USE_BURST_COMPUTATION, 0) != 0;
   }
   int64_t support_library_handle() const {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_55(mht_55_v, 1243, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "support_library_handle");
+
     return GetField<int64_t>(VT_SUPPORT_LIBRARY_HANDLE, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_56(mht_56_v, 1249, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_ACCELERATOR_NAME) &&
            verifier.VerifyString(accelerator_name()) &&
@@ -938,43 +1277,82 @@ struct NNAPISettingsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_accelerator_name(flatbuffers::Offset<flatbuffers::String> accelerator_name) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_57(mht_57_v, 1280, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_accelerator_name");
+
     fbb_.AddOffset(NNAPISettings::VT_ACCELERATOR_NAME, accelerator_name);
   }
   void add_cache_directory(flatbuffers::Offset<flatbuffers::String> cache_directory) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_58(mht_58_v, 1286, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_cache_directory");
+
     fbb_.AddOffset(NNAPISettings::VT_CACHE_DIRECTORY, cache_directory);
   }
   void add_model_token(flatbuffers::Offset<flatbuffers::String> model_token) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_59(mht_59_v, 1292, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_model_token");
+
     fbb_.AddOffset(NNAPISettings::VT_MODEL_TOKEN, model_token);
   }
   void add_execution_preference(tflite::NNAPIExecutionPreference execution_preference) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_60(mht_60_v, 1298, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_execution_preference");
+
     fbb_.AddElement<int32_t>(NNAPISettings::VT_EXECUTION_PREFERENCE, static_cast<int32_t>(execution_preference), 0);
   }
   void add_no_of_nnapi_instances_to_cache(int32_t no_of_nnapi_instances_to_cache) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_61(mht_61_v, 1304, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_no_of_nnapi_instances_to_cache");
+
     fbb_.AddElement<int32_t>(NNAPISettings::VT_NO_OF_NNAPI_INSTANCES_TO_CACHE, no_of_nnapi_instances_to_cache, 0);
   }
   void add_fallback_settings(flatbuffers::Offset<tflite::FallbackSettings> fallback_settings) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_62(mht_62_v, 1310, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_fallback_settings");
+
     fbb_.AddOffset(NNAPISettings::VT_FALLBACK_SETTINGS, fallback_settings);
   }
   void add_allow_nnapi_cpu_on_android_10_plus(bool allow_nnapi_cpu_on_android_10_plus) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_63(mht_63_v, 1316, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_allow_nnapi_cpu_on_android_10_plus");
+
     fbb_.AddElement<uint8_t>(NNAPISettings::VT_ALLOW_NNAPI_CPU_ON_ANDROID_10_PLUS, static_cast<uint8_t>(allow_nnapi_cpu_on_android_10_plus), 0);
   }
   void add_execution_priority(tflite::NNAPIExecutionPriority execution_priority) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_64(mht_64_v, 1322, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_execution_priority");
+
     fbb_.AddElement<int32_t>(NNAPISettings::VT_EXECUTION_PRIORITY, static_cast<int32_t>(execution_priority), 0);
   }
   void add_allow_dynamic_dimensions(bool allow_dynamic_dimensions) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_65(mht_65_v, 1328, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_allow_dynamic_dimensions");
+
     fbb_.AddElement<uint8_t>(NNAPISettings::VT_ALLOW_DYNAMIC_DIMENSIONS, static_cast<uint8_t>(allow_dynamic_dimensions), 0);
   }
   void add_allow_fp16_precision_for_fp32(bool allow_fp16_precision_for_fp32) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_66(mht_66_v, 1334, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_allow_fp16_precision_for_fp32");
+
     fbb_.AddElement<uint8_t>(NNAPISettings::VT_ALLOW_FP16_PRECISION_FOR_FP32, static_cast<uint8_t>(allow_fp16_precision_for_fp32), 0);
   }
   void add_use_burst_computation(bool use_burst_computation) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_67(mht_67_v, 1340, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_use_burst_computation");
+
     fbb_.AddElement<uint8_t>(NNAPISettings::VT_USE_BURST_COMPUTATION, static_cast<uint8_t>(use_burst_computation), 0);
   }
   void add_support_library_handle(int64_t support_library_handle) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_68(mht_68_v, 1346, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_support_library_handle");
+
     fbb_.AddElement<int64_t>(NNAPISettings::VT_SUPPORT_LIBRARY_HANDLE, support_library_handle, 0);
   }
   explicit NNAPISettingsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_69(mht_69_v, 1353, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "NNAPISettingsBuilder");
+
     start_ = fbb_.StartTable();
   }
   NNAPISettingsBuilder &operator=(const NNAPISettingsBuilder &);
@@ -1069,6 +1447,9 @@ struct GPUSettingsT : public flatbuffers::NativeTable {
         inference_priority2(tflite::GPUInferencePriority_GPU_PRIORITY_AUTO),
         inference_priority3(tflite::GPUInferencePriority_GPU_PRIORITY_AUTO),
         inference_preference(tflite::GPUInferenceUsage_GPU_INFERENCE_PREFERENCE_FAST_SINGLE_ANSWER) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_70(mht_70_v, 1450, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "GPUSettingsT");
+
   }
 };
 
@@ -1086,33 +1467,63 @@ struct GPUSettings FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_MODEL_TOKEN = 20
   };
   bool is_precision_loss_allowed() const {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_71(mht_71_v, 1470, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "is_precision_loss_allowed");
+
     return GetField<uint8_t>(VT_IS_PRECISION_LOSS_ALLOWED, 0) != 0;
   }
   bool enable_quantized_inference() const {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_72(mht_72_v, 1476, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "enable_quantized_inference");
+
     return GetField<uint8_t>(VT_ENABLE_QUANTIZED_INFERENCE, 1) != 0;
   }
   tflite::GPUBackend force_backend() const {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_73(mht_73_v, 1482, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "force_backend");
+
     return static_cast<tflite::GPUBackend>(GetField<int32_t>(VT_FORCE_BACKEND, 0));
   }
   tflite::GPUInferencePriority inference_priority1() const {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_74(mht_74_v, 1488, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "inference_priority1");
+
     return static_cast<tflite::GPUInferencePriority>(GetField<int32_t>(VT_INFERENCE_PRIORITY1, 0));
   }
   tflite::GPUInferencePriority inference_priority2() const {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_75(mht_75_v, 1494, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "inference_priority2");
+
     return static_cast<tflite::GPUInferencePriority>(GetField<int32_t>(VT_INFERENCE_PRIORITY2, 0));
   }
   tflite::GPUInferencePriority inference_priority3() const {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_76(mht_76_v, 1500, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "inference_priority3");
+
     return static_cast<tflite::GPUInferencePriority>(GetField<int32_t>(VT_INFERENCE_PRIORITY3, 0));
   }
   tflite::GPUInferenceUsage inference_preference() const {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_77(mht_77_v, 1506, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "inference_preference");
+
     return static_cast<tflite::GPUInferenceUsage>(GetField<int32_t>(VT_INFERENCE_PREFERENCE, 0));
   }
   const flatbuffers::String *cache_directory() const {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_78(mht_78_v, 1512, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "cache_directory");
+
     return GetPointer<const flatbuffers::String *>(VT_CACHE_DIRECTORY);
   }
   const flatbuffers::String *model_token() const {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_79(mht_79_v, 1518, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "model_token");
+
     return GetPointer<const flatbuffers::String *>(VT_MODEL_TOKEN);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_80(mht_80_v, 1524, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<uint8_t>(verifier, VT_IS_PRECISION_LOSS_ALLOWED) &&
            VerifyField<uint8_t>(verifier, VT_ENABLE_QUANTIZED_INFERENCE) &&
@@ -1136,34 +1547,64 @@ struct GPUSettingsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_is_precision_loss_allowed(bool is_precision_loss_allowed) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_81(mht_81_v, 1550, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_is_precision_loss_allowed");
+
     fbb_.AddElement<uint8_t>(GPUSettings::VT_IS_PRECISION_LOSS_ALLOWED, static_cast<uint8_t>(is_precision_loss_allowed), 0);
   }
   void add_enable_quantized_inference(bool enable_quantized_inference) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_82(mht_82_v, 1556, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_enable_quantized_inference");
+
     fbb_.AddElement<uint8_t>(GPUSettings::VT_ENABLE_QUANTIZED_INFERENCE, static_cast<uint8_t>(enable_quantized_inference), 1);
   }
   void add_force_backend(tflite::GPUBackend force_backend) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_83(mht_83_v, 1562, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_force_backend");
+
     fbb_.AddElement<int32_t>(GPUSettings::VT_FORCE_BACKEND, static_cast<int32_t>(force_backend), 0);
   }
   void add_inference_priority1(tflite::GPUInferencePriority inference_priority1) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_84(mht_84_v, 1568, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_inference_priority1");
+
     fbb_.AddElement<int32_t>(GPUSettings::VT_INFERENCE_PRIORITY1, static_cast<int32_t>(inference_priority1), 0);
   }
   void add_inference_priority2(tflite::GPUInferencePriority inference_priority2) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_85(mht_85_v, 1574, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_inference_priority2");
+
     fbb_.AddElement<int32_t>(GPUSettings::VT_INFERENCE_PRIORITY2, static_cast<int32_t>(inference_priority2), 0);
   }
   void add_inference_priority3(tflite::GPUInferencePriority inference_priority3) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_86(mht_86_v, 1580, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_inference_priority3");
+
     fbb_.AddElement<int32_t>(GPUSettings::VT_INFERENCE_PRIORITY3, static_cast<int32_t>(inference_priority3), 0);
   }
   void add_inference_preference(tflite::GPUInferenceUsage inference_preference) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_87(mht_87_v, 1586, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_inference_preference");
+
     fbb_.AddElement<int32_t>(GPUSettings::VT_INFERENCE_PREFERENCE, static_cast<int32_t>(inference_preference), 0);
   }
   void add_cache_directory(flatbuffers::Offset<flatbuffers::String> cache_directory) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_88(mht_88_v, 1592, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_cache_directory");
+
     fbb_.AddOffset(GPUSettings::VT_CACHE_DIRECTORY, cache_directory);
   }
   void add_model_token(flatbuffers::Offset<flatbuffers::String> model_token) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_89(mht_89_v, 1598, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_model_token");
+
     fbb_.AddOffset(GPUSettings::VT_MODEL_TOKEN, model_token);
   }
   explicit GPUSettingsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_90(mht_90_v, 1605, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "GPUSettingsBuilder");
+
     start_ = fbb_.StartTable();
   }
   GPUSettingsBuilder &operator=(const GPUSettingsBuilder &);
@@ -1237,6 +1678,9 @@ struct HexagonSettingsT : public flatbuffers::NativeTable {
         powersave_level(0),
         print_graph_profile(false),
         print_graph_debug(false) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_91(mht_91_v, 1681, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "HexagonSettingsT");
+
   }
 };
 
@@ -1249,18 +1693,33 @@ struct HexagonSettings FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_PRINT_GRAPH_DEBUG = 10
   };
   int32_t debug_level() const {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_92(mht_92_v, 1696, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "debug_level");
+
     return GetField<int32_t>(VT_DEBUG_LEVEL, 0);
   }
   int32_t powersave_level() const {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_93(mht_93_v, 1702, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "powersave_level");
+
     return GetField<int32_t>(VT_POWERSAVE_LEVEL, 0);
   }
   bool print_graph_profile() const {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_94(mht_94_v, 1708, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "print_graph_profile");
+
     return GetField<uint8_t>(VT_PRINT_GRAPH_PROFILE, 0) != 0;
   }
   bool print_graph_debug() const {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_95(mht_95_v, 1714, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "print_graph_debug");
+
     return GetField<uint8_t>(VT_PRINT_GRAPH_DEBUG, 0) != 0;
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_96(mht_96_v, 1720, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_DEBUG_LEVEL) &&
            VerifyField<int32_t>(verifier, VT_POWERSAVE_LEVEL) &&
@@ -1277,19 +1736,34 @@ struct HexagonSettingsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_debug_level(int32_t debug_level) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_97(mht_97_v, 1739, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_debug_level");
+
     fbb_.AddElement<int32_t>(HexagonSettings::VT_DEBUG_LEVEL, debug_level, 0);
   }
   void add_powersave_level(int32_t powersave_level) {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_98(mht_98_v, 1745, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_powersave_level");
+
     fbb_.AddElement<int32_t>(HexagonSettings::VT_POWERSAVE_LEVEL, powersave_level, 0);
   }
   void add_print_graph_profile(bool print_graph_profile) {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_99(mht_99_v, 1751, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_print_graph_profile");
+
     fbb_.AddElement<uint8_t>(HexagonSettings::VT_PRINT_GRAPH_PROFILE, static_cast<uint8_t>(print_graph_profile), 0);
   }
   void add_print_graph_debug(bool print_graph_debug) {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_100(mht_100_v, 1757, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_print_graph_debug");
+
     fbb_.AddElement<uint8_t>(HexagonSettings::VT_PRINT_GRAPH_DEBUG, static_cast<uint8_t>(print_graph_debug), 0);
   }
   explicit HexagonSettingsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_101(mht_101_v, 1764, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "HexagonSettingsBuilder");
+
     start_ = fbb_.StartTable();
   }
   HexagonSettingsBuilder &operator=(const HexagonSettingsBuilder &);
@@ -1321,6 +1795,9 @@ struct XNNPackSettingsT : public flatbuffers::NativeTable {
   int32_t num_threads;
   XNNPackSettingsT()
       : num_threads(0) {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_102(mht_102_v, 1798, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "XNNPackSettingsT");
+
   }
 };
 
@@ -1330,9 +1807,15 @@ struct XNNPackSettings FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_NUM_THREADS = 4
   };
   int32_t num_threads() const {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_103(mht_103_v, 1810, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "num_threads");
+
     return GetField<int32_t>(VT_NUM_THREADS, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_104(mht_104_v, 1816, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_NUM_THREADS) &&
            verifier.EndTable();
@@ -1346,10 +1829,16 @@ struct XNNPackSettingsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_num_threads(int32_t num_threads) {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_105(mht_105_v, 1832, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_num_threads");
+
     fbb_.AddElement<int32_t>(XNNPackSettings::VT_NUM_THREADS, num_threads, 0);
   }
   explicit XNNPackSettingsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_106(mht_106_v, 1839, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "XNNPackSettingsBuilder");
+
     start_ = fbb_.StartTable();
   }
   XNNPackSettingsBuilder &operator=(const XNNPackSettingsBuilder &);
@@ -1381,6 +1870,9 @@ struct CoreMLSettingsT : public flatbuffers::NativeTable {
         coreml_version(0),
         max_delegated_partitions(0),
         min_nodes_per_partition(2) {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_107(mht_107_v, 1873, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "CoreMLSettingsT");
+
   }
 };
 
@@ -1393,18 +1885,33 @@ struct CoreMLSettings FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_MIN_NODES_PER_PARTITION = 10
   };
   tflite::CoreMLSettings_::EnabledDevices enabled_devices() const {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_108(mht_108_v, 1888, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "enabled_devices");
+
     return static_cast<tflite::CoreMLSettings_::EnabledDevices>(GetField<int32_t>(VT_ENABLED_DEVICES, 0));
   }
   int32_t coreml_version() const {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_109(mht_109_v, 1894, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "coreml_version");
+
     return GetField<int32_t>(VT_COREML_VERSION, 0);
   }
   int32_t max_delegated_partitions() const {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_110(mht_110_v, 1900, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "max_delegated_partitions");
+
     return GetField<int32_t>(VT_MAX_DELEGATED_PARTITIONS, 0);
   }
   int32_t min_nodes_per_partition() const {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_111(mht_111_v, 1906, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "min_nodes_per_partition");
+
     return GetField<int32_t>(VT_MIN_NODES_PER_PARTITION, 2);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_112(mht_112_v, 1912, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_ENABLED_DEVICES) &&
            VerifyField<int32_t>(verifier, VT_COREML_VERSION) &&
@@ -1421,19 +1928,34 @@ struct CoreMLSettingsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_enabled_devices(tflite::CoreMLSettings_::EnabledDevices enabled_devices) {
+   std::vector<std::string> mht_113_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_113(mht_113_v, 1931, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_enabled_devices");
+
     fbb_.AddElement<int32_t>(CoreMLSettings::VT_ENABLED_DEVICES, static_cast<int32_t>(enabled_devices), 0);
   }
   void add_coreml_version(int32_t coreml_version) {
+   std::vector<std::string> mht_114_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_114(mht_114_v, 1937, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_coreml_version");
+
     fbb_.AddElement<int32_t>(CoreMLSettings::VT_COREML_VERSION, coreml_version, 0);
   }
   void add_max_delegated_partitions(int32_t max_delegated_partitions) {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_115(mht_115_v, 1943, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_max_delegated_partitions");
+
     fbb_.AddElement<int32_t>(CoreMLSettings::VT_MAX_DELEGATED_PARTITIONS, max_delegated_partitions, 0);
   }
   void add_min_nodes_per_partition(int32_t min_nodes_per_partition) {
+   std::vector<std::string> mht_116_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_116(mht_116_v, 1949, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_min_nodes_per_partition");
+
     fbb_.AddElement<int32_t>(CoreMLSettings::VT_MIN_NODES_PER_PARTITION, min_nodes_per_partition, 2);
   }
   explicit CoreMLSettingsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_117(mht_117_v, 1956, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "CoreMLSettingsBuilder");
+
     start_ = fbb_.StartTable();
   }
   CoreMLSettingsBuilder &operator=(const CoreMLSettingsBuilder &);
@@ -1470,6 +1992,9 @@ struct EdgeTpuDeviceSpecT : public flatbuffers::NativeTable {
       : platform_type(tflite::EdgeTpuDeviceSpec_::PlatformType_MMIO),
         num_chips(0),
         chip_family(0) {
+   std::vector<std::string> mht_118_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_118(mht_118_v, 1995, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EdgeTpuDeviceSpecT");
+
   }
 };
 
@@ -1482,18 +2007,33 @@ struct EdgeTpuDeviceSpec FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_CHIP_FAMILY = 10
   };
   tflite::EdgeTpuDeviceSpec_::PlatformType platform_type() const {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_119(mht_119_v, 2010, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "platform_type");
+
     return static_cast<tflite::EdgeTpuDeviceSpec_::PlatformType>(GetField<int32_t>(VT_PLATFORM_TYPE, 0));
   }
   int32_t num_chips() const {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_120(mht_120_v, 2016, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "num_chips");
+
     return GetField<int32_t>(VT_NUM_CHIPS, 0);
   }
   const flatbuffers::Vector<flatbuffers::Offset<flatbuffers::String>> *device_paths() const {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_121(mht_121_v, 2022, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "device_paths");
+
     return GetPointer<const flatbuffers::Vector<flatbuffers::Offset<flatbuffers::String>> *>(VT_DEVICE_PATHS);
   }
   int32_t chip_family() const {
+   std::vector<std::string> mht_122_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_122(mht_122_v, 2028, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "chip_family");
+
     return GetField<int32_t>(VT_CHIP_FAMILY, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_123_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_123(mht_123_v, 2034, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_PLATFORM_TYPE) &&
            VerifyField<int32_t>(verifier, VT_NUM_CHIPS) &&
@@ -1512,19 +2052,34 @@ struct EdgeTpuDeviceSpecBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_platform_type(tflite::EdgeTpuDeviceSpec_::PlatformType platform_type) {
+   std::vector<std::string> mht_124_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_124(mht_124_v, 2055, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_platform_type");
+
     fbb_.AddElement<int32_t>(EdgeTpuDeviceSpec::VT_PLATFORM_TYPE, static_cast<int32_t>(platform_type), 0);
   }
   void add_num_chips(int32_t num_chips) {
+   std::vector<std::string> mht_125_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_125(mht_125_v, 2061, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_num_chips");
+
     fbb_.AddElement<int32_t>(EdgeTpuDeviceSpec::VT_NUM_CHIPS, num_chips, 0);
   }
   void add_device_paths(flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<flatbuffers::String>>> device_paths) {
+   std::vector<std::string> mht_126_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_126(mht_126_v, 2067, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_device_paths");
+
     fbb_.AddOffset(EdgeTpuDeviceSpec::VT_DEVICE_PATHS, device_paths);
   }
   void add_chip_family(int32_t chip_family) {
+   std::vector<std::string> mht_127_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_127(mht_127_v, 2073, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_chip_family");
+
     fbb_.AddElement<int32_t>(EdgeTpuDeviceSpec::VT_CHIP_FAMILY, chip_family, 0);
   }
   explicit EdgeTpuDeviceSpecBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_128_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_128(mht_128_v, 2080, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EdgeTpuDeviceSpecBuilder");
+
     start_ = fbb_.StartTable();
   }
   EdgeTpuDeviceSpecBuilder &operator=(const EdgeTpuDeviceSpecBuilder &);
@@ -1573,6 +2128,9 @@ struct EdgeTpuInactivePowerConfigT : public flatbuffers::NativeTable {
   EdgeTpuInactivePowerConfigT()
       : inactive_power_state(tflite::EdgeTpuPowerState_UNDEFINED_POWERSTATE),
         inactive_timeout_us(0) {
+   std::vector<std::string> mht_129_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_129(mht_129_v, 2131, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EdgeTpuInactivePowerConfigT");
+
   }
 };
 
@@ -1583,12 +2141,21 @@ struct EdgeTpuInactivePowerConfig FLATBUFFERS_FINAL_CLASS : private flatbuffers:
     VT_INACTIVE_TIMEOUT_US = 6
   };
   tflite::EdgeTpuPowerState inactive_power_state() const {
+   std::vector<std::string> mht_130_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_130(mht_130_v, 2144, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "inactive_power_state");
+
     return static_cast<tflite::EdgeTpuPowerState>(GetField<int32_t>(VT_INACTIVE_POWER_STATE, 0));
   }
   int64_t inactive_timeout_us() const {
+   std::vector<std::string> mht_131_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_131(mht_131_v, 2150, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "inactive_timeout_us");
+
     return GetField<int64_t>(VT_INACTIVE_TIMEOUT_US, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_132_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_132(mht_132_v, 2156, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_INACTIVE_POWER_STATE) &&
            VerifyField<int64_t>(verifier, VT_INACTIVE_TIMEOUT_US) &&
@@ -1603,13 +2170,22 @@ struct EdgeTpuInactivePowerConfigBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_inactive_power_state(tflite::EdgeTpuPowerState inactive_power_state) {
+   std::vector<std::string> mht_133_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_133(mht_133_v, 2173, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_inactive_power_state");
+
     fbb_.AddElement<int32_t>(EdgeTpuInactivePowerConfig::VT_INACTIVE_POWER_STATE, static_cast<int32_t>(inactive_power_state), 0);
   }
   void add_inactive_timeout_us(int64_t inactive_timeout_us) {
+   std::vector<std::string> mht_134_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_134(mht_134_v, 2179, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_inactive_timeout_us");
+
     fbb_.AddElement<int64_t>(EdgeTpuInactivePowerConfig::VT_INACTIVE_TIMEOUT_US, inactive_timeout_us, 0);
   }
   explicit EdgeTpuInactivePowerConfigBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_135_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_135(mht_135_v, 2186, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EdgeTpuInactivePowerConfigBuilder");
+
     start_ = fbb_.StartTable();
   }
   EdgeTpuInactivePowerConfigBuilder &operator=(const EdgeTpuInactivePowerConfigBuilder &);
@@ -1646,6 +2222,9 @@ struct EdgeTpuSettingsT : public flatbuffers::NativeTable {
         inference_priority(-1),
         float_truncation_type(tflite::EdgeTpuSettings_::FloatTruncationType_UNSPECIFIED),
         qos_class(tflite::EdgeTpuSettings_::QosClass_QOS_UNDEFINED) {
+   std::vector<std::string> mht_136_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_136(mht_136_v, 2225, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EdgeTpuSettingsT");
+
   }
 };
 
@@ -1661,27 +2240,51 @@ struct EdgeTpuSettings FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_QOS_CLASS = 16
   };
   tflite::EdgeTpuPowerState inference_power_state() const {
+   std::vector<std::string> mht_137_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_137(mht_137_v, 2243, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "inference_power_state");
+
     return static_cast<tflite::EdgeTpuPowerState>(GetField<int32_t>(VT_INFERENCE_POWER_STATE, 0));
   }
   const flatbuffers::Vector<flatbuffers::Offset<tflite::EdgeTpuInactivePowerConfig>> *inactive_power_configs() const {
+   std::vector<std::string> mht_138_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_138(mht_138_v, 2249, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "inactive_power_configs");
+
     return GetPointer<const flatbuffers::Vector<flatbuffers::Offset<tflite::EdgeTpuInactivePowerConfig>> *>(VT_INACTIVE_POWER_CONFIGS);
   }
   int32_t inference_priority() const {
+   std::vector<std::string> mht_139_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_139(mht_139_v, 2255, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "inference_priority");
+
     return GetField<int32_t>(VT_INFERENCE_PRIORITY, -1);
   }
   const tflite::EdgeTpuDeviceSpec *edgetpu_device_spec() const {
+   std::vector<std::string> mht_140_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_140(mht_140_v, 2261, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "edgetpu_device_spec");
+
     return GetPointer<const tflite::EdgeTpuDeviceSpec *>(VT_EDGETPU_DEVICE_SPEC);
   }
   const flatbuffers::String *model_token() const {
+   std::vector<std::string> mht_141_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_141(mht_141_v, 2267, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "model_token");
+
     return GetPointer<const flatbuffers::String *>(VT_MODEL_TOKEN);
   }
   tflite::EdgeTpuSettings_::FloatTruncationType float_truncation_type() const {
+   std::vector<std::string> mht_142_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_142(mht_142_v, 2273, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "float_truncation_type");
+
     return static_cast<tflite::EdgeTpuSettings_::FloatTruncationType>(GetField<int32_t>(VT_FLOAT_TRUNCATION_TYPE, 0));
   }
   tflite::EdgeTpuSettings_::QosClass qos_class() const {
+   std::vector<std::string> mht_143_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_143(mht_143_v, 2279, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "qos_class");
+
     return static_cast<tflite::EdgeTpuSettings_::QosClass>(GetField<int32_t>(VT_QOS_CLASS, 0));
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_144_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_144(mht_144_v, 2285, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_INFERENCE_POWER_STATE) &&
            VerifyOffset(verifier, VT_INACTIVE_POWER_CONFIGS) &&
@@ -1705,28 +2308,52 @@ struct EdgeTpuSettingsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_inference_power_state(tflite::EdgeTpuPowerState inference_power_state) {
+   std::vector<std::string> mht_145_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_145(mht_145_v, 2311, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_inference_power_state");
+
     fbb_.AddElement<int32_t>(EdgeTpuSettings::VT_INFERENCE_POWER_STATE, static_cast<int32_t>(inference_power_state), 0);
   }
   void add_inactive_power_configs(flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<tflite::EdgeTpuInactivePowerConfig>>> inactive_power_configs) {
+   std::vector<std::string> mht_146_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_146(mht_146_v, 2317, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_inactive_power_configs");
+
     fbb_.AddOffset(EdgeTpuSettings::VT_INACTIVE_POWER_CONFIGS, inactive_power_configs);
   }
   void add_inference_priority(int32_t inference_priority) {
+   std::vector<std::string> mht_147_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_147(mht_147_v, 2323, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_inference_priority");
+
     fbb_.AddElement<int32_t>(EdgeTpuSettings::VT_INFERENCE_PRIORITY, inference_priority, -1);
   }
   void add_edgetpu_device_spec(flatbuffers::Offset<tflite::EdgeTpuDeviceSpec> edgetpu_device_spec) {
+   std::vector<std::string> mht_148_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_148(mht_148_v, 2329, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_edgetpu_device_spec");
+
     fbb_.AddOffset(EdgeTpuSettings::VT_EDGETPU_DEVICE_SPEC, edgetpu_device_spec);
   }
   void add_model_token(flatbuffers::Offset<flatbuffers::String> model_token) {
+   std::vector<std::string> mht_149_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_149(mht_149_v, 2335, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_model_token");
+
     fbb_.AddOffset(EdgeTpuSettings::VT_MODEL_TOKEN, model_token);
   }
   void add_float_truncation_type(tflite::EdgeTpuSettings_::FloatTruncationType float_truncation_type) {
+   std::vector<std::string> mht_150_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_150(mht_150_v, 2341, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_float_truncation_type");
+
     fbb_.AddElement<int32_t>(EdgeTpuSettings::VT_FLOAT_TRUNCATION_TYPE, static_cast<int32_t>(float_truncation_type), 0);
   }
   void add_qos_class(tflite::EdgeTpuSettings_::QosClass qos_class) {
+   std::vector<std::string> mht_151_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_151(mht_151_v, 2347, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_qos_class");
+
     fbb_.AddElement<int32_t>(EdgeTpuSettings::VT_QOS_CLASS, static_cast<int32_t>(qos_class), 0);
   }
   explicit EdgeTpuSettingsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_152_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_152(mht_152_v, 2354, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EdgeTpuSettingsBuilder");
+
     start_ = fbb_.StartTable();
   }
   EdgeTpuSettingsBuilder &operator=(const EdgeTpuSettingsBuilder &);
@@ -1791,6 +2418,9 @@ struct CoralSettingsT : public flatbuffers::NativeTable {
       : performance(tflite::CoralSettings_::Performance_UNDEFINED),
         usb_always_dfu(false),
         usb_max_bulk_in_queue_length(0) {
+   std::vector<std::string> mht_153_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_153(mht_153_v, 2421, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "CoralSettingsT");
+
   }
 };
 
@@ -1803,18 +2433,33 @@ struct CoralSettings FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_USB_MAX_BULK_IN_QUEUE_LENGTH = 10
   };
   const flatbuffers::String *device() const {
+   std::vector<std::string> mht_154_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_154(mht_154_v, 2436, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "device");
+
     return GetPointer<const flatbuffers::String *>(VT_DEVICE);
   }
   tflite::CoralSettings_::Performance performance() const {
+   std::vector<std::string> mht_155_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_155(mht_155_v, 2442, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "performance");
+
     return static_cast<tflite::CoralSettings_::Performance>(GetField<int32_t>(VT_PERFORMANCE, 0));
   }
   bool usb_always_dfu() const {
+   std::vector<std::string> mht_156_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_156(mht_156_v, 2448, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "usb_always_dfu");
+
     return GetField<uint8_t>(VT_USB_ALWAYS_DFU, 0) != 0;
   }
   int32_t usb_max_bulk_in_queue_length() const {
+   std::vector<std::string> mht_157_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_157(mht_157_v, 2454, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "usb_max_bulk_in_queue_length");
+
     return GetField<int32_t>(VT_USB_MAX_BULK_IN_QUEUE_LENGTH, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_158_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_158(mht_158_v, 2460, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_DEVICE) &&
            verifier.VerifyString(device()) &&
@@ -1832,19 +2477,34 @@ struct CoralSettingsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_device(flatbuffers::Offset<flatbuffers::String> device) {
+   std::vector<std::string> mht_159_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_159(mht_159_v, 2480, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_device");
+
     fbb_.AddOffset(CoralSettings::VT_DEVICE, device);
   }
   void add_performance(tflite::CoralSettings_::Performance performance) {
+   std::vector<std::string> mht_160_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_160(mht_160_v, 2486, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_performance");
+
     fbb_.AddElement<int32_t>(CoralSettings::VT_PERFORMANCE, static_cast<int32_t>(performance), 0);
   }
   void add_usb_always_dfu(bool usb_always_dfu) {
+   std::vector<std::string> mht_161_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_161(mht_161_v, 2492, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_usb_always_dfu");
+
     fbb_.AddElement<uint8_t>(CoralSettings::VT_USB_ALWAYS_DFU, static_cast<uint8_t>(usb_always_dfu), 0);
   }
   void add_usb_max_bulk_in_queue_length(int32_t usb_max_bulk_in_queue_length) {
+   std::vector<std::string> mht_162_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_162(mht_162_v, 2498, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_usb_max_bulk_in_queue_length");
+
     fbb_.AddElement<int32_t>(CoralSettings::VT_USB_MAX_BULK_IN_QUEUE_LENGTH, usb_max_bulk_in_queue_length, 0);
   }
   explicit CoralSettingsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_163_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_163(mht_163_v, 2505, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "CoralSettingsBuilder");
+
     start_ = fbb_.StartTable();
   }
   CoralSettingsBuilder &operator=(const CoralSettingsBuilder &);
@@ -1891,6 +2551,9 @@ struct CPUSettingsT : public flatbuffers::NativeTable {
   int32_t num_threads;
   CPUSettingsT()
       : num_threads(-1) {
+   std::vector<std::string> mht_164_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_164(mht_164_v, 2554, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "CPUSettingsT");
+
   }
 };
 
@@ -1900,9 +2563,15 @@ struct CPUSettings FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_NUM_THREADS = 4
   };
   int32_t num_threads() const {
+   std::vector<std::string> mht_165_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_165(mht_165_v, 2566, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "num_threads");
+
     return GetField<int32_t>(VT_NUM_THREADS, -1);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_166_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_166(mht_166_v, 2572, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_NUM_THREADS) &&
            verifier.EndTable();
@@ -1916,10 +2585,16 @@ struct CPUSettingsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_num_threads(int32_t num_threads) {
+   std::vector<std::string> mht_167_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_167(mht_167_v, 2588, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_num_threads");
+
     fbb_.AddElement<int32_t>(CPUSettings::VT_NUM_THREADS, num_threads, -1);
   }
   explicit CPUSettingsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_168_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_168(mht_168_v, 2595, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "CPUSettingsBuilder");
+
     start_ = fbb_.StartTable();
   }
   CPUSettingsBuilder &operator=(const CPUSettingsBuilder &);
@@ -1956,6 +2631,9 @@ struct TFLiteSettingsT : public flatbuffers::NativeTable {
   TFLiteSettingsT()
       : delegate(tflite::Delegate_NONE),
         max_delegated_partitions(0) {
+   std::vector<std::string> mht_169_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_169(mht_169_v, 2634, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "TFLiteSettingsT");
+
   }
 };
 
@@ -1975,39 +2653,75 @@ struct TFLiteSettings FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_FALLBACK_SETTINGS = 24
   };
   tflite::Delegate delegate() const {
+   std::vector<std::string> mht_170_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_170(mht_170_v, 2656, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "delegate");
+
     return static_cast<tflite::Delegate>(GetField<int32_t>(VT_DELEGATE, 0));
   }
   const tflite::NNAPISettings *nnapi_settings() const {
+   std::vector<std::string> mht_171_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_171(mht_171_v, 2662, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "nnapi_settings");
+
     return GetPointer<const tflite::NNAPISettings *>(VT_NNAPI_SETTINGS);
   }
   const tflite::GPUSettings *gpu_settings() const {
+   std::vector<std::string> mht_172_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_172(mht_172_v, 2668, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "gpu_settings");
+
     return GetPointer<const tflite::GPUSettings *>(VT_GPU_SETTINGS);
   }
   const tflite::HexagonSettings *hexagon_settings() const {
+   std::vector<std::string> mht_173_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_173(mht_173_v, 2674, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "hexagon_settings");
+
     return GetPointer<const tflite::HexagonSettings *>(VT_HEXAGON_SETTINGS);
   }
   const tflite::XNNPackSettings *xnnpack_settings() const {
+   std::vector<std::string> mht_174_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_174(mht_174_v, 2680, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "xnnpack_settings");
+
     return GetPointer<const tflite::XNNPackSettings *>(VT_XNNPACK_SETTINGS);
   }
   const tflite::CoreMLSettings *coreml_settings() const {
+   std::vector<std::string> mht_175_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_175(mht_175_v, 2686, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "coreml_settings");
+
     return GetPointer<const tflite::CoreMLSettings *>(VT_COREML_SETTINGS);
   }
   const tflite::CPUSettings *cpu_settings() const {
+   std::vector<std::string> mht_176_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_176(mht_176_v, 2692, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "cpu_settings");
+
     return GetPointer<const tflite::CPUSettings *>(VT_CPU_SETTINGS);
   }
   int32_t max_delegated_partitions() const {
+   std::vector<std::string> mht_177_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_177(mht_177_v, 2698, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "max_delegated_partitions");
+
     return GetField<int32_t>(VT_MAX_DELEGATED_PARTITIONS, 0);
   }
   const tflite::EdgeTpuSettings *edgetpu_settings() const {
+   std::vector<std::string> mht_178_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_178(mht_178_v, 2704, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "edgetpu_settings");
+
     return GetPointer<const tflite::EdgeTpuSettings *>(VT_EDGETPU_SETTINGS);
   }
   const tflite::CoralSettings *coral_settings() const {
+   std::vector<std::string> mht_179_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_179(mht_179_v, 2710, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "coral_settings");
+
     return GetPointer<const tflite::CoralSettings *>(VT_CORAL_SETTINGS);
   }
   const tflite::FallbackSettings *fallback_settings() const {
+   std::vector<std::string> mht_180_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_180(mht_180_v, 2716, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "fallback_settings");
+
     return GetPointer<const tflite::FallbackSettings *>(VT_FALLBACK_SETTINGS);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_181_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_181(mht_181_v, 2722, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_DELEGATE) &&
            VerifyOffset(verifier, VT_NNAPI_SETTINGS) &&
@@ -2040,40 +2754,76 @@ struct TFLiteSettingsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_delegate(tflite::Delegate delegate) {
+   std::vector<std::string> mht_182_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_182(mht_182_v, 2757, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_delegate");
+
     fbb_.AddElement<int32_t>(TFLiteSettings::VT_DELEGATE, static_cast<int32_t>(delegate), 0);
   }
   void add_nnapi_settings(flatbuffers::Offset<tflite::NNAPISettings> nnapi_settings) {
+   std::vector<std::string> mht_183_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_183(mht_183_v, 2763, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_nnapi_settings");
+
     fbb_.AddOffset(TFLiteSettings::VT_NNAPI_SETTINGS, nnapi_settings);
   }
   void add_gpu_settings(flatbuffers::Offset<tflite::GPUSettings> gpu_settings) {
+   std::vector<std::string> mht_184_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_184(mht_184_v, 2769, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_gpu_settings");
+
     fbb_.AddOffset(TFLiteSettings::VT_GPU_SETTINGS, gpu_settings);
   }
   void add_hexagon_settings(flatbuffers::Offset<tflite::HexagonSettings> hexagon_settings) {
+   std::vector<std::string> mht_185_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_185(mht_185_v, 2775, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_hexagon_settings");
+
     fbb_.AddOffset(TFLiteSettings::VT_HEXAGON_SETTINGS, hexagon_settings);
   }
   void add_xnnpack_settings(flatbuffers::Offset<tflite::XNNPackSettings> xnnpack_settings) {
+   std::vector<std::string> mht_186_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_186(mht_186_v, 2781, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_xnnpack_settings");
+
     fbb_.AddOffset(TFLiteSettings::VT_XNNPACK_SETTINGS, xnnpack_settings);
   }
   void add_coreml_settings(flatbuffers::Offset<tflite::CoreMLSettings> coreml_settings) {
+   std::vector<std::string> mht_187_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_187(mht_187_v, 2787, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_coreml_settings");
+
     fbb_.AddOffset(TFLiteSettings::VT_COREML_SETTINGS, coreml_settings);
   }
   void add_cpu_settings(flatbuffers::Offset<tflite::CPUSettings> cpu_settings) {
+   std::vector<std::string> mht_188_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_188(mht_188_v, 2793, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_cpu_settings");
+
     fbb_.AddOffset(TFLiteSettings::VT_CPU_SETTINGS, cpu_settings);
   }
   void add_max_delegated_partitions(int32_t max_delegated_partitions) {
+   std::vector<std::string> mht_189_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_189(mht_189_v, 2799, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_max_delegated_partitions");
+
     fbb_.AddElement<int32_t>(TFLiteSettings::VT_MAX_DELEGATED_PARTITIONS, max_delegated_partitions, 0);
   }
   void add_edgetpu_settings(flatbuffers::Offset<tflite::EdgeTpuSettings> edgetpu_settings) {
+   std::vector<std::string> mht_190_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_190(mht_190_v, 2805, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_edgetpu_settings");
+
     fbb_.AddOffset(TFLiteSettings::VT_EDGETPU_SETTINGS, edgetpu_settings);
   }
   void add_coral_settings(flatbuffers::Offset<tflite::CoralSettings> coral_settings) {
+   std::vector<std::string> mht_191_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_191(mht_191_v, 2811, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_coral_settings");
+
     fbb_.AddOffset(TFLiteSettings::VT_CORAL_SETTINGS, coral_settings);
   }
   void add_fallback_settings(flatbuffers::Offset<tflite::FallbackSettings> fallback_settings) {
+   std::vector<std::string> mht_192_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_192(mht_192_v, 2817, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_fallback_settings");
+
     fbb_.AddOffset(TFLiteSettings::VT_FALLBACK_SETTINGS, fallback_settings);
   }
   explicit TFLiteSettingsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_193_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_193(mht_193_v, 2824, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "TFLiteSettingsBuilder");
+
     start_ = fbb_.StartTable();
   }
   TFLiteSettingsBuilder &operator=(const TFLiteSettingsBuilder &);
@@ -2121,6 +2871,9 @@ struct FallbackSettingsT : public flatbuffers::NativeTable {
   FallbackSettingsT()
       : allow_automatic_fallback_on_compilation_error(false),
         allow_automatic_fallback_on_execution_error(false) {
+   std::vector<std::string> mht_194_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_194(mht_194_v, 2874, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "FallbackSettingsT");
+
   }
 };
 
@@ -2131,12 +2884,21 @@ struct FallbackSettings FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_ALLOW_AUTOMATIC_FALLBACK_ON_EXECUTION_ERROR = 6
   };
   bool allow_automatic_fallback_on_compilation_error() const {
+   std::vector<std::string> mht_195_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_195(mht_195_v, 2887, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "allow_automatic_fallback_on_compilation_error");
+
     return GetField<uint8_t>(VT_ALLOW_AUTOMATIC_FALLBACK_ON_COMPILATION_ERROR, 0) != 0;
   }
   bool allow_automatic_fallback_on_execution_error() const {
+   std::vector<std::string> mht_196_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_196(mht_196_v, 2893, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "allow_automatic_fallback_on_execution_error");
+
     return GetField<uint8_t>(VT_ALLOW_AUTOMATIC_FALLBACK_ON_EXECUTION_ERROR, 0) != 0;
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_197_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_197(mht_197_v, 2899, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<uint8_t>(verifier, VT_ALLOW_AUTOMATIC_FALLBACK_ON_COMPILATION_ERROR) &&
            VerifyField<uint8_t>(verifier, VT_ALLOW_AUTOMATIC_FALLBACK_ON_EXECUTION_ERROR) &&
@@ -2151,13 +2913,22 @@ struct FallbackSettingsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_allow_automatic_fallback_on_compilation_error(bool allow_automatic_fallback_on_compilation_error) {
+   std::vector<std::string> mht_198_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_198(mht_198_v, 2916, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_allow_automatic_fallback_on_compilation_error");
+
     fbb_.AddElement<uint8_t>(FallbackSettings::VT_ALLOW_AUTOMATIC_FALLBACK_ON_COMPILATION_ERROR, static_cast<uint8_t>(allow_automatic_fallback_on_compilation_error), 0);
   }
   void add_allow_automatic_fallback_on_execution_error(bool allow_automatic_fallback_on_execution_error) {
+   std::vector<std::string> mht_199_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_199(mht_199_v, 2922, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_allow_automatic_fallback_on_execution_error");
+
     fbb_.AddElement<uint8_t>(FallbackSettings::VT_ALLOW_AUTOMATIC_FALLBACK_ON_EXECUTION_ERROR, static_cast<uint8_t>(allow_automatic_fallback_on_execution_error), 0);
   }
   explicit FallbackSettingsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_200_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_200(mht_200_v, 2929, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "FallbackSettingsBuilder");
+
     start_ = fbb_.StartTable();
   }
   FallbackSettingsBuilder &operator=(const FallbackSettingsBuilder &);
@@ -2185,6 +2956,9 @@ struct BenchmarkMetricT : public flatbuffers::NativeTable {
   std::string name;
   std::vector<float> values;
   BenchmarkMetricT() {
+   std::vector<std::string> mht_201_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_201(mht_201_v, 2959, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkMetricT");
+
   }
 };
 
@@ -2195,12 +2969,21 @@ struct BenchmarkMetric FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_VALUES = 6
   };
   const flatbuffers::String *name() const {
+   std::vector<std::string> mht_202_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_202(mht_202_v, 2972, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "name");
+
     return GetPointer<const flatbuffers::String *>(VT_NAME);
   }
   const flatbuffers::Vector<float> *values() const {
+   std::vector<std::string> mht_203_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_203(mht_203_v, 2978, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "values");
+
     return GetPointer<const flatbuffers::Vector<float> *>(VT_VALUES);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_204_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_204(mht_204_v, 2984, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_NAME) &&
            verifier.VerifyString(name()) &&
@@ -2217,13 +3000,22 @@ struct BenchmarkMetricBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_name(flatbuffers::Offset<flatbuffers::String> name) {
+   std::vector<std::string> mht_205_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_205(mht_205_v, 3003, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_name");
+
     fbb_.AddOffset(BenchmarkMetric::VT_NAME, name);
   }
   void add_values(flatbuffers::Offset<flatbuffers::Vector<float>> values) {
+   std::vector<std::string> mht_206_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_206(mht_206_v, 3009, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_values");
+
     fbb_.AddOffset(BenchmarkMetric::VT_VALUES, values);
   }
   explicit BenchmarkMetricBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_207_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_207(mht_207_v, 3016, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkMetricBuilder");
+
     start_ = fbb_.StartTable();
   }
   BenchmarkMetricBuilder &operator=(const BenchmarkMetricBuilder &);
@@ -2268,6 +3060,9 @@ struct BenchmarkResultT : public flatbuffers::NativeTable {
   BenchmarkResultT()
       : max_memory_kb(0),
         ok(false) {
+   std::vector<std::string> mht_208_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_208(mht_208_v, 3063, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkResultT");
+
   }
 };
 
@@ -2281,21 +3076,39 @@ struct BenchmarkResult FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_METRICS = 12
   };
   const flatbuffers::Vector<int64_t> *initialization_time_us() const {
+   std::vector<std::string> mht_209_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_209(mht_209_v, 3079, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "initialization_time_us");
+
     return GetPointer<const flatbuffers::Vector<int64_t> *>(VT_INITIALIZATION_TIME_US);
   }
   const flatbuffers::Vector<int64_t> *inference_time_us() const {
+   std::vector<std::string> mht_210_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_210(mht_210_v, 3085, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "inference_time_us");
+
     return GetPointer<const flatbuffers::Vector<int64_t> *>(VT_INFERENCE_TIME_US);
   }
   int32_t max_memory_kb() const {
+   std::vector<std::string> mht_211_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_211(mht_211_v, 3091, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "max_memory_kb");
+
     return GetField<int32_t>(VT_MAX_MEMORY_KB, 0);
   }
   bool ok() const {
+   std::vector<std::string> mht_212_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_212(mht_212_v, 3097, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "ok");
+
     return GetField<uint8_t>(VT_OK, 0) != 0;
   }
   const flatbuffers::Vector<flatbuffers::Offset<tflite::BenchmarkMetric>> *metrics() const {
+   std::vector<std::string> mht_213_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_213(mht_213_v, 3103, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "metrics");
+
     return GetPointer<const flatbuffers::Vector<flatbuffers::Offset<tflite::BenchmarkMetric>> *>(VT_METRICS);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_214_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_214(mht_214_v, 3109, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_INITIALIZATION_TIME_US) &&
            verifier.VerifyVector(initialization_time_us()) &&
@@ -2317,22 +3130,40 @@ struct BenchmarkResultBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_initialization_time_us(flatbuffers::Offset<flatbuffers::Vector<int64_t>> initialization_time_us) {
+   std::vector<std::string> mht_215_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_215(mht_215_v, 3133, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_initialization_time_us");
+
     fbb_.AddOffset(BenchmarkResult::VT_INITIALIZATION_TIME_US, initialization_time_us);
   }
   void add_inference_time_us(flatbuffers::Offset<flatbuffers::Vector<int64_t>> inference_time_us) {
+   std::vector<std::string> mht_216_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_216(mht_216_v, 3139, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_inference_time_us");
+
     fbb_.AddOffset(BenchmarkResult::VT_INFERENCE_TIME_US, inference_time_us);
   }
   void add_max_memory_kb(int32_t max_memory_kb) {
+   std::vector<std::string> mht_217_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_217(mht_217_v, 3145, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_max_memory_kb");
+
     fbb_.AddElement<int32_t>(BenchmarkResult::VT_MAX_MEMORY_KB, max_memory_kb, 0);
   }
   void add_ok(bool ok) {
+   std::vector<std::string> mht_218_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_218(mht_218_v, 3151, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_ok");
+
     fbb_.AddElement<uint8_t>(BenchmarkResult::VT_OK, static_cast<uint8_t>(ok), 0);
   }
   void add_metrics(flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<tflite::BenchmarkMetric>>> metrics) {
+   std::vector<std::string> mht_219_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_219(mht_219_v, 3157, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_metrics");
+
     fbb_.AddOffset(BenchmarkResult::VT_METRICS, metrics);
   }
   explicit BenchmarkResultBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_220_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_220(mht_220_v, 3164, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkResultBuilder");
+
     start_ = fbb_.StartTable();
   }
   BenchmarkResultBuilder &operator=(const BenchmarkResultBuilder &);
@@ -2389,6 +3220,9 @@ struct ErrorCodeT : public flatbuffers::NativeTable {
       : source(tflite::Delegate_NONE),
         tflite_error(0),
         underlying_api_error(0) {
+   std::vector<std::string> mht_221_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_221(mht_221_v, 3223, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "ErrorCodeT");
+
   }
 };
 
@@ -2400,15 +3234,27 @@ struct ErrorCode FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_UNDERLYING_API_ERROR = 8
   };
   tflite::Delegate source() const {
+   std::vector<std::string> mht_222_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_222(mht_222_v, 3237, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "source");
+
     return static_cast<tflite::Delegate>(GetField<int32_t>(VT_SOURCE, 0));
   }
   int32_t tflite_error() const {
+   std::vector<std::string> mht_223_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_223(mht_223_v, 3243, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "tflite_error");
+
     return GetField<int32_t>(VT_TFLITE_ERROR, 0);
   }
   int64_t underlying_api_error() const {
+   std::vector<std::string> mht_224_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_224(mht_224_v, 3249, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "underlying_api_error");
+
     return GetField<int64_t>(VT_UNDERLYING_API_ERROR, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_225_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_225(mht_225_v, 3255, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_SOURCE) &&
            VerifyField<int32_t>(verifier, VT_TFLITE_ERROR) &&
@@ -2424,16 +3270,28 @@ struct ErrorCodeBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_source(tflite::Delegate source) {
+   std::vector<std::string> mht_226_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_226(mht_226_v, 3273, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_source");
+
     fbb_.AddElement<int32_t>(ErrorCode::VT_SOURCE, static_cast<int32_t>(source), 0);
   }
   void add_tflite_error(int32_t tflite_error) {
+   std::vector<std::string> mht_227_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_227(mht_227_v, 3279, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_tflite_error");
+
     fbb_.AddElement<int32_t>(ErrorCode::VT_TFLITE_ERROR, tflite_error, 0);
   }
   void add_underlying_api_error(int64_t underlying_api_error) {
+   std::vector<std::string> mht_228_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_228(mht_228_v, 3285, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_underlying_api_error");
+
     fbb_.AddElement<int64_t>(ErrorCode::VT_UNDERLYING_API_ERROR, underlying_api_error, 0);
   }
   explicit ErrorCodeBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_229_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_229(mht_229_v, 3292, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "ErrorCodeBuilder");
+
     start_ = fbb_.StartTable();
   }
   ErrorCodeBuilder &operator=(const ErrorCodeBuilder &);
@@ -2470,6 +3328,9 @@ struct BenchmarkErrorT : public flatbuffers::NativeTable {
         exit_code(0),
         signal(0),
         mini_benchmark_error_code(0) {
+   std::vector<std::string> mht_230_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_230(mht_230_v, 3331, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkErrorT");
+
   }
 };
 
@@ -2483,21 +3344,39 @@ struct BenchmarkError FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_MINI_BENCHMARK_ERROR_CODE = 12
   };
   tflite::BenchmarkStage stage() const {
+   std::vector<std::string> mht_231_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_231(mht_231_v, 3347, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "stage");
+
     return static_cast<tflite::BenchmarkStage>(GetField<int32_t>(VT_STAGE, 0));
   }
   int32_t exit_code() const {
+   std::vector<std::string> mht_232_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_232(mht_232_v, 3353, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "exit_code");
+
     return GetField<int32_t>(VT_EXIT_CODE, 0);
   }
   int32_t signal() const {
+   std::vector<std::string> mht_233_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_233(mht_233_v, 3359, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "signal");
+
     return GetField<int32_t>(VT_SIGNAL, 0);
   }
   const flatbuffers::Vector<flatbuffers::Offset<tflite::ErrorCode>> *error_code() const {
+   std::vector<std::string> mht_234_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_234(mht_234_v, 3365, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "error_code");
+
     return GetPointer<const flatbuffers::Vector<flatbuffers::Offset<tflite::ErrorCode>> *>(VT_ERROR_CODE);
   }
   int32_t mini_benchmark_error_code() const {
+   std::vector<std::string> mht_235_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_235(mht_235_v, 3371, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "mini_benchmark_error_code");
+
     return GetField<int32_t>(VT_MINI_BENCHMARK_ERROR_CODE, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_236_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_236(mht_236_v, 3377, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_STAGE) &&
            VerifyField<int32_t>(verifier, VT_EXIT_CODE) &&
@@ -2517,22 +3396,40 @@ struct BenchmarkErrorBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_stage(tflite::BenchmarkStage stage) {
+   std::vector<std::string> mht_237_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_237(mht_237_v, 3399, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_stage");
+
     fbb_.AddElement<int32_t>(BenchmarkError::VT_STAGE, static_cast<int32_t>(stage), 0);
   }
   void add_exit_code(int32_t exit_code) {
+   std::vector<std::string> mht_238_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_238(mht_238_v, 3405, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_exit_code");
+
     fbb_.AddElement<int32_t>(BenchmarkError::VT_EXIT_CODE, exit_code, 0);
   }
   void add_signal(int32_t signal) {
+   std::vector<std::string> mht_239_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_239(mht_239_v, 3411, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_signal");
+
     fbb_.AddElement<int32_t>(BenchmarkError::VT_SIGNAL, signal, 0);
   }
   void add_error_code(flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<tflite::ErrorCode>>> error_code) {
+   std::vector<std::string> mht_240_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_240(mht_240_v, 3417, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_error_code");
+
     fbb_.AddOffset(BenchmarkError::VT_ERROR_CODE, error_code);
   }
   void add_mini_benchmark_error_code(int32_t mini_benchmark_error_code) {
+   std::vector<std::string> mht_241_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_241(mht_241_v, 3423, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_mini_benchmark_error_code");
+
     fbb_.AddElement<int32_t>(BenchmarkError::VT_MINI_BENCHMARK_ERROR_CODE, mini_benchmark_error_code, 0);
   }
   explicit BenchmarkErrorBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_242_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_242(mht_242_v, 3430, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkErrorBuilder");
+
     start_ = fbb_.StartTable();
   }
   BenchmarkErrorBuilder &operator=(const BenchmarkErrorBuilder &);
@@ -2590,6 +3487,9 @@ struct BenchmarkEventT : public flatbuffers::NativeTable {
       : event_type(tflite::BenchmarkEventType_UNDEFINED_BENCHMARK_EVENT_TYPE),
         boottime_us(0),
         wallclock_us(0) {
+   std::vector<std::string> mht_243_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_243(mht_243_v, 3490, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkEventT");
+
   }
 };
 
@@ -2604,24 +3504,45 @@ struct BenchmarkEvent FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_WALLCLOCK_US = 14
   };
   const tflite::TFLiteSettings *tflite_settings() const {
+   std::vector<std::string> mht_244_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_244(mht_244_v, 3507, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "tflite_settings");
+
     return GetPointer<const tflite::TFLiteSettings *>(VT_TFLITE_SETTINGS);
   }
   tflite::BenchmarkEventType event_type() const {
+   std::vector<std::string> mht_245_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_245(mht_245_v, 3513, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "event_type");
+
     return static_cast<tflite::BenchmarkEventType>(GetField<int32_t>(VT_EVENT_TYPE, 0));
   }
   const tflite::BenchmarkResult *result() const {
+   std::vector<std::string> mht_246_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_246(mht_246_v, 3519, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "result");
+
     return GetPointer<const tflite::BenchmarkResult *>(VT_RESULT);
   }
   const tflite::BenchmarkError *error() const {
+   std::vector<std::string> mht_247_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_247(mht_247_v, 3525, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "error");
+
     return GetPointer<const tflite::BenchmarkError *>(VT_ERROR);
   }
   int64_t boottime_us() const {
+   std::vector<std::string> mht_248_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_248(mht_248_v, 3531, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "boottime_us");
+
     return GetField<int64_t>(VT_BOOTTIME_US, 0);
   }
   int64_t wallclock_us() const {
+   std::vector<std::string> mht_249_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_249(mht_249_v, 3537, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "wallclock_us");
+
     return GetField<int64_t>(VT_WALLCLOCK_US, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_250_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_250(mht_250_v, 3543, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_TFLITE_SETTINGS) &&
            verifier.VerifyTable(tflite_settings()) &&
@@ -2643,25 +3564,46 @@ struct BenchmarkEventBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_tflite_settings(flatbuffers::Offset<tflite::TFLiteSettings> tflite_settings) {
+   std::vector<std::string> mht_251_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_251(mht_251_v, 3567, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_tflite_settings");
+
     fbb_.AddOffset(BenchmarkEvent::VT_TFLITE_SETTINGS, tflite_settings);
   }
   void add_event_type(tflite::BenchmarkEventType event_type) {
+   std::vector<std::string> mht_252_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_252(mht_252_v, 3573, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_event_type");
+
     fbb_.AddElement<int32_t>(BenchmarkEvent::VT_EVENT_TYPE, static_cast<int32_t>(event_type), 0);
   }
   void add_result(flatbuffers::Offset<tflite::BenchmarkResult> result) {
+   std::vector<std::string> mht_253_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_253(mht_253_v, 3579, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_result");
+
     fbb_.AddOffset(BenchmarkEvent::VT_RESULT, result);
   }
   void add_error(flatbuffers::Offset<tflite::BenchmarkError> error) {
+   std::vector<std::string> mht_254_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_254(mht_254_v, 3585, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_error");
+
     fbb_.AddOffset(BenchmarkEvent::VT_ERROR, error);
   }
   void add_boottime_us(int64_t boottime_us) {
+   std::vector<std::string> mht_255_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_255(mht_255_v, 3591, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_boottime_us");
+
     fbb_.AddElement<int64_t>(BenchmarkEvent::VT_BOOTTIME_US, boottime_us, 0);
   }
   void add_wallclock_us(int64_t wallclock_us) {
+   std::vector<std::string> mht_256_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_256(mht_256_v, 3597, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_wallclock_us");
+
     fbb_.AddElement<int64_t>(BenchmarkEvent::VT_WALLCLOCK_US, wallclock_us, 0);
   }
   explicit BenchmarkEventBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_257_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_257(mht_257_v, 3604, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkEventBuilder");
+
     start_ = fbb_.StartTable();
   }
   BenchmarkEventBuilder &operator=(const BenchmarkEventBuilder &);
@@ -2700,6 +3642,9 @@ struct BestAccelerationDecisionT : public flatbuffers::NativeTable {
   BestAccelerationDecisionT()
       : number_of_source_events(0),
         min_inference_time_us(0) {
+   std::vector<std::string> mht_258_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_258(mht_258_v, 3645, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BestAccelerationDecisionT");
+
   }
 };
 
@@ -2711,15 +3656,27 @@ struct BestAccelerationDecision FLATBUFFERS_FINAL_CLASS : private flatbuffers::T
     VT_MIN_INFERENCE_TIME_US = 8
   };
   int32_t number_of_source_events() const {
+   std::vector<std::string> mht_259_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_259(mht_259_v, 3659, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "number_of_source_events");
+
     return GetField<int32_t>(VT_NUMBER_OF_SOURCE_EVENTS, 0);
   }
   const tflite::BenchmarkEvent *min_latency_event() const {
+   std::vector<std::string> mht_260_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_260(mht_260_v, 3665, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "min_latency_event");
+
     return GetPointer<const tflite::BenchmarkEvent *>(VT_MIN_LATENCY_EVENT);
   }
   int64_t min_inference_time_us() const {
+   std::vector<std::string> mht_261_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_261(mht_261_v, 3671, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "min_inference_time_us");
+
     return GetField<int64_t>(VT_MIN_INFERENCE_TIME_US, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_262_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_262(mht_262_v, 3677, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_NUMBER_OF_SOURCE_EVENTS) &&
            VerifyOffset(verifier, VT_MIN_LATENCY_EVENT) &&
@@ -2736,16 +3693,28 @@ struct BestAccelerationDecisionBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_number_of_source_events(int32_t number_of_source_events) {
+   std::vector<std::string> mht_263_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_263(mht_263_v, 3696, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_number_of_source_events");
+
     fbb_.AddElement<int32_t>(BestAccelerationDecision::VT_NUMBER_OF_SOURCE_EVENTS, number_of_source_events, 0);
   }
   void add_min_latency_event(flatbuffers::Offset<tflite::BenchmarkEvent> min_latency_event) {
+   std::vector<std::string> mht_264_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_264(mht_264_v, 3702, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_min_latency_event");
+
     fbb_.AddOffset(BestAccelerationDecision::VT_MIN_LATENCY_EVENT, min_latency_event);
   }
   void add_min_inference_time_us(int64_t min_inference_time_us) {
+   std::vector<std::string> mht_265_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_265(mht_265_v, 3708, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_min_inference_time_us");
+
     fbb_.AddElement<int64_t>(BestAccelerationDecision::VT_MIN_INFERENCE_TIME_US, min_inference_time_us, 0);
   }
   explicit BestAccelerationDecisionBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_266_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_266(mht_266_v, 3715, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BestAccelerationDecisionBuilder");
+
     start_ = fbb_.StartTable();
   }
   BestAccelerationDecisionBuilder &operator=(const BestAccelerationDecisionBuilder &);
@@ -2775,6 +3744,9 @@ struct BenchmarkInitializationFailureT : public flatbuffers::NativeTable {
   int32_t initialization_status;
   BenchmarkInitializationFailureT()
       : initialization_status(0) {
+   std::vector<std::string> mht_267_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_267(mht_267_v, 3747, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkInitializationFailureT");
+
   }
 };
 
@@ -2784,9 +3756,15 @@ struct BenchmarkInitializationFailure FLATBUFFERS_FINAL_CLASS : private flatbuff
     VT_INITIALIZATION_STATUS = 4
   };
   int32_t initialization_status() const {
+   std::vector<std::string> mht_268_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_268(mht_268_v, 3759, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "initialization_status");
+
     return GetField<int32_t>(VT_INITIALIZATION_STATUS, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_269_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_269(mht_269_v, 3765, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<int32_t>(verifier, VT_INITIALIZATION_STATUS) &&
            verifier.EndTable();
@@ -2800,10 +3778,16 @@ struct BenchmarkInitializationFailureBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_initialization_status(int32_t initialization_status) {
+   std::vector<std::string> mht_270_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_270(mht_270_v, 3781, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_initialization_status");
+
     fbb_.AddElement<int32_t>(BenchmarkInitializationFailure::VT_INITIALIZATION_STATUS, initialization_status, 0);
   }
   explicit BenchmarkInitializationFailureBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_271_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_271(mht_271_v, 3788, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkInitializationFailureBuilder");
+
     start_ = fbb_.StartTable();
   }
   BenchmarkInitializationFailureBuilder &operator=(const BenchmarkInitializationFailureBuilder &);
@@ -2832,6 +3816,9 @@ struct MiniBenchmarkEventT : public flatbuffers::NativeTable {
   std::unique_ptr<tflite::BenchmarkEventT> benchmark_event;
   MiniBenchmarkEventT()
       : is_log_flushing_event(false) {
+   std::vector<std::string> mht_272_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_272(mht_272_v, 3819, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "MiniBenchmarkEventT");
+
   }
 };
 
@@ -2844,18 +3831,33 @@ struct MiniBenchmarkEvent FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_BENCHMARK_EVENT = 10
   };
   bool is_log_flushing_event() const {
+   std::vector<std::string> mht_273_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_273(mht_273_v, 3834, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "is_log_flushing_event");
+
     return GetField<uint8_t>(VT_IS_LOG_FLUSHING_EVENT, 0) != 0;
   }
   const tflite::BestAccelerationDecision *best_acceleration_decision() const {
+   std::vector<std::string> mht_274_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_274(mht_274_v, 3840, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "best_acceleration_decision");
+
     return GetPointer<const tflite::BestAccelerationDecision *>(VT_BEST_ACCELERATION_DECISION);
   }
   const tflite::BenchmarkInitializationFailure *initialization_failure() const {
+   std::vector<std::string> mht_275_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_275(mht_275_v, 3846, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "initialization_failure");
+
     return GetPointer<const tflite::BenchmarkInitializationFailure *>(VT_INITIALIZATION_FAILURE);
   }
   const tflite::BenchmarkEvent *benchmark_event() const {
+   std::vector<std::string> mht_276_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_276(mht_276_v, 3852, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "benchmark_event");
+
     return GetPointer<const tflite::BenchmarkEvent *>(VT_BENCHMARK_EVENT);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_277_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_277(mht_277_v, 3858, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyField<uint8_t>(verifier, VT_IS_LOG_FLUSHING_EVENT) &&
            VerifyOffset(verifier, VT_BEST_ACCELERATION_DECISION) &&
@@ -2875,19 +3877,34 @@ struct MiniBenchmarkEventBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_is_log_flushing_event(bool is_log_flushing_event) {
+   std::vector<std::string> mht_278_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_278(mht_278_v, 3880, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_is_log_flushing_event");
+
     fbb_.AddElement<uint8_t>(MiniBenchmarkEvent::VT_IS_LOG_FLUSHING_EVENT, static_cast<uint8_t>(is_log_flushing_event), 0);
   }
   void add_best_acceleration_decision(flatbuffers::Offset<tflite::BestAccelerationDecision> best_acceleration_decision) {
+   std::vector<std::string> mht_279_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_279(mht_279_v, 3886, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_best_acceleration_decision");
+
     fbb_.AddOffset(MiniBenchmarkEvent::VT_BEST_ACCELERATION_DECISION, best_acceleration_decision);
   }
   void add_initialization_failure(flatbuffers::Offset<tflite::BenchmarkInitializationFailure> initialization_failure) {
+   std::vector<std::string> mht_280_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_280(mht_280_v, 3892, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_initialization_failure");
+
     fbb_.AddOffset(MiniBenchmarkEvent::VT_INITIALIZATION_FAILURE, initialization_failure);
   }
   void add_benchmark_event(flatbuffers::Offset<tflite::BenchmarkEvent> benchmark_event) {
+   std::vector<std::string> mht_281_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_281(mht_281_v, 3898, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_benchmark_event");
+
     fbb_.AddOffset(MiniBenchmarkEvent::VT_BENCHMARK_EVENT, benchmark_event);
   }
   explicit MiniBenchmarkEventBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_282_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_282(mht_282_v, 3905, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "MiniBenchmarkEventBuilder");
+
     start_ = fbb_.StartTable();
   }
   MiniBenchmarkEventBuilder &operator=(const MiniBenchmarkEventBuilder &);
@@ -2924,6 +3941,9 @@ struct ModelFileT : public flatbuffers::NativeTable {
       : fd(0),
         offset(0),
         length(0) {
+   std::vector<std::string> mht_283_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_283(mht_283_v, 3944, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "ModelFileT");
+
   }
 };
 
@@ -2936,18 +3956,33 @@ struct ModelFile FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_LENGTH = 10
   };
   const flatbuffers::String *filename() const {
+   std::vector<std::string> mht_284_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_284(mht_284_v, 3959, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "filename");
+
     return GetPointer<const flatbuffers::String *>(VT_FILENAME);
   }
   int64_t fd() const {
+   std::vector<std::string> mht_285_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_285(mht_285_v, 3965, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "fd");
+
     return GetField<int64_t>(VT_FD, 0);
   }
   int64_t offset() const {
+   std::vector<std::string> mht_286_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_286(mht_286_v, 3971, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "offset");
+
     return GetField<int64_t>(VT_OFFSET, 0);
   }
   int64_t length() const {
+   std::vector<std::string> mht_287_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_287(mht_287_v, 3977, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "length");
+
     return GetField<int64_t>(VT_LENGTH, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_288_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_288(mht_288_v, 3983, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_FILENAME) &&
            verifier.VerifyString(filename()) &&
@@ -2965,19 +4000,34 @@ struct ModelFileBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_filename(flatbuffers::Offset<flatbuffers::String> filename) {
+   std::vector<std::string> mht_289_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_289(mht_289_v, 4003, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_filename");
+
     fbb_.AddOffset(ModelFile::VT_FILENAME, filename);
   }
   void add_fd(int64_t fd) {
+   std::vector<std::string> mht_290_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_290(mht_290_v, 4009, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_fd");
+
     fbb_.AddElement<int64_t>(ModelFile::VT_FD, fd, 0);
   }
   void add_offset(int64_t offset) {
+   std::vector<std::string> mht_291_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_291(mht_291_v, 4015, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_offset");
+
     fbb_.AddElement<int64_t>(ModelFile::VT_OFFSET, offset, 0);
   }
   void add_length(int64_t length) {
+   std::vector<std::string> mht_292_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_292(mht_292_v, 4021, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_length");
+
     fbb_.AddElement<int64_t>(ModelFile::VT_LENGTH, length, 0);
   }
   explicit ModelFileBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_293_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_293(mht_293_v, 4028, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "ModelFileBuilder");
+
     start_ = fbb_.StartTable();
   }
   ModelFileBuilder &operator=(const ModelFileBuilder &);
@@ -3024,6 +4074,9 @@ struct BenchmarkStoragePathsT : public flatbuffers::NativeTable {
   std::string storage_file_path;
   std::string data_directory_path;
   BenchmarkStoragePathsT() {
+   std::vector<std::string> mht_294_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_294(mht_294_v, 4077, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkStoragePathsT");
+
   }
 };
 
@@ -3034,12 +4087,21 @@ struct BenchmarkStoragePaths FLATBUFFERS_FINAL_CLASS : private flatbuffers::Tabl
     VT_DATA_DIRECTORY_PATH = 6
   };
   const flatbuffers::String *storage_file_path() const {
+   std::vector<std::string> mht_295_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_295(mht_295_v, 4090, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "storage_file_path");
+
     return GetPointer<const flatbuffers::String *>(VT_STORAGE_FILE_PATH);
   }
   const flatbuffers::String *data_directory_path() const {
+   std::vector<std::string> mht_296_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_296(mht_296_v, 4096, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "data_directory_path");
+
     return GetPointer<const flatbuffers::String *>(VT_DATA_DIRECTORY_PATH);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_297_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_297(mht_297_v, 4102, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_STORAGE_FILE_PATH) &&
            verifier.VerifyString(storage_file_path()) &&
@@ -3056,13 +4118,22 @@ struct BenchmarkStoragePathsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_storage_file_path(flatbuffers::Offset<flatbuffers::String> storage_file_path) {
+   std::vector<std::string> mht_298_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_298(mht_298_v, 4121, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_storage_file_path");
+
     fbb_.AddOffset(BenchmarkStoragePaths::VT_STORAGE_FILE_PATH, storage_file_path);
   }
   void add_data_directory_path(flatbuffers::Offset<flatbuffers::String> data_directory_path) {
+   std::vector<std::string> mht_299_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_299(mht_299_v, 4127, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_data_directory_path");
+
     fbb_.AddOffset(BenchmarkStoragePaths::VT_DATA_DIRECTORY_PATH, data_directory_path);
   }
   explicit BenchmarkStoragePathsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_300_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_300(mht_300_v, 4134, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkStoragePathsBuilder");
+
     start_ = fbb_.StartTable();
   }
   BenchmarkStoragePathsBuilder &operator=(const BenchmarkStoragePathsBuilder &);
@@ -3103,6 +4174,9 @@ struct MinibenchmarkSettingsT : public flatbuffers::NativeTable {
   std::unique_ptr<tflite::ModelFileT> model_file;
   std::unique_ptr<tflite::BenchmarkStoragePathsT> storage_paths;
   MinibenchmarkSettingsT() {
+   std::vector<std::string> mht_301_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_301(mht_301_v, 4177, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "MinibenchmarkSettingsT");
+
   }
 };
 
@@ -3114,15 +4188,27 @@ struct MinibenchmarkSettings FLATBUFFERS_FINAL_CLASS : private flatbuffers::Tabl
     VT_STORAGE_PATHS = 8
   };
   const flatbuffers::Vector<flatbuffers::Offset<tflite::TFLiteSettings>> *settings_to_test() const {
+   std::vector<std::string> mht_302_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_302(mht_302_v, 4191, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "settings_to_test");
+
     return GetPointer<const flatbuffers::Vector<flatbuffers::Offset<tflite::TFLiteSettings>> *>(VT_SETTINGS_TO_TEST);
   }
   const tflite::ModelFile *model_file() const {
+   std::vector<std::string> mht_303_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_303(mht_303_v, 4197, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "model_file");
+
     return GetPointer<const tflite::ModelFile *>(VT_MODEL_FILE);
   }
   const tflite::BenchmarkStoragePaths *storage_paths() const {
+   std::vector<std::string> mht_304_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_304(mht_304_v, 4203, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "storage_paths");
+
     return GetPointer<const tflite::BenchmarkStoragePaths *>(VT_STORAGE_PATHS);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
+   std::vector<std::string> mht_305_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_305(mht_305_v, 4209, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "Verify");
+
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_SETTINGS_TO_TEST) &&
            verifier.VerifyVector(settings_to_test()) &&
@@ -3142,16 +4228,28 @@ struct MinibenchmarkSettingsBuilder {
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
   void add_settings_to_test(flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<tflite::TFLiteSettings>>> settings_to_test) {
+   std::vector<std::string> mht_306_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_306(mht_306_v, 4231, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_settings_to_test");
+
     fbb_.AddOffset(MinibenchmarkSettings::VT_SETTINGS_TO_TEST, settings_to_test);
   }
   void add_model_file(flatbuffers::Offset<tflite::ModelFile> model_file) {
+   std::vector<std::string> mht_307_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_307(mht_307_v, 4237, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_model_file");
+
     fbb_.AddOffset(MinibenchmarkSettings::VT_MODEL_FILE, model_file);
   }
   void add_storage_paths(flatbuffers::Offset<tflite::BenchmarkStoragePaths> storage_paths) {
+   std::vector<std::string> mht_308_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_308(mht_308_v, 4243, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "add_storage_paths");
+
     fbb_.AddOffset(MinibenchmarkSettings::VT_STORAGE_PATHS, storage_paths);
   }
   explicit MinibenchmarkSettingsBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
+   std::vector<std::string> mht_309_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_309(mht_309_v, 4250, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "MinibenchmarkSettingsBuilder");
+
     start_ = fbb_.StartTable();
   }
   MinibenchmarkSettingsBuilder &operator=(const MinibenchmarkSettingsBuilder &);
@@ -3205,12 +4303,18 @@ inline bool operator!=(const ComputeSettingsT &lhs, const ComputeSettingsT &rhs)
 
 
 inline ComputeSettingsT *ComputeSettings::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_310_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_310(mht_310_v, 4306, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "ComputeSettings::UnPack");
+
   auto _o = new ComputeSettingsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void ComputeSettings::UnPackTo(ComputeSettingsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_311_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_311(mht_311_v, 4315, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "ComputeSettings::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = preference(); _o->preference = _e; }
@@ -3221,6 +4325,9 @@ inline void ComputeSettings::UnPackTo(ComputeSettingsT *_o, const flatbuffers::r
 }
 
 inline flatbuffers::Offset<ComputeSettings> ComputeSettings::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ComputeSettingsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_312_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_312(mht_312_v, 4328, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "ComputeSettings::Pack");
+
   return CreateComputeSettings(_fbb, _o, _rehasher);
 }
 
@@ -3265,12 +4372,18 @@ inline bool operator!=(const NNAPISettingsT &lhs, const NNAPISettingsT &rhs) {
 
 
 inline NNAPISettingsT *NNAPISettings::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_313_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_313(mht_313_v, 4375, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "NNAPISettings::UnPack");
+
   auto _o = new NNAPISettingsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void NNAPISettings::UnPackTo(NNAPISettingsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_314_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_314(mht_314_v, 4384, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "NNAPISettings::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = accelerator_name(); if (_e) _o->accelerator_name = _e->str(); }
@@ -3288,6 +4401,9 @@ inline void NNAPISettings::UnPackTo(NNAPISettingsT *_o, const flatbuffers::resol
 }
 
 inline flatbuffers::Offset<NNAPISettings> NNAPISettings::Pack(flatbuffers::FlatBufferBuilder &_fbb, const NNAPISettingsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_315_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_315(mht_315_v, 4404, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "NNAPISettings::Pack");
+
   return CreateNNAPISettings(_fbb, _o, _rehasher);
 }
 
@@ -3343,12 +4459,18 @@ inline bool operator!=(const GPUSettingsT &lhs, const GPUSettingsT &rhs) {
 
 
 inline GPUSettingsT *GPUSettings::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_316_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_316(mht_316_v, 4462, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "GPUSettings::UnPack");
+
   auto _o = new GPUSettingsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void GPUSettings::UnPackTo(GPUSettingsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_317_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_317(mht_317_v, 4471, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "GPUSettings::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = is_precision_loss_allowed(); _o->is_precision_loss_allowed = _e; }
@@ -3363,6 +4485,9 @@ inline void GPUSettings::UnPackTo(GPUSettingsT *_o, const flatbuffers::resolver_
 }
 
 inline flatbuffers::Offset<GPUSettings> GPUSettings::Pack(flatbuffers::FlatBufferBuilder &_fbb, const GPUSettingsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_318_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_318(mht_318_v, 4488, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "GPUSettings::Pack");
+
   return CreateGPUSettings(_fbb, _o, _rehasher);
 }
 
@@ -3407,12 +4532,18 @@ inline bool operator!=(const HexagonSettingsT &lhs, const HexagonSettingsT &rhs)
 
 
 inline HexagonSettingsT *HexagonSettings::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_319_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_319(mht_319_v, 4535, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "HexagonSettings::UnPack");
+
   auto _o = new HexagonSettingsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void HexagonSettings::UnPackTo(HexagonSettingsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_320_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_320(mht_320_v, 4544, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "HexagonSettings::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = debug_level(); _o->debug_level = _e; }
@@ -3422,6 +4553,9 @@ inline void HexagonSettings::UnPackTo(HexagonSettingsT *_o, const flatbuffers::r
 }
 
 inline flatbuffers::Offset<HexagonSettings> HexagonSettings::Pack(flatbuffers::FlatBufferBuilder &_fbb, const HexagonSettingsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_321_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_321(mht_321_v, 4556, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "HexagonSettings::Pack");
+
   return CreateHexagonSettings(_fbb, _o, _rehasher);
 }
 
@@ -3453,18 +4587,27 @@ inline bool operator!=(const XNNPackSettingsT &lhs, const XNNPackSettingsT &rhs)
 
 
 inline XNNPackSettingsT *XNNPackSettings::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_322_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_322(mht_322_v, 4590, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "XNNPackSettings::UnPack");
+
   auto _o = new XNNPackSettingsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void XNNPackSettings::UnPackTo(XNNPackSettingsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_323_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_323(mht_323_v, 4599, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "XNNPackSettings::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = num_threads(); _o->num_threads = _e; }
 }
 
 inline flatbuffers::Offset<XNNPackSettings> XNNPackSettings::Pack(flatbuffers::FlatBufferBuilder &_fbb, const XNNPackSettingsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_324_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_324(mht_324_v, 4608, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "XNNPackSettings::Pack");
+
   return CreateXNNPackSettings(_fbb, _o, _rehasher);
 }
 
@@ -3493,12 +4636,18 @@ inline bool operator!=(const CoreMLSettingsT &lhs, const CoreMLSettingsT &rhs) {
 
 
 inline CoreMLSettingsT *CoreMLSettings::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_325_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_325(mht_325_v, 4639, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "CoreMLSettings::UnPack");
+
   auto _o = new CoreMLSettingsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void CoreMLSettings::UnPackTo(CoreMLSettingsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_326_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_326(mht_326_v, 4648, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "CoreMLSettings::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = enabled_devices(); _o->enabled_devices = _e; }
@@ -3508,6 +4657,9 @@ inline void CoreMLSettings::UnPackTo(CoreMLSettingsT *_o, const flatbuffers::res
 }
 
 inline flatbuffers::Offset<CoreMLSettings> CoreMLSettings::Pack(flatbuffers::FlatBufferBuilder &_fbb, const CoreMLSettingsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_327_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_327(mht_327_v, 4660, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "CoreMLSettings::Pack");
+
   return CreateCoreMLSettings(_fbb, _o, _rehasher);
 }
 
@@ -3542,12 +4694,18 @@ inline bool operator!=(const EdgeTpuDeviceSpecT &lhs, const EdgeTpuDeviceSpecT &
 
 
 inline EdgeTpuDeviceSpecT *EdgeTpuDeviceSpec::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_328_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_328(mht_328_v, 4697, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EdgeTpuDeviceSpec::UnPack");
+
   auto _o = new EdgeTpuDeviceSpecT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void EdgeTpuDeviceSpec::UnPackTo(EdgeTpuDeviceSpecT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_329_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_329(mht_329_v, 4706, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EdgeTpuDeviceSpec::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = platform_type(); _o->platform_type = _e; }
@@ -3557,6 +4715,9 @@ inline void EdgeTpuDeviceSpec::UnPackTo(EdgeTpuDeviceSpecT *_o, const flatbuffer
 }
 
 inline flatbuffers::Offset<EdgeTpuDeviceSpec> EdgeTpuDeviceSpec::Pack(flatbuffers::FlatBufferBuilder &_fbb, const EdgeTpuDeviceSpecT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_330_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_330(mht_330_v, 4718, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EdgeTpuDeviceSpec::Pack");
+
   return CreateEdgeTpuDeviceSpec(_fbb, _o, _rehasher);
 }
 
@@ -3589,12 +4750,18 @@ inline bool operator!=(const EdgeTpuInactivePowerConfigT &lhs, const EdgeTpuInac
 
 
 inline EdgeTpuInactivePowerConfigT *EdgeTpuInactivePowerConfig::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_331_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_331(mht_331_v, 4753, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EdgeTpuInactivePowerConfig::UnPack");
+
   auto _o = new EdgeTpuInactivePowerConfigT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void EdgeTpuInactivePowerConfig::UnPackTo(EdgeTpuInactivePowerConfigT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_332_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_332(mht_332_v, 4762, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EdgeTpuInactivePowerConfig::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = inactive_power_state(); _o->inactive_power_state = _e; }
@@ -3602,6 +4769,9 @@ inline void EdgeTpuInactivePowerConfig::UnPackTo(EdgeTpuInactivePowerConfigT *_o
 }
 
 inline flatbuffers::Offset<EdgeTpuInactivePowerConfig> EdgeTpuInactivePowerConfig::Pack(flatbuffers::FlatBufferBuilder &_fbb, const EdgeTpuInactivePowerConfigT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_333_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_333(mht_333_v, 4772, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EdgeTpuInactivePowerConfig::Pack");
+
   return CreateEdgeTpuInactivePowerConfig(_fbb, _o, _rehasher);
 }
 
@@ -3635,12 +4805,18 @@ inline bool operator!=(const EdgeTpuSettingsT &lhs, const EdgeTpuSettingsT &rhs)
 
 
 inline EdgeTpuSettingsT *EdgeTpuSettings::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_334_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_334(mht_334_v, 4808, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EdgeTpuSettings::UnPack");
+
   auto _o = new EdgeTpuSettingsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void EdgeTpuSettings::UnPackTo(EdgeTpuSettingsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_335_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_335(mht_335_v, 4817, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EdgeTpuSettings::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = inference_power_state(); _o->inference_power_state = _e; }
@@ -3653,6 +4829,9 @@ inline void EdgeTpuSettings::UnPackTo(EdgeTpuSettingsT *_o, const flatbuffers::r
 }
 
 inline flatbuffers::Offset<EdgeTpuSettings> EdgeTpuSettings::Pack(flatbuffers::FlatBufferBuilder &_fbb, const EdgeTpuSettingsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_336_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_336(mht_336_v, 4832, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "EdgeTpuSettings::Pack");
+
   return CreateEdgeTpuSettings(_fbb, _o, _rehasher);
 }
 
@@ -3693,12 +4872,18 @@ inline bool operator!=(const CoralSettingsT &lhs, const CoralSettingsT &rhs) {
 
 
 inline CoralSettingsT *CoralSettings::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_337_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_337(mht_337_v, 4875, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "CoralSettings::UnPack");
+
   auto _o = new CoralSettingsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void CoralSettings::UnPackTo(CoralSettingsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_338_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_338(mht_338_v, 4884, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "CoralSettings::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = device(); if (_e) _o->device = _e->str(); }
@@ -3708,6 +4893,9 @@ inline void CoralSettings::UnPackTo(CoralSettingsT *_o, const flatbuffers::resol
 }
 
 inline flatbuffers::Offset<CoralSettings> CoralSettings::Pack(flatbuffers::FlatBufferBuilder &_fbb, const CoralSettingsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_339_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_339(mht_339_v, 4896, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "CoralSettings::Pack");
+
   return CreateCoralSettings(_fbb, _o, _rehasher);
 }
 
@@ -3739,18 +4927,27 @@ inline bool operator!=(const CPUSettingsT &lhs, const CPUSettingsT &rhs) {
 
 
 inline CPUSettingsT *CPUSettings::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_340_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_340(mht_340_v, 4930, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "CPUSettings::UnPack");
+
   auto _o = new CPUSettingsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void CPUSettings::UnPackTo(CPUSettingsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_341_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_341(mht_341_v, 4939, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "CPUSettings::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = num_threads(); _o->num_threads = _e; }
 }
 
 inline flatbuffers::Offset<CPUSettings> CPUSettings::Pack(flatbuffers::FlatBufferBuilder &_fbb, const CPUSettingsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_342_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_342(mht_342_v, 4948, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "CPUSettings::Pack");
+
   return CreateCPUSettings(_fbb, _o, _rehasher);
 }
 
@@ -3786,12 +4983,18 @@ inline bool operator!=(const TFLiteSettingsT &lhs, const TFLiteSettingsT &rhs) {
 
 
 inline TFLiteSettingsT *TFLiteSettings::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_343_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_343(mht_343_v, 4986, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "TFLiteSettings::UnPack");
+
   auto _o = new TFLiteSettingsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void TFLiteSettings::UnPackTo(TFLiteSettingsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_344_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_344(mht_344_v, 4995, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "TFLiteSettings::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = delegate(); _o->delegate = _e; }
@@ -3808,6 +5011,9 @@ inline void TFLiteSettings::UnPackTo(TFLiteSettingsT *_o, const flatbuffers::res
 }
 
 inline flatbuffers::Offset<TFLiteSettings> TFLiteSettings::Pack(flatbuffers::FlatBufferBuilder &_fbb, const TFLiteSettingsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_345_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_345(mht_345_v, 5014, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "TFLiteSettings::Pack");
+
   return CreateTFLiteSettings(_fbb, _o, _rehasher);
 }
 
@@ -3854,12 +5060,18 @@ inline bool operator!=(const FallbackSettingsT &lhs, const FallbackSettingsT &rh
 
 
 inline FallbackSettingsT *FallbackSettings::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_346_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_346(mht_346_v, 5063, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "FallbackSettings::UnPack");
+
   auto _o = new FallbackSettingsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void FallbackSettings::UnPackTo(FallbackSettingsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_347_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_347(mht_347_v, 5072, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "FallbackSettings::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = allow_automatic_fallback_on_compilation_error(); _o->allow_automatic_fallback_on_compilation_error = _e; }
@@ -3867,6 +5079,9 @@ inline void FallbackSettings::UnPackTo(FallbackSettingsT *_o, const flatbuffers:
 }
 
 inline flatbuffers::Offset<FallbackSettings> FallbackSettings::Pack(flatbuffers::FlatBufferBuilder &_fbb, const FallbackSettingsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_348_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_348(mht_348_v, 5082, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "FallbackSettings::Pack");
+
   return CreateFallbackSettings(_fbb, _o, _rehasher);
 }
 
@@ -3895,12 +5110,18 @@ inline bool operator!=(const BenchmarkMetricT &lhs, const BenchmarkMetricT &rhs)
 
 
 inline BenchmarkMetricT *BenchmarkMetric::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_349_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_349(mht_349_v, 5113, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkMetric::UnPack");
+
   auto _o = new BenchmarkMetricT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void BenchmarkMetric::UnPackTo(BenchmarkMetricT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_350_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_350(mht_350_v, 5122, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkMetric::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = name(); if (_e) _o->name = _e->str(); }
@@ -3908,6 +5129,9 @@ inline void BenchmarkMetric::UnPackTo(BenchmarkMetricT *_o, const flatbuffers::r
 }
 
 inline flatbuffers::Offset<BenchmarkMetric> BenchmarkMetric::Pack(flatbuffers::FlatBufferBuilder &_fbb, const BenchmarkMetricT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_351_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_351(mht_351_v, 5132, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkMetric::Pack");
+
   return CreateBenchmarkMetric(_fbb, _o, _rehasher);
 }
 
@@ -3939,12 +5163,18 @@ inline bool operator!=(const BenchmarkResultT &lhs, const BenchmarkResultT &rhs)
 
 
 inline BenchmarkResultT *BenchmarkResult::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_352_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_352(mht_352_v, 5166, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkResult::UnPack");
+
   auto _o = new BenchmarkResultT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void BenchmarkResult::UnPackTo(BenchmarkResultT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_353_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_353(mht_353_v, 5175, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkResult::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = initialization_time_us(); if (_e) { _o->initialization_time_us.resize(_e->size()); for (flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->initialization_time_us[_i] = _e->Get(_i); } } }
@@ -3955,6 +5185,9 @@ inline void BenchmarkResult::UnPackTo(BenchmarkResultT *_o, const flatbuffers::r
 }
 
 inline flatbuffers::Offset<BenchmarkResult> BenchmarkResult::Pack(flatbuffers::FlatBufferBuilder &_fbb, const BenchmarkResultT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_354_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_354(mht_354_v, 5188, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkResult::Pack");
+
   return CreateBenchmarkResult(_fbb, _o, _rehasher);
 }
 
@@ -3990,12 +5223,18 @@ inline bool operator!=(const ErrorCodeT &lhs, const ErrorCodeT &rhs) {
 
 
 inline ErrorCodeT *ErrorCode::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_355_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_355(mht_355_v, 5226, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "ErrorCode::UnPack");
+
   auto _o = new ErrorCodeT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void ErrorCode::UnPackTo(ErrorCodeT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_356_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_356(mht_356_v, 5235, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "ErrorCode::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = source(); _o->source = _e; }
@@ -4004,6 +5243,9 @@ inline void ErrorCode::UnPackTo(ErrorCodeT *_o, const flatbuffers::resolver_func
 }
 
 inline flatbuffers::Offset<ErrorCode> ErrorCode::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ErrorCodeT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_357_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_357(mht_357_v, 5246, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "ErrorCode::Pack");
+
   return CreateErrorCode(_fbb, _o, _rehasher);
 }
 
@@ -4037,12 +5279,18 @@ inline bool operator!=(const BenchmarkErrorT &lhs, const BenchmarkErrorT &rhs) {
 
 
 inline BenchmarkErrorT *BenchmarkError::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_358_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_358(mht_358_v, 5282, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkError::UnPack");
+
   auto _o = new BenchmarkErrorT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void BenchmarkError::UnPackTo(BenchmarkErrorT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_359_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_359(mht_359_v, 5291, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkError::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = stage(); _o->stage = _e; }
@@ -4053,6 +5301,9 @@ inline void BenchmarkError::UnPackTo(BenchmarkErrorT *_o, const flatbuffers::res
 }
 
 inline flatbuffers::Offset<BenchmarkError> BenchmarkError::Pack(flatbuffers::FlatBufferBuilder &_fbb, const BenchmarkErrorT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_360_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_360(mht_360_v, 5304, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkError::Pack");
+
   return CreateBenchmarkError(_fbb, _o, _rehasher);
 }
 
@@ -4091,12 +5342,18 @@ inline bool operator!=(const BenchmarkEventT &lhs, const BenchmarkEventT &rhs) {
 
 
 inline BenchmarkEventT *BenchmarkEvent::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_361_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_361(mht_361_v, 5345, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkEvent::UnPack");
+
   auto _o = new BenchmarkEventT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void BenchmarkEvent::UnPackTo(BenchmarkEventT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_362_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_362(mht_362_v, 5354, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkEvent::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = tflite_settings(); if (_e) _o->tflite_settings = std::unique_ptr<tflite::TFLiteSettingsT>(_e->UnPack(_resolver)); }
@@ -4108,6 +5365,9 @@ inline void BenchmarkEvent::UnPackTo(BenchmarkEventT *_o, const flatbuffers::res
 }
 
 inline flatbuffers::Offset<BenchmarkEvent> BenchmarkEvent::Pack(flatbuffers::FlatBufferBuilder &_fbb, const BenchmarkEventT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_363_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_363(mht_363_v, 5368, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkEvent::Pack");
+
   return CreateBenchmarkEvent(_fbb, _o, _rehasher);
 }
 
@@ -4145,12 +5405,18 @@ inline bool operator!=(const BestAccelerationDecisionT &lhs, const BestAccelerat
 
 
 inline BestAccelerationDecisionT *BestAccelerationDecision::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_364_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_364(mht_364_v, 5408, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BestAccelerationDecision::UnPack");
+
   auto _o = new BestAccelerationDecisionT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void BestAccelerationDecision::UnPackTo(BestAccelerationDecisionT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_365_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_365(mht_365_v, 5417, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BestAccelerationDecision::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = number_of_source_events(); _o->number_of_source_events = _e; }
@@ -4159,6 +5425,9 @@ inline void BestAccelerationDecision::UnPackTo(BestAccelerationDecisionT *_o, co
 }
 
 inline flatbuffers::Offset<BestAccelerationDecision> BestAccelerationDecision::Pack(flatbuffers::FlatBufferBuilder &_fbb, const BestAccelerationDecisionT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_366_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_366(mht_366_v, 5428, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BestAccelerationDecision::Pack");
+
   return CreateBestAccelerationDecision(_fbb, _o, _rehasher);
 }
 
@@ -4188,18 +5457,27 @@ inline bool operator!=(const BenchmarkInitializationFailureT &lhs, const Benchma
 
 
 inline BenchmarkInitializationFailureT *BenchmarkInitializationFailure::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_367_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_367(mht_367_v, 5460, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkInitializationFailure::UnPack");
+
   auto _o = new BenchmarkInitializationFailureT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void BenchmarkInitializationFailure::UnPackTo(BenchmarkInitializationFailureT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_368_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_368(mht_368_v, 5469, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkInitializationFailure::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = initialization_status(); _o->initialization_status = _e; }
 }
 
 inline flatbuffers::Offset<BenchmarkInitializationFailure> BenchmarkInitializationFailure::Pack(flatbuffers::FlatBufferBuilder &_fbb, const BenchmarkInitializationFailureT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_369_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_369(mht_369_v, 5478, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkInitializationFailure::Pack");
+
   return CreateBenchmarkInitializationFailure(_fbb, _o, _rehasher);
 }
 
@@ -4228,12 +5506,18 @@ inline bool operator!=(const MiniBenchmarkEventT &lhs, const MiniBenchmarkEventT
 
 
 inline MiniBenchmarkEventT *MiniBenchmarkEvent::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_370_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_370(mht_370_v, 5509, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "MiniBenchmarkEvent::UnPack");
+
   auto _o = new MiniBenchmarkEventT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void MiniBenchmarkEvent::UnPackTo(MiniBenchmarkEventT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_371_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_371(mht_371_v, 5518, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "MiniBenchmarkEvent::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = is_log_flushing_event(); _o->is_log_flushing_event = _e; }
@@ -4243,6 +5527,9 @@ inline void MiniBenchmarkEvent::UnPackTo(MiniBenchmarkEventT *_o, const flatbuff
 }
 
 inline flatbuffers::Offset<MiniBenchmarkEvent> MiniBenchmarkEvent::Pack(flatbuffers::FlatBufferBuilder &_fbb, const MiniBenchmarkEventT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_372_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_372(mht_372_v, 5530, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "MiniBenchmarkEvent::Pack");
+
   return CreateMiniBenchmarkEvent(_fbb, _o, _rehasher);
 }
 
@@ -4277,12 +5564,18 @@ inline bool operator!=(const ModelFileT &lhs, const ModelFileT &rhs) {
 
 
 inline ModelFileT *ModelFile::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_373_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_373(mht_373_v, 5567, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "ModelFile::UnPack");
+
   auto _o = new ModelFileT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void ModelFile::UnPackTo(ModelFileT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_374_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_374(mht_374_v, 5576, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "ModelFile::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = filename(); if (_e) _o->filename = _e->str(); }
@@ -4292,6 +5585,9 @@ inline void ModelFile::UnPackTo(ModelFileT *_o, const flatbuffers::resolver_func
 }
 
 inline flatbuffers::Offset<ModelFile> ModelFile::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ModelFileT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_375_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_375(mht_375_v, 5588, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "ModelFile::Pack");
+
   return CreateModelFile(_fbb, _o, _rehasher);
 }
 
@@ -4324,12 +5620,18 @@ inline bool operator!=(const BenchmarkStoragePathsT &lhs, const BenchmarkStorage
 
 
 inline BenchmarkStoragePathsT *BenchmarkStoragePaths::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_376_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_376(mht_376_v, 5623, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkStoragePaths::UnPack");
+
   auto _o = new BenchmarkStoragePathsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void BenchmarkStoragePaths::UnPackTo(BenchmarkStoragePathsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_377_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_377(mht_377_v, 5632, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkStoragePaths::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = storage_file_path(); if (_e) _o->storage_file_path = _e->str(); }
@@ -4337,6 +5639,9 @@ inline void BenchmarkStoragePaths::UnPackTo(BenchmarkStoragePathsT *_o, const fl
 }
 
 inline flatbuffers::Offset<BenchmarkStoragePaths> BenchmarkStoragePaths::Pack(flatbuffers::FlatBufferBuilder &_fbb, const BenchmarkStoragePathsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_378_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_378(mht_378_v, 5642, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "BenchmarkStoragePaths::Pack");
+
   return CreateBenchmarkStoragePaths(_fbb, _o, _rehasher);
 }
 
@@ -4366,12 +5671,18 @@ inline bool operator!=(const MinibenchmarkSettingsT &lhs, const MinibenchmarkSet
 
 
 inline MinibenchmarkSettingsT *MinibenchmarkSettings::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_379_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_379(mht_379_v, 5674, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "MinibenchmarkSettings::UnPack");
+
   auto _o = new MinibenchmarkSettingsT();
   UnPackTo(_o, _resolver);
   return _o;
 }
 
 inline void MinibenchmarkSettings::UnPackTo(MinibenchmarkSettingsT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+   std::vector<std::string> mht_380_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_380(mht_380_v, 5683, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "MinibenchmarkSettings::UnPackTo");
+
   (void)_o;
   (void)_resolver;
   { auto _e = settings_to_test(); if (_e) { _o->settings_to_test.resize(_e->size()); for (flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->settings_to_test[_i] = std::unique_ptr<tflite::TFLiteSettingsT>(_e->Get(_i)->UnPack(_resolver)); } } }
@@ -4380,6 +5691,9 @@ inline void MinibenchmarkSettings::UnPackTo(MinibenchmarkSettingsT *_o, const fl
 }
 
 inline flatbuffers::Offset<MinibenchmarkSettings> MinibenchmarkSettings::Pack(flatbuffers::FlatBufferBuilder &_fbb, const MinibenchmarkSettingsT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+   std::vector<std::string> mht_381_v;
+   MHTracer_DTPStensorflowPSlitePSexperimentalPSaccelerationPSconfigurationPSconfiguration_generatedDTh mht_381(mht_381_v, 5694, "", "./tensorflow/lite/experimental/acceleration/configuration/configuration_generated.h", "MinibenchmarkSettings::Pack");
+
   return CreateMinibenchmarkSettings(_fbb, _o, _rehasher);
 }
 

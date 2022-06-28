@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,6 +209,9 @@ using ::tensorflow::test::function::NDef;
 constexpr char kNoOp[] = "NoOp";
 
 GraphDef SimpleTestGraph() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_0(mht_0_v, 212, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "SimpleTestGraph");
+
   return GDef({NDef("a", kNoOp, {"b:2", "d:3", "b:2", "d:3", "^c"}),
                NDef("b", kNoOp, {"d:2", "c:5", "^c"}),
                NDef("c", kNoOp, {"^d", "^d"}), NDef("d", kNoOp, {})},
@@ -49,6 +220,9 @@ GraphDef SimpleTestGraph() {
 
 template <typename T>
 const string GetGraphViewTypeAsString() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_1(mht_1_v, 223, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "GetGraphViewTypeAsString");
+
   return std::is_same<T, class GraphView>::value ? "GraphView"
                                                  : "MutableGraphView";
 }
@@ -719,6 +893,9 @@ TYPED_TEST(TypedNodeViewTest, HasFanout) {
 }
 
 GraphDef SimpleAttrTestGraph() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_2(mht_2_v, 896, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "SimpleAttrTestGraph");
+
   return GDef({NDef("a", kNoOp, {}), NDef("b", kNoOp, {}, {{"attr", 1}}),
                NDef("c", kNoOp, {}, {{"attr_1", "a"}, {"attr_2", 2.0f}})},
               /*funcs=*/{});
@@ -794,6 +971,9 @@ class CompareGraphTest : public GrapplerTest {
  public:
   void CompareGraphViewWithGraph(MutableGraphView* graph_view,
                                  const GraphDef& expected_graph) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_3(mht_3_v, 974, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "CompareGraphViewWithGraph");
+
     Status s;
     GraphView expected_graph_view(&expected_graph, &s);
     TF_ASSERT_OK(s);
@@ -959,6 +1139,9 @@ constexpr char kDeviceCPU0[] = "/device:CPU:0";
 constexpr char kDeviceGPU0[] = "/device:GPU:0";
 
 GraphDef SimpleTestGraphForMutation() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_4(mht_4_v, 1142, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "SimpleTestGraphForMutation");
+
   return GDef({NDef("a", kNoOp, {}, {}, kDeviceCPU0),
                NDef("b", kNoOp, {}, {}, kDeviceCPU0),
                NDef("c", kNoOp, {}, {}, kDeviceCPU0),
@@ -1435,6 +1618,9 @@ constexpr char kDeviceCPU1[] = "/device:CPU:1";
 constexpr char kDeviceGPU1[] = "/device:GPU:1";
 
 GraphDef TestGraphForMutation() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_5(mht_5_v, 1621, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "TestGraphForMutation");
+
   return GDef(
       {NDef("a", kIdentity, {}, {{"attr_a", 8}, {"T", DT_FLOAT}}, kDeviceGPU0),
        NDef("b", kNoOp, {"a:2"}, {{"attr_b", 3.0f}}, kDeviceCPU0),
@@ -1571,6 +1757,9 @@ TEST_F(MutationTest, AddAndUpdateNodesWithFanins) {
 
 TEST_F(MutationTest, UpdateNodeNameToReplaceExistingNode) {
   auto test_graph = []() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_6(mht_6_v, 1760, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "lambda");
+
     return GDef(
         {NDef("a", kNoOp, {}, {{"attr_a", 8}}, kDeviceCPU0),
          NDef("b", kNoOp, {"a:2"}, {{"attr_b", 3.0f}}, kDeviceCPU1),
@@ -1748,6 +1937,9 @@ TEST_F(MutationTest, RenameNodeAndAddNewNodeWithRenamedNodeOldName) {
 
 TEST_F(MutationTest, ShiftNodesWithFanouts) {
   auto test_graph = []() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_7(mht_7_v, 1940, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "lambda");
+
     return GDef({NDef("d", kNoOp, {"a:2", "b:3", "a:4", "^a", "^c", "^b"},
                       {{"attr_d_1", "a"}, {"attr_d_2", 2.0f}}, kDeviceGPU1),
                  NDef("c", kNoOp, {"^a"}, {{"attr_c", "test"}}, kDeviceCPU1),
@@ -1785,6 +1977,9 @@ TEST_F(MutationTest, ShiftNodesWithFanouts) {
 
 TEST_F(MutationTest, RemoveFaninFanoutAndShiftFanout) {
   auto test_graph = []() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_8(mht_8_v, 1980, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "lambda");
+
     return GDef({NDef("a", kNoOp, {}, {}, kDeviceGPU0),
                  NDef("b", kNoOp, {"a:2", "a:1"}, {}, kDeviceGPU1),
                  NDef("c", kNoOp, {"a:1", "a:2"}, {}, kDeviceGPU2)},
@@ -1896,6 +2091,9 @@ constexpr char kMatchingFiles[] = "MatchingFiles";
 TEST_F(MutationTest, OpWithUnsupportedDevice) {
   GTEST_SKIP() << "Reenable once offline optimization tests enable CUDA.";
   auto test_graph = []() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_9(mht_9_v, 2094, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "lambda");
+
     return GDef({NDef("a", kMatchingFiles, {}, {}, kDeviceCPU0)},
                 /*funcs=*/{});
   };
@@ -1933,6 +2131,9 @@ TEST_F(MutationTest, OpWithUnsupportedDevice) {
 TEST_F(MutationTest, OpMissingAttribute) {
   GTEST_SKIP() << "Reenable once offline optimization tests enable CUDA.";
   auto test_graph = []() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_10(mht_10_v, 2134, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "lambda");
+
     return GDef({NDef("a", kIdentity, {}, {{"T", DT_FLOAT}}, kDeviceGPU0)},
                 /*funcs=*/{});
   };
@@ -1969,6 +2170,9 @@ TEST_F(MutationTest, OpMissingAttribute) {
 
 TEST_F(MutationTest, EmptyMutationUpdateIndexPersisting) {
   auto test_graph = []() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_11(mht_11_v, 2173, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "lambda");
+
     return GDef({NDef("a", kIdentity, {}, {{"T", DT_FLOAT}}, kDeviceGPU0)},
                 /*funcs=*/{});
   };
@@ -2003,6 +2207,9 @@ class TopologicalSortTest : public CompareGraphTest {
  protected:
   void CompareGraphOrder(const MutableGraphView& graph_view,
                          absl::Span<const string> node_names) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_12(mht_12_v, 2210, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "CompareGraphOrder");
+
     const int num_nodes = graph_view.NumNodes();
     ASSERT_EQ(num_nodes, node_names.size());
     for (int i = 0; i < num_nodes; ++i) {
@@ -2013,6 +2220,9 @@ class TopologicalSortTest : public CompareGraphTest {
   void CompareGraphNodePrecedences(
       const MutableGraphView& graph_view,
       absl::Span<const std::pair<string, string>> node_precedences) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_13(mht_13_v, 2223, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "CompareGraphNodePrecedences");
+
     for (const auto& node_precedence : node_precedences) {
       auto* parent_node = graph_view.GetNode(node_precedence.first);
       ASSERT_NE(parent_node, nullptr);
@@ -2025,6 +2235,9 @@ class TopologicalSortTest : public CompareGraphTest {
 
 TEST_F(TopologicalSortTest, ActiveMutationSort) {
   auto test_graph = []() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_14(mht_14_v, 2238, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "lambda");
+
     return GDef({NDef("a", kIdentity, {}, {{"T", DT_FLOAT}}, kDeviceGPU0),
                  NDef("b", kIdentity, {"a"}, {{"T", DT_FLOAT}}, kDeviceGPU1)},
                 /*funcs=*/{});
@@ -2052,6 +2265,9 @@ TEST_F(TopologicalSortTest, ActiveMutationSort) {
 
 TEST_F(TopologicalSortTest, BadExtraDependenciesSort) {
   auto test_graph = []() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_15(mht_15_v, 2268, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "lambda");
+
     return GDef({NDef("a", kIdentity, {}, {{"T", DT_FLOAT}}, kDeviceGPU0),
                  NDef("b", kIdentity, {}, {{"T", DT_FLOAT}}, kDeviceGPU1)},
                 /*funcs=*/{});
@@ -2082,6 +2298,9 @@ TEST_F(TopologicalSortTest, BadExtraDependenciesSort) {
 
 TEST_F(TopologicalSortTest, NoCyclesAllowed) {
   auto test_graph = []() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_16(mht_16_v, 2301, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "lambda");
+
     return GDef(
         {NDef("a", kIdentity, {}, {{"T", DT_FLOAT}}, kDeviceGPU0),
          NDef("b", kIdentity, {"a", "c"}, {{"T", DT_FLOAT}}, kDeviceGPU1),
@@ -2109,6 +2328,9 @@ TEST_F(TopologicalSortTest, NoCyclesAllowed) {
 
 TEST_F(TopologicalSortTest, NoNodesWithZeroFanins) {
   auto test_graph = []() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_17(mht_17_v, 2331, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "lambda");
+
     return GDef({NDef("a", kIdentity, {"b"}, {{"T", DT_FLOAT}}, kDeviceGPU0),
                  NDef("b", kIdentity, {"a"}, {{"T", DT_FLOAT}}, kDeviceGPU1)},
                 /*funcs=*/{});
@@ -2133,6 +2355,9 @@ TEST_F(TopologicalSortTest, NoNodesWithZeroFanins) {
 
 TEST_F(TopologicalSortTest, DidNotReachAllNodes) {
   auto test_graph = []() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_18(mht_18_v, 2358, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "lambda");
+
     return GDef({NDef("c", kIdentity, {}, {{"T", DT_FLOAT}}, kDeviceGPU2),
                  NDef("a", kIdentity, {"b"}, {{"T", DT_FLOAT}}, kDeviceGPU0),
                  NDef("b", kIdentity, {"a"}, {{"T", DT_FLOAT}}, kDeviceGPU1)},
@@ -2159,6 +2384,9 @@ TEST_F(TopologicalSortTest, DidNotReachAllNodes) {
 
 TEST_F(TopologicalSortTest, NoLoopGraph) {
   auto test_graph = []() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_19(mht_19_v, 2387, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "lambda");
+
     return GDef({NDef("c", kIdentity, {"f"}), NDef("a", kIdentity, {"f", "e"}),
                  NDef("b", kIdentity, {"e", "d"}), NDef("d", kIdentity, {"c"}),
                  NDef("f", kIdentity, {}), NDef("e", kIdentity, {})},
@@ -2180,6 +2408,9 @@ TEST_F(TopologicalSortTest, NoLoopGraph) {
 TEST_F(TopologicalSortTest, ValidLoopGraph) {
   // Control flow loop.
   auto test_graph = []() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_20(mht_20_v, 2411, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "lambda");
+
     return GDef(
         {NDef("while/Const_1", "Const", {}),
          NDef("while/Enter_2", "Enter", {"while/Const_1"},
@@ -2276,6 +2507,9 @@ TEST_F(TopologicalSortTest, ValidLoopGraph) {
 
 TEST_F(TopologicalSortTest, DuplicateFanins) {
   auto test_graph = []() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_21(mht_21_v, 2510, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "lambda");
+
     return GDef(
         {NDef("b", kIdentity, {"a", "a", "^a"}), NDef("a", "Const", {})},
         /*funcs=*/{});
@@ -2293,6 +2527,9 @@ TEST_F(TopologicalSortTest, DuplicateFanins) {
 
 TEST_F(TopologicalSortTest, DiamondDependencyNotACycle) {
   auto test_graph = []() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_22(mht_22_v, 2530, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "lambda");
+
     return GDef({NDef("e", kIdentity, {"b", "c", "d"}),
                  NDef("b", kIdentity, {"a"}), NDef("a", "Const", {}),
                  NDef("d", kIdentity, {"a"}), NDef("c", kIdentity, {"a"})},
@@ -2313,6 +2550,9 @@ TEST_F(TopologicalSortTest, DiamondDependencyNotACycle) {
 
 TEST_F(TopologicalSortTest, ExtraDependencies) {
   auto test_graph = []() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_23(mht_23_v, 2553, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "lambda");
+
     return GDef({NDef("c", kIdentity, {"f"}), NDef("a", kIdentity, {"f", "e"}),
                  NDef("b", kIdentity, {"e", "d"}), NDef("d", kIdentity, {"c"}),
                  NDef("f", kIdentity, {}), NDef("e", kIdentity, {})},
@@ -2343,6 +2583,9 @@ TEST_F(TopologicalSortTest, ExtraDependencies) {
 
 TEST_F(TopologicalSortTest, PushVisitedNodes) {
   auto test_graph = []() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_24(mht_24_v, 2586, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "lambda");
+
     return GDef({NDef("d", kIdentity, {"c"}), NDef("c", kIdentity, {"b", "a"}),
                  NDef("b", kIdentity, {"a"}), NDef("a", kIdentity, {})},
                 /*funcs=*/{});
@@ -2392,6 +2635,9 @@ TEST_F(TopologicalSortTest, PushVisitedNodes) {
 
 template <typename GraphViewT>
 void BM_GraphViewTConstruction(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_25(mht_25_v, 2638, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_GraphViewTConstruction");
+
   const int num_nodes = state.range(0);
   const int num_edges_per_node = state.range(1);
 
@@ -2404,14 +2650,23 @@ void BM_GraphViewTConstruction(::testing::benchmark::State& state) {
 }
 
 void BM_GraphViewConstruction(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_26(mht_26_v, 2653, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_GraphViewConstruction");
+
   BM_GraphViewTConstruction<GraphView>(state);
 }
 
 void BM_MutableGraphViewConstruction(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_27(mht_27_v, 2660, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_MutableGraphViewConstruction");
+
   BM_GraphViewTConstruction<MutableGraphView>(state);
 }
 
 void BM_MutableGraphViewClearAttrs(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_28(mht_28_v, 2667, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_MutableGraphViewClearAttrs");
+
   const int num_nodes = state.range(0);
   const int num_edges_per_node = state.range(1);
 
@@ -2446,6 +2701,9 @@ RUN_NUM_NODE_NUM_EDGE_BENCHMARK(BM_MutableGraphViewClearAttrs);
 template <typename GraphViewT>
 void BM_GraphViewTConstructionWithControlDependencies(
     ::testing::benchmark::State& state) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_29(mht_29_v, 2704, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_GraphViewTConstructionWithControlDependencies");
+
   const int num_fanins_fanouts = state.range(0);
 
   GraphDef graph_def =
@@ -2461,11 +2719,17 @@ void BM_GraphViewTConstructionWithControlDependencies(
 
 void BM_GraphViewConstructionWithControlDependencies(
     ::testing::benchmark::State& state) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_30(mht_30_v, 2722, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_GraphViewConstructionWithControlDependencies");
+
   BM_GraphViewTConstructionWithControlDependencies<GraphView>(state);
 }
 
 void BM_MutableGraphViewConstructionWithControlDependencies(
     ::testing::benchmark::State& state) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_31(mht_31_v, 2730, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_MutableGraphViewConstructionWithControlDependencies");
+
   BM_GraphViewTConstructionWithControlDependencies<MutableGraphView>(state);
 }
 
@@ -2474,6 +2738,9 @@ RUN_NUM_NODE_BENCHMARK(BM_MutableGraphViewConstructionWithControlDependencies);
 
 template <typename GraphViewT>
 void BM_GraphViewTGetNode(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_32(mht_32_v, 2741, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_GraphViewTGetNode");
+
   const int num_nodes = state.range(0);
 
   GraphDef graph_def =
@@ -2487,10 +2754,16 @@ void BM_GraphViewTGetNode(::testing::benchmark::State& state) {
 }
 
 void BM_GraphViewGetNode(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_33(mht_33_v, 2757, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_GraphViewGetNode");
+
   BM_GraphViewTGetNode<GraphView>(state);
 }
 
 void BM_MutableGraphViewGetNode(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_34(mht_34_v, 2764, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_MutableGraphViewGetNode");
+
   BM_GraphViewTGetNode<MutableGraphView>(state);
 }
 
@@ -2527,6 +2800,9 @@ RUN_NUM_NODE_BENCHMARK(BM_MutableGraphViewGetNode);
 
 template <typename GraphViewT>
 void BM_GraphViewTGetRegularFanin(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_35(mht_35_v, 2803, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_GraphViewTGetRegularFanin");
+
   const int num_fanins = state.range(0);
   const int num_fanouts = state.range(1);
 
@@ -2543,10 +2819,16 @@ void BM_GraphViewTGetRegularFanin(::testing::benchmark::State& state) {
 }
 
 void BM_GraphViewGetRegularFanin(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_36(mht_36_v, 2822, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_GraphViewGetRegularFanin");
+
   BM_GraphViewTGetRegularFanin<GraphView>(state);
 }
 
 void BM_MutableGraphViewGetRegularFanin(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_37(mht_37_v, 2829, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_MutableGraphViewGetRegularFanin");
+
   BM_GraphViewTGetRegularFanin<MutableGraphView>(state);
 }
 
@@ -2555,6 +2837,9 @@ RUN_NUM_FANIN_NUM_FANOUT_BENCHMARK(BM_MutableGraphViewGetRegularFanin);
 
 template <typename GraphViewT>
 void BM_GraphViewTGetRegularFanout(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_38(mht_38_v, 2840, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_GraphViewTGetRegularFanout");
+
   const int num_fanins = state.range(0);
   const int num_fanouts = state.range(1);
 
@@ -2571,10 +2856,16 @@ void BM_GraphViewTGetRegularFanout(::testing::benchmark::State& state) {
 }
 
 void BM_GraphViewGetRegularFanout(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_39(mht_39_v, 2859, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_GraphViewGetRegularFanout");
+
   BM_GraphViewTGetRegularFanout<GraphView>(state);
 }
 
 void BM_MutableGraphViewGetRegularFanout(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_40(mht_40_v, 2866, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_MutableGraphViewGetRegularFanout");
+
   BM_GraphViewTGetRegularFanout<MutableGraphView>(state);
 }
 
@@ -2583,6 +2874,9 @@ RUN_NUM_FANIN_NUM_FANOUT_BENCHMARK(BM_MutableGraphViewGetRegularFanout);
 
 template <typename GraphViewT>
 void BM_GraphViewTGetRegularFanins(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_41(mht_41_v, 2877, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_GraphViewTGetRegularFanins");
+
   const int num_fanins = state.range(0);
   const int num_fanouts = state.range(1);
 
@@ -2599,10 +2893,16 @@ void BM_GraphViewTGetRegularFanins(::testing::benchmark::State& state) {
 }
 
 void BM_GraphViewGetRegularFanins(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_42(mht_42_v, 2896, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_GraphViewGetRegularFanins");
+
   BM_GraphViewTGetRegularFanins<GraphView>(state);
 }
 
 void BM_MutableGraphViewGetRegularFanins(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_43(mht_43_v, 2903, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_MutableGraphViewGetRegularFanins");
+
   BM_GraphViewTGetRegularFanins<MutableGraphView>(state);
 }
 
@@ -2611,6 +2911,9 @@ RUN_NUM_FANIN_NUM_FANOUT_BENCHMARK(BM_MutableGraphViewGetRegularFanins);
 
 template <typename GraphViewT>
 void BM_GraphViewTGetRegularFanouts(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_44(mht_44_v, 2914, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_GraphViewTGetRegularFanouts");
+
   const int num_fanins = state.range(0);
   const int num_fanouts = state.range(1);
 
@@ -2627,10 +2930,16 @@ void BM_GraphViewTGetRegularFanouts(::testing::benchmark::State& state) {
 }
 
 void BM_GraphViewGetRegularFanouts(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_45(mht_45_v, 2933, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_GraphViewGetRegularFanouts");
+
   BM_GraphViewTGetRegularFanouts<GraphView>(state);
 }
 
 void BM_MutableGraphViewGetRegularFanouts(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_46(mht_46_v, 2940, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_MutableGraphViewGetRegularFanouts");
+
   BM_GraphViewTGetRegularFanouts<MutableGraphView>(state);
 }
 
@@ -2639,6 +2948,9 @@ RUN_NUM_FANIN_NUM_FANOUT_BENCHMARK(BM_MutableGraphViewGetRegularFanouts);
 
 template <typename GraphViewT>
 void BM_GraphViewTGetControllingFanins(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_47(mht_47_v, 2951, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_GraphViewTGetControllingFanins");
+
   const int num_fanins = state.range(0);
   const int num_fanouts = state.range(1);
 
@@ -2655,11 +2967,17 @@ void BM_GraphViewTGetControllingFanins(::testing::benchmark::State& state) {
 }
 
 void BM_GraphViewGetControllingFanins(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_48(mht_48_v, 2970, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_GraphViewGetControllingFanins");
+
   BM_GraphViewTGetControllingFanins<GraphView>(state);
 }
 
 void BM_MutableGraphViewGetControllingFanins(
     ::testing::benchmark::State& state) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_49(mht_49_v, 2978, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_MutableGraphViewGetControllingFanins");
+
   BM_GraphViewTGetControllingFanins<MutableGraphView>(state);
 }
 
@@ -2668,6 +2986,9 @@ RUN_NUM_FANIN_NUM_FANOUT_BENCHMARK(BM_MutableGraphViewGetControllingFanins);
 
 template <typename GraphViewT>
 void BM_GraphViewTGetControlledFanouts(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_50(mht_50_v, 2989, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_GraphViewTGetControlledFanouts");
+
   const int num_fanins = state.range(0);
   const int num_fanouts = state.range(1);
 
@@ -2684,11 +3005,17 @@ void BM_GraphViewTGetControlledFanouts(::testing::benchmark::State& state) {
 }
 
 void BM_GraphViewGetControlledFanouts(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_51(mht_51_v, 3008, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_GraphViewGetControlledFanouts");
+
   BM_GraphViewTGetControlledFanouts<GraphView>(state);
 }
 
 void BM_MutableGraphViewGetControlledFanouts(
     ::testing::benchmark::State& state) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_52(mht_52_v, 3016, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_MutableGraphViewGetControlledFanouts");
+
   BM_GraphViewTGetControlledFanouts<MutableGraphView>(state);
 }
 
@@ -2715,20 +3042,32 @@ inline void BM_GraphViewTHasRegularFanin(::testing::benchmark::State& state) {
 }
 
 void BM_GraphViewHasRegularFaninFirst(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_53(mht_53_v, 3045, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_GraphViewHasRegularFaninFirst");
+
   BM_GraphViewTHasRegularFanin<GraphView, false>(state);
 }
 
 void BM_GraphViewHasRegularFaninLast(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_54(mht_54_v, 3052, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_GraphViewHasRegularFaninLast");
+
   BM_GraphViewTHasRegularFanin<GraphView, true>(state);
 }
 
 void BM_MutableGraphViewHasRegularFaninFirst(
     ::testing::benchmark::State& state) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_55(mht_55_v, 3060, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_MutableGraphViewHasRegularFaninFirst");
+
   BM_GraphViewTHasRegularFanin<MutableGraphView, false>(state);
 }
 
 void BM_MutableGraphViewHasRegularFaninLast(
     ::testing::benchmark::State& state) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_56(mht_56_v, 3068, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_MutableGraphViewHasRegularFaninLast");
+
   BM_GraphViewTHasRegularFanin<MutableGraphView, true>(state);
 }
 
@@ -2758,20 +3097,32 @@ inline void BM_GraphViewTHasControllingFanin(
 }
 
 void BM_GraphViewHasControllingFaninFirst(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_57(mht_57_v, 3100, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_GraphViewHasControllingFaninFirst");
+
   BM_GraphViewTHasControllingFanin<GraphView, false>(state);
 }
 
 void BM_GraphViewHasControllingFaninLast(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_58(mht_58_v, 3107, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_GraphViewHasControllingFaninLast");
+
   BM_GraphViewTHasControllingFanin<GraphView, true>(state);
 }
 
 void BM_MutableGraphViewHasControllingFaninFirst(
     ::testing::benchmark::State& state) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_59(mht_59_v, 3115, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_MutableGraphViewHasControllingFaninFirst");
+
   BM_GraphViewTHasControllingFanin<MutableGraphView, false>(state);
 }
 
 void BM_MutableGraphViewHasControllingFaninLast(
     ::testing::benchmark::State& state) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_60(mht_60_v, 3123, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_MutableGraphViewHasControllingFaninLast");
+
   BM_GraphViewTHasControllingFanin<MutableGraphView, true>(state);
 }
 
@@ -2800,20 +3151,32 @@ inline void BM_GraphViewTHasRegularFanout(::testing::benchmark::State& state) {
 }
 
 void BM_GraphViewHasRegularFanoutFirst(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_61(mht_61_v, 3154, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_GraphViewHasRegularFanoutFirst");
+
   BM_GraphViewTHasRegularFanout<GraphView, false>(state);
 }
 
 void BM_GraphViewHasRegularFanoutLast(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_62(mht_62_v, 3161, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_GraphViewHasRegularFanoutLast");
+
   BM_GraphViewTHasRegularFanout<GraphView, true>(state);
 }
 
 void BM_MutableGraphViewHasRegularFanoutFirst(
     ::testing::benchmark::State& state) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_63(mht_63_v, 3169, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_MutableGraphViewHasRegularFanoutFirst");
+
   BM_GraphViewTHasRegularFanout<MutableGraphView, false>(state);
 }
 
 void BM_MutableGraphViewHasRegularFanoutLast(
     ::testing::benchmark::State& state) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_64(mht_64_v, 3177, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_MutableGraphViewHasRegularFanoutLast");
+
   BM_GraphViewTHasRegularFanout<MutableGraphView, true>(state);
 }
 
@@ -2843,20 +3206,32 @@ inline void BM_GraphViewTHasControlledFanout(
 }
 
 void BM_GraphViewHasControlledFanoutFirst(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_65(mht_65_v, 3209, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_GraphViewHasControlledFanoutFirst");
+
   BM_GraphViewTHasControlledFanout<GraphView, false>(state);
 }
 
 void BM_GraphViewHasControlledFanoutLast(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_66(mht_66_v, 3216, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_GraphViewHasControlledFanoutLast");
+
   BM_GraphViewTHasControlledFanout<GraphView, true>(state);
 }
 
 void BM_MutableGraphViewHasControlledFanoutFirst(
     ::testing::benchmark::State& state) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_67(mht_67_v, 3224, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_MutableGraphViewHasControlledFanoutFirst");
+
   BM_GraphViewTHasControlledFanout<MutableGraphView, false>(state);
 }
 
 void BM_MutableGraphViewHasControlledFanoutLast(
     ::testing::benchmark::State& state) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_68(mht_68_v, 3232, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_MutableGraphViewHasControlledFanoutLast");
+
   BM_GraphViewTHasControlledFanout<MutableGraphView, true>(state);
 }
 
@@ -2866,6 +3241,9 @@ RUN_NUM_FANIN_NUM_FANOUT_BENCHMARK(BM_MutableGraphViewHasControlledFanoutFirst);
 RUN_NUM_FANIN_NUM_FANOUT_BENCHMARK(BM_MutableGraphViewHasControlledFanoutLast);
 
 void BM_SortTopologically(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_testDTcc mht_69(mht_69_v, 3244, "", "./tensorflow/core/grappler/utils/graph_view_test.cc", "BM_SortTopologically");
+
   const int size = state.range(0);
 
   GraphDef graph = test::CreateRandomGraph(size);

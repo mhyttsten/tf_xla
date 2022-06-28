@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -107,10 +275,16 @@ const char* kKernelLaunchTfDataContention =
 
 template <class Collection>
 double GetTimeInMs(const Collection& type_ps, EventType event_type) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc mht_0(mht_0_v, 278, "", "./tensorflow/core/profiler/convert/op_stats_to_input_pipeline_analysis.cc", "GetTimeInMs");
+
   return PicoToMilli(gtl::FindWithDefault(type_ps, event_type, /*value=*/0));
 }
 
 StepSummary GetStepSummaryForSampleStats(const Stat<double>& sample_stats) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc mht_1(mht_1_v, 285, "", "./tensorflow/core/profiler/convert/op_stats_to_input_pipeline_analysis.cc", "GetStepSummaryForSampleStats");
+
   StepSummary step_time_summary;
   double avg, sdv, min, max;
   if (sample_stats.empty()) {
@@ -132,6 +306,9 @@ StepSummary GetStepSummaryForSampleStats(const Stat<double>& sample_stats) {
 
 GenericStepTimeBreakdown ComputeGenericStepTimeBreakdownInMs(
     const InputPipelineAnalysisResult& analysis) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc mht_2(mht_2_v, 309, "", "./tensorflow/core/profiler/convert/op_stats_to_input_pipeline_analysis.cc", "ComputeGenericStepTimeBreakdownInMs");
+
   Stat<double> unknown_time_ms;
   Stat<double> host_wait_input_ms;
   Stat<double> host_to_device_ms;
@@ -191,6 +368,9 @@ GenericStepTimeBreakdown ComputeGenericStepTimeBreakdownInMs(
 
 InputPipelineAnalysisResult ComputeGenericInputPipelineAnalysisResult(
     const protobuf::RepeatedPtrField<PerCoreStepInfo>& grouped_by_step) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc mht_3(mht_3_v, 371, "", "./tensorflow/core/profiler/convert/op_stats_to_input_pipeline_analysis.cc", "ComputeGenericInputPipelineAnalysisResult");
+
   InputPipelineAnalysisResult result;
 
   // Computes the summary of step time in ms.
@@ -269,6 +449,9 @@ enum class InputOpCategory {
 };
 
 std::string InputOpCategoryString(InputOpCategory category) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc mht_4(mht_4_v, 452, "", "./tensorflow/core/profiler/convert/op_stats_to_input_pipeline_analysis.cc", "InputOpCategoryString");
+
   switch (category) {
     case InputOpCategory::kEnqueue:
       return "Enqueue";
@@ -282,6 +465,10 @@ std::string InputOpCategoryString(InputOpCategory category) {
 }
 
 inline bool IsInputOp(absl::string_view category) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("category: \"" + std::string(category.data(), category.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc mht_5(mht_5_v, 469, "", "./tensorflow/core/profiler/convert/op_stats_to_input_pipeline_analysis.cc", "IsInputOp");
+
   // Do not include "IteratorGetNext*" here, because IteratorGetNext is an Op
   // that experiences the install stall, not an Op that causes the input stall.
   return IsInfeedEnqueueOp(category) || IsDatasetOp(category) ||
@@ -292,6 +479,11 @@ inline bool IsInputOp(absl::string_view category) {
 //   Confirm with the tf.data team if the classification below is correct.
 InputOpCategory CategorizeInputOp(absl::string_view name,
                                   absl::string_view category) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   mht_6_v.push_back("category: \"" + std::string(category.data(), category.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc mht_6(mht_6_v, 484, "", "./tensorflow/core/profiler/convert/op_stats_to_input_pipeline_analysis.cc", "CategorizeInputOp");
+
   if (IsInfeedEnqueueOp(category) || IsMemcpyHToDOp(category)) {
     // Ops for sending input from host to device.
     return InputOpCategory::kEnqueue;
@@ -326,6 +518,9 @@ struct InputOpMetrics {
 };
 
 InputOpMetrics SelectInputOpMetrics(const OpMetricsDb& all_op_metrics) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc mht_7(mht_7_v, 521, "", "./tensorflow/core/profiler/convert/op_stats_to_input_pipeline_analysis.cc", "SelectInputOpMetrics");
+
   InputOpMetrics input_op_metrics;
   for (const OpMetrics* op_metrics : SortedOpMetricsDb(all_op_metrics)) {
     if (IsInputOp(op_metrics->category())) {
@@ -339,6 +534,9 @@ InputOpMetrics SelectInputOpMetrics(const OpMetricsDb& all_op_metrics) {
 InputOpDetails ConvertOpMetricsToInputOpDetails(const OpMetrics& op_metrics,
                                                 uint64 input_op_time_ps,
                                                 InputOpCategory category) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc mht_8(mht_8_v, 537, "", "./tensorflow/core/profiler/convert/op_stats_to_input_pipeline_analysis.cc", "ConvertOpMetricsToInputOpDetails");
+
   InputOpDetails details;
   details.set_op_name(op_metrics.name());
   details.set_count(op_metrics.occurrences());
@@ -356,6 +554,9 @@ InputOpDetails ConvertOpMetricsToInputOpDetails(const OpMetrics& op_metrics,
 double RatioOfHostToDeviceTimeToStepTime(
     const OpMetricsDb& host_tf_metrics_db,
     const InputPipelineAnalysisResult& input_pipeline_analysis) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc mht_9(mht_9_v, 557, "", "./tensorflow/core/profiler/convert/op_stats_to_input_pipeline_analysis.cc", "RatioOfHostToDeviceTimeToStepTime");
+
   // For TPU execution that uses infeed.
   absl::optional<double> host_infeed_enqueue_ratio =
       HostInfeedEnqueueRatio(host_tf_metrics_db);
@@ -381,6 +582,9 @@ double RatioOfHostToDeviceTimeToStepTime(
 void DeviceCollectivesAnalysis(double device_collectives_percent,
                                std::string* device_collectives_classification,
                                std::string* device_collectives_statement) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc mht_10(mht_10_v, 585, "", "./tensorflow/core/profiler/convert/op_stats_to_input_pipeline_analysis.cc", "DeviceCollectivesAnalysis");
+
   if (device_collectives_percent >=
       kHighlyDeviceCollectivesBoundThresholdInPercent) {
     *device_collectives_classification = "high";
@@ -404,6 +608,9 @@ void DeviceCollectivesAnalysis(double device_collectives_percent,
 void KernelLaunchAnalysis(bool tfdata_used, double kernel_launch_percent,
                           std::string* kernel_launch_classification,
                           std::string* kernel_launch_statement) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc mht_11(mht_11_v, 611, "", "./tensorflow/core/profiler/convert/op_stats_to_input_pipeline_analysis.cc", "KernelLaunchAnalysis");
+
   if (kernel_launch_percent >= kHighlyKernelLaunchBoundThresholdInPercent) {
     *kernel_launch_classification = "high";
     *kernel_launch_statement = absl::StrCat(
@@ -430,6 +637,9 @@ void KernelLaunchAnalysis(bool tfdata_used, double kernel_launch_percent,
 void AllOtherAnalysis(bool all_other_reported, double all_other_percent,
                       std::string* all_other_classification,
                       std::string* all_other_statement) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc mht_12(mht_12_v, 640, "", "./tensorflow/core/profiler/convert/op_stats_to_input_pipeline_analysis.cc", "AllOtherAnalysis");
+
   if (all_other_reported) {
     *all_other_classification = "no";
     *all_other_statement = "";
@@ -451,6 +661,9 @@ void AllOtherAnalysis(bool all_other_reported, double all_other_percent,
 
 // Tests if tf.data API is in use.
 bool TfDataInUse(const InputTimeBreakdown& breakdown) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc mht_13(mht_13_v, 664, "", "./tensorflow/core/profiler/convert/op_stats_to_input_pipeline_analysis.cc", "TfDataInUse");
+
   // Do not include enqueue_us because the "enqueue" Op that Xprof recognizes is
   // not part of tf.data.
   return breakdown.demanded_file_read_us() > 0 ||
@@ -460,12 +673,20 @@ bool TfDataInUse(const InputTimeBreakdown& breakdown) {
 
 // Returns a HTML link with the given text.
 std::string MakeDocLink(absl::string_view doc_link, absl::string_view text) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("doc_link: \"" + std::string(doc_link.data(), doc_link.size()) + "\"");
+   mht_14_v.push_back("text: \"" + std::string(text.data(), text.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc mht_14(mht_14_v, 678, "", "./tensorflow/core/profiler/convert/op_stats_to_input_pipeline_analysis.cc", "MakeDocLink");
+
   return absl::StrCat("<a href=\"", doc_link, "\" target=\"_blank\">", text,
                       "</a>");
 }
 
 // Returns the HTML link to the introduction to the tf.data API.
 std::string DatasetIntroDoc() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc mht_15(mht_15_v, 687, "", "./tensorflow/core/profiler/convert/op_stats_to_input_pipeline_analysis.cc", "DatasetIntroDoc");
+
   return "https://www.tensorflow.org/guide/data";
 }
 
@@ -473,6 +694,9 @@ std::string DatasetIntroDoc() {
 
 void GenerateHostResult(const OpMetricsDb& host_tf_metrics_db,
                         InputPipelineAnalysisResult* result) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc mht_16(mht_16_v, 697, "", "./tensorflow/core/profiler/convert/op_stats_to_input_pipeline_analysis.cc", "GenerateHostResult");
+
   InputOpMetrics input_op_metrics = SelectInputOpMetrics(host_tf_metrics_db);
   // Returns if the program is not using an input pipeline with
   // instrumentation and hence no input ops are found.
@@ -532,6 +756,9 @@ void GenerateHostResult(const OpMetricsDb& host_tf_metrics_db,
 }
 
 InputPipelineAnalysisRecommendation GenerateRecommendation() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc mht_17(mht_17_v, 759, "", "./tensorflow/core/profiler/convert/op_stats_to_input_pipeline_analysis.cc", "GenerateRecommendation");
+
   const absl::string_view kDatasetIntro =
       "https://www.tensorflow.org/programmers_guide/datasets";
 
@@ -575,6 +802,9 @@ InputPipelineAnalysisRecommendation GenerateRecommendation() {
 
 StepSummary ComputeStepTimeSummaryInMs(
     const protobuf::RepeatedPtrField<PerCoreStepInfo>& grouped_by_step) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc mht_18(mht_18_v, 805, "", "./tensorflow/core/profiler/convert/op_stats_to_input_pipeline_analysis.cc", "ComputeStepTimeSummaryInMs");
+
   Stat<double> total_step_stats_in_ms;
   // iterates over each step.
   for (const auto& coreid_stepinfo_map : grouped_by_step) {
@@ -595,6 +825,9 @@ StepSummary ComputeStepTimeSummaryInMs(
 
 InputPipelineAnalysisResult ConvertOpStatsToInputPipelineAnalysis(
     const OpStats& op_stats) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc mht_19(mht_19_v, 828, "", "./tensorflow/core/profiler/convert/op_stats_to_input_pipeline_analysis.cc", "ConvertOpStatsToInputPipelineAnalysis");
+
   InputPipelineAnalysisResult result =
       ComputeGenericInputPipelineAnalysisResult(
           op_stats.step_db().step_sequence());
@@ -623,6 +856,9 @@ InputPipelineAnalysisResult ConvertOpStatsToInputPipelineAnalysis(
 bool InputAnalysis(double input_percent, double all_other_percent,
                    std::string* input_classification,
                    std::string* input_statement) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc mht_20(mht_20_v, 859, "", "./tensorflow/core/profiler/convert/op_stats_to_input_pipeline_analysis.cc", "InputAnalysis");
+
   absl::string_view non_input_time = "other time";
   if (input_percent >= kHighlyInfeedBoundThresholdInPercent) {
     *input_classification = "host";
@@ -666,6 +902,9 @@ bool InputAnalysis(double input_percent, double all_other_percent,
 
 void OutputAnalysis(double output_percent, std::string* output_classification,
                     std::string* output_statement) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc mht_21(mht_21_v, 905, "", "./tensorflow/core/profiler/convert/op_stats_to_input_pipeline_analysis.cc", "OutputAnalysis");
+
   if (output_percent >= kHighlyOutfeedBoundThresholdInPercent) {
     *output_classification = "host";
     *output_statement = absl::StrCat(
@@ -690,6 +929,9 @@ BottleneckAnalysis ComputeBottleneckAnalysis(
     const InputTimeBreakdown& input_time_breakdown,
     const ::tensorflow::protobuf::RepeatedPtrField<::google::protobuf::Any>&
         any_step_details) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc mht_22(mht_22_v, 932, "", "./tensorflow/core/profiler/convert/op_stats_to_input_pipeline_analysis.cc", "ComputeBottleneckAnalysis");
+
   double total_step_time_ms = 0;
   double total_input_ms = 0;
   double total_output_ms = 0;
@@ -794,6 +1036,10 @@ BottleneckAnalysis ComputeBottleneckAnalysis(
 
 std::string GetSummaryNextStep(absl::string_view input_classification,
                                const InputTimeBreakdown& breakdown) {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("input_classification: \"" + std::string(input_classification.data(), input_classification.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc mht_23(mht_23_v, 1040, "", "./tensorflow/core/profiler/convert/op_stats_to_input_pipeline_analysis.cc", "GetSummaryNextStep");
+
   std::string summary_next_step;
   if (input_classification == "host" || input_classification == "both") {
     if (!TfDataInUse(breakdown)) {
@@ -818,6 +1064,9 @@ std::string GetSummaryNextStep(absl::string_view input_classification,
 
 double HostToDeviceTransferAsPercentOfInputTime(
     const InputTimeBreakdown& breakdown) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSconvertPSop_stats_to_input_pipeline_analysisDTcc mht_24(mht_24_v, 1067, "", "./tensorflow/core/profiler/convert/op_stats_to_input_pipeline_analysis.cc", "HostToDeviceTransferAsPercentOfInputTime");
+
   // Thanks to the scaling trick we did in GenerateHostResult(), we can
   // estimate the percentage of input-time spent on host-to-device transfer in
   // the following way.

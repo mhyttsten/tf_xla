@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -45,6 +213,9 @@ namespace {
 // op (quantized to 8 bit), in order to quantize to 32 bit.
 TfLiteStatus DuplicateBiasesWithMultipleUses(ModelT* model,
                                              ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_0(mht_0_v, 216, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "DuplicateBiasesWithMultipleUses");
+
   std::set<int> input_uses;
   // Get all input uses for constant tensors.
   for (size_t subgraph_idx = 0; subgraph_idx < model->subgraphs.size();
@@ -132,6 +303,9 @@ TfLiteStatus DuplicateBiasesWithMultipleUses(ModelT* model,
 }
 
 bool IsFloatTensor(const SubGraphT* subgraph, int32_t tensor_idx) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_1(mht_1_v, 306, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "IsFloatTensor");
+
   TensorT* tensor = subgraph->tensors[tensor_idx].get();
   if (tensor->type != TensorType_FLOAT32) {
     // Skip non-real-valued tensor.
@@ -147,6 +321,10 @@ operator_property::OperatorProperty GetOperatorProperty(
     const std::unordered_set<string>& operator_names, const ModelT* model,
     int subgraph_index, int op_idx, const string& operator_name,
     const TensorType& activations_type, bool disable_per_channel = false) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("operator_name: \"" + operator_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_2(mht_2_v, 325, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "GetOperatorProperty");
+
   operator_property::OperatorProperty property =
       operator_property::GetOperatorProperty(model, subgraph_index, op_idx);
   const SubGraphT* subgraph = model->subgraphs[subgraph_index].get();
@@ -176,12 +354,19 @@ operator_property::OperatorProperty GetOperatorProperty(
 
 bool IsRealValueOp(const std::unordered_set<string>& real_value_op_set,
                    const string& operator_name) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("operator_name: \"" + operator_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_3(mht_3_v, 358, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "IsRealValueOp");
+
   return real_value_op_set.find(operator_name) != real_value_op_set.end();
 }
 
 // Utility function to determine if tensor is constant and only has one use.
 bool IsConstantWithOneUse(const ModelT* model, const SubGraphT* subgraph,
                           const int tensor_id) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_4(mht_4_v, 367, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "IsConstantWithOneUse");
+
   if (!subgraph || (tensor_id >= subgraph->tensors.size())) {
     return false;
   }
@@ -277,6 +462,9 @@ TfLiteStatus QuantizeBias(ModelT* model, const TensorT* input_tensor,
                           bool is_per_channel, int channel_dim_index,
                           const TensorType& bias_type,
                           ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_5(mht_5_v, 465, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "QuantizeBias");
+
   if (bias_tensor->shape.size() != 1) {
     TF_LITE_REPORT_ERROR(error_reporter, "Expected bias tensor shape to be 1.");
     return kTfLiteError;
@@ -358,6 +546,9 @@ TfLiteStatus QuantizeBias(ModelT* model, const TensorT* input_tensor,
 
 // True if the tensor type has to be modified.
 bool TensorTypeChangeRequired(const TensorT* tensor, const TensorType& type) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_6(mht_6_v, 549, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "TensorTypeChangeRequired");
+
   // The quantized model is type INT8/INT16, so if the user provided type is
   // INT8/INT16, we do not have to do any custom logic. Additionally, if the
   // current tensor isn't INT8/INT16 quantized, the custom type doesn't apply.
@@ -373,6 +564,9 @@ bool TensorTypeChangeRequired(const TensorT* tensor, const TensorType& type) {
 // requantize if the output scale is the same as the input tensor's.
 bool InputQuantizeRequired(const ModelT* model, const SubGraphT* subgraph,
                            int32_t input_idx) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_7(mht_7_v, 567, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "InputQuantizeRequired");
+
   std::vector<OperatorT*> quantize_ops;
   for (size_t op_idx = 0; op_idx < subgraph->operators.size(); op_idx++) {
     OperatorT* op = subgraph->operators[op_idx].get();
@@ -410,6 +604,9 @@ bool InputQuantizeRequired(const ModelT* model, const SubGraphT* subgraph,
 int32_t SetInputType(ModelT* model, SubGraphT* subgraph,
                      const int32_t tensor_idx, const TensorType& input_type,
                      const TensorType& activations_type) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_8(mht_8_v, 607, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "SetInputType");
+
   TensorT* tensor = subgraph->tensors[tensor_idx].get();
   if (!TensorTypeChangeRequired(tensor, input_type)) {
     return -1;
@@ -474,6 +671,9 @@ int32_t SetInputType(ModelT* model, SubGraphT* subgraph,
 int32_t SetOutputType(ModelT* model, SubGraphT* subgraph,
                       const int32_t tensor_idx, const TensorType& output_type,
                       const TensorType& activations_type) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_9(mht_9_v, 674, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "SetOutputType");
+
   TensorT* tensor = subgraph->tensors[tensor_idx].get();
   if (!TensorTypeChangeRequired(tensor, output_type)) {
     return -1;
@@ -538,6 +738,9 @@ TfLiteStatus SetInputAndOutputTypes(ModelT* model, const TensorType& input_type,
                                     const TensorType& output_type,
                                     const TensorType& activations_type,
                                     ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_10(mht_10_v, 741, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "SetInputAndOutputTypes");
+
   for (int subgraph_idx = 0; subgraph_idx < model->subgraphs.size();
        subgraph_idx++) {
     SubGraphT* subgraph = model->subgraphs.at(subgraph_idx).get();
@@ -610,6 +813,9 @@ TfLiteStatus RequantizeConstant(
     const std::vector<uint8_t>& buffer_data, const TensorT* tensor,
     const std::unique_ptr<QuantizationParametersT>& new_quantization,
     std::vector<uint8_t>& new_buffer_data) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_11(mht_11_v, 816, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "RequantizeConstant");
+
   if (new_buffer_data.size() != buffer_data.size()) {
     new_buffer_data.resize(buffer_data.size());
   }
@@ -688,6 +894,9 @@ TfLiteStatus ApplyConstraints(
     ModelT* model, const std::unordered_set<string>& operator_names,
     const std::unordered_set<string>& real_value_op_set,
     TensorType activations_type, ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_12(mht_12_v, 897, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "ApplyConstraints");
+
   for (int subgraph_idx = 0; subgraph_idx < model->subgraphs.size();
        subgraph_idx++) {
     SubGraphT* subgraph = model->subgraphs.at(subgraph_idx).get();
@@ -792,6 +1001,9 @@ TfLiteStatus ApplyConstraints(
 // used.
 void SetOperatorPropertyADDSUBOperator(ModelT* model,
                                        const TensorType& activations_type) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_13(mht_13_v, 1004, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "SetOperatorPropertyADDSUBOperator");
+
   if (activations_type != TensorType_INT16) {
     // This is needed only in case of int16 activations.
     return;
@@ -852,6 +1064,9 @@ std::vector<std::pair<int, operator_property::TensorProperty>> GetOutputs(
 
 bool ShouldRestrictSameInputOutputScale(
     operator_property::OperatorProperty property) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_14(mht_14_v, 1067, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "ShouldRestrictSameInputOutputScale");
+
   // Ops with multiple inputs (i.e. concat, max and min) gets restricted in
   // ApplyConstraints.
   return (!property.arbitrary_inputs &&
@@ -859,6 +1074,9 @@ bool ShouldRestrictSameInputOutputScale(
 }
 
 bool IsSubgraphInput(SubGraphT* subgraph, int32_t index) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_15(mht_15_v, 1077, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "IsSubgraphInput");
+
   for (const int32_t input_idx : subgraph->inputs) {
     if (index == input_idx) {
       return true;
@@ -873,6 +1091,9 @@ TfLiteStatus QuantizeOpInput(
     operator_property::OperatorProperty property,
     const std::pair<int32_t, operator_property::TensorProperty>& input,
     const TensorType& activations_type, ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_16(mht_16_v, 1094, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "QuantizeOpInput");
+
   int32_t input_idx = input.first;
   operator_property::TensorProperty tensor_property = input.second;
   SubGraphT* subgraph = model->subgraphs.at(subgraph_idx).get();
@@ -1066,6 +1287,9 @@ TfLiteStatus QuantizeOpOutput(
     operator_property::OperatorProperty property,
     const std::pair<int32_t, operator_property::TensorProperty>& output,
     TensorType activations_type, ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_17(mht_17_v, 1290, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "QuantizeOpOutput");
+
   int32_t output_idx = output.first;
   operator_property::TensorProperty tensor_property = output.second;
   // If the operator is not quantizable, we don't need to do anything for the
@@ -1163,6 +1387,9 @@ TfLiteStatus QuantizeOpOutput(
 TfLiteStatus QuantizeIntermediateTensors(ModelT* model,
                                          TensorType activations_type,
                                          ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_18(mht_18_v, 1390, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "QuantizeIntermediateTensors");
+
   for (size_t subgraph_idx = 0; subgraph_idx < model->subgraphs.size();
        subgraph_idx++) {
     SubGraphT* subgraph = model->subgraphs.at(subgraph_idx).get();
@@ -1236,6 +1463,9 @@ TfLiteStatus QuantizeIntermediateTensors(ModelT* model,
 // identical to activation, is not a state tensor the input value (range) of the
 // very first inference is not captured.
 TfLiteStatus QuantizeSharedRange(ModelT* model, ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_19(mht_19_v, 1466, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "QuantizeSharedRange");
+
   for (size_t subgraph_idx = 0; subgraph_idx < model->subgraphs.size();
        subgraph_idx++) {
     SubGraphT* subgraph = model->subgraphs.at(subgraph_idx).get();
@@ -1294,6 +1524,9 @@ TfLiteStatus QuantizeConstantVariable(ModelT* model,
                                       const TensorType& activations_type,
                                       TensorT* var_tensor,
                                       ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_20(mht_20_v, 1527, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "QuantizeConstantVariable");
+
   if (activations_type == TensorType_INT16) {
     const float min = var_tensor->quantization->min[0];
     const float max = var_tensor->quantization->max[0];
@@ -1339,6 +1572,9 @@ using ResourceMinMaxMap = std::map<std::string, std::pair<float, float>>;
 void PopulateResourceMinMaxMap(ModelT* model,
                                TensorResourceMap& tensor_resource_map,
                                ResourceMinMaxMap& resource_min_max_map) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_21(mht_21_v, 1575, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "PopulateResourceMinMaxMap");
+
   for (size_t subgraph_idx = 0; subgraph_idx < model->subgraphs.size();
        subgraph_idx++) {
     SubGraphT* subgraph = model->subgraphs.at(subgraph_idx).get();
@@ -1393,6 +1629,9 @@ void PopulateResourceMinMaxMap(ModelT* model,
 TfLiteStatus QuantizeResources(ModelT* model,
                                const TensorType& activations_type,
                                ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_22(mht_22_v, 1632, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "QuantizeResources");
+
   // Shared name is only stored in the var handle operator, use resoure name map
   // to map tensors to resource names.
   TensorResourceMap tensor_resource_map;
@@ -1468,6 +1707,9 @@ TfLiteStatus QuantizeWeightsInputOutput(
     const std::unordered_set<string>& real_value_op_set,
     const TensorType& activations_type, bool disable_per_channel,
     ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_23(mht_23_v, 1710, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "QuantizeWeightsInputOutput");
+
   // Flag to track unsupported ops.
   bool quantization_not_supported = false;
 
@@ -1544,6 +1786,9 @@ TfLiteStatus QuantizeBiases(ModelT* model,
                             const TensorType& bias_type,
                             bool disable_per_channel,
                             ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_24(mht_24_v, 1789, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "QuantizeBiases");
+
   for (size_t subgraph_idx = 0; subgraph_idx < model->subgraphs.size();
        subgraph_idx++) {
     SubGraphT* subgraph = model->subgraphs.at(subgraph_idx).get();
@@ -1634,6 +1879,9 @@ TfLiteStatus FillQuantizationParams(
     const std::unordered_set<string>& real_value_op_set,
     const TensorType& activations_type, bool disable_per_channel,
     ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_25(mht_25_v, 1882, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "FillQuantizationParams");
+
   for (size_t subgraph_idx = 0; subgraph_idx < model->subgraphs.size();
        subgraph_idx++) {
     SubGraphT* subgraph = model->subgraphs.at(subgraph_idx).get();
@@ -1752,6 +2000,9 @@ TfLiteStatus EnsureBiasScaleCompatibility(
     const std::unordered_set<string>& real_value_op_set,
     const TensorType& activations_type, bool disable_per_channel,
     ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_26(mht_26_v, 2003, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "EnsureBiasScaleCompatibility");
+
   for (size_t subgraph_idx = 0; subgraph_idx < model->subgraphs.size();
        subgraph_idx++) {
     SubGraphT* subgraph = model->subgraphs.at(subgraph_idx).get();
@@ -1903,6 +2154,9 @@ TfLiteStatus QuantizeModel(flatbuffers::FlatBufferBuilder* builder,
                            const TensorType& bias_type,
                            bool disable_per_channel,
                            ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_27(mht_27_v, 2157, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "QuantizeModel");
+
   auto real_value_op_set =
       PopulateRealValueOpSet(model, operator_names, activations_type);
   TF_LITE_ENSURE_STATUS(DuplicateBiasesWithMultipleUses(model, error_reporter));
@@ -1945,6 +2199,9 @@ TfLiteStatus QuantizeModel(flatbuffers::FlatBufferBuilder* builder,
                            const TensorType& activations_type,
                            const TensorType& bias_type,
                            ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_28(mht_28_v, 2202, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "QuantizeModel");
+
   return QuantizeModel(builder, model, input_type, output_type, allow_float,
                        operator_names, activations_type,
                        /*bias_type=*/bias_type,
@@ -1956,6 +2213,9 @@ TfLiteStatus QuantizeModelAllOperators(
     const TensorType& input_type, const TensorType& output_type,
     bool allow_float, const TensorType& activations_type,
     const TensorType& bias_type, ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_29(mht_29_v, 2216, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "QuantizeModelAllOperators");
+
   return QuantizeModel(builder, model, input_type, output_type, allow_float,
                        GetAllOperatorOutputs(model), activations_type,
                        bias_type,
@@ -1968,6 +2228,9 @@ TfLiteStatus QuantizeModelAllOperators(
     bool allow_float, const TensorType& activations_type,
     const TensorType& bias_type, bool disable_per_channel,
     ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_30(mht_30_v, 2231, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "QuantizeModelAllOperators");
+
   return QuantizeModel(builder, model, input_type, output_type, allow_float,
                        GetAllOperatorOutputs(model), activations_type,
                        bias_type, disable_per_channel, error_reporter);
@@ -1977,6 +2240,9 @@ TfLiteStatus QuantizeModel(flatbuffers::FlatBufferBuilder* builder,
                            ModelT* model, const TensorType& input_type,
                            const TensorType& output_type, bool allow_float,
                            ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_31(mht_31_v, 2243, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "QuantizeModel");
+
   return QuantizeModel(builder, model, input_type, output_type, allow_float,
                        GetAllOperatorOutputs(model),
                        /*activations_type=*/TensorType_INT8,
@@ -1987,12 +2253,18 @@ TfLiteStatus QuantizeModel(flatbuffers::FlatBufferBuilder* builder,
                            ModelT* model, const TensorType& input_type,
                            const TensorType& output_type,
                            ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_32(mht_32_v, 2256, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "QuantizeModel");
+
   return QuantizeModel(builder, model, input_type, output_type,
                        /*allow_float=*/false, error_reporter);
 }
 
 TfLiteStatus QuantizeModel(flatbuffers::FlatBufferBuilder* builder,
                            ModelT* model, ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_modelDTcc mht_33(mht_33_v, 2265, "", "./tensorflow/lite/tools/optimize/quantize_model.cc", "QuantizeModel");
+
   return QuantizeModel(builder, model, TensorType_FLOAT32, TensorType_FLOAT32,
                        /*allow_float=*/false, error_reporter);
 }

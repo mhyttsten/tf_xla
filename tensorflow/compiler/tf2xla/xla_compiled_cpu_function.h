@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_COMPILER_TF2XLA_XLA_COMPILED_CPU_FUNCTION_H_
 #define TENSORFLOW_COMPILER_TF2XLA_XLA_COMPILED_CPU_FUNCTION_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <cassert>
 #include <string>
@@ -128,6 +296,9 @@ class XlaCompiledCpuFunction {
 
   // Sets the intra-op thread pool used to run individual ops concurrently.
   void set_thread_pool(const Eigen::ThreadPoolDevice* pool) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_0(mht_0_v, 299, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "set_thread_pool");
+
     run_options_.set_intra_op_thread_pool(pool);
   }
 
@@ -140,22 +311,37 @@ class XlaCompiledCpuFunction {
   // TODO(fschneider): For now this always returns an empty string because there
   // is no support for error reporting in XLA. Remove this once all callers are
   // updated.
-  string error_msg() const { return {}; }
+  string error_msg() const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_1(mht_1_v, 315, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "error_msg");
+ return {}; }
 
   // ------------------------------
   // Arg methods for managing input buffers. Buffers are in row-major order.
 
   // Returns the buffer for the positional argument at the given `index`.
   void* arg_data(size_t index) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_2(mht_2_v, 324, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "arg_data");
+
     return buffer_table_[arg_index_table_[index]];
   }
   const void* arg_data(size_t index) const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_3(mht_3_v, 330, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "arg_data");
+
     return buffer_table_[arg_index_table_[index]];
   }
 
-  int num_args() const { return num_args_; }
+  int num_args() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_4(mht_4_v, 337, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "num_args");
+ return num_args_; }
 
-  int num_variables() const { return num_variables_; }
+  int num_variables() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_5(mht_5_v, 342, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "num_variables");
+ return num_variables_; }
 
   // Returns the size of entry parameter `idx`.
   //
@@ -163,6 +349,9 @@ class XlaCompiledCpuFunction {
   // of XlaCompiledCpuFunction, but try to prefer this when possible since it
   // works both for XlaJitCompiledCpuFunction and AOT compiled subclasses.
   int arg_size(int idx) const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_6(mht_6_v, 352, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "arg_size");
+
     assert(idx < num_args());
     return buffer_infos_[arg_index_table_[idx]].size();
   }
@@ -180,6 +369,9 @@ class XlaCompiledCpuFunction {
   // Aliasing of argument and result buffers is not allowed, and results in
   // undefined behavior.
   void set_arg_data(size_t index, const void* data) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_7(mht_7_v, 372, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "set_arg_data");
+
     assert((arg_size(index) < xla::cpu_function_runtime::MinAlign() ||
             (uintptr_t)data % xla::cpu_function_runtime::MinAlign() == 0) &&
            "Underaligned pointer!");
@@ -200,8 +392,14 @@ class XlaCompiledCpuFunction {
 
   // Returns the underlying array of result buffers, where results()[I] is the
   // buffer for the positional result at index I.
-  void** results() { return static_cast<void**>(buffer_table_[result_index_]); }
+  void** results() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_8(mht_8_v, 396, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "results");
+ return static_cast<void**>(buffer_table_[result_index_]); }
   const void* const* results() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_9(mht_9_v, 400, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "results");
+
     return static_cast<const void* const*>(buffer_table_[result_index_]);
   }
 
@@ -213,11 +411,20 @@ class XlaCompiledCpuFunction {
   // `hlo_profile_printer()`.
   //
   // When Hlo profiling is disabled, this accessor returns null.
-  const int64_t* profile_counters() const { return profile_counters_; }
+  const int64_t* profile_counters() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_10(mht_10_v, 415, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "profile_counters");
+ return profile_counters_; }
 
   // Returns the buffer for the positional result at the given `index`.
-  void* result_data(size_t index) { return results()[index]; }
-  const void* result_data(size_t index) const { return results()[index]; }
+  void* result_data(size_t index) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_11(mht_11_v, 421, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "result_data");
+ return results()[index]; }
+  const void* result_data(size_t index) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_12(mht_12_v, 425, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "result_data");
+ return results()[index]; }
 
   // ------------------------------
   // Methods for extracting optional metadata.
@@ -225,6 +432,9 @@ class XlaCompiledCpuFunction {
   // Returns true iff data is available for the Lookup{Arg,Variable,Result}Index
   // methods. E.g. the data might not be compiled into the binary for AOT.
   bool HasNameIndices() const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_13(mht_13_v, 435, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "HasNameIndices");
+
     return arg_names_ != nullptr && variable_names_ != nullptr &&
            result_names_ != nullptr;
   }
@@ -255,12 +465,21 @@ class XlaCompiledCpuFunction {
 
   // Returns the shape of the args and results. May return nullptr if the
   // program shape isn't available.
-  const xla::ProgramShapeProto* ProgramShape() const { return program_shape_; }
+  const xla::ProgramShapeProto* ProgramShape() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_14(mht_14_v, 469, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "ProgramShape");
+ return program_shape_; }
 
   bool hlo_profiling_enabled() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_15(mht_15_v, 474, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "hlo_profiling_enabled");
+
     return hlo_profile_printer_data_ != nullptr;
   }
   const xla::HloProfilePrinterData& hlo_profile_printer_data() const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_16(mht_16_v, 480, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "hlo_profile_printer_data");
+
     assert(hlo_profiling_enabled());
     return *hlo_profile_printer_data_;
   }
@@ -275,73 +494,115 @@ class XlaCompiledCpuFunction {
 
   static void set_static_data_raw_function(StaticData* static_data,
                                            RawFunction raw_function) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_17(mht_17_v, 497, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "set_static_data_raw_function");
+
     static_data->raw_function_ = raw_function;
   }
 
   static void set_static_data_buffer_infos(
       StaticData* static_data,
       const xla::cpu_function_runtime::BufferInfo* buffer_infos) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_18(mht_18_v, 506, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "set_static_data_buffer_infos");
+
     static_data->buffer_infos_ = buffer_infos;
   }
 
   static void set_static_data_num_buffers(StaticData* static_data,
                                           size_t num_buffers) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_19(mht_19_v, 514, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "set_static_data_num_buffers");
+
     static_data->num_buffers_ = num_buffers;
   }
 
   static void set_static_data_arg_index_table(StaticData* static_data,
                                               const int32* arg_index_table) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_20(mht_20_v, 522, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "set_static_data_arg_index_table");
+
     static_data->arg_index_table_ = arg_index_table;
   }
 
   static void set_static_data_num_args(StaticData* static_data,
                                        int64_t num_args) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_21(mht_21_v, 530, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "set_static_data_num_args");
+
     static_data->num_args_ = num_args;
   }
 
   static void set_static_data_num_variables(StaticData* static_data,
                                             int64_t num_variables) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_22(mht_22_v, 538, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "set_static_data_num_variables");
+
     static_data->num_variables_ = num_variables;
   }
 
   static void set_static_data_result_index(StaticData* static_data,
                                            size_t result_index) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_23(mht_23_v, 546, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "set_static_data_result_index");
+
     static_data->result_index_ = result_index;
   }
 
   static void set_static_data_arg_names(StaticData* static_data,
                                         const char** arg_names) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_24(mht_24_v, 554, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "set_static_data_arg_names");
+
     static_data->arg_names_ = arg_names;
   }
 
   static void set_static_data_variable_names(StaticData* static_data,
                                              const char** variable_names) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_25(mht_25_v, 562, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "set_static_data_variable_names");
+
     static_data->variable_names_ = variable_names;
   }
 
   static void set_static_data_result_names(StaticData* static_data,
                                            const char** result_names) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_26(mht_26_v, 570, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "set_static_data_result_names");
+
     static_data->result_names_ = result_names;
   }
 
   static void set_static_data_program_shape(
       StaticData* static_data, const xla::ProgramShapeProto* program_shape) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_27(mht_27_v, 578, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "set_static_data_program_shape");
+
     static_data->program_shape_ = program_shape;
   }
 
   static void set_static_data_hlo_profile_printer_data(
       StaticData* static_data,
       const xla::HloProfilePrinterData* hlo_profile_printer_data) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_28(mht_28_v, 587, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "set_static_data_hlo_profile_printer_data");
+
     static_data->hlo_profile_printer_data_ = hlo_profile_printer_data;
   }
 
   static const xla::HloProfilePrinterData*
   get_static_data_hlo_profile_printer_data(StaticData* static_data) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_29(mht_29_v, 595, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "get_static_data_hlo_profile_printer_data");
+
     return static_data->hlo_profile_printer_data_;
   }
 
   static void set_static_data_profile_counters_size(
       StaticData* static_data, int64_t profile_counters_size) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSxla_compiled_cpu_functionDTh mht_30(mht_30_v, 603, "", "./tensorflow/compiler/tf2xla/xla_compiled_cpu_function.h", "set_static_data_profile_counters_size");
+
     static_data->profile_counters_size_ = profile_counters_size;
   }
 

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSdistributed_runtimePSlocal_masterDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSlocal_masterDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSdistributed_runtimePSlocal_masterDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +194,9 @@ namespace {
 Status WaitForNotification(CallOptions* call_options,
                            const int64_t default_timeout_in_ms,
                            Notification* n) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSlocal_masterDTcc mht_0(mht_0_v, 197, "", "./tensorflow/core/distributed_runtime/local_master.cc", "WaitForNotification");
+
   int64_t timeout_in_ms = call_options->GetTimeout();
   if (timeout_in_ms == 0) {
     timeout_in_ms = default_timeout_in_ms;
@@ -50,11 +221,17 @@ Status WaitForNotification(CallOptions* call_options,
 LocalMaster::LocalMaster(Master* master_impl,
                          const int64_t default_timeout_in_ms)
     : master_impl_(master_impl),
-      default_timeout_in_ms_(default_timeout_in_ms) {}
+      default_timeout_in_ms_(default_timeout_in_ms) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSlocal_masterDTcc mht_1(mht_1_v, 225, "", "./tensorflow/core/distributed_runtime/local_master.cc", "LocalMaster::LocalMaster");
+}
 
 Status LocalMaster::CreateSession(CallOptions* call_options,
                                   const CreateSessionRequest* request,
                                   CreateSessionResponse* response) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSlocal_masterDTcc mht_2(mht_2_v, 232, "", "./tensorflow/core/distributed_runtime/local_master.cc", "LocalMaster::CreateSession");
+
   Notification n;
   Status ret;
   master_impl_->CreateSession(request, response, [&n, &ret](const Status& s) {
@@ -69,6 +246,9 @@ Status LocalMaster::CreateSession(CallOptions* call_options,
 Status LocalMaster::ExtendSession(CallOptions* call_options,
                                   const ExtendSessionRequest* request,
                                   ExtendSessionResponse* response) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSlocal_masterDTcc mht_3(mht_3_v, 249, "", "./tensorflow/core/distributed_runtime/local_master.cc", "LocalMaster::ExtendSession");
+
   Notification n;
   Status ret;
   master_impl_->ExtendSession(request, response, [&n, &ret](const Status& s) {
@@ -83,6 +263,9 @@ Status LocalMaster::ExtendSession(CallOptions* call_options,
 Status LocalMaster::PartialRunSetup(CallOptions* call_options,
                                     const PartialRunSetupRequest* request,
                                     PartialRunSetupResponse* response) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSlocal_masterDTcc mht_4(mht_4_v, 266, "", "./tensorflow/core/distributed_runtime/local_master.cc", "LocalMaster::PartialRunSetup");
+
   Notification n;
   Status ret;
   master_impl_->PartialRunSetup(request, response, [&n, &ret](const Status& s) {
@@ -97,6 +280,9 @@ Status LocalMaster::PartialRunSetup(CallOptions* call_options,
 Status LocalMaster::RunStep(CallOptions* call_options,
                             RunStepRequestWrapper* request,
                             MutableRunStepResponseWrapper* response) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSlocal_masterDTcc mht_5(mht_5_v, 283, "", "./tensorflow/core/distributed_runtime/local_master.cc", "LocalMaster::RunStep");
+
   Notification n;
   Status ret;
   master_impl_->RunStep(call_options, request, response,
@@ -110,16 +296,25 @@ Status LocalMaster::RunStep(CallOptions* call_options,
 }
 
 MutableRunStepRequestWrapper* LocalMaster::CreateRunStepRequest() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSlocal_masterDTcc mht_6(mht_6_v, 299, "", "./tensorflow/core/distributed_runtime/local_master.cc", "LocalMaster::CreateRunStepRequest");
+
   return new InMemoryRunStepRequest;
 }
 
 MutableRunStepResponseWrapper* LocalMaster::CreateRunStepResponse() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSlocal_masterDTcc mht_7(mht_7_v, 306, "", "./tensorflow/core/distributed_runtime/local_master.cc", "LocalMaster::CreateRunStepResponse");
+
   return new InMemoryRunStepResponse;
 }
 
 Status LocalMaster::CloseSession(CallOptions* call_options,
                                  const CloseSessionRequest* request,
                                  CloseSessionResponse* response) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSlocal_masterDTcc mht_8(mht_8_v, 315, "", "./tensorflow/core/distributed_runtime/local_master.cc", "LocalMaster::CloseSession");
+
   Notification n;
   Status ret;
   master_impl_->CloseSession(request, response, [&n, &ret](const Status& s) {
@@ -134,6 +329,9 @@ Status LocalMaster::CloseSession(CallOptions* call_options,
 Status LocalMaster::ListDevices(CallOptions* call_options,
                                 const ListDevicesRequest* request,
                                 ListDevicesResponse* response) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSlocal_masterDTcc mht_9(mht_9_v, 332, "", "./tensorflow/core/distributed_runtime/local_master.cc", "LocalMaster::ListDevices");
+
   Notification n;
   Status ret;
   master_impl_->ListDevices(request, response, [&n, &ret](const Status& s) {
@@ -148,6 +346,9 @@ Status LocalMaster::ListDevices(CallOptions* call_options,
 Status LocalMaster::Reset(CallOptions* call_options,
                           const ResetRequest* request,
                           ResetResponse* response) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSlocal_masterDTcc mht_10(mht_10_v, 349, "", "./tensorflow/core/distributed_runtime/local_master.cc", "LocalMaster::Reset");
+
   Notification n;
   Status ret;
   master_impl_->Reset(request, response, [&n, &ret](const Status& s) {
@@ -162,6 +363,9 @@ Status LocalMaster::Reset(CallOptions* call_options,
 Status LocalMaster::MakeCallable(CallOptions* call_options,
                                  const MakeCallableRequest* request,
                                  MakeCallableResponse* response) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSlocal_masterDTcc mht_11(mht_11_v, 366, "", "./tensorflow/core/distributed_runtime/local_master.cc", "LocalMaster::MakeCallable");
+
   Notification n;
   Status ret;
   master_impl_->MakeCallable(request, response, [&n, &ret](const Status& s) {
@@ -175,6 +379,9 @@ Status LocalMaster::MakeCallable(CallOptions* call_options,
 Status LocalMaster::RunCallable(CallOptions* call_options,
                                 const RunCallableRequest* request,
                                 RunCallableResponse* response) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSlocal_masterDTcc mht_12(mht_12_v, 382, "", "./tensorflow/core/distributed_runtime/local_master.cc", "LocalMaster::RunCallable");
+
   Notification n;
   Status ret;
   master_impl_->RunCallable(call_options, request, response,
@@ -189,6 +396,9 @@ Status LocalMaster::RunCallable(CallOptions* call_options,
 Status LocalMaster::ReleaseCallable(CallOptions* call_options,
                                     const ReleaseCallableRequest* request,
                                     ReleaseCallableResponse* response) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSlocal_masterDTcc mht_13(mht_13_v, 399, "", "./tensorflow/core/distributed_runtime/local_master.cc", "LocalMaster::ReleaseCallable");
+
   Notification n;
   Status ret;
   master_impl_->ReleaseCallable(request, response, [&n, &ret](const Status& s) {
@@ -202,6 +412,9 @@ Status LocalMaster::ReleaseCallable(CallOptions* call_options,
 
 namespace {
 mutex* get_local_master_registry_lock() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSlocal_masterDTcc mht_14(mht_14_v, 415, "", "./tensorflow/core/distributed_runtime/local_master.cc", "get_local_master_registry_lock");
+
   static mutex local_master_registry_lock(LINKER_INITIALIZED);
   return &local_master_registry_lock;
 }
@@ -211,11 +424,17 @@ struct MasterInfo {
   const int64_t default_timeout_in_ms;
 
   MasterInfo(Master* master, const int64_t default_timeout_in_ms)
-      : master(master), default_timeout_in_ms(default_timeout_in_ms) {}
+      : master(master), default_timeout_in_ms(default_timeout_in_ms) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSlocal_masterDTcc mht_15(mht_15_v, 428, "", "./tensorflow/core/distributed_runtime/local_master.cc", "MasterInfo");
+}
 };
 
 typedef std::unordered_map<string, MasterInfo> LocalMasterRegistry;
 LocalMasterRegistry* local_master_registry() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSlocal_masterDTcc mht_16(mht_16_v, 435, "", "./tensorflow/core/distributed_runtime/local_master.cc", "local_master_registry");
+
   static LocalMasterRegistry* local_master_registry_ = new LocalMasterRegistry;
   return local_master_registry_;
 }
@@ -224,6 +443,10 @@ LocalMasterRegistry* local_master_registry() {
 /* static */
 void LocalMaster::Register(const string& target, Master* master,
                            int64_t default_timeout_in_ms) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("target: \"" + target + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSlocal_masterDTcc mht_17(mht_17_v, 447, "", "./tensorflow/core/distributed_runtime/local_master.cc", "LocalMaster::Register");
+
   mutex_lock l(*get_local_master_registry_lock());
   local_master_registry()->insert(
       {target, MasterInfo(master, default_timeout_in_ms)});
@@ -231,6 +454,10 @@ void LocalMaster::Register(const string& target, Master* master,
 
 /* static */
 std::unique_ptr<LocalMaster> LocalMaster::Lookup(const string& target) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("target: \"" + target + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSlocal_masterDTcc mht_18(mht_18_v, 458, "", "./tensorflow/core/distributed_runtime/local_master.cc", "LocalMaster::Lookup");
+
   std::unique_ptr<LocalMaster> ret;
   mutex_lock l(*get_local_master_registry_lock());
   auto iter = local_master_registry()->find(target);

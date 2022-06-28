@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -48,7 +216,10 @@ class ColumnInterface {
   virtual InternalType Feature(int64_t batch, int64_t n,
                                bool strong_hash) const = 0;
 
-  virtual ~ColumnInterface() {}
+  virtual ~ColumnInterface() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_0(mht_0_v, 220, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "~ColumnInterface");
+}
 };
 
 // A column that is backed by a sparse tensor.
@@ -60,17 +231,26 @@ class SparseTensorColumn : public ColumnInterface<InternalType> {
       : values_(values),
         feature_counts_(std::move(feature_counts)),
         feature_start_indices_(std::move(feature_start_indices)) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_1(mht_1_v, 234, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "SparseTensorColumn");
+
     CHECK_EQ(feature_counts_.size(), feature_start_indices_.size());
   }
 
   int64_t FeatureCount(int64_t batch) const override {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_2(mht_2_v, 241, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "FeatureCount");
+
     return feature_counts_[batch];
   }
 
   InternalType Feature(int64_t batch, int64_t n,
                        bool strong_hash) const override;
 
-  ~SparseTensorColumn() override {}
+  ~SparseTensorColumn() override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_3(mht_3_v, 251, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "~SparseTensorColumn");
+}
 
  private:
   const Tensor& values_;
@@ -89,18 +269,27 @@ class KeyedSparseTensorColumn : public ColumnInterface<InternalType> {
       : values_(values),
         feature_counts_(std::move(feature_counts)),
         feature_start_indices_(std::move(feature_start_indices)) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_4(mht_4_v, 272, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "KeyedSparseTensorColumn");
+
     DCHECK_EQ(feature_counts_.size(), feature_start_indices_.size());
     std::memcpy(key_, key.data(), sizeof(key_));
   }
 
   int64_t FeatureCount(int64_t batch) const override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_5(mht_5_v, 280, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "FeatureCount");
+
     return feature_counts_[batch];
   }
 
   InternalType Feature(int64_t batch, int64_t n,
                        bool strong_hash) const override;
 
-  ~KeyedSparseTensorColumn() override {}
+  ~KeyedSparseTensorColumn() override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_6(mht_6_v, 290, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "~KeyedSparseTensorColumn");
+}
 
  private:
   const Tensor& values_;
@@ -113,6 +302,9 @@ class KeyedSparseTensorColumn : public ColumnInterface<InternalType> {
 template <>
 int64_t SparseTensorColumn<int64_t>::Feature(int64_t batch, int64_t n,
                                              bool strong_hash) const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_7(mht_7_v, 305, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "SparseTensorColumn<int64_t>::Feature");
+
   const int64_t start = feature_start_indices_[batch];
   if (DT_STRING == values_.dtype())
     return Fingerprint64(values_.vec<tstring>().data()[start + n]);
@@ -122,6 +314,9 @@ int64_t SparseTensorColumn<int64_t>::Feature(int64_t batch, int64_t n,
 template <>
 int64_t KeyedSparseTensorColumn<int64_t>::Feature(int64_t batch, int64_t n,
                                                   bool strong_hash) const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_8(mht_8_v, 317, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "KeyedSparseTensorColumn<int64_t>::Feature");
+
   const int64_t start = feature_start_indices_[batch];
   if (strong_hash) {
     if (DT_STRING == values_.dtype()) {
@@ -143,6 +338,9 @@ int64_t KeyedSparseTensorColumn<int64_t>::Feature(int64_t batch, int64_t n,
 template <>
 tstring SparseTensorColumn<tstring>::Feature(int64_t batch, int64_t n,
                                              bool strong_hash) const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_9(mht_9_v, 341, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "SparseTensorColumn<tstring>::Feature");
+
   const int64_t start = feature_start_indices_[batch];
   if (DT_STRING == values_.dtype())
     return values_.vec<tstring>().data()[start + n];
@@ -152,6 +350,9 @@ tstring SparseTensorColumn<tstring>::Feature(int64_t batch, int64_t n,
 template <>
 tstring KeyedSparseTensorColumn<tstring>::Feature(int64_t batch, int64_t n,
                                                   bool strong_hash) const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_10(mht_10_v, 353, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "KeyedSparseTensorColumn<tstring>::Feature");
+
   const int64_t start = feature_start_indices_[batch];
   if (DT_STRING == values_.dtype())
     return values_.vec<tstring>().data()[start + n];
@@ -161,6 +362,9 @@ tstring KeyedSparseTensorColumn<tstring>::Feature(int64_t batch, int64_t n,
 template <>
 StringPiece SparseTensorColumn<StringPiece>::Feature(int64_t batch, int64_t n,
                                                      bool strong_hash) const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_11(mht_11_v, 365, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "SparseTensorColumn<StringPiece>::Feature");
+
   const int64_t start = feature_start_indices_[batch];
   return values_.vec<tstring>().data()[start + n];
 }
@@ -168,6 +372,9 @@ StringPiece SparseTensorColumn<StringPiece>::Feature(int64_t batch, int64_t n,
 template <>
 StringPiece KeyedSparseTensorColumn<StringPiece>::Feature(
     int64_t batch, int64_t n, bool strong_hash) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_12(mht_12_v, 375, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "KeyedSparseTensorColumn<StringPiece>::Feature");
+
   const int64_t start = feature_start_indices_[batch];
   return values_.vec<tstring>().data()[start + n];
 }
@@ -176,16 +383,25 @@ StringPiece KeyedSparseTensorColumn<StringPiece>::Feature(
 template <typename InternalType>
 class DenseTensorColumn : public ColumnInterface<InternalType> {
  public:
-  explicit DenseTensorColumn(const Tensor& tensor) : tensor_(tensor) {}
+  explicit DenseTensorColumn(const Tensor& tensor) : tensor_(tensor) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_13(mht_13_v, 387, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "DenseTensorColumn");
+}
 
   int64_t FeatureCount(int64_t batch) const override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_14(mht_14_v, 392, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "FeatureCount");
+
     return tensor_.dim_size(1);
   }
 
   InternalType Feature(int64_t batch, int64_t n,
                        bool strong_hash) const override;
 
-  ~DenseTensorColumn() override {}
+  ~DenseTensorColumn() override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_15(mht_15_v, 402, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "~DenseTensorColumn");
+}
 
  private:
   const Tensor& tensor_;
@@ -198,17 +414,26 @@ class KeyedDenseTensorColumn : public ColumnInterface<InternalType> {
   explicit KeyedDenseTensorColumn(const Tensor& tensor,
                                   std::vector<int64_t> key)
       : tensor_(tensor) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_16(mht_16_v, 417, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "KeyedDenseTensorColumn");
+
     std::memcpy(key_, key.data(), sizeof(key_));
   }
 
   int64_t FeatureCount(int64_t batch) const override {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_17(mht_17_v, 424, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "FeatureCount");
+
     return tensor_.dim_size(1);
   }
 
   InternalType Feature(int64_t batch, int64_t n,
                        bool strong_hash) const override;
 
-  ~KeyedDenseTensorColumn() override {}
+  ~KeyedDenseTensorColumn() override {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_18(mht_18_v, 434, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "~KeyedDenseTensorColumn");
+}
 
  private:
   const Tensor& tensor_;
@@ -219,6 +444,9 @@ class KeyedDenseTensorColumn : public ColumnInterface<InternalType> {
 template <>
 int64_t DenseTensorColumn<int64_t>::Feature(int64_t batch, int64_t n,
                                             bool strong_hash) const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_19(mht_19_v, 447, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "DenseTensorColumn<int64_t>::Feature");
+
   if (DT_STRING == tensor_.dtype())
     return Fingerprint64(tensor_.matrix<tstring>()(batch, n));
   return tensor_.matrix<int64_t>()(batch, n);
@@ -227,6 +455,9 @@ int64_t DenseTensorColumn<int64_t>::Feature(int64_t batch, int64_t n,
 template <>
 int64_t KeyedDenseTensorColumn<int64_t>::Feature(int64_t batch, int64_t n,
                                                  bool strong_hash) const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_20(mht_20_v, 458, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "KeyedDenseTensorColumn<int64_t>::Feature");
+
   if (strong_hash) {
     if (DT_STRING == tensor_.dtype()) {
       return StrongKeyedHash(key_, tensor_.matrix<tstring>()(batch, n));
@@ -245,6 +476,9 @@ int64_t KeyedDenseTensorColumn<int64_t>::Feature(int64_t batch, int64_t n,
 template <>
 tstring DenseTensorColumn<tstring>::Feature(int64_t batch, int64_t n,
                                             bool strong_hash) const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_21(mht_21_v, 479, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "DenseTensorColumn<tstring>::Feature");
+
   if (DT_STRING == tensor_.dtype()) return tensor_.matrix<tstring>()(batch, n);
   return std::to_string(tensor_.matrix<int64_t>()(batch, n));
 }
@@ -252,6 +486,9 @@ tstring DenseTensorColumn<tstring>::Feature(int64_t batch, int64_t n,
 template <>
 tstring KeyedDenseTensorColumn<tstring>::Feature(int64_t batch, int64_t n,
                                                  bool strong_hash) const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_22(mht_22_v, 489, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "KeyedDenseTensorColumn<tstring>::Feature");
+
   if (DT_STRING == tensor_.dtype()) return tensor_.matrix<tstring>()(batch, n);
   return std::to_string(tensor_.matrix<int64_t>()(batch, n));
 }
@@ -259,12 +496,18 @@ tstring KeyedDenseTensorColumn<tstring>::Feature(int64_t batch, int64_t n,
 template <>
 StringPiece DenseTensorColumn<StringPiece>::Feature(int64_t batch, int64_t n,
                                                     bool strong_hash) const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_23(mht_23_v, 499, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "DenseTensorColumn<StringPiece>::Feature");
+
   return tensor_.matrix<tstring>()(batch, n);
 }
 
 template <>
 StringPiece KeyedDenseTensorColumn<StringPiece>::Feature(
     int64_t batch, int64_t n, bool strong_hash) const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_24(mht_24_v, 508, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "KeyedDenseTensorColumn<StringPiece>::Feature");
+
   return tensor_.matrix<tstring>()(batch, n);
 }
 
@@ -276,10 +519,16 @@ class OutputUpdater {
                 Tensor* indices_out, Tensor* values_out)
       : output_start_indices_(output_start_indices),
         indices_out_(indices_out),
-        values_out_(values_out) {}
+        values_out_(values_out) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_25(mht_25_v, 523, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "OutputUpdater");
+}
 
   void Update(const int64_t batch_index, const int64_t cross_count,
               const OutType& cross) const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_26(mht_26_v, 529, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "Update");
+
     const int64_t output_index =
         output_start_indices_[batch_index] + cross_count;
 
@@ -305,11 +554,18 @@ class StringCrosser {
                     std::unique_ptr<ColumnInterface<InternalType>>>& columns,
                 const int64_t num_buckets_unused, const uint64 hash_key_unused,
                 const tstring k_feature_separator)
-      : columns_(columns), k_feature_separator_(k_feature_separator) {}
+      : columns_(columns), k_feature_separator_(k_feature_separator) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("k_feature_separator: \"" + (std::string)k_feature_separator + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_27(mht_27_v, 559, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "StringCrosser");
+}
 
   string Generate(const int64_t batch_index,
                   const std::vector<int>& permutation,
                   bool unused_strong_hash) const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_28(mht_28_v, 566, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "Generate");
+
     gtl::InlinedVector<InternalType, 6> cross_vec(columns_.size());
     for (int i = 0; i < permutation.size(); i++) {
       cross_vec[i] = columns_[i]->Feature(batch_index, permutation[i], false);
@@ -331,11 +587,18 @@ class HashCrosser {
       const std::vector<std::unique_ptr<ColumnInterface<int64_t>>>& columns,
       const int64_t num_buckets, const uint64 hash_key,
       const tstring k_feature_separator_unused)
-      : columns_(columns), num_buckets_(num_buckets), hash_key_(hash_key) {}
+      : columns_(columns), num_buckets_(num_buckets), hash_key_(hash_key) {
+   std::vector<std::string> mht_29_v;
+   mht_29_v.push_back("k_feature_separator_unused: \"" + (std::string)k_feature_separator_unused + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_29(mht_29_v, 592, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "HashCrosser");
+}
 
   int64_t Generate(const int64_t batch_index,
                    const std::vector<int>& permutation,
                    bool unused_strong_hash) const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_30(mht_30_v, 599, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "Generate");
+
     // Do the fingerprint concatenation on uint64.
     uint64 hashed_output = hash_key_;
     for (size_t i = 0; i < permutation.size(); ++i) {
@@ -364,11 +627,18 @@ class HashCrosserV2 {
       const std::vector<std::unique_ptr<ColumnInterface<int64_t>>>& columns,
       const int64_t num_buckets, const uint64 hash_key_unused,
       const tstring k_feature_separator_unused)
-      : columns_(columns), num_buckets_(num_buckets) {}
+      : columns_(columns), num_buckets_(num_buckets) {
+   std::vector<std::string> mht_31_v;
+   mht_31_v.push_back("k_feature_separator_unused: \"" + (std::string)k_feature_separator_unused + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_31(mht_31_v, 632, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "HashCrosserV2");
+}
 
   int64_t Generate(const int64_t batch_index,
                    const std::vector<int>& permutation,
                    bool strong_hash) const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_32(mht_32_v, 639, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "Generate");
+
     // Do the fingerprint concatenation on uint64.
     uint64 hashed_output =
         columns_[0]->Feature(batch_index, permutation[0], strong_hash);
@@ -400,6 +670,9 @@ class ProductIterator {
           columns,
       int64_t batch_index)
       : columns_(columns), batch_index_(batch_index) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_33(mht_33_v, 673, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "ProductIterator");
+
     next_permutation_.resize(columns_.size(), 0);
     // Sets has_next_ to false if any feature column has 0 features.
     has_next_ = true;
@@ -431,7 +704,10 @@ class ProductIterator {
     return permutation;
   }
 
-  bool HasNext() { return has_next_; }
+  bool HasNext() {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_34(mht_34_v, 708, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "HasNext");
+ return has_next_; }
 
  private:
   bool has_next_;
@@ -461,6 +737,9 @@ struct CrossTraits<true, int64_t> {
 // Calculate the batch size from either the shapes input or the dense input.
 int64_t CalculateBatchSize(const OpInputList& shapes_list_in,
                            const OpInputList& dense_list_in) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_35(mht_35_v, 740, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "CalculateBatchSize");
+
   if (shapes_list_in.size() > 0) {
     return shapes_list_in[0].vec<int64_t>()(0);
   }
@@ -478,6 +757,9 @@ Status ValidateInput(const OpInputList& indices_list_in,
                      const OpInputList& shapes_list_in,
                      const OpInputList& dense_list_in,
                      const DataType& internal_type) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_36(mht_36_v, 760, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "ValidateInput");
+
   const auto size = indices_list_in.size();
   // Only perform internal_type check for SparseCrossOp.
   // Check if the internal_type is not invalid before doing so.
@@ -597,6 +879,9 @@ void ExtractFeatureData(
     const OpInputList& indices_list_in, int64_t batch_size,
     std::vector<std::vector<int64_t>>* feature_counts,
     std::vector<std::vector<int64_t>>* feature_start_indices) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_37(mht_37_v, 882, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "ExtractFeatureData");
+
   gtl::InlinedVector<int64_t, 8> current_row(indices_list_in.size(), 0);
   for (int b = 0; b < batch_size; b++) {
     for (int i = 0; i < indices_list_in.size(); i++) {
@@ -620,6 +905,9 @@ template <typename InternalType>
 int64_t CrossCountByBatchIndex(
     const std::vector<std::unique_ptr<ColumnInterface<InternalType>>>& columns,
     int batch_index) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_38(mht_38_v, 908, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "CrossCountByBatchIndex");
+
   int64_t cross_count = 1;
   for (int i = 0; i < columns.size(); i++) {
     const auto feature_count = columns[i]->FeatureCount(batch_index);
@@ -708,6 +996,9 @@ Status CreateOutputTensors(
     int64_t batch_size, OpKernelContext* context, Tensor** indices_out,
     Tensor** values_out, Tensor** shape_out,
     std::vector<int64_t>* output_start_indices) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_39(mht_39_v, 999, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "CreateOutputTensors");
+
   // Calculates dimensions for output tensors.
   int64_t cross_count_total = 0;
   int64_t max_cross_count = 0;
@@ -738,6 +1029,9 @@ template <bool HASHED_OUTPUT, typename InternalType>
 class SparseCrossOp : public OpKernel {
  public:
   explicit SparseCrossOp(OpKernelConstruction* context) : OpKernel(context) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_40(mht_40_v, 1032, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "SparseCrossOp");
+
     OP_REQUIRES_OK(context, context->GetAttr("num_buckets", &num_buckets_));
     // Read signed_hash_key_ as int64 since uint64 attributes are not
     // supported by REGISTER_OP.
@@ -748,6 +1042,9 @@ class SparseCrossOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_41(mht_41_v, 1045, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "Compute");
+
     OpInputList indices_list_in;
     OP_REQUIRES_OK(context, context->input_list("indices", &indices_list_in));
     OpInputList values_list_in;
@@ -784,6 +1081,9 @@ class SparseCrossOp : public OpKernel {
     typename CrossTraits<HASHED_OUTPUT, InternalType>::Updater updater(
         output_start_indices, indices_out, values_out);
     auto do_work = [&columns, crosser, updater](int64_t begin, int64_t end) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_42(mht_42_v, 1084, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "lambda");
+
       for (int b = begin; b < end; b++) {
         ProductIterator<InternalType> product_iterator(columns, b);
         int64_t cross_count = 0;
@@ -811,9 +1111,15 @@ class SparseCrossOp : public OpKernel {
 
 class SparseCrossV2Op : public OpKernel {
  public:
-  explicit SparseCrossV2Op(OpKernelConstruction* context) : OpKernel(context) {}
+  explicit SparseCrossV2Op(OpKernelConstruction* context) : OpKernel(context) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_43(mht_43_v, 1115, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "SparseCrossV2Op");
+}
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_44(mht_44_v, 1120, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "Compute");
+
     OpInputList indices_list_in;
     OP_REQUIRES_OK(context, context->input_list("indices", &indices_list_in));
     OpInputList values_list_in;
@@ -851,6 +1157,9 @@ class SparseCrossV2Op : public OpKernel {
     OutputUpdater<tstring> updater(output_start_indices, indices_out,
                                    values_out);
     auto do_work = [&columns, crosser, updater](int64_t begin, int64_t end) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_45(mht_45_v, 1160, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "lambda");
+
       for (int b = begin; b < end; b++) {
         ProductIterator<tstring> product_iterator(columns, b);
         int64_t cross_count = 0;
@@ -874,9 +1183,15 @@ class SparseCrossV2Op : public OpKernel {
 class SparseCrossHashedOp : public OpKernel {
  public:
   explicit SparseCrossHashedOp(OpKernelConstruction* context)
-      : OpKernel(context) {}
+      : OpKernel(context) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_46(mht_46_v, 1187, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "SparseCrossHashedOp");
+}
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_47(mht_47_v, 1192, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "Compute");
+
     OpInputList indices_list_in;
     OP_REQUIRES_OK(context, context->input_list("indices", &indices_list_in));
     OpInputList values_list_in;
@@ -926,6 +1241,9 @@ class SparseCrossHashedOp : public OpKernel {
                                    values_out);
     auto do_work = [&columns, crosser, updater, strong_hash](int64_t begin,
                                                              int64_t end) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsparse_cross_opDTcc mht_48(mht_48_v, 1244, "", "./tensorflow/core/kernels/sparse_cross_op.cc", "lambda");
+
       for (int b = begin; b < end; b++) {
         ProductIterator<int64_t> product_iterator(columns, b);
         int64_t cross_count = 0;

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -74,6 +242,9 @@ namespace m = match;
 // Unwraps broadcasts hunting for a constant.  If we find one, checks if the
 // constant contains only the given value.
 bool IsAll(const HloInstruction* op, int8_t value) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_0(mht_0_v, 245, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "IsAll");
+
   switch (op->opcode()) {
     case HloOpcode::kBroadcast:
       return IsAll(op->operand(0), value);
@@ -85,6 +256,9 @@ bool IsAll(const HloInstruction* op, int8_t value) {
 }
 
 bool IsAll(const HloInstruction* op, const Literal& scalar) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_1(mht_1_v, 259, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "IsAll");
+
   CHECK(ShapeUtil::IsScalar(scalar.shape()));
   switch (op->opcode()) {
     case HloOpcode::kBroadcast:
@@ -97,6 +271,9 @@ bool IsAll(const HloInstruction* op, const Literal& scalar) {
 }
 
 bool IsAnyOperandComplex(const HloInstruction* hlo) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_2(mht_2_v, 274, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "IsAnyOperandComplex");
+
   for (auto operand : hlo->operands()) {
     if (ShapeUtil::ElementIsComplex(operand->shape())) {
       return true;
@@ -107,6 +284,9 @@ bool IsAnyOperandComplex(const HloInstruction* hlo) {
 
 bool IsPositive(const HloInstruction* hlo,
                 const AlgebraicSimplifierOptions& options) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_3(mht_3_v, 287, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "IsPositive");
+
   // Utility only handles real types.
   if (IsAnyOperandComplex(hlo)) {
     return false;
@@ -160,22 +340,34 @@ absl::optional<double> GetConstantValue(const HloInstruction* inst) {
 
 static bool IsScalarConstant(const HloInstruction* hlo,
                              const LiteralSlice& literal) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_4(mht_4_v, 343, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "IsScalarConstant");
+
   return hlo->opcode() == HloOpcode::kConstant &&
          ShapeUtil::IsEffectiveScalar(hlo->shape()) &&
          literal_comparison::Equal(hlo->literal(), literal).ok();
 }
 
 static bool IsScalarConstantZero(const HloInstruction* hlo) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_5(mht_5_v, 352, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "IsScalarConstantZero");
+
   return IsScalarConstant(hlo, LiteralUtil::Zero(hlo->shape().element_type()));
 }
 
 static bool IsScalarConstantNegInf(const HloInstruction* hlo) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_6(mht_6_v, 359, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "IsScalarConstantNegInf");
+
   return !primitive_util::IsComplexType(hlo->shape().element_type()) &&
          IsScalarConstant(hlo,
                           LiteralUtil::MinValue(hlo->shape().element_type()));
 }
 
 static bool IsScalarConstantInf(const HloInstruction* hlo) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_7(mht_7_v, 368, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "IsScalarConstantInf");
+
   return !primitive_util::IsComplexType(hlo->shape().element_type()) &&
          IsScalarConstant(hlo,
                           LiteralUtil::MaxValue(hlo->shape().element_type()));
@@ -183,6 +375,9 @@ static bool IsScalarConstantInf(const HloInstruction* hlo) {
 
 bool IsNonNegative(const HloInstruction* hlo,
                    const AlgebraicSimplifierOptions& options) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_8(mht_8_v, 378, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "IsNonNegative");
+
   // Utility only handles real types.
   if (IsAnyOperandComplex(hlo)) {
     return false;
@@ -221,6 +416,9 @@ bool IsNonNegative(const HloInstruction* hlo,
 // values are interesting because multiplying by a power of 2 just moves the
 // exponent.
 bool IsAllFpConstantPowerOf2(const HloInstruction* op) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_9(mht_9_v, 419, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "IsAllFpConstantPowerOf2");
+
   // Unwrap the broadcast if necessary.
   const HloInstruction* c;
   if (!Match(op, m::ConstantEffectiveScalar(&c)) &&
@@ -258,6 +456,9 @@ bool IsAllFpConstantPowerOf2(const HloInstruction* op) {
 // Returns whether the given transpose produces a result which is bit-wise
 // identical to its operand and thus may be replaced with a bitcast.
 bool TransposeIsBitcast(const HloInstruction* transpose) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_10(mht_10_v, 459, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "TransposeIsBitcast");
+
   CHECK_EQ(HloOpcode::kTranspose, transpose->opcode());
   const HloInstruction* operand = transpose->operand(0);
   return ShapeUtil::TransposeIsBitcast(operand->shape(), transpose->shape(),
@@ -268,6 +469,9 @@ bool TransposeIsBitcast(const HloInstruction* transpose) {
 HloInstruction* BitcastingOperandOfReshapeOrCopyChainHelper(
     HloInstruction* instr, HloInstruction* operand,
     const AlgebraicSimplifierOptions& options) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_11(mht_11_v, 472, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "BitcastingOperandOfReshapeOrCopyChainHelper");
+
   // Can't replace chain of copies and reshapes with bitcasts if the compiler
   // used a memory layout which isn't compatible.
   if (options.ReshapeIsBitcast(operand->shape(), instr->shape())) {
@@ -288,6 +492,9 @@ HloInstruction* BitcastingOperandOfReshapeOrCopyChainHelper(
 // identical to first reshape or copy in the chain.
 HloInstruction* BitcastingOperandOfReshapeOrCopyChain(
     HloInstruction* instr, const AlgebraicSimplifierOptions& options) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_12(mht_12_v, 495, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "BitcastingOperandOfReshapeOrCopyChain");
+
   if (!options.is_layout_sensitive()) {
     return nullptr;
   }
@@ -298,12 +505,18 @@ HloInstruction* BitcastingOperandOfReshapeOrCopyChain(
 }
 
 bool IsUnstridedSlice(const HloInstruction* hlo) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_13(mht_13_v, 508, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "IsUnstridedSlice");
+
   return absl::c_all_of(hlo->slice_strides(),
                         [](int64_t stride) { return stride == 1; });
 }
 
 // Returns bool to determine whether a pair of converts can be eliminated.
 bool IsConvertPairNoOp(const HloInstruction* convert) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_14(mht_14_v, 517, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "IsConvertPairNoOp");
+
   //    [operand_convert]         [convert]
   // (src)->convert-(intermediate)->convert-(dest)
   const HloInstruction* operand_convert = convert->operand(0);
@@ -320,6 +533,9 @@ bool IsConvertPairNoOp(const HloInstruction* convert) {
 }
 
 PrecisionConfig SwapOperandsInDotPrecisionConfig(PrecisionConfig config) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_15(mht_15_v, 536, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "SwapOperandsInDotPrecisionConfig");
+
   CHECK_EQ(config.operand_precision_size(), 2);
   std::swap(config.mutable_operand_precision()->at(0),
             config.mutable_operand_precision()->at(1));
@@ -329,6 +545,9 @@ PrecisionConfig SwapOperandsInDotPrecisionConfig(PrecisionConfig config) {
 }  // namespace
 
 void AlgebraicSimplifierVisitor::ResetState(HloComputation* computation) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_16(mht_16_v, 548, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::ResetState");
+
   changed_ = false;
   ResetVisitStates();
   computation_ = computation;
@@ -337,6 +556,9 @@ void AlgebraicSimplifierVisitor::ResetState(HloComputation* computation) {
 bool AlgebraicSimplifierVisitor::Run(HloComputation* computation,
                                      const AlgebraicSimplifierOptions& options,
                                      AlgebraicSimplifier* simplifier) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_17(mht_17_v, 559, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::Run");
+
   ResetState(computation);
   TF_CHECK_OK(computation->Accept(this));
   return changed_ || changed();
@@ -344,6 +566,9 @@ bool AlgebraicSimplifierVisitor::Run(HloComputation* computation,
 
 bool AlgebraicSimplifierVisitor::SameShape(const HloInstruction* lhs,
                                            const HloInstruction* rhs) const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_18(mht_18_v, 569, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::SameShape");
+
   if (options_.is_layout_sensitive()) {
     return ShapeUtil::Equal(lhs->shape(), rhs->shape());
   } else {
@@ -354,6 +579,9 @@ bool AlgebraicSimplifierVisitor::SameShape(const HloInstruction* lhs,
 namespace {
 
 bool IsOpCodeMultiplyCommutative(HloOpcode opcode) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_19(mht_19_v, 582, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "IsOpCodeMultiplyCommutative");
+
   switch (opcode) {
     case HloOpcode::kMultiply:
     case HloOpcode::kTranspose:
@@ -385,6 +613,9 @@ std::unique_ptr<HloInstruction> MakeScalarInstruction(HloInstruction* target,
 
 Status AlgebraicSimplifierVisitor::ScalarMultiplyReduction(
     HloInstruction* dot) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_20(mht_20_v, 616, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::ScalarMultiplyReduction");
+
   // We only process bfloat16 and float32 for now.
   if (dot->shape().element_type() != BF16 &&
       dot->shape().element_type() != F32) {
@@ -536,6 +767,9 @@ Status AlgebraicSimplifierVisitor::ScalarMultiplyReduction(
 
 void AlgebraicSimplifierVisitor::ReplaceWithBitcast(HloInstruction* instruction,
                                                     HloInstruction* operand) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_21(mht_21_v, 770, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::ReplaceWithBitcast");
+
   CHECK_EQ(1, instruction->operand_count());
   if (operand == nullptr) {
     operand = instruction->mutable_operand(0);
@@ -555,6 +789,9 @@ void AlgebraicSimplifierVisitor::ReplaceWithBitcast(HloInstruction* instruction,
 // 2. the replacement will not cause loss of sharding
 bool AlgebraicSimplifierVisitor::ReplaceInstructionIfCompatible(
     HloInstruction* old_instruction, HloInstruction* new_instruction) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_22(mht_22_v, 792, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::ReplaceInstructionIfCompatible");
+
   if (!SameShape(old_instruction, new_instruction)) {
     return false;
   }
@@ -564,6 +801,9 @@ bool AlgebraicSimplifierVisitor::ReplaceInstructionIfCompatible(
 }
 
 Status AlgebraicSimplifierVisitor::HandleAbs(HloInstruction* abs) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_23(mht_23_v, 804, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleAbs");
+
   HloInstruction* abs_operand = abs->mutable_operand(0);
   VLOG(10) << "trying transform [Abs(A) => A] " << abs->ToString()
            << " Abs operand is: " << abs_operand->ToString();
@@ -574,6 +814,9 @@ Status AlgebraicSimplifierVisitor::HandleAbs(HloInstruction* abs) {
 }
 
 Status AlgebraicSimplifierVisitor::HandleAdd(HloInstruction* add) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_24(mht_24_v, 817, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleAdd");
+
   HloInstruction *lhs, *rhs;
   CHECK(Match(add, m::Add(m::Op(&lhs), m::Op(&rhs))));
 
@@ -849,6 +1092,9 @@ Status AlgebraicSimplifierVisitor::HandleAdd(HloInstruction* add) {
 
 StatusOr<bool> AlgebraicSimplifierVisitor::TrySimplifyTautologicalCompare(
     HloInstruction* conjunction) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_25(mht_25_v, 1095, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::TrySimplifyTautologicalCompare");
+
   HloInstruction *lhs, *rhs;
   if (!Match(conjunction, m::And(m::Op(&lhs), m::Op(&rhs)))) {
     return false;
@@ -892,6 +1138,9 @@ StatusOr<bool> AlgebraicSimplifierVisitor::TrySimplifyTautologicalCompare(
 }
 
 Status AlgebraicSimplifierVisitor::HandleAnd(HloInstruction* logical_and) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_26(mht_26_v, 1141, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleAnd");
+
   HloInstruction *lhs, *rhs;
   CHECK(Match(logical_and, m::And(m::Op(&lhs), m::Op(&rhs))));
   // Simplify logical and
@@ -936,6 +1185,9 @@ Status AlgebraicSimplifierVisitor::HandleAnd(HloInstruction* logical_and) {
 }
 
 Status AlgebraicSimplifierVisitor::HandleBitcast(HloInstruction* bitcast) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_27(mht_27_v, 1188, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleBitcast");
+
   // If a bitcast feeds a bitcast, make it a single bitcast.
   HloInstruction* op;
   if (Match(bitcast, m::Bitcast(m::Bitcast(m::Op(&op))))) {
@@ -950,6 +1202,9 @@ Status AlgebraicSimplifierVisitor::HandleBitcast(HloInstruction* bitcast) {
 
 Status AlgebraicSimplifierVisitor::HandleBitcastConvert(
     HloInstruction* bitcast) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_28(mht_28_v, 1205, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleBitcastConvert");
+
   TF_ASSIGN_OR_RETURN(bool replaced,
                       TrySimplifyTautologicalBitcastConvert(bitcast));
   if (replaced) {
@@ -961,6 +1216,9 @@ Status AlgebraicSimplifierVisitor::HandleBitcastConvert(
 }
 
 Status AlgebraicSimplifierVisitor::HandleCopy(HloInstruction* copy) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_29(mht_29_v, 1219, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleCopy");
+
   // If a copy feeds a copy, make it a single copy.
   HloInstruction* op;
   if (Match(copy, m::Copy(m::Copy(m::Op(&op))))) {
@@ -992,6 +1250,9 @@ Status AlgebraicSimplifierVisitor::HandleCopy(HloInstruction* copy) {
 
 Status AlgebraicSimplifierVisitor::HandleConcatenate(
     HloInstruction* concatenate) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_30(mht_30_v, 1253, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleConcatenate");
+
   absl::Span<HloInstruction* const> operands(concatenate->operands());
   if (operands.size() == 1) {
     // Unary concatenates are useless.
@@ -1174,6 +1435,9 @@ Status AlgebraicSimplifierVisitor::HandleConcatenate(
 StatusOr<bool>
 AlgebraicSimplifierVisitor::TrySimplifyTautologicalBitcastConvert(
     HloInstruction* bitcast) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_31(mht_31_v, 1438, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::TrySimplifyTautologicalBitcastConvert");
+
   CHECK_EQ(bitcast->opcode(), HloOpcode::kBitcastConvert);
   PrimitiveType outer_to = bitcast->shape().element_type();
   HloInstruction* concat = bitcast->mutable_operand(0);
@@ -1203,6 +1467,9 @@ AlgebraicSimplifierVisitor::TrySimplifyTautologicalBitcastConvert(
 static HloInstruction* BuildTupleConstant(HloComputation* computation,
                                           const LiteralSlice& literal,
                                           AlgebraicSimplifier* simplifier) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_32(mht_32_v, 1470, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "BuildTupleConstant");
+
   if (literal.shape().IsTuple()) {
     std::vector<HloInstruction*> elems;
     elems.reserve(ShapeUtil::TupleElementCount(literal.shape()));
@@ -1218,6 +1485,9 @@ static HloInstruction* BuildTupleConstant(HloComputation* computation,
 }
 
 Status AlgebraicSimplifierVisitor::HandleConstant(HloInstruction* constant) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_33(mht_33_v, 1488, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleConstant");
+
   // Tuple constants aren't directly supported by any backend. Expand them into
   // explicit Tuple instructions.
   if (constant->shape().IsTuple()) {
@@ -1264,6 +1534,9 @@ Status AlgebraicSimplifierVisitor::HandleConstant(HloInstruction* constant) {
 }
 
 Status AlgebraicSimplifierVisitor::HandleSubtract(HloInstruction* sub) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_34(mht_34_v, 1537, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleSubtract");
+
   HloInstruction *lhs, *rhs;
   CHECK(Match(sub, m::Subtract(m::Op(&lhs), m::Op(&rhs))));
   // A - 0 => A
@@ -1300,6 +1573,9 @@ Status AlgebraicSimplifierVisitor::HandleSubtract(HloInstruction* sub) {
 namespace {
 template <typename T>
 Status InvertConstant(const HloInstruction& constant, Literal* result) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_35(mht_35_v, 1576, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "InvertConstant");
+
   return result->Populate<T>([&](absl::Span<const int64_t> indices) {
     return T{1.0} / constant.literal().Get<T>(indices);
   });
@@ -1363,6 +1639,9 @@ std::unique_ptr<HloInstruction> TryDivideToShift(
 }  // namespace
 
 Status AlgebraicSimplifierVisitor::HandleDivide(HloInstruction* divide) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_36(mht_36_v, 1642, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleDivide");
+
   HloInstruction *a, *b, *c, *d;
   CHECK(Match(divide, m::Divide(m::Op(&a), m::Op(&b))));
   // A/1 => A
@@ -1582,6 +1861,9 @@ Status AlgebraicSimplifierVisitor::HandleDivide(HloInstruction* divide) {
 
 StatusOr<bool> AlgebraicSimplifierVisitor::RemoveDegenerateDimensionFromDot(
     HloInstruction* dot) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_37(mht_37_v, 1864, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::RemoveDegenerateDimensionFromDot");
+
   const Shape& lhs_shape = dot->operand(0)->shape();
   int64_t num_degenerate_lhs_dims = 0;
   std::vector<int64_t> lhs_dimension_map(lhs_shape.rank(), -1);
@@ -1661,6 +1943,9 @@ StatusOr<bool> AlgebraicSimplifierVisitor::RemoveDegenerateDimensionFromDot(
 
 StatusOr<bool> AlgebraicSimplifierVisitor::RemoveTransposesFromDotOperands(
     HloInstruction* dot) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_38(mht_38_v, 1946, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::RemoveTransposesFromDotOperands");
+
   const int64_t rank = dot->shape().rank();
   const auto& dnums = dot->dot_dimension_numbers();
   HloInstruction* lhs = dot->mutable_operand(0);
@@ -1724,6 +2009,9 @@ StatusOr<HloInstruction*>
 AlgebraicSimplifierVisitor::NormalizeDotOperandToBatchMajorAndContractingMinor(
     HloInstruction* dot_operand, absl::Span<const int64_t> batch_dimensions,
     absl::Span<const int64_t> contracting_dimensions) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_39(mht_39_v, 2012, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::NormalizeDotOperandToBatchMajorAndContractingMinor");
+
   std::vector<int64_t> transpose_dimensions(batch_dimensions.begin(),
                                             batch_dimensions.end());
   for (int64_t i = 0; i < dot_operand->shape().rank(); ++i) {
@@ -1743,6 +2031,9 @@ AlgebraicSimplifierVisitor::NormalizeDotOperandToBatchMajorAndContractingMinor(
 
 HloInstruction* AlgebraicSimplifierVisitor::AddReduce(
     HloInstruction* hlo, absl::Span<const int64_t> dims, PrimitiveType type) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_40(mht_40_v, 2034, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::AddReduce");
+
   HloInstruction* zero =
       computation_->AddInstruction(simplifier_->CreateConstantWithLayoutUpdated(
           LiteralUtil::Zero(hlo->shape().element_type()).Clone()));
@@ -1757,6 +2048,9 @@ HloInstruction* AlgebraicSimplifierVisitor::AddReduce(
 
 StatusOr<HloInstruction*> AlgebraicSimplifierVisitor::OptimizeDotOfConcat(
     HloInstruction* dot) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_41(mht_41_v, 2051, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::OptimizeDotOfConcat");
+
   const DotDimensionNumbers& dnums = dot->dot_dimension_numbers();
   if (dnums.lhs_contracting_dimensions_size() != 1 ||
       dnums.lhs_batch_dimensions_size() != 0 ||
@@ -1784,6 +2078,9 @@ StatusOr<HloInstruction*> AlgebraicSimplifierVisitor::OptimizeDotOfConcat(
 StatusOr<HloInstruction*> AlgebraicSimplifierVisitor::OptimizeDotOfConcatHelper(
     HloInstruction* dot, HloInstruction* lhs, int64_t lhs_contracting_dim,
     HloInstruction* rhs, int64_t rhs_contracting_dim, bool swapped) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_42(mht_42_v, 2081, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::OptimizeDotOfConcatHelper");
+
   bool can_optimize = lhs->opcode() == HloOpcode::kConcatenate &&
                       lhs->concatenate_dimension() == lhs_contracting_dim &&
                       rhs->opcode() == HloOpcode::kConstant;
@@ -1899,6 +2196,9 @@ StatusOr<HloInstruction*> AlgebraicSimplifierVisitor::OptimizeDotOfConcatHelper(
 
 StatusOr<HloInstruction*> AlgebraicSimplifierVisitor::OptimizeDotOfGather(
     HloInstruction* dot) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_43(mht_43_v, 2199, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::OptimizeDotOfGather");
+
   const DotDimensionNumbers& dnums = dot->dot_dimension_numbers();
   if (dnums.lhs_contracting_dimensions_size() != 1 ||
       dnums.rhs_contracting_dimensions_size() != 1 ||
@@ -1913,6 +2213,9 @@ StatusOr<HloInstruction*> AlgebraicSimplifierVisitor::OptimizeDotOfGather(
   // Currently a Gather is a DynamicSlice.
   auto is_dynamic_slice_constant_combination =
       [](HloInstruction* a, HloInstruction* b, int a_contracting_dimension) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_44(mht_44_v, 2216, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "lambda");
+
         // First operand is a DynamicSlice(Constant).
         if (a->opcode() != HloOpcode::kDynamicSlice) {
           return false;
@@ -2039,6 +2342,9 @@ StatusOr<HloInstruction*> AlgebraicSimplifierVisitor::OptimizeDotOfGather(
 StatusOr<HloInstruction*>
 AlgebraicSimplifierVisitor::OptimizeDotOfReorderContractingDims(
     HloInstruction* dot) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_45(mht_45_v, 2345, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::OptimizeDotOfReorderContractingDims");
+
   // This transformation assumes layout is not assigned yet.
   if (options_.is_layout_sensitive()) {
     return nullptr;
@@ -2109,6 +2415,9 @@ AlgebraicSimplifierVisitor::OptimizeDotOfReorderContractingDims(
   }
   // We require the "unsquished" lhs contracting dims to be consecutive.
   auto is_iota = [](absl::Span<const int64_t> dims) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_46(mht_46_v, 2418, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "lambda");
+
     return absl::c_adjacent_find(dims, [](const int64_t a, const int64_t b) {
              return (b != a + 1);
            }) == dims.end();
@@ -2245,6 +2554,9 @@ AlgebraicSimplifierVisitor::OptimizeDotOfReorderContractingDims(
 }
 
 Status AlgebraicSimplifierVisitor::HandleDot(HloInstruction* dot) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_47(mht_47_v, 2557, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleDot");
+
   CHECK(computation_ == dot->parent());
   const auto& dnums = dot->dot_dimension_numbers();
 
@@ -2419,6 +2731,9 @@ Status AlgebraicSimplifierVisitor::HandleDot(HloInstruction* dot) {
 }
 
 Status AlgebraicSimplifierVisitor::HandleGather(HloInstruction* gather) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_48(mht_48_v, 2734, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleGather");
+
   const Shape& operand_shape = gather->operand(0)->shape();
   if (ShapeUtil::IsZeroElementArray(operand_shape)) {
     return ReplaceInstruction(gather, MakeScalarLike(gather, 0));
@@ -2447,6 +2762,9 @@ Status AlgebraicSimplifierVisitor::HandleGather(HloInstruction* gather) {
       gather->gather_dimension_numbers().collapsed_slice_dims_size() == 1) {
     const int64_t operand_elements = operand_shape.dimensions(0);
     auto get_value = [&](int64_t i) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_49(mht_49_v, 2765, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "lambda");
+
       auto slice = gather->AddInstruction(HloInstruction::CreateSlice(
           ShapeUtil::MakeShape(operand_shape.element_type(), {1}),
           gather->mutable_operand(0), {i}, {i + 1}, {1}));
@@ -2524,6 +2842,9 @@ StatusOr<std::unique_ptr<HloInstruction>> MinMaxToClamp(
 }  // namespace
 
 Status AlgebraicSimplifierVisitor::HandleMaximum(HloInstruction* maximum) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_50(mht_50_v, 2845, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleMaximum");
+
   HloInstruction *lhs, *rhs;
   CHECK(Match(maximum, m::Maximum(m::Op(&lhs), m::Op(&rhs))));
 
@@ -2578,6 +2899,9 @@ Status AlgebraicSimplifierVisitor::HandleMaximum(HloInstruction* maximum) {
 }
 
 Status AlgebraicSimplifierVisitor::HandleMinimum(HloInstruction* minimum) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_51(mht_51_v, 2902, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleMinimum");
+
   HloInstruction *lhs, *rhs;
   CHECK(Match(minimum, m::Minimum(m::Op(&lhs), m::Op(&rhs))));
 
@@ -2617,6 +2941,9 @@ Status AlgebraicSimplifierVisitor::HandleMinimum(HloInstruction* minimum) {
 }
 
 Status AlgebraicSimplifierVisitor::HandleClamp(HloInstruction* clamp) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_52(mht_52_v, 2944, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleClamp");
+
   HloInstruction* clamp_lower_bound;
   HloInstruction* clamp_upper_bound;
   HloInstruction* to_clamp;
@@ -2654,6 +2981,9 @@ Status AlgebraicSimplifierVisitor::HandleClamp(HloInstruction* clamp) {
 }
 
 Status AlgebraicSimplifierVisitor::HandleMultiply(HloInstruction* multiply) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_53(mht_53_v, 2984, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleMultiply");
+
   HloInstruction *lhs, *rhs;
   CHECK(Match(multiply, m::Multiply(m::Op(&lhs), m::Op(&rhs))));
   // LHS*1 => LHS
@@ -2843,6 +3173,9 @@ Status AlgebraicSimplifierVisitor::HandleMultiply(HloInstruction* multiply) {
 }
 
 Status AlgebraicSimplifierVisitor::HandleNegate(HloInstruction* negate) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_54(mht_54_v, 3176, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleNegate");
+
   // negate(negate(x)) => x
   HloInstruction* x;
   if (Match(negate, m::Negate(m::Negate(m::Op(&x)))) &&
@@ -2853,6 +3186,9 @@ Status AlgebraicSimplifierVisitor::HandleNegate(HloInstruction* negate) {
 }
 
 Status AlgebraicSimplifierVisitor::HandleNot(HloInstruction* logical_not) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_55(mht_55_v, 3189, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleNot");
+
   // not(not(x)) => x
   HloInstruction* x;
   if (Match(logical_not, m::Not(m::Not(m::Op(&x)))) &&
@@ -2863,6 +3199,9 @@ Status AlgebraicSimplifierVisitor::HandleNot(HloInstruction* logical_not) {
 }
 
 Status AlgebraicSimplifierVisitor::HandleOr(HloInstruction* logical_or) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_56(mht_56_v, 3202, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleOr");
+
   HloInstruction *lhs, *rhs;
   CHECK(Match(logical_or, m::Or(m::Op(&lhs), m::Op(&rhs))));
 
@@ -2899,6 +3238,9 @@ Status AlgebraicSimplifierVisitor::HandleOr(HloInstruction* logical_or) {
 }
 
 Status AlgebraicSimplifierVisitor::HandleLog(HloInstruction* log) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_57(mht_57_v, 3241, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleLog");
+
   // ln(exp(A)) => A
   VLOG(10) << "trying transform [ln(exp(A)) => A]: " << log->ToString();
   HloInstruction *a, *b;
@@ -2950,6 +3292,9 @@ Status AlgebraicSimplifierVisitor::HandleLog(HloInstruction* log) {
 
 Status AlgebraicSimplifierVisitor::HandleGetTupleElement(
     HloInstruction* get_tuple_element) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_58(mht_58_v, 3295, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleGetTupleElement");
+
   auto operand = get_tuple_element->mutable_operand(0);
   if (operand->opcode() == HloOpcode::kTuple) {
     // get_tuple_element(make_tuple({A_0, A_1, ..., A_n}), i) => A_i
@@ -2979,6 +3324,9 @@ absl::optional<std::vector<int64_t>> ReshapeLeavesDimensionsUnmodified(
 // "instruction".
 bool OutputIsPermutationOfOperandElements(HloInstruction* instruction,
                                           HloInstruction* operand) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_59(mht_59_v, 3327, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "OutputIsPermutationOfOperandElements");
+
   DCHECK(!instruction->OperandIndices(operand).empty());
   switch (instruction->opcode()) {
     case HloOpcode::kReshape:
@@ -2996,6 +3344,9 @@ bool OutputIsPermutationOfOperandElements(HloInstruction* instruction,
 // "operand". Precondition: "operand" is an operand of "instruction".
 bool OutputIsSubsetOfOperandElements(HloInstruction* instruction,
                                      HloInstruction* operand) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_60(mht_60_v, 3347, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "OutputIsSubsetOfOperandElements");
+
   const auto operand_indices = instruction->OperandIndices(operand);
   CHECK(!operand_indices.empty());
   if (operand_indices.size() != 1) {
@@ -3016,6 +3367,9 @@ bool OutputIsSubsetOfOperandElements(HloInstruction* instruction,
 }  // namespace
 
 Status AlgebraicSimplifierVisitor::HandleBroadcast(HloInstruction* broadcast) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_61(mht_61_v, 3370, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleBroadcast");
+
   HloInstruction* operand;
   CHECK(Match(broadcast, m::Broadcast(m::Op(&operand))));
   auto dims = *broadcast->mutable_dimensions();
@@ -3144,6 +3498,9 @@ Status AlgebraicSimplifierVisitor::HandleBroadcast(HloInstruction* broadcast) {
 }
 
 Status AlgebraicSimplifierVisitor::HandleCompare(HloInstruction* compare) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_62(mht_62_v, 3501, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleCompare");
+
   HloInstruction* lhs;
   HloInstruction* rhs;
   CHECK(Match(compare, m::Compare(m::Op(&lhs), m::Op(&rhs))));
@@ -3225,6 +3582,9 @@ Status AlgebraicSimplifierVisitor::HandleCompare(HloInstruction* compare) {
 }
 
 Status AlgebraicSimplifierVisitor::HandleConvert(HloInstruction* convert) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_63(mht_63_v, 3585, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleConvert");
+
   PrimitiveType src_type = convert->operand(0)->shape().element_type();
   PrimitiveType dest_type = convert->shape().element_type();
   // A conversion to the same element type as the operand is a nop and can be
@@ -3254,6 +3614,9 @@ Status AlgebraicSimplifierVisitor::HandleConvert(HloInstruction* convert) {
 
 // Complex(Real(c), Imag(c)) -> c
 Status AlgebraicSimplifierVisitor::HandleComplex(HloInstruction* complex) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_64(mht_64_v, 3617, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleComplex");
+
   HloInstruction *c0, *c1;
   if (Match(complex, m::Complex(m::Real(m::Op(&c0)), m::Imag(m::Op(&c1)))) &&
       c0 == c1) {
@@ -3264,6 +3627,9 @@ Status AlgebraicSimplifierVisitor::HandleComplex(HloInstruction* complex) {
 
 // Real(Complex(r, i)) -> r
 Status AlgebraicSimplifierVisitor::HandleReal(HloInstruction* real) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_65(mht_65_v, 3630, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleReal");
+
   HloInstruction* op;
   if (Match(real, m::Real(m::Complex(m::Op(&op), m::Op())))) {
     return ReplaceInstruction(real, op);
@@ -3273,6 +3639,9 @@ Status AlgebraicSimplifierVisitor::HandleReal(HloInstruction* real) {
 
 // Imag(Complex(r, i)) -> i
 Status AlgebraicSimplifierVisitor::HandleImag(HloInstruction* imag) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_66(mht_66_v, 3642, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleImag");
+
   HloInstruction* op;
   if (Match(imag, m::Imag(m::Complex(m::Op(), m::Op(&op))))) {
     return ReplaceInstruction(imag, op);
@@ -3281,6 +3650,9 @@ Status AlgebraicSimplifierVisitor::HandleImag(HloInstruction* imag) {
 }
 
 Status AlgebraicSimplifierVisitor::HandleIota(HloInstruction* instruction) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_67(mht_67_v, 3653, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleIota");
+
   // iota -> zero if the iota dimension never produces an element other than
   // zero.
   auto* iota = Cast<HloIotaInstruction>(instruction);
@@ -3291,6 +3663,9 @@ Status AlgebraicSimplifierVisitor::HandleIota(HloInstruction* instruction) {
 }
 
 Status AlgebraicSimplifierVisitor::HandlePad(HloInstruction* pad) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_68(mht_68_v, 3666, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandlePad");
+
   if (ShapeUtil::IsZeroElementArray(pad->operand(0)->shape())) {
     return ReplaceWithNewInstruction(
         pad, HloInstruction::CreateBroadcast(pad->shape(),
@@ -3494,6 +3869,9 @@ Status AlgebraicSimplifierVisitor::HandlePad(HloInstruction* pad) {
 }
 
 Status AlgebraicSimplifierVisitor::HandlePower(HloInstruction* power) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_69(mht_69_v, 3872, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandlePower");
+
   VLOG(10) << "trying transform [pow(A, 0) => 1]: " << power->ToString();
   HloInstruction *lhs, *rhs;
   CHECK(Match(power, m::Power(m::Op(&lhs), m::Op(&rhs))));
@@ -3546,6 +3924,9 @@ Status AlgebraicSimplifierVisitor::HandlePower(HloInstruction* power) {
 StatusOr<bool>
 AlgebraicSimplifierVisitor::TryToSinkBroadcastAfterOpWithUniqueNonScalarOperand(
     HloInstruction* broadcast) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_70(mht_70_v, 3927, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::TryToSinkBroadcastAfterOpWithUniqueNonScalarOperand");
+
   TF_RET_CHECK(broadcast->opcode() == HloOpcode::kBroadcast);
   bool changed = false;
   if (ShapeUtil::IsScalar(broadcast->shape())) {
@@ -3553,17 +3934,26 @@ AlgebraicSimplifierVisitor::TryToSinkBroadcastAfterOpWithUniqueNonScalarOperand(
   }
   HloInstruction* operand = broadcast->mutable_operand(0);
   auto is_scalar_broadcast = [](const HloInstruction* instruction) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_71(mht_71_v, 3937, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "lambda");
+
     return instruction->opcode() == HloOpcode::kBroadcast &&
            ShapeUtil::IsScalar(instruction->operand(0)->shape());
   };
   auto is_equal_broadcast = [operand,
                              broadcast](const HloInstruction* instruction) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_72(mht_72_v, 3945, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "lambda");
+
     return instruction->opcode() == HloOpcode::kBroadcast &&
            ShapeUtil::Equal(operand->shape(),
                             instruction->operand(0)->shape()) &&
            broadcast->dimensions() == instruction->dimensions();
   };
   auto is_compatible_broadcast = [&](const HloInstruction* instruction) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_73(mht_73_v, 3954, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "lambda");
+
     return is_scalar_broadcast(instruction) || is_equal_broadcast(instruction);
   };
   for (HloInstruction* user : broadcast->users()) {
@@ -3713,6 +4103,9 @@ std::unique_ptr<HloInstruction> TryRemainderToAnd(
 }  // namespace
 
 Status AlgebraicSimplifierVisitor::HandleRemainder(HloInstruction* remainder) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_74(mht_74_v, 4106, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleRemainder");
+
   HloInstruction *a, *b;
   CHECK(Match(remainder, m::Remainder(m::Op(&a), m::Op(&b))));
 
@@ -3838,6 +4231,9 @@ Status AlgebraicSimplifierVisitor::HandleRemainder(HloInstruction* remainder) {
 }
 
 Status AlgebraicSimplifierVisitor::HandleReshape(HloInstruction* reshape) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_75(mht_75_v, 4234, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleReshape");
+
   auto operand = reshape->mutable_operand(0);
 
   // Reshape directly to empty constant if the shape contains zero-element
@@ -3988,6 +4384,9 @@ Status AlgebraicSimplifierVisitor::HandleReshape(HloInstruction* reshape) {
 }
 
 Status AlgebraicSimplifierVisitor::HandleReverse(HloInstruction* reverse) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_76(mht_76_v, 4387, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleReverse");
+
   // When all the dimensions to reverse are trivial (i.e. the bound is 1),
   // there is nothing to be done.
   auto dim_is_one = [&](int64_t i) -> bool {
@@ -4001,6 +4400,9 @@ Status AlgebraicSimplifierVisitor::HandleReverse(HloInstruction* reverse) {
 
 StatusOr<bool> AlgebraicSimplifierVisitor::TrySimplifyScalarSlice(
     HloInstruction* slice) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_77(mht_77_v, 4403, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::TrySimplifyScalarSlice");
+
   // Only try to do this for effective scalars. We could do the same for slicing
   // out larger pieces of padding (replacing with a broadcast of the padding
   // value), but this is probably not worth it.
@@ -4053,6 +4455,9 @@ StatusOr<bool> AlgebraicSimplifierVisitor::TrySimplifyScalarSlice(
 
 StatusOr<bool> AlgebraicSimplifierVisitor::TryToReorderSliceAndReshape(
     HloInstruction* slice) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_78(mht_78_v, 4458, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::TryToReorderSliceAndReshape");
+
   CHECK_EQ(slice->opcode(), HloOpcode::kSlice);
   if (!IsUnstridedSlice(slice)) {
     return false;
@@ -4109,6 +4514,9 @@ StatusOr<bool> AlgebraicSimplifierVisitor::TryToReorderSliceAndReshape(
 // slice config.
 StatusOr<bool> AlgebraicSimplifierVisitor::TryToReorderSliceAndReverse(
     HloInstruction* slice) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_79(mht_79_v, 4517, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::TryToReorderSliceAndReverse");
+
   VLOG(2) << "Entered TryToReorderSliceAndReverse for slice:"
           << slice->ToString();
   if (Match(slice, m::Slice(m::Reverse()))) {
@@ -4152,6 +4560,9 @@ StatusOr<bool> AlgebraicSimplifierVisitor::TryToReorderSliceAndReverse(
 }
 
 Status AlgebraicSimplifierVisitor::HandleSlice(HloInstruction* slice) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_80(mht_80_v, 4563, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleSlice");
+
   // Delete no-op slices, i.e. where shape = operand shape.
   if (ReplaceInstructionIfCompatible(slice, slice->mutable_operand(0))) {
     return Status::OK();
@@ -4331,6 +4742,9 @@ Status AlgebraicSimplifierVisitor::HandleSlice(HloInstruction* slice) {
 }
 
 Status AlgebraicSimplifierVisitor::HandleRsqrt(HloInstruction* rsqrt) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_81(mht_81_v, 4745, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleRsqrt");
+
   VLOG(10) << "trying transform [rsqrt(Pow(A, -2)) => |A|] "
            << rsqrt->ToString();
   HloInstruction* rsqrt_operand = rsqrt->mutable_operand(0);
@@ -4357,6 +4771,9 @@ Status AlgebraicSimplifierVisitor::HandleRsqrt(HloInstruction* rsqrt) {
 
 Status AlgebraicSimplifierVisitor::HandleDynamicSlice(
     HloInstruction* dynamic_slice) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_82(mht_82_v, 4774, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleDynamicSlice");
+
   auto operand = dynamic_slice->mutable_operand(0);
   if (ShapeUtil::IsScalar(dynamic_slice->shape())) {
     return ReplaceInstruction(dynamic_slice, operand);
@@ -4470,6 +4887,9 @@ Status AlgebraicSimplifierVisitor::HandleDynamicSlice(
       const PrimitiveType index_type = index->shape().element_type();
 
       auto create_constant = [&](int64_t value) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_83(mht_83_v, 4890, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "lambda");
+
         if (index_type == S32) {
           return MakeScalarLike<int32_t>(index, value);
         } else {
@@ -4538,6 +4958,9 @@ Status AlgebraicSimplifierVisitor::HandleDynamicSlice(
 
 Status AlgebraicSimplifierVisitor::HandleDynamicUpdateSlice(
     HloInstruction* dynamic_update_slice) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_84(mht_84_v, 4961, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleDynamicUpdateSlice");
+
   // Rewriting DynamicUpdateSlice when it matches
   // dynamic_update_slice(broadcast(constant),data,constant_index0,...)
   // to a Pad(x, constant)
@@ -4662,6 +5085,9 @@ Status AlgebraicSimplifierVisitor::HandleDynamicUpdateSlice(
 }
 
 static bool MatchArgMinMax(const HloInstruction* hlo, bool is_max) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_85(mht_85_v, 5088, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "MatchArgMinMax");
+
   // Create matcher for shared sub-expression.
   auto value_pred = m::OrAnyOrder(
       m::Compare(m::Parameter(0), m::Parameter(2))
@@ -4703,6 +5129,9 @@ static bool MatchArgMinMax(const HloInstruction* hlo, bool is_max) {
 //                       tuple
 //
 static bool MatchArgMin(const HloInstruction* hlo) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_86(mht_86_v, 5132, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "MatchArgMin");
+
   // Match on variadic Reduce ArgMin
   if (hlo->opcode() != HloOpcode::kReduce || hlo->operand_count() != 4 ||
       !hlo->shape().IsTuple() ||
@@ -4731,6 +5160,9 @@ static bool MatchArgMin(const HloInstruction* hlo) {
 //                       tuple
 //
 static bool MatchArgMax(const HloInstruction* hlo) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_87(mht_87_v, 5163, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "MatchArgMax");
+
   // Match on variadic Reduce ArgMax.
   if (hlo->opcode() != HloOpcode::kReduce || hlo->operand_count() != 4 ||
       !hlo->shape().IsTuple() ||
@@ -4743,6 +5175,9 @@ static bool MatchArgMax(const HloInstruction* hlo) {
 }
 
 Status AlgebraicSimplifierVisitor::HandleReduce(HloInstruction* hlo) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_88(mht_88_v, 5178, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleReduce");
+
   HloReduceInstruction* reduce = Cast<HloReduceInstruction>(hlo);
   bool multi_output_reduce = reduce->shape().IsTuple();
   // For tuple reduce, we require all reduce shapes to be the same, up to the
@@ -5070,6 +5505,9 @@ Status AlgebraicSimplifierVisitor::HandleReduce(HloInstruction* hlo) {
 }
 
 Status AlgebraicSimplifierVisitor::HandleReduceWindow(HloInstruction* hlo) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_89(mht_89_v, 5508, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleReduceWindow");
+
   auto* reduce_window = Cast<HloReduceWindowInstruction>(hlo);
   const bool multi_output_reduce_window = reduce_window->shape().IsTuple();
   auto inputs = reduce_window->inputs();
@@ -5078,6 +5516,9 @@ Status AlgebraicSimplifierVisitor::HandleReduceWindow(HloInstruction* hlo) {
   auto input_shapes = reduce_window->input_shapes();
   auto output_shapes = reduce_window->output_shapes();
   auto replace_with_span = [&](const std::vector<HloInstruction*>& elements) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_90(mht_90_v, 5519, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "lambda");
+
     CHECK(multi_output_reduce_window || elements.size() == 1);
     if (multi_output_reduce_window) {
       return ReplaceWithNewInstruction(reduce_window,
@@ -5369,6 +5810,9 @@ Status AlgebraicSimplifierVisitor::HandleReduceWindow(HloInstruction* hlo) {
   if (is_effective_broadcast()) {
     VLOG(10) << "Replacing pad/reduce-window with broadcast.";
     auto fadd = [hlo](std::unique_ptr<HloInstruction> x) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_91(mht_91_v, 5813, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "lambda");
+
       return hlo->AddInstruction(std::move(x));
     };
     return ReplaceWithNewInstruction(
@@ -5408,6 +5852,9 @@ Status AlgebraicSimplifierVisitor::HandleReduceWindow(HloInstruction* hlo) {
 }
 
 Status AlgebraicSimplifierVisitor::HandleSelect(HloInstruction* select) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_92(mht_92_v, 5855, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleSelect");
+
   // select(x, y, y) -> y.
   if (select->operand(1) == select->operand(2)) {
     return ReplaceInstruction(select, select->mutable_operand(1));
@@ -5434,6 +5881,9 @@ Status AlgebraicSimplifierVisitor::HandleSelect(HloInstruction* select) {
 }
 
 Status AlgebraicSimplifierVisitor::HandleScatter(HloInstruction* scatter) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_93(mht_93_v, 5884, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleScatter");
+
   if (ShapeUtil::IsZeroElementArray(scatter->operand(2)->shape()) &&
       ReplaceInstructionIfCompatible(scatter, scatter->mutable_operand(0))) {
     return Status::OK();
@@ -5450,6 +5900,9 @@ Status AlgebraicSimplifierVisitor::HandleScatter(HloInstruction* scatter) {
   return Status::OK();
 }
 Status AlgebraicSimplifierVisitor::HandleSort(HloInstruction* sort) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_94(mht_94_v, 5903, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleSort");
+
   auto operand = sort->mutable_operand(0);
   int64_t dimension_to_sort = sort->dimensions(0);
   if (ShapeUtil::IsZeroElementArray(operand->shape()) ||
@@ -5465,6 +5918,9 @@ Status AlgebraicSimplifierVisitor::HandleSort(HloInstruction* sort) {
 }
 
 Status AlgebraicSimplifierVisitor::HandleSqrt(HloInstruction* sqrt) {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_95(mht_95_v, 5921, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleSqrt");
+
   VLOG(10) << "trying transform [sqrt(A*A) => |A|] " << sqrt->ToString();
   HloInstruction* sqrt_operand = sqrt->mutable_operand(0);
   if (sqrt_operand->opcode() == HloOpcode::kMultiply &&
@@ -5480,6 +5936,9 @@ Status AlgebraicSimplifierVisitor::HandleSqrt(HloInstruction* sqrt) {
 namespace {
 bool OnlyPermutesDegenerateDims(const Shape& shape,
                                 absl::Span<const int64_t> perm) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_96(mht_96_v, 5939, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "OnlyPermutesDegenerateDims");
+
   std::vector<int64_t> new_permutation;
   int64_t degenerate_count = 0;
   for (int64_t i = 0; i < perm.size(); ++i) {
@@ -5493,6 +5952,9 @@ bool OnlyPermutesDegenerateDims(const Shape& shape,
 }
 
 bool IsPermutationOfIota(absl::Span<const int64_t> elems) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_97(mht_97_v, 5955, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "IsPermutationOfIota");
+
   absl::InlinedVector<int64_t, 8> sorted(elems.begin(), elems.end());
   absl::c_sort(sorted);
   for (int i = 0; i < sorted.size(); i++) {
@@ -5506,6 +5968,9 @@ bool IsPermutationOfIota(absl::Span<const int64_t> elems) {
 }  // namespace
 
 Status AlgebraicSimplifierVisitor::HandleTranspose(HloInstruction* transpose) {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_98(mht_98_v, 5971, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleTranspose");
+
   auto operand = transpose->mutable_operand(0);
   if (std::is_sorted(transpose->dimensions().begin(),
                      transpose->dimensions().end())) {
@@ -5746,6 +6211,9 @@ Status AlgebraicSimplifierVisitor::HandleTranspose(HloInstruction* transpose) {
 
 StatusOr<bool> AlgebraicSimplifierVisitor::FoldConvInputPad(
     HloInstruction* convolution) {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_99(mht_99_v, 6214, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::FoldConvInputPad");
+
   HloInstruction *lhs, *a, *b;
   if (Match(convolution,
             m::Convolution(m::Pad(&lhs, m::Op(&a), m::ConstantScalar(0)),
@@ -5807,6 +6275,9 @@ StatusOr<bool> AlgebraicSimplifierVisitor::FoldConvInputPad(
 
 StatusOr<bool> AlgebraicSimplifierVisitor::FoldConvFilterPad(
     HloInstruction* convolution) {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_100(mht_100_v, 6278, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::FoldConvFilterPad");
+
   auto* lhs = convolution->mutable_operand(0);
   auto* rhs = convolution->mutable_operand(1);
   const ConvolutionDimensionNumbers& dnums =
@@ -5873,6 +6344,9 @@ StatusOr<bool> AlgebraicSimplifierVisitor::FoldConvFilterPad(
 
 StatusOr<bool> AlgebraicSimplifierVisitor::SwapConvOperands(
     HloInstruction* convolution) {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_101(mht_101_v, 6347, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::SwapConvOperands");
+
   if (!options_.enable_conv_operand_swap() || options_.is_layout_sensitive()) {
     return false;
   }
@@ -6010,6 +6484,9 @@ StatusOr<bool> AlgebraicSimplifierVisitor::SwapConvOperands(
 
 StatusOr<bool> AlgebraicSimplifierVisitor::SimplifyConvToDot(
     HloInstruction* convolution) {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_102(mht_102_v, 6487, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::SimplifyConvToDot");
+
   auto* lhs = convolution->mutable_operand(0);
   auto* rhs = convolution->mutable_operand(1);
   const auto& window = convolution->window();
@@ -6081,6 +6558,9 @@ StatusOr<bool> AlgebraicSimplifierVisitor::SimplifyConvToDot(
     return false;
   }
   auto add_bitcast = [&](Shape shape, HloInstruction* operand) {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_103(mht_103_v, 6561, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "lambda");
+
     std::vector<int64_t> dims(operand->shape().dimensions_size());
     std::iota(dims.begin(), dims.end(), 0);
     return operand->AddInstruction(
@@ -6132,6 +6612,9 @@ StatusOr<bool> AlgebraicSimplifierVisitor::SimplifyConvToDot(
 
 Status AlgebraicSimplifierVisitor::HandleConvolution(
     HloInstruction* convolution) {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_104(mht_104_v, 6615, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleConvolution");
+
   if (options_.enable_scalar_multiply_reduction()) {
     TF_RETURN_IF_ERROR(ScalarMultiplyReduction(convolution));
   }
@@ -6169,6 +6652,9 @@ Status AlgebraicSimplifierVisitor::HandleConvolution(
 }
 
 Status AlgebraicSimplifierVisitor::HandleMap(HloInstruction* map) {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_105(mht_105_v, 6655, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifierVisitor::HandleMap");
+
   auto* map_computation = map->to_apply();
   auto* map_root = map_computation->root_instruction();
   if (map_root->opcode() == HloOpcode::kParameter) {
@@ -6206,6 +6692,9 @@ Status AlgebraicSimplifierVisitor::HandleMap(HloInstruction* map) {
 }
 
 StatusOr<bool> AlgebraicSimplifier::Run(HloModule* module) {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSalgebraic_simplifierDTcc mht_106(mht_106_v, 6695, "", "./tensorflow/compiler/xla/service/algebraic_simplifier.cc", "AlgebraicSimplifier::Run");
+
   bool changed = false;
   AlgebraicSimplifierVisitor visitor(options_, this);
   for (auto* comp : module->MakeNonfusionComputations()) {

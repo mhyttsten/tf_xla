@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_opsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_opsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_opsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -86,18 +254,30 @@ namespace TF {
 namespace {
 
 struct TFConstantFoldInterface : public DialectFoldInterface {
-  TFConstantFoldInterface(Dialect *dialect) : DialectFoldInterface(dialect) {}
+  TFConstantFoldInterface(Dialect *dialect) : DialectFoldInterface(dialect) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_opsDTcc mht_0(mht_0_v, 258, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops.cc", "TFConstantFoldInterface");
+}
   LogicalResult fold(Operation *op, ArrayRef<Attribute> operands,
                      SmallVectorImpl<OpFoldResult> &results) const final {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_opsDTcc mht_1(mht_1_v, 263, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops.cc", "fold");
+
     return TensorFlowDialect::constantFold(op, operands, results);
   }
 };
 
 struct TFDecodeAttributesInterface : public DialectDecodeAttributesInterface {
   TFDecodeAttributesInterface(Dialect *dialect)
-      : DialectDecodeAttributesInterface(dialect) {}
+      : DialectDecodeAttributesInterface(dialect) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_opsDTcc mht_2(mht_2_v, 273, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops.cc", "TFDecodeAttributesInterface");
+}
   LogicalResult decode(OpaqueElementsAttr input,
                        ElementsAttr &output) const override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_opsDTcc mht_3(mht_3_v, 278, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops.cc", "decode");
+
     return TensorFlowDialect::decode(input, output);
   }
 };
@@ -107,6 +287,9 @@ struct TFDecodeAttributesInterface : public DialectDecodeAttributesInterface {
 // placement attributes to match the function call node.
 void MultiDeviceProcessInlinedCallBlocks(
     Operation *call, iterator_range<Region::iterator> inlinedBlocks) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_opsDTcc mht_4(mht_4_v, 290, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops.cc", "MultiDeviceProcessInlinedCallBlocks");
+
   using DeviceNameUtils = tensorflow::DeviceNameUtils;
 
   // Duplicate of the logic in MultiDeviceFunctionBodyPlacer::BodyNodeDevice
@@ -155,6 +338,9 @@ struct TFInlinerInterface : public DialectInlinerInterface {
   // a TF operation.
   bool isLegalToInline(Operation *call, Operation *callable,
                        bool wouldBeCloned) const final {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_opsDTcc mht_5(mht_5_v, 341, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops.cc", "isLegalToInline");
+
     // Skip inlining for TPUPartitionedCalls.
     if (isa<TPUPartitionedCallOp>(call)) return false;
     // Maintain inlining for  `tf.function`s with jit_compile option.
@@ -170,6 +356,9 @@ struct TFInlinerInterface : public DialectInlinerInterface {
   // attached to a TF operation.
   bool isLegalToInline(Region *dest, Region *src, bool wouldBeCloned,
                        BlockAndValueMapping &valueMapping) const final {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_opsDTcc mht_6(mht_6_v, 359, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops.cc", "isLegalToInline");
+
     // Allow inlining in regions attached to region based control flow
     // operations only if the src region is a single block region
     return isa<IfRegionOp, WhileRegionOp>(dest->getParentOp()) &&
@@ -180,6 +369,9 @@ struct TFInlinerInterface : public DialectInlinerInterface {
   // region.
   bool isLegalToInline(Operation *op, Region *dest, bool wouldBeCloned,
                        BlockAndValueMapping &) const final {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_opsDTcc mht_7(mht_7_v, 372, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops.cc", "isLegalToInline");
+
     // An op is legal to inline if either of the following conditions is true:
     // (a) Its legal to duplicate the Op.
     // (b) The Op is inside a single use function. If that function is inlined,
@@ -201,6 +393,9 @@ struct TFInlinerInterface : public DialectInlinerInterface {
   Operation *materializeCallConversion(OpBuilder &builder, Value input,
                                        Type result_type,
                                        Location conversion_loc) const final {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_opsDTcc mht_8(mht_8_v, 396, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops.cc", "materializeCallConversion");
+
     if (!result_type.isa<TensorType>() || !input.getType().isa<TensorType>())
       return nullptr;
     return builder.create<TF::CastOp>(conversion_loc, result_type, input,
@@ -210,6 +405,9 @@ struct TFInlinerInterface : public DialectInlinerInterface {
   void processInlinedCallBlocks(
       Operation *call,
       iterator_range<Region::iterator> inlinedBlocks) const final {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_opsDTcc mht_9(mht_9_v, 408, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops.cc", "processInlinedCallBlocks");
+
     bool has_lower_as_multi_device_function_attr = false;
     if (auto lower = call->getAttrOfType<BoolAttr>(
             tensorflow::LowerFunctionalOpsConstants::
@@ -232,6 +430,9 @@ struct TFInlinerInterface : public DialectInlinerInterface {
 
 // Returns true if the op can be duplicated.
 bool TensorFlowDialect::CanDuplicate(Operation *op) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_opsDTcc mht_10(mht_10_v, 433, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops.cc", "TensorFlowDialect::CanDuplicate");
+
   // If the op is marked with the cannot duplicate trait, it cannot be
   // duplicated.
   if (op->hasTrait<OpTrait::TF::CannotDuplicate>()) return false;
@@ -254,15 +455,24 @@ bool TensorFlowDialect::CanDuplicate(Operation *op) {
 struct TensorFlowRegistryEffectInterfaceFallback
     : public MemoryEffectOpInterface::FallbackModel<
           TensorFlowRegistryEffectInterfaceFallback> {
-  static bool classof(Operation *op) { return true; }
+  static bool classof(Operation *op) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_opsDTcc mht_11(mht_11_v, 459, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops.cc", "classof");
+ return true; }
   void getEffects(
       Operation *op,
       SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
-          &effects) const {}
+          &effects) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_opsDTcc mht_12(mht_12_v, 466, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops.cc", "getEffects");
+}
 };
 
 void *TensorFlowDialect::getRegisteredInterfaceForOp(
     mlir::TypeID interface, mlir::OperationName opName) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_opsDTcc mht_13(mht_13_v, 473, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops.cc", "TensorFlowDialect::getRegisteredInterfaceForOp");
+
   if (interface == TypeID::get<mlir::MemoryEffectOpInterface>()) {
     // Don't use fallback for modelled ops.
     if (opName.isRegistered()) return nullptr;
@@ -281,6 +491,9 @@ void *TensorFlowDialect::getRegisteredInterfaceForOp(
 
 // Returns true if the op can have side effects.
 bool TensorFlowDialect::CanHaveSideEffects(Operation *op) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_opsDTcc mht_14(mht_14_v, 494, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops.cc", "TensorFlowDialect::CanHaveSideEffects");
+
   // If the op has no memory side effects, it has no side effects
   if (MemoryEffectOpInterface::hasNoEffect(op)) return false;
 
@@ -300,6 +513,9 @@ bool TensorFlowDialect::CanHaveSideEffects(Operation *op) {
 // These are invoked at construction time.
 static DenseMap<TypeID, TensorFlowDialect::AdditionalOpFunction>
     &GetAdditionalOperationHooks() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_opsDTcc mht_15(mht_15_v, 516, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops.cc", "GetAdditionalOperationHooks");
+
   static auto *additional_operation_hooks =
       new DenseMap<TypeID, TensorFlowDialect::AdditionalOpFunction>();
   return *additional_operation_hooks;
@@ -307,6 +523,9 @@ static DenseMap<TypeID, TensorFlowDialect::AdditionalOpFunction>
 
 void TensorFlowDialect::RegisterAdditionalOperationHook(
     TypeID id, AdditionalOpFunction fn) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_opsDTcc mht_16(mht_16_v, 526, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops.cc", "TensorFlowDialect::RegisterAdditionalOperationHook");
+
   GetAdditionalOperationHooks().try_emplace(id, std::move(fn));
 }
 
@@ -315,6 +534,9 @@ TensorFlowDialect::DecodeConstantHook TensorFlowDialect::decode_constant_hook_;
 
 TensorFlowDialect::TensorFlowDialect(MLIRContext *context)
     : Dialect(/*name=*/"tf", context, TypeID::get<TensorFlowDialect>()) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_opsDTcc mht_17(mht_17_v, 537, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops.cc", "TensorFlowDialect::TensorFlowDialect");
+
   context->getOrLoadDialect<::mlir::tf_type::TFTypeDialect>();
   addOperations<
 #define GET_OP_LIST
@@ -339,10 +561,16 @@ TensorFlowDialect::TensorFlowDialect(MLIRContext *context)
 }
 
 TensorFlowDialect::~TensorFlowDialect() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_opsDTcc mht_18(mht_18_v, 564, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops.cc", "TensorFlowDialect::~TensorFlowDialect");
+
   delete fallback_effect_op_interface_;
 }
 
 Type TensorFlowDialect::parseType(DialectAsmParser &parser) const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_opsDTcc mht_19(mht_19_v, 571, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops.cc", "TensorFlowDialect::parseType");
+
   StringRef spec = parser.getFullSymbolSpec();
   llvm::SMLoc loc = parser.getCurrentLocation();
   parser.emitError(
@@ -352,6 +580,9 @@ Type TensorFlowDialect::parseType(DialectAsmParser &parser) const {
 
 Attribute TensorFlowDialect::parseAttribute(DialectAsmParser &parser,
                                             Type type) const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_opsDTcc mht_20(mht_20_v, 583, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops.cc", "TensorFlowDialect::parseAttribute");
+
   StringRef spec = parser.getFullSymbolSpec();
   llvm::SMLoc loc = parser.getCurrentLocation();
   parser.emitError(
@@ -362,6 +593,9 @@ Attribute TensorFlowDialect::parseAttribute(DialectAsmParser &parser,
 Operation *TensorFlowDialect::materializeConstant(OpBuilder &builder,
                                                   Attribute value, Type type,
                                                   Location loc) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_opsDTcc mht_21(mht_21_v, 596, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops.cc", "TensorFlowDialect::materializeConstant");
+
   return builder.create<ConstOp>(loc, type, value);
 }
 

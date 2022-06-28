@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -128,6 +296,9 @@ limitations under the License.
 #include "tensorflow/stream_executor/lib/statusor.h"
 
 static inline absl::string_view StringRefToView(llvm::StringRef ref) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_0(mht_0_v, 299, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "StringRefToView");
+
   return {ref.data(), ref.size()};
 }
 
@@ -147,18 +318,27 @@ namespace {
 
 bool IsOutputShapesAttribute(const AttrValue& attr_value,
                              llvm::StringRef attr_name) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_1(mht_1_v, 321, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "IsOutputShapesAttribute");
+
   return attr_name.compare(kOutputShapesAttrName) == 0 &&
          attr_value.value_case() == AttrValue::kList;
 }
 
 bool IsResourceOutputShapesAttribute(const AttrValue& attr_value,
                                      llvm::StringRef attr_name) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_2(mht_2_v, 330, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "IsResourceOutputShapesAttribute");
+
   if (attr_name == "_handle_dtypes" || attr_name == "_handle_shapes")
     return attr_value.value_case() == AttrValue::kList;
   return false;
 }
 
 void LoadImporterDialects(mlir::MLIRContext& context) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_3(mht_3_v, 339, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "LoadImporterDialects");
+
   // Load dialects involved in the conversion
   mlir::DialectRegistry registry;
   mlir::RegisterAllTensorFlowDialects(registry);
@@ -180,14 +360,23 @@ void LoadImporterDialects(mlir::MLIRContext& context) {
 class NameUniquifier : public OpOrArgNameMapper {
  public:
   explicit NameUniquifier(const FunctionLibraryDefinition& flib)
-      : flib_(flib) {}
+      : flib_(flib) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_4(mht_4_v, 364, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "NameUniquifier");
+}
 
  private:
   bool IsUnique(llvm::StringRef name) override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_5(mht_5_v, 370, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "IsUnique");
+
     return !flib_.Contains(std::string(name));
   }
 
   std::string GetName(OpOrVal op_or_val) override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_6(mht_6_v, 377, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "GetName");
+
     DCHECK(false) << "Unimplemented";
     return "";
   }
@@ -221,6 +410,9 @@ class ImporterBase {
         function_name_for_debug_info_(function_name_for_debug_info),
         function_name_uniquifier_(function_name_uniquifier),
         error_handler_(module.getContext()) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_7(mht_7_v, 413, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ImporterBase");
+
     // Log import config.
     if (VLOG_IS_ON(1)) {
       LOG(INFO) << "Importing with: " << specs.str();
@@ -297,7 +489,11 @@ class ImporterBase {
     DeferredConversionMetaData(
         const std::string& function_name,
         const std::vector<mlir::NamedAttribute>& attributes)
-        : function_name(function_name), attributes(attributes) {}
+        : function_name(function_name), attributes(attributes) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("function_name: \"" + function_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_8(mht_8_v, 494, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "DeferredConversionMetaData");
+}
 
     std::string function_name;
     std::vector<mlir::NamedAttribute> attributes;
@@ -476,6 +672,10 @@ class ImporterBase {
 // or only the first output is in use.
 bool HasNonPrimaryOutputInUse(const GraphDef& graph_def,
                               const std::string& node) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("node: \"" + node + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_9(mht_9_v, 676, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "HasNonPrimaryOutputInUse");
+
   for (const auto& node_def : graph_def.node()) {
     for (const auto& input : node_def.input()) {
       if (absl::StartsWith(input, node + ":") && input != node + ":0") {
@@ -493,6 +693,9 @@ bool HasNonPrimaryOutputInUse(const GraphDef& graph_def,
 Status UpdateLegacyFedInputNode(const GraphDef& graph_def,
                                 const GraphImportConfig::InputArrays& inputs,
                                 NodeDef* node) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_10(mht_10_v, 696, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "UpdateLegacyFedInputNode");
+
   const std::string& node_name = node->name();
   auto it = inputs.find(node_name);
 
@@ -527,6 +730,9 @@ Status UpdateLegacyFedInputNode(const GraphDef& graph_def,
 // - Replacing LegacyFedInput nodes with Placeholder nodes if
 //   convert_legacy_fed_inputs option is enabled.
 Status PreprocessGraphDef(const GraphImportConfig* specs, GraphDef* graph_def) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_11(mht_11_v, 733, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "PreprocessGraphDef");
+
   for (auto& node_def : *graph_def->mutable_node()) {
     // TODO(hinsu): Completely deprecate support for LegacyFedInput ops. One
     // solution could be have a tool to let users upgrade old serialized graphs.
@@ -581,6 +787,10 @@ StatusOr<FeedsByNode> GetFeedsByNode(
 std::string GetUniqueNodeName(
     absl::string_view node_name, int index,
     const std::unordered_map<string, Node*>& node_name_map) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_12(mht_12_v, 791, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "GetUniqueNodeName");
+
   std::string new_node_name_base = absl::StrCat(node_name, "_", index);
   int count = 0;
   std::string new_node_name = new_node_name_base;
@@ -591,6 +801,9 @@ std::string GetUniqueNodeName(
 }
 
 Status ImporterBase::ConvertDeferredFunctions() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_13(mht_13_v, 804, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ImporterBase::ConvertDeferredFunctions");
+
   while (!deferred_functions_.empty()) {
     auto conversion_metadata = deferred_functions_.front();
     deferred_functions_.pop();
@@ -664,6 +877,9 @@ Status ImporterBase::ConvertDeferredFunctions() {
 }
 
 Status ImporterBase::RemoveBackedges() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_14(mht_14_v, 880, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ImporterBase::RemoveBackedges");
+
   // Remove all the backedges. So the nodes can be added to the shape refiner.
   TF_RETURN_IF_ERROR(back_edge_helper_.Remove(graph_.get()));
   VLOG(1) << "Found " << (back_edge_helper_.RemovedEdges().size())
@@ -691,6 +907,9 @@ Status ImporterBase::RemoveBackedges() {
 }
 
 Status CopyStackTraces(const Graph& from, Graph* to) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_15(mht_15_v, 910, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "CopyStackTraces");
+
   // Copy over the stack traces.
   // TODO(jpienaar): This really shouldn't be needed, copying the Graph above
   // and then needing these traversals is unfortunate.
@@ -769,7 +988,14 @@ StatusOr<std::pair<Node*, bool>> ImporterBase::CreatePlaceholderNodeForFeed(
 Status ImporterBase::GetInputOutputNodes(
     const std::unordered_map<string, Node*>& node_name_map,
     std::unordered_set<const Node*>* nodes) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_16(mht_16_v, 991, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ImporterBase::GetInputOutputNodes");
+
   auto add_node = [&](absl::string_view name) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_17(mht_17_v, 996, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "lambda");
+
     auto it = node_name_map.find(std::string(name));
     if (it == node_name_map.end()) {
       return errors::FailedPrecondition(
@@ -809,6 +1035,9 @@ Status ImporterBase::GetInputOutputNodes(
 // TODO(jpienaar): Remove this post shape inference on import flag is removed.
 Status ImporterBase::AddNodesToShapeRefiner(
     std::unordered_map<string, Node*>* node_name_map) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_18(mht_18_v, 1038, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ImporterBase::AddNodesToShapeRefiner");
+
   shape_refiner_ = absl::make_unique<ShapeRefiner>(graph_->versions(),
                                                    graph_->op_registry());
   // Some operations (for example "TPUExecute") don't have shape inference
@@ -892,6 +1121,9 @@ Status ImporterBase::AddNodesToShapeRefiner(
     }
 
     auto set_shape_from_list_attr = [&](const AttrValue* attr) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_19(mht_19_v, 1124, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "lambda");
+
       auto& list = attr->list();
       // This follows the same approach as in ValidateShape, but only flags
       // warning in case where there are mismatch in number of shapes and
@@ -1042,6 +1274,9 @@ Status ImporterBase::AddNodesToShapeRefiner(
 
 StatusOr<mlir::Type> ImporterBase::InferInputType(const Node& node, int idx,
                                                   mlir::Builder builder) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_20(mht_20_v, 1277, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ImporterBase::InferInputType");
+
   if (specs_.enable_shape_inference) {
     // TODO(jpienaar): Remove this if shape inference on import flag is removed.
     ExtendedInferenceContext* shape_context =
@@ -1060,6 +1295,9 @@ StatusOr<mlir::Type> ImporterBase::InferInputType(const Node& node, int idx,
 
 StatusOr<mlir::Type> ImporterBase::InferOutputType(const Node& node, int idx,
                                                    mlir::Builder builder) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_21(mht_21_v, 1298, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ImporterBase::InferOutputType");
+
   DataType dtype = node.properties()->output_types[idx];
 
   // Returns output type given inference context.
@@ -1124,6 +1362,11 @@ StatusOr<mlir::Type> ImporterBase::InferOutputType(const Node& node, int idx,
   auto type_from_array_attr = [&node, &idx, &builder](
                                   absl::string_view output_shape_attr,
                                   absl::string_view element_type_attr) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("output_shape_attr: \"" + std::string(output_shape_attr.data(), output_shape_attr.size()) + "\"");
+   mht_22_v.push_back("element_type_attr: \"" + std::string(element_type_attr.data(), element_type_attr.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_22(mht_22_v, 1367, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "lambda");
+
     auto* output_shapes = node.attrs().Find(output_shape_attr);
     auto* element_types = node.attrs().Find(element_type_attr);
     const auto& output_shape = output_shapes->list().shape(idx);
@@ -1234,6 +1477,9 @@ StatusOr<TensorType> ImporterBase::ConvertDataTypeAndShape(
     DataType dtype, const shape_inference::ShapeHandle& handle,
     const std::vector<shape_inference::ShapeAndType>* handle_subtypes,
     shape_inference::InferenceContext* context, mlir::Builder builder) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_23(mht_23_v, 1480, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ImporterBase::ConvertDataTypeAndShape");
+
   TF_ASSIGN_OR_RETURN(auto subtypes,
                       ConvertSubtypes(handle_subtypes, context, builder));
 
@@ -1252,6 +1498,9 @@ StatusOr<TensorType> ImporterBase::ConvertDataTypeAndShape(
 StatusOr<TensorType> ImporterBase::ConvertElementTypeAndShape(
     mlir::Type element_type, const shape_inference::ShapeHandle& handle,
     shape_inference::InferenceContext* context, mlir::Builder builder) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_24(mht_24_v, 1501, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ImporterBase::ConvertElementTypeAndShape");
+
   if (!context->RankKnown(handle)) {
     return mlir::UnrankedTensorType::get(element_type);
   }
@@ -1279,6 +1528,9 @@ StatusOr<TensorType> ImporterBase::ConvertElementTypeAndShape(
 StatusOr<ImporterBase::ElementSubtypes> ImporterBase::ConvertSubtypes(
     const std::vector<shape_inference::ShapeAndType>* handle_subtypes,
     shape_inference::InferenceContext* context, mlir::Builder builder) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_25(mht_25_v, 1531, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ImporterBase::ConvertSubtypes");
+
   ElementSubtypes subtypes;
   if (!handle_subtypes) return subtypes;
 
@@ -1298,6 +1550,10 @@ StatusOr<ImporterBase::ElementSubtypes> ImporterBase::ConvertSubtypes(
 Status ImporterBase::ConvertFunctionCallAttribute(const std::string& base_name,
                                                   const AttrValue& value,
                                                   NamedAttrList* attributes) {
+   std::vector<std::string> mht_26_v;
+   mht_26_v.push_back("base_name: \"" + base_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_26(mht_26_v, 1554, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ImporterBase::ConvertFunctionCallAttribute");
+
   TF_ASSIGN_OR_RETURN(auto func_attr,
                       ConvertFunctionCallName(value.func().name()));
   if (!func_attr) return Status::OK();
@@ -1313,6 +1569,10 @@ Status ImporterBase::ConvertFunctionCallAttribute(const std::string& base_name,
 
 StatusOr<mlir::FlatSymbolRefAttr> ImporterBase::ConvertFunctionCallName(
     const std::string& func_name) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("func_name: \"" + func_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_27(mht_27_v, 1573, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ImporterBase::ConvertFunctionCallName");
+
   // Some ops like XlaHostCompute op uses empty value to represent missing
   // functions. Such attribute values should be defined optional in MLIR
   // definition.
@@ -1325,6 +1585,9 @@ StatusOr<mlir::FlatSymbolRefAttr> ImporterBase::ConvertFunctionCallName(
 
 StatusOr<mlir::Attribute> ImporterBase::ConvertAttributeValue(
     const AttrValue& value) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_28(mht_28_v, 1588, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ImporterBase::ConvertAttributeValue");
+
   switch (value.value_case()) {
     case AttrValue::kFunc: {
       // TODO(b/156546237): Unify kFunc/NameAttrList attribute representation.
@@ -1364,6 +1627,9 @@ void ImporterBase::GetArgsAndRetsFromFunctionBody(
     const FunctionBody& fbody, absl::InlinedVector<OutputTensor, 4>* arg_nodes,
     absl::InlinedVector<OutputTensor, 4>* ret_nodes,
     absl::InlinedVector<Node*, 4>* control_ret_nodes) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_29(mht_29_v, 1630, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ImporterBase::GetArgsAndRetsFromFunctionBody");
+
   arg_nodes->reserve(fbody.arg_nodes.size());
   ret_nodes->reserve(fbody.ret_nodes.size());
   for (auto arg : fbody.arg_nodes) {
@@ -1376,6 +1642,9 @@ void ImporterBase::GetArgsAndRetsFromFunctionBody(
 }
 
 Status ImporterBase::ConvertLibFunction(llvm::StringRef func_name) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_30(mht_30_v, 1645, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ImporterBase::ConvertLibFunction");
+
   // If the library function has been converted already, nothing needs to be
   // done.
   if (tf_name_to_mlir_name_->find(std::string(func_name)) !=
@@ -1432,6 +1701,9 @@ Status ImporterBase::ConvertLibFunction(llvm::StringRef func_name) {
 
 Status ImporterBase::PruneUnreachableNodes(
     std::unordered_map<string, Node*>* node_name_map) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_31(mht_31_v, 1704, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ImporterBase::PruneUnreachableNodes");
+
   std::unordered_set<const Node*> prune_start;
   TF_RETURN_IF_ERROR(GetInputOutputNodes(*node_name_map, &prune_start));
 
@@ -1449,6 +1721,9 @@ Status ImporterBase::PruneUnreachableNodes(
 
 Status ImporterBase::ConvertFeedsToPlaceholders(
     std::unordered_map<string, Node*>* node_name_map) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_32(mht_32_v, 1724, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ImporterBase::ConvertFeedsToPlaceholders");
+
   // Feeds (edges) are converted into single-output placeholder nodes to
   // simplify the conversion process.
   TF_ASSIGN_OR_RETURN(auto feeds_by_node, GetFeedsByNode(specs_.inputs));
@@ -1498,6 +1773,9 @@ Status ImporterBase::ConvertFeedsToPlaceholders(
 
 Status ImporterBase::PrepareConvert(const Graph& graph,
                                     std::unique_ptr<GraphDef> graph_def) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_33(mht_33_v, 1776, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ImporterBase::PrepareConvert");
+
   // TODO(fengliuai): Converting to GraphDef and back is the easiest way to
   // clone a graph.
   // TODO(fengliuai): clone the graph without going to graph_def first.
@@ -1546,6 +1824,9 @@ Status ImporterBase::Convert(
     const absl::InlinedVector<OutputTensor, 4>& ret_nodes,
     const absl::InlinedVector<Node*, 4>& control_ret_nodes,
     llvm::ArrayRef<mlir::NamedAttribute> attrs) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_34(mht_34_v, 1827, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ImporterBase::Convert");
+
   // TODO(b/122040776): Uses debug info for FunctionDef.
   auto function = mlir::func::FuncOp::create(mlir::UnknownLoc::get(context_),
                                              func_name, func_type, attrs);
@@ -1600,6 +1881,9 @@ Status ImporterBase::ConvertFunctionArgAndRets(
     const absl::InlinedVector<OutputTensor, 4>& arg_nodes,
     const absl::InlinedVector<OutputTensor, 4>& ret_nodes,
     const absl::InlinedVector<Node*, 4>& control_ret_nodes) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_35(mht_35_v, 1884, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ImporterBase::ConvertFunctionArgAndRets");
+
   // Store the arg/return attributes as a list rather than uniqueuing during
   // construction.
   llvm::SmallVector<mlir::NamedAttrList, 4> arg_attrs;
@@ -1608,6 +1892,9 @@ Status ImporterBase::ConvertFunctionArgAndRets(
   ret_attrs.resize(func.getNumResults());
 
   auto set_attributes_on_func = [&](Node* node, int64_t index, bool is_arg) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_36(mht_36_v, 1895, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "lambda");
+
     for (const auto& node_attr : node->attrs()) {
       const auto& key = node_attr.first;
       // Only import optional attributes (e.g., those starting with an
@@ -1726,6 +2013,9 @@ Status ImporterBase::ConvertFunctionArgAndRets(
 }
 
 mlir::Location ImporterBase::GetLocation(const Node& node) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_37(mht_37_v, 2016, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ImporterBase::GetLocation");
+
   DVLOG(1) << "Getting location for " << node.name() << " " << &node;
   // TODO(b/142400497): What is the semantic contract for locations?
   const auto& debug_info = debug_info_.traces();
@@ -1797,6 +2087,9 @@ mlir::Location ImporterBase::GetLocation(const Node& node) {
 
   // Create a location for node `name` in function `function_name`.
   auto create_op_type_and_name_locations = [&]() {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_38(mht_38_v, 2090, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "lambda");
+
     return mlir::FusedLoc::get(
         context_,
         // Add the type operation for the propagation of op_type metadata.
@@ -1845,6 +2138,9 @@ mlir::Location ImporterBase::GetLocation(const Node& node) {
 
 Status ImporterBase::EmitErrorWithLocationStr(const Node& node,
                                               const Status& error_status) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_39(mht_39_v, 2141, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ImporterBase::EmitErrorWithLocationStr");
+
   const mlir::Location location = GetLocation(node);
   mlir::emitError(location);
   return error_handler_.Combine(error_status);
@@ -1854,6 +2150,9 @@ mlir::Operation* ImporterBase::CreateOperation(
     const Node& node, llvm::StringRef node_type_name,
     const mlir::OperationState& result,
     const llvm::SmallVectorImpl<mlir::Value>& control_operands) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_40(mht_40_v, 2153, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ImporterBase::CreateOperation");
+
   // For the tf.executor specific operations (not wrapped in an island), we
   // have an extra returned value for the control result, and we concatenate
   // control and non-control operands.
@@ -1923,6 +2222,9 @@ mlir::Operation* ImporterBase::CreateOperation(
       [&](const NameRangeMap& arg_ranges,
           const protobuf::RepeatedPtrField<OpDef::ArgDef>& args,
           llvm::StringRef attr_name) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_41(mht_41_v, 2225, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "lambda");
+
         std::vector<mlir::Attribute> values;
         values.reserve(args.size());
         for (const auto& arg : args) {
@@ -1976,6 +2278,9 @@ mlir::Operation* ImporterBase::CreateOperation(
         bool resource = false;
         std::function<bool(mlir::Type)> record_resource;
         record_resource = [&](mlir::Type type) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_42(mht_42_v, 2281, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "lambda");
+
           if (resource) return true;
           if (type.isa<mlir::TF::ResourceType>()) {
             resource = true;
@@ -2010,6 +2315,9 @@ mlir::Operation* ImporterBase::CreateOperation(
 }
 
 Status ImporterBase::ConvertNode(const Node& node) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_43(mht_43_v, 2318, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ImporterBase::ConvertNode");
+
   if (!node.IsOp()) {
     // Don't import the pseudo-nodes _SOURCE or _SINK. These are added by
     // Graph and don't exist in GraphDef.
@@ -2028,6 +2336,10 @@ Status ImporterBase::ConvertNode(const Node& node) {
   }
 
   auto get_full_op_name = [&](const std::string& op_name) {
+   std::vector<std::string> mht_44_v;
+   mht_44_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_44(mht_44_v, 2340, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "lambda");
+
     const char* kTfPrefix = "tf.";
     return kTfPrefix + op_name;
   };
@@ -2133,6 +2445,9 @@ Status ImporterBase::ConvertNode(const Node& node) {
   }
 
   auto comparator = [](const FuncPairType& a, const FuncPairType& b) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_45(mht_45_v, 2448, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "lambda");
+
     return *a.first < *b.first;
   };
   std::sort(funcs.begin(), funcs.end(), comparator);
@@ -2180,6 +2495,10 @@ Status ImporterBase::ConvertNode(const Node& node) {
   }
 
   auto composite_control_flow_op = [&](const std::string& name) {
+   std::vector<std::string> mht_46_v;
+   mht_46_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_46(mht_46_v, 2499, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "lambda");
+
     result.name = mlir::OperationName(get_full_op_name(name), context_);
     bool stateless = absl::StartsWith(node_type_name, "Stateless");
     mlir::BoolAttr val = builder_.getBoolAttr(stateless);
@@ -2217,6 +2536,9 @@ Status ImporterBase::ConvertNode(const Node& node) {
 // TODO(fengliuai): Preserve the order of the results and operands if
 // necessary.
 Status ImporterBase::AddBackedges() {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_47(mht_47_v, 2539, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ImporterBase::AddBackedges");
+
   for (auto it : back_edge_dst_inputs_) {
     BackEdge& edge = it.second;
     if (!edge.src->IsNextIteration() || !edge.dst->IsMerge()) {
@@ -2232,6 +2554,9 @@ Status ImporterBase::AddBackedges() {
 
 Status ImporterBase::AddBackedge(mlir::Operation* sink, mlir::Operation* dst,
                                  int dst_input) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_48(mht_48_v, 2557, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ImporterBase::AddBackedge");
+
   // Get the NextIteration.Source operation from the token operand of the sink.
   mlir::Operation* source = sink->getOperand(0).getDefiningOp();
 
@@ -2268,6 +2593,9 @@ Status ImporterBase::AddBackedge(mlir::Operation* sink, mlir::Operation* dst,
 
 StatusOr<mlir::FunctionType> ImporterBase::InferLibFunctionType(
     const FunctionBody& fbody) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_49(mht_49_v, 2596, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ImporterBase::InferLibFunctionType");
+
   mlir::Builder builder(context_);
 
   // The FunctionBody contains a graph with a single-output _Arg node for each
@@ -2353,7 +2681,10 @@ class GraphDefImporter : public ImporterBase {
       std::unordered_map<std::string, std::string>* tf_name_to_mlir_name,
       NameUniquifier* function_name_uniquifier)
       : ImporterBase(flib, debug_info, specs, module, tf_name_to_mlir_name,
-                     function_name_uniquifier) {}
+                     function_name_uniquifier) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_50(mht_50_v, 2685, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "GraphDefImporter");
+}
 
   // Returns the function signature of the main function of converted MLIR
   // module, the input nodes and output nodes. The type and shape information
@@ -2387,6 +2718,9 @@ StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> GraphDefImporter::Convert(
     const GraphDebugInfo& debug_info, const FunctionLibraryDefinition& flib_def,
     const GraphImportConfig& specs,
     std::unordered_map<std::string, std::string>& tf_name_to_mlir_name) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_51(mht_51_v, 2721, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "GraphDefImporter::Convert");
+
   LoadImporterDialects(*context);
   mlir::OwningOpRef<mlir::ModuleOp> module =
       mlir::ModuleOp::create(mlir::UnknownLoc::get(context));
@@ -2445,6 +2779,9 @@ StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> GraphDefImporter::Convert(
     std::string s;
     llvm::raw_string_ostream ss(s);
     auto node_name = [&](const OutputTensor& tensor) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_52(mht_52_v, 2782, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "lambda");
+
       ss << tensor.node->name();
     };
     llvm::interleave(arg_nodes, ss, node_name, ",");
@@ -2523,6 +2860,9 @@ StatusOr<mlir::FunctionType> GraphDefImporter::InferMainFunctionType(
     const GraphImportConfig& specs, mlir::MLIRContext* context,
     absl::InlinedVector<OutputTensor, 4>* arg_nodes,
     absl::InlinedVector<OutputTensor, 4>* ret_nodes) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_53(mht_53_v, 2863, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "GraphDefImporter::InferMainFunctionType");
+
   // Find all the input nodes and output nodes.
   // Feeds have been remapped to single output nodes (Placeholder), so an exact
   // name match is sufficient.
@@ -2633,7 +2973,13 @@ StatusOr<mlir::FunctionType>
 GraphDefImporter::GetArgsRetsAndTypesFromFunctionGraph(
     mlir::MLIRContext* context, absl::InlinedVector<OutputTensor, 4>* arg_nodes,
     absl::InlinedVector<OutputTensor, 4>* ret_nodes) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_54(mht_54_v, 2976, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "GraphDefImporter::GetArgsRetsAndTypesFromFunctionGraph");
+
   auto add_node = [](Node* node, absl::InlinedVector<OutputTensor, 4>* nodes) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_55(mht_55_v, 2980, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "lambda");
+
     auto* attr = node->attrs().Find("index");
     if (!attr)
       return errors::InvalidArgument(node->type_string(), " node '",
@@ -2695,6 +3041,9 @@ GraphDefImporter::GetArgsRetsAndTypesFromFunctionGraph(
 Status GraphDefImporter::GetControlRetsFromGraph(
     llvm::ArrayRef<std::string> control_outputs,
     absl::InlinedVector<Node*, 4>* control_ret_nodes) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_56(mht_56_v, 3044, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "GraphDefImporter::GetControlRetsFromGraph");
+
   if (control_outputs.empty()) return Status::OK();
 
   llvm::SmallDenseMap<llvm::StringRef, int32_t> controls_to_idx;
@@ -2737,7 +3086,10 @@ class SavedModelObjectGraphImporter : public ImporterBase {
       std::unordered_map<std::string, std::string>* tf_name_to_mlir_name,
       NameUniquifier* function_name_uniquifier)
       : ImporterBase(flib, debug_info, specs, module, tf_name_to_mlir_name,
-                     function_name_uniquifier) {}
+                     function_name_uniquifier) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_57(mht_57_v, 3090, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "SavedModelObjectGraphImporter");
+}
 };
 
 // Determines the names used to reference objects in the SavedObjectGraph.
@@ -2809,6 +3161,9 @@ ObjectNames::ObjectNames(const SavedObjectGraph& object_graph,
                          absl::Span<std::string> exported_names)
     : object_graph_(object_graph),
       names_to_export_(exported_names.begin(), exported_names.end()) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_58(mht_58_v, 3164, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ObjectNames::ObjectNames");
+
   // Visit all reachable nodes from the root of the object graph.
   // This builds up object_names_ to contain all names like `foo.bar` that a
   // particular node in the graph can be reached from.
@@ -2868,6 +3223,9 @@ ObjectNames::ObjectNames(const SavedObjectGraph& object_graph,
 
 llvm::ArrayRef<llvm::StringRef> ObjectNames::GetExportedNames(
     int node_id) const {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_59(mht_59_v, 3226, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ObjectNames::GetExportedNames");
+
   auto it = exported_names_.find(node_id);
   if (it != exported_names_.end()) {
     return it->second;
@@ -2876,6 +3234,9 @@ llvm::ArrayRef<llvm::StringRef> ObjectNames::GetExportedNames(
 }
 
 llvm::StringRef ObjectNames::GetSymbolTableName(int node_id) const {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_60(mht_60_v, 3237, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ObjectNames::GetSymbolTableName");
+
   auto it = pretty_symbol_table_name_.find(node_id);
   if (it != pretty_symbol_table_name_.end()) {
     return it->second;
@@ -2884,10 +3245,17 @@ llvm::StringRef ObjectNames::GetSymbolTableName(int node_id) const {
 }
 
 std::string ObjectNames::GetDefaultSymbolTableName(int node_id) const {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_61(mht_61_v, 3248, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ObjectNames::GetDefaultSymbolTableName");
+
   return absl::StrCat("__sm_node", node_id);
 }
 
 bool ObjectNames::IsExported(const std::string& name) {
+   std::vector<std::string> mht_62_v;
+   mht_62_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_62(mht_62_v, 3256, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ObjectNames::IsExported");
+
   if (names_to_export_.empty()) {
     return true;
   }
@@ -2895,6 +3263,9 @@ bool ObjectNames::IsExported(const std::string& name) {
 }
 
 void ObjectNames::RecursivelyVisitObjectGraph(int node_id) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_63(mht_63_v, 3266, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ObjectNames::RecursivelyVisitObjectGraph");
+
   const SavedObject& object = object_graph_.nodes(node_id);
 
   switch (object.kind_case()) {
@@ -2924,6 +3295,10 @@ void ObjectNames::RecursivelyVisitObjectGraph(int node_id) {
 }
 
 llvm::StringRef ObjectNames::SaveString(const std::string& s) const {
+   std::vector<std::string> mht_64_v;
+   mht_64_v.push_back("s: \"" + s + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_64(mht_64_v, 3299, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ObjectNames::SaveString");
+
   return llvm::StringRef(*saved_strings_.insert(s).first);
 }
 
@@ -2933,6 +3308,10 @@ llvm::StringRef ObjectNames::SaveString(const std::string& s) const {
 // avoid expensive copies.
 const TensorProto* ExtractConstTensorFromGraph(const GraphDef& graph_def,
                                                const std::string& op_name) {
+   std::vector<std::string> mht_65_v;
+   mht_65_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_65(mht_65_v, 3312, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "ExtractConstTensorFromGraph");
+
   const NodeDef* match_node = nullptr;
   for (const auto& node : graph_def.node()) {
     if (node.name() == op_name) {
@@ -2960,6 +3339,9 @@ const TrackableObjectGraph::TrackableObject::SerializedTensor*
 FindSerializedTensorInTrackable(
     const TrackableObjectGraph::TrackableObject& trackable_object,
     StringPiece name) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_66(mht_66_v, 3342, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "FindSerializedTensorInTrackable");
+
   for (const auto& maybe_serialized_tensor : trackable_object.attributes()) {
     if (maybe_serialized_tensor.name() == name) {
       return &maybe_serialized_tensor;
@@ -2970,6 +3352,9 @@ FindSerializedTensorInTrackable(
 
 Status DiagnoseMultipleConcreteFunctions(const SavedObjectGraph& object_graph,
                                          const ObjectNames& object_names) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_67(mht_67_v, 3355, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "DiagnoseMultipleConcreteFunctions");
+
   for (int node_id = 0; node_id < object_graph.nodes_size(); node_id++) {
     const SavedObject& object = object_graph.nodes(node_id);
     if (object_names.GetExportedNames(node_id).empty()) {
@@ -3048,12 +3433,18 @@ class StructuredValueLinearizer {
 StructuredValueLinearizer::StructuredValueLinearizer(
     const StructuredValue& value, mlir::MLIRContext* context)
     : builder_(context) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_68(mht_68_v, 3436, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "StructuredValueLinearizer::StructuredValueLinearizer");
+
   RecursivelyFindLeaves(value);
 }
 
 StatusOr<llvm::ArrayRef<mlir::ArrayAttr>>
 StructuredValueLinearizer::GetLeafIndexPaths(
     llvm::StringRef error_context) const {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_69(mht_69_v, 3445, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "StructuredValueLinearizer::GetLeafIndexPaths");
+
   if (error_message_.empty()) {
     return llvm::makeArrayRef(leaf_index_paths_);
   }
@@ -3068,6 +3459,9 @@ StructuredValueLinearizer::GetLeafIndexPaths(
 
 void StructuredValueLinearizer::RecursivelyFindLeaves(
     const StructuredValue& value) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_70(mht_70_v, 3462, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "StructuredValueLinearizer::RecursivelyFindLeaves");
+
   switch (value.kind_case()) {
     case StructuredValue::kDictValue: {
       // Dict values must be linearized in sorted order of keys.
@@ -3145,6 +3539,9 @@ void StructuredValueLinearizer::RecursivelyFindLeaves(
 // bound inputs. Here we canonicalize both of them into
 // `tensor<!tf_type.resource<tensor<...>>>`.
 void AdjustBoundInputArgTypes(mlir::ModuleOp module) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_71(mht_71_v, 3542, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "AdjustBoundInputArgTypes");
+
   mlir::SymbolTable symbol_table(module);
   for (auto func : module.getOps<mlir::func::FuncOp>()) {
     if (!mlir::tf_saved_model::IsExported(func)) continue;
@@ -3184,6 +3581,9 @@ void AdjustBoundInputArgTypes(mlir::ModuleOp module) {
 
 // Marks the visibility of functions in the saved model module.
 void MarkSavedModelFunctionVisibility(mlir::ModuleOp module) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_72(mht_72_v, 3584, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "MarkSavedModelFunctionVisibility");
+
   for (auto func : module.getOps<mlir::func::FuncOp>()) {
     auto visibility = mlir::tf_saved_model::IsExported(func)
                           ? mlir::func::FuncOp::Visibility::Public
@@ -3204,6 +3604,9 @@ void MarkSavedModelFunctionVisibility(mlir::ModuleOp module) {
 // available, and only the first exported name is considered), followed by
 // non-exported ops.
 void SortSavedModelModule(mlir::ModuleOp module) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_73(mht_73_v, 3607, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "SortSavedModelModule");
+
   struct NamedGlobalTensor {
     llvm::StringRef name;
     GlobalTensorOp global_tensor;
@@ -3283,6 +3686,9 @@ Status CreateSavedModelIR(
     const SavedObjectGraph& object_graph,
     const std::unordered_map<std::string, std::string>& tf_name_to_mlir_name,
     SavedModelV2Bundle* saved_model) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_74(mht_74_v, 3689, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "CreateSavedModelIR");
+
   mlir::OpBuilder builder(module.getBodyRegion());
   mlir::SymbolTable symbol_table(module);
 
@@ -3481,6 +3887,9 @@ SavedModelObjectGraphImporter::Convert(
     mlir::MLIRContext* context, bool add_default_attributes,
     // TODO(b/200093974): Remove post triage.
     bool unconditionally_use_set_output_shapes) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_75(mht_75_v, 3890, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "SavedModelObjectGraphImporter::Convert");
+
   LoadImporterDialects(*context);
   GraphDebugInfo dummy_debug_info;
   const GraphDebugInfo& debug_info =
@@ -3592,7 +4001,10 @@ class SimpleSavedModelMLIRImportInput : public SavedModelMLIRImportInput {
                                   const GraphDebugInfo& debug_info,
                                   std::unique_ptr<Graph> graph)
       : SavedModelMLIRImportInput(meta_graph_def, debug_info),
-        graph_(std::move(graph)) {}
+        graph_(std::move(graph)) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_76(mht_76_v, 4005, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "SimpleSavedModelMLIRImportInput");
+}
 
   StatusOr<const Graph*> GetSubGraph(absl::string_view name,
                                      GraphImportConfig& specs) override {
@@ -3603,6 +4015,9 @@ class SimpleSavedModelMLIRImportInput : public SavedModelMLIRImportInput {
 
  private:
   bool CheckGraphContainsFeedsAndFetches(const GraphImportConfig& specs) const {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_77(mht_77_v, 4018, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "CheckGraphContainsFeedsAndFetches");
+
     absl::flat_hash_set<std::string> feed_fetch_nodes;
     for (const auto& iter : specs.inputs) {
       TensorId tensor_id = ParseTensorName(iter.first);
@@ -3622,6 +4037,10 @@ class SimpleSavedModelMLIRImportInput : public SavedModelMLIRImportInput {
   }
 
   bool CheckGraphNameValidity(absl::string_view name) const {
+   std::vector<std::string> mht_78_v;
+   mht_78_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_78(mht_78_v, 4041, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "CheckGraphNameValidity");
+
     // If it is one of the signature name, it is valid.
     const auto& signature_defs = meta_graph_def().signature_def();
     if (signature_defs.contains(std::string(name))) return true;
@@ -3695,7 +4114,10 @@ class SavedModelSignatureDefImporterLite {
         symbol_table_(module_.get()),
         import_restore_(import_restore),
         unconditionally_use_set_output_shapes_(
-            unconditionally_use_set_output_shapes) {}
+            unconditionally_use_set_output_shapes) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_79(mht_79_v, 4118, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "SavedModelSignatureDefImporterLite");
+}
 
   // Converts the SavedModel to the SavedModel dialect. Creates an MLIR function
   // for each signature.
@@ -3741,6 +4163,9 @@ class SavedModelSignatureDefImporterLite {
 
 StatusOr<std::vector<SavedModelSignatureDefImporterLite::AssetInfo>>
 SavedModelSignatureDefImporterLite::ConvertAssets() {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_80(mht_80_v, 4166, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "SavedModelSignatureDefImporterLite::ConvertAssets");
+
   std::vector<AssetFileDef> asset_file_defs;
   TF_RETURN_IF_ERROR(
       internal::GetAssetFileDefs(input_.meta_graph_def(), &asset_file_defs));
@@ -3769,6 +4194,10 @@ SavedModelSignatureDefImporterLite::ConvertAssets() {
 Status SavedModelSignatureDefImporterLite::MoveConvertedFunctionsToModule(
     absl::string_view name, mlir::ModuleOp sub_module,
     const std::unordered_map<std::string, std::string>& tf_name_to_mlir_name) {
+   std::vector<std::string> mht_81_v;
+   mht_81_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_81(mht_81_v, 4198, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "SavedModelSignatureDefImporterLite::MoveConvertedFunctionsToModule");
+
   mlir::Builder builder(sub_module.getContext());
   mlir::SymbolTable sub_module_symbol_table(sub_module);
 
@@ -3811,6 +4240,10 @@ Status SavedModelSignatureDefImporterLite::MoveConvertedFunctionsToModule(
 
 Status SavedModelSignatureDefImporterLite::ConvertInitializer(
     const std::string& target_node_name, const std::vector<AssetInfo>& assets) {
+   std::vector<std::string> mht_82_v;
+   mht_82_v.push_back("target_node_name: \"" + target_node_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_82(mht_82_v, 4244, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "SavedModelSignatureDefImporterLite::ConvertInitializer");
+
   std::vector<std::pair<std::string, TensorInfo>> inputs;
   inputs.reserve(assets.size());
   for (const auto& asset : assets) {
@@ -3862,6 +4295,10 @@ SavedModelSignatureDefImporterLite::ConvertGraph(
     const std::vector<std::pair<std::string, TensorInfo>>& outputs,
     const std::vector<std::string> control_outputs,
     std::unordered_map<std::string, std::string>& tf_name_to_mlir_name) {
+   std::vector<std::string> mht_83_v;
+   mht_83_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_83(mht_83_v, 4299, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "SavedModelSignatureDefImporterLite::ConvertGraph");
+
   VLOG(1) << "Importing Signature: " << name;
 
   GraphImportConfig specs;
@@ -3884,6 +4321,10 @@ SavedModelSignatureDefImporterLite::ConvertGraph(
 
 Status SavedModelSignatureDefImporterLite::ConvertSignature(
     const std::string& sig_def_key, const SignatureDef& signature_def) {
+   std::vector<std::string> mht_84_v;
+   mht_84_v.push_back("sig_def_key: \"" + sig_def_key + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_84(mht_84_v, 4325, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "SavedModelSignatureDefImporterLite::ConvertSignature");
+
   // Create local vectors for the input and output and sort them to be
   // deterministic. We don't want anyone to really depend on the order, client
   // should lookup argument/result mapping by attribute name.
@@ -3939,6 +4380,9 @@ Status SavedModelSignatureDefImporterLite::ConvertSignature(
 StatusOr<GraphImportConfig::InputArrays>
 SavedModelSignatureDefImporterLite::ParseInputArrays(
     llvm::ArrayRef<std::pair<std::string, TensorInfo>> inputs) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_85(mht_85_v, 4383, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "SavedModelSignatureDefImporterLite::ParseInputArrays");
+
   GraphImportConfig::InputArrays results;
   for (const auto& iter : inputs) {
     const auto& tensor_info = iter.second;
@@ -3972,6 +4416,9 @@ SavedModelSignatureDefImporterLite::ParseInputArrays(
 
 StatusOr<mlir::OwningOpRef<mlir::ModuleOp>>
 SavedModelSignatureDefImporterLite::ConvertSignatures() {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_86(mht_86_v, 4419, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "SavedModelSignatureDefImporterLite::ConvertSignatures");
+
   LoadImporterDialects(*module_->getContext());
 
   const auto& signatures = input_.meta_graph_def().signature_def();
@@ -4099,6 +4546,9 @@ class SavedModelSignatureDefImporter {
 Status SavedModelSignatureDefImporter::LiftVariables(
     const SavedModelBundle& bundle, mlir::ModuleOp module,
     bool lift_varhandle_ops_to_args) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_87(mht_87_v, 4549, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "SavedModelSignatureDefImporter::LiftVariables");
+
   mlir::StatusScopedDiagnosticHandler diag_handler(module.getContext());
 
   mlir::PassManager pm(module.getContext());
@@ -4149,7 +4599,10 @@ Status SavedModelSignatureDefImporter::LiftVariables(
 
 }  // namespace
 
-SavedModelMLIRImportInput::~SavedModelMLIRImportInput() {}
+SavedModelMLIRImportInput::~SavedModelMLIRImportInput() {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_88(mht_88_v, 4603, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "SavedModelMLIRImportInput::~SavedModelMLIRImportInput");
+}
 
 StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ConvertGraphdefToMlir(
     const GraphDef& graphdef, const GraphDebugInfo& debug_info,
@@ -4250,6 +4703,9 @@ StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ConvertSavedModelV1ToMlirLite(
 
 std::string MlirModuleToString(mlir::ModuleOp module,
                                mlir::OpPrintingFlags flags) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_89(mht_89_v, 4706, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "MlirModuleToString");
+
   std::string txt_module;
   {
     llvm::raw_string_ostream os{txt_module};
@@ -4259,6 +4715,9 @@ std::string MlirModuleToString(mlir::ModuleOp module,
 }
 
 std::string MlirModuleToString(mlir::ModuleOp module, bool show_debug_info) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSimport_modelDTcc mht_90(mht_90_v, 4718, "", "./tensorflow/compiler/mlir/tensorflow/translate/import_model.cc", "MlirModuleToString");
+
   mlir::OpPrintingFlags flags;
   if (show_debug_info) flags.enableDebugInfo();
   return MlirModuleToString(module, flags);

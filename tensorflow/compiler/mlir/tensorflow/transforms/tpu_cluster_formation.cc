@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_cluster_formationDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_cluster_formationDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_cluster_formationDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -74,6 +242,9 @@ using ClusterMap = llvm::SmallDenseMap<llvm::StringRef, OpSetVector, 8>;
 struct TPUClusterFormationPass
     : public TF::TPUClusterFormationPassBase<TPUClusterFormationPass> {
   void getDependentDialects(DialectRegistry& registry) const override {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_cluster_formationDTcc mht_0(mht_0_v, 245, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_cluster_formation.cc", "getDependentDialects");
+
     registry.insert<tf_device::TensorFlowDeviceDialect>();
   }
 
@@ -85,6 +256,9 @@ struct TPUClusterFormationPass
 // TPUReplicateMetadata ops have the same `_replication_info` attribute, an
 // error will be returned.
 LogicalResult CollectMetadata(Block* block, MetadataMap* metadata_map) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_cluster_formationDTcc mht_1(mht_1_v, 259, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_cluster_formation.cc", "CollectMetadata");
+
   // Just look at top-level operations in the block (not nested ones)
   for (Operation& op : llvm::make_early_inc_range(*block)) {
     auto metadata_op = dyn_cast<TF::TPUReplicateMetadataOp>(op);
@@ -123,6 +297,9 @@ LogicalResult CollectMetadata(Block* block, MetadataMap* metadata_map) {
 // Collects and clusters ops with the same `_replication_info` attribute. This
 // will return an error if a `_replication_info` attribute of an op is empty.
 LogicalResult CollectAndGroupClusterOps(Block* block, ClusterMap* clusters) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_cluster_formationDTcc mht_2(mht_2_v, 300, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_cluster_formation.cc", "CollectAndGroupClusterOps");
+
   for (Operation& op : *block) {
     if (op.hasAttr(TF::kReplicationInfoAttr) ||
         op.hasAttr(TF::kCompileDeviceTypeAttr)) {
@@ -144,7 +321,13 @@ bool hasOpClusterControlDependency(
     Operation* op, bool incoming, const OpSetVector& cluster_ops,
     const OpSetVector& cluster_dependent_ops,
     const TF::SideEffectAnalysis::Info& side_effect_analysis) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_cluster_formationDTcc mht_3(mht_3_v, 324, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_cluster_formation.cc", "hasOpClusterControlDependency");
+
   auto filter = [&](Operation* other_op) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_cluster_formationDTcc mht_4(mht_4_v, 328, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_cluster_formation.cc", "lambda");
+
     return cluster_ops.contains(other_op) ||
            cluster_dependent_ops.contains(other_op);
   };
@@ -160,6 +343,9 @@ bool hasOpClusterControlDependency(
 bool hasOpClusterDataDependency(Operation* op, bool incoming,
                                 const OpSetVector& cluster_ops,
                                 const OpSetVector& cluster_dependent_ops) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_cluster_formationDTcc mht_5(mht_5_v, 346, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_cluster_formation.cc", "hasOpClusterDataDependency");
+
   auto result = op->walk([&](Operation* inner_op) {
     ValueRange values = incoming ? ValueRange(inner_op->getOperands())
                                  : ValueRange(inner_op->getResults());
@@ -270,6 +456,9 @@ llvm::SmallVector<Value, 8> CollectClusterResults(
 tf_device::ClusterOp CreateClusterOp(
     Block* block, const OpSetVector& cluster_ops, llvm::ArrayRef<Value> results,
     llvm::ArrayRef<Operation*> cluster_successor_ops) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_cluster_formationDTcc mht_6(mht_6_v, 459, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_cluster_formation.cc", "CreateClusterOp");
+
   // `tf_device.cluster` will be placed at where the last op of the cluster is.
   Operation* last_cluster_op = cluster_ops.back();
   OpBuilder builder(last_cluster_op);
@@ -335,6 +524,9 @@ tf_device::ClusterOp CreateClusterOp(
 LogicalResult SortTPUReplicatedInputsByIndex(
     llvm::ArrayRef<Operation*> inputs,
     llvm::SmallVectorImpl<Operation*>* sorted_inputs) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_cluster_formationDTcc mht_7(mht_7_v, 527, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_cluster_formation.cc", "SortTPUReplicatedInputsByIndex");
+
   llvm::SmallDenseSet<int64_t, 8> unique_indices;
   for (Operation* input : inputs) {
     int64_t index = llvm::cast<TF::TPUReplicatedInputOp>(input).index();
@@ -370,6 +562,9 @@ LogicalResult SortTPUReplicatedInputsByIndex(
 // necessary.
 LogicalResult ReplicateCluster(tf_device::ClusterOp cluster, int num_replicas,
                                int num_cores_per_replica) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_cluster_formationDTcc mht_8(mht_8_v, 565, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_cluster_formation.cc", "ReplicateCluster");
+
   // No need to replicate.
   if (num_replicas == 1) return success();
 
@@ -547,6 +742,9 @@ LogicalResult ReplicateCluster(tf_device::ClusterOp cluster, int num_replicas,
 //   9. Copy over TPUReplicateMetadata attributes to `tf_device.cluster`.
 LogicalResult FormClustersInBlock(
     Block* block, const TF::SideEffectAnalysis::Info& side_effect_analysis) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_cluster_formationDTcc mht_9(mht_9_v, 745, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_cluster_formation.cc", "FormClustersInBlock");
+
   MetadataMap metadata_map;
   LogicalResult result = CollectMetadata(block, &metadata_map);
   if (failed(result)) return result;
@@ -623,6 +821,9 @@ LogicalResult FormClustersInBlock(
 
 LogicalResult FormClustersInFunction(
     FuncOp func, const TF::SideEffectAnalysis::Info& side_effect_analysis) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_cluster_formationDTcc mht_10(mht_10_v, 824, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_cluster_formation.cc", "FormClustersInFunction");
+
   if (!llvm::hasSingleElement(func))
     return func.emitOpError("Expecting a single block function");
 
@@ -658,6 +859,9 @@ LogicalResult FormClustersInFunction(
 }
 
 void TPUClusterFormationPass::runOnOperation() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_cluster_formationDTcc mht_11(mht_11_v, 862, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_cluster_formation.cc", "TPUClusterFormationPass::runOnOperation");
+
   auto& side_effect_analysis = getAnalysis<TF::SideEffectAnalysis>();
   for (auto func : getOperation().getOps<FuncOp>())
     if (!func.isExternal() &&

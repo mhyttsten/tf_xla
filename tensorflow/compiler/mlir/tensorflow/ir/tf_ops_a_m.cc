@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -91,6 +259,9 @@ namespace {
 
 void AddOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                         MLIRContext *context) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_0(mht_0_v, 262, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "AddOp::getCanonicalizationPatterns");
+
   results.add<AddToAddV2>(context);
 }
 
@@ -99,11 +270,17 @@ void AddOp::getCanonicalizationPatterns(RewritePatternSet &results,
 //===----------------------------------------------------------------------===//
 
 OpFoldResult AddNOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_1(mht_1_v, 273, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "AddNOp::fold");
+
   if (operands.size() == 1) return *inputs().begin();
 
   // Fold if there is only one single non-zero operand or all operands are zero.
   int non_zero_index = -1;
   auto IsKnownZero = [](Attribute attr) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_2(mht_2_v, 281, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "lambda");
+
     if (!attr) return false;
     auto splat = attr.dyn_cast<SplatElementsAttr>();
     if (!splat) return false;
@@ -146,10 +323,16 @@ OpFoldResult AddNOp::fold(ArrayRef<Attribute> operands) {
 
 void AddV2Op::getCanonicalizationPatterns(RewritePatternSet &results,
                                           MLIRContext *context) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_3(mht_3_v, 326, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "AddV2Op::getCanonicalizationPatterns");
+
   results.add<AddV2OfNegLeft, AddV2OfNegRight>(context);
 }
 
 OpFoldResult AddV2Op::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_4(mht_4_v, 333, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "AddV2Op::fold");
+
   return IdentityArithmeticOpFolder<AddV2Op>(*this, operands);
 }
 
@@ -158,6 +341,9 @@ OpFoldResult AddV2Op::fold(ArrayRef<Attribute> operands) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult AllOp::verify() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_5(mht_5_v, 344, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "AllOp::verify");
+
   AllOp op = *this;
   return VerifyReductionInputAndDims(op.input(), op.reduction_indices(),
                                      op.getLoc());
@@ -168,6 +354,9 @@ LogicalResult AllOp::verify() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult AnyOp::verify() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_6(mht_6_v, 357, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "AnyOp::verify");
+
   AnyOp op = *this;
   return VerifyReductionInputAndDims(op.input(), op.reduction_indices(),
                                      op.getLoc());
@@ -185,6 +374,9 @@ struct AssertWithTrue : public OpRewritePattern<AssertOp> {
 
   LogicalResult matchAndRewrite(AssertOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_7(mht_7_v, 377, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "matchAndRewrite");
+
     ElementsAttr cst;
     if (matchPattern(op.condition(), m_Constant(&cst))) {
       if (cst.getValues<bool>()[0]) {
@@ -199,6 +391,9 @@ struct AssertWithTrue : public OpRewritePattern<AssertOp> {
 
 void AssertOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                            MLIRContext *context) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_8(mht_8_v, 394, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "AssertOp::getCanonicalizationPatterns");
+
   results.add<AssertWithTrue>(context);
 }
 
@@ -301,16 +496,28 @@ static LogicalResult Verify(OpT op) {
 
   return success();
 }
-LogicalResult BatchMatMulOp::verify() { return Verify(*this); }
-LogicalResult BatchMatMulV2Op::verify() { return Verify(*this); }
+LogicalResult BatchMatMulOp::verify() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_9(mht_9_v, 500, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "BatchMatMulOp::verify");
+ return Verify(*this); }
+LogicalResult BatchMatMulV2Op::verify() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_10(mht_10_v, 504, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "BatchMatMulV2Op::verify");
+ return Verify(*this); }
 
 void BatchMatMulOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                 MLIRContext *context) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_11(mht_11_v, 510, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "BatchMatMulOp::getCanonicalizationPatterns");
+
   results.add<BatchMatMulToV2>(context);
 }
 
 void BatchMatMulV2Op::getCanonicalizationPatterns(RewritePatternSet &results,
                                                   MLIRContext *context) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_12(mht_12_v, 518, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "BatchMatMulV2Op::getCanonicalizationPatterns");
+
   results.add<BatchMatMulV2ToMatMul>(context);
 }
 
@@ -319,6 +526,9 @@ void BatchMatMulV2Op::getCanonicalizationPatterns(RewritePatternSet &results,
 //===----------------------------------------------------------------------===//
 
 LogicalResult BatchToSpaceOp::verify() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_13(mht_13_v, 529, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "BatchToSpaceOp::verify");
+
   BatchToSpaceOp op = *this;
   // Op already has a constraint that block_size >= 2.
   int64_t block_size = op.block_size();
@@ -350,6 +560,9 @@ LogicalResult BatchToSpaceOp::verify() {
              << "requires crops to be a 2D tensor, but got " << crops_type;
 
     auto dim_of_size = [&](int64_t dim, int64_t size) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_14(mht_14_v, 563, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "lambda");
+
       if (crops_type.isDynamicDim(dim)) return true;
       return crops_type.getDimSize(dim) == size;
     };
@@ -385,6 +598,9 @@ LogicalResult BatchToSpaceOp::verify() {
              << "requires output to be a 4D tensor, but got " << output_type;
 
     auto static_dims = [](int64_t dim_a, int64_t dim_b) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_15(mht_15_v, 601, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "lambda");
+
       return dim_a != ShapedType::kDynamicSize &&
              dim_b != ShapedType::kDynamicSize;
     };
@@ -460,6 +676,9 @@ LogicalResult BatchToSpaceOp::verify() {
 
 void BatchToSpaceOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                  MLIRContext *context) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_16(mht_16_v, 679, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "BatchToSpaceOp::getCanonicalizationPatterns");
+
   results.add<BatchToSpaceToBatchToSpaceND>(context);
 }
 
@@ -468,6 +687,9 @@ void BatchToSpaceOp::getCanonicalizationPatterns(RewritePatternSet &results,
 //===----------------------------------------------------------------------===//
 
 LogicalResult BatchToSpaceNDOp::verify() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_17(mht_17_v, 690, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "BatchToSpaceNDOp::verify");
+
   BatchToSpaceNDOp op = *this;
   auto block_shape_ty = op.block_shape().getType().cast<ShapedType>();
   auto crops_ty = op.crops().getType().cast<ShapedType>();
@@ -495,6 +717,9 @@ LogicalResult BatchToSpaceNDOp::verify() {
 //   are not unknown.
 //
 LogicalResult BiasAddOp::verify() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_18(mht_18_v, 720, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "BiasAddOp::verify");
+
   BiasAddOp op = *this;
   absl::string_view data_format(op.data_format().data(),
                                 op.data_format().size());
@@ -536,10 +761,16 @@ LogicalResult BiasAddOp::verify() {
 }
 
 LogicalResult BiasAddOp::UpdateDataFormat(StringRef data_format) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_19(mht_19_v, 764, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "BiasAddOp::UpdateDataFormat");
+
   return ::mlir::TF::UpdateDataFormat(data_format, this);
 }
 
 StringRef BiasAddOp::GetOptimalLayout(const RuntimeDevices &devices) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_20(mht_20_v, 771, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "BiasAddOp::GetOptimalLayout");
+
   // Keep current data format if no GPUs are available or if explicit placement
   // does not allow to use GPU for this operation.
   if (!CanUseGpuDevice(devices) || !CanUseGpuDevice(getOperation()))
@@ -557,6 +788,9 @@ StringRef BiasAddOp::GetOptimalLayout(const RuntimeDevices &devices) {
 // * the out_backprop operands have valid ranks or are unranked.
 //
 LogicalResult BiasAddGradOp::verify() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_21(mht_21_v, 791, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "BiasAddGradOp::verify");
+
   BiasAddGradOp op = *this;
   absl::string_view data_format(op.data_format().data(),
                                 op.data_format().size());
@@ -586,6 +820,9 @@ LogicalResult BiasAddGradOp::verify() {
 
 void BiasAddV1Op::getCanonicalizationPatterns(RewritePatternSet &results,
                                               MLIRContext *context) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_22(mht_22_v, 823, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "BiasAddV1Op::getCanonicalizationPatterns");
+
   results.add<BiasAddV1ToBiasAdd>(context);
 }
 
@@ -595,6 +832,9 @@ void BiasAddV1Op::getCanonicalizationPatterns(RewritePatternSet &results,
 
 void BitcastOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                             MLIRContext *context) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_23(mht_23_v, 835, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "BitcastOp::getCanonicalizationPatterns");
+
   results.add<BitcastSameType, BitcastNested>(context);
 }
 
@@ -603,6 +843,9 @@ void BitcastOp::getCanonicalizationPatterns(RewritePatternSet &results,
 //===----------------------------------------------------------------------===//
 
 LogicalResult BroadcastToOp::verify() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_24(mht_24_v, 846, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "BroadcastToOp::verify");
+
   // TODO(antiagainst): check that
   // * The 'shape' input is an 1-D int tensor.
   // * Each dimension pair of the source and target shapes are either equal
@@ -611,6 +854,9 @@ LogicalResult BroadcastToOp::verify() {
 }
 
 OpFoldResult BroadcastToOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_25(mht_25_v, 857, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "BroadcastToOp::fold");
+
   Value input = this->input();
 
   // Fold broadcast if operand and result types are the same and all dimensions
@@ -638,6 +884,9 @@ bool ExtractInputConstShape(BroadcastGradientArgsOp op,
                             DenseIntElementsAttr &s0, DenseIntElementsAttr &s1,
                             SmallVectorImpl<int64_t> &s0_shape,
                             SmallVectorImpl<int64_t> &s1_shape) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_26(mht_26_v, 887, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "ExtractInputConstShape");
+
   if (!matchPattern(op.s0(), m_Constant(&s0))) return false;
   if (!matchPattern(op.s1(), m_Constant(&s1))) return false;
 
@@ -659,6 +908,9 @@ void GetOutputShapeForBroadcastGradientArgs(ArrayRef<int64_t> bcasted_shape,
                                             ArrayRef<int64_t> s1_shape,
                                             SmallVectorImpl<int64_t> &r0,
                                             SmallVectorImpl<int64_t> &r1) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_27(mht_27_v, 911, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "GetOutputShapeForBroadcastGradientArgs");
+
   r0.clear();
   r1.clear();
 
@@ -699,6 +951,9 @@ void GetOutputShapeForBroadcastGradientArgs(ArrayRef<int64_t> bcasted_shape,
 // * Output shape dimension matches the expected dimension size for input
 // shapes.
 LogicalResult BroadcastGradientArgsOp::verify() {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_28(mht_28_v, 954, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "BroadcastGradientArgsOp::verify");
+
   BroadcastGradientArgsOp op = *this;
   SmallVector<int64_t, 4> s0_shape, s1_shape;
   DenseIntElementsAttr s0, s1;
@@ -731,6 +986,9 @@ LogicalResult BroadcastGradientArgsOp::verify() {
 
 LogicalResult BroadcastGradientArgsOp::fold(
     ArrayRef<Attribute> operands, SmallVectorImpl<OpFoldResult> &results) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_29(mht_29_v, 989, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "BroadcastGradientArgsOp::fold");
+
   SmallVector<int64_t, 4> s0_shape, s1_shape;
   DenseIntElementsAttr s0, s1;
   if (!ExtractInputConstShape(*this, s0, s1, s0_shape, s1_shape))
@@ -751,6 +1009,9 @@ LogicalResult BroadcastGradientArgsOp::fold(
 
   auto build_out_dense_element = [](SmallVectorImpl<int64_t> &shape,
                                     Type input_type) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_30(mht_30_v, 1012, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "lambda");
+
     Type element_type = input_type.cast<mlir::TensorType>().getElementType();
     RankedTensorType type = RankedTensorType::get(
         {static_cast<int64_t>(shape.size())}, element_type);
@@ -778,13 +1039,19 @@ LogicalResult BroadcastGradientArgsOp::fold(
 class FoldConstantCaseOp : public OpRewritePattern<TF::CaseOp> {
  public:
   explicit FoldConstantCaseOp(MLIRContext *context)
-      : OpRewritePattern<TF::CaseOp>(context) {}
+      : OpRewritePattern<TF::CaseOp>(context) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_31(mht_31_v, 1043, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "FoldConstantCaseOp");
+}
   LogicalResult matchAndRewrite(TF::CaseOp op,
                                 PatternRewriter &rewriter) const override;
 };
 
 LogicalResult FoldConstantCaseOp::matchAndRewrite(
     TF::CaseOp op, PatternRewriter &rewriter) const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_32(mht_32_v, 1052, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "FoldConstantCaseOp::matchAndRewrite");
+
   // Extract the constant cond value.
   DenseIntElementsAttr branch;
   if (!matchPattern(op.branch_index(), m_Constant(&branch))) return failure();
@@ -802,10 +1069,16 @@ LogicalResult FoldConstantCaseOp::matchAndRewrite(
 
 void CaseOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                          MLIRContext *context) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_33(mht_33_v, 1072, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "CaseOp::getCanonicalizationPatterns");
+
   results.add<FoldConstantCaseOp, DropAttributes<CaseOp>>(context);
 }
 
 static LogicalResult VerifyCaseOpBase(Operation *op, Value branch_index) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_34(mht_34_v, 1079, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "VerifyCaseOpBase");
+
   if (!IsOfRankOrUnranked(branch_index, 0))
     return op->emitOpError()
            << "expects 'branch_index' to be a scalar, but got "
@@ -817,6 +1090,9 @@ static LogicalResult VerifyCaseOrIfOpBranchFunctions(
     SymbolTableCollection &symbol_table, Operation *op,
     ArrayRef<Attribute> branches,
     llvm::function_ref<std::string(unsigned branch_index)> branch_name) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_35(mht_35_v, 1093, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "VerifyCaseOrIfOpBranchFunctions");
+
   SmallVector<FunctionType, 2> branch_types;
   branch_types.reserve(branches.size());
 
@@ -874,12 +1150,21 @@ static LogicalResult VerifyCaseOrIfOpBranchFunctions(
 }
 
 LogicalResult CaseOp::verify() {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_36(mht_36_v, 1153, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "CaseOp::verify");
+
   CaseOp op = *this;
   return VerifyCaseOpBase(op, op.branch_index());
 }
 
 LogicalResult CaseOp::verifySymbolUses(SymbolTableCollection &symbol_table) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_37(mht_37_v, 1161, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "CaseOp::verifySymbolUses");
+
   auto branch_name = [](unsigned index) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_38(mht_38_v, 1165, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "lambda");
+
     return llvm::formatv("branch #{0}", index).str();
   };
   // TODO(jpienaar): Remove.
@@ -893,6 +1178,9 @@ LogicalResult CaseOp::verifySymbolUses(SymbolTableCollection &symbol_table) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult CaseRegionOp::verify() {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_39(mht_39_v, 1181, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "CaseRegionOp::verify");
+
   CaseRegionOp op = *this;
   if (op.branches().empty())
     return op.emitOpError() << "expects to have at least 1 region";
@@ -922,6 +1210,9 @@ class CaseOrIfRegionEliminatePassThrough
 
   LogicalResult matchAndRewrite(CaseOrIfRegionOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_40(mht_40_v, 1213, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "matchAndRewrite");
+
     RegionRange branches = op.getRegions();
     SmallVector<Type, 4> new_result_types;
     // Maps pass through results to extern values.
@@ -979,6 +1270,9 @@ class CaseOrIfRegionEliminatePassThrough
 
 void CaseRegionOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                MLIRContext *context) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_41(mht_41_v, 1273, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "CaseRegionOp::getCanonicalizationPatterns");
+
   results.add<CaseOrIfRegionEliminatePassThrough<TF::CaseRegionOp>>(context);
 }
 
@@ -987,6 +1281,9 @@ void CaseRegionOp::getCanonicalizationPatterns(RewritePatternSet &results,
 //===----------------------------------------------------------------------===//
 
 OpFoldResult CastOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_42(mht_42_v, 1284, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "CastOp::fold");
+
   // Cast with the same type is a no-op.
   Value operand = getOperand();
   if (getType() == operand.getType()) return operand;
@@ -1016,11 +1313,20 @@ static LogicalResult Verify(OpT op) {
                                   /*mask_one_dim=*/true, op.getOperation());
 }
 
-LogicalResult ConcatOp::verify() { return Verify(*this); }
-LogicalResult ConcatV2Op::verify() { return Verify(*this); }
+LogicalResult ConcatOp::verify() {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_43(mht_43_v, 1317, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "ConcatOp::verify");
+ return Verify(*this); }
+LogicalResult ConcatV2Op::verify() {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_44(mht_44_v, 1321, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "ConcatV2Op::verify");
+ return Verify(*this); }
 
 void ConcatOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                            MLIRContext *context) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_45(mht_45_v, 1327, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "ConcatOp::getCanonicalizationPatterns");
+
   results.add<ConvertToConcatV2>(context);
 }
 
@@ -1041,13 +1347,19 @@ namespace {
 class HoistCwiseUnaryOutOfConcat : public OpRewritePattern<TF::ConcatV2Op> {
  public:
   explicit HoistCwiseUnaryOutOfConcat(MLIRContext *context)
-      : OpRewritePattern<TF::ConcatV2Op>(context) {}
+      : OpRewritePattern<TF::ConcatV2Op>(context) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_46(mht_46_v, 1351, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "HoistCwiseUnaryOutOfConcat");
+}
   LogicalResult matchAndRewrite(TF::ConcatV2Op op,
                                 PatternRewriter &rewriter) const override;
 };
 
 LogicalResult HoistCwiseUnaryOutOfConcat::matchAndRewrite(
     TF::ConcatV2Op op, PatternRewriter &rewriter) const {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_47(mht_47_v, 1360, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "HoistCwiseUnaryOutOfConcat::matchAndRewrite");
+
   auto loc = op.getLoc();
 
   // All concat operands must be defined by ops.
@@ -1114,7 +1426,10 @@ LogicalResult HoistCwiseUnaryOutOfConcat::matchAndRewrite(
 class HoistCwiseBinaryOutOfConcat : public OpRewritePattern<TF::ConcatV2Op> {
  public:
   explicit HoistCwiseBinaryOutOfConcat(MLIRContext *context)
-      : OpRewritePattern<TF::ConcatV2Op>(context) {}
+      : OpRewritePattern<TF::ConcatV2Op>(context) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_48(mht_48_v, 1430, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "HoistCwiseBinaryOutOfConcat");
+}
   LogicalResult matchAndRewrite(TF::ConcatV2Op op,
                                 PatternRewriter &rewriter) const override;
 
@@ -1141,6 +1456,9 @@ class HoistCwiseBinaryOutOfConcat : public OpRewritePattern<TF::ConcatV2Op> {
 
 LogicalResult HoistCwiseBinaryOutOfConcat::matchAndRewrite(
     TF::ConcatV2Op op, PatternRewriter &rewriter) const {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_49(mht_49_v, 1459, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "HoistCwiseBinaryOutOfConcat::matchAndRewrite");
+
   auto loc = op.getLoc();
 
   // Axis must be a constant scalar value.
@@ -1236,6 +1554,9 @@ LogicalResult HoistCwiseBinaryOutOfConcat::matchAndRewrite(
   // Concatenates `args` along `axis`.
   auto pack_or_concat = [&](bool is_scalar, Type result_type, ValueRange args,
                             int64_t axis) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_50(mht_50_v, 1557, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "lambda");
+
     // Use `PackOp` for scalar concatenation because `ConcatV2Op` doesn't
     // support scalar concatenation.
     if (is_scalar) {
@@ -1283,6 +1604,9 @@ Optional<HoistCwiseBinaryOutOfConcat::HoistParams>
 HoistCwiseBinaryOutOfConcat::GetHoistParams(
     TF::ConcatV2Op op, int64_t axis,
     const llvm::SmallDenseMap<Value, unsigned, 4> &exceptions) const {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_51(mht_51_v, 1607, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "HoistCwiseBinaryOutOfConcat::GetHoistParams");
+
   assert(axis >= 0);
   // Collects lhs or rhs arguments of concat op operands.
   auto args = [&](int operand_idx) -> SmallVector<Value, 8> {
@@ -1362,6 +1686,9 @@ HoistCwiseBinaryOutOfConcat::GetHoistParams(
 
 void ConcatV2Op::getCanonicalizationPatterns(RewritePatternSet &results,
                                              MLIRContext *context) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_52(mht_52_v, 1689, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "ConcatV2Op::getCanonicalizationPatterns");
+
   results.add<HoistCwiseBinaryOutOfConcat, HoistCwiseUnaryOutOfConcat>(context);
 }
 
@@ -1393,14 +1720,23 @@ static LogicalResult Verify(OpT op) {
 
   return success();
 }
-LogicalResult CumprodOp::verify() { return Verify(*this); }
-LogicalResult CumsumOp::verify() { return Verify(*this); }
+LogicalResult CumprodOp::verify() {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_53(mht_53_v, 1724, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "CumprodOp::verify");
+ return Verify(*this); }
+LogicalResult CumsumOp::verify() {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_54(mht_54_v, 1728, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "CumsumOp::verify");
+ return Verify(*this); }
 
 //===----------------------------------------------------------------------===//
 // ConcatOffsetOp
 //===----------------------------------------------------------------------===//
 
 LogicalResult ConcatOffsetOp::verify() {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_55(mht_55_v, 1737, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "ConcatOffsetOp::verify");
+
   ConcatOffsetOp op = *this;
   if (op.N() < 2)
     return op.emitOpError() << "requires N to be at least 2, got " << op.N();
@@ -1452,6 +1788,9 @@ LogicalResult ConcatOffsetOp::verify() {
 
 LogicalResult ConcatOffsetOp::fold(ArrayRef<Attribute> operands,
                                    SmallVectorImpl<OpFoldResult> &results) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_56(mht_56_v, 1791, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "ConcatOffsetOp::fold");
+
   // ConcatOffset must have its first operand be concat_dim and at least two
   // shape tensors in variadic shapes operand.
   if (operands.size() < 3) return failure();
@@ -1515,10 +1854,16 @@ LogicalResult ConcatOffsetOp::fold(ArrayRef<Attribute> operands,
 
 void ConstOp::getAsmResultNames(
     function_ref<void(Value, StringRef)> setNameFn) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_57(mht_57_v, 1857, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "ConstOp::getAsmResultNames");
+
   setNameFn(getResult(), "cst");
 }
 
 OpFoldResult ConstOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_58(mht_58_v, 1864, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "ConstOp::fold");
+
   assert(operands.empty() && "constant has no operands");
 
   // Return the held attribute value.
@@ -1532,6 +1877,9 @@ OpFoldResult ConstOp::fold(ArrayRef<Attribute> operands) {
 // attribute but always creates an ElementsAttr internally.
 void ConstOp::build(OpBuilder &builder, OperationState &result,
                     Attribute value) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_59(mht_59_v, 1880, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "ConstOp::build");
+
   ShapedType type;
   if (auto elem_attr = value.dyn_cast<ElementsAttr>()) {
     return ConstOp::build(builder, result, elem_attr);
@@ -1549,6 +1897,9 @@ void ConstOp::build(OpBuilder &builder, OperationState &result,
 
 void ConstOp::build(OpBuilder &builder, OperationState &result, Type type,
                     Attribute value) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_60(mht_60_v, 1900, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "ConstOp::build");
+
   // Handle the case where the type and value are already tensors.
   if (type.isa<TensorType>() && value.isa<ElementsAttr>()) {
     result.addTypes(type);
@@ -1565,6 +1916,9 @@ LogicalResult ConstOp::inferReturnTypes(
     MLIRContext *context, Optional<Location> location, ValueRange operands,
     DictionaryAttr attributes, RegionRange regions,
     SmallVectorImpl<Type> &inferredReturnTypes) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_61(mht_61_v, 1919, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "ConstOp::inferReturnTypes");
+
   auto value = attributes.get("value");
   if (!value) return emitOptionalError(location, "missing attribute 'value'");
   if (auto elem_attr = value.dyn_cast<ElementsAttr>()) {
@@ -1583,11 +1937,17 @@ LogicalResult ConstOp::inferReturnTypes(
 static LogicalResult VerifyConvOpAttributes(
     int num_dims, ArrayRef<Attribute> strides, ArrayRef<Attribute> dilations,
     llvm::Optional<mlir::Location> location) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_62(mht_62_v, 1940, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "VerifyConvOpAttributes");
+
   int64_t strides_size = strides.size();
   if (strides_size != num_dims)
     return emitOptionalError(
         location, "requires strides attribute length to be ", num_dims);
   auto is_not_positive = [](Attribute val) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_63(mht_63_v, 1948, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "lambda");
+
     return val.cast<IntegerAttr>().getValue().getSExtValue() <= 0;
   };
   if (llvm::any_of(strides, is_not_positive))
@@ -1657,6 +2017,9 @@ static LogicalResult Verify(OpT op) {
           num_dims * 2);
     }
     auto is_negative = [](Attribute val) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_64(mht_64_v, 2020, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "lambda");
+
       return val.cast<IntegerAttr>().getValue().getSExtValue() < 0;
     };
     if (llvm::any_of(explicit_padding, is_negative))
@@ -1699,10 +2062,19 @@ static LogicalResult Verify(OpT op) {
   return success();
 }
 
-LogicalResult Conv2DOp::verify() { return Verify(*this); }
-LogicalResult Conv3DOp::verify() { return Verify(*this); }
+LogicalResult Conv2DOp::verify() {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_65(mht_65_v, 2066, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "Conv2DOp::verify");
+ return Verify(*this); }
+LogicalResult Conv3DOp::verify() {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_66(mht_66_v, 2070, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "Conv3DOp::verify");
+ return Verify(*this); }
 
 LogicalResult Conv2DOp::UpdateDataFormat(StringRef data_format) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_67(mht_67_v, 2075, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "Conv2DOp::UpdateDataFormat");
+
   auto perm = GetDataFormatPermutation(this->data_format(), data_format);
   if (perm.empty()) return failure();
 
@@ -1749,6 +2121,9 @@ static LogicalResult inferConvReturnTypes(
   (void)padding_is_valid;
 
   auto get_int = [](Attribute attr) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_68(mht_68_v, 2124, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "lambda");
+
     return attr.template cast<IntegerAttr>().getInt();
   };
 
@@ -1804,6 +2179,9 @@ LogicalResult Conv2DOp::inferReturnTypes(
     mlir::ValueRange operands, mlir::DictionaryAttr attributes,
     mlir::RegionRange regions,
     llvm::SmallVectorImpl<mlir::Type> &inferredReturnTypes) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_69(mht_69_v, 2182, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "Conv2DOp::inferReturnTypes");
+
   Conv2DOpAdaptor op(operands, attributes);
   ArrayRef<Attribute> explicit_padding;
   ArrayAttr explicit_pad =
@@ -1818,6 +2196,9 @@ LogicalResult Conv2DOp::inferReturnTypes(
 }
 
 StringRef Conv2DOp::GetOptimalLayout(const RuntimeDevices &devices) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_70(mht_70_v, 2199, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "Conv2DOp::GetOptimalLayout");
+
   // Keep current data format if no GPUs are available or if explicit placement
   // does not allow to use GPU for this operation.
   if (!CanUseGpuDevice(devices) || !CanUseGpuDevice(getOperation()))
@@ -1875,6 +2256,9 @@ StringRef Conv2DOp::GetOptimalLayout(const RuntimeDevices &devices) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult Conv2DBackpropFilterOp::UpdateDataFormat(StringRef data_format) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_71(mht_71_v, 2259, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "Conv2DBackpropFilterOp::UpdateDataFormat");
+
   StringRef src_data_format = this->data_format();
 
   auto perm = GetDataFormatPermutation(src_data_format, data_format);
@@ -1901,6 +2285,9 @@ LogicalResult Conv2DBackpropFilterOp::UpdateDataFormat(StringRef data_format) {
 
 StringRef Conv2DBackpropFilterOp::GetOptimalLayout(
     const RuntimeDevices &devices) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_72(mht_72_v, 2288, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "Conv2DBackpropFilterOp::GetOptimalLayout");
+
   // Keep current data format if no GPUs are available or if explicit placement
   // does not allow to use GPU for this operation.
   if (!CanUseGpuDevice(devices) || !CanUseGpuDevice(getOperation()))
@@ -1924,6 +2311,9 @@ StringRef Conv2DBackpropFilterOp::GetOptimalLayout(
 //===----------------------------------------------------------------------===//
 
 LogicalResult Conv2DBackpropInputOp::verify() {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_73(mht_73_v, 2314, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "Conv2DBackpropInputOp::verify");
+
   Conv2DBackpropInputOp op = *this;
   int num_spatial_dims = 2;
   int num_dims = 2 + num_spatial_dims;
@@ -1949,6 +2339,9 @@ LogicalResult Conv2DBackpropInputOp::verify() {
 }
 
 LogicalResult Conv2DBackpropInputOp::UpdateDataFormat(StringRef data_format) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_74(mht_74_v, 2342, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "Conv2DBackpropInputOp::UpdateDataFormat");
+
   StringRef src_data_format = this->data_format();
 
   auto perm = GetDataFormatPermutation(src_data_format, data_format);
@@ -1975,6 +2368,9 @@ LogicalResult Conv2DBackpropInputOp::UpdateDataFormat(StringRef data_format) {
 
 StringRef Conv2DBackpropInputOp::GetOptimalLayout(
     const RuntimeDevices &devices) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_75(mht_75_v, 2371, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "Conv2DBackpropInputOp::GetOptimalLayout");
+
   // Keep current data format if no GPUs are available or if explicit placement
   // does not allow to use GPU for this operation.
   if (!CanUseGpuDevice(devices) || !CanUseGpuDevice(getOperation()))
@@ -2002,6 +2398,9 @@ LogicalResult Conv3DOp::inferReturnTypes(
     mlir::ValueRange operands, mlir::DictionaryAttr attributes,
     mlir::RegionRange regions,
     llvm::SmallVectorImpl<mlir::Type> &inferredReturnTypes) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_76(mht_76_v, 2401, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "Conv3DOp::inferReturnTypes");
+
   Conv3DOpAdaptor op(operands, attributes);
   ArrayRef<Attribute> explicit_padding;
   ArrayAttr explicit_pad =
@@ -2020,6 +2419,9 @@ LogicalResult Conv3DOp::inferReturnTypes(
 //===----------------------------------------------------------------------===//
 
 LogicalResult DataFormatVecPermuteOp::verify() {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_77(mht_77_v, 2422, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "DataFormatVecPermuteOp::verify");
+
   DataFormatVecPermuteOp op = *this;
   auto input_ty = op.x().getType().dyn_cast<RankedTensorType>();
   if (!input_ty) return success();
@@ -2076,6 +2478,9 @@ class DivNoNanOrMulNoNanConstantY : public OpRewritePattern<OpT> {
 
   LogicalResult matchAndRewrite(OpT op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_78(mht_78_v, 2481, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "matchAndRewrite");
+
     static_assert(
         llvm::is_one_of<OpT, DivNoNanOp, MulNoNanOp>::value,
         "only canonicalization of tf.DivNoNan and tf.MulNoNan is supported");
@@ -2083,6 +2488,9 @@ class DivNoNanOrMulNoNanConstantY : public OpRewritePattern<OpT> {
     // Returns true iff `val` (a complex constant with float real and imaginary
     // parts) is zero.
     auto complexIsZero = [](const std::complex<APFloat> val) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_79(mht_79_v, 2491, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "lambda");
+
       // Note that when `val` is of complex type, it is zero iff both
       // its real and imaginary parts are zero.
       if (val.real().isZero() && val.imag().isZero())
@@ -2095,6 +2503,9 @@ class DivNoNanOrMulNoNanConstantY : public OpRewritePattern<OpT> {
     // (float/complex type) in `attr`.
     auto hasBothZeroAndNonzeroElements =
         [&complexIsZero](ElementsAttr attr, bool hasComplexElements) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_80(mht_80_v, 2506, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "lambda");
+
           bool foundZero = false, foundNonzero = false;
           if (!hasComplexElements) {
             for (const auto val : attr.getValues<APFloat>()) {
@@ -2175,6 +2586,9 @@ class DivNoNanOrMulNoNanConstantY : public OpRewritePattern<OpT> {
 
 void DivNoNanOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                              MLIRContext *context) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_81(mht_81_v, 2589, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "DivNoNanOp::getCanonicalizationPatterns");
+
   results.add<DivNoNanOrMulNoNanConstantY<TF::DivNoNanOp, TF::DivOp>>(context);
 }
 
@@ -2184,10 +2598,16 @@ void DivNoNanOp::getCanonicalizationPatterns(RewritePatternSet &results,
 
 void DivOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                         MLIRContext *context) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_82(mht_82_v, 2601, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "DivOp::getCanonicalizationPatterns");
+
   results.add<DivWithSqrtDivisor>(context);
 }
 
 OpFoldResult DivOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_83(mht_83_v, 2608, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "DivOp::fold");
+
   return IdentityArithmeticOpFolder<DivOp>(*this, operands);
 }
 
@@ -2196,6 +2616,9 @@ OpFoldResult DivOp::fold(ArrayRef<Attribute> operands) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult DynamicStitchOp::verify() {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_84(mht_84_v, 2619, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "DynamicStitchOp::verify");
+
   DynamicStitchOp op = *this;
   if (op.N() < 1) return op.emitOpError("requires attribute N with value >= 1");
 
@@ -2296,6 +2719,9 @@ LogicalResult DynamicStitchOp::verify() {
 //
 // TODO(hinsu): Verify einsum equation attribute.
 LogicalResult EinsumOp::verify() {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_85(mht_85_v, 2722, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "EinsumOp::verify");
+
   EinsumOp op = *this;
   if (op.N() > 2) {
     return op.emitOpError("supports at most two operands");
@@ -2308,6 +2734,9 @@ LogicalResult EinsumOp::verify() {
 //===----------------------------------------------------------------------===//
 
 OpFoldResult EmptyOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_86(mht_86_v, 2737, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "EmptyOp::fold");
+
   assert(operands.size() == 1 && "empty op has one operand");
 
   Attribute attr = operands.front();
@@ -2345,6 +2774,9 @@ OpFoldResult EmptyOp::fold(ArrayRef<Attribute> operands) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult EmptyTensorListOp::verify() {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_87(mht_87_v, 2777, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "EmptyTensorListOp::verify");
+
   EmptyTensorListOp op = *this;
   // This is required to populate derived attributes during export in a
   // meaningful way. Else during export to GraphDef element_type() query
@@ -2374,26 +2806,44 @@ LogicalResult EmptyTensorListOp::verify() {
 
 std::string
 EnqueueTPUEmbeddingArbitraryTensorBatchOp::GetResourceInstanceStr() {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_88(mht_88_v, 2809, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "EnqueueTPUEmbeddingArbitraryTensorBatchOp::GetResourceInstanceStr");
+
   return std::to_string(device_ordinal());
 }
 
 std::string EnqueueTPUEmbeddingBatchOp::GetResourceInstanceStr() {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_89(mht_89_v, 2816, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "EnqueueTPUEmbeddingBatchOp::GetResourceInstanceStr");
+
   return std::to_string(device_ordinal());
 }
 
 std::string EnqueueTPUEmbeddingIntegerBatchOp::GetResourceInstanceStr() {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_90(mht_90_v, 2823, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "EnqueueTPUEmbeddingIntegerBatchOp::GetResourceInstanceStr");
+
   return std::to_string(device_ordinal());
 }
 
 std::string EnqueueTPUEmbeddingRaggedTensorBatchOp::GetResourceInstanceStr() {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_91(mht_91_v, 2830, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "EnqueueTPUEmbeddingRaggedTensorBatchOp::GetResourceInstanceStr");
+
   return std::to_string(device_ordinal());
 }
 
 std::string EnqueueTPUEmbeddingSparseBatchOp::GetResourceInstanceStr() {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_92(mht_92_v, 2837, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "EnqueueTPUEmbeddingSparseBatchOp::GetResourceInstanceStr");
+
   return std::to_string(device_ordinal());
 }
 
 std::string EnqueueTPUEmbeddingSparseTensorBatchOp::GetResourceInstanceStr() {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_93(mht_93_v, 2844, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "EnqueueTPUEmbeddingSparseTensorBatchOp::GetResourceInstanceStr");
+
   return std::to_string(device_ordinal());
 }
 
@@ -2402,6 +2852,9 @@ std::string EnqueueTPUEmbeddingSparseTensorBatchOp::GetResourceInstanceStr() {
 //===----------------------------------------------------------------------===//
 
 OpFoldResult EnsureShapeOp::fold(llvm::ArrayRef<mlir::Attribute>) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_94(mht_94_v, 2855, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "EnsureShapeOp::fold");
+
   ShapedType type = input().getType().dyn_cast<ShapedType>();
   if (!type || !type.hasRank()) return {};
   // If shape attribute equals input operand's type's shape, fold it to input.
@@ -2429,6 +2882,9 @@ OpFoldResult EnsureShapeOp::fold(llvm::ArrayRef<mlir::Attribute>) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult EqualOp::verify() {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_95(mht_95_v, 2885, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "EqualOp::verify");
+
   EqualOp op = *this;
   // If we allow inputs to have incompatible type, then nothing to do.
   if (!op.incompatible_shape_error()) return success();
@@ -2440,6 +2896,9 @@ LogicalResult EqualOp::verify() {
 
 void EqualOp::build(OpBuilder &builder, OperationState &result, Value x,
                     Value y, BoolAttr incompatible_shape_error) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_96(mht_96_v, 2899, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "EqualOp::build");
+
   auto result_type = DeduceEqualCmpOpType(&builder, result.location, x, y,
                                           incompatible_shape_error);
   return build(builder, result, result_type, x, y, incompatible_shape_error);
@@ -2451,6 +2910,9 @@ namespace {
 // to be compatible.
 template <typename Ty>
 static LogicalResult flipComatibleShapeError(Ty op, PatternRewriter &rewriter) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_97(mht_97_v, 2913, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "flipComatibleShapeError");
+
   if (op.incompatible_shape_error()) {
     return rewriter.notifyMatchFailure(op, "the attribute is already true");
   }
@@ -2483,11 +2945,17 @@ static LogicalResult flipComatibleShapeError(Ty op, PatternRewriter &rewriter) {
 
 void EqualOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                           MLIRContext *context) {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_98(mht_98_v, 2948, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "EqualOp::getCanonicalizationPatterns");
+
   results.add(flipComatibleShapeError<EqualOp>);
 }
 
 void NotEqualOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                              MLIRContext *context) {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_99(mht_99_v, 2956, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "NotEqualOp::getCanonicalizationPatterns");
+
   results.add(flipComatibleShapeError<NotEqualOp>);
 }
 
@@ -2496,6 +2964,9 @@ void NotEqualOp::getCanonicalizationPatterns(RewritePatternSet &results,
 //===----------------------------------------------------------------------===//
 
 Type InferExpandDimsOpType(Value input, Value dim) {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_100(mht_100_v, 2967, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "InferExpandDimsOpType");
+
   Type element_ty = input.getType().cast<TensorType>().getElementType();
   auto unranked_ty = UnrankedTensorType::get(element_ty);
 
@@ -2519,6 +2990,9 @@ Type InferExpandDimsOpType(Value input, Value dim) {
 
 void ExpandDimsOp::build(OpBuilder &builder, OperationState &result,
                          Value input, Value dim) {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_101(mht_101_v, 2993, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "ExpandDimsOp::build");
+
   return build(builder, result, InferExpandDimsOpType(input, dim), input, dim);
 }
 
@@ -2529,6 +3003,9 @@ LogicalResult Expm1Op::inferReturnTypes(
     MLIRContext *context, Optional<Location> location, ValueRange operands,
     DictionaryAttr attributes, RegionRange regions,
     SmallVectorImpl<Type> &inferredReturnTypes) {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_102(mht_102_v, 3006, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "Expm1Op::inferReturnTypes");
+
   if (operands.empty()) {
     return emitOptionalError(location, "requires at least one operand.");
   }
@@ -2544,6 +3021,9 @@ LogicalResult Expm1Op::inferReturnTypes(
 // FakeQuantWithMinMaxArgsOp
 //===----------------------------------------------------------------------===//
 LogicalResult FakeQuantWithMinMaxArgsOp::verify() {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_103(mht_103_v, 3024, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "FakeQuantWithMinMaxArgsOp::verify");
+
   FakeQuantWithMinMaxArgsOp op = *this;
   // TODO(fengliuai): moving the following to an utility method.
   const llvm::fltSemantics &semantics = op.min().getSemantics();
@@ -2572,6 +3052,9 @@ LogicalResult FakeQuantWithMinMaxArgsOp::verify() {
 // FakeQuantWithMinMaxVarsOp
 //===----------------------------------------------------------------------===//
 LogicalResult FakeQuantWithMinMaxVarsOp::verify() {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_104(mht_104_v, 3055, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "FakeQuantWithMinMaxVarsOp::verify");
+
   FakeQuantWithMinMaxVarsOp op = *this;
   auto min = GetRankedTensorTypeForOperand(op.min());
   if (min && !IsOfRankedFloatTensorType(min, 0))
@@ -2593,6 +3076,9 @@ LogicalResult FakeQuantWithMinMaxVarsOp::verify() {
 // FakeQuantWithMinMaxVarsPerChannelOp
 //===----------------------------------------------------------------------===//
 LogicalResult FakeQuantWithMinMaxVarsPerChannelOp::verify() {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_105(mht_105_v, 3079, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "FakeQuantWithMinMaxVarsPerChannelOp::verify");
+
   FakeQuantWithMinMaxVarsPerChannelOp op = *this;
   auto min = GetRankedTensorTypeForOperand(op.min());
   if (min && !IsOfRankedFloatTensorType(min, 1))
@@ -2629,6 +3115,9 @@ LogicalResult FakeQuantWithMinMaxVarsPerChannelOp::verify() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult FillOp::verify() {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_106(mht_106_v, 3118, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "FillOp::verify");
+
   FillOp op = *this;
   if (!IsOfRankOrUnranked(op.dims(), 1))
     return op.emitOpError() << "requires dims to be a 1D tensor";
@@ -2639,6 +3128,9 @@ LogicalResult FillOp::verify() {
 }
 
 static ShapedType InferFillOpType(Value dims, Value value) {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_107(mht_107_v, 3131, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "InferFillOpType");
+
   Type etype = value.getType().cast<ShapedType>().getElementType();
 
   DenseIntElementsAttr dims_attr;
@@ -2662,10 +3154,16 @@ static ShapedType InferFillOpType(Value dims, Value value) {
 
 void FillOp::build(OpBuilder &builder, OperationState &result, Value dims,
                    Value value) {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_108(mht_108_v, 3157, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "FillOp::build");
+
   FillOp::build(builder, result, InferFillOpType(dims, value), dims, value);
 }
 
 OpFoldResult FillOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_109(mht_109_v, 3164, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "FillOp::fold");
+
   assert(operands.size() == 2 && "fill op has two operand");
 
   auto type = getType().cast<ShapedType>();
@@ -2702,11 +3200,17 @@ OpFoldResult FillOp::fold(ArrayRef<Attribute> operands) {
 // change in the latest GPU generations.
 
 LogicalResult FusedBatchNormGradV3Op::UpdateDataFormat(StringRef data_format) {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_110(mht_110_v, 3203, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "FusedBatchNormGradV3Op::UpdateDataFormat");
+
   return ::mlir::TF::UpdateDataFormat(data_format, this);
 }
 
 StringRef FusedBatchNormGradV3Op::GetOptimalLayout(
     const RuntimeDevices &devices) {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_111(mht_111_v, 3211, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "FusedBatchNormGradV3Op::GetOptimalLayout");
+
   // Keep current data format if no GPUs are available or if explicit placement
   // does not allow to use GPU for this operation.
   if (!CanUseGpuDevice(devices) || !CanUseGpuDevice(getOperation()))
@@ -2727,6 +3231,9 @@ StringRef FusedBatchNormGradV3Op::GetOptimalLayout(
 //===----------------------------------------------------------------------===//
 
 LogicalResult FusedBatchNormOp::verify() {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_112(mht_112_v, 3234, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "FusedBatchNormOp::verify");
+
   FusedBatchNormOp op = *this;
   auto x = GetRankedTensorTypeForOperand(op.x());
   if (x && !IsOfRankedFloatTensorType(x, 4))
@@ -2760,6 +3267,9 @@ LogicalResult FusedBatchNormOp::verify() {
 template <class Op>
 static LogicalResult InferenceFoldOperandsPermutation(
     ArrayRef<int64_t> permutation, Op *op) {
+   std::vector<std::string> mht_113_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_113(mht_113_v, 3270, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "InferenceFoldOperandsPermutation");
+
   // FusedBatchNorm in training mode is a layout sentitive operation, and should
   // have already assigned an optimal data format.
   if (op->is_training()) return failure();
@@ -2768,6 +3278,9 @@ static LogicalResult InferenceFoldOperandsPermutation(
 
 template <class Op>
 static StringRef GetOptimalLayout(const RuntimeDevices &devices, Op *op) {
+   std::vector<std::string> mht_114_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_114(mht_114_v, 3281, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "GetOptimalLayout");
+
   // In inference mode FusedBatchNorm is not sensitive to data layout.
   if (!op->is_training()) return op->data_format();
 
@@ -2788,27 +3301,45 @@ static StringRef GetOptimalLayout(const RuntimeDevices &devices, Op *op) {
 
 LogicalResult FusedBatchNormV2Op::FoldOperandsPermutation(
     ArrayRef<int64_t> permutation) {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_115(mht_115_v, 3304, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "FusedBatchNormV2Op::FoldOperandsPermutation");
+
   return ::mlir::TF::InferenceFoldOperandsPermutation(permutation, this);
 }
 
 LogicalResult FusedBatchNormV2Op::UpdateDataFormat(StringRef data_format) {
+   std::vector<std::string> mht_116_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_116(mht_116_v, 3311, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "FusedBatchNormV2Op::UpdateDataFormat");
+
   return ::mlir::TF::UpdateDataFormat(data_format, this);
 }
 
 StringRef FusedBatchNormV2Op::GetOptimalLayout(const RuntimeDevices &devices) {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_117(mht_117_v, 3318, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "FusedBatchNormV2Op::GetOptimalLayout");
+
   return ::mlir::TF::GetOptimalLayout(devices, this);
 }
 
 LogicalResult FusedBatchNormV3Op::FoldOperandsPermutation(
     ArrayRef<int64_t> permutation) {
+   std::vector<std::string> mht_118_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_118(mht_118_v, 3326, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "FusedBatchNormV3Op::FoldOperandsPermutation");
+
   return ::mlir::TF::InferenceFoldOperandsPermutation(permutation, this);
 }
 
 LogicalResult FusedBatchNormV3Op::UpdateDataFormat(StringRef data_format) {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_119(mht_119_v, 3333, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "FusedBatchNormV3Op::UpdateDataFormat");
+
   return ::mlir::TF::UpdateDataFormat(data_format, this);
 }
 
 StringRef FusedBatchNormV3Op::GetOptimalLayout(const RuntimeDevices &devices) {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_120(mht_120_v, 3340, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "FusedBatchNormV3Op::GetOptimalLayout");
+
   return ::mlir::TF::GetOptimalLayout(devices, this);
 }
 
@@ -2817,6 +3348,9 @@ StringRef FusedBatchNormV3Op::GetOptimalLayout(const RuntimeDevices &devices) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult GatherV2Op::verify() {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_121(mht_121_v, 3351, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "GatherV2Op::verify");
+
   GatherV2Op op = *this;
   int64_t batch_dims = op.batch_dims();
   if (auto ty = op.indices().getType().dyn_cast<RankedTensorType>()) {
@@ -2853,6 +3387,9 @@ LogicalResult GatherV2Op::verify() {
 
 void GatherOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                            MLIRContext *context) {
+   std::vector<std::string> mht_122_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_122(mht_122_v, 3390, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "GatherOp::getCanonicalizationPatterns");
+
   results.add<GatherToV2>(context);
 }
 
@@ -2861,6 +3398,9 @@ void GatherOp::getCanonicalizationPatterns(RewritePatternSet &results,
 //===----------------------------------------------------------------------===//
 
 LogicalResult IfOp::verifySymbolUses(SymbolTableCollection &symbol_table) {
+   std::vector<std::string> mht_123_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_123(mht_123_v, 3401, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "IfOp::verifySymbolUses");
+
   auto branch_name = [](unsigned index) -> std::string {
     return index == 0 ? "'then_branch'" : "'else_branch'";
   };
@@ -2878,7 +3418,10 @@ namespace {
 class FoldConstantIfOp : public OpRewritePattern<TF::IfOp> {
  public:
   explicit FoldConstantIfOp(MLIRContext *context)
-      : OpRewritePattern<TF::IfOp>(context) {}
+      : OpRewritePattern<TF::IfOp>(context) {
+   std::vector<std::string> mht_124_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_124(mht_124_v, 3422, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "FoldConstantIfOp");
+}
   LogicalResult matchAndRewrite(TF::IfOp op,
                                 PatternRewriter &rewriter) const override;
 
@@ -2891,6 +3434,9 @@ class FoldConstantIfOp : public OpRewritePattern<TF::IfOp> {
 
 LogicalResult FoldConstantIfOp::matchAndRewrite(
     TF::IfOp op, PatternRewriter &rewriter) const {
+   std::vector<std::string> mht_125_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_125(mht_125_v, 3437, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "FoldConstantIfOp::matchAndRewrite");
+
   // Extract the constant cond value.
   DenseIntElementsAttr cond_attr;
   if (!matchPattern(op.cond(), m_Constant(&cond_attr))) return failure();
@@ -2904,6 +3450,9 @@ LogicalResult FoldConstantIfOp::matchAndRewrite(
 
   // Replace IfOp with PartitionedCallOp or StatefulPartitionedCallOp.
   auto rewrite = [&](auto op_type) {
+   std::vector<std::string> mht_126_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_126(mht_126_v, 3453, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "lambda");
+
     auto empty = rewriter.getStringAttr("");
     ReplaceTfOpWithNewOp<typename decltype(op_type)::CallOp>(
         rewriter, op, op.getResultTypes(), op.input(), func,
@@ -2921,6 +3470,9 @@ LogicalResult FoldConstantIfOp::matchAndRewrite(
 
 void IfOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                        MLIRContext *context) {
+   std::vector<std::string> mht_127_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_127(mht_127_v, 3473, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "IfOp::getCanonicalizationPatterns");
+
   results.add<FoldConstantIfOp, DropAttributes<IfOp>>(context);
 }
 
@@ -2929,6 +3481,9 @@ void IfOp::getCanonicalizationPatterns(RewritePatternSet &results,
 //===----------------------------------------------------------------------===//
 
 LogicalResult IfRegionOp::verifyRegions() {
+   std::vector<std::string> mht_128_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_128(mht_128_v, 3484, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "IfRegionOp::verifyRegions");
+
   IfRegionOp op = *this;
   TypeRange then_types =
       op.then_branch().front().getTerminator()->getOperandTypes();
@@ -2950,13 +3505,19 @@ namespace {
 class FoldConstantIfRegionOp : public OpRewritePattern<TF::IfRegionOp> {
  public:
   explicit FoldConstantIfRegionOp(MLIRContext *context)
-      : OpRewritePattern<TF::IfRegionOp>(context) {}
+      : OpRewritePattern<TF::IfRegionOp>(context) {
+   std::vector<std::string> mht_129_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_129(mht_129_v, 3509, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "FoldConstantIfRegionOp");
+}
   LogicalResult matchAndRewrite(TF::IfRegionOp op,
                                 PatternRewriter &rewriter) const override;
 };
 
 LogicalResult FoldConstantIfRegionOp::matchAndRewrite(
     TF::IfRegionOp op, PatternRewriter &rewriter) const {
+   std::vector<std::string> mht_130_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_130(mht_130_v, 3518, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "FoldConstantIfRegionOp::matchAndRewrite");
+
   // Extract the constant cond value.
   DenseIntElementsAttr cond_attr;
   if (!matchPattern(op.cond(), m_Constant(&cond_attr))) return failure();
@@ -2998,6 +3559,9 @@ LogicalResult FoldConstantIfRegionOp::matchAndRewrite(
 
 void IfRegionOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                              MLIRContext *context) {
+   std::vector<std::string> mht_131_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_131(mht_131_v, 3562, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "IfRegionOp::getCanonicalizationPatterns");
+
   results.add<FoldConstantIfRegionOp,
               CaseOrIfRegionEliminatePassThrough<TF::IfRegionOp>>(context);
 }
@@ -3008,6 +3572,9 @@ void IfRegionOp::getCanonicalizationPatterns(RewritePatternSet &results,
 
 // Verifies that the input is 1D.
 LogicalResult InvertPermutationOp::verify() {
+   std::vector<std::string> mht_132_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_132(mht_132_v, 3575, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "InvertPermutationOp::verify");
+
   InvertPermutationOp op = *this;
   auto x_type = op.x().getType().cast<TensorType>();
   if (!x_type.hasRank()) return success();
@@ -3022,12 +3589,18 @@ LogicalResult InvertPermutationOp::verify() {
 //===----------------------------------------------------------------------===//
 
 OpFoldResult LeakyReluOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_133_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_133(mht_133_v, 3592, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "LeakyReluOp::fold");
+
   assert(operands.size() == 1 && "leaky relu has one operand");
 
   // leaky_relu(x, alpha: 1) -> x
   if (alpha().convertToFloat() == 1.0f) return getOperand();
 
   auto calculate = [&](FloatAttr arg) {
+   std::vector<std::string> mht_134_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_134(mht_134_v, 3601, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "lambda");
+
     APFloat val = arg.getValue();
     if (val.isNegative()) val = alpha() * val;
     return FloatAttr::get(arg.getType(), val);
@@ -3048,6 +3621,9 @@ OpFoldResult LeakyReluOp::fold(ArrayRef<Attribute> operands) {
 
 void LogOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                         MLIRContext *context) {
+   std::vector<std::string> mht_135_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_135(mht_135_v, 3624, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "LogOp::getCanonicalizationPatterns");
+
   results.add<LogOfSoftmax, LogToLog1p>(context);
 }
 
@@ -3057,6 +3633,9 @@ void LogOp::getCanonicalizationPatterns(RewritePatternSet &results,
 
 void LogicalNotOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                MLIRContext *context) {
+   std::vector<std::string> mht_136_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_136(mht_136_v, 3636, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "LogicalNotOp::getCanonicalizationPatterns");
+
   results
       .add<LogicalNotOfEqual, LogicalNotOfNotEqual, LogicalNotOfGreater,
            LogicalNotOfGreaterEqual, LogicalNotOfLess, LogicalNotOfLessEqual>(
@@ -3068,6 +3647,9 @@ void LogicalNotOp::getCanonicalizationPatterns(RewritePatternSet &results,
 //===----------------------------------------------------------------------===//
 
 LogicalResult MatrixBandPartOp::verify() {
+   std::vector<std::string> mht_137_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_137(mht_137_v, 3650, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "MatrixBandPartOp::verify");
+
   MatrixBandPartOp op = *this;
   if (!HasRankAtLeast(op.input(), 2)) {
     return op.emitOpError()
@@ -3093,6 +3675,9 @@ LogicalResult MatrixBandPartOp::verify() {
 
 void MatrixDiagOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                MLIRContext *context) {
+   std::vector<std::string> mht_138_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_138(mht_138_v, 3678, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "MatrixDiagOp::getCanonicalizationPatterns");
+
   results.add<MatrixDiagToV3>(context);
 }
 
@@ -3102,6 +3687,9 @@ void MatrixDiagOp::getCanonicalizationPatterns(RewritePatternSet &results,
 
 void MatrixSetDiagOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                   MLIRContext *context) {
+   std::vector<std::string> mht_139_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_139(mht_139_v, 3690, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "MatrixSetDiagOp::getCanonicalizationPatterns");
+
   results.add<MatrixSetDiagToV3>(context);
 }
 
@@ -3111,6 +3699,9 @@ void MatrixSetDiagOp::getCanonicalizationPatterns(RewritePatternSet &results,
 
 void MatrixSetDiagV2Op::getCanonicalizationPatterns(RewritePatternSet &results,
                                                     MLIRContext *context) {
+   std::vector<std::string> mht_140_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_140(mht_140_v, 3702, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "MatrixSetDiagV2Op::getCanonicalizationPatterns");
+
   results.add<MatrixSetDiagV2ToV3>(context);
 }
 
@@ -3120,6 +3711,9 @@ void MatrixSetDiagV2Op::getCanonicalizationPatterns(RewritePatternSet &results,
 
 void MaxOp::build(OpBuilder &builder, OperationState &result, Value input,
                   Value reduction_indices, BoolAttr keep_dims) {
+   std::vector<std::string> mht_141_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_141(mht_141_v, 3714, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "MaxOp::build");
+
   Type out_ty = InferReductionOpType(input, reduction_indices, keep_dims);
   build(builder, result, out_ty, input, reduction_indices, keep_dims);
 }
@@ -3130,11 +3724,17 @@ void MaxOp::build(OpBuilder &builder, OperationState &result, Value input,
 
 LogicalResult MaxPoolOp::FoldOperandsPermutation(
     ArrayRef<int64_t> permutation) {
+   std::vector<std::string> mht_142_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_142(mht_142_v, 3727, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "MaxPoolOp::FoldOperandsPermutation");
+
   return ::mlir::TF::FoldOperandsPermutation(
       permutation, this, {{"strides", strides()}, {"ksize", ksize()}});
 }
 
 LogicalResult MaxPoolOp::UpdateDataFormat(StringRef new_data_format) {
+   std::vector<std::string> mht_143_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_143(mht_143_v, 3735, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "MaxPoolOp::UpdateDataFormat");
+
   StringRef src_data_format = data_format();
 
   auto perm = GetDataFormatPermutation(src_data_format, new_data_format);
@@ -3152,6 +3752,9 @@ LogicalResult MaxPoolOp::UpdateDataFormat(StringRef new_data_format) {
 }
 
 StringRef MaxPoolOp::GetOptimalLayout(const RuntimeDevices &devices) {
+   std::vector<std::string> mht_144_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_144(mht_144_v, 3755, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "MaxPoolOp::GetOptimalLayout");
+
   // Keep current data format if no GPUs are available or if explicit placement
   // does not allow to use GPU for this operation.
   if (!CanUseGpuDevice(devices) || !CanUseGpuDevice(getOperation()))
@@ -3166,6 +3769,9 @@ StringRef MaxPoolOp::GetOptimalLayout(const RuntimeDevices &devices) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult MaxPoolGradOp::verify() {
+   std::vector<std::string> mht_145_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_145(mht_145_v, 3772, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "MaxPoolGradOp::verify");
+
   MaxPoolGradOp op = *this;
   if (!IsOfRankOrUnranked(op.orig_input(), 4)) {
     return op.emitOpError() << "requires orig_input to be rank 4";
@@ -3184,6 +3790,9 @@ LogicalResult MaxPoolGradOp::verify() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult MeanOp::FoldOperandsPermutation(ArrayRef<int64_t> permutation) {
+   std::vector<std::string> mht_146_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_146(mht_146_v, 3793, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "MeanOp::FoldOperandsPermutation");
+
   // Reduction indices must be defined by a constant operation.
   auto reduction_op =
       dyn_cast_or_null<TF::ConstOp>(reduction_indices().getDefiningOp());
@@ -3217,6 +3826,9 @@ LogicalResult MeanOp::FoldOperandsPermutation(ArrayRef<int64_t> permutation) {
 
 void MulNoNanOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                              MLIRContext *context) {
+   std::vector<std::string> mht_147_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_147(mht_147_v, 3829, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "MulNoNanOp::getCanonicalizationPatterns");
+
   results.add<DivNoNanOrMulNoNanConstantY<TF::MulNoNanOp, TF::MulOp>>(context);
 }
 
@@ -3225,6 +3837,9 @@ void MulNoNanOp::getCanonicalizationPatterns(RewritePatternSet &results,
 //===----------------------------------------------------------------------===//
 
 OpFoldResult MulOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_148_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_148(mht_148_v, 3840, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "MulOp::fold");
+
   return IdentityArithmeticOpFolder<MulOp>(*this, operands);
 }
 
@@ -3233,6 +3848,9 @@ OpFoldResult MulOp::fold(ArrayRef<Attribute> operands) {
 //===----------------------------------------------------------------------===//
 void HashTableOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                               MLIRContext *context) {
+   std::vector<std::string> mht_149_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_149(mht_149_v, 3851, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "HashTableOp::getCanonicalizationPatterns");
+
   results.add<HashTableAndInitializeTableToV2>(context);
   results.add<HashTableAndLookupTableSizeToV2>(context);
   results.add<HashTableAndLookupTableFindToV2>(context);
@@ -3243,6 +3861,9 @@ void HashTableOp::getCanonicalizationPatterns(RewritePatternSet &results,
 //===----------------------------------------------------------------------===//
 
 LogicalResult BitcastOp::verify() {
+   std::vector<std::string> mht_150_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_150(mht_150_v, 3864, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "BitcastOp::verify");
+
   BitcastOp op = *this;
   auto input_type = op.input().getType().cast<ShapedType>();
   auto output_type = op.output().getType().cast<ShapedType>();
@@ -3260,6 +3881,9 @@ LogicalResult BitcastOp::verify() {
         output_element_type.getIntOrFloatBitWidth();
 
     auto is_output_shape_valid_with_small_input_element_type_bitwidth = [&]() {
+   std::vector<std::string> mht_151_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_151(mht_151_v, 3884, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "lambda");
+
       if (output_element_type_bitwidth % input_element_type_bitwidth != 0) {
         op.emitOpError() << "output element bitwidth is not multiple "
                          << "of input element bitwidth";
@@ -3297,6 +3921,9 @@ LogicalResult BitcastOp::verify() {
     };
 
     auto is_output_shape_valid_with_small_output_element_type_bitwidth = [&]() {
+   std::vector<std::string> mht_152_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_152(mht_152_v, 3924, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "lambda");
+
       if (input_element_type_bitwidth % output_element_type_bitwidth != 0) {
         op.emitOpError() << "input element bitwidth is not multiple "
                          << "of output element bitwidth";
@@ -3333,6 +3960,9 @@ LogicalResult BitcastOp::verify() {
     };
 
     auto is_output_shape_valid_with_equal_bitwidth = [&]() {
+   std::vector<std::string> mht_153_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_ops_a_mDTcc mht_153(mht_153_v, 3963, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.cc", "lambda");
+
       if (input_type.getShape().equals(output_type.getShape())) {
         return success();
       }

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,6 +214,9 @@ namespace tensorflow {
 namespace functionalize_cond {
 
 bool AncestorNode::operator<(const AncestorNode& other) const {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_0(mht_0_v, 217, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "AncestorNode::operator<");
+
   return (output_tensor.node->id() < other.output_tensor.node->id()) ||
          (output_tensor.node->id() == other.output_tensor.node->id() &&
           output_tensor.index < other.output_tensor.index) ||
@@ -84,10 +255,16 @@ struct ClusterTupleLessThan {
 
 // TODO(jpienaar): Move to OutputTensor.
 string DebugString(const OutputTensor& tensor) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_1(mht_1_v, 258, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "DebugString");
+
   return absl::StrCat(tensor.node->name(), ":", tensor.index);
 }
 
 string Branch_Name(BranchType b) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_2(mht_2_v, 265, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "Branch_Name");
+
   switch (b) {
     case BranchType::kElseBranch:
       return "else";
@@ -101,6 +278,9 @@ string Branch_Name(BranchType b) {
 }
 
 string DebugString(StateMap::CondId cond_state) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_3(mht_3_v, 281, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "DebugString");
+
   if (cond_state == nullptr || cond_state->empty()) return "{}";
   using value_type = StateMap::CondState::value_type;
   return absl::StrCat(
@@ -120,6 +300,9 @@ string DebugString(StateMap::CondId cond_state) {
 
 // Returns the predicate of a switch.
 Status GetSwitchPredicate(const Node& switch_node, OutputTensor* pred) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_4(mht_4_v, 303, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "GetSwitchPredicate");
+
   const Edge* pred_edge;
   TF_RETURN_IF_ERROR(switch_node.input_edge(1, &pred_edge));
   // The predicate can be preceded by a identity node. Look through
@@ -132,6 +315,9 @@ Status GetSwitchPredicate(const Node& switch_node, OutputTensor* pred) {
 }
 
 Status GetSwitchValue(const Node& switch_node, OutputTensor* val) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_5(mht_5_v, 318, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "GetSwitchValue");
+
   const Edge* val_edge;
   TF_RETURN_IF_ERROR(switch_node.input_edge(0, &val_edge));
   *val = OutputTensor(val_edge->src(), val_edge->src_output());
@@ -157,6 +343,9 @@ struct CondStateLess {
 };
 
 StateMap::StateMap(Graph* graph) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_6(mht_6_v, 346, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "StateMap::StateMap");
+
   node_to_condid_map_.resize(graph->num_node_ids());
   node_to_ancestorid_map_.resize(graph->num_node_ids());
   // Initialize the dead state (empty state is designated with a nullptr).
@@ -164,9 +353,15 @@ StateMap::StateMap(Graph* graph) {
       {std::make_pair(OutputTensor(nullptr, -1), BranchType::kNeither)});
 }
 
-bool StateMap::IsDead(StateMap::CondId id) const { return id == dead_id_; }
+bool StateMap::IsDead(StateMap::CondId id) const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_7(mht_7_v, 357, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "StateMap::IsDead");
+ return id == dead_id_; }
 
-bool StateMap::IsEmpty(StateMap::CondId id) const { return id == nullptr; }
+bool StateMap::IsEmpty(StateMap::CondId id) const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_8(mht_8_v, 362, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "StateMap::IsEmpty");
+ return id == nullptr; }
 
 size_t StateMap::Hash::operator()(const StateMap::CondState& map) const {
   if (map.empty()) return 0;
@@ -198,9 +393,15 @@ size_t StateMap::Hash::operator()(const StateMap::AncestorState& map) const {
 // switch nodes.
 struct CondArgNode {
   explicit CondArgNode(Node* src, int src_output)
-      : src(src), src_output(src_output) {}
+      : src(src), src_output(src_output) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_9(mht_9_v, 397, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "CondArgNode");
+}
 
   string ToString() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_10(mht_10_v, 402, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "ToString");
+
     return absl::StrCat("src=", src->name(), ":", src_output,
                         " switches=", NodesToString(switches));
   }
@@ -213,6 +414,9 @@ struct CondArgNode {
 using CondArgNodes = std::vector<CondArgNode>;
 
 string DebugString(const CondArgNodes& nodes) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_11(mht_11_v, 417, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "DebugString");
+
   return absl::StrCat(
       "[",
       absl::StrJoin(nodes, ", ",
@@ -223,17 +427,26 @@ string DebugString(const CondArgNodes& nodes) {
 }
 
 StateMap::CondId StateMap::LookupCondId(const Node* node) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_12(mht_12_v, 430, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "StateMap::LookupCondId");
+
   const int64_t map_size = node_to_condid_map_.size();
   if (node->id() < map_size) return node_to_condid_map_[node->id()];
   return added_node_condid_mapping_.at(node->id());
 }
 
 StateMap::CondId StateMap::GetCondId(const StateMap::CondState& state) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_13(mht_13_v, 439, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "StateMap::GetCondId");
+
   if (state.empty()) return nullptr;
   return &*condstate_set_.insert(state).first;
 }
 
 void StateMap::ResetCondId(const Node* node, StateMap::CondId id) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_14(mht_14_v, 447, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "StateMap::ResetCondId");
+
   const int64_t map_size = node_to_condid_map_.size();
   if (node->id() < map_size)
     node_to_condid_map_[node->id()] = id;
@@ -242,6 +455,9 @@ void StateMap::ResetCondId(const Node* node, StateMap::CondId id) {
 }
 
 StateMap::AncestorId StateMap::LookupAncestorId(const Node* node) const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_15(mht_15_v, 458, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "StateMap::LookupAncestorId");
+
   const int64_t map_size = node_to_ancestorid_map_.size();
   if (node->id() < map_size) return node_to_ancestorid_map_[node->id()];
   return added_node_ancestorid_mapping_.at(node->id());
@@ -249,11 +465,17 @@ StateMap::AncestorId StateMap::LookupAncestorId(const Node* node) const {
 
 StateMap::AncestorId StateMap::GetAncestorId(
     const StateMap::AncestorState& state) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_16(mht_16_v, 468, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "StateMap::GetAncestorId");
+
   if (state.empty()) return nullptr;
   return &*ancestorstate_set_.insert(state).first;
 }
 
 void StateMap::ResetAncestorId(const Node* node, StateMap::AncestorId id) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_17(mht_17_v, 476, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "StateMap::ResetAncestorId");
+
   const int64_t map_size = node_to_ancestorid_map_.size();
   if (node->id() < map_size)
     node_to_ancestorid_map_[node->id()] = id;
@@ -261,17 +483,29 @@ void StateMap::ResetAncestorId(const Node* node, StateMap::AncestorId id) {
     added_node_ancestorid_mapping_[node->id()] = id;
 }
 
-void StateMap::MarkDead(const Node* node) { ResetCondId(node, dead_id_); }
+void StateMap::MarkDead(const Node* node) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_18(mht_18_v, 487, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "StateMap::MarkDead");
+ ResetCondId(node, dead_id_); }
 
 string StateMap::CondStateToString(const Node* node) const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_19(mht_19_v, 492, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "StateMap::CondStateToString");
+
   return CondStateToString(LookupCondId(node));
 }
 
 string StateMap::CondStateToString(StateMap::CondId id) const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_20(mht_20_v, 499, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "StateMap::CondStateToString");
+
   return DebugString(id);
 }
 
 string StateMap::AncestorStateToString(const Node* node) const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_21(mht_21_v, 506, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "StateMap::AncestorStateToString");
+
   if (auto id = LookupAncestorId(node)) {
     return absl::StrCat(
         "{",
@@ -292,7 +526,10 @@ FunctionalizeCond::FunctionalizeCond(Graph* graph,
     : state_map_(graph),
       library_(library),
       graph_(graph),
-      node_filter_(node_filter) {}
+      node_filter_(node_filter) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_22(mht_22_v, 530, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "FunctionalizeCond::FunctionalizeCond");
+}
 
 // Class representing the merge/switch nodes that will become a conditional.
 class Conditional {
@@ -390,14 +627,23 @@ Conditional::Conditional(OutputTensor predicate, FunctionalizeCond* parent,
     : parent_(parent),
       state_map_(cond_state_map),
       predicate_(predicate),
-      refiner_(refiner) {}
+      refiner_(refiner) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_23(mht_23_v, 631, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "Conditional::Conditional");
+}
 
 Status Conditional::AddMerge(Node* m) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_24(mht_24_v, 636, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "Conditional::AddMerge");
+
   merges_.insert(m);
   return Status::OK();
 }
 
 Status Conditional::AddSwitch(Node* s) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_25(mht_25_v, 644, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "Conditional::AddSwitch");
+
   VLOG(5) << "Adding switch " << s->DebugString();
   OutputTensor predicate;
   TF_RETURN_IF_ERROR(GetSwitchPredicate(*s, &predicate));
@@ -414,6 +660,9 @@ Status Conditional::AddSwitch(Node* s) {
 }
 
 Status Conditional::BuildArgumentNodes() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_26(mht_26_v, 663, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "Conditional::BuildArgumentNodes");
+
   VLOG(1) << "Build function arguments";
   struct Hash {
     size_t operator()(const std::pair<Node*, int>& item) const {
@@ -497,6 +746,9 @@ Status Conditional::BuildArgumentNodes() {
 
 Status Conditional::AddSwitchNodeAlongEdge(const Edge* edge, BranchType branch,
                                            Graph* graph) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_27(mht_27_v, 749, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "Conditional::AddSwitchNodeAlongEdge");
+
   // Previously we had edge:
   //   src:src_output ---- edge ----> dst:dst_input
   // post this we have (in graph)
@@ -525,6 +777,9 @@ Status Conditional::AddSwitchNodeAlongEdge(const Edge* edge, BranchType branch,
 }
 
 Status Conditional::ExtractBodies(Graph* graph) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_28(mht_28_v, 780, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "Conditional::ExtractBodies");
+
   VLOG(2) << "Extracting bodies for " << name();
   for (auto b : {BranchType::kElseBranch, BranchType::kThenBranch}) {
     bodies_[static_cast<int>(b)] =
@@ -532,6 +787,9 @@ Status Conditional::ExtractBodies(Graph* graph) {
   }
 
   auto find_branch = [&](const Edge* e) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_29(mht_29_v, 790, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "lambda");
+
     const auto& id = state_map_->LookupCondId(e->src());
     return IsSwitch(e->src()) ? BranchType(e->src_output())
                               : state_map_->FindBranchOf(id, predicate_);
@@ -746,6 +1004,9 @@ Status Conditional::ExtractBodies(Graph* graph) {
 
 Status Conditional::BuildIfNode(Graph* graph,
                                 FunctionLibraryDefinition* library) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_30(mht_30_v, 1007, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "Conditional::BuildIfNode");
+
   VLOG(2) << "Build cond function for " << name();
   NodeDebugInfo debug_info((*merges_.begin())->def());
   NodeDefBuilder builder(name(), "If", library, &debug_info);
@@ -843,6 +1104,9 @@ Status Conditional::BuildIfNode(Graph* graph,
 Status Conditional::AddInputEdges(
     Graph* graph,
     const std::unordered_map<Node*, OutputTensor>& merge_to_replacement) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_31(mht_31_v, 1107, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "Conditional::AddInputEdges");
+
   VLOG(2) << "AddInputEdges for " << if_node_->name();
   int index = 0;
   // Add predicate input.
@@ -880,6 +1144,9 @@ Status Conditional::AddInputEdges(
 Status Conditional::AddOutputEdges(
     Graph* graph,
     std::unordered_map<Node*, OutputTensor>* merge_to_replacement) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_32(mht_32_v, 1147, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "Conditional::AddOutputEdges");
+
   VLOG(2) << "AddOutputEdges for " << if_node_->name();
   int i = 0;
   for (Node* node : merges_) {
@@ -919,6 +1186,9 @@ Status Conditional::AddOutputEdges(
 Status Conditional::BuildAndReplace(
     Graph* graph, FunctionLibraryDefinition* library,
     std::unordered_map<Node*, OutputTensor>* merge_to_replacement) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_33(mht_33_v, 1189, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "Conditional::BuildAndReplace");
+
   VLOG(1) << "Build If and replace merge nodes "
           << NodesToString(this->merges_);
   if (replaced_) return Status::OK();
@@ -951,12 +1221,18 @@ Status Conditional::BuildAndReplace(
 }
 
 string Conditional::name() const {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_34(mht_34_v, 1224, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "Conditional::name");
+
   CHECK(!merges_.empty());
   return absl::StrCat((*merges_.begin())->name(), "_if");
 }
 
 Status FunctionalizeCond::AddIdentityNode(const Node* replacee, Node* if_node,
                                           int port) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_35(mht_35_v, 1233, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "FunctionalizeCond::AddIdentityNode");
+
   NodeBuilder id_builder(replacee->name(), "Identity");
   id_builder.Input(if_node, port);
   string outside_compilation;
@@ -975,6 +1251,9 @@ Status FunctionalizeCond::AddIdentityNode(const Node* replacee, Node* if_node,
 StatusOr<Node*> FunctionalizeCond::AddIfNode(const NodeDef& def,
                                              const Node* replacee,
                                              const OutputTensor& predicate) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_36(mht_36_v, 1254, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "FunctionalizeCond::AddIfNode");
+
   TF_ASSIGN_OR_RETURN(Node * ret, graph_->AddNode(def));
   VLOG(1) << "Adding If for " << replacee->name();
   StateMap::CondId id = state_map_.LookupCondId(replacee);
@@ -992,6 +1271,9 @@ StatusOr<Node*> FunctionalizeCond::AddIfNode(const NodeDef& def,
 }
 
 Status FunctionalizeCond::PropagateUpdatedState(const Node* replacee) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_37(mht_37_v, 1274, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "FunctionalizeCond::PropagateUpdatedState");
+
   VLOG(2) << "Propagating update state for " << replacee->name() << " "
           << state_map_.CondStateToString(replacee);
   // Redo topological sort as the order could have changed.
@@ -1027,6 +1309,9 @@ Status FunctionalizeCond::PropagateUpdatedState(const Node* replacee) {
 // Returns the most restrictive branch of two branches or neither. This is the
 // meet operator of the BranchType lattice.
 BranchType MeetBranch(const BranchType& lhs, const BranchType& rhs) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_38(mht_38_v, 1312, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "MeetBranch");
+
   if (lhs == rhs) return lhs;
   if (lhs == BranchType::kNeither) return rhs;
   if (rhs == BranchType::kNeither) return lhs;
@@ -1036,6 +1321,9 @@ BranchType MeetBranch(const BranchType& lhs, const BranchType& rhs) {
 }
 
 BranchType StateMap::FindBranchOf(CondId id, OutputTensor predicate) const {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_39(mht_39_v, 1324, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "StateMap::FindBranchOf");
+
   if (IsEmpty(id)) return BranchType::kNeither;
   const CondState& nodes = *id;
   auto it = nodes.find(predicate);
@@ -1045,6 +1333,9 @@ BranchType StateMap::FindBranchOf(CondId id, OutputTensor predicate) const {
 
 StatusOr<StateMap::CondId> FunctionalizeCond::JoinCondStatesNonMerge(
     StateMap::CondId src, StateMap::CondId dst) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_40(mht_40_v, 1336, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "FunctionalizeCond::JoinCondStatesNonMerge");
+
   VLOG(5) << "Joining src=" << DebugString(src) << " [" << src
           << "] and dst=" << DebugString(dst) << " [" << dst << "]";
 
@@ -1081,6 +1372,9 @@ StatusOr<StateMap::CondId> FunctionalizeCond::JoinCondStatesNonMerge(
 
 StatusOr<StateMap::CondId> FunctionalizeCond::JoinCondStatesMerge(
     Node* merge, StateMap::CondId src, StateMap::CondId dst) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_41(mht_41_v, 1375, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "FunctionalizeCond::JoinCondStatesMerge");
+
   // Determine the flow state when joining two states for a merge
   // node. Combining the two states for a merge node is effectively performing a
   // disjunction of the states along the different input edges. For a merge that
@@ -1130,6 +1424,9 @@ StatusOr<StateMap::CondId> FunctionalizeCond::JoinCondStatesMerge(
 }
 
 StateMap::CondId FunctionalizeCond::StateAlongEdge(const Edge* e) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_42(mht_42_v, 1427, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "FunctionalizeCond::StateAlongEdge");
+
   Node* src = e->src();
   StateMap::CondId id = state_map_.LookupCondId(e->src());
 
@@ -1160,6 +1457,9 @@ StateMap::CondId FunctionalizeCond::StateAlongEdge(const Edge* e) {
 }
 
 Status FunctionalizeCond::DetermineCondStateMerge(Node* dst) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_43(mht_43_v, 1460, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "FunctionalizeCond::DetermineCondStateMerge");
+
   // Only Merge nodes with two inputs are supported, but if this is a redundant
   // merge, then the dead edge may already have been removed (if due to a
   // switch) and so the input count would be incorrect.
@@ -1190,6 +1490,9 @@ Status FunctionalizeCond::DetermineCondStateMerge(Node* dst) {
 }
 
 Status FunctionalizeCond::DetermineCondStateNonMerge(Node* dst) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_44(mht_44_v, 1493, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "FunctionalizeCond::DetermineCondStateNonMerge");
+
   // Handle non-merge join.
   for (auto e : dst->in_edges()) {
     VLOG(4) << "Processing forward flow for: " << e->DebugString() << " "
@@ -1208,6 +1511,9 @@ Status FunctionalizeCond::DetermineCondStateNonMerge(Node* dst) {
 }
 
 Status FunctionalizeCond::RemoveRedundantMerge(Node* node) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_45(mht_45_v, 1514, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "FunctionalizeCond::RemoveRedundantMerge");
+
   // Handle redundant merge nodes. A merge node is considered redundant if
   // one input edge is dead while the other has a value.
   if (!state_map_.IsDead(state_map_.LookupCondId(node))) return Status::OK();
@@ -1246,6 +1552,9 @@ Status FunctionalizeCond::RemoveRedundantMerge(Node* node) {
 }
 
 Status FunctionalizeCond::RemoveRedundantSwitch(Node* node) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_46(mht_46_v, 1555, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "FunctionalizeCond::RemoveRedundantSwitch");
+
   // Handle redundant switch nodes. A switch node is considered redundant if
   // the predicate of the switch already holds on the current branch. E.g., if
   // p is the predicate of the switch but p is already known to hold on this
@@ -1316,6 +1625,9 @@ Status FunctionalizeCond::RemoveRedundantSwitch(Node* node) {
 }
 
 Status FunctionalizeCond::DetermineStates(std::vector<Node*> rev_topo_order) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_47(mht_47_v, 1628, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "FunctionalizeCond::DetermineStates");
+
   // The state that is propagated along the given edge.
   for (auto it = rev_topo_order.rbegin(); it != rev_topo_order.rend(); ++it) {
     Node* dst = *it;
@@ -1332,10 +1644,16 @@ Status FunctionalizeCond::DetermineStates(std::vector<Node*> rev_topo_order) {
 }
 
 Status FunctionalizeCond::DetermineAncestorState(Node* dst) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_48(mht_48_v, 1647, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "FunctionalizeCond::DetermineAncestorState");
+
   StateMap::AncestorId id = nullptr;
   StateMap::AncestorState state;
 
   auto insert = [&](StateMap::AncestorId id, Node* src) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_49(mht_49_v, 1654, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "lambda");
+
     auto other_id = state_map_.LookupAncestorId(src);
     if (other_id != id && other_id != nullptr) {
       state.insert(other_id->begin(), other_id->end());
@@ -1367,6 +1685,9 @@ Status FunctionalizeCond::DetermineAncestorState(Node* dst) {
 
 void FunctionalizeCond::DeleteReachableAndDeadNodes(
     const std::vector<Node*>& merge_order) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_50(mht_50_v, 1688, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "FunctionalizeCond::DeleteReachableAndDeadNodes");
+
   // Delete all nodes that have been extracted or are reachable from
   // deleted/dead nodes. The input and outgoing edges should have already been
   // removed.
@@ -1441,6 +1762,9 @@ void FunctionalizeCond::DeleteReachableAndDeadNodes(
 }
 
 void FunctionalizeCond::SortMergeNodes(std::vector<Node*>* merge_order) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_51(mht_51_v, 1765, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "FunctionalizeCond::SortMergeNodes");
+
   // Sort merge nodes by nesting depth.
   using sort_pair = std::pair<int, Node*>;
   std::vector<sort_pair> inner_to_outer_merge_order;
@@ -1461,6 +1785,9 @@ void FunctionalizeCond::SortMergeNodes(std::vector<Node*>* merge_order) {
 }
 
 Status FunctionalizeCond::FunctionalizeInternal() {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_52(mht_52_v, 1788, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "FunctionalizeCond::FunctionalizeInternal");
+
   // The general approach for converting a tf.cond (as lowered via switch/merge
   // nodes) to a functional if is as follows:
   // 1. Determine the topological order and collect all the switch and merge
@@ -1581,6 +1908,10 @@ Status FunctionalizeCond::FunctionalizeInternal() {
 }
 
 void FunctionalizeCond::DumpGraphWithCondState(const string& name) {
+   std::vector<std::string> mht_53_v;
+   mht_53_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_53(mht_53_v, 1912, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "FunctionalizeCond::DumpGraphWithCondState");
+
   const char* const kCondGroupDebugAttr = "_XlaFunctionalizeCondGroup";
 
   for (Node* n : graph_->nodes()) {
@@ -1595,12 +1926,18 @@ void FunctionalizeCond::DumpGraphWithCondState(const string& name) {
 }
 
 void FunctionalizeCond::AddSwitchId(int switch_id) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_54(mht_54_v, 1929, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "FunctionalizeCond::AddSwitchId");
+
   switch_ids_.push_back(switch_id);
 }
 
 Status FunctionalizeCond::Functionalize(Graph* graph,
                                         FunctionLibraryDefinition* library,
                                         const NodeFilter& node_filter) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_55(mht_55_v, 1938, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "FunctionalizeCond::Functionalize");
+
   VLOG(1) << "FunctionalizeCond::Functionalize";
   FunctionalizeCond fc(graph, library, node_filter);
   return fc.FunctionalizeInternal();
@@ -1610,6 +1947,9 @@ Status FunctionalizeCond::Functionalize(Graph* graph,
 
 Status FunctionalizeCond(Graph* graph, FunctionLibraryDefinition* library,
                          const NodeFilter& node_filter) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSfunctionalize_condDTcc mht_56(mht_56_v, 1950, "", "./tensorflow/compiler/tf2xla/functionalize_cond.cc", "FunctionalizeCond");
+
   // FunctionalizeControlFlow is invoked for every function, so the loops's
   // bodies and conditionals that were extracted into functions will be handled
   // in successive invocations.

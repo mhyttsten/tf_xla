@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_inspection_required_ops_utilsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_inspection_required_ops_utilsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_inspection_required_ops_utilsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,6 +197,9 @@ namespace tensorflow {
 namespace {
 
 bool IsFunctionCall(const Node& node) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_inspection_required_ops_utilsDTcc mht_0(mht_0_v, 200, "", "./tensorflow/core/common_runtime/placer_inspection_required_ops_utils.cc", "IsFunctionCall");
+
   // TODO(iga): Handle non-PCO functions when we add multi-device support
   // to regular function calls. Also, the GetFunctionDefAndAttrs assumes that
   // the function name is stored in the `f` attribute of the node. That code
@@ -40,6 +211,9 @@ bool IsFunctionCall(const Node& node) {
 // Utility to set node's value in `cache` and `is_deep` to `value`.
 Status Set(const Node& node, bool value, bool* is_deep,
            std::vector<absl::optional<bool>>* cache) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_inspection_required_ops_utilsDTcc mht_1(mht_1_v, 214, "", "./tensorflow/core/common_runtime/placer_inspection_required_ops_utils.cc", "Set");
+
   *is_deep = value;
   (*cache)[node.id()] = value;
   return Status::OK();
@@ -50,11 +224,17 @@ Status Set(const Node& node, bool value, bool* is_deep,
 PlacerInspectionRequiredOpChecker::PlacerInspectionRequiredOpChecker(
     const Graph* graph, const FunctionLibraryDefinition* flib_def)
     : graph_(*graph), flib_def_(*flib_def) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_inspection_required_ops_utilsDTcc mht_2(mht_2_v, 227, "", "./tensorflow/core/common_runtime/placer_inspection_required_ops_utils.cc", "PlacerInspectionRequiredOpChecker::PlacerInspectionRequiredOpChecker");
+
   cache_.resize(graph_.num_node_ids());
 }
 
 Status PlacerInspectionRequiredOpChecker::IsPlacerInspectionRequired(
     const Node& node, bool* is_deep) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_inspection_required_ops_utilsDTcc mht_3(mht_3_v, 235, "", "./tensorflow/core/common_runtime/placer_inspection_required_ops_utils.cc", "PlacerInspectionRequiredOpChecker::IsPlacerInspectionRequired");
+
   if (cache_[node.id()].has_value()) {
     *is_deep = cache_[node.id()].value();
     return Status::OK();
@@ -80,6 +260,9 @@ Status PlacerInspectionRequiredOpChecker::IsPlacerInspectionRequired(
 Status GetFunctionDefAndAttrs(const FunctionLibraryDefinition& flib_def,
                               const Node& node, const FunctionDef** fdef,
                               NameAttrList* func) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_inspection_required_ops_utilsDTcc mht_4(mht_4_v, 263, "", "./tensorflow/core/common_runtime/placer_inspection_required_ops_utils.cc", "GetFunctionDefAndAttrs");
+
   TF_RETURN_IF_ERROR(GetNodeAttr(node.def(), "f", func));
   const string& function_name = func->name();
   *fdef = flib_def.Find(function_name);
@@ -92,10 +275,18 @@ Status GetFunctionDefAndAttrs(const FunctionLibraryDefinition& flib_def,
 }
 
 FunctionStack::FunctionStack(const string& function_name)
-    : current_function_name_(function_name) {}
+    : current_function_name_(function_name) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("function_name: \"" + function_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_inspection_required_ops_utilsDTcc mht_5(mht_5_v, 280, "", "./tensorflow/core/common_runtime/placer_inspection_required_ops_utils.cc", "FunctionStack::FunctionStack");
+}
 
 FunctionStack FunctionStack::Push(const Node* node_in_current_function,
                                   const string& new_current_function) const {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("new_current_function: \"" + new_current_function + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_inspection_required_ops_utilsDTcc mht_6(mht_6_v, 287, "", "./tensorflow/core/common_runtime/placer_inspection_required_ops_utils.cc", "FunctionStack::Push");
+
   FunctionStack new_stack(new_current_function);
   new_stack.frames_ = frames_;
   new_stack.frames_.emplace_back(current_function_name_,
@@ -104,6 +295,10 @@ FunctionStack FunctionStack::Push(const Node* node_in_current_function,
 }
 
 bool FunctionStack::HasFunction(const string& function_name) const {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("function_name: \"" + function_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_inspection_required_ops_utilsDTcc mht_7(mht_7_v, 299, "", "./tensorflow/core/common_runtime/placer_inspection_required_ops_utils.cc", "FunctionStack::HasFunction");
+
   if (current_function_name_ == function_name) {
     return true;
   }
@@ -116,6 +311,9 @@ bool FunctionStack::HasFunction(const string& function_name) const {
 }
 
 string FunctionStack::FormatForError() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_inspection_required_ops_utilsDTcc mht_8(mht_8_v, 314, "", "./tensorflow/core/common_runtime/placer_inspection_required_ops_utils.cc", "FunctionStack::FormatForError");
+
   std::vector<string> msgs;
   for (int i = 0; i < frames_.size(); ++i) {
     if (frames_[i].function_name.empty()) {
@@ -147,6 +345,10 @@ constexpr char kIdentityOp[] = "Identity";
 
 string Uniquify(const string& candidate_name,
                 std::unordered_set<string>* node_names) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("candidate_name: \"" + candidate_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_inspection_required_ops_utilsDTcc mht_9(mht_9_v, 349, "", "./tensorflow/core/common_runtime/placer_inspection_required_ops_utils.cc", "Uniquify");
+
   if (node_names->find(candidate_name) == node_names->end()) {
     node_names->insert(candidate_name);
     return candidate_name;
@@ -163,6 +365,9 @@ string Uniquify(const string& candidate_name,
 
 Status AddInputIdentity(Node* node, int input_idx, Graph* graph,
                         std::unordered_set<string>* node_names) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_inspection_required_ops_utilsDTcc mht_10(mht_10_v, 368, "", "./tensorflow/core/common_runtime/placer_inspection_required_ops_utils.cc", "AddInputIdentity");
+
   const Edge* edge;
   TF_RETURN_IF_ERROR(node->input_edge(input_idx, &edge));
 
@@ -202,8 +407,15 @@ struct EdgePtrCompare {
 
 Status AddOutputIdentities(Node* node, Graph* graph,
                            std::unordered_set<string>* node_names) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_inspection_required_ops_utilsDTcc mht_11(mht_11_v, 410, "", "./tensorflow/core/common_runtime/placer_inspection_required_ops_utils.cc", "AddOutputIdentities");
+
   auto add_identity = [&](int src_output, const string& identity_name,
                           Node** identity_node) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("identity_name: \"" + identity_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_inspection_required_ops_utilsDTcc mht_12(mht_12_v, 416, "", "./tensorflow/core/common_runtime/placer_inspection_required_ops_utils.cc", "lambda");
+
     NodeDefBuilder builder(identity_name, kIdentityOp);
     builder.Attr("T", node->output_type(src_output));
     NodeDefBuilder::NodeOut input(node->name(), src_output,
@@ -265,6 +477,9 @@ Status AddOutputIdentities(Node* node, Graph* graph,
 }
 
 Status IsolateNode(Node* node, Graph* graph) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_inspection_required_ops_utilsDTcc mht_13(mht_13_v, 480, "", "./tensorflow/core/common_runtime/placer_inspection_required_ops_utils.cc", "IsolateNode");
+
   // We use `node_names` to make sure we pick unique names.
   // We don't use graph->NewName() because it produces verbose names and
   // does not actually ensure that they are unique (it assumes all names
@@ -285,6 +500,9 @@ Status IsolateNode(Node* node, Graph* graph) {
 
 Status IsolatePlacerInspectionRequiredOps(
     const FunctionLibraryDefinition& flib_def, Graph* graph) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_inspection_required_ops_utilsDTcc mht_14(mht_14_v, 503, "", "./tensorflow/core/common_runtime/placer_inspection_required_ops_utils.cc", "IsolatePlacerInspectionRequiredOps");
+
   PlacerInspectionRequiredOpChecker checker(graph, &flib_def);
   // It is OK to add nodes to the graph during iteration.
   // New nodes will get ids above current ids. The loop

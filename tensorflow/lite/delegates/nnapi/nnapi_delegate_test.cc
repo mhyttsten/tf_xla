@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,36 +219,63 @@ MATCHER(QuantizedNear, "") {
 
 class SingleOpModelWithNNAPI : public SingleOpModel {
  public:
-  SingleOpModelWithNNAPI() { options_.disallow_nnapi_cpu = false; }
+  SingleOpModelWithNNAPI() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_0(mht_0_v, 223, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SingleOpModelWithNNAPI");
+ options_.disallow_nnapi_cpu = false; }
 
   explicit SingleOpModelWithNNAPI(
       const StatefulNnApiDelegate::Options& options) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_1(mht_1_v, 229, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SingleOpModelWithNNAPI");
+
     options_ = options;
     options_.disallow_nnapi_cpu = false;
   }
 
   TfLiteStatus ResizeInputTensor(int tensor_index,
                                  const std::vector<int>& dims) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_2(mht_2_v, 238, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "ResizeInputTensor");
+
     return interpreter_->ResizeInputTensor(tensor_index, dims);
   }
 
-  StatefulNnApiDelegate* GetDelegate() { return stateful_delegate_.get(); }
+  StatefulNnApiDelegate* GetDelegate() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_3(mht_3_v, 245, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "GetDelegate");
+ return stateful_delegate_.get(); }
 
   void SetBufferHandle(int index, TfLiteBufferHandle handle) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_4(mht_4_v, 250, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetBufferHandle");
+
     interpreter_->SetBufferHandle(index, handle, stateful_delegate_.get());
   }
 
   void MarkInputTensorDataStale(int index) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_5(mht_5_v, 257, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "MarkInputTensorDataStale");
+
     interpreter_->tensor(index)->data_is_stale = true;
   }
 
-  TfLiteStatus AllocateTensors() { return interpreter_->AllocateTensors(); }
+  TfLiteStatus AllocateTensors() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_6(mht_6_v, 264, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "AllocateTensors");
+ return interpreter_->AllocateTensors(); }
 
   void SetTensorMaxSize(uint32_t tensor_index, size_t max_size) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_7(mht_7_v, 269, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetTensorMaxSize");
+
     options_.tensor_max_size_hints.emplace(tensor_index, max_size);
   }
 
   void ApplyNNAPIDelegate() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_8(mht_8_v, 276, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "ApplyNNAPIDelegate");
+
     stateful_delegate_.reset(new StatefulNnApiDelegate(options_));
     SetDelegate(stateful_delegate_.get());
     ApplyDelegate();
@@ -88,6 +283,9 @@ class SingleOpModelWithNNAPI : public SingleOpModel {
 
  protected:
   void SetData(int index, TensorType type, const std::vector<float>& data) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_9(mht_9_v, 286, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetData");
+
     switch (type) {
       case TensorType_FLOAT32:
         PopulateTensor(index, data);
@@ -108,6 +306,9 @@ class SingleOpModelWithNNAPI : public SingleOpModel {
   }
 
   void GetData(int index, TensorType type, std::vector<float>* output) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_10(mht_10_v, 309, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "GetData");
+
     switch (type) {
       case TensorType_FLOAT32:
         *output = ExtractVector<float>(index);
@@ -125,6 +326,9 @@ class SingleOpModelWithNNAPI : public SingleOpModel {
   void BuildInterpreterWithNNAPI(std::vector<std::vector<int>> input_shapes,
                                  bool allow_fp32_relax_to_fp16 = false,
                                  bool apply_delegate = true) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_11(mht_11_v, 329, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "BuildInterpreterWithNNAPI");
+
     // We skip those TfLite delegates that are applied by default in TfLite
     // runtime by setting 'apply_delegate' to false. Afterwards, we explicitly
     // call ApplyDelegate to apply the NNAPI delegate to meet the testing
@@ -149,6 +353,9 @@ class FloatAddOpModel : public SingleOpModelWithNNAPI {
                   const TensorData& output,
                   ActivationFunctionType activation_type,
                   bool allow_fp32_relax_to_fp16 = false) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_12(mht_12_v, 356, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "FloatAddOpModel");
+
     Init(input1, input2, output, activation_type, allow_fp32_relax_to_fp16);
   }
 
@@ -158,11 +365,20 @@ class FloatAddOpModel : public SingleOpModelWithNNAPI {
                   ActivationFunctionType activation_type,
                   bool allow_fp32_relax_to_fp16 = false)
       : SingleOpModelWithNNAPI(options) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_13(mht_13_v, 368, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "FloatAddOpModel");
+
     Init(input1, input2, output, activation_type, allow_fp32_relax_to_fp16);
   }
 
-  int input1() { return input1_; }
-  int input2() { return input2_; }
+  int input1() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_14(mht_14_v, 375, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "input1");
+ return input1_; }
+  int input2() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_15(mht_15_v, 379, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "input2");
+ return input2_; }
 
   std::vector<float> GetOutput() { return ExtractVector<float>(output_); }
 
@@ -176,6 +392,9 @@ class FloatAddOpModel : public SingleOpModelWithNNAPI {
   void Init(const TensorData& input1, const TensorData& input2,
             const TensorData& output, ActivationFunctionType activation_type,
             bool allow_fp32_relax_to_fp16 = false) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_16(mht_16_v, 395, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "Init");
+
     input1_ = AddInput(input1);
     input2_ = AddInput(input2);
     output_ = AddOutput(output);
@@ -292,6 +511,9 @@ TEST(NNAPIDelegate, ResizeDynamicBatchInputTensorsWorks) {
 
   // Define 2 test cases, each with a different dynamic dimension value.
   auto RunTestCase1 = [&m]() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_17(mht_17_v, 514, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "lambda");
+
     EXPECT_EQ(m.ResizeInputTensor(m.input1(), {1, 3, 2, 1}), kTfLiteOk);
     EXPECT_EQ(m.ResizeInputTensor(m.input2(), {1, 3, 2, 1}), kTfLiteOk);
     EXPECT_EQ(m.AllocateTensors(), kTfLiteOk);
@@ -302,6 +524,9 @@ TEST(NNAPIDelegate, ResizeDynamicBatchInputTensorsWorks) {
                 ElementsAreArray({-1.9, 0.4, 1.0, 1.3, 1.1, 1.5}));
   };
   auto RunTestCase2 = [&m]() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_18(mht_18_v, 527, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "lambda");
+
     EXPECT_EQ(m.ResizeInputTensor(m.input1(), {1, 2, 2, 1}), kTfLiteOk);
     EXPECT_EQ(m.ResizeInputTensor(m.input2(), {1, 2, 2, 1}), kTfLiteOk);
     EXPECT_EQ(m.AllocateTensors(), kTfLiteOk);
@@ -512,6 +737,9 @@ class FloatMulOpModel : public SingleOpModelWithNNAPI {
   FloatMulOpModel(const TensorData& input1, const TensorData& input2,
                   const TensorData& output,
                   ActivationFunctionType activation_type) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_19(mht_19_v, 740, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "FloatMulOpModel");
+
     input1_ = AddInput(input1);
     input2_ = AddInput(input2);
     output_ = AddOutput(output);
@@ -520,8 +748,14 @@ class FloatMulOpModel : public SingleOpModelWithNNAPI {
     BuildInterpreterWithNNAPI({GetShape(input1_), GetShape(input2_)});
   }
 
-  int input1() { return input1_; }
-  int input2() { return input2_; }
+  int input1() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_20(mht_20_v, 752, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "input1");
+ return input1_; }
+  int input2() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_21(mht_21_v, 756, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "input2");
+ return input2_; }
 
   std::vector<float> GetOutput() { return ExtractVector<float>(output_); }
 
@@ -547,6 +781,9 @@ class FloatPoolingOpModel : public SingleOpModelWithNNAPI {
   FloatPoolingOpModel(BuiltinOperator type, const TensorData& input,
                       int filter_width, int filter_height,
                       const TensorData& output) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_22(mht_22_v, 784, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "FloatPoolingOpModel");
+
     input_ = AddInput(input);
     output_ = AddOutput(output);
 
@@ -560,6 +797,9 @@ class FloatPoolingOpModel : public SingleOpModelWithNNAPI {
   }
 
   void SetInput(std::initializer_list<float> data) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_23(mht_23_v, 800, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     PopulateTensor(input_, data);
   }
 
@@ -618,6 +858,9 @@ class ConvolutionOpModel : public SingleOpModelWithNNAPI {
       enum ActivationFunctionType activation = ActivationFunctionType_NONE,
       int dilation_width_factor = 1, int dilation_height_factor = 1)
       : input_type_(input.type), filter_type_(filter.type) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_24(mht_24_v, 861, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "ConvolutionOpModel");
+
     input_ = AddInput(input);
     filter_ = AddInput(filter);
 
@@ -646,14 +889,23 @@ class ConvolutionOpModel : public SingleOpModelWithNNAPI {
   }
 
   void SetInput(std::initializer_list<float> data) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_25(mht_25_v, 892, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     SetData(input_, input_type_, data);
   }
 
   void SetFilter(std::initializer_list<float> data) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_26(mht_26_v, 899, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetFilter");
+
     SetData(filter_, filter_type_, data);
   }
 
   void SetBias(std::initializer_list<float> data) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_27(mht_27_v, 906, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetBias");
+
     const auto bias_type =
         (input_type_ == TensorType_FLOAT32) ? input_type_ : TensorType_INT32;
     SetData(bias_, bias_type, data);
@@ -920,14 +1172,23 @@ class QuantizedConvolutionOpModel : public ConvolutionOpModel {
   using ConvolutionOpModel::ConvolutionOpModel;
 
   void SetInput(std::initializer_list<float> data) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_28(mht_28_v, 1175, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     QuantizeAndPopulate<uint8_t>(input_, data);
   }
 
   void SetFilter(std::initializer_list<float> data) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_29(mht_29_v, 1182, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetFilter");
+
     QuantizeAndPopulate<uint8_t>(filter_, data);
   }
 
   void SetBias(std::initializer_list<float> data) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_30(mht_30_v, 1189, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetBias");
+
     QuantizeAndPopulate<int32_t>(bias_, data);
   }
 
@@ -1013,6 +1274,9 @@ class PerChannelQuantizedConvolutionWithConstantFilterOpModel
       enum ActivationFunctionType activation = ActivationFunctionType_NONE,
       int dilation_width_factor = 1, int dilation_height_factor = 1)
       : input_type_(input.type), filter_type_(filter.type) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_31(mht_31_v, 1277, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "PerChannelQuantizedConvolutionWithConstantFilterOpModel");
+
     CHECK(filter.per_channel_quantization);
     input_ = AddInput(input);
     filter_ = AddConstInput(filter, filter_data);
@@ -1049,6 +1313,9 @@ class PerChannelQuantizedConvolutionWithConstantFilterOpModel
   }
 
   void SetInput(std::initializer_list<float> data) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_32(mht_32_v, 1316, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     QuantizeAndPopulate<int8_t>(input_, data);
   }
 
@@ -1114,6 +1381,9 @@ class DepthwiseConvolutionOpModel : public SingleOpModelWithNNAPI {
   DepthwiseConvolutionOpModel(const TensorData& input, const TensorData& filter,
                               const TensorData& output)
       : input_type_(input.type) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_33(mht_33_v, 1384, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "DepthwiseConvolutionOpModel");
+
     input_ = AddInput(input);
     filter_ = AddInput(filter);
 
@@ -1147,14 +1417,23 @@ class DepthwiseConvolutionOpModel : public SingleOpModelWithNNAPI {
   }
 
   void SetInput(std::initializer_list<float> data) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_34(mht_34_v, 1420, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     SetData(input_, input_type_, data);
   }
 
   void SetFilter(std::initializer_list<float> data) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_35(mht_35_v, 1427, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetFilter");
+
     SetData(filter_, input_type_, data);
   }
 
   void SetBias(std::initializer_list<float> data) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_36(mht_36_v, 1434, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetBias");
+
     const auto bias_type =
         (input_type_ == TensorType_FLOAT32) ? input_type_ : TensorType_INT32;
     SetData(bias_, bias_type, data);
@@ -1247,6 +1526,9 @@ class FullyConnectedOpModel : public SingleOpModelWithNNAPI {
       const TensorData& output,
       enum ActivationFunctionType activation = ActivationFunctionType_NONE)
       : input_type_(input.type), weights_type_(weights.type) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_37(mht_37_v, 1529, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "FullyConnectedOpModel");
+
     input_ = AddInput(input);
     weights_ = AddInput(weights);
 
@@ -1272,14 +1554,23 @@ class FullyConnectedOpModel : public SingleOpModelWithNNAPI {
   }
 
   void SetInput(std::initializer_list<float> data) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_38(mht_38_v, 1557, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     SetData(input_, input_type_, data);
   }
 
   void SetWeights(std::initializer_list<float> data) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_39(mht_39_v, 1564, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetWeights");
+
     SetData(weights_, weights_type_, data);
   }
 
   void SetBias(std::initializer_list<float> data) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_40(mht_40_v, 1571, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetBias");
+
     const auto bias_type =
         (input_type_ == TensorType_FLOAT32) ? input_type_ : TensorType_INT32;
     SetData(bias_, bias_type, data);
@@ -1377,6 +1668,9 @@ TEST(FullyConnectedOpTest, QuantizedOutputMultiplierGreaterThan1) {
 class SoftmaxOpModel : public SingleOpModelWithNNAPI {
  public:
   SoftmaxOpModel(const TensorData& input, float beta) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_41(mht_41_v, 1671, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SoftmaxOpModel");
+
     input_ = AddInput(input);
     output_ = AddOutput(input);
     SetBuiltinOp(BuiltinOperator_SOFTMAX, BuiltinOptions_SoftmaxOptions,
@@ -1385,10 +1679,16 @@ class SoftmaxOpModel : public SingleOpModelWithNNAPI {
   }
 
   void SetInput(std::initializer_list<float> data) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_42(mht_42_v, 1682, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     PopulateTensor(input_, data);
   }
 
   void SetInput(int offset, float* begin, float* end) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_43(mht_43_v, 1689, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     PopulateTensor(input_, offset, begin, end);
   }
 
@@ -1477,6 +1777,9 @@ class ReshapeOpModel : public SingleOpModelWithNNAPI {
  public:
   ReshapeOpModel(std::initializer_list<int> input_shape,
                  std::initializer_list<int> new_shape) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_44(mht_44_v, 1780, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "ReshapeOpModel");
+
     input_ = AddInput(TensorType_FLOAT32);
     new_shape_ = AddConstInput<int>(TensorType_INT32, new_shape,
                                     {static_cast<int>(new_shape.size())});
@@ -1490,6 +1793,9 @@ class ReshapeOpModel : public SingleOpModelWithNNAPI {
   }
 
   void SetInput(std::initializer_list<float> data) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_45(mht_45_v, 1796, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     PopulateTensor<float>(input_, data);
   }
   std::vector<float> GetOutput() { return ExtractVector<float>(output_); }
@@ -1513,6 +1819,9 @@ class SqueezeOpModel : public SingleOpModelWithNNAPI {
  public:
   SqueezeOpModel(const TensorData& input, const TensorData& output,
                  std::initializer_list<int> axis) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_46(mht_46_v, 1822, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SqueezeOpModel");
+
     input_ = AddInput(input);
     output_ = AddOutput(output);
     SetBuiltinOp(
@@ -1523,6 +1832,9 @@ class SqueezeOpModel : public SingleOpModelWithNNAPI {
   }
 
   void SetInput(std::initializer_list<float> data) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_47(mht_47_v, 1835, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     PopulateTensor<float>(input_, data);
   }
   std::vector<float> GetOutput() { return ExtractVector<float>(output_); }
@@ -1571,6 +1883,9 @@ class L2NormOpModel : public SingleOpModelWithNNAPI {
  public:
   L2NormOpModel(const TensorData& input, const TensorData& output,
                 ActivationFunctionType activation_type) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_48(mht_48_v, 1886, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "L2NormOpModel");
+
     input_ = AddInput(input);
     output_ = AddOutput(output);
     SetBuiltinOp(BuiltinOperator_L2_NORMALIZATION, BuiltinOptions_L2NormOptions,
@@ -1579,6 +1894,9 @@ class L2NormOpModel : public SingleOpModelWithNNAPI {
   }
 
   void SetInput(std::initializer_list<float> data) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_49(mht_49_v, 1897, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     PopulateTensor<float>(input_, data);
   }
   std::vector<float> GetOutput() { return ExtractVector<float>(output_); }
@@ -1607,6 +1925,9 @@ class TransposeSimpleModel : public SingleOpModelWithNNAPI {
   TransposeSimpleModel(std::initializer_list<int> input_shape,
                        std::initializer_list<int> perm_shape,
                        std::initializer_list<int> perm) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_50(mht_50_v, 1928, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "TransposeSimpleModel");
+
     input_ = AddInput(TensorType_FLOAT32);
     perm_ = AddConstInput(TensorType_INT32, perm, perm_shape);
     output_ = AddOutput(TensorType_FLOAT32);
@@ -1616,6 +1937,9 @@ class TransposeSimpleModel : public SingleOpModelWithNNAPI {
   }
 
   void SetInput(std::initializer_list<float> data) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_51(mht_51_v, 1940, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     PopulateTensor<float>(input_, data);
   }
 
@@ -1641,8 +1965,14 @@ TEST(NNAPIDelegate, TransposeSimpleTest) {
 
 class ElementwiseOpBaseModel : public SingleOpModelWithNNAPI {
  public:
-  int input() const { return input_; }
-  int output() const { return output_; }
+  int input() const {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_52(mht_52_v, 1969, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "input");
+ return input_; }
+  int output() const {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_53(mht_53_v, 1973, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "output");
+ return output_; }
 
  protected:
   int input_;
@@ -1653,6 +1983,9 @@ class ElementwiseOpFloatModel : public ElementwiseOpBaseModel {
  public:
   ElementwiseOpFloatModel(BuiltinOperator op,
                           std::initializer_list<int> input_shape) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_54(mht_54_v, 1986, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "ElementwiseOpFloatModel");
+
     input_ = AddInput(TensorType_FLOAT32);
     output_ = AddOutput(TensorType_FLOAT32);
     SetBuiltinOp(op, BuiltinOptions_NONE, 0);
@@ -1725,6 +2058,9 @@ class FloatSubOpModel : public SingleOpModelWithNNAPI {
   FloatSubOpModel(const TensorData& input1, const TensorData& input2,
                   const TensorData& output,
                   ActivationFunctionType activation_type) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_55(mht_55_v, 2061, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "FloatSubOpModel");
+
     input1_ = AddInput(input1);
     input2_ = AddInput(input2);
     output_ = AddOutput(output);
@@ -1733,8 +2069,14 @@ class FloatSubOpModel : public SingleOpModelWithNNAPI {
     BuildInterpreterWithNNAPI({GetShape(input1_), GetShape(input2_)});
   }
 
-  int input1() { return input1_; }
-  int input2() { return input2_; }
+  int input1() {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_56(mht_56_v, 2073, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "input1");
+ return input1_; }
+  int input2() {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_57(mht_57_v, 2077, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "input2");
+ return input2_; }
 
   std::vector<float> GetOutput() { return ExtractVector<float>(output_); }
 
@@ -1760,6 +2102,9 @@ class FloatDivOpModel : public SingleOpModelWithNNAPI {
   FloatDivOpModel(const TensorData& input1, const TensorData& input2,
                   const TensorData& output,
                   ActivationFunctionType activation_type) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_58(mht_58_v, 2105, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "FloatDivOpModel");
+
     input1_ = AddInput(input1);
     input2_ = AddInput(input2);
     output_ = AddOutput(output);
@@ -1768,8 +2113,14 @@ class FloatDivOpModel : public SingleOpModelWithNNAPI {
     BuildInterpreterWithNNAPI({GetShape(input1_), GetShape(input2_)});
   }
 
-  int input1() { return input1_; }
-  int input2() { return input2_; }
+  int input1() {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_59(mht_59_v, 2117, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "input1");
+ return input1_; }
+  int input2() {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_60(mht_60_v, 2121, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "input2");
+ return input2_; }
 
   std::vector<float> GetOutput() { return ExtractVector<float>(output_); }
 
@@ -1791,9 +2142,15 @@ TEST(NNAPIDelegate, DivWithNoActivation) {
 
 class BaseConcatenationOpModel : public SingleOpModelWithNNAPI {
  public:
-  BaseConcatenationOpModel() {}
+  BaseConcatenationOpModel() {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_61(mht_61_v, 2146, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "BaseConcatenationOpModel");
+}
   BaseConcatenationOpModel(const TensorData& input_template, int axis,
                            int num_inputs) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_62(mht_62_v, 2151, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "BaseConcatenationOpModel");
+
     std::vector<std::vector<int>> all_input_shapes;
     for (int i = 0; i < num_inputs; ++i) {
       all_input_shapes.push_back(input_template.shape);
@@ -1816,6 +2173,9 @@ class ConcatenationOpModel : public BaseConcatenationOpModel {
  public:
   using BaseConcatenationOpModel::BaseConcatenationOpModel;
   void SetInput(int index, std::initializer_list<float> data) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_63(mht_63_v, 2176, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     PopulateTensor(index, data);
   }
   std::vector<float> GetOutput() { return ExtractVector<float>(output_); }
@@ -1850,6 +2210,9 @@ class QuantizedConcatenationOpModel : public BaseConcatenationOpModel {
   QuantizedConcatenationOpModel(const std::vector<TensorData>& input_template,
                                 int axis, int num_inputs,
                                 const TensorData& output_template) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_64(mht_64_v, 2213, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "QuantizedConcatenationOpModel");
+
     std::vector<std::vector<int>> all_input_shapes;
     CHECK_EQ(input_template.size(), num_inputs);
     for (int i = 0; i < num_inputs; ++i) {
@@ -1865,6 +2228,9 @@ class QuantizedConcatenationOpModel : public BaseConcatenationOpModel {
     BuildInterpreterWithNNAPI(all_input_shapes);
   }
   void SetInput(int index, std::initializer_list<float> data) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_65(mht_65_v, 2231, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     QuantizeAndPopulate<uint8_t>(index, data);
   }
   std::vector<uint8_t> GetOutput() { return ExtractVector<uint8_t>(output_); }
@@ -1923,6 +2289,9 @@ class DequantizeOpModel : public SingleOpModelWithNNAPI {
  public:
   DequantizeOpModel(TensorType inputType, std::initializer_list<int> shape,
                     float min, float max) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_66(mht_66_v, 2292, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "DequantizeOpModel");
+
     input_ = AddInput({inputType, shape, min, max});
     output_ = AddOutput({TensorType_FLOAT32, shape});
     SetBuiltinOp(BuiltinOperator_DEQUANTIZE, BuiltinOptions_DequantizeOptions,
@@ -1933,6 +2302,9 @@ class DequantizeOpModel : public SingleOpModelWithNNAPI {
 
   template <typename T>
   void SetInput(std::initializer_list<T> data) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_67(mht_67_v, 2305, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     PopulateTensor(input_, data);
   }
 
@@ -1967,6 +2339,9 @@ TEST(NNAPIDelegate, DequantizeFourDimensionalInt8Symm) {
 class FloorOpModel : public SingleOpModelWithNNAPI {
  public:
   FloorOpModel(std::initializer_list<int> input_shape, TensorType input_type) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_68(mht_68_v, 2342, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "FloorOpModel");
+
     input_ = AddInput(TensorType_FLOAT32);
     output_ = AddOutput(TensorType_FLOAT32);
     SetBuiltinOp(BuiltinOperator_FLOOR, BuiltinOptions_NONE, 0);
@@ -1975,7 +2350,10 @@ class FloorOpModel : public SingleOpModelWithNNAPI {
     });
   }
 
-  int input() { return input_; }
+  int input() {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_69(mht_69_v, 2354, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "input");
+ return input_; }
 
   std::vector<float> GetOutput() { return ExtractVector<float>(output_); }
   std::vector<int> GetOutputShape() { return GetTensorShape(output_); }
@@ -2017,6 +2395,9 @@ class LocalResponseNormOpModel : public SingleOpModelWithNNAPI {
  public:
   LocalResponseNormOpModel(std::initializer_list<int> input_shape, int radius,
                            float bias, float alpha, float beta) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_70(mht_70_v, 2398, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "LocalResponseNormOpModel");
+
     input_ = AddInput(TensorType_FLOAT32);
     output_ = AddOutput(TensorType_FLOAT32);
     SetBuiltinOp(BuiltinOperator_LOCAL_RESPONSE_NORMALIZATION,
@@ -2028,6 +2409,9 @@ class LocalResponseNormOpModel : public SingleOpModelWithNNAPI {
   }
 
   void SetInput(std::initializer_list<float> data) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_71(mht_71_v, 2412, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     PopulateTensor(input_, data);
   }
 
@@ -2087,6 +2471,9 @@ class LSHProjectionOpModel : public SingleOpModelWithNNAPI {
                        std::initializer_list<int> hash_shape,
                        std::initializer_list<int> input_shape,
                        std::initializer_list<int> weight_shape) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_72(mht_72_v, 2474, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "LSHProjectionOpModel");
+
     hash_ = AddInput(TensorType_FLOAT32);
     input_ = AddInput(TensorType_INT32);
     if (weight_shape.size() > 0) {
@@ -2112,14 +2499,23 @@ class LSHProjectionOpModel : public SingleOpModelWithNNAPI {
     }
   }
   void SetInput(std::initializer_list<int> data) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_73(mht_73_v, 2502, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     PopulateTensor(input_, data);
   }
 
   void SetHash(std::initializer_list<float> data) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_74(mht_74_v, 2509, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetHash");
+
     PopulateTensor(hash_, data);
   }
 
-  void SetWeight(std::initializer_list<float> f) { PopulateTensor(weight_, f); }
+  void SetWeight(std::initializer_list<float> f) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_75(mht_75_v, 2516, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetWeight");
+ PopulateTensor(weight_, f); }
 
   std::vector<int> GetOutput() { return ExtractVector<int>(output_); }
 
@@ -2191,6 +2587,9 @@ class BaseActivationsOpModel : public SingleOpModelWithNNAPI {
   // Most activations don't take any options, so this constructor works for
   // them.
   BaseActivationsOpModel(BuiltinOperator type, const TensorData& input) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_76(mht_76_v, 2590, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "BaseActivationsOpModel");
+
     input_ = AddInput(input);
     if (input.type == TensorType_UINT8) {
       output_ = AddOutput({input.type, {}, 0, 0, 1. / 256});
@@ -2203,6 +2602,9 @@ class BaseActivationsOpModel : public SingleOpModelWithNNAPI {
 
   BaseActivationsOpModel(BuiltinOperator type, const TensorData& input,
                          const TensorData& output) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_77(mht_77_v, 2605, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "BaseActivationsOpModel");
+
     input_ = AddInput(input);
     output_ = AddOutput(output);
     SetBuiltinOp(type, BuiltinOptions_NONE, 0);
@@ -2219,6 +2621,9 @@ class FloatActivationsOpModel : public BaseActivationsOpModel {
   using BaseActivationsOpModel::BaseActivationsOpModel;
 
   void SetInput(std::initializer_list<float> data) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_78(mht_78_v, 2624, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     PopulateTensor(input_, data);
   }
   std::vector<float> GetOutput() { return ExtractVector<float>(output_); }
@@ -2232,6 +2637,9 @@ class QuantizedActivationsOpModel : public BaseActivationsOpModel {
 
   template <typename T>
   void SetInput(std::initializer_list<float> data) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_79(mht_79_v, 2640, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     QuantizeAndPopulate<T>(input_, data);
   }
   template <typename T>
@@ -2327,6 +2735,9 @@ class ResizeBilinearOpModel : public SingleOpModelWithNNAPI {
  public:
   ResizeBilinearOpModel(const TensorData& input,
                         std::initializer_list<int> size_data) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_80(mht_80_v, 2738, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "ResizeBilinearOpModel");
+
     bool const_size = size_data.size() != 0;
     input_ = AddInput(input);
     if (const_size) {
@@ -2347,9 +2758,15 @@ class ResizeBilinearOpModel : public SingleOpModelWithNNAPI {
 
   template <typename T>
   void SetInput(std::initializer_list<T> data) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_81(mht_81_v, 2761, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     PopulateTensor(input_, data);
   }
-  void SetSize(std::initializer_list<int> data) { PopulateTensor(size_, data); }
+  void SetSize(std::initializer_list<int> data) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_82(mht_82_v, 2767, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetSize");
+ PopulateTensor(size_, data); }
 
   template <typename T>
   std::vector<T> GetOutput() {
@@ -2429,20 +2846,32 @@ template <typename T>
 class PadOpModel : public SingleOpModelWithNNAPI {
  public:
   void SetInput(std::initializer_list<T> data) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_83(mht_83_v, 2849, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     PopulateTensor<T>(input_, data);
   }
 
   template <typename QuantizedInputOutput>
   void SetQuantizedInput(std::initializer_list<float> data) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_84(mht_84_v, 2857, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetQuantizedInput");
+
     QuantizeAndPopulate<QuantizedInputOutput>(input_, data);
   }
 
   template <typename QuantizedInputOutput>
   void SetQuantizedPadValue(float data) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_85(mht_85_v, 2865, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetQuantizedPadValue");
+
     QuantizeAndPopulate<QuantizedInputOutput>(constant_values_, {data});
   }
 
   void SetPaddings(std::initializer_list<int> paddings) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_86(mht_86_v, 2872, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetPaddings");
+
     PopulateTensor<int>(paddings_, paddings);
   }
 
@@ -2469,6 +2898,9 @@ class PadOpConstModel : public PadOpModel<float> {
                   std::initializer_list<int> paddings_shape,
                   std::initializer_list<int> paddings,
                   const TensorData& output) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_87(mht_87_v, 2901, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "PadOpConstModel");
+
     input_ = AddInput(input);
     paddings_ = AddConstInput(TensorType_INT32, paddings, paddings_shape);
     output_ = AddOutput(output);
@@ -2493,14 +2925,23 @@ TEST(NNAPIDelegate, PadAdvancedConstTest) {
 class SpaceToBatchNDOpModel : public SingleOpModelWithNNAPI {
  public:
   void SetInput(std::initializer_list<float> data) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_88(mht_88_v, 2928, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     PopulateTensor<float>(input_, data);
   }
 
   void SetBlockShape(std::initializer_list<int> data) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_89(mht_89_v, 2935, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetBlockShape");
+
     PopulateTensor<int>(block_shape_, data);
   }
 
   void SetPaddings(std::initializer_list<int> data) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_90(mht_90_v, 2942, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetPaddings");
+
     PopulateTensor<int>(paddings_, data);
   }
 
@@ -2519,6 +2960,9 @@ class SpaceToBatchNDOpConstModel : public SpaceToBatchNDOpModel {
   SpaceToBatchNDOpConstModel(std::initializer_list<int> input_shape,
                              std::initializer_list<int> block_shape,
                              std::initializer_list<int> paddings) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_91(mht_91_v, 2963, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SpaceToBatchNDOpConstModel");
+
     input_ = AddInput(TensorType_FLOAT32);
     block_shape_ = AddConstInput(TensorType_INT32, block_shape, {2});
     paddings_ = AddConstInput(TensorType_INT32, paddings, {2, 2});
@@ -2585,6 +3029,9 @@ class StridedSliceOpModel : public SingleOpModelWithNNAPI {
                       std::initializer_list<int> strides_data, int begin_mask,
                       int end_mask, int ellipsis_mask, int new_axis_mask,
                       int shrink_axis_mask) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_92(mht_92_v, 3032, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "StridedSliceOpModel");
+
     input_ = AddInput(tensor_input_type);
     begin_ = AddConstInput(TensorType_INT32, begin_data, begin_shape);
     end_ = AddConstInput(TensorType_INT32, end_data, end_shape);
@@ -2600,6 +3047,9 @@ class StridedSliceOpModel : public SingleOpModelWithNNAPI {
   }
 
   void SetInput(std::initializer_list<input_type> data) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_93(mht_93_v, 3050, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     PopulateTensor<input_type>(input_, data);
   }
 
@@ -2805,6 +3255,9 @@ class RNNOpModel : public SingleOpModelWithNNAPI {
              const TensorType weights = TensorType_FLOAT32,
              const TensorType recurrent_weights = TensorType_FLOAT32)
       : batches_(batches), units_(units), input_size_(size) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_94(mht_94_v, 3258, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "RNNOpModel");
+
     input_ = AddInput(TensorType_FLOAT32);
     weights_ = AddInput(weights);
     recurrent_weights_ = AddInput(recurrent_weights);
@@ -2823,29 +3276,53 @@ class RNNOpModel : public SingleOpModelWithNNAPI {
     });
   }
 
-  void SetBias(std::initializer_list<float> f) { PopulateTensor(bias_, f); }
+  void SetBias(std::initializer_list<float> f) {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_95(mht_95_v, 3280, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetBias");
+ PopulateTensor(bias_, f); }
 
   void SetWeights(std::initializer_list<float> f) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_96(mht_96_v, 3285, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetWeights");
+
     PopulateTensor(weights_, f);
   }
 
   void SetRecurrentWeights(std::initializer_list<float> f) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_97(mht_97_v, 3292, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetRecurrentWeights");
+
     PopulateTensor(recurrent_weights_, f);
   }
 
   void SetInput(std::initializer_list<float> data) {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_98(mht_98_v, 3299, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     PopulateTensor(input_, data);
   }
 
   void SetInput(int offset, float* begin, float* end) {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_99(mht_99_v, 3306, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     PopulateTensor(input_, offset, begin, end);
   }
 
   std::vector<float> GetOutput() { return ExtractVector<float>(output_); }
 
-  int input_size() { return input_size_; }
-  int num_units() { return units_; }
-  int num_batches() { return batches_; }
+  int input_size() {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_100(mht_100_v, 3315, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "input_size");
+ return input_size_; }
+  int num_units() {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_101(mht_101_v, 3319, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "num_units");
+ return units_; }
+  int num_batches() {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_102(mht_102_v, 3323, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "num_batches");
+ return batches_; }
 
  protected:
   int input_;
@@ -2994,6 +3471,9 @@ class BaseSVDFOpModel : public SingleOpModelWithNNAPI {
         input_size_(input_size),
         memory_size_(memory_size),
         rank_(rank) {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_103(mht_103_v, 3474, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "BaseSVDFOpModel");
+
     input_ = AddInput(TensorType_FLOAT32);
     weights_feature_ = AddInput(weights_feature_type);
     weights_time_ = AddInput(weights_time_type);
@@ -3020,25 +3500,43 @@ class BaseSVDFOpModel : public SingleOpModelWithNNAPI {
 
   // Populates the weights_feature tensor.
   void SetWeightsFeature(std::initializer_list<float> f) {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_104(mht_104_v, 3503, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetWeightsFeature");
+
     PopulateTensor(weights_feature_, f);
   }
 
   // Populates the weights_time tensor.
   void SetWeightsTime(std::initializer_list<float> f) {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_105(mht_105_v, 3511, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetWeightsTime");
+
     PopulateTensor(weights_time_, f);
   }
 
   // Populates the input tensor.
   void SetInput(int offset, float* begin, float* end) {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_106(mht_106_v, 3519, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     PopulateTensor(input_, offset, begin, end);
   }
 
   // Extracts the output tensor from the SVDF op.
   std::vector<float> GetOutput() { return ExtractVector<float>(output_); }
 
-  int input_size() { return input_size_; }
-  int num_units() { return units_; }
-  int num_batches() { return batches_; }
+  int input_size() {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_107(mht_107_v, 3529, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "input_size");
+ return input_size_; }
+  int num_units() {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_108(mht_108_v, 3533, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "num_units");
+ return units_; }
+  int num_batches() {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_109(mht_109_v, 3537, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "num_batches");
+ return batches_; }
 
  protected:
   int input_;
@@ -3065,6 +3563,9 @@ class SVDFOpTest : public ::testing::Test {
   void VerifyGoldens(float golden_input[], float golden_output[],
                      int golden_size, BaseSVDFOpModel* svdf,
                      float tolerance = 1e-5) {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_110(mht_110_v, 3566, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "VerifyGoldens");
+
     const int svdf_num_batches = svdf->num_batches();
     const int svdf_input_size = svdf->input_size();
     const int svdf_num_units = svdf->num_units();
@@ -3168,6 +3669,9 @@ class LSTMOpModel : public SingleOpModelWithNNAPI {
         n_cell_(n_cell),
         n_output_(n_output),
         weight_type_(weight_type) {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_111(mht_111_v, 3672, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "LSTMOpModel");
+
     input_ = AddInput(TensorType_FLOAT32);
 
     if (use_cifg) {
@@ -3261,100 +3765,178 @@ class LSTMOpModel : public SingleOpModelWithNNAPI {
   }
 
   void SetInputToInputWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_112(mht_112_v, 3768, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInputToInputWeights");
+
     SetData(input_to_input_weights_, weight_type_, f);
   }
 
   void SetInputToForgetWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_113_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_113(mht_113_v, 3775, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInputToForgetWeights");
+
     SetData(input_to_forget_weights_, weight_type_, f);
   }
 
   void SetInputToCellWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_114_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_114(mht_114_v, 3782, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInputToCellWeights");
+
     SetData(input_to_cell_weights_, weight_type_, f);
   }
 
   void SetInputToOutputWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_115(mht_115_v, 3789, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInputToOutputWeights");
+
     SetData(input_to_output_weights_, weight_type_, f);
   }
 
   void SetRecurrentToInputWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_116_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_116(mht_116_v, 3796, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetRecurrentToInputWeights");
+
     SetData(recurrent_to_input_weights_, weight_type_, f);
   }
 
   void SetRecurrentToForgetWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_117(mht_117_v, 3803, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetRecurrentToForgetWeights");
+
     SetData(recurrent_to_forget_weights_, weight_type_, f);
   }
 
   void SetRecurrentToCellWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_118_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_118(mht_118_v, 3810, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetRecurrentToCellWeights");
+
     SetData(recurrent_to_cell_weights_, weight_type_, f);
   }
 
   void SetRecurrentToOutputWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_119(mht_119_v, 3817, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetRecurrentToOutputWeights");
+
     SetData(recurrent_to_output_weights_, weight_type_, f);
   }
 
   void SetCellToInputWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_120(mht_120_v, 3824, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetCellToInputWeights");
+
     SetData(cell_to_input_weights_, weight_type_, f);
   }
 
   void SetCellToForgetWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_121(mht_121_v, 3831, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetCellToForgetWeights");
+
     SetData(cell_to_forget_weights_, weight_type_, f);
   }
 
   void SetCellToOutputWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_122_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_122(mht_122_v, 3838, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetCellToOutputWeights");
+
     SetData(cell_to_output_weights_, weight_type_, f);
   }
 
   void SetInputGateBias(const std::vector<float>& f) {
+   std::vector<std::string> mht_123_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_123(mht_123_v, 3845, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInputGateBias");
+
     PopulateTensor(input_gate_bias_, f);
   }
 
   void SetForgetGateBias(const std::vector<float>& f) {
+   std::vector<std::string> mht_124_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_124(mht_124_v, 3852, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetForgetGateBias");
+
     PopulateTensor(forget_gate_bias_, f);
   }
 
   void SetCellBias(const std::vector<float>& f) {
+   std::vector<std::string> mht_125_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_125(mht_125_v, 3859, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetCellBias");
+
     PopulateTensor(cell_bias_, f);
   }
 
   void SetOutputGateBias(const std::vector<float>& f) {
+   std::vector<std::string> mht_126_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_126(mht_126_v, 3866, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetOutputGateBias");
+
     PopulateTensor(output_gate_bias_, f);
   }
 
   void SetProjectionWeights(const std::vector<float>& f) {
+   std::vector<std::string> mht_127_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_127(mht_127_v, 3873, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetProjectionWeights");
+
     SetData(projection_weights_, weight_type_, f);
   }
 
   void SetProjectionBias(const std::vector<float>& f) {
+   std::vector<std::string> mht_128_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_128(mht_128_v, 3880, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetProjectionBias");
+
     PopulateTensor(projection_bias_, f);
   }
 
   void SetInputLayerNormCoefficients(const std::vector<float>& f) {
+   std::vector<std::string> mht_129_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_129(mht_129_v, 3887, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInputLayerNormCoefficients");
+
     PopulateTensor(input_layer_norm_coefficients_, f);
   }
 
   void SetForgetLayerNormCoefficients(const std::vector<float>& f) {
+   std::vector<std::string> mht_130_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_130(mht_130_v, 3894, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetForgetLayerNormCoefficients");
+
     PopulateTensor(forget_layer_norm_coefficients_, f);
   }
 
   void SetCellLayerNormCoefficients(const std::vector<float>& f) {
+   std::vector<std::string> mht_131_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_131(mht_131_v, 3901, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetCellLayerNormCoefficients");
+
     PopulateTensor(cell_layer_norm_coefficients_, f);
   }
 
   void SetOutputLayerNormCoefficients(const std::vector<float>& f) {
+   std::vector<std::string> mht_132_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_132(mht_132_v, 3908, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetOutputLayerNormCoefficients");
+
     PopulateTensor(output_layer_norm_coefficients_, f);
   }
 
   void SetInput(int offset, const float* begin, const float* end) {
+   std::vector<std::string> mht_133_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_133(mht_133_v, 3915, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     PopulateTensor(input_, offset, const_cast<float*>(begin),
                    const_cast<float*>(end));
   }
 
   std::vector<float> GetOutput() { return ExtractVector<float>(output_); }
 
-  int num_inputs() { return n_input_; }
-  int num_outputs() { return n_output_; }
-  int num_cells() { return n_cell_; }
-  int num_batches() { return n_batch_; }
+  int num_inputs() {
+   std::vector<std::string> mht_134_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_134(mht_134_v, 3925, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "num_inputs");
+ return n_input_; }
+  int num_outputs() {
+   std::vector<std::string> mht_135_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_135(mht_135_v, 3929, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "num_outputs");
+ return n_output_; }
+  int num_cells() {
+   std::vector<std::string> mht_136_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_136(mht_136_v, 3933, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "num_cells");
+ return n_cell_; }
+  int num_batches() {
+   std::vector<std::string> mht_137_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_137(mht_137_v, 3937, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "num_batches");
+ return n_batch_; }
 
  protected:
   int input_;
@@ -3401,6 +3983,9 @@ class LSTMOpModel : public SingleOpModelWithNNAPI {
 
   int AddLayerNormCoeffsTensor(
       int tensor_index, const std::vector<std::vector<int>>& input_shapes) {
+   std::vector<std::string> mht_138_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_138(mht_138_v, 3986, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "AddLayerNormCoeffsTensor");
+
     if (input_shapes[tensor_index][0] != 0) {
       return AddInput(TensorType_FLOAT32);
     } else {
@@ -3442,6 +4027,9 @@ class BaseLstmTest : public ::testing::Test {
   void VerifyGoldens(const std::vector<std::vector<float>>& input,
                      const std::vector<std::vector<float>>& output,
                      LSTMOpModel* lstm, float tolerance = 1e-5) {
+   std::vector<std::string> mht_139_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_139(mht_139_v, 4030, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "VerifyGoldens");
+
     const int num_batches = input.size();
     EXPECT_GT(num_batches, 0);
     const int num_inputs = lstm->num_inputs();
@@ -3473,6 +4061,9 @@ class BaseLstmTest : public ::testing::Test {
 
 class NoCifgNoPeepholeNoProjectionNoClippingLstmTest : public BaseLstmTest {
   void SetUp() override {
+   std::vector<std::string> mht_140_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_140(mht_140_v, 4064, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetUp");
+
     input_to_input_weights_ = {-0.45018822, -0.02338299, -0.0870589,
                                -0.34550029, 0.04266912,  -0.15680569,
                                -0.34856534, 0.43890524};
@@ -3651,6 +4242,9 @@ TEST_F(NoCifgNoPeepholeNoProjectionNoClippingOmittedLayerNormLstmTest,
 
 class CifgNoPeepholeNoProjectionNoClippingLstmTest : public BaseLstmTest {
   void SetUp() override {
+   std::vector<std::string> mht_141_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_141(mht_141_v, 4245, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetUp");
+
     input_to_cell_weights_ = {-0.49770179, -0.27711356, -0.09624726,
                               0.05100781,  0.04717243,  0.48944736,
                               -0.38535351, -0.17212132};
@@ -3758,6 +4352,9 @@ TEST_F(CifgNoPeepholeNoProjectionNoClippingLstmTest, LstmBlackBoxTest) {
 
 class NoCifgPeepholeProjectionClippingLstmTest : public BaseLstmTest {
   void SetUp() override {
+   std::vector<std::string> mht_142_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_142(mht_142_v, 4355, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetUp");
+
     input_to_input_weights_ = {
         0.021393683,  0.06124551,    0.046905167,  -0.014657677,  -0.03149463,
         0.09171803,   0.14647801,    0.10797193,   -0.0057968358, 0.0019193048,
@@ -4423,6 +5020,9 @@ TEST_F(NoCifgPeepholeProjectionClippingLstmTest, LstmBlackBoxTest) {
 class NoCifgPeepholeProjectionNoClippingLayerNormLstmTest
     : public BaseLstmTest {
   void SetUp() override {
+   std::vector<std::string> mht_143_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_143(mht_143_v, 5023, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetUp");
+
     input_to_input_weights_ = {0.5,  0.6,  0.7,  -0.8, -0.9, 0.1,  0.2,
                                0.3,  -0.4, 0.5,  -0.8, 0.7,  -0.6, 0.5,
                                -0.4, -0.5, -0.4, -0.3, -0.2, -0.1};
@@ -4584,6 +5184,9 @@ TEST_F(NoCifgPeepholeProjectionNoClippingLayerNormLstmTest,
 
 class CifgPeepholeProjectionNoClippingLayerNormLstmTest : public BaseLstmTest {
   void SetUp() override {
+   std::vector<std::string> mht_144_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_144(mht_144_v, 5187, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetUp");
+
     input_to_forget_weights_ = {-0.6, -0.1, 0.3,  0.2,  0.9,  -0.5, -0.2,
                                 -0.4, 0.3,  -0.8, -0.4, 0.3,  -0.5, -0.4,
                                 -0.6, 0.3,  -0.4, -0.6, -0.5, -0.5};
@@ -4720,10 +5323,16 @@ TEST_F(CifgPeepholeProjectionNoClippingLayerNormLstmTest,
 
 class BaseReduceOpModel : public SingleOpModelWithNNAPI {
  public:
-  void SetAxis(const std::vector<int>& data) { PopulateTensor(axis_, data); }
+  void SetAxis(const std::vector<int>& data) {
+   std::vector<std::string> mht_145_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_145(mht_145_v, 5327, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetAxis");
+ PopulateTensor(axis_, data); }
 
   template <class T>
   void SetInput(const std::vector<T>& data) {
+   std::vector<std::string> mht_146_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_146(mht_146_v, 5333, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     PopulateTensor(input_, data);
   }
 
@@ -4739,7 +5348,10 @@ class BaseReduceOpModel : public SingleOpModelWithNNAPI {
 
   std::vector<int> GetOutputShape() { return GetTensorShape(output_); }
 
-  int Input() { return input_; }
+  int Input() {
+   std::vector<std::string> mht_147_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_147(mht_147_v, 5352, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "Input");
+ return input_; }
 
  protected:
   int input_;
@@ -4752,6 +5364,9 @@ class MeanOpDynamicModel : public BaseReduceOpModel {
  public:
   MeanOpDynamicModel(const TensorData& input, const TensorData& output,
                      const TensorData& axis, bool keep_dims) {
+   std::vector<std::string> mht_148_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_148(mht_148_v, 5367, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "MeanOpDynamicModel");
+
     input_ = AddInput(input);
     axis_ = AddInput(axis);
     output_ = AddOutput(output);
@@ -4782,6 +5397,9 @@ class MeanOpConstModel : public BaseReduceOpModel {
   MeanOpConstModel(const TensorData& input, const TensorData& output,
                    std::initializer_list<int> axis_shape,
                    std::initializer_list<int> axis, bool keep_dims) {
+   std::vector<std::string> mht_149_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_149(mht_149_v, 5400, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "MeanOpConstModel");
+
     input_ = AddInput(input);
     axis_ = AddConstInput(TensorType_INT32, axis, axis_shape);
     output_ = AddOutput(output);
@@ -4822,6 +5440,9 @@ class BaseEmbeddingLookupOpModel : public SingleOpModelWithNNAPI {
   BaseEmbeddingLookupOpModel(std::initializer_list<int> index_shape,
                              std::initializer_list<int> weight_shape,
                              TensorType weight_type = TensorType_FLOAT32) {
+   std::vector<std::string> mht_150_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_150(mht_150_v, 5443, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "BaseEmbeddingLookupOpModel");
+
     input_ = AddInput(TensorType_INT32);
     weight_ = AddInput(weight_type);
     output_ = AddOutput(TensorType_FLOAT32);
@@ -4830,6 +5451,9 @@ class BaseEmbeddingLookupOpModel : public SingleOpModelWithNNAPI {
   }
 
   void SetInput(std::initializer_list<int> data) {
+   std::vector<std::string> mht_151_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_151(mht_151_v, 5454, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     PopulateTensor(input_, data);
   }
 
@@ -4846,6 +5470,9 @@ class EmbeddingLookupOpModel : public BaseEmbeddingLookupOpModel {
   using BaseEmbeddingLookupOpModel::BaseEmbeddingLookupOpModel;
 
   void Set3DWeightMatrix(const std::function<float(int, int, int)>& function) {
+   std::vector<std::string> mht_152_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_152(mht_152_v, 5473, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "Set3DWeightMatrix");
+
     TfLiteTensor* tensor = interpreter_->tensor(weight_);
     int rows = tensor->dims->data[0];
     int columns = tensor->dims->data[1];
@@ -4882,6 +5509,9 @@ class HashtableLookupOpModel : public SingleOpModelWithNNAPI {
                          std::initializer_list<int> key_shape,
                          std::initializer_list<int> value_shape,
                          TensorType type) {
+   std::vector<std::string> mht_153_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_153(mht_153_v, 5512, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "HashtableLookupOpModel");
+
     lookup_ = AddInput(TensorType_INT32);
     key_ = AddInput(TensorType_INT32);
     value_ = AddInput(type);
@@ -4892,18 +5522,30 @@ class HashtableLookupOpModel : public SingleOpModelWithNNAPI {
   }
 
   void SetLookup(std::initializer_list<int> data) {
+   std::vector<std::string> mht_154_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_154(mht_154_v, 5525, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetLookup");
+
     PopulateTensor<int>(lookup_, data);
   }
 
   void SetHashtableKey(std::initializer_list<int> data) {
+   std::vector<std::string> mht_155_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_155(mht_155_v, 5532, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetHashtableKey");
+
     PopulateTensor<int>(key_, data);
   }
 
   void SetHashtableValue(const std::vector<string>& content) {
+   std::vector<std::string> mht_156_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_156(mht_156_v, 5539, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetHashtableValue");
+
     PopulateStringTensor(value_, content);
   }
 
   void SetHashtableValue(const std::function<float(int)>& function) {
+   std::vector<std::string> mht_157_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_157(mht_157_v, 5546, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetHashtableValue");
+
     TfLiteTensor* tensor = interpreter_->tensor(value_);
     int rows = tensor->dims->data[0];
     for (int i = 0; i < rows; i++) {
@@ -4912,6 +5554,9 @@ class HashtableLookupOpModel : public SingleOpModelWithNNAPI {
   }
 
   void SetHashtableValue(const std::function<float(int, int)>& function) {
+   std::vector<std::string> mht_158_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_158(mht_158_v, 5557, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetHashtableValue");
+
     TfLiteTensor* tensor = interpreter_->tensor(value_);
     int rows = tensor->dims->data[0];
     int features = tensor->dims->data[1];
@@ -4996,6 +5641,9 @@ class PReluOpModel : public SingleOpModelWithNNAPI {
  public:
   PReluOpModel(const TensorData& input, const TensorData& alpha)
       : input_type_(input.type) {
+   std::vector<std::string> mht_159_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_159(mht_159_v, 5644, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "PReluOpModel");
+
     input_ = AddInput(input);
     alpha_ = AddInput(alpha);
     output_ = AddOutput({input.type, input.shape, input.min, input.max});
@@ -5004,10 +5652,16 @@ class PReluOpModel : public SingleOpModelWithNNAPI {
   }
 
   void SetInput(std::initializer_list<float> data) {
+   std::vector<std::string> mht_160_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_160(mht_160_v, 5655, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     SetData(input_, input_type_, data);
   }
 
   void SetAlpha(std::initializer_list<float> data) {
+   std::vector<std::string> mht_161_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_161(mht_161_v, 5662, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetAlpha");
+
     SetData(alpha_, input_type_, data);
   }
 
@@ -5076,6 +5730,9 @@ class PadV2OpConstModel : public PadOpModel<T1> {
                     std::initializer_list<int> paddings_shape,
                     std::initializer_list<int> paddings, T1 constant_values,
                     const TensorData& output) {
+   std::vector<std::string> mht_162_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_162(mht_162_v, 5733, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "PadV2OpConstModel");
+
     this->input_ = this->AddInput(input);
     this->paddings_ =
         this->AddConstInput(TensorType_INT32, paddings, paddings_shape);
@@ -5094,6 +5751,9 @@ class PadV2OpConstModel : public PadOpModel<T1> {
                     std::initializer_list<int> paddings,
                     const TensorData& constant_values,
                     const TensorData& output) {
+   std::vector<std::string> mht_163_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_163(mht_163_v, 5754, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "PadV2OpConstModel");
+
     this->input_ = this->AddInput(input);
     this->paddings_ =
         this->AddConstInput(TensorType_INT32, paddings, paddings_shape);
@@ -5115,6 +5775,9 @@ class PadV2OpDynamicModel : public PadOpModel<RegularInputOutput> {
                       std::initializer_list<int> paddings_shape,
                       RegularInputOutput constant_values,
                       const TensorData& output) {
+   std::vector<std::string> mht_164_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_164(mht_164_v, 5778, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "PadV2OpDynamicModel");
+
     this->input_ = this->AddInput(input);
     this->paddings_ = this->AddInput(TensorType_INT32);
     this->constant_values_ = this->AddConstInput(
@@ -5129,6 +5792,9 @@ class PadV2OpDynamicModel : public PadOpModel<RegularInputOutput> {
                       std::initializer_list<int> paddings_shape,
                       const TensorData& constant_values,
                       const TensorData& output) {
+   std::vector<std::string> mht_165_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_165(mht_165_v, 5795, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "PadV2OpDynamicModel");
+
     this->input_ = this->AddInput(input);
     this->paddings_ = this->AddInput(TensorType_INT32);
     this->constant_values_ = this->AddInput(constant_values);
@@ -5425,6 +6091,9 @@ class LeakyReluOpModel : public SingleOpModelWithNNAPI {
  public:
   LeakyReluOpModel(const TensorData& input, const float& alpha)
       : input_type_(input.type) {
+   std::vector<std::string> mht_166_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_166(mht_166_v, 6094, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "LeakyReluOpModel");
+
     input_ = AddInput(input);
     output_ = AddOutput({input.type, input.shape, input.min, input.max});
 
@@ -5434,6 +6103,9 @@ class LeakyReluOpModel : public SingleOpModelWithNNAPI {
   }
 
   void SetInput(std::initializer_list<float> data) {
+   std::vector<std::string> mht_167_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_167(mht_167_v, 6106, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "SetInput");
+
     SetData(input_, input_type_, data);
   }
 
@@ -5512,6 +6184,9 @@ static const char kTestCustomOp[] = "nnapi-custom-op";
 class NnapiTestVendorPlugin : public NnapiDelegateVendorPlugin {
  public:
   NnapiTestVendorPlugin() {
+   std::vector<std::string> mht_168_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_168(mht_168_v, 6187, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "NnapiTestVendorPlugin");
+
     ValidateNode = DoValidateNode;
     MapNode = DoMapNode;
     ConfigureCompilationHints = DoConfigureCompilationHints;
@@ -5521,6 +6196,9 @@ class NnapiTestVendorPlugin : public NnapiDelegateVendorPlugin {
   static bool DoValidateNode(const TfLiteContext* context,
                              const TfLiteRegistration* registration,
                              const TfLiteNode* node) {
+   std::vector<std::string> mht_169_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_169(mht_169_v, 6199, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "DoValidateNode");
+
     if (strcmp(kTestCustomOp, registration->custom_name) != 0) {
       return false;
     }
@@ -5539,6 +6217,9 @@ class NnapiTestVendorPlugin : public NnapiDelegateVendorPlugin {
                                        NnapiMappingUtilCInterface* mapping,
                                        std::vector<uint32_t>* indices,
                                        ANeuralNetworksModel* model) {
+   std::vector<std::string> mht_170_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_170(mht_170_v, 6220, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "AddFloat32Tensor");
+
     int ann_tensor_index = mapping->TfLiteIndexToNnIndex(mapping, tensor_index);
     if (ann_tensor_index != -1) {
       indices->push_back(ann_tensor_index);
@@ -5571,6 +6252,9 @@ class NnapiTestVendorPlugin : public NnapiDelegateVendorPlugin {
                                 int node_index,
                                 NnapiMappingUtilCInterface* mapping,
                                 ANeuralNetworksModel* model) {
+   std::vector<std::string> mht_171_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_171(mht_171_v, 6255, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "DoMapNode");
+
     std::vector<uint32_t> input_indices;
     std::vector<uint32_t> output_indices;
     for (int input_pos = 0; input_pos < node->inputs->size; ++input_pos) {
@@ -5598,11 +6282,19 @@ class NnapiTestVendorPlugin : public NnapiDelegateVendorPlugin {
 
   static TfLiteStatus DoConfigureCompilationHints(
       const char* compilation_hints, ANeuralNetworksCompilation* compilation) {
+   std::vector<std::string> mht_172_v;
+   mht_172_v.push_back("compilation_hints: \"" + (compilation_hints == nullptr ? std::string("nullptr") : std::string((char*)compilation_hints)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_172(mht_172_v, 6286, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "DoConfigureCompilationHints");
+
     return kTfLiteOk;
   }
 
   static TfLiteStatus DoConfigureExecutionHints(
       const char* execution_hints, ANeuralNetworksExecution* execution) {
+   std::vector<std::string> mht_173_v;
+   mht_173_v.push_back("execution_hints: \"" + (execution_hints == nullptr ? std::string("nullptr") : std::string((char*)execution_hints)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_173(mht_173_v, 6295, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "DoConfigureExecutionHints");
+
     return kTfLiteOk;
   }
 };
@@ -5614,11 +6306,20 @@ class CustomFloorOpModel : public SingleOpModelWithNNAPI {
                      bool allow_fp32_relax_to_fp16 = false,
                      bool apply_delegate = true)
       : SingleOpModelWithNNAPI(options) {
+   std::vector<std::string> mht_174_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_174(mht_174_v, 6309, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "CustomFloorOpModel");
+
     Init(input, output, allow_fp32_relax_to_fp16, apply_delegate);
   }
 
-  int input() { return input_; }
-  int output() { return output_; }
+  int input() {
+   std::vector<std::string> mht_175_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_175(mht_175_v, 6316, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "input");
+ return input_; }
+  int output() {
+   std::vector<std::string> mht_176_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_176(mht_176_v, 6320, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "output");
+ return output_; }
 
   std::vector<float> GetOutput() { return ExtractVector<float>(output_); }
 
@@ -5630,6 +6331,9 @@ class CustomFloorOpModel : public SingleOpModelWithNNAPI {
   // Performs initialization logic shared across all constructors.
   void Init(const TensorData& input, const TensorData& output,
             bool allow_fp32_relax_to_fp16 = false, bool apply_delegate = true) {
+   std::vector<std::string> mht_177_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSnnapiPSnnapi_delegate_testDTcc mht_177(mht_177_v, 6334, "", "./tensorflow/lite/delegates/nnapi/nnapi_delegate_test.cc", "Init");
+
     input_ = AddInput(input);
     output_ = AddOutput(output);
     SetCustomOp(kTestCustomOp, {}, tflite::ops::builtin::Register_FLOOR);

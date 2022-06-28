@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -68,6 +236,10 @@ void ProcessFunctionLibraryRuntime::FunctionData::DistributedInit(
     const FunctionLibraryDefinition& lib_def, AttrSlice attrs,
     const FunctionLibraryRuntime::InstantiateOptions& options,
     FunctionLibraryRuntime::DoneCallback done) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("function_name: \"" + function_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_0(mht_0_v, 240, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::FunctionData::DistributedInit");
+
   {
     mutex_lock l(mu_);
     is_cross_process_ = true;
@@ -106,6 +278,9 @@ ProcessFunctionLibraryRuntime::ProcessFunctionLibraryRuntime(
       rendezvous_factory_(std::move(rendezvous_factory)),
       optimizer_options_(optimizer_options),
       graph_def_version_(graph_def_version) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_1(mht_1_v, 281, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::ProcessFunctionLibraryRuntime");
+
   if (device_mgr == nullptr) {
     (*flr_map_)[nullptr] = NewFunctionLibraryRuntime(
         nullptr, env, config_ ? &(*config_) : nullptr, nullptr,
@@ -123,6 +298,12 @@ Status ProcessFunctionLibraryRuntime::SendTensors(
     gtl::ArraySlice<Tensor> tensors_to_send, DeviceContext* device_context,
     const std::vector<AllocatorAttributes>& alloc_attrs,
     RendezvousInterface* rendezvous) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("source_device: \"" + source_device + "\"");
+   mht_2_v.push_back("target_device: \"" + target_device + "\"");
+   mht_2_v.push_back("key_prefix: \"" + key_prefix + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_2(mht_2_v, 304, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::SendTensors");
+
   std::vector<string> keys;
   for (int i = 0; i < tensors_to_send.size(); ++i) {
     string name = strings::StrCat(key_prefix, i);
@@ -143,6 +324,12 @@ void ProcessFunctionLibraryRuntime::ReceiveTensorsAsync(
     const std::vector<AllocatorAttributes>& alloc_attrs,
     RendezvousInterface* rendezvous, std::vector<Tensor>* received_tensors,
     StatusCallback done) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("source_device: \"" + source_device + "\"");
+   mht_3_v.push_back("target_device: \"" + target_device + "\"");
+   mht_3_v.push_back("key_prefix: \"" + key_prefix + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_3(mht_3_v, 330, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::ReceiveTensorsAsync");
+
   std::vector<string> keys;
   for (int64_t i = 0; i < num_tensors; ++i) {
     string name = strings::StrCat(key_prefix, i);
@@ -156,6 +343,9 @@ void ProcessFunctionLibraryRuntime::ReceiveTensorsAsync(
 
 Status ProcessFunctionLibraryRuntime::GetRetTypes(
     FunctionLibraryRuntime::Handle h, DataTypeVector* ret_types) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_4(mht_4_v, 346, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::GetRetTypes");
+
   FunctionLibraryRuntime* flr = nullptr;
   {
     tf_shared_lock l(mu_);
@@ -177,6 +367,10 @@ Status ProcessFunctionLibraryRuntime::GetRetTypes(
 
 Status ProcessFunctionLibraryRuntime::GetDeviceIncarnation(
     const string& device_name, int64_t* incarnation) const {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_5(mht_5_v, 371, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::GetDeviceIncarnation");
+
   FunctionLibraryRuntime* flr = GetFLR(device_name);
   if (flr == nullptr) {
     return errors::InvalidArgument("Device name: ", device_name, " not found.");
@@ -187,6 +381,10 @@ Status ProcessFunctionLibraryRuntime::GetDeviceIncarnation(
 
 Status ProcessFunctionLibraryRuntime::GetDeviceContext(
     const string& device_name, DeviceContext** device_context) const {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_6(mht_6_v, 385, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::GetDeviceContext");
+
   *device_context = nullptr;
   FunctionLibraryRuntime* flr = GetFLR(device_name);
   if (flr == nullptr) {
@@ -213,6 +411,9 @@ Status ProcessFunctionLibraryRuntime::GetDeviceContext(
 }
 
 void ProcessFunctionLibraryRuntime::InitializeDeviceAndFlr() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_7(mht_7_v, 414, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::InitializeDeviceAndFlr");
+
   // Reset device_set_ by one of the two following scenarios:
   // 1) Both cluster-FLR and its remote_device_mgr is available: include local
   //    devices (if any) from the local device_mgr_ as Device type, and include
@@ -251,6 +452,10 @@ void ProcessFunctionLibraryRuntime::InitializeDeviceAndFlr() {
 
 FunctionLibraryRuntime* ProcessFunctionLibraryRuntime::GetFLR(
     const string& device_name) const {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_8(mht_8_v, 456, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::GetFLR");
+
   Device* device = nullptr;
   if (device_name != kDefaultFLRDevice) {
     if (!device_mgr_->LookupDevice(device_name, &device).ok()) {
@@ -270,6 +475,11 @@ FunctionLibraryRuntime* ProcessFunctionLibraryRuntime::GetFLR(
 FunctionLibraryRuntime::Handle ProcessFunctionLibraryRuntime::AddHandle(
     const string& function_key, const string& device_name,
     FunctionLibraryRuntime::LocalHandle local_handle) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("function_key: \"" + function_key + "\"");
+   mht_9_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_9(mht_9_v, 480, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::AddHandle");
+
   mutex_lock l(mu_);
   return AddHandleLocked(function_key, device_name, local_handle);
 }
@@ -277,6 +487,11 @@ FunctionLibraryRuntime::Handle ProcessFunctionLibraryRuntime::AddHandle(
 FunctionLibraryRuntime::Handle ProcessFunctionLibraryRuntime::AddHandleLocked(
     const string& function_key, const string& device_name,
     FunctionLibraryRuntime::LocalHandle local_handle) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("function_key: \"" + function_key + "\"");
+   mht_10_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_10(mht_10_v, 492, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::AddHandleLocked");
+
   auto h = next_handle_;
   function_data_[h] =
       absl::make_unique<FunctionData>(device_name, local_handle, function_key);
@@ -288,6 +503,10 @@ FunctionLibraryRuntime::Handle ProcessFunctionLibraryRuntime::AddHandleLocked(
 FunctionLibraryRuntime::Handle
 ProcessFunctionLibraryRuntime::AddMultiDeviceHandle(
     std::unique_ptr<MultiDeviceFunctionData> data, const string& function_key) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("function_key: \"" + function_key + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_11(mht_11_v, 507, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::AddMultiDeviceHandle");
+
   mutex_lock l(mu_);
   auto h = next_handle_;
   mdevice_data_[h] = std::move(data);
@@ -298,6 +517,9 @@ ProcessFunctionLibraryRuntime::AddMultiDeviceHandle(
 
 bool ProcessFunctionLibraryRuntime::HasMultiDeviceHandle(
     FunctionLibraryRuntime::Handle handle) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_12(mht_12_v, 520, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::HasMultiDeviceHandle");
+
   bool multi_device;
   {
     tf_shared_lock l(mu_);
@@ -308,6 +530,10 @@ bool ProcessFunctionLibraryRuntime::HasMultiDeviceHandle(
 
 FunctionLibraryRuntime::Handle ProcessFunctionLibraryRuntime::GetHandle(
     const string& function_key) const {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("function_key: \"" + function_key + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_13(mht_13_v, 534, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::GetHandle");
+
   tf_shared_lock l(mu_);
   return gtl::FindWithDefault(table_, function_key, kInvalidHandle);
 }
@@ -316,6 +542,10 @@ FunctionLibraryRuntime::LocalHandle
 ProcessFunctionLibraryRuntime::GetHandleOnDevice(
     const string& device_name, FunctionLibraryRuntime::Handle handle,
     bool include_multi_device) const {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_14(mht_14_v, 546, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::GetHandleOnDevice");
+
   tf_shared_lock l(mu_);
 
   auto miter = mdevice_data_.find(handle);
@@ -348,6 +578,9 @@ ProcessFunctionLibraryRuntime::GetHandleOnDevice(
 
 string ProcessFunctionLibraryRuntime::GetDeviceName(
     FunctionLibraryRuntime::Handle handle) const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_15(mht_15_v, 581, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::GetDeviceName");
+
   tf_shared_lock l(mu_);
   auto iter = function_data_.find(handle);
   CHECK(iter != function_data_.end());
@@ -358,6 +591,9 @@ string ProcessFunctionLibraryRuntime::GetDeviceName(
 ProcessFunctionLibraryRuntime::MultiDeviceFunctionData*
 ProcessFunctionLibraryRuntime::IsMultiDevice(
     FunctionLibraryRuntime::Handle handle) const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_16(mht_16_v, 594, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::IsMultiDevice");
+
   tf_shared_lock l(mu_);
   const auto& it = mdevice_data_.find(handle);
   if (it != mdevice_data_.end()) {
@@ -370,6 +606,9 @@ namespace {
 // Sets `group` to the first colocation group specified in `node`. If no
 // group is specified, does not touch `group`.
 void GetColocationGroup(const Node* node, string* group) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_17(mht_17_v, 609, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "GetColocationGroup");
+
   // We hoist the conversion from C-style string literal to string here,
   // so that we can avoid the many repeated calls to strlen().
   static const StringPiece kColocationAttrNameStringPiece(kColocationAttrName);
@@ -382,6 +621,9 @@ void GetColocationGroup(const Node* node, string* group) {
 }
 
 const string* AssignedOrRequestedDeviceName(const Node& node) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_18(mht_18_v, 624, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "AssignedOrRequestedDeviceName");
+
   if (node.has_assigned_device_name()) {
     return &node.assigned_device_name();
   }
@@ -391,6 +633,9 @@ const string* AssignedOrRequestedDeviceName(const Node& node) {
 Status SetArgShape(const std::unordered_map<int, DtypeAndPartialTensorShape>&
                        input_resource_dtypes_and_shapes,
                    const std::vector<Node*>& arg_nodes) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_19(mht_19_v, 636, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "SetArgShape");
+
   for (Node* n : arg_nodes) {
     int index;
     TF_RETURN_IF_ERROR(GetNodeAttr(n->def(), "index", &index));
@@ -429,7 +674,13 @@ std::vector<Tensor> GetLocalArgs(gtl::ArraySlice<FunctionArg> args) {
 FunctionLibraryRuntime::DoneCallback TensorsToFunctionRetsDoneCallback(
     std::vector<FunctionRet>* rets, std::vector<Tensor>* tensors,
     FunctionLibraryRuntime::DoneCallback done) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_20(mht_20_v, 677, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "TensorsToFunctionRetsDoneCallback");
+
   return [rets, tensors, done = std::move(done)](const Status& s) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_21(mht_21_v, 681, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "lambda");
+
     if (s.ok()) {
       for (const auto& t : *tensors) {
         rets->push_back(t);
@@ -443,6 +694,9 @@ FunctionLibraryRuntime::DoneCallback TensorsToFunctionRetsDoneCallback(
 // Push Tensors in `function_rets` into `tensors`.
 Status FunctionRetsToTensors(const std::vector<FunctionRet>* function_rets,
                              std::vector<Tensor>* tensors) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_22(mht_22_v, 697, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "FunctionRetsToTensors");
+
   for (const auto& ret : *function_rets) {
     if (ret.index() != 0) {
       return errors::Internal(
@@ -460,6 +714,9 @@ Status ProcessFunctionLibraryRuntime::PinArgsAndRets(
     const std::vector<string>& output_devices, const DeviceSet& device_set,
     const std::vector<Node*>& arg_nodes, const std::vector<Node*>& ret_nodes,
     const FunctionLibraryDefinition* lib_def, Device* default_device) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_23(mht_23_v, 717, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::PinArgsAndRets");
+
   // If output_devices are not specified, we want to set the output device
   // based on the device of the output producing node. The output producing
   // node can be an arg node because functions can simply return their
@@ -623,6 +880,11 @@ namespace {
 Status ValidateNoListArguments(
     const protobuf::RepeatedPtrField<OpDef::ArgDef>& args, const char* arg_type,
     const string& function_name) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("arg_type: \"" + (arg_type == nullptr ? std::string("nullptr") : std::string((char*)arg_type)) + "\"");
+   mht_24_v.push_back("function_name: \"" + function_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_24(mht_24_v, 885, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ValidateNoListArguments");
+
   for (const OpDef::ArgDef& arg : args) {
     if (!arg.number_attr().empty() || !arg.type_list_attr().empty()) {
       return errors::InvalidArgument(
@@ -639,6 +901,9 @@ Status ValidateNoListArguments(
 Status ValidateMultiDeviceOptions(
     const FunctionDef& fdef,
     const FunctionLibraryRuntime::InstantiateOptions& options) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_25(mht_25_v, 904, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ValidateMultiDeviceOptions");
+
   const OpDef& signature = fdef.signature();
   // Multi-device functions currently do not support list inputs or outputs.
   TF_RETURN_IF_ERROR(ValidateNoListArguments(signature.input_arg(), "input",
@@ -675,6 +940,9 @@ Status ValidateMultiDeviceOptions(
 
 ProcessFunctionLibraryRuntime::AsyncAttributes::Summary
 ProcessFunctionLibraryRuntime::AsyncAttributes::Summarize(const Graph* graph) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_26(mht_26_v, 943, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::AsyncAttributes::Summarize");
+
   bool has_send_op = false;
   bool has_recv_op = false;
   bool has_unsafe_op = false;
@@ -722,6 +990,10 @@ Status GetGraphAndArgRets(
     std::vector<Node*>* arg_nodes, std::vector<Node*>* ret_nodes,
     std::vector<string>* ret_node_names, DataTypeVector* ret_types,
     std::vector<string>* control_ret_node_names) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("function_name: \"" + function_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_27(mht_27_v, 994, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "GetGraphAndArgRets");
+
   std::unique_ptr<FunctionBody> fbody;
   // TODO(iga): FunctionDefToBodyHelper copies fdef. Avoid this copy.
   TF_RETURN_IF_ERROR(FunctionDefToBodyHelper(*fdef, attrs, lib_def, &fbody));
@@ -756,6 +1028,10 @@ Status ProcessFunctionLibraryRuntime::InstantiateMultiDevice(
     const string& function_name, AttrSlice attrs,
     const FunctionLibraryRuntime::InstantiateOptions& options,
     FunctionLibraryRuntime::Handle* handle) {
+   std::vector<std::string> mht_28_v;
+   mht_28_v.push_back("function_name: \"" + function_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_28(mht_28_v, 1032, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::InstantiateMultiDevice");
+
   // Check if this function has already been instantiated.
   const string& function_key = Canonicalize(function_name, attrs, options);
 
@@ -1030,6 +1306,9 @@ Status ProcessFunctionLibraryRuntime::InstantiateMultiDevice(
   gtl::InlinedVector<Status, 4> instantiate_status(num_subgraphs);
   BlockingCounter counter(static_cast<int>(num_subgraphs));
   auto runner = [this, num_subgraphs](std::function<void()> fn) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_29(mht_29_v, 1309, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "lambda");
+
     // NOTE: Only use thread pool to instantiate sub-function when there are
     // more than 8 sub-functions. We want to avoid cost of switching thread when
     // there are only a few sub-functions.
@@ -1109,6 +1388,9 @@ Status ProcessFunctionLibraryRuntime::InstantiateMultiDevice(
       auto* component_handle = new FunctionLibraryRuntime::Handle;
       auto done = [this, status, unique_name, comp_data, component_handle,
                    &data, &counter](const Status& s) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_30(mht_30_v, 1391, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "lambda");
+
         status->Update(s);
 
         VLOG(1) << "Finished instantiating component function " << unique_name
@@ -1155,6 +1437,9 @@ Status ProcessFunctionLibraryRuntime::InstantiateMultiDevice(
 Status ProcessFunctionLibraryRuntime::GetOutputDevices(
     FunctionLibraryRuntime::Handle handle,
     std::vector<Device*>* output_devices) const {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_31(mht_31_v, 1440, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::GetOutputDevices");
+
   MultiDeviceFunctionData* data = IsMultiDevice(handle);
   if (data == nullptr) {
     return errors::InvalidArgument(
@@ -1203,6 +1488,9 @@ Status ProcessFunctionLibraryRuntime::PrepareRunMultiDevice(
     const FunctionLibraryRuntime::Options& opts,
     FunctionLibraryRuntime::Handle handle,
     const MultiDeviceFunctionData** data) const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_32(mht_32_v, 1491, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::PrepareRunMultiDevice");
+
   if (opts.create_rendezvous) {
     // FLR->Run() is the default entry point. It checks for cancellation,
     // creates rendezvous, etc.
@@ -1233,12 +1521,20 @@ Status ProcessFunctionLibraryRuntime::PrepareRunMultiDevice(
 
 std::vector<string> ProcessFunctionLibraryRuntime::GetOrderedSubgraphs(
     const MultiDeviceFunctionData* data) const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_33(mht_33_v, 1524, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::GetOrderedSubgraphs");
+
   std::vector<string> subgraph_keys;
   subgraph_keys.reserve(data->glue_.size());
   for (const auto& pair : data->glue_) {
     subgraph_keys.push_back(pair.first);
   }
   auto send_first_ordering = [&](const string& a, const string& b) {
+   std::vector<std::string> mht_34_v;
+   mht_34_v.push_back("a: \"" + a + "\"");
+   mht_34_v.push_back("b: \"" + b + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_34(mht_34_v, 1535, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "lambda");
+
     auto a_summary = data->glue_.at(a).async_attributes.summary();
     auto b_summary = data->glue_.at(b).async_attributes.summary();
     if (a_summary == b_summary) {
@@ -1259,6 +1555,9 @@ Status ProcessFunctionLibraryRuntime::RunMultiDeviceSync(
     std::function<Status(const ComponentFunctionData& comp_data,
                          InternalArgs* args)>
         get_component_args) const {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_35(mht_35_v, 1558, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::RunMultiDeviceSync");
+
   const MultiDeviceFunctionData* data;
   Status prepare_status = PrepareRunMultiDevice(opts, outer_handle, &data);
   if (!prepare_status.ok()) {
@@ -1356,6 +1655,9 @@ void ProcessFunctionLibraryRuntime::RunMultiDeviceAsync(
     std::function<Status(const ComponentFunctionData& comp_data,
                          InternalArgs* args)>
         get_component_args) const {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_36(mht_36_v, 1658, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::RunMultiDeviceAsync");
+
   const MultiDeviceFunctionData* data;
   Status prepare_status = PrepareRunMultiDevice(opts, outer_handle, &data);
   if (!prepare_status.ok()) {
@@ -1402,6 +1704,9 @@ void ProcessFunctionLibraryRuntime::RunMultiDeviceAsync(
     auto component_fn_callback = [comp_rets, rets, comp_data, refcounted_done,
                                   cm, local_cm, data, comp_handle,
                                   target](const Status& status) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_37(mht_37_v, 1707, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "lambda");
+
       if (!status.ok()) {
         VLOG(2) << "Component function execution on target " << target
                 << " from " << data->function_name_ << " with handle "
@@ -1462,6 +1767,10 @@ Status ProcessFunctionLibraryRuntime::Instantiate(
     const string& function_name, AttrSlice attrs,
     const FunctionLibraryRuntime::InstantiateOptions& options,
     FunctionLibraryRuntime::Handle* handle) {
+   std::vector<std::string> mht_38_v;
+   mht_38_v.push_back("function_name: \"" + function_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_38(mht_38_v, 1771, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::Instantiate");
+
   if (options.is_multi_device_function) {
     return InstantiateMultiDevice(function_name, attrs, options, handle);
   }
@@ -1485,6 +1794,9 @@ Status ProcessFunctionLibraryRuntime::Instantiate(
 
 Status ProcessFunctionLibraryRuntime::IsCrossProcess(
     FunctionLibraryRuntime::Handle handle, bool* is_cross_process) const {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_39(mht_39_v, 1797, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::IsCrossProcess");
+
   tf_shared_lock l(mu_);
   const auto& mdevice_it = mdevice_data_.find(handle);
   if (mdevice_it != mdevice_data_.end()) {
@@ -1504,6 +1816,10 @@ void ProcessFunctionLibraryRuntime::InstantiateRemote(
     const FunctionLibraryRuntime::InstantiateOptions& options,
     FunctionLibraryRuntime::Handle* handle,
     FunctionLibraryRuntime::DoneCallback done) {
+   std::vector<std::string> mht_40_v;
+   mht_40_v.push_back("function_name: \"" + function_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_40(mht_40_v, 1820, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::InstantiateRemote");
+
   if (parent_ == nullptr) {
     done(errors::Internal(
         "Currently don't support instantiating functions on device: ",
@@ -1537,6 +1853,9 @@ void ProcessFunctionLibraryRuntime::InstantiateRemote(
 
 Status ProcessFunctionLibraryRuntime::RemoveHandle(
     FunctionLibraryRuntime::Handle handle) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_41(mht_41_v, 1856, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::RemoveHandle");
+
   mutex_lock l(mu_);
   table_.erase(function_data_[handle]->function_key());
   function_data_.erase(handle);
@@ -1545,6 +1864,9 @@ Status ProcessFunctionLibraryRuntime::RemoveHandle(
 
 Status ProcessFunctionLibraryRuntime::ReleaseMultiDeviceHandle(
     FunctionLibraryRuntime::Handle handle) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_42(mht_42_v, 1867, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::ReleaseMultiDeviceHandle");
+
   std::unique_ptr<MultiDeviceFunctionData> mdata;
   {
     mutex_lock l(mu_);
@@ -1588,6 +1910,9 @@ Status ProcessFunctionLibraryRuntime::ReleaseMultiDeviceHandle(
 
 Status ProcessFunctionLibraryRuntime::ReleaseHandle(
     FunctionLibraryRuntime::Handle handle) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_43(mht_43_v, 1913, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::ReleaseHandle");
+
   // Return directly if all function handles has already been released.
   if (flr_map_ == nullptr) return Status::OK();
 
@@ -1611,6 +1936,9 @@ Status ProcessFunctionLibraryRuntime::ReleaseHandle(
 
 void ProcessFunctionLibraryRuntime::CleanupCreatedRendezvous(
     const Rendezvous* created_rendezvous, const int64_t step_id) const {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_44(mht_44_v, 1939, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::CleanupCreatedRendezvous");
+
   if (created_rendezvous) {
     DCHECK(rendezvous_factory_);
     created_rendezvous->Unref();
@@ -1626,8 +1954,14 @@ ProcessFunctionLibraryRuntime::ApplyCleanUpToDoneCallback(
     std::vector<std::unique_ptr<CleanUpItem>>* items,
     FunctionLibraryRuntime::DoneCallback done, const int64_t step_id,
     const Rendezvous* created_rendezvous) const {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_45(mht_45_v, 1957, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::ApplyCleanUpToDoneCallback");
+
   return [this, items, done = std::move(done), step_id,
           created_rendezvous](const Status& status) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_46(mht_46_v, 1962, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "lambda");
+
     this->CleanupCreatedRendezvous(created_rendezvous, step_id);
     auto* local_status = new Status(status);
     CleanUp(items, [local_status, done](const Status& cleanup_status) {
@@ -1642,6 +1976,9 @@ ProcessFunctionLibraryRuntime::ApplyCleanUpToDoneCallback(
 Status ProcessFunctionLibraryRuntime::CreateRendezvous(
     FunctionLibraryRuntime::Options& opts,
     Rendezvous** created_rendezvous) const {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_47(mht_47_v, 1979, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::CreateRendezvous");
+
   DCHECK(opts.rendezvous == nullptr);
   if (!rendezvous_factory_) {
     return errors::FailedPrecondition(
@@ -1661,6 +1998,9 @@ Status ProcessFunctionLibraryRuntime::GetComponentArgs(
     const gtl::ArraySlice<Tensor> args,
     const ProcessFunctionLibraryRuntime::ComponentFunctionData& comp_data,
     ProcessFunctionLibraryRuntime::InternalArgs* comp_args) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_48(mht_48_v, 2001, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::GetComponentArgs");
+
   // "Index"s of _Arg nodes are unique when all arguments are local Tensors.
   for (const auto& it : comp_data.arg_indices) {
     if (it.index >= args.size()) {
@@ -1731,6 +2071,9 @@ void ProcessFunctionLibraryRuntime::Run(
                                     new_opts.step_id, created_rendezvous);
   std::vector<FunctionRet>* function_rets = new std::vector<FunctionRet>;
   done = [rets, function_rets, done = std::move(done)](const Status& s) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_49(mht_49_v, 2074, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "lambda");
+
     Status status = s;
     if (status.ok()) {
       status.Update(FunctionRetsToTensors(function_rets, rets));
@@ -1762,6 +2105,9 @@ void ProcessFunctionLibraryRuntime::RunInternal(
     std::vector<FunctionRet>* rets,
     std::vector<std::unique_ptr<CleanUpItem>>* cleanup_items,
     FunctionLibraryRuntime::DoneCallback done) const {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_50(mht_50_v, 2108, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::RunInternal");
+
   FunctionLibraryRuntime* flr = nullptr;
   string target_device;
   FunctionLibraryRuntime::LocalHandle local_handle;
@@ -1854,6 +2200,9 @@ void ProcessFunctionLibraryRuntime::Run(
     const FunctionLibraryRuntime::Options& opts,
     FunctionLibraryRuntime::Handle handle, CallFrameInterface* frame,
     FunctionLibraryRuntime::DoneCallback done) const {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_51(mht_51_v, 2203, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::Run");
+
   std::vector<Tensor> args;
   args.reserve(frame->num_args());
   for (size_t i = 0; i < frame->num_args(); ++i) {
@@ -1900,6 +2249,9 @@ Status ProcessFunctionLibraryRuntime::RunSync(
     const FunctionLibraryRuntime::Options& orig_opts,
     FunctionLibraryRuntime::Handle handle, gtl::ArraySlice<Tensor> args,
     std::vector<Tensor>* rets) const {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_52(mht_52_v, 2252, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::RunSync");
+
   MultiDeviceFunctionData* multi_device_data = IsMultiDevice(handle);
   if (multi_device_data && multi_device_data->enable_sync_execution) {
     metrics::IncrementTestCounter("pflr_runsync", "sync");
@@ -1912,6 +2264,9 @@ Status ProcessFunctionLibraryRuntime::RunSync(
     std::vector<FunctionRet> function_rets;
     auto get_component_args = [&args](const ComponentFunctionData& comp_data,
                                       InternalArgs* comp_args) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_53(mht_53_v, 2267, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "lambda");
+
       return GetComponentArgs(args, comp_data, comp_args);
     };
 
@@ -1937,6 +2292,9 @@ Status ProcessFunctionLibraryRuntime::RunSync(
 Status ProcessFunctionLibraryRuntime::RunSync(
     const FunctionLibraryRuntime::Options& opts,
     FunctionLibraryRuntime::Handle handle, CallFrameInterface* frame) const {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_54(mht_54_v, 2295, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::RunSync");
+
   // TODO(b/207485199): Implement this as synchronous code.
   Notification n;
   Status s;
@@ -1953,6 +2311,9 @@ void ProcessFunctionLibraryRuntime::Run(
     FunctionLibraryRuntime::Handle handle, const FunctionArgsInterface& args,
     std::vector<FunctionRet>* rets,
     FunctionLibraryRuntime::DoneCallback done) const {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_55(mht_55_v, 2314, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::Run");
+
   bool has_remote_outputs = false;
   const MultiDeviceFunctionData* data = IsMultiDevice(handle);
   if (data != nullptr) {
@@ -1997,6 +2358,9 @@ void ProcessFunctionLibraryRuntime::Run(
 void ProcessFunctionLibraryRuntime::CleanUp(
     std::vector<std::unique_ptr<CleanUpItem>>* items,
     FunctionLibraryRuntime::DoneCallback done) const {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_56(mht_56_v, 2361, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::CleanUp");
+
   auto* refcounted_done = new ReffedStatusCallback(std::move(done));
   for (auto& item : *items) {
     refcounted_done->Ref();
@@ -2029,6 +2393,9 @@ Status ProcessFunctionLibraryRuntime::Clone(
     std::unique_ptr<FunctionLibraryDefinition>* out_lib_def,
     std::unique_ptr<ProcessFunctionLibraryRuntime>* out_pflr,
     bool skip_flib_def) const {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTcc mht_57(mht_57_v, 2396, "", "./tensorflow/core/common_runtime/process_function_library_runtime.cc", "ProcessFunctionLibraryRuntime::Clone");
+
   if (skip_flib_def) {
     *out_lib_def = absl::make_unique<FunctionLibraryDefinition>(
         lib_def_->default_registry(), FunctionDefLibrary{});

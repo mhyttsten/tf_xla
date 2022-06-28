@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -76,31 +244,49 @@ StatusOr<Literal> Compare(const Shape& shape, ComparisonDirection direction,
   switch (direction) {
     case ComparisonDirection::kEq:
       compare_op = [](OperandT lhs_el, OperandT rhs_el) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_0(mht_0_v, 247, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "lambda");
+
         return lhs_el == rhs_el;
       };
       break;
     case ComparisonDirection::kNe:
       compare_op = [](OperandT lhs_el, OperandT rhs_el) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_1(mht_1_v, 255, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "lambda");
+
         return lhs_el != rhs_el;
       };
       break;
     case ComparisonDirection::kGe:
       compare_op = [](OperandT lhs_el, OperandT rhs_el) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_2(mht_2_v, 263, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "lambda");
+
         return lhs_el >= rhs_el;
       };
       break;
     case ComparisonDirection::kGt:
       compare_op = [](OperandT lhs_el, OperandT rhs_el) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_3(mht_3_v, 271, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "lambda");
+
         return lhs_el > rhs_el;
       };
       break;
     case ComparisonDirection::kLe:
       compare_op = [](OperandT lhs_el, OperandT rhs_el) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_4(mht_4_v, 279, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "lambda");
+
         return lhs_el <= rhs_el;
       };
       break;
     case ComparisonDirection::kLt:
       compare_op = [](OperandT lhs_el, OperandT rhs_el) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_5(mht_5_v, 287, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "lambda");
+
         return lhs_el < rhs_el;
       };
       break;
@@ -125,11 +311,17 @@ StatusOr<Literal> Compare<complex64>(const Shape& shape,
   switch (direction) {
     case ComparisonDirection::kEq:
       compare_op = [](complex64 lhs_el, complex64 rhs_el) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_6(mht_6_v, 314, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "lambda");
+
         return lhs_el == rhs_el;
       };
       break;
     case ComparisonDirection::kNe:
       compare_op = [](complex64 lhs_el, complex64 rhs_el) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_7(mht_7_v, 322, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "lambda");
+
         return lhs_el != rhs_el;
       };
       break;
@@ -157,11 +349,17 @@ StatusOr<Literal> Compare<complex128>(const Shape& shape,
   switch (direction) {
     case ComparisonDirection::kEq:
       compare_op = [](complex128 lhs_el, complex128 rhs_el) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_8(mht_8_v, 352, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "lambda");
+
         return lhs_el == rhs_el;
       };
       break;
     case ComparisonDirection::kNe:
       compare_op = [](complex128 lhs_el, complex128 rhs_el) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_9(mht_9_v, 360, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "lambda");
+
         return lhs_el != rhs_el;
       };
       break;
@@ -187,7 +385,10 @@ struct ParamIndexAndValue {
   absl::optional<int64_t> param_index;
   absl::optional<int64_t> value;
 
-  bool IsValid() const { return param_index.has_value() || value.has_value(); }
+  bool IsValid() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_10(mht_10_v, 389, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "IsValid");
+ return param_index.has_value() || value.has_value(); }
 };
 
 // Represents the while loop condition comparison.
@@ -390,7 +591,10 @@ absl::optional<bool> PatternMatchLoopCondVarOverride(
 // Repesents a value that might or might not be determined statically.
 struct DynamicOrStaticValue {
   absl::optional<int64_t> static_value;
-  bool is_dynamic() const { return !static_value.has_value(); }
+  bool is_dynamic() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_11(mht_11_v, 595, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "is_dynamic");
+ return !static_value.has_value(); }
 };
 
 constexpr absl::string_view kEvalErrorDetailUrl = "EvalErrorDetailUrl";
@@ -404,6 +608,9 @@ enum class EvalErrorDetail : uint32_t {
 };
 
 Status MakeEvalErrorDueToParamOrInfeed() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_12(mht_12_v, 611, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "MakeEvalErrorDueToParamOrInfeed");
+
   Status error = tensorflow::errors::FailedPrecondition(
       "Failed to evaluate instruction since it depends on infeed or "
       "parameters to its parent computation.");
@@ -714,6 +921,9 @@ absl::optional<ParsedWhileLoop> PatternMatchParseWhileLoop(
 // HloEvaluatorTypedVisitor cannot.
 HloEvaluator::HloEvaluator(int64_t max_loop_iterations)
     : max_loop_iterations_(max_loop_iterations) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_13(mht_13_v, 924, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HloEvaluator");
+
   typed_visitors_[PRED] =
       absl::make_unique<HloEvaluatorTypedVisitor<bool>>(this);
   typed_visitors_[U8] =
@@ -770,6 +980,9 @@ HloEvaluator::HloEvaluator(int64_t max_loop_iterations)
 StatusOr<Literal> HloEvaluator::Evaluate(
     const HloComputation& computation,
     absl::Span<const Literal* const> arg_literals) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_14(mht_14_v, 983, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::Evaluate");
+
   CHECK(computation.parent() != nullptr);
   XLA_VLOG_LINES(
       2, "HloEvaluator::Evaluate computation:\n" + computation.ToString());
@@ -828,6 +1041,9 @@ StatusOr<Literal> HloEvaluator::Evaluate(
 StatusOr<Literal> HloEvaluator::Evaluate(
     HloInstruction* instruction,
     bool recursively_evaluate_nonconstant_operands) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_15(mht_15_v, 1044, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::Evaluate");
+
   arg_literals_.clear();
   evaluated_.clear();
   auto enable_partial_evaluation_cleanup =
@@ -845,6 +1061,9 @@ StatusOr<Literal> HloEvaluator::Evaluate(
 
 bool HloEvaluator::TryEvaluate(HloInstruction* instruction, Literal* result,
                                bool recursively_evaluate_nonconstant_operands) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_16(mht_16_v, 1064, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::TryEvaluate");
+
   CHECK(result != nullptr);
   auto result_or =
       Evaluate(instruction, recursively_evaluate_nonconstant_operands);
@@ -861,6 +1080,9 @@ StatusOr<Literal> HloEvaluator::EvaluateWithSubstitutions(
     const HloInstruction* instruction,
     const absl::flat_hash_map<const HloInstruction*, const Literal*>&
         substitutions) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_17(mht_17_v, 1083, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::EvaluateWithSubstitutions");
+
   std::vector<std::unique_ptr<HloInstruction>> owned_operands;
   for (const HloInstruction* operand : instruction->operands()) {
     auto it = substitutions.find(operand);
@@ -887,6 +1109,9 @@ StatusOr<Literal> HloEvaluator::EvaluateWithSubstitutions(
 
 StatusOr<Literal> HloEvaluator::EvaluateElementwiseBinaryOp(
     HloOpcode opcode, const Literal& lhs, const Literal& rhs) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_18(mht_18_v, 1112, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::EvaluateElementwiseBinaryOp");
+
   std::unique_ptr<HloInstruction> lhs_instr =
       HloInstruction::CreateConstant(lhs.Clone());
   std::unique_ptr<HloInstruction> rhs_instr =
@@ -903,6 +1128,9 @@ StatusOr<Literal> HloEvaluator::EvaluateElementwiseBinaryOp(
 StatusOr<Literal> HloEvaluator::EvaluateElementwiseTernaryOp(
     HloOpcode opcode, const Literal& lhs, const Literal& rhs,
     const Literal& ehs) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_19(mht_19_v, 1131, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::EvaluateElementwiseTernaryOp");
+
   std::unique_ptr<HloInstruction> lhs_instr =
       HloInstruction::CreateConstant(lhs.Clone());
   std::unique_ptr<HloInstruction> rhs_instr =
@@ -920,6 +1148,9 @@ StatusOr<Literal> HloEvaluator::EvaluateElementwiseTernaryOp(
 
 StatusOr<Literal> HloEvaluator::EvaluateElementwiseCompareOp(
     ComparisonDirection direction, const Literal& lhs, const Literal& rhs) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_20(mht_20_v, 1151, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::EvaluateElementwiseCompareOp");
+
   std::unique_ptr<HloInstruction> lhs_instr =
       HloInstruction::CreateConstant(lhs.Clone());
   std::unique_ptr<HloInstruction> rhs_instr =
@@ -936,6 +1167,9 @@ StatusOr<Literal> HloEvaluator::EvaluateElementwiseCompareOp(
 
 StatusOr<Literal> HloEvaluator::EvaluateElementwiseUnaryOp(
     HloOpcode opcode, const Literal& operand) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_21(mht_21_v, 1170, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::EvaluateElementwiseUnaryOp");
+
   std::unique_ptr<HloInstruction> operand_instr =
       HloInstruction::CreateConstant(operand.Clone());
 
@@ -952,6 +1186,9 @@ StatusOr<Literal> HloEvaluator::EvaluateDotOp(
     const DotDimensionNumbers& dim_numbers,
     const PrecisionConfig& precision_config, const Literal& lhs,
     const Literal& rhs) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_22(mht_22_v, 1189, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::EvaluateDotOp");
+
   std::unique_ptr<HloInstruction> lhs_instr =
       HloInstruction::CreateConstant(lhs.Clone());
   std::unique_ptr<HloInstruction> rhs_instr =
@@ -971,6 +1208,9 @@ StatusOr<Literal> HloEvaluator::EvaluateDotOp(
 Status HloEvaluator::EvaluateInternal(
     HloInstruction* instruction, const ShapeIndex& shape_index,
     bool recursively_evaluate_nonconstant_operands) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_23(mht_23_v, 1211, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::EvaluateInternal");
+
   // Don't need to evaluate this instruction again if it has already been
   // evaluated.
   if (IsAlreadyEvaluated(instruction, shape_index)) {
@@ -1028,6 +1268,9 @@ Status HloEvaluator::EvaluateInternal(
 }
 
 Status HloEvaluator::HandleBitcast(HloInstruction* bitcast) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_24(mht_24_v, 1271, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleBitcast");
+
   const Literal& operand_literal = GetEvaluatedLiteralFor(bitcast->operand(0));
   Literal result(bitcast->shape());
   // Bitcast output is allowed to be smaller than the input if the backend-
@@ -1043,6 +1286,9 @@ Status HloEvaluator::HandleBitcast(HloInstruction* bitcast) {
 
 Status HloEvaluator::HandleGetDimensionSize(
     HloInstruction* get_dimension_size) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_25(mht_25_v, 1289, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleGetDimensionSize");
+
   HloInstruction* operand = get_dimension_size->mutable_operand(0);
   int64_t dim = get_dimension_size->dimension();
   if (dynamic_dimension_inference_ == nullptr) {
@@ -1068,6 +1314,9 @@ Status HloEvaluator::HandleGetDimensionSize(
 
 Status HloEvaluator::HandleSetDimensionSize(
     HloInstruction* set_dimension_size) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_26(mht_26_v, 1317, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleSetDimensionSize");
+
   const Literal& operand_literal =
       GetEvaluatedLiteralFor(set_dimension_size->operand(0));
   Literal result(set_dimension_size->shape());
@@ -1082,6 +1331,9 @@ Status HloEvaluator::HandleSetDimensionSize(
 }
 
 Status HloEvaluator::HandleParameter(HloInstruction* parameter) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_27(mht_27_v, 1334, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleParameter");
+
   if (arg_literals_.empty()) {
     if (!enable_partial_evaluation_) {
       return tensorflow::errors::FailedPrecondition(
@@ -1112,6 +1364,9 @@ Status HloEvaluator::HandleParameter(HloInstruction* parameter) {
 }
 
 Status HloEvaluator::HandleInfeed(HloInstruction* infeed) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_28(mht_28_v, 1367, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleInfeed");
+
   if (!enable_partial_evaluation_) {
     return tensorflow::errors::FailedPrecondition(
         "Failed to evaluate instruction since its operands are unknown "
@@ -1122,9 +1377,15 @@ Status HloEvaluator::HandleInfeed(HloInstruction* infeed) {
   return Status::OK();
 }
 
-Status HloEvaluator::HandleConstant(HloInstruction*) { return Status::OK(); }
+Status HloEvaluator::HandleConstant(HloInstruction*) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_29(mht_29_v, 1381, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleConstant");
+ return Status::OK(); }
 
 Status HloEvaluator::HandleReshape(HloInstruction* reshape) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_30(mht_30_v, 1386, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleReshape");
+
   TF_ASSIGN_OR_RETURN(evaluated_[reshape],
                       GetEvaluatedLiteralFor(reshape->operand(0))
                           .Reshape(reshape->shape().dimensions()));
@@ -1132,12 +1393,18 @@ Status HloEvaluator::HandleReshape(HloInstruction* reshape) {
 }
 
 Status HloEvaluator::HandleTranspose(HloInstruction* transpose) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_31(mht_31_v, 1396, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleTranspose");
+
   evaluated_[transpose] = GetEvaluatedLiteralFor(transpose->operand(0))
                               .Transpose(transpose->dimensions());
   return Status::OK();
 }
 
 Status HloEvaluator::HandleConcatenate(HloInstruction* concatenate) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_32(mht_32_v, 1405, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleConcatenate");
+
   absl::Span<HloInstruction* const> operands(concatenate->operands());
   // The result concatenate dimension is going to be the sum of all
   // concatenate dimensions of the operands taking part of the operation.
@@ -1179,6 +1446,9 @@ Status HloEvaluator::HandleConcatenate(HloInstruction* concatenate) {
 }
 
 Status HloEvaluator::HandleIsFinite(HloInstruction* is_finite) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_33(mht_33_v, 1449, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleIsFinite");
+
   auto operand = is_finite->operand(0);
   auto elem_ty = operand->shape().element_type();
   switch (elem_ty) {
@@ -1248,6 +1518,9 @@ Status HloEvaluator::HandleIsFinite(HloInstruction* is_finite) {
 }
 
 Status HloEvaluator::HandleReal(HloInstruction* real) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_34(mht_34_v, 1521, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleReal");
+
   auto operand = real->operand(0);
   switch (operand->shape().element_type()) {
     case BF16: {
@@ -1301,6 +1574,9 @@ Status HloEvaluator::HandleReal(HloInstruction* real) {
 }
 
 Status HloEvaluator::HandleImag(HloInstruction* imag) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_35(mht_35_v, 1577, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleImag");
+
   auto operand = imag->operand(0);
   switch (operand->shape().element_type()) {
     case BF16: {
@@ -1360,6 +1636,9 @@ Status HloEvaluator::HandleImag(HloInstruction* imag) {
 }
 
 Status HloEvaluator::HandleComplex(HloInstruction* complex) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_36(mht_36_v, 1639, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleComplex");
+
   const Literal& real = GetEvaluatedLiteralFor(complex->operand(0));
   const Literal& imag = GetEvaluatedLiteralFor(complex->operand(1));
   TF_RET_CHECK(ShapeUtil::Compatible(real.shape(), imag.shape()));
@@ -1392,6 +1671,9 @@ Status HloEvaluator::HandleComplex(HloInstruction* complex) {
 }
 
 Status HloEvaluator::HandleCompare(HloInstruction* compare) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_37(mht_37_v, 1674, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleCompare");
+
   ComparisonDirection direction = compare->comparison_direction();
   auto lhs = compare->operand(0);
   auto rhs = compare->operand(1);
@@ -1489,6 +1771,9 @@ Status HloEvaluator::HandleCompare(HloInstruction* compare) {
 }
 
 Status HloEvaluator::HandleTuple(HloInstruction* tuple) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_38(mht_38_v, 1774, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleTuple");
+
   std::vector<const Literal*> operand_literals;
   std::vector<Literal> operand_literal_values;
   if (!visitor_shape_index_.empty()) {
@@ -1537,6 +1822,9 @@ namespace {
 template <typename ToType, typename FromType>
 struct TypeConverter {
   static inline ToType GetAs(FromType value) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_39(mht_39_v, 1825, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "GetAs");
+
     return static_cast<ToType>(value);
   }
 };
@@ -1544,6 +1832,9 @@ struct TypeConverter {
 template <typename FromType>
 struct TypeConverter<float, FromType> {
   static inline float GetAs(FromType value) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_40(mht_40_v, 1835, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "GetAs");
+
     return static_cast<float>(value.real());
   }
 };
@@ -1603,12 +1894,18 @@ class FftTransform {
       : fft_type_(fft->fft_type()),
         fft_rank_(fft->fft_length().size()),
         fft_lengths_(fft->fft_length()) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_41(mht_41_v, 1897, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "FftTransform");
+
     // Make fft_lengths_[0] the minormost dimension.
     absl::c_reverse(fft_lengths_);
   }
 
   Status ComputeFft(HloInstruction* fft, const Literal& input_literal,
                     Literal* output_literal) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_42(mht_42_v, 1906, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "ComputeFft");
+
     const Shape& input_shape = input_literal.shape();
     const Shape& output_shape = fft->shape();
 
@@ -1648,6 +1945,9 @@ class FftTransform {
       // input and the output to allow different layouts.
       auto base_case = [&](int64_t axis, int64_t output_index,
                            int64_t input_index, bool within_src_bounds) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_43(mht_43_v, 1948, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "lambda");
+
         if (axis == fft_rank_ - 1) {
           // Base case: copy the data from the input literal, apply the
           // transform, and copy the result to the output literal.
@@ -1680,6 +1980,9 @@ class FftTransform {
   static bool GatherToBuffer(absl::Span<ComplexType> data, int64_t length,
                              int64_t start, int64_t stride, bool expand_input,
                              absl::Span<ComplexType> buffer) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_44(mht_44_v, 1983, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "GatherToBuffer");
+
     CHECK_GE(buffer.size(), length);
     bool input_is_zero = true;
     const int64_t ub = expand_input ? length / 2 + 1 : length;
@@ -1703,6 +2006,9 @@ class FftTransform {
   // Returns (conjugated, if 'inverse' is true) k-th twiddle for the given
   // length.
   static inline ComplexType Twiddle(int64_t k, int64_t length, bool inverse) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_45(mht_45_v, 2009, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "Twiddle");
+
     auto coeff = std::exp(ComplexType(0.0, -2.0 * M_PI * k / length));
     return inverse ? std::conj(coeff) : coeff;
   }
@@ -1722,6 +2028,9 @@ class FftTransform {
                          bool inverse, bool contract_output, bool expand_input,
                          absl::Span<ComplexType> data,
                          absl::Span<ComplexType> buffer) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_46(mht_46_v, 2031, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "NaiveDft1D");
+
     const bool input_is_zero =
         GatherToBuffer(data, length, start, stride, expand_input, buffer);
 
@@ -1749,12 +2058,18 @@ class FftTransform {
                     bool contract_output, bool expand_input,
                     absl::Span<ComplexType> data,
                     absl::Span<ComplexType> buffer) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_47(mht_47_v, 2061, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "Fft1D");
+
     CHECK(absl::has_single_bit(static_cast<uint64_t>(length)));
     const bool input_is_zero =
         GatherToBuffer(data, length, start, stride, expand_input, buffer);
 
     if (!input_is_zero) {
       auto generate_twiddles = [](int64_t length, bool inverse) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_48(mht_48_v, 2070, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "lambda");
+
         std::vector<ComplexType> twiddles;
         // Need only half the twiddles.
         for (int64_t k = 0; k < length / 2; k++) {
@@ -1805,6 +2120,9 @@ class FftTransform {
                     bool contract_output, bool expand_input,
                     absl::Span<ComplexType> data,
                     absl::Span<ComplexType> buffer) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_49(mht_49_v, 2123, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "Dft1D");
+
     if (absl::has_single_bit(static_cast<uint64_t>(length))) {
       Fft1D(length, start, stride, inverse, contract_output, expand_input, data,
             buffer);
@@ -1865,6 +2183,9 @@ class FftTransform {
   void Sweep(const absl::Span<const int64_t> fft_lengths,
              const absl::Span<const int64_t> fft_strides,
              absl::Span<ComplexType> data, absl::Span<ComplexType> buffer) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_50(mht_50_v, 2186, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "Sweep");
+
     const bool inverse =
         fft_type_ == FftType::IFFT || fft_type_ == FftType::IRFFT;
     const bool input_is_truncated = fft_type_ == FftType::IRFFT;
@@ -1881,6 +2202,9 @@ class FftTransform {
     // full-length transform along the X axis in the last sweep.
     std::function<void(int64_t, int64_t, int64_t)> sweep =
         [&](int64_t sweep_axis, int64_t axis, int64_t start) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_51(mht_51_v, 2205, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "lambda");
+
           if (axis < 0) {
             // Base case: invoke 1D transform.
             const int64_t length = fft_lengths[sweep_axis];
@@ -1940,6 +2264,9 @@ class FftTransform {
                               const absl::Span<const int64_t> src_strides,
                               int64_t rank, int64_t dst_start,
                               int64_t src_start, BaseFn&& base) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_52(mht_52_v, 2267, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "GenerateIndices");
+
     CHECK_EQ(dst_lengths.size() + 1, dst_strides.size());
     CHECK_GE(dst_lengths.size(), rank);
     CHECK_EQ(src_lengths.size() + 1, src_strides.size());
@@ -1948,6 +2275,9 @@ class FftTransform {
     std::function<void(int64_t, int64_t, int64_t, bool)> generate =
         [&](int64_t axis, int64_t dst_index, int64_t src_index,
             bool within_src_bounds) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_53(mht_53_v, 2278, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "lambda");
+
           if (!base(axis, dst_index, src_index, within_src_bounds)) {
             for (int64_t i = 0; i < dst_lengths[axis]; i++) {
               // Because the loop goes over dst_lengths[], the source index may
@@ -1986,6 +2316,9 @@ class FftTransform {
                          const absl::Span<const int64_t> input_lengths,
                          const absl::Span<const int64_t> input_strides,
                          absl::Span<ComplexType> data) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_54(mht_54_v, 2319, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "CopyDataFromInput");
+
     CHECK_GE(data.size(), fft_size);
 
     const bool input_is_truncated = fft_type_ == FftType::IRFFT;
@@ -1996,6 +2329,9 @@ class FftTransform {
     const InputType* input_data = input_literal.data<InputType>().data();
     auto base_case = [&](int64_t axis, int64_t dst_index, int64_t src_index,
                          bool within_src_bounds) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_55(mht_55_v, 2332, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "lambda");
+
       if (axis == 0) {
         // For IRFFT, the negative frequencies are only needed for the sweep
         // along the X axis, which is performed last. Leave this part of the
@@ -2039,6 +2375,9 @@ class FftTransform {
                         const absl::Span<const int64_t> output_lengths,
                         const absl::Span<const int64_t> output_strides,
                         Literal* output_literal) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_56(mht_56_v, 2378, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "CopyDataToOutput");
+
     const bool output_is_truncated = fft_type_ == FftType::RFFT;
 
     // Base case for recursive copy of the results to the output. The code
@@ -2047,6 +2386,9 @@ class FftTransform {
     OutputType* output_data = output_literal->data<OutputType>().data();
     auto base_case = [&](int64_t axis, int64_t dst_index, int64_t src_index,
                          bool within_src_bounds) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_57(mht_57_v, 2389, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "lambda");
+
       if (axis == 0) {
         // Drop negative frequencies for RFFT.
         const int64_t length = fft_lengths[axis];
@@ -2076,6 +2418,9 @@ class FftTransform {
                          const absl::Span<const int64_t> input_lengths,
                          const absl::Span<const int64_t> input_strides,
                          absl::Span<ComplexType> data) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_58(mht_58_v, 2421, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "CopyDataFromInput");
+
     const bool input_is_float = fft_type_ == FftType::RFFT;
     if (input_is_float) {
       return CopyDataFromInput<float>(input_literal, input_start, fft_size,
@@ -2096,6 +2441,9 @@ class FftTransform {
                         const absl::Span<const int64_t> output_lengths,
                         const absl::Span<const int64_t> output_strides,
                         Literal* output_literal) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_59(mht_59_v, 2444, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "CopyDataToOutput");
+
     const bool output_is_float = fft_type_ == FftType::IRFFT;
     if (output_is_float) {
       CopyDataToOutput<float>(data, output_start, fft_lengths, fft_strides,
@@ -2108,6 +2456,9 @@ class FftTransform {
   }
 
   Status CheckParameters(const Shape& input_shape, const Shape& output_shape) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_60(mht_60_v, 2459, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "CheckParameters");
+
     // Check FFT parameters.
     if (fft_rank_ <= 0) {
       return InvalidArgument("Zero or negative FFT rank.");
@@ -2180,6 +2531,9 @@ class FftTransform {
 }  // namespace
 
 Status HloEvaluator::HandleFft(HloInstruction* fft) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_61(mht_61_v, 2534, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleFft");
+
   const Literal& input_literal = GetEvaluatedLiteralFor(fft->operand(0));
   Literal output_literal = Literal::CreateFromShape(fft->shape());
 
@@ -2194,6 +2548,9 @@ Status HloEvaluator::HandleFft(HloInstruction* fft) {
 // dimensions while keeping the rest of the output dimensions clamped to 0.
 ShapeUtil::IndexIterationSpace IterationSpaceForOutputBatchIndices(
     const Shape& output_shape, const GatherDimensionNumbers& dim_numbers) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_62(mht_62_v, 2551, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "IterationSpaceForOutputBatchIndices");
+
   int64_t output_rank = output_shape.dimensions_size();
   std::vector<int64_t> index_base(output_rank, 0);
   std::vector<int64_t> index_count;
@@ -2213,6 +2570,9 @@ ShapeUtil::IndexIterationSpace IterationSpaceForOutputBatchIndices(
 ShapeUtil::IndexIterationSpace IterationSpaceForOutputOffsetIndices(
     int64_t output_rank, absl::Span<const int64_t> slice_sizes,
     const GatherDimensionNumbers& dim_numbers) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_63(mht_63_v, 2573, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "IterationSpaceForOutputOffsetIndices");
+
   std::vector<int64_t> index_base(output_rank, 0);
   std::vector<int64_t> index_count(output_rank, 1);
   int64_t slice_sizes_idx = 0;
@@ -2245,6 +2605,9 @@ class OutputBatchIndexToInputIndex {
       const GatherDimensionNumbers* dim_numbers, const Shape& input_shape,
       const Shape& output_shape, const Literal* start_indices)
       : dim_numbers_(*dim_numbers), start_indices_(*start_indices) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_64(mht_64_v, 2608, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "OutputBatchIndexToInputIndex");
+
     for (int64_t i = 0; i < output_shape.dimensions_size(); i++) {
       output_dim_is_batch_dims_.push_back(
           !absl::c_binary_search(dim_numbers_.offset_dims(), i));
@@ -2299,6 +2662,9 @@ class OutputBatchIndexToInputIndex {
   // we iterate over in FetchIndexVector.
   void PropagateOutputIndexGatherDimsToIndexVectorIndex(
       absl::Span<const int64_t> output_index) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_65(mht_65_v, 2665, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "PropagateOutputIndexGatherDimsToIndexVectorIndex");
+
     int64_t index_vector_index_i = 0;
     for (int64_t i = 0, e = output_index.size(); i < e; i++) {
       if (!output_dim_is_batch_dims_[i]) {
@@ -2316,6 +2682,9 @@ class OutputBatchIndexToInputIndex {
   // Populates index_vector_ by iterating over start_indices_ according to
   // index_vector_index_.
   Status FetchIndexVector() {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_66(mht_66_v, 2685, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "FetchIndexVector");
+
     int64_t index_vector_dim = dim_numbers_.index_vector_dim();
     for (int64_t i = 0, e = index_vector_.size(); i < e; i++) {
       index_vector_index_[index_vector_dim] = i;
@@ -2328,6 +2697,9 @@ class OutputBatchIndexToInputIndex {
 
   // Populates input_index_.
   void PropagateIndexVectorToInputIndex() {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_67(mht_67_v, 2700, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "PropagateIndexVectorToInputIndex");
+
     for (int64_t i = 0, e = input_index_.size(); i < e; i++) {
       if (input_dim_value_to_index_vector_[i] != -1) {
         input_index_[i] = index_vector_[input_dim_value_to_index_vector_[i]];
@@ -2372,6 +2744,9 @@ class OutputOffsetIndexToInputIndex {
   explicit OutputOffsetIndexToInputIndex(
       const GatherDimensionNumbers& dim_numbers, const Shape& input_shape,
       const Shape& output_shape) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_68(mht_68_v, 2747, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "OutputOffsetIndexToInputIndex");
+
     std::vector<int64_t> window_index_to_output_index;
     int64_t output_index_count = 0;
     for (int64_t i = 0; i < output_shape.dimensions_size(); i++) {
@@ -2413,6 +2788,9 @@ class OutputOffsetIndexToInputIndex {
   // Returns for a given 'input_dim' the corresponding output dimension index,
   // or -1 if 'input_dim' is an elided window dimension.
   int64_t input_dim_value_to_output_index(int64_t input_dim) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_69(mht_69_v, 2791, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "input_dim_value_to_output_index");
+
     return input_dim_value_to_output_index_[input_dim];
   }
 
@@ -2421,6 +2799,9 @@ class OutputOffsetIndexToInputIndex {
   // mutating input_index_ in place.
   void PropagateOutputIndexWindowDimsToInputIndex(
       absl::Span<const int64_t> output_index) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_70(mht_70_v, 2802, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "PropagateOutputIndexWindowDimsToInputIndex");
+
     for (int64_t i = 0, e = input_index_.size(); i < e; i++) {
       if (input_dim_value_to_output_index_[i] != -1) {
         input_index_[i] = output_index[input_dim_value_to_output_index_[i]];
@@ -2460,6 +2841,9 @@ static StatusOr<std::reference_wrapper<const Literal>> ReshapedGatherIndices(
 }
 
 Status HloEvaluator::HandleGather(HloInstruction* gather) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_71(mht_71_v, 2844, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleGather");
+
   Literal result = Literal::CreateFromShape(gather->shape());
   const Shape& shape = gather->shape();
   const GatherDimensionNumbers& dim_numbers =
@@ -2556,6 +2940,9 @@ Status HloEvaluator::HandleGather(HloInstruction* gather) {
 }
 
 Status HloEvaluator::HandleBroadcast(HloInstruction* broadcast) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_72(mht_72_v, 2943, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleBroadcast");
+
   const Literal& operand = GetEvaluatedLiteralFor(broadcast->operand(0));
   TF_RET_CHECK(broadcast->shape().element_type() ==
                operand.shape().element_type())
@@ -2584,11 +2971,17 @@ Status HloEvaluator::HandleBroadcast(HloInstruction* broadcast) {
 }
 
 Status HloEvaluator::HandleAfterAll(HloInstruction* after_all) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_73(mht_73_v, 2974, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleAfterAll");
+
   evaluated_[after_all] = LiteralUtil::CreateToken();
   return Status::OK();
 }
 
 Status HloEvaluator::HandleAddDependency(HloInstruction* add_dependency) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_74(mht_74_v, 2982, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleAddDependency");
+
   // AddDedendency just forwards its zero-th operand.
   evaluated_[add_dependency] =
       GetEvaluatedLiteralFor(add_dependency->operand(0)).Clone();
@@ -2596,6 +2989,9 @@ Status HloEvaluator::HandleAddDependency(HloInstruction* add_dependency) {
 }
 
 Status HloEvaluator::HandleGetTupleElement(HloInstruction* get_tuple_element) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_75(mht_75_v, 2992, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleGetTupleElement");
+
   const auto result_shape = get_tuple_element->shape();
   const int64_t index = get_tuple_element->tuple_index();
 
@@ -2618,12 +3014,18 @@ Status HloEvaluator::HandleGetTupleElement(HloInstruction* get_tuple_element) {
 }
 
 Status HloEvaluator::HandleCopy(HloInstruction* copy) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_76(mht_76_v, 3017, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleCopy");
+
   TF_RET_CHECK(ShapeUtil::Compatible(copy->shape(), copy->operand(0)->shape()));
   evaluated_[copy] = GetEvaluatedLiteralFor(copy->operand(0)).Clone();
   return Status::OK();
 }
 
 Status HloEvaluator::HandleAsyncStart(HloInstruction* async_start) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_77(mht_77_v, 3026, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleAsyncStart");
+
   std::vector<const Literal*> arg_literals;
   arg_literals.reserve(async_start->operands().size());
   for (auto operand : async_start->operands()) {
@@ -2654,6 +3056,9 @@ Status HloEvaluator::HandleAsyncStart(HloInstruction* async_start) {
 }
 
 Status HloEvaluator::HandleAsyncUpdate(HloInstruction* async_update) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_78(mht_78_v, 3059, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleAsyncUpdate");
+
   const Literal& operand_tuple_literal =
       GetEvaluatedLiteralFor(async_update->operand(0));
   evaluated_[async_update] = Literal(async_update->shape());
@@ -2664,6 +3069,9 @@ Status HloEvaluator::HandleAsyncUpdate(HloInstruction* async_update) {
 }
 
 Status HloEvaluator::HandleAsyncDone(HloInstruction* async_done) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_79(mht_79_v, 3072, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleAsyncDone");
+
   const Literal& operand_tuple_literal =
       GetEvaluatedLiteralFor(async_done->operand(0));
   evaluated_[async_done] = Literal(async_done->shape());
@@ -2674,6 +3082,9 @@ Status HloEvaluator::HandleAsyncDone(HloInstruction* async_done) {
 }
 
 Status HloEvaluator::HandleCopyStart(HloInstruction* copy_start) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_80(mht_80_v, 3085, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleCopyStart");
+
   if (copy_start->user_count() != 1 ||
       copy_start->users().at(0)->opcode() != HloOpcode::kCopyDone) {
     return tensorflow::errors::FailedPrecondition(
@@ -2694,6 +3105,9 @@ Status HloEvaluator::HandleCopyStart(HloInstruction* copy_start) {
 }
 
 Status HloEvaluator::HandleCopyDone(HloInstruction* copy_done) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_81(mht_81_v, 3108, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleCopyDone");
+
   const HloInstruction* operand = copy_done->operand(0);
   if (operand->opcode() != HloOpcode::kCopyStart) {
     return tensorflow::errors::FailedPrecondition(
@@ -2711,6 +3125,9 @@ Status HloEvaluator::HandleCopyDone(HloInstruction* copy_done) {
 }
 
 Status HloEvaluator::HandleCall(HloInstruction* call) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_82(mht_82_v, 3128, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleCall");
+
   auto* computation = call->to_apply();
   auto operands = call->operands();
 
@@ -2733,6 +3150,9 @@ Status HloEvaluator::HandleCall(HloInstruction* call) {
 }
 
 Status HloEvaluator::HandleFusion(HloInstruction* fusion) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_83(mht_83_v, 3153, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleFusion");
+
   HloModuleConfig config;
   // Attach cloned computation to an empty HLO module so the existing ones are
   // not modified.
@@ -2769,6 +3189,9 @@ Status HloEvaluator::HandleFusion(HloInstruction* fusion) {
 }
 
 Status HloEvaluator::HandleConditional(HloInstruction* conditional) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_84(mht_84_v, 3192, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleConditional");
+
   const auto& branch_index_literal =
       GetEvaluatedLiteralFor(conditional->operand(0));
   int branch_index;
@@ -2797,6 +3220,9 @@ Status HloEvaluator::HandleConditional(HloInstruction* conditional) {
 }
 
 Status HloEvaluator::HandleSelect(HloInstruction* select) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_85(mht_85_v, 3223, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleSelect");
+
   const auto& pred = GetEvaluatedLiteralFor(select->operand(0));
   const auto& on_true = GetEvaluatedLiteralFor(select->operand(1));
   const auto& on_false = GetEvaluatedLiteralFor(select->operand(2));
@@ -2815,6 +3241,9 @@ Status HloEvaluator::HandleSelect(HloInstruction* select) {
 }
 
 Status HloEvaluator::HandleTupleSelect(HloInstruction* tuple_select) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_86(mht_86_v, 3244, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleTupleSelect");
+
   const auto& pred = GetEvaluatedLiteralFor(tuple_select->operand(0));
   const auto& on_true = GetEvaluatedLiteralFor(tuple_select->operand(1));
   const auto& on_false = GetEvaluatedLiteralFor(tuple_select->operand(2));
@@ -2903,6 +3332,9 @@ StatusOr<Literal> TryParseAndEvaluateWhileInductionVar(
 }  // namespace
 
 Status HloEvaluator::HandleWhile(HloInstruction* while_hlo) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_87(mht_87_v, 3335, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleWhile");
+
   HloComputation* cond_comp = while_hlo->while_condition();
   HloComputation* body_comp = while_hlo->while_body();
   // Initialize the loop carried valued with the input to the While instruction.
@@ -2971,6 +3403,9 @@ template <typename NativeT>
 Literal ExtractLiteralFromIndexPositions(const Literal& from,
                                          absl::Span<int64_t const> indices,
                                          bool extract_as_scalar) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_88(mht_88_v, 3406, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "ExtractLiteralFromIndexPositions");
+
   if (extract_as_scalar) {
     return LiteralUtil::CreateR0<NativeT>(from.Get<NativeT>({indices[0]}));
   }
@@ -3059,6 +3494,9 @@ StatusOr<Literal> ExtractFromIndexPositions(const Literal& from,
 }  // namespace
 
 Status HloEvaluator::HandleSort(HloInstruction* sort) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_89(mht_89_v, 3497, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleSort");
+
   TF_RET_CHECK(sort->operand_count() >= 1)
       << "Expected at least 1 operand for sort";
   for (int64_t i = 1; i < sort->operand_count(); ++i) {
@@ -3114,6 +3552,9 @@ Status HloEvaluator::HandleSort(HloInstruction* sort) {
         auto comparator = [sort, &compare_status,
                            embedded_evaluator = embedded_evaluator.get(),
                            &literals_to_sort](int64_t a, int64_t b) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_90(mht_90_v, 3555, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "lambda");
+
           std::vector<Literal> literals;
           literals.reserve(2 * sort->operand_count());
           for (int64_t i = 0; i < sort->operand_count(); ++i) {
@@ -3188,6 +3629,9 @@ Status HloEvaluator::HandleSort(HloInstruction* sort) {
 }
 
 static bool IsScalarAdd(HloComputation* computation) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_91(mht_91_v, 3632, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "IsScalarAdd");
+
   HloInstruction* instruction = computation->root_instruction();
   if (instruction->opcode() == HloOpcode::kAdd &&
       computation->num_parameters() == 2) {
@@ -3312,6 +3756,9 @@ static StatusOr<bool> GenerateReduceOutputElement(
 }
 
 Status HloEvaluator::HandleReduce(HloInstruction* instr) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_92(mht_92_v, 3759, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleReduce");
+
   HloReduceInstruction* reduce = Cast<HloReduceInstruction>(instr);
   int64_t num_args = reduce->inputs().size();
   absl::Span<const int64_t> dimensions_to_reduce(reduce->dimensions());
@@ -3407,6 +3854,9 @@ Status HloEvaluator::HandleReduce(HloInstruction* instr) {
 }
 
 Status HloEvaluator::HandleReduceWindow(HloInstruction* hlo) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_93(mht_93_v, 3857, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleReduceWindow");
+
   // Here we delegate the handling to the typed visitor class, instantiated by
   // using the type of the first input of ReduceWindow. The support for the
   // variadic case inside the typed_visitor is made to not use the template
@@ -3424,6 +3874,9 @@ Status HloEvaluator::HandleReduceWindow(HloInstruction* hlo) {
 }
 
 Status HloEvaluator::HandleCustomCall(HloInstruction* custom_call) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_94(mht_94_v, 3877, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::HandleCustomCall");
+
   if (!custom_call_handler_) {
     // No handler is registered; this means custom-calls are not allowed.
     return DefaultAction(custom_call);
@@ -3445,6 +3898,9 @@ Status HloEvaluator::HandleCustomCall(HloInstruction* custom_call) {
 }
 
 Status HloEvaluator::Preprocess(HloInstruction* hlo) {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_95(mht_95_v, 3901, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::Preprocess");
+
   VLOG(2) << "About to visit HLO: " << hlo->ToString();
   if (!enable_partial_evaluation_) {
     for (HloInstruction* operand : hlo->mutable_operands()) {
@@ -3460,6 +3916,9 @@ Status HloEvaluator::Preprocess(HloInstruction* hlo) {
 }
 
 Status HloEvaluator::Postprocess(HloInstruction* hlo) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_96(mht_96_v, 3919, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::Postprocess");
+
   VLOG(2) << "Finished visiting " << hlo->ToString()
           << "; evaluated value is: " << GetEvaluatedLiteralFor(hlo).ToString();
   // Out of convenience the literal may have been produced with a different
@@ -3499,18 +3958,27 @@ std::unique_ptr<Array2D<T>> MatmulArray2DImpl(
 
 std::unique_ptr<Array2D<Eigen::half>> HloEvaluator::MatmulArray2D(
     const Array2D<Eigen::half>& lhs, const Array2D<Eigen::half>& rhs) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_97(mht_97_v, 3961, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::MatmulArray2D");
+
   return MatmulArray2DImpl<Eigen::half>(
       lhs, rhs, __xla_cpu_runtime_EigenSingleThreadedMatMulF16);
 }
 
 std::unique_ptr<Array2D<float>> HloEvaluator::MatmulArray2D(
     const Array2D<float>& lhs, const Array2D<float>& rhs) {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_98(mht_98_v, 3970, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::MatmulArray2D");
+
   return MatmulArray2DImpl<float>(
       lhs, rhs, __xla_cpu_runtime_EigenSingleThreadedMatMulF32);
 }
 
 std::unique_ptr<Array2D<double>> HloEvaluator::MatmulArray2D(
     const Array2D<double>& lhs, const Array2D<double>& rhs) {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_99(mht_99_v, 3979, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::MatmulArray2D");
+
   return MatmulArray2DImpl<double>(
       lhs, rhs, __xla_cpu_runtime_EigenSingleThreadedMatMulF64);
 }
@@ -3518,6 +3986,9 @@ std::unique_ptr<Array2D<double>> HloEvaluator::MatmulArray2D(
 std::unique_ptr<Array2D<std::complex<float>>> HloEvaluator::MatmulArray2D(
     const Array2D<std::complex<float>>& lhs,
     const Array2D<std::complex<float>>& rhs) {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_100(mht_100_v, 3989, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::MatmulArray2D");
+
   return MatmulArray2DImpl<std::complex<float>>(
       lhs, rhs, __xla_cpu_runtime_EigenSingleThreadedMatMulC64);
 }
@@ -3525,12 +3996,18 @@ std::unique_ptr<Array2D<std::complex<float>>> HloEvaluator::MatmulArray2D(
 std::unique_ptr<Array2D<std::complex<double>>> HloEvaluator::MatmulArray2D(
     const Array2D<std::complex<double>>& lhs,
     const Array2D<std::complex<double>>& rhs) {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_101(mht_101_v, 3999, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::MatmulArray2D");
+
   return MatmulArray2DImpl<std::complex<double>>(
       lhs, rhs, __xla_cpu_runtime_EigenSingleThreadedMatMulC128);
 }
 
 std::unique_ptr<Array2D<int32_t>> HloEvaluator::MatmulArray2D(
     const Array2D<int32_t>& lhs, const Array2D<int32_t>& rhs) {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluatorDTcc mht_102(mht_102_v, 4008, "", "./tensorflow/compiler/xla/service/hlo_evaluator.cc", "HloEvaluator::MatmulArray2D");
+
   return MatmulArray2DImpl<int32_t>(
       lhs, rhs, __xla_cpu_runtime_EigenSingleThreadedMatMulS32);
 }

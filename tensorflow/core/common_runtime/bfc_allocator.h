@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_COMMON_RUNTIME_BFC_ALLOCATOR_H_
 #define TENSORFLOW_CORE_COMMON_RUNTIME_BFC_ALLOCATOR_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <array>
 #include <deque>
@@ -72,9 +240,15 @@ class BFCAllocator : public Allocator {
 
   ~BFCAllocator() override;
 
-  string Name() override { return name_; }
+  string Name() override {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_0(mht_0_v, 244, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "Name");
+ return name_; }
 
   void* AllocateRaw(size_t alignment, size_t num_bytes) override {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_1(mht_1_v, 249, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "AllocateRaw");
+
     return AllocateRaw(alignment, num_bytes, AllocationAttributes());
   }
 
@@ -95,13 +269,19 @@ class BFCAllocator : public Allocator {
 
   bool ClearStats() override;
 
-  void SetTimingCounter(SharedCounter* sc) { timing_counter_ = sc; }
+  void SetTimingCounter(SharedCounter* sc) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_2(mht_2_v, 273, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "SetTimingCounter");
+ timing_counter_ = sc; }
 
   void SetSafeFrontier(uint64 count) override;
 
   AllocatorMemoryType GetMemoryType() const override;
 
-  bool ShouldRecordOpName() const { return true; }
+  bool ShouldRecordOpName() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_3(mht_3_v, 282, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "ShouldRecordOpName");
+ return true; }
 
   MemoryDump RecordMemoryMap();
 
@@ -206,7 +386,10 @@ class BFCAllocator : public Allocator {
     // Optional count when this chunk was most recently made free.
     uint64 freed_at_count = 0;
 
-    bool in_use() const { return allocation_id != -1; }
+    bool in_use() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_4(mht_4_v, 390, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "in_use");
+ return allocation_id != -1; }
 
 #ifdef TENSORFLOW_MEM_DEBUG
     // optional debugging info
@@ -248,7 +431,10 @@ class BFCAllocator : public Allocator {
     class ChunkComparator {
      public:
       explicit ChunkComparator(BFCAllocator* allocator)
-          : allocator_(allocator) {}
+          : allocator_(allocator) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_5(mht_5_v, 435, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "ChunkComparator");
+}
       // Sort first by size and then use pointer address as a tie breaker.
       bool operator()(const ChunkHandle ha,
                       const ChunkHandle hb) const TF_NO_THREAD_SAFETY_ANALYSIS {
@@ -269,7 +455,10 @@ class BFCAllocator : public Allocator {
     // Chunk * not owned.
     FreeChunkSet free_chunks;
     Bin(BFCAllocator* allocator, size_t bs)
-        : bin_size(bs), free_chunks(ChunkComparator(allocator)) {}
+        : bin_size(bs), free_chunks(ChunkComparator(allocator)) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_6(mht_6_v, 459, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "Bin");
+}
   };
 
   static constexpr size_t kMinAllocationBits = 8;
@@ -293,6 +482,9 @@ class BFCAllocator : public Allocator {
           memory_size_(memory_size),
           end_ptr_(
               static_cast<void*>(static_cast<char*>(ptr_) + memory_size_)) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_7(mht_7_v, 485, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "AllocationRegion");
+
       DCHECK_EQ(0, memory_size % kMinAllocationSize);
       const size_t n_handles =
           (memory_size + kMinAllocationSize - 1) / kMinAllocationSize;
@@ -300,16 +492,34 @@ class BFCAllocator : public Allocator {
     }
 
     AllocationRegion() = default;
-    AllocationRegion(AllocationRegion&& other) { Swap(&other); }
+    AllocationRegion(AllocationRegion&& other) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_8(mht_8_v, 496, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "AllocationRegion");
+ Swap(&other); }
     AllocationRegion& operator=(AllocationRegion&& other) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_9(mht_9_v, 500, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "=");
+
       Swap(&other);
       return *this;
     }
 
-    void* ptr() const { return ptr_; }
-    void* end_ptr() const { return end_ptr_; }
-    size_t memory_size() const { return memory_size_; }
+    void* ptr() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_10(mht_10_v, 508, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "ptr");
+ return ptr_; }
+    void* end_ptr() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_11(mht_11_v, 512, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "end_ptr");
+ return end_ptr_; }
+    size_t memory_size() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_12(mht_12_v, 516, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "memory_size");
+ return memory_size_; }
     void extend(size_t size) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_13(mht_13_v, 520, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "extend");
+
       memory_size_ += size;
       DCHECK_EQ(0, memory_size_ % kMinAllocationSize);
 
@@ -319,13 +529,25 @@ class BFCAllocator : public Allocator {
       handles_.resize(n_handles, kInvalidChunkHandle);
     }
     ChunkHandle get_handle(const void* p) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_14(mht_14_v, 532, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "get_handle");
+
       return handles_[IndexFor(p)];
     }
-    void set_handle(const void* p, ChunkHandle h) { handles_[IndexFor(p)] = h; }
-    void erase(const void* p) { set_handle(p, kInvalidChunkHandle); }
+    void set_handle(const void* p, ChunkHandle h) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_15(mht_15_v, 538, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "set_handle");
+ handles_[IndexFor(p)] = h; }
+    void erase(const void* p) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_16(mht_16_v, 542, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "erase");
+ set_handle(p, kInvalidChunkHandle); }
 
    private:
     void Swap(AllocationRegion* other) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_17(mht_17_v, 548, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "Swap");
+
       std::swap(ptr_, other->ptr_);
       std::swap(memory_size_, other->memory_size_);
       std::swap(end_ptr_, other->end_ptr_);
@@ -333,6 +555,9 @@ class BFCAllocator : public Allocator {
     }
 
     size_t IndexFor(const void* p) const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_18(mht_18_v, 558, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "IndexFor");
+
       std::uintptr_t p_int = reinterpret_cast<std::uintptr_t>(p);
       std::uintptr_t base_int = reinterpret_cast<std::uintptr_t>(ptr_);
       DCHECK_GE(p_int, base_int);
@@ -360,10 +585,19 @@ class BFCAllocator : public Allocator {
   // This class is thread-compatible.
   class RegionManager {
    public:
-    RegionManager() {}
-    ~RegionManager() {}
+    RegionManager() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_19(mht_19_v, 589, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "RegionManager");
+}
+    ~RegionManager() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_20(mht_20_v, 593, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "~RegionManager");
+}
 
     void AddAllocationRegion(void* ptr, size_t memory_size) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_21(mht_21_v, 598, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "AddAllocationRegion");
+
       // Insert sorted by end_ptr.
       auto entry =
           std::upper_bound(regions_.begin(), regions_.end(), ptr, &Comparator);
@@ -376,6 +610,9 @@ class BFCAllocator : public Allocator {
     // the BFC allocator can reason about chunkification.
     AllocationRegion* AddOrExtendAllocationRegion(void* ptr,
                                                   size_t memory_size) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_22(mht_22_v, 613, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "AddOrExtendAllocationRegion");
+
       // Insert sorted by end_ptr.
       auto entry =
           std::upper_bound(regions_.begin(), regions_.end(), ptr, &Comparator);
@@ -403,30 +640,54 @@ class BFCAllocator : public Allocator {
 
     std::vector<AllocationRegion>::iterator RemoveAllocationRegion(
         std::vector<AllocationRegion>::iterator it) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_23(mht_23_v, 643, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "RemoveAllocationRegion");
+
       return regions_.erase(it);
     }
 
     ChunkHandle get_handle(const void* p) const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_24(mht_24_v, 650, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "get_handle");
+
       return RegionFor(p)->get_handle(p);
     }
 
     void set_handle(const void* p, ChunkHandle h) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_25(mht_25_v, 657, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "set_handle");
+
       return MutableRegionFor(p)->set_handle(p, h);
     }
-    void erase(const void* p) { return MutableRegionFor(p)->erase(p); }
+    void erase(const void* p) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_26(mht_26_v, 663, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "erase");
+ return MutableRegionFor(p)->erase(p); }
 
-    const std::vector<AllocationRegion>& regions() const { return regions_; }
+    const std::vector<AllocationRegion>& regions() const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_27(mht_27_v, 668, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "regions");
+ return regions_; }
 
    private:
     static bool Comparator(const void* ptr, const AllocationRegion& other) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_28(mht_28_v, 674, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "Comparator");
+
       return ptr < other.end_ptr();
     }
 
     AllocationRegion* MutableRegionFor(const void* p) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_29(mht_29_v, 681, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "MutableRegionFor");
+
       return const_cast<AllocationRegion*>(RegionFor(p));
     }
 
     const AllocationRegion* RegionFor(const void* p) const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_30(mht_30_v, 688, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "RegionFor");
+
       auto entry =
           std::upper_bound(regions_.begin(), regions_.end(), p, &Comparator);
 
@@ -533,6 +794,9 @@ class BFCAllocator : public Allocator {
   size_t memory_limit_ = 0;
 
   inline int Log2FloorNonZeroSlow(uint64 n) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_31(mht_31_v, 797, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "Log2FloorNonZeroSlow");
+
     int r = 0;
     while (n > 0) {
       r++;
@@ -543,6 +807,9 @@ class BFCAllocator : public Allocator {
 
   // Returns floor(log2(n)).
   inline int Log2FloorNonZero(uint64 n) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_32(mht_32_v, 810, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "Log2FloorNonZero");
+
 #if defined(__GNUC__)
     return 63 ^ __builtin_clzll(n);
 #elif defined(PLATFORM_WINDOWS) && (_WIN64)
@@ -556,17 +823,29 @@ class BFCAllocator : public Allocator {
 
   // Map from bin size to Bin
   Bin* BinFromIndex(BinNum index) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_33(mht_33_v, 826, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "BinFromIndex");
+
     return reinterpret_cast<Bin*>(&(bins_space_[index * sizeof(Bin)]));
   }
   size_t BinNumToSize(BinNum index) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_34(mht_34_v, 832, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "BinNumToSize");
+
     return static_cast<size_t>(256) << index;
   }
   BinNum BinNumForSize(size_t bytes) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_35(mht_35_v, 838, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "BinNumForSize");
+
     uint64 v = std::max<size_t>(bytes, 256) >> kMinAllocationBits;
     int b = std::min(kNumBins - 1, Log2FloorNonZero(v));
     return b;
   }
-  Bin* BinForSize(size_t bytes) { return BinFromIndex(BinNumForSize(bytes)); }
+  Bin* BinForSize(size_t bytes) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSbfc_allocatorDTh mht_36(mht_36_v, 846, "", "./tensorflow/core/common_runtime/bfc_allocator.h", "BinForSize");
+ return BinFromIndex(BinNumForSize(bytes)); }
 
   char bins_space_[sizeof(Bin) * kNumBins];
 

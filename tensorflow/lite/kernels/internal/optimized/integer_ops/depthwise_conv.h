@@ -14,6 +14,174 @@ limitations under the License.
 ==============================================================================*/
 #ifndef TENSORFLOW_LITE_KERNELS_INTERNAL_OPTIMIZED_INTEGER_OPS_DEPTHWISE_CONV_H_
 #define TENSORFLOW_LITE_KERNELS_INTERNAL_OPTIMIZED_INTEGER_OPS_DEPTHWISE_CONV_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <string.h>
 
@@ -49,6 +217,9 @@ struct QuantizedDepthwiseConvKernel<true, 8, 2> {
                   const int8* input_ptr, int16 input_offset,
                   int input_ptr_increment, const int8* filter_ptr,
                   int32* acc_buffer_ptr) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_0(mht_0_v, 220, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "Run");
+
     // Load the filters.
     int8x8x2_t filter_s8;
     filter_s8.val[0] = vld1_s8(filter_ptr);
@@ -95,6 +266,9 @@ struct QuantizedDepthwiseConvKernel<false, 8, 1> {
                   const int8* input_ptr, int16 input_offset,
                   int input_ptr_increment, const int8* filter_ptr,
                   int32* acc_buffer_ptr) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_1(mht_1_v, 269, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "Run");
+
     // Load the filters.
     const int8x8_t filter_s8 = vld1_s8(filter_ptr);
     const int16x8_t filter = vmovl_s8(filter_s8);
@@ -162,6 +336,9 @@ struct QuantizedDepthwiseConvKernel<false, 4, 2> {
                   const int8* input_ptr, int16 input_offset,
                   int input_ptr_increment, const int8* filter_ptr,
                   int32* acc_buffer_ptr) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_2(mht_2_v, 339, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "Run");
+
     // Load the filters.
     const int8x8_t filter_s8 = vld1_s8(filter_ptr);
     const int16x8_t filter = vmovl_s8(filter_s8);
@@ -230,6 +407,9 @@ struct QuantizedDepthwiseConvKernel<false, 2, 8> {
                   const int8* input_ptr, int16 input_offset,
                   int input_ptr_increment, const int8* filter_ptr,
                   int32* acc_buffer_ptr) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_3(mht_3_v, 410, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "Run");
+
     // Load the filters.
     int16x8_t filter[2];
     for (int i = 0; i < 2; i++) {
@@ -304,6 +484,9 @@ struct QuantizedDepthwiseConvKernel<false, 2, 2> {
                   const int8* input_ptr, int16 input_offset,
                   int input_ptr_increment, const int8* filter_ptr,
                   int32* acc_buffer_ptr) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_4(mht_4_v, 487, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "Run");
+
     // Load the filters.
     int8x8_t filter_s8 = vdup_n_s8(0);
     filter_s8 = vset_lane_s8(filter_ptr[0], filter_s8, 0);
@@ -367,6 +550,9 @@ struct QuantizedDepthwiseConvKernel<false, 2, 1> {
                   const int8* input_ptr, int16 input_offset,
                   int input_ptr_increment, const int8* filter_ptr,
                   int32* acc_buffer_ptr) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_5(mht_5_v, 553, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "Run");
+
     // Load the filters.
     int8x8_t filter_s8 = vdup_n_s8(0);
     filter_s8 = vset_lane_s8(filter_ptr[0], filter_s8, 0);
@@ -477,6 +663,9 @@ struct QuantizedDepthwiseConvKernel<false, 1, 2> {
                   const int8* input_ptr, int16 input_offset,
                   int input_ptr_increment, const int8* filter_ptr,
                   int32* acc_buffer_ptr) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_6(mht_6_v, 666, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "Run");
+
     // Load the filters.
     int8x8_t filter_s8 = vdup_n_s8(0);
     filter_s8 = vset_lane_s8(filter_ptr[0], filter_s8, 0);
@@ -535,6 +724,9 @@ struct QuantizedDepthwiseConvKernel<false, 1, 4> {
                   const int8* input_ptr, int16 input_offset,
                   int input_ptr_increment, const int8* filter_ptr,
                   int32* acc_buffer_ptr) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_7(mht_7_v, 727, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "Run");
+
     // Load the filters.
     int8x8_t filter_s8 = vdup_n_s8(0);
     filter_s8 = vset_lane_s8(filter_ptr[0], filter_s8, 0);
@@ -627,6 +819,9 @@ struct QuantizedDepthwiseConvKernel<false, 4, 1> {
                   const int8* input_ptr, int16 input_offset,
                   int input_ptr_increment, const int8* filter_ptr,
                   int32* acc_buffer_ptr) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_8(mht_8_v, 822, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "Run");
+
     // Load the filters.
     int8x8_t filter_s8 = vdup_n_s8(0);
     filter_s8 = vset_lane_s8(filter_ptr[0], filter_s8, 0);
@@ -694,6 +889,9 @@ struct QuantizedDepthwiseConvKernel<false, 4, 4> {
                   const int8* input_ptr, int16 input_offset,
                   int input_ptr_increment, const int8* filter_ptr,
                   int32* acc_buffer_ptr) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_9(mht_9_v, 892, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "Run");
+
     // Load the filters.
     int16x8_t filter[2];
     for (int i = 0; i < 2; i++) {
@@ -777,6 +975,9 @@ struct QuantizedDepthwiseConvKernel<true, 0, 3> {
                   const int8* input_ptr, int16 input_offset,
                   int input_ptr_increment, const int8* filter_ptr,
                   int32* acc_buffer_ptr) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_10(mht_10_v, 978, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "Run");
+
     // We will have to duplicate bytes in a NEON register, 3-fold.
     // We will do that by register-level table-look-up using VTBL instructions.
     // Here we prepare the registers containing the table-lookup indices.
@@ -860,6 +1061,9 @@ struct QuantizedDepthwiseConvKernel<true, 0, 2> {
                   const int8* input_ptr, int16 input_offset,
                   int input_ptr_increment, const int8* filter_ptr,
                   int32* acc_buffer_ptr) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_11(mht_11_v, 1064, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "Run");
+
     // Handle one output pixel at a time.
     for (int outp = 0; outp < num_output_pixels; outp++) {
       const int8* local_filter_ptr = filter_ptr;
@@ -923,6 +1127,9 @@ struct QuantizedDepthwiseConvKernel<true, 0, 1> {
                   const int8* input_ptr, int16 input_offset,
                   int input_ptr_increment, const int8* filter_ptr,
                   int32* acc_buffer_ptr) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_12(mht_12_v, 1130, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "Run");
+
     // Handle one output pixel at a time.
     for (int outp = 0; outp < num_output_pixels; outp++) {
       const int8* local_filter_ptr = filter_ptr;
@@ -1004,6 +1211,9 @@ struct QuantizedDepthwiseConvKernel<true, 16, 1> {
                   const int8* input_ptr, int16 input_offset,
                   int input_ptr_increment, const int8* filter_ptr,
                   int32* acc_buffer_ptr) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_13(mht_13_v, 1214, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "Run");
+
     // Load the filters.
     int8x8_t filter_s8[2];
     for (int i = 0; i < 2; i++) {
@@ -1055,6 +1265,9 @@ struct QuantizedDepthwiseConvKernel<true, 8, 1> {
                   const int8* input_ptr, int16 input_offset,
                   int input_ptr_increment, const int8* filter_ptr,
                   int32* acc_buffer_ptr) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_14(mht_14_v, 1268, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "Run");
+
     // Load the filters.
     const int8x8_t filter_s8 = vld1_s8(filter_ptr);
     const int16x8_t filter = vmovl_s8(filter_s8);
@@ -1088,6 +1301,9 @@ struct QuantizedDepthwiseConvKernel<true, 1, 16> {
                   const int8* input_ptr, int16 input_offset,
                   int input_ptr_increment, const int8* filter_ptr,
                   int32* acc_buffer_ptr) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_15(mht_15_v, 1304, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "Run");
+
     // Load the filters.
     int8x8_t filter_s8[2];
     for (int i = 0; i < 2; i++) {
@@ -1129,6 +1345,9 @@ struct QuantizedDepthwiseConvKernel<true, 1, 32> {
                   const int8* input_ptr, int16 input_offset,
                   int input_ptr_increment, const int8* filter_ptr,
                   int32* acc_buffer_ptr) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_16(mht_16_v, 1348, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "Run");
+
     // Load the filters.
     int8x8_t filter_s8_0 = vld1_s8(filter_ptr + 8 * 0);
     int8x8_t filter_s8_1 = vld1_s8(filter_ptr + 8 * 1);
@@ -1181,6 +1400,9 @@ struct QuantizedDepthwiseConvKernel<true, 1, 20> {
                   const int8* input_ptr, int16 input_offset,
                   int input_ptr_increment, const int8* filter_ptr,
                   int32* acc_buffer_ptr) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_17(mht_17_v, 1403, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "Run");
+
     // Load the filters.
     // NEON wants to load 8 bytes at a time, but 20 is not divisible by 8.
     // We load the first 16 bytes into filter_s8_{0,1} as usual.
@@ -1227,6 +1449,9 @@ struct QuantizedDepthwiseConvKernel<true, 1, 8> {
                   const int8* input_ptr, int16 input_offset,
                   int input_ptr_increment, const int8* filter_ptr,
                   int32* acc_buffer_ptr) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_18(mht_18_v, 1452, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "Run");
+
     // Load the filters.
     const int8x8_t filter_s8 = vld1_s8(filter_ptr);
     const int16x8_t filter = vmovl_s8(filter_s8);
@@ -1258,6 +1483,9 @@ struct QuantizedDepthwiseConvKernel<true, 2, 1> {
                   const int8* input_ptr, int16 input_offset,
                   int input_ptr_increment, const int8* filter_ptr,
                   int32* acc_buffer_ptr) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_19(mht_19_v, 1486, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "Run");
+
     // Load the filters.
     int8x8_t filter_s8 = vdup_n_s8(0);
     filter_s8 = vset_lane_s8(filter_ptr[0], filter_s8, 0);
@@ -1317,6 +1545,9 @@ struct QuantizedDepthwiseConvKernel<true, 4, 1> {
                   const int8* input_ptr, int16 input_offset,
                   int input_ptr_increment, const int8* filter_ptr,
                   int32* acc_buffer_ptr) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_20(mht_20_v, 1548, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "Run");
+
     if (num_output_pixels <= 0) {
       return;
     }
@@ -1377,6 +1608,9 @@ struct QuantizedDepthwiseConvKernel<false, 12, 1> {
                   const int8* input_ptr, int16 input_offset,
                   int input_ptr_increment, const int8* filter_ptr,
                   int32* acc_buffer_ptr) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_21(mht_21_v, 1611, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "Run");
+
     // Load the filters.
     int8x8_t filter_s8_0 = vld1_s8(filter_ptr);
     int8x8_t filter_s8_1 = vld1_s8(filter_ptr + 4);
@@ -1503,6 +1737,9 @@ inline void QuantizedDepthwiseConvAccumRowGeneric(
     int depth_multiplier, int filter_width, const int8* filter_data,
     int out_x_buffer_start, int out_x_buffer_end, int output_depth,
     int32* acc_buffer) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_22(mht_22_v, 1740, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "QuantizedDepthwiseConvAccumRowGeneric");
+
   ruy::profiler::ScopeLabel label("DepthwiseConvAccumRowGeneric (slow)");
   const int8* filter_base_ptr = filter_data;
   for (int filter_x = 0; filter_x < filter_width; ++filter_x) {
@@ -1539,6 +1776,9 @@ inline void QuantizedDepthwiseConvAccumRowGeneric(
 inline void DepthwiseConvInitAccBuffer(int num_output_pixels, int output_depth,
                                        const int32* bias_data,
                                        int32* acc_buffer) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_23(mht_23_v, 1779, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "DepthwiseConvInitAccBuffer");
+
   int i = 0;
 #ifdef USE_NEON
   if (output_depth == 1) {
@@ -1615,6 +1855,9 @@ inline void DepthwiseConvGeneral(
     const int8* filter_data, const RuntimeShape& bias_shape,
     const int32* bias_data, const RuntimeShape& output_shape, int8* output_data,
     int thread_start, int thread_end, int thread_dim) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_24(mht_24_v, 1858, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "DepthwiseConvGeneral");
+
   const int stride_width = params.stride_width;
   const int stride_height = params.stride_height;
   const int pad_width = params.padding_values.width;
@@ -1809,6 +2052,9 @@ inline void DepthwiseConvWithRounding(
     const int32* bias_data, const RuntimeShape& output_shape, int8* output_data,
     int thread_start, int thread_end, int thread_dim,
     const CpuBackendContext& cpu_backend_context) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_25(mht_25_v, 2055, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "DepthwiseConvWithRounding");
+
   ruy::profiler::ScopeLabel label("DepthwiseConvInt8/8bit");
   const int depth_multiplier = params.depth_multiplier;
   const int dilation_width_factor = params.dilation_width_factor;
@@ -1893,6 +2139,9 @@ inline void DepthwiseConvImpl(
     const int32* bias_data, const RuntimeShape& output_shape, int8* output_data,
     int thread_start, int thread_end, int thread_dim,
     const CpuBackendContext& cpu_backend_context) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_26(mht_26_v, 2142, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "DepthwiseConvImpl");
+
   return DepthwiseConvWithRounding<DepthwiseConvOutputRounding::kAwayFromZero>(
       params, output_multiplier, output_shift, input_shape, input_data,
       filter_shape, filter_data, bias_shape, bias_data, output_shape,
@@ -1925,9 +2174,15 @@ struct DepthwiseConvWorkerTask : cpu_backend_threadpool::Task {
         thread_start_(thread_start),
         thread_end_(thread_end),
         thread_dim_(thread_dim),
-        cpu_backend_context(cpu_backend_context_x) {}
+        cpu_backend_context(cpu_backend_context_x) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_27(mht_27_v, 2178, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "DepthwiseConvWorkerTask");
+}
 
   void Run() override {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_28(mht_28_v, 2183, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "Run");
+
     DepthwiseConvImpl(params_, output_multiplier_, output_shift_, input_shape_,
                       input_data_, filter_shape_, filter_data_, bias_shape_,
                       bias_data_, output_shape_, output_data_, thread_start_,
@@ -1955,6 +2210,9 @@ struct DepthwiseConvWorkerTask : cpu_backend_threadpool::Task {
 inline int HowManyConvThreads(const RuntimeShape& output_shape,
                               const RuntimeShape& filter_shape,
                               int thread_dim) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_29(mht_29_v, 2213, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "HowManyConvThreads");
+
   constexpr int kMinMulPerThread = 8;
   const int output_units = output_shape.Dims(thread_dim);
   const int filter_height = filter_shape.Dims(1);
@@ -1973,6 +2231,9 @@ inline void DepthwiseConvPerChannel(
     const int8* filter_data, const RuntimeShape& bias_shape,
     const int32* bias_data, const RuntimeShape& output_shape, int8* output_data,
     CpuBackendContext* cpu_backend_context) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSinteger_opsPSdepthwise_convDTh mht_30(mht_30_v, 2234, "", "./tensorflow/lite/kernels/internal/optimized/integer_ops/depthwise_conv.h", "DepthwiseConvPerChannel");
+
   ruy::profiler::ScopeLabel label("DepthwiseConvInt8");
   TFLITE_DCHECK_EQ(input_shape.DimensionsCount(), 4);
   TFLITE_DCHECK_EQ(filter_shape.DimensionsCount(), 4);

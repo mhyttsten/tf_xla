@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -159,6 +327,11 @@ const int64_t kMinDimensionToTransposeTiled = 16;
 void AnnotateWithInt32Value(std::string name, int64_t value,
                             const std::string& kernel_name,
                             llvm::Module* llvm_module) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("name: \"" + name + "\"");
+   mht_0_v.push_back("kernel_name: \"" + kernel_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_0(mht_0_v, 332, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "AnnotateWithInt32Value");
+
   llvm::NamedMDNode* nvvm_annotations_node =
       llvm_module->getOrInsertNamedMetadata("nvvm.annotations");
   llvm::Function* ir_kernel = llvm_module->getFunction(kernel_name.c_str());
@@ -177,6 +350,10 @@ void AnnotateWithInt32Value(std::string name, int64_t value,
 void AnnotateThunkLaunchDimensions(const LaunchDimensions& launch_dims,
                                    const std::string& kernel_name,
                                    llvm::Module* llvm_module) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("kernel_name: \"" + kernel_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_1(mht_1_v, 354, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "AnnotateThunkLaunchDimensions");
+
   // Add __launch_bounds__ to metadata. This limits registers per thread to
   // avoid out-of-resources launching errors.
 
@@ -196,6 +373,9 @@ void AnnotateThunkLaunchDimensions(const LaunchDimensions& launch_dims,
 
 bool BinarySearchDenseElementsAttr(mlir::DenseIntElementsAttr elements,
                                    int64_t v) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_2(mht_2_v, 376, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "BinarySearchDenseElementsAttr");
+
   mlir::APInt value(sizeof(int64_t) * 8, v, /*isSigned=*/true);
   return std::binary_search(
       elements.begin(), elements.end(), value,
@@ -203,6 +383,9 @@ bool BinarySearchDenseElementsAttr(mlir::DenseIntElementsAttr elements,
 }
 
 bool MhloOpIsElementwise(mlir::Operation* op) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_3(mht_3_v, 386, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "MhloOpIsElementwise");
+
   CHECK(op->getDialect() ==
         op->getContext()->getLoadedDialect<mlir::mhlo::MhloDialect>());
   auto opcode = *MhloToHloOpcode(op);
@@ -227,6 +410,9 @@ bool MhloOpIsElementwise(mlir::Operation* op) {
 }
 
 bool IsSingleInstructionFusion(mlir::lmhlo::FusionOp fusion) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_4(mht_4_v, 413, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IsSingleInstructionFusion");
+
   int instruction_count = 0;
   for (mlir::Operation& instr : fusion.region().front()) {
     if (mlir::isa<mlir::lmhlo::TerminatorOp, mlir::mhlo::ReturnOp,
@@ -240,6 +426,9 @@ bool IsSingleInstructionFusion(mlir::lmhlo::FusionOp fusion) {
 }
 
 bool MayPreventVectorization(mlir::Operation* op) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_5(mht_5_v, 429, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "MayPreventVectorization");
+
   // An empirically chosen constant: unrolling concat with a large amount of
   // arguments causes excessive register spilling.
   static constexpr int kMaxConcatArgumentsForUnrolling = 10;
@@ -285,6 +474,9 @@ bool MayPreventVectorization(mlir::Operation* op) {
 // Computes the maximum valid unroll factor for a given instruction.
 int ComputeMaxUnrollFactor(mlir::Type type,
                            const HloModuleConfig& hlo_module_config) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_6(mht_6_v, 477, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "ComputeMaxUnrollFactor");
+
   int max_unroll_factor =
       hlo_module_config.debug_options().xla_gpu_max_kernel_unroll_factor();
 
@@ -308,6 +500,9 @@ int ComputeMaxUnrollFactor(mlir::Type type,
 // Computes the maximum valid unroll factor for a given instruction.
 int ComputeMaxUnrollFactor(mlir::Operation* op,
                            const HloModuleConfig& hlo_module_config) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_7(mht_7_v, 503, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "ComputeMaxUnrollFactor");
+
   mlir::Type element_shape = [&] {
     if (auto fusion = mlir::dyn_cast<mlir::lmhlo::FusionOp>(op)) {
       return fusion.getFusionRoots()[0]->getResult(0).getType();
@@ -327,6 +522,9 @@ int ComputeMaxUnrollFactor(mlir::Operation* op,
 // Otherwise, the return type is i64.
 llvm::Type* GetIndexTypeForKernel(const HloInstruction* hlo,
                                   int64_t launch_size, llvm::IRBuilder<>* b) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_8(mht_8_v, 525, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "GetIndexTypeForKernel");
+
   // Find the unnested hlo instruction for which the kernel is generated for.
   const HloInstruction* unnested_hlo = hlo;
   const HloComputation* computation = hlo->parent();
@@ -335,6 +533,9 @@ llvm::Type* GetIndexTypeForKernel(const HloInstruction* hlo,
   }
 
   auto shape_in_range = [&](const Shape& s) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_9(mht_9_v, 536, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "lambda");
+
     bool in_range = true;
     ShapeUtil::ForEachSubshape(s, [&](const Shape& sub_shape,
                                       const ShapeIndex& /*index*/) {
@@ -381,7 +582,13 @@ llvm::Type* GetIndexTypeForKernel(const HloInstruction* hlo,
 // The same as GetIndexTypeForKernel, but works with MLIR ops.
 llvm::Type* GetIndexTypeForKernel(mlir::Operation* op, int64_t launch_size,
                                   llvm::IRBuilder<>* b) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_10(mht_10_v, 585, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "GetIndexTypeForKernel");
+
   auto shape_in_range = [&](const Shape& s) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_11(mht_11_v, 589, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "lambda");
+
     bool in_range = true;
     ShapeUtil::ForEachSubshape(s, [&](const Shape& sub_shape,
                                       const ShapeIndex& /*index*/) {
@@ -467,6 +674,9 @@ StatusOr<Shape> GetConsistentInputShapeForRootSlices(
 
 // Returns a sanitized (doesn't need quoting) identifier name from a location.
 std::string GetIrNameFromLoc(mlir::Location loc) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_12(mht_12_v, 677, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "GetIrNameFromLoc");
+
   return llvm_ir::SanitizeConstantName(mlir::GetNameFromLoc(loc));
 }
 
@@ -474,17 +684,27 @@ std::string GetIrNameFromLoc(mlir::Location loc) {
 
 IrEmitterUnnested::IrEmitterUnnested(const HloModuleConfig& hlo_module_config,
                                      IrEmitterContext* ir_emitter_context)
-    : IrEmitter(hlo_module_config, ir_emitter_context, /*is_nested=*/false) {}
+    : IrEmitter(hlo_module_config, ir_emitter_context, /*is_nested=*/false) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_13(mht_13_v, 688, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::IrEmitterUnnested");
+}
 
 StatusOr<std::unique_ptr<IrEmitterUnnested>> IrEmitterUnnested::Create(
     const HloModuleConfig& hlo_module_config,
     IrEmitterContext* ir_emitter_context) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_14(mht_14_v, 695, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::Create");
+
   return std::unique_ptr<IrEmitterUnnested>(
       new IrEmitterUnnested(hlo_module_config, ir_emitter_context));
 }
 
 llvm::Function* IrEmitterUnnested::BuildKernelPrototype(
     absl::string_view name, absl::Span<const BufferAllocation* const> args) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_15(mht_15_v, 705, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::BuildKernelPrototype");
+
   // Compute the kernel name. The opcode string may contain "-" which cannot be
   // in a PTX function name, so sanitize the name before uniquifying it.
   std::string kernel_name = ir_emitter_context_->name_uniquer()->GetUniqueName(
@@ -550,11 +770,17 @@ llvm::Function* IrEmitterUnnested::BuildKernelPrototype(
 
 StatusOr<BufferAllocation::Slice> IrEmitterUnnested::GetAllocationSlice(
     mlir::Value v, std::string* constant_name) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_16(mht_16_v, 773, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::GetAllocationSlice");
+
   return xla::gpu::GetAllocationSlice(v, ir_emitter_context_->allocations(),
                                       constant_name);
 }
 
 Status IrEmitterUnnested::EmitConstant(mlir::Operation* op) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_17(mht_17_v, 781, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitConstant");
+
   auto get_global = mlir::cast<mlir::memref::GetGlobalOp>(op);
   auto module = get_global->getParentOfType<mlir::ModuleOp>();
   auto global = mlir::cast<mlir::memref::GlobalOp>(
@@ -612,6 +838,9 @@ Status IrEmitterUnnested::EmitConstant(mlir::Operation* op) {
 
 static ConditionalThunkConfig GetConditionalThunkConfig(
     mlir::lmhlo::CaseOp op, std::vector<ThunkSequence> branch_thunk_sequences) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_18(mht_18_v, 841, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "GetConditionalThunkConfig");
+
   ConditionalThunkConfig config;
   config.branch_index_is_bool =
       op.index().getType().cast<mlir::ShapedType>().getElementType().isInteger(
@@ -629,6 +858,9 @@ static ConditionalThunkConfig GetConditionalThunkConfig(
 }
 
 Status IrEmitterUnnested::EmitConditional(mlir::Operation* op) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_19(mht_19_v, 861, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitConditional");
+
   auto conditional = mlir::cast<mlir::lmhlo::CaseOp>(op);
 
   std::vector<ThunkSequence> branch_thunks;
@@ -657,6 +889,9 @@ Status IrEmitterUnnested::EmitConditional(mlir::Operation* op) {
 llvm::Value* IrEmitterUnnested::CreateLoad(llvm::Value* address,
                                            llvm::Type* data_type,
                                            int alignment_bytes) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_20(mht_20_v, 892, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::CreateLoad");
+
   int data_bytes = data_type->getPrimitiveSizeInBits() /
                    primitive_util::BitWidth(PrimitiveType::U8);
   if (alignment_bytes == 0) {
@@ -686,6 +921,9 @@ llvm::Value* IrEmitterUnnested::CreateLoad(llvm::Value* address,
 
 void IrEmitterUnnested::CreateStore(llvm::Value* data, llvm::Value* address,
                                     int alignment_bytes) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_21(mht_21_v, 924, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::CreateStore");
+
   int data_bytes = data->getType()->getPrimitiveSizeInBits() /
                    primitive_util::BitWidth(PrimitiveType::U8);
   CHECK_GE(data_bytes, alignment_bytes);
@@ -716,6 +954,9 @@ void IrEmitterUnnested::CreateStore(llvm::Value* data, llvm::Value* address,
 // Input = {dynamic array(with dynamic dimension meta data at the end)}
 // Output = {static array, dynamic_dim0, dynamic_dim1}
 Status IrEmitterUnnested::EmitPadToStatic(mlir::Operation* op) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_22(mht_22_v, 957, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitPadToStatic");
+
   // TODO(jurahul): Create an op to represent PadToStatic.
   auto pad_to_static = mlir::cast<mlir::lmhlo::CustomCallOp>(op);
   int unroll_factor = 1;
@@ -838,6 +1079,9 @@ Status IrEmitterUnnested::EmitPadToStatic(mlir::Operation* op) {
 // Input = {dynamic array(with dynamic dimension meta data at the end)}
 // Output = {static array, dynamic_dim0, dynamic_dim1}
 Status IrEmitterUnnested::EmitSliceToDynamic(mlir::Operation* op) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_23(mht_23_v, 1082, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitSliceToDynamic");
+
   // TODO(jurahul): Create an op to represent SliceToDynamic.
   auto slice_to_dynamic = mlir::cast<mlir::lmhlo::CustomCallOp>(op);
   int unroll_factor = 1;
@@ -954,6 +1198,9 @@ Status IrEmitterUnnested::EmitSliceToDynamic(mlir::Operation* op) {
 }
 
 Status IrEmitterUnnested::EmitConvolutionThunk(mlir::Operation* op) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_24(mht_24_v, 1201, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitConvolutionThunk");
+
   using mlir::dyn_cast;
   using mlir::lmhlo_gpu::Activation;
   using mlir::lmhlo_gpu::ConvBackwardFilterOp;
@@ -987,6 +1234,9 @@ Status IrEmitterUnnested::EmitConvolutionThunk(mlir::Operation* op) {
   }
 
   auto apply_layout = [](const Shape& shape, mlir::ArrayAttr layout_attrib) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_25(mht_25_v, 1237, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "lambda");
+
     mlir::SmallVector<int64_t, 4> minor_to_major = llvm::to_vector<4>(
         llvm::map_range(layout_attrib, [](mlir::Attribute a) -> int64_t {
           return static_cast<int64_t>(a.cast<mlir::IntegerAttr>().getInt());
@@ -998,6 +1248,9 @@ Status IrEmitterUnnested::EmitConvolutionThunk(mlir::Operation* op) {
   GpuConvDescriptor descriptor;
 
   auto fill_conv_descriptor = [&](auto op) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_26(mht_26_v, 1251, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "lambda");
+
     descriptor.operand0_shape = apply_layout(
         GetShape(op->getOperand(0)), op.backend_config().operand_0_layout());
     descriptor.operand1_shape = apply_layout(
@@ -1096,6 +1349,9 @@ Status IrEmitterUnnested::EmitConvolutionThunk(mlir::Operation* op) {
 }
 
 Status IrEmitterUnnested::EmitGemmThunk(mlir::Operation* op) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_27(mht_27_v, 1352, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitGemmThunk");
+
   auto make_bef_thunk =
       [&](auto op, absl::optional<BufferAllocation::Slice> bias =
                        absl::nullopt) -> StatusOr<std::unique_ptr<Thunk>> {
@@ -1140,6 +1396,9 @@ Status IrEmitterUnnested::EmitGemmThunk(mlir::Operation* op) {
     auto mlir_dims = op.dot_dimension_numbers();
 
     auto fill_dims = [](llvm::ArrayRef<int64_t> mlir_dim, auto* config_attrs) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_28(mht_28_v, 1399, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "lambda");
+
       for (int64_t e : mlir_dim) config_attrs->Add(e);
     };
     fill_dims(mlir_dims.getLhsBatchingDimensions(),
@@ -1215,6 +1474,9 @@ struct NamedValue {
 // rank.
 std::pair<bool, int> RowVectorizationEnabled(mlir::lmhlo::FusionOp fusion) {
   const auto is_row_major = [](mlir::Value value) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_29(mht_29_v, 1477, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "lambda");
+
     // Only tested when the inputs are row-major. So only
     // enable that case. Maybe it would works if only the
     // inner dimensions is contiguous.
@@ -1293,7 +1555,10 @@ Status IrEmitterUnnested::EmitCholeskyThunk(mlir::Operation* op) {
   const auto& dims = shape.dimensions();
   int64_t batch_size =
       std::accumulate(dims.begin(), dims.end() - 2, int64_t{1},
-                      [](int64_t a, int64_t b) { return a * b; });
+                      [](int64_t a, int64_t b) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_30(mht_30_v, 1559, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "lambda");
+ return a * b; });
 
   TF_ASSIGN_OR_RETURN(auto operand_buffer,
                       GetAllocationSlice(cholesky_op.input()));
@@ -1440,6 +1705,10 @@ Status IrEmitterUnnested::EmitCustomCallThunk(mlir::Operation* op) {
                                            void** buffers, const char* opaque,
                                            size_t opaque_len,
                                            XlaCustomCallStatus*) {
+   std::vector<std::string> mht_31_v;
+   mht_31_v.push_back("opaque: \"" + (opaque == nullptr ? std::string("nullptr") : std::string((char*)opaque)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_31(mht_31_v, 1709, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "lambda");
+
           auto typed_call_target =
               reinterpret_cast<original_call_type>(call_target);
           typed_call_target(stream, buffers, opaque, opaque_len);
@@ -1467,6 +1736,9 @@ Status IrEmitterUnnested::EmitCustomCallThunk(mlir::Operation* op) {
 }
 
 Status IrEmitterUnnested::EmitFftThunk(mlir::Operation* op) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_32(mht_32_v, 1739, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitFftThunk");
+
   auto fft_op = mlir::cast<mlir::lmhlo::FftOp>(op);
   const Shape operand_shape = GetShape(fft_op.operand());
   const Shape output_shape = GetShape(fft_op.output());
@@ -1566,7 +1838,10 @@ Status IrEmitterUnnested::EmitTriangularSolveCustomCall(mlir::Operation* op) {
   int64_t n = b_shape.dimensions(b_shape.rank() - 1);
   int64_t batch_size = std::accumulate(
       b_shape.dimensions().begin(), b_shape.dimensions().end() - 2, int64_t{1},
-      [](int64_t a, int64_t b) { return a * b; });
+      [](int64_t a, int64_t b) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_33(mht_33_v, 1842, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "lambda");
+ return a * b; });
   int64_t elem_size = ShapeUtil::ByteSizeOfPrimitiveType(elem_ty);
   int64_t a_batch_stride =
       backend_config.left_side() ? m * m * elem_size : n * n * elem_size;
@@ -1651,6 +1926,9 @@ static Status ProcessFusionForConversion(mlir::Region* region,
 // This is migrated from IrEmitter::HandleFusion() with IrEmitterUnnested as the
 // subclass. The logic is de-virtualized and less scattered.
 Status IrEmitterUnnested::EmitLoopFusion(mlir::Operation* op) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_34(mht_34_v, 1929, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitLoopFusion");
+
   auto fusion = mlir::cast<mlir::lmhlo::FusionOp>(op);
 
   TF_ASSIGN_OR_RETURN(const HloComputation* fused_computation,
@@ -1756,12 +2034,18 @@ Status IrEmitterUnnested::EmitLoopFusion(mlir::Operation* op) {
 
 // Returns whether any of the rooots of the fusion are unnested reductions.
 static bool HasAnyUnnestedReductionRoot(mlir::lmhlo::FusionOp fusion) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_35(mht_35_v, 2037, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "HasAnyUnnestedReductionRoot");
+
   return absl::c_any_of(fusion.getFusionRoots(), [&](mlir::Operation* op) {
     return IsReductionFromOrToContiguousDimensions(op);
   });
 }
 
 Status IrEmitterUnnested::EmitFusion(mlir::Operation* op) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_36(mht_36_v, 2046, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitFusion");
+
   auto fusion_op = mlir::cast<mlir::lmhlo::FusionOp>(op);
   const bool is_single_instruction = IsSingleInstructionFusion(fusion_op);
 
@@ -1885,6 +2169,9 @@ Status IrEmitterUnnested::EmitFusion(mlir::Operation* op) {
       TF_ASSIGN_OR_RETURN(desc.updates_gen, scatter_fused_emitter.GetGenerator(
                                                 *root->operand(2)));
       desc.get_index_type = [&](int64_t launch_size) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_37(mht_37_v, 2172, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "lambda");
+
         return GetIndexTypeForKernel(root, launch_size, &b_);
       };
 
@@ -1993,6 +2280,9 @@ Status IrEmitterUnnested::EmitExtraOutputsForReduce(
     const ReductionOutputMap& result_ir_arrays, const IrArray::Index& index,
     const ReductionCodegenInfo& reduction_info,
     const ExtraOutputGensMap& extra_output_gens) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_38(mht_38_v, 2283, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitExtraOutputsForReduce");
+
   // Compute all extra output values before writing them. This avoids
   // overwriting aliased input/output buffers before all reads occured.
   absl::flat_hash_map<const HloInstruction*, llvm::Value*>
@@ -2014,6 +2304,10 @@ Status IrEmitterUnnested::EmitExtraOutputsForReduce(
 
 Status IrEmitterUnnested::AssertNonDeterminismIsOkay(
     const std::string& op_name) {
+   std::vector<std::string> mht_39_v;
+   mht_39_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_39(mht_39_v, 2308, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::AssertNonDeterminismIsOkay");
+
   if (hlo_module_config_.debug_options().xla_gpu_deterministic_ops()) {
     return Unimplemented(
         "HLO instruction %s does not have a deterministic implementation, "
@@ -2025,6 +2319,9 @@ Status IrEmitterUnnested::AssertNonDeterminismIsOkay(
 }
 
 Status IrEmitterUnnested::EmitSelectAndScatter(mlir::Operation* op) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_40(mht_40_v, 2322, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitSelectAndScatter");
+
   auto select_and_scatter_op = mlir::cast<mlir::lmhlo::SelectAndScatterOp>(op);
 
   const Shape source_shape = GetShape(select_and_scatter_op.source());
@@ -2172,6 +2469,9 @@ Status IrEmitterUnnested::EmitSelectAndScatter(mlir::Operation* op) {
     // with the currently visiting operand.
     llvm_ir::SetToFirstInsertPoint(if_initialized.false_block, &b_);
     const auto save_operand_index = [&](const IrArray::Index& operand_index) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_41(mht_41_v, 2472, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "lambda");
+
       for (int64_t i = 0; i < rank; ++i) {
         llvm::Value* selected_index_address_slot =
             InBoundsGEP(selected_index_address, {b_.getInt32(i)});
@@ -2257,6 +2557,9 @@ Status IrEmitterUnnested::EmitSelectAndScatter(mlir::Operation* op) {
 }
 
 Status IrEmitterUnnested::EmitWhile(mlir::Operation* op) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_42(mht_42_v, 2560, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitWhile");
+
   auto while_op = mlir::cast<mlir::lmhlo::WhileOp>(op);
 
   auto cond_result = GetHloOutputs(while_op);
@@ -2282,6 +2585,9 @@ Status IrEmitterUnnested::EmitWhile(mlir::Operation* op) {
 }
 
 Status IrEmitterUnnested::EmitRngGetAndUpdateState(mlir::Operation* op) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_43(mht_43_v, 2588, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitRngGetAndUpdateState");
+
   auto rng_op = mlir::dyn_cast<mlir::lmhlo::RngGetAndUpdateStateOp>(op);
 
   // Emit a kernel to increment the global state for Philox RNG algorithm.
@@ -2310,6 +2616,9 @@ Status IrEmitterUnnested::EmitRngGetAndUpdateState(mlir::Operation* op) {
 }
 
 Status IrEmitterUnnested::EmitScatter(mlir::Operation* op) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_44(mht_44_v, 2619, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitScatter");
+
   ThunkSequence thunks;
 
   auto scatter_op = mlir::cast<mlir::lmhlo::ScatterOp>(op);
@@ -2355,6 +2664,9 @@ Status IrEmitterUnnested::EmitScatter(mlir::Operation* op) {
   const IrArray& output = ir_arrays[2];
 
   auto get_index_type = [&](int64_t launch_size) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_45(mht_45_v, 2667, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "lambda");
+
     return GetIndexTypeForKernel(scatter_op, launch_size, &b_);
   };
 
@@ -2367,6 +2679,9 @@ Status IrEmitterUnnested::EmitScatter(mlir::Operation* op) {
       },
       /*updates_gen=*/
       [&](const IrArray::Index& index) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_46(mht_46_v, 2682, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "lambda");
+
         return updates.EmitReadArrayElement(index, &b_, "update");
       },
       /* get_index_type=*/
@@ -2389,6 +2704,9 @@ Status IrEmitterUnnested::EmitScatter(
     const llvm_ir::ElementGenerator& scatter_indices_gen,
     const llvm_ir::ElementGenerator& updates_gen,
     std::function<llvm::Type*(int64_t)> get_index_type) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_47(mht_47_v, 2707, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitScatter");
+
   const Shape operand_shape = GetShape(scatter.operand());
   CHECK(ShapeUtil::Equal(GetShape(scatter.output()), operand_shape));
 
@@ -2415,6 +2733,9 @@ Status IrEmitterUnnested::EmitScatter(
 Status IrEmitterUnnested::EmitScatter(
     const ScatterDescriptor& desc, Thunk* thunk,
     const LaunchDimensions& launch_dimensions) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_48(mht_48_v, 2736, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitScatter");
+
   if (!desc.unique_indices) {
     TF_RETURN_IF_ERROR(AssertNonDeterminismIsOkay(desc.name));
   }
@@ -2550,6 +2871,9 @@ Status IrEmitterUnnested::EmitScatter(
 StatusOr<HloComputation*>
 IrEmitterUnnested::GetOrCreateSubComputationFromRegion(mlir::Region* region,
                                                        bool is_fusion) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_49(mht_49_v, 2874, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::GetOrCreateSubComputationFromRegion");
+
   std::unique_ptr<HloModule>& module = scratch_nested_computations_[region];
   if (module == nullptr) {
     std::vector<Shape> operand_shapes, output_shapes;
@@ -2661,6 +2985,9 @@ IrEmitterUnnested::GetOrCreateSubComputationFromRegion(mlir::Region* region,
 }
 
 Status IrEmitterUnnested::EmitSort(mlir::Operation* op) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_50(mht_50_v, 2988, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitSort");
+
   auto sort_op = mlir::cast<mlir::lmhlo::SortOp>(op);
   ThunkSequence thunks;
 
@@ -2790,6 +3117,9 @@ Status IrEmitterUnnested::EmitSort(mlir::Operation* op) {
 
   std::vector<llvm_ir::IrArray> ir_arrays;
   auto emit_kernel = [&](absl::Span<const int64_t> xor_masks) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_51(mht_51_v, 3120, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "lambda");
+
     VLOG(2) << absl::StreamFormat(
         "%s uses kernel for xor masks [%s]", op_name,
         absl::StrJoin(xor_masks, ", ", [](std::string* out, int64_t xor_mask) {
@@ -2870,6 +3200,9 @@ Status IrEmitterUnnested::EmitReplicaOrPartitionId(mlir::Operation* op) {
 }
 
 Status IrEmitterUnnested::EmitCollectivePermute(mlir::Operation* op) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_52(mht_52_v, 3203, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitCollectivePermute");
+
   auto collective_permute_op = mlir::cast<mlir::lmhlo::CollectivePermuteOp>(op);
 
   TF_ASSIGN_OR_RETURN(BufferAllocation::Slice source_slice,
@@ -2915,6 +3248,9 @@ Status MaybeAddAllReduceStartThunkToMap(
     absl::flat_hash_map<mlir::Operation*, NcclAllReduceStartThunk*>&
         all_reduce_start_thunks,
     mlir::Operation* op, Thunk* thunk) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_53(mht_53_v, 3251, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "MaybeAddAllReduceStartThunkToMap");
+
   if (mlir::isa<mlir::lmhlo_gpu::AllReduceStartOp>(op)) {
     TF_RET_CHECK(all_reduce_start_thunks
                      .emplace(op, static_cast<NcclAllReduceStartThunk*>(thunk))
@@ -3033,6 +3369,9 @@ Status IrEmitterUnnested::EmitNcclThunk(mlir::Operation* untyped_op) {
 }
 
 Status IrEmitterUnnested::EmitAllReduceDone(mlir::Operation* op) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_54(mht_54_v, 3372, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitAllReduceDone");
+
   auto done_op = mlir::cast<mlir::lmhlo_gpu::AllReduceDoneOp>(op);
   auto start_op =
       done_op.token().getDefiningOp<mlir::lmhlo_gpu::AllReduceStartOp>();
@@ -3052,6 +3391,9 @@ Status IrEmitterUnnested::EmitAllReduceDone(mlir::Operation* op) {
 
 StatusOr<std::vector<ShapedSlice>> IrEmitterUnnested::GetShapedSlices(
     mlir::Operation::operand_range operands) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_55(mht_55_v, 3394, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::GetShapedSlices");
+
   std::vector<ShapedSlice> shaped_slices;
   shaped_slices.reserve(operands.size());
   for (mlir::Value opnd : operands) {
@@ -3063,6 +3405,9 @@ StatusOr<std::vector<ShapedSlice>> IrEmitterUnnested::GetShapedSlices(
 
 StatusOr<std::vector<BufferAllocation::Slice>> IrEmitterUnnested::GetSlices(
     mlir::Operation::operand_range operands) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_56(mht_56_v, 3408, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::GetSlices");
+
   std::vector<BufferAllocation::Slice> slices;
   slices.reserve(operands.size());
   for (mlir::Value opnd : operands) {
@@ -3073,6 +3418,9 @@ StatusOr<std::vector<BufferAllocation::Slice>> IrEmitterUnnested::GetSlices(
 }
 
 Status IrEmitterUnnested::EmitInfeed(mlir::Operation* op) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_57(mht_57_v, 3421, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitInfeed");
+
   mlir::Operation::operand_range operands =
       mlir::cast<mlir::lmhlo::InfeedOp>(op).outputs();
   std::unique_ptr<Thunk> thunk;
@@ -3091,6 +3439,9 @@ Status IrEmitterUnnested::EmitInfeed(mlir::Operation* op) {
 }
 
 Status IrEmitterUnnested::EmitOutfeed(mlir::Operation* op) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_58(mht_58_v, 3442, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitOutfeed");
+
   mlir::Operation::operand_range operands =
       mlir::cast<mlir::lmhlo::OutfeedOp>(op).operands();
   std::unique_ptr<Thunk> thunk;
@@ -3113,6 +3464,10 @@ StatusOr<std::unique_ptr<Thunk>> IrEmitterUnnested::BuildKernelThunkImpl(
     absl::Span<const BufferSlice> slices,
     std::vector<llvm_ir::IrArray>* ir_arrays,
     const LaunchDimensions& launch_dimensions) {
+   std::vector<std::string> mht_59_v;
+   mht_59_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_59(mht_59_v, 3468, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::BuildKernelThunkImpl");
+
   // Figure out which buffer allocations need to be passed as arguments to our
   // kernel.  This is simply all of the allocations referenced in slices,
   // plus the XLA temp buffer (if we have it).  We always include the temp
@@ -3234,6 +3589,9 @@ StatusOr<std::unique_ptr<Thunk>> IrEmitterUnnested::BuildKernelThunk(
     mlir::Operation* op, mlir::ValueRange operands, Thunk::ThunkInfo thunk_info,
     std::vector<llvm_ir::IrArray>* ir_arrays,
     const LaunchDimensions& launch_dimensions) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_60(mht_60_v, 3592, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::BuildKernelThunk");
+
   TF_RET_CHECK(!mlir::isa<mlir::lmhlo::FusionOp>(op));
 
   std::vector<BufferSlice> slices;
@@ -3255,6 +3613,9 @@ StatusOr<std::unique_ptr<Thunk>> IrEmitterUnnested::BuildKernelThunk(
     mlir::Operation* op, Thunk::ThunkInfo thunk_info,
     std::vector<llvm_ir::IrArray>* ir_arrays,
     const LaunchDimensions& launch_dimensions) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_61(mht_61_v, 3616, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::BuildKernelThunk");
+
   if (auto fusion = mlir::dyn_cast<mlir::lmhlo::FusionOp>(op)) {
     auto operands = GetHloOperands(op);
     auto outputs = GetHloOutputs(op);
@@ -3288,6 +3649,9 @@ StatusOr<std::unique_ptr<Thunk>> IrEmitterUnnested::BuildKernelThunk(
 std::unique_ptr<Thunk> IrEmitterUnnested::BuildConstantInitializerThunk(
     absl::Span<const uint8_t> init_value, const BufferAllocation::Slice& dest,
     const Shape& output_shape) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_62(mht_62_v, 3652, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::BuildConstantInitializerThunk");
+
   int64_t num_bytes = init_value.size();
   if (absl::c_all_of(init_value, [](uint8_t byte) { return byte == 0; })) {
     return absl::make_unique<MemzeroThunk>(Thunk::ThunkInfo(), dest);
@@ -3327,6 +3691,9 @@ std::unique_ptr<Thunk> IrEmitterUnnested::BuildConstantInitializerThunk(
 StatusOr<std::unique_ptr<Thunk>>
 IrEmitterUnnested::TryBuildConstantInitializerThunk(mlir::Value init_value,
                                                     mlir::Value dest) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_63(mht_63_v, 3694, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::TryBuildConstantInitializerThunk");
+
   mlir::DenseElementsAttr const_init;
   if (auto get_global_memref =
           mlir::dyn_cast_or_null<mlir::memref::GetGlobalOp>(
@@ -3365,6 +3732,9 @@ IrEmitterUnnested::TryBuildConstantInitializerThunk(mlir::Value init_value,
 
 StatusOr<std::unique_ptr<Thunk>> IrEmitterUnnested::BuildInitializerThunk(
     mlir::Operation* op, mlir::Value init_value, mlir::Value dest) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_64(mht_64_v, 3735, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::BuildInitializerThunk");
+
   // initial value must be a scalar memref.
   auto init_type = init_value.getType().dyn_cast<mlir::MemRefType>();
   TF_RET_CHECK(init_type.getRank() == 0);
@@ -3403,6 +3773,9 @@ StatusOr<std::unique_ptr<Thunk>> IrEmitterUnnested::BuildInitializerThunk(
 
 StatusOr<std::unique_ptr<Thunk>> IrEmitterUnnested::BuildFusedInitializerThunk(
     mlir::lmhlo::FusionOp fusion, int output_index) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_65(mht_65_v, 3776, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::BuildFusedInitializerThunk");
+
   auto reduce = mlir::dyn_cast_or_null<mlir::mhlo::ReduceOp>(
       fusion.getFusionRoots()[output_index]);
 
@@ -3465,6 +3838,9 @@ StatusOr<std::unique_ptr<Thunk>> IrEmitterUnnested::BuildFusedInitializerThunk(
 
 StatusOr<std::unique_ptr<Thunk>> IrEmitterUnnested::BuildWhileThunk(
     mlir::lmhlo::WhileOp while_op, const Thunk::ThunkInfo& thunk_info) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_66(mht_66_v, 3841, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::BuildWhileThunk");
+
   // Generate thunk sequence for while 'condition'.
   mlir::Region* condition = &while_op.cond();
   TF_ASSIGN_OR_RETURN(
@@ -3497,6 +3873,9 @@ StatusOr<std::unique_ptr<Thunk>> IrEmitterUnnested::BuildWhileThunk(
 StatusOr<std::unique_ptr<Thunk>> IrEmitterUnnested::BuildForThunk(
     mlir::lmhlo::WhileOp while_op, const Thunk::ThunkInfo& thunk_info,
     const int64_t loop_limit) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_67(mht_67_v, 3876, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::BuildForThunk");
+
   // Generate thunk sequence for while 'body' (will be used a For loop body).
   TF_ASSIGN_OR_RETURN(
       auto ir_emitter_body,
@@ -3509,6 +3888,9 @@ StatusOr<std::unique_ptr<Thunk>> IrEmitterUnnested::BuildForThunk(
 
 Status IrEmitterUnnested::EmitTargetElementLoop(
     const HloInstruction& hlo, const llvm_ir::ElementGenerator& body_emitter) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_68(mht_68_v, 3891, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitTargetElementLoop");
+
   return InternalError("This should be unreachable");
 }
 
@@ -3518,6 +3900,9 @@ static llvm::Value* GetStartOffsetX(const TilingScheme& tiling_scheme,
                                     llvm::Value* thread_id_x,
                                     llvm::Type* index_ty,
                                     llvm::IRBuilder<>* b) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_69(mht_69_v, 3903, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "GetStartOffsetX");
+
   int64_t multiplier = tiling_scheme.GetIndexingOrder() == kStridedIndexingX
                            ? tiling_scheme.GetVectorSize()
                            : tiling_scheme.GetTileSizeFor(kDimX);
@@ -3544,9 +3929,15 @@ static void EmitXTileLoop(
     std::array<llvm::Value*, 3> tile_dimensions,
     const IrArray::Index& source_idx, llvm::IRBuilder<>* b,
     const IrEmitterUnnested::EmitElementFunction* emit_elem_function) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_70(mht_70_v, 3932, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "EmitXTileLoop");
+
   llvm::Type* index_ty = tile_dimensions[kDimX]->getType();
   KernelSupportLibrary ksl(b, llvm_ir::UnrollMode::kDefaultUnroll);
   auto constant = [&](int64_t val) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_71(mht_71_v, 3938, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "lambda");
+
     return llvm::ConstantInt::get(index_ty, val);
   };
 
@@ -3591,8 +3982,14 @@ void IrEmitterUnnested::EmitTile(
     const ThreadIdInfo& thread_id_info,
     std::array<llvm::Value*, 3> tile_dimensions,
     const IrEmitterUnnested::EmitElementFunction& emit_elem_function) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_72(mht_72_v, 3985, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitTile");
+
   llvm::Type* index_ty = tile_dimensions[kDimY]->getType();
   auto constant = [&](int64_t val) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_73(mht_73_v, 3990, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "lambda");
+
     return llvm::ConstantInt::get(index_ty, val);
   };
   llvm::Value* num_threads_y = constant(tiling_scheme.GetNumThreadsFor(kDimY));
@@ -3610,6 +4007,9 @@ void IrEmitterUnnested::EmitTile(
       tile_dimensions[kDimY],
       /*step=*/num_threads_y, [&](llvm::Value* y_loc) {
         auto unroll_inner_tile_loop = [&](bool check_x_tile_bounds) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_74(mht_74_v, 4010, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "lambda");
+
           return EmitXTileLoop(thread_id_info, tiling_scheme,
                                check_x_tile_bounds, start_offset_x, y_loc,
                                tile_dimensions, source_idx, &b_,
@@ -3638,6 +4038,9 @@ static IrArray::Index GetUnnormalizedIndex(
     const IrArray::Index& normalized_shape_index,
     const Shape& unnormalized_shape, llvm::IRBuilder<>* b_,
     const TilingScheme& tiling_scheme) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_75(mht_75_v, 4041, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "GetUnnormalizedIndex");
+
   DCHECK_EQ(normalized_shape_index.size(), 3);
   // If the normalization only add a new dimensions of size 1,
   // generate simpler indexing. LLVM doesn't always simplify the more
@@ -3680,6 +4083,9 @@ void IrEmitterUnnested::EmitTileElementForFusion(
     const llvm_ir::IrArray::Index& index, const TilingScheme& tiling_scheme,
     llvm::Value* y_loc, llvm::Value* x_loc,
     absl::Span<llvm::Value* const> param_shmem_buffers) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_76(mht_76_v, 4086, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitTileElementForFusion");
+
   const HloComputation* fused_computation =
       *GetOrCreateSubComputationFromRegion(&fusion.region(),
                                            /*is_fusion=*/true);
@@ -3691,6 +4097,9 @@ void IrEmitterUnnested::EmitTileElementForFusion(
     if (llvm::Value* param_tile_buffer = param_shmem_buffers[i]) {
       gen = [this, param_tile_buffer, x_loc, y_loc,
              thread_id_info](llvm_ir::IrArray::Index index) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_77(mht_77_v, 4100, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "lambda");
+
         // TODO(jlebar): Add AA metadata to this load.  Tile buffers are
         // global variables, so LLVM's points-to analysis doesn't help us
         // much.  And we want the AA info to be present before address
@@ -3705,6 +4114,9 @@ void IrEmitterUnnested::EmitTileElementForFusion(
       auto array = operand_arrays[i];
       auto name = fused_computation->parameter_instruction(i)->name();
       gen = [this, array, name](const llvm_ir::IrArray::Index& index) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_78(mht_78_v, 4117, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "lambda");
+
         return array.EmitReadArrayElement(index, &b_, name);
       };
     }
@@ -3730,6 +4142,9 @@ void IrEmitterUnnested::EmitTileElementForFusion(
 }
 
 static int GetNumOutputs(const Shape& shape) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_79(mht_79_v, 4145, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "GetNumOutputs");
+
   if (shape.IsTuple()) {
     return shape.tuple_shapes_size();
   }
@@ -3740,6 +4155,9 @@ ReductionCodegenState IrEmitterUnnested::GenerateReductionCodegenState(
     mlir::lmhlo::FusionOp fusion, const ReductionCodegenInfo& reduction_info,
     absl::Span<const HloReduceInstruction* const> reduce_instr_index_group,
     HloComputation* fused_computation, FusedIrEmitter* fused_emitter) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_80(mht_80_v, 4158, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::GenerateReductionCodegenState");
+
   ReductionCodegenState reduction_codegen_state(reduction_info);
   VLOG(10) << "Emit prologue for reduction: " << MlirToString(fusion);
 
@@ -3816,6 +4234,9 @@ void IrEmitterUnnested::EmitFullWarpShuffleDownLoopForReduce(
     const HloComputation* reducer,
     absl::Span<llvm::Value* const> partial_result_addresses,
     int threads_per_block) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_81(mht_81_v, 4237, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitFullWarpShuffleDownLoopForReduce");
+
   // This only works when the block size is a multiple of 32 threads.
 
   // We check this here as a mistake in the number of threads per
@@ -3843,6 +4264,9 @@ void IrEmitterUnnested::EmitFullWarpShuffleDownLoopForReduce(
       llvm::Type* shuffled_value_type =
           element_type->isStructTy() ? b_.getIntNTy(bit_width) : element_type;
       auto convert_pointer_for_shuffle = [&](llvm::Value* ptr) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_82(mht_82_v, 4267, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "lambda");
+
         return b_.CreatePointerBitCastOrAddrSpaceCast(
             ptr, shuffled_value_type->getPointerTo());
       };
@@ -3874,6 +4298,9 @@ llvm::Value* IrEmitterUnnested::GetOutputAddressForReduction(
     const TilingKernelInfo& tiling_kernel_info,
     const IrEmitterUnnested::ReductionOutputMap& output_arrays,
     const HloReduceInstruction* reduction, int output_idx) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_83(mht_83_v, 4301, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::GetOutputAddressForReduction");
+
   auto constant = [&](uint64_t c) -> llvm::Constant* {
     return llvm::ConstantInt::get(index_ty, c);
   };
@@ -3939,6 +4366,9 @@ llvm::Value* IrEmitterUnnested::GetOutputAddressForReduction(
 
 llvm::Value* IrEmitterUnnested::EmitBlockId(int32_t num_blocks,
                                             llvm::Type* index_ty) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_84(mht_84_v, 4369, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitBlockId");
+
   llvm::Value* block_id = gpu::EmitCallToTargetIntrinsic(
       gpu::TargetIntrinsicID::kBlockIdx, {}, {}, &b_);
   if (num_blocks != 0) {
@@ -3954,6 +4384,10 @@ void IrEmitterUnnested::EmitPrintfWithThreadId(
     absl::string_view fmt, absl::Span<llvm::Value* const> arguments,
     absl::optional<int64_t> thread_id_filter,
     absl::optional<int64_t> block_id_filter) {
+   std::vector<std::string> mht_85_v;
+   mht_85_v.push_back("fmt: \"" + std::string(fmt.data(), fmt.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_85(mht_85_v, 4388, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitPrintfWithThreadId");
+
   llvm::Value* thread_id = EmitThreadId(
       /*threads_per_block=*/1024, b_.getInt32Ty());
   llvm::Value* block_id = EmitBlockId(0, b_.getInt32Ty());
@@ -3978,6 +4412,9 @@ void IrEmitterUnnested::EmitPrintfWithThreadId(
 
 llvm::Value* IrEmitterUnnested::CastSharedToGlobal(llvm::Value* input,
                                                    llvm::Twine name) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_86(mht_86_v, 4415, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::CastSharedToGlobal");
+
   return b_.CreateAddrSpaceCast(
       input,
       llvm::PointerType::get(input->getType()->getPointerElementType(),
@@ -3990,12 +4427,18 @@ void IrEmitterUnnested::EmitReductionOutputForRowReduction(
     const ReductionCodegenState& reduction_codegen_state, llvm::Type* index_ty,
     const ReductionOutputMap& output_arrays,
     const HloReduceInstruction* reduction, int partial_result_idx) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_87(mht_87_v, 4430, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitReductionOutputForRowReduction");
+
   const HloComputation* reducer = reduction->to_apply();
   const auto& thread_id_info = tiling_kernel_info.thread_id_info;
   auto constant = [&](uint64_t c) -> llvm::Constant* {
     return llvm::ConstantInt::get(index_ty, c);
   };
   auto is_zero = [&](llvm::Value* value) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_88(mht_88_v, 4439, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "lambda");
+
     return b_.CreateICmpEQ(value, constant(0));
   };
 
@@ -4084,6 +4527,9 @@ void IrEmitterUnnested::EmitReductionOutputForColumnReduction(
     const ReductionCodegenState& reduction_codegen_state, llvm::Type* index_ty,
     const ReductionOutputMap& output_arrays,
     const HloReduceInstruction* reduction, int partial_result_idx) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_89(mht_89_v, 4530, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitReductionOutputForColumnReduction");
+
   KernelSupportLibrary ksl(&b_);
   const HloComputation* reducer = reduction->to_apply();
   const auto& thread_id_info = tiling_kernel_info.thread_id_info;
@@ -4092,6 +4538,9 @@ void IrEmitterUnnested::EmitReductionOutputForColumnReduction(
     return llvm::ConstantInt::get(index_ty, c);
   };
   auto is_zero = [&](llvm::Value* value) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_90(mht_90_v, 4541, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "lambda");
+
     return b_.CreateICmpEQ(value, constant(0));
   };
   const TilingScheme& tiling_scheme = reduction_codegen_state.GetTilingScheme();
@@ -4164,6 +4613,9 @@ void IrEmitterUnnested::EmitReductionOutputForColumnReduction(
 
 llvm::Value* IrEmitterUnnested::EmitThreadId(int64_t threads_per_block,
                                              llvm::Type* index_ty) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_91(mht_91_v, 4616, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitThreadId");
+
   // Calculate (y, x) coordinates respectively in the 2D view of thread block,
   // defined by (num_thread_y, num_thread_x) from thread_id.
   llvm::CallInst* thread_id_raw = gpu::EmitCallToTargetIntrinsic(
@@ -4175,6 +4627,9 @@ llvm::Value* IrEmitterUnnested::EmitThreadId(int64_t threads_per_block,
 
 StatusOr<IrEmitterUnnested::ThreadIdInfo> IrEmitterUnnested::EmitThreadIdInfo(
     const TilingScheme& tiling_scheme, llvm::Type* index_ty) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_92(mht_92_v, 4630, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitThreadIdInfo");
+
   auto constant = [&](uint64_t c) -> llvm::Constant* {
     return llvm::ConstantInt::get(index_ty, c);
   };
@@ -4220,6 +4675,9 @@ StatusOr<IrEmitterUnnested::TilingKernelInfo>
 IrEmitterUnnested::EmitTilingKernel(
     const TilingScheme& tiling_scheme, llvm::Type* index_ty,
     const TileElementGenerator& tile_element_generator) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_93(mht_93_v, 4678, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitTilingKernel");
+
   absl::Span<const int64_t> dims_in_elems = tiling_scheme.GetDimsInElems();
   Vector3 dims_in_blocks = tiling_scheme.GetDimsInBlocks();
   auto constant = [&](uint64_t c) -> llvm::Constant* {
@@ -4272,6 +4730,9 @@ IrEmitterUnnested::EmitTilingKernel(
   }();
 
   auto emit_tile = [&](const IrArray::Index& tile) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_94(mht_94_v, 4733, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "lambda");
+
     tile_element_generator(thread_id_info, tile, tile_dimensions);
   };
 
@@ -4305,6 +4766,9 @@ IrEmitterUnnested::EmitTilingKernel(
 }
 
 llvm::CallInst* IrEmitterUnnested::EmitSyncThreads() {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_95(mht_95_v, 4769, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitSyncThreads");
+
   return EmitCallToTargetIntrinsic(TargetIntrinsicID::kBarrierId, {}, {}, &b_);
 }
 
@@ -4340,6 +4804,9 @@ void IrEmitterUnnested::EmitHlo021Tile(
     absl::Span<const int64_t> tiled_param_ids,
     const TilingScheme& tiling_scheme,
     const LaunchDimensions& launch_dimensions) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_96(mht_96_v, 4807, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitHlo021Tile");
+
   std::string name = GetIrNameFromLoc(fusion.getLoc());
 
   llvm::Type* index_type = GetIndexTypeForKernel(
@@ -4354,6 +4821,10 @@ void IrEmitterUnnested::EmitHlo021Tile(
 
   auto get_shared_memory_buffer = [&](llvm::Type* elem_ty,
                                       absl::string_view buffer_name) {
+   std::vector<std::string> mht_97_v;
+   mht_97_v.push_back("buffer_name: \"" + std::string(buffer_name.data(), buffer_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_97(mht_97_v, 4825, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "lambda");
+
     // For Nvidia GPUs, the warp size is 32 threads and the shared memory bank
     // is organized into 32-way. We usually use the warp size or a multiplier or
     // a the warp size as the size for tiling. This may cause all elements in
@@ -4389,6 +4860,9 @@ void IrEmitterUnnested::EmitHlo021Tile(
       [&](const ThreadIdInfo& thread_id_info,
           const llvm_ir::IrArray::Index& index, llvm::Value* y_loc,
           llvm::Value* x_loc, llvm::Value* x_iter_num) {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_98(mht_98_v, 4863, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "lambda");
+
         EmitTileElementForFusion(thread_id_info, fusion, operand_arrays,
                                  output_arrays, index, tiling_scheme, y_loc,
                                  x_loc, param_shmem_buffers);
@@ -4397,6 +4871,9 @@ void IrEmitterUnnested::EmitHlo021Tile(
   TileElementGenerator tile_generator =
       [&](const ThreadIdInfo& thread_id_info, const IrArray::Index& index,
           std::array<llvm::Value*, 3> tile_dimensions) {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_99(mht_99_v, 4874, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "lambda");
+
         // If shared memory transpose is needed, wait for all threads to reach
         // this point, lest we copy a value from tile to output before the other
         // thread copies it from input to tile. This is `__syncthreads` in CUDA.
@@ -4500,6 +4977,9 @@ namespace {
 // to the result of such a use-chain, which provides the input to the reduce
 // operation.
 bool IsInstructionSafeForShmemTranspose(mlir::Operation* op) {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_100(mht_100_v, 4980, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IsInstructionSafeForShmemTranspose");
+
   if (mlir::isa<mlir::memref::TensorStoreOp>(op)) {
     return true;
   }
@@ -4577,6 +5057,9 @@ std::vector<int64_t> FilterInputsForShmemTranspose(
 
 StatusOr<bool> IrEmitterUnnested::CheckAndEmitHloWithTile021(
     mlir::lmhlo::FusionOp fusion) {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_101(mht_101_v, 5060, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::CheckAndEmitHloWithTile021");
+
   // If the output_shape is reduced to 021 shape, find all the parameters of
   // the HLO that are in the corresponding 012 shape.
   std::vector<int64_t> params_012;
@@ -4688,6 +5171,9 @@ namespace {
 bool AreUsersElementwise(
     mlir::Value value,
     const absl::flat_hash_set<mlir::Operation*>& use_chain_endings) {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_102(mht_102_v, 5174, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "AreUsersElementwise");
+
   return absl::c_all_of(value.getUsers(), [&](mlir::OpOperand use) {
     mlir::Operation* user = use.getOwner();
     return use_chain_endings.count(user) ||
@@ -4707,6 +5193,9 @@ bool AreUsersElementwise(
 int64_t NumInputsInvolveInOnlyElementwiseOps(
     mlir::lmhlo::FusionOp fusion, const Shape& op_shape,
     const absl::flat_hash_set<mlir::Operation*>& use_chain_endings) {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_103(mht_103_v, 5196, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "NumInputsInvolveInOnlyElementwiseOps");
+
   return absl::c_count_if(
       fusion.getFusionParameters(), [&](mlir::Value parameter) {
         Shape parameter_shape = GetShape(parameter);
@@ -4719,6 +5208,9 @@ int64_t NumInputsInvolveInOnlyElementwiseOps(
 // shape.
 int64_t NumInputsWithMoreElementsThan(mlir::lmhlo::FusionOp fusion,
                                       const Shape& shape) {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_104(mht_104_v, 5211, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "NumInputsWithMoreElementsThan");
+
   int64_t num_elements = ShapeUtil::ElementsIn(shape);
   return absl::c_count_if(
       fusion.getFusionParameters(), [&](mlir::Value parameter) {
@@ -4736,6 +5228,9 @@ int64_t NumInputsWithMoreElementsThan(mlir::lmhlo::FusionOp fusion,
 bool IsUnrollingColumnReductionBeneficial(mlir::lmhlo::FusionOp fusion,
                                           const Shape& input_shape,
                                           int64_t num_kept_minor) {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_105(mht_105_v, 5231, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IsUnrollingColumnReductionBeneficial");
+
   if (num_kept_minor % (WarpSize() * 2) != 0) {
     return false;
   }
@@ -4780,6 +5275,9 @@ bool IsUnrollingColumnReductionBeneficial(mlir::lmhlo::FusionOp fusion,
 }
 
 int64_t NearestPowerOfTwo(int64_t v) {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_106(mht_106_v, 5278, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "NearestPowerOfTwo");
+
   if (v < 0) {
     return 0;
   }
@@ -4792,6 +5290,9 @@ int64_t NearestPowerOfTwo(int64_t v) {
 
 // Returns primitive bitwidth for shape of the value.
 static int GetPrimitiveBitwidth(mlir::Value i) {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_107(mht_107_v, 5293, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "GetPrimitiveBitwidth");
+
   // TODO(timshen): may not be efficient.
   return primitive_util::BitWidth(GetShape(i).element_type());
 }
@@ -4805,6 +5306,9 @@ static int GetPrimitiveBitwidth(mlir::Value i) {
 static int CalculateVirtualThreadScalingFactorForReduction(
     const ReductionDimensions& reduction_dimensions,
     const se::CudaComputeCapability& cc) {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_108(mht_108_v, 5309, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "CalculateVirtualThreadScalingFactorForReduction");
+
   if (reduction_dimensions.is_row_reduction &&
       reduction_dimensions.dimensions[kDimX] <= 128) {
     if (cc.IsAtLeast(se::CudaComputeCapability::AMPERE)) {
@@ -4819,6 +5323,9 @@ llvm::Value* IrEmitterUnnested::ThreadIdInfo::GEPIntoSharedMemory(
     llvm::IRBuilder<>* b, llvm::Value* shared,
     absl::Span<llvm::Value* const> idx_major_to_minor,
     const llvm::Twine& name) const {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_109(mht_109_v, 5326, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::ThreadIdInfo::GEPIntoSharedMemory");
+
   std::vector<llvm::Value*> idxs_scaled;
   idxs_scaled.push_back(llvm::ConstantInt::get(scaling->getType(), 0));
   idxs_scaled.push_back(scaling);
@@ -4838,6 +5345,10 @@ llvm::GlobalVariable* IrEmitterUnnested::AllocateShared(
     const TilingScheme& tiling_scheme, llvm::Type* element_type,
     absl::Span<int64_t const> dimensions_major_to_minor,
     absl::string_view buffer_name) {
+   std::vector<std::string> mht_110_v;
+   mht_110_v.push_back("buffer_name: \"" + std::string(buffer_name.data(), buffer_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_110(mht_110_v, 5349, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::AllocateShared");
+
   CHECK(!dimensions_major_to_minor.empty());
   llvm::Type* array_type = nullptr;
   for (int i = dimensions_major_to_minor.size() - 1; i >= 0; i--) {
@@ -4860,6 +5371,9 @@ static bool CanVectorizeReduction(
     se::CudaComputeCapability cc, mlir::lmhlo::FusionOp fusion,
     const ReductionDimensions& reduction_dimensions, int num_threads_x,
     std::array<int64_t, 3> reduction_tiling, const Shape& input_shape) {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_111(mht_111_v, 5374, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "CanVectorizeReduction");
+
   if (!reduction_dimensions.is_row_reduction) {
     return IsUnrollingColumnReductionBeneficial(
         fusion, input_shape, reduction_dimensions.dimensions[kDimX]);
@@ -4890,6 +5404,9 @@ static bool CanVectorizeReduction(
 
 StatusOr<ReductionCodegenInfo> IrEmitterUnnested::ComputeReductionCodegenInfo(
     mlir::lmhlo::FusionOp fusion, mlir::mhlo::ReduceOp first_reduce) {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_112(mht_112_v, 5407, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::ComputeReductionCodegenInfo");
+
   Shape input_shape = GetShape(first_reduce->getOperand(0));
   ReductionDimensions reduction_dimensions =
       GetReductionKindAndContiguousComponents(first_reduce);
@@ -4961,6 +5478,9 @@ void IrEmitterUnnested::GenerateElementForReducer(
     const llvm_ir::IrArray::Index& index_without_linear,
     const IrArray::Index& input_index, int num_partial_results,
     const ReductionOutputMap& result_ir_arrays) {
+   std::vector<std::string> mht_113_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_113(mht_113_v, 5481, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::GenerateElementForReducer");
+
   HloComputation* reducer = reduction->to_apply();
   CHECK_EQ(reducer->num_parameters() % 2, 0);
 
@@ -5012,6 +5532,9 @@ Status IrEmitterUnnested::EmitIRForReduction(
     HloComputation* fused_computation, FusedIrEmitter* fused_emitter,
     const ReductionOutputMap& result_ir_arrays,
     const ReductionCodegenInfo& reduction_info, const Shape& input_shape) {
+   std::vector<std::string> mht_114_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_114(mht_114_v, 5535, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitIRForReduction");
+
   std::vector<const HloReduceInstruction*> reductions;
   ExtraOutputGensMap extra_output_gens;
   for (const HloInstruction* hlo : instr_index_group) {
@@ -5037,6 +5560,9 @@ Status IrEmitterUnnested::EmitIRForReduction(
       [&](const ThreadIdInfo& thread_id_info,
           const llvm_ir::IrArray::Index& index, llvm::Value* y_loc,
           llvm::Value* x_loc, llvm::Value* x_iter_num) {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_115(mht_115_v, 5563, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "lambda");
+
         IrArray::Index input_index = GetUnnormalizedIndex(
             index, input_shape, &b_, codegen_state.GetTilingScheme());
 
@@ -5100,6 +5626,9 @@ namespace {
 // Returns whether the `instr` is either a constant, a scalar, or a
 // broadcasted constant/scalar.
 bool IsBroadcastedConstantOrScalar(const HloInstruction& instr) {
+   std::vector<std::string> mht_116_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_116(mht_116_v, 5629, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IsBroadcastedConstantOrScalar");
+
   return instr.IsConstant() || ShapeUtil::IsScalar(instr.shape()) ||
          (HloOpcode::kBroadcast == instr.opcode() &&
           (instr.operand(0)->IsConstant() ||
@@ -5109,6 +5638,9 @@ bool IsBroadcastedConstantOrScalar(const HloInstruction& instr) {
 // Recursive helper for GetFusionRoots below.
 static void GetFusionRootsRec(HloInstruction* root,
                               std::vector<HloInstruction*>& out) {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_117(mht_117_v, 5641, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "GetFusionRootsRec");
+
   if (root->opcode() == HloOpcode::kGetTupleElement) {
     return GetFusionRootsRec(root->mutable_operand(0), out);
   } else if (root->opcode() == HloOpcode::kTuple) {
@@ -5216,6 +5748,9 @@ std::vector<std::vector<HloInstruction*>> GroupDisjointReductions(
 }  // namespace
 
 Status IrEmitterUnnested::EmitUnnestedReduction(mlir::lmhlo::FusionOp fusion) {
+   std::vector<std::string> mht_118_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_118(mht_118_v, 5751, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitUnnestedReduction");
+
   llvm::SmallVector<mlir::Operation*> fusion_roots = fusion.getFusionRoots();
 
   // Build a kernel thunk to compute all the outputs.
@@ -5366,6 +5901,9 @@ Status IrEmitterUnnested::EmitElementForInputFusibleSlices(
     const HloComputation* fused_computation,
     absl::Span<const llvm_ir::IrArray> ir_arrays,
     const llvm_ir::IrArray::Index& index) {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_119(mht_119_v, 5904, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitElementForInputFusibleSlices");
+
   VLOG(10) << "Emitting slice input fusion for "
            << fused_computation->ToString();
 
@@ -5439,6 +5977,9 @@ Status IrEmitterUnnested::EmitElementForInputFusibleSlices(
 
 Status IrEmitterUnnested::EmitInputFusibleNonStridedSlices(
     mlir::Operation* op) {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_120(mht_120_v, 5980, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitInputFusibleNonStridedSlices");
+
   auto fusion = mlir::cast<mlir::lmhlo::FusionOp>(op);
 
   constexpr int unroll_factor = 1;
@@ -5476,6 +6017,9 @@ Status IrEmitterUnnested::EmitInputFusibleNonStridedSlices(
 }
 
 Status IrEmitterUnnested::EmitOp(mlir::Operation* op) {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_121(mht_121_v, 6020, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitOp");
+
   if (mlir::isa<mlir::func::ConstantOp, mlir::arith::ConstantOp,
                 mlir::memref::ViewOp, mlir::memref::ReinterpretCastOp,
                 mlir::func::ReturnOp, mlir::lmhlo::TerminatorOp>(op)) {
@@ -5615,6 +6159,9 @@ Status IrEmitterUnnested::EmitOp(mlir::Operation* op) {
 }
 
 Status IrEmitterUnnested::EmitLmhloRegion(mlir::Region* region) {
+   std::vector<std::string> mht_122_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_122(mht_122_v, 6162, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::EmitLmhloRegion");
+
   for (mlir::Operation& op : llvm::make_early_inc_range(region->front())) {
     TF_RETURN_IF_ERROR(EmitOp(&op));
   }
@@ -5622,6 +6169,9 @@ Status IrEmitterUnnested::EmitLmhloRegion(mlir::Region* region) {
 }
 
 Thunk::ThunkInfo IrEmitterUnnested::GetThunkInfo(mlir::Operation* op) {
+   std::vector<std::string> mht_123_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSir_emitter_unnestedDTcc mht_123(mht_123_v, 6172, "", "./tensorflow/compiler/xla/service/gpu/ir_emitter_unnested.cc", "IrEmitterUnnested::GetThunkInfo");
+
   auto module = op->getParentOfType<mlir::ModuleOp>();
   // Include the HloModule's unique_id in the thunk's module name so that xprof
   // shows different modules differently, addressing b/202415436#comment24.

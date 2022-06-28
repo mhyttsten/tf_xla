@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -99,6 +267,9 @@ namespace {
 //
 // In case of inconsistencies (rank disagreement for example), it returns `lhs`.
 Type TypeMeet(Type lhs, Type rhs) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_0(mht_0_v, 270, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "TypeMeet");
+
   DCOMMENT("RefineTypeWith : " << lhs << " : " << rhs);
   if (lhs == rhs) return lhs;
 
@@ -200,11 +371,17 @@ Type TypeMeet(Type lhs, Type rhs) {
 // Returns whether `original_type` type can be refined with
 // `potential_refined_type` type.
 bool CanRefineTypeWith(Type original_type, Type potential_refined_type) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_1(mht_1_v, 374, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "CanRefineTypeWith");
+
   return original_type != TypeMeet(original_type, potential_refined_type);
 }
 
 // Returns if the shape inference pass supports an op outside the TF dialect.
 bool IsSupportedNonTFOp(Operation* op) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_2(mht_2_v, 382, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "IsSupportedNonTFOp");
+
   return isa<tf_device::ReturnOp, tf_device::ClusterOp, tf_device::LaunchOp,
              tf_executor::EnterOp, tf_executor::ExitOp, tf_executor::FetchOp,
              tf_executor::GraphOp, tf_executor::IslandOp,
@@ -218,12 +395,18 @@ bool IsSupportedNonTFOp(Operation* op) {
 // operation of which use is an operand allows for shape refinement without
 // a cast.
 bool NeedsCastBack(OpOperand& use, Dialect* tf_dialect) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_3(mht_3_v, 398, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "NeedsCastBack");
+
   return use.getOwner()->getDialect() != tf_dialect &&
          !IsSupportedNonTFOp(use.getOwner());
 }
 
 TensorType CreateTensorType(llvm::Optional<llvm::ArrayRef<int64_t>> shape,
                             Type element_type) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_4(mht_4_v, 407, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "CreateTensorType");
+
   if (shape.hasValue())
     return RankedTensorType::get(shape.getValue(), element_type);
   return UnrankedTensorType::get(element_type);
@@ -231,12 +414,18 @@ TensorType CreateTensorType(llvm::Optional<llvm::ArrayRef<int64_t>> shape,
 
 // Returns true if the op creates a TensorList.
 bool IsTensorListInitOp(Operation* op) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_5(mht_5_v, 417, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "IsTensorListInitOp");
+
   return isa<TensorListReserveOp>(op) || isa<EmptyTensorListOp>(op) ||
          isa<TensorListFromTensorOp>(op);
 }
 
 // Returns the `element_shape` operand of the ops that create a TensorList.
 Value GetElementShapeOperand(Operation* op) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_6(mht_6_v, 426, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "GetElementShapeOperand");
+
   if (auto empty_tl = dyn_cast<EmptyTensorListOp>(op))
     return empty_tl.element_shape();
   if (auto tl_reserve = dyn_cast<TensorListReserveOp>(op))
@@ -249,6 +438,9 @@ Value GetElementShapeOperand(Operation* op) {
 // Utility function to create a ranked tensor type after dropping the first
 // dimension from the input type.
 RankedTensorType DropFirstDimension(Type type) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_7(mht_7_v, 441, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "DropFirstDimension");
+
   RankedTensorType ranked_type = type.dyn_cast<RankedTensorType>();
   if (!ranked_type) return {};
   llvm::ArrayRef<int64_t> dims_except_first =
@@ -257,6 +449,9 @@ RankedTensorType DropFirstDimension(Type type) {
 }
 
 Operation* InsertCast(OpBuilder& b, Location loc, Type dst_type, Value input) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_8(mht_8_v, 452, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "InsertCast");
+
   Type element_type = getElementTypeOrSelf(dst_type);
   if (element_type.isa<IndexType>())
     return b.create<tensor::CastOp>(loc, dst_type, input);
@@ -275,6 +470,9 @@ Operation* InsertCast(OpBuilder& b, Location loc, Type dst_type, Value input) {
 bool CanInferTensorListElementType(Value tensorlist,
                                    Value initial_element_shape,
                                    RankedTensorType* potential_element_type) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_9(mht_9_v, 473, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "CanInferTensorListElementType");
+
   DCOMMENT("CanInferTensorListElementType " << tensorlist << " with initial "
                                             << initial_element_shape);
   // Verifies if the new element type has static shape and matches the potential
@@ -400,6 +598,9 @@ bool CanInferTensorListElementType(Value tensorlist,
 // Returns the tensor type created from the `shape_attr` and `type_attr`
 // attributes.
 Type GetType(Attribute shape_attr, Attribute type_attr) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_10(mht_10_v, 601, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "GetType");
+
   auto shape = shape_attr.cast<tf_type::ShapeAttr>();
   auto type = type_attr.cast<TypeAttr>();
   if (shape.hasRank())
@@ -412,11 +613,17 @@ Type GetType(Attribute shape_attr, Attribute type_attr) {
 
 // Returns whether type can be further refined.
 bool CanBeRefined(Type type) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_11(mht_11_v, 616, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "CanBeRefined");
+
   auto shape_type = type.dyn_cast<ShapedType>();
   if (!shape_type) return false;
 
   // Returns whether type with subtypes can be further refined.
   auto can_refine_subtypes = [](TF::TensorFlowTypeWithSubtype tws) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_12(mht_12_v, 624, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "lambda");
+
     return tws.GetSubtypes().empty() ||
            llvm::any_of(tws.GetSubtypes(), CanBeRefined);
   };
@@ -441,6 +648,9 @@ struct ValuePort {
 
   // Convert output value to ValuePort.
   explicit ValuePort(Value v) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_13(mht_13_v, 651, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ValuePort");
+
     OpResult opr = v.dyn_cast<OpResult>();
     if (opr) {
       producer = opr.getOwner();
@@ -452,9 +662,15 @@ struct ValuePort {
   }
   ValuePort(PointerUnion<Operation*, BlockArgument> producer,
             SmallVector<unsigned int, 2> port)
-      : producer(producer), port(port) {}
+      : producer(producer), port(port) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_14(mht_14_v, 666, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ValuePort");
+}
 
   raw_ostream& print(raw_ostream& os) const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_15(mht_15_v, 671, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "print");
+
     if (auto* op = producer.dyn_cast<Operation*>())
       os << "op " << op->getName();
     if (auto ba = producer.dyn_cast<BlockArgument>())
@@ -482,6 +698,9 @@ using ValuePortInputs = SmallVectorImpl<ValuePort>;
 LogicalResult ComputeInputsRequiredForOutput(ValuePort value_port,
                                              ComputedQueryFn has_been_computed,
                                              ValuePortInputs* inputs) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_16(mht_16_v, 701, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ComputeInputsRequiredForOutput");
+
   auto op = value_port.producer.dyn_cast<Operation*>();
   auto& port = value_port.port;
   if (!op) return failure();
@@ -508,6 +727,9 @@ LogicalResult ComputeInputsRequiredForOutput(ValuePort value_port,
 // existing computed values.
 Attribute ComputeOutputComponent(const ValuePort& value_port,
                                  ValueQueryFn values) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_17(mht_17_v, 730, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ComputeOutputComponent");
+
   LLVM_DEBUG(value_port.print(llvm::dbgs() << "Computing output for ") << "\n");
   if (auto known = values(value_port)) return known;
 
@@ -569,6 +791,9 @@ class ShapeInference {
 
   LogicalResult ComputeInputsRequiredForOutput(ValuePort value_port,
                                                ValuePortInputs* inputs) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_18(mht_18_v, 794, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ComputeInputsRequiredForOutput");
+
     return ::mlir::TF::ComputeInputsRequiredForOutput(
         value_port,
         [this](const ValuePort& port) {
@@ -578,6 +803,9 @@ class ShapeInference {
   }
 
   Attribute ComputeOutputComponent(const ValuePort& value_port) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_19(mht_19_v, 806, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ComputeOutputComponent");
+
     if (auto known_attr = results_[value_port]) return known_attr;
     auto attr = ::mlir::TF::ComputeOutputComponent(
         value_port, [this](const ValuePort& port) { return results_[port]; });
@@ -589,6 +817,9 @@ class ShapeInference {
   ShapeHandle ComputeOutputAsShape(OpResult result, InferenceContext* ic);
 
   void RecordValue(const ValuePort& value_port, Attribute value) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_20(mht_20_v, 820, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "RecordValue");
+
     LLVM_DEBUG(value_port.print(llvm::dbgs() << "\trecording ")
                << value << "\n");
     results_[value_port] = value;
@@ -691,6 +922,9 @@ class ShapeInference {
 
   // Enqueues function for processing.
   void enqueue(FuncOp fn) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_21(mht_21_v, 925, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "enqueue");
+
     LLVM_DEBUG(llvm::dbgs()
                << "enqueue " << fn.getName() << " ("
                << (queue_set_.count(fn) ? "already inserted" : "newly inserted")
@@ -702,13 +936,22 @@ class ShapeInference {
   void EnqueueCallers(FuncOp fn);
 
   // Returns the function at the front of the queue.
-  FuncOp front() { return queue_.front(); }
+  FuncOp front() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_22(mht_22_v, 940, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "front");
+ return queue_.front(); }
 
   // Returns whether work queue is empty.
-  bool EmptyQueue() const { return queue_.empty(); }
+  bool EmptyQueue() const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_23(mht_23_v, 946, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "EmptyQueue");
+ return queue_.empty(); }
 
   // Returns function from the front of the work queue.
   FuncOp pop_front() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_24(mht_24_v, 952, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "pop_front");
+
     FuncOp ret = queue_.front();
     queue_.pop();
     queue_set_.erase(ret);
@@ -716,7 +959,10 @@ class ShapeInference {
   }
 
   // Returns the current size of the queue.
-  std::queue<FuncOp>::size_type QueueSize() const { return queue_.size(); }
+  std::queue<FuncOp>::size_type QueueSize() const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_25(mht_25_v, 963, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "QueueSize");
+ return queue_.size(); }
 
   Dialect* const tf_dialect_;
 
@@ -824,20 +1070,32 @@ ShapeInference::ShapeInference(int64_t graph_version, ModuleOp module,
       symbol_users_(symbol_table_, module),
       graph_version_(graph_version),
       propagate_caller_callee_constants_(propagate_caller_callee_constants) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_26(mht_26_v, 1073, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::ShapeInference");
+
   // Create symbol table for module.
   symbol_table_.getSymbolTable(module);
 }
 
 ArrayRef<Operation*> ShapeInference::GetCallers(FuncOp fn) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_27(mht_27_v, 1081, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::GetCallers");
+
   return symbol_users_.getUsers(fn);
 }
 
 void ShapeInference::EnqueueCallers(FuncOp fn) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_28(mht_28_v, 1088, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::EnqueueCallers");
+
   for (auto user : GetCallers(fn)) enqueue(user->getParentOfType<FuncOp>());
 }
 
 bool ShapeInference::UpdateTypeAndInsertIncompatibleUseCasts(Type new_type,
                                                              Value result) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_29(mht_29_v, 1096, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::UpdateTypeAndInsertIncompatibleUseCasts");
+
   // No changes needed if the new type is unchanged.
   if (new_type == result.getType()) return false;
 
@@ -868,6 +1126,9 @@ bool ShapeInference::UpdateTypeAndInsertIncompatibleUseCasts(Type new_type,
 
 bool ShapeInference::RefineResultType(Operation* op, Value result,
                                       Type potential_refined_type) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_30(mht_30_v, 1129, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::RefineResultType");
+
   if (!CanRefineTypeWith(result.getType(), potential_refined_type))
     return false;
 
@@ -878,6 +1139,9 @@ bool ShapeInference::RefineResultType(Operation* op, Value result,
 // Infers the shape from a (Stateful)PartionedCall operation by looking up the
 // called function and propagating the return type.
 bool ShapeInference::InferShapeForCall(CallOpInterface call_op) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_31(mht_31_v, 1142, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::InferShapeForCall");
+
   FuncOp func =
       dyn_cast_or_null<FuncOp>(call_op.resolveCallable(&symbol_table_));
   if (!func) return false;
@@ -898,6 +1162,9 @@ bool ShapeInference::InferShapeForCall(CallOpInterface call_op) {
 }
 
 bool ShapeInference::InferShapeForCast(Operation* op) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_32(mht_32_v, 1165, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::InferShapeForCast");
+
   DCOMMENT_OP(op, "Inferring shape for ");
   Value result = op->getResult(0);
   if (!CanBeRefined(result.getType())) return false;
@@ -925,6 +1192,9 @@ bool ShapeInference::InferShapeForCast(Operation* op) {
 }
 
 bool ShapeInference::InferShapeForIf(IfOp op) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_33(mht_33_v, 1195, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::InferShapeForIf");
+
   DCOMMENT_OP(op.getOperation(), "Infer shape for if ");
   bool changed = false;
   auto then_results =
@@ -940,6 +1210,9 @@ bool ShapeInference::InferShapeForIf(IfOp op) {
 }
 
 bool ShapeInference::InferShapeForIfRegion(IfRegionOp op) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_34(mht_34_v, 1213, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::InferShapeForIfRegion");
+
   bool changed = false;
 
   Operation* then_yield = op.then_branch().front().getTerminator();
@@ -956,6 +1229,9 @@ bool ShapeInference::InferShapeForIfRegion(IfRegionOp op) {
 
 bool ShapeInference::InferShapeForXlaHostComputeMlir(
     _XlaHostComputeMlirOp host_compute_op) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_35(mht_35_v, 1232, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::InferShapeForXlaHostComputeMlir");
+
   // Extract the module and function.
   // The '_XlaHostComputeMlir` verifier verifies that `host_mlir_module`
   // attribute is well formed, so we just return in case of an error in
@@ -995,6 +1271,9 @@ bool ShapeInference::InferShapeForXlaHostComputeMlir(
 // `AssignVariableOp` that uses the result. This requires that the resource
 // subtype inference is completed.
 bool ShapeInference::InferShapeForRestore(Operation* op) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_36(mht_36_v, 1274, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::InferShapeForRestore");
+
   DCOMMENT_OP(op, "Inferring shape for Restore,RestoreV2");
   // Currently only support single output.
   if (op->getNumResults() != 1) return false;
@@ -1023,7 +1302,10 @@ bool ShapeInference::InferShapeForRestore(Operation* op) {
 
 // Helper structure to capture shapes & types for Dataset input.
 struct DatasetInput {
-  explicit operator bool() const { return shapes && types; }
+  explicit operator bool() const {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_37(mht_37_v, 1306, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "bool");
+ return shapes && types; }
 
   ArrayAttr shapes;
   ArrayAttr types;
@@ -1031,6 +1313,9 @@ struct DatasetInput {
 
 // Returns the input elements shapes and types for Dataset ops.
 DatasetInput GetDatasetInput(Value value) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_38(mht_38_v, 1316, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "GetDatasetInput");
+
   // TODO(haoliang): add an interface for DatasetOp to avoid the following
   // enumeration.
   // Iteratively tracing upwards if parent op is `IdentityOp` or `IdentityNOp`.
@@ -1052,6 +1337,9 @@ DatasetInput GetDatasetInput(Value value) {
 
 bool ShapeInference::InferShapeForDatasetOpCommon(Operation* op, FuncOp f,
                                                   int64_t max_iterations) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_39(mht_39_v, 1340, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::InferShapeForDatasetOpCommon");
+
   int N = op->getNumOperands() - 1;
   int M = f.getNumArguments() - N;
   DCOMMENT_OP(op, "Inferring shape for with N = " << N << " and M = " << M);
@@ -1095,6 +1383,9 @@ bool ShapeInference::InferShapeForDatasetOpCommon(Operation* op, FuncOp f,
 
 bool ShapeInference::InferShapeForMapDataset(MapDatasetOp op,
                                              int64_t max_iterations) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_40(mht_40_v, 1386, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::InferShapeForMapDataset");
+
   // MapDatasetOp's relationship with its associated function is as
   // follows: first M function params are dictated by the set
   // output shapes and types, the next N are the last Ninputs from MapDataset
@@ -1109,6 +1400,9 @@ bool ShapeInference::InferShapeForMapDataset(MapDatasetOp op,
 
 bool ShapeInference::InferShapeForTakeWhileDataset(TakeWhileDatasetOp op,
                                                    int64_t max_iterations) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_41(mht_41_v, 1403, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::InferShapeForTakeWhileDataset");
+
   // TakeWhileDatasetOp's relationship with its associated function is as
   // follows: first M function params are dictated by the set
   // output shapes and types, the next N are the last Ninputs from
@@ -1123,6 +1417,9 @@ bool ShapeInference::InferShapeForTakeWhileDataset(TakeWhileDatasetOp op,
 
 bool ShapeInference::InferShapeForReduceDataset(ReduceDatasetOp op,
                                                 int64_t max_iterations) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_42(mht_42_v, 1420, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::InferShapeForReduceDataset");
+
   // ReduceDatasetOp's relationship with its associated reduce function is
   // described as follows: The reduce function will in general have (X + Y + Z)
   // arguments, where X is the number of tensor components that represent the
@@ -1203,6 +1500,9 @@ bool ShapeInference::InferShapeForReduceDataset(ReduceDatasetOp op,
 }
 
 bool ShapeInference::InferShapeForTensorListInitOps(Operation* op) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_43(mht_43_v, 1503, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::InferShapeForTensorListInitOps");
+
   DCOMMENT_OP(op, "Inferring shape for TensorList ");
   Value handle = op->getResult(0);
   Value initial_element_shape = GetElementShapeOperand(op);
@@ -1229,6 +1529,9 @@ bool ShapeInference::InferShapeForTensorListInitOps(Operation* op) {
 }
 
 bool ShapeInference::InferShapeForVarHandleOp(VarHandleOp op) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_44(mht_44_v, 1532, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::InferShapeForVarHandleOp");
+
   DCOMMENT_OP(op, "Inferring shape for VarHandleOp");
 
   Value resource = op.resource();
@@ -1282,6 +1585,10 @@ llvm::Optional<xla::Window> InferWindowFromDimensions(
     llvm::SmallVector<int64_t> lhs_dilation,
     llvm::SmallVector<int64_t> rhs_dilation) {
   const auto verify_size = [&](const size_t x, const char* x_name) {
+   std::vector<std::string> mht_45_v;
+   mht_45_v.push_back("x_name: \"" + (x_name == nullptr ? std::string("nullptr") : std::string((char*)x_name)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_45(mht_45_v, 1589, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "lambda");
+
     if (x == 0 || x == window_dimensions.size()) {
       return true;
     } else {
@@ -1386,6 +1693,9 @@ llvm::Optional<RankedTensorType> InferWindowOutputShape(
 }
 
 bool ShapeInference::InferShapeForXlaReduceWindowOp(XlaReduceWindowOp op) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_46(mht_46_v, 1696, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::InferShapeForXlaReduceWindowOp");
+
   DCOMMENT_OP(op, "Inferring shape for XlaReduceWindowOp");
 
   bool changed = false;
@@ -1452,6 +1762,9 @@ bool ShapeInference::InferShapeForXlaReduceWindowOp(XlaReduceWindowOp op) {
 
 bool ShapeInference::InferShapeForXlaSelectAndScatterOp(
     XlaSelectAndScatterOp op) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_47(mht_47_v, 1765, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::InferShapeForXlaSelectAndScatterOp");
+
   DCOMMENT_OP(op, "Inferring shape for XlaSelectAndScatterOp");
 
   auto operand_shape = op.operand().getType().cast<ShapedType>();
@@ -1560,6 +1873,9 @@ llvm::Optional<RankedTensorType> InferXlaConvOutputShape(
 // "third_party/tensorflow/compiler/mlir/tensorflow/ir/tf_ops_n_z.cc" is
 // resolved
 LogicalResult PrecheckForXlaConvOp(XlaConvOp op) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_48(mht_48_v, 1876, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "PrecheckForXlaConvOp");
+
   auto input_tensor = op.lhs();
   auto kernel_tensor = op.rhs();
   auto window_strides = op.window_strides();
@@ -1688,6 +2004,9 @@ LogicalResult PrecheckForXlaConvOp(XlaConvOp op) {
 }
 
 bool ShapeInference::InferShapeForXlaConvOp(XlaConvOp op) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_49(mht_49_v, 2007, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::InferShapeForXlaConvOp");
+
   DCOMMENT_OP(op, "Inferring shape for XlaConvOp");
 
   bool changed = false;
@@ -1767,6 +2086,9 @@ bool ShapeInference::InferShapeForXlaConvOp(XlaConvOp op) {
 
 bool ShapeInference::RefineWithInferTypeOpInterface(
     InferTypeOpInterface infer_ti) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_50(mht_50_v, 2089, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::RefineWithInferTypeOpInterface");
+
   Operation* op = infer_ti.getOperation();
   SmallVector<Type, 4> inferred;
   LogicalResult res = infer_ti.inferReturnTypes(
@@ -1795,6 +2117,9 @@ bool ShapeInference::RefineWithInferTypeOpInterface(
 
 ShapeHandle ShapeInference::ComputeOutputAsShape(OpResult result,
                                                  InferenceContext* ic) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_51(mht_51_v, 2120, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::ComputeOutputAsShape");
+
   LLVM_DEBUG(result.print(llvm::dbgs() << "\nEvaluate partially "));
   auto rt = result.getType().dyn_cast<RankedTensorType>();
   if (!rt || !rt.hasStaticShape() || rt.getRank() != 1) return {};
@@ -1860,6 +2185,9 @@ ShapeHandle ShapeInference::ComputeOutputAsShape(OpResult result,
 bool ShapeInference::RefineTypeForPassThroughOperands(Operation* op,
                                                       OperandRange operands,
                                                       ResultRange results) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_52(mht_52_v, 2188, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::RefineTypeForPassThroughOperands");
+
   bool changed = false;
   for (auto entry : llvm::zip(operands, results)) {
     Type operand_type = std::get<0>(entry).getType();
@@ -1876,6 +2204,9 @@ bool ShapeInference::RefineTypeForPassThroughOperands(Operation* op,
 }
 
 bool ShapeInference::RefineShapeForPassThroughOps(Operation* op) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_53(mht_53_v, 2207, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::RefineShapeForPassThroughOps");
+
   DCOMMENT_OP(op, "Pass through op");
   bool changed = false;
   for (auto entry : llvm::zip(op->getOperands(), op->getResults())) {
@@ -1891,6 +2222,9 @@ bool ShapeInference::RefineShapeForPassThroughOps(Operation* op) {
 }
 
 bool ShapeInference::InferShapeForNonTFDialectOperation(Operation* op) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_54(mht_54_v, 2225, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::InferShapeForNonTFDialectOperation");
+
   if (auto graph_op = dyn_cast<tf_executor::GraphOp>(op)) {
     return RefineTypeForPassThroughOperands(
         graph_op.GetFetch(), graph_op.GetFetch().fetches(), op->getResults());
@@ -1927,6 +2261,9 @@ bool ShapeInference::InferShapeForNonTFDialectOperation(Operation* op) {
 // for handle types.
 Type GetElementTypeFromOperand(TensorType operand_type,
                                TensorType result_type) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_55(mht_55_v, 2264, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "GetElementTypeFromOperand");
+
   auto operand_handle_type =
       operand_type.getElementType().dyn_cast<TensorFlowTypeWithSubtype>();
   if (!operand_handle_type) return result_type.getElementType();
@@ -1943,6 +2280,9 @@ Type GetElementTypeFromOperand(TensorType operand_type,
 // type cannot be used for refinement.
 bool CanWhileTypeBeRefinedWith(TensorType current_type,
                                TensorType potential_refined_type) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_56(mht_56_v, 2283, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "CanWhileTypeBeRefinedWith");
+
   if (!current_type.hasRank()) return true;
   if (!potential_refined_type.hasRank()) return false;
   if (current_type.getRank() != potential_refined_type.getRank()) return false;
@@ -1960,6 +2300,9 @@ bool CanWhileTypeBeRefinedWith(TensorType current_type,
 template <typename WhileOpTy>
 bool ShapeInference::InferShapeForWhile(WhileOpTy op,
                                         TypeRange body_result_types) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_57(mht_57_v, 2303, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::InferShapeForWhile");
+
   if (!op.shape_invariant())
     return RefineTypeForPassThroughOperands(op, op.input(), op.output());
 
@@ -1994,6 +2337,9 @@ bool ShapeInference::InferShapeForWhile(WhileOpTy op,
 
 bool ShapeInference::InferShapeForSingleOperation(Operation* op,
                                                   int64_t max_iterations) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_58(mht_58_v, 2340, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::InferShapeForSingleOperation");
+
   LLVM_DEBUG(op->print(llvm::dbgs() << "InferShapeForSingleOperation for ");
              llvm::dbgs() << "\n");
   assert(tf_dialect_ == op->getDialect());
@@ -2092,6 +2438,9 @@ bool ShapeInference::InferShapeForSingleOperation(Operation* op,
 
   // Return operand as a constant attribute.
   auto operand_as_constant_fn = [&](Value operand) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_59(mht_59_v, 2441, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "lambda");
+
     ValuePort vp(operand);
     Attribute attr = ComputeOutputComponent(vp);
     if (!attr && matchPattern(operand, m_Constant(&attr)))
@@ -2102,11 +2451,17 @@ bool ShapeInference::InferShapeForSingleOperation(Operation* op,
   // Return op result as a shape.
   auto op_result_as_shape_fn = [&](InferenceContext& context,
                                    OpResult op_result) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_60(mht_60_v, 2454, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "lambda");
+
     return ComputeOutputAsShape(op_result, &context);
   };
 
   // Return result element type at `index`.
   auto result_element_type_fn = [&](int index) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_61(mht_61_v, 2462, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "lambda");
+
     return op->getResult(index).getType().cast<TensorType>().getElementType();
   };
 
@@ -2147,6 +2502,9 @@ bool ShapeInference::InferShapeForSingleOperation(Operation* op,
 FailureOr<bool> ShapeInference::PropagateShapeToFunctions(
     ModuleOp module, TypeRange input_types, ArrayRef<FuncOp> functions,
     int64_t max_iterations) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_62(mht_62_v, 2505, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::PropagateShapeToFunctions");
+
   bool any_failure = false;
   bool any_nonconvergence = false;
   // If shape propagation fails for one function, return failure, but do not
@@ -2194,6 +2552,9 @@ FailureOr<bool> ShapeInference::PropagateShapeToFunctions(
 
 FailureOr<bool> ShapeInference::PropagateShapeToRegions(
     TypeRange input_types, ArrayRef<Region*> regions, int64_t max_iterations) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_63(mht_63_v, 2555, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::PropagateShapeToRegions");
+
   DCOMMENT("\tPropagating shapes to regions");
   bool any_failure = false;
   bool any_nonconvergence = false;
@@ -2224,6 +2585,9 @@ FailureOr<bool> ShapeInference::PropagateShapeToRegions(
 
 void ShapeInference::PropagateConstantToCallee(CallOpInterface call_op,
                                                FuncOp func, ModuleOp module) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_64(mht_64_v, 2588, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::PropagateConstantToCallee");
+
   auto callers = GetCallers(func);
   if (!llvm::hasSingleElement(callers)) return;
 
@@ -2252,6 +2616,9 @@ void ShapeInference::PropagateConstantToCallee(CallOpInterface call_op,
 
 void ShapeInference::PropagateConstantFromCallee(CallOpInterface call_op,
                                                  FuncOp func, ModuleOp module) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_65(mht_65_v, 2619, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::PropagateConstantFromCallee");
+
   // If the return value is a constant, use the constant as the value of
   // the call return.
   Operation* op = call_op.getOperation();
@@ -2278,6 +2645,9 @@ void ShapeInference::PropagateConstantFromCallee(CallOpInterface call_op,
 }
 
 bool RankedAndSameRank(TensorType lhs, TensorType rhs) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_66(mht_66_v, 2648, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "RankedAndSameRank");
+
   return lhs.hasRank() && rhs.hasRank() && lhs.getRank() == rhs.getRank();
 }
 
@@ -2285,6 +2655,9 @@ bool RankedAndSameRank(TensorType lhs, TensorType rhs) {
 // replaced with dynamic sizes.
 RankedTensorType GetCompatibleRankedTensorType(RankedTensorType lhs,
                                                RankedTensorType rhs) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_67(mht_67_v, 2658, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "GetCompatibleRankedTensorType");
+
   assert(lhs.getRank() == rhs.getRank());
   llvm::SmallVector<int64_t, 4> dims;
   dims.reserve(lhs.getRank());
@@ -2336,6 +2709,9 @@ llvm::SmallVector<Type, 4> GetWhileCompatibleTypes(
 
 FailureOr<bool> ShapeInference::PropagateShapeIntoAttachedFunctions(
     Operation* op, int64_t max_iterations) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_68(mht_68_v, 2712, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::PropagateShapeIntoAttachedFunctions");
+
   ModuleOp module = op->getParentOfType<ModuleOp>();
   if (auto if_op = dyn_cast<TF::IfOp>(op)) {
     DCOMMENT("Propagating shapes into If");
@@ -2385,6 +2761,9 @@ FailureOr<bool> ShapeInference::PropagateShapeIntoAttachedFunctions(
              isa<TF::XlaVariadicReduceV2Op>(op) ||
              isa<TF::XlaVariadicSortOp>(op)) {
     auto propagate_shape_to = [&](mlir::SymbolRefAttr func_sym) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_69(mht_69_v, 2764, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "lambda");
+
       auto func = llvm::cast<mlir::func::FuncOp>(
           mlir::SymbolTable::lookupSymbolIn(module, func_sym));
       mlir::SmallVector<mlir::Type, 2> types;
@@ -2418,6 +2797,9 @@ FailureOr<bool> ShapeInference::PropagateShapeIntoAttachedFunctions(
 
 FailureOr<bool> ShapeInference::PropagateShapeIntoAttachedRegions(
     Operation* op, int64_t max_iterations) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_70(mht_70_v, 2800, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::PropagateShapeIntoAttachedRegions");
+
   if (auto while_op = dyn_cast<TF::WhileRegionOp>(op)) {
     // If `shape_invariant` is set, operand shapes cannot be simply propagated
     // to result shapes as the op may have different intermediate shapes (such
@@ -2439,6 +2821,9 @@ FailureOr<bool> ShapeInference::PropagateShapeIntoAttachedRegions(
 }
 
 LogicalResult ShapeInference::TryToFold(Operation* op) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_71(mht_71_v, 2824, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::TryToFold");
+
   LLVM_DEBUG(op->print(llvm::dbgs() << "TryToFold "); llvm::dbgs() << "\n");
   // If any output result is known, then the op probably has been computed
   // before.
@@ -2504,6 +2889,9 @@ LogicalResult ShapeInference::TryToFold(Operation* op) {
 }
 
 LogicalResult ShapeInference::InferShapeForFunctionReturnType(FuncOp func) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_72(mht_72_v, 2892, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::InferShapeForFunctionReturnType");
+
   LLVM_DEBUG(llvm::dbgs() << "Inferring return type for: " << func.getName()
                           << "\n");
 
@@ -2569,6 +2957,9 @@ LogicalResult ShapeInference::InferShapeForFunctionReturnType(FuncOp func) {
 
 FailureOr<bool> ShapeInference::InferShapeUntilFixPoint(
     Region* region, int64_t max_iterations) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSshape_inferenceDTcc mht_73(mht_73_v, 2960, "", "./tensorflow/compiler/mlir/tensorflow/transforms/shape_inference.cc", "ShapeInference::InferShapeUntilFixPoint");
+
   bool changed = true;
 
   // TODO(aminim): we could have a more efficient traversal by guiding the

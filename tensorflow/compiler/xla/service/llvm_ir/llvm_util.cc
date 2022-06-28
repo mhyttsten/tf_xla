@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -57,6 +225,9 @@ namespace {
 // Note, this function is only useful in an insertion context; in a global
 // (e.g. constants) context it will CHECK fail.
 llvm::Module* ModuleFromIRBuilder(llvm::IRBuilder<>* b) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_0(mht_0_v, 228, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "ModuleFromIRBuilder");
+
   auto block = CHECK_NOTNULL(b->GetInsertBlock());
   auto fn = CHECK_NOTNULL(block->getParent());
   auto module = CHECK_NOTNULL(fn->getParent());
@@ -76,6 +247,9 @@ std::unique_ptr<llvm::Module> DropConstantInitializers(
 }
 
 std::string DumpModuleToString(const llvm::Module& module) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_1(mht_1_v, 250, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "DumpModuleToString");
+
   std::string buffer_string;
   llvm::raw_string_ostream ostream(buffer_string);
   module.print(ostream, nullptr);
@@ -87,6 +261,10 @@ llvm::CallInst* EmitCallToIntrinsic(
     llvm::Intrinsic::ID intrinsic_id, absl::Span<llvm::Value* const> operands,
     absl::Span<llvm::Type* const> overloaded_types, llvm::IRBuilder<>* b,
     absl::string_view name) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_2(mht_2_v, 265, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "EmitCallToIntrinsic");
+
   llvm::Module* module = ModuleFromIRBuilder(b);
   llvm::Function* intrinsic = llvm::Intrinsic::getDeclaration(
       module, intrinsic_id, AsArrayRef(overloaded_types));
@@ -96,6 +274,10 @@ llvm::CallInst* EmitCallToIntrinsic(
 llvm::Value* EmitFloatMax(llvm::Value* lhs_value, llvm::Value* rhs_value,
                           llvm::IRBuilder<>* b, bool enable_fast_min_max,
                           absl::string_view name) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_3(mht_3_v, 278, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "EmitFloatMax");
+
   if (b->getFastMathFlags().noNaNs() || enable_fast_min_max) {
     auto cmp = b->CreateFCmpUGE(lhs_value, rhs_value);
     return b->CreateSelect(cmp, lhs_value, rhs_value, name.data());
@@ -110,6 +292,10 @@ llvm::Value* EmitFloatMax(llvm::Value* lhs_value, llvm::Value* rhs_value,
 llvm::Value* EmitFloatMin(llvm::Value* lhs_value, llvm::Value* rhs_value,
                           llvm::IRBuilder<>* b, bool enable_fast_min_max,
                           absl::string_view name) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_4(mht_4_v, 296, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "EmitFloatMin");
+
   if (b->getFastMathFlags().noNaNs() || enable_fast_min_max) {
     auto cmp = b->CreateFCmpULE(lhs_value, rhs_value);
     return b->CreateSelect(cmp, lhs_value, rhs_value, name.data());
@@ -123,6 +309,9 @@ llvm::Value* EmitFloatMin(llvm::Value* lhs_value, llvm::Value* rhs_value,
 
 llvm::Value* EmitBufferIndexingGEP(llvm::Value* array, llvm::Value* index,
                                    llvm::IRBuilder<>* b) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_5(mht_5_v, 312, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "EmitBufferIndexingGEP");
+
   llvm::Type* array_type = array->getType();
   CHECK(array_type->isPointerTy());
   llvm::PointerType* array_type_as_pointer =
@@ -141,11 +330,17 @@ llvm::Value* EmitBufferIndexingGEP(llvm::Value* array, llvm::Value* index,
 
 llvm::Value* EmitBufferIndexingGEP(llvm::Value* array, int64_t index,
                                    llvm::IRBuilder<>* b) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_6(mht_6_v, 333, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "EmitBufferIndexingGEP");
+
   return EmitBufferIndexingGEP(array, b->getInt64(index), b);
 }
 
 llvm::Type* PrimitiveTypeToIrType(PrimitiveType element_type,
                                   llvm::Module* module) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_7(mht_7_v, 341, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "PrimitiveTypeToIrType");
+
   switch (element_type) {
     case PRED:
     case S8:
@@ -216,6 +411,9 @@ llvm::Type* PrimitiveTypeToIrType(PrimitiveType element_type,
 }
 
 int GetSizeInBits(llvm::Type* type) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_8(mht_8_v, 414, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "GetSizeInBits");
+
   const llvm::StructType* struct_ty = llvm::dyn_cast<llvm::StructType>(type);
   if (struct_ty) {
     CHECK(struct_ty->isPacked());
@@ -231,6 +429,9 @@ int GetSizeInBits(llvm::Type* type) {
 }
 
 llvm::Type* ShapeToIrType(const Shape& shape, llvm::Module* module) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_9(mht_9_v, 432, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "ShapeToIrType");
+
   llvm::Type* result_type = PrimitiveTypeToIrType(shape.element_type(), module);
   if (shape.IsTuple()) {
     // A tuple buffer is an array of pointers.
@@ -257,6 +458,9 @@ StatusOr<llvm::Value*> EncodeSelfDescribingShapeConstant(const Shape& shape,
 
 llvm::Constant* ConvertLiteralToIrConstant(const Literal& literal,
                                            llvm::Module* module) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_10(mht_10_v, 461, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "ConvertLiteralToIrConstant");
+
   const char* data = static_cast<const char*>(literal.untyped_data());
   CHECK_EQ(module->getDataLayout().isLittleEndian(),
            tensorflow::port::kLittleEndian);
@@ -268,6 +472,10 @@ llvm::Constant* ConvertLiteralToIrConstant(const Literal& literal,
 llvm::GlobalVariable* AllocateSharedMemoryTile(llvm::Module* module,
                                                llvm::Type* tile_type,
                                                absl::string_view name) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_11(mht_11_v, 476, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "AllocateSharedMemoryTile");
+
   // Both AMDGPU and NVPTX use the same address space for shared memory.
   const int kGPUSharedMemoryAddrSpace = 3;
   return new llvm::GlobalVariable(
@@ -281,6 +489,10 @@ llvm::AllocaInst* EmitAllocaAtFunctionEntry(llvm::Type* type,
                                             absl::string_view name,
                                             llvm::IRBuilder<>* b,
                                             int alignment) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_12(mht_12_v, 493, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "EmitAllocaAtFunctionEntry");
+
   return EmitAllocaAtFunctionEntryWithCount(type, nullptr, name, b, alignment);
 }
 
@@ -289,6 +501,10 @@ llvm::AllocaInst* EmitAllocaAtFunctionEntryWithCount(llvm::Type* type,
                                                      absl::string_view name,
                                                      llvm::IRBuilder<>* b,
                                                      int alignment) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_13(mht_13_v, 505, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "EmitAllocaAtFunctionEntryWithCount");
+
   llvm::IRBuilder<>::InsertPointGuard guard(*b);
   llvm::Function* function = b->GetInsertBlock()->getParent();
   b->SetInsertPoint(&function->getEntryBlock(),
@@ -304,6 +520,10 @@ llvm::AllocaInst* EmitAllocaAtFunctionEntryWithCount(llvm::Type* type,
 llvm::BasicBlock* CreateBasicBlock(llvm::BasicBlock* insert_before,
                                    absl::string_view name,
                                    llvm::IRBuilder<>* b) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_14(mht_14_v, 524, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "CreateBasicBlock");
+
   return llvm::BasicBlock::Create(
       /*Context=*/b->getContext(),
       /*Name=*/AsStringRef(name),
@@ -313,6 +533,10 @@ llvm::BasicBlock* CreateBasicBlock(llvm::BasicBlock* insert_before,
 
 LlvmIfData EmitIfThenElse(llvm::Value* condition, absl::string_view name,
                           llvm::IRBuilder<>* b, bool emit_else) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_15(mht_15_v, 537, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "EmitIfThenElse");
+
   llvm_ir::LlvmIfData if_data;
   if_data.if_block = b->GetInsertBlock();
   if_data.true_block =
@@ -357,6 +581,10 @@ LlvmIfData EmitIfThenElse(llvm::Value* condition, absl::string_view name,
 llvm::Value* EmitComparison(llvm::CmpInst::Predicate predicate,
                             llvm::Value* lhs_value, llvm::Value* rhs_value,
                             llvm::IRBuilder<>* b, absl::string_view name) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_16(mht_16_v, 585, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "EmitComparison");
+
   llvm::Value* comparison_result;
   if (lhs_value->getType()->isIntegerTy()) {
     comparison_result =
@@ -374,10 +602,18 @@ llvm::Value* EmitComparison(llvm::CmpInst::Predicate predicate,
 // Internal helper that is called from emitted code to log an int64_t value with
 // a tag.
 static void LogS64(const char* tag, int64_t value) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("tag: \"" + (tag == nullptr ? std::string("nullptr") : std::string((char*)tag)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_17(mht_17_v, 606, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "LogS64");
+
   LOG(INFO) << tag << " (int64_t): " << value;
 }
 
 void EmitLogging(const char* tag, llvm::Value* value, llvm::IRBuilder<>* b) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("tag: \"" + (tag == nullptr ? std::string("nullptr") : std::string((char*)tag)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_18(mht_18_v, 614, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "EmitLogging");
+
   llvm::FunctionType* log_function_type = llvm::FunctionType::get(
       b->getVoidTy(), {b->getInt64Ty(), b->getInt64Ty()}, /*isVarArg=*/false);
   b->CreateCall(log_function_type,
@@ -387,6 +623,9 @@ void EmitLogging(const char* tag, llvm::Value* value, llvm::IRBuilder<>* b) {
 }
 
 void SetAlignmentMetadataForLoad(llvm::LoadInst* load, uint64_t alignment) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_19(mht_19_v, 626, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "SetAlignmentMetadataForLoad");
+
   llvm::LLVMContext& context = load->getContext();
   llvm::Type* int64_ty = llvm::Type::getInt64Ty(context);
   llvm::Constant* alignment_constant =
@@ -400,6 +639,9 @@ void SetAlignmentMetadataForLoad(llvm::LoadInst* load, uint64_t alignment) {
 
 void SetDereferenceableMetadataForLoad(llvm::LoadInst* load,
                                        uint64_t dereferenceable_bytes) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_20(mht_20_v, 642, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "SetDereferenceableMetadataForLoad");
+
   llvm::LLVMContext& context = load->getContext();
   llvm::Type* int64_ty = llvm::Type::getInt64Ty(context);
   llvm::Constant* dereferenceable_bytes_constant =
@@ -413,6 +655,9 @@ void SetDereferenceableMetadataForLoad(llvm::LoadInst* load,
 
 llvm::Instruction* AddRangeMetadata(int32_t lower, int32_t upper,
                                     llvm::Instruction* inst) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_21(mht_21_v, 658, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "AddRangeMetadata");
+
   llvm::LLVMContext& context = inst->getParent()->getContext();
   llvm::IntegerType* i32 = llvm::Type::getInt32Ty(context);
   inst->setMetadata(
@@ -425,12 +670,21 @@ llvm::Instruction* AddRangeMetadata(int32_t lower, int32_t upper,
 }
 
 std::string IrName(absl::string_view a) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("a: \"" + std::string(a.data(), a.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_22(mht_22_v, 674, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "IrName");
+
   std::string s(a);
   s.erase(std::remove(s.begin(), s.end(), '%'), s.end());
   return s;
 }
 
 std::string IrName(absl::string_view a, absl::string_view b) {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("a: \"" + std::string(a.data(), a.size()) + "\"");
+   mht_23_v.push_back("b: \"" + std::string(b.data(), b.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_23(mht_23_v, 685, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "IrName");
+
   if (!a.empty() && !b.empty()) {
     return IrName(absl::StrCat(a, ".", b));
   }
@@ -438,10 +692,18 @@ std::string IrName(absl::string_view a, absl::string_view b) {
 }
 
 std::string IrName(const HloInstruction* a, absl::string_view b) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("b: \"" + std::string(b.data(), b.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_24(mht_24_v, 696, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "IrName");
+
   return IrName(a->name(), b);
 }
 
 std::string SanitizeFunctionName(std::string function_name) {
+   std::vector<std::string> mht_25_v;
+   mht_25_v.push_back("function_name: \"" + function_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_25(mht_25_v, 704, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "SanitizeFunctionName");
+
   // The backend with the strictest requirements on function names is NVPTX, so
   // we sanitize to its requirements.
   //
@@ -479,10 +741,16 @@ std::string SanitizeFunctionName(std::string function_name) {
 }
 
 void SetToFirstInsertPoint(llvm::BasicBlock* blk, llvm::IRBuilder<>* builder) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_26(mht_26_v, 744, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "SetToFirstInsertPoint");
+
   builder->SetInsertPoint(blk, blk->getFirstInsertionPt());
 }
 
 void SetToLastInsertPoint(llvm::BasicBlock* blk, llvm::IRBuilder<>* builder) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_27(mht_27_v, 751, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "SetToLastInsertPoint");
+
   if (llvm::Instruction* terminator = blk->getTerminator()) {
     builder->SetInsertPoint(terminator);
   } else {
@@ -492,20 +760,32 @@ void SetToLastInsertPoint(llvm::BasicBlock* blk, llvm::IRBuilder<>* builder) {
 
 llvm::Value* CreateRor(llvm::Value* rotand, llvm::Value* rotor,
                        llvm::IRBuilder<>* builder) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_28(mht_28_v, 763, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "CreateRor");
+
   auto size = rotand->getType()->getPrimitiveSizeInBits();
   auto size_value = builder->getIntN(size, size);
-  auto mod = [=](llvm::Value* x) { return builder->CreateURem(x, size_value); };
+  auto mod = [=](llvm::Value* x) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_29(mht_29_v, 769, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "lambda");
+ return builder->CreateURem(x, size_value); };
   return builder->CreateOr(
       builder->CreateShl(rotand, mod(builder->CreateSub(size_value, rotor))),
       builder->CreateLShr(rotand, mod(rotor)));
 }
 
 int64_t ByteSizeOf(const Shape& shape, const llvm::DataLayout& data_layout) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_30(mht_30_v, 778, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "ByteSizeOf");
+
   unsigned pointer_size = data_layout.getPointerSize();
   return ShapeUtil::ByteSizeOf(shape, pointer_size);
 }
 
 llvm::FastMathFlags GetCpuFastMathFlags(const HloModuleConfig& module_config) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_31(mht_31_v, 786, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "GetCpuFastMathFlags");
+
   llvm::FastMathFlags flags;
   const auto& options = module_config.debug_options();
   if (!options.xla_cpu_enable_fast_math()) {
@@ -572,6 +852,12 @@ std::map<int, llvm::MDNode*> MergeMetadata(
 static Status CreateAndWriteStringToFile(const std::string& directory_name,
                                          const std::string& file_name,
                                          const std::string& text) {
+   std::vector<std::string> mht_32_v;
+   mht_32_v.push_back("directory_name: \"" + directory_name + "\"");
+   mht_32_v.push_back("file_name: \"" + file_name + "\"");
+   mht_32_v.push_back("text: \"" + text + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_32(mht_32_v, 858, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "CreateAndWriteStringToFile");
+
   std::unique_ptr<tensorflow::WritableFile> f;
   TF_RETURN_IF_ERROR(
       tensorflow::Env::Default()->RecursivelyCreateDir(directory_name));
@@ -585,6 +871,10 @@ static Status CreateAndWriteStringToFile(const std::string& directory_name,
 void DumpIrIfEnabled(const HloModule& hlo_module,
                      const llvm::Module& llvm_module, bool optimized,
                      absl::string_view filename_suffix) {
+   std::vector<std::string> mht_33_v;
+   mht_33_v.push_back("filename_suffix: \"" + std::string(filename_suffix.data(), filename_suffix.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_33(mht_33_v, 875, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "DumpIrIfEnabled");
+
   const auto& debug_opts = hlo_module.config().debug_options();
   if (!DumpingEnabledForHloModule(hlo_module)) {
     return;
@@ -613,6 +903,10 @@ llvm::Function* CreateCpuFunction(llvm::FunctionType* function_type,
                                   const HloModuleConfig& module_config,
                                   absl::string_view name,
                                   llvm::Module* module) {
+   std::vector<std::string> mht_34_v;
+   mht_34_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_34(mht_34_v, 907, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "CreateCpuFunction");
+
   llvm::Function* function =
       llvm::Function::Create(function_type, linkage, AsStringRef(name), module);
   function->setCallingConv(llvm::CallingConv::C);
@@ -658,10 +952,16 @@ std::pair<llvm::Value*, llvm::Value*> SplitInt64ToInt32s(
   return std::make_pair(low_32bits, high_32bits);
 }
 
-unsigned GetGlobalMemoryAddressSpace() { return 1; }
+unsigned GetGlobalMemoryAddressSpace() {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_35(mht_35_v, 956, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "GetGlobalMemoryAddressSpace");
+ return 1; }
 
 llvm::GlobalVariable* GetOrCreateVariableForRngState(llvm::Module* module,
                                                      llvm::IRBuilder<>* b) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_36(mht_36_v, 962, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "GetOrCreateVariableForRngState");
+
   static const char* kRngStateVariableName = "rng_state";
   llvm::GlobalVariable* state_ptr =
       module->getNamedGlobal(kRngStateVariableName);
@@ -688,6 +988,9 @@ llvm::GlobalVariable* GetOrCreateVariableForRngState(llvm::Module* module,
 
 llvm::Value* RngGetAndUpdateState(uint64_t delta, llvm::Module* module,
                                   llvm::IRBuilder<>* builder) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_37(mht_37_v, 991, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "RngGetAndUpdateState");
+
   llvm::GlobalVariable* state_ptr =
       GetOrCreateVariableForRngState(module, builder);
   llvm::LoadInst* state_value_old = builder->CreateLoad(
@@ -700,6 +1003,9 @@ llvm::Value* RngGetAndUpdateState(uint64_t delta, llvm::Module* module,
 }
 
 llvm::BasicBlock* EmitReturnBlock(llvm::IRBuilder<>* b) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_38(mht_38_v, 1006, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "EmitReturnBlock");
+
   llvm::Function* function = b->GetInsertBlock()->getParent();
   llvm::Module* module = b->GetInsertBlock()->getModule();
   llvm::IRBuilder<>::InsertPointGuard guard(*b);
@@ -714,6 +1020,9 @@ llvm::BasicBlock* EmitReturnBlock(llvm::IRBuilder<>* b) {
 
 void EmitEarlyReturn(llvm::Value* condition, llvm::IRBuilder<>* b,
                      llvm::BasicBlock* return_block) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSllvm_irPSllvm_utilDTcc mht_39(mht_39_v, 1023, "", "./tensorflow/compiler/xla/service/llvm_ir/llvm_util.cc", "EmitEarlyReturn");
+
   if (!return_block) {
     return_block = EmitReturnBlock(b);
   }

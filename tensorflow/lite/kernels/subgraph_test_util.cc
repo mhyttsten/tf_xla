@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,6 +207,9 @@ namespace custom {
 namespace random_int {
 
 TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc mht_0(mht_0_v, 210, "", "./tensorflow/lite/kernels/subgraph_test_util.cc", "Prepare");
+
   TF_LITE_ENSURE_EQ(context, NumInputs(node), 0);
   TF_LITE_ENSURE_EQ(context, NumOutputs(node), 1);
 
@@ -49,6 +220,9 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
 }
 
 TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc mht_1(mht_1_v, 223, "", "./tensorflow/lite/kernels/subgraph_test_util.cc", "Eval");
+
   TfLiteTensor& output = context->tensors[node->outputs->data[0]];
 
   std::random_device rd;
@@ -60,6 +234,9 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
 }  // namespace random_int
 
 TfLiteRegistration* Register_RANDOM_INT() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc mht_2(mht_2_v, 237, "", "./tensorflow/lite/kernels/subgraph_test_util.cc", "Register_RANDOM_INT");
+
   static TfLiteRegistration r = {nullptr, nullptr, random_int::Prepare,
                                  random_int::Eval};
   return &r;
@@ -73,6 +250,9 @@ namespace subgraph_test_util {
 namespace {
 
 void SetupTensor(Subgraph* subgraph, int tensor_index, TfLiteType type) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc mht_3(mht_3_v, 253, "", "./tensorflow/lite/kernels/subgraph_test_util.cc", "SetupTensor");
+
   ASSERT_EQ(subgraph->SetTensorParametersReadWrite(tensor_index, type, "", 0,
                                                    nullptr, {}, false),
             kTfLiteOk);
@@ -81,12 +261,18 @@ void SetupTensor(Subgraph* subgraph, int tensor_index, TfLiteType type) {
 }  // namespace
 
 SubgraphBuilder::~SubgraphBuilder() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc mht_4(mht_4_v, 264, "", "./tensorflow/lite/kernels/subgraph_test_util.cc", "SubgraphBuilder::~SubgraphBuilder");
+
   for (auto buffer : buffers_) {
     free(buffer);
   }
 }
 
 void SubgraphBuilder::BuildAddSubgraph(Subgraph* subgraph) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc mht_5(mht_5_v, 273, "", "./tensorflow/lite/kernels/subgraph_test_util.cc", "SubgraphBuilder::BuildAddSubgraph");
+
   const int kInput1 = 0;
   const int kInput2 = 1;
   const int kOutput = 2;
@@ -118,6 +304,9 @@ void SubgraphBuilder::BuildAddSubgraph(Subgraph* subgraph) {
 
 // Build a subgraph with an mul op. Helper function for testing.
 void SubgraphBuilder::BuildMulSubgraph(Subgraph* subgraph) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc mht_6(mht_6_v, 307, "", "./tensorflow/lite/kernels/subgraph_test_util.cc", "SubgraphBuilder::BuildMulSubgraph");
+
   const int kInput1 = 0;
   const int kInput2 = 1;
   const int kOutput = 2;
@@ -149,6 +338,9 @@ void SubgraphBuilder::BuildMulSubgraph(Subgraph* subgraph) {
 
 // Build a subgraph with a pad op. Helper function for testing.
 void SubgraphBuilder::BuildPadSubgraph(Subgraph* subgraph) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc mht_7(mht_7_v, 341, "", "./tensorflow/lite/kernels/subgraph_test_util.cc", "SubgraphBuilder::BuildPadSubgraph");
+
   const int kInput1 = 0;
   const int kInput2 = 1;
   const int kOutput = 2;
@@ -178,6 +370,9 @@ void SubgraphBuilder::BuildPadSubgraph(Subgraph* subgraph) {
 }
 
 void SubgraphBuilder::BuildIfSubgraph(Subgraph* subgraph) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc mht_8(mht_8_v, 373, "", "./tensorflow/lite/kernels/subgraph_test_util.cc", "SubgraphBuilder::BuildIfSubgraph");
+
   const int kCondInput = 0;
   const int kInput1 = 1;
   const int kInput2 = 2;
@@ -213,6 +408,9 @@ void SubgraphBuilder::BuildIfSubgraph(Subgraph* subgraph) {
 }
 
 void SubgraphBuilder::BuildLessEqualCondSubgraph(Subgraph* subgraph, int rhs) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc mht_9(mht_9_v, 411, "", "./tensorflow/lite/kernels/subgraph_test_util.cc", "SubgraphBuilder::BuildLessEqualCondSubgraph");
+
   const int kInput1 = 0;
   const int kInput2 = 1;
   const int kOutput = 2;
@@ -246,6 +444,9 @@ void SubgraphBuilder::BuildLessEqualCondSubgraph(Subgraph* subgraph, int rhs) {
 }
 
 void SubgraphBuilder::BuildAccumulateLoopBodySubgraph(Subgraph* subgraph) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc mht_10(mht_10_v, 447, "", "./tensorflow/lite/kernels/subgraph_test_util.cc", "SubgraphBuilder::BuildAccumulateLoopBodySubgraph");
+
   const int kInputCounter = 0;
   const int kInputValue = 1;
   const int kOutputCounter = 2;
@@ -293,6 +494,9 @@ void SubgraphBuilder::BuildAccumulateLoopBodySubgraph(Subgraph* subgraph) {
 
 void SubgraphBuilder::BuildPadLoopBodySubgraph(Subgraph* subgraph,
                                                const std::vector<int> padding) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc mht_11(mht_11_v, 497, "", "./tensorflow/lite/kernels/subgraph_test_util.cc", "SubgraphBuilder::BuildPadLoopBodySubgraph");
+
   const int kInputCounter = 0;
   const int kInputValue = 1;
   const int kOutputCounter = 2;
@@ -346,6 +550,9 @@ void SubgraphBuilder::BuildPadLoopBodySubgraph(Subgraph* subgraph,
 }
 
 void SubgraphBuilder::BuildWhileSubgraph(Subgraph* subgraph) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc mht_12(mht_12_v, 553, "", "./tensorflow/lite/kernels/subgraph_test_util.cc", "SubgraphBuilder::BuildWhileSubgraph");
+
   const int kInput1 = 0;
   const int kInput2 = 1;
   const int kOutput1 = 2;
@@ -382,6 +589,9 @@ void SubgraphBuilder::BuildWhileSubgraph(Subgraph* subgraph) {
 
 void SubgraphBuilder::BuildAssignRandomValueToVariableSubgraph(
     Subgraph* subgraph) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc mht_13(mht_13_v, 592, "", "./tensorflow/lite/kernels/subgraph_test_util.cc", "SubgraphBuilder::BuildAssignRandomValueToVariableSubgraph");
+
   const int kConstResourceId = 0;
   const int kRandomValue = 1;
   const int kTensorCount = 3;
@@ -409,6 +619,9 @@ void SubgraphBuilder::BuildAssignRandomValueToVariableSubgraph(
 }
 
 void SubgraphBuilder::BuildCallOnceAndReadVariableSubgraph(Subgraph* subgraph) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc mht_14(mht_14_v, 622, "", "./tensorflow/lite/kernels/subgraph_test_util.cc", "SubgraphBuilder::BuildCallOnceAndReadVariableSubgraph");
+
   const int kConstResourceId = 0;
   const int kOutput = 1;
   const int kTensorCount = 2;
@@ -441,6 +654,9 @@ void SubgraphBuilder::BuildCallOnceAndReadVariableSubgraph(Subgraph* subgraph) {
 
 void SubgraphBuilder::BuildCallOnceAndReadVariablePlusOneSubgraph(
     Subgraph* subgraph) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc mht_15(mht_15_v, 657, "", "./tensorflow/lite/kernels/subgraph_test_util.cc", "SubgraphBuilder::BuildCallOnceAndReadVariablePlusOneSubgraph");
+
   const int kConstResourceId = 0;
   const int kConstOne = 1;
   const int kReadVariableResult = 2;
@@ -485,6 +701,9 @@ void SubgraphBuilder::BuildCallOnceAndReadVariablePlusOneSubgraph(
 
 void SubgraphBuilder::BuildLessEqualCondSubgraphWithDynamicTensor(
     Subgraph* subgraph, int rhs) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc mht_16(mht_16_v, 704, "", "./tensorflow/lite/kernels/subgraph_test_util.cc", "SubgraphBuilder::BuildLessEqualCondSubgraphWithDynamicTensor");
+
   const int kStringInput1 = 0;
   const int kStringInput2 = 1;
   const int kIntegerInput = 2;
@@ -522,6 +741,9 @@ void SubgraphBuilder::BuildLessEqualCondSubgraphWithDynamicTensor(
 }
 
 void SubgraphBuilder::BuildBodySubgraphWithDynamicTensor(Subgraph* subgraph) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc mht_17(mht_17_v, 744, "", "./tensorflow/lite/kernels/subgraph_test_util.cc", "SubgraphBuilder::BuildBodySubgraphWithDynamicTensor");
+
   const int kStringInput1 = 0;
   const int kStringInput2 = 1;
   const int kIntegerInput = 2;
@@ -574,6 +796,9 @@ void SubgraphBuilder::BuildBodySubgraphWithDynamicTensor(Subgraph* subgraph) {
 }
 
 void SubgraphBuilder::BuildWhileSubgraphWithDynamicTensor(Subgraph* subgraph) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc mht_18(mht_18_v, 799, "", "./tensorflow/lite/kernels/subgraph_test_util.cc", "SubgraphBuilder::BuildWhileSubgraphWithDynamicTensor");
+
   const int kStringInput1 = 0;
   const int kStringInput2 = 1;
   const int kIntegerInput = 2;
@@ -618,6 +843,9 @@ void SubgraphBuilder::CreateConstantInt32Tensor(Subgraph* subgraph,
                                                 int tensor_index,
                                                 const std::vector<int>& shape,
                                                 const std::vector<int>& data) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc mht_19(mht_19_v, 846, "", "./tensorflow/lite/kernels/subgraph_test_util.cc", "SubgraphBuilder::CreateConstantInt32Tensor");
+
   ASSERT_GT(shape.size(), 0);
   int num_elements = 1;
   for (int dim : shape) {
@@ -638,6 +866,9 @@ void SubgraphBuilder::CreateConstantInt32Tensor(Subgraph* subgraph,
 }
 
 void FillIntTensor(TfLiteTensor* tensor, const std::vector<int32_t>& data) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc mht_20(mht_20_v, 869, "", "./tensorflow/lite/kernels/subgraph_test_util.cc", "FillIntTensor");
+
   int count = NumElements(tensor);
   ASSERT_EQ(count, data.size());
   for (int i = 0; i < count; ++i) {
@@ -646,6 +877,10 @@ void FillIntTensor(TfLiteTensor* tensor, const std::vector<int32_t>& data) {
 }
 
 void FillScalarStringTensor(TfLiteTensor* tensor, const std::string& data) {
+   std::vector<std::string> mht_21_v;
+   mht_21_v.push_back("data: \"" + data + "\"");
+   MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc mht_21(mht_21_v, 881, "", "./tensorflow/lite/kernels/subgraph_test_util.cc", "FillScalarStringTensor");
+
   StringRef str_ref;
   str_ref.str = data.c_str();
   str_ref.len = data.size();
@@ -656,6 +891,10 @@ void FillScalarStringTensor(TfLiteTensor* tensor, const std::string& data) {
 
 void CheckScalarStringTensor(const TfLiteTensor* tensor,
                              const std::string& data) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("data: \"" + data + "\"");
+   MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc mht_22(mht_22_v, 895, "", "./tensorflow/lite/kernels/subgraph_test_util.cc", "CheckScalarStringTensor");
+
   ASSERT_EQ(tensor->dims->size, 0);
   ASSERT_EQ(tensor->type, kTfLiteString);
   StringRef str_ref = GetString(tensor, 0);
@@ -665,6 +904,9 @@ void CheckScalarStringTensor(const TfLiteTensor* tensor,
 void CheckStringTensor(const TfLiteTensor* tensor,
                        const std::vector<int>& shape,
                        const std::vector<std::string>& data) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc mht_23(mht_23_v, 907, "", "./tensorflow/lite/kernels/subgraph_test_util.cc", "CheckStringTensor");
+
   ASSERT_EQ(tensor->dims->size, shape.size());
   for (int i = 0; i < tensor->dims->size; ++i) {
     ASSERT_EQ(tensor->dims->data[i], shape[i]);
@@ -679,6 +921,9 @@ void CheckStringTensor(const TfLiteTensor* tensor,
 }
 void CheckIntTensor(const TfLiteTensor* tensor, const std::vector<int>& shape,
                     const std::vector<int32_t>& data) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc mht_24(mht_24_v, 924, "", "./tensorflow/lite/kernels/subgraph_test_util.cc", "CheckIntTensor");
+
   ASSERT_EQ(tensor->dims->size, shape.size());
   for (int i = 0; i < tensor->dims->size; ++i) {
     ASSERT_EQ(tensor->dims->data[i], shape[i]);
@@ -693,6 +938,9 @@ void CheckIntTensor(const TfLiteTensor* tensor, const std::vector<int>& shape,
 
 void CheckBoolTensor(const TfLiteTensor* tensor, const std::vector<int>& shape,
                      const std::vector<bool>& data) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSsubgraph_test_utilDTcc mht_25(mht_25_v, 941, "", "./tensorflow/lite/kernels/subgraph_test_util.cc", "CheckBoolTensor");
+
   ASSERT_EQ(tensor->dims->size, shape.size());
   for (int i = 0; i < tensor->dims->size; ++i) {
     ASSERT_EQ(tensor->dims->data[i], shape[i]);

@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_KERNELS_QUANTIZATION_UTILS_H_
 #define TENSORFLOW_CORE_KERNELS_QUANTIZATION_UTILS_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <cmath>
 #define EIGEN_USE_THREADS
@@ -45,6 +213,9 @@ namespace tensorflow {
 template <class T>
 inline int64_t FloatToQuantizedUnclamped(float input, float range_min,
                                          float range_max) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_0(mht_0_v, 216, "", "./tensorflow/core/kernels/quantization_utils.h", "FloatToQuantizedUnclamped");
+
   const int64_t lowest_quantized =
       static_cast<double>(Eigen::NumTraits<T>::lowest());
   if (range_min == range_max) {
@@ -64,6 +235,9 @@ inline int64_t FloatToQuantizedUnclamped(float input, float range_min,
 template <>
 inline int64_t FloatToQuantizedUnclamped<float>(float input, float range_min,
                                                 float range_max) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_1(mht_1_v, 238, "", "./tensorflow/core/kernels/quantization_utils.h", "FloatToQuantizedUnclamped<float>");
+
   return -1;
 }
 
@@ -71,6 +245,9 @@ inline int64_t FloatToQuantizedUnclamped<float>(float input, float range_min,
 // any over or underflows.
 template <class T>
 T FloatToQuantized(float input, float range_min, float range_max) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_2(mht_2_v, 248, "", "./tensorflow/core/kernels/quantization_utils.h", "FloatToQuantized");
+
   if (std::is_same<T, float>::value) {
     // Specialization for float. This is used in reference implementation
     // for float which is useful to compare performance between float
@@ -89,6 +266,9 @@ T FloatToQuantized(float input, float range_min, float range_max) {
 
 template <class T>
 float QuantizedToFloat(T input, float range_min, float range_max) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_3(mht_3_v, 269, "", "./tensorflow/core/kernels/quantization_utils.h", "QuantizedToFloat");
+
   if (std::is_same<T, float>::value) {
     // Specialization for float. This is used in reference implementation
     // for float which is useful to compare performance between float
@@ -118,6 +298,9 @@ float QuantizedToFloat(T input, float range_min, float range_max) {
 
 template <class T>
 float FloatForOneQuantizedLevel(float range_min, float range_max) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_4(mht_4_v, 301, "", "./tensorflow/core/kernels/quantization_utils.h", "FloatForOneQuantizedLevel");
+
   const int64_t highest = static_cast<int64_t>(Eigen::NumTraits<T>::highest());
   const int64_t lowest = static_cast<int64_t>(Eigen::NumTraits<T>::lowest());
   const float float_for_one_quantized_level =
@@ -171,6 +354,9 @@ struct QuantizedToFloatStruct {
                                              << number_of_bits;
 
   static float lowest_quantized() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_5(mht_5_v, 357, "", "./tensorflow/core/kernels/quantization_utils.h", "lowest_quantized");
+
     return static_cast<float>(Eigen::NumTraits<T>::lowest());
   }
 
@@ -180,7 +366,10 @@ struct QuantizedToFloatStruct {
         range_min_rounded(range_max == range_min
                               ? range_min
                               : std::round(range_min / range_scale) *
-                                    range_scale) {}
+                                    range_scale) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_6(mht_6_v, 370, "", "./tensorflow/core/kernels/quantization_utils.h", "QuantizedToFloatStruct");
+}
 
   const float range_min;
   const float range_scale;
@@ -200,15 +389,24 @@ struct FloatToQuantizedStruct {
   // cast back to int32 or QInt32.  Instead, use bounds that can be converted
   // back to int32 without going outside the range of an int32.
   static float lower_bound_float() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_7(mht_7_v, 392, "", "./tensorflow/core/kernels/quantization_utils.h", "lower_bound_float");
+
     return Eigen::numext::maxi(
         static_cast<float>(Eigen::NumTraits<T>::lowest()), -2.147483648e+09f);
   }
   static float upper_bound_float() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_8(mht_8_v, 399, "", "./tensorflow/core/kernels/quantization_utils.h", "upper_bound_float");
+
     return Eigen::numext::mini(
         static_cast<float>(Eigen::NumTraits<T>::highest()), +2.147483520e+09f);
   }
 
   static float lowest_quantized() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_9(mht_9_v, 407, "", "./tensorflow/core/kernels/quantization_utils.h", "lowest_quantized");
+
     return static_cast<float>(Eigen::NumTraits<T>::lowest());
   }
 
@@ -217,7 +415,10 @@ struct FloatToQuantizedStruct {
         range_scale(range_max == range_min
                         ? 0.0
                         : (number_of_steps - 1.0) / (range_max - range_min)),
-        range_min_scaled(std::round(range_min * range_scale)) {}
+        range_min_scaled(std::round(range_min * range_scale)) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_10(mht_10_v, 419, "", "./tensorflow/core/kernels/quantization_utils.h", "FloatToQuantizedStruct");
+}
 
   const float range_min;
   const float range_scale;
@@ -251,6 +452,9 @@ inline void RequantizeManyInNewRangeReference(const qint32* input,
                                               float max_input, float min_output,
                                               float max_output,
                                               quint8* output) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_11(mht_11_v, 455, "", "./tensorflow/core/kernels/quantization_utils.h", "RequantizeManyInNewRangeReference");
+
   // Initially we calculate all the constants we need once, before we go into
   // the inner loop.  If this is updated, also update the Eigen version.
   const int fp_shift = 16;
@@ -294,6 +498,9 @@ inline void RequantizeManyInNewRangeReference(const qint32* input,
 inline void RequantizeManyInNewRange8To32BitReference(
     const quint8* input, int64_t count, float min_input, float max_input,
     float min_output, float max_output, qint32* output) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_12(mht_12_v, 501, "", "./tensorflow/core/kernels/quantization_utils.h", "RequantizeManyInNewRange8To32BitReference");
+
   const float code_0_float = QuantizedToFloat<quint8>(0, min_input, max_input);
   const float code_1_float = QuantizedToFloat<quint8>(1, min_input, max_input);
   const int64_t code_0_int64 =
@@ -425,6 +632,9 @@ inline void RequantizeManyInNewRange<qint32, quint8>(
 // NEON accelerated 16bit rounded division by 2^n.
 template <int POW>
 inline int16x8_t Divide16x8PowRound(const int16x8_t val) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_13(mht_13_v, 635, "", "./tensorflow/core/kernels/quantization_utils.h", "Divide16x8PowRound");
+
   const int16x8_t val_sign = vshrq_n_s16(val, 15);
   const int16x8_t val_xor = veorq_s16(val, val_sign);
   const int16x8_t val_pos = vsubq_s16(val_xor, val_sign);
@@ -437,6 +647,9 @@ inline int16x8_t Divide16x8PowRound(const int16x8_t val) {
 // NEON accelerated 64bit rounded division by 2^n.
 template <int POW>
 inline int64x2_t Divide64x2PowRound(const int64x2_t val) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_14(mht_14_v, 650, "", "./tensorflow/core/kernels/quantization_utils.h", "Divide64x2PowRound");
+
   const int64x2_t val_sign = vshrq_n_s64(val, 63);
   const int64x2_t val_xor = veorq_s64(val, val_sign);
   const int64x2_t val_pos = vsubq_s64(val_xor, val_sign);
@@ -450,6 +663,9 @@ inline int64x2_t Divide64x2PowRound(const int64x2_t val) {
 // CAVEAT: The input must be greater than min-int16 to avoid underflow.
 template <int POW>
 inline int16x8_t Divide16x8Pow(const int16x8_t val) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_15(mht_15_v, 666, "", "./tensorflow/core/kernels/quantization_utils.h", "Divide16x8Pow");
+
   static constexpr int16 FIRST_BIT_VAL = 0x0000000000000001;
   static const int16x8_t FIRST_BIT = vmovq_n_s16(FIRST_BIT_VAL);
   const int16x8_t val_sign = vshrq_n_s16(val, 15);
@@ -464,6 +680,9 @@ inline int16x8_t Divide16x8Pow(const int16x8_t val) {
 // CAVEAT: The input must be greater than min-int64 to avoid underflow.
 template <int POW>
 inline int64x2_t Divide64x2Pow(const int64x2_t val) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_16(mht_16_v, 683, "", "./tensorflow/core/kernels/quantization_utils.h", "Divide64x2Pow");
+
   static constexpr int64 FIRST_BIT_VAL = 0x0000000000000001;
   static const int64x2_t FIRST_BIT = vmovq_n_s64(FIRST_BIT_VAL);
   const int64x2_t val_sign = vshrq_n_s64(val, 63);
@@ -482,6 +701,9 @@ inline int32x2_t ComputeLerp32x2(const int32x2_t top_left,
                                  const int32x2_t bottom_right,
                                  const int32x2_t x_lerp,
                                  const int32x2_t y_lerp) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_17(mht_17_v, 704, "", "./tensorflow/core/kernels/quantization_utils.h", "ComputeLerp32x2");
+
   static_assert(RESOLUTION < 31, "RESOLUTION must be less than 31");
   constexpr int32 RESOLUTION_MULT32 = (1 << RESOLUTION);
   static const int32x2_t RESOLUTION_MULT32x2 = vmov_n_s32(RESOLUTION_MULT32);
@@ -518,6 +740,9 @@ inline uint8x8_t ComputeLerp8x8(const uint8x8_t top_left8x8,
                                 const uint8x8_t bottom_right8x8,
                                 const int16x8_t x_lerp,
                                 const int16x8_t y_lerp) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_18(mht_18_v, 743, "", "./tensorflow/core/kernels/quantization_utils.h", "ComputeLerp8x8");
+
   static_assert(RESOLUTION < 8, "RESOLUTION must be less than 8");
   constexpr uint8 RESOLUTION_MULT_VAL = (1 << RESOLUTION);
   static const uint8x8_t RESOLUTION_MULT = vdup_n_u8(RESOLUTION_MULT_VAL);
@@ -736,6 +961,9 @@ template <class T>
 void FloatTensorToQuantizedInPlaceUsingEigen(
     const Eigen::ThreadPoolDevice& device, const Tensor& input, float min,
     float max, Tensor* result) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_19(mht_19_v, 964, "", "./tensorflow/core/kernels/quantization_utils.h", "FloatTensorToQuantizedInPlaceUsingEigen");
+
   DCHECK_EQ(DataTypeToEnum<T>::v(), result->dtype());
   auto flat_input = input.flat<float>();
   auto flat_result = result->flat<T>();
@@ -748,6 +976,9 @@ void FloatTensorToQuantizedInPlaceUsingEigen(
 template <class T>
 void FloatTensorToQuantizedInPlace(const Tensor& input, float min, float max,
                                    Tensor* result) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_20(mht_20_v, 979, "", "./tensorflow/core/kernels/quantization_utils.h", "FloatTensorToQuantizedInPlace");
+
   DCHECK_EQ(DataTypeToEnum<T>::v(), result->dtype());
   auto flat_input = input.flat<float>();
   auto flat_result = result->flat<T>();
@@ -760,6 +991,9 @@ void FloatTensorToQuantizedInPlace(const Tensor& input, float min, float max,
 
 template <class T>
 Tensor FloatTensorToQuantized(const Tensor& input, float min, float max) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_21(mht_21_v, 994, "", "./tensorflow/core/kernels/quantization_utils.h", "FloatTensorToQuantized");
+
   Tensor result(DataTypeToEnum<T>::v(), input.shape());
   FloatTensorToQuantizedInPlace<T>(input, min, max, &result);
   return result;
@@ -770,6 +1004,9 @@ template <class T>
 void QuantizedTensorToFloatInPlaceUsingEigen(
     const Eigen::ThreadPoolDevice& device, const Tensor& input, float min,
     float max, Tensor* result) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_22(mht_22_v, 1007, "", "./tensorflow/core/kernels/quantization_utils.h", "QuantizedTensorToFloatInPlaceUsingEigen");
+
   DCHECK_EQ(DataTypeToEnum<T>::v(), input.dtype());
   auto flat_input = input.flat<T>();
   auto flat_result = result->flat<float>();
@@ -784,6 +1021,9 @@ void QuantizedTensorToFloatInPlaceUsingEigen(
 template <class T>
 void QuantizedTensorToFloatInPlace(const Tensor& input, float min, float max,
                                    Tensor* result) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_23(mht_23_v, 1024, "", "./tensorflow/core/kernels/quantization_utils.h", "QuantizedTensorToFloatInPlace");
+
   DCHECK_EQ(DataTypeToEnum<T>::v(), input.dtype());
   auto flat_input = input.flat<T>();
   auto flat_result = result->flat<float>();
@@ -796,6 +1036,9 @@ void QuantizedTensorToFloatInPlace(const Tensor& input, float min, float max,
 
 template <class T>
 Tensor QuantizedTensorToFloat(const Tensor& input, float min, float max) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_24(mht_24_v, 1039, "", "./tensorflow/core/kernels/quantization_utils.h", "QuantizedTensorToFloat");
+
   Tensor result(DT_FLOAT, input.shape());
   QuantizedTensorToFloatInPlace<T>(input, min, max, &result);
   return result;
@@ -909,9 +1152,15 @@ void QuantizedAdd(const Eigen::ThreadPoolDevice& device, const Tensor& input,
 class TensorflowGemmlowpWorkersPool {
  public:
   TensorflowGemmlowpWorkersPool(thread::ThreadPool* workers)
-      : workers_(workers) {}
+      : workers_(workers) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_25(mht_25_v, 1156, "", "./tensorflow/core/kernels/quantization_utils.h", "TensorflowGemmlowpWorkersPool");
+}
 
   ~TensorflowGemmlowpWorkersPool() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_26(mht_26_v, 1161, "", "./tensorflow/core/kernels/quantization_utils.h", "~TensorflowGemmlowpWorkersPool");
+
     // This workaround ensures that all worker tasks have exited methods in the
     // BlockingCounter. Without this, there is a race where the context is torn
     // down while the counter is in use.
@@ -919,6 +1168,9 @@ class TensorflowGemmlowpWorkersPool {
   }
 
   void Execute(const std::vector<gemmlowp::Task*>& tasks) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_27(mht_27_v, 1171, "", "./tensorflow/core/kernels/quantization_utils.h", "Execute");
+
     assert(!tasks.empty());
     assert(workers_ != nullptr);
     counter_to_decrement_when_ready_.Reset(tasks.size());
@@ -951,10 +1203,16 @@ class TensorflowGemmContext : public gemmlowp::MultiThreadGemmContextBase {
  public:
   TensorflowGemmContext(int num_threads, thread::ThreadPool* workers)
       : workers_pool_(workers) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_28(mht_28_v, 1206, "", "./tensorflow/core/kernels/quantization_utils.h", "TensorflowGemmContext");
+
     set_max_num_threads(num_threads);
   }
 
-  TensorflowGemmlowpWorkersPool* workers_pool() { return &workers_pool_; }
+  TensorflowGemmlowpWorkersPool* workers_pool() {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantization_utilsDTh mht_29(mht_29_v, 1213, "", "./tensorflow/core/kernels/quantization_utils.h", "workers_pool");
+ return &workers_pool_; }
 
  private:
   TensorflowGemmlowpWorkersPool workers_pool_;

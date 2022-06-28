@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSspectrogram_test_utilsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSspectrogram_test_utilsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSspectrogram_test_utilsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,6 +198,10 @@ limitations under the License.
 namespace tensorflow {
 
 bool ReadWaveFileToVector(const string& file_name, std::vector<double>* data) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("file_name: \"" + file_name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSspectrogram_test_utilsDTcc mht_0(mht_0_v, 202, "", "./tensorflow/core/kernels/spectrogram_test_utils.cc", "ReadWaveFileToVector");
+
   string wav_data;
   if (!ReadFileToString(Env::Default(), file_name, &wav_data).ok()) {
     LOG(ERROR) << "Wave file read failed for " << file_name;
@@ -56,6 +228,10 @@ bool ReadWaveFileToVector(const string& file_name, std::vector<double>* data) {
 bool ReadRawFloatFileToComplexVector(
     const string& file_name, int row_length,
     std::vector<std::vector<std::complex<double> > >* data) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("file_name: \"" + file_name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSspectrogram_test_utilsDTcc mht_1(mht_1_v, 232, "", "./tensorflow/core/kernels/spectrogram_test_utils.cc", "ReadRawFloatFileToComplexVector");
+
   data->clear();
   string data_string;
   if (!ReadFileToString(Env::Default(), file_name, &data_string).ok()) {
@@ -106,6 +282,10 @@ bool ReadRawFloatFileToComplexVector(
 void ReadCSVFileToComplexVectorOrDie(
     const string& file_name,
     std::vector<std::vector<std::complex<double> > >* data) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("file_name: \"" + file_name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSspectrogram_test_utilsDTcc mht_2(mht_2_v, 286, "", "./tensorflow/core/kernels/spectrogram_test_utils.cc", "ReadCSVFileToComplexVectorOrDie");
+
   data->clear();
   string data_string;
   if (!ReadFileToString(Env::Default(), file_name, &data_string).ok()) {
@@ -154,6 +334,10 @@ void ReadCSVFileToComplexVectorOrDie(
 
 void ReadCSVFileToArrayOrDie(const string& filename,
                              std::vector<std::vector<float> >* array) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("filename: \"" + filename + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSspectrogram_test_utilsDTcc mht_3(mht_3_v, 338, "", "./tensorflow/core/kernels/spectrogram_test_utils.cc", "ReadCSVFileToArrayOrDie");
+
   string contents;
   TF_CHECK_OK(ReadFileToString(Env::Default(), filename, &contents));
   std::vector<string> lines = str_util::Split(contents, '\n');
@@ -175,6 +359,10 @@ void ReadCSVFileToArrayOrDie(const string& filename,
 
 bool WriteDoubleVectorToFile(const string& file_name,
                              const std::vector<double>& data) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("file_name: \"" + file_name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSspectrogram_test_utilsDTcc mht_4(mht_4_v, 363, "", "./tensorflow/core/kernels/spectrogram_test_utils.cc", "WriteDoubleVectorToFile");
+
   std::unique_ptr<WritableFile> file;
   if (!Env::Default()->NewWritableFile(file_name, &file).ok()) {
     LOG(ERROR) << "Failed to open file " << file_name;
@@ -197,6 +385,10 @@ bool WriteDoubleVectorToFile(const string& file_name,
 
 bool WriteFloatVectorToFile(const string& file_name,
                             const std::vector<float>& data) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("file_name: \"" + file_name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSspectrogram_test_utilsDTcc mht_5(mht_5_v, 389, "", "./tensorflow/core/kernels/spectrogram_test_utils.cc", "WriteFloatVectorToFile");
+
   std::unique_ptr<WritableFile> file;
   if (!Env::Default()->NewWritableFile(file_name, &file).ok()) {
     LOG(ERROR) << "Failed to open file " << file_name;
@@ -219,6 +411,10 @@ bool WriteFloatVectorToFile(const string& file_name,
 
 bool WriteDoubleArrayToFile(const string& file_name, int size,
                             const double* data) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("file_name: \"" + file_name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSspectrogram_test_utilsDTcc mht_6(mht_6_v, 415, "", "./tensorflow/core/kernels/spectrogram_test_utils.cc", "WriteDoubleArrayToFile");
+
   std::unique_ptr<WritableFile> file;
   if (!Env::Default()->NewWritableFile(file_name, &file).ok()) {
     LOG(ERROR) << "Failed to open file " << file_name;
@@ -241,6 +437,10 @@ bool WriteDoubleArrayToFile(const string& file_name, int size,
 
 bool WriteFloatArrayToFile(const string& file_name, int size,
                            const float* data) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("file_name: \"" + file_name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSspectrogram_test_utilsDTcc mht_7(mht_7_v, 441, "", "./tensorflow/core/kernels/spectrogram_test_utils.cc", "WriteFloatArrayToFile");
+
   std::unique_ptr<WritableFile> file;
   if (!Env::Default()->NewWritableFile(file_name, &file).ok()) {
     LOG(ERROR) << "Failed to open file " << file_name;
@@ -264,6 +464,10 @@ bool WriteFloatArrayToFile(const string& file_name, int size,
 bool WriteComplexVectorToRawFloatFile(
     const string& file_name,
     const std::vector<std::vector<std::complex<double> > >& data) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("file_name: \"" + file_name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSspectrogram_test_utilsDTcc mht_8(mht_8_v, 468, "", "./tensorflow/core/kernels/spectrogram_test_utils.cc", "WriteComplexVectorToRawFloatFile");
+
   std::unique_ptr<WritableFile> file;
   if (!Env::Default()->NewWritableFile(file_name, &file).ok()) {
     LOG(ERROR) << "Failed to open file " << file_name;
@@ -297,6 +501,9 @@ bool WriteComplexVectorToRawFloatFile(
 
 void SineWave(int sample_rate, float frequency, float duration_seconds,
               std::vector<double>* data) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSspectrogram_test_utilsDTcc mht_9(mht_9_v, 504, "", "./tensorflow/core/kernels/spectrogram_test_utils.cc", "SineWave");
+
   data->clear();
   for (int i = 0; i < static_cast<int>(sample_rate * duration_seconds); ++i) {
     data->push_back(

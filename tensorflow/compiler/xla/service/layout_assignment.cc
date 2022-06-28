@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -64,6 +232,9 @@ namespace xla {
 
 std::ostream& operator<<(std::ostream& out,
                          const LayoutConstraint& constraint) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_0(mht_0_v, 235, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "operator<<");
+
   out << constraint.ToString();
   return out;
 }
@@ -75,10 +246,16 @@ BufferLayoutConstraint::BufferLayoutConstraint(const Layout& layout,
     : LayoutConstraint(mandatory, dfs, priority),
       layout_(layout),
       buffer_(&buffer) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_1(mht_1_v, 249, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "BufferLayoutConstraint::BufferLayoutConstraint");
+
   CHECK(LayoutUtil::ValidateLayoutForShape(layout, buffer.shape()).ok());
 }
 
 std::string BufferLayoutConstraint::ToString() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_2(mht_2_v, 256, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "BufferLayoutConstraint::ToString");
+
   return absl::StrFormat(
       "BufferLayoutConstraint (prioity=%d, mandatory=%d, dfs=%d) %s: %s",
       priority(), mandatory(), dfs(), buffer_->ToString(),
@@ -88,6 +265,9 @@ std::string BufferLayoutConstraint::ToString() const {
 bool BufferLayoutConstraint::UpdateLayout(int64_t priority,
                                           const Layout& layout, bool mandatory,
                                           bool dfs) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_3(mht_3_v, 268, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "BufferLayoutConstraint::UpdateLayout");
+
   if (!mandatory && priority <= priority_) {
     return false;
   }
@@ -109,6 +289,9 @@ OperandLayoutConstraint::OperandLayoutConstraint(
       shape_layout_(shape_layout),
       instruction_(instruction),
       operand_no_(operand_no) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_4(mht_4_v, 292, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "OperandLayoutConstraint::OperandLayoutConstraint");
+
   CHECK(shape_layout_.LayoutIsSet());
   CHECK(ShapeUtil::Compatible(shape_layout.shape(),
                               instruction->operand(operand_no)->shape()))
@@ -118,12 +301,18 @@ OperandLayoutConstraint::OperandLayoutConstraint(
 }
 
 std::string OperandLayoutConstraint::ToString() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_5(mht_5_v, 304, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "OperandLayoutConstraint::ToString");
+
   return absl::StrFormat(
       "OperandLayoutConstraint (prioity=%d) %s, operand %d: %s", priority(),
       instruction_->name(), operand_no_, shape_layout_.ToString());
 }
 
 std::string ComputationLayoutConstraint::ToString() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_6(mht_6_v, 313, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "ComputationLayoutConstraint::ToString");
+
   return absl::StrFormat("ComputationLayoutConstraint (status=%d): %s",
                          layout_state_, computation_layout_.ToString());
 }
@@ -132,10 +321,16 @@ LayoutAssignment::LayoutConstraints::LayoutConstraints(
     HloComputation* computation, ComputationLayout* computation_layout,
     int64_t priority)
     : computation_(computation),
-      computation_constraint_(computation, computation_layout, priority) {}
+      computation_constraint_(computation, computation_layout, priority) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_7(mht_7_v, 325, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::LayoutConstraints::LayoutConstraints");
+}
 
 PointsToSet::BufferSet* LayoutAssignment::GetBufferSet(
     const HloInstruction* instruction) const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_8(mht_8_v, 331, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::GetBufferSet");
+
   auto it = buffer_sets_cache_.find(instruction);
   if (it != buffer_sets_cache_.end()) {
     return it->second.get();
@@ -155,6 +350,9 @@ PointsToSet::BufferSet* LayoutAssignment::GetBufferSet(
 
 bool LayoutAssignment::AnyOperandBufferForwarded(
     const HloInstruction* instruction, int64_t operand_no) const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_9(mht_9_v, 353, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::AnyOperandBufferForwarded");
+
   // The operand is potentially forwarded if the intersection of points-to sets
   // of the operand and the instruction is non-empty.
   PointsToSet::BufferSet* output_buffers = GetBufferSet(instruction);
@@ -167,6 +365,9 @@ bool LayoutAssignment::AnyOperandBufferForwarded(
 
 bool LayoutAssignment::AllOperandBuffersForwarded(
     const HloInstruction* instruction, int64_t operand_no) const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_10(mht_10_v, 368, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::AllOperandBuffersForwarded");
+
   // The operand is potentially forwarded if the intersection of points-to sets
   // of the operand and the instruction is non-empty.
   PointsToSet::BufferSet* output_buffers = GetBufferSet(instruction);
@@ -181,6 +382,9 @@ Status LayoutAssignment::SetBufferLayout(const Layout& layout,
                                          const LogicalBuffer& buffer,
                                          bool mandatory, bool dfs,
                                          int64_t priority) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_11(mht_11_v, 385, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::SetBufferLayout");
+
   VLOG(3) << "SetBufferLayout : " << buffer << " : "
           << LayoutUtil::HumanString(layout) << " with priority " << priority;
   TF_RETURN_IF_ERROR(points_to_analysis_->VerifyBuffer(buffer));
@@ -237,6 +441,9 @@ Status LayoutAssignment::SetOperandLayout(const Shape& shape_with_layout,
                                           const HloInstruction* instruction,
                                           int64_t operand_no, bool mandatory,
                                           bool dfs, int64_t priority) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_12(mht_12_v, 444, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::SetOperandLayout");
+
   LayoutConstraints& constraints =
       *FindOrDie(computation_layouts_, instruction->parent());
   // The second and third operands (operand_no > 0) of a dynamic-update-slice
@@ -300,6 +507,9 @@ OperandLayoutConstraint*
 LayoutAssignment::LayoutConstraints::InsertOperandLayoutConstraint(
     const HloInstruction* instruction, int64_t operand_no,
     const OperandLayoutConstraint& constraint) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_13(mht_13_v, 510, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::LayoutConstraints::InsertOperandLayoutConstraint");
+
   auto key = std::make_pair(instruction, operand_no);
   auto iter = operand_constraints_.find(key);
   if (iter == operand_constraints_.end()) {
@@ -313,6 +523,9 @@ LayoutAssignment::LayoutConstraints::InsertOperandLayoutConstraint(
 
 void LayoutAssignment::PushAddedConstraints(
     const LayoutConstraint* constraint) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_14(mht_14_v, 526, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::PushAddedConstraints");
+
   if (!constraint->dfs()) {
     // Insert a new constraint to the first location where it's strictly greater
     // than all the subsequent constraints. Assumes invariant that the list is
@@ -331,6 +544,9 @@ void LayoutAssignment::PushAddedConstraints(
 Status LayoutAssignment::SetArrayOperandLayout(
     const Layout& layout, const HloInstruction* instruction, int64_t operand_no,
     bool mandatory, bool dfs, int64_t priority) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_15(mht_15_v, 547, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::SetArrayOperandLayout");
+
   const HloInstruction* operand = instruction->operand(operand_no);
   TF_RET_CHECK(operand->shape().IsArray());
   Shape shape(operand->shape());
@@ -343,6 +559,9 @@ Status LayoutAssignment::SetArrayOperandLayout(
 Status LayoutAssignment::LayoutConstraints::SetResultLayout(
     LayoutAssignment* assignment, const Shape& shape_with_layout,
     int64_t priority) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_16(mht_16_v, 562, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::LayoutConstraints::SetResultLayout");
+
   VLOG(3) << "  : " << ShapeUtil::HumanStringWithLayout(shape_with_layout)
           << "; priority = " << priority << ".\n";
 
@@ -357,6 +576,9 @@ Status LayoutAssignment::SetInstructionLayout(const Layout& layout,
                                               bool mandatory, bool dfs,
                                               bool allow_alias,
                                               int64_t priority) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_17(mht_17_v, 579, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::SetInstructionLayout");
+
   if (priority < 0) {
     priority = current_priority_;
   }
@@ -397,6 +619,9 @@ Status LayoutAssignment::SetInstructionLayout(const Shape& shape_with_layout,
                                               bool mandatory, bool dfs,
                                               bool allow_alias,
                                               int64_t priority) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_18(mht_18_v, 622, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::SetInstructionLayout");
+
   VLOG(3) << "SetInstructionLayout : " << instruction->name() << ", "
           << ShapeUtil::HumanStringWithLayout(shape_with_layout)
           << ": priority = " << priority << " : mandatory = " << mandatory
@@ -433,12 +658,18 @@ Status LayoutAssignment::SetInstructionLayout(const Shape& shape_with_layout,
 
 const BufferLayoutConstraint* LayoutAssignment::GetBufferLayoutConstraint(
     const LogicalBuffer& buffer) const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_19(mht_19_v, 661, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::GetBufferLayoutConstraint");
+
   auto it = buffer_constraints_.find(&buffer);
   return it == buffer_constraints_.end() ? nullptr : &it->second;
 }
 
 const ShapeLayout* LayoutAssignment::LayoutConstraints::OperandLayout(
     const HloInstruction* instruction, int64_t operand_no) const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_20(mht_20_v, 670, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::LayoutConstraints::OperandLayout");
+
   if (const auto* constraint =
           GetOperandLayoutConstraint(instruction, operand_no)) {
     return &constraint->shape_layout();
@@ -449,11 +680,17 @@ const ShapeLayout* LayoutAssignment::LayoutConstraints::OperandLayout(
 const OperandLayoutConstraint*
 LayoutAssignment::LayoutConstraints::GetOperandLayoutConstraint(
     const HloInstruction* instruction, int64_t operand_no) const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_21(mht_21_v, 683, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::LayoutConstraints::GetOperandLayoutConstraint");
+
   auto it = operand_constraints_.find(std::make_pair(instruction, operand_no));
   return it == operand_constraints_.end() ? nullptr : &it->second;
 }
 
 const ShapeLayout* LayoutAssignment::LayoutConstraints::ResultLayout() const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_22(mht_22_v, 691, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::LayoutConstraints::ResultLayout");
+
   return (computation_->IsEntryComputation() ||
           computation_constraint_.result_layout_is_set())
              ? &computation_layout().result_layout()
@@ -462,6 +699,9 @@ const ShapeLayout* LayoutAssignment::LayoutConstraints::ResultLayout() const {
 
 std::string LayoutAssignment::ToString(
     const LayoutConstraints& constraints) const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_23(mht_23_v, 702, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::ToString");
+
   std::string output;
   absl::StrAppend(&output, "LayoutConstraints for computation ",
                   constraints.computation()->name(), "\n");
@@ -494,6 +734,9 @@ std::string LayoutAssignment::ToString(
 namespace {
 
 bool IsHostSendRecv(const HloInstruction* instruction) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_24(mht_24_v, 737, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "IsHostSendRecv");
+
   const HloSendRecvInstruction* send_recv_instr =
       DynCast<HloSendRecvInstruction>(instruction);
   return send_recv_instr != nullptr && send_recv_instr->is_host_transfer();
@@ -503,6 +746,9 @@ bool IsHostSendRecv(const HloInstruction* instruction) {
 
 Status LayoutAssignment::BuildHostChannelConstraints(
     HloComputation* computation) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_25(mht_25_v, 749, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::BuildHostChannelConstraints");
+
   for (auto* instruction : computation->instructions()) {
     const HloSendRecvInstruction* send_recv_instr =
         DynCast<HloSendRecvInstruction>(instruction);
@@ -531,12 +777,18 @@ Status LayoutAssignment::BuildHostChannelConstraints(
 namespace {
 
 bool IsLayoutConstrainedCustomCall(HloInstruction* instruction) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_26(mht_26_v, 780, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "IsLayoutConstrainedCustomCall");
+
   const HloCustomCallInstruction* custom_call =
       DynCast<HloCustomCallInstruction>(instruction);
   return custom_call != nullptr && custom_call->layout_constrained();
 }
 
 bool IsLayoutConstrainedCollective(const HloInstruction* instruction) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_27(mht_27_v, 789, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "IsLayoutConstrainedCollective");
+
   const HloCollectiveInstruction* collective =
       DynCast<HloCollectiveInstruction>(instruction);
   return collective != nullptr && collective->constrain_layout();
@@ -545,6 +797,9 @@ bool IsLayoutConstrainedCollective(const HloInstruction* instruction) {
 Status PropagateParameterLayoutToUsers(const HloInstruction* instruction,
                                        const Shape& shape,
                                        LayoutAssignment* constraints) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_28(mht_28_v, 800, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "PropagateParameterLayoutToUsers");
+
   for (auto* user : instruction->users()) {
     // Excluding tuple operations as they do not participate in layout
     // propagations (they do not create or aliase buffers).
@@ -575,10 +830,16 @@ Status PropagateParameterLayoutToUsers(const HloInstruction* instruction,
 Status LayoutAssignment::AddMandatoryConstraints(
     ChannelLayoutConstraints* channel_constraints,
     LayoutConstraints* constraints) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_29(mht_29_v, 833, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::AddMandatoryConstraints");
+
   VLOG(2) << "Adding mandatory layout constraints to computation "
           << constraints->computation()->name();
 
   auto get_channel_constraints = [&](const HloInstruction* instruction) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_30(mht_30_v, 840, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "lambda");
+
     return IsHostSendRecv(instruction) ? &host_channel_constraints_
                                        : channel_constraints;
   };
@@ -817,6 +1078,9 @@ Status LayoutAssignment::AddMandatoryConstraints(
 namespace {
 
 bool LayoutsInShapesEqual(const Shape& lhs, const Shape& rhs) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_31(mht_31_v, 1081, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutsInShapesEqual");
+
   return Layout::Equal().MinorToMajorOnly()(lhs.layout(), rhs.layout());
 }
 
@@ -825,6 +1089,9 @@ bool LayoutsInShapesEqual(const Shape& lhs, const Shape& rhs) {
 // layout in the ComputationLayout.
 Status CheckCallLayout(HloInstruction* call,
                        const ComputationLayout& computation_layout) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_32(mht_32_v, 1092, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "CheckCallLayout");
+
   HloComputation* computation = call->to_apply();
   TF_RET_CHECK(computation->num_parameters() == call->operand_count());
   for (int64_t i = 0; i < computation->num_parameters(); ++i) {
@@ -839,6 +1106,9 @@ Status CheckCallLayout(HloInstruction* call,
 // Operands of layout-constrained custom calls must match the expected
 // constrained layouts.
 Status CheckCustomCallLayout(HloInstruction* instruction) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_33(mht_33_v, 1109, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "CheckCustomCallLayout");
+
   if (IsLayoutConstrainedCustomCall(instruction)) {
     const HloCustomCallInstruction* custom_call =
         DynCast<HloCustomCallInstruction>(instruction);
@@ -860,6 +1130,9 @@ Status CheckCustomCallLayout(HloInstruction* instruction) {
 Status CheckWhileLayout(HloInstruction* while_inst,
                         const ComputationLayout& condition_computation_layout,
                         const ComputationLayout& body_computation_layout) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_34(mht_34_v, 1133, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "CheckWhileLayout");
+
   auto init_shape = while_inst->operand(0)->shape();
   TF_RET_CHECK(
       condition_computation_layout.parameter_layout(0).MatchesLayoutInShape(
@@ -873,6 +1146,9 @@ Status CheckWhileLayout(HloInstruction* while_inst,
 }
 
 Status CheckOptimizationBarrierLayout(HloInstruction* inst) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_35(mht_35_v, 1149, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "CheckOptimizationBarrierLayout");
+
   TF_RET_CHECK(LayoutsInShapesEqual(inst->operand(0)->shape(), inst->shape()));
   return Status::OK();
 }
@@ -880,6 +1156,9 @@ Status CheckOptimizationBarrierLayout(HloInstruction* inst) {
 Status CheckConditionalLayout(
     HloInstruction* instruction,
     absl::Span<const ComputationLayout> branch_computation_layouts) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_36(mht_36_v, 1159, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "CheckConditionalLayout");
+
   for (int j = 0; j < instruction->branch_count(); ++j) {
     const HloInstruction* branch_operand = instruction->operand(j + 1);
     TF_RET_CHECK(
@@ -906,6 +1185,9 @@ Status CheckConditionalLayout(
 // and the root of the fusion expression must match the layout of the fusion
 // instruction.
 Status CheckFusionLayout(HloInstruction* fusion) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_37(mht_37_v, 1188, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "CheckFusionLayout");
+
   TF_RET_CHECK(HloOpcode::kFusion == fusion->opcode());
 
   TF_RET_CHECK(LayoutsInShapesEqual(fusion->shape(),
@@ -921,6 +1203,9 @@ Status CheckFusionLayout(HloInstruction* fusion) {
 // computation's ComputationLayout.
 Status CheckParameterLayout(HloInstruction* parameter,
                             const ComputationLayout& computation_layout) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_38(mht_38_v, 1206, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "CheckParameterLayout");
+
   const ShapeLayout& parameter_layout =
       computation_layout.parameter_layout(parameter->parameter_number());
   return ShapeUtil::ForEachSubshapeWithStatus(
@@ -944,6 +1229,9 @@ Status CheckParameterLayout(HloInstruction* parameter,
 
 // The layout of a constant instruction must match the layout of its literal.
 Status CheckConstantLayout(HloInstruction* constant) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_39(mht_39_v, 1232, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "CheckConstantLayout");
+
   if (!LayoutsInShapesEqual(constant->literal().shape(), constant->shape())) {
     return InternalError(
         "constant instruction %s does not match the layout of its literal %s",
@@ -957,6 +1245,9 @@ Status CheckConstantLayout(HloInstruction* constant) {
 
 StatusOr<HloInstruction*> LayoutAssignment::CreateCopyWithNewLayout(
     const Shape& shape_with_layout, HloInstruction* instruction) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_40(mht_40_v, 1248, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::CreateCopyWithNewLayout");
+
   TF_RET_CHECK(LayoutUtil::HasLayout(shape_with_layout));
   DCHECK(ShapeUtil::Compatible(shape_with_layout, instruction->shape()))
       << ShapeUtil::HumanString(shape_with_layout) << " "
@@ -1018,6 +1309,9 @@ StatusOr<HloInstruction*> LayoutAssignment::CreateCopyWithNewLayout(
 Status LayoutAssignment::CopyOperandIfLayoutsDiffer(
     const ShapeLayout& operand_layout, HloInstruction* instruction,
     int64_t operand_no) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_41(mht_41_v, 1312, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::CopyOperandIfLayoutsDiffer");
+
   HloInstruction* operand = instruction->mutable_operand(operand_no);
   TF_RET_CHECK(operand_layout.LayoutIsSet());
   TF_RET_CHECK(LayoutUtil::HasLayout(operand->shape()));
@@ -1076,6 +1370,9 @@ Status LayoutAssignment::CopyOperandIfLayoutsDiffer(
 void LayoutAssignment::SetupCopiedInstruction(const HloInstruction& instruction,
                                               HloInstruction* copy,
                                               const ShapeIndex& index) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_42(mht_42_v, 1373, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::SetupCopiedInstruction");
+
   if (instruction.has_sharding()) {
     // If the index is empty, we want to copy the whole sharding, in case the
     // sharding is a tuple sharding.
@@ -1096,6 +1393,9 @@ void LayoutAssignment::SetupCopiedInstruction(const HloInstruction& instruction,
 }
 
 Status LayoutAssignment::CheckLayouts(HloModule* module) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_43(mht_43_v, 1396, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::CheckLayouts");
+
   TF_ASSIGN_OR_RETURN(auto points_to_analysis,
                       TuplePointsToAnalysis::Run(module));
   for (auto* computation : module->MakeNonfusionComputations()) {
@@ -1208,6 +1508,9 @@ LayoutAssignment::LayoutAssignment(
       saved_entry_computation_layout_(*entry_computation_layout),
       reverse_computation_order_(reverse_computation_order),
       channel_layout_constraints_(channel_constraints) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_44(mht_44_v, 1511, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::LayoutAssignment");
+
   if (channel_layout_constraints_ != nullptr) {
     // Save a copy of the input ChannelLayoutConstraints so that we can reset it
     // if we have to undo previous operations (ClearPreviousPassSideEffects()).
@@ -1220,6 +1523,9 @@ LayoutAssignment::LayoutAssignment(
 std::unique_ptr<Layout> LayoutAssignment::ChooseOperandLayoutFromOutputLayout(
     const Layout& output_layout, const HloInstruction* instruction,
     int64_t operand_no) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_45(mht_45_v, 1526, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::ChooseOperandLayoutFromOutputLayout");
+
   const HloInstruction* operand = instruction->operand(operand_no);
   CHECK(instruction->shape().IsArray());
   CHECK(operand->shape().IsArray());
@@ -1286,6 +1592,9 @@ std::unique_ptr<Layout> LayoutAssignment::ChooseOperandLayoutFromOutputLayout(
 
 static Layout GetReduceLayoutFromOperand(const Layout& operand_layout,
                                          const HloInstruction* hlo) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_46(mht_46_v, 1595, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "GetReduceLayoutFromOperand");
+
   CHECK_EQ(hlo->opcode(), HloOpcode::kReduce);
   Shape operand_shape = hlo->operand(0)->shape();
   *operand_shape.mutable_layout() = operand_layout;
@@ -1300,6 +1609,9 @@ static Layout GetReduceLayoutFromOperand(const Layout& operand_layout,
 std::unique_ptr<Layout> LayoutAssignment::ChooseOutputLayoutFromOperandLayout(
     const Layout& operand_layout, const HloInstruction* user,
     int64_t operand_no) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_47(mht_47_v, 1612, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::ChooseOutputLayoutFromOperandLayout");
+
   const HloInstruction* operand = user->operand(operand_no);
 
   // Enforce standard layout on variadic reduction output to avoid having two
@@ -1366,6 +1678,9 @@ std::unique_ptr<Layout> LayoutAssignment::ChooseOutputLayoutFromOperandLayout(
 }
 
 Status LayoutAssignment::PropagateConstraints(LayoutConstraints* constraints) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_48(mht_48_v, 1681, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::PropagateConstraints");
+
   // Gathers all initial constraints in a worklist and propagates them in
   // depth-first order. DFS order seems to be better than BFS because a
   // constraint is propagated as far as possible before propagating unrelated
@@ -1376,6 +1691,9 @@ Status LayoutAssignment::PropagateConstraints(LayoutConstraints* constraints) {
 
   // Lambda for moving newly added constraints to the worklist.
   auto add_new_constraints_to_worklist = [this, &worklist]() {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_49(mht_49_v, 1694, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "lambda");
+
     // Add constraints to the front of the deque for DFS ordering.
     for (auto* constraint : ConsumeAddedConstraints()) {
       if (constraint->dfs()) {
@@ -1448,6 +1766,9 @@ std::vector<std::pair<const HloInstruction*, int64_t>> GetArrayUsesOfBuffer(
 Status LayoutAssignment::PropagateUseConstraintToDefs(
     const ShapeLayout& shape_layout, const HloInstruction* instruction,
     LayoutConstraints* constraints, int64_t priority) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_50(mht_50_v, 1769, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::PropagateUseConstraintToDefs");
+
   // Try to set all logical buffers which may be sources of the given operand to
   // match the given layout.
   const PointsToSet& points_to_set =
@@ -1477,6 +1798,9 @@ namespace {
 // layouts that are valuable to propagate in a depthfirst manner to avoid
 // unassigned layouts in the graph.
 bool InstructionShouldPropagateDepthFirst(const HloInstruction& hlo) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_51(mht_51_v, 1801, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "InstructionShouldPropagateDepthFirst");
+
   switch (hlo.opcode()) {
     case HloOpcode::kFusion:
       return hlo.IsCustomFusion();
@@ -1498,6 +1822,9 @@ bool InstructionShouldPropagateDepthFirst(const HloInstruction& hlo) {
 Status LayoutAssignment::PropagateOperandConstraint(
     const OperandLayoutConstraint& operand_constraint,
     LayoutConstraints* constraints) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_52(mht_52_v, 1825, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::PropagateOperandConstraint");
+
   VLOG(3) << "Propagate Operand Constraint : " << operand_constraint.ToString()
           << "\n";
   // Try to set the layout of the logical buffers in the given operand to match
@@ -1676,6 +2003,9 @@ Status LayoutAssignment::PropagateOperandConstraint(
 Status LayoutAssignment::PropagateBufferConstraintToOperands(
     const BufferLayoutConstraint& buffer_constraint,
     LayoutConstraints* constraints) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_53(mht_53_v, 2006, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::PropagateBufferConstraintToOperands");
+
   VLOG(5) << "PropagateBufferConstraintToOperands: "
           << buffer_constraint.ToString();
   const LogicalBuffer& buffer = buffer_constraint.buffer();
@@ -1740,6 +2070,9 @@ Status LayoutAssignment::PropagateBufferConstraintToOperands(
 Status LayoutAssignment::PropagateBufferConstraint(
     const BufferLayoutConstraint& buffer_constraint,
     LayoutConstraints* constraints) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_54(mht_54_v, 2073, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::PropagateBufferConstraint");
+
   // Only propagate array layouts.
   const LogicalBuffer& buffer = buffer_constraint.buffer();
   if (!buffer.IsArray()) {
@@ -1753,6 +2086,9 @@ Status LayoutAssignment::PropagateBufferConstraint(
 Status LayoutAssignment::PropagateBufferConstraintToUses(
     const BufferLayoutConstraint& buffer_constraint,
     LayoutConstraints* constraints) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_55(mht_55_v, 2089, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::PropagateBufferConstraintToUses");
+
   VLOG(5) << "PropagateBufferConstraintToUses: "
           << buffer_constraint.ToString();
   const LogicalBuffer& buffer = buffer_constraint.buffer();
@@ -1807,6 +2143,9 @@ Status LayoutAssignment::PropagateBufferConstraintToUses(
 Status LayoutAssignment::PropagateResultConstraint(
     const ComputationLayoutConstraint& layout_constraint,
     LayoutConstraints* constraints) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_56(mht_56_v, 2146, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::PropagateResultConstraint");
+
   // Propagate the use constraint of the root instruction up to the logical
   // buffers which make up the result.
   return PropagateUseConstraintToDefs(
@@ -1821,6 +2160,9 @@ Status LayoutAssignment::PropagateResultConstraint(
 // instruction's operands).
 StatusOr<Layout> LayoutAssignment::InferArrayLayout(
     const HloInstruction* instruction, const ShapeIndex& index) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_57(mht_57_v, 2163, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::InferArrayLayout");
+
   const auto& source_buffers =
       points_to_analysis_->GetPointsToSet(instruction).element(index);
   TF_RET_CHECK(!source_buffers.empty());
@@ -1865,6 +2207,9 @@ namespace {
 // set the layout of the fused root to match the layout of the fusion
 // instruction itself.
 Status SetFusionLayouts(HloInstruction* fusion) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_58(mht_58_v, 2210, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "SetFusionLayouts");
+
   TF_RET_CHECK(fusion->opcode() == HloOpcode::kFusion);
   for (auto* fused_instruction :
        fusion->fused_instructions_computation()->MakeInstructionPostOrder()) {
@@ -1909,6 +2254,9 @@ Status SetFusionLayouts(HloInstruction* fusion) {
 }  // namespace
 
 Status LayoutAssignment::AssignLayouts(LayoutConstraints& constraints) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_59(mht_59_v, 2257, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::AssignLayouts");
+
   HloComputation* computation = constraints.computation();
   VLOG(2) << "Assigning layouts to computation: " << computation->name();
 
@@ -2002,6 +2350,9 @@ Status LayoutAssignment::AssignLayouts(LayoutConstraints& constraints) {
       // Copy the tiling info specified in result layout.
       auto copy_tiling = [&constraints](xla::Shape* subshape,
                                         const xla::ShapeIndex& index) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_60(mht_60_v, 2353, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "lambda");
+
         if (subshape->IsArray()) {
           const Shape& result_shape = ShapeUtil::GetSubshape(
               constraints.ResultLayout()->shape(), index);
@@ -2025,6 +2376,9 @@ Status LayoutAssignment::AssignLayouts(LayoutConstraints& constraints) {
 
 Status LayoutAssignment::CalculateComputationLayout(
     LayoutConstraints* constraints) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_61(mht_61_v, 2379, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::CalculateComputationLayout");
+
   // Process instructions that contain nested computations and may require
   // additional layouts to be assigned on the instructions nested inside.
 
@@ -2149,6 +2503,9 @@ Status LayoutAssignment::CalculateComputationLayout(
 }
 
 Status LayoutAssignment::ClearComputationLayouts(HloComputation* computation) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_62(mht_62_v, 2506, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::ClearComputationLayouts");
+
   // Clear existing layouts of the instructions.  All layouts must be assigned
   // by the LayoutAssignment pass, except for those on parameters, the
   // computation result, and a couple special cases. The former two are
@@ -2176,6 +2533,9 @@ Status LayoutAssignment::ClearComputationLayouts(HloComputation* computation) {
 Status LayoutAssignment::RunOnComputation(
     LayoutConstraints* constraints,
     ChannelLayoutConstraints* channel_constraints) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_63(mht_63_v, 2536, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::RunOnComputation");
+
   HloComputation* computation = constraints->computation();
   VLOG(1) << "LayoutAssignment::RunOnComputation(" << computation->name()
           << ")";
@@ -2258,6 +2618,9 @@ Status LayoutAssignment::RunOnComputation(
 Status LayoutAssignment::ConstrainChannelLayouts(
     HloComputation* computation,
     ChannelLayoutConstraints* channel_constraints) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_64(mht_64_v, 2621, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::ConstrainChannelLayouts");
+
   for (HloInstruction* instruction : computation->MakeInstructionPostOrder()) {
     if (instruction->IsCrossModuleAllReduce()) {
       TF_ASSIGN_OR_RETURN(auto op_layout, InferArrayLayout(instruction, {}));
@@ -2271,6 +2634,9 @@ Status LayoutAssignment::ConstrainChannelLayouts(
 }
 
 Status LayoutAssignment::PropagateMemorySpace(HloModule* module) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_65(mht_65_v, 2637, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::PropagateMemorySpace");
+
   TF_ASSIGN_OR_RETURN(auto alias_analysis, HloAliasAnalysis::Run(module));
   for (const auto& buffer : alias_analysis->buffers()) {
     // First go through values to collect the memory spaces.
@@ -2307,6 +2673,9 @@ Status LayoutAssignment::PropagateMemorySpace(HloModule* module) {
 
 Status LayoutAssignment::PropagateComputationLayouts(
     HloComputation* computation, ComputationLayout* computation_layout) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_66(mht_66_v, 2676, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::PropagateComputationLayouts");
+
   ComputationLayout computed_computation_layout(
       computation->ComputeProgramShape(),
       /*ignore_layouts=*/false);
@@ -2356,6 +2725,9 @@ Status LayoutAssignment::PropagateComputationLayouts(
 }
 
 StatusOr<bool> LayoutAssignment::Run(HloModule* module) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_67(mht_67_v, 2728, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::Run");
+
   VLOG(2) << "Running layout assignment on module " << module->name();
   TF_RETURN_IF_ERROR(Init(module));
   call_graph_ = CallGraph::Build(module);
@@ -2481,6 +2853,9 @@ StatusOr<bool> LayoutAssignment::Run(HloModule* module) {
 /* static */
 bool LayoutAssignment::InstructionCanChangeLayout(
     const HloInstruction* instruction) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_68(mht_68_v, 2856, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::InstructionCanChangeLayout");
+
   switch (instruction->opcode()) {
     case HloOpcode::kAbs:
     case HloOpcode::kAdd:
@@ -2608,11 +2983,17 @@ bool LayoutAssignment::InstructionCanChangeLayout(
 
 bool LayoutAssignment::InstructionCanChangeLayoutInstance(
     const HloInstruction* instruction) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_69(mht_69_v, 2986, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::InstructionCanChangeLayoutInstance");
+
   return InstructionCanChangeLayout(instruction);
 }
 
 /* static */
 bool LayoutAssignment::IsAtMostRank1(const Shape& shape) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_70(mht_70_v, 2994, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::IsAtMostRank1");
+
   if (shape.IsArray()) {
     return shape.rank() <= 1;
   }
@@ -2622,6 +3003,9 @@ bool LayoutAssignment::IsAtMostRank1(const Shape& shape) {
 }
 
 Status LayoutAssignment::Init(HloModule* module) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_71(mht_71_v, 3006, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::Init");
+
   computation_layouts_.clear();
   conditional_mismatch_.clear();
   *entry_computation_layout_ = saved_entry_computation_layout_;
@@ -2654,6 +3038,9 @@ Status LayoutAssignment::Init(HloModule* module) {
 }
 
 Status LayoutAssignment::ClearPreviousPassSideEffects(HloModule* module) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_72(mht_72_v, 3041, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::ClearPreviousPassSideEffects");
+
   VLOG(5) << "Clearing previous side effects";
   for (HloComputation* computation : module->computations()) {
     if (computation_layouts_.find(computation) != computation_layouts_.end()) {
@@ -2668,6 +3055,9 @@ Status LayoutAssignment::ClearPreviousPassSideEffects(HloModule* module) {
 }
 Status LayoutAssignment::AddCopyForOperand(HloInstruction* instruction,
                                            int64_t operand_number) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSlayout_assignmentDTcc mht_73(mht_73_v, 3058, "", "./tensorflow/compiler/xla/service/layout_assignment.cc", "LayoutAssignment::AddCopyForOperand");
+
   HloInstruction* operand = instruction->mutable_operand(operand_number);
   if (operand->opcode() != HloOpcode::kCopy || operand->user_count() > 1) {
     HloInstruction* copy =

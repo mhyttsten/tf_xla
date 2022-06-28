@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_quantize_opDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_quantize_opDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_quantize_opDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -71,7 +239,10 @@ struct MklReorderWithScaleFwdParams {
 
   MklReorderWithScaleFwdParams(memory::dims src_dims, memory::desc src_md,
                                memory::desc dst_md)
-      : src_dims(src_dims), src_md(src_md), dst_md(dst_md) {}
+      : src_dims(src_dims), src_md(src_md), dst_md(dst_md) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_quantize_opDTcc mht_0(mht_0_v, 243, "", "./tensorflow/core/kernels/mkl/mkl_quantize_op.cc", "MklReorderWithScaleFwdParams");
+}
 };
 
 class MklReorderWithScalePrimitive : public MklPrimitive {
@@ -79,16 +250,25 @@ class MklReorderWithScalePrimitive : public MklPrimitive {
   explicit MklReorderWithScalePrimitive(
       const MklReorderWithScaleFwdParams& fwdParams)
       : MklPrimitive(engine(engine::kind::cpu, 0)) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_quantize_opDTcc mht_1(mht_1_v, 253, "", "./tensorflow/core/kernels/mkl/mkl_quantize_op.cc", "MklReorderWithScalePrimitive");
+
     // Create reorder primitive
     Setup(fwdParams);
   }
 
-  ~MklReorderWithScalePrimitive() {}
+  ~MklReorderWithScalePrimitive() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_quantize_opDTcc mht_2(mht_2_v, 261, "", "./tensorflow/core/kernels/mkl/mkl_quantize_op.cc", "~MklReorderWithScalePrimitive");
+}
 
   std::shared_ptr<primitive> GetPrimitive() { return context_.reorder_prim; }
 
   void Execute(void* src_data, void* dst_data,
                std::shared_ptr<stream> reorder_stream) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_quantize_opDTcc mht_3(mht_3_v, 269, "", "./tensorflow/core/kernels/mkl/mkl_quantize_op.cc", "Execute");
+
 #ifdef DNNL_AARCH64_USE_ACL
     mutex_lock lock(primitive_execution_mu_);
 #endif
@@ -125,11 +305,17 @@ class MklReorderWithScalePrimitive : public MklPrimitive {
         : src_mem(nullptr),
           dst_mem(nullptr),
           reorder_pd(nullptr),
-          reorder_prim(nullptr) {}
+          reorder_prim(nullptr) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_quantize_opDTcc mht_4(mht_4_v, 309, "", "./tensorflow/core/kernels/mkl/mkl_quantize_op.cc", "ReorderContext");
+}
   } context_;
 
   // Reorder primitive setup
   void Setup(const MklReorderWithScaleFwdParams& fwdParams) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_quantize_opDTcc mht_5(mht_5_v, 316, "", "./tensorflow/core/kernels/mkl/mkl_quantize_op.cc", "Setup");
+
     // Create memory descriptors for reorder data with specified format
     context_.src_mem.reset(
         new memory(fwdParams.src_md, cpu_engine_, DummyData));
@@ -167,6 +353,9 @@ class MklReorderWithScalePrimitiveFactory : public MklPrimitiveFactory<T> {
   static MklReorderWithScalePrimitive* Get(
       const memory* from, const memory* to,
       const MklReorderWithScaleFwdParams& fwdParams) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_quantize_opDTcc mht_6(mht_6_v, 356, "", "./tensorflow/core/kernels/mkl/mkl_quantize_op.cc", "Get");
+
     // Try to find a suitable primitive from the cached pool
     auto reorderPrim = static_cast<MklReorderWithScalePrimitive*>(
         MklReorderWithScalePrimitiveFactory<T>::GetInstance().GetReorder(
@@ -180,16 +369,28 @@ class MklReorderWithScalePrimitiveFactory : public MklPrimitiveFactory<T> {
   }
 
   static MklReorderWithScalePrimitiveFactory& GetInstance() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_quantize_opDTcc mht_7(mht_7_v, 372, "", "./tensorflow/core/kernels/mkl/mkl_quantize_op.cc", "GetInstance");
+
     static MklReorderWithScalePrimitiveFactory instance_;
     return instance_;
   }
 
  private:
-  MklReorderWithScalePrimitiveFactory() {}
-  ~MklReorderWithScalePrimitiveFactory() {}
+  MklReorderWithScalePrimitiveFactory() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_quantize_opDTcc mht_8(mht_8_v, 381, "", "./tensorflow/core/kernels/mkl/mkl_quantize_op.cc", "MklReorderWithScalePrimitiveFactory");
+}
+  ~MklReorderWithScalePrimitiveFactory() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_quantize_opDTcc mht_9(mht_9_v, 385, "", "./tensorflow/core/kernels/mkl/mkl_quantize_op.cc", "~MklReorderWithScalePrimitiveFactory");
+}
 
   static string CreateKey(const memory* from, const memory* to,
                           const MklReorderWithScaleFwdParams& fwdParams) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_quantize_opDTcc mht_10(mht_10_v, 391, "", "./tensorflow/core/kernels/mkl/mkl_quantize_op.cc", "CreateKey");
+
     FactoryKeyCreator key_creator;
     key_creator.AddAsKey(MklReorderPrimitiveFactory<T>::CreateKey(from, to));
     // Generate key for post-op scale
@@ -206,12 +407,18 @@ class MklReorderWithScalePrimitiveFactory : public MklPrimitiveFactory<T> {
 
   MklPrimitive* GetReorder(const memory* from, const memory* to,
                            const MklReorderWithScaleFwdParams& fwdParams) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_quantize_opDTcc mht_11(mht_11_v, 410, "", "./tensorflow/core/kernels/mkl/mkl_quantize_op.cc", "GetReorder");
+
     string key = CreateKey(from, to, fwdParams);
     return this->GetOp(key);
   }
 
   void SetReorder(const memory* from, const memory* to, MklPrimitive* op,
                   const MklReorderWithScaleFwdParams& fwdParams) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_quantize_opDTcc mht_12(mht_12_v, 419, "", "./tensorflow/core/kernels/mkl/mkl_quantize_op.cc", "SetReorder");
+
     string key = CreateKey(from, to, fwdParams);
     this->SetOp(key, op);
   }
@@ -223,6 +430,9 @@ template <typename Device, typename T, bool native_format = false>
 class MklQuantizeV2Op : public OpKernel {
  public:
   explicit MklQuantizeV2Op(OpKernelConstruction* ctx) : OpKernel(ctx) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_quantize_opDTcc mht_13(mht_13_v, 433, "", "./tensorflow/core/kernels/mkl/mkl_quantize_op.cc", "MklQuantizeV2Op");
+
     string mode_string;
     OP_REQUIRES_OK(ctx, ctx->GetAttr("mode", &mode_string));
     OP_REQUIRES(ctx,
@@ -265,6 +475,9 @@ class MklQuantizeV2Op : public OpKernel {
   }
 
   void ComputeScalar(OpKernelContext* ctx, float min_range, float max_range) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_quantize_opDTcc mht_14(mht_14_v, 478, "", "./tensorflow/core/kernels/mkl/mkl_quantize_op.cc", "ComputeScalar");
+
     // TODO(intel-tf): Scalar support has to be added for SCALE mode
     OP_REQUIRES(ctx, (mode_ == QUANTIZE_MODE_MIN_FIRST),
                 errors::InvalidArgument(
@@ -311,6 +524,9 @@ class MklQuantizeV2Op : public OpKernel {
   }
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_quantize_opDTcc mht_15(mht_15_v, 527, "", "./tensorflow/core/kernels/mkl/mkl_quantize_op.cc", "Compute");
+
     const unsigned int src_idx = 0;
     const Tensor& input = ctx->input(src_idx);
     const float input_min_range = ctx->input(1).flat<float>()(0);
@@ -396,6 +612,9 @@ class MklQuantizeV2Op : public OpKernel {
 
       const CPUDevice& d = ctx->eigen_device<CPUDevice>();
       auto ParallelSub = [&](int64 start, int64 end) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_quantize_opDTcc mht_16(mht_16_v, 615, "", "./tensorflow/core/kernels/mkl/mkl_quantize_op.cc", "lambda");
+
         for (int i = start; i < end; ++i) {
           minfirst_input[i] = flat_input[i] - min_range;
         }

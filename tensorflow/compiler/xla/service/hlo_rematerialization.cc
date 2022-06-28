@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -62,6 +230,9 @@ using ::tensorflow::strings::HumanReadableNumBytes;
 
 // Returns true if the given instruction is rematerializable.
 bool IsRematerializable(const HloInstruction* instruction) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_0(mht_0_v, 233, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "IsRematerializable");
+
   if (instruction->opcode() == HloOpcode::kCopy) {
     if (LayoutUtil::Equal(instruction->shape().layout(),
                           instruction->operand(0)->shape().layout())) {
@@ -93,6 +264,9 @@ bool IsRematerializable(const HloInstruction* instruction) {
 bool CanBeRematerialized(
     const HloInstruction* instruction,
     absl::flat_hash_map<const HloInstruction*, bool>* rematerializable_map) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_1(mht_1_v, 267, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "CanBeRematerialized");
+
   auto it = rematerializable_map->find(instruction);
   if (it != rematerializable_map->end()) {
     return it->second;
@@ -106,6 +280,9 @@ bool CanBeRematerialized(
 // users and if this is one of these instructions we support the
 // rematerialization of.
 bool IsSupportedIndirectUser(const HloInstruction* instruction) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_2(mht_2_v, 283, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "IsSupportedIndirectUser");
+
   return instruction->opcode() == HloOpcode::kBitcast ||
          instruction->opcode() == HloOpcode::kGetTupleElement;
 }
@@ -177,7 +354,10 @@ struct ItemUse {
   absl::optional<int64_t> index;
 
   ItemUse(Item* user, int64_t op_num, absl::optional<int64_t> index)
-      : user(user), operand_number(op_num), index(index) {}
+      : user(user), operand_number(op_num), index(index) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_3(mht_3_v, 358, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "ItemUse");
+}
   bool operator==(const ItemUse& other) const {
     return user == other.user && operand_number == other.operand_number &&
            index == other.index;
@@ -202,6 +382,9 @@ using UsesList = absl::InlinedVector<ItemUse, 3>;
 class InstructionList {
  public:
   explicit InstructionList(const HloInstructionSequence& order) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_4(mht_4_v, 385, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "InstructionList");
+
     int64_t position = 0;
     Item* last = nullptr;
     last_skip_node_ = nullptr;
@@ -233,6 +416,9 @@ class InstructionList {
   }
 
   ~InstructionList() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_5(mht_5_v, 419, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "~InstructionList");
+
     for (Item* item = first_; item != nullptr;) {
       Item* next = item->next;
       delete item;
@@ -240,19 +426,37 @@ class InstructionList {
     }
   }
 
-  size_t size() const { return item_map_.size(); }
+  size_t size() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_6(mht_6_v, 430, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "size");
+ return item_map_.size(); }
 
   // For ordered iteration over items.
   //    for (auto item = q.first(); item != nullptr; item = q.next(item)) {...}
-  Item* first() const { return first_; }
-  Item* next(Item* item) const { return item->next; }
+  Item* first() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_7(mht_7_v, 437, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "first");
+ return first_; }
+  Item* next(Item* item) const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_8(mht_8_v, 441, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "next");
+ return item->next; }
 
-  Item* first_skip_node() const { return first_skip_node_; }
-  Item* next_skip_node(Item* item) const { return item->next_skip_node; }
+  Item* first_skip_node() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_9(mht_9_v, 446, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "first_skip_node");
+ return first_skip_node_; }
+  Item* next_skip_node(Item* item) const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_10(mht_10_v, 450, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "next_skip_node");
+ return item->next_skip_node; }
 
   // Creates an Item for the given instruction, but doesn't add it to the list.
   // (Use InsertBeforeInstructions to add the Item to the list.)
   Item* CreateItem(HloInstruction* inst) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_11(mht_11_v, 457, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "CreateItem");
+
     Item* item = new Item;
     item->instruction = inst;
     CHECK(item_map_.insert({inst, item}).second)
@@ -262,6 +466,9 @@ class InstructionList {
 
   // Return the Item corresponding to inst.
   Item* GetItem(const HloInstruction* inst) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_12(mht_12_v, 469, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "GetItem");
+
     auto iter = item_map_.find(inst);
     CHECK(iter != item_map_.end()) << "Did not find " << inst->name();
     return iter->second;
@@ -282,6 +489,9 @@ class InstructionList {
   // duplicate values. However, monotonicity is preserved.
   void InsertBeforeInstructions(Item* to_insert,
                                 absl::Span<Item* const> before_instructions) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_13(mht_13_v, 492, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "InsertBeforeInstructions");
+
     VLOG(3) << "InsertBeforeInstructions: " << to_insert->instruction->name()
             << " before {"
             << absl::StrJoin(before_instructions, ", ",
@@ -321,6 +531,9 @@ class InstructionList {
   // Scan the list and promote nodes to express lane if should_promote(Item)
   // returns true;
   void PromoteNodesToSkip(std::function<bool(Item*)> should_promote) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_14(mht_14_v, 534, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "PromoteNodesToSkip");
+
     int64_t count = 0;
     for (auto* item = first(); item != nullptr; item = next(item)) {
       if (should_promote(item)) {
@@ -341,6 +554,9 @@ class InstructionList {
 
   void InsertAfterInstructions(Item* to_insert,
                                absl::Span<Item* const> after_instructions) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_15(mht_15_v, 557, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "InsertAfterInstructions");
+
     VLOG(3) << "InsertAfterInstructions: " << to_insert->instruction->name()
             << " after {"
             << absl::StrJoin(after_instructions, ", ",
@@ -366,12 +582,18 @@ class InstructionList {
   }
 
   void Denylist(const HloInstruction* inst) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_16(mht_16_v, 585, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "Denylist");
+
     GetItem(inst)->denylisted = true;
   }
 
  private:
   // Insert instruction 'item' immediately before 'before' in the list.
   void InsertBefore(Item* item, Item* before) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_17(mht_17_v, 594, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "InsertBefore");
+
     VLOG(3) << "InsertBefore: " << item->instruction->name() << " before "
             << before->instruction->name();
     // Always place new nodes on express lane for the ease of implementation.
@@ -448,6 +670,9 @@ UsesList GetUsers(const InstructionList& instruction_list,
                   const LogicalBuffer* logical_buffer,
                   const TuplePointsToAnalysis& points_to_analysis,
                   bool* has_indirect_users) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_18(mht_18_v, 673, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "GetUsers");
+
   UsesList users;
   // To identify uses iterate through all HloInstruction users of the
   // BufferAliases of the logical buffer.
@@ -511,6 +736,9 @@ class MemoryUsageTracker {
   int64_t RematerializationCost(const std::vector<Item*>& items,
                                 int64_t memory_reduced,
                                 int64_t memory_limit_bytes) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_19(mht_19_v, 739, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "RematerializationCost");
+
     // If none of the users of any 'item' have been placed in the
     // sequence (as tracked by memory_tracker), then rematerialization of
     // 'item' is a zero-cost move of 'item->instruction' in the sequence.
@@ -576,6 +804,9 @@ class MemoryUsageTracker {
   // Returns whether the given instruction has been placed (BeginInstruction
   // has been called with 'instruction' as the argument).
   bool IsPlaced(const HloInstruction* instruction) const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_20(mht_20_v, 807, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "IsPlaced");
+
     return instruction_list_.GetItem(instruction)->placed;
   }
 
@@ -586,14 +817,23 @@ class MemoryUsageTracker {
   const UsesList GetItemUses(Item* item) const;
 
   // Returns whether 'item' is currently in progress.
-  bool IsInProgressItem(Item* item) const { return item == in_progress_item_; }
+  bool IsInProgressItem(Item* item) const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_21(mht_21_v, 821, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "IsInProgressItem");
+ return item == in_progress_item_; }
 
   // Returns the current memory usage. This is the sum of sizes of all live
   // values.
-  int64_t memory_usage() const { return memory_usage_; }
+  int64_t memory_usage() const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_22(mht_22_v, 828, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "memory_usage");
+ return memory_usage_; }
 
   //
   int64_t AllocatedSize(Item* item) const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_23(mht_23_v, 834, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "AllocatedSize");
+
     int64_t size = 0;
     for (auto buffer_id : item->buffers_defined) {
       size += AllocatedSize(buffer_id);
@@ -645,6 +885,9 @@ class MemoryUsageTracker {
     int64_t unfinished_user_count;
 
     std::string ToString() const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_24(mht_24_v, 888, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "ToString");
+
       return absl::StrCat("Buffer ", id, " (defined by ",
                           defining_instruction->instruction->name(), ", size ",
                           size, " bytes)");
@@ -660,6 +903,9 @@ class MemoryUsageTracker {
   Buffer& CreateBufferFromLogicalBuffer(
       const LogicalBuffer* logical_buffer,
       const TuplePointsToAnalysis& points_to_analysis, bool live_out) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_25(mht_25_v, 906, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "CreateBufferFromLogicalBuffer");
+
     bool has_indirect_uses = false;
     UsesList users = GetUsers(instruction_list_, logical_buffer,
                               points_to_analysis, &has_indirect_uses);
@@ -672,6 +918,9 @@ class MemoryUsageTracker {
   // the given uses.
   Buffer& RematerializeBuffer(const Buffer& original_buffer, Item* remat_item,
                               UsesList&& rematerialized_uses) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_26(mht_26_v, 921, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "RematerializeBuffer");
+
     CHECK(original_buffer.defining_instruction->placed)
         << original_buffer.defining_instruction->instruction->name();
     CHECK(!original_buffer.has_indirect_uses) << original_buffer.ToString();
@@ -689,6 +938,9 @@ class MemoryUsageTracker {
   // considered to have zero bytes because the memory is accounted for in a
   // different computation.
   int64_t AllocatedSize(BufferId buffer_id) const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_27(mht_27_v, 941, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "AllocatedSize");
+
     const Buffer& buffer = buffers_.at(buffer_id);
     HloInstruction* inst = buffer.defining_instruction->instruction;
     HloOpcode def_opcode = inst->opcode();
@@ -702,12 +954,18 @@ class MemoryUsageTracker {
   // Returns true if BeginInstruction and EndInstruction has been called for the
   // given instruction.
   bool IsFinished(Item* item) const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_28(mht_28_v, 957, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "IsFinished");
+
     return item->placed && item != in_progress_item_;
   }
 
   // Returns whether the given buffer is being used by the in-progress
   // instruction.
   bool IsInUse(BufferId buffer_id) const {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_29(mht_29_v, 966, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "IsInUse");
+
     if (in_progress_item_ == nullptr) {
       return false;
     }
@@ -716,6 +974,9 @@ class MemoryUsageTracker {
   }
 
   bool IsCurrentlyLive(BufferId buffer_id) const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_30(mht_30_v, 977, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "IsCurrentlyLive");
+
     const Buffer& buffer = buffers_[buffer_id];
     return (buffer.defining_instruction->placed &&
             buffer.unfinished_user_count > 0);
@@ -724,6 +985,9 @@ class MemoryUsageTracker {
   // Returns whether the given instruction is live at the current program
   // point.
   bool IsInstructionCurrentlyLive(Item* instruction) const {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_31(mht_31_v, 988, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "IsInstructionCurrentlyLive");
+
     // If the instruction has not started yet, it is not alive.
     if (!IsPlaced(instruction->instruction)) {
       return false;
@@ -742,6 +1006,9 @@ class MemoryUsageTracker {
   Buffer& NewBuffer(Item* defining_instruction, const Shape& shape,
                     const ShapeIndex& index, UsesList&& uses, bool live_out,
                     bool has_indirect_uses) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_32(mht_32_v, 1009, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "NewBuffer");
+
     int buffer_id = buffers_.size();
     auto get_num_of_unique_users = [](const UsesList& uses) -> int64_t {
       absl::flat_hash_set<Item*> users_set;
@@ -797,6 +1064,9 @@ MemoryUsageTracker::MemoryUsageTracker(
       size_function_(size_function),
       compact_shape_function_(compact_shape_function),
       mode_(mode) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_33(mht_33_v, 1067, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "MemoryUsageTracker::MemoryUsageTracker");
+
   PointsToSet::BufferSet live_out_set =
       points_to_analysis.GetPointsToSet(computation_->root_instruction())
           .CreateFlattenedSet();
@@ -866,6 +1136,9 @@ MemoryUsageTracker::MemoryUsageTracker(
 }
 
 Status MemoryUsageTracker::BeginInstruction(Item* item) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_34(mht_34_v, 1139, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "MemoryUsageTracker::BeginInstruction");
+
   const HloInstruction* instruction = item->instruction;
   VLOG(3) << "BeginInstruction " << instruction->name();
   TF_RET_CHECK(in_progress_item_ == nullptr);
@@ -893,6 +1166,9 @@ Status MemoryUsageTracker::BeginInstruction(Item* item) {
 }
 
 Status MemoryUsageTracker::EndInstruction() {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_35(mht_35_v, 1169, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "MemoryUsageTracker::EndInstruction");
+
   TF_RET_CHECK(in_progress_item_ != nullptr);
   VLOG(3) << "EndInstruction " << in_progress_item_->instruction->name();
 
@@ -935,6 +1211,9 @@ Status MemoryUsageTracker::EndInstruction() {
 
 int64_t MemoryUsageTracker::MemoryReducedIfCompressed(
     Item* item, const Shape& compact_shape) const {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_36(mht_36_v, 1214, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "MemoryUsageTracker::MemoryReducedIfCompressed");
+
   CHECK_NE(in_progress_item_, nullptr);
   if (!item->placed || item == in_progress_item_) {
     return 0;
@@ -959,6 +1238,9 @@ int64_t MemoryUsageTracker::MemoryReducedIfCompressed(
 
 int64_t MemoryUsageTracker::MemoryReducedIfRematerialized(
     absl::Span<const Item* const> items) const {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_37(mht_37_v, 1241, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "MemoryUsageTracker::MemoryReducedIfRematerialized");
+
   CHECK_NE(in_progress_item_, nullptr);
   int64_t memory_reduced = 0;
   absl::flat_hash_set<const Item*> remat_candidates;
@@ -1018,6 +1300,9 @@ int64_t MemoryUsageTracker::MemoryReducedIfRematerialized(
 Status MemoryUsageTracker::AddCompressInstructions(Item* original_item,
                                                    Item* compressed_item,
                                                    Item* uncompressed_item) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_38(mht_38_v, 1303, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "MemoryUsageTracker::AddCompressInstructions");
+
   // Original buffer is now dead.
   memory_usage_ -= size_function_(original_item->instruction->shape());
   // Compressed buffer is now alive.
@@ -1072,6 +1357,9 @@ Status MemoryUsageTracker::AddCompressInstructions(Item* original_item,
 
 Status MemoryUsageTracker::AddRematerializedInstruction(
     Item* original_item, Item* remat_item, absl::Span<Item*> indirect_users) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_39(mht_39_v, 1360, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "MemoryUsageTracker::AddRematerializedInstruction");
+
   VLOG(3) << "AddRematerializedInstruction: original_instruction = "
           << original_item->instruction->name()
           << ", remat_instruction = " << remat_item->instruction->name();
@@ -1143,6 +1431,9 @@ Status MemoryUsageTracker::AddRematerializedInstruction(
     remat_item->buffers_defined.push_back(new_buffer.id);
     auto update_buffers = [old_buffer_id, new_buffer_id = new_buffer.id](
                               BufferIdList& to_update) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_40(mht_40_v, 1434, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "lambda");
+
       std::replace(to_update.begin(), to_update.end(), old_buffer_id,
                    new_buffer_id);
     };
@@ -1215,6 +1506,9 @@ Status MemoryUsageTracker::AddRematerializedInstruction(
 }
 
 std::string MemoryUsageTracker::ToString() const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_41(mht_41_v, 1509, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "MemoryUsageTracker::ToString");
+
   std::string output =
       absl::StrCat("MemoryUsageTracker for ", computation_->name(), "\n");
   absl::StrAppend(&output,
@@ -1246,6 +1540,9 @@ std::string MemoryUsageTracker::ToString() const {
 }
 
 StatusOr<Shape> MemoryUsageTracker::GetCompactShape(const HloInstruction* hlo) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_42(mht_42_v, 1543, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "MemoryUsageTracker::GetCompactShape");
+
   auto it = compact_shape_.find(hlo);
   if (it != compact_shape_.end()) {
     return it->second;
@@ -1257,7 +1554,13 @@ StatusOr<Shape> MemoryUsageTracker::GetCompactShape(const HloInstruction* hlo) {
 }
 
 bool MemoryUsageTracker::Check() const {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_43(mht_43_v, 1557, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "MemoryUsageTracker::Check");
+
   auto elements_are_unique = [](const BufferIdList& vec) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_44(mht_44_v, 1561, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "lambda");
+
     return vec.size() == std::set<BufferId>(vec.begin(), vec.end()).size();
   };
 
@@ -1327,6 +1630,9 @@ int64_t RematerializationCost(const HloInstruction* instruction,
                               const MemoryUsageTracker& memory_tracker,
                               int64_t memory_reduced,
                               int64_t memory_limit_bytes) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_45(mht_45_v, 1633, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "RematerializationCost");
+
   // If none of the users of 'instruction' have been placed in the sequence (as
   // tracked by memory_tracker), then rematerialization of 'instruction' is a
   // zero-cost move of 'instruction' in the sequence.
@@ -1367,6 +1673,9 @@ std::vector<Item*> GetInitialBlock(const InstructionList& instruction_list,
 bool AnyDenylistedOrNonRematerializable(
     const std::vector<Item*>& block,
     absl::flat_hash_map<const HloInstruction*, bool>* rematerializable_map) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_46(mht_46_v, 1676, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "AnyDenylistedOrNonRematerializable");
+
   for (auto* item : block) {
     if (item->denylisted) {
       return true;
@@ -1512,6 +1821,9 @@ MemoryUsageTracker::PickRematerializationCandidates(
 }
 
 bool MemoryUsageTracker::HasUnplacedUsers(Item* item) const {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_47(mht_47_v, 1824, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "MemoryUsageTracker::HasUnplacedUsers");
+
   for (BufferId buffer_id : item->buffers_defined) {
     const Buffer& buffer = buffers_.at(buffer_id);
     for (const ItemUse& user : buffer.users) {
@@ -1524,6 +1836,9 @@ bool MemoryUsageTracker::HasUnplacedUsers(Item* item) const {
 }
 
 const UsesList MemoryUsageTracker::GetItemUses(Item* item) const {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_48(mht_48_v, 1839, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "MemoryUsageTracker::GetItemUses");
+
   UsesList combined_users;
   for (BufferId buffer_id : item->buffers_defined) {
     const Buffer& buffer = buffers_.at(buffer_id);
@@ -1667,6 +1982,9 @@ StatusOr<int64_t> RematerializeInstructions(
     // Helper function that looks through indirect users when determining if
     // there is an active user for an HloInstruction.
     std::function<bool(HloInstruction*)> uses_empty = [&](HloInstruction* i) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_49(mht_49_v, 1985, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "lambda");
+
       for (auto* u : i->users()) {
         if (!IsSupportedIndirectUser(u) || !uses_empty(u)) {
           return false;
@@ -1823,6 +2141,9 @@ StatusOr<InstructionsAdded> RematerializeBestBlock(
 StatusOr<int64_t> HloRematerialization::ComputePeakMemory(
     const HloComputation* computation,
     const HloInstructionSequence& order) const {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_50(mht_50_v, 2144, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "HloRematerialization::ComputePeakMemory");
+
   InstructionList instruction_list(order);
   MemoryUsageTracker tracker(computation, size_function_,
                              compact_shape_function_, *points_to_analysis_,
@@ -1845,6 +2166,9 @@ StatusOr<int64_t> HloRematerialization::ComputePeakMemory(
 
 StatusOr<int64_t> HloRematerialization::CalledComputationsMemoryUsage(
     const HloInstruction* instruction) const {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_51(mht_51_v, 2169, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "HloRematerialization::CalledComputationsMemoryUsage");
+
   const CallSite* callsite =
       call_graph_->GetNode(instruction->parent()).GetCallSite(instruction);
   if (callsite == nullptr || callsite->context() == CallContext::kEmbedded) {
@@ -1861,6 +2185,9 @@ StatusOr<int64_t> HloRematerialization::CalledComputationsMemoryUsage(
 StatusOr<bool> HloRematerialization::RematerializeComputation(
     HloComputation* computation, HloSchedule* schedule,
     int64_t memory_limit_bytes, int64_t min_remat_size) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_52(mht_52_v, 2188, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "HloRematerialization::RematerializeComputation");
+
   VLOG(1) << "Rematerializing computation " << computation->name()
           << " with limit " << HumanReadableNumBytes(memory_limit_bytes);
   VLOG(1) << "peak memory usage is "
@@ -2049,6 +2376,9 @@ StatusOr<bool> HloRematerialization::RematerializeComputation(
 }
 
 StatusOr<bool> HloRematerialization::Run(HloModule* module) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_rematerializationDTcc mht_53(mht_53_v, 2379, "", "./tensorflow/compiler/xla/service/hlo_rematerialization.cc", "HloRematerialization::Run");
+
   VLOG(1) << "HloRematerialization() with memory limit of "
           << HumanReadableNumBytes(memory_limit_bytes_);
   XLA_VLOG_LINES(3, "Before HloRematerialization:\n" + module->ToString());

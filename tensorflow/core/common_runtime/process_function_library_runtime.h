@@ -14,6 +14,174 @@ limitations under the License.
 ==============================================================================*/
 #ifndef TENSORFLOW_CORE_COMMON_RUNTIME_PROCESS_FUNCTION_LIBRARY_RUNTIME_H_
 #define TENSORFLOW_CORE_COMMON_RUNTIME_PROCESS_FUNCTION_LIBRARY_RUNTIME_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <functional>
 #include <unordered_map>
@@ -40,7 +208,10 @@ namespace tensorflow {
 
 class FunctionArgsInterface {
  public:
-  virtual ~FunctionArgsInterface() {}
+  virtual ~FunctionArgsInterface() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTh mht_0(mht_0_v, 212, "", "./tensorflow/core/common_runtime/process_function_library_runtime.h", "~FunctionArgsInterface");
+}
 
   virtual bool HasRemoteOrPackedInputs() const = 0;
 
@@ -74,6 +245,9 @@ class ProcessFunctionLibraryRuntime {
       Rendezvous::Factory rendezvous_factory = Rendezvous::Factory());
 
   ~ProcessFunctionLibraryRuntime() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTh mht_1(mht_1_v, 248, "", "./tensorflow/core/common_runtime/process_function_library_runtime.h", "~ProcessFunctionLibraryRuntime");
+
     // Deleting the FunctionLibraryRuntime map will delete the function handles
     // registered in it, which may call ReleaseHandle in this class again to
     // release their sub-function. These circular calls may cause segfault
@@ -208,7 +382,10 @@ class ProcessFunctionLibraryRuntime {
                  FunctionLibraryRuntime::Handle handle,
                  CallFrameInterface* frame) const;
 
-  const DeviceMgr* device_mgr() { return device_mgr_; }
+  const DeviceMgr* device_mgr() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTh mht_2(mht_2_v, 386, "", "./tensorflow/core/common_runtime/process_function_library_runtime.h", "device_mgr");
+ return device_mgr_; }
 
   const std::shared_ptr<DeviceSet> device_set() const {
     tf_shared_lock l(mu_);
@@ -219,9 +396,15 @@ class ProcessFunctionLibraryRuntime {
   // device selection.
   void InitializeDeviceAndFlr();
 
-  const ConfigProto* config() const { return config_ ? &(*config_) : nullptr; }
+  const ConfigProto* config() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTh mht_3(mht_3_v, 400, "", "./tensorflow/core/common_runtime/process_function_library_runtime.h", "config");
+ return config_ ? &(*config_) : nullptr; }
 
   const FunctionLibraryDefinition* GetFunctionLibraryDefinition() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTh mht_4(mht_4_v, 405, "", "./tensorflow/core/common_runtime/process_function_library_runtime.h", "GetFunctionLibraryDefinition");
+
     return lib_def_;
   }
 
@@ -251,13 +434,25 @@ class ProcessFunctionLibraryRuntime {
     enum Summary { kSafeForSync = 0, kSendOnly, kRecvOnly, kAsyncRequired };
 
     AsyncAttributes()
-        : allow_control_flow_sync_execution_(false), summary_(kSafeForSync) {}
+        : allow_control_flow_sync_execution_(false), summary_(kSafeForSync) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTh mht_5(mht_5_v, 438, "", "./tensorflow/core/common_runtime/process_function_library_runtime.h", "AsyncAttributes");
+}
     explicit AsyncAttributes(const Graph* graph,
                              bool allow_control_flow_sync_execution)
         : allow_control_flow_sync_execution_(allow_control_flow_sync_execution),
-          summary_(Summarize(graph)) {}
-    Summary summary() const { return summary_; }
+          summary_(Summarize(graph)) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTh mht_6(mht_6_v, 445, "", "./tensorflow/core/common_runtime/process_function_library_runtime.h", "AsyncAttributes");
+}
+    Summary summary() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTh mht_7(mht_7_v, 449, "", "./tensorflow/core/common_runtime/process_function_library_runtime.h", "summary");
+ return summary_; }
     bool allow_control_flow_sync_execution() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTh mht_8(mht_8_v, 453, "", "./tensorflow/core/common_runtime/process_function_library_runtime.h", "allow_control_flow_sync_execution");
+
       return allow_control_flow_sync_execution_;
     }
 
@@ -307,7 +502,12 @@ class ProcessFunctionLibraryRuntime {
           num_outputs_(num_outputs),
           ret_types_(std::move(ret_types)),
           is_cross_process_(false),
-          has_remote_outputs(false) {}
+          has_remote_outputs(false) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("function_name: \"" + function_name + "\"");
+   mht_9_v.push_back("function_key: \"" + function_key + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTh mht_9(mht_9_v, 508, "", "./tensorflow/core/common_runtime/process_function_library_runtime.h", "MultiDeviceFunctionData");
+}
 
     const string function_name_;
     const string function_key_;
@@ -463,12 +663,26 @@ class ProcessFunctionLibraryRuntime {
                  const string& function_key)
         : target_device_(target_device),
           local_handle_(local_handle),
-          function_key_(function_key) {}
+          function_key_(function_key) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("target_device: \"" + target_device + "\"");
+   mht_10_v.push_back("function_key: \"" + function_key + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTh mht_10(mht_10_v, 669, "", "./tensorflow/core/common_runtime/process_function_library_runtime.h", "FunctionData");
+}
 
-    const string& target_device() { return target_device_; }
-    const string& function_key() { return function_key_; }
+    const string& target_device() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTh mht_11(mht_11_v, 674, "", "./tensorflow/core/common_runtime/process_function_library_runtime.h", "target_device");
+ return target_device_; }
+    const string& function_key() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTh mht_12(mht_12_v, 678, "", "./tensorflow/core/common_runtime/process_function_library_runtime.h", "function_key");
+ return function_key_; }
 
     FunctionLibraryRuntime::LocalHandle local_handle() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTh mht_13(mht_13_v, 683, "", "./tensorflow/core/common_runtime/process_function_library_runtime.h", "local_handle");
+
       mutex_lock l(mu_);
       return local_handle_;
     }
@@ -482,6 +696,9 @@ class ProcessFunctionLibraryRuntime {
         FunctionLibraryRuntime::DoneCallback done);
 
     bool is_cross_process() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSprocess_function_library_runtimeDTh mht_14(mht_14_v, 699, "", "./tensorflow/core/common_runtime/process_function_library_runtime.h", "is_cross_process");
+
       mutex_lock l(mu_);
       return is_cross_process_;
     }

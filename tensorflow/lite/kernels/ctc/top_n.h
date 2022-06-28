@@ -40,6 +40,174 @@ limitations under the License.
 // TODO(b/111524997): Remove this file.
 #ifndef TENSORFLOW_LITE_KERNELS_CTC_TOP_N_H_
 #define TENSORFLOW_LITE_KERNELS_CTC_TOP_N_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSkernelsPSctcPStop_nDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSctcPStop_nDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSkernelsPSctcPStop_nDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <stddef.h>
 #include <algorithm>
@@ -91,36 +259,66 @@ class TopN {
   using UnsortedIterator = typename std::vector<T>::const_iterator;
 
   // 'limit' is the maximum number of top results to return.
-  explicit TopN(size_t limit) : TopN(limit, Cmp()) {}
-  TopN(size_t limit, const Cmp &cmp) : limit_(limit), cmp_(cmp) {}
+  explicit TopN(size_t limit) : TopN(limit, Cmp()) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSctcPStop_nDTh mht_0(mht_0_v, 263, "", "./tensorflow/lite/kernels/ctc/top_n.h", "TopN");
+}
+  TopN(size_t limit, const Cmp &cmp) : limit_(limit), cmp_(cmp) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSctcPStop_nDTh mht_1(mht_1_v, 267, "", "./tensorflow/lite/kernels/ctc/top_n.h", "TopN");
+}
 
-  size_t limit() const { return limit_; }
+  size_t limit() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSctcPStop_nDTh mht_2(mht_2_v, 272, "", "./tensorflow/lite/kernels/ctc/top_n.h", "limit");
+ return limit_; }
 
   // Number of elements currently held by this TopN object.  This
   // will be no greater than 'limit' passed to the constructor.
-  size_t size() const { return std::min(elements_.size(), limit_); }
+  size_t size() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSctcPStop_nDTh mht_3(mht_3_v, 279, "", "./tensorflow/lite/kernels/ctc/top_n.h", "size");
+ return std::min(elements_.size(), limit_); }
 
-  bool empty() const { return size() == 0; }
+  bool empty() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSctcPStop_nDTh mht_4(mht_4_v, 284, "", "./tensorflow/lite/kernels/ctc/top_n.h", "empty");
+ return size() == 0; }
 
   // If you know how many elements you will push at the time you create the
   // TopN object, you can call reserve to preallocate the memory that TopN
   // will need to process all 'n' pushes.  Calling this method is optional.
-  void reserve(size_t n) { elements_.reserve(std::min(n, limit_ + 1)); }
+  void reserve(size_t n) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSctcPStop_nDTh mht_5(mht_5_v, 292, "", "./tensorflow/lite/kernels/ctc/top_n.h", "reserve");
+ elements_.reserve(std::min(n, limit_ + 1)); }
 
   // Push 'v'.  If the maximum number of elements was exceeded, drop the
   // lowest element and return it in 'dropped' (if given). If the maximum is not
   // exceeded, 'dropped' will remain unchanged. 'dropped' may be omitted or
   // nullptr, in which case it is not filled in.
   // Requires: T is CopyAssignable, Swappable
-  void push(const T &v) { push(v, nullptr); }
-  void push(const T &v, T *dropped) { PushInternal(v, dropped); }
+  void push(const T &v) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSctcPStop_nDTh mht_6(mht_6_v, 302, "", "./tensorflow/lite/kernels/ctc/top_n.h", "push");
+ push(v, nullptr); }
+  void push(const T &v, T *dropped) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSctcPStop_nDTh mht_7(mht_7_v, 306, "", "./tensorflow/lite/kernels/ctc/top_n.h", "push");
+ PushInternal(v, dropped); }
 
   // Move overloads of push.
   // Requires: T is MoveAssignable, Swappable
-  void push(T &&v) {  // NOLINT(build/c++11)
+  void push(T &&v) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSctcPStop_nDTh mht_8(mht_8_v, 313, "", "./tensorflow/lite/kernels/ctc/top_n.h", "push");
+  // NOLINT(build/c++11)
     push(std::move(v), nullptr);
   }
-  void push(T &&v, T *dropped) {  // NOLINT(build/c++11)
+  void push(T &&v, T *dropped) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSctcPStop_nDTh mht_9(mht_9_v, 319, "", "./tensorflow/lite/kernels/ctc/top_n.h", "push");
+  // NOLINT(build/c++11)
     PushInternal(std::move(v), dropped);
   }
 
@@ -176,11 +374,20 @@ class TopN {
   // Return an iterator to the beginning (end) of the container,
   // with no guarantees about the order of iteration. These iterators are
   // invalidated by mutation of the data structure.
-  UnsortedIterator unsorted_begin() const { return elements_.begin(); }
-  UnsortedIterator unsorted_end() const { return elements_.begin() + size(); }
+  UnsortedIterator unsorted_begin() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSctcPStop_nDTh mht_10(mht_10_v, 378, "", "./tensorflow/lite/kernels/ctc/top_n.h", "unsorted_begin");
+ return elements_.begin(); }
+  UnsortedIterator unsorted_end() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSctcPStop_nDTh mht_11(mht_11_v, 382, "", "./tensorflow/lite/kernels/ctc/top_n.h", "unsorted_end");
+ return elements_.begin() + size(); }
 
   // Accessor for comparator template argument.
-  Cmp *comparator() { return &cmp_; }
+  Cmp *comparator() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSctcPStop_nDTh mht_12(mht_12_v, 388, "", "./tensorflow/lite/kernels/ctc/top_n.h", "comparator");
+ return &cmp_; }
 
   // This removes all elements.  If Extract() or ExtractUnsorted() have been
   // called, this will put it back in an empty but useable state.

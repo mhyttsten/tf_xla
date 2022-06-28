@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPShlo_control_flow_flatteningDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPShlo_control_flow_flatteningDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPShlo_control_flow_flatteningDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,6 +199,9 @@ namespace {
 // the computation.
 HloInstruction* CreateConstant(const Shape& shape,
                                HloComputation* computation) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPShlo_control_flow_flatteningDTcc mht_0(mht_0_v, 202, "", "./tensorflow/compiler/xla/tools/hlo_control_flow_flattening.cc", "CreateConstant");
+
   if (shape.IsTuple()) {
     std::vector<HloInstruction*> tuple_arguments(shape.tuple_shapes_size());
     for (int index = 0; index < shape.tuple_shapes_size(); ++index) {
@@ -51,6 +222,9 @@ HloInstruction* CreateConstant(const Shape& shape,
 const HloInstruction* ExtractInstruction(
     const HloInstruction* hlo,
     const std::function<bool(const HloInstruction*)>& filter) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPShlo_control_flow_flatteningDTcc mht_1(mht_1_v, 225, "", "./tensorflow/compiler/xla/tools/hlo_control_flow_flattening.cc", "ExtractInstruction");
+
   if (filter(hlo)) {
     return hlo;
   }
@@ -68,6 +242,9 @@ const HloInstruction* ExtractInstruction(
 
 // Returns true if instruction is a collective op.
 bool IsCollective(const HloInstruction* instruction) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPShlo_control_flow_flatteningDTcc mht_2(mht_2_v, 245, "", "./tensorflow/compiler/xla/tools/hlo_control_flow_flattening.cc", "IsCollective");
+
   switch (instruction->opcode()) {
     case HloOpcode::kAllReduce:
     case HloOpcode::kAllReduceStart:
@@ -87,6 +264,9 @@ bool IsCollective(const HloInstruction* instruction) {
 
 // Prints sub-expression rooted at inst for a given depth.
 void PrintSubexpression(HloInstruction* inst, int depth) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPShlo_control_flow_flatteningDTcc mht_3(mht_3_v, 267, "", "./tensorflow/compiler/xla/tools/hlo_control_flow_flattening.cc", "PrintSubexpression");
+
   if (depth == 0) {
     return;
   }
@@ -97,6 +277,9 @@ void PrintSubexpression(HloInstruction* inst, int depth) {
 }
 
 bool IsConstantScalarInt(const HloInstruction* inst) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPShlo_control_flow_flatteningDTcc mht_4(mht_4_v, 280, "", "./tensorflow/compiler/xla/tools/hlo_control_flow_flattening.cc", "IsConstantScalarInt");
+
   return inst->opcode() == HloOpcode::kConstant &&
          ShapeUtil::IsEffectiveScalar(inst->shape()) &&
          inst->shape().IsInteger();
@@ -104,6 +287,9 @@ bool IsConstantScalarInt(const HloInstruction* inst) {
 
 bool IsNotContainedInLoop(const HloInstruction& while_hlo,
                           const CallGraph& call_graph) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPShlo_control_flow_flatteningDTcc mht_5(mht_5_v, 290, "", "./tensorflow/compiler/xla/tools/hlo_control_flow_flattening.cc", "IsNotContainedInLoop");
+
   const HloComputation* computation = while_hlo.parent();
   while (!computation->IsEntryComputation()) {
     auto& node = call_graph.GetNode(computation);
@@ -125,6 +311,9 @@ int GetLoopBoundWithOuterLoopMax(const HloInstruction& while_hlo,
                                  const int default_loop_count,
                                  const int max_outer_loop_count,
                                  const int max_loop_count) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPShlo_control_flow_flatteningDTcc mht_6(mht_6_v, 314, "", "./tensorflow/compiler/xla/tools/hlo_control_flow_flattening.cc", "GetLoopBoundWithOuterLoopMax");
+
   int loop_bound = GetLoopBound(while_hlo, default_loop_count, max_loop_count);
   if (loop_bound > max_outer_loop_count) {
     // First does the inexpensive loop bound check to avoid as many
@@ -140,6 +329,9 @@ int GetLoopBoundWithOuterLoopMax(const HloInstruction& while_hlo,
 
 int GetLoopBound(const HloInstruction& while_hlo, const int default_loop_count,
                  const int max_loop_count) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPShlo_control_flow_flatteningDTcc mht_7(mht_7_v, 332, "", "./tensorflow/compiler/xla/tools/hlo_control_flow_flattening.cc", "GetLoopBound");
+
   HloInstruction* condition = while_hlo.while_condition()->root_instruction();
   if (condition->opcode() == HloOpcode::kCompare) {
     int64_t value = 0;
@@ -165,6 +357,9 @@ int GetLoopBound(const HloInstruction& while_hlo, const int default_loop_count,
 
 Status HloControlFlowFlattening::FlattenWhileLoop(
     HloInstruction* while_hlo, const CallGraph& call_graph) const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPShlo_control_flow_flatteningDTcc mht_8(mht_8_v, 360, "", "./tensorflow/compiler/xla/tools/hlo_control_flow_flattening.cc", "HloControlFlowFlattening::FlattenWhileLoop");
+
   CHECK_EQ(while_hlo->opcode(), HloOpcode::kWhile);
   HloComputation* computation = while_hlo->parent();
   // Add a new induction variable.
@@ -178,6 +373,9 @@ Status HloControlFlowFlattening::FlattenWhileLoop(
   TF_RETURN_IF_ERROR(while_hlo->ReplaceOperandWithDifferentShape(0, new_tuple));
 
   auto change_op_shape = [&](HloInstruction* instruction) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPShlo_control_flow_flatteningDTcc mht_9(mht_9_v, 376, "", "./tensorflow/compiler/xla/tools/hlo_control_flow_flattening.cc", "lambda");
+
     Shape* shape = instruction->mutable_shape();
     CHECK(shape->IsTuple());
     CHECK_EQ(shape->tuple_shapes().size(), new_tuple_size - 1);
@@ -286,6 +484,9 @@ constexpr char kAllocateBuffer[] = "AllocateBuffer";
 
 Status HloControlFlowFlattening::RemoveInfeed(
     HloInstruction* infeed_hlo) const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPShlo_control_flow_flatteningDTcc mht_10(mht_10_v, 487, "", "./tensorflow/compiler/xla/tools/hlo_control_flow_flattening.cc", "HloControlFlowFlattening::RemoveInfeed");
+
   CHECK_EQ(infeed_hlo->opcode(), HloOpcode::kInfeed);
   HloComputation* computation = infeed_hlo->parent();
   CHECK_EQ(infeed_hlo->shape().tuple_shapes_size(), 2);
@@ -307,6 +508,9 @@ Status HloControlFlowFlattening::RemoveInfeed(
 Status HloControlFlowFlattening::RemoveRecvDone(
     HloInstruction* recv_done,
     absl::flat_hash_set<HloInstruction*>* additional_removed) const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPShlo_control_flow_flatteningDTcc mht_11(mht_11_v, 511, "", "./tensorflow/compiler/xla/tools/hlo_control_flow_flattening.cc", "HloControlFlowFlattening::RemoveRecvDone");
+
   CHECK_EQ(recv_done->opcode(), HloOpcode::kRecvDone);
   CHECK_EQ(recv_done->operand_count(), 1);
   HloInstruction* recv = recv_done->mutable_operand(0);
@@ -333,6 +537,9 @@ Status HloControlFlowFlattening::RemoveRecvDone(
 
 Status HloControlFlowFlattening::RemoveOutfeed(
     HloInstruction* outfeed_hlo) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPShlo_control_flow_flatteningDTcc mht_12(mht_12_v, 540, "", "./tensorflow/compiler/xla/tools/hlo_control_flow_flattening.cc", "HloControlFlowFlattening::RemoveOutfeed");
+
   CHECK_EQ(outfeed_hlo->opcode(), HloOpcode::kOutfeed);
   HloComputation* computation = outfeed_hlo->parent();
   // Replace the outfeed with a no-op custom call with side effect to ensure the
@@ -350,6 +557,9 @@ Status HloControlFlowFlattening::RemoveOutfeed(
 Status HloControlFlowFlattening::RemoveSendDone(
     HloInstruction* send_done,
     absl::flat_hash_set<HloInstruction*>* additional_removed) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPShlo_control_flow_flatteningDTcc mht_13(mht_13_v, 560, "", "./tensorflow/compiler/xla/tools/hlo_control_flow_flattening.cc", "HloControlFlowFlattening::RemoveSendDone");
+
   CHECK_EQ(send_done->opcode(), HloOpcode::kSendDone);
   CHECK_EQ(send_done->operand_count(), 1);
   HloInstruction* send = send_done->mutable_operand(0);
@@ -371,6 +581,9 @@ Status HloControlFlowFlattening::RemoveSendDone(
 }
 
 Status HloControlFlowFlattening::RemoveCollective(HloInstruction* hlo) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPShlo_control_flow_flatteningDTcc mht_14(mht_14_v, 584, "", "./tensorflow/compiler/xla/tools/hlo_control_flow_flattening.cc", "HloControlFlowFlattening::RemoveCollective");
+
   HloComputation* computation = hlo->parent();
   HloInstruction* custom_call =
       computation->AddInstruction(HloInstruction::CreateCustomCall(
@@ -381,6 +594,9 @@ Status HloControlFlowFlattening::RemoveCollective(HloInstruction* hlo) const {
 
 Status HloControlFlowFlattening::RemovePartitionOrReplicaId(
     HloInstruction* hlo) const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPShlo_control_flow_flatteningDTcc mht_15(mht_15_v, 597, "", "./tensorflow/compiler/xla/tools/hlo_control_flow_flattening.cc", "HloControlFlowFlattening::RemovePartitionOrReplicaId");
+
   HloComputation* computation = hlo->parent();
   HloInstruction* zero = CreateConstant(hlo->shape(), computation);
   TF_RETURN_IF_ERROR(computation->ReplaceInstruction(hlo, zero));
@@ -388,6 +604,9 @@ Status HloControlFlowFlattening::RemovePartitionOrReplicaId(
 }
 
 StatusOr<bool> HloControlFlowFlattening::Run(HloModule* module) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStoolsPShlo_control_flow_flatteningDTcc mht_16(mht_16_v, 607, "", "./tensorflow/compiler/xla/tools/hlo_control_flow_flattening.cc", "HloControlFlowFlattening::Run");
+
   auto call_graph = CallGraph::Build(module);
   bool changed = false;
   absl::flat_hash_set<HloInstruction*> removed;

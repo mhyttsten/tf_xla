@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPSclustersPSsingle_machineDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSclustersPSsingle_machineDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPSclustersPSsingle_machineDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,6 +208,9 @@ static std::atomic<bool> already_provisioned(false);
 
 SingleMachine::SingleMachine(int timeout_s, int num_cpu_cores, int num_gpus)
     : Cluster(timeout_s), expected_init_time_s_(0), closing_(false) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSclustersPSsingle_machineDTcc mht_0(mht_0_v, 211, "", "./tensorflow/core/grappler/clusters/single_machine.cc", "SingleMachine::SingleMachine");
+
   VLOG(1) << "Number of CPU cores: " << num_cpu_cores
           << " Number of GPUs: " << num_gpus;
   thread_pool_.reset(new thread::ThreadPool(
@@ -61,6 +232,9 @@ SingleMachine::SingleMachine(int timeout_s, int num_cpu_cores, int num_gpus)
 }
 
 SingleMachine::~SingleMachine() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSclustersPSsingle_machineDTcc mht_1(mht_1_v, 235, "", "./tensorflow/core/grappler/clusters/single_machine.cc", "SingleMachine::~SingleMachine");
+
   CloseSession(false /*use_timeout*/).IgnoreError();
 
   // Reset the thread-pool so that there are no outstanding Session::Run(...)s
@@ -69,6 +243,9 @@ SingleMachine::~SingleMachine() {
 }
 
 Status SingleMachine::Provision() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSclustersPSsingle_machineDTcc mht_2(mht_2_v, 246, "", "./tensorflow/core/grappler/clusters/single_machine.cc", "SingleMachine::Provision");
+
   // This is really ugly: to avoid leaking variables, we need to reset the tf
   // session every time we're done processing a grappler item. However,
   // variables are global, and therefore we can't have more than 1 session alive
@@ -122,6 +299,9 @@ Status SingleMachine::Provision() {
 }
 
 Status SingleMachine::Initialize(const GrapplerItem& item) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSclustersPSsingle_machineDTcc mht_3(mht_3_v, 302, "", "./tensorflow/core/grappler/clusters/single_machine.cc", "SingleMachine::Initialize");
+
   mutex_lock l(this->last_graph_mu_);
   if (last_graph_ != &item.graph || last_graph_id_ != item.id) {
     init_ops_ = item.init_ops;
@@ -134,6 +314,9 @@ Status SingleMachine::Initialize(const GrapplerItem& item) {
 }
 
 Status SingleMachine::Shutdown() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSclustersPSsingle_machineDTcc mht_4(mht_4_v, 317, "", "./tensorflow/core/grappler/clusters/single_machine.cc", "SingleMachine::Shutdown");
+
   TF_RETURN_IF_ERROR(ShutdownSession());
 
   mutex_lock l(this->last_graph_mu_);
@@ -147,6 +330,9 @@ Status SingleMachine::Run(const GraphDef& graph_def,
                           const std::vector<std::pair<string, Tensor>>& feed,
                           const std::vector<string>& fetch,
                           RunMetadata* metadata) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSclustersPSsingle_machineDTcc mht_5(mht_5_v, 333, "", "./tensorflow/core/grappler/clusters/single_machine.cc", "SingleMachine::Run");
+
   mutex_lock l(this->last_graph_mu_);
   if (last_graph_ != &graph_def) {
     TF_RETURN_IF_ERROR(ResetSession());
@@ -205,6 +391,9 @@ Status SingleMachine::Run(const GraphDef& graph_def,
 }
 
 Status SingleMachine::EnablePeakMemoryStats() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSclustersPSsingle_machineDTcc mht_6(mht_6_v, 394, "", "./tensorflow/core/grappler/clusters/single_machine.cc", "SingleMachine::EnablePeakMemoryStats");
+
   EnableCPUAllocatorStats();
   cpu_allocator_stats_enabled_ = true;
   // No need to enable GPU allocator stats since its stats are always collected.
@@ -213,6 +402,9 @@ Status SingleMachine::EnablePeakMemoryStats() {
 
 Status SingleMachine::GetPeakMemoryUsage(
     std::unordered_map<string, uint64>* device_peak_memory) const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSclustersPSsingle_machineDTcc mht_7(mht_7_v, 405, "", "./tensorflow/core/grappler/clusters/single_machine.cc", "SingleMachine::GetPeakMemoryUsage");
+
   // Cpu_allocator->TracksAllocationSizes() returns true doesn't always mean the
   // the AllocatorStats would be collected.
   if (!cpu_allocator_stats_enabled_) {
@@ -242,6 +434,9 @@ Status SingleMachine::GetPeakMemoryUsage(
 Status SingleMachine::RunWithTimeout(
     const std::vector<std::pair<string, Tensor>>& feed,
     const std::vector<string>& fetch, RunMetadata* run_metadata) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSclustersPSsingle_machineDTcc mht_8(mht_8_v, 437, "", "./tensorflow/core/grappler/clusters/single_machine.cc", "SingleMachine::RunWithTimeout");
+
   return RunWithTimeout(feed, fetch, run_metadata, timeout_s_);
 }
 
@@ -249,6 +444,9 @@ Status SingleMachine::RunWithTimeout(
     const std::vector<std::pair<string, Tensor>>& feed,
     const std::vector<string>& fetch, RunMetadata* run_metadata,
     int64_t timeout_s) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSclustersPSsingle_machineDTcc mht_9(mht_9_v, 447, "", "./tensorflow/core/grappler/clusters/single_machine.cc", "SingleMachine::RunWithTimeout");
+
   // We shouldn't be running or closing the session at this point.
   {
     mutex_lock l(close_mu_);
@@ -273,6 +471,9 @@ Status SingleMachine::RunWithTimeout(
 }
 
 Status SingleMachine::CloseSession(bool use_timeout) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSclustersPSsingle_machineDTcc mht_10(mht_10_v, 474, "", "./tensorflow/core/grappler/clusters/single_machine.cc", "SingleMachine::CloseSession");
+
   if (!session_ || !thread_pool_) {
     return Status::OK();
   }
@@ -318,6 +519,9 @@ Status SingleMachine::CloseSession(bool use_timeout) {
 }
 
 Status SingleMachine::ShutdownSession() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSclustersPSsingle_machineDTcc mht_11(mht_11_v, 522, "", "./tensorflow/core/grappler/clusters/single_machine.cc", "SingleMachine::ShutdownSession");
+
   TF_RETURN_IF_ERROR(CloseSession(true /*use_timeout*/));
 
   // Delete the threadpool: this ensures that all the pending closures complete
@@ -344,6 +548,9 @@ Status SingleMachine::ShutdownSession() {
 }
 
 Status SingleMachine::ResetSession() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSclustersPSsingle_machineDTcc mht_12(mht_12_v, 551, "", "./tensorflow/core/grappler/clusters/single_machine.cc", "SingleMachine::ResetSession");
+
   if (session_) {
     LOG(INFO) << "Cleaning up previous session";
 
@@ -382,6 +589,9 @@ Status SingleMachine::ResetSession() {
 void SingleMachine::MergeCosts(CostGraphDef* graph_costs,
                                const CostGraphDef& init_costs,
                                const CostGraphDef& queue_costs) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSclustersPSsingle_machineDTcc mht_13(mht_13_v, 592, "", "./tensorflow/core/grappler/clusters/single_machine.cc", "SingleMachine::MergeCosts");
+
   graph_costs->mutable_node()->Reserve(graph_costs->node_size() +
                                        init_costs.node_size() +
                                        queue_costs.node_size());
@@ -442,6 +652,9 @@ void SingleMachine::MergeCosts(CostGraphDef* graph_costs,
 }
 
 Status SingleMachine::ClearAllocatorStats() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSclustersPSsingle_machineDTcc mht_14(mht_14_v, 655, "", "./tensorflow/core/grappler/clusters/single_machine.cc", "SingleMachine::ClearAllocatorStats");
+
   // Cpu_allocator->TracksAllocationSizes() returns true doesn't always mean the
   // the AllocatorStats would be collected.
   if (!cpu_allocator_stats_enabled_) {

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSloop_optimizerDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSloop_optimizerDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSloop_optimizerDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -59,7 +227,10 @@ using TensorVector = gtl::InlinedVector<TensorValue, 4>;
 class LoopInvariantNodeMotionOptimizer {
  public:
   explicit LoopInvariantNodeMotionOptimizer(GraphDef* optimized_graph)
-      : optimized_graph_(optimized_graph) {}
+      : optimized_graph_(optimized_graph) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSloop_optimizerDTcc mht_0(mht_0_v, 231, "", "./tensorflow/core/grappler/optimizers/loop_optimizer.cc", "LoopInvariantNodeMotionOptimizer");
+}
   virtual ~LoopInvariantNodeMotionOptimizer() = default;
   Status Optimize();
 
@@ -85,6 +256,9 @@ class LoopInvariantNodeMotionOptimizer {
 
 Status LoopInvariantNodeMotionOptimizer::HandleInvariantEnter(
     NodeDef* node, const int num_outputs) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSloop_optimizerDTcc mht_1(mht_1_v, 259, "", "./tensorflow/core/grappler/optimizers/loop_optimizer.cc", "LoopInvariantNodeMotionOptimizer::HandleInvariantEnter");
+
   auto consumers = node_map_->GetOutputs(node->name());
   std::vector<string> enter_control_inputs;
   string enter_input;
@@ -116,6 +290,9 @@ Status LoopInvariantNodeMotionOptimizer::HandleInvariantEnter(
 Status LoopInvariantNodeMotionOptimizer::HandleConst(NodeDef* node,
                                                      const int num_outputs,
                                                      const int frame_id) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSloop_optimizerDTcc mht_2(mht_2_v, 293, "", "./tensorflow/core/grappler/optimizers/loop_optimizer.cc", "LoopInvariantNodeMotionOptimizer::HandleConst");
+
   NodeDef* const_node = nullptr;
   if (num_outputs == 0) {
     // all successor nodes are invariant
@@ -187,6 +364,9 @@ Status LoopInvariantNodeMotionOptimizer::HandleConst(NodeDef* node,
 
 Status LoopInvariantNodeMotionOptimizer::HandleInvariantNode(
     NodeDef* node, const int num_outputs, const int frame_id) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSloop_optimizerDTcc mht_3(mht_3_v, 367, "", "./tensorflow/core/grappler/optimizers/loop_optimizer.cc", "LoopInvariantNodeMotionOptimizer::HandleInvariantNode");
+
   // have to remove control inputs to the invariant node from the same frame
   // when moving this node out of this frame
   for (int i = 0; i < node->input_size(); ++i) {
@@ -256,6 +436,9 @@ Status LoopInvariantNodeMotionOptimizer::HandleInvariantNode(
 
 Status LoopInvariantNodeMotionOptimizer::MoveInvariantNodes(
     const int frame_id) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSloop_optimizerDTcc mht_4(mht_4_v, 439, "", "./tensorflow/core/grappler/optimizers/loop_optimizer.cc", "LoopInvariantNodeMotionOptimizer::MoveInvariantNodes");
+
   for (auto iter = invariant_nodes_.begin(); iter != invariant_nodes_.end();
        ++iter) {
     auto* invariant_node = iter->first;
@@ -273,6 +456,9 @@ Status LoopInvariantNodeMotionOptimizer::MoveInvariantNodes(
 }
 
 Status LoopInvariantNodeMotionOptimizer::RevertInvariantNodes() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSloop_optimizerDTcc mht_5(mht_5_v, 459, "", "./tensorflow/core/grappler/optimizers/loop_optimizer.cc", "LoopInvariantNodeMotionOptimizer::RevertInvariantNodes");
+
   std::deque<const NodeDef*> reverted_nodes;
   for (auto iter = invariant_nodes_.begin(); iter != invariant_nodes_.end();) {
     bool erased = false;
@@ -331,6 +517,9 @@ Status LoopInvariantNodeMotionOptimizer::RevertInvariantNodes() {
 
 Status LoopInvariantNodeMotionOptimizer::FindInvariantNodes(
     NodeDef* start_node) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSloop_optimizerDTcc mht_6(mht_6_v, 520, "", "./tensorflow/core/grappler/optimizers/loop_optimizer.cc", "LoopInvariantNodeMotionOptimizer::FindInvariantNodes");
+
   std::vector<NodeDef*> stack;
   stack.reserve(32);
   stack.push_back(start_node);
@@ -379,6 +568,9 @@ Status LoopInvariantNodeMotionOptimizer::FindInvariantNodes(
 }
 
 Status LoopInvariantNodeMotionOptimizer::Optimize() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSloop_optimizerDTcc mht_7(mht_7_v, 571, "", "./tensorflow/core/grappler/optimizers/loop_optimizer.cc", "LoopInvariantNodeMotionOptimizer::Optimize");
+
   node_map_.reset(new NodeMap(optimized_graph_));
   FrameView frame_view;
   // TODO(ezhulenev): Use GraphView when migrated from NodeMap.
@@ -517,6 +709,9 @@ std::vector<int> GetStackPushNodesToConvert(
 
 Status RemoveStackOps(const std::unordered_set<string>& nodes_to_preserve,
                       GraphDef* optimized_graph) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSloop_optimizerDTcc mht_8(mht_8_v, 712, "", "./tensorflow/core/grappler/optimizers/loop_optimizer.cc", "RemoveStackOps");
+
   NodeMap node_map(optimized_graph);
   GraphTopologyView graph_view;
   TF_RETURN_IF_ERROR(graph_view.InitializeFromGraph(*optimized_graph));
@@ -547,6 +742,9 @@ Status RemoveStackOps(const std::unordered_set<string>& nodes_to_preserve,
 }
 
 bool IsSimpleBinaryOperator(const NodeDef& node) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSloop_optimizerDTcc mht_9(mht_9_v, 745, "", "./tensorflow/core/grappler/optimizers/loop_optimizer.cc", "IsSimpleBinaryOperator");
+
   return (IsLess(node) || IsLessEqual(node) || IsGreater(node) ||
           IsGreaterEqual(node) || IsEqual(node));
 }
@@ -557,6 +755,9 @@ Status EvaluateBoolOpForConstantOperands(const NodeDef& op_node,
                                          DeviceBase* cpu_device,
                                          ResourceMgr* resource_mgr,
                                          bool* value) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSloop_optimizerDTcc mht_10(mht_10_v, 758, "", "./tensorflow/core/grappler/optimizers/loop_optimizer.cc", "EvaluateBoolOpForConstantOperands");
+
   VLOG(4) << "Evaluate bool op: op_node=" << op_node.name()
           << " input0=" << constant_operand_0.name()
           << " input1=" << constant_operand_1.name();
@@ -587,6 +788,9 @@ Status EvaluateBoolOpForConstantOperands(const NodeDef& op_node,
 // TODO(lyandy): Consolidate with ConstantFolding implementation.
 bool IsReallyConstant(const NodeDef& node,
                       const absl::flat_hash_set<string>& feed_nodes) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSloop_optimizerDTcc mht_11(mht_11_v, 791, "", "./tensorflow/core/grappler/optimizers/loop_optimizer.cc", "IsReallyConstant");
+
   if (!IsConstant(node)) {
     return false;
   }
@@ -599,6 +803,9 @@ Status CheckForDeadFanout(const MutableGraphView& view,
                           const absl::flat_hash_set<string>& feed_nodes,
                           DeviceBase* cpu_device, ResourceMgr* resource_mgr,
                           bool* has_dead_fanout, int* dead_fanout) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSloop_optimizerDTcc mht_12(mht_12_v, 806, "", "./tensorflow/core/grappler/optimizers/loop_optimizer.cc", "CheckForDeadFanout");
+
   *has_dead_fanout = false;
   GraphView::InputPort switch_loopcond_port(&switch_node, 1);
   const NodeDef* switch_predicate =
@@ -719,18 +926,27 @@ Status CheckForDeadFanout(const MutableGraphView& view,
 LoopOptimizer::LoopOptimizer()
     : opt_level_(RewriterConfig::ON),
       cpu_device_(nullptr),
-      options_(LoopOptimizerOptions::Default(RewriterConfig::ON)) {}
+      options_(LoopOptimizerOptions::Default(RewriterConfig::ON)) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSloop_optimizerDTcc mht_13(mht_13_v, 930, "", "./tensorflow/core/grappler/optimizers/loop_optimizer.cc", "LoopOptimizer::LoopOptimizer");
+}
 
 LoopOptimizer::LoopOptimizer(RewriterConfig::Toggle opt_level,
                              DeviceBase* cpu_device)
     : opt_level_(opt_level),
       cpu_device_(cpu_device),
       options_(LoopOptimizerOptions::Default(RewriterConfig::ON)) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSloop_optimizerDTcc mht_14(mht_14_v, 939, "", "./tensorflow/core/grappler/optimizers/loop_optimizer.cc", "LoopOptimizer::LoopOptimizer");
+
   resource_mgr_.reset(new ResourceMgr());
 }
 
 Status LoopOptimizer::Optimize(Cluster* cluster, const GrapplerItem& item,
                                GraphDef* optimized_graph) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSloop_optimizerDTcc mht_15(mht_15_v, 947, "", "./tensorflow/core/grappler/optimizers/loop_optimizer.cc", "LoopOptimizer::Optimize");
+
   if (!options_.enable_loop_invariant_node_motion &&
       !options_.enable_stack_push_removal &&
       !options_.enable_dead_branch_removal) {
@@ -761,6 +977,9 @@ Status LoopOptimizer::Optimize(Cluster* cluster, const GrapplerItem& item,
 Status LoopOptimizer::RemoveDeadBranches(
     const std::unordered_set<string>& nodes_to_preserve, NodeMap& node_map,
     const absl::flat_hash_set<string>& feed_nodes, GraphDef* optimized_graph) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSloop_optimizerDTcc mht_16(mht_16_v, 980, "", "./tensorflow/core/grappler/optimizers/loop_optimizer.cc", "LoopOptimizer::RemoveDeadBranches");
+
   std::unordered_set<const NodeDef*> dead_nodes;
   std::unordered_map<NodeDef*, std::set<int>> dead_merge_inputs;
   absl::flat_hash_set<GraphView::OutputPort> identity_switches;

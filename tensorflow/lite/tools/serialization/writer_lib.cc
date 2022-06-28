@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePStoolsPSserializationPSwriter_libDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePStoolsPSserializationPSwriter_libDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePStoolsPSserializationPSwriter_libDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -56,6 +224,10 @@ ExportBuffersImpl(flatbuffers::FlatBufferBuilder* fbb,
 }
 
 TfLiteStatus WriteImpl(const std::string& filename, void* data, size_t size) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("filename: \"" + filename + "\"");
+   MHTracer_DTPStensorflowPSlitePStoolsPSserializationPSwriter_libDTcc mht_0(mht_0_v, 228, "", "./tensorflow/lite/tools/serialization/writer_lib.cc", "WriteImpl");
+
   FILE* fp = fopen(filename.c_str(), "wb");
   if (!fp) return kTfLiteError;
 
@@ -80,12 +252,18 @@ std::pair<BuiltinOptions, flatbuffers::Offset<void>> CreateBuiltinUnion(
 template <class T_OUTPUT, class T_INPUT>
 flatbuffers::Offset<flatbuffers::Vector<T_OUTPUT>> SubgraphWriter::ExportVector(
     flatbuffers::FlatBufferBuilder* fbb, const T_INPUT& v) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSserializationPSwriter_libDTcc mht_1(mht_1_v, 255, "", "./tensorflow/lite/tools/serialization/writer_lib.cc", "SubgraphWriter::ExportVector");
+
   std::vector<T_OUTPUT> inputs(v.begin(), v.end());
   return fbb->template CreateVector<T_OUTPUT>(inputs);
 }
 
 flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<Operator>>>
 SubgraphWriter::ExportOperators(flatbuffers::FlatBufferBuilder* fbb) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSserializationPSwriter_libDTcc mht_2(mht_2_v, 264, "", "./tensorflow/lite/tools/serialization/writer_lib.cc", "SubgraphWriter::ExportOperators");
+
   std::vector<flatbuffers::Offset<Operator>> operators;
 
   std::vector<int> operator_to_opcode;
@@ -156,6 +334,9 @@ SubgraphWriter::ExportOperators(flatbuffers::FlatBufferBuilder* fbb) {
 
 flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<Tensor>>>
 SubgraphWriter::ExportTensors(flatbuffers::FlatBufferBuilder* fbb) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSserializationPSwriter_libDTcc mht_3(mht_3_v, 337, "", "./tensorflow/lite/tools/serialization/writer_lib.cc", "SubgraphWriter::ExportTensors");
+
   // Initialized to -1.
   // A value of -1 means this tensor will not be exported.
   tensor_to_written_tensor_.resize(subgraph_->tensors_size(), -1);
@@ -256,16 +437,25 @@ SubgraphWriter::ExportTensors(flatbuffers::FlatBufferBuilder* fbb) {
 
 flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<Buffer>>>
 SubgraphWriter::ExportBuffers(flatbuffers::FlatBufferBuilder* fbb) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSserializationPSwriter_libDTcc mht_4(mht_4_v, 440, "", "./tensorflow/lite/tools/serialization/writer_lib.cc", "SubgraphWriter::ExportBuffers");
+
   return ExportBuffersImpl(fbb, buffers_);
 }
 
 flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<OperatorCode>>>
 SubgraphWriter::CreateOpCodeTable(flatbuffers::FlatBufferBuilder* fbb) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSserializationPSwriter_libDTcc mht_5(mht_5_v, 448, "", "./tensorflow/lite/tools/serialization/writer_lib.cc", "SubgraphWriter::CreateOpCodeTable");
+
   return CreateOpCodeTableImpl(fbb, opcodes_);
 }
 
 template <class T>
 std::vector<int> SubgraphWriter::RemapTensorIndicesToWritten(const T& input) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSserializationPSwriter_libDTcc mht_6(mht_6_v, 456, "", "./tensorflow/lite/tools/serialization/writer_lib.cc", "SubgraphWriter::RemapTensorIndicesToWritten");
+
   std::vector<int> output;
   output.reserve(input.size());
   for (int x : input) {
@@ -283,6 +473,9 @@ std::vector<int> SubgraphWriter::RemapTensorIndicesToWritten(const T& input) {
 
 TfLiteStatus SubgraphWriter::GetBuffer(std::unique_ptr<uint8_t[]>* out,
                                        size_t* size) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSserializationPSwriter_libDTcc mht_7(mht_7_v, 476, "", "./tensorflow/lite/tools/serialization/writer_lib.cc", "SubgraphWriter::GetBuffer");
+
   if (!out || !size) return kTfLiteError;
   flatbuffers::FlatBufferBuilder builder(/*initial_size=*/10240);
   std::vector<flatbuffers::Offset<SubGraph>> subgraphs_as_vector;
@@ -308,6 +501,10 @@ TfLiteStatus SubgraphWriter::GetBuffer(std::unique_ptr<uint8_t[]>* out,
 
 flatbuffers::Offset<SubGraph> SubgraphWriter::PopulateAndGetOffset(
     flatbuffers::FlatBufferBuilder* builder, const std::string& subgraph_name) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("subgraph_name: \"" + subgraph_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStoolsPSserializationPSwriter_libDTcc mht_8(mht_8_v, 505, "", "./tensorflow/lite/tools/serialization/writer_lib.cc", "SubgraphWriter::PopulateAndGetOffset");
+
   auto tensors = ExportTensors(builder);
   std::vector<int> written_inputs = RemapTensorIndicesToWritten(inputs_);
   std::vector<int> written_outputs = RemapTensorIndicesToWritten(outputs_);
@@ -320,6 +517,10 @@ flatbuffers::Offset<SubGraph> SubgraphWriter::PopulateAndGetOffset(
 }
 
 TfLiteStatus SubgraphWriter::Write(const std::string& filename) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("filename: \"" + filename + "\"");
+   MHTracer_DTPStensorflowPSlitePStoolsPSserializationPSwriter_libDTcc mht_9(mht_9_v, 521, "", "./tensorflow/lite/tools/serialization/writer_lib.cc", "SubgraphWriter::Write");
+
   std::unique_ptr<uint8_t[]> buffer;
   size_t size;
   TF_LITE_ENSURE_STATUS(GetBuffer(&buffer, &size));
@@ -328,6 +529,10 @@ TfLiteStatus SubgraphWriter::Write(const std::string& filename) {
 
 TfLiteStatus SubgraphWriter::RegisterCustomWriter(
     const std::string& custom_name, CustomWriter custom_writer) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("custom_name: \"" + custom_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStoolsPSserializationPSwriter_libDTcc mht_10(mht_10_v, 533, "", "./tensorflow/lite/tools/serialization/writer_lib.cc", "SubgraphWriter::RegisterCustomWriter");
+
   if (custom_op_to_writer_.find(custom_name) != custom_op_to_writer_.end()) {
     return kTfLiteError;
   }
@@ -338,6 +543,9 @@ TfLiteStatus SubgraphWriter::RegisterCustomWriter(
 TfLiteStatus SubgraphWriter::CheckInputOutput(
     const std::vector<int>& inputs, const std::vector<int>& outputs,
     const std::vector<int>& execution_plan) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSserializationPSwriter_libDTcc mht_11(mht_11_v, 546, "", "./tensorflow/lite/tools/serialization/writer_lib.cc", "SubgraphWriter::CheckInputOutput");
+
   absl::flat_hash_set<int> known_tensors(inputs.begin(), inputs.end());
   known_tensors.insert(subgraph_->variables().begin(),
                        subgraph_->variables().end());
@@ -397,6 +605,9 @@ TfLiteStatus SubgraphWriter::CheckInputOutput(
 TfLiteStatus SubgraphWriter::SetCustomInputOutput(
     const std::vector<int>& inputs, const std::vector<int>& outputs,
     const std::vector<int>& execution_plan) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSserializationPSwriter_libDTcc mht_12(mht_12_v, 608, "", "./tensorflow/lite/tools/serialization/writer_lib.cc", "SubgraphWriter::SetCustomInputOutput");
+
   TF_LITE_ENSURE_STATUS(CheckInputOutput(inputs, outputs, execution_plan));
   inputs_ = inputs;
   outputs_ = outputs;
@@ -405,6 +616,9 @@ TfLiteStatus SubgraphWriter::SetCustomInputOutput(
 }
 
 ModelWriter::ModelWriter(Interpreter* interpreter) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSserializationPSwriter_libDTcc mht_13(mht_13_v, 619, "", "./tensorflow/lite/tools/serialization/writer_lib.cc", "ModelWriter::ModelWriter");
+
   std::vector<Subgraph*> subgraphs;
 
   // Retrieves the list of the subgraphs from the interpreter for constructing
@@ -418,10 +632,16 @@ ModelWriter::ModelWriter(Interpreter* interpreter) {
 }
 
 ModelWriter::ModelWriter(const std::vector<Subgraph*>& subgraphs) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSserializationPSwriter_libDTcc mht_14(mht_14_v, 635, "", "./tensorflow/lite/tools/serialization/writer_lib.cc", "ModelWriter::ModelWriter");
+
   Init(subgraphs);
 }
 
 void ModelWriter::Init(const std::vector<Subgraph*>& subgraphs) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSserializationPSwriter_libDTcc mht_15(mht_15_v, 642, "", "./tensorflow/lite/tools/serialization/writer_lib.cc", "ModelWriter::Init");
+
   buffers_.push_back(std::make_pair(nullptr, 0));
   subgraph_writers_.reserve(subgraphs.size());
   for (auto* subgraph : subgraphs) {
@@ -433,16 +653,25 @@ void ModelWriter::Init(const std::vector<Subgraph*>& subgraphs) {
 
 flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<Buffer>>>
 ModelWriter::ExportBuffers(flatbuffers::FlatBufferBuilder* fbb) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSserializationPSwriter_libDTcc mht_16(mht_16_v, 656, "", "./tensorflow/lite/tools/serialization/writer_lib.cc", "ModelWriter::ExportBuffers");
+
   return ExportBuffersImpl(fbb, &buffers_);
 }
 
 flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<OperatorCode>>>
 ModelWriter::CreateOpCodeTable(flatbuffers::FlatBufferBuilder* fbb) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSserializationPSwriter_libDTcc mht_17(mht_17_v, 664, "", "./tensorflow/lite/tools/serialization/writer_lib.cc", "ModelWriter::CreateOpCodeTable");
+
   return CreateOpCodeTableImpl(fbb, &opcodes_);
 }
 
 TfLiteStatus ModelWriter::GetBuffer(std::unique_ptr<uint8_t[]>* out,
                                     size_t* size) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSserializationPSwriter_libDTcc mht_18(mht_18_v, 672, "", "./tensorflow/lite/tools/serialization/writer_lib.cc", "ModelWriter::GetBuffer");
+
   if (!out || !size) return kTfLiteError;
   flatbuffers::FlatBufferBuilder builder(/*initial_size=*/10240);
 
@@ -470,6 +699,10 @@ TfLiteStatus ModelWriter::GetBuffer(std::unique_ptr<uint8_t[]>* out,
 }
 
 TfLiteStatus ModelWriter::Write(const std::string& filename) {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("filename: \"" + filename + "\"");
+   MHTracer_DTPStensorflowPSlitePStoolsPSserializationPSwriter_libDTcc mht_19(mht_19_v, 703, "", "./tensorflow/lite/tools/serialization/writer_lib.cc", "ModelWriter::Write");
+
   std::unique_ptr<uint8_t[]> buffer;
   size_t size;
   TF_LITE_ENSURE_STATUS(GetBuffer(&buffer, &size));
@@ -478,12 +711,18 @@ TfLiteStatus ModelWriter::Write(const std::string& filename) {
 
 void ModelWriter::SetUnusedTensors(int subgraph_index,
                                    const std::set<int>& unused_tensors) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSserializationPSwriter_libDTcc mht_20(mht_20_v, 714, "", "./tensorflow/lite/tools/serialization/writer_lib.cc", "ModelWriter::SetUnusedTensors");
+
   subgraph_writers_[subgraph_index].SetUnusedTensors(unused_tensors);
 }
 
 TfLiteStatus ModelWriter::SetCustomInputOutput(
     int subgraph_index, const std::vector<int>& inputs,
     const std::vector<int>& outputs, const std::vector<int>& execution_plan) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSserializationPSwriter_libDTcc mht_21(mht_21_v, 723, "", "./tensorflow/lite/tools/serialization/writer_lib.cc", "ModelWriter::SetCustomInputOutput");
+
   return subgraph_writers_[subgraph_index].SetCustomInputOutput(inputs, outputs,
                                                                 execution_plan);
 }

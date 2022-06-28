@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -105,6 +273,9 @@ Status GatherComputationsByAllocationType(
     const HloModule* module,
     std::vector<const HloComputation*>* thread_local_computations,
     std::vector<const HloComputation*>* global_computations) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_0(mht_0_v, 276, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "GatherComputationsByAllocationType");
+
   // Create a worklist of computations paired with whether the allocation must
   // be thread-local.
   std::deque<std::pair<const HloComputation*, bool>> worklist;
@@ -207,18 +378,27 @@ Status GatherComputationsByAllocationType(
 }
 
 std::string BufferAllocation::Slice::ToString() const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_1(mht_1_v, 381, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAllocation::Slice::ToString");
+
   return absl::StrCat("{index:", index(), ", offset:", offset_,
                       ", size:", size_, "}");
 }
 
 BufferAllocation::Slice BufferAllocation::GetSlice(
     const HloValue& buffer) const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_2(mht_2_v, 390, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAllocation::GetSlice");
+
   const OffsetSize os = FindOrDie(assigned_buffers_, &buffer);
   return Slice(this, os.offset, os.size);
 }
 
 void BufferAllocation::AddAssignment(const HloValue& buffer, int64_t offset,
                                      int64_t size) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_3(mht_3_v, 399, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAllocation::AddAssignment");
+
   VLOG(4) << "Adding the following buffer to allocation #" << index()
           << absl::StrFormat(" (size=%d, offset=%d) %s", size, offset,
                              buffer.ToShortString());
@@ -249,6 +429,9 @@ void BufferAllocation::AddAssignment(const HloValue& buffer, int64_t offset,
 }
 
 BufferAllocationProto BufferAllocation::ToProto() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_4(mht_4_v, 432, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAllocation::ToProto");
+
   BufferAllocationProto proto;
   proto.set_index(index_);
   proto.set_size(size_);
@@ -280,12 +463,18 @@ BufferAllocationProto BufferAllocation::ToProto() const {
 }
 
 static bool CompareHloValuesById(const HloValue* a, const HloValue* b) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_5(mht_5_v, 466, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "CompareHloValuesById");
+
   return a->id() < b->id();
 }
 
 // Returns parameter instruction corresponding to the allocation or nullptr.
 static const HloInstruction* GetEntryParameterInstruction(
     const BufferAllocation& alloc) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_6(mht_6_v, 475, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "GetEntryParameterInstruction");
+
   for (const auto& p : alloc.assigned_buffers()) {
     const HloValue* value = p.first;
     const HloInstruction* instr = value->instruction();
@@ -301,6 +490,9 @@ static const HloInstruction* GetEntryParameterInstruction(
 // nullptr.
 static const HloInstruction* GetOutputInstruction(
     const BufferAllocation& alloc) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_7(mht_7_v, 493, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "GetOutputInstruction");
+
   for (const auto& p : alloc.assigned_buffers()) {
     const HloValue* value = p.first;
     for (const HloPosition& position : value->positions()) {
@@ -316,6 +508,9 @@ static const HloInstruction* GetOutputInstruction(
 }
 
 std::string BufferAllocation::ToString() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_8(mht_8_v, 511, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAllocation::ToString");
+
   std::string output;
   StrAppendFormat(&output, "allocation %d: %p, size %d", index_, this, size());
   if (color() != 0) {
@@ -363,41 +558,65 @@ std::string BufferAllocation::ToString() const {
 }
 
 std::ostream& operator<<(std::ostream& out, const BufferAllocation& buffer) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_9(mht_9_v, 561, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "operator<<");
+
   out << buffer.ToString();
   return out;
 }
 
 std::ostream& operator<<(std::ostream& out, const BufferAllocation::Slice& s) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_10(mht_10_v, 569, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "operator<<");
+
   out << s.ToString();
   return out;
 }
 
 bool BufferAssignment::HasAllocation(const HloValue& value) const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_11(mht_11_v, 577, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssignment::HasAllocation");
+
   return allocation_index_for_value_.contains(&value);
 }
 
 bool BufferAssignment::HasAllocation(const HloBuffer& buffer) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_12(mht_12_v, 584, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssignment::HasAllocation");
+
   return allocation_index_for_value_.contains(buffer.values()[0]);
 }
 
 const BufferAllocation& BufferAssignment::GetAssignedAllocation(
     const HloValue& value) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_13(mht_13_v, 592, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssignment::GetAssignedAllocation");
+
   CHECK(HasAllocation(value));
   return GetAllocation(allocation_index_for_value_.at(&value));
 }
 
 const BufferAllocation& BufferAssignment::GetAssignedAllocation(
     const HloBuffer& hlo_buffer) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_14(mht_14_v, 601, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssignment::GetAssignedAllocation");
+
   return GetAssignedAllocation(*hlo_buffer.values()[0]);
 }
 
 BufferAllocation* BufferAssignment::GetMutableAssignedAllocation(
     const HloBuffer& buffer) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_15(mht_15_v, 609, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssignment::GetMutableAssignedAllocation");
+
   return const_cast<BufferAllocation*>(&GetAssignedAllocation(buffer));
 }
 
 std::set<BufferAllocation::Slice> BufferAssignment::GetAllSlices(
     const HloInstruction* instruction, const ShapeIndex& index) const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_16(mht_16_v, 617, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssignment::GetAllSlices");
+
   std::set<BufferAllocation::Slice> result;
   for (const HloValue* value :
        dataflow_analysis().GetValueSet(instruction, index).values()) {
@@ -410,6 +629,9 @@ std::set<BufferAllocation::Slice> BufferAssignment::GetAllSlices(
 
 const BufferAllocation& BufferAssignment::GetAllocation(
     BufferAllocation::Index index) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_17(mht_17_v, 632, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssignment::GetAllocation");
+
   CHECK_GE(index, 0);
   CHECK_LT(index, allocations_.size());
   return allocations_[index];
@@ -417,6 +639,9 @@ const BufferAllocation& BufferAssignment::GetAllocation(
 
 const BufferAllocation* BufferAssignment::GetInstructionAllocation(
     const HloInstruction* hlo, const ShapeIndex& shape_index) const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_18(mht_18_v, 642, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssignment::GetInstructionAllocation");
+
   const HloValue* value =
       dataflow_analysis().GetValueSet(hlo, shape_index).values()[0];
 
@@ -431,11 +656,17 @@ const BufferAllocation* BufferAssignment::GetInstructionAllocation(
 
 BufferAllocation* BufferAssignment::GetMutableAllocation(
     BufferAllocation::Index index) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_19(mht_19_v, 659, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssignment::GetMutableAllocation");
+
   return const_cast<BufferAllocation*>(&GetAllocation(index));
 }
 
 bool BufferAssignment::HasAllocationAt(const HloInstruction* instruction,
                                        const ShapeIndex& index) const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_20(mht_20_v, 667, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssignment::HasAllocationAt");
+
   return absl::c_any_of(
       dataflow_analysis().GetValueSet(instruction, index).values(),
       IsKeyIn(allocation_index_for_value_));
@@ -443,11 +674,17 @@ bool BufferAssignment::HasAllocationAt(const HloInstruction* instruction,
 
 bool BufferAssignment::HasTopLevelAllocation(
     const HloInstruction* instruction) const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_21(mht_21_v, 677, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssignment::HasTopLevelAllocation");
+
   return HasAllocationAt(instruction, /*index=*/{});
 }
 
 StatusOr<BufferAllocation::Slice> BufferAssignment::GetUniqueSlice(
     const HloInstruction* instruction, const ShapeIndex& index) const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_22(mht_22_v, 685, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssignment::GetUniqueSlice");
+
   VLOG(3) << "Trying to find unique slice for " << instruction->name() << " ["
           << index << "]";
   BufferAllocation::Slice result;
@@ -480,18 +717,27 @@ StatusOr<BufferAllocation::Slice> BufferAssignment::GetUniqueSlice(
 
 StatusOr<BufferAllocation::Slice> BufferAssignment::GetUniqueTopLevelSlice(
     const HloInstruction* instruction) const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_23(mht_23_v, 720, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssignment::GetUniqueTopLevelSlice");
+
   return GetUniqueSlice(instruction, /*index=*/{});
 }
 
 bool BufferAssignment::SharesSliceAtIndex(
     const HloInstruction* hlo_a, const ShapeIndex& shape_index_a,
     const HloInstruction* hlo_b, const ShapeIndex& shape_index_b) const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_24(mht_24_v, 729, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssignment::SharesSliceAtIndex");
+
   return GetUniqueSlice(hlo_a, shape_index_a).ConsumeValueOrDie() ==
          GetUniqueSlice(hlo_b, shape_index_b).ConsumeValueOrDie();
 }
 
 bool BufferAssignment::HaveDisjointSlices(const HloInstruction* hlo_a,
                                           const HloInstruction* hlo_b) const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_25(mht_25_v, 738, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssignment::HaveDisjointSlices");
+
   using SliceSet = flat_hash_set<BufferAllocation::Slice>;
   // Gets the slices all of instr's subshapes.  If any subshape doesn't have an
   // assigned slice, returns the empty set.
@@ -526,12 +772,18 @@ bool BufferAssignment::HaveDisjointSlices(const HloInstruction* hlo_a,
 
 StatusOr<BufferAllocation::Slice>
 BufferAssignment::GetUniqueTopLevelOutputSlice() const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_26(mht_26_v, 775, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssignment::GetUniqueTopLevelOutputSlice");
+
   return GetUniqueTopLevelSlice(
       module_->entry_computation()->root_instruction());
 }
 
 BufferAllocation* BufferAssignment::NewEmptyAllocation(
     int64_t size, LogicalBuffer::Color color) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_27(mht_27_v, 784, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssignment::NewEmptyAllocation");
+
   BufferAllocation::Index index = allocations_.size();
   allocations_.emplace_back(index, size, color);
   BufferAllocation* allocation = &allocations_.back();
@@ -540,6 +792,9 @@ BufferAllocation* BufferAssignment::NewEmptyAllocation(
 
 BufferAllocation* BufferAssignment::NewAllocation(const HloBuffer& buffer,
                                                   int64_t size) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_28(mht_28_v, 795, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssignment::NewAllocation");
+
   BufferAllocation* allocation = NewEmptyAllocation(size, buffer.color());
   AddAssignment(allocation, buffer, /*offset=*/0, size);
   allocation->peak_buffers_.push_back(buffer.values()[0]);
@@ -549,6 +804,9 @@ BufferAllocation* BufferAssignment::NewAllocation(const HloBuffer& buffer,
 void BufferAssignment::AddAssignment(BufferAllocation* allocation,
                                      const HloBuffer& buffer, int64_t offset,
                                      int64_t size) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_29(mht_29_v, 807, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssignment::AddAssignment");
+
   CHECK(allocation->is_reusable() || allocation->assigned_buffers().empty())
       << "Non-reusable allocation already assigned a buffer: "
       << allocation->ToString();
@@ -570,6 +828,9 @@ void BufferAssignment::AddAssignment(BufferAllocation* allocation,
 void BufferAssignment::AddAssignment(BufferAllocation* allocation,
                                      const HloValue& value, int64_t offset,
                                      int64_t size) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_30(mht_30_v, 831, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssignment::AddAssignment");
+
   allocation->AddAssignment(value, offset, size);
   allocation_index_for_value_[&value] = allocation->index();
   const HloValue& hlo_value =
@@ -584,6 +845,9 @@ void BufferAssignment::AddAssignment(BufferAllocation* allocation,
 // Combines allocations of temporary buffers of the same color into one big
 // BufferAllocation.
 void BufferAssignment::CombineTempAllocations() {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_31(mht_31_v, 848, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssignment::CombineTempAllocations");
+
   VLOG(1) << "CombineTempAllocations()";
   // Stores the combined allocations.
   std::deque<BufferAllocation> combined_allocations;
@@ -675,6 +939,9 @@ void BufferAssignment::CombineTempAllocations() {
 }
 
 Status BufferAssignment::ComputeSummaryStats() {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_32(mht_32_v, 942, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssignment::ComputeSummaryStats");
+
   for (auto& allocation : Allocations()) {
     if (allocation.is_entry_computation_parameter()) {
       stats_.parameter_allocation_count++;
@@ -722,6 +989,9 @@ Status BufferAssignment::ComputeSummaryStats() {
 }
 
 std::string BufferAssignment::Stats::ToString() const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_33(mht_33_v, 992, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssignment::Stats::ToString");
+
   std::string s;
   StrAppendFormat(&s, "BufferAssignment stats:\n");
   StrAppendFormat(&s, "             parameter allocation: %10s\n",
@@ -751,6 +1021,9 @@ std::string BufferAssignment::Stats::ToString() const {
 }
 
 std::string BufferAssignment::ToString() const {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_34(mht_34_v, 1024, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssignment::ToString");
+
   std::string output;
   absl::StrAppend(&output, "BufferAssignment:\n");
   std::vector<const HloValue*> used_values;
@@ -800,6 +1073,9 @@ std::vector<std::pair<int64_t, const HloValue*>> TopKPeakBuffers(
 }
 
 std::string BufferAssignment::ToVerboseString() const {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_35(mht_35_v, 1076, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssignment::ToVerboseString");
+
   // TODO(loreno): make this tunable via flag.
   const size_t kMaxBuffersToShow = 15;
   std::string output =
@@ -839,6 +1115,9 @@ std::string BufferAssignment::ToVerboseString() const {
 }
 
 std::string BufferAssignment::BufferInfoString() const {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_36(mht_36_v, 1118, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssignment::BufferInfoString");
+
   std::string binfo;
   // Columns in buffer information:
   // buffer_id: int. This value can be used to match the allocation in
@@ -911,6 +1190,9 @@ std::string BufferAssignment::BufferInfoString() const {
 }
 
 BufferAssignmentProto BufferAssignment::ToProto() const {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_37(mht_37_v, 1193, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssignment::ToProto");
+
   BufferAssignmentProto proto;
   // NOTE: DataflowAnalysis state is serialized here in BufferAssignment,
   // because we need to do the HasAllocation check for each buffer. Otherwise
@@ -957,6 +1239,9 @@ StatusOr<std::unique_ptr<BufferAssignment>> BufferAssigner::Run(
     absl::optional<BufferAssigner::MustNotLiveOut> must_not_live_out,
     HloDataflowAnalysis::CanShareBuffer can_share_buffer,
     std::unique_ptr<PresetAssignments> preset_assignments) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_38(mht_38_v, 1242, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssigner::Run");
+
   BufferAssigner assigner(allocate_buffers_for_constants, std::move(colorer),
                           must_not_live_out, std::move(preset_assignments));
   return assigner.CreateAssignment(
@@ -967,6 +1252,9 @@ StatusOr<std::unique_ptr<BufferAssignment>> BufferAssigner::Run(
 bool BufferAssigner::LiveRangeInterferes(const HloValue* buffer1,
                                          const HloValue* buffer2,
                                          BufferAssignment* assignment) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_39(mht_39_v, 1255, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssigner::LiveRangeInterferes");
+
   CHECK((assignment->hlo_live_range().total_order_scheduled()));
   const HloLiveRange& hlo_live_range = assignment->hlo_live_range();
 
@@ -984,6 +1272,9 @@ bool BufferAssigner::LiveRangeInterferes(const HloValue* buffer1,
   auto can_share_as_operand =
       [&assignment](const HloValue* user_value, const HloValue* operand_value,
                     const HloLiveRange::TimeBound& operand_live_range) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_40(mht_40_v, 1275, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "lambda");
+
         // An hlo value can hold multiple instructions during its life time. We
         // only look at the last instruction and check if it can be shared with
         // the operand.
@@ -1035,6 +1326,9 @@ bool BufferAssigner::LiveRangeInterferes(const HloValue* buffer1,
 bool BufferAssigner::MaybeAssignBuffer(BufferAllocation* allocation,
                                        const HloBuffer& hlo_buffer,
                                        BufferAssignment* assignment) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_41(mht_41_v, 1329, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssigner::MaybeAssignBuffer");
+
   CHECK(!assignment->HasAllocation(hlo_buffer))
       << "buffer " << hlo_buffer << " already has an allocation assigned.";
 
@@ -1154,6 +1448,9 @@ Status BufferAssigner::AssignSingleHloBuffer(
         buffers_to_assign_sequentially,
     std::vector<BufferAllocation::Index>* allocation_indices,
     BufferAssignment* assignment) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_42(mht_42_v, 1451, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssigner::AssignSingleHloBuffer");
+
   const int64_t buffer_size = assignment->HloBufferSize(*hlo_buffer);
   for (const HloValue* value : hlo_buffer->values()) {
     if (value->instruction()->opcode() == HloOpcode::kConstant) {
@@ -1293,6 +1590,9 @@ Status BufferAssigner::AssignBuffersForComputations(
                         absl::flat_hash_set<const HloValue*>>*
         buffers_to_assign_sequentially,
     BufferAssignment* assignment) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_43(mht_43_v, 1593, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssigner::AssignBuffersForComputations");
+
   if (computations.empty()) {
     return Status::OK();
   }
@@ -1375,6 +1675,9 @@ Status BufferAssigner::AssignBuffersForComputations(
         }
         auto compare = [&post_order_position](const HloValue* value1,
                                               const HloValue* value2) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_44(mht_44_v, 1678, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "lambda");
+
           return post_order_position.at(value1->instruction()) <
                  post_order_position.at(value2->instruction());
         };
@@ -1408,6 +1711,9 @@ BufferAssigner::SplitBuffersByColor(
 Status BufferAssigner::AssignPresetBuffers(
     absl::flat_hash_set<const HloBuffer*>* assigned_buffers,
     BufferAssignment* assignment) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_45(mht_45_v, 1714, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssigner::AssignPresetBuffers");
+
   if (!preset_assignments_) {
     return Status::OK();
   }
@@ -1460,6 +1766,9 @@ Status BufferAssigner::AssignBuffersWithSequentialOrdering(
     const flat_hash_map<const HloComputation*, flat_hash_set<const HloValue*>>&
         buffers_to_assign_sequentially,
     bool run_whole_module_heap_simulation, BufferAssignment* assignment) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_46(mht_46_v, 1769, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssigner::AssignBuffersWithSequentialOrdering");
+
   // Run the sequence of instructions through the heap simulator.  The
   // heuristic that seems to give the best results is lazy-best-fit, with all
   // runs of alloc / free calls sorted in decreasing size order.
@@ -1468,6 +1777,9 @@ Status BufferAssigner::AssignBuffersWithSequentialOrdering(
   // Returns a heap algorithm that chooses the best result from several
   // algorithms.
   auto get_heap_algorithm = [&](int64_t alignment) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_47(mht_47_v, 1780, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "lambda");
+
     auto algorithms = absl::make_unique<
         std::vector<std::unique_ptr<HeapAlgorithm<HloValue>>>>();
     algorithms->push_back(
@@ -1677,6 +1989,9 @@ std::vector<const HloValue*> ComputePeakMemoryLogicalBuffers(
 void BufferAssigner::AssignBuffersFromHeapSimulator(
     const HeapSimulator::Result<HloValue>& result, BufferAssignment* assignment,
     BufferValue::Color color) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_48(mht_48_v, 1992, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssigner::AssignBuffersFromHeapSimulator");
+
   if (assignment->stats_.preallocated_temp_fragmentation_bytes == -1) {
     assignment->stats_.preallocated_temp_fragmentation_bytes =
         result.fragmentation_size;
@@ -1711,6 +2026,9 @@ StatusOr<std::unique_ptr<BufferAssignment>> BufferAssigner::CreateAssignment(
     BufferValue::SizeFunction buffer_size,
     LogicalBuffer::AlignmentFunction color_alignment,
     HloDataflowAnalysis::CanShareBuffer can_share_buffer) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbuffer_assignmentDTcc mht_49(mht_49_v, 2029, "", "./tensorflow/compiler/xla/service/buffer_assignment.cc", "BufferAssigner::CreateAssignment");
+
   TF_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
                       HloAliasAnalysis::Run(module, can_share_buffer));
 

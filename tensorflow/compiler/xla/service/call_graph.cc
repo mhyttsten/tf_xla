@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScall_graphDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScall_graphDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScall_graphDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,6 +202,9 @@ using absl::StrAppendFormat;
 using absl::StrCat;
 
 std::string CallContextToString(CallContext context) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScall_graphDTcc mht_0(mht_0_v, 205, "", "./tensorflow/compiler/xla/service/call_graph.cc", "CallContextToString");
+
   switch (context) {
     case CallContext::kNone:
       return "kNone";
@@ -47,11 +218,17 @@ std::string CallContextToString(CallContext context) {
 }
 
 std::ostream& operator<<(std::ostream& out, const CallContext& context) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScall_graphDTcc mht_1(mht_1_v, 221, "", "./tensorflow/compiler/xla/service/call_graph.cc", "operator<<");
+
   out << CallContextToString(context);
   return out;
 }
 
 CallContext GetInstructionCallContext(HloOpcode opcode) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScall_graphDTcc mht_2(mht_2_v, 229, "", "./tensorflow/compiler/xla/service/call_graph.cc", "GetInstructionCallContext");
+
   switch (opcode) {
     case HloOpcode::kCall:
     case HloOpcode::kConditional:
@@ -78,6 +255,9 @@ CallContext GetInstructionCallContext(HloOpcode opcode) {
 }
 
 std::string CallSite::ToString() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScall_graphDTcc mht_3(mht_3_v, 258, "", "./tensorflow/compiler/xla/service/call_graph.cc", "CallSite::ToString");
+
   return StrCat(
       instruction()->name(), " calls in context ",
       CallContextToString(context()), ": ",
@@ -88,10 +268,16 @@ std::string CallSite::ToString() const {
 }
 
 CallGraphNode::CallGraphNode(HloComputation* computation)
-    : computation_(computation) {}
+    : computation_(computation) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScall_graphDTcc mht_4(mht_4_v, 272, "", "./tensorflow/compiler/xla/service/call_graph.cc", "CallGraphNode::CallGraphNode");
+}
 
 const CallSite* CallGraphNode::GetCallSite(
     const HloInstruction* instruction) const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScall_graphDTcc mht_5(mht_5_v, 278, "", "./tensorflow/compiler/xla/service/call_graph.cc", "CallGraphNode::GetCallSite");
+
   auto it = callsite_instructions_.find(instruction);
   if (it == callsite_instructions_.end()) {
     return nullptr;
@@ -99,9 +285,15 @@ const CallSite* CallGraphNode::GetCallSite(
   return &callsites_[it->second];
 }
 
-std::string CallGraphNode::ToString() const { return computation_->name(); }
+std::string CallGraphNode::ToString() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScall_graphDTcc mht_6(mht_6_v, 289, "", "./tensorflow/compiler/xla/service/call_graph.cc", "CallGraphNode::ToString");
+ return computation_->name(); }
 
 void CallGraphNode::AddCallerCallSite(const CallSite& caller_callsite) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScall_graphDTcc mht_7(mht_7_v, 294, "", "./tensorflow/compiler/xla/service/call_graph.cc", "CallGraphNode::AddCallerCallSite");
+
   caller_callsites_.push_back(caller_callsite);
   HloComputation* caller = caller_callsite.instruction()->parent();
   if (!ContainsKey(caller_set_, caller)) {
@@ -111,6 +303,9 @@ void CallGraphNode::AddCallerCallSite(const CallSite& caller_callsite) {
 }
 
 void CallGraphNode::AddCallSiteForInstruction(HloInstruction* instruction) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScall_graphDTcc mht_8(mht_8_v, 306, "", "./tensorflow/compiler/xla/service/call_graph.cc", "CallGraphNode::AddCallSiteForInstruction");
+
   CHECK_EQ(instruction->parent(), computation());
   const CallContext context = GetInstructionCallContext(instruction->opcode());
   if (!instruction->called_computations().empty()) {
@@ -130,16 +325,25 @@ void CallGraphNode::AddCallSiteForInstruction(HloInstruction* instruction) {
   }
 }
 
-CallGraph::CallGraph(const HloModule* module) : module_(module) {}
+CallGraph::CallGraph(const HloModule* module) : module_(module) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScall_graphDTcc mht_9(mht_9_v, 329, "", "./tensorflow/compiler/xla/service/call_graph.cc", "CallGraph::CallGraph");
+}
 
 const CallGraphNode& CallGraph::GetNode(
     const HloComputation* computation) const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScall_graphDTcc mht_10(mht_10_v, 335, "", "./tensorflow/compiler/xla/service/call_graph.cc", "CallGraph::GetNode");
+
   auto it = node_indices_.find(computation);
   CHECK(it != node_indices_.end());
   return nodes_[it->second];
 }
 
 CallGraphNode& CallGraph::GetNode(const HloComputation* computation) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScall_graphDTcc mht_11(mht_11_v, 344, "", "./tensorflow/compiler/xla/service/call_graph.cc", "CallGraph::GetNode");
+
   auto it = node_indices_.find(computation);
   CHECK(it != node_indices_.end());
   return nodes_[it->second];
@@ -148,6 +352,9 @@ CallGraphNode& CallGraph::GetNode(const HloComputation* computation) {
 bool CallGraph::DominatesHelper(
     const HloComputation* a, const HloComputation* b,
     absl::flat_hash_set<const HloComputation*>* visited) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScall_graphDTcc mht_12(mht_12_v, 355, "", "./tensorflow/compiler/xla/service/call_graph.cc", "CallGraph::DominatesHelper");
+
   if (a == b || ContainsKey(*visited, b)) {
     // The call graph is guaranteed to be acyclic so any previously visited node
     // we encounter was already determined to be dominated.
@@ -172,6 +379,9 @@ bool CallGraph::DominatesHelper(
 
 bool CallGraph::Dominates(const HloComputation* a,
                           const HloComputation* b) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScall_graphDTcc mht_13(mht_13_v, 382, "", "./tensorflow/compiler/xla/service/call_graph.cc", "CallGraph::Dominates");
+
   absl::flat_hash_set<const HloComputation*> visited;
   return DominatesHelper(a, b, &visited);
 }
@@ -181,6 +391,9 @@ namespace {
 // Returns the call context of a computation which is called from contexts 'a'
 // and 'b'.
 CallContext UnionContexts(CallContext a, CallContext b) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScall_graphDTcc mht_14(mht_14_v, 394, "", "./tensorflow/compiler/xla/service/call_graph.cc", "UnionContexts");
+
   if (a == CallContext::kNone) {
     return b;
   } else if (b == CallContext::kNone) {
@@ -197,6 +410,9 @@ CallContext UnionContexts(CallContext a, CallContext b) {
 }  // namespace
 
 void CallGraph::SetCallContexts() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScall_graphDTcc mht_15(mht_15_v, 413, "", "./tensorflow/compiler/xla/service/call_graph.cc", "CallGraph::SetCallContexts");
+
   std::queue<CallGraphNode*> worklist;
 
   // Initialize worklist with all roots of the call graph (computations without
@@ -245,6 +461,9 @@ void CallGraph::SetCallContexts() {
 }
 
 void CallGraph::SetNodeDepths() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScall_graphDTcc mht_16(mht_16_v, 464, "", "./tensorflow/compiler/xla/service/call_graph.cc", "CallGraph::SetNodeDepths");
+
   std::queue<CallGraphNode*> worklist;
 
   // Initialize node depths to -1.
@@ -281,6 +500,9 @@ void CallGraph::SetNodeDepths() {
 
 /* static */
 std::unique_ptr<CallGraph> CallGraph::Build(const HloModule* module) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScall_graphDTcc mht_17(mht_17_v, 503, "", "./tensorflow/compiler/xla/service/call_graph.cc", "CallGraph::Build");
+
   // Constructor for CallGraph is private so absl::make_unique can't be used.
   auto call_graph = absl::WrapUnique<CallGraph>(new CallGraph(module));
 
@@ -324,6 +546,9 @@ std::unique_ptr<CallGraph> CallGraph::Build(const HloModule* module) {
 Status CallGraph::VisitNodesInternal(
     const VisitorFunction& visitor_func, const CallGraphNode& node,
     absl::flat_hash_set<const CallGraphNode*>* visited) const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScall_graphDTcc mht_18(mht_18_v, 549, "", "./tensorflow/compiler/xla/service/call_graph.cc", "CallGraph::VisitNodesInternal");
+
   auto pair = visited->insert(&node);
   if (!pair.second) {
     // Node was not inserted. Node has already been visited.
@@ -340,6 +565,9 @@ Status CallGraph::VisitNodesInternal(
 
 Status CallGraph::VisitNodes(const VisitorFunction& visitor_func,
                              bool visit_unreachable_nodes) const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScall_graphDTcc mht_19(mht_19_v, 568, "", "./tensorflow/compiler/xla/service/call_graph.cc", "CallGraph::VisitNodes");
+
   absl::flat_hash_set<const CallGraphNode*> visited;
   if (visit_unreachable_nodes) {
     // Traverse from all roots in the call graph.
@@ -358,6 +586,9 @@ Status CallGraph::VisitNodes(const VisitorFunction& visitor_func,
 }
 
 bool CallGraph::IsFlattened() const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScall_graphDTcc mht_20(mht_20_v, 589, "", "./tensorflow/compiler/xla/service/call_graph.cc", "CallGraph::IsFlattened");
+
   for (const CallGraphNode& node : nodes_) {
     if (node.context() == CallContext::kBoth) {
       return false;
@@ -372,6 +603,9 @@ bool CallGraph::IsFlattened() const {
 
 std::vector<HloInstruction*> CallGraph::GetComputationCallers(
     HloComputation* c) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScall_graphDTcc mht_21(mht_21_v, 606, "", "./tensorflow/compiler/xla/service/call_graph.cc", "CallGraph::GetComputationCallers");
+
   std::vector<HloInstruction*> callers;
   for (const auto& callsite : GetNode(c).caller_callsites()) {
     callers.push_back(callsite.instruction());
@@ -433,6 +667,9 @@ CallGraph::NearestAncestorsInSameComputation(HloInstruction* a,
 }
 
 std::string CallGraph::ToString() const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScall_graphDTcc mht_22(mht_22_v, 670, "", "./tensorflow/compiler/xla/service/call_graph.cc", "CallGraph::ToString");
+
   std::string out;
   StrAppendFormat(&out, "Call graph for module %s:\n", module_->name());
   for (const CallGraphNode& node : nodes()) {

@@ -14,6 +14,174 @@ limitations under the License.
 ==============================================================================*/
 #ifndef TENSORFLOW_CORE_TFRT_EAGER_C_API_TFRT_H_
 #define TENSORFLOW_CORE_TFRT_EAGER_C_API_TFRT_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <memory>
 #include <string>
@@ -72,7 +240,10 @@ class ContextInterface : public tensorflow::ImmediateExecutionContext {
       bool is_async, bool use_tfrt_distributed_runtime);
   ~ContextInterface() override;
 
-  void Release() override { delete this; }
+  void Release() override {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_0(mht_0_v, 244, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "Release");
+ delete this; }
 
   tensorflow::AbstractTensorInterface* CreateInt64Scalar(
       int64_t value) override;
@@ -148,6 +319,9 @@ class ContextInterface : public tensorflow::ImmediateExecutionContext {
   void EndStep() override;
 
   tensorflow::Status AsyncWait() override {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_1(mht_1_v, 322, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "AsyncWait");
+
     TF_RETURN_IF_ERROR(GetEagerContext()->AsyncWait());
     GetHostContext()->Quiesce();
     return tensorflow::Status::OK();
@@ -168,11 +342,17 @@ class ContextInterface : public tensorflow::ImmediateExecutionContext {
   const std::string& HostCPUName() const override;
 
   void SetAllowSoftPlacement(bool enable) override {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_2(mht_2_v, 345, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "SetAllowSoftPlacement");
+
     // TODO(tfrt-devs): Move this flag to a common place that can be shared
     // by current TF and TFRT.
     GetEagerContext()->SetAllowSoftPlacement(enable);
   }
   void SetShouldStoreGraphs(bool value) override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_3(mht_3_v, 353, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "SetShouldStoreGraphs");
+
     GetEagerContext()->SetShouldStoreGraphs(value);
   }
 
@@ -185,36 +365,54 @@ class ContextInterface : public tensorflow::ImmediateExecutionContext {
   tensorflow::Status RunMetadataRecordFunction(const std::string& func_name);
 
   void SetLogDevicePlacement(bool enable) override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_4(mht_4_v, 368, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "SetLogDevicePlacement");
+
     // TODO(tfrt-devs): Move this flag to a common place that can be shared
     // by current TF and TFRT.
     GetEagerContext()->SetLogDevicePlacement(enable);
   }
 
   void SetRunEagerOpAsFunction(bool enable) override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_5(mht_5_v, 377, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "SetRunEagerOpAsFunction");
+
     // TODO(tfrt-devs): Move this flag to a common place that can be shared
     // by current TF and TFRT.
     GetEagerContext()->SetRunEagerOpAsFunction(enable);
   }
 
   void SetJitCompileRewrite(bool enable) override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_6(mht_6_v, 386, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "SetJitCompileRewrite");
+
     // TODO(tfrt-devs): Move this flag to a common place that can be shared
     // by current TF and TFRT.
     GetEagerContext()->SetJitCompileRewrite(enable);
   }
 
   tensorflow::EagerExecutor& Executor() override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_7(mht_7_v, 395, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "Executor");
+
     return GetEagerContext()->Executor();
   }
   void SetExecutorForThread(tensorflow::EagerExecutor* executor) override;
 
   void SetThreadLocalDevicePlacementPolicy(
       tensorflow::ContextDevicePlacementPolicy policy) override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_8(mht_8_v, 404, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "SetThreadLocalDevicePlacementPolicy");
+
     // TODO(tfrt-devs): Move this flag to a common place that can be shared
     // by current TF and TFRT.
     GetEagerContext()->SetThreadLocalDevicePlacementPolicy(policy);
   }
   tensorflow::ContextDevicePlacementPolicy GetDevicePlacementPolicy()
       const override {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_9(mht_9_v, 413, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "GetDevicePlacementPolicy");
+
     // TODO(tfrt-devs): Move this flag to a common place that can be shared
     // by current TF and TFRT.
     return GetEagerContext()->GetDevicePlacementPolicy();
@@ -248,22 +446,37 @@ class ContextInterface : public tensorflow::ImmediateExecutionContext {
   AsyncValueRef<Chain>* GetChain();
 
   // Indicates sync or async execution.
-  bool IsAsync() const { return context_.IsAsync(); }
+  bool IsAsync() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_10(mht_10_v, 450, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "IsAsync");
+ return context_.IsAsync(); }
 
   // For LLVM style RTTI.
   static bool classof(const AbstractContext* op) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_11(mht_11_v, 456, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "classof");
+
     return op->getKind() == kTfrt;
   }
 
-  FunctionCache& GetFunctionCache() { return function_cache_; }
+  FunctionCache& GetFunctionCache() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_12(mht_12_v, 463, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "GetFunctionCache");
+ return function_cache_; }
 
-  OpCache& GetOpCache() { return op_cache_; }
+  OpCache& GetOpCache() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_13(mht_13_v, 468, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "GetOpCache");
+ return op_cache_; }
 
   OpHandler* GetFallbackOpHandler();
 
   std::vector<std::string> GetLoggedOpsTestonly() override;
 
-  bool UseTfrtDistributedRuntime() { return use_tfrt_distributed_runtime_; }
+  bool UseTfrtDistributedRuntime() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_14(mht_14_v, 477, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "UseTfrtDistributedRuntime");
+ return use_tfrt_distributed_runtime_; }
 
 #if !defined(IS_MOBILE_PLATFORM)
   void SetDistributedManager(
@@ -274,6 +487,9 @@ class ContextInterface : public tensorflow::ImmediateExecutionContext {
 
   tensorflow::ImmediateExecutionDistributedManager* GetDistributedManager()
       override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_15(mht_15_v, 490, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "GetDistributedManager");
+
     if (use_tfrt_distributed_runtime_) {
       return distributed_manager_.get();
     } else {
@@ -321,11 +537,23 @@ class ContextInterface : public tensorflow::ImmediateExecutionContext {
 
 class TensorInterface : public tensorflow::AbstractTensorInterface {
  public:
-  explicit TensorInterface(AsyncValueRef<Tensor> t) : tensor_(std::move(t)) {}
-  explicit TensorInterface(tensorflow::Tensor t) : tf_tensor_(std::move(t)) {}
-  ~TensorInterface() override {}
+  explicit TensorInterface(AsyncValueRef<Tensor> t) : tensor_(std::move(t)) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_16(mht_16_v, 541, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "TensorInterface");
+}
+  explicit TensorInterface(tensorflow::Tensor t) : tf_tensor_(std::move(t)) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_17(mht_17_v, 545, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "TensorInterface");
+}
+  ~TensorInterface() override {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_18(mht_18_v, 549, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "~TensorInterface");
+}
 
-  void Release() override { delete this; }
+  void Release() override {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_19(mht_19_v, 554, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "Release");
+ delete this; }
 
   tensorflow::DataType Type() const override;
   int NumDims() const override;
@@ -335,11 +563,17 @@ class TensorInterface : public tensorflow::AbstractTensorInterface {
   void* Data() const override;
   bool IsAligned() const override;
   bool CanMove() const override;
-  bool IsTfTensor() const { return !tensor_; }
+  bool IsTfTensor() const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_20(mht_20_v, 567, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "IsTfTensor");
+ return !tensor_; }
   std::string SummarizeValue() const override;
 
   AsyncValueRef<tfrt::Tensor> TensorRef() const;
-  tensorflow::Tensor& TfTensor() { return tf_tensor_; }
+  tensorflow::Tensor& TfTensor() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_21(mht_21_v, 574, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "TfTensor");
+ return tf_tensor_; }
 
  private:
   AsyncValueRef<tfrt::Tensor> tensor_;
@@ -358,7 +592,10 @@ class TensorHandleInterface
   explicit TensorHandleInterface(tensorflow::DataType dtype, Value&& v,
                                  TfrtContext* context);
 
-  void Release() override { Unref(); }
+  void Release() override {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_22(mht_22_v, 596, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "Release");
+ Unref(); }
 
   tensorflow::DataType DataType() const override;
   tensorflow::Status TensorHandleStatus() const override;
@@ -380,6 +617,9 @@ class TensorHandleInterface
   const char* DeviceType(tensorflow::Status* status) const override;
 
   int DeviceId(tensorflow::Status* status) const override {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_23(mht_23_v, 620, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "DeviceId");
+
     // TODO(tfrt-devs): implement for tfrt tensor handle.
     llvm_unreachable("unimplemented method.");
   }
@@ -390,16 +630,28 @@ class TensorHandleInterface
   // TODO(b/161897666): Figure out if we can get rid of returning a new
   // pointer here and just use Ref().
   tensorflow::ImmediateExecutionTensorHandle* Copy() override {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_24(mht_24_v, 633, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "Copy");
+
     Ref();
     return this;
   }
 
-  TensorHandle Handle() { return value_.get<TensorHandle>().CopyRef(); }
+  TensorHandle Handle() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_25(mht_25_v, 641, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "Handle");
+ return value_.get<TensorHandle>().CopyRef(); }
 
-  Value* value() { return &value_; }
+  Value* value() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_26(mht_26_v, 646, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "value");
+ return &value_; }
 
   // For LLVM style RTTI.
   static bool classof(const tensorflow::AbstractTensorHandle* ptr) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_27(mht_27_v, 652, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "classof");
+
     return ptr->getKind() == kTfrt;
   }
 
@@ -423,6 +675,9 @@ class TensorHandleInterface
 
 template <typename T>
 inline TensorHandleInterface* TensorHandleFromInterface(T* handle) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_28(mht_28_v, 678, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "TensorHandleFromInterface");
+
   return tensorflow::down_cast<TensorHandleInterface*>(handle);
 }
 
@@ -435,6 +690,9 @@ class AbortLocationHandler final : public tfrt::LocationHandler {
 
  private:
   tfrt::DecodedLocation DecodeLocation(tfrt::Location loc) const override {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_29(mht_29_v, 693, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "DecodeLocation");
+
     // Return a dummy decoded location.
     return {};
   }
@@ -447,8 +705,14 @@ class OpAttrsInterface : public tensorflow::AbstractOpAttrs {
       : AbstractOpAttrs(
             tensorflow::AbstractOpAttrs::AbstractOpAttrsKind::kTfrt),
         attrs_(attrs),
-        fallback_attrs_(fallback_attrs) {}
-  ~OpAttrsInterface() override {}
+        fallback_attrs_(fallback_attrs) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_30(mht_30_v, 709, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "OpAttrsInterface");
+}
+  ~OpAttrsInterface() override {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_31(mht_31_v, 713, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "~OpAttrsInterface");
+}
 
   void GetNameAttrList(tensorflow::NameAttrList* name_and_attrs) const override;
   tensorflow::Status GetTypeList(
@@ -461,9 +725,15 @@ class OpAttrsInterface : public tensorflow::AbstractOpAttrs {
   bool GetType(absl::string_view attr_name,
                tensorflow::DataType* result) const override;
 
-  const OpAttrs* GetAttrs() const { return attrs_; }
+  const OpAttrs* GetAttrs() const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_32(mht_32_v, 729, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "GetAttrs");
+ return attrs_; }
 
   const tensorflow::AttrBuilder* GetFallbackAttrs() const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_33(mht_33_v, 734, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "GetFallbackAttrs");
+
     return fallback_attrs_;
   }
 
@@ -480,22 +750,43 @@ class OperationInterface : public tensorflow::ImmediateExecutionOperation {
  public:
   // All arguments come from ContextInterface.
   explicit OperationInterface(ContextInterface* context);
-  ~OperationInterface() override {}
+  ~OperationInterface() override {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_34(mht_34_v, 754, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "~OperationInterface");
+}
 
-  void Release() override { delete this; }
+  void Release() override {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_35(mht_35_v, 759, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "Release");
+ delete this; }
 
-  void Clear() override { args_.clear(); }
+  void Clear() override {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_36(mht_36_v, 764, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "Clear");
+ args_.clear(); }
 
   tensorflow::Status Reset(const char* op,
                            const char* raw_device_name) override;
-  const std::string& Name() const override { return op_name_; }
-  const std::string& DeviceName() const override { return device_name_; }
+  const std::string& Name() const override {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_37(mht_37_v, 771, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "Name");
+ return op_name_; }
+  const std::string& DeviceName() const override {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_38(mht_38_v, 775, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "DeviceName");
+ return device_name_; }
   tensorflow::Status SetDeviceName(const char* name) override;
 
   tensorflow::ImmediateExecutionContext* GetContext() const override {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_39(mht_39_v, 781, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "GetContext");
+
     return context_;
   }
   bool HasCustomDeviceInput() const override {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_40(mht_40_v, 787, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "HasCustomDeviceInput");
+
     return custom_device_tensor_handle_count_ > 0;
   }
 
@@ -509,8 +800,14 @@ class OperationInterface : public tensorflow::ImmediateExecutionOperation {
   tensorflow::Status Execute(
       absl::Span<tensorflow::AbstractTensorHandle*> retvals,
       int* num_retvals) override;
-  const tensorflow::OpDef* OpDef() const override { return op_def_; }
-  const tensorflow::NodeDef NodeDef() { return fallback_attrs_.BuildNodeDef(); }
+  const tensorflow::OpDef* OpDef() const override {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_41(mht_41_v, 804, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "OpDef");
+ return op_def_; }
+  const tensorflow::NodeDef NodeDef() {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_42(mht_42_v, 808, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "NodeDef");
+ return fallback_attrs_.BuildNodeDef(); }
 
   tensorflow::Status SetAttrString(const char* attr_name, const char* data,
                                    size_t length) override;
@@ -560,11 +857,17 @@ class OperationInterface : public tensorflow::ImmediateExecutionOperation {
   void AddAttrs(const tensorflow::AbstractOpAttrs* op_attrs) override;
 
   void SetStackTrace(tensorflow::ManagedStackTrace stack_trace) override {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_43(mht_43_v, 860, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "SetStackTrace");
+
     stack_trace_ = stack_trace;
   }
 
   void SetCancellationManager(
       tensorflow::CancellationManager* cancellation_manager) override {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_44(mht_44_v, 868, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "SetCancellationManager");
+
     // TODO(b/181368626): Support cancellation.
   }
 
@@ -573,10 +876,16 @@ class OperationInterface : public tensorflow::ImmediateExecutionOperation {
   }
 
   // Currently not supported.
-  void SetStepId(int64_t step_id) override {}
+  void SetStepId(int64_t step_id) override {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_45(mht_45_v, 880, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "SetStepId");
+}
 
   // For LLVM style RTTI.
   static bool classof(const AbstractOperation* ptr) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePStfrtPSeagerPSc_api_tfrtDTh mht_46(mht_46_v, 886, "", "./tensorflow/core/tfrt/eager/c_api_tfrt.h", "classof");
+
     return ptr->getKind() == kTfrt;
   }
 

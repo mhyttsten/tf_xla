@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSconv_grad_ops_3dDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSconv_grad_ops_3dDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSconv_grad_ops_3dDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -79,6 +247,9 @@ void Col2im(const T* col_data, const int depth, const int planes,
             const int pad_t, const int pad_l, const int pad_pb, const int pad_b,
             const int pad_r, const int stride_p, const int stride_h,
             const int stride_w, T* im_data) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSconv_grad_ops_3dDTcc mht_0(mht_0_v, 250, "", "./tensorflow/core/kernels/conv_grad_ops_3d.cc", "Col2im");
+
   const int planes_col = (planes + pad_pt + pad_pb - filter_p) / stride_p + 1;
   const int height_col = (height + pad_t + pad_b - filter_h) / stride_h + 1;
   const int width_col = (width + pad_l + pad_r - filter_w) / stride_w + 1;
@@ -128,6 +299,9 @@ void Im2col(const T* input_data, const int depth, const int planes,
             const int pad_t, const int pad_l, const int pad_pb, const int pad_b,
             const int pad_r, const int stride_p, const int stride_h,
             const int stride_w, T* col_data) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSconv_grad_ops_3dDTcc mht_1(mht_1_v, 302, "", "./tensorflow/core/kernels/conv_grad_ops_3d.cc", "Im2col");
+
   const int planes_col = (planes + pad_pt + pad_pb - filter_p) / stride_p + 1;
   const int height_col = (height + pad_t + pad_b - filter_h) / stride_h + 1;
   const int width_col = (width + pad_l + pad_r - filter_w) / stride_w + 1;
@@ -179,6 +353,9 @@ class Conv3DBackpropInputOp : public OpKernel {
       : OpKernel(context),
         data_format_(FORMAT_NHWC),
         takes_shape_(type_string().find("V2") != std::string::npos) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSconv_grad_ops_3dDTcc mht_2(mht_2_v, 356, "", "./tensorflow/core/kernels/conv_grad_ops_3d.cc", "Conv3DBackpropInputOp");
+
     // data_format is only available in V2.
     if (takes_shape_) {
       string data_format;
@@ -225,6 +402,9 @@ class Conv3DBackpropInputOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSconv_grad_ops_3dDTcc mht_3(mht_3_v, 405, "", "./tensorflow/core/kernels/conv_grad_ops_3d.cc", "Compute");
+
     const Tensor& filter = context->input(1);
     const TensorShape& filter_shape = filter.shape();
 
@@ -308,6 +488,9 @@ class Conv3DCustomBackpropInputOp : public OpKernel {
       : OpKernel(context),
         data_format_(FORMAT_NHWC),
         takes_shape_(type_string().find("V2") != std::string::npos) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSconv_grad_ops_3dDTcc mht_4(mht_4_v, 491, "", "./tensorflow/core/kernels/conv_grad_ops_3d.cc", "Conv3DCustomBackpropInputOp");
+
     // data_format is only available in V2.
     if (takes_shape_) {
       string data_format;
@@ -354,6 +537,9 @@ class Conv3DCustomBackpropInputOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSconv_grad_ops_3dDTcc mht_5(mht_5_v, 540, "", "./tensorflow/core/kernels/conv_grad_ops_3d.cc", "Compute");
+
     const Tensor& filter = context->input(1);
     const TensorShape& filter_shape = filter.shape();
 
@@ -590,6 +776,9 @@ class Conv3DCustomBackpropInputOp : public OpKernel {
                       &input_backprop_data, &col_buffer_data,
                       &out_backprop_data, &filter_data, &input_offset,
                       &output_offset, &size_C](int64_t start, int64_t limit) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSconv_grad_ops_3dDTcc mht_6(mht_6_v, 779, "", "./tensorflow/core/kernels/conv_grad_ops_3d.cc", "lambda");
+
           for (int shard_id = start; shard_id < limit; ++shard_id) {
             T* im2col_buf = col_buffer_data + shard_id * size_C;
             T* input_data = input_backprop_data + shard_id * input_offset;
@@ -686,6 +875,9 @@ class Conv3DBackpropFilterOp : public OpKernel {
       : OpKernel(context),
         data_format_(FORMAT_NHWC),
         takes_shape_(type_string().find("V2") != std::string::npos) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSconv_grad_ops_3dDTcc mht_7(mht_7_v, 878, "", "./tensorflow/core/kernels/conv_grad_ops_3d.cc", "Conv3DBackpropFilterOp");
+
     // data_format is only available in V2.
     if (takes_shape_) {
       string data_format;
@@ -732,6 +924,9 @@ class Conv3DBackpropFilterOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSconv_grad_ops_3dDTcc mht_8(mht_8_v, 927, "", "./tensorflow/core/kernels/conv_grad_ops_3d.cc", "Compute");
+
     const Tensor& input = context->input(0);
     const TensorShape& input_shape = input.shape();
 
@@ -824,6 +1019,9 @@ class Conv3DCustomBackpropFilterOp : public OpKernel {
       : OpKernel(context),
         data_format_(FORMAT_NHWC),
         takes_shape_(type_string().find("V2") != std::string::npos) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSconv_grad_ops_3dDTcc mht_9(mht_9_v, 1022, "", "./tensorflow/core/kernels/conv_grad_ops_3d.cc", "Conv3DCustomBackpropFilterOp");
+
     // data_format is only available in V2.
     if (takes_shape_) {
       string data_format;
@@ -870,6 +1068,9 @@ class Conv3DCustomBackpropFilterOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSconv_grad_ops_3dDTcc mht_10(mht_10_v, 1071, "", "./tensorflow/core/kernels/conv_grad_ops_3d.cc", "Compute");
+
     const Tensor& input = context->input(0);
     const TensorShape& input_shape = input.shape();
 
@@ -1067,6 +1268,9 @@ class Conv3DCustomBackpropFilterOp : public OpKernel {
                     &top_pad_rows, &left_pad_cols, &bottom_pad_planes,
                     &bottom_pad_rows, &right_pad_cols, &input_offset,
                     &size_A](int64_t start, int64_t limit) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSconv_grad_ops_3dDTcc mht_11(mht_11_v, 1271, "", "./tensorflow/core/kernels/conv_grad_ops_3d.cc", "lambda");
+
         for (int shard_id = start; shard_id < limit; ++shard_id) {
           const T* input_data_shard = input_data + shard_id * input_offset;
           T* col_data_shard = col_buffer_data + shard_id * size_A;
@@ -1201,7 +1405,10 @@ DECLARE_GPU_SPEC(double);
 
 // A dummy type to group backward data autotune results together.
 struct Conv3dBackwardDataAutotuneGroup {
-  static string name() { return "Conv3dBwdData"; }
+  static string name() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSconv_grad_ops_3dDTcc mht_12(mht_12_v, 1409, "", "./tensorflow/core/kernels/conv_grad_ops_3d.cc", "name");
+ return "Conv3dBwdData"; }
 };
 
 typedef AutotuneSingleton<Conv3dBackwardDataAutotuneGroup, ConvParameters,
@@ -1216,6 +1423,9 @@ class Conv3DBackpropInputOp<GPUDevice, T> : public OpKernel {
       : OpKernel(context),
         data_format_(FORMAT_NHWC),
         takes_shape_(type_string().find("V2") != std::string::npos) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSconv_grad_ops_3dDTcc mht_13(mht_13_v, 1426, "", "./tensorflow/core/kernels/conv_grad_ops_3d.cc", "Conv3DBackpropInputOp");
+
     // data_format is only available in V2.
     if (takes_shape_) {
       string data_format;
@@ -1259,6 +1469,9 @@ class Conv3DBackpropInputOp<GPUDevice, T> : public OpKernel {
     cudnn_use_autotune_ = CudnnUseAutotune();
   }
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSconv_grad_ops_3dDTcc mht_14(mht_14_v, 1472, "", "./tensorflow/core/kernels/conv_grad_ops_3d.cc", "Compute");
+
     const Tensor& filter = context->input(1);
     const TensorShape& filter_shape = filter.shape();
 
@@ -1579,7 +1792,10 @@ class Conv3DBackpropInputOp<GPUDevice, T> : public OpKernel {
 
 // A dummy type to group backward filter autotune results together.
 struct Conv3dBackwardFilterAutotuneGroup {
-  static string name() { return "Conv3dBwdFilter"; }
+  static string name() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSconv_grad_ops_3dDTcc mht_15(mht_15_v, 1796, "", "./tensorflow/core/kernels/conv_grad_ops_3d.cc", "name");
+ return "Conv3dBwdFilter"; }
 };
 
 typedef AutotuneSingleton<Conv3dBackwardFilterAutotuneGroup, ConvParameters,
@@ -1593,6 +1809,9 @@ class Conv3DBackpropFilterOp<GPUDevice, T> : public OpKernel {
       : OpKernel(context),
         data_format_(FORMAT_NHWC),
         takes_shape_(type_string().find("V2") != std::string::npos) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSconv_grad_ops_3dDTcc mht_16(mht_16_v, 1812, "", "./tensorflow/core/kernels/conv_grad_ops_3d.cc", "Conv3DBackpropFilterOp");
+
     // data_format is only available in V2.
     if (takes_shape_) {
       string data_format;
@@ -1637,6 +1856,9 @@ class Conv3DBackpropFilterOp<GPUDevice, T> : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSconv_grad_ops_3dDTcc mht_17(mht_17_v, 1859, "", "./tensorflow/core/kernels/conv_grad_ops_3d.cc", "Compute");
+
     const Tensor& input = context->input(0);
     const TensorShape& input_shape = input.shape();
 

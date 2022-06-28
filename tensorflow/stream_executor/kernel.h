@@ -68,6 +68,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_STREAM_EXECUTOR_KERNEL_H_
 #define TENSORFLOW_STREAM_EXECUTOR_KERNEL_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSstream_executorPSkernelDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSstream_executorPSkernelDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSstream_executorPSkernelDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <array>
 #include <memory>
@@ -101,7 +269,10 @@ class KernelInterface;
 class KernelMetadata {
  public:
   KernelMetadata()
-      : has_registers_per_thread_(false), has_shared_memory_bytes_(false) {}
+      : has_registers_per_thread_(false), has_shared_memory_bytes_(false) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSstream_executorPSkernelDTh mht_0(mht_0_v, 273, "", "./tensorflow/stream_executor/kernel.h", "KernelMetadata");
+}
 
   // Returns the number of registers used per thread executing this kernel.
   bool registers_per_thread(int *registers_per_thread) const;
@@ -156,20 +327,35 @@ class KernelBase {
 
   // Returns the StreamExecutor that represents the platform this kernel
   // executes upon.
-  StreamExecutor *parent() const { return parent_; }
+  StreamExecutor *parent() const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSstream_executorPSkernelDTh mht_1(mht_1_v, 331, "", "./tensorflow/stream_executor/kernel.h", "parent");
+ return parent_; }
 
   // Returns a const pointer to the (opaque) platform-dependent implementation.
   const internal::KernelInterface *implementation() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSstream_executorPSkernelDTh mht_2(mht_2_v, 337, "", "./tensorflow/stream_executor/kernel.h", "implementation");
+
     return implementation_.get();
   }
 
   // Returns a non-const pointer to the (opaque) platform-dependent
   // implementation.
-  internal::KernelInterface *implementation() { return implementation_.get(); }
+  internal::KernelInterface *implementation() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSstream_executorPSkernelDTh mht_3(mht_3_v, 346, "", "./tensorflow/stream_executor/kernel.h", "implementation");
+ return implementation_.get(); }
 
-  void set_metadata(const KernelMetadata &metadata) { metadata_ = metadata; }
+  void set_metadata(const KernelMetadata &metadata) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSstream_executorPSkernelDTh mht_4(mht_4_v, 351, "", "./tensorflow/stream_executor/kernel.h", "set_metadata");
+ metadata_ = metadata; }
 
-  const KernelMetadata &metadata() const { return metadata_; }
+  const KernelMetadata &metadata() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSstream_executorPSkernelDTh mht_5(mht_5_v, 356, "", "./tensorflow/stream_executor/kernel.h", "metadata");
+ return metadata_; }
 
   // Sets the preferred cache configuration for a kernel. This is just a
   // suggestion to the runtime, and may not be honored during execution.
@@ -179,8 +365,14 @@ class KernelBase {
   KernelCacheConfig GetPreferredCacheConfig() const;
 
   void set_name(absl::string_view name);
-  const std::string &name() const { return name_; }
-  const std::string &demangled_name() const { return demangled_name_; }
+  const std::string &name() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSstream_executorPSkernelDTh mht_6(mht_6_v, 369, "", "./tensorflow/stream_executor/kernel.h", "name");
+ return name_; }
+  const std::string &demangled_name() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSstream_executorPSkernelDTh mht_7(mht_7_v, 373, "", "./tensorflow/stream_executor/kernel.h", "demangled_name");
+ return demangled_name_; }
 
  private:
   // The StreamExecutor that loads this kernel object.
@@ -292,15 +484,24 @@ class KernelArgIterator {
         shmem_bytes_iter_(shmem_bytes_data),
         shmem_indices_iter_(shmem_indices_data),
         shmem_indices_end_(shmem_indices_data +
-                           number_of_shared_memory_arguments) {}
+                           number_of_shared_memory_arguments) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSstream_executorPSkernelDTh mht_8(mht_8_v, 488, "", "./tensorflow/stream_executor/kernel.h", "KernelArgIterator");
+}
 
   // Returns true if another argument is present in the iterator.
-  bool has_next() { return arg_index_ < number_of_arguments_; }
+  bool has_next() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSstream_executorPSkernelDTh mht_9(mht_9_v, 494, "", "./tensorflow/stream_executor/kernel.h", "has_next");
+ return arg_index_ < number_of_arguments_; }
 
   // Returns the next argument in the iterator.
   //
   // Returns a default-constructed KernelArg if there is no next argument.
   KernelArg next() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSstream_executorPSkernelDTh mht_10(mht_10_v, 502, "", "./tensorflow/stream_executor/kernel.h", "next");
+
     KernelArg result = {};
     if (!has_next()) {
       return result;
@@ -398,6 +599,9 @@ class KernelArgsArray : public KernelArgsArrayBase {
   // Adds an argument to the list.
   template <typename T>
   void add_argument(const T &arg) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSstream_executorPSkernelDTh mht_11(mht_11_v, 602, "", "./tensorflow/stream_executor/kernel.h", "add_argument");
+
     static_assert(sizeof(T) <= kMaxGenericArgSize,
                   "Please adjust kMaxGenericArgSize");
     static_assert(std::is_pod<T>::value, "Only pod types supported!");
@@ -415,6 +619,9 @@ class KernelArgsArray : public KernelArgsArrayBase {
 
   // Adds a device memory argument to the list.
   void add_device_memory_argument(const DeviceMemoryBase &arg) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSstream_executorPSkernelDTh mht_12(mht_12_v, 622, "", "./tensorflow/stream_executor/kernel.h", "add_device_memory_argument");
+
     const void **copy_ptr =
         &device_memory_opaque_pointers_[number_of_argument_addresses_];
     *copy_ptr = arg.opaque();
@@ -428,6 +635,9 @@ class KernelArgsArray : public KernelArgsArrayBase {
   // The only significant information about a shared argument is its size, so
   // that is the only parameter in this function.
   void add_shared_bytes(size_t number_of_bytes) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSstream_executorPSkernelDTh mht_13(mht_13_v, 638, "", "./tensorflow/stream_executor/kernel.h", "add_shared_bytes");
+
     shared_memory_indices_[number_of_shared_memory_arguments_] =
         number_of_argument_addresses_ + number_of_shared_memory_arguments_;
     shared_memory_bytes_[number_of_shared_memory_arguments_] = number_of_bytes;
@@ -438,11 +648,17 @@ class KernelArgsArray : public KernelArgsArrayBase {
   // Gets the number of arguments added so far, including shared memory
   // arguments.
   size_t number_of_arguments() const override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSstream_executorPSkernelDTh mht_14(mht_14_v, 651, "", "./tensorflow/stream_executor/kernel.h", "number_of_arguments");
+
     return number_of_argument_addresses_ + number_of_shared_memory_arguments_;
   }
 
   // Gets the total number of shared memory bytes added so far.
   uint64_t number_of_shared_bytes() const override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSstream_executorPSkernelDTh mht_15(mht_15_v, 659, "", "./tensorflow/stream_executor/kernel.h", "number_of_shared_bytes");
+
     return total_shared_memory_bytes_;
   }
 
@@ -454,6 +670,9 @@ class KernelArgsArray : public KernelArgsArrayBase {
 
   // Gets an iterator to the arguments in the array.
   KernelArgIterator arg_iterator() const override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSstream_executorPSkernelDTh mht_16(mht_16_v, 673, "", "./tensorflow/stream_executor/kernel.h", "arg_iterator");
+
     return KernelArgIterator(
         number_of_argument_addresses_, number_of_shared_memory_arguments_,
         argument_addresses_.data(), argument_sizes_.data(),
@@ -510,12 +729,18 @@ class TypedKernel : public KernelBase {
   static constexpr size_t kNumberOfParameters = sizeof...(Params);
 
   // Delegates to KernelBase::KernelBase(), see that constructor.
-  explicit TypedKernel(StreamExecutor *parent) : KernelBase(parent) {}
+  explicit TypedKernel(StreamExecutor *parent) : KernelBase(parent) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSstream_executorPSkernelDTh mht_17(mht_17_v, 733, "", "./tensorflow/stream_executor/kernel.h", "TypedKernel");
+}
 
   // Test-only constructor that can take a mock KernelInterface implementation.
   // Takes ownership of implementation, it should not be null.
   TypedKernel(StreamExecutor *parent, internal::KernelInterface *implementation)
-      : KernelBase(parent, implementation) {}
+      : KernelBase(parent, implementation) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSstream_executorPSkernelDTh mht_18(mht_18_v, 741, "", "./tensorflow/stream_executor/kernel.h", "TypedKernel");
+}
 
  private:
   // Stream needs access to the specific parameter-packing functionality that
@@ -536,6 +761,9 @@ class TypedKernel : public KernelBase {
   // structure.
   void PackParams(KernelArgsArray<kNumberOfParameters> *args,
                   Params &... params) const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSstream_executorPSkernelDTh mht_19(mht_19_v, 764, "", "./tensorflow/stream_executor/kernel.h", "PackParams");
+
     PackOneParamFromList(args, params...);
   }
 
@@ -547,7 +775,10 @@ class TypedKernel : public KernelBase {
   }
 
   // Base case for variadic template expansion - nothing to do!
-  void PackOneParamFromList(KernelArgsArray<kNumberOfParameters> *args) const {}
+  void PackOneParamFromList(KernelArgsArray<kNumberOfParameters> *args) const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSstream_executorPSkernelDTh mht_20(mht_20_v, 779, "", "./tensorflow/stream_executor/kernel.h", "PackOneParamFromList");
+}
 
   // Packs one (non-DeviceMemoryBase) parameter into the arg and sizes array.
   // The enable_if<> is for excluding DeviceMemoryBase args, which have a
@@ -559,6 +790,9 @@ class TypedKernel : public KernelBase {
                               !IsDeviceMemoryPointer<T>::value &&
                               !IsSharedDeviceMemory<T>::value>::type * =
           nullptr) const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSstream_executorPSkernelDTh mht_21(mht_21_v, 793, "", "./tensorflow/stream_executor/kernel.h", "PackOneParam");
+
     static_assert(!std::is_pointer<T>::value,
                   "cannot pass raw pointer to the device");
     static_assert(!std::is_convertible<T, DeviceMemoryBase>::value,
@@ -572,6 +806,9 @@ class TypedKernel : public KernelBase {
       KernelArgsArray<kNumberOfParameters> *args, const T &arg,
       typename std::enable_if<IsDeviceMemoryValueLike<T>::value>::type * =
           nullptr) const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSstream_executorPSkernelDTh mht_22(mht_22_v, 809, "", "./tensorflow/stream_executor/kernel.h", "PackOneParam");
+
     args->add_device_memory_argument(arg);
   }
 
@@ -581,6 +818,9 @@ class TypedKernel : public KernelBase {
       KernelArgsArray<kNumberOfParameters> *args, T arg,
       typename std::enable_if<IsDeviceMemoryPointer<T>::value>::type * =
           nullptr) const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSstream_executorPSkernelDTh mht_23(mht_23_v, 821, "", "./tensorflow/stream_executor/kernel.h", "PackOneParam");
+
     DeviceMemoryBase *ptr = static_cast<DeviceMemoryBase *>(arg);
     args->add_device_memory_argument(*ptr);
   }
@@ -592,6 +832,9 @@ class TypedKernel : public KernelBase {
       KernelArgsArray<kNumberOfParameters> *args, T arg,
       typename std::enable_if<IsSharedDeviceMemory<T>::value>::type * =
           nullptr) const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSstream_executorPSkernelDTh mht_24(mht_24_v, 835, "", "./tensorflow/stream_executor/kernel.h", "PackOneParam");
+
     args->add_shared_bytes(arg.size());
   }
 

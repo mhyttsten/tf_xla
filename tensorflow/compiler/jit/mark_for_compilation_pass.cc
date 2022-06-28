@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -127,7 +295,10 @@ class MarkForCompilationPassImpl {
         flib_def_(flib_def),
         env_(env),
         global_jit_level_(global_jit_level),
-        cpu_global_jit_(cpu_global_jit) {}
+        cpu_global_jit_(cpu_global_jit) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_0(mht_0_v, 299, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPassImpl");
+}
 
   Status Run();
 
@@ -150,6 +321,9 @@ class MarkForCompilationPassImpl {
           deadness_predicate_(deadness_predicate),
           is_xla_compile_attr_true_(is_xla_compile_attr_true),
           xla_scope_(std::move(xla_scope)) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_1(mht_1_v, 324, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "Cluster");
+
       if (resource_var_operation_node_id.has_value()) {
         resource_var_operation_node_ids_.push_back(
             *resource_var_operation_node_id);
@@ -163,36 +337,60 @@ class MarkForCompilationPassImpl {
     // If this is a trivial cluster containing only one node then return the ID
     // of that node.  May not be called otherwise.
     int GetIdOfOnlyNode() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_2(mht_2_v, 340, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "GetIdOfOnlyNode");
+
       DCHECK_EQ(cluster_size(), 1);
       return cycles_graph_node_id();
     }
 
     // The number of TF nodes in this cluster.
-    int cluster_size() const { return cluster_size_; }
+    int cluster_size() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_3(mht_3_v, 349, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "cluster_size");
+ return cluster_size_; }
 
     // The ID of the cluster as represented in `cycles_graph_`.
-    int cycles_graph_node_id() const { return cycles_graph_node_id_; }
+    int cycles_graph_node_id() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_4(mht_4_v, 355, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "cycles_graph_node_id");
+ return cycles_graph_node_id_; }
 
     // Sets the ID of the cluster as represented in `cycles_graph_`.
     void set_cycles_graph_node_id(int cycles_graph_node_id) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_5(mht_5_v, 361, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "set_cycles_graph_node_id");
+
       cycles_graph_node_id_ = cycles_graph_node_id;
     }
 
     // The size of the cluster excluding constant and identity nodes.
-    int effective_cluster_size() const { return effective_cluster_size_; }
+    int effective_cluster_size() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_6(mht_6_v, 369, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "effective_cluster_size");
+ return effective_cluster_size_; }
 
     // True if the cluster has functional control flow like `If` and `While`.
     bool has_functional_control_flow() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_7(mht_7_v, 375, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "has_functional_control_flow");
+
       return has_functional_control_flow_;
     }
 
     // The set of devices nodes in the cluster are placed on.
-    const DeviceSet& devices() const { return devices_; }
+    const DeviceSet& devices() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_8(mht_8_v, 383, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "devices");
+ return devices_; }
 
     // If the cluster has a resource operation then the device the resource
     // operation is placed on.  A cluster may have resource ops placed only on a
     // single device.
     const absl::optional<DeviceId>& resource_op_device() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_9(mht_9_v, 391, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "resource_op_device");
+
       return resource_op_device_;
     }
 
@@ -201,16 +399,25 @@ class MarkForCompilationPassImpl {
     // unset on a single Cluster instance then it is unset on all Cluster
     // instances.
     const absl::optional<DeadnessPredicate>& deadness_predicate() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_10(mht_10_v, 402, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "deadness_predicate");
+
       return deadness_predicate_;
     }
 
     // If true then the cluster has a XlaCompile=true attribute on one of its
     // nodes.
-    bool is_xla_compile_attr_true() const { return is_xla_compile_attr_true_; }
+    bool is_xla_compile_attr_true() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_11(mht_11_v, 411, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "is_xla_compile_attr_true");
+ return is_xla_compile_attr_true_; }
 
     // If not nullopt then the all nodes in the cluster either do not have the
     // XlaScope attribute set or have it set to the value returned.
-    const absl::optional<string>& xla_scope() const { return xla_scope_; }
+    const absl::optional<string>& xla_scope() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_12(mht_12_v, 418, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "xla_scope");
+ return xla_scope_; }
 
     // Returns the TF graph node IDs for the resource variable operations in
     // this cluster.
@@ -219,6 +426,9 @@ class MarkForCompilationPassImpl {
     }
 
     string DebugString(const Graph& graph) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_13(mht_13_v, 429, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "DebugString");
+
       Node* node = graph.FindNodeId(cycles_graph_node_id());
       if (!node) {
         // This should never happen but we try to be resilient because this is a
@@ -303,6 +513,9 @@ class MarkForCompilationPassImpl {
   Status DumpDebugInfo();
 
   bool IsCompilationCandidate(Node* n) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_14(mht_14_v, 516, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "IsCompilationCandidate");
+
     return compilation_candidates_.find(n) != compilation_candidates_.end();
   }
 
@@ -342,6 +555,9 @@ class MarkForCompilationPassImpl {
                           absl::optional<DeadnessPredicate> deadness_predicate,
                           bool is_xla_compile_attr_true,
                           absl::optional<string> xla_scope) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_15(mht_15_v, 558, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MakeNewCluster");
+
     cluster_storage_.push_back(absl::make_unique<Cluster>(
         cycles_graph_node_id, effective_cluster_size,
         has_functional_control_flow, device_set, resource_op_device,
@@ -358,6 +574,9 @@ class MarkForCompilationPassImpl {
   //
   // Returns nullptr if `n` is not a compilation candidate.
   Cluster* GetClusterForNode(Node* n) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_16(mht_16_v, 577, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "GetClusterForNode");
+
     return cluster_for_node_[n->id()].Get();
   }
 
@@ -367,6 +586,9 @@ class MarkForCompilationPassImpl {
   //
   // Returns nullptr if `node_id` is not a compilation candidate.
   Cluster* GetClusterForCyclesGraphNode(int node_id) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_17(mht_17_v, 589, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "GetClusterForCyclesGraphNode");
+
     // We have to check `graph_->FindNodeId(node) == nullptr` because we add all
     // nodes in [0, graph_->num_node_ids()) to the cycle detection graph but the
     // TF graph may be missing some node ids.
@@ -412,6 +634,9 @@ class MarkForCompilationPassImpl {
   // `cycles_graph_`'s ID of either `cluster_from` or `cluster_to` depending on
   // which way will require less operations.
   bool MergeClusters(Cluster* cluster_from, Cluster* cluster_to) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_18(mht_18_v, 637, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MergeClusters");
+
     int from = cluster_from->cycles_graph_node_id();
     int to = cluster_to->cycles_graph_node_id();
 
@@ -437,6 +662,10 @@ class MarkForCompilationPassImpl {
 
   string EdgeContractionFailureMsg(Cluster* from, Cluster* to,
                                    absl::string_view reason) {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("reason: \"" + std::string(reason.data(), reason.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_19(mht_19_v, 666, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "EdgeContractionFailureMsg");
+
     return absl::StrCat("Could not contract ", from->DebugString(*graph_),
                         " -> ", to->DebugString(*graph_), " because ", reason,
                         ".");
@@ -468,6 +697,9 @@ class MarkForCompilationPassImpl {
 
 std::vector<int> MarkForCompilationPassImpl::FindAlternatePathForDebugging(
     int from, int to) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_20(mht_20_v, 700, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPassImpl::FindAlternatePathForDebugging");
+
   std::vector<int> rpo = cycles_graph_.AllNodesInPostOrder();
   absl::c_reverse(rpo);
 
@@ -506,6 +738,9 @@ std::vector<int> MarkForCompilationPassImpl::FindAlternatePathForDebugging(
   } while (current_rpo_node != to);
 
   auto get_best_pred = [&](int n) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_21(mht_21_v, 741, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "lambda");
+
     auto it = best_pred_for_node.find(n);
     CHECK(it != best_pred_for_node.end());
     return it->second;
@@ -524,6 +759,9 @@ std::vector<int> MarkForCompilationPassImpl::FindAlternatePathForDebugging(
 
 string MarkForCompilationPassImpl::DebugStringForCyclesGraphNode(
     int cycles_graph_node_id, bool* found_unclustered) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_22(mht_22_v, 762, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPassImpl::DebugStringForCyclesGraphNode");
+
   Cluster* cluster = GetClusterForCyclesGraphNode(cycles_graph_node_id);
   if (cluster) {
     return cluster->DebugString(*graph_);
@@ -543,6 +781,9 @@ string MarkForCompilationPassImpl::DebugStringForCyclesGraphNode(
 }
 
 string MarkForCompilationPassImpl::DescribePotentialCycle(int from, int to) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_23(mht_23_v, 784, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPassImpl::DescribePotentialCycle");
+
   std::vector<string> path_str;
   bool found_unclustered = false;
   absl::c_transform(FindAlternatePathForDebugging(from, to),
@@ -555,6 +796,9 @@ string MarkForCompilationPassImpl::DescribePotentialCycle(int from, int to) {
 }
 
 void MarkForCompilationPassImpl::Cluster::Merge(Cluster* other) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_24(mht_24_v, 799, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPassImpl::Cluster::Merge");
+
   // We keep our own cycles_graph_node_id_ to mirror what GraphCycles does.
 
   // Clearing out data structures in `other` is just a memory saving
@@ -591,6 +835,9 @@ void MarkForCompilationPassImpl::Cluster::Merge(Cluster* other) {
 
 Status IgnoreResourceOpForSafetyAnalysis(
     jit::DeviceInfoCache* device_info_cache, const Node& n, bool* ignore) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_25(mht_25_v, 838, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "IgnoreResourceOpForSafetyAnalysis");
+
   // If a resource operation is assigned to XLA_CPU or XLA_GPU explicitly then
   // ignore it during resource operation safety analysis.  We need this hack
   // because of two reasons:
@@ -628,6 +875,9 @@ Status IgnoreResourceOpForSafetyAnalysis(
 }
 
 StatusOr<bool> MarkForCompilationPassImpl::Initialize() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_26(mht_26_v, 878, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPassImpl::Initialize");
+
   TF_RET_CHECK(!initialized_ && !edges_contracted_ && !clusters_created_);
   initialized_ = true;
 
@@ -666,6 +916,9 @@ StatusOr<bool> MarkForCompilationPassImpl::Initialize() {
 
 template <typename FnTy>
 StatusOr<bool> MarkForCompilationPassImpl::ForEachEdgeInPostOrder(FnTy fn) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_27(mht_27_v, 919, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPassImpl::ForEachEdgeInPostOrder");
+
   bool changed = false;
   for (int32_t node : cycles_graph_.AllNodesInPostOrder()) {
     Cluster* cluster_from = GetClusterForCyclesGraphNode(node);
@@ -695,12 +948,18 @@ StatusOr<bool> MarkForCompilationPassImpl::ForEachEdgeInPostOrder(FnTy fn) {
 }
 
 Node* MarkForCompilationPassImpl::GetOnlyNodeIn(const Cluster& cluster) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_28(mht_28_v, 951, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPassImpl::GetOnlyNodeIn");
+
   return cluster.cluster_size() == 1
              ? graph_->FindNodeId(cluster.GetIdOfOnlyNode())
              : nullptr;
 }
 
 bool MarkForCompilationPassImpl::IsSinkLike(const Cluster& cluster) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_29(mht_29_v, 960, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPassImpl::IsSinkLike");
+
   if (Node* n = GetOnlyNodeIn(cluster)) {
     return n->type_string() == "NoOp" && n->out_edges().size() == 1 &&
            (*n->out_edges().begin())->dst()->IsSink();
@@ -711,6 +970,9 @@ bool MarkForCompilationPassImpl::IsSinkLike(const Cluster& cluster) {
 
 bool MarkForCompilationPassImpl::IsScalarIntegerResourceOperation(
     const Cluster& cluster) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_30(mht_30_v, 973, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPassImpl::IsScalarIntegerResourceOperation");
+
   Node* n = GetOnlyNodeIn(cluster);
   if (!n) {
     return false;
@@ -747,6 +1009,9 @@ bool MarkForCompilationPassImpl::IsScalarIntegerResourceOperation(
 }
 
 Status MarkForCompilationPassImpl::RunEdgeContractionLoop() {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_31(mht_31_v, 1012, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPassImpl::RunEdgeContractionLoop");
+
   TF_RET_CHECK(initialized_ && !edges_contracted_ && !clusters_created_);
   edges_contracted_ = true;
 
@@ -871,6 +1136,9 @@ Status MarkForCompilationPassImpl::RunEdgeContractionLoop() {
 }
 
 Status MarkForCompilationPassImpl::DeclusterNodes() {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_32(mht_32_v, 1139, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPassImpl::DeclusterNodes");
+
   for (Node* n : compilation_candidates_) {
     Cluster* cluster = GetClusterForNode(n);
     if (cluster == nullptr) {
@@ -904,16 +1172,25 @@ Status MarkForCompilationPassImpl::DeclusterNodes() {
 class ClusterSequenceNumberGenerator {
  public:
   void Reset() {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_33(mht_33_v, 1175, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "Reset");
+
     mutex_lock lock(mu_);
     sequence_numbers_.clear();
   }
 
   int64 GetNext(uint64 key) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_34(mht_34_v, 1183, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "GetNext");
+
     mutex_lock lock(mu_);
     return sequence_numbers_[key]++;
   }
 
   static ClusterSequenceNumberGenerator& Global() {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_35(mht_35_v, 1191, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "Global");
+
     static ClusterSequenceNumberGenerator* gen =
         new ClusterSequenceNumberGenerator;
     return *gen;
@@ -928,10 +1205,16 @@ class ClusterSequenceNumberGenerator {
 // The sequence number is necessary to disambiguate clusters extracted from the
 // same graph and when duplicate graphs exist within the same process.
 int64_t GetNextClusterSequenceNumber(uint64 fingerprint) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_36(mht_36_v, 1208, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "GetNextClusterSequenceNumber");
+
   return ClusterSequenceNumberGenerator::Global().GetNext(fingerprint);
 }
 
 Status MarkForCompilationPassImpl::CreateClusters() {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_37(mht_37_v, 1215, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPassImpl::CreateClusters");
+
   TF_RET_CHECK(initialized_ && edges_contracted_ && !clusters_created_);
   clusters_created_ = true;
 
@@ -986,6 +1269,9 @@ Status MarkForCompilationPassImpl::CreateClusters() {
 }
 
 Status MarkForCompilationPassImpl::DumpDebugInfo() {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_38(mht_38_v, 1272, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPassImpl::DumpDebugInfo");
+
   TF_RET_CHECK(initialized_ && edges_contracted_ && clusters_created_);
 
   if (debug_options_.dump_graphs) {
@@ -1000,6 +1286,9 @@ Status MarkForCompilationPassImpl::DumpDebugInfo() {
 StatusOr<bool>
 MarkForCompilationPassImpl::ClusteringWillIntroduceInterDeviceDependency(
     const Cluster& cluster_from, const Cluster& cluster_to) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_39(mht_39_v, 1289, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPassImpl::ClusteringWillIntroduceInterDeviceDependency");
+
   // If any of the consumer's producers are on a different device, do not
   // cluster these nodes. This prevents other work on this device from being
   // delayed by work on other devices. We consider predecessors of the entire
@@ -1031,6 +1320,9 @@ MarkForCompilationPassImpl::ClusteringWillIntroduceInterDeviceDependency(
 }
 
 absl::optional<string> MarkForCompilationPassImpl::GetXlaScope(Node* node) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_40(mht_40_v, 1323, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPassImpl::GetXlaScope");
+
   // Look for either _XlaScope or _XlaInternalScope on both nodes to guide
   // clustering.  If both nodes have a scope and the scopes do not match, do
   // not cluster along this edge.  If even one of the nodes lacks a scope
@@ -1069,6 +1361,10 @@ absl::optional<string> MarkForCompilationPassImpl::GetXlaScope(Node* node) {
 // to it's callee.
 static bool GetNodeOrFuncAttr(Node* node, FunctionLibraryDefinition* flib_def,
                               const char* attr_name) {
+   std::vector<std::string> mht_41_v;
+   mht_41_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_41(mht_41_v, 1365, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "GetNodeOrFuncAttr");
+
   bool out = false;
   bool attr_value;
   if (TryGetNodeAttr(node->attrs(), attr_name, &attr_value)) {
@@ -1082,7 +1378,13 @@ static bool GetNodeOrFuncAttr(Node* node, FunctionLibraryDefinition* flib_def,
 }
 
 Status MarkForCompilationPassImpl::BuildInitialClusterSet() {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_42(mht_42_v, 1381, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPassImpl::BuildInitialClusterSet");
+
   auto ignore_resource_ops = [&](const Node& n, bool* ignore) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_43(mht_43_v, 1385, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "lambda");
+
     return IgnoreResourceOpForSafetyAnalysis(&device_info_cache_, n, ignore);
   };
 
@@ -1219,6 +1521,9 @@ absl::flat_hash_set<string> GetOrCreateAllowlist() {
 }
 
 Status MarkForCompilationPassImpl::FindCompilationCandidates() {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_44(mht_44_v, 1524, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPassImpl::FindCompilationCandidates");
+
   OptimizerOptions opts;
   std::unique_ptr<ProcessFunctionLibraryRuntime> pflr(
       new ProcessFunctionLibraryRuntime(nullptr, env_, /*config=*/nullptr,
@@ -1410,6 +1715,9 @@ Status MarkForCompilationPassImpl::FindCompilationCandidates() {
 
 bool MarkForCompilationPassImpl::CompilationDisallowedByXlaCompileAttr(
     Node* node) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_45(mht_45_v, 1718, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPassImpl::CompilationDisallowedByXlaCompileAttr");
+
   if (debug_options_.ignore_xla_compile_attr) {
     return false;
   }
@@ -1439,12 +1747,19 @@ bool MarkForCompilationPassImpl::CompilationDisallowedByXlaCompileAttr(
 
 bool MarkForCompilationPassImpl::LogNotContractableAndReturnFalse(
     Cluster* from, Cluster* to, absl::string_view reason) {
+   std::vector<std::string> mht_46_v;
+   mht_46_v.push_back("reason: \"" + std::string(reason.data(), reason.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_46(mht_46_v, 1751, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPassImpl::LogNotContractableAndReturnFalse");
+
   VLOG(3) << EdgeContractionFailureMsg(from, to, reason);
   return false;
 }
 
 StatusOr<bool> MarkForCompilationPassImpl::TryToContractEdge(Cluster* from,
                                                              Cluster* to) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_47(mht_47_v, 1760, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPassImpl::TryToContractEdge");
+
   DCHECK(from->deadness_predicate().has_value() ==
          to->deadness_predicate().has_value());
   if (from->deadness_predicate() != to->deadness_predicate()) {
@@ -1515,6 +1830,9 @@ StatusOr<bool> MarkForCompilationPassImpl::TryToContractEdge(Cluster* from,
 }
 
 Status MarkForCompilationPassImpl::Run() {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_48(mht_48_v, 1833, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPassImpl::Run");
+
   // Make sure that kernels have been registered on the JIT device.
   XlaOpRegistry::RegisterCompilationKernels();
 
@@ -1538,6 +1856,9 @@ Status MarkForCompilationPassImpl::Run() {
 }
 
 void MarkForCompilationPassImpl::DumpPostClusteringGraphs() {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_49(mht_49_v, 1859, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPassImpl::DumpPostClusteringGraphs");
+
   DumpGraphToFile("mark_for_compilation", *graph_, flib_def_);
 
   // We also dump out an annotated version of the TF graph where the nodes
@@ -1564,11 +1885,17 @@ void MarkForCompilationPassImpl::DumpPostClusteringGraphs() {
 }
 
 string RatioToString(int numerator, int denominator) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_50(mht_50_v, 1888, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "RatioToString");
+
   return absl::StrFormat("%d / %d (%.2f%%)", numerator, denominator,
                          (100.0 * numerator) / denominator);
 }
 
 void MarkForCompilationPassImpl::VLogClusteringSummary() {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_51(mht_51_v, 1896, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPassImpl::VLogClusteringSummary");
+
   if (!VLOG_IS_ON(2)) {
     return;
   }
@@ -1611,6 +1938,9 @@ void MarkForCompilationPassImpl::VLogClusteringSummary() {
     absl::optional<absl::string_view> cluster_name;
 
     absl::string_view GetClusterName() const {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_52(mht_52_v, 1941, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "GetClusterName");
+
       return cluster_name ? *cluster_name : "[none]";
     }
 
@@ -1620,6 +1950,9 @@ void MarkForCompilationPassImpl::VLogClusteringSummary() {
     }
 
     bool operator<(const EdgeInfo& other) const {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_53(mht_53_v, 1953, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "operator<");
+
       return AsPair() < other.AsPair();
     }
   };
@@ -1664,6 +1997,11 @@ void MarkForCompilationPassImpl::VLogClusteringSummary() {
   auto print_edge_info_set_for_cluster = [&](absl::string_view cluster_name,
                                              const EdgeInfoMap& edge_info_map,
                                              absl::string_view desc) {
+   std::vector<std::string> mht_54_v;
+   mht_54_v.push_back("cluster_name: \"" + std::string(cluster_name.data(), cluster_name.size()) + "\"");
+   mht_54_v.push_back("desc: \"" + std::string(desc.data(), desc.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_54(mht_54_v, 2002, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "lambda");
+
     auto it = edge_info_map.find(cluster_name);
     if (it != edge_info_map.end()) {
       VLOG(4) << "  " << it->second.size() << " " << desc << " edges";
@@ -1688,6 +2026,9 @@ void MarkForCompilationPassImpl::VLogClusteringSummary() {
 
 StatusOr<bool> MarkForCompilationPassImpl::AreDevicesCompatible(
     const Cluster& cluster_a, const Cluster& cluster_b) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_55(mht_55_v, 2029, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPassImpl::AreDevicesCompatible");
+
   DeviceSet devices = cluster_a.devices();
   devices.UnionWith(cluster_b.devices());
 
@@ -1709,6 +2050,9 @@ StatusOr<bool> MarkForCompilationPassImpl::AreDevicesCompatible(
   // resource variables are placed on some other device.
   auto resource_op_device_ok =
       [&](absl::optional<DeviceId> resource_op_device) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_56(mht_56_v, 2053, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "lambda");
+
         return !resource_op_device.has_value() ||
                *resource_op_device == chosen_device;
       };
@@ -1720,6 +2064,9 @@ StatusOr<bool> MarkForCompilationPassImpl::AreDevicesCompatible(
 // Returns `true` iff we should compile `cluster`.
 StatusOr<bool> MarkForCompilationPassImpl::ShouldCompileClusterImpl(
     const Cluster& cluster) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_57(mht_57_v, 2067, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPassImpl::ShouldCompileClusterImpl");
+
   TF_ASSIGN_OR_RETURN(DeviceId chosen_device,
                       PickDeviceForXla(device_info_cache_, cluster.devices(),
                                        /*allow_mixing_unknown_and_cpu=*/false));
@@ -1777,6 +2124,9 @@ proper command-line flag, not via TF_XLA_FLAGS).)";
 
 StatusOr<bool> MarkForCompilationPassImpl::ShouldCompileCluster(
     const Cluster& cluster) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_58(mht_58_v, 2127, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPassImpl::ShouldCompileCluster");
+
   auto it = should_compile_cluster_cache_.find(&cluster);
   if (it != should_compile_cluster_cache_.end()) {
     return it->second;
@@ -1790,6 +2140,9 @@ StatusOr<bool> MarkForCompilationPassImpl::ShouldCompileCluster(
 Status MarkForCompilation(
     const GraphOptimizationPassOptions& options,
     const MarkForCompilationPassImpl::DebugOptions& debug_options) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_59(mht_59_v, 2143, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilation");
+
   Graph* graph = options.graph->get();
   FunctionLibraryDefinition* flib_def = options.flib_def;
 
@@ -1826,7 +2179,13 @@ Status MarkForCompilation(
 }
 
 std::atomic<int64_t>* GetPointerToFuel(int64_t initial_value) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_60(mht_60_v, 2182, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "GetPointerToFuel");
+
   static std::atomic<int64_t>* fuel = [&]() {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_61(mht_61_v, 2186, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "lambda");
+
     std::atomic<int64_t>* fuel = new std::atomic<int64_t>;
     *fuel = initial_value;
     return fuel;
@@ -1838,6 +2197,9 @@ std::atomic<int64_t>* GetPointerToFuel(int64_t initial_value) {
 
 Status MarkForCompilationPass::Run(
     const GraphOptimizationPassOptions& options) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_62(mht_62_v, 2200, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPass::Run");
+
   MarkForCompilationPassFlags* flags = GetMarkForCompilationPassFlags();
 
   MarkForCompilationPassImpl::DebugOptions debug_options;
@@ -1859,6 +2221,9 @@ Status MarkForCompilationPass::Run(
 Status MarkForCompilationPass::RunForTest(
     const GraphOptimizationPassOptions& options, bool disable_deadness_analysis,
     bool deterministic_cluster_names) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_63(mht_63_v, 2224, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "MarkForCompilationPass::RunForTest");
+
   MarkForCompilationPassFlags* flags = GetMarkForCompilationPassFlags();
 
   MarkForCompilationPassImpl::DebugOptions debug_options;
@@ -1876,6 +2241,9 @@ Status MarkForCompilationPass::RunForTest(
 }
 
 absl::flat_hash_map<string, std::vector<string>>* GetAllowlistTable() {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_64(mht_64_v, 2244, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "GetAllowlistTable");
+
   // Table format: category name: {list of TF operations in that category}
   static absl::flat_hash_map<string, std::vector<string>>* result =
       new absl::flat_hash_map<string, std::vector<string>>{
@@ -1942,6 +2310,9 @@ absl::flat_hash_map<string, std::vector<string>>* GetAllowlistTable() {
 
 namespace testing {
 void ResetClusterSequenceNumber() {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSmark_for_compilation_passDTcc mht_65(mht_65_v, 2313, "", "./tensorflow/compiler/jit/mark_for_compilation_pass.cc", "ResetClusterSequenceNumber");
+
   ClusterSequenceNumberGenerator::Global().Reset();
 }
 

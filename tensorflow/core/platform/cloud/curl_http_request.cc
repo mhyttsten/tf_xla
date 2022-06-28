@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,6 +208,9 @@ constexpr uint64 kVerboseOutput = 0;
 class LibCurlProxy : public LibCurl {
  public:
   static LibCurlProxy* Load() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_0(mht_0_v, 211, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "Load");
+
     static LibCurlProxy* libcurl = []() -> LibCurlProxy* {
       curl_global_init(CURL_GLOBAL_ALL);
       return new LibCurlProxy;
@@ -47,32 +218,51 @@ class LibCurlProxy : public LibCurl {
     return libcurl;
   }
 
-  CURL* curl_easy_init() override { return ::curl_easy_init(); }
+  CURL* curl_easy_init() override {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_1(mht_1_v, 222, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "curl_easy_init");
+ return ::curl_easy_init(); }
 
   CURLcode curl_easy_setopt(CURL* curl, CURLoption option,
                             uint64 param) override {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_2(mht_2_v, 228, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "curl_easy_setopt");
+
     return ::curl_easy_setopt(curl, option, param);
   }
 
   CURLcode curl_easy_setopt(CURL* curl, CURLoption option,
                             const char* param) override {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("param: \"" + (param == nullptr ? std::string("nullptr") : std::string((char*)param)) + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_3(mht_3_v, 237, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "curl_easy_setopt");
+
     return ::curl_easy_setopt(curl, option, param);
   }
 
   CURLcode curl_easy_setopt(CURL* curl, CURLoption option,
                             void* param) override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_4(mht_4_v, 245, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "curl_easy_setopt");
+
     return ::curl_easy_setopt(curl, option, param);
   }
 
   CURLcode curl_easy_setopt(CURL* curl, CURLoption option,
                             size_t (*param)(void*, size_t, size_t,
                                             FILE*)) override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_5(mht_5_v, 254, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "curl_easy_setopt");
+
     return ::curl_easy_setopt(curl, option, param);
   }
 
   CURLcode curl_easy_setopt(CURL* curl, CURLoption option,
                             size_t (*param)(const void*, size_t, size_t,
                                             void*)) override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_6(mht_6_v, 263, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "curl_easy_setopt");
+
     return ::curl_easy_setopt(curl, option, param);
   }
 
@@ -80,47 +270,82 @@ class LibCurlProxy : public LibCurl {
                             int (*param)(void* clientp, curl_off_t dltotal,
                                          curl_off_t dlnow, curl_off_t ultotal,
                                          curl_off_t ulnow)) override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_7(mht_7_v, 273, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "curl_easy_setopt");
+
     return ::curl_easy_setopt(curl, option, param);
   }
 
   CURLcode curl_easy_perform(CURL* curl) override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_8(mht_8_v, 280, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "curl_easy_perform");
+
     return ::curl_easy_perform(curl);
   }
 
   CURLcode curl_easy_getinfo(CURL* curl, CURLINFO info,
                              uint64* value) override {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_9(mht_9_v, 288, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "curl_easy_getinfo");
+
     return ::curl_easy_getinfo(curl, info, value);
   }
 
   CURLcode curl_easy_getinfo(CURL* curl, CURLINFO info,
                              double* value) override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_10(mht_10_v, 296, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "curl_easy_getinfo");
+
     return ::curl_easy_getinfo(curl, info, value);
   }
 
   void curl_easy_cleanup(CURL* curl) override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_11(mht_11_v, 303, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "curl_easy_cleanup");
+
     return ::curl_easy_cleanup(curl);
   }
 
   char* curl_easy_escape(CURL* curl, const char* str, int length) override {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("str: \"" + (str == nullptr ? std::string("nullptr") : std::string((char*)str)) + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_12(mht_12_v, 311, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "curl_easy_escape");
+
     return ::curl_easy_escape(curl, str, length);
   }
 
   curl_slist* curl_slist_append(curl_slist* list, const char* str) override {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("str: \"" + (str == nullptr ? std::string("nullptr") : std::string((char*)str)) + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_13(mht_13_v, 319, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "curl_slist_append");
+
     return ::curl_slist_append(list, str);
   }
 
   void curl_slist_free_all(curl_slist* list) override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_14(mht_14_v, 326, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "curl_slist_free_all");
+
     return ::curl_slist_free_all(list);
   }
 
-  void curl_free(void* p) override { ::curl_free(p); }
+  void curl_free(void* p) override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_15(mht_15_v, 333, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "curl_free");
+ ::curl_free(p); }
 };
 }  // namespace
 
-CurlHttpRequest::CurlHttpRequest() : CurlHttpRequest(LibCurlProxy::Load()) {}
+CurlHttpRequest::CurlHttpRequest() : CurlHttpRequest(LibCurlProxy::Load()) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_16(mht_16_v, 340, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::CurlHttpRequest");
+}
 
 CurlHttpRequest::CurlHttpRequest(LibCurl* libcurl, Env* env)
     : libcurl_(libcurl), env_(env) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_17(mht_17_v, 346, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::CurlHttpRequest");
+
   default_response_buffer_.reserve(CURL_MAX_WRITE_SIZE);
 
   curl_ = libcurl_->curl_easy_init();
@@ -161,6 +386,9 @@ CurlHttpRequest::CurlHttpRequest(LibCurl* libcurl, Env* env)
 }
 
 CurlHttpRequest::~CurlHttpRequest() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_18(mht_18_v, 389, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::~CurlHttpRequest");
+
   if (curl_headers_) {
     libcurl_->curl_slist_free_all(curl_headers_);
   }
@@ -178,6 +406,10 @@ CurlHttpRequest::~CurlHttpRequest() {
 }
 
 string CurlHttpRequest::EscapeString(const string& str) {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("str: \"" + str + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_19(mht_19_v, 410, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::EscapeString");
+
   char* out_char_str = libcurl_->curl_easy_escape(curl_, str.c_str(), 0);
   string out_str(out_char_str);
   libcurl_->curl_free(out_char_str);
@@ -185,6 +417,10 @@ string CurlHttpRequest::EscapeString(const string& str) {
 }
 
 void CurlHttpRequest::SetUri(const string& uri) {
+   std::vector<std::string> mht_20_v;
+   mht_20_v.push_back("uri: \"" + uri + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_20(mht_20_v, 421, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::SetUri");
+
   CheckNotSent();
   is_uri_set_ = true;
   uri_ = uri;
@@ -192,12 +428,20 @@ void CurlHttpRequest::SetUri(const string& uri) {
 }
 
 void CurlHttpRequest::SetRange(uint64 start, uint64 end) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_21(mht_21_v, 431, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::SetRange");
+
   CheckNotSent();
   CHECK_CURL_OK(libcurl_->curl_easy_setopt(
       curl_, CURLOPT_RANGE, strings::StrCat(start, "-", end).c_str()));
 }
 
 void CurlHttpRequest::AddHeader(const string& name, const string& value) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("name: \"" + name + "\"");
+   mht_22_v.push_back("value: \"" + value + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_22(mht_22_v, 442, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::AddHeader");
+
   CheckNotSent();
   curl_headers_ = libcurl_->curl_slist_append(
       curl_headers_, strings::StrCat(name, ": ", value).c_str());
@@ -205,6 +449,11 @@ void CurlHttpRequest::AddHeader(const string& name, const string& value) {
 
 void CurlHttpRequest::AddResolveOverride(const string& hostname, int64_t port,
                                          const string& ip_addr) {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("hostname: \"" + hostname + "\"");
+   mht_23_v.push_back("ip_addr: \"" + ip_addr + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_23(mht_23_v, 454, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::AddResolveOverride");
+
   CheckNotSent();
   // Resolve values are hostname:port:IP.add.ress
   resolve_list_ = libcurl_->curl_slist_append(
@@ -213,6 +462,10 @@ void CurlHttpRequest::AddResolveOverride(const string& hostname, int64_t port,
 }
 
 void CurlHttpRequest::AddAuthBearerHeader(const string& auth_token) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("auth_token: \"" + auth_token + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_24(mht_24_v, 466, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::AddAuthBearerHeader");
+
   CheckNotSent();
   if (!auth_token.empty()) {
     AddHeader("Authorization", strings::StrCat("Bearer ", auth_token));
@@ -220,12 +473,18 @@ void CurlHttpRequest::AddAuthBearerHeader(const string& auth_token) {
 }
 
 void CurlHttpRequest::SetRequestStats(RequestStats* stats) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_25(mht_25_v, 476, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::SetRequestStats");
+
   CheckNotSent();
   CHECK(stats_ == nullptr) << "SetRequestStats already called";
   stats_ = stats;
 }
 
 void CurlHttpRequest::SetDeleteRequest() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_26(mht_26_v, 485, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::SetDeleteRequest");
+
   CheckNotSent();
   CheckMethodNotSet();
   is_method_set_ = true;
@@ -236,6 +495,10 @@ void CurlHttpRequest::SetDeleteRequest() {
 
 Status CurlHttpRequest::SetPutFromFile(const string& body_filepath,
                                        size_t offset) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("body_filepath: \"" + body_filepath + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_27(mht_27_v, 499, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::SetPutFromFile");
+
   CheckNotSent();
   CheckMethodNotSet();
   is_method_set_ = true;
@@ -265,6 +528,9 @@ Status CurlHttpRequest::SetPutFromFile(const string& body_filepath,
 }
 
 void CurlHttpRequest::SetPutEmptyBody() {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_28(mht_28_v, 531, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::SetPutEmptyBody");
+
   CheckNotSent();
   CheckMethodNotSet();
   is_method_set_ = true;
@@ -279,6 +545,10 @@ void CurlHttpRequest::SetPutEmptyBody() {
 }
 
 void CurlHttpRequest::SetPostFromBuffer(const char* buffer, size_t size) {
+   std::vector<std::string> mht_29_v;
+   mht_29_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_29(mht_29_v, 549, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::SetPostFromBuffer");
+
   CheckNotSent();
   CheckMethodNotSet();
   is_method_set_ = true;
@@ -294,6 +564,9 @@ void CurlHttpRequest::SetPostFromBuffer(const char* buffer, size_t size) {
 }
 
 void CurlHttpRequest::SetPostEmptyBody() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_30(mht_30_v, 567, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::SetPostEmptyBody");
+
   CheckNotSent();
   CheckMethodNotSet();
   is_method_set_ = true;
@@ -308,6 +581,9 @@ void CurlHttpRequest::SetPostEmptyBody() {
 }
 
 void CurlHttpRequest::SetResultBuffer(std::vector<char>* out_buffer) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_31(mht_31_v, 584, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::SetResultBuffer");
+
   CheckNotSent();
   CHECK(out_buffer != nullptr);
 
@@ -321,6 +597,10 @@ void CurlHttpRequest::SetResultBuffer(std::vector<char>* out_buffer) {
 }
 
 void CurlHttpRequest::SetResultBufferDirect(char* buffer, size_t size) {
+   std::vector<std::string> mht_32_v;
+   mht_32_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_32(mht_32_v, 601, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::SetResultBufferDirect");
+
   CHECK(buffer != nullptr);
   CheckNotSent();
 
@@ -332,11 +612,17 @@ void CurlHttpRequest::SetResultBufferDirect(char* buffer, size_t size) {
 }
 
 bool CurlHttpRequest::IsDirectResponse() const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_33(mht_33_v, 615, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::IsDirectResponse");
+
   return direct_response_.buffer_ != nullptr;
 }
 
 size_t CurlHttpRequest::WriteCallbackDirect(const void* ptr, size_t size,
                                             size_t nmemb, void* userdata) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_34(mht_34_v, 623, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::WriteCallbackDirect");
+
   CHECK(ptr != nullptr);
   auto that = reinterpret_cast<CurlHttpRequest*>(userdata);
   DirectResponseState* state = &that->direct_response_;
@@ -359,12 +645,18 @@ size_t CurlHttpRequest::WriteCallbackDirect(const void* ptr, size_t size,
 }
 
 size_t CurlHttpRequest::GetResultBufferDirectBytesTransferred() {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_35(mht_35_v, 648, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::GetResultBufferDirectBytesTransferred");
+
   CHECK(direct_response_.buffer_ != nullptr);
   return direct_response_.bytes_transferred_;
 }
 
 void CurlHttpRequest::SetTimeouts(uint32 connection, uint32 inactivity,
                                   uint32 total) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_36(mht_36_v, 657, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::SetTimeouts");
+
   CheckNotSent();
   connect_timeout_secs_ = connection;
   inactivity_timeout_secs_ = inactivity;
@@ -373,6 +665,9 @@ void CurlHttpRequest::SetTimeouts(uint32 connection, uint32 inactivity,
 
 size_t CurlHttpRequest::WriteCallback(const void* ptr, size_t size,
                                       size_t nmemb, void* this_object) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_37(mht_37_v, 668, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::WriteCallback");
+
   CHECK(ptr);
   auto that = reinterpret_cast<CurlHttpRequest*>(this_object);
   CHECK(that->response_buffer_);
@@ -386,6 +681,9 @@ size_t CurlHttpRequest::WriteCallback(const void* ptr, size_t size,
 
 size_t CurlHttpRequest::ReadCallback(void* ptr, size_t size, size_t nmemb,
                                      FILE* this_object) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_38(mht_38_v, 684, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::ReadCallback");
+
   CHECK(ptr);
   auto that = reinterpret_cast<CurlHttpRequest*>(this_object);
   CHECK(that->post_body_read_ <= that->post_body_buffer_.size());
@@ -399,6 +697,9 @@ size_t CurlHttpRequest::ReadCallback(void* ptr, size_t size, size_t nmemb,
 
 size_t CurlHttpRequest::HeaderCallback(const void* ptr, size_t size,
                                        size_t nmemb, void* this_object) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_39(mht_39_v, 700, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::HeaderCallback");
+
   CHECK(ptr);
   auto that = reinterpret_cast<CurlHttpRequest*>(this_object);
   StringPiece header(reinterpret_cast<const char*>(ptr), size * nmemb);
@@ -417,6 +718,9 @@ size_t CurlHttpRequest::HeaderCallback(const void* ptr, size_t size,
 }
 
 Status CurlHttpRequest::Send() {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_40(mht_40_v, 721, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::Send");
+
   CheckNotSent();
   CHECK(is_uri_set_) << "URI has not been set.";
 
@@ -553,14 +857,23 @@ Status CurlHttpRequest::Send() {
 }
 
 void CurlHttpRequest::CheckMethodNotSet() const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_41(mht_41_v, 860, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::CheckMethodNotSet");
+
   CHECK(!is_method_set_) << "HTTP method has been already set.";
 }
 
 void CurlHttpRequest::CheckNotSent() const {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_42(mht_42_v, 867, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::CheckNotSent");
+
   CHECK(!is_sent_) << "The request has already been sent.";
 }
 
 StringPiece CurlHttpRequest::GetResponse() const {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_43(mht_43_v, 874, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::GetResponse");
+
   StringPiece response;
   if (IsDirectResponse()) {
     response = StringPiece(direct_response_.buffer_,
@@ -572,16 +885,26 @@ StringPiece CurlHttpRequest::GetResponse() const {
 }
 
 string CurlHttpRequest::GetResponseHeader(const string& name) const {
+   std::vector<std::string> mht_44_v;
+   mht_44_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_44(mht_44_v, 889, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::GetResponseHeader");
+
   const auto& header = response_headers_.find(name);
   return header != response_headers_.end() ? header->second : "";
 }
 
-uint64 CurlHttpRequest::GetResponseCode() const { return response_code_; }
+uint64 CurlHttpRequest::GetResponseCode() const {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_45(mht_45_v, 897, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::GetResponseCode");
+ return response_code_; }
 
 // Cancels the transmission if no progress has been made for too long.
 int CurlHttpRequest::ProgressCallback(void* this_object, curl_off_t dltotal,
                                       curl_off_t dlnow, curl_off_t ultotal,
                                       curl_off_t ulnow) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_46(mht_46_v, 905, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::ProgressCallback");
+
   auto that = reinterpret_cast<CurlHttpRequest*>(this_object);
   const auto now = that->env_->NowSeconds();
   const auto current_progress = dlnow + ulnow;
@@ -633,6 +956,10 @@ int CurlHttpRequest::ProgressCallback(void* this_object, curl_off_t dltotal,
 
 Status CurlHttpRequest::CURLcodeToStatus(CURLcode code,
                                          const char* error_buffer) {
+   std::vector<std::string> mht_47_v;
+   mht_47_v.push_back("error_buffer: \"" + (error_buffer == nullptr ? std::string("nullptr") : std::string((char*)error_buffer)) + "\"");
+   MHTracer_DTPStensorflowPScorePSplatformPScloudPScurl_http_requestDTcc mht_47(mht_47_v, 960, "", "./tensorflow/core/platform/cloud/curl_http_request.cc", "CurlHttpRequest::CURLcodeToStatus");
+
   if (code == CURLE_OK) {
     return Status::OK();
   }

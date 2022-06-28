@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSbroadcast_propagationDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSbroadcast_propagationDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSbroadcast_propagationDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -64,18 +232,27 @@ namespace llvm {
 template <>
 struct DenseMapInfo<mlir::mhlo::BroadcastIntent> {
   static mlir::mhlo::BroadcastIntent getEmptyKey() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSbroadcast_propagationDTcc mht_0(mht_0_v, 235, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/broadcast_propagation.cc", "getEmptyKey");
+
     return {DenseMapInfo<mlir::RankedTensorType>::getEmptyKey(),
             DenseMapInfo<mlir::Value>::getEmptyKey(),
             DenseMapInfo<mlir::Value>::getEmptyKey(),
             DenseMapInfo<mlir::Attribute>::getEmptyKey()};
   }
   static mlir::mhlo::BroadcastIntent getTombstoneKey() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSbroadcast_propagationDTcc mht_1(mht_1_v, 244, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/broadcast_propagation.cc", "getTombstoneKey");
+
     return {DenseMapInfo<mlir::RankedTensorType>::getTombstoneKey(),
             DenseMapInfo<mlir::Value>::getTombstoneKey(),
             DenseMapInfo<mlir::Value>::getTombstoneKey(),
             DenseMapInfo<mlir::Attribute>::getTombstoneKey()};
   }
   static unsigned getHashValue(const mlir::mhlo::BroadcastIntent &intent) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSbroadcast_propagationDTcc mht_2(mht_2_v, 253, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/broadcast_propagation.cc", "getHashValue");
+
     return hash_combine(
         DenseMapInfo<mlir::RankedTensorType>::getHashValue(intent.result_type),
         DenseMapInfo<mlir::Value>::getHashValue(intent.target_value),
@@ -85,6 +262,9 @@ struct DenseMapInfo<mlir::mhlo::BroadcastIntent> {
   }
   static bool isEqual(const mlir::mhlo::BroadcastIntent &lhs,
                       const mlir::mhlo::BroadcastIntent &rhs) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSbroadcast_propagationDTcc mht_3(mht_3_v, 265, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/broadcast_propagation.cc", "isEqual");
+
     return lhs == rhs;
   }
 };
@@ -96,6 +276,9 @@ namespace mhlo {
 namespace {
 
 bool AllowsForElementwiseBroadcastPropagation(Operation *op) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSbroadcast_propagationDTcc mht_4(mht_4_v, 279, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/broadcast_propagation.cc", "AllowsForElementwiseBroadcastPropagation");
+
   if (op && op->hasTrait<mlir::OpTrait::SameOperandsAndResultShape>() &&
       op->hasTrait<mlir::OpTrait::Elementwise>() && op->getNumResults() == 1) {
     return true;
@@ -108,6 +291,9 @@ bool AllowsForElementwiseBroadcastPropagation(Operation *op) {
 }
 
 bool AllowsForBroadcastPropagation(Operation *op) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSbroadcast_propagationDTcc mht_5(mht_5_v, 294, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/broadcast_propagation.cc", "AllowsForBroadcastPropagation");
+
   return llvm::isa_and_nonnull<DynamicBroadcastInDimOp>(op) ||
          AllowsForElementwiseBroadcastPropagation(op);
 }
@@ -115,6 +301,9 @@ bool AllowsForBroadcastPropagation(Operation *op) {
 DenseIntElementsAttr ComposeBroadcastDimensionsAttr(OpBuilder &builder,
                                                     DenseIntElementsAttr a,
                                                     DenseIntElementsAttr b) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSbroadcast_propagationDTcc mht_6(mht_6_v, 304, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/broadcast_propagation.cc", "ComposeBroadcastDimensionsAttr");
+
   SmallVector<int64_t> b_vec =
       llvm::to_vector(llvm::map_range(b, [](const APInt &it) {
         return static_cast<int64_t>(it.getLimitedValue());
@@ -133,12 +322,18 @@ void FindBroadcastIntents(
     SmallVector<BroadcastIntent> &bcast_intents,
     DenseMap<BroadcastIntent, SmallVector<BroadcastIntent>>
         &bcast_intent_dependencies) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSbroadcast_propagationDTcc mht_7(mht_7_v, 325, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/broadcast_propagation.cc", "FindBroadcastIntents");
+
   OpBuilder builder(root.getContext());
 
   // Use the result vector of broadcast intents as a worklist. The set of
   // broadcast intents helps to ensure their uniqueness.
   DenseSet<BroadcastIntent> bcast_intents_set;
   auto add_to_worklist_if_new = [&](BroadcastIntent bcast_intent) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSbroadcast_propagationDTcc mht_8(mht_8_v, 334, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/broadcast_propagation.cc", "lambda");
+
     if (!bcast_intents_set.count(bcast_intent)) {
       bcast_intents_set.insert(bcast_intent);
       bcast_intents.push_back(bcast_intent);
@@ -208,6 +403,9 @@ void FindBroadcastIntents(
 
 void SortBroadcastIntentsInReverseTopologicalOrder(
     SmallVector<BroadcastIntent> &bcast_intents_vec, Block *parent_block) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSbroadcast_propagationDTcc mht_9(mht_9_v, 406, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/broadcast_propagation.cc", "SortBroadcastIntentsInReverseTopologicalOrder");
+
   // Sort broadcast intents in reverse topological order of the producer ops. We
   // can use the positions in the block for this. All broadcast intents outside
   // the block (e.g. arguments) will be sorted towards the front.
@@ -230,6 +428,9 @@ void SortBroadcastIntentsInReverseTopologicalOrder(
 
 void SetInsertionPointToEarliestPointWithAllValuesAvailable(
     PatternRewriter &rewriter, Block *block, ValueRange values) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSbroadcast_propagationDTcc mht_10(mht_10_v, 431, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/broadcast_propagation.cc", "SetInsertionPointToEarliestPointWithAllValuesAvailable");
+
   Operation *last_def = nullptr;
   for (Value v : values) {
     Operation *def = v.getDefiningOp();
@@ -316,6 +517,9 @@ DenseMap<BroadcastIntent, Value> RealizeBroadcastIntents(
 
 void TransitivelyEraseUnusedSideEffectFreeOps(Operation *root,
                                               PatternRewriter &rewriter) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSbroadcast_propagationDTcc mht_11(mht_11_v, 520, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/broadcast_propagation.cc", "TransitivelyEraseUnusedSideEffectFreeOps");
+
   // Find ops to erase.
   SmallPtrSet<Operation *, 16> ops_to_erase_set;
   SmallVector<Operation *, 16> ops_to_erase;
@@ -349,6 +553,9 @@ void TransitivelyEraseUnusedSideEffectFreeOps(Operation *root,
 LogicalResult PropagateBroadcast(DynamicBroadcastInDimOp root,
                                  Block *parent_block,
                                  PatternRewriter &rewriter) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSbroadcast_propagationDTcc mht_12(mht_12_v, 556, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/broadcast_propagation.cc", "PropagateBroadcast");
+
   // We can move broadcasts up over (i) (broadcasting) element-wise operations
   // and (i) dynamic_broadcast_in_dim ops. This way, we propagate them through
   // the IR to perform them early. Instead of broadcasting the result of such an
@@ -415,6 +622,9 @@ struct BroadcastPropagationPattern
 
   LogicalResult matchAndRewrite(DynamicBroadcastInDimOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSbroadcast_propagationDTcc mht_13(mht_13_v, 625, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/broadcast_propagation.cc", "matchAndRewrite");
+
     return PropagateBroadcast(op, op->getBlock(), rewriter);
   }
 };
@@ -422,10 +632,16 @@ struct BroadcastPropagationPattern
 struct BroadcastPropagationPass
     : public BroadcastPropagationPassBase<BroadcastPropagationPass> {
   void getDependentDialects(DialectRegistry &registry) const override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSbroadcast_propagationDTcc mht_14(mht_14_v, 635, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/broadcast_propagation.cc", "getDependentDialects");
+
     registry.insert<mhlo::MhloDialect>();
   }
 
   void runOnOperation() override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPStransformsPSbroadcast_propagationDTcc mht_15(mht_15_v, 642, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/transforms/broadcast_propagation.cc", "runOnOperation");
+
     MLIRContext *ctx = &getContext();
 
     // Collect patterns.

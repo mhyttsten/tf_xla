@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSclustering_opsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSclustering_opsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSclustering_opsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 // Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not
@@ -59,12 +227,18 @@ const int64_t kNearestNeighborsPointsMinBlockSize = 16;
 
 // Returns the smallest multiple of a that is not smaller than b.
 int64_t NextMultiple(int64_t a, int64_t b) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSclustering_opsDTcc mht_0(mht_0_v, 230, "", "./tensorflow/core/kernels/clustering_ops.cc", "NextMultiple");
+
   const int64_t remainder = b % a;
   return remainder == 0 ? b : (b + a - remainder);
 }
 
 // Returns a / b rounded up to the next higher integer.
-int64_t CeilOfRatio(int64_t a, int64_t b) { return (a + b - 1) / b; }
+int64_t CeilOfRatio(int64_t a, int64_t b) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSclustering_opsDTcc mht_1(mht_1_v, 239, "", "./tensorflow/core/kernels/clustering_ops.cc", "CeilOfRatio");
+ return (a + b - 1) / b; }
 
 }  // namespace
 
@@ -75,12 +249,18 @@ class KmeansPlusPlusInitializationOp : public OpKernel {
  public:
   explicit KmeansPlusPlusInitializationOp(OpKernelConstruction* context)
       : OpKernel(context) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSclustering_opsDTcc mht_2(mht_2_v, 252, "", "./tensorflow/core/kernels/clustering_ops.cc", "KmeansPlusPlusInitializationOp");
+
     OP_REQUIRES_OK(context,
                    context->MatchSignature(
                        {DT_FLOAT, DT_INT64, DT_INT64, DT_INT64}, {DT_FLOAT}));
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSclustering_opsDTcc mht_3(mht_3_v, 261, "", "./tensorflow/core/kernels/clustering_ops.cc", "Compute");
+
     const Tensor& points_tensor = context->input(0);
     const Tensor& num_to_sample_tensor = context->input(1);
     const Tensor& seed_tensor = context->input(2);
@@ -103,6 +283,9 @@ class KmeansPlusPlusInitializationOp : public OpKernel {
     const int64_t num_to_sample = num_to_sample_tensor.scalar<int64_t>()();
     const int64_t seed = seed_tensor.scalar<int64_t>()();
     const int64_t num_retries_per_sample = [&]() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSclustering_opsDTcc mht_4(mht_4_v, 286, "", "./tensorflow/core/kernels/clustering_ops.cc", "lambda");
+
       const int64_t value = num_retries_per_sample_tensor.scalar<int64_t>()();
       return value >= 0 ? value
                         : 2 + static_cast<int64_t>(std::log(num_to_sample));
@@ -136,6 +319,9 @@ class KmeansPlusPlusInitializationOp : public OpKernel {
     random::SimplePhilox rng(&random);
 
     auto add_one_point = [&](int64_t from, int64_t to) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSclustering_opsDTcc mht_5(mht_5_v, 322, "", "./tensorflow/core/kernels/clustering_ops.cc", "lambda");
+
       from = std::min(from, num_points - 1);
       sampled_points.row(to) = points.row(from);
       sampled_indices.insert(from);
@@ -164,6 +350,9 @@ class KmeansPlusPlusInitializationOp : public OpKernel {
     };
 
     auto sample_one_point = [&]() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSclustering_opsDTcc mht_6(mht_6_v, 353, "", "./tensorflow/core/kernels/clustering_ops.cc", "lambda");
+
       const int64_t sampled_index = draw_one_sample();
       min_distances = min_distances.cwiseMin(GetHalfSquaredDistancesToY(
           points, points_half_squared_norm, points.row(sampled_index),
@@ -172,6 +361,9 @@ class KmeansPlusPlusInitializationOp : public OpKernel {
     };
 
     auto sample_one_point_with_retries = [&]() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSclustering_opsDTcc mht_7(mht_7_v, 364, "", "./tensorflow/core/kernels/clustering_ops.cc", "lambda");
+
       Eigen::VectorXf best_new_min_distances(num_points);
       float best_potential = std::numeric_limits<float>::infinity();
       int64_t best_sampled_index = 0;
@@ -215,6 +407,9 @@ class KmeansPlusPlusInitializationOp : public OpKernel {
       const Eigen::Ref<const Eigen::VectorXf>& xs_half_squared_norm,
       const Eigen::Ref<const Eigen::RowVectorXf>& y,
       float y_half_squared_norm) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSclustering_opsDTcc mht_8(mht_8_v, 410, "", "./tensorflow/core/kernels/clustering_ops.cc", "GetHalfSquaredDistancesToY");
+
     // Squared distance between points xs_i and y is:
     //   || xs_i ||^2 - 2 <xs_i, y> + || y ||^2
     return (xs_half_squared_norm - xs * y.transpose()).array() +
@@ -230,11 +425,17 @@ class KMC2ChainInitializationOp : public OpKernel {
  public:
   explicit KMC2ChainInitializationOp(OpKernelConstruction* context)
       : OpKernel(context) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSclustering_opsDTcc mht_9(mht_9_v, 428, "", "./tensorflow/core/kernels/clustering_ops.cc", "KMC2ChainInitializationOp");
+
     OP_REQUIRES_OK(context,
                    context->MatchSignature({DT_FLOAT, DT_INT64}, {DT_INT64}));
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSclustering_opsDTcc mht_10(mht_10_v, 436, "", "./tensorflow/core/kernels/clustering_ops.cc", "Compute");
+
     const Tensor& distances_tensor = context->input(0);
     const Tensor& seed_tensor = context->input(1);
     OP_REQUIRES(context, TensorShapeUtils::IsVector(distances_tensor.shape()),
@@ -282,12 +483,18 @@ class NearestNeighborsOp : public OpKernel {
  public:
   explicit NearestNeighborsOp(OpKernelConstruction* context)
       : OpKernel(context) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSclustering_opsDTcc mht_11(mht_11_v, 486, "", "./tensorflow/core/kernels/clustering_ops.cc", "NearestNeighborsOp");
+
     OP_REQUIRES_OK(context,
                    context->MatchSignature({DT_FLOAT, DT_FLOAT, DT_INT64},
                                            {DT_INT64, DT_FLOAT}));
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSclustering_opsDTcc mht_12(mht_12_v, 495, "", "./tensorflow/core/kernels/clustering_ops.cc", "Compute");
+
     const Tensor& points_tensor = context->input(0);
     const Tensor& centers_tensor = context->input(1);
     const Tensor& k_tensor = context->input(2);
@@ -390,6 +597,9 @@ class NearestNeighborsOp : public OpKernel {
     const int64_t num_units =
         NextMultiple(num_threads, CeilOfRatio(num_points, rows_per_block));
     auto work = [&](int64_t start, int64_t limit) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSclustering_opsDTcc mht_13(mht_13_v, 600, "", "./tensorflow/core/kernels/clustering_ops.cc", "lambda");
+
       for (; start < limit; ++start) {
         const int64_t start_row = num_points * start / num_units;
         const int64_t limit_row = num_points * (start + 1) / num_units;
@@ -431,6 +641,9 @@ class NearestNeighborsOp : public OpKernel {
       const Eigen::Ref<const Eigen::VectorXf>& centers_half_squared_norm,
       const Eigen::Ref<MatrixXi64RowMajor>& nearest_center_indices,
       const Eigen::Ref<MatrixXfRowMajor>& nearest_center_distances) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSclustering_opsDTcc mht_14(mht_14_v, 644, "", "./tensorflow/core/kernels/clustering_ops.cc", "FindKNearestCenters");
+
     DCHECK_LE(k, centers.rows());
     if (centers.rows() <= kNearestNeighborsCentersMaxBlockSize) {
       FindKNearestCentersOneBlock(k, points, points_half_squared_norm, centers,
@@ -452,6 +665,9 @@ class NearestNeighborsOp : public OpKernel {
       const Eigen::Ref<const Eigen::VectorXf>& centers_half_squared_norm,
       Eigen::Ref<MatrixXi64RowMajor> nearest_center_indices,
       Eigen::Ref<MatrixXfRowMajor> nearest_center_distances) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSclustering_opsDTcc mht_15(mht_15_v, 668, "", "./tensorflow/core/kernels/clustering_ops.cc", "FindKNearestCentersOneBlock");
+
     DCHECK_LE(k, centers.rows());
     const int64_t num_points = points.rows();
     const MatrixXfRowMajor inner_product = points * centers.transpose();
@@ -499,6 +715,9 @@ class NearestNeighborsOp : public OpKernel {
       const Eigen::Ref<const Eigen::VectorXf>& centers_half_squared_norm,
       Eigen::Ref<MatrixXi64RowMajor> nearest_center_indices,
       Eigen::Ref<MatrixXfRowMajor> nearest_center_distances) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSclustering_opsDTcc mht_16(mht_16_v, 718, "", "./tensorflow/core/kernels/clustering_ops.cc", "FindKNearestCentersBlockwise");
+
     const int64_t num_points = points.rows();
     const int64_t num_centers = centers.rows();
     DCHECK_LE(k, num_centers);

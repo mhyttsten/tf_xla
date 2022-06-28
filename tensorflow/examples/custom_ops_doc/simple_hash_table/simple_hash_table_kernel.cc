@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSexamplesPScustom_ops_docPSsimple_hash_tablePSsimple_hash_table_kernelDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSexamplesPScustom_ops_docPSsimple_hash_tablePSsimple_hash_table_kernelDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSexamplesPScustom_ops_docPSsimple_hash_tablePSsimple_hash_table_kernelDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,6 +203,9 @@ template <class K, class V>
 class SimpleHashTableResource : public ::tensorflow::ResourceBase {
  public:
   Status Insert(const Tensor& key, const Tensor& value) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSexamplesPScustom_ops_docPSsimple_hash_tablePSsimple_hash_table_kernelDTcc mht_0(mht_0_v, 206, "", "./tensorflow/examples/custom_ops_doc/simple_hash_table/simple_hash_table_kernel.cc", "Insert");
+
     const K key_val = key.flat<K>()(0);
     const V value_val = value.flat<V>()(0);
 
@@ -44,6 +215,9 @@ class SimpleHashTableResource : public ::tensorflow::ResourceBase {
   }
 
   Status Find(const Tensor& key, Tensor* value, const Tensor& default_value) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSexamplesPScustom_ops_docPSsimple_hash_tablePSsimple_hash_table_kernelDTcc mht_1(mht_1_v, 218, "", "./tensorflow/examples/custom_ops_doc/simple_hash_table/simple_hash_table_kernel.cc", "Find");
+
     // Note that tf_shared_lock could be used instead of mutex_lock
     // in ops that do not not modify data protected by a mutex, but
     // go/totw/197 recommends using exclusive lock instead of a shared
@@ -59,6 +233,9 @@ class SimpleHashTableResource : public ::tensorflow::ResourceBase {
   }
 
   Status Remove(const Tensor& key) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSexamplesPScustom_ops_docPSsimple_hash_tablePSsimple_hash_table_kernelDTcc mht_2(mht_2_v, 236, "", "./tensorflow/examples/custom_ops_doc/simple_hash_table/simple_hash_table_kernel.cc", "Remove");
+
     mutex_lock l(mu_);
 
     const K key_val = key.flat<K>()(0);
@@ -70,6 +247,9 @@ class SimpleHashTableResource : public ::tensorflow::ResourceBase {
 
   // Save all key, value pairs to tensor outputs to support SavedModel
   Status Export(OpKernelContext* ctx) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSexamplesPScustom_ops_docPSsimple_hash_tablePSsimple_hash_table_kernelDTcc mht_3(mht_3_v, 250, "", "./tensorflow/examples/custom_ops_doc/simple_hash_table/simple_hash_table_kernel.cc", "Export");
+
     mutex_lock l(mu_);
     int64_t size = table_.size();
     Tensor* keys;
@@ -90,6 +270,9 @@ class SimpleHashTableResource : public ::tensorflow::ResourceBase {
 
   // Load all key, value pairs from tensor inputs to support SavedModel
   Status Import(const Tensor& keys, const Tensor& values) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSexamplesPScustom_ops_docPSsimple_hash_tablePSsimple_hash_table_kernelDTcc mht_4(mht_4_v, 273, "", "./tensorflow/examples/custom_ops_doc/simple_hash_table/simple_hash_table_kernel.cc", "Import");
+
     const auto key_values = keys.flat<K>();
     const auto value_values = values.flat<V>();
 
@@ -104,8 +287,14 @@ class SimpleHashTableResource : public ::tensorflow::ResourceBase {
   // Create a debug string with the content of the map if this is small,
   // or some example data if this is large, handling both the cases where the
   // hash table has many entries and where the entries are long strings.
-  std::string DebugString() const override { return DebugString(3); }
+  std::string DebugString() const override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSexamplesPScustom_ops_docPSsimple_hash_tablePSsimple_hash_table_kernelDTcc mht_5(mht_5_v, 291, "", "./tensorflow/examples/custom_ops_doc/simple_hash_table/simple_hash_table_kernel.cc", "DebugString");
+ return DebugString(3); }
   std::string DebugString(int num_pairs) const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSexamplesPScustom_ops_docPSsimple_hash_tablePSsimple_hash_table_kernelDTcc mht_6(mht_6_v, 295, "", "./tensorflow/examples/custom_ops_doc/simple_hash_table/simple_hash_table_kernel.cc", "DebugString");
+
     std::string rval = "SimpleHashTable {";
     size_t count = 0;
     const size_t max_kv_str_len = 100;
@@ -134,9 +323,15 @@ template <class K, class V>
 class SimpleHashTableCreateOpKernel : public OpKernel {
  public:
   explicit SimpleHashTableCreateOpKernel(OpKernelConstruction* ctx)
-      : OpKernel(ctx) {}
+      : OpKernel(ctx) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSexamplesPScustom_ops_docPSsimple_hash_tablePSsimple_hash_table_kernelDTcc mht_7(mht_7_v, 327, "", "./tensorflow/examples/custom_ops_doc/simple_hash_table/simple_hash_table_kernel.cc", "SimpleHashTableCreateOpKernel");
+}
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSexamplesPScustom_ops_docPSsimple_hash_tablePSsimple_hash_table_kernelDTcc mht_8(mht_8_v, 332, "", "./tensorflow/examples/custom_ops_doc/simple_hash_table/simple_hash_table_kernel.cc", "Compute");
+
     Tensor handle_tensor;
     AllocatorAttributes attr;
     OP_REQUIRES_OK(ctx, ctx->allocate_temp(DT_RESOURCE, TensorShape({}),
@@ -170,9 +365,15 @@ template <class K, class V>
 class SimpleHashTableFindOpKernel : public OpKernel {
  public:
   explicit SimpleHashTableFindOpKernel(OpKernelConstruction* ctx)
-      : OpKernel(ctx) {}
+      : OpKernel(ctx) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSexamplesPScustom_ops_docPSsimple_hash_tablePSsimple_hash_table_kernelDTcc mht_9(mht_9_v, 369, "", "./tensorflow/examples/custom_ops_doc/simple_hash_table/simple_hash_table_kernel.cc", "SimpleHashTableFindOpKernel");
+}
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSexamplesPScustom_ops_docPSsimple_hash_tablePSsimple_hash_table_kernelDTcc mht_10(mht_10_v, 374, "", "./tensorflow/examples/custom_ops_doc/simple_hash_table/simple_hash_table_kernel.cc", "Compute");
+
     DataTypeVector expected_inputs = {DT_RESOURCE, DataTypeToEnum<K>::v(),
                                       DataTypeToEnum<V>::v()};
     DataTypeVector expected_outputs = {DataTypeToEnum<V>::v()};
@@ -193,9 +394,15 @@ template <class K, class V>
 class SimpleHashTableInsertOpKernel : public OpKernel {
  public:
   explicit SimpleHashTableInsertOpKernel(OpKernelConstruction* ctx)
-      : OpKernel(ctx) {}
+      : OpKernel(ctx) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSexamplesPScustom_ops_docPSsimple_hash_tablePSsimple_hash_table_kernelDTcc mht_11(mht_11_v, 398, "", "./tensorflow/examples/custom_ops_doc/simple_hash_table/simple_hash_table_kernel.cc", "SimpleHashTableInsertOpKernel");
+}
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSexamplesPScustom_ops_docPSsimple_hash_tablePSsimple_hash_table_kernelDTcc mht_12(mht_12_v, 403, "", "./tensorflow/examples/custom_ops_doc/simple_hash_table/simple_hash_table_kernel.cc", "Compute");
+
     DataTypeVector expected_inputs = {DT_RESOURCE, DataTypeToEnum<K>::v(),
                                       DataTypeToEnum<V>::v()};
     OP_REQUIRES_OK(ctx, ctx->MatchSignature(expected_inputs, {}));
@@ -212,9 +419,15 @@ template <class K, class V>
 class SimpleHashTableRemoveOpKernel : public OpKernel {
  public:
   explicit SimpleHashTableRemoveOpKernel(OpKernelConstruction* ctx)
-      : OpKernel(ctx) {}
+      : OpKernel(ctx) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSexamplesPScustom_ops_docPSsimple_hash_tablePSsimple_hash_table_kernelDTcc mht_13(mht_13_v, 423, "", "./tensorflow/examples/custom_ops_doc/simple_hash_table/simple_hash_table_kernel.cc", "SimpleHashTableRemoveOpKernel");
+}
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSexamplesPScustom_ops_docPSsimple_hash_tablePSsimple_hash_table_kernelDTcc mht_14(mht_14_v, 428, "", "./tensorflow/examples/custom_ops_doc/simple_hash_table/simple_hash_table_kernel.cc", "Compute");
+
     DataTypeVector expected_inputs = {DT_RESOURCE, DataTypeToEnum<K>::v()};
     OP_REQUIRES_OK(ctx, ctx->MatchSignature(expected_inputs, {}));
     SimpleHashTableResource<K, V>* resource;
@@ -229,9 +442,15 @@ template <class K, class V>
 class SimpleHashTableExportOpKernel : public OpKernel {
  public:
   explicit SimpleHashTableExportOpKernel(OpKernelConstruction* ctx)
-      : OpKernel(ctx) {}
+      : OpKernel(ctx) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSexamplesPScustom_ops_docPSsimple_hash_tablePSsimple_hash_table_kernelDTcc mht_15(mht_15_v, 446, "", "./tensorflow/examples/custom_ops_doc/simple_hash_table/simple_hash_table_kernel.cc", "SimpleHashTableExportOpKernel");
+}
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSexamplesPScustom_ops_docPSsimple_hash_tablePSsimple_hash_table_kernelDTcc mht_16(mht_16_v, 451, "", "./tensorflow/examples/custom_ops_doc/simple_hash_table/simple_hash_table_kernel.cc", "Compute");
+
     DataTypeVector expected_inputs = {DT_RESOURCE};
     DataTypeVector expected_outputs = {DataTypeToEnum<K>::v(),
                                        DataTypeToEnum<V>::v()};
@@ -246,9 +465,15 @@ template <class K, class V>
 class SimpleHashTableImportOpKernel : public OpKernel {
  public:
   explicit SimpleHashTableImportOpKernel(OpKernelConstruction* ctx)
-      : OpKernel(ctx) {}
+      : OpKernel(ctx) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSexamplesPScustom_ops_docPSsimple_hash_tablePSsimple_hash_table_kernelDTcc mht_17(mht_17_v, 469, "", "./tensorflow/examples/custom_ops_doc/simple_hash_table/simple_hash_table_kernel.cc", "SimpleHashTableImportOpKernel");
+}
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSexamplesPScustom_ops_docPSsimple_hash_tablePSsimple_hash_table_kernelDTcc mht_18(mht_18_v, 474, "", "./tensorflow/examples/custom_ops_doc/simple_hash_table/simple_hash_table_kernel.cc", "Compute");
+
     SimpleHashTableResource<K, V>* resource;
     OP_REQUIRES_OK(ctx, GetResource(ctx, &resource));
     DataTypeVector expected_inputs = {DT_RESOURCE, DataTypeToEnum<K>::v(),

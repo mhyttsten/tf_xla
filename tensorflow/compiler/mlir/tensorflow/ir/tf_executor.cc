@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -64,12 +232,18 @@ struct TensorFlowExecutorInlinerInterface : public DialectInlinerInterface {
   // Allow all call operations to be inlined.
   bool isLegalToInline(Operation *call, Operation *callable,
                        bool wouldBeCloned) const final {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_0(mht_0_v, 235, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "isLegalToInline");
+
     return true;
   }
   // Override the inlining hook to determine if 'src' can be inlined into
   // 'dest'.
   bool isLegalToInline(Region *dest, Region *src, bool wouldBeCloned,
                        BlockAndValueMapping &value_mapping) const final {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_1(mht_1_v, 244, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "isLegalToInline");
+
     // Allow inlining into tf.island regions if the incoming region has a single
     // block.
     return llvm::isa<tf_executor::IslandOp>(dest->getParentOp()) &&
@@ -86,6 +260,9 @@ struct TensorFlowExecutorDialectFoldInterface : public DialectFoldInterface {
   // materializing constants.
   // In the executor dialect we materialize inside an island.
   bool shouldMaterializeInto(Region *region) const final {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_2(mht_2_v, 263, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "shouldMaterializeInto");
+
     return isa<tf_executor::IslandOp>(region->getParentOp());
   }
 };
@@ -95,6 +272,9 @@ struct TensorFlowExecutorDialectFoldInterface : public DialectFoldInterface {
 TensorFlowExecutorDialect::TensorFlowExecutorDialect(MLIRContext *context)
     : Dialect(/*name=*/"tf_executor", context,
               TypeID::get<TensorFlowExecutorDialect>()) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_3(mht_3_v, 275, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "TensorFlowExecutorDialect::TensorFlowExecutorDialect");
+
   addOperations<
 #define GET_OP_LIST
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc.inc"
@@ -107,6 +287,9 @@ TensorFlowExecutorDialect::TensorFlowExecutorDialect(MLIRContext *context)
 }
 
 Type TensorFlowExecutorDialect::parseType(DialectAsmParser &parser) const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_4(mht_4_v, 290, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "TensorFlowExecutorDialect::parseType");
+
   StringRef data_type;
   if (parser.parseKeyword(&data_type)) return Type();
 
@@ -119,6 +302,9 @@ Type TensorFlowExecutorDialect::parseType(DialectAsmParser &parser) const {
 
 void TensorFlowExecutorDialect::printType(Type type,
                                           DialectAsmPrinter &os) const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_5(mht_5_v, 305, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "TensorFlowExecutorDialect::printType");
+
   if (type.isa<ControlType>()) {
     os << "control";
     return;
@@ -139,6 +325,9 @@ namespace {
 // Verifies that every control operands are at the end of the list.
 // Used by the constraint `ControlOperandsAfterAllData` in ODS.
 LogicalResult VerifyControlOperandsAfterAllData(Operation *op) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_6(mht_6_v, 328, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "VerifyControlOperandsAfterAllData");
+
   bool found_control = false;
   for (int operand_idx : llvm::seq<int>(0, op->getNumOperands())) {
     if (op->getOperand(operand_idx).getType().isa<ControlType>()) {
@@ -158,9 +347,15 @@ LogicalResult VerifyControlOperandsAfterAllData(Operation *op) {
 // tf_executor.graph
 //===----------------------------------------------------------------------===//
 
-FetchOp GraphOp::GetFetch() { return llvm::cast<FetchOp>(GetBody().back()); }
+FetchOp GraphOp::GetFetch() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_7(mht_7_v, 351, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "GraphOp::GetFetch");
+ return llvm::cast<FetchOp>(GetBody().back()); }
 
 LogicalResult GraphOp::verify() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_8(mht_8_v, 356, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "GraphOp::verify");
+
   GraphOp graph = *this;
   auto *executorDialect = graph->getDialect();
 
@@ -213,12 +408,18 @@ LogicalResult GraphOp::verify() {
 }
 
 void GraphOp::print(OpAsmPrinter &p) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_9(mht_9_v, 411, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "GraphOp::print");
+
   p << ' ';
   p.printRegion(getOperation()->getRegion(0));
   p.printOptionalAttrDict(getOperation()->getAttrs());
 }
 
 ParseResult GraphOp::parse(OpAsmParser &parser, OperationState &result) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_10(mht_10_v, 420, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "GraphOp::parse");
+
   llvm::SMLoc loc = parser.getCurrentLocation();
 
   // Parse the body region.
@@ -259,11 +460,17 @@ ParseResult GraphOp::parse(OpAsmParser &parser, OperationState &result) {
 // tf_executor.island
 //===----------------------------------------------------------------------===//
 
-YieldOp IslandOp::GetYield() { return llvm::cast<YieldOp>(GetBody().back()); }
+YieldOp IslandOp::GetYield() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_11(mht_11_v, 464, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "IslandOp::GetYield");
+ return llvm::cast<YieldOp>(GetBody().back()); }
 
 // Checks if a tf_executor.island wraps a single operation and the single
 // operation results are perfectly forwarded to the islands yield.
 bool IslandOp::WrapsSingleOp() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_12(mht_12_v, 471, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "IslandOp::WrapsSingleOp");
+
   auto body = GetBody().without_terminator();
   if (!hasSingleElement(body)) return false;
 
@@ -275,6 +482,9 @@ bool IslandOp::WrapsSingleOp() {
 }
 
 mlir::LogicalResult IslandOp::verify() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_13(mht_13_v, 485, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "IslandOp::verify");
+
   IslandOp island = *this;
   if (!island.GetBody().args_empty())
     return island.emitOpError() << "expects body without any arguments";
@@ -309,6 +519,9 @@ mlir::LogicalResult IslandOp::verify() {
 }
 
 void IslandOp::print(OpAsmPrinter &p) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_14(mht_14_v, 522, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "IslandOp::print");
+
   if (getNumOperands()) {
     // These are always control operand, no explicit type needed.
     p << '(';
@@ -337,6 +550,9 @@ void IslandOp::print(OpAsmPrinter &p) {
 }
 
 ParseResult IslandOp::parse(OpAsmParser &parser, OperationState &result) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_15(mht_15_v, 553, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "IslandOp::parse");
+
   llvm::SMLoc loc = parser.getCurrentLocation();
   Type control_type = ControlType::get(parser.getBuilder().getContext());
 
@@ -390,6 +606,9 @@ ParseResult IslandOp::parse(OpAsmParser &parser, OperationState &result) {
 //===----------------------------------------------------------------------===//
 
 ParseResult SwitchOp::parse(OpAsmParser &parser, OperationState &result) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_16(mht_16_v, 609, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "SwitchOp::parse");
+
   SmallVector<OpAsmParser::UnresolvedOperand, 2> op_infos;
   SmallVector<Type, 1> types;
   if (parser.parseOperandList(op_infos) || parser.parseColonTypeList(types))
@@ -430,6 +649,9 @@ ParseResult SwitchOp::parse(OpAsmParser &parser, OperationState &result) {
 }
 
 void SwitchOp::print(OpAsmPrinter &p) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_17(mht_17_v, 652, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "SwitchOp::print");
+
   p << ' ';
   p.printOperands(getOperands());
   Type data_operand_ty = data().getType();
@@ -451,6 +673,9 @@ void SwitchOp::print(OpAsmPrinter &p) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult SwitchNOp::verify() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_18(mht_18_v, 676, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "SwitchNOp::verify");
+
   SwitchNOp switchn = *this;
   IntegerAttr num_outs = switchn->getAttrOfType<IntegerAttr>("num_outs");
   if (!num_outs)
@@ -504,6 +729,9 @@ LogicalResult SwitchNOp::verify() {
 }
 
 void SwitchNOp::print(OpAsmPrinter &p) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_19(mht_19_v, 732, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "SwitchNOp::print");
+
   p << ' ';
   auto operands = getOperands();
   // Print the 2 data operands.
@@ -520,6 +748,9 @@ void SwitchNOp::print(OpAsmPrinter &p) {
 }
 
 ParseResult SwitchNOp::parse(OpAsmParser &parser, OperationState &result) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_20(mht_20_v, 751, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "SwitchNOp::parse");
+
   // Parsing:
   //       %2:6 = tf_executor.SwitchN %0, %1 of 5 : tensor<??xf32>
   // Where the first operand is the data to replicate, the second is an i32
@@ -567,6 +798,9 @@ ParseResult SwitchNOp::parse(OpAsmParser &parser, OperationState &result) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult MergeOp::verify() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_21(mht_21_v, 801, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "MergeOp::verify");
+
   MergeOp merge = *this;
   if (!merge.getNumOperands())
     return merge.emitOpError() << "expects at least one operand";
@@ -616,6 +850,9 @@ LogicalResult MergeOp::verify() {
 }
 
 void MergeOp::print(OpAsmPrinter &p) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_22(mht_22_v, 853, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "MergeOp::print");
+
   // Use short form only when there are exactly two data operands and their
   // type matches the output type. Otherwise, use the generic printer.
   bool use_short_form = true;
@@ -647,6 +884,9 @@ void MergeOp::print(OpAsmPrinter &p) {
 }
 
 ParseResult MergeOp::parse(OpAsmParser &parser, OperationState &result) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_23(mht_23_v, 887, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "MergeOp::parse");
+
   SmallVector<OpAsmParser::UnresolvedOperand, 2> op_infos;
   SmallVector<Type, 1> types;
   llvm::SMLoc loc = parser.getCurrentLocation();
@@ -688,6 +928,9 @@ ParseResult MergeOp::parse(OpAsmParser &parser, OperationState &result) {
 static constexpr int kDefaultParallelIterations = 10;
 
 void EnterOp::print(OpAsmPrinter &p) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_24(mht_24_v, 931, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "EnterOp::print");
+
   p << ' ';
   p.printOperands(getOperands());
 
@@ -712,6 +955,9 @@ void EnterOp::print(OpAsmPrinter &p) {
 }
 
 ParseResult EnterOp::parse(OpAsmParser &parser, OperationState &result) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_25(mht_25_v, 958, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "EnterOp::parse");
+
   SmallVector<OpAsmParser::UnresolvedOperand, 2> op_infos;
   llvm::SMLoc loc = parser.getCurrentLocation();
   MLIRContext *context = parser.getBuilder().getContext();
@@ -773,6 +1019,9 @@ ParseResult EnterOp::parse(OpAsmParser &parser, OperationState &result) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult NextIterationSourceOp::verify() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_26(mht_26_v, 1022, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "NextIterationSourceOp::verify");
+
   NextIterationSourceOp source = *this;
   Value token = source.token();
   if (!token.hasOneUse())
@@ -787,6 +1036,9 @@ LogicalResult NextIterationSourceOp::verify() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult NextIterationSinkOp::verify() {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_27(mht_27_v, 1039, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "NextIterationSinkOp::verify");
+
   NextIterationSinkOp sink = *this;
   Value token = sink.token();
   Operation *definingOp = token.getDefiningOp();
@@ -806,6 +1058,9 @@ LogicalResult NextIterationSinkOp::verify() {
 }
 
 NextIterationSourceOp NextIterationSinkOp::GetSource() {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_28(mht_28_v, 1061, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "NextIterationSinkOp::GetSource");
+
   return cast<NextIterationSourceOp>(token().getDefiningOp());
 }
 
@@ -814,6 +1069,9 @@ NextIterationSourceOp NextIterationSinkOp::GetSource() {
 //===----------------------------------------------------------------------===//
 
 void ExitOp::print(OpAsmPrinter &p) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_29(mht_29_v, 1072, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "ExitOp::print");
+
   p << ' ';
   p.printOperands(getOperands());
   p << " : " << getType(0);
@@ -821,6 +1079,9 @@ void ExitOp::print(OpAsmPrinter &p) {
 }
 
 ParseResult ExitOp::parse(OpAsmParser &parser, OperationState &result) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_30(mht_30_v, 1082, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "ExitOp::parse");
+
   SmallVector<OpAsmParser::UnresolvedOperand, 2> op_infos;
   SmallVector<Type, 1> types;
 
@@ -846,6 +1107,9 @@ ParseResult ExitOp::parse(OpAsmParser &parser, OperationState &result) {
 //===----------------------------------------------------------------------===//
 
 void LoopCondOp::print(OpAsmPrinter &p) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_31(mht_31_v, 1110, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "LoopCondOp::print");
+
   p << ' ';
   p.printOperands(getOperands());
 
@@ -861,6 +1125,9 @@ void LoopCondOp::print(OpAsmPrinter &p) {
 }
 
 ParseResult LoopCondOp::parse(OpAsmParser &parser, OperationState &result) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_32(mht_32_v, 1128, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "LoopCondOp::parse");
+
   SmallVector<OpAsmParser::UnresolvedOperand, 2> op_infos;
 
   if (parser.parseOperandList(op_infos)) return failure();
@@ -912,6 +1179,9 @@ namespace {
 // optionally followed by a terminator.
 template <typename InnerOpT>
 bool HasSingleOpInBlock(Block *block) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_33(mht_33_v, 1182, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "HasSingleOpInBlock");
+
   if (block->empty()) return false;
   if (!llvm::isa<InnerOpT>(block->front())) return false;
   // Either InnerOpT is the only instruction in the block, or there is a
@@ -927,6 +1197,9 @@ struct DropEmptyGraph : public OpRewritePattern<GraphOp> {
 
   LogicalResult matchAndRewrite(GraphOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_34(mht_34_v, 1200, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "matchAndRewrite");
+
     Block &block = op.GetBody();
     // Check if graph only has one fetch.
     if (&block.front() != &block.back()) return failure();
@@ -946,6 +1219,9 @@ struct HoistInnerOpsSingleIslandGraph : public OpRewritePattern<GraphOp> {
 
   LogicalResult matchAndRewrite(GraphOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_35(mht_35_v, 1222, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "matchAndRewrite");
+
     Block &block = op.GetBody();
     // Check if graph only has one island.
     if (!HasSingleOpInBlock<IslandOp>(&block)) return failure();
@@ -985,6 +1261,9 @@ struct HoistInnerOpsSingleIslandGraph : public OpRewritePattern<GraphOp> {
 
 void GraphOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                           MLIRContext *context) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_36(mht_36_v, 1264, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "GraphOp::getCanonicalizationPatterns");
+
   results.add<DropEmptyGraph, HoistInnerOpsSingleIslandGraph>(context);
 }
 
@@ -1002,6 +1281,9 @@ struct DropEmptyIslandNoOperandNoDataResult
 
   LogicalResult matchAndRewrite(IslandOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_37(mht_37_v, 1284, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "matchAndRewrite");
+
     if (op.getNumOperands() != 0 || op.getNumResults() != 1 ||
         !HasSingleOpInBlock<YieldOp>(&op.GetBody()))
       return failure();
@@ -1025,6 +1307,9 @@ struct DropEmptyIslandNoOperandOneDataResult
 
   LogicalResult matchAndRewrite(IslandOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_38(mht_38_v, 1310, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "matchAndRewrite");
+
     if (op.getNumOperands() != 0 || op.getNumResults() != 2 ||
         !op.control().use_empty() ||
         !HasSingleOpInBlock<YieldOp>(&op.GetBody()))
@@ -1043,6 +1328,9 @@ struct DropEmptyIslandNoOperandOneDataResult
 
 void IslandOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                            MLIRContext *context) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_39(mht_39_v, 1331, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "IslandOp::getCanonicalizationPatterns");
+
   results.add<DropEmptyIslandNoOperandNoDataResult,
               DropEmptyIslandNoOperandOneDataResult>(context);
 }
@@ -1059,6 +1347,9 @@ struct DropEmptyControlTrigger : public OpRewritePattern<ControlTriggerOp> {
 
   LogicalResult matchAndRewrite(ControlTriggerOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_40(mht_40_v, 1350, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "matchAndRewrite");
+
     if (op.getNumOperands() != 0) return failure();
 
     for (auto &use : llvm::make_early_inc_range(op.control().getUses()))
@@ -1073,6 +1364,9 @@ struct DropEmptyControlTrigger : public OpRewritePattern<ControlTriggerOp> {
 
 void ControlTriggerOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                    MLIRContext *context) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_41(mht_41_v, 1367, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "ControlTriggerOp::getCanonicalizationPatterns");
+
   results.add<DropEmptyControlTrigger>(context);
 }
 
@@ -1086,6 +1380,9 @@ void ControlTriggerOp::getCanonicalizationPatterns(RewritePatternSet &results,
 
 LogicalResult IslandOp::fold(llvm::ArrayRef<Attribute> operands,
                              llvm::SmallVectorImpl<OpFoldResult> &results) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPSirPStf_executorDTcc mht_42(mht_42_v, 1383, "", "./tensorflow/compiler/mlir/tensorflow/ir/tf_executor.cc", "IslandOp::fold");
+
   // This folds IslandOps with no inner ops, one control operand and no data
   // results. The single control operand is forwarded to the IslandOp control
   // result users.

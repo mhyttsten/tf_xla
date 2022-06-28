@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScPSc_api_function_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScPSc_api_function_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -57,7 +225,10 @@ struct EdgeSpec : public std::pair<string, string> {
   // Inherit the set of constructors
   using Base::pair;
 
-  string ToString() const { return strings::StrCat(first, "->", second); }
+  string ToString() const {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_0(mht_0_v, 229, "", "./tensorflow/c/c_api_function_test.cc", "ToString");
+ return strings::StrCat(first, "->", second); }
 };
 
 class CApiFunctionTest : public ::testing::Test {
@@ -66,11 +237,20 @@ class CApiFunctionTest : public ::testing::Test {
       : s_(TF_NewStatus()),
         func_graph_(TF_NewGraph()),
         host_graph_(TF_NewGraph()),
-        func_(nullptr) {}
+        func_(nullptr) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_1(mht_1_v, 241, "", "./tensorflow/c/c_api_function_test.cc", "CApiFunctionTest");
+}
 
-  void SetUp() override {}
+  void SetUp() override {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_2(mht_2_v, 246, "", "./tensorflow/c/c_api_function_test.cc", "SetUp");
+}
 
   ~CApiFunctionTest() override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_3(mht_3_v, 251, "", "./tensorflow/c/c_api_function_test.cc", "~CApiFunctionTest");
+
     TF_DeleteFunction(func_);
     TF_DeleteGraph(host_graph_);
     TF_DeleteGraph(func_graph_);
@@ -79,6 +259,9 @@ class CApiFunctionTest : public ::testing::Test {
 
   void Run(const std::vector<std::pair<TF_Operation*, TF_Tensor*>>& inputs,
            TF_Operation* output, int32_t expected_result) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_4(mht_4_v, 262, "", "./tensorflow/c/c_api_function_test.cc", "Run");
+
     Run(inputs, {{output, 0}}, {expected_result});
   }
 
@@ -88,6 +271,9 @@ class CApiFunctionTest : public ::testing::Test {
   void RunT(const std::vector<std::pair<TF_Operation*, TF_Tensor*>>& inputs,
             std::initializer_list<TF_Output> outputs,
             const std::vector<std::vector<int32_t>>& expected_results) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_5(mht_5_v, 274, "", "./tensorflow/c/c_api_function_test.cc", "RunT");
+
     // Create a session for this graph
     CSession csession(host_graph_, s_);
     ASSERT_EQ(TF_OK, TF_GetCode(s_)) << TF_Message(s_);
@@ -113,6 +299,9 @@ class CApiFunctionTest : public ::testing::Test {
   void Run(const std::vector<std::pair<TF_Operation*, TF_Tensor*>>& inputs,
            std::initializer_list<TF_Output> outputs,
            const std::vector<int32_t>& expected_results) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_6(mht_6_v, 302, "", "./tensorflow/c/c_api_function_test.cc", "Run");
+
     // Create a session for this graph.
     CSession csession(host_graph_, s_);
     ASSERT_EQ(TF_OK, TF_GetCode(s_)) << TF_Message(s_);
@@ -134,6 +323,9 @@ class CApiFunctionTest : public ::testing::Test {
   }
 
   void CompareInt32Tensor(const std::vector<int32_t>& expected, TF_Tensor* t) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_7(mht_7_v, 326, "", "./tensorflow/c/c_api_function_test.cc", "CompareInt32Tensor");
+
     int32_t* data = static_cast<int32_t*>(TF_TensorData(t));
     size_t size = TF_TensorByteSize(t);
     ASSERT_EQ(expected.size() * sizeof(int32_t), size);
@@ -155,12 +347,18 @@ class CApiFunctionTest : public ::testing::Test {
               const std::vector<TF_Operation*>& outputs,
               const std::vector<string>& output_names,
               bool expect_failure = false) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_8(mht_8_v, 350, "", "./tensorflow/c/c_api_function_test.cc", "Define");
+
     DefineT(num_opers, opers, ToOutput(inputs), ToOutput(outputs), output_names,
             expect_failure);
   }
 
   // Caller must delete[] the returned value
   static const char** ToArray(const std::vector<string>& strs) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_9(mht_9_v, 359, "", "./tensorflow/c/c_api_function_test.cc", "ToArray");
+
     const char** ptr = nullptr;
     if (!strs.empty()) {
       ptr = new const char*[strs.size()];
@@ -179,6 +377,9 @@ class CApiFunctionTest : public ::testing::Test {
                const std::vector<TF_Output>& outputs,
                const std::vector<string>& output_names,
                bool expect_failure = false) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_10(mht_10_v, 380, "", "./tensorflow/c/c_api_function_test.cc", "DefineT");
+
     ASSERT_EQ(func_, nullptr);
     const char** output_names_ptr = ToArray(output_names);
     func_ = TF_GraphToFunction(func_graph_, func_name_, false, num_opers,
@@ -200,10 +401,16 @@ class CApiFunctionTest : public ::testing::Test {
   }
 
   TF_Operation* Use(const std::vector<TF_Operation*>& inputs) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_11(mht_11_v, 404, "", "./tensorflow/c/c_api_function_test.cc", "Use");
+
     return UseT(ToOutput(inputs));
   }
 
   TF_Operation* UseT(const std::vector<TF_Output>& inputs) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_12(mht_12_v, 411, "", "./tensorflow/c/c_api_function_test.cc", "UseT");
+
     TF_Operation* op;
     UseHelper(inputs, &op);
     return op;
@@ -213,6 +420,9 @@ class CApiFunctionTest : public ::testing::Test {
   // one cannot call ASSERT_* methods in non-void-returning functions (when
   // exceptions are disabled during compilation)
   void UseHelper(const std::vector<TF_Output>& inputs, TF_Operation** op) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_13(mht_13_v, 423, "", "./tensorflow/c/c_api_function_test.cc", "UseHelper");
+
     TF_OperationDescription* desc =
         TF_NewOperation(host_graph_, func_name_, func_node_name_);
     for (auto input : inputs) {
@@ -227,6 +437,9 @@ class CApiFunctionTest : public ::testing::Test {
   }
 
   FunctionDef fdef() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_14(mht_14_v, 440, "", "./tensorflow/c/c_api_function_test.cc", "fdef");
+
     tensorflow::FunctionDef fdef;
     EXPECT_TRUE(GetFunctionDef(func_, &fdef));
     return fdef;
@@ -235,6 +448,9 @@ class CApiFunctionTest : public ::testing::Test {
   // logging utility
   template <class Container>
   string ToString(const Container& v) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_15(mht_15_v, 451, "", "./tensorflow/c/c_api_function_test.cc", "ToString");
+
     std::stringstream ss;
     ss << "{";
     size_t i = 0;
@@ -251,6 +467,9 @@ class CApiFunctionTest : public ::testing::Test {
 
   void VerifyFDefNodes(const tensorflow::FunctionDef& fdef,
                        const std::unordered_set<string>& nodes) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_16(mht_16_v, 470, "", "./tensorflow/c/c_api_function_test.cc", "VerifyFDefNodes");
+
     ASSERT_EQ(nodes.size(), fdef.node_def_size())
         << "Got unexpected number of nodes. Expected: ["
         << absl::StrJoin(nodes, ", ")
@@ -264,6 +483,9 @@ class CApiFunctionTest : public ::testing::Test {
 
   void VerifyFDefInputs(const tensorflow::FunctionDef& fdef,
                         const std::vector<IOSpec>& inputs) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_17(mht_17_v, 486, "", "./tensorflow/c/c_api_function_test.cc", "VerifyFDefInputs");
+
     const OpDef& signature = fdef.signature();
     ASSERT_EQ(inputs.size(), signature.input_arg_size());
     for (int i = 0; i < inputs.size(); ++i) {
@@ -281,6 +503,9 @@ class CApiFunctionTest : public ::testing::Test {
 
   void VerifyFDefOutputs(const tensorflow::FunctionDef& fdef,
                          const std::vector<IOSpec>& outputs) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_18(mht_18_v, 506, "", "./tensorflow/c/c_api_function_test.cc", "VerifyFDefOutputs");
+
     const OpDef& signature = fdef.signature();
     ASSERT_EQ(outputs.size(), signature.output_arg_size());
     for (int i = 0; i < outputs.size(); ++i) {
@@ -301,6 +526,9 @@ class CApiFunctionTest : public ::testing::Test {
       const std::vector<EdgeSpec>& e_edges,  // expected edges
       const std::vector<EdgeSpec>& c_edges,  // expected ctrl edges
       bool is_exact_edges = true) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_19(mht_19_v, 529, "", "./tensorflow/c/c_api_function_test.cc", "VerifyFDefEdges");
+
     // Build a set of edges from fdef
     std::set<EdgeSpec> a_edges;  // actual edges
     // Get edges from inputs to body nodes and between body nodes
@@ -356,6 +584,9 @@ class CApiFunctionTest : public ::testing::Test {
                   const std::vector<EdgeSpec>& e_edges,  // expected edges
                   const std::vector<EdgeSpec>& c_edges,  // expected ctrl edges
                   bool is_exact_edges = true) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_20(mht_20_v, 587, "", "./tensorflow/c/c_api_function_test.cc", "VerifyFDef");
+
     tensorflow::FunctionDef fdef;
     ASSERT_TRUE(GetFunctionDef(func_, &fdef));
     VerifyFDefNodes(fdef, nodes);
@@ -366,6 +597,9 @@ class CApiFunctionTest : public ::testing::Test {
 
   // Serialize func_ to fdef and import it back
   void Reincarnate() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_21(mht_21_v, 600, "", "./tensorflow/c/c_api_function_test.cc", "Reincarnate");
+
     // func_ -> fdef
     tensorflow::FunctionDef fdef;
     ASSERT_TRUE(GetFunctionDef(func_, &fdef));
@@ -379,6 +613,10 @@ class CApiFunctionTest : public ::testing::Test {
   }
 
   void GetAttr(const char* attr_name, AttrValue* out_attr) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_22(mht_22_v, 617, "", "./tensorflow/c/c_api_function_test.cc", "GetAttr");
+
     TF_Buffer* attr_buf = TF_NewBuffer();
     TF_FunctionGetAttrValueProto(func_, attr_name, attr_buf, s_);
     ASSERT_TRUE(out_attr->ParseFromArray(attr_buf->data, attr_buf->length));
@@ -1213,6 +1451,10 @@ TEST_F(CApiFunctionTest, OutputOpNotInBody) {
 void DefineFunction(const char* name, TF_Function** func,
                     const char* description = nullptr,
                     bool append_hash = false) {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("name: \"" + (name == nullptr ? std::string("nullptr") : std::string((char*)name)) + "\"");
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_23(mht_23_v, 1455, "", "./tensorflow/c/c_api_function_test.cc", "DefineFunction");
+
   std::unique_ptr<TF_Graph, decltype(&TF_DeleteGraph)> func_graph(
       TF_NewGraph(), TF_DeleteGraph);
   std::unique_ptr<TF_Status, decltype(&TF_DeleteStatus)> s(TF_NewStatus(),
@@ -1239,6 +1481,11 @@ REGISTER_OP("CustomOp")
 void NodeWithPlaceholderAttrHelper(TF_Graph* graph, TF_Status* s,
                                    const char* name, const char* placeholder,
                                    TF_Operation** op) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("name: \"" + (name == nullptr ? std::string("nullptr") : std::string((char*)name)) + "\"");
+   mht_24_v.push_back("placeholder: \"" + (placeholder == nullptr ? std::string("nullptr") : std::string((char*)placeholder)) + "\"");
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_24(mht_24_v, 1486, "", "./tensorflow/c/c_api_function_test.cc", "NodeWithPlaceholderAttrHelper");
+
   TF_OperationDescription* desc = TF_NewOperation(graph, "CustomOp", name);
   TF_SetAttrPlaceholder(desc, "index", placeholder);
   *op = TF_FinishOperation(desc, s);
@@ -1280,6 +1527,12 @@ TEST_F(CApiFunctionTest, GraphToFunctionDefWithPlaceholderAttr) {
 void NodeWithAttrHelper(TF_Graph* graph, TF_Status* s, const char* name,
                         const char* attr_name, const char* attr_value,
                         TF_Operation** op) {
+   std::vector<std::string> mht_25_v;
+   mht_25_v.push_back("name: \"" + (name == nullptr ? std::string("nullptr") : std::string((char*)name)) + "\"");
+   mht_25_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   mht_25_v.push_back("attr_value: \"" + (attr_value == nullptr ? std::string("nullptr") : std::string((char*)attr_value)) + "\"");
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_25(mht_25_v, 1533, "", "./tensorflow/c/c_api_function_test.cc", "NodeWithAttrHelper");
+
   TF_OperationDescription* desc = TF_NewOperation(graph, "Placeholder", name);
   TF_SetAttrType(desc, "dtype", TF_INT32);
   TF_SetAttrString(desc, attr_name, attr_value, strlen(attr_value));
@@ -1591,6 +1844,10 @@ TEST_F(CApiFunctionTest, GetOpDef) {
 }
 
 void DefineStatefulFunction(const char* name, TF_Function** func) {
+   std::vector<std::string> mht_26_v;
+   mht_26_v.push_back("name: \"" + (name == nullptr ? std::string("nullptr") : std::string((char*)name)) + "\"");
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_26(mht_26_v, 1848, "", "./tensorflow/c/c_api_function_test.cc", "DefineStatefulFunction");
+
   std::unique_ptr<TF_Graph, decltype(&TF_DeleteGraph)> func_graph(
       TF_NewGraph(), TF_DeleteGraph);
   std::unique_ptr<TF_Status, decltype(&TF_DeleteStatus)> s(TF_NewStatus(),
@@ -1635,6 +1892,9 @@ TEST_F(CApiFunctionTest, StatefulOpDef) {
 }
 
 void AssertEqual(TF_Function* f1, TF_Function* f2) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_27(mht_27_v, 1895, "", "./tensorflow/c/c_api_function_test.cc", "AssertEqual");
+
   string s1, s2;
   tensorflow::FunctionDef fdef1, fdef2;
   ASSERT_TRUE(GetFunctionDef(f1, &fdef1));
@@ -1645,6 +1905,9 @@ void AssertEqual(TF_Function* f1, TF_Function* f2) {
 }
 
 string GetName(TF_Function* func) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScPSc_api_function_testDTcc mht_28(mht_28_v, 1908, "", "./tensorflow/c/c_api_function_test.cc", "GetName");
+
   tensorflow::FunctionDef fdef;
   GetFunctionDef(func, &fdef);
   return fdef.signature().name();

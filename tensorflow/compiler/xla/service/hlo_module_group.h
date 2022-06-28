@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_HLO_MODULE_GROUP_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_HLO_MODULE_GROUP_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_module_groupDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_module_groupDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_module_groupDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <iosfwd>
 #include <string>
@@ -32,7 +200,11 @@ namespace xla {
 class HloModuleGroup {
  public:
   // Construct an empty module group.
-  explicit HloModuleGroup(absl::string_view name) : name_(name) {}
+  explicit HloModuleGroup(absl::string_view name) : name_(name) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_module_groupDTh mht_0(mht_0_v, 205, "", "./tensorflow/compiler/xla/service/hlo_module_group.h", "HloModuleGroup");
+}
 
   // Construct a module group containing a single module.
   explicit HloModuleGroup(std::unique_ptr<HloModule> module);
@@ -44,10 +216,16 @@ class HloModuleGroup {
                  std::vector<std::unique_ptr<HloModule>>&& modules);
 
   // Returns the modules contained in the group.
-  const std::vector<HloModule*>& modules() const { return module_ptrs_; }
+  const std::vector<HloModule*>& modules() const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_module_groupDTh mht_1(mht_1_v, 220, "", "./tensorflow/compiler/xla/service/hlo_module_group.h", "modules");
+ return module_ptrs_; }
 
   // Returns a module at a particular index.
-  HloModule& module(int index) const { return *module_ptrs_.at(index); }
+  HloModule& module(int index) const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_module_groupDTh mht_2(mht_2_v, 226, "", "./tensorflow/compiler/xla/service/hlo_module_group.h", "module");
+ return *module_ptrs_.at(index); }
 
   // Add a module to the back of vector of modules in the group.
   void push_back(std::unique_ptr<HloModule> module);
@@ -60,12 +238,18 @@ class HloModuleGroup {
   // method runs, the module group will be empty.
   std::vector<std::unique_ptr<HloModule>> ConsumeModules();
 
-  std::string name() const { return name_; }
+  std::string name() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_module_groupDTh mht_3(mht_3_v, 242, "", "./tensorflow/compiler/xla/service/hlo_module_group.h", "name");
+ return name_; }
 
   std::string ToString() const;
 
   // Deallocate removed instructions in each module.
   void Cleanup() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_module_groupDTh mht_4(mht_4_v, 250, "", "./tensorflow/compiler/xla/service/hlo_module_group.h", "Cleanup");
+
     for (auto& module : modules_) {
       module->Cleanup();
     }
@@ -73,6 +257,9 @@ class HloModuleGroup {
 
   template <typename H>
   friend H AbslHashValue(H h, const HloModuleGroup& group) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_module_groupDTh mht_5(mht_5_v, 260, "", "./tensorflow/compiler/xla/service/hlo_module_group.h", "AbslHashValue");
+
     for (auto& module : group.modules_) {
       h = H::combine(std::move(h), *module);
     }
@@ -86,13 +273,26 @@ class HloModuleGroup {
       absl::Span<const HloModuleConfig> module_configs);
 
   // Returns the number of modules in the module group.
-  int size() const { return modules_.size(); }
+  int size() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_module_groupDTh mht_6(mht_6_v, 277, "", "./tensorflow/compiler/xla/service/hlo_module_group.h", "size");
+ return modules_.size(); }
 
   // Returns true if there are no modules in the module group.
-  bool empty() const { return modules_.empty(); }
+  bool empty() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_module_groupDTh mht_7(mht_7_v, 283, "", "./tensorflow/compiler/xla/service/hlo_module_group.h", "empty");
+ return modules_.empty(); }
 
-  absl::string_view cache_key() const { return cache_key_; }
+  absl::string_view cache_key() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_module_groupDTh mht_8(mht_8_v, 288, "", "./tensorflow/compiler/xla/service/hlo_module_group.h", "cache_key");
+ return cache_key_; }
   void set_cache_key(absl::string_view cache_key) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("cache_key: \"" + std::string(cache_key.data(), cache_key.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_module_groupDTh mht_9(mht_9_v, 293, "", "./tensorflow/compiler/xla/service/hlo_module_group.h", "set_cache_key");
+
     cache_key_ = std::string(cache_key);
   }
 

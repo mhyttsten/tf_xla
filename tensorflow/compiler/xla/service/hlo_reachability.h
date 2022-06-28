@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_HLO_REACHABILITY_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_HLO_REACHABILITY_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_reachabilityDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_reachabilityDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_reachabilityDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <cstdio>
 #include <list>
@@ -106,6 +274,9 @@ class HloReachabilityMap {
                                   Index index);
 
   Index GetIndex(const HloInstruction* instruction) const {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_reachabilityDTh mht_0(mht_0_v, 277, "", "./tensorflow/compiler/xla/service/hlo_reachability.h", "GetIndex");
+
     Index i;
     i.v = FindOrDie(indices_, GetKey(instruction));
     return i;
@@ -118,6 +289,9 @@ class HloReachabilityMap {
   // from a to b and does not transitively update any other part of the
   // adjacency matrix.
   void SetReachable(const HloInstruction* a, const HloInstruction* b) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_reachabilityDTh mht_1(mht_1_v, 292, "", "./tensorflow/compiler/xla/service/hlo_reachability.h", "SetReachable");
+
     SetReachable(GetIndex(a), GetIndex(b));
   }
   void SetReachable(Index a, Index b);
@@ -131,23 +305,38 @@ class HloReachabilityMap {
   // Note that this function only correctly answers queries about reachability
   // if the set of edges that have been provided to this class are transitive.
   bool IsReachable(const HloInstruction* a, const HloInstruction* b) const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_reachabilityDTh mht_2(mht_2_v, 308, "", "./tensorflow/compiler/xla/service/hlo_reachability.h", "IsReachable");
+
     return IsReachable(GetIndex(a), GetIndex(b));
   }
-  bool IsReachable(Index a, Index b) const { return GetBitVector(b).Get(a.v); }
+  bool IsReachable(Index a, Index b) const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_reachabilityDTh mht_3(mht_3_v, 314, "", "./tensorflow/compiler/xla/service/hlo_reachability.h", "IsReachable");
+ return GetBitVector(b).Get(a.v); }
 
   // Returns true if "b" is reachable from "a" or "a" is reachable from "b"
   //
   // Note that this function only correctly answers queries about reachability
   // if the set of edges that have been provided to this class are transitive.
   bool IsConnected(const HloInstruction* a, const HloInstruction* b) const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_reachabilityDTh mht_4(mht_4_v, 323, "", "./tensorflow/compiler/xla/service/hlo_reachability.h", "IsConnected");
+
     return IsConnected(GetIndex(a), GetIndex(b));
   }
   bool IsConnected(Index a, Index b) const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_reachabilityDTh mht_5(mht_5_v, 329, "", "./tensorflow/compiler/xla/service/hlo_reachability.h", "IsConnected");
+
     return IsReachable(a, b) || IsReachable(b, a);
   }
 
   // Checks if an instruction is in the Reachability map.
   bool IsPresent(const HloInstruction* a) const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_reachabilityDTh mht_6(mht_6_v, 337, "", "./tensorflow/compiler/xla/service/hlo_reachability.h", "IsPresent");
+
     return indices_.contains(GetKey(a));
   }
 
@@ -163,29 +352,44 @@ class HloReachabilityMap {
    public:
     BitVector() = default;
     BitVector(size_t size)
-        : size_(size), vector_((size + kBits - 1) / kBits, 0) {}
+        : size_(size), vector_((size + kBits - 1) / kBits, 0) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_reachabilityDTh mht_7(mht_7_v, 356, "", "./tensorflow/compiler/xla/service/hlo_reachability.h", "BitVector");
+}
 
     // Return the bit at the given index.
     bool Get(size_t index) const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_reachabilityDTh mht_8(mht_8_v, 362, "", "./tensorflow/compiler/xla/service/hlo_reachability.h", "Get");
+
       DCHECK(index >= 0 && index < size_);
       return vector_[index / kBits] & (1ull << (index % kBits));
     }
 
     // Set the bit at the given index.
     void Set(size_t index) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_reachabilityDTh mht_9(mht_9_v, 371, "", "./tensorflow/compiler/xla/service/hlo_reachability.h", "Set");
+
       DCHECK(index >= 0 && index < size_);
       vector_[index / kBits] |= 1ull << (index % kBits);
     }
 
     // Set this bitvector to the Logical OR of this bitvector and 'other'.
     void OrWith(const BitVector& other) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_reachabilityDTh mht_10(mht_10_v, 380, "", "./tensorflow/compiler/xla/service/hlo_reachability.h", "OrWith");
+
       for (size_t i = 0; i < vector_.size(); ++i) {
         vector_[i] |= other.vector_[i];
       }
     }
 
     // Set the bitvector to all zeros.
-    void SetToZero() { std::fill(vector_.begin(), vector_.end(), 0); }
+    void SetToZero() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_reachabilityDTh mht_11(mht_11_v, 390, "", "./tensorflow/compiler/xla/service/hlo_reachability.h", "SetToZero");
+ std::fill(vector_.begin(), vector_.end(), 0); }
 
     bool operator==(const BitVector& other) const {
       return vector_ == other.vector_;
@@ -206,16 +410,28 @@ class HloReachabilityMap {
 
   // Return the bitvector storing the reachability-to of the given instruction.
   const BitVector& GetBitVector(const HloInstruction* instruction) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_reachabilityDTh mht_12(mht_12_v, 413, "", "./tensorflow/compiler/xla/service/hlo_reachability.h", "GetBitVector");
+
     return GetBitVector(GetIndex(instruction));
   }
   BitVector& GetBitVector(const HloInstruction* instruction) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_reachabilityDTh mht_13(mht_13_v, 419, "", "./tensorflow/compiler/xla/service/hlo_reachability.h", "GetBitVector");
+
     return GetBitVector(GetIndex(instruction));
   }
 
   const BitVector& GetBitVector(Index index) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_reachabilityDTh mht_14(mht_14_v, 426, "", "./tensorflow/compiler/xla/service/hlo_reachability.h", "GetBitVector");
+
     return bit_vectors_[index.v];
   }
-  BitVector& GetBitVector(Index index) { return bit_vectors_[index.v]; }
+  BitVector& GetBitVector(Index index) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_reachabilityDTh mht_15(mht_15_v, 432, "", "./tensorflow/compiler/xla/service/hlo_reachability.h", "GetBitVector");
+ return bit_vectors_[index.v]; }
 
   // Helper for SetReachabilityToUnion/FastSetReachabilityToUnion.
   void SetReachabilityToUnionHelper(
@@ -224,6 +440,9 @@ class HloReachabilityMap {
                                     Index index);
 
   uint64_t GetKey(const HloInstruction* instruction) const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_reachabilityDTh mht_16(mht_16_v, 443, "", "./tensorflow/compiler/xla/service/hlo_reachability.h", "GetKey");
+
     uint64_t unique_id = absl::bit_cast<uint32_t>(instruction->unique_id());
     uint64_t module_id =
         absl::bit_cast<uint32_t>(instruction->parent()->parent()->unique_id());
@@ -231,6 +450,9 @@ class HloReachabilityMap {
   }
   // Return the index of the given instruction.
   int GetIndexInternal(const HloInstruction* instruction) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_reachabilityDTh mht_17(mht_17_v, 453, "", "./tensorflow/compiler/xla/service/hlo_reachability.h", "GetIndexInternal");
+
     return FindOrDie(indices_, GetKey(instruction));
   }
 

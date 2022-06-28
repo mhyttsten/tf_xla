@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSkernelsPSrfft2dDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSrfft2dDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSkernelsPSrfft2dDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,10 +218,16 @@ struct OpData {
   int fft_double_working_area_id = kTensorNotAllocated;
 };
 
-bool IsPowerOfTwo(uint32_t v) { return v && !(v & (v - 1)); }
+bool IsPowerOfTwo(uint32_t v) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSrfft2dDTcc mht_0(mht_0_v, 222, "", "./tensorflow/lite/kernels/rfft2d.cc", "IsPowerOfTwo");
+ return v && !(v & (v - 1)); }
 
 static TfLiteStatus InitTemporaryTensors(TfLiteContext* context,
                                          TfLiteNode* node) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSrfft2dDTcc mht_1(mht_1_v, 228, "", "./tensorflow/lite/kernels/rfft2d.cc", "InitTemporaryTensors");
+
   OpData* data = reinterpret_cast<OpData*>(node->user_data);
   // The prepare function may be executed multiple times. But temporary tensors
   // only need to be initiated once.
@@ -104,6 +278,9 @@ static TfLiteStatus InitTemporaryTensors(TfLiteContext* context,
 
 TfLiteStatus ResizeOutputandTemporaryTensors(TfLiteContext* context,
                                              TfLiteNode* node) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSrfft2dDTcc mht_2(mht_2_v, 281, "", "./tensorflow/lite/kernels/rfft2d.cc", "ResizeOutputandTemporaryTensors");
+
   const TfLiteTensor* input;
   TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kInputTensor, &input));
   const int num_dims = NumDimensions(input);
@@ -157,15 +334,25 @@ TfLiteStatus ResizeOutputandTemporaryTensors(TfLiteContext* context,
 }
 
 void* Init(TfLiteContext* context, const char* buffer, size_t length) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSkernelsPSrfft2dDTcc mht_3(mht_3_v, 338, "", "./tensorflow/lite/kernels/rfft2d.cc", "Init");
+
   auto* data = new OpData;
   return data;
 }
 
 void Free(TfLiteContext* context, void* buffer) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSrfft2dDTcc mht_4(mht_4_v, 346, "", "./tensorflow/lite/kernels/rfft2d.cc", "Free");
+
   delete reinterpret_cast<OpData*>(buffer);
 }
 
 TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSrfft2dDTcc mht_5(mht_5_v, 353, "", "./tensorflow/lite/kernels/rfft2d.cc", "Prepare");
+
   TF_LITE_ENSURE_EQ(context, NumInputs(node), 2);
   TF_LITE_ENSURE_EQ(context, NumOutputs(node), 1);
 
@@ -245,6 +432,9 @@ TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
 //   Real(-3/4, 0) = Real(1/4, 0) = Real(-1/4, 0)
 //   Img(-3/4, 0) = Img(1/4, 0) = -Img(-1/4, 0)
 void Rfft2dReorder(int fft_height, int fft_width, double** fft_input_output) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSrfft2dDTcc mht_6(mht_6_v, 435, "", "./tensorflow/lite/kernels/rfft2d.cc", "Rfft2dReorder");
+
   int fft_height_half;
   ruy::profiler::ScopeLabel label("Rfft2dReorder");
   double real, img;
@@ -300,6 +490,9 @@ void Rfft2dReorder(int fft_height, int fft_width, double** fft_input_output) {
 void Rfft2dImpl(int fft_height, int fft_width, double** fft_input_output,
                 int* fft_integer_working_area_data,
                 double* fft_double_working_area_data) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSrfft2dDTcc mht_7(mht_7_v, 493, "", "./tensorflow/lite/kernels/rfft2d.cc", "Rfft2dImpl");
+
   ruy::profiler::ScopeLabel label("Rfft2dImpl");
 
   // Working data areas for the FFT routines.
@@ -314,6 +507,9 @@ void Rfft2dImpl(int fft_height, int fft_width, double** fft_input_output,
 void PrepareInputBuffer(const float* input_data, int input_height,
                         int input_width, int fft_height, int fft_width,
                         double** fft_input_output) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSrfft2dDTcc mht_8(mht_8_v, 510, "", "./tensorflow/lite/kernels/rfft2d.cc", "PrepareInputBuffer");
+
   int valid_input_height = std::min(input_height, fft_height);
   int valid_input_width = std::min(input_width, fft_width);
   for (int i = 0; i < valid_input_height; ++i) {
@@ -337,6 +533,9 @@ void PrepareInputBuffer(const float* input_data, int input_height,
 
 void PrepareOutputBuffer(complex<float>* output_data, int fft_height,
                          int fft_width, double** fft_input_output) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSrfft2dDTcc mht_9(mht_9_v, 536, "", "./tensorflow/lite/kernels/rfft2d.cc", "PrepareOutputBuffer");
+
   int cnt = 0;
   for (int i = 0; i < fft_height; ++i) {
     for (int j = 0; j < fft_width / 2 + 1; ++j) {
@@ -347,6 +546,9 @@ void PrepareOutputBuffer(complex<float>* output_data, int fft_height,
 }
 
 TfLiteStatus Rfft2dHelper(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSrfft2dDTcc mht_10(mht_10_v, 549, "", "./tensorflow/lite/kernels/rfft2d.cc", "Rfft2dHelper");
+
   const TfLiteTensor* input;
   TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kInputTensor, &input));
   const float* input_data = GetTensorData<float>(input);
@@ -424,6 +626,9 @@ TfLiteStatus Rfft2dHelper(TfLiteContext* context, TfLiteNode* node) {
 }
 
 TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSrfft2dDTcc mht_11(mht_11_v, 629, "", "./tensorflow/lite/kernels/rfft2d.cc", "Eval");
+
   const TfLiteTensor* input;
   TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, kInputTensor, &input));
   const TfLiteTensor* fft_length;
@@ -462,6 +667,9 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
 }  // namespace rfft2d
 
 TfLiteRegistration* Register_RFFT2D() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSrfft2dDTcc mht_12(mht_12_v, 670, "", "./tensorflow/lite/kernels/rfft2d.cc", "Register_RFFT2D");
+
   static TfLiteRegistration r = {rfft2d::Init, rfft2d::Free, rfft2d::Prepare,
                                  rfft2d::Eval};
   return &r;

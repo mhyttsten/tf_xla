@@ -14,6 +14,174 @@ limitations under the License.
 ==============================================================================*/
 #ifndef TENSORFLOW_LITE_KERNELS_TEST_UTIL_H_
 #define TENSORFLOW_LITE_KERNELS_TEST_UTIL_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <stddef.h>
 #include <stdint.h>
@@ -154,17 +322,27 @@ class SingleOpResolver : public OpResolver {
   SingleOpResolver(const BuiltinOperator op, TfLiteRegistration* registration,
                    int version = 1)
       : op_(op), registration_(*registration) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_0(mht_0_v, 325, "", "./tensorflow/lite/kernels/test_util.h", "SingleOpResolver");
+
     registration_.builtin_code = static_cast<int32_t>(op);
     registration_.version = version;
   }
   const TfLiteRegistration* FindOp(BuiltinOperator op,
                                    int version) const override {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_1(mht_1_v, 333, "", "./tensorflow/lite/kernels/test_util.h", "FindOp");
+
     if (op == op_) {
       return &registration_;
     }
     return nullptr;
   }
   const TfLiteRegistration* FindOp(const char* op, int version) const override {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("op: \"" + (op == nullptr ? std::string("nullptr") : std::string((char*)op)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_2(mht_2_v, 343, "", "./tensorflow/lite/kernels/test_util.h", "FindOp");
+
     return nullptr;
   }
 
@@ -175,13 +353,19 @@ class SingleOpResolver : public OpResolver {
 
 class SingleOpModel {
  public:
-  SingleOpModel() {}
+  SingleOpModel() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_3(mht_3_v, 357, "", "./tensorflow/lite/kernels/test_util.h", "SingleOpModel");
+}
   ~SingleOpModel();
 
   // Set a delegate that is applied right after graph is prepared. This is
   // useful for testing other runtimes like NN API or GPU.
   // Note: the caller still owns the memory of the passed-in `delegate`.
   void SetDelegate(TfLiteDelegate* delegate) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_4(mht_4_v, 366, "", "./tensorflow/lite/kernels/test_util.h", "SetDelegate");
+
     delegate_ = delegate;
     // As this is a manually-set TF Lite delegate, we assume the intention of
     // the test is to test against the particular delegate, hence bypassing
@@ -207,6 +391,9 @@ class SingleOpModel {
   // Templated version of AddConstInput().
   template <typename T>
   int AddConstInput(const TensorData& t, std::initializer_list<T> data) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_5(mht_5_v, 394, "", "./tensorflow/lite/kernels/test_util.h", "AddConstInput");
+
     int id = 0;
     if (t.per_channel_quantization) {
       id = AddTensorPerChannelQuant(t, data);
@@ -219,6 +406,9 @@ class SingleOpModel {
   template <typename T>
   int AddConstInput(TensorType type, std::initializer_list<T> data,
                     std::initializer_list<int> shape) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_6(mht_6_v, 409, "", "./tensorflow/lite/kernels/test_util.h", "AddConstInput");
+
     return AddConstInput(TensorData{type, shape}, data);
   }
 
@@ -226,6 +416,9 @@ class SingleOpModel {
   // duplicate code in the two functions below.
   int AddConstSparseInput(const TensorData& t,
                           const std::vector<int8_t>& data) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_7(mht_7_v, 419, "", "./tensorflow/lite/kernels/test_util.h", "AddConstSparseInput");
+
     int id = tensors_.size();
     const int dims_count = t.traversal_order.size();
     std::vector<int8_t> dense_data(data);
@@ -298,6 +491,9 @@ class SingleOpModel {
   template <typename T>
   int AddConstSparseInput(const TensorData& t, const std::vector<T>& data,
                           bool symmetric_quantize = false) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_8(mht_8_v, 494, "", "./tensorflow/lite/kernels/test_util.h", "AddConstSparseInput");
+
     int id = tensors_.size();
     const int dims_count = t.traversal_order.size();
     std::vector<T> dense_data(data);
@@ -403,12 +599,18 @@ class SingleOpModel {
 
   template <typename T>
   void QuantizeAndPopulate(int index, const std::vector<float>& data) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_9(mht_9_v, 602, "", "./tensorflow/lite/kernels/test_util.h", "QuantizeAndPopulate");
+
     TfLiteTensor* t = interpreter_->tensor(index);
     auto q = Quantize<T>(data, t->params.scale, t->params.zero_point);
     PopulateTensor(index, 0, q.data(), q.data() + q.size());
   }
 
   void SymmetricQuantizeAndPopulate(int index, const std::vector<float>& data) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_10(mht_10_v, 611, "", "./tensorflow/lite/kernels/test_util.h", "SymmetricQuantizeAndPopulate");
+
     std::vector<int8_t> q = QuantizeTensor(index, data);
     PopulateTensor(index, /*offset=*/0, reinterpret_cast<uint8_t*>(q.data()),
                    reinterpret_cast<uint8_t*>(q.data() + q.size()));
@@ -416,6 +618,9 @@ class SingleOpModel {
 
   void SignedSymmetricQuantizeAndPopulate(int index,
                                           const std::vector<float>& data) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_11(mht_11_v, 621, "", "./tensorflow/lite/kernels/test_util.h", "SignedSymmetricQuantizeAndPopulate");
+
     std::vector<int8_t> q = QuantizeTensor(index, data);
     PopulateTensor(index, /*offset=*/0, q.data(), q.data() + q.size());
   }
@@ -423,6 +628,9 @@ class SingleOpModel {
   // Quantize and populate data for filter with per channel quantization.
   void PerChannelSymmetricQuantizeAndPopulate(
       int index, const std::vector<float>& input_data) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_12(mht_12_v, 631, "", "./tensorflow/lite/kernels/test_util.h", "PerChannelSymmetricQuantizeAndPopulate");
+
     TfLiteTensor* t = interpreter_->tensor(index);
     auto* params =
         reinterpret_cast<TfLiteAffineQuantization*>(t->quantization.params);
@@ -452,6 +660,9 @@ class SingleOpModel {
   void PerChannelQuantizeBiasPopulateTensor(
       const std::vector<float>& input_data, int index,
       TfLiteAffineQuantization* params) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_13(mht_13_v, 663, "", "./tensorflow/lite/kernels/test_util.h", "PerChannelQuantizeBiasPopulateTensor");
+
     const int32_t num_inputs = input_data.size();
     std::vector<T> quantized_output(num_inputs);
     for (int i = 0; i < num_inputs; ++i) {
@@ -465,6 +676,9 @@ class SingleOpModel {
   void PerChannelQuantizeBiasPopulateTensor(
       int index, const std::vector<float>& input_data,
       const TfLiteAffineQuantization* params) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_14(mht_14_v, 679, "", "./tensorflow/lite/kernels/test_util.h", "PerChannelQuantizeBiasPopulateTensor");
+
     const int32_t num_inputs = input_data.size();
     std::vector<T> quantized_output(num_inputs);
     for (int i = 0; i < num_inputs; ++i) {
@@ -478,6 +692,9 @@ class SingleOpModel {
 
   // Quantize and populate data for bias with per channel quantization.
   void PerChannelQuantizeBias(int index, const std::vector<float>& input_data) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_15(mht_15_v, 695, "", "./tensorflow/lite/kernels/test_util.h", "PerChannelQuantizeBias");
+
     TfLiteTensor* t = interpreter_->tensor(index);
     auto* params =
         reinterpret_cast<TfLiteAffineQuantization*>(t->quantization.params);
@@ -489,10 +706,19 @@ class SingleOpModel {
     }
   }
 
-  const std::vector<int>& GetShape(int id) { return tensor_data_.at(id).shape; }
+  const std::vector<int>& GetShape(int id) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_16(mht_16_v, 710, "", "./tensorflow/lite/kernels/test_util.h", "GetShape");
+ return tensor_data_.at(id).shape; }
 
-  float GetScale(int id) { return tensor_data_.at(id).scale; }
-  int32_t GetZeroPoint(int id) { return tensor_data_.at(id).zero_point; }
+  float GetScale(int id) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_17(mht_17_v, 715, "", "./tensorflow/lite/kernels/test_util.h", "GetScale");
+ return tensor_data_.at(id).scale; }
+  int32_t GetZeroPoint(int id) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_18(mht_18_v, 719, "", "./tensorflow/lite/kernels/test_util.h", "GetZeroPoint");
+ return tensor_data_.at(id).zero_point; }
 
   // Define the operator in this model.
   void SetBuiltinOp(BuiltinOperator type, BuiltinOptions builtin_options_type,
@@ -522,6 +748,9 @@ class SingleOpModel {
   TfLiteStatus InvokeUnchecked();
 
   void PopulateStringTensor(int index, const std::vector<string>& content) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_19(mht_19_v, 751, "", "./tensorflow/lite/kernels/test_util.h", "PopulateStringTensor");
+
     auto tensor = interpreter_->tensor(index);
     DynamicBuffer buf;
     for (const string& s : content) {
@@ -534,6 +763,9 @@ class SingleOpModel {
   // TODO(b/110696148) clean up and merge with vector-taking variant below.
   template <typename T>
   void PopulateTensor(int index, const std::initializer_list<T>& data) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_20(mht_20_v, 766, "", "./tensorflow/lite/kernels/test_util.h", "PopulateTensor");
+
     T* v = interpreter_->typed_tensor<T>(index);
     if (!v) {
       auto* t = interpreter_->tensor(index);
@@ -556,6 +788,9 @@ class SingleOpModel {
   // above.
   template <typename T>
   void PopulateTensor(int index, const std::vector<T>& data) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_21(mht_21_v, 791, "", "./tensorflow/lite/kernels/test_util.h", "PopulateTensor");
+
     T* v = interpreter_->typed_tensor<T>(index);
     if (!v) {
       auto* t = interpreter_->tensor(index);
@@ -576,6 +811,9 @@ class SingleOpModel {
   // Partially populate the tensor, starting at the given offset.
   template <typename T>
   void PopulateTensor(int index, int offset, T* begin, T* end) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_22(mht_22_v, 814, "", "./tensorflow/lite/kernels/test_util.h", "PopulateTensor");
+
     T* v = interpreter_->typed_tensor<T>(index);
     if (!v) {
       auto* t = interpreter_->tensor(index);
@@ -610,7 +848,10 @@ class SingleOpModel {
   }
 
   // Return the TFLite model buffer, only available after BuildInterpreter.
-  const uint8_t* GetModelBuffer() { return builder_.GetBufferPointer(); }
+  const uint8_t* GetModelBuffer() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_23(mht_23_v, 852, "", "./tensorflow/lite/kernels/test_util.h", "GetModelBuffer");
+ return builder_.GetBufferPointer(); }
 
   std::vector<int> GetTensorShape(int index) {
     std::vector<int> result;
@@ -625,6 +866,9 @@ class SingleOpModel {
   // Sets the number of threads available to the interpreter.
   // Reconstruct the interpreter if reset_interpreter is true.
   void SetNumThreads(int num_threads, bool reset_interpreter = false) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_24(mht_24_v, 869, "", "./tensorflow/lite/kernels/test_util.h", "SetNumThreads");
+
     CHECK(interpreter_ != nullptr);
     if (reset_interpreter) {
       // Reconstruct interpreter as number of threads may affect internal state,
@@ -636,6 +880,9 @@ class SingleOpModel {
   }
 
   void SetResolver(std::unique_ptr<OpResolver> resolver) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_25(mht_25_v, 883, "", "./tensorflow/lite/kernels/test_util.h", "SetResolver");
+
     resolver_ = std::move(resolver);
   }
 
@@ -648,7 +895,10 @@ class SingleOpModel {
 
   // Tell TF Lite runtime to skip applying default delegates (i.e. XNNPACK
   // delegate) when handling this op-level model.
-  void SetBypassDefaultDelegates() { bypass_default_delegates_ = true; }
+  void SetBypassDefaultDelegates() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_26(mht_26_v, 899, "", "./tensorflow/lite/kernels/test_util.h", "SetBypassDefaultDelegates");
+ bypass_default_delegates_ = true; }
 
   flatbuffers::FlatBufferBuilder builder_;
   std::unique_ptr<tflite::Interpreter> interpreter_;
@@ -661,6 +911,9 @@ class SingleOpModel {
   template <typename T>
   int AddTensor(TensorData t, std::initializer_list<T> data,
                 bool is_variable = false) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_27(mht_27_v, 914, "", "./tensorflow/lite/kernels/test_util.h", "AddTensor");
+
     int id = tensors_.size();
 
     // This is slightly different depending on whether we are adding a
@@ -796,6 +1049,9 @@ class SingleOpModel {
   }
 
   int AddTensorPerChannelQuant(const TensorData& t) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_28(mht_28_v, 1052, "", "./tensorflow/lite/kernels/test_util.h", "AddTensorPerChannelQuant");
+
     // type does not matter when adding empty data.
     return AddTensorPerChannelQuant<uint8_t>(t, {});
   }
@@ -803,6 +1059,9 @@ class SingleOpModel {
   template <typename T>
   int AddTensorPerChannelQuant(const TensorData& t,
                                const std::initializer_list<T>& data) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_29(mht_29_v, 1062, "", "./tensorflow/lite/kernels/test_util.h", "AddTensorPerChannelQuant");
+
     const int id = tensors_.size();
     flatbuffers::Offset<QuantizationParameters> q_params = 0;
     q_params = CreateQuantizationParameters(
@@ -912,6 +1171,9 @@ class SingleOpModel {
 template <>
 inline void SingleOpModel::PopulateTensor<string>(
     int index, const std::initializer_list<string>& data) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_30(mht_30_v, 1174, "", "./tensorflow/lite/kernels/test_util.h", "SingleOpModel::PopulateTensor<string>");
+
   PopulateStringTensor(index, data);
 }
 
@@ -942,6 +1204,9 @@ class SingleOpTest : public ::testing::TestWithParam<string> {
  protected:
   virtual const std::map<string, TfLiteRegistration*>& GetKernelMap() = 0;
   TfLiteRegistration* GetRegistration() {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_31(mht_31_v, 1207, "", "./tensorflow/lite/kernels/test_util.h", "GetRegistration");
+
     return GetKernelMap().at(GetParam());
   }
 };
@@ -949,6 +1214,9 @@ class SingleOpTest : public ::testing::TestWithParam<string> {
 // Returns the corresponding TensorType given the type T.
 template <typename T>
 TensorType GetTensorType() {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_32(mht_32_v, 1217, "", "./tensorflow/lite/kernels/test_util.h", "GetTensorType");
+
   if (std::is_same<T, float>::value) return TensorType_FLOAT32;
   if (std::is_same<T, TfLiteFloat16>::value) return TensorType_FLOAT16;
   if (std::is_same<T, double>::value) return TensorType_FLOAT64;
@@ -1049,8 +1317,14 @@ struct TypeUnion<uint8_t> {
 
 class MultiOpModel : public SingleOpModel {
  public:
-  MultiOpModel() : SingleOpModel() {}
-  ~MultiOpModel() {}
+  MultiOpModel() : SingleOpModel() {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_33(mht_33_v, 1321, "", "./tensorflow/lite/kernels/test_util.h", "MultiOpModel");
+}
+  ~MultiOpModel() {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_34(mht_34_v, 1325, "", "./tensorflow/lite/kernels/test_util.h", "~MultiOpModel");
+}
 
   void AddBuiltinOp(BuiltinOperator type, BuiltinOptions builtin_options_type,
                     const flatbuffers::Offset<void>& builtin_options,
@@ -1065,6 +1339,9 @@ class MultiOpModel : public SingleOpModel {
 
   template <typename T>
   int AddInnerTensor(TensorData t) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPStest_utilDTh mht_35(mht_35_v, 1342, "", "./tensorflow/lite/kernels/test_util.h", "AddInnerTensor");
+
     return AddTensor<T>(t, {}, false);
   }
 };

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -54,6 +222,9 @@ std::vector<T> GetAsVector(const flatbuffers::Vector<T>* vec) {
 void VerifyAsymmetricQuantizationScale(
     const QuantizationParameters& float_quant_params,
     const QuantizationParametersT& quantized_quant_params) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_0(mht_0_v, 225, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "VerifyAsymmetricQuantizationScale");
+
   const float eps = 1e-7;
   ASSERT_EQ(float_quant_params.min()->size(), 1);
   ASSERT_EQ(float_quant_params.max()->size(), 1);
@@ -68,6 +239,9 @@ void VerifyAsymmetricQuantizationScale(
 }
 
 TensorType GetBiasTensorType(TensorType& activation_type) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_1(mht_1_v, 242, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "GetBiasTensorType");
+
   return activation_type == TensorType_INT16 ? TensorType_INT64
                                              : TensorType_INT32;
 }
@@ -75,6 +249,9 @@ TensorType GetBiasTensorType(TensorType& activation_type) {
 class QuantizeModelTest : public testing::Test {
  protected:
   QuantizeModelTest() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_2(mht_2_v, 252, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeModelTest");
+
     input_model_ = ReadModel(internal::kConvModelWith0Plus10Weights);
     readonly_model_ = input_model_->GetModel();
     readonly_model_->UnPackTo(&model_);
@@ -88,6 +265,9 @@ class QuantizeModelTest : public testing::Test {
 };
 
 void ExpectSameModels(const ModelT& model, const ModelT& expected_model) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_3(mht_3_v, 268, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "ExpectSameModels");
+
   ASSERT_EQ(model.subgraphs.size(), expected_model.subgraphs.size());
   for (size_t subgraph_idx = 0; subgraph_idx < model.subgraphs.size();
        subgraph_idx++) {
@@ -129,6 +309,9 @@ class QuantizeConvModelTest : public QuantizeModelTest,
                               public testing::WithParamInterface<TensorType> {
  protected:
   QuantizeConvModelTest() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_4(mht_4_v, 312, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeConvModelTest");
+
     tensor_type_ = GetParam();
     bias_type_ = GetBiasTensorType(tensor_type_);
     input_model_ = ReadModel(internal::kConvModelWith0Plus10Weights);
@@ -401,6 +584,9 @@ TEST_P(QuantizeConvModelTest, Uint8InputAndOutput) {
 class QuantizeConvNoBiasModelTest : public QuantizeModelTest {
  protected:
   QuantizeConvNoBiasModelTest() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_5(mht_5_v, 587, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeConvNoBiasModelTest");
+
     input_model_ = ReadModel(internal::kConvModelWithNoBias);
     readonly_model_ = input_model_->GetModel();
     readonly_model_->UnPackTo(&model_);
@@ -421,12 +607,18 @@ class QuantizeConcatModelTest : public QuantizeModelTest,
                                 public testing::WithParamInterface<TensorType> {
  protected:
   QuantizeConcatModelTest() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_6(mht_6_v, 610, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeConcatModelTest");
+
     input_model_ = ReadModel(internal::kFloatConcatMax5Max10Max10);
     readonly_model_ = input_model_->GetModel();
     readonly_model_->UnPackTo(&model_);
   }
 
   void SetUp() override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_7(mht_7_v, 619, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "SetUp");
+
     tensor_type_ = GetParam();
     bias_type_ = GetBiasTensorType(tensor_type_);
   }
@@ -538,6 +730,9 @@ INSTANTIATE_TEST_SUITE_P(QuantizeConcatModelInst, QuantizeConcatModelTest,
 class QuantizeSplitModelTest : public QuantizeModelTest {
  protected:
   QuantizeSplitModelTest() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_8(mht_8_v, 733, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeSplitModelTest");
+
     input_model_ = ReadModel(internal::kModelSplit);
     readonly_model_ = input_model_->GetModel();
     readonly_model_->UnPackTo(&model_);
@@ -606,6 +801,9 @@ TEST_F(QuantizeSplitModelTest, QuantizeSplit) {
 class QuantizeConvModel1Test : public QuantizeModelTest {
  protected:
   QuantizeConvModel1Test() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_9(mht_9_v, 804, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeConvModel1Test");
+
     input_model_ = ReadModel(internal::kConvModelWithMinus128Plus127Weights);
     readonly_model_ = input_model_->GetModel();
     readonly_model_->UnPackTo(&model_);
@@ -710,6 +908,9 @@ class QuantizeConvModel2Test : public QuantizeModelTest,
                                public testing::WithParamInterface<TensorType> {
  protected:
   QuantizeConvModel2Test() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_10(mht_10_v, 911, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeConvModel2Test");
+
     tensor_type_ = GetParam();
     bias_type_ = GetBiasTensorType(tensor_type_);
     input_model_ = ReadModel(internal::kConvModelWith0Plus10Weights);
@@ -935,6 +1136,9 @@ TEST_P(QuantizeConvModel2Test, VerifyConvDisablePerChannelQuantization) {
 class QuantizeSoftmaxTest : public QuantizeModelTest {
  protected:
   QuantizeSoftmaxTest() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_11(mht_11_v, 1139, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeSoftmaxTest");
+
     input_model_ = ReadModel(internal::kSingleSoftmaxModelMinMinus5MaxPlus5);
     readonly_model_ = input_model_->GetModel();
     readonly_model_->UnPackTo(&model_);
@@ -997,6 +1201,9 @@ TEST_F(QuantizeSoftmaxTest, VerifySoftmaxQuantization) {
 class QuantizeAvgPoolTest : public QuantizeModelTest {
  protected:
   QuantizeAvgPoolTest() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_12(mht_12_v, 1204, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeAvgPoolTest");
+
     input_model_ = ReadModel(internal::kSingleAvgPoolModelMinMinus5MaxPlus5);
     readonly_model_ = input_model_->GetModel();
     readonly_model_->UnPackTo(&model_);
@@ -1059,6 +1266,9 @@ TEST_F(QuantizeAvgPoolTest, VerifyAvgPoolQuantization) {
 class QuantizeMultiInputAddWithReshapeTest : public QuantizeModelTest {
  protected:
   QuantizeMultiInputAddWithReshapeTest() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_13(mht_13_v, 1269, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeMultiInputAddWithReshapeTest");
+
     input_model_ = ReadModel(internal::kMultiInputAddWithReshape);
     readonly_model_ = input_model_->GetModel();
     readonly_model_->UnPackTo(&model_);
@@ -1172,6 +1382,9 @@ class QuantizeConstInputTest : public QuantizeModelTest,
                                public testing::WithParamInterface<TensorType> {
  protected:
   QuantizeConstInputTest() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_14(mht_14_v, 1385, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeConstInputTest");
+
     tensor_type_ = GetParam();
     bias_type_ = GetBiasTensorType(tensor_type_);
     input_model_ = ReadModel(internal::kConstInputAddModel);
@@ -1233,6 +1446,9 @@ TEST_P(QuantizeConstInputTest, VerifyConstOpInput) {
 class QuantizeArgMaxTest : public QuantizeModelTest {
  protected:
   QuantizeArgMaxTest() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_15(mht_15_v, 1449, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeArgMaxTest");
+
     input_model_ = ReadModel(internal::kModelWithArgMaxOp);
     readonly_model_ = input_model_->GetModel();
     readonly_model_->UnPackTo(&model_);
@@ -1277,6 +1493,9 @@ TEST_F(QuantizeArgMaxTest, VerifyArgMax) {
 class QuantizeLSTMTest : public QuantizeModelTest {
  protected:
   QuantizeLSTMTest() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_16(mht_16_v, 1496, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeLSTMTest");
+
     input_model_ = ReadModel(internal::kLstmCalibrated);
     readonly_model_ = input_model_->GetModel();
     readonly_model_->UnPackTo(&model_);
@@ -1302,6 +1521,9 @@ TEST_F(QuantizeLSTMTest, VerifyLSTM) {
 class QuantizeLSTM2Test : public QuantizeModelTest {
  protected:
   QuantizeLSTM2Test() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_17(mht_17_v, 1524, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeLSTM2Test");
+
     input_model_ = ReadModel(internal::kLstmCalibrated2);
     readonly_model_ = input_model_->GetModel();
     readonly_model_->UnPackTo(&model_);
@@ -1327,6 +1549,9 @@ TEST_F(QuantizeLSTM2Test, VerifyLSTM) {
 class QuantizeUnidirectionalSequenceLSTMTest : public QuantizeModelTest {
  protected:
   QuantizeUnidirectionalSequenceLSTMTest() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_18(mht_18_v, 1552, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeUnidirectionalSequenceLSTMTest");
+
     input_model_ = ReadModel(internal::kUnidirectionalSequenceLstmCalibrated);
     readonly_model_ = input_model_->GetModel();
     readonly_model_->UnPackTo(&model_);
@@ -1354,6 +1579,9 @@ TEST_F(QuantizeUnidirectionalSequenceLSTMTest,
 class QuantizeSVDFTest : public QuantizeModelTest {
  protected:
   QuantizeSVDFTest() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_19(mht_19_v, 1582, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeSVDFTest");
+
     input_model_ = ReadModel(internal::kSvdfCalibrated);
     readonly_model_ = input_model_->GetModel();
     readonly_model_->UnPackTo(&model_);
@@ -1414,6 +1642,9 @@ TEST_F(QuantizeSVDFTest, VerifySVDF) {
 class QuantizeFCTest : public QuantizeModelTest {
  protected:
   QuantizeFCTest() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_20(mht_20_v, 1645, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeFCTest");
+
     input_model_ = ReadModel(internal::kModelWithFCOp);
     readonly_model_ = input_model_->GetModel();
     readonly_model_->UnPackTo(&model_);
@@ -1468,6 +1699,9 @@ class QuantizeCustomOpTest
       public ::testing::WithParamInterface<tflite::TensorType> {
  protected:
   QuantizeCustomOpTest() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_21(mht_21_v, 1702, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeCustomOpTest");
+
     tensor_type_ = GetParam();
     bias_type_ = GetBiasTensorType(tensor_type_);
     input_model_ = ReadModel(internal::kModelMixed);
@@ -1512,6 +1746,9 @@ INSTANTIATE_TEST_SUITE_P(QuantizeCustomOpTest, QuantizeCustomOpTest,
 class QuantizeOp16x8Test : public QuantizeModelTest {
  protected:
   QuantizeOp16x8Test() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_22(mht_22_v, 1749, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeOp16x8Test");
+
     input_model_ = ReadModel(internal::kModelMixed16x8);
     readonly_model_ = input_model_->GetModel();
     readonly_model_->UnPackTo(&model_);
@@ -1547,6 +1784,9 @@ TEST_F(QuantizeOp16x8Test, VerifyMixedQuantization16x8) {
 class QuantizePackTest : public QuantizeModelTest {
  protected:
   QuantizePackTest() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_23(mht_23_v, 1787, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizePackTest");
+
     input_model_ = ReadModel(internal::kModelPack);
     readonly_model_ = input_model_->GetModel();
     readonly_model_->UnPackTo(&model_);
@@ -1611,6 +1851,9 @@ class QuantizeMinimumMaximumTest
       public testing::WithParamInterface<const char*> {
  protected:
   QuantizeMinimumMaximumTest() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_24(mht_24_v, 1854, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeMinimumMaximumTest");
+
     input_model_ = ReadModel(GetParam());
     readonly_model_ = input_model_->GetModel();
     readonly_model_->UnPackTo(&model_);
@@ -1687,6 +1930,9 @@ INSTANTIATE_TEST_SUITE_P(MinimumMaximumTestInst, QuantizeMinimumMaximumTest,
 class QuantizeUnpackTest : public QuantizeModelTest {
  protected:
   QuantizeUnpackTest() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_25(mht_25_v, 1933, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeUnpackTest");
+
     input_model_ = ReadModel(internal::kModelWithUnpack);
     readonly_model_ = input_model_->GetModel();
     readonly_model_->UnPackTo(&model_);
@@ -1735,6 +1981,9 @@ TEST_F(QuantizeUnpackTest, VerifyUnpack) {
 class QuantizeTransposeTest : public QuantizeModelTest {
  protected:
   QuantizeTransposeTest() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_26(mht_26_v, 1984, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeTransposeTest");
+
     input_model_ = ReadModel(internal::kModelWithTranspose);
     readonly_model_ = input_model_->GetModel();
     readonly_model_->UnPackTo(&model_);
@@ -1779,6 +2028,9 @@ TEST_F(QuantizeTransposeTest, VerifyTranspose) {
 class QuantizeQatTest : public QuantizeModelTest {
  protected:
   QuantizeQatTest() {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_27(mht_27_v, 2031, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeQatTest");
+
     input_model_ = ReadModel(internal::kQatModelWithFc);
     readonly_model_ = input_model_->GetModel();
     readonly_model_->UnPackTo(&model_);
@@ -1839,6 +2091,9 @@ class QuantizeBroadcastToModelTest
       public testing::WithParamInterface<TensorType> {
  protected:
   QuantizeBroadcastToModelTest() {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_28(mht_28_v, 2094, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeBroadcastToModelTest");
+
     tensor_type_ = GetParam();
     bias_type_ = GetBiasTensorType(tensor_type_);
     input_model_ = ReadModel(internal::kModelWithBroadcastToOp);
@@ -1908,6 +2163,9 @@ class QuantizeGatherNDModelTest
       public testing::WithParamInterface<TensorType> {
  protected:
   QuantizeGatherNDModelTest() {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_29(mht_29_v, 2166, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeGatherNDModelTest");
+
     tensor_type_ = GetParam();
     bias_type_ = GetBiasTensorType(tensor_type_);
     input_model_ = ReadModel(internal::kModelWithGatherNDOp);
@@ -1973,6 +2231,9 @@ TEST_P(QuantizeGatherNDModelTest, QuantizeGatherND) {
 class QuantizeWhereModelTest : public QuantizeModelTest {
  protected:
   QuantizeWhereModelTest() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_30(mht_30_v, 2234, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeWhereModelTest");
+
     input_model_ = ReadModel(internal::kModelWithWhereOp);
     readonly_model_ = input_model_->GetModel();
     readonly_model_->UnPackTo(&model_);
@@ -2046,6 +2307,9 @@ class QuantizeResourcesModelTest
       public testing::WithParamInterface<TestType> {
  protected:
   QuantizeResourcesModelTest() {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_31(mht_31_v, 2310, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeResourcesModelTest");
+
     TestType obj = GetParam();
     tensor_type_ = obj.tensor_type;
     modify_range_ = obj.modify_range;
@@ -2058,6 +2322,9 @@ class QuantizeResourcesModelTest
     }
   }
   void ModifyRange(ModelT* model) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_32(mht_32_v, 2325, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "ModifyRange");
+
     // Modify ranges to test when min/max of the primary subgraph variable
     // is smaller than the initializer subgraph.
     const bool do_read = (modify_range_ == ModifyRangeType::kAll ||
@@ -2190,6 +2457,9 @@ class QuantizeConcatConstModelTest
       public testing::WithParamInterface<TensorType> {
  protected:
   QuantizeConcatConstModelTest() {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_33(mht_33_v, 2460, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "QuantizeConcatConstModelTest");
+
     input_model_ = ReadModel(internal::kFloatConcatMax5Max10Max10);
     readonly_model_ = input_model_->GetModel();
     readonly_model_->UnPackTo(&model_);
@@ -2198,11 +2468,17 @@ class QuantizeConcatConstModelTest
   }
 
   void SetUp() override {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_34(mht_34_v, 2471, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "SetUp");
+
     tensor_type_ = GetParam();
     bias_type_ = GetBiasTensorType(tensor_type_);
   }
 
   void MakeInputConstant(tflite::ModelT* model) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_35(mht_35_v, 2479, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "MakeInputConstant");
+
     auto& subgraph = model->subgraphs[0];
     const int tensor_id = subgraph->inputs.back();
     int replace_tensor_id = subgraph->inputs[0];
@@ -2297,6 +2573,9 @@ class BiasInputTest : public QuantizeModelTest,
                       public testing::WithParamInterface<BiasTestType> {
  protected:
   BiasInputTest() {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_36(mht_36_v, 2576, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "BiasInputTest");
+
     BiasTestType obj = GetParam();
     tensor_type_ = obj.tensor_type;
     bias_type_ = obj.bias_type;
@@ -2338,6 +2617,9 @@ TEST_P(BiasInputTest, QuantizationSucceeds) {
 }  // namespace tflite
 
 int main(int argc, char** argv) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSquantize_model_testDTcc mht_37(mht_37_v, 2620, "", "./tensorflow/lite/tools/optimize/quantize_model_test.cc", "main");
+
   tensorflow::string model_file;
   const std::vector<tensorflow::Flag> flag_list = {
       tensorflow::Flag("test_model_file", &model_file,

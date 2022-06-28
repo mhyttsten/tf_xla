@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,11 +206,17 @@ struct UserangeInfoBuilder {
                       OperationListT op_list)
       : values(std::move(values)),
         op_list(std::move(op_list)),
-        liveness(std::move(liveness)) {}
+        liveness(std::move(liveness)) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc mht_0(mht_0_v, 210, "", "./tensorflow/compiler/mlir/hlo/lib/Analysis/userange_analysis.cc", "UserangeInfoBuilder");
+}
 
   /// Computes the userange of the current value by iterating over all of its
   /// uses.
   Liveness::OperationListT computeUserange() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc mht_1(mht_1_v, 217, "", "./tensorflow/compiler/mlir/hlo/lib/Analysis/userange_analysis.cc", "computeUserange");
+
     Region *topRegion = findTopRegion();
     // Iterate over all associated uses.
     for (Operation *use : op_list) {
@@ -66,6 +240,9 @@ struct UserangeInfoBuilder {
  private:
   /// Find the top most Region of all values stored in the values set.
   Region *findTopRegion() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc mht_2(mht_2_v, 243, "", "./tensorflow/compiler/mlir/hlo/lib/Analysis/userange_analysis.cc", "findTopRegion");
+
     Region *topRegion = nullptr;
     llvm::for_each(values, [&](Value v) {
       Region *other = v.getParentRegion();
@@ -77,6 +254,9 @@ struct UserangeInfoBuilder {
   /// Finds the highest level block that has the current value in its liveOut
   /// set.
   Block *findTopLiveBlock(Operation *op) const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc mht_3(mht_3_v, 257, "", "./tensorflow/compiler/mlir/hlo/lib/Analysis/userange_analysis.cc", "findTopLiveBlock");
+
     Operation *topOp = op;
     while (const LivenessBlockInfo *blockInfo =
                liveness.getLiveness(op->getBlock())) {
@@ -93,6 +273,9 @@ struct UserangeInfoBuilder {
   /// it are included as well. If includeEnd is false the end operation is not
   /// added.
   void addAllOperationsBetween(Operation *start, Operation *end) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc mht_4(mht_4_v, 276, "", "./tensorflow/compiler/mlir/hlo/lib/Analysis/userange_analysis.cc", "addAllOperationsBetween");
+
     current_userange.push_back(start);
     addAllOperationsInRegion(start);
 
@@ -107,6 +290,9 @@ struct UserangeInfoBuilder {
   /// userange of the current value. Additionally iterate over all successors
   /// where the value is live.
   void findOperationsInUse(Block *block) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc mht_5(mht_5_v, 293, "", "./tensorflow/compiler/mlir/hlo/lib/Analysis/userange_analysis.cc", "findOperationsInUse");
+
     SmallVector<Block *, 8> blocksToProcess;
     addOperationsInBlockAndFindSuccessors(
         block, block, getStartOperation(block), blocksToProcess);
@@ -126,6 +312,9 @@ struct UserangeInfoBuilder {
   void addOperationsInBlockAndFindSuccessors(
       const Block *startBlock, Block *toProcess, Operation *start,
       SmallVector<Block *, 8> &blocksToProcess) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc mht_6(mht_6_v, 315, "", "./tensorflow/compiler/mlir/hlo/lib/Analysis/userange_analysis.cc", "addOperationsInBlockAndFindSuccessors");
+
     const LivenessBlockInfo *blockInfo = liveness.getLiveness(toProcess);
     Operation *end = getEndOperation(toProcess);
 
@@ -158,6 +347,9 @@ struct UserangeInfoBuilder {
   /// Iterates over all regions of a given operation and adds all operations
   /// inside those regions to the userange of the current value.
   void addAllOperationsInRegion(Operation *parentOp) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc mht_7(mht_7_v, 350, "", "./tensorflow/compiler/mlir/hlo/lib/Analysis/userange_analysis.cc", "addAllOperationsInRegion");
+
     // Iterate over all regions of the parentOp.
     for (Region &region : parentOp->getRegions()) {
       // Iterate over blocks inside the region.
@@ -190,6 +382,9 @@ struct UserangeInfoBuilder {
 
   /// Find the start operation of the current value inside the given block.
   Operation *getStartOperation(Block *block) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc mht_8(mht_8_v, 385, "", "./tensorflow/compiler/mlir/hlo/lib/Analysis/userange_analysis.cc", "getStartOperation");
+
     Operation *startOperation = &block->back();
     for (Operation *useOp : op_list) {
       // Find the associated operation in the current block (if any).
@@ -204,6 +399,9 @@ struct UserangeInfoBuilder {
 
   /// Find the end operation of the current value inside the given block.
   Operation *getEndOperation(Block *block) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc mht_9(mht_9_v, 402, "", "./tensorflow/compiler/mlir/hlo/lib/Analysis/userange_analysis.cc", "getEndOperation");
+
     const LivenessBlockInfo *blockInfo = liveness.getLiveness(block);
     if (llvm::any_of(values, [&](Value v) { return blockInfo->isLiveOut(v); }))
       return &block->back();
@@ -242,11 +440,17 @@ struct UserangeInfoBuilder {
 /// Empty UseInterval Constructor.
 UseInterval::UseInterval()
     : start(std::numeric_limits<size_t>::max()),
-      end(std::numeric_limits<size_t>::min()) {}
+      end(std::numeric_limits<size_t>::min()) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc mht_10(mht_10_v, 444, "", "./tensorflow/compiler/mlir/hlo/lib/Analysis/userange_analysis.cc", "UseInterval::UseInterval");
+}
 
 /// Performs an interval subtraction => A = A - B.
 void UseInterval::intervalSubtract(UseInterval::Vector &a,
                                    const UseInterval::Vector &b) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc mht_11(mht_11_v, 451, "", "./tensorflow/compiler/mlir/hlo/lib/Analysis/userange_analysis.cc", "UseInterval::intervalSubtract");
+
   const auto *iterB = b.begin();
   const auto *endB = b.end();
   for (auto *iterA = a.begin(); iterA != a.end() && iterB != endB;) {
@@ -288,6 +492,9 @@ void UseInterval::intervalSubtract(UseInterval::Vector &a,
 /// Performs an interval intersection => A = A ^ B.
 void UseInterval::intervalIntersect(UseInterval::Vector &a,
                                     const UseInterval::Vector &b) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc mht_12(mht_12_v, 495, "", "./tensorflow/compiler/mlir/hlo/lib/Analysis/userange_analysis.cc", "UseInterval::intervalIntersect");
+
   const auto *iterB = b.begin();
   const auto *endB = b.end();
   for (auto *iterA = a.begin(); iterA != a.end();) {
@@ -319,6 +526,9 @@ void UseInterval::intervalIntersect(UseInterval::Vector &a,
 /// Note: All overlapping and contiguous UseIntervals are merged.
 void UseInterval::intervalMerge(UseInterval::Vector &a,
                                 const UseInterval::Vector &b) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc mht_13(mht_13_v, 529, "", "./tensorflow/compiler/mlir/hlo/lib/Analysis/userange_analysis.cc", "UseInterval::intervalMerge");
+
   const auto *iterB = b.begin();
   const auto *endB = b.end();
   // Iterate over UseInterval::Vector a and b.
@@ -357,6 +567,9 @@ void UseInterval::intervalMerge(UseInterval::Vector &a,
 void UseInterval::mergeAndEraseContiguousIntervals(
     UseInterval::Vector &interval, UseInterval *iter,
     const UseInterval &toMerge) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc mht_14(mht_14_v, 570, "", "./tensorflow/compiler/mlir/hlo/lib/Analysis/userange_analysis.cc", "UseInterval::mergeAndEraseContiguousIntervals");
+
   // Return if the iter points to the end.
   if (iter == interval.end()) return;
 
@@ -378,6 +591,9 @@ UserangeAnalysis::UserangeAnalysis(
     Operation *op, const bufferization::BufferPlacementAllocs &allocs,
     const BufferViewFlowAnalysis &aliases)
     : liveness(op) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc mht_15(mht_15_v, 594, "", "./tensorflow/compiler/mlir/hlo/lib/Analysis/userange_analysis.cc", "UserangeAnalysis::UserangeAnalysis");
+
   // Walk over all operations and map them to an ID.
   op->walk([&](Operation *operation) {
     gatherMemoryEffects(operation);
@@ -453,6 +669,9 @@ UserangeAnalysis::UserangeAnalysis(
 /// the program sequence. If the value has only read effects, the returning ID
 /// will be even, otherwise odd.
 size_t UserangeAnalysis::computeId(Value v, Operation *op) const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc mht_16(mht_16_v, 672, "", "./tensorflow/compiler/mlir/hlo/lib/Analysis/userange_analysis.cc", "UserangeAnalysis::computeId");
+
   size_t doubledID = (operationIds.find(op)->second + 1) * 2 - 1;
   auto mapIter = opReadWriteMap.find(op);
   if (mapIter == opReadWriteMap.end()) return doubledID;
@@ -465,6 +684,9 @@ size_t UserangeAnalysis::computeId(Value v, Operation *op) const {
 /// Computes the UsePositions of the given Value, sorts and inserts them into
 /// the usePositionMap.
 void UserangeAnalysis::computeUsePositions(Value v) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc mht_17(mht_17_v, 687, "", "./tensorflow/compiler/mlir/hlo/lib/Analysis/userange_analysis.cc", "UserangeAnalysis::computeUsePositions");
+
   // Get the uses of v.
   const Value::use_range &uses = v.getUses();
 
@@ -492,6 +714,9 @@ void UserangeAnalysis::computeUsePositions(Value v) {
 /// Merges listB into listA, sorts the result and removes all duplicates.
 void UserangeAnalysis::mergeUsePositions(UsePositionList &listA,
                                          const UsePositionList &listB) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc mht_18(mht_18_v, 717, "", "./tensorflow/compiler/mlir/hlo/lib/Analysis/userange_analysis.cc", "UserangeAnalysis::mergeUsePositions");
+
   // Insert listB into listA.
   listA.insert(listA.end(), listB.begin(), listB.end());
 
@@ -507,6 +732,9 @@ void UserangeAnalysis::mergeUsePositions(UsePositionList &listA,
 
 /// Checks if the use intervals of the given values interfere.
 bool UserangeAnalysis::rangesInterfere(Value itemA, Value itemB) const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc mht_19(mht_19_v, 735, "", "./tensorflow/compiler/mlir/hlo/lib/Analysis/userange_analysis.cc", "UserangeAnalysis::rangesInterfere");
+
   ValueSetT intersect = aliasCache.find(itemA)->second;
   llvm::set_intersect(intersect, aliasCache.find(itemB)->second);
   UseInterval::Vector tmpIntervalA = useIntervalMap.find(itemA)->second;
@@ -539,12 +767,18 @@ bool UserangeAnalysis::rangesInterfere(Value itemA, Value itemB) const {
 
 /// Merges the userange of itemB into the userange of itemA.
 void UserangeAnalysis::unionRanges(Value itemA, Value itemB) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc mht_20(mht_20_v, 770, "", "./tensorflow/compiler/mlir/hlo/lib/Analysis/userange_analysis.cc", "UserangeAnalysis::unionRanges");
+
   UseInterval::intervalMerge(useIntervalMap[itemA], useIntervalMap[itemB]);
 }
 
 /// Builds an UseInterval::Vector corresponding to the given OperationList.
 UseInterval::Vector UserangeAnalysis::computeInterval(
     Value value, const Liveness::OperationListT &operationList) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc mht_21(mht_21_v, 779, "", "./tensorflow/compiler/mlir/hlo/lib/Analysis/userange_analysis.cc", "UserangeAnalysis::computeInterval");
+
   assert(!operationList.empty() && "Operation list must not be empty");
   size_t start = computeId(value, *operationList.begin());
   size_t last = start;
@@ -567,6 +801,9 @@ UseInterval::Vector UserangeAnalysis::computeInterval(
 /// Checks each operand within the operation for its memory effects and
 /// separates them into read and write.
 void UserangeAnalysis::gatherMemoryEffects(Operation *op) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc mht_22(mht_22_v, 804, "", "./tensorflow/compiler/mlir/hlo/lib/Analysis/userange_analysis.cc", "UserangeAnalysis::gatherMemoryEffects");
+
   if (OpTrait::hasElementwiseMappableTraits(op)) {
     if (auto effectInterface = dyn_cast<MemoryEffectOpInterface>(op)) {
       SmallPtrSet<Value, 2> readEffectSet;
@@ -589,9 +826,15 @@ void UserangeAnalysis::gatherMemoryEffects(Operation *op) {
 }
 
 /// Computes the doubled Id back to the OperationId.
-size_t UserangeAnalysis::unwrapId(size_t id) const { return id / 2; }
+size_t UserangeAnalysis::unwrapId(size_t id) const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc mht_23(mht_23_v, 830, "", "./tensorflow/compiler/mlir/hlo/lib/Analysis/userange_analysis.cc", "UserangeAnalysis::unwrapId");
+ return id / 2; }
 
 void UserangeAnalysis::dump(raw_ostream &os) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSAnalysisPSuserange_analysisDTcc mht_24(mht_24_v, 835, "", "./tensorflow/compiler/mlir/hlo/lib/Analysis/userange_analysis.cc", "UserangeAnalysis::dump");
+
   os << "// ---- UserangeAnalysis -----\n";
   llvm::SmallVector<Value> values;
   values.reserve(useIntervalMap.size());

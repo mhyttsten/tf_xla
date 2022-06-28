@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,23 +206,37 @@ namespace fusion_utils {
 
 namespace {
 string ParseNodeConnection(const string& name) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_0(mht_0_v, 210, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "ParseNodeConnection");
+
   // If input/output node name has semicolon, take the prefix.  Otherwise take
   // the whole string.
   return name.substr(0, name.find(':'));
 }
 
 string ParseOutputNode(const string& name) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_1(mht_1_v, 220, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "ParseOutputNode");
+
   if (name.find(':') == string::npos) return {};
   return name.substr(name.find(':'), string::npos);
 }
 
 string GetOutputNode(const FunctionDef& function, int output_idx) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_2(mht_2_v, 228, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "GetOutputNode");
+
   const auto& ret_output_name =
       function.signature().output_arg(output_idx).name();
   return function.ret().at(ret_output_name);
 }
 
 string& GetMutableOutputNode(FunctionDef* function, int output_idx) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_3(mht_3_v, 237, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "GetMutableOutputNode");
+
   const auto& ret_output_name =
       function->signature().output_arg(output_idx).name();
   return function->mutable_ret()->at(ret_output_name);
@@ -62,6 +244,9 @@ string& GetMutableOutputNode(FunctionDef* function, int output_idx) {
 
 template <typename Iterable>
 StringCollection GetNames(const Iterable& iterable, int allocate_size) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_4(mht_4_v, 247, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "GetNames");
+
   StringCollection names;
   names.reserve(allocate_size);
   for (auto& arg : iterable) names.push_back(arg.name());
@@ -116,10 +301,16 @@ gtl::FlatMap<string, string> GetUniqueNames(const Iterable& first_iterable,
 void RenameFunctionNodes(const FunctionDef& first_function,
                          protobuf::RepeatedPtrField<NodeDef>* nodes_to_fuse,
                          protobuf::Map<string, string>* rets_to_fuse) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_5(mht_5_v, 304, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "RenameFunctionNodes");
+
   const gtl::FlatMap<string, string> changed_node_names =
       GetUniqueNames(first_function.node_def(), *nodes_to_fuse);
 
   auto update_name = [&changed_node_names](string* input) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_6(mht_6_v, 311, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "lambda");
+
     string input_node = ParseNodeConnection(*input);
     auto iter = changed_node_names.find(input_node);
     if (iter != changed_node_names.end()) {
@@ -142,6 +333,9 @@ void RenameFunctionNodes(const FunctionDef& first_function,
 }
 
 StringCollection GetFunctionInputs(const FunctionDef& function) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_7(mht_7_v, 336, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "GetFunctionInputs");
+
   return GetNames(function.signature().input_arg(),
                   function.signature().input_arg_size());
 }
@@ -153,6 +347,9 @@ OpDef GetUniqueSignature(const OpDef& first_signature,
                          const OpDef& second_signature,
                          protobuf::Map<string, string>* rets_to_fuse,
                          protobuf::RepeatedPtrField<NodeDef>* nodes_to_fuse) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_8(mht_8_v, 350, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "GetUniqueSignature");
+
   const gtl::FlatMap<string, string> changed_input_names =
       GetUniqueNames(first_signature.input_arg(), second_signature.input_arg());
   OpDef signature;
@@ -213,6 +410,9 @@ void FuseFunctionNodes(const StringCollection& first_inputs,
                        const StringCollection& first_outputs,
                        const SetInputFn& set_input,
                        protobuf::RepeatedPtrField<NodeDef>* nodes_to_fuse) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_9(mht_9_v, 413, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "FuseFunctionNodes");
+
   for (NodeDef& function_node : *nodes_to_fuse) {
     for (auto& node_input : *function_node.mutable_input()) {
       auto parsed_name = ParseNodeConnection(node_input);
@@ -235,6 +435,9 @@ void FuseReturns(const StringCollection& first_inputs,
                  const StringCollection& first_outputs,
                  const SetInputFn& set_input,
                  protobuf::Map<string, string>* fused_ret) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_10(mht_10_v, 438, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "FuseReturns");
+
   for (auto& ret : *fused_ret) {
     auto return_input = ParseNodeConnection(ret.second);
     auto input_it =
@@ -249,6 +452,9 @@ void FuseReturns(const StringCollection& first_inputs,
 
 // Returns collection of node names that are used as a return from function.
 StringCollection GetFunctionOutputs(const FunctionDef& function) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_11(mht_11_v, 455, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "GetFunctionOutputs");
+
   const auto number_of_outputs = function.signature().output_arg_size();
   StringCollection outputs;
   outputs.reserve(number_of_outputs);
@@ -261,6 +467,9 @@ StringCollection GetFunctionOutputs(const FunctionDef& function) {
 FunctionDef* CreateFalsePredicate(
     const protobuf::RepeatedPtrField<OpDef_ArgDef>& fake_args,
     FunctionDefLibrary* library) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_12(mht_12_v, 470, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "CreateFalsePredicate");
+
   GraphDef graph;
   MutableGraphView graph_view(&graph);
   auto* node = graph_utils::AddScalarConstNode(false, &graph_view);
@@ -287,6 +496,9 @@ FunctionDef* CreateFalsePredicate(
 
 void CheckIfCanCompose(const OpDef& first_signature,
                        const OpDef& second_signature) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_13(mht_13_v, 499, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "CheckIfCanCompose");
+
   CHECK(CanCompose(first_signature, second_signature))
       << "The number of input arguments of function " << second_signature.name()
       << " should be the same as the number of output arguments of function "
@@ -298,6 +510,9 @@ void CheckIfCanCompose(const OpDef& first_signature,
 void MergeNodes(const FunctionDef& first_function,
                 const FunctionDef& second_function, FunctionDef* fused_function,
                 FunctionDefLibrary* library) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_14(mht_14_v, 513, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "MergeNodes");
+
   // Copy all nodes from first_function.
   fused_function->mutable_node_def()->CopyFrom(first_function.node_def());
   // Copy transformed nodes from the second function.
@@ -305,6 +520,9 @@ void MergeNodes(const FunctionDef& first_function,
 }
 
 bool CanCompose(const OpDef& first_signature, const OpDef& second_signature) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_15(mht_15_v, 523, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "CanCompose");
+
   // TODO(prazek): Functions can have additional inputs being placeholders
   // for a values used in function.  We should be able to also fuse these
   // functions.
@@ -314,12 +532,18 @@ bool CanCompose(const OpDef& first_signature, const OpDef& second_signature) {
 string ComposeInput(const StringCollection& first_inputs,
                     const StringCollection& second_inputs,
                     const StringCollection& first_outputs, int arg_num) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_16(mht_16_v, 535, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "ComposeInput");
+
   // Take corresponding parent output.
   return first_outputs.at(arg_num);
 }
 
 void ComposeSignature(const OpDef& first_signature,
                       const OpDef& second_signature, OpDef* fused_signature) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_17(mht_17_v, 544, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "ComposeSignature");
+
   CheckIfCanCompose(first_signature, second_signature);
 
   // Copy input signature from parent function.
@@ -331,11 +555,17 @@ void ComposeSignature(const OpDef& first_signature,
 void ComposeOutput(const protobuf::Map<string, string>& first_ret,
                    const protobuf::Map<string, string>& second_ret,
                    protobuf::Map<string, string>* fused_ret) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_18(mht_18_v, 558, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "ComposeOutput");
+
   *fused_ret = second_ret;
 }
 
 void CombineSignature(const OpDef& first_signature,
                       const OpDef& second_signature, OpDef* fused_signature) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_19(mht_19_v, 566, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "CombineSignature");
+
   CheckIfCanCompose(first_signature, second_signature);
   // Copy input and output signature from parent function.
   *fused_signature = first_signature;
@@ -348,6 +578,9 @@ void CombineSignature(const OpDef& first_signature,
 void CombineOutput(const protobuf::Map<string, string>& first_ret,
                    const protobuf::Map<string, string>& second_ret,
                    protobuf::Map<string, string>* fused_ret) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_20(mht_20_v, 581, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "CombineOutput");
+
   *fused_ret = first_ret;
   fused_ret->insert(second_ret.begin(), second_ret.end());
 }
@@ -355,11 +588,17 @@ void CombineOutput(const protobuf::Map<string, string>& first_ret,
 string SameInput(const StringCollection& first_inputs,
                  const StringCollection& second_inputs,
                  const StringCollection& first_outputs, int arg_num) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_21(mht_21_v, 591, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "SameInput");
+
   return first_inputs.at(arg_num);
 }
 
 bool HasSameSignature(const OpDef& first_signature,
                       const OpDef& second_signature) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_22(mht_22_v, 599, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "HasSameSignature");
+
   return first_signature.input_arg_size() ==
              second_signature.input_arg_size() &&
          first_signature.output_arg_size() ==
@@ -368,6 +607,9 @@ bool HasSameSignature(const OpDef& first_signature,
 
 void SameSignature(const OpDef& first_signature, const OpDef& second_signature,
                    OpDef* fused_signature) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_23(mht_23_v, 610, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "SameSignature");
+
   CHECK(HasSameSignature(first_signature, second_signature))
       << "Functions do not have the same signature";
   // Copy signature from first function.
@@ -378,6 +620,9 @@ void LazyConjunctionNodes(const FunctionDef& first_function,
                           const FunctionDef& second_function,
                           FunctionDef* fused_function,
                           FunctionDefLibrary* library) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_24(mht_24_v, 623, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "LazyConjunctionNodes");
+
   fused_function->mutable_node_def()->CopyFrom(first_function.node_def());
 
   NodeDefBuilder if_builder("", "If");
@@ -417,6 +662,9 @@ void LazyConjunctionNodes(const FunctionDef& first_function,
 void LazyConjunctionOutput(const protobuf::Map<string, string>& first_ret,
                            const protobuf::Map<string, string>& second_ret,
                            protobuf::Map<string, string>* fused_ret) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_25(mht_25_v, 665, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "LazyConjunctionOutput");
+
   CHECK_EQ(first_ret.size(), 1);
   CHECK_EQ(second_ret.size(), 1);
   // Temporarily copy returns from first_ret.  We are going to change the
@@ -429,7 +677,13 @@ FunctionDef* FuseFunctions(
     StringPiece fused_name_prefix, const SetFunctionSignatureFn& set_signature,
     const SetInputFn& set_input, const SetOutputFn& set_output,
     const SetNodesFn& set_nodes, FunctionDefLibrary* library) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_26(mht_26_v, 680, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "FuseFunctions");
+
   auto has_unknown_attrs = [](const FunctionDef& func) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_27(mht_27_v, 684, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "lambda");
+
     int known_attribute_size = 0;
 
     if (data::IsTFDataFunction(func)) known_attribute_size += 1;
@@ -482,6 +736,9 @@ FunctionDef* FuseFunctions(
 
   // Preserve `_construction_context` attribute in the fused function.
   auto get_construction_context = [](const FunctionDef& func) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSfusion_utilsDTcc mht_28(mht_28_v, 739, "", "./tensorflow/core/grappler/optimizers/data/fusion_utils.cc", "lambda");
+
     auto iter = func.attr().find("_construction_context");
     if (iter == func.attr().cend()) return std::string();
     return iter->second.s();

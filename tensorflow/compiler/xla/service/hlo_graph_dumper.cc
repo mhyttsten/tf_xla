@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -94,26 +262,47 @@ enum NodeFilterResult {
 // shown, hidden, or highlighted.
 class NodeFilter {
  public:
-  NodeFilter() : filter_([](const HloInstruction*) { return kNormalNode; }) {}
+  NodeFilter() : filter_([](const HloInstruction*) { return kNormalNode; }) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_0(mht_0_v, 266, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "NodeFilter");
+}
 
   explicit NodeFilter(
       std::function<NodeFilterResult(const HloInstruction* instr)> filter)
-      : filter_(std::move(filter)) {}
+      : filter_(std::move(filter)) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_1(mht_1_v, 273, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "NodeFilter");
+}
 
   bool Show(const HloInstruction* instr) const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_2(mht_2_v, 278, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "Show");
+
     return filter_(instr) != kHideNode;
   }
   bool Highlight(const HloInstruction* instr) const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_3(mht_3_v, 284, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "Highlight");
+
     return filter_(instr) == kHighlightNode;
   }
   bool OmitOperands(const HloInstruction* instr) const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_4(mht_4_v, 290, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "OmitOperands");
+
     return filter_(instr) == kOmitNodeOperands;
   }
   bool SomeOrAllOperandsOmitted(const HloInstruction* instr) const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_5(mht_5_v, 296, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "SomeOrAllOperandsOmitted");
+
     auto result = filter_(instr);
     return result == kOmitNodeOperands || result == kSomeOperandsOmitted;
   }
   bool Deemphasized(const HloInstruction* instr) const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_6(mht_6_v, 303, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "Deemphasized");
+
     auto result = filter_(instr);
     return result == kOmitNodeOperands || result == kSomeOperandsOmitted ||
            result == kSomeUsersOmitted;
@@ -126,6 +315,9 @@ class NodeFilter {
 // We arbitrarily set this as the boundary between "large" and "small"
 // instructions.
 bool IsSmall(const HloInstruction* instr) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_7(mht_7_v, 318, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "IsSmall");
+
   if (ShapeUtil::HasPrimitiveType(instr->shape(), OPAQUE_TYPE) ||
       ShapeUtil::HasPrimitiveType(instr->shape(), TOKEN)) {
     return true;
@@ -163,6 +355,9 @@ struct NodeColors {
 };
 
 NodeColors NodeColorsForScheme(ColorScheme color) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_8(mht_8_v, 358, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "NodeColorsForScheme");
+
   switch (color) {
     case kBlue:
       return NodeColors{"filled", "#bbdefb", "#8aacc8", "black"};
@@ -206,6 +401,9 @@ NodeColors NodeColorsForScheme(ColorScheme color) {
 //
 // Colors are from https://material.io/color.
 std::string NodeColorAttributes(ColorScheme color) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_9(mht_9_v, 404, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "NodeColorAttributes");
+
   NodeColors node_colors = NodeColorsForScheme(color);
 
   return StrFormat(R"(style="%s", fontcolor="%s", color="%s", fillcolor="%s")",
@@ -216,10 +414,17 @@ std::string NodeColorAttributes(ColorScheme color) {
 // Replaces <> with &lt;&gt;, so that this string is safe(er) for use in a
 // graphviz HTML-like string.
 std::string HtmlLikeStringSanitize(absl::string_view s) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("s: \"" + std::string(s.data(), s.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_10(mht_10_v, 418, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "HtmlLikeStringSanitize");
+
   return absl::StrReplaceAll(s, {{"<", "&lt;"}, {">", "&gt;"}});
 }
 
 bool IsFusedBroadcastOfConstantEffectiveScalar(const HloInstruction* instr) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_11(mht_11_v, 425, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "IsFusedBroadcastOfConstantEffectiveScalar");
+
   namespace m = match;
   return instr->parent()->IsFusionComputation() &&
          Match(instr, m::Broadcast(m::ConstantEffectiveScalar()));
@@ -337,7 +542,11 @@ class HloDotDumper {
         debug_options_(debug_options),
         hlo_render_options_(hlo_render_options),
         profile_(profile),
-        filter_(std::move(filter)) {}
+        filter_(std::move(filter)) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("label: \"" + std::string(label.data(), label.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_12(mht_12_v, 547, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "HloDotDumper");
+}
 
   std::string Dump();
 
@@ -361,11 +570,17 @@ class HloDotDumper {
  private:
   // Returns the dot graph identifier for the given instruction.
   std::string InstructionId(const HloInstruction* instruction) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_13(mht_13_v, 573, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "InstructionId");
+
     return StrCat(reinterpret_cast<uint64_t>(instruction));
   }
 
   // Returns the dot graph identifier for the given computation.
   std::string SubcomputationId(const HloComputation* computation) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_14(mht_14_v, 581, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "SubcomputationId");
+
     return StrCat("cluster_", reinterpret_cast<uint64_t>(computation));
   }
 
@@ -458,6 +673,9 @@ class HloDotDumper {
 };
 
 std::string HloDotDumper::Dump() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_15(mht_15_v, 676, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "HloDotDumper::Dump");
+
   std::string body;
   StrAppend(&body, DumpComputation(computation_));
   StrAppend(&body, DumpRootTag());
@@ -471,6 +689,9 @@ std::string HloDotDumper::Dump() {
 }
 
 std::string HloDotDumper::Header() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_16(mht_16_v, 692, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "HloDotDumper::Header");
+
   constexpr char fmt[] = R"(digraph G {
 rankdir = TB;
 compound = true;
@@ -528,6 +749,11 @@ stylesheet=<
 
     auto add_hover_css_rule = [&](std::string elem_type, int64_t elem_id,
                                   const char* color) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("elem_type: \"" + elem_type + "\"");
+   mht_17_v.push_back("color: \"" + (color == nullptr ? std::string("nullptr") : std::string((char*)color)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_17(mht_17_v, 754, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "lambda");
+
       // One could imagine other ways of writing this CSS rule that involve
       // less duplication, but this way seems to be relatively performant.
       edge_css_rules.push_back(
@@ -590,15 +816,24 @@ stylesheet=<
 }
 
 std::string HloDotDumper::Footer() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_18(mht_18_v, 819, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "HloDotDumper::Footer");
+
   return StrCat(StrJoin(edges_, "\n"), "\n}");
 }
 
 bool HloDotDumper::ShouldShowFusionSubcomputation(const HloInstruction* instr) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_19(mht_19_v, 826, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "HloDotDumper::ShouldShowFusionSubcomputation");
+
   CHECK_EQ(instr->opcode(), HloOpcode::kFusion);
   return ShouldShowSubcomputation(instr->fused_instructions_computation());
 }
 
 bool HloDotDumper::ShouldShowSubcomputation(const HloComputation* subcomp) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_20(mht_20_v, 834, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "HloDotDumper::ShouldShowSubcomputation");
+
   if (subcomp->IsFusionComputation()) {
     const HloInstruction* fusion = subcomp->FusionInstruction();
     if (!filter_.Show(fusion) || filter_.SomeOrAllOperandsOmitted(fusion) ||
@@ -621,6 +856,9 @@ bool HloDotDumper::ShouldShowSubcomputation(const HloComputation* subcomp) {
 
 std::string HloDotDumper::DumpSubcomputation(
     const HloComputation* subcomp, const HloInstruction* parent_instr) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_21(mht_21_v, 859, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "HloDotDumper::DumpSubcomputation");
+
   VLOG(2) << "Dumping subcomputation " << subcomp->name();
   // Add an edge from the subcomputation to its parent node.  If subcomp
   // belongs to a fusion node, it's drawn in place of the fusion instruction,
@@ -703,6 +941,9 @@ tooltip = " ";
 }
 
 std::string HloDotDumper::DumpComputation(const HloComputation* comp) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_22(mht_22_v, 944, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "HloDotDumper::DumpComputation");
+
   std::string g;
   for (const auto* instr : comp->instructions()) {
     if (!filter_.Show(instr)) {
@@ -722,6 +963,9 @@ std::string HloDotDumper::DumpComputation(const HloComputation* comp) {
 }
 
 std::string HloDotDumper::DumpRootTag() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_23(mht_23_v, 966, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "HloDotDumper::DumpRootTag");
+
   const HloInstruction* from = GetNodeForEdge(computation_->root_instruction());
 
   // We didn't display constants or broadcasts of effective scalars within
@@ -761,6 +1005,9 @@ std::string HloDotDumper::DumpRootTag() {
 
 static const HloConstantInstruction* TryGetFusionParameterConstant(
     const HloInstruction* instr) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_24(mht_24_v, 1008, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "TryGetFusionParameterConstant");
+
   if (instr->opcode() != HloOpcode::kParameter || !instr->IsFused()) {
     return nullptr;
   }
@@ -770,6 +1017,9 @@ static const HloConstantInstruction* TryGetFusionParameterConstant(
 }
 
 bool HloDotDumper::ShouldMergeIntoUsers(const HloInstruction* instr) const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_25(mht_25_v, 1020, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "HloDotDumper::ShouldMergeIntoUsers");
+
   // If a node:
   //
   //  - is a get-tuple-element that isn't the root of the computation, or
@@ -803,6 +1053,9 @@ bool HloDotDumper::ShouldMergeIntoUsers(const HloInstruction* instr) const {
 }
 
 std::string HloDotDumper::DumpInstruction(const HloInstruction* instr) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_26(mht_26_v, 1056, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "HloDotDumper::DumpInstruction");
+
   // We don't display constants or broadcasts of effective scalar constants
   // within fusions as separate nodes; they're merged into their users.
   if ((instr->opcode() == HloOpcode::kConstant ||
@@ -862,11 +1115,17 @@ std::string HloDotDumper::DumpInstruction(const HloInstruction* instr) {
 
 std::string HloDotDumper::GetInstructionNodeInlinedOperands(
     const HloInstruction* instr) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_27(mht_27_v, 1118, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "HloDotDumper::GetInstructionNodeInlinedOperands");
+
   // The constant's shape is a parameter because, in the case of a broadcasted
   // scalar constant, we want to show the broadcasted shape, not the constant's
   // scalar shape.
   auto stringify_constant = [](const HloConstantInstruction* constant,
                                const Shape& shape) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_28(mht_28_v, 1126, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "lambda");
+
     // If the shape has a dimension of size zero, print it as e.g.
     // "{} (f32[42, 0, 10])".  The alternative, calling Literal::ToString(),
     // enumerates all of its empty dimensions (e.g.  "{ { {}, {} }, ..."), which
@@ -959,6 +1218,9 @@ std::string HloDotDumper::GetInstructionNodeInlinedOperands(
 }
 
 ColorScheme HloDotDumper::GetInstructionColor(const HloInstruction* instr) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_29(mht_29_v, 1221, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "HloDotDumper::GetInstructionColor");
+
   if (debug_options_.xla_hlo_graph_sharding_color()) {
     if (!instr->has_sharding()) {
       return kDashedBorder;
@@ -1156,6 +1418,9 @@ ColorScheme HloDotDumper::GetInstructionColor(const HloInstruction* instr) {
 }
 
 std::string HloDotDumper::GetInstructionNodeShape(const HloInstruction* instr) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_30(mht_30_v, 1421, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "HloDotDumper::GetInstructionNodeShape");
+
   // Give while loops a different shape so they're easier to pick out.
   switch (instr->opcode()) {
     case HloOpcode::kWhile:
@@ -1166,6 +1431,9 @@ std::string HloDotDumper::GetInstructionNodeShape(const HloInstruction* instr) {
 }
 
 std::string HloDotDumper::GetInstructionNodeLabel(const HloInstruction* instr) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_31(mht_31_v, 1434, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "HloDotDumper::GetInstructionNodeLabel");
+
   // If we have a parameter, put the param number in the name.
   if (instr->opcode() == HloOpcode::kParameter) {
     return StrFormat("<b>Parameter %d</b>", instr->parameter_number());
@@ -1188,6 +1456,9 @@ std::string HloDotDumper::GetInstructionNodeLabel(const HloInstruction* instr) {
 
 std::string HloDotDumper::GetInstructionNodeMetadata(
     const HloInstruction* instr) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_32(mht_32_v, 1459, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "HloDotDumper::GetInstructionNodeMetadata");
+
   std::vector<std::string> lines;
   if (!instr->metadata().op_name().empty()) {
     lines.push_back(HtmlLikeStringSanitize(instr->metadata().op_name()));
@@ -1263,6 +1534,9 @@ ExtractGemmBackendConfigProps(const gpu::GemmBackendConfig& config,
 
 std::string HloDotDumper::GetInstructionNodeBackendConfig(
     const HloInstruction* instr) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_33(mht_33_v, 1537, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "HloDotDumper::GetInstructionNodeBackendConfig");
+
   // custom-calls for convs and gemms have backend-configs with fields that are
   // semantically significant.  Print these configs unconditionally.
   //
@@ -1311,6 +1585,9 @@ std::string HloDotDumper::GetInstructionNodeBackendConfig(
 
 std::string HloDotDumper::GetInstructionNodeExtraInfo(
     const HloInstruction* instr) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_34(mht_34_v, 1588, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "HloDotDumper::GetInstructionNodeExtraInfo");
+
   std::vector<std::string> lines;
 
   // Get the instruction's extra attributes excluding the names of its
@@ -1376,8 +1653,14 @@ std::string HloDotDumper::GetInstructionNodeExtraInfo(
 }
 
 void HloDotDumper::AddInstructionIncomingEdges(const HloInstruction* instr) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_35(mht_35_v, 1656, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "HloDotDumper::AddInstructionIncomingEdges");
+
   auto add_edge = [&](const HloInstruction* from, const HloInstruction* to,
                       int64_t operand_num, bool control_edge = false) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_36(mht_36_v, 1661, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "lambda");
+
     from = GetNodeForEdge(from);
 
     if (!filter_.Show(from) || from->opcode() == HloOpcode::kConstant ||
@@ -1429,6 +1712,9 @@ void HloDotDumper::AddInstructionIncomingEdges(const HloInstruction* instr) {
 
 std::string HloDotDumper::GetInstructionTrivialComputationStr(
     const HloInstruction* instr) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_37(mht_37_v, 1715, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "HloDotDumper::GetInstructionTrivialComputationStr");
+
   // called_computations() on a fusion node "inherits" any called computations
   // of the fused root, which isn't what we want.  Just ignore fusion nodes
   // here; they're handled separately.
@@ -1456,6 +1742,9 @@ std::string HloDotDumper::GetInstructionTrivialComputationStr(
 
 const HloInstruction* HloDotDumper::GetNodeForEdge(
     const HloInstruction* instr) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_38(mht_38_v, 1745, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "HloDotDumper::GetNodeForEdge");
+
   // Skip over get-tuple-element nodes.
   if (instr->opcode() == HloOpcode::kGetTupleElement) {
     instr = instr->operand(0);
@@ -1472,6 +1761,9 @@ const HloInstruction* HloDotDumper::GetNodeForEdge(
 NodeFilter MakeNodeRadiusAroundFilter(
     const HloInstruction* root, int64_t radius,
     const absl::flat_hash_set<const HloInstruction*>& boundary) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_39(mht_39_v, 1764, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "MakeNodeRadiusAroundFilter");
+
   // First, find the neighborhood of nodes with distance from root <= radius.
   // These nodes are our initial set of "normal" nodes.
   absl::flat_hash_map<const HloInstruction*, NodeFilterResult> nodes;
@@ -1533,6 +1825,9 @@ NodeFilter MakeNodeRadiusAroundFilter(
   }
 
   auto is_displayed = [&](const HloInstruction* instr) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_40(mht_40_v, 1828, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "lambda");
+
     // Constants are displayed inline with their users; they're never omitted.
     // Nodes in subcomputations are always shown.
     return nodes.contains(instr) || instr->opcode() == HloOpcode::kConstant ||
@@ -1585,6 +1880,9 @@ NodeFilter MakeNodeRadiusAroundFilter(
 NodeFilter MakeNodeFromToFilter(const HloInstruction* from,
                                 const HloInstruction* to, int64_t max_nodes,
                                 bool* hit_limit) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_41(mht_41_v, 1883, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "MakeNodeFromToFilter");
+
   *hit_limit = false;
 
   // Elements in the queue are paths through the graph.
@@ -1646,6 +1944,10 @@ static const char* kRenderDotJS = R"(
 )";
 
 std::string WrapDotInHtml(absl::string_view dot) {
+   std::vector<std::string> mht_42_v;
+   mht_42_v.push_back("dot: \"" + std::string(dot.data(), dot.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_42(mht_42_v, 1948, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "WrapDotInHtml");
+
   std::string html_prefix =
       absl::StrReplaceAll(R"html(
 <!DOCTYPE html>
@@ -1767,6 +2069,11 @@ struct FusionVisualizerProgress {
   // Creates a frame with a new rendered graph.
   void AddState(absl::string_view dot, absl::string_view explanation,
                 absl::optional<std::string> to_highlight) {
+   std::vector<std::string> mht_43_v;
+   mht_43_v.push_back("dot: \"" + std::string(dot.data(), dot.size()) + "\"");
+   mht_43_v.push_back("explanation: \"" + std::string(explanation.data(), explanation.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_43(mht_43_v, 2074, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "AddState");
+
     if (dot_graphs.empty() || dot_graphs.back() != dot) {
       dot_graphs.push_back(std::string(dot));
     }
@@ -1830,13 +2137,26 @@ static StatusOr<std::string> CompressAndEncode(absl::string_view input) {
     ~WritableStringFile() override = default;
 
     Status Append(absl::string_view data) override {
+   std::vector<std::string> mht_44_v;
+   mht_44_v.push_back("data: \"" + std::string(data.data(), data.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_44(mht_44_v, 2141, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "Append");
+
       absl::StrAppend(data_, data);
       return Status::OK();
     }
 
-    Status Close() override { return Status::OK(); }
-    Status Flush() override { return Status::OK(); }
-    Status Sync() override { return Status::OK(); }
+    Status Close() override {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_45(mht_45_v, 2149, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "Close");
+ return Status::OK(); }
+    Status Flush() override {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_46(mht_46_v, 2153, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "Flush");
+ return Status::OK(); }
+    Status Sync() override {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_47(mht_47_v, 2157, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "Sync");
+ return Status::OK(); }
 
    private:
     std::string* data_;
@@ -1858,6 +2178,10 @@ static StatusOr<std::string> CompressAndEncode(absl::string_view input) {
 }
 
 static std::string EscapeJSONString(absl::string_view raw) {
+   std::vector<std::string> mht_48_v;
+   mht_48_v.push_back("raw: \"" + std::string(raw.data(), raw.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_48(mht_48_v, 2182, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "EscapeJSONString");
+
   return absl::StrCat(
       "\"",
       absl::StrReplaceAll(raw, {{"\n", "\\n"}, {"\"", "\\\""}, {"\\", "\\\\"}}),
@@ -2065,6 +2389,9 @@ StatusOr<std::string> WrapFusionExplorer(const HloComputation& computation) {
 
 void RegisterGraphToURLRenderer(
     std::function<StatusOr<std::string>(absl::string_view)> renderer) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_49(mht_49_v, 2392, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "RegisterGraphToURLRenderer");
+
   absl::MutexLock lock(&url_renderer_mu);
   if (url_renderer != nullptr) {
     LOG(WARNING) << "Multiple calls to RegisterGraphToURLRenderer.  Last call "
@@ -2080,6 +2407,10 @@ void RegisterFusionState(const HloComputation& computation,
                          absl::string_view label,
                          const HloInstruction& consumer,
                          const HloInstruction* producer) {
+   std::vector<std::string> mht_50_v;
+   mht_50_v.push_back("label: \"" + std::string(label.data(), label.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_graph_dumperDTcc mht_50(mht_50_v, 2411, "", "./tensorflow/compiler/xla/service/hlo_graph_dumper.cc", "RegisterFusionState");
+
   absl::MutexLock lock(&fusion_visualizer_state_mu);
   FusionVisualizerProgress& fusion_progress =
       fusion_visualizer_states[FusionVisualizerStateKey(computation)];

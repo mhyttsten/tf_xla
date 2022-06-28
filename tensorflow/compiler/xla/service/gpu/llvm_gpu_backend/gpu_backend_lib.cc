@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSllvm_gpu_backendPSgpu_backend_libDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSllvm_gpu_backendPSgpu_backend_libDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSllvm_gpu_backendPSgpu_backend_libDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -90,6 +258,9 @@ const int kDefaultInlineThreshold = 1100;
 // capability.  If we see an unrecognized compute capability, we
 // return the highest one that is known and below the selected device.
 static std::string GetSmName(se::CudaComputeCapability compute_capability) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSllvm_gpu_backendPSgpu_backend_libDTcc mht_0(mht_0_v, 261, "", "./tensorflow/compiler/xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.cc", "GetSmName");
+
   int compute_capability_version =
       compute_capability.major * 10 + compute_capability.minor;
   int sm_version = 30;
@@ -122,12 +293,20 @@ static std::string GetSmName(se::CudaComputeCapability compute_capability) {
 // from the input filename.
 std::string MakeNameForTempProduct(absl::string_view input_filename,
                                    absl::string_view extension) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("input_filename: \"" + std::string(input_filename.data(), input_filename.size()) + "\"");
+   mht_1_v.push_back("extension: \"" + std::string(extension.data(), extension.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSllvm_gpu_backendPSgpu_backend_libDTcc mht_1(mht_1_v, 298, "", "./tensorflow/compiler/xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.cc", "MakeNameForTempProduct");
+
   return ReplaceFilenameExtension(tensorflow::io::Basename(input_filename),
                                   extension);
 }
 
 // Initializes LLVM passes. Uses the PassRegistry mechanism.
 void InitializePasses(llvm::PassRegistry* pass_registry) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSllvm_gpu_backendPSgpu_backend_libDTcc mht_2(mht_2_v, 307, "", "./tensorflow/compiler/xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.cc", "InitializePasses");
+
   llvm::initializeCore(*pass_registry);
   llvm::initializeCodeGen(*pass_registry);
   llvm::initializeScalarOpts(*pass_registry);
@@ -193,6 +372,9 @@ void AddOptimizationPasses(unsigned opt_level, unsigned size_level,
                            llvm::legacy::PassManagerBase* module_passes,
                            llvm::legacy::FunctionPassManager* function_passes,
                            int inline_threshold) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSllvm_gpu_backendPSgpu_backend_libDTcc mht_3(mht_3_v, 375, "", "./tensorflow/compiler/xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.cc", "AddOptimizationPasses");
+
   llvm::PassManagerBuilder builder;
   builder.OptLevel = opt_level;
   builder.SizeLevel = size_level;
@@ -217,6 +399,10 @@ void AddOptimizationPasses(unsigned opt_level, unsigned size_level,
 
 // Emits the given module to a bit code file.
 void EmitBitcodeToFile(const llvm::Module& module, absl::string_view filename) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("filename: \"" + std::string(filename.data(), filename.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSllvm_gpu_backendPSgpu_backend_libDTcc mht_4(mht_4_v, 403, "", "./tensorflow/compiler/xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.cc", "EmitBitcodeToFile");
+
   std::error_code error_code;
   llvm::ToolOutputFile outfile(std::string(filename).c_str(), error_code,
                                llvm::sys::fs::OF_None);
@@ -232,6 +418,9 @@ void EmitBitcodeToFile(const llvm::Module& module, absl::string_view filename) {
 // for the NVPTX target.
 std::string EmitModuleToPTX(llvm::Module* module,
                             llvm::TargetMachine* target_machine) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSllvm_gpu_backendPSgpu_backend_libDTcc mht_5(mht_5_v, 421, "", "./tensorflow/compiler/xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.cc", "EmitModuleToPTX");
+
   std::string ptx;
   {
     llvm::raw_string_ostream stream(ptx);
@@ -260,6 +449,9 @@ std::string EmitModuleToPTX(llvm::Module* module,
 // Note: setting flags with this method is stateful, since flags are just
 // static globals within LLVM libraries.
 void FeedLLVMWithFlags(const std::vector<std::string>& cl_opts) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSllvm_gpu_backendPSgpu_backend_libDTcc mht_6(mht_6_v, 452, "", "./tensorflow/compiler/xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.cc", "FeedLLVMWithFlags");
+
   std::vector<const char*> fake_argv = {""};
   for (const std::string& cl_opt : cl_opts) {
     fake_argv.push_back(cl_opt.c_str());
@@ -269,6 +461,9 @@ void FeedLLVMWithFlags(const std::vector<std::string>& cl_opts) {
 
 // Returns whether the module could use any device bitcode library functions.
 bool CouldNeedDeviceBitcode(const llvm::Module& module) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSllvm_gpu_backendPSgpu_backend_libDTcc mht_7(mht_7_v, 464, "", "./tensorflow/compiler/xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.cc", "CouldNeedDeviceBitcode");
+
   for (const llvm::Function& function : module.functions()) {
     // The list of prefixes should be in sync with library functions used in
     // target_util.cc.
@@ -286,6 +481,9 @@ bool CouldNeedDeviceBitcode(const llvm::Module& module) {
 // The caller must guarantee that the paths exist.
 Status LinkWithBitcodeVector(
     llvm::Module* module, const std::vector<std::string>& bitcode_path_vector) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSllvm_gpu_backendPSgpu_backend_libDTcc mht_8(mht_8_v, 484, "", "./tensorflow/compiler/xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.cc", "LinkWithBitcodeVector");
+
   llvm::Linker linker(*module);
 
   for (auto& bitcode_path : bitcode_path_vector) {
@@ -318,6 +516,10 @@ Status LinkWithBitcodeVector(
 // Links libdevice into the given module if the module needs libdevice.
 Status LinkLibdeviceIfNecessary(llvm::Module* module,
                                 const std::string& libdevice_dir_path) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("libdevice_dir_path: \"" + libdevice_dir_path + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSllvm_gpu_backendPSgpu_backend_libDTcc mht_9(mht_9_v, 520, "", "./tensorflow/compiler/xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.cc", "LinkLibdeviceIfNecessary");
+
   if (!CouldNeedDeviceBitcode(*module)) {
     return Status::OK();
   }
@@ -340,6 +542,10 @@ Status LinkLibdeviceIfNecessary(llvm::Module* module,
 Status NVPTXTargetModuleLinker(llvm::Module* module, GpuVersion gpu_version,
                                const HloModuleConfig& hlo_module_config,
                                const std::string& device_bitcode_dir_path) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("device_bitcode_dir_path: \"" + device_bitcode_dir_path + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSllvm_gpu_backendPSgpu_backend_libDTcc mht_10(mht_10_v, 546, "", "./tensorflow/compiler/xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.cc", "NVPTXTargetModuleLinker");
+
   // Link the input module with libdevice, to pull in implementations of some
   // builtins.
   TF_RETURN_IF_ERROR(LinkLibdeviceIfNecessary(module, device_bitcode_dir_path));
@@ -378,6 +584,10 @@ Status LinkAndOptimizeModule(llvm::Module* module, GpuVersion gpu_version,
                              llvm::Triple default_target_triple,
                              llvm::TargetMachine* target_machine,
                              int inline_threshold) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("device_bitcode_dir_path: \"" + device_bitcode_dir_path + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSllvm_gpu_backendPSgpu_backend_libDTcc mht_11(mht_11_v, 588, "", "./tensorflow/compiler/xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.cc", "LinkAndOptimizeModule");
+
   TF_RETURN_IF_ERROR(module_linker(module, gpu_version, hlo_module_config,
                                    device_bitcode_dir_path));
 
@@ -463,6 +673,9 @@ Status LinkAndOptimizeModule(llvm::Module* module, GpuVersion gpu_version,
 // One-time module initializer.
 // Must be called only once -- DO NOT CALL DIRECTLY.
 void NVPTXBackendInit(const HloModuleConfig& hlo_module_config) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSllvm_gpu_backendPSgpu_backend_libDTcc mht_12(mht_12_v, 676, "", "./tensorflow/compiler/xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.cc", "NVPTXBackendInit");
+
   // Feed all customized flags here, so we can override them with llvm_cl_opts
   // without redeploy the compiler for development purpose.
 
@@ -632,6 +845,11 @@ static HsacoCache g_hsacoCache;
 
 bool HsacoCache::Find(const std::string& ir, uint64_t& hash,
                       const std::string& gfx, std::vector<uint8_t>& hsaco) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("ir: \"" + ir + "\"");
+   mht_13_v.push_back("gfx: \"" + gfx + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSllvm_gpu_backendPSgpu_backend_libDTcc mht_13(mht_13_v, 850, "", "./tensorflow/compiler/xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.cc", "HsacoCache::Find");
+
   std::lock_guard<std::mutex> lg(g_hsacoCache.m_mutex);
   hash = std::hash<std::string>{}(ir);
   bool hit = false;
@@ -654,6 +872,11 @@ bool HsacoCache::Find(const std::string& ir, uint64_t& hash,
 void HsacoCache::Add(const std::string& ir, uint64_t hash,
                      const std::string& gfx,
                      const std::vector<uint8_t>& hsaco) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("ir: \"" + ir + "\"");
+   mht_14_v.push_back("gfx: \"" + gfx + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSllvm_gpu_backendPSgpu_backend_libDTcc mht_14(mht_14_v, 877, "", "./tensorflow/compiler/xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.cc", "HsacoCache::Add");
+
   std::lock_guard<std::mutex> lg(g_hsacoCache.m_mutex);
   g_hsacoCache.cache.resize(g_hsacoCache.cache.size() + 1);
   g_hsacoCache.cache.back().ir = ir;
@@ -780,6 +1003,11 @@ StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
 // Links ROCm-Device-Libs into the given module if the module needs it.
 Status LinkROCDLIfNecessary(llvm::Module* module, std::string gcn_arch_name,
                             const std::string& rocdl_dir_path) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("gcn_arch_name: \"" + gcn_arch_name + "\"");
+   mht_15_v.push_back("rocdl_dir_path: \"" + rocdl_dir_path + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSllvm_gpu_backendPSgpu_backend_libDTcc mht_15(mht_15_v, 1008, "", "./tensorflow/compiler/xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.cc", "LinkROCDLIfNecessary");
+
   if (!CouldNeedDeviceBitcode(*module)) {
     return Status::OK();
   }
@@ -791,6 +1019,10 @@ Status LinkROCDLIfNecessary(llvm::Module* module, std::string gcn_arch_name,
 Status AMDGPUTargetModuleLinker(llvm::Module* module, GpuVersion gpu_version,
                                 const HloModuleConfig& hlo_module_config,
                                 const std::string& device_bitcode_dir_path) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("device_bitcode_dir_path: \"" + device_bitcode_dir_path + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSllvm_gpu_backendPSgpu_backend_libDTcc mht_16(mht_16_v, 1023, "", "./tensorflow/compiler/xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.cc", "AMDGPUTargetModuleLinker");
+
   // Link the input module with ROCDL.
 
   auto compute_capability =
@@ -824,6 +1056,10 @@ Status AMDGPUTargetModuleLinker(llvm::Module* module, GpuVersion gpu_version,
 // When that upstreaming happens (and TF LLVM pointer moves past the
 // upstream commit), the following mapping will need to change
 std::string MapGCNArchNameTokenToFeatureStr(const std::string& token) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("token: \"" + token + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSllvm_gpu_backendPSgpu_backend_libDTcc mht_17(mht_17_v, 1060, "", "./tensorflow/compiler/xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.cc", "MapGCNArchNameTokenToFeatureStr");
+
   if (token == "sramecc+") {
     return "+sramecc";
   } else if (token == "sramecc-") {
@@ -873,6 +1109,9 @@ std::unique_ptr<llvm::TargetMachine> AMDGPUGetTargetMachine(
 }
 
 void AMDGPUBackendInit(const HloModuleConfig& hlo_module_config) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSllvm_gpu_backendPSgpu_backend_libDTcc mht_18(mht_18_v, 1112, "", "./tensorflow/compiler/xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.cc", "AMDGPUBackendInit");
+
   llvm_ir::InitializeLLVMCommandLineOptions(
       hlo_module_config.debug_options().xla_backend_extra_options());
 

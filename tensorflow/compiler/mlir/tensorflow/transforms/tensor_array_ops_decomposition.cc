@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -77,6 +245,9 @@ struct TensorArrayOpsDecompositionPass
 LogicalResult GetSplitElementTypeAndCount(TF::TensorArraySplitV3Op split,
                                           RankedTensorType* elem_type,
                                           int64_t* count) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc mht_0(mht_0_v, 248, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tensor_array_ops_decomposition.cc", "GetSplitElementTypeAndCount");
+
   auto lengths_const =
       llvm::dyn_cast_or_null<TF::ConstOp>(split.lengths().getDefiningOp());
   if (!lengths_const) return split.emitOpError("non-constant split lengths");
@@ -162,6 +333,9 @@ llvm::Optional<llvm::SmallVector<int64_t, 8>> GetTensorArrayElementShape(
 }
 
 void ReplaceAllUsesWithCast(Value old_val, Value new_val) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc mht_1(mht_1_v, 336, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tensor_array_ops_decomposition.cc", "ReplaceAllUsesWithCast");
+
   if (old_val.use_empty()) return;
   auto cast_op =
       OpBuilder(old_val.getDefiningOp())
@@ -170,6 +344,9 @@ void ReplaceAllUsesWithCast(Value old_val, Value new_val) {
 }
 
 void ReplaceAllUsesExceptTerminator(Value old_val, Value new_val) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc mht_2(mht_2_v, 347, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tensor_array_ops_decomposition.cc", "ReplaceAllUsesExceptTerminator");
+
   if (old_val.getType() == new_val.getType()) {
     old_val.replaceAllUsesWith(new_val);
     return;
@@ -192,6 +369,9 @@ struct TensorArrayStats {
 LogicalResult HandleTensorArrayV3Op(
     TF::TensorArrayV3Op ta, ModuleOp module,
     llvm::SmallDenseMap<Value, TensorArrayStats>* stats) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc mht_3(mht_3_v, 372, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tensor_array_ops_decomposition.cc", "HandleTensorArrayV3Op");
+
   auto elem_shape = GetTensorArrayElementShape(ta, module);
   if (!elem_shape) return ta.emitOpError("unknown element shape");
   if (ta.dynamic_size()) {
@@ -228,6 +408,9 @@ LogicalResult HandleTensorArrayV3Op(
 LogicalResult HandleTensorArrayReadV3Op(
     TF::TensorArrayReadV3Op read,
     const llvm::SmallDenseMap<Value, TensorArrayStats>& stats) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc mht_4(mht_4_v, 411, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tensor_array_ops_decomposition.cc", "HandleTensorArrayReadV3Op");
+
   auto local_var = read.handle();
   if (stats.count(local_var) == 0) {
     return read.emitOpError("unknown tensor array");
@@ -249,6 +432,9 @@ LogicalResult HandleTensorArrayReadV3Op(
 LogicalResult HandleTensorArrayWriteV3Op(
     TF::TensorArrayWriteV3Op write,
     const llvm::SmallDenseMap<Value, TensorArrayStats>& stats) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc mht_5(mht_5_v, 435, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tensor_array_ops_decomposition.cc", "HandleTensorArrayWriteV3Op");
+
   auto local_var = write.handle();
   auto stat_it = stats.find(local_var);
   if (stat_it == stats.end()) return write.emitOpError("unknown tensor array");
@@ -284,6 +470,9 @@ LogicalResult HandleTensorArrayWriteV3Op(
 LogicalResult HandleTensorArrayConcatV3Op(
     TF::TensorArrayConcatV3Op concat,
     const llvm::SmallDenseMap<Value, TensorArrayStats>& stats) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc mht_6(mht_6_v, 473, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tensor_array_ops_decomposition.cc", "HandleTensorArrayConcatV3Op");
+
   auto local_var = concat.handle();
   if (stats.count(local_var) == 0) {
     return concat.emitOpError("unknown tensor array");
@@ -322,6 +511,9 @@ LogicalResult HandleTensorArrayConcatV3Op(
 LogicalResult HandleTensorArraySplitV3Op(
     TF::TensorArraySplitV3Op split,
     const llvm::SmallDenseMap<Value, TensorArrayStats>& stats) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc mht_7(mht_7_v, 514, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tensor_array_ops_decomposition.cc", "HandleTensorArraySplitV3Op");
+
   auto local_var = split.handle();
   if (stats.count(local_var) == 0) {
     return split.emitOpError("unknown tensor array");
@@ -359,6 +551,9 @@ LogicalResult HandleTensorArraySplitV3Op(
 LogicalResult HandleTensorArraySizeV3Op(
     TF::TensorArraySizeV3Op size,
     const llvm::SmallDenseMap<Value, TensorArrayStats>& stats) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc mht_8(mht_8_v, 554, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tensor_array_ops_decomposition.cc", "HandleTensorArraySizeV3Op");
+
   auto local_var = size.handle();
   if (stats.count(local_var) == 0) {
     return size.emitOpError("unknown tensor array");
@@ -377,6 +572,9 @@ LogicalResult HandleTensorArraySizeV3Op(
 
 LogicalResult CreateAndInitializeGradVariable(Type local_var_type,
                                               Operation* op, Value* var) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc mht_9(mht_9_v, 575, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tensor_array_ops_decomposition.cc", "CreateAndInitializeGradVariable");
+
   OpBuilder builder(op);
   *var = builder.create<TF::MlirLocalVarOp>(
       op->getLoc(), ArrayRef<Type>{local_var_type}, ArrayRef<Value>{});
@@ -397,6 +595,9 @@ LogicalResult CreateAndInitializeGradVariable(Type local_var_type,
 LogicalResult HandleTensorArrayGradV3Op(
     TF::TensorArrayGradV3Op grad,
     llvm::SmallDenseMap<Value, TensorArrayStats>* stats) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc mht_10(mht_10_v, 598, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tensor_array_ops_decomposition.cc", "HandleTensorArrayGradV3Op");
+
   auto local_var = grad.handle();
   OpBuilder builder(grad);
   Value grad_var;
@@ -425,6 +626,9 @@ LogicalResult HandleTensorArrayGradV3Op(
 LogicalResult HandleTensorArrayGatherV3Op(
     TF::TensorArrayGatherV3Op gather,
     const llvm::SmallDenseMap<Value, TensorArrayStats>& stats) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc mht_11(mht_11_v, 629, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tensor_array_ops_decomposition.cc", "HandleTensorArrayGatherV3Op");
+
   auto local_var = gather.handle();
   if (stats.count(local_var) == 0) {
     return gather.emitOpError("unknown tensor array");
@@ -442,6 +646,9 @@ LogicalResult HandleTensorArrayGatherV3Op(
 LogicalResult HandleTensorArrayScatterV3Op(
     TF::TensorArrayScatterV3Op scatter,
     const llvm::SmallDenseMap<Value, TensorArrayStats>& stats) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc mht_12(mht_12_v, 649, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tensor_array_ops_decomposition.cc", "HandleTensorArrayScatterV3Op");
+
   auto local_var = scatter.handle();
   if (stats.count(local_var) == 0) {
     return scatter.emitOpError("unknown tensor array");
@@ -458,6 +665,9 @@ LogicalResult HandleTensorArrayScatterV3Op(
 
 // Updates func's type according to its current arguments and return values.
 void UpdateFuncType(FuncOp func) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc mht_13(mht_13_v, 668, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tensor_array_ops_decomposition.cc", "UpdateFuncType");
+
   llvm::SmallVector<Type, 8> arg_types;
   for (auto arg : func.getArguments()) arg_types.push_back(arg.getType());
   func.setType(
@@ -471,6 +681,10 @@ llvm::SmallDenseMap<int64_t, llvm::SmallVector<string, 4>> AccessedGradients(
   llvm::SmallDenseMap<int64_t, llvm::SmallVector<string, 4>> result;
   llvm::SmallDenseMap<int64_t, llvm::StringSet<>> result_sets;
   auto insert = [&](Value v, const string& source, const Block& func_block) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("source: \"" + source + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc mht_14(mht_14_v, 685, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tensor_array_ops_decomposition.cc", "lambda");
+
     auto arg = v.dyn_cast<BlockArgument>();
     if (!arg || arg.getOwner() != &func_block) return;
     auto insert_res = result_sets[arg.getArgNumber()].insert(source);
@@ -527,6 +741,9 @@ void ChangeFunctionInputSignature(
     llvm::function_ref<Type(int64_t)> ta_arg_buffer_type,
     llvm::function_ref<bool(int64_t)> ta_accumulate_on_write,
     llvm::SmallDenseMap<Value, TensorArrayStats>* stats) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc mht_15(mht_15_v, 744, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tensor_array_ops_decomposition.cc", "ChangeFunctionInputSignature");
+
   int64_t original_args = func.getNumArguments();
   for (int64_t argnum = 0; argnum < original_args; ++argnum) {
     auto arg = func.getArgument(argnum);
@@ -556,6 +773,9 @@ LogicalResult HandleWhileOp(TF::WhileOp while_op, ModuleOp module,
                             llvm::SmallDenseMap<Value, TensorArrayStats>* stats,
                             llvm::StringMap<PartitionedCallTensorArrayOpsInfo>*
                                 decomposed_partitioned_call_callees) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc mht_16(mht_16_v, 776, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tensor_array_ops_decomposition.cc", "HandleWhileOp");
+
   auto body = while_op.body_function();
   auto cond = while_op.cond_function();
   auto grads = AccessedGradients({body, cond}, module);
@@ -565,6 +785,9 @@ LogicalResult HandleWhileOp(TF::WhileOp while_op, ModuleOp module,
     return it->getFirst().getType();
   };
   auto ta_accumulate_on_write = [&](int64_t index) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc mht_17(mht_17_v, 788, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tensor_array_ops_decomposition.cc", "lambda");
+
     auto it = stats->find(while_op.getOperand(index));
     if (it == stats->end()) return false;
     return it->getSecond().accumulate_on_write;
@@ -641,6 +864,9 @@ LogicalResult HandleIfOp(TF::IfOp if_op, ModuleOp module,
                          llvm::SmallDenseMap<Value, TensorArrayStats>* stats,
                          llvm::StringMap<PartitionedCallTensorArrayOpsInfo>*
                              decomposed_partitioned_call_callees) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc mht_18(mht_18_v, 867, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tensor_array_ops_decomposition.cc", "HandleIfOp");
+
   auto then_branch = if_op.then_function();
   auto else_branch = if_op.else_function();
   auto grads = AccessedGradients({then_branch, else_branch}, module);
@@ -650,6 +876,9 @@ LogicalResult HandleIfOp(TF::IfOp if_op, ModuleOp module,
     return it->getFirst().getType();
   };
   auto ta_accumulate_on_write = [&](int64_t index) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc mht_19(mht_19_v, 879, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tensor_array_ops_decomposition.cc", "lambda");
+
     auto it = stats->find(if_op.getOperand(index + 1));
     if (it == stats->end()) return false;
     return it->getSecond().accumulate_on_write;
@@ -724,6 +953,9 @@ LogicalResult HandlePartitionedCallOp(
     llvm::SmallDenseMap<Value, TensorArrayStats>* stats,
     llvm::StringMap<PartitionedCallTensorArrayOpsInfo>*
         decomposed_partitioned_call_callees) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc mht_20(mht_20_v, 956, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tensor_array_ops_decomposition.cc", "HandlePartitionedCallOp");
+
   auto emplace_res = decomposed_partitioned_call_callees->try_emplace(
       callee.getName(), PartitionedCallTensorArrayOpsInfo());
   auto& info = emplace_res.first->second;
@@ -778,6 +1010,9 @@ LogicalResult HandlePartitionedCallOp(
     return it->getFirst().getType();
   };
   auto ta_accumulate_on_write = [&](int64_t index) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc mht_21(mht_21_v, 1013, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tensor_array_ops_decomposition.cc", "lambda");
+
     auto it = stats->find(call.getOperand(index));
     if (it == stats->end()) return false;
     return it->getSecond().accumulate_on_write;
@@ -834,6 +1069,9 @@ LogicalResult HandleRegionControlFlowOps(
     llvm::SmallDenseMap<Value, TensorArrayStats>* stats,
     llvm::StringMap<PartitionedCallTensorArrayOpsInfo>*
         decomposed_partitioned_call_callees) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc mht_22(mht_22_v, 1072, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tensor_array_ops_decomposition.cc", "HandleRegionControlFlowOps");
+
   for (OpOperand& operand : op.getOpOperands()) {
     if (getElementTypeOrSelf(operand.get().getType()).isa<TF::ResourceType>()) {
       return op.emitOpError()
@@ -866,6 +1104,9 @@ LogicalResult DecomposeTensorArrayOps(
     llvm::SmallDenseMap<Value, TensorArrayStats>* stats,
     llvm::StringMap<PartitionedCallTensorArrayOpsInfo>*
         decomposed_partitioned_call_callees) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc mht_23(mht_23_v, 1107, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tensor_array_ops_decomposition.cc", "DecomposeTensorArrayOps");
+
   for (auto& op : llvm::make_early_inc_range(block->getOperations())) {
     if (llvm::isa<TF::IdentityOp, TF::IdentityNOp>(&op)) {
       op.replaceAllUsesWith(op.getOperands());
@@ -935,6 +1176,9 @@ LogicalResult DecomposeTensorArrayOps(
 }
 
 void TensorArrayOpsDecompositionPass::runOnOperation() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStensor_array_ops_decompositionDTcc mht_24(mht_24_v, 1179, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tensor_array_ops_decomposition.cc", "TensorArrayOpsDecompositionPass::runOnOperation");
+
   auto module = getOperation();
   auto main = module.lookupSymbol<FuncOp>("main");
   if (!main) return;

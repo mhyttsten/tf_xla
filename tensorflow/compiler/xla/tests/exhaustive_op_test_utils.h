@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_COMPILER_XLA_TESTS_EXHAUSTIVE_OP_TEST_UTILS_H_
 #define TENSORFLOW_COMPILER_XLA_TESTS_EXHAUSTIVE_OP_TEST_UTILS_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <algorithm>
 #include <array>
@@ -46,7 +214,10 @@ struct ErrorSpec {
   // equal to 0.
   bool strict_signed_zeros = false;
 
-  ErrorSpec(float a, float r) : abs_err(a), rel_err(r) {}
+  ErrorSpec(float a, float r) : abs_err(a), rel_err(r) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_0(mht_0_v, 218, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "ErrorSpec");
+}
 };
 
 // Representations of the reference function passed in by the user.
@@ -68,6 +239,9 @@ template <typename XlaInputs>
 struct EnqueueOpWrapper<XlaInputs, 1> {
   using type = std::function<XlaOp(XlaOp)>;
   static XlaOp BuildFromInputs(XlaInputs inputs, type ty) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_1(mht_1_v, 242, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "BuildFromInputs");
+
     return ty(inputs[0]);
   }
 };
@@ -75,6 +249,9 @@ template <typename XlaInputs>
 struct EnqueueOpWrapper<XlaInputs, 2> {
   using type = std::function<XlaOp(XlaOp, XlaOp)>;
   static XlaOp BuildFromInputs(XlaInputs inputs, type ty) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_2(mht_2_v, 252, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "BuildFromInputs");
+
     return ty(inputs[0], inputs[1]);
   }
 };
@@ -173,6 +350,9 @@ class ExhaustiveOpTestBase : public ClientLibraryTestBase {
 
   explicit ExhaustiveOpTestBase()
       : ty_(T), platform_(client_->platform()->Name()) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_3(mht_3_v, 353, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "ExhaustiveOpTestBase");
+
     SetFastMathDisabled(true);
 
     // Run all HLO passes.  In particular, constant folding is disabled by
@@ -181,6 +361,9 @@ class ExhaustiveOpTestBase : public ClientLibraryTestBase {
   }
 
   void Run(EnqueueOp enqueue_op, EvaluateOp evaluate_op) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_4(mht_4_v, 364, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "Run");
+
     Run(enqueue_op, evaluate_op, GetDefaultSpecGenerator<T, N>());
   }
 
@@ -193,6 +376,9 @@ class ExhaustiveOpTestBase : public ClientLibraryTestBase {
   // ExpectNear.
   void Run(EnqueueOp enqueue_op, EvaluateOp evaluate_op,
            ErrorSpecGen error_spec_gen) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_5(mht_5_v, 379, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "Run");
+
     InputLiterals input_literals = CreateInputLiterals();
     FillInput(&input_literals);
 
@@ -283,7 +469,10 @@ class ExhaustiveOpTestBase : public ClientLibraryTestBase {
     return std::move(result_literal);
   }
 
-  const std::string& Platform() { return platform_; }
+  const std::string& Platform() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_6(mht_6_v, 473, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "Platform");
+ return platform_; }
 
   // Returns the number of elements in each input literal.
   virtual int64_t GetInputSize() = 0;
@@ -293,6 +482,9 @@ class ExhaustiveOpTestBase : public ClientLibraryTestBase {
 
   // Replace infinites with max value to help compute errors.
   static ComponentNativeRefT ReplaceInfWithMax(ComponentNativeRefT value) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_7(mht_7_v, 485, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "ReplaceInfWithMax");
+
     if (std::isinf(value)) {
       return std::copysign(std::numeric_limits<ComponentNativeRefT>::max(),
                            value);
@@ -303,6 +495,9 @@ class ExhaustiveOpTestBase : public ClientLibraryTestBase {
   // Returns true if both components are 0, but their sign bits differ.
   static bool CheckSignedZeroError(ComponentNativeRefT expected,
                                    ComponentNativeRefT actual) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_8(mht_8_v, 498, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "CheckSignedZeroError");
+
     return expected == 0 && actual == 0 &&
            std::signbit(expected) != std::signbit(actual);
   }
@@ -310,6 +505,9 @@ class ExhaustiveOpTestBase : public ClientLibraryTestBase {
   // Sets the components to 0 if both are NaNs.
   static void RemoveCorrespondingNaNs(ComponentNativeRefT* expected,
                                       ComponentNativeRefT* actual) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_9(mht_9_v, 508, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "RemoveCorrespondingNaNs");
+
     if (std::isnan(*expected) && std::isnan(*actual)) {
       *expected = 0;
       *actual = 0;
@@ -327,6 +525,9 @@ class ExhaustiveOpTestBase : public ClientLibraryTestBase {
 
   static bool CheckSignedZeroError(std::complex<ComponentNativeRefT> expected,
                                    std::complex<ComponentNativeRefT> actual) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_10(mht_10_v, 528, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "CheckSignedZeroError");
+
     return CheckSignedZeroError(expected.real(), actual.real()) ||
            CheckSignedZeroError(expected.imag(), actual.imag());
   }
@@ -334,6 +535,9 @@ class ExhaustiveOpTestBase : public ClientLibraryTestBase {
   static void RemoveCorrespondingNaNs(
       std::complex<ComponentNativeRefT>* expected,
       std::complex<ComponentNativeRefT>* actual) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_11(mht_11_v, 538, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "RemoveCorrespondingNaNs");
+
     ComponentNativeRefT expected_real = expected->real();
     ComponentNativeRefT expected_imag = expected->imag();
     ComponentNativeRefT actual_real = actual->real();
@@ -450,6 +654,9 @@ class ExhaustiveOpTestBase : public ClientLibraryTestBase {
   }
 
   InputLiterals CreateInputLiterals() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_12(mht_12_v, 657, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "CreateInputLiterals");
+
     InputLiterals literals;
     for (int i = 0; i < N; ++i) {
       literals[i] = LiteralUtil::CreateFromDimensions(T, {GetInputSize()});
@@ -460,6 +667,9 @@ class ExhaustiveOpTestBase : public ClientLibraryTestBase {
   // Determines if two output values are sufficiently close to each other based
   // on an error spec.
   bool IsClose(NativeRefT expected, NativeRefT actual, ErrorSpec spec) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_13(mht_13_v, 670, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "IsClose");
+
     // When two corresponding values are a NaN, they can be considered to have
     // the same value, so the values are just set to 0.
     RemoveCorrespondingNaNs(&expected, &actual);
@@ -489,6 +699,9 @@ class ExhaustiveOpTestBase : public ClientLibraryTestBase {
   // uint64_t. This function is used to convert such a bit pattern stored as
   // uint64_t to the input value for T.
   static ComponentNativeT ConvertValue(uint64_t bits) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_14(mht_14_v, 702, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "ConvertValue");
+
     using I = ComponentIntegralNativeT;
     I used_bits = static_cast<I>(bits);
     return BitCast<ComponentNativeT>(used_bits);
@@ -496,6 +709,9 @@ class ExhaustiveOpTestBase : public ClientLibraryTestBase {
 
   ComponentNativeT ConvertAndReplaceKnownIncorrectValueWith(
       uint64_t bits, int replacement_value = 0) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_15(mht_15_v, 712, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "ConvertAndReplaceKnownIncorrectValueWith");
+
     if (known_incorrect_fn_ && known_incorrect_fn_(bits)) {
       return static_cast<ComponentNativeT>(replacement_value);
     }
@@ -548,10 +764,16 @@ class BitChunks {
                              uint64_t                  // reference
                              > {
    public:
-    iterator() {}
+    iterator() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_16(mht_16_v, 768, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "iterator");
+}
 
     explicit iterator(const BitChunks* bit_chunks)
-        : bit_chunks_(bit_chunks), next_bit_chunk_(bit_chunks->start_) {}
+        : bit_chunks_(bit_chunks), next_bit_chunk_(bit_chunks->start_) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_17(mht_17_v, 774, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "iterator");
+}
 
     iterator& operator++() {
       Next();
@@ -572,20 +794,35 @@ class BitChunks {
     bool operator!=(iterator other) const { return !(*this == other); }
 
     iterator MoveToEnd() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_18(mht_18_v, 797, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "MoveToEnd");
+
       MoveNextBitChunkToOnePassEnd();
       return *this;
     }
 
     reference operator*() const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_19(mht_19_v, 805, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "*");
+
       CHECK(*this != this->bit_chunks_->end());
       return next_bit_chunk_;
     }
 
-    const BitChunks* GetBitChunks() const { return bit_chunks_; }
+    const BitChunks* GetBitChunks() const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_20(mht_20_v, 813, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "GetBitChunks");
+ return bit_chunks_; }
 
-    void Reset() { next_bit_chunk_ = bit_chunks_->start_; }
+    void Reset() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_21(mht_21_v, 818, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "Reset");
+ next_bit_chunk_ = bit_chunks_->start_; }
 
     void Next() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_22(mht_22_v, 823, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "Next");
+
       CHECK(*this != this->bit_chunks_->end());
       if (next_bit_chunk_ == bit_chunks_->end_) {
         MoveNextBitChunkToOnePassEnd();
@@ -598,6 +835,9 @@ class BitChunks {
     }
 
     std::string ToString() const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_23(mht_23_v, 838, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "ToString");
+
       return absl::StrFormat("0x%08x", next_bit_chunk_);
     }
 
@@ -608,6 +848,9 @@ class BitChunks {
     // normalizing the representation of the iterator ending this way can
     // can simplify the checking for iterator ending.
     void MoveNextBitChunkToOnePassEnd() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_24(mht_24_v, 851, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "MoveNextBitChunkToOnePassEnd");
+
       next_bit_chunk_ = bit_chunks_->end_ + 1;
     }
 
@@ -615,19 +858,31 @@ class BitChunks {
     uint64_t next_bit_chunk_;
   };
 
-  iterator begin() const { return iterator(this); }
+  iterator begin() const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_25(mht_25_v, 862, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "begin");
+ return iterator(this); }
   iterator end() const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_26(mht_26_v, 866, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "end");
+
     iterator end(this);
     return end.MoveToEnd();
   }
 
   explicit BitChunks(uint64_t start = 0, uint64_t end = 0, uint64_t spacing = 1)
       : start_(start), end_(end), spacing_(spacing) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_27(mht_27_v, 875, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "BitChunks");
+
     CHECK_GE(end_, start_);
     CHECK_NE(spacing, 0) << ToString();
   }
 
   int64_t GetTotalBitChunks() const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_28(mht_28_v, 883, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "GetTotalBitChunks");
+
     if (start_ == end_) {
       return 1;
     }
@@ -636,6 +891,9 @@ class BitChunks {
   }
 
   std::string ToString() const {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_29(mht_29_v, 894, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "ToString");
+
     return absl::StrFormat("(0x%08x, 0x%08x, 0x%08x)", start_, end_, spacing_);
   }
 
@@ -644,12 +902,21 @@ class BitChunks {
   uint64_t spacing_;
 };
 
-inline std::string StringifyNum(BitChunks c) { return c.ToString(); }
+inline std::string StringifyNum(BitChunks c) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_30(mht_30_v, 906, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "StringifyNum");
+ return c.ToString(); }
 
-inline std::string StringifyNum(BitChunks::iterator c) { return c.ToString(); }
+inline std::string StringifyNum(BitChunks::iterator c) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_31(mht_31_v, 911, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "StringifyNum");
+ return c.ToString(); }
 
 template <typename T>
 void AppendStringifyNum(std::string* s, T x) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_32(mht_32_v, 917, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "AppendStringifyNum");
+
   absl::StrAppend(s, StringifyNum(x));
 }
 
@@ -669,6 +936,9 @@ class FpValues {
                              > {
    public:
     explicit iterator(const FpValues* fp_values) : fp_values_(fp_values) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_33(mht_33_v, 939, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "iterator");
+
       for (int i = 0; i < FpValues::kTotalBitChunks; ++i) {
         iters_[i] = BitChunks::iterator(&fp_values->GetBitChunks(i));
       }
@@ -697,6 +967,9 @@ class FpValues {
     bool operator!=(iterator other) const { return !(*this == other); }
 
     iterator MoveToEnd() {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_34(mht_34_v, 970, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "MoveToEnd");
+
       for (int i = 0; i < FpValues::kTotalBitChunks; ++i) {
         iters_[i].MoveToEnd();
       }
@@ -704,6 +977,9 @@ class FpValues {
     }
 
     uint64_t operator*() const {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_35(mht_35_v, 980, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "*");
+
       uint64_t value = 0;
       for (int i = 0; i < FpValues::kTotalBitChunks; ++i) {
         value = value | (*iters_[i]) << fp_values_->offsets_[i];
@@ -711,9 +987,15 @@ class FpValues {
       return value;
     }
 
-    const BitChunks::iterator& GetBitChunksIter(int i) { return iters_[i]; }
+    const BitChunks::iterator& GetBitChunksIter(int i) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_36(mht_36_v, 991, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "GetBitChunksIter");
+ return iters_[i]; }
 
     std::string ToString() const {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_37(mht_37_v, 996, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "ToString");
+
       return absl::StrJoin(iters_, ",",
                            AppendStringifyNum<BitChunks::iterator>);
     }
@@ -722,6 +1004,9 @@ class FpValues {
     // Moves the iterator for the ith BitChunks to the next value, and
     // returns true if the new state is not the end of the iterator.
     bool Next(int i = 0) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_38(mht_38_v, 1007, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "Next");
+
       iters_[i].Next();
       if (iters_[i] == iters_[i].GetBitChunks()->end()) {
         if (i == FpValues::kTotalBitChunks - 1) {
@@ -740,8 +1025,14 @@ class FpValues {
     const FpValues* fp_values_;
   };
 
-  FpValues() : bit_chunks_(), offsets_() {}
+  FpValues() : bit_chunks_(), offsets_() {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_39(mht_39_v, 1029, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "FpValues");
+}
   FpValues(absl::Span<const BitChunks> chunks, absl::Span<const int> offsets) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_40(mht_40_v, 1033, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "FpValues");
+
     CHECK_EQ(chunks.size(), offsets.size() - 1);
     CHECK_EQ(chunks.size(), kTotalBitChunks);
     std::copy_n(chunks.begin(), kTotalBitChunks, bit_chunks_.begin());
@@ -762,14 +1053,23 @@ class FpValues {
     }
   }
 
-  iterator begin() const { return iterator(this); }
+  iterator begin() const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_41(mht_41_v, 1057, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "begin");
+ return iterator(this); }
 
   iterator end() const {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_42(mht_42_v, 1062, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "end");
+
     iterator end(this);
     return end.MoveToEnd();
   }
 
   int64_t GetTotalNumValues() const {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_43(mht_43_v, 1070, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "GetTotalNumValues");
+
     int64_t total = 1;
     absl::c_for_each(bit_chunks_, [&](const BitChunks& chunks) {
       total *= chunks.GetTotalBitChunks();
@@ -777,9 +1077,15 @@ class FpValues {
     return total;
   }
 
-  const BitChunks& GetBitChunks(int i) const { return bit_chunks_[i]; }
+  const BitChunks& GetBitChunks(int i) const {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_44(mht_44_v, 1081, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "GetBitChunks");
+ return bit_chunks_[i]; }
 
   std::string ToString() const {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_45(mht_45_v, 1086, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "ToString");
+
     return absl::StrCat(
         "[", absl::StrJoin(bit_chunks_, ",", AppendStringifyNum<BitChunks>),
         "]");
@@ -798,21 +1104,33 @@ int GetMantissaTotalBits() {
 
 template <typename T>
 int GetFpTotalBits() {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_46(mht_46_v, 1107, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "GetFpTotalBits");
+
   return sizeof(T) * 8;
 }
 
 template <typename T>
 int GetExponentTotalBits() {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_47(mht_47_v, 1115, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "GetExponentTotalBits");
+
   return GetFpTotalBits<T>() - GetMantissaTotalBits<T>() - 1;
 }
 
 template <typename T>
 uint64_t GetAllOneMantissa() {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_48(mht_48_v, 1123, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "GetAllOneMantissa");
+
   return (1ull << GetMantissaTotalBits<T>()) - 1ull;
 }
 
 template <typename T>
 uint64_t GetAllOneExponent() {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_49(mht_49_v, 1131, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "GetAllOneExponent");
+
   return (1ull << GetExponentTotalBits<T>()) - 1ull;
 }
 
@@ -827,12 +1145,18 @@ FpValues GetFpValues(BitChunks mantissa, BitChunks exponent, BitChunks sign) {
 
 template <typename T>
 FpValues GetZeros() {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_50(mht_50_v, 1148, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "GetZeros");
+
   return GetFpValues<T>(BitChunks(0, 0, 1), BitChunks(0, 0, 1),
                         BitChunks(0, 1, 1));
 }
 
 template <typename T>
 FpValues GetSubnormals(int approx_num_values) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_51(mht_51_v, 1157, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "GetSubnormals");
+
   int mantissa = GetMantissaTotalBits<T>();
   uint64_t mantissa_spacing = (1ull << mantissa) / (approx_num_values * 2);
   return GetFpValues<T>(
@@ -842,6 +1166,9 @@ FpValues GetSubnormals(int approx_num_values) {
 
 template <typename T>
 FpValues GetInfinites() {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_52(mht_52_v, 1169, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "GetInfinites");
+
   uint64_t all_one_exp = GetAllOneExponent<T>();
   return GetFpValues<T>(BitChunks(0, 0, 1),
                         BitChunks(all_one_exp, all_one_exp, 1),
@@ -850,6 +1177,9 @@ FpValues GetInfinites() {
 
 template <typename T>
 FpValues GetNans(int approx_num_values) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_53(mht_53_v, 1180, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "GetNans");
+
   int mantissa = GetMantissaTotalBits<T>();
   uint64_t mantissa_spacing = (1ull << mantissa) / (approx_num_values * 2);
   uint64_t all_one_exp = GetAllOneExponent<T>();
@@ -860,6 +1190,9 @@ FpValues GetNans(int approx_num_values) {
 
 template <typename T>
 FpValues GetNormals(int approx_num_values) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_54(mht_54_v, 1193, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "GetNormals");
+
   float component_total = std::sqrt(static_cast<float>(approx_num_values));
   return GetFpValues<T>(
       BitChunks(0x1, GetAllOneMantissa<T>(),
@@ -1007,6 +1340,9 @@ inline ErrorSpec DefaultSpecGenerator<BF16, 2>(bfloat16, bfloat16) {
 
 template <PrimitiveType T, size_t N>
 typename ErrorSpecGenWrapper<T, N>::type GetDefaultSpecGenerator() {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_55(mht_55_v, 1343, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "GetDefaultSpecGenerator");
+
   return DefaultSpecGenerator<T, N>;
 }
 
@@ -1055,6 +1391,9 @@ class ExhaustiveUnaryTest : public ExhaustiveOpTestBase<T, 1> {
  public:
   using typename ExhaustiveOpTestBase<T, 1>::ErrorSpecGen;
   static ErrorSpecGen GetDefaultSpecGenerator() {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSexhaustive_op_test_utilsDTh mht_56(mht_56_v, 1394, "", "./tensorflow/compiler/xla/tests/exhaustive_op_test_utils.h", "GetDefaultSpecGenerator");
+
     return exhaustive_op_test::GetDefaultSpecGenerator<T, 1>();
   }
 };

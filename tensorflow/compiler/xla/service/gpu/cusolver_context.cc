@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPScusolver_contextDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPScusolver_contextDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPScusolver_contextDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -113,6 +281,9 @@ struct GpuComplexT<std::complex<double>*> {
 
 template <typename T>
 inline typename GpuComplexT<T>::type* ToDevicePointer(se::DeviceMemory<T> p) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPScusolver_contextDTcc mht_0(mht_0_v, 284, "", "./tensorflow/compiler/xla/service/gpu/cusolver_context.cc", "ToDevicePointer");
+
   return static_cast<typename GpuComplexT<T>::type*>(p.opaque());
 }
 
@@ -130,6 +301,9 @@ cublasFillMode_t GpuBlasUpperLower(se::blas::UpperLower uplo) {
 
 // Converts a cuSolver status to a Status.
 Status ConvertStatus(cusolverStatus_t status) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPScusolver_contextDTcc mht_1(mht_1_v, 304, "", "./tensorflow/compiler/xla/service/gpu/cusolver_context.cc", "ConvertStatus");
+
   switch (status) {
     case CUSOLVER_STATUS_SUCCESS:
       return Status::OK();
@@ -173,6 +347,9 @@ hipsolverFillMode_t GpuBlasUpperLower(se::blas::UpperLower uplo) {
 }
 
 Status ConvertStatus(hipsolverStatus_t status) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPScusolver_contextDTcc mht_2(mht_2_v, 350, "", "./tensorflow/compiler/xla/service/gpu/cusolver_context.cc", "ConvertStatus");
+
   switch (status) {
     case HIPSOLVER_STATUS_SUCCESS:
       return Status::OK();
@@ -215,6 +392,9 @@ rocblas_fill GpuBlasUpperLower(se::blas::UpperLower uplo) {
 }
 
 Status ConvertStatus(rocblas_status status) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPScusolver_contextDTcc mht_3(mht_3_v, 395, "", "./tensorflow/compiler/xla/service/gpu/cusolver_context.cc", "ConvertStatus");
+
   switch (status) {
     case rocblas_status_success:
       return Status::OK();
@@ -293,6 +473,9 @@ Status ConvertStatus(rocblas_status status) {
 }  // namespace
 
 StatusOr<GpuSolverContext> GpuSolverContext::Create(se::Stream* stream) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPScusolver_contextDTcc mht_4(mht_4_v, 476, "", "./tensorflow/compiler/xla/service/gpu/cusolver_context.cc", "GpuSolverContext::Create");
+
   gpusolverHandle_t handle;
   TF_RETURN_IF_ERROR(ConvertStatus(GpuSolverCreate(&handle)));
   GpuSolverContext context(stream, handle);
@@ -309,9 +492,15 @@ StatusOr<GpuSolverContext> GpuSolverContext::Create(se::Stream* stream) {
 }
 
 GpuSolverContext::GpuSolverContext(se::Stream* stream, gpusolverHandle_t handle)
-    : stream_(stream), handle_(handle) {}
+    : stream_(stream), handle_(handle) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPScusolver_contextDTcc mht_5(mht_5_v, 496, "", "./tensorflow/compiler/xla/service/gpu/cusolver_context.cc", "GpuSolverContext::GpuSolverContext");
+}
 
 GpuSolverContext::GpuSolverContext(GpuSolverContext&& other) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPScusolver_contextDTcc mht_6(mht_6_v, 501, "", "./tensorflow/compiler/xla/service/gpu/cusolver_context.cc", "GpuSolverContext::GpuSolverContext");
+
   handle_ = other.handle_;
   stream_ = other.stream_;
   other.handle_ = nullptr;
@@ -319,12 +508,18 @@ GpuSolverContext::GpuSolverContext(GpuSolverContext&& other) {
 }
 
 GpuSolverContext& GpuSolverContext::operator=(GpuSolverContext&& other) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPScusolver_contextDTcc mht_7(mht_7_v, 511, "", "./tensorflow/compiler/xla/service/gpu/cusolver_context.cc", "=");
+
   std::swap(handle_, other.handle_);
   std::swap(stream_, other.stream_);
   return *this;
 }
 
 GpuSolverContext::~GpuSolverContext() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPScusolver_contextDTcc mht_8(mht_8_v, 520, "", "./tensorflow/compiler/xla/service/gpu/cusolver_context.cc", "GpuSolverContext::~GpuSolverContext");
+
   if (handle_) {
     Status status = ConvertStatus(GpuSolverDestroy(handle_));
     if (!status.ok()) {
@@ -340,6 +535,9 @@ StatusOr<int64_t> GpuSolverContext::PotrfBufferSize(PrimitiveType type,
                                                     se::blas::UpperLower uplo,
                                                     int n, int lda,
                                                     int batch_size) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPScusolver_contextDTcc mht_9(mht_9_v, 538, "", "./tensorflow/compiler/xla/service/gpu/cusolver_context.cc", "GpuSolverContext::PotrfBufferSize");
+
 #if TENSORFLOW_USE_CUSOLVER_OR_HIPSOLVER
   int size = -1;
   switch (type) {
@@ -383,6 +581,9 @@ Status GpuSolverContext::Potrf(se::blas::UpperLower uplo, int n,
                                se::DeviceMemory<float> a, int lda,
                                se::DeviceMemory<int> lapack_info,
                                se::DeviceMemoryBase workspace) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPScusolver_contextDTcc mht_10(mht_10_v, 584, "", "./tensorflow/compiler/xla/service/gpu/cusolver_context.cc", "GpuSolverContext::Potrf");
+
   return ConvertStatus(GpuSolverSpotrf(
       handle(), GpuBlasUpperLower(uplo), n, ToDevicePointer(a), lda,
 #if TENSORFLOW_USE_CUSOLVER_OR_HIPSOLVER
@@ -396,6 +597,9 @@ Status GpuSolverContext::Potrf(se::blas::UpperLower uplo, int n,
                                se::DeviceMemory<double> a, int lda,
                                se::DeviceMemory<int> lapack_info,
                                se::DeviceMemoryBase workspace) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPScusolver_contextDTcc mht_11(mht_11_v, 600, "", "./tensorflow/compiler/xla/service/gpu/cusolver_context.cc", "GpuSolverContext::Potrf");
+
   return ConvertStatus(GpuSolverDpotrf(
       handle(), GpuBlasUpperLower(uplo), n, ToDevicePointer(a), lda,
 #if TENSORFLOW_USE_CUSOLVER_OR_HIPSOLVER
@@ -409,6 +613,9 @@ Status GpuSolverContext::Potrf(se::blas::UpperLower uplo, int n,
                                se::DeviceMemory<std::complex<float>> a, int lda,
                                se::DeviceMemory<int> lapack_info,
                                se::DeviceMemoryBase workspace) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPScusolver_contextDTcc mht_12(mht_12_v, 616, "", "./tensorflow/compiler/xla/service/gpu/cusolver_context.cc", "GpuSolverContext::Potrf");
+
   return ConvertStatus(GpuSolverCpotrf(
       handle(), GpuBlasUpperLower(uplo), n, ToDevicePointer(a), lda,
 #if TENSORFLOW_USE_CUSOLVER_OR_HIPSOLVER
@@ -422,6 +629,9 @@ Status GpuSolverContext::Potrf(se::blas::UpperLower uplo, int n,
                                se::DeviceMemory<std::complex<double>> a,
                                int lda, se::DeviceMemory<int> lapack_info,
                                se::DeviceMemoryBase workspace) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPScusolver_contextDTcc mht_13(mht_13_v, 632, "", "./tensorflow/compiler/xla/service/gpu/cusolver_context.cc", "GpuSolverContext::Potrf");
+
   return ConvertStatus(GpuSolverZpotrf(
       handle(), GpuBlasUpperLower(uplo), n, ToDevicePointer(a), lda,
 #if TENSORFLOW_USE_CUSOLVER_OR_HIPSOLVER
@@ -435,6 +645,9 @@ Status GpuSolverContext::PotrfBatched(se::blas::UpperLower uplo, int n,
                                       se::DeviceMemory<float*> as, int lda,
                                       se::DeviceMemory<int> lapack_info,
                                       int batch_size) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPScusolver_contextDTcc mht_14(mht_14_v, 648, "", "./tensorflow/compiler/xla/service/gpu/cusolver_context.cc", "GpuSolverContext::PotrfBatched");
+
   return ConvertStatus(GpuSolverSpotrfBatched(
       handle(), GpuBlasUpperLower(uplo), n, ToDevicePointer(as), lda,
 #if TENSORFLOW_USE_HIPSOLVER
@@ -447,6 +660,9 @@ Status GpuSolverContext::PotrfBatched(se::blas::UpperLower uplo, int n,
                                       se::DeviceMemory<double*> as, int lda,
                                       se::DeviceMemory<int> lapack_info,
                                       int batch_size) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPScusolver_contextDTcc mht_15(mht_15_v, 663, "", "./tensorflow/compiler/xla/service/gpu/cusolver_context.cc", "GpuSolverContext::PotrfBatched");
+
   return ConvertStatus(GpuSolverDpotrfBatched(
       handle(), GpuBlasUpperLower(uplo), n, ToDevicePointer(as), lda,
 #if TENSORFLOW_USE_HIPSOLVER
@@ -460,6 +676,9 @@ Status GpuSolverContext::PotrfBatched(se::blas::UpperLower uplo, int n,
                                       int lda,
                                       se::DeviceMemory<int> lapack_info,
                                       int batch_size) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPScusolver_contextDTcc mht_16(mht_16_v, 679, "", "./tensorflow/compiler/xla/service/gpu/cusolver_context.cc", "GpuSolverContext::PotrfBatched");
+
   return ConvertStatus(GpuSolverCpotrfBatched(
       handle(), GpuBlasUpperLower(uplo), n, ToDevicePointer(as), lda,
 #if TENSORFLOW_USE_HIPSOLVER
@@ -472,6 +691,9 @@ Status GpuSolverContext::PotrfBatched(
     se::blas::UpperLower uplo, int n,
     se::DeviceMemory<std::complex<double>*> as, int lda,
     se::DeviceMemory<int> lapack_info, int batch_size) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPScusolver_contextDTcc mht_17(mht_17_v, 694, "", "./tensorflow/compiler/xla/service/gpu/cusolver_context.cc", "GpuSolverContext::PotrfBatched");
+
   return ConvertStatus(GpuSolverZpotrfBatched(
       handle(), GpuBlasUpperLower(uplo), n, ToDevicePointer(as), lda,
 #if TENSORFLOW_USE_HIPSOLVER

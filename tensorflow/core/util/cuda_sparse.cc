@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSutilPScuda_sparseDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSutilPScuda_sparseDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSutilPScuda_sparseDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -62,10 +230,16 @@ struct CudaComplexT<std::complex<double>> {
 // cuComplex/cuDoubleComplex. No type conversion for non-complex types.
 template <typename T>
 inline const typename CudaComplexT<T>::type* AsCudaComplex(const T* p) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSutilPScuda_sparseDTcc mht_0(mht_0_v, 233, "", "./tensorflow/core/util/cuda_sparse.cc", "AsCudaComplex");
+
   return reinterpret_cast<const typename CudaComplexT<T>::type*>(p);
 }
 template <typename T>
 inline typename CudaComplexT<T>::type* AsCudaComplex(T* p) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSutilPScuda_sparseDTcc mht_1(mht_1_v, 240, "", "./tensorflow/core/util/cuda_sparse.cc", "AsCudaComplex");
+
   return reinterpret_cast<typename CudaComplexT<T>::type*>(p);
 }
 
@@ -74,16 +248,25 @@ inline typename CudaComplexT<T>::type* AsCudaComplex(T* p) {
 class CudaSparseHandles {
  public:
   explicit CudaSparseHandles(cudaStream_t stream)
-      : initialized_(false), stream_(stream) {}
+      : initialized_(false), stream_(stream) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSutilPScuda_sparseDTcc mht_2(mht_2_v, 252, "", "./tensorflow/core/util/cuda_sparse.cc", "CudaSparseHandles");
+}
 
   CudaSparseHandles(CudaSparseHandles&& rhs)
       : initialized_(rhs.initialized_),
         stream_(std::move(rhs.stream_)),
         cusparse_handle_(rhs.cusparse_handle_) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSutilPScuda_sparseDTcc mht_3(mht_3_v, 260, "", "./tensorflow/core/util/cuda_sparse.cc", "CudaSparseHandles");
+
     rhs.initialized_ = false;
   }
 
   CudaSparseHandles& operator=(CudaSparseHandles&& rhs) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSutilPScuda_sparseDTcc mht_4(mht_4_v, 267, "", "./tensorflow/core/util/cuda_sparse.cc", "=");
+
     if (this == &rhs) return *this;
     Release();
     stream_ = std::move(rhs.stream_);
@@ -93,9 +276,15 @@ class CudaSparseHandles {
     return *this;
   }
 
-  ~CudaSparseHandles() { Release(); }
+  ~CudaSparseHandles() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSutilPScuda_sparseDTcc mht_5(mht_5_v, 280, "", "./tensorflow/core/util/cuda_sparse.cc", "~CudaSparseHandles");
+ Release(); }
 
   Status Initialize() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSutilPScuda_sparseDTcc mht_6(mht_6_v, 285, "", "./tensorflow/core/util/cuda_sparse.cc", "Initialize");
+
     if (initialized_) return Status::OK();
     TF_RETURN_IF_GPUSPARSE_ERROR(cusparseCreate(&cusparse_handle_));
     TF_RETURN_IF_GPUSPARSE_ERROR(cusparseSetStream(cusparse_handle_, stream_));
@@ -104,17 +293,26 @@ class CudaSparseHandles {
   }
 
   cusparseHandle_t& handle() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSutilPScuda_sparseDTcc mht_7(mht_7_v, 296, "", "./tensorflow/core/util/cuda_sparse.cc", "handle");
+
     DCHECK(initialized_);
     return cusparse_handle_;
   }
 
   const cusparseHandle_t& handle() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSutilPScuda_sparseDTcc mht_8(mht_8_v, 304, "", "./tensorflow/core/util/cuda_sparse.cc", "handle");
+
     DCHECK(initialized_);
     return cusparse_handle_;
   }
 
  private:
   void Release() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSutilPScuda_sparseDTcc mht_9(mht_9_v, 313, "", "./tensorflow/core/util/cuda_sparse.cc", "Release");
+
     if (initialized_) {
       // This should never return anything other than success
       auto err = cusparseDestroy(cusparse_handle_);
@@ -144,6 +342,9 @@ using HandleMap = std::unordered_map<cudaStream_t, CudaSparseHandles>;
 // Returns a singleton map used for storing initialized handles for each unique
 // cuda stream.
 HandleMap* GetHandleMapSingleton() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSutilPScuda_sparseDTcc mht_10(mht_10_v, 345, "", "./tensorflow/core/util/cuda_sparse.cc", "GetHandleMapSingleton");
+
   static HandleMap* cm = new HandleMap;
   return cm;
 }
@@ -152,6 +353,9 @@ HandleMap* GetHandleMapSingleton() {
 
 GpuSparse::GpuSparse(OpKernelContext* context)
     : initialized_(false), context_(context) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSutilPScuda_sparseDTcc mht_11(mht_11_v, 356, "", "./tensorflow/core/util/cuda_sparse.cc", "GpuSparse::GpuSparse");
+
   auto cuda_stream_ptr =
       reinterpret_cast<const cudaStream_t*>(context->op_device_context()
                                                 ->stream()
@@ -162,6 +366,9 @@ GpuSparse::GpuSparse(OpKernelContext* context)
 }
 
 Status GpuSparse::Initialize() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSutilPScuda_sparseDTcc mht_12(mht_12_v, 369, "", "./tensorflow/core/util/cuda_sparse.cc", "GpuSparse::Initialize");
+
   HandleMap* handle_map = GetHandleMapSingleton();
   DCHECK(handle_map);
   mutex_lock lock(handle_map_mutex);
@@ -334,6 +541,9 @@ TF_CALL_LAPACK_TYPES(GTSV2_STRIDED_BATCH_BUFFER_SIZE_INSTANCE);
 
 Status GpuSparse::Coo2csr(const int* cooRowInd, int nnz, int m,
                           int* csrRowPtr) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSutilPScuda_sparseDTcc mht_13(mht_13_v, 544, "", "./tensorflow/core/util/cuda_sparse.cc", "GpuSparse::Coo2csr");
+
   // cusparseStatus_t CUSPARSEAPI cusparseXcoo2csr(cusparseHandle_t handle,
   //                                               const int *cooRowInd,
   //                                               int nnz,
@@ -350,6 +560,9 @@ Status GpuSparse::Coo2csr(const int* cooRowInd, int nnz, int m,
 
 Status GpuSparse::Csr2coo(const int* csrRowPtr, int nnz, int m,
                           int* cooRowInd) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSutilPScuda_sparseDTcc mht_14(mht_14_v, 563, "", "./tensorflow/core/util/cuda_sparse.cc", "GpuSparse::Csr2coo");
+
   // cusparseStatus_t CUSPARSEAPI cusparseXcsr2coo(cusparseHandle_t handle,
   //                                               const int *csrRowPtr,
   //                                               int nnz,
@@ -370,6 +583,9 @@ Status GpuSparse::CsrgeamNnz(
     const cusparseMatDescr_t descrB, int nnzB, const int* csrSortedRowPtrB,
     const int* csrSortedColIndB, const cusparseMatDescr_t descrC,
     int* csrSortedRowPtrC, int* nnzTotalDevHostPtr, void* workspace) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSutilPScuda_sparseDTcc mht_15(mht_15_v, 586, "", "./tensorflow/core/util/cuda_sparse.cc", "GpuSparse::CsrgeamNnz");
+
   DCHECK(initialized_);
   DCHECK(nnzTotalDevHostPtr != nullptr);
 #if CUDA_VERSION >= 10000
@@ -556,6 +772,9 @@ static inline Status SpMVImpl(cudaDataType_t dtype, OpKernelContext* context,
                               const int* csrSortedRowPtrA,
                               const int* csrSortedColIndA, const Scalar* x,
                               const Scalar* beta_host, Scalar* y) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSutilPScuda_sparseDTcc mht_16(mht_16_v, 775, "", "./tensorflow/core/util/cuda_sparse.cc", "SpMVImpl");
+
   cusparseSpMatDescr_t matA;
   TF_RETURN_IF_GPUSPARSE_ERROR(cusparseCreateCsr(
       &matA, m, n, nnz, const_cast<int*>(csrSortedRowPtrA),
@@ -826,6 +1045,9 @@ static const T* one_ptr() {
 
 template <typename T>
 static const T* null_ptr() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSutilPScuda_sparseDTcc mht_17(mht_17_v, 1048, "", "./tensorflow/core/util/cuda_sparse.cc", "null_ptr");
+
   return nullptr;
 }
 
@@ -856,6 +1078,9 @@ Status GpuSparse::CsrgemmNnz(
     const int* csrSortedColIndB, const cusparseMatDescr_t descrC,
     int* csrSortedRowPtrC, int* nnzTotalDevHostPtr, csrgemm2Info_t info,
     void* workspace) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSutilPScuda_sparseDTcc mht_18(mht_18_v, 1081, "", "./tensorflow/core/util/cuda_sparse.cc", "GpuSparse::CsrgemmNnz");
+
   DCHECK(initialized_);
   DCHECK(nnzTotalDevHostPtr != nullptr);
 

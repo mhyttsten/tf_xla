@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,8 +197,14 @@ namespace {
 class ResourceApplyGradientDescent : public XlaOpKernel {
  public:
   explicit ResourceApplyGradientDescent(OpKernelConstruction* ctx)
-      : XlaOpKernel(ctx) {}
+      : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_0(mht_0_v, 201, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "ResourceApplyGradientDescent");
+}
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_1(mht_1_v, 205, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "Compile");
+
     xla::XlaOp handle;
     DataType type = ctx->input_type(1);
     TensorShape var_shape;
@@ -59,6 +233,9 @@ REGISTER_XLA_OP(Name("ResourceApplyGradientDescent")
 xla::XlaOp ProximalGradientDescentUpdate(xla::XlaOp var, xla::XlaOp lr,
                                          xla::XlaOp l1, xla::XlaOp l2,
                                          xla::XlaOp grad) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_2(mht_2_v, 236, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "ProximalGradientDescentUpdate");
+
   xla::XlaOp one = xla::ScalarLike(lr, 1.0);
   xla::XlaOp zero = xla::ScalarLike(lr, 0.0);
   xla::XlaOp prox_var = var - grad * lr;
@@ -73,10 +250,16 @@ class ResourceApplyProximalGradientDescent : public XlaOpKernel {
  public:
   explicit ResourceApplyProximalGradientDescent(OpKernelConstruction* ctx)
       : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_3(mht_3_v, 253, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "ResourceApplyProximalGradientDescent");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("T", &dtype_));
   }
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_4(mht_4_v, 260, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "Compile");
+
     xla::XlaOp var;
     TensorShape var_shape;
     OP_REQUIRES_OK(ctx, ctx->ReadVariableInput(0, dtype_, &var_shape, &var));
@@ -117,10 +300,16 @@ REGISTER_XLA_OP(Name("ResourceApplyProximalGradientDescent")
 class ResourceApplyMomentum : public XlaOpKernel {
  public:
   explicit ResourceApplyMomentum(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_5(mht_5_v, 303, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "ResourceApplyMomentum");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("use_nesterov", &use_nesterov_));
   }
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_6(mht_6_v, 310, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "Compile");
+
     DataType type = ctx->input_type(2);
 
     TensorShape var_shape, accum_shape;
@@ -175,10 +364,16 @@ class ResourceApplyKerasMomentum : public XlaOpKernel {
  public:
   explicit ResourceApplyKerasMomentum(OpKernelConstruction* ctx)
       : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_7(mht_7_v, 367, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "ResourceApplyKerasMomentum");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("use_nesterov", &use_nesterov_));
   }
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_8(mht_8_v, 374, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "Compile");
+
     DataType type = ctx->input_type(2);
 
     TensorShape var_shape, accum_shape;
@@ -233,10 +428,16 @@ REGISTER_XLA_OP(Name("ResourceApplyKerasMomentum")
 class ResourceApplyAdagrad : public XlaOpKernel {
  public:
   explicit ResourceApplyAdagrad(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_9(mht_9_v, 431, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "ResourceApplyAdagrad");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("update_slots", &update_slots_));
   }
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_10(mht_10_v, 438, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "Compile");
+
     DataType type = ctx->input_type(2);
 
     TensorShape var_shape, accum_shape;
@@ -282,10 +483,16 @@ class ResourceApplyAdagradV2 : public XlaOpKernel {
  public:
   explicit ResourceApplyAdagradV2(OpKernelConstruction* ctx)
       : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_11(mht_11_v, 486, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "ResourceApplyAdagradV2");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("update_slots", &update_slots_));
   }
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_12(mht_12_v, 493, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "Compile");
+
     DataType type = ctx->input_type(2);
 
     TensorShape var_shape, accum_shape;
@@ -337,10 +544,16 @@ class ResourceApplyProximalAdagrad : public XlaOpKernel {
  public:
   explicit ResourceApplyProximalAdagrad(OpKernelConstruction* ctx)
       : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_13(mht_13_v, 547, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "ResourceApplyProximalAdagrad");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("T", &dtype_));
   }
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_14(mht_14_v, 554, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "Compile");
+
     TensorShape var_shape, accum_shape;
     xla::XlaOp var, accum;
     OP_REQUIRES_OK(ctx, ctx->ReadVariableInput(0, dtype_, &var_shape, &var));
@@ -393,10 +606,16 @@ class ResourceApplyAdagradDA : public XlaOpKernel {
  public:
   explicit ResourceApplyAdagradDA(OpKernelConstruction* ctx)
       : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_15(mht_15_v, 609, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "ResourceApplyAdagradDA");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("T", &dtype_));
   }
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_16(mht_16_v, 616, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "Compile");
+
     TensorShape var_shape, accum_shape, squared_accum_shape;
     xla::XlaOp var, accum, squared_accum;
     OP_REQUIRES_OK(ctx, ctx->ReadVariableInput(0, dtype_, &var_shape, &var));
@@ -468,11 +687,17 @@ REGISTER_XLA_OP(Name("ResourceApplyAdagradDA").TypeConstraint("T", kFloatTypes),
 class ResourceApplyAdam : public XlaOpKernel {
  public:
   explicit ResourceApplyAdam(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_17(mht_17_v, 690, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "ResourceApplyAdam");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("T", &dtype_));
     OP_REQUIRES_OK(ctx, ctx->GetAttr("use_nesterov", &use_nesterov_));
   }
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_18(mht_18_v, 698, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "Compile");
+
     TensorShape var_shape, m_shape, v_shape;
     xla::XlaOp var, m, v;
     OP_REQUIRES_OK(ctx, ctx->ReadVariableInput(0, dtype_, &var_shape, &var));
@@ -565,10 +790,16 @@ REGISTER_XLA_OP(
 class ResourceApplyAdaMax : public XlaOpKernel {
  public:
   explicit ResourceApplyAdaMax(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_19(mht_19_v, 793, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "ResourceApplyAdaMax");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("T", &dtype_));
   }
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_20(mht_20_v, 800, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "Compile");
+
     TensorShape var_shape, m_shape, v_shape;
     xla::XlaOp var, m, v;
     OP_REQUIRES_OK(ctx, ctx->ReadVariableInput(0, dtype_, &var_shape, &var));
@@ -636,10 +867,16 @@ REGISTER_XLA_OP(Name("ResourceApplyAdaMax").TypeConstraint("T", kFloatTypes),
 class ResourceApplyRMSProp : public XlaOpKernel {
  public:
   explicit ResourceApplyRMSProp(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_21(mht_21_v, 870, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "ResourceApplyRMSProp");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("T", &dtype_));
   }
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_22(mht_22_v, 877, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "Compile");
+
     TensorShape var_shape, ms_shape, mom_shape, mg_shape;
     xla::XlaOp var, ms, mom, mg;
     OP_REQUIRES_OK(ctx,
@@ -740,6 +977,9 @@ class ResourceApplyCenteredRMSProp : public ResourceApplyRMSProp {
  public:
   explicit ResourceApplyCenteredRMSProp(OpKernelConstruction* ctx)
       : ResourceApplyRMSProp(ctx) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_23(mht_23_v, 980, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "ResourceApplyCenteredRMSProp");
+
     centered_ = true;
   }
 };
@@ -749,6 +989,9 @@ REGISTER_XLA_OP(Name("ResourceApplyCenteredRMSProp")
 
 void CompileFtrl(XlaOpKernelContext* ctx, DataType dtype, bool has_l2_shrinkage,
                  bool multiply_linear_by_lr) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_24(mht_24_v, 992, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "CompileFtrl");
+
   xla::XlaBuilder* b = ctx->builder();
 
   TensorShape var_shape, accum_shape, linear_shape;
@@ -864,12 +1107,18 @@ void CompileFtrl(XlaOpKernelContext* ctx, DataType dtype, bool has_l2_shrinkage,
 class ResourceApplyFtrl : public XlaOpKernel {
  public:
   explicit ResourceApplyFtrl(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_25(mht_25_v, 1110, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "ResourceApplyFtrl");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("T", &dtype_));
     OP_REQUIRES_OK(
         ctx, ctx->GetAttr("multiply_linear_by_lr", &multiply_linear_by_lr_));
   }
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_26(mht_26_v, 1119, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "Compile");
+
     CompileFtrl(ctx, dtype_, /*has_l2_shrinkage=*/false,
                 /*multiply_linear_by_lr=*/multiply_linear_by_lr_);
   }
@@ -886,12 +1135,18 @@ REGISTER_XLA_OP(Name("ResourceApplyFtrl").TypeConstraint("T", kFloatTypes),
 class ResourceApplyFtrlV2 : public XlaOpKernel {
  public:
   explicit ResourceApplyFtrlV2(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_27(mht_27_v, 1138, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "ResourceApplyFtrlV2");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("T", &dtype_));
     OP_REQUIRES_OK(
         ctx, ctx->GetAttr("multiply_linear_by_lr", &multiply_linear_by_lr_));
   }
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_28(mht_28_v, 1147, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "Compile");
+
     CompileFtrl(ctx, dtype_, /*has_l2_shrinkage=*/true,
                 /*multiply_linear_by_lr=*/multiply_linear_by_lr_);
   }
@@ -908,10 +1163,16 @@ REGISTER_XLA_OP(Name("ResourceApplyFtrlV2").TypeConstraint("T", kFloatTypes),
 class ResourceApplyAdadelta : public XlaOpKernel {
  public:
   explicit ResourceApplyAdadelta(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_29(mht_29_v, 1166, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "ResourceApplyAdadelta");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("T", &dtype_));
   }
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_30(mht_30_v, 1173, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "Compile");
+
     TensorShape var_shape, accum_shape, accum_update_shape;
     xla::XlaOp var, accum, accum_update;
     OP_REQUIRES_OK(ctx, ctx->ReadVariableInput(0, dtype_, &var_shape, &var));
@@ -975,10 +1236,16 @@ REGISTER_XLA_OP(
 class ResourceApplySignBase : public XlaOpKernel {
  public:
   explicit ResourceApplySignBase(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_31(mht_31_v, 1239, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "ResourceApplySignBase");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("T", &dtype_));
   }
 
   void Compile(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_32(mht_32_v, 1246, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "Compile");
+
     TensorShape var_shape, m_shape;
     xla::XlaOp var, m;
     OP_REQUIRES_OK(ctx, ctx->ReadVariableInput(0, dtype_, &var_shape, &var));
@@ -1010,6 +1277,9 @@ class ResourceApplySignBase : public XlaOpKernel {
   }
 
   virtual void CheckScalarParams(XlaOpKernelContext* ctx) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_33(mht_33_v, 1280, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "CheckScalarParams");
+
     TensorShape lr_shape = ctx->InputShape(2);
     TensorShape sign_decay_shape = ctx->InputShape(4);
     TensorShape beta_shape = ctx->InputShape(5);
@@ -1037,9 +1307,15 @@ class ResourceApplySignBase : public XlaOpKernel {
 class ResourceApplyAddSign : public ResourceApplySignBase {
  public:
   explicit ResourceApplyAddSign(OpKernelConstruction* ctx)
-      : ResourceApplySignBase(ctx) {}
+      : ResourceApplySignBase(ctx) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_34(mht_34_v, 1311, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "ResourceApplyAddSign");
+}
 
   void CheckScalarParams(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_35(mht_35_v, 1316, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "CheckScalarParams");
+
     ResourceApplySignBase::CheckScalarParams(ctx);
     TensorShape alpha_shape = ctx->InputShape(3);
     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(alpha_shape),
@@ -1048,6 +1324,9 @@ class ResourceApplyAddSign : public ResourceApplySignBase {
   }
 
   xla::XlaOp ComputeGradientScale(xla::XlaOp alpha, xla::XlaOp decay) override {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_36(mht_36_v, 1327, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "ComputeGradientScale");
+
     return alpha + decay;
   }
 };
@@ -1057,9 +1336,15 @@ REGISTER_XLA_OP(Name("ResourceApplyAddSign").TypeConstraint("T", kFloatTypes),
 class ResourceApplyPowerSign : public ResourceApplySignBase {
  public:
   explicit ResourceApplyPowerSign(OpKernelConstruction* ctx)
-      : ResourceApplySignBase(ctx) {}
+      : ResourceApplySignBase(ctx) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_37(mht_37_v, 1340, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "ResourceApplyPowerSign");
+}
 
   void CheckScalarParams(XlaOpKernelContext* ctx) override {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_38(mht_38_v, 1345, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "CheckScalarParams");
+
     ResourceApplySignBase::CheckScalarParams(ctx);
     TensorShape logbase_shape = ctx->InputShape(3);
     OP_REQUIRES(ctx, TensorShapeUtils::IsScalar(logbase_shape),
@@ -1068,6 +1353,9 @@ class ResourceApplyPowerSign : public ResourceApplySignBase {
   }
 
   xla::XlaOp ComputeGradientScale(xla::XlaOp alpha, xla::XlaOp decay) override {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStraining_opsDTcc mht_39(mht_39_v, 1356, "", "./tensorflow/compiler/tf2xla/kernels/training_ops.cc", "ComputeGradientScale");
+
     return xla::Exp(alpha * decay);
   }
 };

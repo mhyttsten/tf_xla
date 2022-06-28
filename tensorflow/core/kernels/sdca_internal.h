@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_KERNELS_SDCA_INTERNAL_H_
 #define TENSORFLOW_CORE_KERNELS_SDCA_INTERNAL_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #define EIGEN_USE_THREADS
 
@@ -68,15 +236,24 @@ struct ExampleStatistics {
   // Num_weight_vectors equals to the number of classification classes in the
   // multiclass case; while for binary case, it is 1.
   ExampleStatistics(const int num_weight_vectors)
-      : wx(num_weight_vectors, 0.0), prev_wx(num_weight_vectors, 0.0) {}
+      : wx(num_weight_vectors, 0.0), prev_wx(num_weight_vectors, 0.0) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh mht_0(mht_0_v, 240, "", "./tensorflow/core/kernels/sdca_internal.h", "ExampleStatistics");
+}
 };
 
 class Regularizations {
  public:
-  Regularizations() {}
+  Regularizations() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh mht_1(mht_1_v, 248, "", "./tensorflow/core/kernels/sdca_internal.h", "Regularizations");
+}
 
   // Initialize() must be called immediately after construction.
   Status Initialize(OpKernelConstruction* const context) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh mht_2(mht_2_v, 254, "", "./tensorflow/core/kernels/sdca_internal.h", "Initialize");
+
     TF_RETURN_IF_ERROR(context->GetAttr("l1", &symmetric_l1_));
     TF_RETURN_IF_ERROR(context->GetAttr("l2", &symmetric_l2_));
     shrinkage_ = symmetric_l1_ / symmetric_l2_;
@@ -85,6 +262,9 @@ class Regularizations {
 
   // Proximal SDCA shrinking for L1 regularization.
   double Shrink(const double weight) const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh mht_3(mht_3_v, 265, "", "./tensorflow/core/kernels/sdca_internal.h", "Shrink");
+
     const double shrinked = std::max(std::abs(weight) - shrinkage_, 0.0);
     if (shrinked > 0.0) {
       return std::copysign(shrinked, weight);
@@ -108,7 +288,10 @@ class Regularizations {
                                  .cwiseMax(weights.constant(0.0)));
   }
 
-  float symmetric_l2() const { return symmetric_l2_; }
+  float symmetric_l2() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh mht_4(mht_4_v, 292, "", "./tensorflow/core/kernels/sdca_internal.h", "symmetric_l2");
+ return symmetric_l2_; }
 
  private:
   float symmetric_l1_ = 0;
@@ -135,11 +318,20 @@ class Example {
       const Regularizations& regularization,
       const int num_weight_vectors) const;
 
-  float example_label() const { return example_label_; }
+  float example_label() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh mht_5(mht_5_v, 322, "", "./tensorflow/core/kernels/sdca_internal.h", "example_label");
+ return example_label_; }
 
-  float example_weight() const { return example_weight_; }
+  float example_weight() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh mht_6(mht_6_v, 327, "", "./tensorflow/core/kernels/sdca_internal.h", "example_weight");
+ return example_weight_; }
 
-  double squared_norm() const { return squared_norm_; }
+  double squared_norm() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh mht_7(mht_7_v, 332, "", "./tensorflow/core/kernels/sdca_internal.h", "squared_norm");
+ return squared_norm_; }
 
   // Sparse features associated with the example.
   // Indices and Values are the associated feature index, and values. Values
@@ -197,19 +389,31 @@ class FeatureWeightsDenseStorage {
   FeatureWeightsDenseStorage(const TTypes<const float>::Matrix nominals,
                              TTypes<float>::Matrix deltas)
       : nominals_(nominals), deltas_(deltas) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh mht_8(mht_8_v, 392, "", "./tensorflow/core/kernels/sdca_internal.h", "FeatureWeightsDenseStorage");
+
     CHECK_GT(deltas.rank(), 1);
   }
 
   // Check if a feature index is with-in the bounds.
   bool IndexValid(const int64_t index) const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh mht_9(mht_9_v, 400, "", "./tensorflow/core/kernels/sdca_internal.h", "IndexValid");
+
     return index >= 0 && index < deltas_.dimension(1);
   }
 
   // Nominals here are the original weight matrix.
-  TTypes<const float>::Matrix nominals() const { return nominals_; }
+  TTypes<const float>::Matrix nominals() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh mht_10(mht_10_v, 408, "", "./tensorflow/core/kernels/sdca_internal.h", "nominals");
+ return nominals_; }
 
   // Delta weights during mini-batch updates.
-  TTypes<float>::Matrix deltas() const { return deltas_; }
+  TTypes<float>::Matrix deltas() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh mht_11(mht_11_v, 414, "", "./tensorflow/core/kernels/sdca_internal.h", "deltas");
+ return deltas_; }
 
   // Updates delta weights based on active dense features in the example and
   // the corresponding dual residual.
@@ -233,6 +437,9 @@ class FeatureWeightsSparseStorage {
                               const TTypes<const float>::Matrix nominals,
                               TTypes<float>::Matrix deltas)
       : nominals_(nominals), deltas_(deltas) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh mht_12(mht_12_v, 440, "", "./tensorflow/core/kernels/sdca_internal.h", "FeatureWeightsSparseStorage");
+
     // Create a map from sparse index to the dense index of the underlying
     // storage.
     for (int64_t j = 0; j < indices.size(); ++j) {
@@ -242,17 +449,26 @@ class FeatureWeightsSparseStorage {
 
   // Check if a feature index exists.
   bool IndexValid(const int64_t index) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh mht_13(mht_13_v, 452, "", "./tensorflow/core/kernels/sdca_internal.h", "IndexValid");
+
     return indices_to_id_.find(index) != indices_to_id_.end();
   }
 
   // Nominal value at a particular feature index and class label.
   float nominals(const int class_id, const int64_t index) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh mht_14(mht_14_v, 460, "", "./tensorflow/core/kernels/sdca_internal.h", "nominals");
+
     auto it = indices_to_id_.find(index);
     return nominals_(class_id, it->second);
   }
 
   // Delta weights during mini-batch updates.
   float deltas(const int class_id, const int64_t index) const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh mht_15(mht_15_v, 469, "", "./tensorflow/core/kernels/sdca_internal.h", "deltas");
+
     auto it = indices_to_id_.find(index);
     return deltas_(class_id, it->second);
   }
@@ -277,13 +493,22 @@ class FeatureWeightsSparseStorage {
 // for both sparse and dense features.
 class ModelWeights {
  public:
-  ModelWeights() {}
+  ModelWeights() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh mht_16(mht_16_v, 497, "", "./tensorflow/core/kernels/sdca_internal.h", "ModelWeights");
+}
 
   bool SparseIndexValid(const int col, const int64_t index) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh mht_17(mht_17_v, 502, "", "./tensorflow/core/kernels/sdca_internal.h", "SparseIndexValid");
+
     return sparse_weights_[col].IndexValid(index);
   }
 
   bool DenseIndexValid(const int col, const int64_t index) const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh mht_18(mht_18_v, 509, "", "./tensorflow/core/kernels/sdca_internal.h", "DenseIndexValid");
+
     return dense_weights_[col].IndexValid(index);
   }
 
@@ -296,10 +521,16 @@ class ModelWeights {
   Status Initialize(OpKernelContext* const context);
 
   const std::vector<FeatureWeightsSparseStorage>& sparse_weights() const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh mht_19(mht_19_v, 524, "", "./tensorflow/core/kernels/sdca_internal.h", "sparse_weights");
+
     return sparse_weights_;
   }
 
   const std::vector<FeatureWeightsDenseStorage>& dense_weights() const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh mht_20(mht_20_v, 531, "", "./tensorflow/core/kernels/sdca_internal.h", "dense_weights");
+
     return dense_weights_;
   }
 
@@ -313,14 +544,23 @@ class ModelWeights {
 // Examples contains all the training examples that SDCA uses for a mini-batch.
 class Examples {
  public:
-  Examples() {}
+  Examples() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh mht_21(mht_21_v, 548, "", "./tensorflow/core/kernels/sdca_internal.h", "Examples");
+}
 
   // Returns the Example at |example_index|.
   const Example& example(const int example_index) const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh mht_22(mht_22_v, 554, "", "./tensorflow/core/kernels/sdca_internal.h", "example");
+
     return examples_.at(example_index);
   }
 
-  int sampled_index(const int id) const { return sampled_index_[id]; }
+  int sampled_index(const int id) const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh mht_23(mht_23_v, 561, "", "./tensorflow/core/kernels/sdca_internal.h", "sampled_index");
+ return sampled_index_[id]; }
 
   // Adaptive SDCA in the current implementation only works for
   // binary classification, where the input argument for num_weight_vectors
@@ -334,9 +574,15 @@ class Examples {
 
   void RandomShuffle();
 
-  int num_examples() const { return examples_.size(); }
+  int num_examples() const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh mht_24(mht_24_v, 578, "", "./tensorflow/core/kernels/sdca_internal.h", "num_examples");
+ return examples_.size(); }
 
-  int num_features() const { return num_features_; }
+  int num_features() const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSsdca_internalDTh mht_25(mht_25_v, 583, "", "./tensorflow/core/kernels/sdca_internal.h", "num_features");
+ return num_features_; }
 
   // Initialize() must be called immediately after construction.
   Status Initialize(OpKernelContext* const context, const ModelWeights& weights,

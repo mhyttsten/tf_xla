@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,6 +217,9 @@ namespace {
 
 // returns true if actual memory for this storage type is buffer
 bool IsBufferBased(const TensorStorageType& type) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_0(mht_0_v, 220, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "IsBufferBased");
+
   return type == TensorStorageType::BUFFER ||
          type == TensorStorageType::IMAGE_BUFFER ||
          type == TensorStorageType::TEXTURE_2D ||
@@ -57,6 +228,9 @@ bool IsBufferBased(const TensorStorageType& type) {
 
 void AddUsage(ValueId id, int task_index,
               std::map<ValueId, int2>* usage_records) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_1(mht_1_v, 231, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "AddUsage");
+
   auto it = usage_records->find(id);
   if (it == usage_records->end()) {
     // initializing start index(.x) and end index(.y)
@@ -71,6 +245,9 @@ void AddUsage(ValueId id, int task_index,
 // Calculates the total size of the assignment.
 size_t TotalSize(const ObjectsAssignment<size_t>& assignment,
                  size_t alignment = 1) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_2(mht_2_v, 248, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "TotalSize");
+
   size_t total_size = 0;
   for (auto object_size : assignment.object_sizes) {
     total_size += AlignByN(object_size, alignment);
@@ -99,6 +276,9 @@ flatbuffers::Offset<data::MetalProgram> EncodeProgram(
 
 void DecodeProgram(const data::MetalProgram* metal_program, std::string* code,
                    std::map<std::string, std::string>* defines) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_3(mht_3_v, 279, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "DecodeProgram");
+
   *code = std::string(metal_program->code()->c_str(),
                       metal_program->code()->size());
   for (int i = 0; i < metal_program->define_names()->size(); ++i) {
@@ -114,6 +294,9 @@ void DecodeProgram(const data::MetalProgram* metal_program, std::string* code,
 absl::Status InferenceContext::InitFromGraphWithTransforms(
     const CreateGpuModelInfo& create_info, GraphFloat32* graph,
     id<MTLDevice> device_id, std::vector<uint8_t>* serialized_model) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_4(mht_4_v, 297, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "InferenceContext::InitFromGraphWithTransforms");
+
   RETURN_IF_ERROR(RunGraphTransformsForGpuModel(graph));
   RETURN_IF_ERROR(
       InitFromGraph(create_info, *graph, device_id, serialized_model));
@@ -121,6 +304,9 @@ absl::Status InferenceContext::InitFromGraphWithTransforms(
 }
 
 void InferenceContext::CopyFromGpuModel(GpuModel* gpu_model) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_5(mht_5_v, 307, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "InferenceContext::CopyFromGpuModel");
+
   for (const auto& input : gpu_model->input_ids_and_refs) {
     input_ids_.push_back(input.first);
   }
@@ -141,6 +327,9 @@ void InferenceContext::CopyFromGpuModel(GpuModel* gpu_model) {
 absl::Status InferenceContext::InitFromGraph(
     const CreateGpuModelInfo& create_info, const GraphFloat32& graph,
     id<MTLDevice> device_id, std::vector<uint8_t>* serialized_model) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_6(mht_6_v, 330, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "InferenceContext::InitFromGraph");
+
   device_ = device_id;
   MetalDevice metal_device(device_id);
   GpuModel gpu_model;
@@ -217,6 +406,9 @@ absl::Status InferenceContext::InitFromGraph(
 absl::Status InferenceContext::RestoreDeserialized(
     const absl::Span<const uint8_t> serialized_model, id<MTLDevice> device_id,
     CreateGpuModelInfo* create_info) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_7(mht_7_v, 409, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "InferenceContext::RestoreDeserialized");
+
   flatbuffers::Verifier verifier(serialized_model.data(),
                                  serialized_model.size());
   if (!data::VerifyInferenceContextBuffer(verifier)) {
@@ -266,6 +458,9 @@ flatbuffers::Offset<data::InferenceContext> InferenceContext::Encode(
     MetalDevice* device,
     flatbuffers::Offset<tflite::gpu::data::GpuModel> gpu_model_fb,
     flatbuffers::FlatBufferBuilder* builder) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_8(mht_8_v, 461, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "InferenceContext::Encode");
+
   std::vector<flatbuffers::Offset<tflite::gpu::data::Int3>> work_groups_fb;
   for (int i = 0; i < nodes_.size(); ++i) {
     auto work_group_fb =
@@ -291,6 +486,9 @@ flatbuffers::Offset<data::InferenceContext> InferenceContext::Encode(
 
 absl::Status InferenceContext::Decode(
     MetalDevice* device, const data::InferenceContext* fb_inference) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_9(mht_9_v, 489, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "InferenceContext::Decode");
+
   GpuModel gpu_model;
   RETURN_IF_ERROR(tflite::gpu::Decode(fb_inference->gpu_model(), &gpu_model));
   CopyFromGpuModel(&gpu_model);
@@ -311,6 +509,9 @@ absl::Status InferenceContext::Decode(
 }
 
 absl::Status InferenceContext::CompileOperations(MetalDevice* device) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_10(mht_10_v, 512, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "InferenceContext::CompileOperations");
+
   for (auto& node : nodes_) {
     RETURN_IF_ERROR(node.task.Compile(device));
   }
@@ -318,6 +519,9 @@ absl::Status InferenceContext::CompileOperations(MetalDevice* device) {
 }
 
 absl::Status InferenceContext::AllocateTensors(MetalDevice* device) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_11(mht_11_v, 522, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "InferenceContext::AllocateTensors");
+
   RETURN_IF_ERROR(AllocateMemoryForConstTensors(device));
   RETURN_IF_ERROR(AllocateMemoryForBuffers(device));
   RETURN_IF_ERROR(AllocateMemoryForStrongShapes(device));
@@ -325,6 +529,9 @@ absl::Status InferenceContext::AllocateTensors(MetalDevice* device) {
 }
 
 MetalSpatialTensor* InferenceContext::GetTensor(ValueId tensor_id) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_12(mht_12_v, 532, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "InferenceContext::GetTensor");
+
   if (external_immutable_tensors_.find(tensor_id) !=
       external_immutable_tensors_.end()) {
     return external_immutable_tensors_[tensor_id];
@@ -347,11 +554,17 @@ MetalSpatialTensor* InferenceContext::GetTensor(ValueId tensor_id) {
 
 absl::Status InferenceContext::SetInputTensor(ValueId id,
                                               const TensorFloat32& tensor) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_13(mht_13_v, 557, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "InferenceContext::SetInputTensor");
+
   return GetTensor(id)->WriteData(device_, tensor);
 }
 
 absl::Status InferenceContext::GetOutputTensor(ValueId id,
                                                TensorFloat32* result) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_14(mht_14_v, 565, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "InferenceContext::GetOutputTensor");
+
   const auto& gpu_tensor = *GetTensor(id);
   const auto dst_shape = BHWC(gpu_tensor.Batch(), gpu_tensor.Height(),
                               gpu_tensor.Width(), gpu_tensor.Channels());
@@ -362,6 +575,9 @@ absl::Status InferenceContext::GetOutputTensor(ValueId id,
 }
 
 void InferenceContext::BindTensorsToOperations() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_15(mht_15_v, 578, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "InferenceContext::BindTensorsToOperations");
+
   for (auto& node : nodes_) {
     const auto& src_ids = node.inputs;
     for (int i = 0; i < src_ids.size(); ++i) {
@@ -375,6 +591,9 @@ void InferenceContext::BindTensorsToOperations() {
 }
 
 absl::Status InferenceContext::UpdateParams(const GpuInfo& gpu_info) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_16(mht_16_v, 594, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "InferenceContext::UpdateParams");
+
   for (auto& node : nodes_) {
     std::vector<BHWC> src_shapes;
     std::vector<BHWC> dst_shapes;
@@ -393,6 +612,9 @@ absl::Status InferenceContext::UpdateParams(const GpuInfo& gpu_info) {
 
 InferenceContext::TensorMemoryType InferenceContext::GetTensorMemoryType(
     ValueId id) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_17(mht_17_v, 615, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "InferenceContext::GetTensorMemoryType");
+
   if (external_immutable_tensors_.find(id) !=
       external_immutable_tensors_.end()) {
     return TensorMemoryType::kExternal;
@@ -410,6 +632,9 @@ InferenceContext::TensorMemoryType InferenceContext::GetTensorMemoryType(
 
 void InferenceContext::GetUsages(const std::function<bool(ValueId)>& functor,
                                  std::map<ValueId, int2>* usages) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_18(mht_18_v, 635, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "InferenceContext::GetUsages");
+
   for (ValueId in_id : input_ids_) {
     if (functor(in_id)) {
       AddUsage(in_id, 0, usages);
@@ -436,6 +661,9 @@ void InferenceContext::GetUsages(const std::function<bool(ValueId)>& functor,
 
 absl::Status InferenceContext::AllocateMemoryForConstTensors(
     MetalDevice* device) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_19(mht_19_v, 664, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "InferenceContext::AllocateMemoryForConstTensors");
+
   for (auto& description : const_tensors_descs_) {
     RETURN_IF_ERROR(const_tensors_[description.first].CreateFromDescriptor(
         description.second, device->device()));
@@ -445,6 +673,9 @@ absl::Status InferenceContext::AllocateMemoryForConstTensors(
 }
 
 absl::Status InferenceContext::AllocateMemoryForBuffers(MetalDevice* device) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_20(mht_20_v, 676, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "InferenceContext::AllocateMemoryForBuffers");
+
   std::map<ValueId, int2> buffer_usages;
   GetUsages(
       [this](ValueId id) {
@@ -589,6 +820,9 @@ absl::Status InferenceContext::AllocateMemoryForBuffers(MetalDevice* device) {
 
 absl::Status InferenceContext::AllocateMemoryForStrongShapes(
     MetalDevice* device) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_21(mht_21_v, 823, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "InferenceContext::AllocateMemoryForStrongShapes");
+
   std::map<ValueId, int2> usages;
   GetUsages(
       [this](ValueId id) {
@@ -643,6 +877,9 @@ absl::Status InferenceContext::AllocateMemoryForStrongShapes(
 
 absl::Status InferenceContext::Tune(TuningType tuning_type,
                                     MetalDevice* device) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_22(mht_22_v, 880, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "InferenceContext::Tune");
+
   for (auto& node : nodes_) {
     RETURN_IF_ERROR(node.task.Tune(tuning_type, device));
   }
@@ -651,6 +888,9 @@ absl::Status InferenceContext::Tune(TuningType tuning_type,
 
 void InferenceContext::EncodeWithEncoder(
     id<MTLComputeCommandEncoder> command_encoder) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_23(mht_23_v, 891, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "InferenceContext::EncodeWithEncoder");
+
   for (int i = 0; i < nodes_.size(); ++i) {
     auto& task = nodes_[i].task;
     task.Encode(command_encoder);
@@ -674,6 +914,9 @@ void InferenceContext::EncodeWithICB(
 }
 
 void InferenceContext::Profile(id<MTLDevice> device, ProfilingInfo* result) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_24(mht_24_v, 917, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "InferenceContext::Profile");
+
   result->dispatches.resize(nodes_.size());
   id<MTLCommandQueue> command_queue = [device newCommandQueue];
   for (int k = 0; k < nodes_.size(); ++k) {
@@ -713,6 +956,9 @@ void InferenceContext::Profile(id<MTLDevice> device, ProfilingInfo* result) {
 }
 
 uint64_t InferenceContext::GetIntermediateTensorsSize() const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_25(mht_25_v, 959, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "InferenceContext::GetIntermediateTensorsSize");
+
   uint64_t total_memory = 0;
   for (const auto& t : strong_shape_tensors_) {
     total_memory += t.second.GetMemorySizeInBytes();
@@ -725,6 +971,9 @@ uint64_t InferenceContext::GetIntermediateTensorsSize() const {
 }
 
 uint64_t InferenceContext::GetConstantTensorsSize() const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_26(mht_26_v, 974, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "InferenceContext::GetConstantTensorsSize");
+
   uint64_t total_size = 0;
   for (const auto& node : nodes_) {
     total_size += node.task.GetGpuOperation().const_args_size_;
@@ -737,6 +986,9 @@ uint64_t InferenceContext::GetConstantTensorsSize() const {
 
 void InferenceContext::EncodeWithCommandBuffer(
     id<MTLCommandBuffer> command_buffer) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_27(mht_27_v, 989, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "InferenceContext::EncodeWithCommandBuffer");
+
   for (int i = 0; i < nodes_.size(); ++i) {
     id<MTLComputeCommandEncoder> encoder =
         [command_buffer computeCommandEncoder];
@@ -748,6 +1000,9 @@ void InferenceContext::EncodeWithCommandBuffer(
 
 void InferenceContext::EncodeWithCommandQueue(id<MTLCommandQueue> command_queue,
                                               int flush_period) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_28(mht_28_v, 1003, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "InferenceContext::EncodeWithCommandQueue");
+
   id<MTLCommandBuffer> command_buffer = [command_queue commandBuffer];
   for (int i = 0; i < nodes_.size(); ++i) {
     id<MTLComputeCommandEncoder> encoder =
@@ -765,6 +1020,9 @@ void InferenceContext::EncodeWithCommandQueue(id<MTLCommandQueue> command_queue,
 
 absl::Status InferenceContext::SetTensor(const ValueId& tensor_id,
                                          MetalSpatialTensor* tensor_ptr) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_29(mht_29_v, 1023, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "InferenceContext::SetTensor");
+
   auto it = external_mutable_tensors_.find(tensor_id);
   if (it == external_mutable_tensors_.end()) {
     return absl::InvalidArgumentError("No external tensor with this id.");
@@ -787,6 +1045,9 @@ absl::Status InferenceContext::SetTensor(const ValueId& tensor_id,
 }
 
 void InferenceContext::PrepareExternal() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSmetalPSinference_contextDTcc mht_30(mht_30_v, 1048, "", "./tensorflow/lite/delegates/gpu/metal/inference_context.cc", "InferenceContext::PrepareExternal");
+
   for (auto& external : external_mutable_tensors_) {
     for (int i = 0; i < nodes_.size(); ++i) {
       bool has_tensor = false;

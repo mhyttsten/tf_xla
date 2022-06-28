@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSdeep_conv2dDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdeep_conv2dDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSdeep_conv2dDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,6 +217,9 @@ static int64_t GetDeepConvCost(int input_tile_rows, int input_tile_cols,
                                int out_tile_rows, int out_tile_cols,
                                int in_depth, int out_depth, int out_rows,
                                int out_cols) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdeep_conv2dDTcc mht_0(mht_0_v, 220, "", "./tensorflow/core/kernels/deep_conv2d.cc", "GetDeepConvCost");
+
   // Input transform cost.
   const int64_t input_tile_spatial_size = input_tile_rows * input_tile_cols;
   const int64_t input_transform_cost =
@@ -74,12 +245,19 @@ static int64_t GetDeepConvCost(int input_tile_rows, int input_tile_cols,
 
 static int64_t GetDirectConvCost(int filter_rows, int filter_cols, int in_depth,
                                  int out_depth, int out_rows, int out_cols) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdeep_conv2dDTcc mht_1(mht_1_v, 248, "", "./tensorflow/core/kernels/deep_conv2d.cc", "GetDirectConvCost");
+
   return filter_rows * filter_cols * in_depth * out_depth * out_rows * out_cols;
 }
 
 // Reads environment variable 'env_var_name'.
 // Returns 'true' if environment variable is enabled, false otherwise.
 static bool ReadBoolFromEnvVar(const char* env_var_name, bool default_val) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("env_var_name: \"" + (env_var_name == nullptr ? std::string("nullptr") : std::string((char*)env_var_name)) + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSdeep_conv2dDTcc mht_2(mht_2_v, 258, "", "./tensorflow/core/kernels/deep_conv2d.cc", "ReadBoolFromEnvVar");
+
   const char* tf_env_var_val = getenv(env_var_name);
   if (tf_env_var_val != nullptr) {
     StringPiece tf_env_var_val_str(tf_env_var_val);
@@ -98,6 +276,9 @@ static bool ReadBoolFromEnvVar(const char* env_var_name, bool default_val) {
 bool CanUseDeepConv2D(int stride_rows, int stride_cols, int filter_rows,
                       int filter_cols, int in_depth, int out_depth,
                       int out_rows, int out_cols) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdeep_conv2dDTcc mht_3(mht_3_v, 279, "", "./tensorflow/core/kernels/deep_conv2d.cc", "CanUseDeepConv2D");
+
   // Check if convolution parameters are supported.
   // TODO(andydavis) Add support for multiple filter sizes and strides.
   if (stride_rows > 1 || stride_cols > 1 || filter_rows != 3 ||
@@ -446,6 +627,9 @@ struct TransformFilters {
                   &filter_shards_col, &tile_spatial_size, &filter_in,
                   &transform_matrix,
                   &filter_out](int64_t start, int64_t limit) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdeep_conv2dDTcc mht_4(mht_4_v, 630, "", "./tensorflow/core/kernels/deep_conv2d.cc", "lambda");
+
       // Allocate buffer for pre-processed filter:
       //   [base_filter_rows, base_filter_cols, num_filters_transform, in_depth]
       //
@@ -518,9 +702,15 @@ class GemmFilterPacker {
       : rows_(rows),
         depth_(depth),
         lhs_block_(lhs_block),
-        lhs_mapper_(lhs_input, depth_) {}
+        lhs_mapper_(lhs_input, depth_) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdeep_conv2dDTcc mht_5(mht_5_v, 706, "", "./tensorflow/core/kernels/deep_conv2d.cc", "GemmFilterPacker");
+}
 
-  void Run() { pack_lhs(lhs_block_, lhs_mapper_, depth_, rows_); }
+  void Run() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdeep_conv2dDTcc mht_6(mht_6_v, 711, "", "./tensorflow/core/kernels/deep_conv2d.cc", "Run");
+ pack_lhs(lhs_block_, lhs_mapper_, depth_, rows_); }
 
  private:
   const int64_t rows_;
@@ -547,6 +737,9 @@ struct PackFilters {
     auto shard = [&ctx, &packed_filters, &filter_transform_data, &in_depth,
                   &out_depth, &filter_shards_row, &filter_shards_col,
                   &num_filters](int64_t start, int64_t limit) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdeep_conv2dDTcc mht_7(mht_7_v, 740, "", "./tensorflow/core/kernels/deep_conv2d.cc", "lambda");
+
       const int64_t filter_coord_stride = num_filters * in_depth;
       for (int64_t i = start; i < limit; ++i) {
         // Allocate filter buffer [out_depth, shard_rows, shard_cols, in_depth].
@@ -608,11 +801,20 @@ class GemmState {
         rhs_block_(rhs_block),
         out_buffer_(out_buffer),
         rhs_mapper_(rhs_input, depth_),
-        out_mapper_(out_buffer, rows_) {}
+        out_mapper_(out_buffer, rows_) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdeep_conv2dDTcc mht_8(mht_8_v, 805, "", "./tensorflow/core/kernels/deep_conv2d.cc", "GemmState");
+}
 
-  void PackRhs() { pack_rhs(rhs_block_, rhs_mapper_, depth_, cols_); }
+  void PackRhs() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdeep_conv2dDTcc mht_9(mht_9_v, 810, "", "./tensorflow/core/kernels/deep_conv2d.cc", "PackRhs");
+ pack_rhs(rhs_block_, rhs_mapper_, depth_, cols_); }
 
   void Compute() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdeep_conv2dDTcc mht_10(mht_10_v, 815, "", "./tensorflow/core/kernels/deep_conv2d.cc", "Compute");
+
     memset(out_buffer_, 0, sizeof(T) * out_buffer_size_);
     gebp(out_mapper_, lhs_block_, rhs_block_, rows_, depth_, cols_, 1.0);
   }
@@ -866,7 +1068,10 @@ struct Conv2DState {
         buffer1(buffer1),
         buffer2(buffer2),
         packed_tile_buffer(packed_tile_buffer),
-        gemm_output_buffer(gemm_output_buffer) {}
+        gemm_output_buffer(gemm_output_buffer) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdeep_conv2dDTcc mht_11(mht_11_v, 1072, "", "./tensorflow/core/kernels/deep_conv2d.cc", "Conv2DState");
+}
 
   const int64_t tile_spatial_size;
   const int64_t filter_shards_row;
@@ -1021,6 +1226,9 @@ struct DeepConv2D<CPUDevice, T> {
                   filter_shards_col, tile_spatial_size, &input,
                   &tile_transform_matrix, &output_transform_matrix,
                   &output](int64_t batch_start, int64_t batch_limit) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdeep_conv2dDTcc mht_12(mht_12_v, 1229, "", "./tensorflow/core/kernels/deep_conv2d.cc", "lambda");
+
       const int64_t row_tiles =
           (args.out_rows + out_tile_rows - 1) / out_tile_rows +
           filter_shards_row - 1;

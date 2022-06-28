@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -131,10 +299,20 @@ class SnapshotDatasetV2Op::Dataset : public DatasetBase {
         writer_prefix_(writer_prefix),
         reader_func_(std::move(reader_func)),
         shard_func_(std::move(shard_func)) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("path: \"" + path + "\"");
+   mht_0_v.push_back("compression: \"" + compression + "\"");
+   mht_0_v.push_back("reader_prefix: \"" + reader_prefix + "\"");
+   mht_0_v.push_back("writer_prefix: \"" + writer_prefix + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_0(mht_0_v, 306, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "Dataset");
+
     input_->Ref();
   }
 
-  ~Dataset() override { input_->Unref(); }
+  ~Dataset() override {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_1(mht_1_v, 313, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "~Dataset");
+ input_->Unref(); }
 
   std::unique_ptr<IteratorBase> MakeIteratorInternal(
       const string& prefix) const override {
@@ -144,30 +322,51 @@ class SnapshotDatasetV2Op::Dataset : public DatasetBase {
 
   Status MakeSplitProviders(std::vector<std::unique_ptr<SplitProvider>>*
                                 split_providers) const override {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_2(mht_2_v, 325, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "MakeSplitProviders");
+
     return errors::Unimplemented(
         "Splitting is not implemented for snapshot datasets.");
   }
 
   const DataTypeVector& output_dtypes() const override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_3(mht_3_v, 333, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "output_dtypes");
+
     return input_->output_dtypes();
   }
 
   const std::vector<PartialTensorShape>& output_shapes() const override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_4(mht_4_v, 340, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "output_shapes");
+
     return input_->output_shapes();
   }
 
   string DebugString() const override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_5(mht_5_v, 347, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "DebugString");
+
     return name_utils::DatasetDebugString(kDatasetType);
   }
 
-  int64_t CardinalityInternal() const override { return input_->Cardinality(); }
+  int64_t CardinalityInternal() const override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_6(mht_6_v, 354, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "CardinalityInternal");
+ return input_->Cardinality(); }
 
   Status InputDatasets(std::vector<const DatasetBase*>* inputs) const override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_7(mht_7_v, 359, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "InputDatasets");
+
     inputs->push_back(input_);
     return Status::OK();
   }
 
   Status CheckExternalState() const override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_8(mht_8_v, 367, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "CheckExternalState");
+
     return input_->CheckExternalState();
   }
 
@@ -175,6 +374,9 @@ class SnapshotDatasetV2Op::Dataset : public DatasetBase {
   Status AsGraphDefInternal(SerializationContext* ctx,
                             DatasetGraphDefBuilder* b,
                             Node** output) const override {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_9(mht_9_v, 377, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "AsGraphDefInternal");
+
     Node* input_graph_node = nullptr;
     TF_RETURN_IF_ERROR(b->AddInputDataset(ctx, input_, &input_graph_node));
 
@@ -256,9 +458,15 @@ class SnapshotDatasetV2Op::Dataset : public DatasetBase {
     static constexpr const char* const kIteratorName = "Reader";
 
     Reader(const Params& params, int64_t start_index)
-        : DatasetIterator<Dataset>(params), start_index_(start_index) {}
+        : DatasetIterator<Dataset>(params), start_index_(start_index) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_10(mht_10_v, 462, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "Reader");
+}
 
     Status Initialize(IteratorContext* ctx) override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_11(mht_11_v, 467, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "Initialize");
+
       mutex_lock l(mu_);
 
       TF_RETURN_IF_ERROR(dataset()->reader_func_->Instantiate(
@@ -312,6 +520,9 @@ class SnapshotDatasetV2Op::Dataset : public DatasetBase {
     Status GetNextInternal(IteratorContext* ctx,
                            std::vector<Tensor>* out_tensors,
                            bool* end_of_sequence) override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_12(mht_12_v, 523, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "GetNextInternal");
+
       mutex_lock l(mu_);
       return input_impl_->GetNext(ctx, out_tensors, end_of_sequence);
     }
@@ -319,6 +530,9 @@ class SnapshotDatasetV2Op::Dataset : public DatasetBase {
    protected:
     Status SaveInternal(SerializationContext* ctx,
                         IteratorStateWriter* writer) override {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_13(mht_13_v, 533, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "SaveInternal");
+
       // We do not need to checkpoint the reader as we are rebuilding the
       // reader datasets from information that is already saved by the main
       // iterator.
@@ -327,6 +541,9 @@ class SnapshotDatasetV2Op::Dataset : public DatasetBase {
 
     Status RestoreInternal(IteratorContext* ctx,
                            IteratorStateReader* reader) override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_14(mht_14_v, 544, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "RestoreInternal");
+
       return Status::OK();
     }
 
@@ -354,14 +571,23 @@ class SnapshotDatasetV2Op::Dataset : public DatasetBase {
         : DatasetIterator<Dataset>(params),
           writers_closed_(false),
           run_id_(0),
-          current_checkpoint_id_(0) {}
+          current_checkpoint_id_(0) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_15(mht_15_v, 575, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "Writer");
+}
 
     ~Writer() override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_16(mht_16_v, 580, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "~Writer");
+
       mutex_lock l(mu_);
       SignalEOF(true);
     }
 
     Status Initialize(IteratorContext* ctx) override {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_17(mht_17_v, 588, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "Initialize");
+
       mutex_lock l(mu_);
       TF_RETURN_IF_ERROR(
           dataset()->shard_func_->Instantiate(ctx, &instantiated_shard_func_));
@@ -374,6 +600,9 @@ class SnapshotDatasetV2Op::Dataset : public DatasetBase {
     Status GetNextInternal(IteratorContext* ctx,
                            std::vector<Tensor>* out_tensors,
                            bool* end_of_sequence) override {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_18(mht_18_v, 603, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "GetNextInternal");
+
       *end_of_sequence = false;
       snapshot_util::AsyncWriter* current_writer;
 
@@ -451,6 +680,9 @@ class SnapshotDatasetV2Op::Dataset : public DatasetBase {
    protected:
     Status SaveInternal(SerializationContext* ctx,
                         IteratorStateWriter* writer) override {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_19(mht_19_v, 683, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "SaveInternal");
+
       mutex_lock l(mu_);
       TF_RETURN_IF_ERROR(writer->WriteScalar(full_name(kRunId),
                                              static_cast<int64_t>(run_id_)));
@@ -465,6 +697,9 @@ class SnapshotDatasetV2Op::Dataset : public DatasetBase {
 
     Status RestoreInternal(IteratorContext* ctx,
                            IteratorStateReader* reader) override {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_20(mht_20_v, 700, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "RestoreInternal");
+
       mutex_lock l(mu_);
       int64_t run_id_signed;
       int64_t current_checkpoint_id;
@@ -489,6 +724,9 @@ class SnapshotDatasetV2Op::Dataset : public DatasetBase {
                          const std::vector<Tensor>& tensors,
                          int64_t* shard_index)
         TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_21(mht_21_v, 727, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "GetShardIndex");
+
       std::vector<Tensor> output_tensors;
 
       // Run the shard function
@@ -509,6 +747,9 @@ class SnapshotDatasetV2Op::Dataset : public DatasetBase {
 
     Status WriteMetadataFile(Env* env, bool finalized)
         TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_22(mht_22_v, 750, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "WriteMetadataFile");
+
       DCHECK(!run_dir_.empty());
 
       experimental::SnapshotMetadataRecord metadata;
@@ -528,6 +769,9 @@ class SnapshotDatasetV2Op::Dataset : public DatasetBase {
     }
 
     void SignalEOF(bool mark_closed) TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_23(mht_23_v, 772, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "SignalEOF");
+
       if (!writers_closed_) {
         // Push the end of sequence signal to each of the threads to close
         // files.
@@ -565,26 +809,41 @@ class SnapshotDatasetV2Op::Dataset : public DatasetBase {
     static constexpr const char* const kIteratorName = "Passthrough";
 
     explicit Passthrough(const Params& params)
-        : DatasetIterator<Dataset>(params) {}
+        : DatasetIterator<Dataset>(params) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_24(mht_24_v, 813, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "Passthrough");
+}
 
     Status Initialize(IteratorContext* ctx) override {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_25(mht_25_v, 818, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "Initialize");
+
       return dataset()->input_->MakeIterator(ctx, this, prefix(), &input_impl_);
     }
 
     Status GetNextInternal(IteratorContext* ctx,
                            std::vector<Tensor>* out_tensors,
                            bool* end_of_sequence) override {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_26(mht_26_v, 827, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "GetNextInternal");
+
       return input_impl_->GetNext(ctx, out_tensors, end_of_sequence);
     }
 
    protected:
     Status SaveInternal(SerializationContext* ctx,
                         IteratorStateWriter* writer) override {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_27(mht_27_v, 836, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "SaveInternal");
+
       return SaveInput(ctx, writer, input_impl_);
     }
 
     Status RestoreInternal(IteratorContext* ctx,
                            IteratorStateReader* reader) override {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_28(mht_28_v, 844, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "RestoreInternal");
+
       return RestoreInput(ctx, reader, input_impl_);
     }
 
@@ -603,9 +862,15 @@ class SnapshotDatasetV2Op::Dataset : public DatasetBase {
         : DatasetIterator<Dataset>(params),
           index_(0),
           hash_dir_(snapshot_util::HashDirectory(dataset()->path_,
-                                                 dataset()->hash_)) {}
+                                                 dataset()->hash_)) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_29(mht_29_v, 866, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "Iterator");
+}
 
     Status Initialize(IteratorContext* ctx) override {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_30(mht_30_v, 871, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "Initialize");
+
       return ctx->env()->RecursivelyCreateDir(
           io::JoinPath(dataset()->writer_prefix_, hash_dir_));
     }
@@ -613,6 +878,9 @@ class SnapshotDatasetV2Op::Dataset : public DatasetBase {
     Status GetNextInternal(IteratorContext* ctx,
                            std::vector<Tensor>* out_tensors,
                            bool* end_of_sequence) override {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_31(mht_31_v, 881, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "GetNextInternal");
+
       mutex_lock l(mu_);
       if (iterator_ == nullptr) {
         Status s = InitializeIterator(ctx, /*reader=*/nullptr);
@@ -628,6 +896,9 @@ class SnapshotDatasetV2Op::Dataset : public DatasetBase {
    protected:
     Status SaveInternal(SerializationContext* ctx,
                         IteratorStateWriter* writer) override {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_32(mht_32_v, 899, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "SaveInternal");
+
       mutex_lock l(mu_);
       if (iterator_ != nullptr) {
         TF_RETURN_IF_ERROR(SaveInput(ctx, writer, iterator_));
@@ -642,6 +913,9 @@ class SnapshotDatasetV2Op::Dataset : public DatasetBase {
 
     Status RestoreInternal(IteratorContext* ctx,
                            IteratorStateReader* reader) override {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_33(mht_33_v, 916, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "RestoreInternal");
+
       mutex_lock l(mu_);
       if (reader->Contains(full_name(kIteratorMode))) {
         TF_RETURN_IF_ERROR(InitializeIterator(ctx, reader));
@@ -653,6 +927,9 @@ class SnapshotDatasetV2Op::Dataset : public DatasetBase {
    private:
     Status InitializeIterator(IteratorContext* ctx, IteratorStateReader* reader)
         TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_34(mht_34_v, 930, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "InitializeIterator");
+
       if (reader != nullptr) {
         // Check whether the computed hash directory is the same.
         tstring hash_dir;
@@ -730,6 +1007,9 @@ class SnapshotDatasetV2Op::Dataset : public DatasetBase {
 
 SnapshotDatasetV2Op::SnapshotDatasetV2Op(OpKernelConstruction* ctx)
     : UnaryDatasetOpKernel(ctx), graph_def_version_(ctx->graph_def_version()) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_35(mht_35_v, 1010, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "SnapshotDatasetV2Op::SnapshotDatasetV2Op");
+
   FunctionMetadata::Params reader_params;
   FunctionMetadata::Params shard_params;
 
@@ -757,6 +1037,9 @@ SnapshotDatasetV2Op::SnapshotDatasetV2Op(OpKernelConstruction* ctx)
 
 void SnapshotDatasetV2Op::MakeDataset(OpKernelContext* ctx, DatasetBase* input,
                                       DatasetBase** output) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_36(mht_36_v, 1040, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "SnapshotDatasetV2Op::MakeDataset");
+
   tstring path;
   OP_REQUIRES_OK(ctx, ParseScalarArgument(ctx, "path", &path));
 
@@ -843,6 +1126,9 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
   explicit SnapshotDatasetOp(OpKernelConstruction* ctx)
       : UnaryDatasetOpKernel(ctx),
         graph_def_version_(ctx->graph_def_version()) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_37(mht_37_v, 1129, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "SnapshotDatasetOp");
+
     OP_REQUIRES_OK(ctx, ctx->GetAttr("output_types", &output_types_));
     OP_REQUIRES_OK(ctx, ctx->GetAttr("output_shapes", &output_shapes_));
 
@@ -916,6 +1202,9 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
  protected:
   void MakeDataset(OpKernelContext* ctx, DatasetBase* input,
                    DatasetBase** output) override {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_38(mht_38_v, 1205, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "MakeDataset");
+
     tstring path;
 
     OP_REQUIRES_OK(ctx, ParseScalarArgument(ctx, "path", &path));
@@ -982,10 +1271,23 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
           seed2_(seed2),
           mode_(mode),
           snapshot_name_(snapshot_name) {
+   std::vector<std::string> mht_39_v;
+   mht_39_v.push_back("path: \"" + path + "\"");
+   mht_39_v.push_back("graph_hash: \"" + graph_hash + "\"");
+   mht_39_v.push_back("reader_path_prefix: \"" + reader_path_prefix + "\"");
+   mht_39_v.push_back("writer_path_prefix: \"" + writer_path_prefix + "\"");
+   mht_39_v.push_back("compression: \"" + compression + "\"");
+   mht_39_v.push_back("mode: \"" + mode + "\"");
+   mht_39_v.push_back("snapshot_name: \"" + snapshot_name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_39(mht_39_v, 1281, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "Dataset");
+
       input_->Ref();
     }
 
-    ~Dataset() override { input_->Unref(); }
+    ~Dataset() override {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_40(mht_40_v, 1288, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "~Dataset");
+ input_->Unref(); }
 
     std::unique_ptr<IteratorBase> MakeIteratorInternal(
         const string& prefix) const override {
@@ -995,31 +1297,52 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
 
     Status MakeSplitProviders(std::vector<std::unique_ptr<SplitProvider>>*
                                   split_providers) const override {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_41(mht_41_v, 1300, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "MakeSplitProviders");
+
       return errors::Unimplemented(
           "Splitting is not implemented for snapshot datasets.");
     }
 
     const DataTypeVector& output_dtypes() const override {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_42(mht_42_v, 1308, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "output_dtypes");
+
       return input_->output_dtypes();
     }
 
     const std::vector<PartialTensorShape>& output_shapes() const override {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_43(mht_43_v, 1315, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "output_shapes");
+
       return input_->output_shapes();
     }
 
-    string DebugString() const override { return "SnapshotDatasetOp::Dataset"; }
+    string DebugString() const override {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_44(mht_44_v, 1322, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "DebugString");
+ return "SnapshotDatasetOp::Dataset"; }
 
     int64_t CardinalityInternal() const override {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_45(mht_45_v, 1327, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "CardinalityInternal");
+
       return input_->Cardinality();
     }
 
     Status InputDatasets(
         std::vector<const DatasetBase*>* inputs) const override {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_46(mht_46_v, 1335, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "InputDatasets");
+
       inputs->push_back(input_);
       return Status::OK();
     }
 
     Status CheckExternalState() const override {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_47(mht_47_v, 1343, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "CheckExternalState");
+
       return input_->CheckExternalState();
     }
 
@@ -1027,6 +1350,9 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
     Status AsGraphDefInternal(SerializationContext* ctx,
                               DatasetGraphDefBuilder* b,
                               Node** output) const override {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_48(mht_48_v, 1353, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "AsGraphDefInternal");
+
       Node* input_graph_node = nullptr;
       TF_RETURN_IF_ERROR(b->AddInputDataset(ctx, input_, &input_graph_node));
 
@@ -1107,6 +1433,9 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
      public:
       explicit Iterator(const Params& params)
           : DatasetIterator<Dataset>(params) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_49(mht_49_v, 1436, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "Iterator");
+
         if (dataset()->snapshot_name_.empty()) {
           hash_dir_ = io::JoinPath(dataset()->dir_, dataset()->graph_hash_);
         } else {
@@ -1124,11 +1453,17 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
       // Initialize at first and at that point we don't know which iterator
       // (Reader / Writer / Passthrough) we need to restore as this info is part
       // of the checkpoint.
-      Status Initialize(IteratorContext* ctx) override { return Status::OK(); }
+      Status Initialize(IteratorContext* ctx) override {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_50(mht_50_v, 1457, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "Initialize");
+ return Status::OK(); }
 
       Status GetNextInternal(IteratorContext* ctx,
                              std::vector<Tensor>* out_tensors,
                              bool* end_of_sequence) override {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_51(mht_51_v, 1464, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "GetNextInternal");
+
         mutex_lock l(mu_);
         if (iterator_ == nullptr) {
           experimental::SnapshotMetadataRecord metadata;
@@ -1147,6 +1482,9 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
      protected:
       Status SaveInternal(SerializationContext* ctx,
                           IteratorStateWriter* writer) override {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_52(mht_52_v, 1485, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "SaveInternal");
+
         mutex_lock l(mu_);
         if (iterator_ != nullptr) {
           TF_RETURN_IF_ERROR(SaveInput(ctx, writer, iterator_));
@@ -1160,6 +1498,9 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
 
       Status RestoreInternal(IteratorContext* ctx,
                              IteratorStateReader* reader) override {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_53(mht_53_v, 1501, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "RestoreInternal");
+
         mutex_lock l(mu_);
         tstring hash_dir;
         TF_RETURN_IF_ERROR(reader->ReadScalar(full_name(kHashDir), &hash_dir));
@@ -1187,6 +1528,9 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
           IteratorContext* ctx,
           const experimental::SnapshotMetadataRecord& metadata)
           TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_54(mht_54_v, 1531, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "InitializeIterator");
+
         std::string run_id = "";
         if (!dataset()->snapshot_name_.empty()) {
           // We have overridden the snapshot with a custom name, so we don't
@@ -1250,9 +1594,17 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
             : DatasetIterator<Dataset>(params),
               hash_dir_(hash_dir),
               run_id_(run_id),
-              version_(version) {}
+              version_(version) {
+   std::vector<std::string> mht_55_v;
+   mht_55_v.push_back("hash_dir: \"" + hash_dir + "\"");
+   mht_55_v.push_back("run_id: \"" + run_id + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_55(mht_55_v, 1600, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "SnapshotReaderIterator");
+}
 
         ~SnapshotReaderIterator() override {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_56(mht_56_v, 1605, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "~SnapshotReaderIterator");
+
           mutex_lock l(mu_);
           cancelled_ = true;
           cond_var_.notify_all();
@@ -1262,6 +1614,9 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
         }
 
         Status Initialize(IteratorContext* ctx) override {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_57(mht_57_v, 1617, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "Initialize");
+
           mutex_lock l(mu_);
           thread_pool_ = ctx->CreateThreadPool(kSnapshotReaderWorkerPool,
                                                dataset()->num_reader_threads_);
@@ -1299,6 +1654,9 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
         Status GetNextInternal(IteratorContext* ctx,
                                std::vector<Tensor>* out_tensors,
                                bool* end_of_sequence) override {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_58(mht_58_v, 1657, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "GetNextInternal");
+
           absl::Time start = absl::Now();
           mutex_lock l(mu_);
           if (!background_threads_started_) {
@@ -1385,6 +1743,9 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
        protected:
         Status SaveInternal(SerializationContext* ctx,
                             IteratorStateWriter* writer) override {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_59(mht_59_v, 1746, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "SaveInternal");
+
           mutex_lock l(mu_);
           TF_RETURN_IF_ERROR(
               writer->WriteScalar(full_name(kHashDir), hash_dir_));
@@ -1420,6 +1781,9 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
 
         Status RestoreInternal(IteratorContext* ctx,
                                IteratorStateReader* reader) override {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_60(mht_60_v, 1784, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "RestoreInternal");
+
           mutex_lock l(mu_);
           tstring hash_dir, run_id, run_dir;
           TF_RETURN_IF_ERROR(
@@ -1488,6 +1852,10 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
        private:
         // Reads one file end to end.
         Status ReadFile(Env* env, const string& filename) {
+   std::vector<std::string> mht_61_v;
+   mht_61_v.push_back("filename: \"" + filename + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_61(mht_61_v, 1856, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "ReadFile");
+
           std::unique_ptr<snapshot_util::Reader> reader;
           TF_RETURN_IF_ERROR(snapshot_util::Reader::Create(
               env, filename, dataset()->compression_, version_,
@@ -1530,6 +1898,9 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
         }
 
         string GetNextFilename() TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_62(mht_62_v, 1901, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "GetNextFilename");
+
           if (next_file_index_ >= filenames_.size()) {
             return "";
           }
@@ -1542,6 +1913,9 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
         // Pulls one file off the filenames_ list and reads it through. When
         // all files are read, terminates.
         void ReadingFilesLoop(Env* env, int i) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_63(mht_63_v, 1916, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "ReadingFilesLoop");
+
           auto cleanup = gtl::MakeCleanup([this]() {
             mutex_lock l(mu_);
             --num_active_threads_;
@@ -1587,6 +1961,9 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
         Status WriteStatus(IteratorStateWriter* writer, size_t index,
                            const Status& status)
             TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_64(mht_64_v, 1964, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "WriteStatus");
+
           TF_RETURN_IF_ERROR(writer->WriteScalar(
               CodeKey(index), static_cast<int64_t>(status.code())));
           if (!status.ok()) {
@@ -1598,6 +1975,9 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
 
         Status ReadStatus(IteratorStateReader* reader, size_t index,
                           Status* status) TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_65(mht_65_v, 1978, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "ReadStatus");
+
           int64_t code_int;
           TF_RETURN_IF_ERROR(reader->ReadScalar(CodeKey(index), &code_int));
           error::Code code = static_cast<error::Code>(code_int);
@@ -1614,10 +1994,16 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
         }
 
         string CodeKey(size_t index) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_66(mht_66_v, 1997, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "CodeKey");
+
           return full_name(strings::StrCat(kStatus, "[", index, "]", kCode));
         }
 
         string ErrorMessageKey(size_t index) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_67(mht_67_v, 2004, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "ErrorMessageKey");
+
           return full_name(
               strings::StrCat(kStatus, "[", index, "]", kErrorMessage));
         }
@@ -1664,6 +2050,11 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
             : DatasetIterator<Dataset>(params),
               hash_dir_(hash_dir),
               run_id_(run_id) {
+   std::vector<std::string> mht_68_v;
+   mht_68_v.push_back("hash_dir: \"" + hash_dir + "\"");
+   mht_68_v.push_back("run_id: \"" + run_id + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_68(mht_68_v, 2055, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "SnapshotWriterIterator");
+
           if (run_id_.empty()) {
             run_id_ = strings::StrCat(
                 strings::Hex(random::New64(), strings::kZeroPad4));
@@ -1673,6 +2064,9 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
         }
 
         ~SnapshotWriterIterator() override {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_69(mht_69_v, 2067, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "~SnapshotWriterIterator");
+
           mutex_lock l(mu_);
           cancelled_ = true;
           cond_var_.notify_all();
@@ -1682,6 +2076,9 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
         }
 
         Status Initialize(IteratorContext* ctx) override {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_70(mht_70_v, 2079, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "Initialize");
+
           thread_pool_ = ctx->CreateThreadPool(kSnapshotWriterWorkerPool,
                                                dataset()->num_writer_threads_);
           return dataset()->input_->MakeIterator(ctx, this, prefix(),
@@ -1691,6 +2088,9 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
         Status GetNextInternal(IteratorContext* ctx,
                                std::vector<Tensor>* out_tensors,
                                bool* end_of_sequence) override {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_71(mht_71_v, 2091, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "GetNextInternal");
+
           absl::Time start = absl::Now();
 
           bool first_call;
@@ -1798,6 +2198,9 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
        protected:
         Status SaveInternal(SerializationContext* ctx,
                             IteratorStateWriter* writer) override {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_72(mht_72_v, 2201, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "SaveInternal");
+
           mutex_lock l(mu_);
           TF_RETURN_IF_ERROR(SaveInput(ctx, writer, input_impl_));
           if (end_of_sequence_) {
@@ -1852,6 +2255,9 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
 
         Status RestoreInternal(IteratorContext* ctx,
                                IteratorStateReader* reader) override {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_73(mht_73_v, 2258, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "RestoreInternal");
+
           mutex_lock l(mu_);
           buffer_.clear();
           TF_RETURN_IF_ERROR(RestoreInput(ctx, reader, input_impl_));
@@ -1960,6 +2366,9 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
 
        private:
         string GetSnapshotFilename() {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_74(mht_74_v, 2369, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "GetSnapshotFilename");
+
           mutex_lock l(mu_);
           string snapshot_data_filename = io::JoinPath(
               run_dir_, strings::Printf(
@@ -2014,6 +2423,9 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
                                  string* snapshot_data_filename,
                                  std::unique_ptr<snapshot_util::Writer>* writer,
                                  bool* end_of_processing) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_75(mht_75_v, 2426, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "ProcessOneElement");
+
           profiler::TraceMe activity(
               [&]() {
                 return absl::StrCat(prefix(), kSeparator, kProcessOneElement);
@@ -2101,6 +2513,9 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
 
         // Just pulls off elements from the buffer and writes them.
         void WriterThread(Env* env) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_76(mht_76_v, 2516, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "WriterThread");
+
           auto cleanup = gtl::MakeCleanup([this]() {
             mutex_lock l(mu_);
             --num_active_threads_;
@@ -2144,6 +2559,10 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
                                  uint64 bytes_written,
                                  snapshot_util::Writer* writer,
                                  bool* should_close) {
+   std::vector<std::string> mht_77_v;
+   mht_77_v.push_back("filename: \"" + filename + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_77(mht_77_v, 2563, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "ShouldCloseWriter");
+
           // If the compression ratio has been estimated, use it to decide
           // whether the file should be closed. We avoid estimating the
           // compression ratio repeatedly because it requires syncing the file,
@@ -2214,9 +2633,15 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
       class SnapshotPassthroughIterator : public DatasetIterator<Dataset> {
        public:
         explicit SnapshotPassthroughIterator(const Params& params)
-            : DatasetIterator<Dataset>(params) {}
+            : DatasetIterator<Dataset>(params) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_78(mht_78_v, 2637, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "SnapshotPassthroughIterator");
+}
 
         Status Initialize(IteratorContext* ctx) override {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_79(mht_79_v, 2642, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "Initialize");
+
           return dataset()->input_->MakeIterator(ctx, this, prefix(),
                                                  &input_impl_);
         }
@@ -2224,17 +2649,26 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
         Status GetNextInternal(IteratorContext* ctx,
                                std::vector<Tensor>* out_tensors,
                                bool* end_of_sequence) override {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_80(mht_80_v, 2652, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "GetNextInternal");
+
           return input_impl_->GetNext(ctx, out_tensors, end_of_sequence);
         }
 
        protected:
         Status SaveInternal(SerializationContext* ctx,
                             IteratorStateWriter* writer) override {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_81(mht_81_v, 2661, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "SaveInternal");
+
           return SaveInput(ctx, writer, input_impl_);
         }
 
         Status RestoreInternal(IteratorContext* ctx,
                                IteratorStateReader* reader) override {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_82(mht_82_v, 2669, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "RestoreInternal");
+
           return RestoreInput(ctx, reader, input_impl_);
         }
 
@@ -2274,6 +2708,10 @@ class SnapshotDatasetOp : public UnaryDatasetOpKernel {
 
   Status ComputeDatasetHash(const GraphDef& graph_def, const std::string& path,
                             uint64* hash) {
+   std::vector<std::string> mht_83_v;
+   mht_83_v.push_back("path: \"" + path + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSdataPSexperimentalPSsnapshot_dataset_opDTcc mht_83(mht_83_v, 2712, "", "./tensorflow/core/kernels/data/experimental/snapshot_dataset_op.cc", "ComputeDatasetHash");
+
     TF_RETURN_IF_ERROR(HashGraph(graph_def, hash));
     // Adding path, compression, reader / writer path prefix, shard size
     // bytes to the fp as they effect the data written on disk.

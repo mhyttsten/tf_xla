@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSexport_graphdefDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSexport_graphdefDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSexport_graphdefDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -89,6 +257,9 @@ constexpr char kAliasingAttr[] = "tf.aliasing_output";
 class LegalizedOpOrValLocNameMapper : public OpOrArgLocNameMapper {
  private:
   std::string GetName(OpOrVal op_or_val) override {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSexport_graphdefDTcc mht_0(mht_0_v, 260, "", "./tensorflow/compiler/mlir/tensorflow/translate/export_graphdef.cc", "GetName");
+
     std::string name = OpOrArgLocNameMapper::GetName(op_or_val);
     assert(!name.empty() && "expected non-empty name");
     mlir::LegalizeNodeName(name);
@@ -99,6 +270,9 @@ class LegalizedOpOrValLocNameMapper : public OpOrArgLocNameMapper {
 // Finds first inner op if `op` is a tf_executor.island. Otherwise `op` is
 // returned.
 Operation* GetIslandInnerOpOrSelf(mlir::Operation* op) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSexport_graphdefDTcc mht_1(mht_1_v, 273, "", "./tensorflow/compiler/mlir/tensorflow/translate/export_graphdef.cc", "GetIslandInnerOpOrSelf");
+
   auto island = llvm::dyn_cast<mlir::tf_executor::IslandOp>(op);
   if (island) return &island.GetBody().front();
   return op;
@@ -135,7 +309,10 @@ class Exporter {
 
  private:
   explicit Exporter(Graph* graph, const Dialect* tf_dialect)
-      : graph_(graph), tf_dialect_(tf_dialect) {}
+      : graph_(graph), tf_dialect_(tf_dialect) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSexport_graphdefDTcc mht_2(mht_2_v, 313, "", "./tensorflow/compiler/mlir/tensorflow/translate/export_graphdef.cc", "Exporter");
+}
 
   Status AddArgumentNode(BlockArgument arg, unsigned index,
                          llvm::StringRef name);
@@ -170,6 +347,9 @@ class Exporter {
 
 StatusOr<std::unique_ptr<NodeDef>> Exporter::GetArgumentNode(
     BlockArgument arg, unsigned index, llvm::StringRef name) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSexport_graphdefDTcc mht_3(mht_3_v, 350, "", "./tensorflow/compiler/mlir/tensorflow/translate/export_graphdef.cc", "Exporter::GetArgumentNode");
+
   auto func = arg.getParentRegion()->getParentOfType<FuncOp>();
 
   auto node_def = absl::make_unique<NodeDef>();
@@ -232,6 +412,9 @@ StatusOr<std::unique_ptr<NodeDef>> Exporter::GetArgumentNode(
 
 StatusOr<std::unique_ptr<NodeDef>> Exporter::GetReturnNode(
     FuncOp function, Value operand, unsigned index, llvm::StringRef name) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSexport_graphdefDTcc mht_4(mht_4_v, 415, "", "./tensorflow/compiler/mlir/tensorflow/translate/export_graphdef.cc", "Exporter::GetReturnNode");
+
   auto node_def = absl::make_unique<NodeDef>();
   if (!name.empty())
     node_def->set_name(std::string(ParseTensorName(name.str()).node()));
@@ -266,6 +449,9 @@ StatusOr<std::unique_ptr<NodeDef>> Exporter::GetReturnNode(
 
 Status Exporter::AddEdgeBetweenNodes(Value src, Node* dst_node,
                                      unsigned dst_index) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSexport_graphdefDTcc mht_5(mht_5_v, 452, "", "./tensorflow/compiler/mlir/tensorflow/translate/export_graphdef.cc", "Exporter::AddEdgeBetweenNodes");
+
   if (auto input_result = src.dyn_cast<mlir::OpResult>()) {
     auto* input_inst = GetIslandInnerOpOrSelf(input_result.getOwner());
     // Replaces the input node with NextIteration sink if it is a NextIteration
@@ -297,6 +483,9 @@ Status Exporter::AddEdgeBetweenNodes(Value src, Node* dst_node,
 }
 
 Status Exporter::AddEdge(Operation* inst) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSexport_graphdefDTcc mht_6(mht_6_v, 486, "", "./tensorflow/compiler/mlir/tensorflow/translate/export_graphdef.cc", "Exporter::AddEdge");
+
   // For tf_executor.fetch, add only its data edges. Control edges are captured
   // later.
   if (auto fetch = llvm::dyn_cast<mlir::tf_executor::FetchOp>(inst)) {
@@ -355,6 +544,9 @@ Status Exporter::AddEdge(Operation* inst) {
 }
 
 Status Exporter::AddInstructionNode(Operation* inst) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSexport_graphdefDTcc mht_7(mht_7_v, 547, "", "./tensorflow/compiler/mlir/tensorflow/translate/export_graphdef.cc", "Exporter::AddInstructionNode");
+
   std::unique_ptr<NodeDef> node_def;
   auto name = op_to_name_.GetUniqueName(inst);
   // Convert registered TF ops to NodeDef. Only registered ops are handled to
@@ -370,6 +562,9 @@ Status Exporter::AddInstructionNode(Operation* inst) {
 }
 
 bool IsEntryFunctionArg(BlockArgument arg) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSexport_graphdefDTcc mht_8(mht_8_v, 565, "", "./tensorflow/compiler/mlir/tensorflow/translate/export_graphdef.cc", "IsEntryFunctionArg");
+
   return arg.getParentRegion()->getParentOfType<FuncOp>().getName() == "main";
 }
 
@@ -377,6 +572,9 @@ bool IsEntryFunctionArg(BlockArgument arg) {
 // name will be used instead of generating a unique name.
 Status Exporter::AddArgumentNode(BlockArgument arg, unsigned index,
                                  llvm::StringRef name) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSexport_graphdefDTcc mht_9(mht_9_v, 575, "", "./tensorflow/compiler/mlir/tensorflow/translate/export_graphdef.cc", "Exporter::AddArgumentNode");
+
   TF_ASSIGN_OR_RETURN(auto node_def, GetArgumentNode(arg, index, name));
   TF_ASSIGN_OR_RETURN(Node * node, graph_->AddNode(*node_def));
   args_[arg] = node;
@@ -387,6 +585,9 @@ Status Exporter::AddArgumentNode(BlockArgument arg, unsigned index,
 // names will be used per node in order instead of generating a unique name.
 Status Exporter::AddFetchNode(FuncOp function, mlir::tf_executor::FetchOp fetch,
                               llvm::ArrayRef<llvm::StringRef> names) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSexport_graphdefDTcc mht_10(mht_10_v, 588, "", "./tensorflow/compiler/mlir/tensorflow/translate/export_graphdef.cc", "Exporter::AddFetchNode");
+
   auto& return_nodes = returns_[fetch];
   for (auto operand_and_idx : llvm::enumerate(fetch.getOperands())) {
     if (operand_and_idx.value().getType().isa<mlir::tf_executor::ControlType>())
@@ -408,6 +609,9 @@ Status Exporter::AddFetchNode(FuncOp function, mlir::tf_executor::FetchOp fetch,
 Status Exporter::GetControlRetNodes(
     mlir::tf_executor::FetchOp fetch,
     absl::flat_hash_set<Node*>* control_ret_nodes) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSexport_graphdefDTcc mht_11(mht_11_v, 612, "", "./tensorflow/compiler/mlir/tensorflow/translate/export_graphdef.cc", "Exporter::GetControlRetNodes");
+
   for (Value fetch_operand : fetch.getOperands()) {
     if (fetch_operand.getType().isa<mlir::tf_executor::ControlType>()) {
       Operation* defining_op =
@@ -425,6 +629,9 @@ StatusOr<std::unique_ptr<Graph>> Exporter::Convert(
     const SymbolTable& symbol_table, FuncOp function, FunctionDefLibrary* flib,
     llvm::SmallDenseSet<FuncOp>& visited_functions,
     absl::flat_hash_set<Node*>* control_ret_nodes) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSexport_graphdefDTcc mht_12(mht_12_v, 632, "", "./tensorflow/compiler/mlir/tensorflow/translate/export_graphdef.cc", "Exporter::Convert");
+
   mlir::Block& block = function.front();
 
   // Extract input & output names if set.
@@ -518,6 +725,9 @@ StatusOr<std::unique_ptr<Graph>> Exporter::Convert(
   }
 
   auto convert_called_function = [&](llvm::StringRef name) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSexport_graphdefDTcc mht_13(mht_13_v, 728, "", "./tensorflow/compiler/mlir/tensorflow/translate/export_graphdef.cc", "lambda");
+
     auto func = symbol_table.lookup<FuncOp>(name);
     if (func != nullptr) {
       TF_RETURN_IF_ERROR(ConvertLibFunction(configs, tf_dialect, symbol_table,
@@ -589,6 +799,9 @@ Status Exporter::ConvertLibFunction(
     const GraphExportConfig& configs, const Dialect* tf_dialect,
     const SymbolTable& symbol_table, FuncOp function, FunctionDefLibrary* flib,
     llvm::SmallDenseSet<FuncOp>& visited_functions) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSexport_graphdefDTcc mht_14(mht_14_v, 802, "", "./tensorflow/compiler/mlir/tensorflow/translate/export_graphdef.cc", "Exporter::ConvertLibFunction");
+
   // Return early if the function has already been exported.
   bool is_new_function = visited_functions.insert(function).second;
   if (!is_new_function) return Status::OK();
@@ -667,6 +880,9 @@ Status Exporter::Convert(mlir::ModuleOp module,
                          std::unique_ptr<Graph>* graph,
                          FunctionLibraryDefinition* flib_def,
                          absl::flat_hash_set<Node*>* control_ret_nodes) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSexport_graphdefDTcc mht_15(mht_15_v, 883, "", "./tensorflow/compiler/mlir/tensorflow/translate/export_graphdef.cc", "Exporter::Convert");
+
   mlir::StringAttr entry_func_id =
       mlir::StringAttr::get(module.getContext(), "main");
   absl::optional<FuncOp> entry_func;
@@ -722,6 +938,9 @@ Status ConvertMlirToGraph(mlir::ModuleOp module,
                           std::unique_ptr<Graph>* graph,
                           FunctionLibraryDefinition* flib_def,
                           absl::flat_hash_set<Node*>* control_ret_nodes) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSexport_graphdefDTcc mht_16(mht_16_v, 941, "", "./tensorflow/compiler/mlir/tensorflow/translate/export_graphdef.cc", "ConvertMlirToGraph");
+
   mlir::StatusScopedDiagnosticHandler sh(module.getContext());
   if (failed(VerifyExportSuitable(module))) return sh.ConsumeStatus();
   return sh.Combine(
@@ -732,6 +951,9 @@ Status ConvertMlirToGraph(mlir::ModuleOp module,
                           const GraphExportConfig& configs,
                           std::unique_ptr<Graph>* graph,
                           FunctionLibraryDefinition* flib_def) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSexport_graphdefDTcc mht_17(mht_17_v, 954, "", "./tensorflow/compiler/mlir/tensorflow/translate/export_graphdef.cc", "ConvertMlirToGraph");
+
   absl::flat_hash_set<Node*> control_ret_nodes;
   return ConvertMlirToGraph(module, configs, graph, flib_def,
                             &control_ret_nodes);
@@ -771,6 +993,9 @@ StatusOr<std::unique_ptr<GraphDef>> ConvertMlirToGraphdef(
 
 stream_executor::port::Status ConvertMlirFunctionToFunctionLibraryDef(
     FuncOp func, const GraphExportConfig& configs, FunctionDef* function_def) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStranslatePSexport_graphdefDTcc mht_18(mht_18_v, 996, "", "./tensorflow/compiler/mlir/tensorflow/translate/export_graphdef.cc", "ConvertMlirFunctionToFunctionLibraryDef");
+
   Dialect* tf_dialect = func.getContext()->getLoadedDialect("tf");
   FunctionDefLibrary flib;
   llvm::SmallDenseSet<FuncOp> visited_functions;

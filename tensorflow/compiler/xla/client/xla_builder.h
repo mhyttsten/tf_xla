@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_COMPILER_XLA_CLIENT_XLA_BUILDER_H_
 #define TENSORFLOW_COMPILER_XLA_CLIENT_XLA_BUILDER_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <cstdint>
 #include <functional>
@@ -76,6 +244,9 @@ struct XlaBuilderFriend {
 class XlaOp {
  public:
   XlaOp() : handle_(-1), builder_(nullptr) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_0(mht_0_v, 247, "", "./tensorflow/compiler/xla/client/xla_builder.h", "XlaOp");
+
     static_assert(std::is_trivially_destructible<XlaOp>::value,
                   "XlaOp should be trivially destructible");
   }
@@ -91,32 +262,56 @@ class XlaOp {
   // deep in the callstack when we finally dereference `this`.  The precondition
   // lets us avoid this tricky-to-debug problem.
   XlaBuilder* builder() const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_1(mht_1_v, 265, "", "./tensorflow/compiler/xla/client/xla_builder.h", "builder");
+
     CHECK(builder_ != nullptr);
     return builder_;
   }
 
   // Returns true if the XlaOp represents valid, non-erroneous value.
-  bool valid() const { return handle_ >= 0; }
+  bool valid() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_2(mht_2_v, 274, "", "./tensorflow/compiler/xla/client/xla_builder.h", "valid");
+ return handle_ >= 0; }
 
   // Returns true if the XlaOp was created by the XlaOp() constructor and
   // not returned by a builder.
-  bool IsUninitialized() const { return builder_ == nullptr; }
+  bool IsUninitialized() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_3(mht_3_v, 281, "", "./tensorflow/compiler/xla/client/xla_builder.h", "IsUninitialized");
+ return builder_ == nullptr; }
 
   bool IsIdenticalTo(XlaOp rhs) const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_4(mht_4_v, 286, "", "./tensorflow/compiler/xla/client/xla_builder.h", "IsIdenticalTo");
+
     return handle_ == rhs.handle_ && builder_ == rhs.builder_;
   }
 
   friend std::ostream& operator<<(std::ostream& out, XlaOp op) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_5(mht_5_v, 293, "", "./tensorflow/compiler/xla/client/xla_builder.h", "operator<<");
+
     out << op.handle();
     return out;
   }
 
  private:
-  explicit XlaOp(XlaBuilder* builder) : handle_(-1), builder_(builder) {}
+  explicit XlaOp(XlaBuilder* builder) : handle_(-1), builder_(builder) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_6(mht_6_v, 302, "", "./tensorflow/compiler/xla/client/xla_builder.h", "XlaOp");
+}
   XlaOp(int64_t handle, XlaBuilder* builder)
-      : handle_(handle), builder_(builder) {}
+      : handle_(handle), builder_(builder) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_7(mht_7_v, 307, "", "./tensorflow/compiler/xla/client/xla_builder.h", "XlaOp");
+}
 
-  int64_t handle() const { return handle_; }
+  int64_t handle() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_8(mht_8_v, 312, "", "./tensorflow/compiler/xla/client/xla_builder.h", "handle");
+ return handle_; }
 
   friend class XlaBuilder;
   friend class ValueInference;
@@ -169,7 +364,10 @@ class XlaBuilder {
   virtual ~XlaBuilder();
 
   // Returns the computation name.
-  const std::string& name() const { return name_; }
+  const std::string& name() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_9(mht_9_v, 368, "", "./tensorflow/compiler/xla/client/xla_builder.h", "name");
+ return name_; }
 
   // Sets OpMetadata that will be added to all instructions until cleared.
   //
@@ -177,12 +375,18 @@ class XlaBuilder {
   // result, OpMetadata is set on the computation builder. All subsequent
   // instructions generated via this computation builder will have the same
   // OpMetadata attached until a call to ClearOpMetadata.
-  void SetOpMetadata(OpMetadata metadata) { metadata_ = std::move(metadata); }
+  void SetOpMetadata(OpMetadata metadata) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_10(mht_10_v, 379, "", "./tensorflow/compiler/xla/client/xla_builder.h", "SetOpMetadata");
+ metadata_ = std::move(metadata); }
 
   // Swaps the passed op metadata with the ones currently set.
   //
   // Returns the old op metadata.
   OpMetadata SwapOpMetadata(OpMetadata metadata) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_11(mht_11_v, 387, "", "./tensorflow/compiler/xla/client/xla_builder.h", "SwapOpMetadata");
+
     OpMetadata old_metadata = std::move(metadata_);
     metadata_ = std::move(metadata);
     return old_metadata;
@@ -190,14 +394,23 @@ class XlaBuilder {
 
   // Similar to SetOpMetadata, but only set the metadata for the next op.
   void SetOneShotOpMetadata(OpMetadata metadata) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_12(mht_12_v, 397, "", "./tensorflow/compiler/xla/client/xla_builder.h", "SetOneShotOpMetadata");
+
     one_shot_metadata_ = std::move(metadata);
   }
 
   // Clears the HloMetadata state.
-  void ClearOpMetadata() { metadata_.Clear(); }
+  void ClearOpMetadata() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_13(mht_13_v, 405, "", "./tensorflow/compiler/xla/client/xla_builder.h", "ClearOpMetadata");
+ metadata_.Clear(); }
 
   // Sets an OpSharding that will be attached to all instructions until cleared.
-  void SetSharding(const OpSharding& sharding) { sharding_ = sharding; }
+  void SetSharding(const OpSharding& sharding) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_14(mht_14_v, 411, "", "./tensorflow/compiler/xla/client/xla_builder.h", "SetSharding");
+ sharding_ = sharding; }
 
   // Sets the FrontendAttributes that will be added to all instructions until
   // cleared.
@@ -207,6 +420,9 @@ class XlaBuilder {
   // instructions generated via the computation builder will have the same
   // frontend attributes attached to them.
   void SetFrontendAttributes(const FrontendAttributes& frontend_attributes) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_15(mht_15_v, 423, "", "./tensorflow/compiler/xla/client/xla_builder.h", "SetFrontendAttributes");
+
     frontend_attributes_ = frontend_attributes;
   }
 
@@ -215,6 +431,9 @@ class XlaBuilder {
   // Return the old attributes.
   FrontendAttributes SwapFrontendAttributes(
       const FrontendAttributes& frontend_attributes) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_16(mht_16_v, 434, "", "./tensorflow/compiler/xla/client/xla_builder.h", "SwapFrontendAttributes");
+
     FrontendAttributes old_attributes = std::move(frontend_attributes_);
     frontend_attributes_ = frontend_attributes;
     return old_attributes;
@@ -222,23 +441,38 @@ class XlaBuilder {
 
   // Returns the FrontendAttributes that will be attached to all instructions.
   const FrontendAttributes& frontend_attributes() const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_17(mht_17_v, 444, "", "./tensorflow/compiler/xla/client/xla_builder.h", "frontend_attributes");
+
     return frontend_attributes_;
   }
 
   // Clears all the frontend attributes.
-  void ClearFrontendAttributes() { frontend_attributes_.Clear(); }
+  void ClearFrontendAttributes() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_18(mht_18_v, 452, "", "./tensorflow/compiler/xla/client/xla_builder.h", "ClearFrontendAttributes");
+ frontend_attributes_.Clear(); }
 
   // Clears the sharding. Ops will be sharded according to the default placement
   // policy.
-  void ClearSharding() { sharding_ = absl::nullopt; }
+  void ClearSharding() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_19(mht_19_v, 459, "", "./tensorflow/compiler/xla/client/xla_builder.h", "ClearSharding");
+ sharding_ = absl::nullopt; }
 
   // Returns the OpSharding that will be attached to all instructions.
-  const absl::optional<OpSharding>& sharding() const { return sharding_; }
+  const absl::optional<OpSharding>& sharding() const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_20(mht_20_v, 465, "", "./tensorflow/compiler/xla/client/xla_builder.h", "sharding");
+ return sharding_; }
 
   // Sets the builder to a mode where it will die immediately when an error is
   // encountered, rather than producing it in a deferred fashion when Build() is
   // called (which is the default).
   void set_die_immediately_on_error(bool enabled) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_21(mht_21_v, 473, "", "./tensorflow/compiler/xla/client/xla_builder.h", "set_die_immediately_on_error");
+
     die_immediately_on_error_ = enabled;
   }
 
@@ -309,7 +543,10 @@ class XlaBuilder {
   // building the computation when they make a final call to Build().
   //
   // See also set_die_immediately_on_error().
-  Status first_error() const { return first_error_; }
+  Status first_error() const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_22(mht_22_v, 547, "", "./tensorflow/compiler/xla/client/xla_builder.h", "first_error");
+ return first_error_; }
 
   // Returns the current status of the builder, complete with the stack trace
   // information.
@@ -385,6 +622,9 @@ class XlaBuilder {
                   const ShapeIndex& param_index,
                   HloInputOutputAliasConfig::AliasKind kind =
                       HloInputOutputAliasConfig::AliasKind::kMayAlias) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_23(mht_23_v, 625, "", "./tensorflow/compiler/xla/client/xla_builder.h", "SetUpAlias");
+
     input_output_aliases_.push_back(
         {output_index, param_number, param_index, kind});
   }
@@ -433,6 +673,10 @@ class XlaBuilder {
                   const std::vector<bool>& replicated_at_leaf_buffers);
   XlaOp Parameter(int64_t parameter_number, const Shape& shape,
                   const std::string& name) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_24(mht_24_v, 677, "", "./tensorflow/compiler/xla/client/xla_builder.h", "Parameter");
+
     std::vector<bool> empty_bools;
     return Parameter(parameter_number, shape, name, empty_bools);
   }
@@ -995,7 +1239,10 @@ class XlaBuilder {
       const Shape& lhs_shape, const Shape& rhs_shape,
       const ConvolutionDimensionNumbers& dimension_numbers) const;
 
-  int64_t GetNextId() { return ++next_id_; }
+  int64_t GetNextId() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_25(mht_25_v, 1243, "", "./tensorflow/compiler/xla/client/xla_builder.h", "GetNextId");
+ return ++next_id_; }
 
   // Populates the module with the input/output alias information stored within
   // the input_output_aliases vector.
@@ -1542,6 +1789,9 @@ class XlaScopedShardingAssignment {
   XlaScopedShardingAssignment(xla::XlaBuilder* builder,
                               absl::optional<OpSharding> sharding)
       : builder_(builder), prev_sharding_(builder->sharding()) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_26(mht_26_v, 1792, "", "./tensorflow/compiler/xla/client/xla_builder.h", "XlaScopedShardingAssignment");
+
     SetSharding(sharding);
   }
 
@@ -1549,10 +1799,16 @@ class XlaScopedShardingAssignment {
   XlaScopedShardingAssignment& operator=(const XlaScopedShardingAssignment&) =
       delete;
 
-  ~XlaScopedShardingAssignment() { SetSharding(prev_sharding_); }
+  ~XlaScopedShardingAssignment() {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_27(mht_27_v, 1803, "", "./tensorflow/compiler/xla/client/xla_builder.h", "~XlaScopedShardingAssignment");
+ SetSharding(prev_sharding_); }
 
  private:
   void SetSharding(const absl::optional<OpSharding>& sharding) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_28(mht_28_v, 1809, "", "./tensorflow/compiler/xla/client/xla_builder.h", "SetSharding");
+
     if (sharding.has_value()) {
       builder_->SetSharding(sharding.value());
     } else {
@@ -1572,10 +1828,16 @@ class XlaScopedFrontendAttributesAssignment {
   XlaScopedFrontendAttributesAssignment(xla::XlaBuilder* builder,
                                         FrontendAttributes attributes)
       : builder_(builder) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_29(mht_29_v, 1831, "", "./tensorflow/compiler/xla/client/xla_builder.h", "XlaScopedFrontendAttributesAssignment");
+
     saved_ = builder_->SwapFrontendAttributes(attributes);
   }
 
   ~XlaScopedFrontendAttributesAssignment() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_30(mht_30_v, 1838, "", "./tensorflow/compiler/xla/client/xla_builder.h", "~XlaScopedFrontendAttributesAssignment");
+
     builder_->SetFrontendAttributes(saved_);
   }
 
@@ -1595,10 +1857,16 @@ class XlaScopedOpMetadataAssignment {
  public:
   XlaScopedOpMetadataAssignment(xla::XlaBuilder* builder, OpMetadata metadata)
       : builder_(builder) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_31(mht_31_v, 1860, "", "./tensorflow/compiler/xla/client/xla_builder.h", "XlaScopedOpMetadataAssignment");
+
     saved_ = builder_->SwapOpMetadata(metadata);
   }
 
-  ~XlaScopedOpMetadataAssignment() { builder_->SwapOpMetadata(saved_); }
+  ~XlaScopedOpMetadataAssignment() {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_32(mht_32_v, 1867, "", "./tensorflow/compiler/xla/client/xla_builder.h", "~XlaScopedOpMetadataAssignment");
+ builder_->SwapOpMetadata(saved_); }
 
  private:
   xla::XlaBuilder* const builder_;
@@ -2205,6 +2473,9 @@ XlaOp And(XlaOp lhs, XlaOp rhs,
 // convoluted overload set to disambiguate with the overload that takes the
 // `broadcast_dimensions` optional param.
 inline XlaOp And(XlaOp op1, XlaOp op2, XlaOp op3) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_33(mht_33_v, 2476, "", "./tensorflow/compiler/xla/client/xla_builder.h", "And");
+
   return And(op1, And(op2, op3));
 }
 template <typename... XlaOpTs>
@@ -2219,6 +2490,9 @@ XlaOp Or(XlaOp lhs, XlaOp rhs,
 // following complicated overload set to handle the default arg in the `Or`
 // overload above.
 inline XlaOp Or(XlaOp op1, XlaOp op2, XlaOp op3) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_34(mht_34_v, 2493, "", "./tensorflow/compiler/xla/client/xla_builder.h", "Or");
+
   return Or(op1, Or(op2, op3));
 }
 template <typename... XlaOpTs>
@@ -2667,11 +2941,17 @@ XlaOp RemoveDynamicDimension(XlaOp operand, int64_t dimension);
 
 template <typename NativeT>
 XlaOp ConstantR0(XlaBuilder* builder, NativeT value) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_35(mht_35_v, 2944, "", "./tensorflow/compiler/xla/client/xla_builder.h", "ConstantR0");
+
   return ConstantLiteral(builder, LiteralUtil::CreateR0<NativeT>(value));
 }
 
 template <typename NativeT>
 XlaOp ConstantR1(XlaBuilder* builder, absl::Span<const NativeT> values) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_36(mht_36_v, 2952, "", "./tensorflow/compiler/xla/client/xla_builder.h", "ConstantR1");
+
   BorrowingLiteral literal(
       reinterpret_cast<const char*>(values.begin()),
       ShapeUtil::MakeShape(primitive_util::NativeToPrimitiveType<NativeT>(),
@@ -2681,6 +2961,9 @@ XlaOp ConstantR1(XlaBuilder* builder, absl::Span<const NativeT> values) {
 
 template <typename NativeT>
 XlaOp ConstantR1(XlaBuilder* builder, int64_t length, NativeT value) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_37(mht_37_v, 2964, "", "./tensorflow/compiler/xla/client/xla_builder.h", "ConstantR1");
+
   Literal literal(ShapeUtil::MakeShape(
       primitive_util::NativeToPrimitiveType<NativeT>(), {length}));
   literal.PopulateWithValue(value);
@@ -2689,12 +2972,18 @@ XlaOp ConstantR1(XlaBuilder* builder, int64_t length, NativeT value) {
 
 inline XlaOp ConstantR1(XlaBuilder* builder,
                         const tensorflow::core::Bitmap& values) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_38(mht_38_v, 2975, "", "./tensorflow/compiler/xla/client/xla_builder.h", "ConstantR1");
+
   return ConstantLiteral(builder, LiteralUtil::CreateR1(values));
 }
 
 template <typename NativeT>
 XlaOp ConstantR2(XlaBuilder* builder,
                  std::initializer_list<std::initializer_list<NativeT>> values) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_39(mht_39_v, 2984, "", "./tensorflow/compiler/xla/client/xla_builder.h", "ConstantR2");
+
   return ConstantLiteral(builder, LiteralUtil::CreateR2<NativeT>(values));
 }
 
@@ -2702,12 +2991,18 @@ template <typename NativeT>
 XlaOp ConstantFromArrayWithLayout(XlaBuilder* builder,
                                   const Array<NativeT>& values,
                                   const Layout& layout) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_40(mht_40_v, 2994, "", "./tensorflow/compiler/xla/client/xla_builder.h", "ConstantFromArrayWithLayout");
+
   return ConstantLiteral(
       builder, LiteralUtil::CreateFromArrayWithLayout<NativeT>(values, layout));
 }
 
 template <typename NativeT>
 XlaOp ConstantFromArray(XlaBuilder* builder, const Array<NativeT>& values) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_41(mht_41_v, 3003, "", "./tensorflow/compiler/xla/client/xla_builder.h", "ConstantFromArray");
+
   return ConstantLiteral(builder,
                          LiteralUtil::CreateFromArray<NativeT>(values));
 }
@@ -2716,6 +3011,9 @@ template <typename NativeT>
 XlaOp ConstantR2FromArray2DWithLayout(XlaBuilder* builder,
                                       const Array2D<NativeT>& values,
                                       const Layout& layout) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_42(mht_42_v, 3014, "", "./tensorflow/compiler/xla/client/xla_builder.h", "ConstantR2FromArray2DWithLayout");
+
   return ConstantLiteral(
       builder, LiteralUtil::CreateFromArrayWithLayout<NativeT>(values, layout));
 }
@@ -2723,6 +3021,9 @@ XlaOp ConstantR2FromArray2DWithLayout(XlaBuilder* builder,
 template <typename NativeT>
 XlaOp ConstantR2FromArray2D(XlaBuilder* builder,
                             const Array2D<NativeT>& values) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_43(mht_43_v, 3024, "", "./tensorflow/compiler/xla/client/xla_builder.h", "ConstantR2FromArray2D");
+
   return ConstantLiteral(builder,
                          LiteralUtil::CreateR2FromArray2D<NativeT>(values));
 }
@@ -2731,6 +3032,9 @@ template <typename NativeT>
 XlaOp ConstantR3FromArray3DWithLayout(XlaBuilder* builder,
                                       const Array3D<NativeT>& values,
                                       const Layout& layout) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_44(mht_44_v, 3035, "", "./tensorflow/compiler/xla/client/xla_builder.h", "ConstantR3FromArray3DWithLayout");
+
   return ConstantLiteral(
       builder,
       LiteralUtil::CreateR3FromArray3DWithLayout<NativeT>(values, layout));
@@ -2739,6 +3043,9 @@ XlaOp ConstantR3FromArray3DWithLayout(XlaBuilder* builder,
 template <typename NativeT>
 XlaOp ConstantR3FromArray3D(XlaBuilder* builder,
                             const Array3D<NativeT>& values) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_45(mht_45_v, 3046, "", "./tensorflow/compiler/xla/client/xla_builder.h", "ConstantR3FromArray3D");
+
   return ConstantFromArray(builder, values);
 }
 
@@ -2746,12 +3053,18 @@ template <typename NativeT>
 XlaOp ConstantR4FromArray4DWithLayout(XlaBuilder* builder,
                                       const Array4D<NativeT>& values,
                                       const Layout& layout) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_46(mht_46_v, 3056, "", "./tensorflow/compiler/xla/client/xla_builder.h", "ConstantR4FromArray4DWithLayout");
+
   return ConstantFromArrayWithLayout(builder, values, layout);
 }
 
 template <typename NativeT>
 XlaOp ConstantR4FromArray4D(XlaBuilder* builder,
                             const Array4D<NativeT>& values) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSxla_builderDTh mht_47(mht_47_v, 3065, "", "./tensorflow/compiler/xla/client/xla_builder.h", "ConstantR4FromArray4D");
+
   return ConstantFromArray(builder, values);
 }
 

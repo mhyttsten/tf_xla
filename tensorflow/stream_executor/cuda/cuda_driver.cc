@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -77,6 +245,9 @@ namespace gpu {
 namespace {
 
 bool UseCudaMallocAsyncAllocator() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_0(mht_0_v, 248, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "UseCudaMallocAsyncAllocator");
+
   static const char* debug_allocator_str = std::getenv("TF_GPU_ALLOCATOR");
   return debug_allocator_str != nullptr &&
          std::strcmp(debug_allocator_str, "cuda_malloc_async") == 0;
@@ -86,6 +257,9 @@ bool UseCudaMallocAsyncAllocator() {
 // created by StreamExecutor (to ensure that the CUDA runtime didn't create a
 // context behind our backs).
 CUcontext CurrentContext() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_1(mht_1_v, 260, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "CurrentContext");
+
   CUcontext current = cuda::CurrentContextOrDie();
   if (current != nullptr && !CreatedContexts::Has(current)) {
     LOG(FATAL) << "current context was not created by the StreamExecutor "
@@ -103,6 +277,9 @@ CUcontext CurrentContext() {
 // thread::ThreadPool on some platforms), we run certain routines in this pool
 // and wait for completion.
 port::ThreadPool* GetDriverExecutor() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_2(mht_2_v, 280, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GetDriverExecutor");
+
   static port::ThreadPool* thread_pool = new port::ThreadPool(
       port::Env::Default(), port::ThreadOptions(), "cuda_driver", 1);
   return thread_pool;
@@ -111,6 +288,9 @@ port::ThreadPool* GetDriverExecutor() {
 }  // namespace
 
 std::string MemorySpaceString(MemorySpace memory_space) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_3(mht_3_v, 291, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "MemorySpaceString");
+
   switch (memory_space) {
     case MemorySpace::kHost:
       return "host";
@@ -125,6 +305,9 @@ namespace {
 
 // Call cuCtxtSynchronize and crash if it doesn't succeed.
 void SynchronizeOrDie() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_4(mht_4_v, 308, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "SynchronizeOrDie");
+
   FAIL_IF_CUDA_RES_ERROR(cuCtxSynchronize(),
                          "Synchronize fail: ", port::CurrentStackTrace());
 }
@@ -140,6 +323,9 @@ SE_STATIC_THREAD_LOCAL_POD(ThreadLocalData, tls_data);
 }  // namespace
 
 ScopedActivateContext::ScopedActivateContext(GpuContext* cuda_context) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_5(mht_5_v, 326, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "ScopedActivateContext::ScopedActivateContext");
+
   if (FLAGS_gpuexec_cuda_sync_around_driver_calls) SynchronizeOrDie();
 
   auto* tls = &tls_data.get();
@@ -179,6 +365,9 @@ ScopedActivateContext::ScopedActivateContext(GpuContext* cuda_context) {
 }
 
 ScopedActivateContext::~ScopedActivateContext() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_6(mht_6_v, 368, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "ScopedActivateContext::~ScopedActivateContext");
+
   if (FLAGS_gpuexec_cuda_sync_around_driver_calls) SynchronizeOrDie();
 
   auto* tls = &tls_data.get();
@@ -210,6 +399,9 @@ namespace {
 // logging purposes. Returns "?" if the device could not be successfully
 // queried.
 std::string CUDAPointerToDeviceString(CUdeviceptr pointer) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_7(mht_7_v, 402, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "CUDAPointerToDeviceString");
+
   auto value = GpuDriver::GetPointerDevice(pointer);
   if (value.ok()) {
     return absl::StrCat(value.ValueOrDie());
@@ -222,6 +414,9 @@ std::string CUDAPointerToDeviceString(CUdeviceptr pointer) {
 // logging purposes. Returns "?" if the memory space could not be successfully
 // queried.
 std::string CUDAPointerToMemorySpaceString(CUdeviceptr pointer) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_8(mht_8_v, 417, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "CUDAPointerToMemorySpaceString");
+
   auto value = GpuDriver::GetPointerMemorySpace(pointer);
   if (value.ok()) {
     return MemorySpaceString(value.ValueOrDie());
@@ -235,6 +430,9 @@ std::string CUDAPointerToMemorySpaceString(CUdeviceptr pointer) {
 // primarily for logging purposes. Returns "error" if an error is encountered
 // in the process of querying.
 std::string CUDAPointersToCanAccessString(CUdeviceptr from, CUdeviceptr to) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_9(mht_9_v, 433, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "CUDAPointersToCanAccessString");
+
   auto from_context = GpuDriver::GetPointerContext(from);
   if (!from_context.ok()) {
     LOG(ERROR) << "could not retrieve source pointer's context: "
@@ -256,6 +454,9 @@ std::string CUDAPointersToCanAccessString(CUdeviceptr from, CUdeviceptr to) {
 // Actually performs the work of CUDA initialization. Wrapped up in one-time
 // execution guard.
 static port::Status InternalInit() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_10(mht_10_v, 457, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "InternalInit");
+
   CUresult res = CUDA_ERROR_NO_DEVICE;
   if (FLAGS_gpuexec_cuda_driver_inject_init_error) {
     LOG(ERROR) << "injecting CUDA init error; initialization will fail";
@@ -279,6 +480,9 @@ static port::Status InternalInit() {
 }  // namespace
 
 /* static */ port::Status GpuDriver::Init() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_11(mht_11_v, 483, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::Init");
+
   // Cached return value from calling InternalInit(), as cuInit need only be
   // called once, but GpuDriver::Init may be called many times.
   static port::Status* init_retval = [] {
@@ -289,6 +493,9 @@ static port::Status InternalInit() {
 
 /* static */ port::Status GpuDriver::GetDevice(int device_ordinal,
                                                CUdevice* device) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_12(mht_12_v, 496, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetDevice");
+
   RETURN_IF_CUDA_RES_ERROR(cuDeviceGet(device, device_ordinal),
                            "Failed call to cuDeviceGet");
   return port::Status::OK();
@@ -296,6 +503,9 @@ static port::Status InternalInit() {
 
 /* static */ port::Status GpuDriver::GetDeviceName(CUdevice device,
                                                    std::string* device_name) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_13(mht_13_v, 506, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetDeviceName");
+
   static const size_t kCharLimit = 64;
   absl::InlinedVector<char, 4> chars(kCharLimit);
   RETURN_IF_CUDA_RES_ERROR(
@@ -308,6 +518,9 @@ static port::Status InternalInit() {
 
 bool DeviceOptionsToContextFlags(const DeviceOptions& device_options,
                                  int* flags) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_14(mht_14_v, 521, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "DeviceOptionsToContextFlags");
+
   static_assert(DeviceOptions::kMask == 0xf,
                 "needs update for new device options");
 
@@ -333,6 +546,9 @@ bool DeviceOptionsToContextFlags(const DeviceOptions& device_options,
 /* static */ port::Status GpuDriver::CreateContext(
     int device_ordinal, CUdevice device, const DeviceOptions& device_options,
     GpuContext** context) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_15(mht_15_v, 549, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::CreateContext");
+
   *context = nullptr;
 
   int flags = 0;
@@ -409,6 +625,9 @@ bool DeviceOptionsToContextFlags(const DeviceOptions& device_options,
 }
 
 /* static */ void GpuDriver::DestroyContext(GpuContext* context) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_16(mht_16_v, 628, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::DestroyContext");
+
   if (context == nullptr) {
     return;
   }
@@ -428,11 +647,17 @@ bool DeviceOptionsToContextFlags(const DeviceOptions& device_options,
 }
 
 /* static */ CUcontext GpuDriver::GetContextHandle(GpuContext* context) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_17(mht_17_v, 650, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetContextHandle");
+
   return context->context();
 }
 
 /* static */ port::Status GpuDriver::FuncGetAttribute(
     CUfunction_attribute attribute, CUfunction func, int* attribute_value) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_18(mht_18_v, 658, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::FuncGetAttribute");
+
   RETURN_IF_CUDA_RES_ERROR(cuFuncGetAttribute(attribute_value, attribute, func),
                            "Failed to query kernel attribute: ", attribute);
   return port::Status::OK();
@@ -440,6 +665,9 @@ bool DeviceOptionsToContextFlags(const DeviceOptions& device_options,
 
 /* static */ port::Status GpuDriver::FuncSetCacheConfig(
     CUfunction function, CUfunc_cache cache_config) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_19(mht_19_v, 668, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::FuncSetCacheConfig");
+
   RETURN_IF_CUDA_RES_ERROR(cuFuncSetCacheConfig(function, cache_config),
                            "Failed to set CUDA kernel cache config");
   return port::Status::OK();
@@ -447,6 +675,9 @@ bool DeviceOptionsToContextFlags(const DeviceOptions& device_options,
 
 /* static */ port::StatusOr<CUsharedconfig>
 GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_20(mht_20_v, 678, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::ContextGetSharedMemConfig");
+
   CUsharedconfig shared_mem_config;
   ScopedActivateContext activation(context);
   RETURN_IF_CUDA_RES_ERROR(cuCtxGetSharedMemConfig(&shared_mem_config),
@@ -456,6 +687,9 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
 
 /* static */ port::Status GpuDriver::ContextSetSharedMemConfig(
     GpuContext* context, CUsharedconfig shared_mem_config) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_21(mht_21_v, 690, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::ContextSetSharedMemConfig");
+
   ScopedActivateContext activation(context);
   RETURN_IF_CUDA_RES_ERROR(cuCtxSetSharedMemConfig(shared_mem_config),
                            "Failed to set shared memory config");
@@ -468,6 +702,10 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
     unsigned int block_dim_x, unsigned int block_dim_y,
     unsigned int block_dim_z, unsigned int shared_mem_bytes, CUstream stream,
     void** kernel_params, void** extra) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("kernel_name: \"" + std::string(kernel_name.data(), kernel_name.size()) + "\"");
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_22(mht_22_v, 706, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::LaunchKernel");
+
   ScopedActivateContext activation(context);
   VLOG(2) << "launching kernel: " << kernel_name << "; gdx: " << grid_dim_x
           << " gdy: " << grid_dim_y << " gdz: " << grid_dim_z
@@ -487,6 +725,10 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
 /* static */ port::Status GpuDriver::LoadCubin(GpuContext* context,
                                                const char* cubin_bytes,
                                                CUmodule* module) {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("cubin_bytes: \"" + (cubin_bytes == nullptr ? std::string("nullptr") : std::string((char*)cubin_bytes)) + "\"");
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_23(mht_23_v, 729, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::LoadCubin");
+
   ScopedActivateContext activation(context);
   RETURN_IF_CUDA_RES_ERROR(cuModuleLoadFatBinary(module, cubin_bytes),
                            "Failed to load in-memory CUBIN");
@@ -496,6 +738,10 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
 /* static */ port::Status GpuDriver::LoadPtx(GpuContext* context,
                                              const char* ptx_contents,
                                              CUmodule* module) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("ptx_contents: \"" + (ptx_contents == nullptr ? std::string("nullptr") : std::string((char*)ptx_contents)) + "\"");
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_24(mht_24_v, 742, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::LoadPtx");
+
   absl::Notification notification;
   port::Status ret = port::Status::OK();
   GetDriverExecutor()->Schedule([context, ptx_contents, module, &ret,
@@ -567,12 +813,19 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
 /* static */ port::Status GpuDriver::LoadHsaco(GpuContext* context,
                                                const char* hsaco_contents,
                                                CUmodule* module) {
+   std::vector<std::string> mht_25_v;
+   mht_25_v.push_back("hsaco_contents: \"" + (hsaco_contents == nullptr ? std::string("nullptr") : std::string((char*)hsaco_contents)) + "\"");
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_25(mht_25_v, 817, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::LoadHsaco");
+
   return port::InternalError(
       "Feature not supported on CUDA platform (LoadHsaco)");
 }
 
 /* static */ port::Status GpuDriver::SynchronousMemsetUint8(
     GpuContext* context, CUdeviceptr location, uint8 value, size_t size) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_26(mht_26_v, 826, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::SynchronousMemsetUint8");
+
   ScopedActivateContext activation(context);
   RETURN_IF_CUDA_RES_ERROR(cuMemsetD8(location, value, size),
                            "Failed to memset memory");
@@ -582,6 +835,9 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
 /* static */ port::Status GpuDriver::SynchronousMemsetUint32(
     GpuContext* context, CUdeviceptr location, uint32 value,
     size_t uint32_count) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_27(mht_27_v, 838, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::SynchronousMemsetUint32");
+
   ScopedActivateContext activation(context);
   RETURN_IF_CUDA_RES_ERROR(cuMemsetD32(location, value, uint32_count),
                            "Failed to memset memory");
@@ -591,6 +847,9 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
 /* static */ port::Status GpuDriver::AsynchronousMemsetUint8(
     GpuContext* context, CUdeviceptr location, uint8 value, size_t uint32_count,
     CUstream stream) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_28(mht_28_v, 850, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::AsynchronousMemsetUint8");
+
   ScopedActivateContext activation(context);
   RETURN_IF_CUDA_RES_ERROR(
       cuMemsetD8Async(location, value, uint32_count, stream),
@@ -601,6 +860,9 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
 /* static */ port::Status GpuDriver::AsynchronousMemsetUint32(
     GpuContext* context, CUdeviceptr location, uint32 value,
     size_t uint32_count, CUstream stream) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_29(mht_29_v, 863, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::AsynchronousMemsetUint32");
+
   ScopedActivateContext activation(context);
   RETURN_IF_CUDA_RES_ERROR(
       cuMemsetD32Async(location, value, uint32_count, stream),
@@ -612,6 +874,9 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
                                                CUstream stream,
                                                StreamCallback callback,
                                                void* data) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_30(mht_30_v, 877, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::AddStreamCallback");
+
   // Note: flags param is required to be zero according to CUDA 6.0.
   CUresult res = cuStreamAddCallback(stream, callback, data, 0 /* = flags */);
   if (res != CUDA_SUCCESS) {
@@ -625,6 +890,10 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
                                                CUmodule module,
                                                const char* kernel_name,
                                                CUfunction* function) {
+   std::vector<std::string> mht_31_v;
+   mht_31_v.push_back("kernel_name: \"" + (kernel_name == nullptr ? std::string("nullptr") : std::string((char*)kernel_name)) + "\"");
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_31(mht_31_v, 894, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetModuleFunction");
+
   ScopedActivateContext activated{context};
   CHECK(module != nullptr && kernel_name != nullptr);
   CUresult res = cuModuleGetFunction(function, module, kernel_name);
@@ -641,6 +910,10 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
                                              CUmodule module,
                                              const char* symbol_name,
                                              CUdeviceptr* dptr, size_t* bytes) {
+   std::vector<std::string> mht_32_v;
+   mht_32_v.push_back("symbol_name: \"" + (symbol_name == nullptr ? std::string("nullptr") : std::string((char*)symbol_name)) + "\"");
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_32(mht_32_v, 914, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetModuleSymbol");
+
   ScopedActivateContext activated{context};
   CHECK(module != nullptr && symbol_name != nullptr &&
         (dptr != nullptr || bytes != nullptr));
@@ -658,6 +931,9 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
 
 /* static */ void GpuDriver::UnloadModule(GpuContext* context,
                                           CUmodule module) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_33(mht_33_v, 934, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::UnloadModule");
+
   ScopedActivateContext activated{context};
   CUresult res = cuModuleUnload(module);
   if (res != CUDA_SUCCESS) {
@@ -668,6 +944,9 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
 
 /* static */ port::StatusOr<CUdevice> GpuDriver::DeviceFromContext(
     GpuContext* context) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_34(mht_34_v, 947, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::DeviceFromContext");
+
   ScopedActivateContext activated{context};
   CUdevice device = -1;
   CUresult result = cuCtxGetDevice(&device);
@@ -682,6 +961,9 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
 
 /* static */ bool GpuDriver::CreateStream(GpuContext* context, CUstream* stream,
                                           int priority) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_35(mht_35_v, 964, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::CreateStream");
+
   // TODO(leary) can we switch this to CU_STREAM_NON_BLOCKING or will that mess
   // up synchronization with respect to memsets and any other things that have
   // to occur on the default stream?
@@ -708,6 +990,9 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
 
 /* static */ void GpuDriver::DestroyStream(GpuContext* context,
                                            CUstream* stream) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_36(mht_36_v, 993, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::DestroyStream");
+
   if (*stream == nullptr) {
     return;
   }
@@ -726,6 +1011,9 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
 
 /* static */ void* GpuDriver::DeviceAllocate(GpuContext* context,
                                              uint64_t bytes) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_37(mht_37_v, 1014, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::DeviceAllocate");
+
   if (bytes == 0) {
     return nullptr;
   }
@@ -749,6 +1037,9 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
 
 /* static */ void GpuDriver::DeviceDeallocate(GpuContext* context,
                                               void* location) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_38(mht_38_v, 1040, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::DeviceDeallocate");
+
   ScopedActivateContext activation(context);
   CUdeviceptr pointer = absl::bit_cast<CUdeviceptr>(location);
   CUresult res = cuMemFree(pointer);
@@ -763,6 +1054,9 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
 
 /* static */ void* GpuDriver::UnifiedMemoryAllocate(GpuContext* context,
                                                     uint64_t bytes) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_39(mht_39_v, 1057, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::UnifiedMemoryAllocate");
+
   ScopedActivateContext activation(context);
   CUdeviceptr result = 0;
   // "Portable" memory is visible to all CUDA contexts. Safe for our use model.
@@ -780,6 +1074,9 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
 
 /* static */ void GpuDriver::UnifiedMemoryDeallocate(GpuContext* context,
                                                      void* location) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_40(mht_40_v, 1077, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::UnifiedMemoryDeallocate");
+
   ScopedActivateContext activation(context);
   CUdeviceptr pointer = absl::bit_cast<CUdeviceptr>(location);
   CUresult res = cuMemFree(pointer);
@@ -794,6 +1091,9 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
 
 /* static */ void* GpuDriver::HostAllocate(GpuContext* context,
                                            uint64_t bytes) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_41(mht_41_v, 1094, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::HostAllocate");
+
   ScopedActivateContext activation(context);
   void* host_mem = nullptr;
   // "Portable" memory is visible to all CUDA contexts. Safe for our use model.
@@ -807,6 +1107,9 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
 
 /* static */ void GpuDriver::HostDeallocate(GpuContext* context,
                                             void* location) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_42(mht_42_v, 1110, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::HostDeallocate");
+
   ScopedActivateContext activation(context);
   CUresult res = cuMemFreeHost(location);
   if (res != CUDA_SUCCESS) {
@@ -817,6 +1120,9 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
 
 /* static */ bool GpuDriver::HostRegister(GpuContext* context, void* location,
                                           uint64_t bytes) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_43(mht_43_v, 1123, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::HostRegister");
+
   ScopedActivateContext activation(context);
   // "Portable" memory is visible to all CUDA contexts. Safe for our use model.
   CUresult res =
@@ -831,6 +1137,9 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
 
 /* static */ bool GpuDriver::HostUnregister(GpuContext* context,
                                             void* location) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_44(mht_44_v, 1140, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::HostUnregister");
+
   ScopedActivateContext activation(context);
   CUresult res = cuMemHostUnregister(location);
   if (res != CUDA_SUCCESS) {
@@ -844,6 +1153,9 @@ GpuDriver::ContextGetSharedMemConfig(GpuContext* context) {
 #if CUDA_VERSION >= 10020
 /* static */ port::StatusOr<GpuDriver::VmemSpan>
 GpuDriver::ReserveVirtualMemory(GpuContext* context, uint64_t bytes) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_45(mht_45_v, 1156, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::ReserveVirtualMemory");
+
   ScopedActivateContext activation(context);
   CUdeviceptr base;
   CUresult res = cuMemAddressReserve(&base, bytes, /*alignment=*/0,
@@ -858,6 +1170,9 @@ GpuDriver::ReserveVirtualMemory(GpuContext* context, uint64_t bytes) {
 
 /* static */ void GpuDriver::FreeVirtualMemory(
     GpuContext* context, GpuDriver::VmemSpan reservation) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_46(mht_46_v, 1173, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::FreeVirtualMemory");
+
   ScopedActivateContext activation(context);
   CUresult res = cuMemAddressFree(reservation.base, reservation.size_bytes);
   if (res != CUDA_SUCCESS) {
@@ -868,6 +1183,9 @@ GpuDriver::ReserveVirtualMemory(GpuContext* context, uint64_t bytes) {
 
 /* static */ port::StatusOr<uint64_t> GpuDriver::GetMinAllocationGranularity(
     GpuDeviceHandle device) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_47(mht_47_v, 1186, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetMinAllocationGranularity");
+
   CUmemAllocationProp props = {};
   props.type = CU_MEM_ALLOCATION_TYPE_PINNED;
   props.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
@@ -885,6 +1203,9 @@ GpuDriver::ReserveVirtualMemory(GpuContext* context, uint64_t bytes) {
 
 /* static */ port::StatusOr<GpuDriver::GenericMemoryHandle>
 GpuDriver::CreateMemoryHandle(GpuContext* context, uint64_t bytes) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_48(mht_48_v, 1206, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::CreateMemoryHandle");
+
   ScopedActivateContext activation(context);
   auto device = DeviceFromContext(context);
   if (!device.ok()) {
@@ -909,6 +1230,9 @@ GpuDriver::CreateMemoryHandle(GpuContext* context, uint64_t bytes) {
 
 /* static */ void GpuDriver::ReleaseMemoryHandle(
     GpuContext* context, GpuDriver::GenericMemoryHandle handle) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_49(mht_49_v, 1233, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::ReleaseMemoryHandle");
+
   ScopedActivateContext activation(context);
 
   CUresult res = cuMemRelease(handle.handle);
@@ -922,6 +1246,9 @@ GpuDriver::CreateMemoryHandle(GpuContext* context, uint64_t bytes) {
     GpuContext* context, CUdeviceptr va,
     const GpuDriver::GenericMemoryHandle& handle,
     const std::vector<GpuDeviceHandle>& device_handles) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_50(mht_50_v, 1249, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::MapMemory");
+
   ScopedActivateContext activation(context);
 
   auto device = DeviceFromContext(context);
@@ -961,6 +1288,9 @@ GpuDriver::CreateMemoryHandle(GpuContext* context, uint64_t bytes) {
 
 /* static */ void GpuDriver::UnmapMemory(GpuContext* context, CUdeviceptr va,
                                          uint64_t bytes) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_51(mht_51_v, 1291, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::UnmapMemory");
+
   ScopedActivateContext activation(context);
 
   CUresult res = cuMemUnmap(va, bytes);
@@ -974,6 +1304,9 @@ GpuDriver::CreateMemoryHandle(GpuContext* context, uint64_t bytes) {
 
 /* static */ port::Status GpuDriver::DestroyEvent(GpuContext* context,
                                                   CUevent* event) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_52(mht_52_v, 1307, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::DestroyEvent");
+
   if (*event == nullptr) {
     return port::Status(port::error::INVALID_ARGUMENT,
                         "input event cannot be null");
@@ -988,6 +1321,9 @@ GpuDriver::CreateMemoryHandle(GpuContext* context, uint64_t bytes) {
 /* static */ port::Status GpuDriver::RecordEvent(GpuContext* context,
                                                  CUevent event,
                                                  CUstream stream) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_53(mht_53_v, 1324, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::RecordEvent");
+
   ScopedActivateContext activated{context};
   RETURN_IF_CUDA_RES_ERROR(cuEventRecord(event, stream),
                            "Error recording CUDA event");
@@ -996,6 +1332,9 @@ GpuDriver::CreateMemoryHandle(GpuContext* context, uint64_t bytes) {
 
 /* static */ port::StatusOr<CUresult> GpuDriver::QueryEvent(GpuContext* context,
                                                             CUevent event) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_54(mht_54_v, 1335, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::QueryEvent");
+
   ScopedActivateContext activated{context};
   CUresult res = cuEventQuery(event);
   if (res != CUDA_SUCCESS && res != CUDA_ERROR_NOT_READY) {
@@ -1010,6 +1349,9 @@ GpuDriver::CreateMemoryHandle(GpuContext* context, uint64_t bytes) {
 /* static */ bool GpuDriver::GetEventElapsedTime(GpuContext* context,
                                                  float* elapsed_milliseconds,
                                                  CUevent start, CUevent stop) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_55(mht_55_v, 1352, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetEventElapsedTime");
+
   ScopedActivateContext activated{context};
   // The stop event must have completed in order for cuEventElapsedTime to
   // work.
@@ -1030,6 +1372,9 @@ GpuDriver::CreateMemoryHandle(GpuContext* context, uint64_t bytes) {
 
 /* static */ bool GpuDriver::WaitStreamOnEvent(GpuContext* context,
                                                CUstream stream, CUevent event) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_56(mht_56_v, 1375, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::WaitStreamOnEvent");
+
   ScopedActivateContext activation(context);
   CUresult res = cuStreamWaitEvent(stream, event, 0 /* = flags */);
   if (res != CUDA_SUCCESS) {
@@ -1041,6 +1386,9 @@ GpuDriver::CreateMemoryHandle(GpuContext* context, uint64_t bytes) {
 }
 
 /* static */ bool GpuDriver::SynchronizeContext(GpuContext* context) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_57(mht_57_v, 1389, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::SynchronizeContext");
+
   ScopedActivateContext activation(context);
   CUresult res = cuCtxSynchronize();
   if (res != CUDA_SUCCESS) {
@@ -1054,6 +1402,9 @@ GpuDriver::CreateMemoryHandle(GpuContext* context, uint64_t bytes) {
 
 /* static */ port::Status GpuDriver::SynchronizeStream(GpuContext* context,
                                                        CUstream stream) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_58(mht_58_v, 1405, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::SynchronizeStream");
+
   ScopedActivateContext activated{context};
   CHECK(stream != nullptr);
   RETURN_IF_CUDA_RES_ERROR(cuStreamSynchronize(stream),
@@ -1063,6 +1414,9 @@ GpuDriver::CreateMemoryHandle(GpuContext* context, uint64_t bytes) {
 
 /* static */ bool GpuDriver::IsStreamIdle(GpuContext* context,
                                           CUstream stream) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_59(mht_59_v, 1417, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::IsStreamIdle");
+
   ScopedActivateContext activated{context};
   CHECK(stream != nullptr);
   CUresult res = cuStreamQuery(stream);
@@ -1080,6 +1434,9 @@ GpuDriver::CreateMemoryHandle(GpuContext* context, uint64_t bytes) {
                                                           void* host_dst,
                                                           CUdeviceptr gpu_src,
                                                           uint64_t size) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_60(mht_60_v, 1437, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::SynchronousMemcpyD2H");
+
   ScopedActivateContext activation(context);
   RETURN_IF_CUDA_RES_ERROR(
       cuMemcpyDtoH(host_dst, gpu_src, size),
@@ -1095,6 +1452,9 @@ GpuDriver::CreateMemoryHandle(GpuContext* context, uint64_t bytes) {
                                                           CUdeviceptr gpu_dst,
                                                           const void* host_src,
                                                           uint64_t size) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_61(mht_61_v, 1455, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::SynchronousMemcpyH2D");
+
   ScopedActivateContext activation(context);
   RETURN_IF_CUDA_RES_ERROR(
       cuMemcpyHtoD(gpu_dst, host_src, size),
@@ -1110,6 +1470,9 @@ GpuDriver::CreateMemoryHandle(GpuContext* context, uint64_t bytes) {
                                                           CUdeviceptr gpu_dst,
                                                           CUdeviceptr gpu_src,
                                                           uint64_t size) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_62(mht_62_v, 1473, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::SynchronousMemcpyD2D");
+
   ScopedActivateContext activation(context);
 
   CUresult result;
@@ -1157,6 +1520,9 @@ GpuDriver::CreateMemoryHandle(GpuContext* context, uint64_t bytes) {
                                                    CUdeviceptr gpu_src,
                                                    uint64_t size,
                                                    CUstream stream) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_63(mht_63_v, 1523, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::AsynchronousMemcpyD2H");
+
   ScopedActivateContext activation(context);
   CUresult res = cuMemcpyDtoHAsync(host_dst, gpu_src, size, stream);
   if (res != CUDA_SUCCESS) {
@@ -1177,6 +1543,9 @@ GpuDriver::CreateMemoryHandle(GpuContext* context, uint64_t bytes) {
                                                    const void* host_src,
                                                    uint64_t size,
                                                    CUstream stream) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_64(mht_64_v, 1546, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::AsynchronousMemcpyH2D");
+
   ScopedActivateContext activation(context);
   CUresult res = cuMemcpyHtoDAsync(gpu_dst, host_src, size, stream);
   if (res != CUDA_SUCCESS) {
@@ -1196,6 +1565,9 @@ GpuDriver::CreateMemoryHandle(GpuContext* context, uint64_t bytes) {
                                                    CUdeviceptr gpu_src,
                                                    uint64_t size,
                                                    CUstream stream) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_65(mht_65_v, 1568, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::AsynchronousMemcpyD2D");
+
   ScopedActivateContext activation(context);
   CUresult result;
   // CreatedContexts::GetAnyContext() doesn't works when ptr == 0.
@@ -1248,6 +1620,9 @@ GpuDriver::CreateMemoryHandle(GpuContext* context, uint64_t bytes) {
 /* static */ port::Status GpuDriver::InitEvent(GpuContext* context,
                                                CUevent* result,
                                                EventFlags flags) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_66(mht_66_v, 1623, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::InitEvent");
+
   int cuflags;
   switch (flags) {
     case EventFlags::kDefault:
@@ -1276,6 +1651,9 @@ GpuDriver::CreateMemoryHandle(GpuContext* context, uint64_t bytes) {
 }
 
 /* static */ int GpuDriver::GetDeviceCount() {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_67(mht_67_v, 1654, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetDeviceCount");
+
   int device_count = 0;
   CUresult res = cuDeviceGetCount(&device_count);
   if (res != CUDA_SUCCESS) {
@@ -1291,6 +1669,9 @@ GpuDriver::CreateMemoryHandle(GpuContext* context, uint64_t bytes) {
 
 /* static */ port::StatusOr<GpuContext*> GpuDriver::GetPointerContext(
     CUdeviceptr pointer) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_68(mht_68_v, 1672, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetPointerContext");
+
   GpuContext* context = nullptr;
   CUresult result =
       cuPointerGetAttribute(&context, CU_POINTER_ATTRIBUTE_CONTEXT, pointer);
@@ -1317,6 +1698,9 @@ GpuDriver::CreateMemoryHandle(GpuContext* context, uint64_t bytes) {
 
 /* static */ port::StatusOr<MemorySpace> GpuDriver::GetPointerMemorySpace(
     CUdeviceptr pointer) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_69(mht_69_v, 1701, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetPointerMemorySpace");
+
   unsigned int value;
   CUresult result =
       cuPointerGetAttribute(&value, CU_POINTER_ATTRIBUTE_MEMORY_TYPE, pointer);
@@ -1342,6 +1726,9 @@ GpuDriver::CreateMemoryHandle(GpuContext* context, uint64_t bytes) {
 /* static */ port::Status GpuDriver::GetPointerAddressRange(CUdeviceptr dptr,
                                                             CUdeviceptr* base,
                                                             size_t* size) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_70(mht_70_v, 1729, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetPointerAddressRange");
+
   CUresult result = cuMemGetAddressRange(base, size, dptr);
   if (result == CUDA_SUCCESS) {
     return port::Status::OK();
@@ -1363,6 +1750,9 @@ GpuDriver::CreateMemoryHandle(GpuContext* context, uint64_t bytes) {
 
 /* static */ port::StatusOr<CUdevice> GpuDriver::GetPointerDevice(
     CUdeviceptr pointer) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_71(mht_71_v, 1753, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetPointerDevice");
+
   auto result = GetPointerContext(pointer);
   if (!result.ok()) {
     return result.status();
@@ -1374,6 +1764,9 @@ GpuDriver::CreateMemoryHandle(GpuContext* context, uint64_t bytes) {
 /* static */ port::Status GpuDriver::GetComputeCapability(int* cc_major,
                                                           int* cc_minor,
                                                           CUdevice device) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_72(mht_72_v, 1767, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetComputeCapability");
+
   *cc_major = 0;
   *cc_minor = 0;
 
@@ -1402,12 +1795,18 @@ GpuDriver::CreateMemoryHandle(GpuContext* context, uint64_t bytes) {
 
 /* static */ port::Status GpuDriver::GetGpuISAVersion(int* version,
                                                       CUdevice device) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_73(mht_73_v, 1798, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetGpuISAVersion");
+
   return port::Status{
       port::error::INTERNAL,
       "Feature not supported on CUDA platform (GetGpuISAVersion)"};
 }
 
 /* static */ port::Status GpuDriver::GetGpuGCNArchName(CUdevice, std::string*) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_74(mht_74_v, 1807, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetGpuGCNArchName");
+
   return port::Status{
       port::error::INTERNAL,
       "Feature not supported on CUDA platform (GetGpuGCNArchName)"};
@@ -1428,47 +1827,71 @@ static port::StatusOr<T> GetSimpleAttribute(CUdevice device,
 
 /* static */ port::StatusOr<int> GpuDriver::GetMultiprocessorCount(
     CUdevice device) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_75(mht_75_v, 1830, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetMultiprocessorCount");
+
   return GetSimpleAttribute<int>(device,
                                  CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT);
 }
 
 /* static */ port::StatusOr<int64_t> GpuDriver::GetMaxSharedMemoryPerCore(
     CUdevice device) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_76(mht_76_v, 1839, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetMaxSharedMemoryPerCore");
+
   return GetSimpleAttribute<int64_t>(
       device, CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_MULTIPROCESSOR);
 }
 
 /* static */ port::StatusOr<int64_t> GpuDriver::GetMaxSharedMemoryPerBlock(
     CUdevice device) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_77(mht_77_v, 1848, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetMaxSharedMemoryPerBlock");
+
   return GetSimpleAttribute<int64_t>(
       device, CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK);
 }
 
 /* static */ port::StatusOr<int64_t> GpuDriver::GetMaxThreadsPerMultiprocessor(
     CUdevice device) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_78(mht_78_v, 1857, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetMaxThreadsPerMultiprocessor");
+
   return GetSimpleAttribute<int64_t>(
       device, CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_MULTIPROCESSOR);
 }
 
 /* static */ port::StatusOr<int64_t> GpuDriver::GetMaxThreadsPerBlock(
     CUdevice device) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_79(mht_79_v, 1866, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetMaxThreadsPerBlock");
+
   return GetSimpleAttribute<int64_t>(device,
                                      CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_BLOCK);
 }
 
 /* static */ port::StatusOr<int64_t> GpuDriver::GetMaxRegistersPerBlock(
     CUdevice device) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_80(mht_80_v, 1875, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetMaxRegistersPerBlock");
+
   return GetSimpleAttribute<int64_t>(
       device, CU_DEVICE_ATTRIBUTE_MAX_REGISTERS_PER_BLOCK);
 }
 
 /* static */ port::StatusOr<int64_t> GpuDriver::GetThreadsPerWarp(
     CUdevice device) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_81(mht_81_v, 1884, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetThreadsPerWarp");
+
   return GetSimpleAttribute<int64_t>(device, CU_DEVICE_ATTRIBUTE_WARP_SIZE);
 }
 
 /* static */ bool GpuDriver::GetGridLimits(int* x, int* y, int* z,
                                            CUdevice device) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_82(mht_82_v, 1892, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetGridLimits");
+
   int value;
   CUresult res =
       cuDeviceGetAttribute(&value, CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_X, device);
@@ -1497,6 +1920,9 @@ static port::StatusOr<T> GetSimpleAttribute(CUdevice device,
 }
 
 /* static */ bool GpuDriver::GetDriverVersion(int* driver_version) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_83(mht_83_v, 1923, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetDriverVersion");
+
   CUresult res = cuDriverGetVersion(driver_version);
   if (res != CUDA_SUCCESS) {
     LOG(ERROR) << "failed to query driver version: " << ToString(res);
@@ -1508,6 +1934,9 @@ static port::StatusOr<T> GetSimpleAttribute(CUdevice device,
 
 /* static */ bool GpuDriver::GetDeviceProperties(CUdevprop* device_properties,
                                                  int device_ordinal) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_84(mht_84_v, 1937, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetDeviceProperties");
+
   CUresult res = cuDeviceGetProperties(device_properties, device_ordinal);
   if (res != CUDA_SUCCESS) {
     LOG(ERROR) << "failed to query device properties: " << ToString(res);
@@ -1519,6 +1948,9 @@ static port::StatusOr<T> GetSimpleAttribute(CUdevice device,
 
 /* static */ port::StatusOr<int> GpuDriver::GetDeviceAttribute(
     CUdevice_attribute attribute, CUdevice device) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_85(mht_85_v, 1951, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetDeviceAttribute");
+
   int val;
   CUresult res = cuDeviceGetAttribute(&val, attribute, device);
   if (res != CUDA_SUCCESS) {
@@ -1531,6 +1963,9 @@ static port::StatusOr<T> GetSimpleAttribute(CUdevice device,
 }
 
 /* static */ bool GpuDriver::IsEccEnabled(CUdevice device, bool* result) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_86(mht_86_v, 1966, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::IsEccEnabled");
+
   int value = -1;
   CUresult res =
       cuDeviceGetAttribute(&value, CU_DEVICE_ATTRIBUTE_ECC_ENABLED, device);
@@ -1546,6 +1981,9 @@ static port::StatusOr<T> GetSimpleAttribute(CUdevice device,
 /* static */ bool GpuDriver::GetDeviceMemoryInfo(GpuContext* context,
                                                  int64_t* free_out,
                                                  int64_t* total_out) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_87(mht_87_v, 1984, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetDeviceMemoryInfo");
+
   ScopedActivateContext activation(context);
   size_t free = 0;
   size_t total = 0;
@@ -1562,6 +2000,9 @@ static port::StatusOr<T> GetSimpleAttribute(CUdevice device,
 
 /* static */ bool GpuDriver::GetDeviceTotalMemory(CUdevice device,
                                                   uint64_t* result) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_88(mht_88_v, 2003, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetDeviceTotalMemory");
+
   size_t value = -1;
   CUresult res = cuDeviceTotalMem(&value, device);
   if (res != CUDA_SUCCESS) {
@@ -1574,6 +2015,9 @@ static port::StatusOr<T> GetSimpleAttribute(CUdevice device,
 }
 
 /* static */ std::string GpuDriver::GetPCIBusID(CUdevice device) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_89(mht_89_v, 2018, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetPCIBusID");
+
   std::string pci_bus_id;
   static const int kBufferSize = 64;
   absl::InlinedVector<char, 4> chars(kBufferSize);
@@ -1589,6 +2033,9 @@ static port::StatusOr<T> GetSimpleAttribute(CUdevice device,
 
 /* static */ bool GpuDriver::CanEnablePeerAccess(GpuContext* from,
                                                  GpuContext* to) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_90(mht_90_v, 2036, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::CanEnablePeerAccess");
+
   if (from == to) {
     return true;  // A context can always access its own memory.
   }
@@ -1610,6 +2057,9 @@ static port::StatusOr<T> GetSimpleAttribute(CUdevice device,
 
 /* static */ bool GpuDriver::CanEnablePeerAccess(GpuDeviceHandle from,
                                                  GpuDeviceHandle to) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_91(mht_91_v, 2060, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::CanEnablePeerAccess");
+
   int can_access_peer = -1;
   CUresult result = cuDeviceCanAccessPeer(&can_access_peer, from, to);
   if (result != CUDA_SUCCESS) {
@@ -1622,6 +2072,9 @@ static port::StatusOr<T> GetSimpleAttribute(CUdevice device,
 
 /* static */ port::Status GpuDriver::EnablePeerAccess(GpuContext* from,
                                                       GpuContext* to) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_92(mht_92_v, 2075, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::EnablePeerAccess");
+
   if (from == to) {
     return port::Status::OK();  // A context can always access its own memory.
   }
@@ -1642,6 +2095,9 @@ static port::StatusOr<T> GetSimpleAttribute(CUdevice device,
 /* static */ port::StatusOr<int> GpuDriver::GetMaxOccupiedBlocksPerCore(
     GpuContext* context, CUfunction kernel, int threads_per_block,
     size_t dynamic_shared_memory_bytes) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_93(mht_93_v, 2098, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "GpuDriver::GetMaxOccupiedBlocksPerCore");
+
   ScopedActivateContext activation(context);
 
   int max_blocks;
@@ -1657,6 +2113,9 @@ static port::StatusOr<T> GetSimpleAttribute(CUdevice device,
 namespace cuda {
 
 CUcontext CurrentContextOrDie() {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPSstream_executorPScudaPScuda_driverDTcc mht_94(mht_94_v, 2116, "", "./tensorflow/stream_executor/cuda/cuda_driver.cc", "CurrentContextOrDie");
+
   CUcontext current = nullptr;
   FAIL_IF_CUDA_RES_ERROR(cuCtxGetCurrent(&current),
                          "Failed to query current context");

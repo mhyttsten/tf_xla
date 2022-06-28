@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_DATA_DATASET_TEST_BASE_H_
 #define TENSORFLOW_CORE_DATA_DATASET_TEST_BASE_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <stddef.h>
 
@@ -68,6 +236,9 @@ constexpr int kDefaultThreadNum = 2;
 template <typename T>
 static Tensor CreateTensor(const TensorShape& input_shape,
                            gtl::ArraySlice<T> input_data) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh mht_0(mht_0_v, 239, "", "./tensorflow/core/data/dataset_test_base.h", "CreateTensor");
+
   Tensor tensor(DataTypeToEnum<T>::value, input_shape);
   test::FillValues<T>(&tensor, input_data);
   return tensor;
@@ -76,6 +247,9 @@ static Tensor CreateTensor(const TensorShape& input_shape,
 // Creates a tensor with the specified dtype and shape, with values 0, 1, 2, ...
 template <typename T>
 static Tensor CreateTensor(const TensorShape& input_shape) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh mht_1(mht_1_v, 250, "", "./tensorflow/core/data/dataset_test_base.h", "CreateTensor");
+
   Tensor tensor(DataTypeToEnum<T>::value, input_shape);
   test::FillIota<T>(&tensor, 0);
   return tensor;
@@ -132,7 +306,10 @@ class DatasetParams {
                 std::vector<PartialTensorShape> output_shapes,
                 string node_name);
 
-  virtual ~DatasetParams() {}
+  virtual ~DatasetParams() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh mht_2(mht_2_v, 310, "", "./tensorflow/core/data/dataset_test_base.h", "~DatasetParams");
+}
 
   // Returns the inputs (except the input datasets) as a tensor vector.
   virtual std::vector<Tensor> GetInputTensors() const = 0;
@@ -146,18 +323,30 @@ class DatasetParams {
   // Checks if the tensor is a dataset variant tensor.
   static bool IsDatasetTensor(const Tensor& tensor);
 
-  string node_name() const { return node_name_; }
+  string node_name() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh mht_3(mht_3_v, 327, "", "./tensorflow/core/data/dataset_test_base.h", "node_name");
+ return node_name_; }
 
-  DataTypeVector output_dtypes() const { return output_dtypes_; }
+  DataTypeVector output_dtypes() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh mht_4(mht_4_v, 332, "", "./tensorflow/core/data/dataset_test_base.h", "output_dtypes");
+ return output_dtypes_; }
 
   std::vector<PartialTensorShape> output_shapes() const {
     return output_shapes_;
   }
 
-  string iterator_prefix() const { return iterator_prefix_; }
+  string iterator_prefix() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh mht_5(mht_5_v, 341, "", "./tensorflow/core/data/dataset_test_base.h", "iterator_prefix");
+ return iterator_prefix_; }
 
   const std::vector<std::shared_ptr<DatasetParams>>& input_dataset_params()
       const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh mht_6(mht_6_v, 347, "", "./tensorflow/core/data/dataset_test_base.h", "input_dataset_params");
+
     return input_dataset_params_;
   }
 
@@ -173,12 +362,18 @@ class DatasetParams {
   // concatenated with "Dataset". For ops that do not have "Dataset" suffix,
   // this method can be overriden to return a different name.
   virtual string op_name() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh mht_7(mht_7_v, 365, "", "./tensorflow/core/data/dataset_test_base.h", "op_name");
+
     name_utils::OpNameParams params;
     params.op_version = op_version();
     return name_utils::OpName(dataset_type(), params);
   }
 
-  virtual int op_version() const { return op_version_; }
+  virtual int op_version() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh mht_8(mht_8_v, 374, "", "./tensorflow/core/data/dataset_test_base.h", "op_version");
+ return op_version_; }
 
  protected:
   std::vector<std::shared_ptr<DatasetParams>> input_dataset_params_;
@@ -232,6 +427,10 @@ class BatchDatasetParams : public DatasetParams {
         batch_size_(batch_size),
         drop_remainder_(drop_remainder),
         parallel_copy_(parallel_copy) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh mht_9(mht_9_v, 431, "", "./tensorflow/core/data/dataset_test_base.h", "BatchDatasetParams");
+
     input_dataset_params_.push_back(std::make_unique<T>(input_dataset_params));
     op_version_ = 2;
     iterator_prefix_ =
@@ -273,6 +472,10 @@ class MapDatasetParams : public DatasetParams {
         type_arguments_(std::move(type_arguments)),
         use_inter_op_parallelism_(use_inter_op_parallelism),
         preserve_cardinality_(preserve_cardinality) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh mht_10(mht_10_v, 476, "", "./tensorflow/core/data/dataset_test_base.h", "MapDatasetParams");
+
     input_dataset_params_.push_back(absl::make_unique<T>(input_dataset_params));
     iterator_prefix_ =
         name_utils::IteratorPrefix(input_dataset_params.dataset_type(),
@@ -313,9 +516,15 @@ class TensorSliceDatasetParams : public DatasetParams {
 
   string dataset_type() const override;
 
-  int64_t num_slices() const { return components_[0].dim_size(0); }
+  int64_t num_slices() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh mht_11(mht_11_v, 520, "", "./tensorflow/core/data/dataset_test_base.h", "num_slices");
+ return components_[0].dim_size(0); }
 
-  size_t num_tensors_per_slice() const { return components_.size(); }
+  size_t num_tensors_per_slice() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh mht_12(mht_12_v, 525, "", "./tensorflow/core/data/dataset_test_base.h", "num_tensors_per_slice");
+ return components_.size(); }
 
  private:
   DataTypeVector TensorSliceDtypes(const std::vector<Tensor>& input_components);
@@ -340,6 +549,10 @@ class TakeDatasetParams : public DatasetParams {
       : DatasetParams(std::move(output_dtypes), std::move(output_shapes),
                       std::move(node_name)),
         count_(count) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh mht_13(mht_13_v, 553, "", "./tensorflow/core/data/dataset_test_base.h", "TakeDatasetParams");
+
     input_dataset_params_.push_back(absl::make_unique<T>(input_dataset_params));
     iterator_prefix_ =
         name_utils::IteratorPrefix(input_dataset_params.dataset_type(),
@@ -369,6 +582,9 @@ class ConcatenateDatasetParams : public DatasetParams {
                            string node_name)
       : DatasetParams(std::move(output_dtypes), std::move(output_shapes),
                       std::move(node_name)) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh mht_14(mht_14_v, 585, "", "./tensorflow/core/data/dataset_test_base.h", "DatasetParams");
+
     input_dataset_params_.push_back(
         absl::make_unique<T>(input_dataset_params_0));
     input_dataset_params_.push_back(
@@ -399,6 +615,11 @@ class OptionsDatasetParams : public DatasetParams {
       : DatasetParams(std::move(output_dtypes), std::move(output_shapes),
                       std::move(node_name)),
         serialized_options_(serialized_options) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("serialized_options: \"" + serialized_options + "\"");
+   mht_15_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh mht_15(mht_15_v, 620, "", "./tensorflow/core/data/dataset_test_base.h", "OptionsDatasetParams");
+
     input_dataset_params_.push_back(absl::make_unique<T>(input_dataset_params));
   }
 
@@ -420,7 +641,10 @@ struct GetNextTestCase {
                   bool compare_order = true)
       : dataset_params(std::move(dataset_params)),
         expected_outputs(std::move(expected_outputs)),
-        compare_order(compare_order) {}
+        compare_order(compare_order) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh mht_16(mht_16_v, 645, "", "./tensorflow/core/data/dataset_test_base.h", "GetNextTestCase");
+}
 
   T dataset_params;
   std::vector<Tensor> expected_outputs;
@@ -508,7 +732,10 @@ struct IteratorSaveAndRestoreTestCase {
       : dataset_params(std::move(dataset_params)),
         breakpoints(std::move(breakpoints)),
         expected_outputs(std::move(expected_outputs)),
-        compare_order(compare_order) {}
+        compare_order(compare_order) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh mht_17(mht_17_v, 736, "", "./tensorflow/core/data/dataset_test_base.h", "IteratorSaveAndRestoreTestCase");
+}
 
   T dataset_params;
   std::vector<int> breakpoints;
@@ -531,11 +758,20 @@ class TestDataset {
         ctx_(std::move(ctx)),
         input_tensors_(std::move(input_tensors)),
         dataset_(dataset),
-        scoped_unref_(dataset) {}
+        scoped_unref_(dataset) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh mht_18(mht_18_v, 762, "", "./tensorflow/core/data/dataset_test_base.h", "TestDataset");
+}
 
-  DatasetBase* dataset() const { return dataset_; }
+  DatasetBase* dataset() const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh mht_19(mht_19_v, 767, "", "./tensorflow/core/data/dataset_test_base.h", "dataset");
+ return dataset_; }
 
-  OpKernelContext* op_kernel_context() const { return ctx_.get(); }
+  OpKernelContext* op_kernel_context() const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh mht_20(mht_20_v, 772, "", "./tensorflow/core/data/dataset_test_base.h", "op_kernel_context");
+ return ctx_.get(); }
 
  protected:
   std::unique_ptr<OpKernel> kernel_;
@@ -553,13 +789,25 @@ class TestIterator {
  public:
   TestIterator(std::unique_ptr<IteratorContext> ctx,
                std::unique_ptr<IteratorBase> iterator)
-      : iterator_(std::move(iterator)), ctx_(std::move(ctx)) {}
+      : iterator_(std::move(iterator)), ctx_(std::move(ctx)) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh mht_21(mht_21_v, 793, "", "./tensorflow/core/data/dataset_test_base.h", "TestIterator");
+}
 
-  IteratorBase* iterator() const { return iterator_.get(); }
+  IteratorBase* iterator() const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh mht_22(mht_22_v, 798, "", "./tensorflow/core/data/dataset_test_base.h", "iterator");
+ return iterator_.get(); }
 
-  IteratorContext* ctx() const { return ctx_.get(); }
+  IteratorContext* ctx() const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh mht_23(mht_23_v, 803, "", "./tensorflow/core/data/dataset_test_base.h", "ctx");
+ return ctx_.get(); }
 
   Status GetNext(std::vector<Tensor>* out_tensors, bool* end_of_sequence) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSdataPSdataset_test_baseDTh mht_24(mht_24_v, 808, "", "./tensorflow/core/data/dataset_test_base.h", "GetNext");
+
     return iterator_->GetNext(ctx(), out_tensors, end_of_sequence);
   }
 

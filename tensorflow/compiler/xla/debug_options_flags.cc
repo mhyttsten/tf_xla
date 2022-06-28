@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSdebug_options_flagsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSdebug_options_flagsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSdebug_options_flagsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,6 +196,9 @@ limitations under the License.
 namespace xla {
 
 DebugOptions DefaultDebugOptionsIgnoringFlags() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSdebug_options_flagsDTcc mht_0(mht_0_v, 199, "", "./tensorflow/compiler/xla/debug_options_flags.cc", "DefaultDebugOptionsIgnoringFlags");
+
   DebugOptions opts;
   opts.set_xla_llvm_enable_alias_scope_metadata(true);
   opts.set_xla_llvm_enable_noalias_metadata(true);
@@ -116,6 +287,9 @@ static thread_local std::unique_ptr<
 // Logs a warning if a pass's fuel was never consumed, on the theory that this
 // may be a typo in the flag value.  Called atexit.
 static void WarnIfFuelWasNeverConsumed() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSdebug_options_flagsDTcc mht_1(mht_1_v, 290, "", "./tensorflow/compiler/xla/debug_options_flags.cc", "WarnIfFuelWasNeverConsumed");
+
   CHECK(fuel_ever_consumed != nullptr);
   for (const auto& kv : *fuel_ever_consumed) {
     absl::string_view pass = kv.first;
@@ -132,12 +306,21 @@ static void WarnIfFuelWasNeverConsumed() {
 // Allocates flag_values and flag_objects; this function must not be called more
 // than once - its call done via call_once.
 static void AllocateFlags() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSdebug_options_flagsDTcc mht_2(mht_2_v, 309, "", "./tensorflow/compiler/xla/debug_options_flags.cc", "AllocateFlags");
+
   flag_values = new DebugOptions(DefaultDebugOptionsIgnoringFlags());
 
   // Returns a lambda that calls "member_setter" on "flag_values" with the
   // argument passed in to the lambda.
   auto bool_setter_for = [](void (DebugOptions::*member_setter)(bool)) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSdebug_options_flagsDTcc mht_3(mht_3_v, 317, "", "./tensorflow/compiler/xla/debug_options_flags.cc", "lambda");
+
     return [member_setter](bool value) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSdebug_options_flagsDTcc mht_4(mht_4_v, 321, "", "./tensorflow/compiler/xla/debug_options_flags.cc", "lambda");
+
       (flag_values->*member_setter)(value);
       return true;
     };
@@ -146,14 +329,26 @@ static void AllocateFlags() {
   // Returns a lambda that calls "member_setter" on "flag_values" with the
   // argument passed in to the lambda.
   auto int32_setter_for = [](void (DebugOptions::*member_setter)(int32_t)) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSdebug_options_flagsDTcc mht_5(mht_5_v, 332, "", "./tensorflow/compiler/xla/debug_options_flags.cc", "lambda");
+
     return [member_setter](int32_t value) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSdebug_options_flagsDTcc mht_6(mht_6_v, 336, "", "./tensorflow/compiler/xla/debug_options_flags.cc", "lambda");
+
       (flag_values->*member_setter)(value);
       return true;
     };
   };
 
   auto int64_setter_for = [](void (DebugOptions::*member_setter)(int64_t)) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSdebug_options_flagsDTcc mht_7(mht_7_v, 345, "", "./tensorflow/compiler/xla/debug_options_flags.cc", "lambda");
+
     return [member_setter](int64_t value) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSdebug_options_flagsDTcc mht_8(mht_8_v, 349, "", "./tensorflow/compiler/xla/debug_options_flags.cc", "lambda");
+
       (flag_values->*member_setter)(value);
       return true;
     };
@@ -161,7 +356,14 @@ static void AllocateFlags() {
 
   auto string_setter_for =
       [](void (DebugOptions::*member_setter)(const std::string& value)) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSdebug_options_flagsDTcc mht_9(mht_9_v, 359, "", "./tensorflow/compiler/xla/debug_options_flags.cc", "lambda");
+
         return [member_setter](const std::string& value) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("value: \"" + value + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSdebug_options_flagsDTcc mht_10(mht_10_v, 364, "", "./tensorflow/compiler/xla/debug_options_flags.cc", "lambda");
+
           (flag_values->*member_setter)(value);
           return true;
         };
@@ -170,6 +372,10 @@ static void AllocateFlags() {
   // Custom "sub-parser" lambda for xla_disable_hlo_passes.
   auto setter_for_xla_disable_hlo_passes =
       [](std::string comma_separated_values) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("comma_separated_values: \"" + comma_separated_values + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSdebug_options_flagsDTcc mht_11(mht_11_v, 376, "", "./tensorflow/compiler/xla/debug_options_flags.cc", "lambda");
+
         for (const auto& passname : std::vector<std::string>(
                  absl::StrSplit(comma_separated_values, ','))) {
           flag_values->add_xla_disable_hlo_passes(passname);
@@ -180,6 +386,10 @@ static void AllocateFlags() {
   // Custom "sub-parser" lambda for xla_enable_hlo_passes_only.
   auto setter_for_xla_enable_hlo_passes_only =
       [](std::string comma_separated_values) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("comma_separated_values: \"" + comma_separated_values + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSdebug_options_flagsDTcc mht_12(mht_12_v, 390, "", "./tensorflow/compiler/xla/debug_options_flags.cc", "lambda");
+
         for (const auto& passname : std::vector<std::string>(
                  absl::StrSplit(comma_separated_values, ','))) {
           flag_values->add_xla_enable_hlo_passes_only(passname);
@@ -189,12 +399,20 @@ static void AllocateFlags() {
 
   // Custom "sub-parser" lambda for xla_gpu_ptx_file.
   auto setter_for_xla_gpu_ptx_file = [](std::string value) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("value: \"" + value + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSdebug_options_flagsDTcc mht_13(mht_13_v, 403, "", "./tensorflow/compiler/xla/debug_options_flags.cc", "lambda");
+
     flag_values->add_xla_gpu_ptx_file(value);
     return true;
   };
 
   // Custom "sub-parser" lambda for xla_gpu_llvm_ir_file.
   auto setter_for_xla_gpu_llvm_ir_file = [](const std::string& value) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("value: \"" + value + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSdebug_options_flagsDTcc mht_14(mht_14_v, 413, "", "./tensorflow/compiler/xla/debug_options_flags.cc", "lambda");
+
     flag_values->add_xla_gpu_llvm_ir_file(value);
     return true;
   };
@@ -202,6 +420,10 @@ static void AllocateFlags() {
   // Custom "sub-parser" lambda for xla_backend_extra_options.
   auto setter_for_xla_backend_extra_options =
       [](std::string comma_separated_values) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("comma_separated_values: \"" + comma_separated_values + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSdebug_options_flagsDTcc mht_15(mht_15_v, 424, "", "./tensorflow/compiler/xla/debug_options_flags.cc", "lambda");
+
         auto* extra_options_map =
             flag_values->mutable_xla_backend_extra_options();
         parse_xla_backend_extra_options(extra_options_map,
@@ -218,6 +440,10 @@ static void AllocateFlags() {
       new absl::node_hash_map<std::string, std::atomic<bool>>();
   global_fuel = new absl::node_hash_map<std::string, std::atomic<int64_t>>();
   auto setter_for_xla_fuel = [](std::string xla_fuel_value) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("xla_fuel_value: \"" + xla_fuel_value + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSdebug_options_flagsDTcc mht_16(mht_16_v, 444, "", "./tensorflow/compiler/xla/debug_options_flags.cc", "lambda");
+
     initial_fuel->clear();
     global_fuel->clear();
     fuel_ever_consumed->clear();
@@ -732,17 +958,26 @@ static void AllocateFlags() {
 }  // NOLINT(readability/fn_size)
 
 void AppendDebugOptionsFlags(std::vector<tensorflow::Flag>* flag_list) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSdebug_options_flagsDTcc mht_17(mht_17_v, 961, "", "./tensorflow/compiler/xla/debug_options_flags.cc", "AppendDebugOptionsFlags");
+
   absl::call_once(flags_init, &AllocateFlags);
   flag_list->insert(flag_list->end(), flag_objects->begin(),
                     flag_objects->end());
 }
 
 xla::DebugOptions GetDebugOptionsFromFlags() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSdebug_options_flagsDTcc mht_18(mht_18_v, 970, "", "./tensorflow/compiler/xla/debug_options_flags.cc", "GetDebugOptionsFromFlags");
+
   absl::call_once(flags_init, &AllocateFlags);
   return *flag_values;
 }
 
 void ResetThreadLocalFuel() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSdebug_options_flagsDTcc mht_19(mht_19_v, 978, "", "./tensorflow/compiler/xla/debug_options_flags.cc", "ResetThreadLocalFuel");
+
   absl::call_once(flags_init, &AllocateFlags);
 
   thread_fuel.reset(
@@ -754,6 +989,10 @@ void ResetThreadLocalFuel() {
 }
 
 bool ConsumeFuel(absl::string_view pass, bool* just_ran_out) {
+   std::vector<std::string> mht_20_v;
+   mht_20_v.push_back("pass: \"" + std::string(pass.data(), pass.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSdebug_options_flagsDTcc mht_20(mht_20_v, 993, "", "./tensorflow/compiler/xla/debug_options_flags.cc", "ConsumeFuel");
+
   absl::call_once(flags_init, &AllocateFlags);
   if (just_ran_out != nullptr) {
     *just_ran_out = false;

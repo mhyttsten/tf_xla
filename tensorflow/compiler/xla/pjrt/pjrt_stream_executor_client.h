@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_COMPILER_XLA_PJRT_PJRT_STREAM_EXECUTOR_CLIENT_H_
 #define TENSORFLOW_COMPILER_XLA_PJRT_PJRT_STREAM_EXECUTOR_CLIENT_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <functional>
 #include <memory>
@@ -68,16 +236,29 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
             local_device_state ? local_device_state->device_ordinal() : -1),
         local_device_state_(std::move(local_device_state)),
         process_index_(process_index),
-        device_kind_(std::move(device_kind)) {}
-  ~PjRtStreamExecutorDevice() override {}
+        device_kind_(std::move(device_kind)) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("device_kind: \"" + device_kind + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_0(mht_0_v, 241, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "PjRtStreamExecutorDevice");
+}
+  ~PjRtStreamExecutorDevice() override {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_1(mht_1_v, 245, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "~PjRtStreamExecutorDevice");
+}
 
   // Must set client exactly once.
   void SetClient(PjRtClient* client) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_2(mht_2_v, 251, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "SetClient");
+
     CHECK(client_ == nullptr);
     client_ = client;
   }
 
-  int process_index() const override { return process_index_; }
+  int process_index() const override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_3(mht_3_v, 259, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "process_index");
+ return process_index_; }
 
   // Return `platform_id` from client.
   PjRtPlatformId platform_id() const;
@@ -85,18 +266,33 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
   // Return `platform_name` from client.
   absl::string_view platform_name() const;
 
-  PjRtClient* client() const override { return client_; }
+  PjRtClient* client() const override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_4(mht_4_v, 270, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "client");
+ return client_; }
 
-  int id() const override { return id_; }
+  int id() const override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_5(mht_5_v, 275, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "id");
+ return id_; }
 
-  bool IsAddressable() const override { return device_ordinal_ != -1; }
+  bool IsAddressable() const override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_6(mht_6_v, 280, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "IsAddressable");
+ return device_ordinal_ != -1; }
 
-  int local_hardware_id() const override { return device_ordinal_; }
+  int local_hardware_id() const override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_7(mht_7_v, 285, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "local_hardware_id");
+ return device_ordinal_; }
 
   // If this is a device local to this host, returns a LocalDeviceState object
   // that can be used to manipulate the device. Returns nullptr if the device is
   // not local to this host.
   LocalDeviceState* local_device_state() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_8(mht_8_v, 293, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "local_device_state");
+
     return local_device_state_.get();
   }
 
@@ -105,7 +301,10 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
   // is not local to this host.
   StatusOr<LocalDeviceState*> GetLocalDeviceState() const;
 
-  absl::string_view device_kind() const override { return device_kind_; }
+  absl::string_view device_kind() const override {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_9(mht_9_v, 305, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "device_kind");
+ return device_kind_; }
 
   std::string DebugString() const override;
 
@@ -134,10 +333,19 @@ class PjRtStreamExecutorClient : public PjRtClient {
       std::unique_ptr<gpu::GpuExecutableRunOptions> gpu_run_options);
   ~PjRtStreamExecutorClient() override = default;
 
-  int process_index() const override { return process_index_; }
+  int process_index() const override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_10(mht_10_v, 337, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "process_index");
+ return process_index_; }
 
-  int device_count() const override { return devices_.size(); }
+  int device_count() const override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_11(mht_11_v, 342, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "device_count");
+ return devices_.size(); }
   int addressable_device_count() const override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_12(mht_12_v, 346, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "addressable_device_count");
+
     return addressable_devices_.size();
   }
   absl::Span<PjRtDevice* const> devices() const override { return devices_; }
@@ -157,15 +365,30 @@ class PjRtStreamExecutorClient : public PjRtClient {
   StatusOr<PjRtDevice*> LookupAddressableDevice(
       int local_hardware_id) const override;
 
-  PjRtPlatformId platform_id() const override { return platform_id_; }
-  absl::string_view platform_name() const override { return platform_name_; }
-  absl::string_view platform_version() const override { return "<unknown>"; }
-  PjRtRuntimeType runtime_type() const override { return kStreamExecutor; }
+  PjRtPlatformId platform_id() const override {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_13(mht_13_v, 369, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "platform_id");
+ return platform_id_; }
+  absl::string_view platform_name() const override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_14(mht_14_v, 373, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "platform_name");
+ return platform_name_; }
+  absl::string_view platform_version() const override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_15(mht_15_v, 377, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "platform_version");
+ return "<unknown>"; }
+  PjRtRuntimeType runtime_type() const override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_16(mht_16_v, 381, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "runtime_type");
+ return kStreamExecutor; }
 
   // Most platforms expect device-to-device transfers to be enqueued on the
   // source d2d stream, but some platforms use the destination d2d stream. This
   // function specifies which one the platform expects.
-  virtual bool EnqueueD2DTransfersOnSrcStream() const { return true; }
+  virtual bool EnqueueD2DTransfersOnSrcStream() const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_17(mht_17_v, 389, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "EnqueueD2DTransfersOnSrcStream");
+ return true; }
 
   StatusOr<DeviceAssignment> GetDefaultDeviceAssignment(
       int num_replicas, int num_partitions) const override;
@@ -244,28 +467,52 @@ class PjRtStreamExecutorClient : public PjRtClient {
 
   // TODO(zhangqiaorjc): Experimental. Will be removed.
   Status Defragment() override {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_18(mht_18_v, 470, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "Defragment");
+
     return Unimplemented("Defragment not implemented");
   }
 
   LocalDeviceState& device_state(int device_ordinal) const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_19(mht_19_v, 477, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "device_state");
+
     return *tensorflow::down_cast<PjRtStreamExecutorDevice*>(
                 addressable_devices_.at(device_ordinal))
                 ->local_device_state();
   }
-  LocalClient* client() const { return client_; }
-  se::DeviceMemoryAllocator* allocator() const { return allocator_; }
+  LocalClient* client() const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_20(mht_20_v, 485, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "client");
+ return client_; }
+  se::DeviceMemoryAllocator* allocator() const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_21(mht_21_v, 489, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "allocator");
+ return allocator_; }
   tensorflow::Allocator* host_memory_allocator() const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_22(mht_22_v, 493, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "host_memory_allocator");
+
     return host_memory_allocator_.get();
   }
   bool should_stage_host_to_device_transfers() const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_23(mht_23_v, 499, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "should_stage_host_to_device_transfers");
+
     return should_stage_host_to_device_transfers_;
   }
 
   gpu::GpuExecutableRunOptions* gpu_run_options() const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_24(mht_24_v, 506, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "gpu_run_options");
+
     return gpu_run_options_.get();
   }
 
-  tensorflow::thread::ThreadPool* thread_pool() { return &thread_pool_; }
+  tensorflow::thread::ThreadPool* thread_pool() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_25(mht_25_v, 513, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "thread_pool");
+ return &thread_pool_; }
 
  protected:
   friend class PjRtStreamExecutorBuffer;
@@ -275,12 +522,19 @@ class PjRtStreamExecutorClient : public PjRtClient {
       std::shared_ptr<BufferSequencingEvent> definition_event,
       PjRtCrossHostRecvNotifier&& notifier,
       absl::optional<std::vector<GatherDetails>> gather_details) const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_26(mht_26_v, 525, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "EnqueueCrossHostReceive");
+
     notifier(Unimplemented("Cross host receives not implemented."));
   }
 
   virtual void CopyToRemoteDevice(
       PjRtBuffer* buffer, absl::string_view serialized_descriptor,
       PjRtBuffer::RemoteSendCallback on_done) const {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("serialized_descriptor: \"" + std::string(serialized_descriptor.data(), serialized_descriptor.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_27(mht_27_v, 535, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "CopyToRemoteDevice");
+
     on_done(Unimplemented("Cross host sends not implemented."),
             /*sends_were_enqueued=*/false);
   }
@@ -290,6 +544,9 @@ class PjRtStreamExecutorClient : public PjRtClient {
       absl::Span<const std::pair<std::string, PjRtBuffer::RemoteSendCallback>>
           serialized_descriptors_and_callbacks,
       const PjRtBuffer::ScatterDetails& scatter_details) const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_28(mht_28_v, 547, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "CopyToRemoteDeviceScattered");
+
     for (const auto& d_and_cb : serialized_descriptors_and_callbacks) {
       d_and_cb.second(
           Unimplemented("Scattered cross host sends not implemented."),
@@ -300,6 +557,9 @@ class PjRtStreamExecutorClient : public PjRtClient {
   virtual Status CopyRawSubBufferToHost(PjRtBuffer* buffer, void* dst,
                                         int64_t offset, int64_t transfer_size,
                                         std::function<void(Status)> on_ready) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_29(mht_29_v, 560, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "CopyRawSubBufferToHost");
+
     return Unimplemented("Raw copies to host not implemented.");
   }
 
@@ -423,9 +683,15 @@ class PjRtStreamExecutorBuffer : public PjRtBuffer {
     ScopedHold(const ScopedHold&) = delete;
     ScopedHold& operator=(const ScopedHold&) = delete;
 
-    Type type() const { return type_; }
+    Type type() const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_30(mht_30_v, 687, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "type");
+ return type_; }
 
     Status status() const {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_31(mht_31_v, 692, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "status");
+
       // Lazily create Status values only when they are requested.
       switch (state_) {
         case kUninitialized:
@@ -446,16 +712,25 @@ class PjRtStreamExecutorBuffer : public PjRtBuffer {
           CHECK(false) << "Unexpected state value " << state_;
       }
     }
-    bool ok() const { return state_ == kValid; }
+    bool ok() const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_32(mht_32_v, 716, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "ok");
+ return state_ == kValid; }
 
     // Access to the underlying device buffer storage. Requires this->ok().
     const std::shared_ptr<TrackedDeviceBuffer>& buffer() const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_33(mht_33_v, 722, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "buffer");
+
       CHECK_EQ(state_, kValid);
       CHECK_NE(buffer_, nullptr);
       return buffer_;
     }
     TrackedDeviceBuffer* operator->() const { return buffer().get(); }
-    const TrackedDeviceBuffer& operator*() const { return *buffer(); }
+    const TrackedDeviceBuffer& operator*() const {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_34(mht_34_v, 731, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "*");
+ return *buffer(); }
 
     // Converts the hold into a usage event. Only valid for holds of type
     // kUsage.
@@ -498,19 +773,28 @@ class PjRtStreamExecutorBuffer : public PjRtBuffer {
                                   Status, std::shared_ptr<TrackedDeviceBuffer>>;
 
     ScopedHold(PjRtStreamExecutorBuffer* parent, Type type)
-        : parent_(parent), type_(type), state_(kUninitialized) {}
+        : parent_(parent), type_(type), state_(kUninitialized) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_35(mht_35_v, 777, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "ScopedHold");
+}
     explicit ScopedHold(const ForClosure& closure_helper)
         : parent_(std::get<0>(closure_helper)),
           type_(std::get<1>(closure_helper)),
           state_(std::get<2>(closure_helper)),
           status_(std::get<3>(closure_helper)),
           buffer_(std::get<4>(closure_helper)) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_36(mht_36_v, 786, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "ScopedHold");
+
       // Check the buffer is not in an error state.
       CHECK(status_.ok() && buffer_ != nullptr);
     }
 
     // Sets buffer state.
-    void SetState(State state) { state_ = state; }
+    void SetState(State state) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_37(mht_37_v, 795, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "SetState");
+ state_ = state; }
 
     // Sets buffer_ and status_. Called by parent_ to initialize the hold.
     void Acquire(StatusOr<std::shared_ptr<TrackedDeviceBuffer>>&& buffer_or);
@@ -540,13 +824,31 @@ class PjRtStreamExecutorBuffer : public PjRtBuffer {
   PjRtStreamExecutorBuffer& operator=(const PjRtStreamExecutorBuffer&) = delete;
   PjRtStreamExecutorBuffer& operator=(PjRtStreamExecutorBuffer&&) = delete;
 
-  const Shape& on_device_shape() const override { return on_device_shape_; }
+  const Shape& on_device_shape() const override {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_38(mht_38_v, 828, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "on_device_shape");
+ return on_device_shape_; }
   StatusOr<Shape> logical_on_device_shape() override;
-  PjRtStreamExecutorDevice* device() const override { return device_; }
-  PjRtPlatformId platform_id() const { return client_->platform_id(); }
-  absl::string_view platform_name() const { return client_->platform_name(); }
-  PjRtStreamExecutorClient* client() const override { return client_; }
+  PjRtStreamExecutorDevice* device() const override {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_39(mht_39_v, 833, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "device");
+ return device_; }
+  PjRtPlatformId platform_id() const {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_40(mht_40_v, 837, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "platform_id");
+ return client_->platform_id(); }
+  absl::string_view platform_name() const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_41(mht_41_v, 841, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "platform_name");
+ return client_->platform_name(); }
+  PjRtStreamExecutorClient* client() const override {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_42(mht_42_v, 845, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "client");
+ return client_; }
   bool IsEmptyTuple() const {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_43(mht_43_v, 849, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "IsEmptyTuple");
+
     return on_device_shape_.IsTuple() &&
            on_device_shape_.tuple_shapes_size() == 0;
   }
@@ -586,9 +888,15 @@ class PjRtStreamExecutorBuffer : public PjRtBuffer {
   // buffers. See comment on ScopedHold.
   ScopedHold GetBufferWithHold(ScopedHold::Type type);
   ScopedHold GetBufferWithUsageHold() {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_44(mht_44_v, 891, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "GetBufferWithUsageHold");
+
     return GetBufferWithHold(ScopedHold::kUsage);
   }
   ScopedHold GetBufferWithExternalReference() {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_45(mht_45_v, 897, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "GetBufferWithExternalReference");
+
     return GetBufferWithHold(ScopedHold::kExternalReference);
   }
 
@@ -696,19 +1004,31 @@ class PjRtStreamExecutorExecutable : public PjRtExecutable {
 
   ~PjRtStreamExecutorExecutable() override = default;
 
-  PjRtStreamExecutorClient* client() const override { return client_; }
+  PjRtStreamExecutorClient* client() const override {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_46(mht_46_v, 1008, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "client");
+ return client_; }
 
   absl::string_view name() const override;
 
   int num_replicas() const override {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_47(mht_47_v, 1015, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "num_replicas");
+
     return executables_[0]->build_options().num_replicas();
   }
 
   int num_partitions() const override {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_48(mht_48_v, 1022, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "num_partitions");
+
     return executables_[0]->build_options().num_partitions();
   }
 
   int64_t SizeOfGeneratedCodeInBytes() const override {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_49(mht_49_v, 1029, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "SizeOfGeneratedCodeInBytes");
+
     int64_t size = 0;
     for (auto& executable : executables_) {
       size += executable->executable()->SizeOfGeneratedCodeInBytes();
@@ -717,6 +1037,9 @@ class PjRtStreamExecutorExecutable : public PjRtExecutable {
   }
 
   const DeviceAssignment& device_assignment() const override {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_50(mht_50_v, 1040, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "device_assignment");
+
     return *device_assignment_;
   }
 
@@ -754,9 +1077,15 @@ class PjRtStreamExecutorExecutable : public PjRtExecutable {
       absl::optional<PjRtFuture<Status>>& returned_future,
       bool fill_future) override;
 
-  void Delete() override { executables_.clear(); }
+  void Delete() override {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_51(mht_51_v, 1081, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "Delete");
+ executables_.clear(); }
 
-  bool IsDeleted() override { return executables_.empty(); }
+  bool IsDeleted() override {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_52(mht_52_v, 1086, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "IsDeleted");
+ return executables_.empty(); }
 
   absl::Span<const std::shared_ptr<LocalExecutable>> executables() const {
     return executables_;
@@ -764,6 +1093,9 @@ class PjRtStreamExecutorExecutable : public PjRtExecutable {
 
  protected:
   bool parameter_is_tupled_arguments() const {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSpjrtPSpjrt_stream_executor_clientDTh mht_53(mht_53_v, 1096, "", "./tensorflow/compiler/xla/pjrt/pjrt_stream_executor_client.h", "parameter_is_tupled_arguments");
+
     return parameter_is_tupled_arguments_;
   }
 

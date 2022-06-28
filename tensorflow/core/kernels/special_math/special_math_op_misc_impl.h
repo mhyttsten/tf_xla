@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_KERNELS_SPECIAL_MATH_SPECIAL_MATH_OP_MISC_IMPL_H_
 #define TENSORFLOW_CORE_KERNELS_SPECIAL_MATH_SPECIAL_MATH_OP_MISC_IMPL_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSspecial_mathPSspecial_math_op_misc_implDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSspecial_mathPSspecial_math_op_misc_implDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSspecial_mathPSspecial_math_op_misc_implDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #define _USE_MATH_DEFINES
 #include <cmath>
@@ -35,6 +203,9 @@ namespace internal {
 template <typename Scalar>
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar
 generic_dawsn_interval_1(const Scalar& x) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSspecial_mathPSspecial_math_op_misc_implDTh mht_0(mht_0_v, 206, "", "./tensorflow/core/kernels/special_math/special_math_op_misc_impl.h", "generic_dawsn_interval_1");
+
   // Rational approximation on [0, 3.25)
   const Scalar AN[] = {
       Scalar(1.13681498971755972054E-11), Scalar(8.49262267667473811108E-10),
@@ -60,6 +231,9 @@ generic_dawsn_interval_1(const Scalar& x) {
 template <typename Scalar>
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar
 generic_dawsn_interval_2(const Scalar& x) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSspecial_mathPSspecial_math_op_misc_implDTh mht_1(mht_1_v, 234, "", "./tensorflow/core/kernels/special_math/special_math_op_misc_impl.h", "generic_dawsn_interval_2");
+
   // Rational approximation on [3.25, 6.25)
   const Scalar BN[] = {
       Scalar(5.08955156417900903354E-1),  Scalar(-2.44754418142697847934E-1),
@@ -96,6 +270,9 @@ generic_dawsn_interval_2(const Scalar& x) {
 template <typename Scalar>
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar
 generic_dawsn_interval_3(const Scalar& x) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSspecial_mathPSspecial_math_op_misc_implDTh mht_2(mht_2_v, 273, "", "./tensorflow/core/kernels/special_math/special_math_op_misc_impl.h", "generic_dawsn_interval_3");
+
   // Rational approximation on [6.25, 1.0e9)
   const Scalar CN[] = {
       Scalar(-5.90592860534773254987E-1), Scalar(6.29235242724368800674E-1),
@@ -157,6 +334,9 @@ struct dawsn_op {
 template <typename Scalar>
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar
 generic_expint_interval_1(const Scalar& x) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSspecial_mathPSspecial_math_op_misc_implDTh mht_3(mht_3_v, 337, "", "./tensorflow/core/kernels/special_math/special_math_op_misc_impl.h", "generic_expint_interval_1");
+
   /* 0 < x <= 2
    Ei(x) - EUL - ln(x) = x A(x)/B(x)
    Theoretical peak relative error 9.73e-18  */
@@ -186,6 +366,9 @@ generic_expint_interval_1(const Scalar& x) {
 template <typename Scalar>
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar
 generic_expint_interval_2(const Scalar& x) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSspecial_mathPSspecial_math_op_misc_implDTh mht_4(mht_4_v, 369, "", "./tensorflow/core/kernels/special_math/special_math_op_misc_impl.h", "generic_expint_interval_2");
+
   /* 2 <= x <= 4
    x exp(-x) Ei(x) - 1  =  1/x A6(1/x) / B6(1/x)
    Theoretical absolute error = 4.89e-17  */
@@ -217,6 +400,9 @@ generic_expint_interval_2(const Scalar& x) {
 template <typename Scalar>
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar
 generic_expint_interval_3(const Scalar& x) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSspecial_mathPSspecial_math_op_misc_implDTh mht_5(mht_5_v, 403, "", "./tensorflow/core/kernels/special_math/special_math_op_misc_impl.h", "generic_expint_interval_3");
+
   /* 4 <= x <= 8
      x exp(-x) Ei(x) - 1  =  1/x A5(1/x) / B5(1/x)
      Theoretical absolute error = 2.20e-17  */
@@ -249,6 +435,9 @@ generic_expint_interval_3(const Scalar& x) {
 template <typename Scalar>
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar
 generic_expint_interval_4(const Scalar& x) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSspecial_mathPSspecial_math_op_misc_implDTh mht_6(mht_6_v, 438, "", "./tensorflow/core/kernels/special_math/special_math_op_misc_impl.h", "generic_expint_interval_4");
+
   /* 8 <= x <= 16
    x exp(-x) Ei(x) - 1 = 1/x R(1/x)
    Theoretical peak absolute error = 1.07e-17  */
@@ -283,6 +472,9 @@ generic_expint_interval_4(const Scalar& x) {
 template <typename Scalar>
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar
 generic_expint_interval_5(const Scalar& x) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSspecial_mathPSspecial_math_op_misc_implDTh mht_7(mht_7_v, 475, "", "./tensorflow/core/kernels/special_math/special_math_op_misc_impl.h", "generic_expint_interval_5");
+
   /* 16 <= x <= 32
    x exp(-x) Ei(x) - 1  =  1/x A4(1/x) / B4(1/x)
    Theoretical absolute error = 1.22e-17  */
@@ -315,6 +507,9 @@ generic_expint_interval_5(const Scalar& x) {
 template <typename Scalar>
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar
 generic_expint_interval_6(const Scalar& x) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSspecial_mathPSspecial_math_op_misc_implDTh mht_8(mht_8_v, 510, "", "./tensorflow/core/kernels/special_math/special_math_op_misc_impl.h", "generic_expint_interval_6");
+
   /* 32 <= x <= 64
    x exp(-x) Ei(x) - 1  =  1/x A7(1/x) / B7(1/x)
    Theoretical absolute error = 7.71e-18  */
@@ -343,6 +538,9 @@ generic_expint_interval_6(const Scalar& x) {
 template <typename Scalar>
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar
 generic_expint_interval_7(const Scalar& x) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSspecial_mathPSspecial_math_op_misc_implDTh mht_9(mht_9_v, 541, "", "./tensorflow/core/kernels/special_math/special_math_op_misc_impl.h", "generic_expint_interval_7");
+
   /* x > 64
    x exp(-x) Ei(x) - 1  =  1/x A3(1/x)/B3(1/x)
    Theoretical absolute error = 6.15e-17  */
@@ -414,6 +612,9 @@ struct expint_op {
 template <typename Scalar>
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar
 generic_fresnel_cos_interval_1(const Scalar& x) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSspecial_mathPSspecial_math_op_misc_implDTh mht_10(mht_10_v, 615, "", "./tensorflow/core/kernels/special_math/special_math_op_misc_impl.h", "generic_fresnel_cos_interval_1");
+
   const Scalar CN[] = {
       Scalar(-4.98843114573573548651E-8), Scalar(9.50428062829859605134E-6),
       Scalar(-6.45191435683965050962E-4), Scalar(1.88843319396703850064E-2),
@@ -435,6 +636,9 @@ generic_fresnel_cos_interval_1(const Scalar& x) {
 template <typename Scalar>
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar
 generic_fresnel_sin_interval_1(const Scalar& x) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSspecial_mathPSspecial_math_op_misc_implDTh mht_11(mht_11_v, 639, "", "./tensorflow/core/kernels/special_math/special_math_op_misc_impl.h", "generic_fresnel_sin_interval_1");
+
   const Scalar SN[] = {
       Scalar(-2.99181919401019853726E3),  Scalar(7.08840045257738576863E5),
       Scalar(-6.29741486205862506537E7),  Scalar(2.54890880573376359104E9),
@@ -460,6 +664,9 @@ generic_fresnel_sin_interval_1(const Scalar& x) {
 template <typename Scalar>
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar
 generic_fresnel_asymp(const Scalar& x, bool use_sin) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSspecial_mathPSspecial_math_op_misc_implDTh mht_12(mht_12_v, 667, "", "./tensorflow/core/kernels/special_math/special_math_op_misc_impl.h", "generic_fresnel_asymp");
+
   const Scalar FN[] = {
       Scalar(4.21543555043677546506E-1),  Scalar(1.43407919780758885261E-1),
       Scalar(1.15220955073585758835E-2),  Scalar(3.45017939782574027900E-4),

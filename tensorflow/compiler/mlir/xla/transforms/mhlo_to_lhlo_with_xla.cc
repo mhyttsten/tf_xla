@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -92,6 +260,9 @@ namespace mlir {
 namespace {
 
 absl::string_view StringRefToView(llvm::StringRef ref) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_0(mht_0_v, 263, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "StringRefToView");
+
   return {ref.data(), ref.size()};
 }
 
@@ -111,6 +282,9 @@ StatusOr<std::unique_ptr<HloModule>> HloModuleFromProto(
 Status OptimizeAndConvertHloToLmhlo(std::unique_ptr<HloModule> hlo_module,
                                     ModuleOp module, StringRef platform_name,
                                     bool optimize_xla_hlo) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_1(mht_1_v, 285, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "OptimizeAndConvertHloToLmhlo");
+
   auto platform = xla::se::MultiPlatformManager::PlatformWithName(
       StringRefToView(platform_name));
   if (!platform.ok()) {
@@ -173,6 +347,9 @@ namespace {
 class XlaHloToLhloPass
     : public PassWrapper<XlaHloToLhloPass, OperationPass<ModuleOp>> {
   void getDependentDialects(DialectRegistry& registry) const override {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_2(mht_2_v, 350, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "getDependentDialects");
+
     registry
         .insert<arith::ArithmeticDialect, bufferization::BufferizationDialect,
                 func::FuncDialect, memref::MemRefDialect, mhlo::MhloDialect,
@@ -181,14 +358,26 @@ class XlaHloToLhloPass
 
  public:
   XlaHloToLhloPass() = default;
-  XlaHloToLhloPass(const XlaHloToLhloPass&) {}
-  StringRef getArgument() const final { return "xla-hlo-to-lhlo-with-xla"; }
+  XlaHloToLhloPass(const XlaHloToLhloPass&) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_3(mht_3_v, 362, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "XlaHloToLhloPass");
+}
+  StringRef getArgument() const final {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_4(mht_4_v, 366, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "getArgument");
+ return "xla-hlo-to-lhlo-with-xla"; }
   StringRef getDescription() const final {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_5(mht_5_v, 370, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "getDescription");
+
     return "Emit LHLO from HLO using the existing XLA implementation";
   }
 
  private:
   void runOnOperation() final {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_6(mht_6_v, 378, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "runOnOperation");
+
     ModuleOp module = getOperation();
 
     auto status = [&module, this]() -> Status {
@@ -239,6 +428,9 @@ Status LhloDialectEmitter::CreateOperands(
     const HloInstruction* instr, absl::optional<int64_t> num_operands,
     TokenLoweringMode token_mode, llvm::SmallVectorImpl<Value>& operands,
     size_t& num_arguments, size_t& num_results) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_7(mht_7_v, 431, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::CreateOperands");
+
   if (num_operands.value_or(0) > instr->operand_count())
     return xla::InvalidArgument("num_operands must be <= operand count");
   for (int64_t i = 0; i < num_operands.value_or(instr->operand_count()); ++i) {
@@ -255,6 +447,9 @@ Status LhloDialectEmitter::CreateOperands(
 template <typename OpType>
 OpType LhloDialectEmitter::CreateOpWithoutAttrs(const HloInstruction* instr,
                                                 ValueRange operands) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_8(mht_8_v, 450, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::CreateOpWithoutAttrs");
+
   Location loc = getLocation(instr);
   return builder_.create<OpType>(loc, llvm::None, operands,
                                  llvm::ArrayRef<NamedAttribute>{});
@@ -264,6 +459,9 @@ template <typename OpType>
 StatusOr<OpType> LhloDialectEmitter::CreateOpWithoutAttrs(
     const HloInstruction* instr, size_t& num_arguments, size_t& num_results,
     absl::optional<int64_t> num_operands) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_9(mht_9_v, 462, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::CreateOpWithoutAttrs");
+
   llvm::SmallVector<Value, 4> operands;
   TF_RETURN_IF_ERROR(CreateOperands(instr, num_operands,
                                     TokenLoweringMode::kFailToLower, operands,
@@ -274,6 +472,9 @@ StatusOr<OpType> LhloDialectEmitter::CreateOpWithoutAttrs(
 StatusOr<mlir::Operation*> LhloDialectEmitter::CreateOpInFusion(
     const HloInstruction* instr, ValueRange buffer_operands,
     size_t num_arguments, size_t num_results) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_10(mht_10_v, 475, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::CreateOpInFusion");
+
   Location loc = getLocation(instr);
   std::vector<Value> buffers(buffer_operands.begin(), buffer_operands.end());
   absl::Span<Value> arguments =
@@ -325,6 +526,9 @@ StatusOr<mlir::Operation*> LhloDialectEmitter::CreateOpInFusion(
 
 StatusOr<mlir::Operation*> LhloDialectEmitter::CreateOpInFusion(
     const HloInstruction* instr) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_11(mht_11_v, 529, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::CreateOpInFusion");
+
   llvm::SmallVector<Value, 4> operands;
   size_t num_arguments, num_results;
   TF_RETURN_IF_ERROR(CreateOperands(instr, absl::nullopt,
@@ -337,6 +541,9 @@ StatusOr<mlir::Operation*> LhloDialectEmitter::CreateOpInFusion(
 
 StatusOr<mlir::Operation*> LhloDialectEmitter::EmitOp(
     const HloInstruction* instr) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_12(mht_12_v, 544, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::EmitOp");
+
   using xla::HloOpcode;
   switch (instr->opcode()) {
     case HloOpcode::kAddDependency:
@@ -466,11 +673,17 @@ StatusOr<mlir::Operation*> LhloDialectEmitter::EmitOp(
 }
 
 Status LhloDialectEmitter::DefaultAction(const HloInstruction* instr) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_13(mht_13_v, 676, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::DefaultAction");
+
   return EmitOp(instr).status();
 }
 
 StatusOr<lmhlo::SortOp> LhloDialectEmitter::EmitSortOp(
     const HloInstruction* instr) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_14(mht_14_v, 684, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::EmitSortOp");
+
   TF_ASSIGN_OR_RETURN(auto sort, CreateOpWithoutAttrs<lmhlo::SortOp>(instr));
   auto* sort_instr = xla::Cast<xla::HloSortInstruction>(instr);
   sort.dimensionAttr(builder_.getI64IntegerAttr(sort_instr->sort_dimension()));
@@ -483,6 +696,9 @@ StatusOr<lmhlo::SortOp> LhloDialectEmitter::EmitSortOp(
 // Walks MHLO::TupleOp recursively.
 Status WalkTuplePostOrder(Value v,
                           const std::function<Status(Value)>& visitor) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_15(mht_15_v, 699, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "WalkTuplePostOrder");
+
   if (auto* op = v.getDefiningOp()) {
     if (auto tuple = dyn_cast<mhlo::TupleOp>(op)) {
       for (Value sub_v : tuple.val()) {
@@ -497,6 +713,9 @@ Status WalkTuplePostOrder(Value v,
 StatusOr<Value> LhloDialectEmitter::RewriteFusionOperand(
     const HloInstruction* root, const Shape& shape,
     xla::ShapeIndex* shape_index, OpBuilder* b, Location loc) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_16(mht_16_v, 716, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::RewriteFusionOperand");
+
   if (shape.IsTuple()) {
     llvm::SmallVector<Value, 4> values;
     for (int i = 0; i < shape.tuple_shapes_size(); ++i) {
@@ -541,6 +760,9 @@ StatusOr<Value> LhloDialectEmitter::RewriteFusionOperand(
 //     }
 StatusOr<lmhlo::FusionOp> LhloDialectEmitter::EmitFusionOp(
     const HloInstruction* instr) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_17(mht_17_v, 763, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::EmitFusionOp");
+
   Location loc = getLocation(instr);
 
   auto* fusion_instr = xla::Cast<xla::HloFusionInstruction>(instr);
@@ -611,12 +833,18 @@ StatusOr<lmhlo::FusionOp> LhloDialectEmitter::EmitFusionOp(
 StatusOr<mhlo::ScatterDimensionNumbersAttr>
 LhloDialectEmitter::GetScatterDimensionNumbers(const HloInstruction* instr,
                                                mlir::MLIRContext* context) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_18(mht_18_v, 836, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::GetScatterDimensionNumbers");
+
   auto* scatter_instr = xla::Cast<xla::HloScatterInstruction>(instr);
 
   const xla::ScatterDimensionNumbers& xla_scatter_dim =
       scatter_instr->scatter_dimension_numbers();
 
   auto get_i64_array = [](absl::Span<const int64_t> container) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_19(mht_19_v, 845, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "lambda");
+
     return ArrayRef<int64_t>{container.data(),
                              static_cast<size_t>(container.size())};
   };
@@ -630,6 +858,9 @@ LhloDialectEmitter::GetScatterDimensionNumbers(const HloInstruction* instr,
 
 StatusOr<lmhlo::ScatterOp> LhloDialectEmitter::EmitScatterOp(
     const HloInstruction* instr) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_20(mht_20_v, 861, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::EmitScatterOp");
+
   TF_ASSIGN_OR_RETURN(auto scatter,
                       CreateOpWithoutAttrs<lmhlo::ScatterOp>(instr));
 
@@ -654,6 +885,9 @@ StatusOr<lmhlo::ScatterOp> LhloDialectEmitter::EmitScatterOp(
 
 StatusOr<lmhlo::SelectAndScatterOp> LhloDialectEmitter::EmitSelectAndScatterOp(
     const HloInstruction* instr) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_21(mht_21_v, 888, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::EmitSelectAndScatterOp");
+
   TF_ASSIGN_OR_RETURN(auto select_and_scatter,
                       CreateOpWithoutAttrs<lmhlo::SelectAndScatterOp>(instr));
 
@@ -691,6 +925,9 @@ StatusOr<lmhlo::SelectAndScatterOp> LhloDialectEmitter::EmitSelectAndScatterOp(
 
 StatusOr<mlir::Operation*> LhloDialectEmitter::EmitCustomCallOp(
     const HloInstruction* instr) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_22(mht_22_v, 928, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::EmitCustomCallOp");
+
   auto* custom_call_instr = xla::Cast<xla::HloCustomCallInstruction>(instr);
 
   if (xla::gpu::IsCustomCallToCusolver(*instr)) {
@@ -774,6 +1011,9 @@ StatusOr<mlir::Operation*> LhloDialectEmitter::EmitCustomCallOp(
 
 StatusOr<lmhlo_gpu::CholeskyOp> LhloDialectEmitter::EmitCholesky(
     const HloCustomCallInstruction* custom_call) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_23(mht_23_v, 1014, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::EmitCholesky");
+
   TF_ASSIGN_OR_RETURN(auto cholesky_op,
                       CreateOpWithoutAttrs<lmhlo_gpu::CholeskyOp>(custom_call));
   TF_ASSIGN_OR_RETURN(xla::CholeskyOptions options,
@@ -784,12 +1024,18 @@ StatusOr<lmhlo_gpu::CholeskyOp> LhloDialectEmitter::EmitCholesky(
 
 StatusOr<Operation*> LhloDialectEmitter::EmitGemm(
     const HloCustomCallInstruction* custom_call) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_24(mht_24_v, 1027, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::EmitGemm");
+
   TF_ASSIGN_OR_RETURN(
       auto const config,
       custom_call->backend_config<xla::gpu::GemmBackendConfig>());
 
   auto set_common_attributes = [&](auto op) -> Operation* {
     auto arrayref = [](absl::Span<const int64_t> array) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_25(mht_25_v, 1036, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "lambda");
+
       return llvm::ArrayRef<int64_t>{array.data(), array.size()};
     };
     auto hlo_dims = config.dot_dimension_numbers();
@@ -852,6 +1098,9 @@ static StatusOr<mlir::lmhlo_gpu::Activation> GetLHLOActivation(
 
 StatusOr<Operation*> LhloDialectEmitter::EmitDnnConvolution(
     const HloCustomCallInstruction* custom_call) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_26(mht_26_v, 1101, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::EmitDnnConvolution");
+
   TF_ASSIGN_OR_RETURN(
       auto const backend_config,
       custom_call->backend_config<xla::gpu::CudnnConvBackendConfig>());
@@ -860,6 +1109,9 @@ StatusOr<Operation*> LhloDialectEmitter::EmitDnnConvolution(
                       xla::gpu::GetCudnnConvKind(custom_call));
 
   auto get_layout_attribute = [&](const xla::Layout& layout) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_27(mht_27_v, 1112, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "lambda");
+
     std::vector<int64_t> minor_to_major(layout.minor_to_major_size());
     absl::c_transform(layout.minor_to_major(), minor_to_major.begin(),
                       [](int64_t x) { return static_cast<int64_t>(x); });
@@ -991,6 +1243,9 @@ StatusOr<Operation*> LhloDialectEmitter::EmitDnnConvolution(
 // Convert an XLA HLO constant to a global_memref + get_global_memref pair.
 StatusOr<mlir::memref::GetGlobalOp> LhloDialectEmitter::EmitConstant(
     const HloInstruction* instr) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_28(mht_28_v, 1246, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::EmitConstant");
+
   auto& cached_value = slices_[std::make_pair(instr, xla::ShapeIndex())];
   if (cached_value) {
     return dyn_cast<mlir::memref::GetGlobalOp>(cached_value.getDefiningOp());
@@ -1053,6 +1308,9 @@ namespace {
 template <typename OpT>
 void SetupChannelIdAttribute(OpT op, const xla::HloChannelInstruction* instr,
                              mlir::Builder builder) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_29(mht_29_v, 1311, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "SetupChannelIdAttribute");
+
   if (instr->channel_id().has_value()) {
     op.channel_idAttr(mlir::mhlo::ChannelHandle::get(
         builder.getI64IntegerAttr(*instr->channel_id()),
@@ -1063,6 +1321,9 @@ void SetupChannelIdAttribute(OpT op, const xla::HloChannelInstruction* instr,
 template <typename OpT>
 Status SetupCommonCollectiveOpAttributes(OpT op, const HloInstruction* instr,
                                          mlir::OpBuilder& builder) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_30(mht_30_v, 1324, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "SetupCommonCollectiveOpAttributes");
+
   auto* collective = xla::Cast<xla::HloCollectiveInstruction>(instr);
   auto replica_groups_attr = xla::HloFunctionImporter::ConvertReplicaGroups(
       collective->replica_groups(), &builder);
@@ -1075,6 +1336,9 @@ Status SetupCommonCollectiveOpAttributes(OpT op, const HloInstruction* instr,
 
 StatusOr<lmhlo::AllToAllOp> LhloDialectEmitter::EmitAllToAllOp(
     const HloInstruction* instr) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_31(mht_31_v, 1339, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::EmitAllToAllOp");
+
   TF_ASSIGN_OR_RETURN(auto all_to_all_op,
                       CreateOpWithoutAttrs<lmhlo::AllToAllOp>(instr));
   auto* all_to_all = xla::Cast<xla::HloAllToAllInstruction>(instr);
@@ -1089,6 +1353,9 @@ StatusOr<lmhlo::AllToAllOp> LhloDialectEmitter::EmitAllToAllOp(
 
 StatusOr<lmhlo::AllGatherOp> LhloDialectEmitter::EmitAllGatherOp(
     const HloInstruction* instr) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_32(mht_32_v, 1356, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::EmitAllGatherOp");
+
   TF_ASSIGN_OR_RETURN(auto all_gather_op,
                       CreateOpWithoutAttrs<lmhlo::AllGatherOp>(instr));
   auto* all_gather = xla::Cast<xla::HloAllGatherInstruction>(instr);
@@ -1103,6 +1370,9 @@ StatusOr<lmhlo::AllGatherOp> LhloDialectEmitter::EmitAllGatherOp(
 
 StatusOr<lmhlo::AllReduceOp> LhloDialectEmitter::EmitAllReduceOp(
     const HloInstruction* instr) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_33(mht_33_v, 1373, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::EmitAllReduceOp");
+
   TF_ASSIGN_OR_RETURN(auto all_reduce_op,
                       CreateOpWithoutAttrs<lmhlo::AllReduceOp>(instr));
   auto* all_reduce = xla::Cast<xla::HloAllReduceInstruction>(instr);
@@ -1118,6 +1388,9 @@ StatusOr<lmhlo::AllReduceOp> LhloDialectEmitter::EmitAllReduceOp(
 
 StatusOr<lmhlo_gpu::AllReduceStartOp> LhloDialectEmitter::EmitAllReduceStartOp(
     const HloInstruction* instr) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_34(mht_34_v, 1391, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::EmitAllReduceStartOp");
+
   llvm::SmallVector<Value, 4> operands;
   for (const HloInstruction* operand : instr->operands()) {
     TF_RETURN_IF_ERROR(GetOrCreateView(operand, &operands));
@@ -1146,6 +1419,9 @@ StatusOr<lmhlo_gpu::AllReduceStartOp> LhloDialectEmitter::EmitAllReduceStartOp(
 
 StatusOr<lmhlo_gpu::AllReduceDoneOp> LhloDialectEmitter::EmitAllReduceDoneOp(
     const HloInstruction* instr) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_35(mht_35_v, 1422, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::EmitAllReduceDoneOp");
+
   auto it = all_reduce_start_ops_.find(instr->operand(0));
   TF_RET_CHECK(it != all_reduce_start_ops_.end())
       << "didn't find all-reduce-start op";
@@ -1164,6 +1440,9 @@ StatusOr<lmhlo_gpu::AllReduceDoneOp> LhloDialectEmitter::EmitAllReduceDoneOp(
 
 StatusOr<lmhlo::ReduceScatterOp> LhloDialectEmitter::EmitReduceScatterOp(
     const HloInstruction* instr) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_36(mht_36_v, 1443, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::EmitReduceScatterOp");
+
   TF_ASSIGN_OR_RETURN(auto reduce_scatter_op,
                       CreateOpWithoutAttrs<lmhlo::ReduceScatterOp>(instr));
   auto* ars = xla::Cast<xla::HloReduceScatterInstruction>(instr);
@@ -1181,6 +1460,9 @@ StatusOr<lmhlo::ReduceScatterOp> LhloDialectEmitter::EmitReduceScatterOp(
 
 StatusOr<lmhlo::CollectivePermuteOp>
 LhloDialectEmitter::EmitCollectivePermuteOp(const HloInstruction* instr) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_37(mht_37_v, 1463, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::EmitCollectivePermuteOp");
+
   TF_ASSIGN_OR_RETURN(auto permute_op,
                       CreateOpWithoutAttrs<lmhlo::CollectivePermuteOp>(instr));
   auto* permute = xla::Cast<xla::HloCollectivePermuteInstruction>(instr);
@@ -1195,6 +1477,9 @@ LhloDialectEmitter::EmitCollectivePermuteOp(const HloInstruction* instr) {
 
 StatusOr<lmhlo::InfeedOp> LhloDialectEmitter::EmitInfeedOp(
     const HloInstruction* instr) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_38(mht_38_v, 1480, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::EmitInfeedOp");
+
   const HloInfeedInstruction* infeed = xla::Cast<HloInfeedInstruction>(instr);
   // HLO Infeed instruction has a single operand of token type and a tuple
   // with buffers and a token as its output. LMHLO Infeed operation does not
@@ -1208,6 +1493,9 @@ StatusOr<lmhlo::InfeedOp> LhloDialectEmitter::EmitInfeedOp(
 
 StatusOr<lmhlo::OutfeedOp> LhloDialectEmitter::EmitOutfeedOp(
     const HloInstruction* instr) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_39(mht_39_v, 1496, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::EmitOutfeedOp");
+
   const HloOutfeedInstruction* outfeed =
       xla::Cast<HloOutfeedInstruction>(instr);
   // HLO outfeed instruction has 2 operands, the source and a token, and a
@@ -1223,6 +1511,9 @@ StatusOr<lmhlo::OutfeedOp> LhloDialectEmitter::EmitOutfeedOp(
 xla::StatusOr<lmhlo::RngGetAndUpdateStateOp>
 LhloDialectEmitter::EmitRngGetAndUpdateStateOp(
     const xla::HloInstruction* instr) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_40(mht_40_v, 1514, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::EmitRngGetAndUpdateStateOp");
+
   TF_ASSIGN_OR_RETURN(
       auto rng, CreateOpWithoutAttrs<lmhlo::RngGetAndUpdateStateOp>(instr));
   auto hlo_rng = xla::Cast<xla::HloRngGetAndUpdateStateInstruction>(instr);
@@ -1232,6 +1523,9 @@ LhloDialectEmitter::EmitRngGetAndUpdateStateOp(
 
 xla::StatusOr<lmhlo::FftOp> LhloDialectEmitter::EmitFftOp(
     const HloInstruction* instr) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_41(mht_41_v, 1526, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::EmitFftOp");
+
   auto hlo_fft = xla::Cast<xla::HloFftInstruction>(instr);
   TF_ASSIGN_OR_RETURN(auto fft, CreateOpWithoutAttrs<lmhlo::FftOp>(instr));
   TF_ASSIGN_OR_RETURN(mlir::mhlo::FftType fft_type,
@@ -1244,6 +1538,9 @@ xla::StatusOr<lmhlo::FftOp> LhloDialectEmitter::EmitFftOp(
 
 xla::StatusOr<lmhlo::TriangularSolveOp>
 LhloDialectEmitter::EmitTriangularSolveOp(const xla::HloInstruction* instr) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_42(mht_42_v, 1541, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::EmitTriangularSolveOp");
+
   auto hlo_triangular_solve =
       xla::Cast<xla::HloTriangularSolveInstruction>(instr);
   TF_ASSIGN_OR_RETURN(auto triangular_solve,
@@ -1269,6 +1566,9 @@ LhloDialectEmitter::EmitTriangularSolveOp(const xla::HloInstruction* instr) {
 
 xla::StatusOr<Operation*> LhloDialectEmitter::EmitBitcast(
     const xla::HloInstruction* instr) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_43(mht_43_v, 1569, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::EmitBitcast");
+
   // XLA buffer assignment should assign the same slice to a bitcast input and
   // output.
   const xla::ShapeIndex top_index;
@@ -1286,6 +1586,9 @@ xla::StatusOr<Operation*> LhloDialectEmitter::EmitBitcast(
 
 mlir::DenseIntElementsAttr LhloDialectEmitter::GetLayoutAttribute(
     const xla::Layout& layout, Builder* builder) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_44(mht_44_v, 1589, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::GetLayoutAttribute");
+
   llvm::SmallVector<int64_t, 4> minor_to_major(layout.minor_to_major().begin(),
                                                layout.minor_to_major().end());
   return builder->getIndexTensorAttr(minor_to_major);
@@ -1293,6 +1596,9 @@ mlir::DenseIntElementsAttr LhloDialectEmitter::GetLayoutAttribute(
 
 Status LhloDialectEmitter::ImportAsLmhloRegion(xla::HloComputation* computation,
                                                mlir::Region* region) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_45(mht_45_v, 1599, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::ImportAsLmhloRegion");
+
   auto after = builder_.saveInsertionPoint();
   auto reverter = absl::MakeCleanup(
       [this, after] { builder_.restoreInsertionPoint(after); });
@@ -1310,6 +1616,9 @@ Status LhloDialectEmitter::ImportAsLmhloRegion(xla::HloComputation* computation,
 
 StatusOr<lmhlo::CaseOp> LhloDialectEmitter::EmitCaseOp(
     const HloInstruction* instr) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_46(mht_46_v, 1619, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::EmitCaseOp");
+
   Location loc = getLocation(instr);
   llvm::SmallVector<Value, 4> operands;
   size_t num_arguments, num_results;
@@ -1330,6 +1639,9 @@ StatusOr<lmhlo::CaseOp> LhloDialectEmitter::EmitCaseOp(
 
 xla::StatusOr<lmhlo::WhileOp> LhloDialectEmitter::EmitWhileOp(
     const xla::HloInstruction* instr) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_47(mht_47_v, 1642, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::EmitWhileOp");
+
   Location loc = getLocation(instr);
   SmallVector<Value, 1> operands;
   TF_RETURN_IF_ERROR(GetOrCreateView(
@@ -1359,6 +1671,9 @@ xla::StatusOr<lmhlo::WhileOp> LhloDialectEmitter::EmitWhileOp(
 StatusOr<Value> LhloDialectEmitter::GetOrCreateArrayView(
     const xla::HloInstruction* instr, const xla::Shape& current_shape,
     const xla::ShapeIndex& shape_index) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_48(mht_48_v, 1674, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::GetOrCreateArrayView");
+
   // For constants, the cache is managed inside EmitConstant since it can
   // be called either from here or when we see a top-level HloConstant instr.
   if (instr->IsConstant() && shape_index.empty()) {
@@ -1427,6 +1742,9 @@ Status LhloDialectEmitter::GetOrCreateViewImpl(
     const HloInstruction* instr, const Shape& current_shape,
     xla::ShapeIndex* current_shape_index, SmallVectorImpl<Value>* values,
     TokenLoweringMode token_mode) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_49(mht_49_v, 1745, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::GetOrCreateViewImpl");
+
   if (current_shape.IsTuple()) {
     for (int i = 0; i < current_shape.tuple_shapes().size(); ++i) {
       current_shape_index->push_back(i);
@@ -1466,6 +1784,9 @@ Status LhloDialectEmitter::GetOrCreateView(const HloInstruction* instr,
                                            SmallVectorImpl<Value>* values,
                                            const xla::ShapeIndex& result_subset,
                                            TokenLoweringMode token_mode) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_50(mht_50_v, 1787, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::GetOrCreateView");
+
   xla::ShapeIndex shape_index = result_subset;
   const Shape& sub_shape =
       xla::ShapeUtil::GetSubshape(instr->shape(), shape_index);
@@ -1474,6 +1795,9 @@ Status LhloDialectEmitter::GetOrCreateView(const HloInstruction* instr,
 }
 
 Status LhloDialectEmitter::Initialize() {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_51(mht_51_v, 1798, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "LhloDialectEmitter::Initialize");
+
   TF_RET_CHECK(computation_.IsEntryComputation());
 
   mlir::IntegerAttr unique_id =
@@ -1513,6 +1837,9 @@ Status LhloDialectEmitter::Initialize() {
     // buffer. Check on that.
     const auto allocation_comparator = [](const BufferAllocation* lhs,
                                           const BufferAllocation* rhs) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_52(mht_52_v, 1840, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "lambda");
+
       if (lhs->is_entry_computation_parameter() !=
           rhs->is_entry_computation_parameter()) {
         return lhs->is_entry_computation_parameter() >
@@ -1639,6 +1966,9 @@ std::unique_ptr<OperationPass<ModuleOp>> createXlaHloToLhloWithXlaPass() {
 
 Status HloToLhloModule(const BufferAssignment& assignment,
                        const HloModule& hlo_module, ModuleOp module) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_53(mht_53_v, 1969, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "HloToLhloModule");
+
   module.getContext()
       ->loadDialect<arith::ArithmeticDialect,
                     bufferization::BufferizationDialect, func::FuncDialect,
@@ -1691,6 +2021,9 @@ OwningOpRef<mlir::ModuleOp> HloTextToLhloTranslateFunction(
 }
 
 void RegisterMhloToLhloWithXlaPass() {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPSxlaPStransformsPSmhlo_to_lhlo_with_xlaDTcc mht_54(mht_54_v, 2024, "", "./tensorflow/compiler/mlir/xla/transforms/mhlo_to_lhlo_with_xla.cc", "RegisterMhloToLhloWithXlaPass");
+
   static PassRegistration<XlaHloToLhloPass> registration;
 }
 

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_fusibleDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_fusibleDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_fusibleDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,6 +207,9 @@ namespace {
 int64_t kSharedMemoryBudgetInBytes = 40000;
 
 bool IfFusedReadsElementsMultipleTimes(const HloInstruction& instr) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_fusibleDTcc mht_0(mht_0_v, 210, "", "./tensorflow/compiler/xla/service/gpu/gpu_fusible.cc", "IfFusedReadsElementsMultipleTimes");
+
   CHECK_NE(instr.opcode(), HloOpcode::kFusion) << "`instr` has to be unfused.";
   if (instr.opcode() == HloOpcode::kReduce &&
       !IsReductionFromOrToContiguousDimensions(instr)) {
@@ -60,6 +231,9 @@ bool IfFusedReadsElementsMultipleTimes(const HloInstruction& instr) {
 
 bool LayoutsAreReduceInputFusionFriendly(const HloInstruction& producer,
                                          const HloInstruction& reduce) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_fusibleDTcc mht_1(mht_1_v, 234, "", "./tensorflow/compiler/xla/service/gpu/gpu_fusible.cc", "LayoutsAreReduceInputFusionFriendly");
+
   if (producer.opcode() == HloOpcode::kCopy) {
     return false;
   }
@@ -81,6 +255,9 @@ bool LayoutsAreReduceInputFusionFriendly(const HloInstruction& producer,
 }
 
 bool IsReduceInputFusion(const HloInstruction& instr) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_fusibleDTcc mht_2(mht_2_v, 258, "", "./tensorflow/compiler/xla/service/gpu/gpu_fusible.cc", "IsReduceInputFusion");
+
   if (instr.IsMultiOutputFusion()) {
     for (const HloInstruction* operand :
          instr.fused_expression_root()->operands()) {
@@ -104,12 +281,18 @@ bool IsReduceInputFusion(const HloInstruction& instr) {
 }
 
 bool IsInputFusibleReduction(const HloInstruction& instr) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_fusibleDTcc mht_3(mht_3_v, 284, "", "./tensorflow/compiler/xla/service/gpu/gpu_fusible.cc", "IsInputFusibleReduction");
+
   return IsReduceInputFusion(instr) ||
          IsReductionFromOrToContiguousDimensions(instr);
 }
 
 const HloInstruction* GetRealHeroForMultiOutputFusion(
     const HloInstruction& instr) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_fusibleDTcc mht_4(mht_4_v, 293, "", "./tensorflow/compiler/xla/service/gpu/gpu_fusible.cc", "GetRealHeroForMultiOutputFusion");
+
   if (instr.opcode() != HloOpcode::kFusion) {
     return &instr;
   }
@@ -129,9 +312,15 @@ const HloInstruction* GetRealHeroForMultiOutputFusion(
 
 bool ShapesCompatibleForMultiOutputFusion(const HloInstruction& instr1,
                                           const HloInstruction& instr2) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_fusibleDTcc mht_5(mht_5_v, 315, "", "./tensorflow/compiler/xla/service/gpu/gpu_fusible.cc", "ShapesCompatibleForMultiOutputFusion");
+
   // Multi-output fusion kernels share a common parallel loop. The loop
   // dimensions are determined by instruction shapes.
   auto get_loop_shape = [&](const HloInstruction* element_instr) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_fusibleDTcc mht_6(mht_6_v, 321, "", "./tensorflow/compiler/xla/service/gpu/gpu_fusible.cc", "lambda");
+
     // Special-case reduction-to-vector ops: The loop dimensions are determined
     // by the shape of the first operand.
     if (IsReductionFromOrToContiguousDimensions(*element_instr)) {
@@ -157,6 +346,9 @@ bool ShapesCompatibleForMultiOutputFusion(const HloInstruction& instr1,
 }
 
 bool IsInputFusibleScatter(const HloInstruction& instr) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_fusibleDTcc mht_7(mht_7_v, 349, "", "./tensorflow/compiler/xla/service/gpu/gpu_fusible.cc", "IsInputFusibleScatter");
+
   if (instr.opcode() == HloOpcode::kScatter ||
       (instr.opcode() == HloOpcode::kFusion &&
        instr.fusion_kind() == HloInstruction::FusionKind::kInput &&
@@ -167,12 +359,18 @@ bool IsInputFusibleScatter(const HloInstruction& instr) {
 }
 
 bool IsInputFusible(const HloInstruction& instr) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_fusibleDTcc mht_8(mht_8_v, 362, "", "./tensorflow/compiler/xla/service/gpu/gpu_fusible.cc", "IsInputFusible");
+
   // Input fusion only handles non-elemental reduction and scatter operations.
   return instr.IsFusible() &&
          (IsInputFusibleReduction(instr) || IsInputFusibleScatter(instr));
 }
 
 bool IsLoopFusible(const HloInstruction& instr) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_fusibleDTcc mht_9(mht_9_v, 371, "", "./tensorflow/compiler/xla/service/gpu/gpu_fusible.cc", "IsLoopFusible");
+
   // Don't fuse get-tuple-element on GPU: We can, but it's slower than not
   // fusing.  We never generate kernels for unfused GTEs.  Instead, if an
   // unfused GTE is an input to a kernel (including a fusion kernel), we
@@ -205,6 +403,9 @@ bool IsLoopFusible(const HloInstruction& instr) {
 
 FusionDecision IsProducerConsumerFusible(const HloInstruction& producer,
                                          const HloInstruction& consumer) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_fusibleDTcc mht_10(mht_10_v, 406, "", "./tensorflow/compiler/xla/service/gpu/gpu_fusible.cc", "IsProducerConsumerFusible");
+
   if (!IsLoopFusible(producer)) {
     return "the producer is not loop-fusible";
   }
@@ -249,6 +450,9 @@ FusionDecision IsProducerConsumerFusible(const HloInstruction& producer,
 
 bool IsProducerConsumerMultiOutputFusible(const HloInstruction& producer,
                                           const HloInstruction& consumer) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_fusibleDTcc mht_11(mht_11_v, 453, "", "./tensorflow/compiler/xla/service/gpu/gpu_fusible.cc", "IsProducerConsumerMultiOutputFusible");
+
   // Skip multiple output fusion. It's not yet supported.
   if (producer.IsMultiOutputFusion()) {
     return false;
@@ -298,6 +502,9 @@ bool IsProducerConsumerMultiOutputFusible(const HloInstruction& producer,
 
 // Returns shared memory usage for a given instruction in bytes.
 static int64_t SharedMemoryUsageNoCache(const HloInstruction& instr) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_fusibleDTcc mht_12(mht_12_v, 505, "", "./tensorflow/compiler/xla/service/gpu/gpu_fusible.cc", "SharedMemoryUsageNoCache");
+
   // For now we are only fusing reductions.
   if (instr.opcode() == HloOpcode::kReduce &&
       IsReductionFromOrToContiguousDimensions(instr)) {
@@ -329,6 +536,9 @@ static int64_t SharedMemoryUsageNoCache(const HloInstruction& instr) {
 
 static int64_t SharedMemoryUsage(const HloInstruction& instr,
                                  FusionInfoCache* cache = nullptr) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_fusibleDTcc mht_13(mht_13_v, 539, "", "./tensorflow/compiler/xla/service/gpu/gpu_fusible.cc", "SharedMemoryUsage");
+
   if (!cache) {
     return SharedMemoryUsageNoCache(instr);
   }
@@ -353,6 +563,9 @@ constexpr int64_t kMaxUnnestedReductionOutputsPerFusion = 8;
 
 // Returns the number of unnested reductions in the instruction output.
 static int64_t NumUnnestedReductionsNoCache(const HloInstruction& instr) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_fusibleDTcc mht_14(mht_14_v, 566, "", "./tensorflow/compiler/xla/service/gpu/gpu_fusible.cc", "NumUnnestedReductionsNoCache");
+
   if (instr.opcode() == HloOpcode::kReduce &&
       IsReductionFromOrToContiguousDimensions(instr)) {
     return 1;
@@ -370,6 +583,9 @@ static int64_t NumUnnestedReductionsNoCache(const HloInstruction& instr) {
 
 static int64_t NumUnnestedReductions(const HloInstruction& instr,
                                      FusionInfoCache* cache) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_fusibleDTcc mht_15(mht_15_v, 586, "", "./tensorflow/compiler/xla/service/gpu/gpu_fusible.cc", "NumUnnestedReductions");
+
   if (!cache) {
     return NumUnnestedReductionsNoCache(instr);
   }
@@ -415,6 +631,9 @@ FusionDecision FusionFitsInBudget(const HloInstruction& instr1,
                                   const HloInstruction& instr2,
                                   bool is_consumer_producer_fusion,
                                   FusionInfoCache* cache /*=nullptr*/) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_fusibleDTcc mht_16(mht_16_v, 634, "", "./tensorflow/compiler/xla/service/gpu/gpu_fusible.cc", "FusionFitsInBudget");
+
   if (SharedMemoryUsage(instr1, cache) + SharedMemoryUsage(instr2, cache) >
       kSharedMemoryBudgetInBytes) {
     return FusionDecision{}
@@ -496,9 +715,15 @@ FusionDecision FusionFitsInBudget(const HloInstruction& instr1,
 
 bool CreatesNestedLoop(const HloInstruction& producer,
                        const HloInstruction& consumer) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_fusibleDTcc mht_17(mht_17_v, 718, "", "./tensorflow/compiler/xla/service/gpu/gpu_fusible.cc", "CreatesNestedLoop");
+
   // If producer does not have an instruction that codegens a loop then there is
   // nothing to do.
   auto producer_has_loop_codegen = [&](const HloInstruction& instr) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_fusibleDTcc mht_18(mht_18_v, 724, "", "./tensorflow/compiler/xla/service/gpu/gpu_fusible.cc", "lambda");
+
     if (producer.opcode() != HloOpcode::kFusion) {
       return IfFusedReadsElementsMultipleTimes(producer);
     }
@@ -560,6 +785,9 @@ bool CreatesNestedLoop(const HloInstruction& producer,
 }
 
 bool IsFusibleAsMultiOutputFusionRoot(const HloInstruction& instr) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_fusibleDTcc mht_19(mht_19_v, 788, "", "./tensorflow/compiler/xla/service/gpu/gpu_fusible.cc", "IsFusibleAsMultiOutputFusionRoot");
+
   // We can fuse reduces and loop fusions. Elementwise instructions can be fused
   // with any other instruction.
   // Note that scatter cannot be the root of a multi-output fusion because
@@ -573,12 +801,18 @@ bool IsFusibleAsMultiOutputFusionRoot(const HloInstruction& instr) {
 
 HloInstruction::FusionKind ChooseFusionKind(const HloInstruction& /*producer*/,
                                             const HloInstruction& consumer) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_fusibleDTcc mht_20(mht_20_v, 804, "", "./tensorflow/compiler/xla/service/gpu/gpu_fusible.cc", "ChooseFusionKind");
+
   return IsInputFusible(consumer) ? HloInstruction::FusionKind::kInput
                                   : HloInstruction::FusionKind::kLoop;
 }
 
 bool IsConsumerTheOnlyNonRootUser(const HloInstruction& instr,
                                   const HloInstruction& consumer) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_fusibleDTcc mht_21(mht_21_v, 813, "", "./tensorflow/compiler/xla/service/gpu/gpu_fusible.cc", "IsConsumerTheOnlyNonRootUser");
+
   return absl::c_all_of(instr.users(), [&](const HloInstruction* user) {
     if (user->opcode() == HloOpcode::kGetTupleElement) {
       // Skip GTE.
@@ -597,6 +831,9 @@ bool IsConsumerTheOnlyNonRootUser(const HloInstruction& instr,
 }
 
 size_t GetInstrCountOfFusible(const HloInstruction& instr) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_fusibleDTcc mht_22(mht_22_v, 834, "", "./tensorflow/compiler/xla/service/gpu/gpu_fusible.cc", "GetInstrCountOfFusible");
+
   if (instr.opcode() != HloOpcode::kFusion) {
     return 1;
   } else {
@@ -620,6 +857,9 @@ absl::InlinedVector<const HloInstruction*, 2> GetOutputsOfFusible(
 }
 
 size_t GetOutputSizeOfFusible(const HloInstruction& instr) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_fusibleDTcc mht_23(mht_23_v, 860, "", "./tensorflow/compiler/xla/service/gpu/gpu_fusible.cc", "GetOutputSizeOfFusible");
+
   if (!instr.IsMultiOutputFusion()) {
     return 1;
   }

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePScommon_runtimePSsingle_threaded_executor_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSsingle_threaded_executor_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePScommon_runtimePSsingle_threaded_executor_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,10 +220,16 @@ class MockOp : public OpKernel {
   using OpKernel::OpKernel;
 
   void SetCompute(std::function<void(OpKernelContext*)> compute) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSsingle_threaded_executor_testDTcc mht_0(mht_0_v, 223, "", "./tensorflow/core/common_runtime/single_threaded_executor_test.cc", "SetCompute");
+
     compute_ = std::move(compute);
   }
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSsingle_threaded_executor_testDTcc mht_1(mht_1_v, 230, "", "./tensorflow/core/common_runtime/single_threaded_executor_test.cc", "Compute");
+
     OP_REQUIRES(ctx, compute_ != nullptr,
                 errors::FailedPrecondition("Compute() is not set"));
     compute_(ctx);
@@ -75,9 +249,15 @@ class ExecutorTest : public ::testing::Test {
  protected:
   ExecutorTest()
       : device_(DeviceFactory::NewDevice("CPU", {},
-                                         "/job:localhost/replica:0/task:0")) {}
+                                         "/job:localhost/replica:0/task:0")) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSsingle_threaded_executor_testDTcc mht_2(mht_2_v, 253, "", "./tensorflow/core/common_runtime/single_threaded_executor_test.cc", "ExecutorTest");
+}
 
   ~ExecutorTest() override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSsingle_threaded_executor_testDTcc mht_3(mht_3_v, 258, "", "./tensorflow/core/common_runtime/single_threaded_executor_test.cc", "~ExecutorTest");
+
     // There should always be exactly one Ref left on the Rendezvous
     // when the test completes.
     CHECK(rendez_->Unref());
@@ -86,6 +266,9 @@ class ExecutorTest : public ::testing::Test {
   // Resets executor_ with a new executor based on a graph 'gdef'.
   void Create(std::unique_ptr<const Graph> graph,
               std::function<void(OpKernelContext*)> mock_fn = nullptr) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSsingle_threaded_executor_testDTcc mht_4(mht_4_v, 269, "", "./tensorflow/core/common_runtime/single_threaded_executor_test.cc", "Create");
+
     const int version = graph->versions().producer();
     LocalExecutorParams params;
     params.device = device_.get();
@@ -93,6 +276,9 @@ class ExecutorTest : public ::testing::Test {
         [this, mock_fn = std::move(mock_fn), version](
             const std::shared_ptr<const NodeProperties>& props,
             OpKernel** kernel) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSsingle_threaded_executor_testDTcc mht_5(mht_5_v, 279, "", "./tensorflow/core/common_runtime/single_threaded_executor_test.cc", "lambda");
+
           TF_RETURN_IF_ERROR(CreateNonCachedKernel(device_.get(), nullptr,
                                                    props, version, kernel));
           if ((*kernel)->type_string_view() == "Mock") {
@@ -101,15 +287,24 @@ class ExecutorTest : public ::testing::Test {
           return Status::OK();
         };
     params.delete_kernel = [](OpKernel* kernel) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSsingle_threaded_executor_testDTcc mht_6(mht_6_v, 290, "", "./tensorflow/core/common_runtime/single_threaded_executor_test.cc", "lambda");
+
       DeleteNonCachedKernel(kernel);
     };
     TF_CHECK_OK(
         NewExecutor("SINGLE_THREADED_EXECUTOR", params, *graph, &exec_));
-    runner_ = [](const std::function<void()>& fn) { fn(); };
+    runner_ = [](const std::function<void()>& fn) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSsingle_threaded_executor_testDTcc mht_7(mht_7_v, 298, "", "./tensorflow/core/common_runtime/single_threaded_executor_test.cc", "lambda");
+ fn(); };
     rendez_ = NewLocalRendezvous();
   }
 
   Status Run(Rendezvous* rendez) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSsingle_threaded_executor_testDTcc mht_8(mht_8_v, 305, "", "./tensorflow/core/common_runtime/single_threaded_executor_test.cc", "Run");
+
     Executor::Args args;
     args.rendezvous = rendez;
     args.runner = runner_;
@@ -117,6 +312,9 @@ class ExecutorTest : public ::testing::Test {
   }
 
   Status Run(CallFrameInterface* call_frame) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSsingle_threaded_executor_testDTcc mht_9(mht_9_v, 315, "", "./tensorflow/core/common_runtime/single_threaded_executor_test.cc", "Run");
+
     Executor::Args args;
     args.call_frame = call_frame;
     args.runner = runner_;
@@ -125,6 +323,9 @@ class ExecutorTest : public ::testing::Test {
 
   void TestContext(Executor::Args args,
                    std::function<void(OpKernelContext*)> test_fn) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSsingle_threaded_executor_testDTcc mht_10(mht_10_v, 326, "", "./tensorflow/core/common_runtime/single_threaded_executor_test.cc", "TestContext");
+
     auto g = absl::make_unique<Graph>(OpRegistry::Global());
     Node* arg = test::graph::Arg(g.get(), 0, DT_FLOAT);
     Node* tmp;
@@ -158,6 +359,9 @@ class ExecutorTest : public ::testing::Test {
 
 // A float val -> Tensor<float>
 Tensor V(const float val) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSsingle_threaded_executor_testDTcc mht_11(mht_11_v, 362, "", "./tensorflow/core/common_runtime/single_threaded_executor_test.cc", "V");
+
   Tensor tensor(DT_FLOAT, TensorShape({}));
   tensor.scalar<float>()() = val;
   return tensor;
@@ -165,6 +369,9 @@ Tensor V(const float val) {
 
 // Tensor<float> -> a float val.
 float V(const Tensor& tensor) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSsingle_threaded_executor_testDTcc mht_12(mht_12_v, 372, "", "./tensorflow/core/common_runtime/single_threaded_executor_test.cc", "V");
+
   CHECK_EQ(tensor.dtype(), DT_FLOAT);
   CHECK(TensorShapeUtils::IsScalar(tensor.shape()));
   return tensor.scalar<float>()();
@@ -172,6 +379,12 @@ float V(const Tensor& tensor) {
 
 Rendezvous::ParsedKey Key(const string& sender, const uint64 incarnation,
                           const string& receiver, const string& name) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("sender: \"" + sender + "\"");
+   mht_13_v.push_back("receiver: \"" + receiver + "\"");
+   mht_13_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSsingle_threaded_executor_testDTcc mht_13(mht_13_v, 385, "", "./tensorflow/core/common_runtime/single_threaded_executor_test.cc", "Key");
+
   Rendezvous::ParsedKey result;
   TF_CHECK_OK(
       Rendezvous::ParseKey(Rendezvous::CreateKey(sender, incarnation, receiver,
@@ -183,9 +396,18 @@ Rendezvous::ParsedKey Key(const string& sender, const uint64 incarnation,
 TEST_F(ExecutorTest, UserIntraOpThreadPool) {
   class DummyThreadPool : public thread::ThreadPoolInterface {
    public:
-    void Schedule(std::function<void()> fn) override { fn(); }
-    int NumThreads() const override { return 1; }
-    int CurrentThreadId() const override { return -1; }
+    void Schedule(std::function<void()> fn) override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSsingle_threaded_executor_testDTcc mht_14(mht_14_v, 400, "", "./tensorflow/core/common_runtime/single_threaded_executor_test.cc", "Schedule");
+ fn(); }
+    int NumThreads() const override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSsingle_threaded_executor_testDTcc mht_15(mht_15_v, 404, "", "./tensorflow/core/common_runtime/single_threaded_executor_test.cc", "NumThreads");
+ return 1; }
+    int CurrentThreadId() const override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSsingle_threaded_executor_testDTcc mht_16(mht_16_v, 408, "", "./tensorflow/core/common_runtime/single_threaded_executor_test.cc", "CurrentThreadId");
+ return -1; }
   };
   DummyThreadPool dummy_thread_pool;
 
@@ -284,6 +506,9 @@ TEST_F(ExecutorTest, SelfAdd) {
 //     ((a + a) + a) + a
 // are all possibly generated.
 void BuildTree(int N, Graph* g) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSsingle_threaded_executor_testDTcc mht_17(mht_17_v, 509, "", "./tensorflow/core/common_runtime/single_threaded_executor_test.cc", "BuildTree");
+
   CHECK_GT(N, 1);
   // A single input node "in".
   auto in = test::graph::Arg(g, 0, DT_FLOAT);
@@ -357,6 +582,9 @@ TEST_F(ExecutorTest, ControlDependenciesFromSpecialNodes) {
 }
 
 void BM_executor(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSsingle_threaded_executor_testDTcc mht_18(mht_18_v, 585, "", "./tensorflow/core/common_runtime/single_threaded_executor_test.cc", "BM_executor");
+
   const int width = state.range(0);
   const int depth = state.range(1);
 
@@ -408,6 +636,9 @@ BENCHMARK(BM_executor)->UseRealTime()->ArgPair(8192, 32);
 BENCHMARK(BM_executor)->UseRealTime()->ArgPair(1024, 1024);
 
 void BM_const_identity(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSsingle_threaded_executor_testDTcc mht_19(mht_19_v, 639, "", "./tensorflow/core/common_runtime/single_threaded_executor_test.cc", "BM_const_identity");
+
   const int width = state.range(0);
   const int outputs_per_const = state.range(1);
 

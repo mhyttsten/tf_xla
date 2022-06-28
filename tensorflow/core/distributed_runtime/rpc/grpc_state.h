@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_DISTRIBUTED_RUNTIME_RPC_GRPC_STATE_H_
 #define TENSORFLOW_CORE_DISTRIBUTED_RUNTIME_RPC_GRPC_STATE_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <queue>
 #include <utility>
@@ -80,7 +248,10 @@ class RPCState : public GrpcClientCQTag {
               }
             }(),
             (call_opts != nullptr ? call_opts->GetTimeout() : 0), max_retries,
-            target) {}
+            target) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_0(mht_0_v, 252, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "RPCState");
+}
 
   template <typename Request>
   RPCState(::grpc::GenericStub* stub, ::grpc::CompletionQueue* cq,
@@ -98,6 +269,9 @@ class RPCState : public GrpcClientCQTag {
         method_(method),
         fail_fast_(fail_fast),
         target_(target) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_1(mht_1_v, 272, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "RPCState");
+
     response_ = response;
     ::grpc::Status s = GrpcMaybeUnparseProto(request, &request_buf_);
     if (!s.ok()) {
@@ -112,6 +286,9 @@ class RPCState : public GrpcClientCQTag {
   }
 
   void StartCall() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_2(mht_2_v, 289, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "StartCall");
+
     context_.reset(new ::grpc::ClientContext());
     context_->set_wait_for_ready(!fail_fast_);
     if (timeout_in_ms_ > 0) {
@@ -130,6 +307,9 @@ class RPCState : public GrpcClientCQTag {
   }
 
   void OnCompleted(bool ok) override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_3(mht_3_v, 310, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "OnCompleted");
+
     if (call_opts_) {
       call_opts_->ClearCancelCallback();
     }
@@ -192,6 +372,9 @@ class RPCState : public GrpcClientCQTag {
   }
 
   void ParseAndCallDone() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_4(mht_4_v, 375, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "ParseAndCallDone");
+
     Status s;
     if (!GrpcMaybeParseProto(&response_buf_, response_)) {
       s.Update(errors::Internal("could not parse rpc response"));
@@ -202,6 +385,9 @@ class RPCState : public GrpcClientCQTag {
 
  private:
   void ComputeRetryBackoffMs(int min_backoff_ms, int max_backoff_ms) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_5(mht_5_v, 388, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "ComputeRetryBackoffMs");
+
     constexpr float kBackoffBase = 1.3;
     if (retry_backoff_ms_ < 0) {
       retry_backoff_ms_ = min_backoff_ms;
@@ -298,20 +484,39 @@ class Exchange {
         request_buf_(request_buf),
         response_(response),
         cb_(std::move(cb)),
-        debug_string_(std::move(debug_string)) {}
+        debug_string_(std::move(debug_string)) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("debug_string: \"" + debug_string + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_6(mht_6_v, 489, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "Exchange");
+}
 
-  const ::grpc::ByteBuffer& request_buf() { return request_buf_; }
-  ::grpc::ByteBuffer* response_buf() { return &response_buf_; }
+  const ::grpc::ByteBuffer& request_buf() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_7(mht_7_v, 494, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "request_buf");
+ return request_buf_; }
+  ::grpc::ByteBuffer* response_buf() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_8(mht_8_v, 498, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "response_buf");
+ return &response_buf_; }
 
   void MarkRequestWriteIssued() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_9(mht_9_v, 503, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "MarkRequestWriteIssued");
+
     DCHECK(state_ == State::kExchangeCreated);
     state_ = State::kRequestWriteIssued;
   }
   void MarkRequestWriteCompleted() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_10(mht_10_v, 510, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "MarkRequestWriteCompleted");
+
     DCHECK(state_ == State::kRequestWriteIssued);
     state_ = State::kRequestWriteCompleted;
   }
   void MarkResponseReadIssued() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_11(mht_11_v, 517, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "MarkResponseReadIssued");
+
     DCHECK(state_ == State::kRequestWriteCompleted);
     state_ = State::kResponseReadIssued;
   }
@@ -321,7 +526,10 @@ class Exchange {
   // callback with `status`.
   void Complete(Status status);
 
-  const State& state() const { return state_; }
+  const State& state() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_12(mht_12_v, 530, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "state");
+ return state_; }
 
   string DebugString() const;
 
@@ -395,7 +603,10 @@ class ExchangeQueue {
   // Completes all exchanges in this with `status`.
   void CompleteAll(Status status);
 
-  void CallStarted() { call_started_ = true; }
+  void CallStarted() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_13(mht_13_v, 607, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "CallStarted");
+ call_started_ = true; }
 
  private:
   // Does nothing by default. Turn on VLOG(5) to enable.
@@ -422,6 +633,9 @@ class StreamingRPCState : public UntypedStreamingRPCState {
       std::unique_ptr<::grpc::GenericClientAsyncReaderWriter> call,
       const std::shared_ptr<::grpc::ClientContext>& context)
       : context_(context), call_(std::move(call)), call_state_(State::kActive) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_14(mht_14_v, 636, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "StreamingRPCState");
+
     Ref();
     VLOG(3) << "Created new StreamingRPCState " << this;
     VLOG(3) << "StreamingRPCState(" << this << ") calling grpc::StartCall";
@@ -429,6 +643,9 @@ class StreamingRPCState : public UntypedStreamingRPCState {
   }
 
   ~StreamingRPCState() override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_15(mht_15_v, 646, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "~StreamingRPCState");
+
     VLOG(3) << "Destructing StreamingRPCState " << this;
   }
 
@@ -442,6 +659,9 @@ class StreamingRPCState : public UntypedStreamingRPCState {
   // returned.
   bool SendNextRequest(const protobuf::Message& request, Response* response,
                        const StatusCallback& done) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_16(mht_16_v, 662, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "SendNextRequest");
+
     ::grpc::ByteBuffer request_buf;
     ::grpc::Status s = GrpcMaybeUnparseProto(request, &request_buf);
     if (!s.ok()) {
@@ -470,6 +690,9 @@ class StreamingRPCState : public UntypedStreamingRPCState {
   }
 
   void CallStarted(bool ok) override {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_17(mht_17_v, 693, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "CallStarted");
+
     VLOG(3) << "StreamingRPCState(" << this << ")::CallStarted(ok=" << ok
             << ")";
     mutex_lock l(mu_);
@@ -483,6 +706,9 @@ class StreamingRPCState : public UntypedStreamingRPCState {
   }
 
   void RequestWriteCompleted(bool ok) override {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_18(mht_18_v, 709, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "RequestWriteCompleted");
+
     VLOG(3) << "StreamingRPCState(" << this
             << ")::RequestWriteCompleted(ok=" << ok << ")";
     mu_.lock();
@@ -505,6 +731,9 @@ class StreamingRPCState : public UntypedStreamingRPCState {
   }
 
   void ResponseReadCompleted(bool ok) override {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_19(mht_19_v, 734, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "ResponseReadCompleted");
+
     VLOG(3) << "StreamingRPCState(" << this
             << ")::ResponseReadCompleted(ok=" << ok << ")";
     mu_.lock();
@@ -537,6 +766,9 @@ class StreamingRPCState : public UntypedStreamingRPCState {
   }
 
   void CallFinished(bool ok) override {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_20(mht_20_v, 769, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "CallFinished");
+
     VLOG(3) << "StreamingRPCState(" << this << ")::CallFinished(ok=" << ok
             << ")";
     mu_.lock();
@@ -558,6 +790,9 @@ class StreamingRPCState : public UntypedStreamingRPCState {
   }
 
   string DebugString() const override {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_21(mht_21_v, 793, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "DebugString");
+
     mutex_lock l(mu_);
     return exchanges_.DebugString();
   }
@@ -571,6 +806,9 @@ class StreamingRPCState : public UntypedStreamingRPCState {
 
   void MarkDoneAndCompleteExchanges(Status status)
       TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) TF_UNLOCK_FUNCTION(mu_) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_22(mht_22_v, 809, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "MarkDoneAndCompleteExchanges");
+
     call_state_ = State::kDone;
     VLOG(2) << "Ending gRPC streaming call on the client side due to "
             << status.ToString();
@@ -585,6 +823,9 @@ class StreamingRPCState : public UntypedStreamingRPCState {
   }
 
   void MaybeIssueRequestWriteLocked() TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_23(mht_23_v, 826, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "MaybeIssueRequestWriteLocked");
+
     Exchange* exchange = exchanges_.GetReadyForRequestWriting();
     if (exchange == nullptr) {
       // There are no queued exchanges, there is already an outstanding write,
@@ -598,6 +839,9 @@ class StreamingRPCState : public UntypedStreamingRPCState {
   }
 
   void MaybeIssueResponseReadLocked() TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_24(mht_24_v, 842, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "MaybeIssueResponseReadLocked");
+
     Exchange* exchange = exchanges_.GetReadyForResponseReading();
     if (exchange == nullptr) {
       return;
@@ -609,6 +853,9 @@ class StreamingRPCState : public UntypedStreamingRPCState {
   }
 
   void IssueCallFinishLocked() TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_25(mht_25_v, 856, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "IssueCallFinishLocked");
+
     call_state_ = State::kFinishing;
     Ref();
     VLOG(3) << "StreamingRPCState(" << this << ") calling grpc::Finish";
@@ -664,7 +911,10 @@ class StreamingRPCDispatcher {
  public:
   StreamingRPCDispatcher(::grpc::GenericStub* stub, ::grpc::CompletionQueue* cq,
                          const ::grpc::string& method)
-      : stub_(stub), cq_(cq), method_(method) {}
+      : stub_(stub), cq_(cq), method_(method) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_26(mht_26_v, 915, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "StreamingRPCDispatcher");
+}
 
   // Attempts to send the next request. If there is no active streaming call,
   // starts one and sends the request on top of it. `done` is invoked when
@@ -672,6 +922,9 @@ class StreamingRPCDispatcher {
   // is an error. `done` can be invoked before SendNextRequest returns.
   void SendNextRequest(const protobuf::Message& request, Response* response,
                        StatusCallback done) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_27(mht_27_v, 925, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "SendNextRequest");
+
     mutex_lock l(mu_);
     if (state_ == nullptr) {
       CreateStreamingState();
@@ -696,6 +949,9 @@ class StreamingRPCDispatcher {
 
   // Request to cancel the current streaming call. Non-blocking.
   void CancelCall() {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_28(mht_28_v, 952, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "CancelCall");
+
     mutex_lock l(mu_);
     if (state_ == nullptr) {
       return;
@@ -706,6 +962,9 @@ class StreamingRPCDispatcher {
 
  private:
   void CreateStreamingState() TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSrpcPSgrpc_stateDTh mht_29(mht_29_v, 965, "", "./tensorflow/core/distributed_runtime/rpc/grpc_state.h", "CreateStreamingState");
+
     // ClientContext cannot be reused across calls.
     context_ = std::make_shared<::grpc::ClientContext>();
     // Don't immediately fail StartCall if the channel is not ready. Wait for

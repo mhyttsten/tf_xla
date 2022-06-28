@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_KERNELS_BATCHING_UTIL_ADAPTIVE_SHARED_BATCH_SCHEDULER_H_
 #define TENSORFLOW_CORE_KERNELS_BATCHING_UTIL_ADAPTIVE_SHARED_BATCH_SCHEDULER_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <algorithm>
 #include <atomic>
@@ -81,6 +249,9 @@ class AdaptiveSharedBatchScheduler
           AdaptiveSharedBatchScheduler<TaskType>> {
  public:
   ~AdaptiveSharedBatchScheduler() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_0(mht_0_v, 252, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "~AdaptiveSharedBatchScheduler");
+
     // Finish processing batches before destroying other class members.
     if (owned_batch_thread_pool_) {
       delete batch_thread_pool_;
@@ -178,6 +349,9 @@ class AdaptiveSharedBatchScheduler
                   std::unique_ptr<BatchScheduler<TaskType>>* queue);
 
   double in_flight_batches_limit() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_1(mht_1_v, 352, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "in_flight_batches_limit");
+
     mutex_lock l(mu_);
     return in_flight_batches_limit_;
   }
@@ -217,7 +391,10 @@ class AdaptiveSharedBatchScheduler
   // Removes queue from scheduler.
   void RemoveQueue(const internal::ASBSQueue<TaskType>* queue);
 
-  Env* GetEnv() const { return options_.env; }
+  Env* GetEnv() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_2(mht_2_v, 395, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "GetEnv");
+ return options_.env; }
 
   const Options options_;
 
@@ -316,7 +493,10 @@ class ASBSQueue : public BatchScheduler<TaskType> {
   // place any more tasks in this batch.
   void ReleaseBatch(const ASBSBatch<TaskType>* batch);
 
-  size_t max_task_size() const override { return options_.max_batch_size; }
+  size_t max_task_size() const override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_3(mht_3_v, 497, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "max_task_size");
+ return options_.max_batch_size; }
 
  private:
   // Number of size 1 tasks which could currently be scheduled without failing.
@@ -345,17 +525,35 @@ class ASBSBatch : public Batch<TaskType> {
       : queue_(queue),
         creation_time_micros_(creation_time_micros),
         schedulable_time_micros_(creation_time_micros + batch_timeout_micros),
-        traceme_context_id_(traceme_context_id) {}
+        traceme_context_id_(traceme_context_id) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_4(mht_4_v, 529, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "ASBSBatch");
+}
 
-  ~ASBSBatch() override {}
+  ~ASBSBatch() override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_5(mht_5_v, 534, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "~ASBSBatch");
+}
 
-  ASBSQueue<TaskType>* queue() const { return queue_; }
+  ASBSQueue<TaskType>* queue() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_6(mht_6_v, 539, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "queue");
+ return queue_; }
 
-  int64_t creation_time_micros() const { return creation_time_micros_; }
+  int64_t creation_time_micros() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_7(mht_7_v, 544, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "creation_time_micros");
+ return creation_time_micros_; }
 
-  int64_t schedulable_time_micros() const { return schedulable_time_micros_; }
+  int64_t schedulable_time_micros() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_8(mht_8_v, 549, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "schedulable_time_micros");
+ return schedulable_time_micros_; }
 
-  uint64 traceme_context_id() const { return traceme_context_id_; }
+  uint64 traceme_context_id() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_9(mht_9_v, 554, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "traceme_context_id");
+ return traceme_context_id_; }
 
  private:
   ASBSQueue<TaskType>* queue_;
@@ -378,6 +576,9 @@ template <typename TaskType>
 Status AdaptiveSharedBatchScheduler<TaskType>::Create(
     const Options& options,
     std::shared_ptr<AdaptiveSharedBatchScheduler<TaskType>>* scheduler) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_10(mht_10_v, 579, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "AdaptiveSharedBatchScheduler<TaskType>::Create");
+
   if (options.num_batch_threads < 1) {
     return errors::InvalidArgument("num_batch_threads must be positive; was ",
                                    options.num_batch_threads);
@@ -427,6 +628,9 @@ AdaptiveSharedBatchScheduler<TaskType>::AdaptiveSharedBatchScheduler(
     : options_(options),
       in_flight_batches_limit_(options.initial_in_flight_batches_limit),
       rand_double_(0.0, 1.0) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_11(mht_11_v, 631, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "AdaptiveSharedBatchScheduler<TaskType>::AdaptiveSharedBatchScheduler");
+
   std::random_device device;
   rand_engine_.seed(device());
   if (options.thread_pool == nullptr) {
@@ -443,6 +647,9 @@ template <typename TaskType>
 Status AdaptiveSharedBatchScheduler<TaskType>::AddQueue(
     const QueueOptions& options, BatchProcessor process_batch_callback,
     std::unique_ptr<BatchScheduler<TaskType>>* queue) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_12(mht_12_v, 650, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "AdaptiveSharedBatchScheduler<TaskType>::AddQueue");
+
   if (options.max_batch_size <= 0) {
     return errors::InvalidArgument("max_batch_size must be positive; was ",
                                    options.max_batch_size);
@@ -472,6 +679,9 @@ Status AdaptiveSharedBatchScheduler<TaskType>::AddQueue(
 template <typename TaskType>
 void AdaptiveSharedBatchScheduler<TaskType>::AddBatch(
     const internal::ASBSBatch<TaskType>* batch) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_13(mht_13_v, 682, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "AdaptiveSharedBatchScheduler<TaskType>::AddBatch");
+
   mutex_lock l(mu_);
   if (options_.fifo_scheduling) {
     fifo_batches_.push_back(batch);
@@ -499,12 +709,18 @@ void AdaptiveSharedBatchScheduler<TaskType>::AddBatch(
 template <typename TaskType>
 void AdaptiveSharedBatchScheduler<TaskType>::RemoveQueue(
     const internal::ASBSQueue<TaskType>* queue) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_14(mht_14_v, 712, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "AdaptiveSharedBatchScheduler<TaskType>::RemoveQueue");
+
   mutex_lock l(mu_);
   queues_and_callbacks_.erase(queue);
 }
 
 template <typename TaskType>
 void AdaptiveSharedBatchScheduler<TaskType>::MaybeScheduleNextBatchFIFO() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_15(mht_15_v, 721, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "AdaptiveSharedBatchScheduler<TaskType>::MaybeScheduleNextBatchFIFO");
+
   const internal::ASBSBatch<TaskType>* batch = *fifo_batches_.begin();
   fifo_batches_.pop_front();
   // Queue may destroy itself after ReleaseBatch is called.
@@ -518,6 +734,9 @@ void AdaptiveSharedBatchScheduler<TaskType>::MaybeScheduleNextBatchFIFO() {
 template <typename TaskType>
 void AdaptiveSharedBatchScheduler<
     TaskType>::MaybeScheduleClosedBatchesLockedFIFO() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_16(mht_16_v, 737, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "TaskType>::MaybeScheduleClosedBatchesLockedFIFO");
+
   // Only schedule closed batches if we have spare capacity.
   int available_threads =
       static_cast<int>(options_.num_batch_threads - in_flight_batches_ -
@@ -544,6 +763,9 @@ void AdaptiveSharedBatchScheduler<
 
 template <typename TaskType>
 void AdaptiveSharedBatchScheduler<TaskType>::MaybeScheduleNextBatch() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_17(mht_17_v, 766, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "AdaptiveSharedBatchScheduler<TaskType>::MaybeScheduleNextBatch");
+
   bool batch_empty =
       options_.fifo_scheduling ? fifo_batches_.empty() : batches_.empty();
   if (batch_empty || in_flight_batches_ >= in_flight_batches_limit_) return;
@@ -587,6 +809,9 @@ void AdaptiveSharedBatchScheduler<TaskType>::MaybeScheduleNextBatch() {
 
 template <typename TaskType>
 void AdaptiveSharedBatchScheduler<TaskType>::MaybeScheduleClosedBatches() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_18(mht_18_v, 812, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "AdaptiveSharedBatchScheduler<TaskType>::MaybeScheduleClosedBatches");
+
   mutex_lock l(mu_);
   MaybeScheduleClosedBatchesLocked();
 }
@@ -594,6 +819,9 @@ void AdaptiveSharedBatchScheduler<TaskType>::MaybeScheduleClosedBatches() {
 template <typename TaskType>
 void AdaptiveSharedBatchScheduler<
     TaskType>::MaybeScheduleClosedBatchesLocked() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_19(mht_19_v, 822, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "TaskType>::MaybeScheduleClosedBatchesLocked");
+
   if (options_.fifo_scheduling) {
     MaybeScheduleClosedBatchesLockedFIFO();
     return;
@@ -624,6 +852,9 @@ void AdaptiveSharedBatchScheduler<TaskType>::CallbackWrapper(
     const internal::ASBSBatch<TaskType>* batch,
     AdaptiveSharedBatchScheduler<TaskType>::BatchProcessor callback,
     bool is_express) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_20(mht_20_v, 855, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "AdaptiveSharedBatchScheduler<TaskType>::CallbackWrapper");
+
   profiler::TraceMeConsumer trace_me(
       [&] {
         return profiler::TraceMeEncode(
@@ -653,6 +884,9 @@ void AdaptiveSharedBatchScheduler<TaskType>::CallbackWrapper(
 
 template <typename TaskType>
 void AdaptiveSharedBatchScheduler<TaskType>::MaybeAdjustInflightLimit() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_21(mht_21_v, 887, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "AdaptiveSharedBatchScheduler<TaskType>::MaybeAdjustInflightLimit");
+
   // Occasionally adjust in_flight_batches_limit_ to minimize average latency.
   // Although the optimal value may depend on the workload, the latency should
   // be a simple convex function of in_flight_batches_limit_, allowing us to
@@ -701,10 +935,16 @@ template <typename TaskType>
 ASBSQueue<TaskType>::ASBSQueue(
     std::shared_ptr<AdaptiveSharedBatchScheduler<TaskType>> scheduler,
     const QueueOptions& options)
-    : scheduler_(scheduler), options_(options) {}
+    : scheduler_(scheduler), options_(options) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_22(mht_22_v, 939, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "ASBSQueue<TaskType>::ASBSQueue");
+}
 
 template <typename TaskType>
 ASBSQueue<TaskType>::~ASBSQueue() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_23(mht_23_v, 945, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "ASBSQueue<TaskType>::~ASBSQueue");
+
   // Wait until last batch has been scheduled.
   const int kSleepMicros = 1000;
   for (;;) {
@@ -721,6 +961,9 @@ ASBSQueue<TaskType>::~ASBSQueue() {
 
 template <typename TaskType>
 Status ASBSQueue<TaskType>::Schedule(std::unique_ptr<TaskType>* task) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_24(mht_24_v, 964, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "ASBSQueue<TaskType>::Schedule");
+
   size_t size = (*task)->size();
   if (options_.split_input_task_func == nullptr &&
       size > options_.max_batch_size) {
@@ -818,6 +1061,9 @@ Status ASBSQueue<TaskType>::Schedule(std::unique_ptr<TaskType>* task) {
 
 template <typename TaskType>
 void ASBSQueue<TaskType>::ReleaseBatch(const ASBSBatch<TaskType>* batch) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_25(mht_25_v, 1064, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "ASBSQueue<TaskType>::ReleaseBatch");
+
   mutex_lock l(mu_);
   num_enqueued_batches_--;
   num_enqueued_tasks_ -= batch->num_tasks();
@@ -829,18 +1075,27 @@ void ASBSQueue<TaskType>::ReleaseBatch(const ASBSBatch<TaskType>* batch) {
 
 template <typename TaskType>
 size_t ASBSQueue<TaskType>::NumEnqueuedTasks() const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_26(mht_26_v, 1078, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "ASBSQueue<TaskType>::NumEnqueuedTasks");
+
   mutex_lock l(mu_);
   return num_enqueued_tasks_;
 }
 
 template <typename TaskType>
 size_t ASBSQueue<TaskType>::SchedulingCapacity() const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_27(mht_27_v, 1087, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "ASBSQueue<TaskType>::SchedulingCapacity");
+
   mutex_lock l(mu_);
   return SchedulingCapacityLocked();
 }
 
 template <typename TaskType>
 size_t ASBSQueue<TaskType>::SchedulingCapacityLocked() const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_28(mht_28_v, 1096, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "ASBSQueue<TaskType>::SchedulingCapacityLocked");
+
   const int current_batch_capacity =
       current_batch_ ? options_.max_batch_size - current_batch_->size() : 0;
   const int spare_batches =
@@ -851,6 +1106,9 @@ size_t ASBSQueue<TaskType>::SchedulingCapacityLocked() const {
 template <typename TaskType>
 // static
 uint64 ASBSQueue<TaskType>::NewTraceMeContextIdForBatch() {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSbatching_utilPSadaptive_shared_batch_schedulerDTh mht_29(mht_29_v, 1109, "", "./tensorflow/core/kernels/batching_util/adaptive_shared_batch_scheduler.h", "ASBSQueue<TaskType>::NewTraceMeContextIdForBatch");
+
   static std::atomic<uint64> traceme_context_id(0);
   return traceme_context_id.fetch_add(1, std::memory_order_relaxed);
 }

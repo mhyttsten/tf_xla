@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_GRAPPLER_COSTS_VIRTUAL_SCHEDULER_H_
 #define TENSORFLOW_CORE_GRAPPLER_COSTS_VIRTUAL_SCHEDULER_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <functional>
 #include <list>
@@ -81,6 +249,9 @@ struct NodeState {
 
   Costs node_costs;  // Node costs per execution
   Costs TotalNodeCosts() const {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_0(mht_0_v, 252, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "TotalNodeCosts");
+
     return MultiplyCosts(node_costs, execution_count);
   }
   // How many times this node has been executed, e.g. in a while loop.
@@ -90,6 +261,9 @@ struct NodeState {
   bool shape_incompatible;
 
   NodeState() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_1(mht_1_v, 264, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "NodeState");
+
     num_inputs_ready = 0;
     time_ready = Costs::Duration::max();
     time_scheduled = Costs::Duration::max();
@@ -157,23 +331,38 @@ struct DeviceState {
   } shape_annotation_stats;
 
   DeviceState() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_2(mht_2_v, 334, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "DeviceState");
+
     device_costs = Costs::ZeroCosts();
     device_costs.num_ops_total = 0;
     memory_usage = 0;
     max_memory_usage = 0;
   }
 
-  Costs::Duration GetCurrTime() const { return device_costs.execution_time; }
+  Costs::Duration GetCurrTime() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_3(mht_3_v, 344, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "GetCurrTime");
+ return device_costs.execution_time; }
 };
 
 // ReadyNodeManager (abstract class):
 // Keeps ready nodes and picks the best one to be scheduled.
 class ReadyNodeManager {
  public:
-  ReadyNodeManager() {}
-  virtual ~ReadyNodeManager() {}
+  ReadyNodeManager() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_4(mht_4_v, 354, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "ReadyNodeManager");
+}
+  virtual ~ReadyNodeManager() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_5(mht_5_v, 358, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "~ReadyNodeManager");
+}
   virtual Status Init(
       const std::unordered_map<const NodeDef*, NodeState>* node_map) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_6(mht_6_v, 363, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "Init");
+
     return Status::OK();
   }
   virtual void AddNode(const NodeDef* node) = 0;
@@ -184,15 +373,33 @@ class ReadyNodeManager {
 
 class FIFOManager : public ReadyNodeManager {
  public:
-  FIFOManager() : ReadyNodeManager() {}
-  ~FIFOManager() override {}
-  void AddNode(const NodeDef* node) override { nodes_.push_back(node); }
+  FIFOManager() : ReadyNodeManager() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_7(mht_7_v, 377, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "FIFOManager");
+}
+  ~FIFOManager() override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_8(mht_8_v, 381, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "~FIFOManager");
+}
+  void AddNode(const NodeDef* node) override {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_9(mht_9_v, 385, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "AddNode");
+ nodes_.push_back(node); }
   const NodeDef* GetCurrNode() override {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_10(mht_10_v, 389, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "GetCurrNode");
+
     CHECK(!nodes_.empty()) << "GetCurrNode(), but there's no ready node";
     return nodes_.front();
   }
-  void RemoveCurrNode() override { nodes_.pop_front(); }
-  bool Empty() const override { return nodes_.empty(); }
+  void RemoveCurrNode() override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_11(mht_11_v, 396, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "RemoveCurrNode");
+ nodes_.pop_front(); }
+  bool Empty() const override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_12(mht_12_v, 400, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "Empty");
+ return nodes_.empty(); }
 
  private:
   std::list<const NodeDef*> nodes_;
@@ -204,12 +411,21 @@ class FIFOManager : public ReadyNodeManager {
 // that node's execution.
 class LIFOManager : public ReadyNodeManager {
  public:
-  LIFOManager() : ReadyNodeManager() {}
-  ~LIFOManager() override {}
+  LIFOManager() : ReadyNodeManager() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_13(mht_13_v, 415, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "LIFOManager");
+}
+  ~LIFOManager() override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_14(mht_14_v, 419, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "~LIFOManager");
+}
   void AddNode(const NodeDef* node) override;
   const NodeDef* GetCurrNode() override;
   void RemoveCurrNode() override;
-  bool Empty() const override { return nodes_.empty(); }
+  bool Empty() const override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_15(mht_15_v, 426, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "Empty");
+ return nodes_.empty(); }
 
  private:
   std::list<const NodeDef*> nodes_;
@@ -228,7 +444,10 @@ class HeapReadyManager : public ReadyNodeManager {
   HeapReadyManager();
   Status Init(
       const std::unordered_map<const NodeDef*, NodeState>* node_map) override;
-  ~HeapReadyManager() override {}
+  ~HeapReadyManager() override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_16(mht_16_v, 448, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "~HeapReadyManager");
+}
   void AddNode(const NodeDef* node) override;
   const NodeDef* GetCurrNode() override;
   void RemoveCurrNode() override;
@@ -258,8 +477,14 @@ class HeapReadyManager : public ReadyNodeManager {
 // time_ready value with unique node names as the tie-breaker.
 class FirstReadyManager : public HeapReadyManager {
  public:
-  FirstReadyManager() : HeapReadyManager() {}
-  ~FirstReadyManager() override {}
+  FirstReadyManager() : HeapReadyManager() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_17(mht_17_v, 481, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "FirstReadyManager");
+}
+  ~FirstReadyManager() override {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_18(mht_18_v, 485, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "~FirstReadyManager");
+}
 
  protected:
   std::function<bool(const NodeDef*, const NodeDef*)> Greater() override;
@@ -269,8 +494,14 @@ class FirstReadyManager : public HeapReadyManager {
 // from all the ready nodes.
 class PriorityReadyManager : public HeapReadyManager {
  public:
-  PriorityReadyManager() : HeapReadyManager() {}
-  ~PriorityReadyManager() override {}
+  PriorityReadyManager() : HeapReadyManager() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_19(mht_19_v, 498, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "PriorityReadyManager");
+}
+  ~PriorityReadyManager() override {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_20(mht_20_v, 502, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "~PriorityReadyManager");
+}
   void AddNode(const NodeDef* node) override;
 
   // Note this should be called after Init().
@@ -294,7 +525,10 @@ class PriorityReadyManager : public HeapReadyManager {
 class CompositeNodeManager : public ReadyNodeManager {
  public:
   CompositeNodeManager();
-  ~CompositeNodeManager() override {}
+  ~CompositeNodeManager() override {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_21(mht_21_v, 529, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "~CompositeNodeManager");
+}
 
   Status Init(
       const std::unordered_map<const NodeDef*, NodeState>* node_map) override;
@@ -369,7 +603,10 @@ class SchedulerState {
   // Returns per device memory usage.
   const std::unordered_map<string, int64_t> GetPeakMemoryUsage() const;
   const std::unordered_map<string, int64_t> GetPersistentMemoryUsage() const;
-  void enable_mem_usage_tracking() { track_mem_usage_snapshot_ = true; }
+  void enable_mem_usage_tracking() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_22(mht_22_v, 607, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "enable_mem_usage_tracking");
+ track_mem_usage_snapshot_ = true; }
   // Returns (read only) device and node states.
   const std::unordered_map<string, DeviceState>* GetDeviceStates() const {
     return &device_;
@@ -386,11 +623,26 @@ class SchedulerState {
       const std::string& override_device_name = "");
 
   // Some getter functions.
-  const GrapplerItem* GetGrapplerItem() { return grappler_item_; }
-  Costs GetGraphCost() { return graph_costs_; }
-  Cluster* GetCluster() { return cluster_; }
-  bool GetUseStaticShape() { return use_static_shapes_; }
+  const GrapplerItem* GetGrapplerItem() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_23(mht_23_v, 627, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "GetGrapplerItem");
+ return grappler_item_; }
+  Costs GetGraphCost() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_24(mht_24_v, 631, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "GetGraphCost");
+ return graph_costs_; }
+  Cluster* GetCluster() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_25(mht_25_v, 635, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "GetCluster");
+ return cluster_; }
+  bool GetUseStaticShape() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_26(mht_26_v, 639, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "GetUseStaticShape");
+ return use_static_shapes_; }
   bool GetUseAggressiveShapeInference() {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_27(mht_27_v, 643, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "GetUseAggressiveShapeInference");
+
     return use_aggressive_shape_inference_;
   }
   const std::unordered_map<const NodeDef*, NodeState>& GetNodeMap() {
@@ -499,15 +751,24 @@ class VirtualScheduler {
   virtual bool MarkCurrNodeExecuted(const Costs& node_costs);
 
   // Prints out summary of execution (timing, memory usage, etc.)
-  Costs Summary() const { return scheduler_state_->Summary(); }
+  Costs Summary() const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_28(mht_28_v, 755, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "Summary");
+ return scheduler_state_->Summary(); }
   // Like the above, but writes detailed stats to RunMetadata.
   // If metadata is nullptr, then just calls and return Summary().
   Costs Summary(RunMetadata* metadata) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_29(mht_29_v, 761, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "Summary");
+
     return scheduler_state_->Summary(metadata);
   }
   // Generates RunMetadata's step_stats and partition_graphs fields from results
   // of the virtual execution of the graph.
   void GenerateRunMetadata(RunMetadata* metadata) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_30(mht_30_v, 769, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "GenerateRunMetadata");
+
     scheduler_state_->GenerateRunMetadata(metadata);
   }
   // Returns per device memory usage.
@@ -525,6 +786,9 @@ class VirtualScheduler {
     return scheduler_state_->GetNodeStates();
   }
   void enable_mem_usage_tracking() {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPScostsPSvirtual_schedulerDTh mht_31(mht_31_v, 789, "", "./tensorflow/core/grappler/costs/virtual_scheduler.h", "enable_mem_usage_tracking");
+
     scheduler_state_->enable_mem_usage_tracking();
   }
 

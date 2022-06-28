@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,10 +202,16 @@ namespace xla {
 
 BFloat16Propagation::BFloat16Propagation(
     const BFloat16Support* bfloat16_support)
-    : bfloat16_support_(bfloat16_support) {}
+    : bfloat16_support_(bfloat16_support) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc mht_0(mht_0_v, 206, "", "./tensorflow/compiler/xla/service/bfloat16_propagation.cc", "BFloat16Propagation::BFloat16Propagation");
+}
 
 void BFloat16Propagation::DetermineFusionComputationPrecision(
     HloInstruction* fusion) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc mht_1(mht_1_v, 212, "", "./tensorflow/compiler/xla/service/bfloat16_propagation.cc", "BFloat16Propagation::DetermineFusionComputationPrecision");
+
   CHECK_EQ(fusion->opcode(), HloOpcode::kFusion);
   if (!bfloat16_support_->SupportsMixedPrecisions(*fusion)) {
     return;
@@ -78,7 +252,13 @@ void BFloat16Propagation::DetermineFusionComputationPrecision(
 
 void BFloat16Propagation::RevertIfFusionInternalBF16Changes(
     HloInstruction* fusion) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc mht_2(mht_2_v, 255, "", "./tensorflow/compiler/xla/service/bfloat16_propagation.cc", "BFloat16Propagation::RevertIfFusionInternalBF16Changes");
+
   auto has_changes = [this](HloInstruction* inst) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc mht_3(mht_3_v, 259, "", "./tensorflow/compiler/xla/service/bfloat16_propagation.cc", "lambda");
+
     auto it = changes_to_bf16_.find(inst);
     return it != changes_to_bf16_.end() && !it->second.empty();
   };
@@ -98,6 +278,9 @@ void BFloat16Propagation::RevertIfFusionInternalBF16Changes(
 
   auto aliases_changed_root_buffer =
       [this, &changed_root_buffers](const HloInstruction* inst) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc mht_4(mht_4_v, 281, "", "./tensorflow/compiler/xla/service/bfloat16_propagation.cc", "lambda");
+
         bool aliasing = false;
         ShapeUtil::ForEachSubshape(
             inst->shape(), [&](const Shape& subshape, const ShapeIndex& index) {
@@ -161,6 +344,9 @@ void BFloat16Propagation::RevertIfFusionInternalBF16Changes(
 
 void BFloat16Propagation::DetermineWhileComputationsPrecision(
     HloInstruction* while_hlo) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc mht_5(mht_5_v, 347, "", "./tensorflow/compiler/xla/service/bfloat16_propagation.cc", "BFloat16Propagation::DetermineWhileComputationsPrecision");
+
   CHECK_EQ(while_hlo->opcode(), HloOpcode::kWhile);
 
   // We are depending on the while node itself having already been analyzed for
@@ -204,6 +390,9 @@ void BFloat16Propagation::DetermineWhileComputationsPrecision(
 
 void BFloat16Propagation::DetermineConditionalComputationsPrecision(
     HloInstruction* cond) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc mht_6(mht_6_v, 393, "", "./tensorflow/compiler/xla/service/bfloat16_propagation.cc", "BFloat16Propagation::DetermineConditionalComputationsPrecision");
+
   CHECK_EQ(cond->opcode(), HloOpcode::kConditional);
   for (int64_t i = 0; i < cond->branch_count(); ++i) {
     auto branch = cond->branch_computation(i);
@@ -231,6 +420,9 @@ void BFloat16Propagation::DetermineConditionalComputationsPrecision(
 
 bool BFloat16Propagation::AllUsersConsumeBF16(const HloInstruction& hlo,
                                               const ShapeIndex& index) const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc mht_7(mht_7_v, 423, "", "./tensorflow/compiler/xla/service/bfloat16_propagation.cc", "BFloat16Propagation::AllUsersConsumeBF16");
+
   // If the subshape isn't floating point then none of the users will be BF16.
   const Shape& subshape = ShapeUtil::GetSubshape(hlo.shape(), index);
   if (subshape.element_type() != BF16 && subshape.element_type() != F32) {
@@ -344,6 +536,9 @@ bool BFloat16Propagation::AllUsersConsumeBF16(const HloInstruction& hlo,
 
 bool BFloat16Propagation::ShouldKeepPrecisionUnchanged(
     const HloInstruction* inst) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc mht_8(mht_8_v, 539, "", "./tensorflow/compiler/xla/service/bfloat16_propagation.cc", "BFloat16Propagation::ShouldKeepPrecisionUnchanged");
+
   if (inst->opcode() == HloOpcode::kFusion &&
       inst->fusion_kind() == HloInstruction::FusionKind::kCustom) {
     return ShouldKeepPrecisionUnchanged(
@@ -360,6 +555,9 @@ bool BFloat16Propagation::ShouldKeepPrecisionUnchanged(
 
 void BFloat16Propagation::DetermineInstructionPrecision(HloInstruction* hlo,
                                                         bool skip_parameters) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc mht_9(mht_9_v, 558, "", "./tensorflow/compiler/xla/service/bfloat16_propagation.cc", "BFloat16Propagation::DetermineInstructionPrecision");
+
   // We handle any fusion computation, while body/condition or conditional
   // branches after the instruction is handled, because we need to know the
   // output shape of a fusion or while before propagating inside its
@@ -442,6 +640,9 @@ void BFloat16Propagation::DetermineInstructionPrecision(HloInstruction* hlo,
 
 bool BFloat16Propagation::InstructionIsCandidateForBF16Output(
     HloInstruction* hlo) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc mht_10(mht_10_v, 643, "", "./tensorflow/compiler/xla/service/bfloat16_propagation.cc", "BFloat16Propagation::InstructionIsCandidateForBF16Output");
+
   if (!bfloat16_support_->SupportsMixedPrecisions(*hlo) &&
       hlo->opcode() != HloOpcode::kTuple &&
       hlo->opcode() != HloOpcode::kGetTupleElement &&
@@ -460,9 +661,15 @@ bool BFloat16Propagation::InstructionIsCandidateForBF16Output(
 
 void BFloat16Propagation::AdjustCalledComputationParameters(
     HloInstruction* hlo) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc mht_11(mht_11_v, 664, "", "./tensorflow/compiler/xla/service/bfloat16_propagation.cc", "BFloat16Propagation::AdjustCalledComputationParameters");
+
   auto adjust_computation =
       [this, hlo](HloComputation* computation,
                   absl::Span<HloInstruction* const> operands) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc mht_12(mht_12_v, 670, "", "./tensorflow/compiler/xla/service/bfloat16_propagation.cc", "lambda");
+
         // Adjust parameters.
         CHECK_EQ(operands.size(), computation->num_parameters());
         for (int64_t i = 0; i < operands.size(); ++i) {
@@ -510,8 +717,14 @@ void BFloat16Propagation::AdjustCalledComputationParameters(
 }
 
 void BFloat16Propagation::AdjustCalledComputationRoot(HloInstruction* hlo) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc mht_13(mht_13_v, 720, "", "./tensorflow/compiler/xla/service/bfloat16_propagation.cc", "BFloat16Propagation::AdjustCalledComputationRoot");
+
   auto adjust_computation = [this, hlo](HloComputation* computation,
                                         HloInstruction* output) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc mht_14(mht_14_v, 725, "", "./tensorflow/compiler/xla/service/bfloat16_propagation.cc", "lambda");
+
     // Adjust root.
     HloInstruction* root = computation->root_instruction();
     ShapeUtil::ForEachSubshape(root->shape(), [this, hlo, root, output](
@@ -567,6 +780,9 @@ void BFloat16Propagation::AdjustCalledComputationRoot(HloInstruction* hlo) {
 bool BFloat16Propagation::ResolveInconsistencyOfAliasingBuffersHelper(
     HloComputation* computation,
     absl::flat_hash_set<const HloComputation*>* visited_computations) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc mht_15(mht_15_v, 783, "", "./tensorflow/compiler/xla/service/bfloat16_propagation.cc", "BFloat16Propagation::ResolveInconsistencyOfAliasingBuffersHelper");
+
   bool parameter_changed = false;
   auto insts = computation->MakeInstructionPostOrder();
   // Do the adjustment on each instruction in the computation in reverse
@@ -577,6 +793,9 @@ bool BFloat16Propagation::ResolveInconsistencyOfAliasingBuffersHelper(
       auto hlo = *inst_it;
       auto adjust_hlo_output = [&](const Shape& /* subshape */,
                                    const ShapeIndex& index) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc mht_16(mht_16_v, 796, "", "./tensorflow/compiler/xla/service/bfloat16_propagation.cc", "lambda");
+
         auto output_type = OutputTypeAfterChange(hlo, index);
         VLOG(2) << "output_type is " << ((output_type == BF16) ? "BF16" : "F32")
                 << " for :" << hlo->ToString() << "\n";
@@ -695,6 +914,9 @@ bool BFloat16Propagation::ResolveInconsistencyOfAliasingBuffersHelper(
 
 void BFloat16Propagation::ResolveInconsistencyOfAliasingBuffers(
     HloModule* module) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc mht_17(mht_17_v, 917, "", "./tensorflow/compiler/xla/service/bfloat16_propagation.cc", "BFloat16Propagation::ResolveInconsistencyOfAliasingBuffers");
+
   const auto& computations_topological_order =
       module->MakeComputationPostOrder();
   absl::flat_hash_set<const HloComputation*> resolved;
@@ -708,6 +930,9 @@ void BFloat16Propagation::ResolveInconsistencyOfAliasingBuffers(
 }
 
 Status BFloat16Propagation::ResolveInconsistentFusions(HloModule* module) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc mht_18(mht_18_v, 933, "", "./tensorflow/compiler/xla/service/bfloat16_propagation.cc", "BFloat16Propagation::ResolveInconsistentFusions");
+
   // We could have changed a fusion computation's root shape to have a different
   // precision than the fusion node's output, if the fusion root does not
   // define a buffer (e.g., a tuple). Now we add conversions after such fusion
@@ -769,6 +994,9 @@ Status BFloat16Propagation::ResolveInconsistentFusions(HloModule* module) {
 }
 
 Status BFloat16Propagation::ResolveConvertedConstants(HloModule* module) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc mht_19(mht_19_v, 997, "", "./tensorflow/compiler/xla/service/bfloat16_propagation.cc", "BFloat16Propagation::ResolveConvertedConstants");
+
   // We may have converted some constants from F32 to BF16, so adjust the
   // constant literals in such cases. We do this here instead of when the
   // constant node's is changed because 1) the HloInstruction interface does not
@@ -799,6 +1027,9 @@ Status BFloat16Propagation::ResolveConvertedConstants(HloModule* module) {
 }
 
 Status BFloat16Propagation::SkipNoopConversions(HloModule* module) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc mht_20(mht_20_v, 1030, "", "./tensorflow/compiler/xla/service/bfloat16_propagation.cc", "BFloat16Propagation::SkipNoopConversions");
+
   for (auto computation : module->computations()) {
     for (auto hlo : computation->MakeInstructionPostOrder()) {
       if (hlo->opcode() != HloOpcode::kConvert) {
@@ -825,6 +1056,9 @@ Status BFloat16Propagation::SkipNoopConversions(HloModule* module) {
 // changes_to_bf16_ which are subject to further adjustments then applied to the
 // HLOs.
 StatusOr<bool> BFloat16Propagation::Run(HloModule* module) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc mht_21(mht_21_v, 1059, "", "./tensorflow/compiler/xla/service/bfloat16_propagation.cc", "BFloat16Propagation::Run");
+
   consider_using_bfloat16_.clear();
   instructions_visited_in_backward_pass_.clear();
   computations_visited_in_backward_pass_.clear();
@@ -951,6 +1185,9 @@ StatusOr<bool> BFloat16Propagation::Run(HloModule* module) {
   // de-aliasing copies to while loop inputs, or later when converting output
   // types.
   auto clean_up = [this, module]() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc mht_22(mht_22_v, 1188, "", "./tensorflow/compiler/xla/service/bfloat16_propagation.cc", "lambda");
+
     TF_RETURN_IF_ERROR(SkipNoopConversions(module));
     TupleSimplifier tuple_simplifier;
     TF_RETURN_IF_ERROR(tuple_simplifier.Run(module).status());
@@ -973,6 +1210,9 @@ StatusOr<bool> BFloat16Propagation::Run(HloModule* module) {
 
 PrimitiveType BFloat16Propagation::OutputTypeAfterChange(
     HloInstruction* hlo, const ShapeIndex& index) const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc mht_23(mht_23_v, 1213, "", "./tensorflow/compiler/xla/service/bfloat16_propagation.cc", "BFloat16Propagation::OutputTypeAfterChange");
+
   Shape* subshape = ShapeUtil::GetMutableSubshape(hlo->mutable_shape(), index);
   const PrimitiveType type_on_hlo = subshape->element_type();
   if (type_on_hlo != F32) {
@@ -987,6 +1227,9 @@ PrimitiveType BFloat16Propagation::OutputTypeAfterChange(
 
 PrimitiveType BFloat16Propagation::ValueTypeAfterChange(
     const HloValue* value) const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc mht_24(mht_24_v, 1230, "", "./tensorflow/compiler/xla/service/bfloat16_propagation.cc", "BFloat16Propagation::ValueTypeAfterChange");
+
   auto hlo = value->defining_instruction();
   const auto& position = value->defining_position();
   return OutputTypeAfterChange(hlo, position.index);
@@ -994,6 +1237,9 @@ PrimitiveType BFloat16Propagation::ValueTypeAfterChange(
 
 void BFloat16Propagation::AddToOrRemoveFromBF16ChangeSet(
     HloInstruction* hlo, const ShapeIndex& index, PrimitiveType target_type) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSbfloat16_propagationDTcc mht_25(mht_25_v, 1240, "", "./tensorflow/compiler/xla/service/bfloat16_propagation.cc", "BFloat16Propagation::AddToOrRemoveFromBF16ChangeSet");
+
   if (target_type == BF16) {
     auto& entry = changes_to_bf16_[hlo];
     entry.emplace(ShapeUtil::GetMutableSubshape(hlo->mutable_shape(), index),

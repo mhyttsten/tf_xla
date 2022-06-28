@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSconvertDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSconvertDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSconvertDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,6 +210,9 @@ constexpr int kPiohw4ChannelsInPlane = 4;
 // Layout is Po,H,W,OI4x4.
 absl::Status ConvertToPHWO4I4(absl::Span<const float> in, const OHWI& shape,
                               absl::Span<float> out, bool reverse_space) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSconvertDTcc mht_0(mht_0_v, 213, "", "./tensorflow/lite/delegates/gpu/common/convert.cc", "ConvertToPHWO4I4");
+
   if (in.size() != shape.DimensionsProduct()) {
     return absl::InvalidArgumentError(absl::StrCat(
         "ConvertToPHWO4I4: Input data size does not match expected size: ",
@@ -84,11 +255,17 @@ absl::Status ConvertToPHWO4I4(absl::Span<const float> in, const OHWI& shape,
 }  // namespace
 
 uint32_t GetElementsSizeForPHWO4I4(const OHWI& shape) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSconvertDTcc mht_1(mht_1_v, 258, "", "./tensorflow/lite/delegates/gpu/common/convert.cc", "GetElementsSizeForPHWO4I4");
+
   return AlignByN(shape.i, kPhwo4i4ChannelsInPlane) *
          AlignByN(shape.o, kPhwo4i4ChannelsInPlane) * shape.h * shape.w;
 }
 
 uint32_t GetElementsSizeForPHWO4I4(const IHWO& shape) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSconvertDTcc mht_2(mht_2_v, 266, "", "./tensorflow/lite/delegates/gpu/common/convert.cc", "GetElementsSizeForPHWO4I4");
+
   return AlignByN(shape.i, kPhwo4i4ChannelsInPlane) *
          AlignByN(shape.o, kPhwo4i4ChannelsInPlane) * shape.h * shape.w;
 }
@@ -114,6 +291,9 @@ std::vector<float> ConvertToPHWO4I4Transposed(
 }
 
 uint3 Get3DSizeForPHWO4I4(const OHWI& shape) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSconvertDTcc mht_3(mht_3_v, 294, "", "./tensorflow/lite/delegates/gpu/common/convert.cc", "Get3DSizeForPHWO4I4");
+
   return uint3(AlignByN(shape.i, 4), shape.h * shape.w,
                DivideRoundUp(shape.o, 4));
 }
@@ -121,6 +301,9 @@ uint3 Get3DSizeForPHWO4I4(const OHWI& shape) {
 // Layout is Po,H,W,OI4x4.
 absl::Status ConvertToPHWO4I4(absl::Span<const float> in, const IHWO& shape,
                               absl::Span<float> out) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSconvertDTcc mht_4(mht_4_v, 304, "", "./tensorflow/lite/delegates/gpu/common/convert.cc", "ConvertToPHWO4I4");
+
   if (in.size() != shape.DimensionsProduct()) {
     return absl::InvalidArgumentError(absl::StrCat(
         "ConvertToPHWO4I4: Input data size does not match expected size: ",
@@ -169,12 +352,18 @@ std::vector<float> ConvertToPHWO4I4(
 }
 
 uint32_t GetElementsSizeForPIOHW4(const OHWI& shape) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSconvertDTcc mht_5(mht_5_v, 355, "", "./tensorflow/lite/delegates/gpu/common/convert.cc", "GetElementsSizeForPIOHW4");
+
   return AlignByN(shape.o * shape.i, kPiohw4ChannelsInPlane) * shape.h *
          shape.w;
 }
 
 absl::Status ConvertToPIOHW4(absl::Span<const float> in, const OHWI& shape,
                              absl::Span<float> out) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSconvertDTcc mht_6(mht_6_v, 364, "", "./tensorflow/lite/delegates/gpu/common/convert.cc", "ConvertToPIOHW4");
+
   if (in.size() != shape.DimensionsProduct()) {
     return absl::InvalidArgumentError(absl::StrCat(
         "ConvertToPIOHW4: Input data size does not match expected size: ",
@@ -217,6 +406,9 @@ std::vector<float> ConvertToPIOHW4(
 template <typename T>
 absl::Status ValidateConvertToPHWC4(absl::Span<const float> in,
                                     const BHWC& shape, absl::Span<T> out) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSconvertDTcc mht_7(mht_7_v, 409, "", "./tensorflow/lite/delegates/gpu/common/convert.cc", "ValidateConvertToPHWC4");
+
   if (in.size() != shape.DimensionsProduct()) {
     return absl::InvalidArgumentError(absl::StrCat(
         "ConvertToPHWC4: Input data size does not match expected size: ",
@@ -233,6 +425,9 @@ absl::Status ValidateConvertToPHWC4(absl::Span<const float> in,
 // Layout is Pc,H,W,C4 where P - is a plane based on channels.
 absl::Status ConvertToPHWC4(absl::Span<const float> in, const BHWC& shape,
                             absl::Span<float> out) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSconvertDTcc mht_8(mht_8_v, 428, "", "./tensorflow/lite/delegates/gpu/common/convert.cc", "ConvertToPHWC4");
+
   RETURN_IF_ERROR(ValidateConvertToPHWC4(in, shape, out));
   if (shape.c == 4) {
     std::memcpy(out.data(), in.data(),
@@ -286,6 +481,9 @@ absl::Status ConvertToPHWC4(absl::Span<const float> in, const BHWC& shape,
 // Layout is Pc,H,W,C4 where P - is a plane based on channels.
 absl::Status ConvertToPHWC4Half(absl::Span<const float> in, const BHWC& shape,
                                 absl::Span<HalfBits> out) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSconvertDTcc mht_9(mht_9_v, 484, "", "./tensorflow/lite/delegates/gpu/common/convert.cc", "ConvertToPHWC4Half");
+
   RETURN_IF_ERROR(ValidateConvertToPHWC4(in, shape, out));
 
   // Layout is Pc,H,W,C4 where P - is a plane based on channels.
@@ -387,12 +585,18 @@ std::vector<float> ConvertToPHWC4(
 }
 
 uint32_t GetElementsSizeForPHWC4(const BHWC& shape) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSconvertDTcc mht_10(mht_10_v, 588, "", "./tensorflow/lite/delegates/gpu/common/convert.cc", "GetElementsSizeForPHWC4");
+
   return shape.b * shape.h * shape.w * AlignByN(shape.c, kPhwc4ChannelsInPlane);
 }
 
 template <typename T>
 absl::Status ValidateConvertFromPHWC4(absl::Span<const T> in, const BHWC& shape,
                                       absl::Span<float> out) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSconvertDTcc mht_11(mht_11_v, 597, "", "./tensorflow/lite/delegates/gpu/common/convert.cc", "ValidateConvertFromPHWC4");
+
   if (in.size() != GetElementsSizeForPHWC4(shape)) {
     return absl::InvalidArgumentError(absl::StrCat(
         "ConvertFromPHWC4: Input data size does not match expected size: ",
@@ -408,6 +612,9 @@ absl::Status ValidateConvertFromPHWC4(absl::Span<const T> in, const BHWC& shape,
 
 absl::Status ConvertFromPHWC4(absl::Span<const float> in, const BHWC& shape,
                               absl::Span<float> out) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSconvertDTcc mht_12(mht_12_v, 615, "", "./tensorflow/lite/delegates/gpu/common/convert.cc", "ConvertFromPHWC4");
+
   RETURN_IF_ERROR(ValidateConvertFromPHWC4(in, shape, out));
   if (shape.c == 4) {
     std::memcpy(out.data(), in.data(),
@@ -456,6 +663,9 @@ absl::Status ConvertFromPHWC4(absl::Span<const float> in, const BHWC& shape,
 
 absl::Status ConvertFromPHWC4Half(absl::Span<const HalfBits> in,
                                   const BHWC& shape, absl::Span<float> out) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSconvertDTcc mht_13(mht_13_v, 666, "", "./tensorflow/lite/delegates/gpu/common/convert.cc", "ConvertFromPHWC4Half");
+
   RETURN_IF_ERROR(ValidateConvertFromPHWC4(in, shape, out));
   int num_planes = DivideRoundUp(shape.c, kPhwc4ChannelsInPlane);
   const int num_pixels = shape.h * shape.w;

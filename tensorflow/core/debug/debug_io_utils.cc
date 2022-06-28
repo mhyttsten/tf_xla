@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -63,6 +231,9 @@ Event PrepareChunkEventProto(const DebugNodeKey& debug_node_key,
                              const size_t chunk_index,
                              const DataType& tensor_dtype,
                              const TensorShapeProto& tensor_shape) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_0(mht_0_v, 234, "", "./tensorflow/core/debug/debug_io_utils.cc", "PrepareChunkEventProto");
+
   Event event;
   event.set_wall_time(static_cast<double>(wall_time_us));
   Summary::Value* value = event.mutable_summary()->add_value();
@@ -114,6 +285,10 @@ Event PrepareChunkEventProto(const DebugNodeKey& debug_node_key,
 // gRPC message size limit) of the Varint-encoded length, to workaround the lack
 // of a portable length function.
 const size_t StringValMaxBytesInProto(const string& str) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("str: \"" + str + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_1(mht_1_v, 289, "", "./tensorflow/core/debug/debug_io_utils.cc", "StringValMaxBytesInProto");
+
 #if defined(PLATFORM_GOOGLE)
   return str.size() + DebugGrpcIO::kGrpcMaxVarintLengthSize;
 #else
@@ -128,6 +303,9 @@ Status WrapStringTensorAsEvents(const DebugNodeKey& debug_node_key,
                                 const size_t chunk_size_limit,
                                 TensorProto* tensor_proto,
                                 std::vector<Event>* events) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_2(mht_2_v, 306, "", "./tensorflow/core/debug/debug_io_utils.cc", "WrapStringTensorAsEvents");
+
   const protobuf::RepeatedPtrField<string>& strs = tensor_proto->string_val();
   const size_t num_strs = strs.size();
   const size_t chunk_size_ub = chunk_size_limit > 0
@@ -187,6 +365,9 @@ Status WrapTensorAsEvents(const DebugNodeKey& debug_node_key,
                           const Tensor& tensor, const uint64 wall_time_us,
                           const size_t chunk_size_limit,
                           std::vector<Event>* events) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_3(mht_3_v, 368, "", "./tensorflow/core/debug/debug_io_utils.cc", "WrapTensorAsEvents");
+
   TensorProto tensor_proto;
   if (tensor.dtype() == DT_STRING) {
     // Treat DT_STRING specially, so that tensor_util.MakeNdarray in Python can
@@ -231,6 +412,10 @@ Status WrapTensorAsEvents(const DebugNodeKey& debug_node_key,
 // sets parallel_iterations attribute of all while_loops to 1 to prevent
 // the same node from between executed multiple times concurrently.
 string AppendTimestampToFilePath(const string& in, const uint64 timestamp) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("in: \"" + in + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_4(mht_4_v, 416, "", "./tensorflow/core/debug/debug_io_utils.cc", "AppendTimestampToFilePath");
+
   string out = strings::StrCat(in, "_", timestamp);
 
   uint64 i = 1;
@@ -291,6 +476,10 @@ const char* const DebugIO::kGraphTag = "graph_";
 const char* const DebugIO::kHashTag = "hash";
 
 Status ReadEventFromFile(const string& dump_file_path, Event* event) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("dump_file_path: \"" + dump_file_path + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_5(mht_5_v, 480, "", "./tensorflow/core/debug/debug_io_utils.cc", "ReadEventFromFile");
+
   Env* env(Env::Default());
 
   string content;
@@ -330,6 +519,9 @@ Status DebugIO::PublishDebugMetadata(
     const std::vector<string>& output_names,
     const std::vector<string>& target_nodes,
     const std::unordered_set<string>& debug_urls) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_6(mht_6_v, 522, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugIO::PublishDebugMetadata");
+
   std::ostringstream oss;
 
   // Construct a JSON string to carry the metadata.
@@ -416,6 +608,9 @@ Status DebugIO::PublishDebugTensor(const DebugNodeKey& debug_node_key,
                                    const uint64 wall_time_us,
                                    const gtl::ArraySlice<string> debug_urls,
                                    const bool gated_grpc) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_7(mht_7_v, 611, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugIO::PublishDebugTensor");
+
   int32_t num_failed_urls = 0;
   std::vector<Status> fail_statuses;
   for (const string& url : debug_urls) {
@@ -484,12 +679,19 @@ Status DebugIO::PublishDebugTensor(const DebugNodeKey& debug_node_key,
                                    const Tensor& tensor,
                                    const uint64 wall_time_us,
                                    const gtl::ArraySlice<string> debug_urls) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_8(mht_8_v, 682, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugIO::PublishDebugTensor");
+
   return PublishDebugTensor(debug_node_key, tensor, wall_time_us, debug_urls,
                             false);
 }
 
 Status DebugIO::PublishGraph(const Graph& graph, const string& device_name,
                              const std::unordered_set<string>& debug_urls) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_9(mht_9_v, 692, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugIO::PublishGraph");
+
   GraphDef graph_def;
   graph.ToGraphDef(&graph_def);
 
@@ -529,6 +731,9 @@ Status DebugIO::PublishGraph(const Graph& graph, const string& device_name,
 
 bool DebugIO::IsCopyNodeGateOpen(
     const std::vector<DebugWatchAndURLSpec>& specs) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_10(mht_10_v, 734, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugIO::IsCopyNodeGateOpen");
+
 #ifndef PLATFORM_WINDOWS
   for (const DebugWatchAndURLSpec& spec : specs) {
     if (!spec.gated_grpc || spec.url.compare(0, strlen(DebugIO::kGrpcURLScheme),
@@ -548,6 +753,10 @@ bool DebugIO::IsCopyNodeGateOpen(
 
 bool DebugIO::IsDebugNodeGateOpen(const string& watch_key,
                                   const std::vector<string>& debug_urls) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("watch_key: \"" + watch_key + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_11(mht_11_v, 757, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugIO::IsDebugNodeGateOpen");
+
 #ifndef PLATFORM_WINDOWS
   for (const string& debug_url : debug_urls) {
     if (debug_url.compare(0, strlen(DebugIO::kGrpcURLScheme),
@@ -567,6 +776,11 @@ bool DebugIO::IsDebugNodeGateOpen(const string& watch_key,
 
 bool DebugIO::IsDebugURLGateOpen(const string& watch_key,
                                  const string& debug_url) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("watch_key: \"" + watch_key + "\"");
+   mht_12_v.push_back("debug_url: \"" + debug_url + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_12(mht_12_v, 781, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugIO::IsDebugURLGateOpen");
+
 #ifndef PLATFORM_WINDOWS
   if (debug_url != kGrpcURLScheme) {
     return true;
@@ -579,6 +793,10 @@ bool DebugIO::IsDebugURLGateOpen(const string& watch_key,
 }
 
 Status DebugIO::CloseDebugURL(const string& debug_url) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("debug_url: \"" + debug_url + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_13(mht_13_v, 797, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugIO::CloseDebugURL");
+
   if (absl::StartsWith(debug_url, DebugIO::kGrpcURLScheme)) {
 #ifndef PLATFORM_WINDOWS
     return DebugGrpcIO::CloseGrpcStream(debug_url);
@@ -596,6 +814,10 @@ Status DebugFileIO::DumpTensorToDir(const DebugNodeKey& debug_node_key,
                                     const uint64 wall_time_us,
                                     const string& dump_root_dir,
                                     string* dump_file_path) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("dump_root_dir: \"" + dump_root_dir + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_14(mht_14_v, 818, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugFileIO::DumpTensorToDir");
+
   const string file_path =
       GetDumpFilePath(dump_root_dir, debug_node_key, wall_time_us);
 
@@ -609,6 +831,10 @@ Status DebugFileIO::DumpTensorToDir(const DebugNodeKey& debug_node_key,
 string DebugFileIO::GetDumpFilePath(const string& dump_root_dir,
                                     const DebugNodeKey& debug_node_key,
                                     const uint64 wall_time_us) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("dump_root_dir: \"" + dump_root_dir + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_15(mht_15_v, 835, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugFileIO::GetDumpFilePath");
+
   return AppendTimestampToFilePath(
       io::JoinPath(dump_root_dir, debug_node_key.device_path,
                    strings::StrCat(debug_node_key.node_name, "_",
@@ -620,6 +846,11 @@ string DebugFileIO::GetDumpFilePath(const string& dump_root_dir,
 Status DebugFileIO::DumpEventProtoToFile(const Event& event_proto,
                                          const string& dir_name,
                                          const string& file_name) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("dir_name: \"" + dir_name + "\"");
+   mht_16_v.push_back("file_name: \"" + file_name + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_16(mht_16_v, 851, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugFileIO::DumpEventProtoToFile");
+
   Env* env(Env::Default());
 
   Status s = RecursiveCreateDir(env, dir_name);
@@ -646,6 +877,10 @@ Status DebugFileIO::DumpTensorToEventFile(const DebugNodeKey& debug_node_key,
                                           const Tensor& tensor,
                                           const uint64 wall_time_us,
                                           const string& file_path) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("file_path: \"" + file_path + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_17(mht_17_v, 881, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugFileIO::DumpTensorToEventFile");
+
   std::vector<Event> events;
   TF_RETURN_IF_ERROR(
       WrapTensorAsEvents(debug_node_key, tensor, wall_time_us, 0, &events));
@@ -654,6 +889,10 @@ Status DebugFileIO::DumpTensorToEventFile(const DebugNodeKey& debug_node_key,
 }
 
 Status DebugFileIO::RecursiveCreateDir(Env* env, const string& dir) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("dir: \"" + dir + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_18(mht_18_v, 893, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugFileIO::RecursiveCreateDir");
+
   if (env->FileExists(dir).ok() && env->IsDirectory(dir).ok()) {
     // The path already exists as a directory. Return OK right away.
     return Status::OK();
@@ -695,6 +934,9 @@ uint64 DebugFileIO::disk_bytes_used_ = 0;
 mutex DebugFileIO::bytes_mu_(LINKER_INITIALIZED);
 
 bool DebugFileIO::requestDiskByteUsage(uint64 bytes) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_19(mht_19_v, 937, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugFileIO::requestDiskByteUsage");
+
   mutex_lock l(bytes_mu_);
   if (global_disk_bytes_limit_ == 0) {
     const char* env_tfdbg_disk_bytes_limit = getenv("TFDBG_DISK_BYTES_LIMIT");
@@ -719,6 +961,9 @@ bool DebugFileIO::requestDiskByteUsage(uint64 bytes) {
 }
 
 void DebugFileIO::resetDiskByteUsage() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_20(mht_20_v, 964, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugFileIO::resetDiskByteUsage");
+
   mutex_lock l(bytes_mu_);
   disk_bytes_used_ = 0;
 }
@@ -729,6 +974,9 @@ DebugGrpcChannel::DebugGrpcChannel(const string& server_stream_addr)
       url_(strings::StrCat(DebugIO::kGrpcURLScheme, server_stream_addr)) {}
 
 Status DebugGrpcChannel::Connect(const int64_t timeout_micros) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_21(mht_21_v, 977, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugGrpcChannel::Connect");
+
   ::grpc::ChannelArguments args;
   args.SetInt(GRPC_ARG_MAX_MESSAGE_LENGTH, std::numeric_limits<int32>::max());
   // Avoid problems where default reconnect backoff is too long (e.g., 20 s).
@@ -749,16 +997,25 @@ Status DebugGrpcChannel::Connect(const int64_t timeout_micros) {
 }
 
 bool DebugGrpcChannel::WriteEvent(const Event& event) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_22(mht_22_v, 1000, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugGrpcChannel::WriteEvent");
+
   mutex_lock l(mu_);
   return reader_writer_->Write(event);
 }
 
 bool DebugGrpcChannel::ReadEventReply(EventReply* event_reply) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_23(mht_23_v, 1008, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugGrpcChannel::ReadEventReply");
+
   mutex_lock l(mu_);
   return reader_writer_->Read(event_reply);
 }
 
 void DebugGrpcChannel::ReceiveAndProcessEventReplies(const size_t max_replies) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_24(mht_24_v, 1016, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugGrpcChannel::ReceiveAndProcessEventReplies");
+
   EventReply event_reply;
   size_t num_replies = 0;
   while ((max_replies == 0 || ++num_replies <= max_replies) &&
@@ -775,6 +1032,9 @@ void DebugGrpcChannel::ReceiveAndProcessEventReplies(const size_t max_replies) {
 }
 
 Status DebugGrpcChannel::ReceiveServerRepliesAndClose() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_25(mht_25_v, 1035, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugGrpcChannel::ReceiveServerRepliesAndClose");
+
   reader_writer_->WritesDone();
   // Read all EventReply messages (if any) from the server.
   ReceiveAndProcessEventReplies(0);
@@ -798,6 +1058,9 @@ const size_t DebugGrpcIO::kGrpcMaxVarintLengthSize = 6;
 
 std::unordered_map<string, std::unique_ptr<DebugGrpcChannel>>*
 DebugGrpcIO::GetStreamChannels() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_26(mht_26_v, 1061, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugGrpcIO::GetStreamChannels");
+
   static std::unordered_map<string, std::unique_ptr<DebugGrpcChannel>>*
       stream_channels =
           new std::unordered_map<string, std::unique_ptr<DebugGrpcChannel>>();
@@ -808,6 +1071,10 @@ Status DebugGrpcIO::SendTensorThroughGrpcStream(
     const DebugNodeKey& debug_node_key, const Tensor& tensor,
     const uint64 wall_time_us, const string& grpc_stream_url,
     const bool gated) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("grpc_stream_url: \"" + grpc_stream_url + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_27(mht_27_v, 1075, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugGrpcIO::SendTensorThroughGrpcStream");
+
   if (gated &&
       !IsReadGateOpen(grpc_stream_url, debug_node_key.debug_node_name)) {
     return Status::OK();
@@ -833,6 +1100,10 @@ Status DebugGrpcIO::SendTensorThroughGrpcStream(
 
 Status DebugGrpcIO::ReceiveEventReplyProtoThroughGrpcStream(
     EventReply* event_reply, const string& grpc_stream_url) {
+   std::vector<std::string> mht_28_v;
+   mht_28_v.push_back("grpc_stream_url: \"" + grpc_stream_url + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_28(mht_28_v, 1104, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugGrpcIO::ReceiveEventReplyProtoThroughGrpcStream");
+
   DebugGrpcChannel* debug_grpc_channel = nullptr;
   TF_RETURN_IF_ERROR(
       GetOrCreateDebugGrpcChannel(grpc_stream_url, &debug_grpc_channel));
@@ -846,6 +1117,10 @@ Status DebugGrpcIO::ReceiveEventReplyProtoThroughGrpcStream(
 
 Status DebugGrpcIO::GetOrCreateDebugGrpcChannel(
     const string& grpc_stream_url, DebugGrpcChannel** debug_grpc_channel) {
+   std::vector<std::string> mht_29_v;
+   mht_29_v.push_back("grpc_stream_url: \"" + grpc_stream_url + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_29(mht_29_v, 1121, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugGrpcIO::GetOrCreateDebugGrpcChannel");
+
   const string addr_with_path =
       absl::StartsWith(grpc_stream_url, DebugIO::kGrpcURLScheme)
           ? grpc_stream_url.substr(strlen(DebugIO::kGrpcURLScheme))
@@ -871,6 +1146,10 @@ Status DebugGrpcIO::GetOrCreateDebugGrpcChannel(
 Status DebugGrpcIO::SendEventProtoThroughGrpcStream(
     const Event& event_proto, const string& grpc_stream_url,
     const bool receive_reply) {
+   std::vector<std::string> mht_30_v;
+   mht_30_v.push_back("grpc_stream_url: \"" + grpc_stream_url + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_30(mht_30_v, 1150, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugGrpcIO::SendEventProtoThroughGrpcStream");
+
   DebugGrpcChannel* debug_grpc_channel;
   TF_RETURN_IF_ERROR(
       GetOrCreateDebugGrpcChannel(grpc_stream_url, &debug_grpc_channel));
@@ -890,6 +1169,11 @@ Status DebugGrpcIO::SendEventProtoThroughGrpcStream(
 
 bool DebugGrpcIO::IsReadGateOpen(const string& grpc_debug_url,
                                  const string& watch_key) {
+   std::vector<std::string> mht_31_v;
+   mht_31_v.push_back("grpc_debug_url: \"" + grpc_debug_url + "\"");
+   mht_31_v.push_back("watch_key: \"" + watch_key + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_31(mht_31_v, 1174, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugGrpcIO::IsReadGateOpen");
+
   const DebugNodeName2State* enabled_node_to_state =
       GetEnabledDebugOpStatesAtUrl(grpc_debug_url);
   return enabled_node_to_state->find(watch_key) != enabled_node_to_state->end();
@@ -897,6 +1181,11 @@ bool DebugGrpcIO::IsReadGateOpen(const string& grpc_debug_url,
 
 bool DebugGrpcIO::IsWriteGateOpen(const string& grpc_debug_url,
                                   const string& watch_key) {
+   std::vector<std::string> mht_32_v;
+   mht_32_v.push_back("grpc_debug_url: \"" + grpc_debug_url + "\"");
+   mht_32_v.push_back("watch_key: \"" + watch_key + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_32(mht_32_v, 1186, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugGrpcIO::IsWriteGateOpen");
+
   const DebugNodeName2State* enabled_node_to_state =
       GetEnabledDebugOpStatesAtUrl(grpc_debug_url);
   auto it = enabled_node_to_state->find(watch_key);
@@ -908,6 +1197,10 @@ bool DebugGrpcIO::IsWriteGateOpen(const string& grpc_debug_url,
 }
 
 Status DebugGrpcIO::CloseGrpcStream(const string& grpc_stream_url) {
+   std::vector<std::string> mht_33_v;
+   mht_33_v.push_back("grpc_stream_url: \"" + grpc_stream_url + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_33(mht_33_v, 1201, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugGrpcIO::CloseGrpcStream");
+
   mutex_lock l(streams_mu_);
 
   std::unordered_map<string, std::unique_ptr<DebugGrpcChannel>>*
@@ -927,6 +1220,9 @@ Status DebugGrpcIO::CloseGrpcStream(const string& grpc_stream_url) {
 
 std::unordered_map<string, DebugGrpcIO::DebugNodeName2State>*
 DebugGrpcIO::GetEnabledDebugOpStates() {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_34(mht_34_v, 1223, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugGrpcIO::GetEnabledDebugOpStates");
+
   static std::unordered_map<string, DebugNodeName2State>*
       enabled_debug_op_states =
           new std::unordered_map<string, DebugNodeName2State>();
@@ -935,6 +1231,10 @@ DebugGrpcIO::GetEnabledDebugOpStates() {
 
 DebugGrpcIO::DebugNodeName2State* DebugGrpcIO::GetEnabledDebugOpStatesAtUrl(
     const string& grpc_debug_url) {
+   std::vector<std::string> mht_35_v;
+   mht_35_v.push_back("grpc_debug_url: \"" + grpc_debug_url + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_35(mht_35_v, 1235, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugGrpcIO::GetEnabledDebugOpStatesAtUrl");
+
   static mutex* debug_ops_state_mu = new mutex();
   std::unordered_map<string, DebugNodeName2State>* states =
       GetEnabledDebugOpStates();
@@ -950,6 +1250,11 @@ DebugGrpcIO::DebugNodeName2State* DebugGrpcIO::GetEnabledDebugOpStatesAtUrl(
 void DebugGrpcIO::SetDebugNodeKeyGrpcState(
     const string& grpc_debug_url, const string& watch_key,
     const EventReply::DebugOpStateChange::State new_state) {
+   std::vector<std::string> mht_36_v;
+   mht_36_v.push_back("grpc_debug_url: \"" + grpc_debug_url + "\"");
+   mht_36_v.push_back("watch_key: \"" + watch_key + "\"");
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_36(mht_36_v, 1255, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugGrpcIO::SetDebugNodeKeyGrpcState");
+
   DebugNodeName2State* states = GetEnabledDebugOpStatesAtUrl(grpc_debug_url);
   if (new_state == EventReply::DebugOpStateChange::DISABLED) {
     if (states->find(watch_key) == states->end()) {
@@ -964,6 +1269,9 @@ void DebugGrpcIO::SetDebugNodeKeyGrpcState(
 }
 
 void DebugGrpcIO::ClearEnabledWatchKeys() {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSdebugPSdebug_io_utilsDTcc mht_37(mht_37_v, 1272, "", "./tensorflow/core/debug/debug_io_utils.cc", "DebugGrpcIO::ClearEnabledWatchKeys");
+
   GetEnabledDebugOpStates()->clear();
 }
 

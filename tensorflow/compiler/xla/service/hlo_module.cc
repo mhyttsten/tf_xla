@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,10 +215,17 @@ HloModule::HloModule(const std::string& name, HloModuleConfig config)
       config_(std::move(config)),
       unique_id_(next_unique_module_id_++),
       metadata_(tensorflow::Env::Default()) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_0(mht_0_v, 219, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::HloModule");
+
   metadata_.set_canonical_module_id(unique_id_);
 }
 
 Status HloModule::set_schedule(HloSchedule schedule) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_1(mht_1_v, 226, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::set_schedule");
+
   TF_RET_CHECK(schedule.module() == this);
   TF_RETURN_IF_ERROR(schedule.Verify());
   schedule_ = std::move(schedule);
@@ -58,6 +233,9 @@ Status HloModule::set_schedule(HloSchedule schedule) {
 }
 
 void HloModule::ReplaceEntryComputation(HloComputation* entry_computation) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_2(mht_2_v, 236, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::ReplaceEntryComputation");
+
   entry_computation_ = entry_computation;
   config_.SetDefaultComputationLayout(
       entry_computation_->ComputeProgramShape());
@@ -68,6 +246,9 @@ void HloModule::ReplaceEntryComputation(HloComputation* entry_computation) {
 HloComputation* HloModule::AddComputationInternal(
     std::unique_ptr<HloComputation> computation, bool is_entry,
     bool uniquify_identifiers, bool preserve_entry_layouts) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_3(mht_3_v, 249, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::AddComputationInternal");
+
   if (is_entry) {
     CHECK_EQ(nullptr, entry_computation_);
     entry_computation_ = computation.get();
@@ -122,6 +303,9 @@ HloComputation* HloModule::AddComputationInternal(
 
 HloComputation* HloModule::AddEntryComputation(
     std::unique_ptr<HloComputation> computation) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_4(mht_4_v, 306, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::AddEntryComputation");
+
   return AddComputationInternal(std::move(computation), /*is_entry=*/true,
                                 /*uniquify_identifiers=*/true,
                                 /*preserve_entry_layouts=*/false);
@@ -129,12 +313,18 @@ HloComputation* HloModule::AddEntryComputation(
 
 HloComputation* HloModule::AddEntryComputationWithLayouts(
     std::unique_ptr<HloComputation> computation) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_5(mht_5_v, 316, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::AddEntryComputationWithLayouts");
+
   return AddComputationInternal(std::move(computation), /*is_entry=*/true,
                                 /*uniquify_identifiers=*/true,
                                 /*preserve_entry_layouts=*/true);
 }
 
 Status HloModule::RemoveEmbeddedComputation(HloComputation* to_remove) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_6(mht_6_v, 325, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::RemoveEmbeddedComputation");
+
   if (has_schedule() && !to_remove->IsCalledComputation()) {
     schedule_->remove_computation(to_remove);
   }
@@ -151,6 +341,9 @@ Status HloModule::RemoveEmbeddedComputation(HloComputation* to_remove) {
 
 HloComputation* HloModule::AddEmbeddedComputation(
     std::unique_ptr<HloComputation> computation) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_7(mht_7_v, 344, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::AddEmbeddedComputation");
+
   return AddComputationInternal(std::move(computation), /*is_entry=*/false,
                                 /*uniquify_identifiers=*/true,
                                 /*preserve_entry_layouts=*/false);
@@ -158,6 +351,9 @@ HloComputation* HloModule::AddEmbeddedComputation(
 
 void HloModule::ReplaceComputations(
     const absl::flat_hash_map<HloComputation*, HloComputation*>& replacements) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_8(mht_8_v, 354, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::ReplaceComputations");
+
   // Replace all uses of non-canonical computations with their
   // representatives.
   std::vector<std::unique_ptr<HloComputation>> new_computations;
@@ -235,10 +431,16 @@ void HloModule::ReplaceComputations(
 }
 
 std::string HloModule::ToString(const HloPrintOptions& options) const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_9(mht_9_v, 434, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::ToString");
+
   return std::string(ToCord(options));
 }
 
 absl::Cord HloModule::ToCord(const HloPrintOptions& options) const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_10(mht_10_v, 441, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::ToCord");
+
   absl::Cord result;
   result.Append("HloModule ");
   if (options.print_ids()) {
@@ -287,6 +489,9 @@ absl::Cord HloModule::ToCord(const HloPrintOptions& options) const {
 }
 
 HloModuleProto HloModule::ToProto() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_11(mht_11_v, 492, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::ToProto");
+
   HloModuleProto proto;
   proto.set_id(unique_id_);
   proto.set_name(name_);
@@ -336,6 +541,9 @@ HloModuleProto HloModule::ToProto() const {
 }
 
 Status HloModule::CheckUniqueNamesAndIdsForComputationsAndInstructions() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_12(mht_12_v, 544, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::CheckUniqueNamesAndIdsForComputationsAndInstructions");
+
   absl::flat_hash_set<std::string> computation_names;
   absl::flat_hash_set<int> computation_ids;
   absl::flat_hash_set<std::string> instruction_names;
@@ -367,6 +575,9 @@ Status HloModule::CheckUniqueNamesAndIdsForComputationsAndInstructions() const {
 StatusOr<std::unique_ptr<HloModule>> HloModule::CreateFromProto(
     const HloModuleProto& proto, const HloModuleConfig& module_config,
     bool prohibit_empty_literal) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_13(mht_13_v, 578, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::CreateFromProto");
+
   VLOG(2) << "CreateFromProto()";
   XLA_VLOG_LINES(3, proto.DebugString());
 
@@ -495,6 +706,9 @@ StatusOr<std::unique_ptr<HloModule>> HloModule::CreateFromProto(
 StatusOr<HloModuleConfig> HloModule::CreateModuleConfigFromShape(
     const ProgramShape& program_shape, const DebugOptions& debug_options,
     const ExecutionOptions* execution_options) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_14(mht_14_v, 709, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::CreateModuleConfigFromShape");
+
   HloModuleConfig module_config(ProgramShape{program_shape});
   module_config.set_debug_options(debug_options);
   if (execution_options) {
@@ -545,6 +759,9 @@ StatusOr<HloModuleConfig> HloModule::CreateModuleConfigFromShape(
 StatusOr<HloModuleConfig> HloModule::CreateModuleConfigFromProto(
     const HloModuleProto& module, const DebugOptions& debug_options,
     const ExecutionOptions* execution_options) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_15(mht_15_v, 762, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::CreateModuleConfigFromProto");
+
   TF_RET_CHECK(module.has_host_program_shape())
       << "No program shape found in the proto";
   ProgramShape program_shape(module.host_program_shape());
@@ -559,6 +776,9 @@ namespace {
 bool IsUsedOutsideSubcomputation(const HloInstruction& hlo,
                                  const absl::flat_hash_set<HloInstruction*>&
                                      instructions_in_subcomputation) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_16(mht_16_v, 779, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "IsUsedOutsideSubcomputation");
+
   return absl::c_any_of(hlo.users(), [&](HloInstruction* user) {
     return !instructions_in_subcomputation.contains(user);
   });
@@ -568,6 +788,10 @@ bool IsUsedOutsideSubcomputation(const HloInstruction& hlo,
 HloInstruction* HloModule::OutlineExpressionFromComputation(
     absl::Span<HloInstruction* const> instructions_to_outline,
     const std::string& outlined_computation_name, HloComputation* computation) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("outlined_computation_name: \"" + outlined_computation_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_17(mht_17_v, 792, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::OutlineExpressionFromComputation");
+
   auto builder = HloComputation::Builder(outlined_computation_name);
 
   // A map from original instructions to their counterparts in the new outlined
@@ -652,6 +876,9 @@ HloInstruction* HloModule::OutlineExpressionFromComputation(
 }
 
 int64_t HloModule::instruction_count() const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_18(mht_18_v, 879, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::instruction_count");
+
   int64_t n = 0;
   for (const auto& computation : computations_) {
     n += computation->instruction_count();
@@ -661,6 +888,9 @@ int64_t HloModule::instruction_count() const {
 
 std::vector<HloComputation*> HloModule::MakeComputationPostOrder(
     const absl::flat_hash_set<HloComputation*>& allow_list) const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_19(mht_19_v, 891, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::MakeComputationPostOrder");
+
   std::vector<HloComputation*> filtered_post_order(allow_list.size());
   auto post_order = this->MakeComputationPostOrder();
 
@@ -676,6 +906,9 @@ std::vector<HloComputation*> HloModule::MakeComputationPostOrder(
 }
 
 std::vector<HloComputation*> HloModule::MakeComputationPostOrder() const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_20(mht_20_v, 909, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::MakeComputationPostOrder");
+
   if (computations_.empty()) {
     return {};
   }
@@ -734,6 +967,9 @@ std::vector<HloComputation*> HloModule::MakeComputationPostOrder() const {
 namespace {
 bool CompareComputationsByContent(const HloComputation* a,
                                   const HloComputation* b) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_21(mht_21_v, 970, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "CompareComputationsByContent");
+
   if (a->instruction_count() != b->instruction_count()) {
     return a->instruction_count() < b->instruction_count();
   }
@@ -744,6 +980,9 @@ bool CompareComputationsByContent(const HloComputation* a,
 uint64_t GetFingerprint(
     absl::flat_hash_map<const HloComputation*, uint64_t>& fingerprint_map,
     const HloComputation* computation) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_22(mht_22_v, 983, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "GetFingerprint");
+
   auto it = fingerprint_map.find(computation);
   if (it != fingerprint_map.end()) {
     return it->second;
@@ -756,9 +995,15 @@ uint64_t GetFingerprint(
 }
 
 void SortComputationsByContent(std::vector<HloComputation*>* computations) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_23(mht_23_v, 998, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "SortComputationsByContent");
+
   absl::flat_hash_map<const HloComputation*, uint64_t> fingerprint_map;
   auto cmp = [&fingerprint_map](const HloComputation* a,
                                 const HloComputation* b) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_24(mht_24_v, 1004, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "lambda");
+
     if (a->instruction_count() != b->instruction_count()) {
       return a->instruction_count() < b->instruction_count();
     }
@@ -771,6 +1016,9 @@ void SortComputationsByContent(std::vector<HloComputation*>* computations) {
 }  // anonymous namespace
 
 std::vector<HloComputation*> HloModule::MakeComputationSorted() const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_25(mht_25_v, 1019, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::MakeComputationSorted");
+
   std::vector<HloComputation*> result = MakeComputationPostOrder();
   if (config().content_aware_computation_sorting()) {
     SortComputationsByContent(&result);
@@ -779,6 +1027,9 @@ std::vector<HloComputation*> HloModule::MakeComputationSorted() const {
 }
 
 std::vector<HloComputation*> HloModule::MakeNonfusionComputations() const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_26(mht_26_v, 1030, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::MakeNonfusionComputations");
+
   std::vector<HloComputation*> result = MakeComputationPostOrder();
   result.erase(std::remove_if(
                    result.begin(), result.end(),
@@ -789,6 +1040,9 @@ std::vector<HloComputation*> HloModule::MakeNonfusionComputations() const {
 
 std::vector<HloComputation*> HloModule::MakeNonfusionComputationsSorted()
     const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_27(mht_27_v, 1043, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::MakeNonfusionComputationsSorted");
+
   auto result = MakeNonfusionComputations();
   if (config().content_aware_computation_sorting()) {
     SortComputationsByContent(&result);
@@ -797,11 +1051,19 @@ std::vector<HloComputation*> HloModule::MakeNonfusionComputationsSorted()
 }
 
 std::unique_ptr<HloModule> HloModule::Clone(const std::string& suffix) const {
+   std::vector<std::string> mht_28_v;
+   mht_28_v.push_back("suffix: \"" + suffix + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_28(mht_28_v, 1055, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::Clone");
+
   return Clone(config(), suffix);
 }
 
 std::unique_ptr<HloModule> HloModule::Clone(const HloModuleConfig& config,
                                             const std::string& suffix) const {
+   std::vector<std::string> mht_29_v;
+   mht_29_v.push_back("suffix: \"" + suffix + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_29(mht_29_v, 1064, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::Clone");
+
   VLOG(1) << "Cloning module :" << name_ << " --> " << suffix << "\n";
   auto module = absl::make_unique<HloModule>(
       absl::StrCat(name_, suffix.empty() ? "" : "-", suffix), config);
@@ -840,6 +1102,9 @@ std::unique_ptr<HloModule> HloModule::Clone(const HloModuleConfig& config,
 }
 
 Status HloModule::RemoveUnusedComputations() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_30(mht_30_v, 1105, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::RemoveUnusedComputations");
+
   std::string suffix = "tmp";
   auto module = absl::make_unique<HloModule>(
       absl::StrCat(name_, suffix.empty() ? "" : "-", suffix), config());
@@ -860,6 +1125,9 @@ Status HloModule::RemoveUnusedComputations() {
 
 HloComputation* HloModule::DeepCloneComputation(HloComputation* computation,
                                                 HloCloneContext* context) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_31(mht_31_v, 1128, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::DeepCloneComputation");
+
   HloComputation* new_computation;
   if (context != nullptr) {
     if ((new_computation = context->FindComputation(computation)) != nullptr) {
@@ -874,11 +1142,18 @@ HloComputation* HloModule::DeepCloneComputation(HloComputation* computation,
 }
 
 uint64_t HloModule::RandomNew64() const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_32(mht_32_v, 1145, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::RandomNew64");
+
   absl::MutexLock l(&rng_mutex_);
   return rng_();
 }
 
 HloComputation* HloModule::GetComputationWithName(absl::string_view name) {
+   std::vector<std::string> mht_33_v;
+   mht_33_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_moduleDTcc mht_33(mht_33_v, 1154, "", "./tensorflow/compiler/xla/service/hlo_module.cc", "HloModule::GetComputationWithName");
+
   auto computations_in_module = computations();
   auto it = absl::c_find_if(
       computations_in_module,

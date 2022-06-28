@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_lrn_opDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_lrn_opDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_lrn_opDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -53,6 +221,9 @@ namespace {
 template <typename T>
 void GetBandMatrix(int depth, int depth_radius,
                    Eigen::Tensor<T, 2, Eigen::RowMajor>* result) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_lrn_opDTcc mht_0(mht_0_v, 224, "", "./tensorflow/core/kernels/mkl/mkl_lrn_op.cc", "GetBandMatrix");
+
   result->setZero();
   for (int row = 0; row < depth; ++row) {
     const int begin = std::max<int>(0, row - depth_radius);
@@ -68,10 +239,16 @@ void GetBandMatrix(int depth, int depth_radius,
 template <typename T>
 class MklLRNOp : public OpKernel {
  public:
-  ~MklLRNOp() {}
+  ~MklLRNOp() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_lrn_opDTcc mht_1(mht_1_v, 243, "", "./tensorflow/core/kernels/mkl/mkl_lrn_op.cc", "~MklLRNOp");
+}
 
   explicit MklLRNOp(OpKernelConstruction* context)
       : OpKernel(context), cpu_engine_(engine::kind::cpu, 0) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_lrn_opDTcc mht_2(mht_2_v, 249, "", "./tensorflow/core/kernels/mkl/mkl_lrn_op.cc", "MklLRNOp");
+
     int64 depth_radius64;
     OP_REQUIRES_OK(context, context->GetAttr("depth_radius", &depth_radius64));
     OP_REQUIRES(
@@ -90,6 +267,9 @@ class MklLRNOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_lrn_opDTcc mht_3(mht_3_v, 270, "", "./tensorflow/core/kernels/mkl/mkl_lrn_op.cc", "Compute");
+
     try {
       SanityCheckInputs(context);
       if (!context->status().ok()) return;
@@ -192,6 +372,9 @@ class MklLRNOp : public OpKernel {
       const lrn_forward::primitive_desc& lrn_fwd_prim_desc,
       const memory::dims output_dims_mkl_order,
       const MklTensorFormat& output_tf_format, Tensor** output_tensor) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_lrn_opDTcc mht_4(mht_4_v, 375, "", "./tensorflow/core/kernels/mkl/mkl_lrn_op.cc", "AllocateOutputTensor");
+
     DCHECK(output_tensor != nullptr);
     memory::desc dst_pd = lrn_fwd_prim_desc.dst_desc();
 
@@ -216,6 +399,9 @@ class MklLRNOp : public OpKernel {
   // TODO(intel-tf) Check if we can use EigenLRNOp directly instead of making a
   // copy.
   void MklDefaultToEigen(OpKernelContext* context, const Tensor& input) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_lrn_opDTcc mht_5(mht_5_v, 402, "", "./tensorflow/core/kernels/mkl/mkl_lrn_op.cc", "MklDefaultToEigen");
+
     const int batch = static_cast<int>(input.dim_size(0));
     const int rows = static_cast<int>(input.dim_size(1));
     const int cols = static_cast<int>(input.dim_size(2));
@@ -263,6 +449,9 @@ class MklLRNOp : public OpKernel {
       OpKernelContext* context,
       const lrn_forward::primitive_desc& lrn_fwd_prim_desc,
       MklDnnData<uint8>* dnn_data_wksp) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_lrn_opDTcc mht_6(mht_6_v, 452, "", "./tensorflow/core/kernels/mkl/mkl_lrn_op.cc", "AllocateWorkspaceTensor");
+
     DCHECK(dnn_data_wksp != nullptr);
     Tensor* workspace_tensor = nullptr;
     memory::desc workspace_pd = lrn_fwd_prim_desc.workspace_desc();
@@ -280,6 +469,9 @@ class MklLRNOp : public OpKernel {
   }
 
   void SanityCheckInputs(OpKernelContext* context) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_lrn_opDTcc mht_7(mht_7_v, 472, "", "./tensorflow/core/kernels/mkl/mkl_lrn_op.cc", "SanityCheckInputs");
+
     const Tensor& src_tensor = MklGetInput(context, kIdxInput);
     MklDnnShape src_dnn_shape;
     GetMklShape(context, kIdxInput, &src_dnn_shape);
@@ -316,6 +508,9 @@ class MklLRNGradOp : public OpKernel {
  public:
   explicit MklLRNGradOp(OpKernelConstruction* context)
       : OpKernel(context), cpu_engine_(engine::kind::cpu, 0) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_lrn_opDTcc mht_8(mht_8_v, 511, "", "./tensorflow/core/kernels/mkl/mkl_lrn_op.cc", "MklLRNGradOp");
+
     int64 depth_radius64;
     OP_REQUIRES_OK(context, context->GetAttr("depth_radius", &depth_radius64));
     OP_REQUIRES(
@@ -334,6 +529,9 @@ class MklLRNGradOp : public OpKernel {
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_lrn_opDTcc mht_9(mht_9_v, 532, "", "./tensorflow/core/kernels/mkl/mkl_lrn_op.cc", "Compute");
+
     try {
       SanityCheckInputs(context);
       if (!context->status().ok()) return;
@@ -455,6 +653,9 @@ class MklLRNGradOp : public OpKernel {
       const lrn_backward::primitive_desc& lrn_bkwd_prim_desc,
       const memory::dims output_dims_mkl_order,
       const MklTensorFormat& output_tf_format, Tensor** output_tensor) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_lrn_opDTcc mht_10(mht_10_v, 656, "", "./tensorflow/core/kernels/mkl/mkl_lrn_op.cc", "AllocateOutputTensor");
+
     DCHECK(output_tensor != nullptr);
     memory::desc dst_pd = lrn_bkwd_prim_desc.diff_src_desc();
     MklDnnShape output_mkl_shape;
@@ -477,6 +678,9 @@ class MklLRNGradOp : public OpKernel {
   memory::desc ConfigureInputGradient(const Tensor& input_grad_tensor,
                                       const MklDnnShape& input_grad_dnn_shape,
                                       MklDnnData<T>* input_grad_dnn_data) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_lrn_opDTcc mht_11(mht_11_v, 681, "", "./tensorflow/core/kernels/mkl/mkl_lrn_op.cc", "ConfigureInputGradient");
+
     DCHECK(input_grad_dnn_data != nullptr);
     // This shouldn't be necessary at this point, but just in case
     DCHECK(input_grad_dnn_shape.IsMklTensor() == true);
@@ -492,6 +696,9 @@ class MklLRNGradOp : public OpKernel {
   void ConfigureWorkspace(const Tensor& workspace_tensor,
                           memory::desc workspace_pd,
                           MklDnnData<uint8>* workspace_dnn_data) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_lrn_opDTcc mht_12(mht_12_v, 699, "", "./tensorflow/core/kernels/mkl/mkl_lrn_op.cc", "ConfigureWorkspace");
+
     DCHECK(workspace_dnn_data);
 
     workspace_dnn_data->SetUsrMem(workspace_pd, &workspace_tensor);
@@ -501,6 +708,9 @@ class MklLRNGradOp : public OpKernel {
   // TODO(intel-tf) Check if we can use EigenLRNOp directly
   // instead of making a copy.
   void MklDefaultToEigen(OpKernelContext* context) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_lrn_opDTcc mht_13(mht_13_v, 711, "", "./tensorflow/core/kernels/mkl/mkl_lrn_op.cc", "MklDefaultToEigen");
+
     Tensor input_gradient_tensor;
     Tensor orig_input_tensor;
     Tensor orig_output_tensor;
@@ -560,6 +770,9 @@ class MklLRNGradOp : public OpKernel {
     out_shaped.setZero();
     auto shard = [this, activations, in_shaped, grads_shaped, out_shaped,
                   depth](int64 begin, int64 end) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_lrn_opDTcc mht_14(mht_14_v, 773, "", "./tensorflow/core/kernels/mkl/mkl_lrn_op.cc", "lambda");
+
       for (int64 i = begin; i < end; ++i) {
         for (int64 j = 0; j < depth; ++j) {
           int64 depth_begin = std::max<int64_t>(0, j - depth_radius_);
@@ -589,6 +802,9 @@ class MklLRNGradOp : public OpKernel {
   }
 
   void SanityCheckInputs(OpKernelContext* context) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSmklPSmkl_lrn_opDTcc mht_15(mht_15_v, 805, "", "./tensorflow/core/kernels/mkl/mkl_lrn_op.cc", "SanityCheckInputs");
+
     const Tensor& input_gradient_tensor = MklGetInput(context, kIdxGradient);
     const Tensor& orig_input_tensor = MklGetInput(context, kIdxOrigInput);
     const Tensor& orig_output_tensor = MklGetInput(context, kIdxOrigOutput);

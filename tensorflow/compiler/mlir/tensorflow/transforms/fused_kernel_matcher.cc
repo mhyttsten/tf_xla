@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfused_kernel_matcherDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfused_kernel_matcherDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfused_kernel_matcherDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -56,6 +224,9 @@ struct FusedKernelMatcherPass
 };
 
 bool IsActivationFunction(Operation *op) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfused_kernel_matcherDTcc mht_0(mht_0_v, 227, "", "./tensorflow/compiler/mlir/tensorflow/transforms/fused_kernel_matcher.cc", "IsActivationFunction");
+
   return isa<EluOp, ReluOp, Relu6Op>(op);
 }
 
@@ -64,6 +235,9 @@ bool IsActivationFunction(Operation *op) {
 // one). If there are no activation functions that use the output, returns
 // nullptr.
 Operation *GetActivation(Value op) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfused_kernel_matcherDTcc mht_1(mht_1_v, 238, "", "./tensorflow/compiler/mlir/tensorflow/transforms/fused_kernel_matcher.cc", "GetActivation");
+
   for (auto &use : op.getUses()) {
     if (IsActivationFunction(use.getOwner())) return use.getOwner();
   }
@@ -75,6 +249,9 @@ Operation *GetActivation(Value op) {
 // guarantee as to which one). If there are no BiasAdds that use the output,
 // returns a null BiasAddOp.
 BiasAddOp GetBiasAdd(Value op) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfused_kernel_matcherDTcc mht_2(mht_2_v, 252, "", "./tensorflow/compiler/mlir/tensorflow/transforms/fused_kernel_matcher.cc", "GetBiasAdd");
+
   for (auto &use : op.getUses()) {
     auto bias_add = dyn_cast_or_null<BiasAddOp>(use.getOwner());
     // If it's a BiasAdd, check that the conv op is the first input.
@@ -102,11 +279,17 @@ class FuseContractionWithBiasAdd : public OpRewritePattern<SrcOpT> {
   // compatibility requirements between the contraction op and the BiasAdd op.
   virtual bool AreFuseCompatible(SrcOpT contraction_op, BiasAddOp bias_add,
                                  PatternRewriter &rewriter) const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfused_kernel_matcherDTcc mht_3(mht_3_v, 282, "", "./tensorflow/compiler/mlir/tensorflow/transforms/fused_kernel_matcher.cc", "AreFuseCompatible");
+
     return true;
   }
 
   LogicalResult matchAndRewrite(SrcOpT contraction,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfused_kernel_matcherDTcc mht_4(mht_4_v, 290, "", "./tensorflow/compiler/mlir/tensorflow/transforms/fused_kernel_matcher.cc", "matchAndRewrite");
+
     auto context = rewriter.getContext();
 
     // We do support fusion only if the contraction operation is inside one of
@@ -204,6 +387,9 @@ class FuseConv2DBiasAdd
   // attribute which is shared.
   bool AreFuseCompatible(Conv2DOp conv, BiasAddOp bias_add,
                          PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfused_kernel_matcherDTcc mht_5(mht_5_v, 390, "", "./tensorflow/compiler/mlir/tensorflow/transforms/fused_kernel_matcher.cc", "AreFuseCompatible");
+
     // Verify that the data formats match and are valid for fusion.
     if (conv.data_format() != bias_add.data_format()) {
       (void)rewriter.notifyMatchFailure(conv, [&](Diagnostic &diag) {
@@ -233,6 +419,9 @@ class FuseMatMulBiasAdd
 
   bool AreFuseCompatible(MatMulOp matmul, BiasAddOp bias_add,
                          PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfused_kernel_matcherDTcc mht_6(mht_6_v, 422, "", "./tensorflow/compiler/mlir/tensorflow/transforms/fused_kernel_matcher.cc", "AreFuseCompatible");
+
     // FusedMatMul kernel supports limited set of data types.
     if (!matmul.T().isF32() && !matmul.T().isBF16()) {
       (void)rewriter.notifyMatchFailure(matmul, [&](Diagnostic &diag) {
@@ -246,6 +435,9 @@ class FuseMatMulBiasAdd
 };
 
 void FusedKernelMatcherPass::runOnOperation() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfused_kernel_matcherDTcc mht_7(mht_7_v, 438, "", "./tensorflow/compiler/mlir/tensorflow/transforms/fused_kernel_matcher.cc", "FusedKernelMatcherPass::runOnOperation");
+
   RewritePatternSet patterns(&getContext());
   auto func = getOperation();
   patterns.add<FuseConv2DBiasAdd, FuseMatMulBiasAdd>(&getContext());

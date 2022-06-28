@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -106,6 +274,9 @@ class MasterSession::ReffedClientGraph : public core::RefCounted {
   }
 
   ~ReffedClientGraph() override {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_0(mht_0_v, 277, "", "./tensorflow/core/distributed_runtime/master_session.cc", "~ReffedClientGraph");
+
     if (should_deregister_) {
       DeregisterPartitions();
     } else {
@@ -115,11 +286,20 @@ class MasterSession::ReffedClientGraph : public core::RefCounted {
     }
   }
 
-  const CallableOptions& callable_options() { return callable_opts_; }
+  const CallableOptions& callable_options() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_1(mht_1_v, 290, "", "./tensorflow/core/distributed_runtime/master_session.cc", "callable_options");
+ return callable_opts_; }
 
-  const BuildGraphOptions& build_graph_options() { return bg_opts_; }
+  const BuildGraphOptions& build_graph_options() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_2(mht_2_v, 295, "", "./tensorflow/core/distributed_runtime/master_session.cc", "build_graph_options");
+ return bg_opts_; }
 
-  int64_t collective_graph_key() { return collective_graph_key_; }
+  int64_t collective_graph_key() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_3(mht_3_v, 300, "", "./tensorflow/core/distributed_runtime/master_session.cc", "collective_graph_key");
+ return collective_graph_key_; }
 
   std::unique_ptr<ProfileHandler> GetProfileHandler(uint64 step,
                                                     int64_t execution_count,
@@ -128,6 +308,9 @@ class MasterSession::ReffedClientGraph : public core::RefCounted {
   }
 
   int64_t get_and_increment_execution_count() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_4(mht_4_v, 311, "", "./tensorflow/core/distributed_runtime/master_session.cc", "get_and_increment_execution_count");
+
     return execution_count_.fetch_add(1);
   }
 
@@ -135,6 +318,9 @@ class MasterSession::ReffedClientGraph : public core::RefCounted {
   // master process, and at each remote worker in use for the current
   // partitions.
   void SetRPCLogging(bool active) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_5(mht_5_v, 321, "", "./tensorflow/core/distributed_runtime/master_session.cc", "SetRPCLogging");
+
     worker_cache_->SetLogging(active);
     // Logging is a best-effort activity, so we make async calls to turn
     // it on/off and don't make use of the responses.
@@ -163,6 +349,9 @@ class MasterSession::ReffedClientGraph : public core::RefCounted {
   // from the local WorkerCache in use by this master process and from
   // all the remote workers executing the remote partitions.
   void RetrieveLogs(int64_t step_id, StepStats* ss) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_6(mht_6_v, 352, "", "./tensorflow/core/distributed_runtime/master_session.cc", "RetrieveLogs");
+
     // Get the local data first, because it sets *ss without merging.
     worker_cache_->RetrieveLogs(step_id, ss);
 
@@ -245,7 +434,12 @@ class MasterSession::ReffedClientGraph : public core::RefCounted {
   struct NodeDetails {
     explicit NodeDetails(string type_string, string detail_text)
         : type_string(std::move(type_string)),
-          detail_text(std::move(detail_text)) {}
+          detail_text(std::move(detail_text)) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("type_string: \"" + type_string + "\"");
+   mht_7_v.push_back("detail_text: \"" + detail_text + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_7(mht_7_v, 440, "", "./tensorflow/core/distributed_runtime/master_session.cc", "NodeDetails");
+}
     const string type_string;
     const string detail_text;
   };
@@ -273,7 +467,10 @@ class MasterSession::ReffedClientGraph : public core::RefCounted {
     // this partition on the worker.
     string graph_handle;
 
-    Part() : feed_key(3), key_fetch(3) {}
+    Part() : feed_key(3), key_fetch(3) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_8(mht_8_v, 471, "", "./tensorflow/core/distributed_runtime/master_session.cc", "Part");
+}
   };
 
   // partitions_ is immutable after RegisterPartitions() call
@@ -294,6 +491,9 @@ class MasterSession::ReffedClientGraph : public core::RefCounted {
   std::unique_ptr<StatsPublisherInterface> stats_publisher_;
 
   string DetailText(const NodeDetails& details, const NodeExecStats& stats) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_9(mht_9_v, 494, "", "./tensorflow/core/distributed_runtime/master_session.cc", "DetailText");
+
     int64_t tot = 0;
     for (auto& no : stats.output()) {
       tot += no.tensor_description().allocation_description().requested_bytes();
@@ -340,6 +540,9 @@ class MasterSession::ReffedClientGraph : public core::RefCounted {
 
 Status MasterSession::ReffedClientGraph::RegisterPartitions(
     PartitionOptions popts) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_10(mht_10_v, 543, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::ReffedClientGraph::RegisterPartitions");
+
   {  // Ensure register once.
     mu_.lock();
     if (client_graph_before_register_) {
@@ -381,6 +584,9 @@ Status MasterSession::ReffedClientGraph::RegisterPartitions(
 }
 
 static string SplitByWorker(const Node* node) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_11(mht_11_v, 587, "", "./tensorflow/core/distributed_runtime/master_session.cc", "SplitByWorker");
+
   string task;
   string device;
   CHECK(DeviceNameUtils::SplitDeviceName(node->assigned_device_name(), &task,
@@ -391,6 +597,9 @@ static string SplitByWorker(const Node* node) {
 
 void MasterSession::ReffedClientGraph::TrackFeedsAndFetches(
     Part* part, const GraphDef& graph_def, const PartitionOptions& popts) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_12(mht_12_v, 600, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::ReffedClientGraph::TrackFeedsAndFetches");
+
   for (int i = 0; i < graph_def.node_size(); ++i) {
     const NodeDef& ndef = graph_def.node(i);
     const bool is_recv = ndef.op() == "_Recv";
@@ -430,6 +639,9 @@ void MasterSession::ReffedClientGraph::TrackFeedsAndFetches(
 Status MasterSession::ReffedClientGraph::DoBuildPartitions(
     PartitionOptions popts, ClientGraph* client_graph,
     std::unordered_map<string, GraphDef>* out_partitions) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_13(mht_13_v, 642, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::ReffedClientGraph::DoBuildPartitions");
+
   if (popts.need_to_record_start_times) {
     CostModel cost_model(true);
     cost_model.InitFromGraph(client_graph->graph);
@@ -446,6 +658,9 @@ Status MasterSession::ReffedClientGraph::DoBuildPartitions(
 Status MasterSession::ReffedClientGraph::DoRegisterPartitions(
     const PartitionOptions& popts,
     std::unordered_map<string, GraphDef> graph_partitions) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_14(mht_14_v, 661, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::ReffedClientGraph::DoRegisterPartitions");
+
   partitions_.reserve(graph_partitions.size());
   Status s;
   for (auto& name_def : graph_partitions) {
@@ -489,6 +704,9 @@ Status MasterSession::ReffedClientGraph::DoRegisterPartitions(
     c->req.set_collective_graph_key(collective_graph_key_);
     VLOG(2) << "Register " << c->req.graph_def().DebugString();
     auto cb = [c, &done](const Status& s) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_15(mht_15_v, 707, "", "./tensorflow/core/distributed_runtime/master_session.cc", "lambda");
+
       c->status = s;
       done.DecrementCount();
     };
@@ -507,9 +725,15 @@ namespace {
 // Helper class to manage "num" parallel RunGraph calls.
 class RunManyGraphs {
  public:
-  explicit RunManyGraphs(int num) : calls_(num), pending_(num) {}
+  explicit RunManyGraphs(int num) : calls_(num), pending_(num) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_16(mht_16_v, 729, "", "./tensorflow/core/distributed_runtime/master_session.cc", "RunManyGraphs");
+}
 
-  ~RunManyGraphs() {}
+  ~RunManyGraphs() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_17(mht_17_v, 734, "", "./tensorflow/core/distributed_runtime/master_session.cc", "~RunManyGraphs");
+}
 
   // Returns the index-th call.
   struct Call {
@@ -519,10 +743,16 @@ class RunManyGraphs {
     std::unique_ptr<MutableRunGraphRequestWrapper> req;
     std::unique_ptr<MutableRunGraphResponseWrapper> resp;
   };
-  Call* get(int index) { return &calls_[index]; }
+  Call* get(int index) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_18(mht_18_v, 747, "", "./tensorflow/core/distributed_runtime/master_session.cc", "get");
+ return &calls_[index]; }
 
   // When the index-th call is done, updates the overall status.
   void WhenDone(int index, const Status& s) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_19(mht_19_v, 753, "", "./tensorflow/core/distributed_runtime/master_session.cc", "WhenDone");
+
     TRACEPRINTF("Partition %d %s", index, s.ToString().c_str());
     Call* call = get(index);
     call->done = true;
@@ -544,11 +774,17 @@ class RunManyGraphs {
   }
 
   void StartCancel() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_20(mht_20_v, 777, "", "./tensorflow/core/distributed_runtime/master_session.cc", "StartCancel");
+
     mutex_lock l(mu_);
     ReportBadStatus(errors::Cancelled("RunManyGraphs"));
   }
 
   void Wait() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_21(mht_21_v, 785, "", "./tensorflow/core/distributed_runtime/master_session.cc", "Wait");
+
     // Check the error status every 60 seconds in other to print a log message
     // in the event of a hang.
     const std::chrono::milliseconds kCheckErrorPeriod(1000 * 60);
@@ -580,6 +816,9 @@ class RunManyGraphs {
   }
 
   Status status() const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_22(mht_22_v, 819, "", "./tensorflow/core/distributed_runtime/master_session.cc", "status");
+
     mutex_lock l(mu_);
     // Concat status objects in this StatusGroup to get the aggregated status,
     // as each status in status_group_ is already summarized status.
@@ -595,6 +834,9 @@ class RunManyGraphs {
   bool cancel_issued_ TF_GUARDED_BY(mu_) = false;
 
   void ReportBadStatus(const Status& s) TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_23(mht_23_v, 837, "", "./tensorflow/core/distributed_runtime/master_session.cc", "ReportBadStatus");
+
     VLOG(1) << "Master received error status " << s;
     if (!cancel_issued_ && !StatusGroup::IsDerived(s)) {
       // Only start cancelling other workers upon receiving a non-derived
@@ -616,12 +858,20 @@ class RunManyGraphs {
 Status AddSendFromClientRequest(const RunStepRequestWrapper& client_req,
                                 MutableRunGraphRequestWrapper* worker_req,
                                 size_t index, const string& send_key) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("send_key: \"" + send_key + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_24(mht_24_v, 862, "", "./tensorflow/core/distributed_runtime/master_session.cc", "AddSendFromClientRequest");
+
   return worker_req->AddSendFromRunStepRequest(client_req, index, send_key);
 }
 
 Status AddSendFromClientRequest(const RunCallableRequest& client_req,
                                 MutableRunGraphRequestWrapper* worker_req,
                                 size_t index, const string& send_key) {
+   std::vector<std::string> mht_25_v;
+   mht_25_v.push_back("send_key: \"" + send_key + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_25(mht_25_v, 872, "", "./tensorflow/core/distributed_runtime/master_session.cc", "AddSendFromClientRequest");
+
   return worker_req->AddSendFromRunCallableRequest(client_req, index, send_key);
 }
 
@@ -631,11 +881,18 @@ struct RunCallableResponseWrapper {
   RunCallableResponse* resp;  // Not owned.
   std::unordered_map<string, TensorProto> fetch_key_to_protos;
 
-  RunMetadata* mutable_metadata() { return resp->mutable_metadata(); }
+  RunMetadata* mutable_metadata() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_26(mht_26_v, 885, "", "./tensorflow/core/distributed_runtime/master_session.cc", "mutable_metadata");
+ return resp->mutable_metadata(); }
 
   Status AddTensorFromRunGraphResponse(
       const string& tensor_name, MutableRunGraphResponseWrapper* worker_resp,
       size_t index) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("tensor_name: \"" + tensor_name + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_27(mht_27_v, 893, "", "./tensorflow/core/distributed_runtime/master_session.cc", "AddTensorFromRunGraphResponse");
+
     return worker_resp->RecvValue(index, &fetch_key_to_protos[tensor_name]);
   }
 };
@@ -813,6 +1070,9 @@ Status MasterSession::ReffedClientGraph::RunPartitions(
     PerStepState* pss, CallOptions* call_opts, const RunStepRequestWrapper& req,
     MutableRunStepResponseWrapper* resp, CancellationManager* cm,
     const bool is_last_partial_run) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_28(mht_28_v, 1073, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::ReffedClientGraph::RunPartitions");
+
   VLOG(2) << "RunPartitions step_id " << step_id << " execution_count "
           << execution_count;
   // Maps the names of fed tensors to their index in `req`.
@@ -837,6 +1097,9 @@ Status MasterSession::ReffedClientGraph::RunPartitions(
     const MasterEnv* env, int64_t step_id, int64_t execution_count,
     PerStepState* pss, CallOptions* call_opts, const RunCallableRequest& req,
     RunCallableResponse* resp, CancellationManager* cm) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_29(mht_29_v, 1100, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::ReffedClientGraph::RunPartitions");
+
   VLOG(2) << "RunPartitions step_id " << step_id << " execution_count "
           << execution_count;
   // Maps the names of fed tensors to their index in `req`.
@@ -877,17 +1140,29 @@ class CleanupBroadcastHelper {
  public:
   CleanupBroadcastHelper(int64_t step_id, int num_calls, StatusCallback done)
       : resps_(num_calls), num_pending_(num_calls), done_(std::move(done)) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_30(mht_30_v, 1143, "", "./tensorflow/core/distributed_runtime/master_session.cc", "CleanupBroadcastHelper");
+
     req_.set_step_id(step_id);
   }
 
   // Returns a non-owned pointer to a request buffer for all calls.
-  CleanupGraphRequest* request() { return &req_; }
+  CleanupGraphRequest* request() {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_31(mht_31_v, 1151, "", "./tensorflow/core/distributed_runtime/master_session.cc", "request");
+ return &req_; }
 
   // Returns a non-owned pointer to a response buffer for the ith call.
-  CleanupGraphResponse* response(int i) { return &resps_[i]; }
+  CleanupGraphResponse* response(int i) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_32(mht_32_v, 1157, "", "./tensorflow/core/distributed_runtime/master_session.cc", "response");
+ return &resps_[i]; }
 
   // Called when the ith response is received.
   void call_done(int i, const Status& s) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_33(mht_33_v, 1163, "", "./tensorflow/core/distributed_runtime/master_session.cc", "call_done");
+
     bool run_callback = false;
     Status status_copy;
     {
@@ -926,6 +1201,9 @@ class CleanupBroadcastHelper {
 
 void MasterSession::ReffedClientGraph::CleanupPartitionsAsync(
     int64_t step_id, StatusCallback done) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_34(mht_34_v, 1204, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::ReffedClientGraph::CleanupPartitionsAsync");
+
   const int num = partitions_.size();
   // Helper object will be deleted when the final call completes.
   CleanupBroadcastHelper* helper =
@@ -943,6 +1221,9 @@ void MasterSession::ReffedClientGraph::ProcessStats(int64_t step_id,
                                                     ProfileHandler* ph,
                                                     const RunOptions& options,
                                                     RunMetadata* resp) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_35(mht_35_v, 1224, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::ReffedClientGraph::ProcessStats");
+
   if (!pss->collect_costs && !pss->collect_timeline) return;
 
   // Out-of-band logging data is collected now, during post-processing.
@@ -989,6 +1270,9 @@ void MasterSession::ReffedClientGraph::ProcessStats(int64_t step_id,
 
 void MasterSession::ReffedClientGraph::ProcessDeviceStats(
     ProfileHandler* ph, const DeviceStepStats& ds, bool is_rpc) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_36(mht_36_v, 1273, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::ReffedClientGraph::ProcessDeviceStats");
+
   const string& dev_name = ds.device();
   VLOG(1) << "Device " << dev_name << " reports stats for "
           << ds.node_stats_size() << " nodes";
@@ -1037,6 +1321,9 @@ void MasterSession::ReffedClientGraph::ProcessDeviceStats(
 Status MasterSession::ReffedClientGraph::CheckFetches(
     const RunStepRequestWrapper& req, const RunState* run_state,
     GraphExecutionState* execution_state) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_37(mht_37_v, 1324, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::ReffedClientGraph::CheckFetches");
+
   // Build the set of pending feeds that we haven't seen.
   std::unordered_set<TensorId, TensorId::Hasher> pending_feeds;
   for (const auto& input : run_state->pending_inputs) {
@@ -1094,6 +1381,9 @@ Status MasterSession::ReffedClientGraph::CheckFetches(
 // Asynchronously deregisters subgraphs on the workers, without waiting for the
 // result.
 void MasterSession::ReffedClientGraph::DeregisterPartitions() {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_38(mht_38_v, 1384, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::ReffedClientGraph::DeregisterPartitions");
+
   struct Call {
     DeregisterGraphRequest req;
     DeregisterGraphResponse resp;
@@ -1112,6 +1402,9 @@ void MasterSession::ReffedClientGraph::DeregisterPartitions() {
       WorkerInterface* w = part.worker;
       CHECK_NOTNULL(w);
       auto cb = [worker_cache, c, name, w](const Status& s) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_39(mht_39_v, 1405, "", "./tensorflow/core/distributed_runtime/master_session.cc", "lambda");
+
         if (!s.ok()) {
           // This error is potentially benign, so we don't log at the
           // error level.
@@ -1129,6 +1422,9 @@ namespace {
 void CopyAndSortStrings(size_t size,
                         const std::function<string(size_t)>& input_accessor,
                         protobuf::RepeatedPtrField<string>* output) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_40(mht_40_v, 1425, "", "./tensorflow/core/distributed_runtime/master_session.cc", "CopyAndSortStrings");
+
   std::vector<string> temp;
   temp.reserve(size);
   for (size_t i = 0; i < size; ++i) {
@@ -1141,6 +1437,9 @@ void CopyAndSortStrings(size_t size,
 void BuildBuildGraphOptions(const RunStepRequestWrapper& req,
                             const ConfigProto& config,
                             BuildGraphOptions* opts) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_41(mht_41_v, 1440, "", "./tensorflow/core/distributed_runtime/master_session.cc", "BuildBuildGraphOptions");
+
   CallableOptions* callable_opts = &opts->callable_options;
   CopyAndSortStrings(
       req.num_feeds(), [&req](size_t i) { return req.feed_name(i); },
@@ -1168,6 +1467,9 @@ void BuildBuildGraphOptions(const RunStepRequestWrapper& req,
 
 void BuildBuildGraphOptions(const PartialRunSetupRequest& req,
                             BuildGraphOptions* opts) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_42(mht_42_v, 1470, "", "./tensorflow/core/distributed_runtime/master_session.cc", "BuildBuildGraphOptions");
+
   CallableOptions* callable_opts = &opts->callable_options;
   CopyAndSortStrings(
       req.feed_size(), [&req](size_t i) { return req.feed(i); },
@@ -1183,6 +1485,9 @@ void BuildBuildGraphOptions(const PartialRunSetupRequest& req,
 }
 
 uint64 HashBuildGraphOptions(const BuildGraphOptions& opts) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_43(mht_43_v, 1488, "", "./tensorflow/core/distributed_runtime/master_session.cc", "HashBuildGraphOptions");
+
   uint64 h = 0x2b992ddfa23249d6ull;
   for (const string& name : opts.callable_options.feed()) {
     h = Hash64(name.c_str(), name.size(), h);
@@ -1206,6 +1511,9 @@ uint64 HashBuildGraphOptions(const BuildGraphOptions& opts) {
 }
 
 string BuildGraphOptionsString(const BuildGraphOptions& opts) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_44(mht_44_v, 1514, "", "./tensorflow/core/distributed_runtime/master_session.cc", "BuildGraphOptionsString");
+
   string buf;
   for (const string& name : opts.callable_options.feed()) {
     strings::StrAppend(&buf, " FdE: ", name);
@@ -1243,6 +1551,9 @@ MasterSession::MasterSession(
       graph_version_(0),
       run_graphs_(5),
       partial_run_graphs_(5) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_45(mht_45_v, 1554, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::MasterSession");
+
   UpdateLastAccessTime();
   CHECK(devices_) << "device_set was null!";
 
@@ -1253,16 +1564,25 @@ MasterSession::MasterSession(
 }
 
 MasterSession::~MasterSession() {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_46(mht_46_v, 1567, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::~MasterSession");
+
   for (const auto& iter : run_graphs_) iter.second->Unref();
   for (const auto& iter : partial_run_graphs_) iter.second->Unref();
 }
 
 void MasterSession::UpdateLastAccessTime() {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_47(mht_47_v, 1575, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::UpdateLastAccessTime");
+
   last_access_time_usec_.store(Env::Default()->NowMicros());
 }
 
 Status MasterSession::Create(GraphDef&& graph_def,
                              const ClusterDef& cluster_def) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_48(mht_48_v, 1583, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::Create");
+
   if (session_opts_.config.use_per_session_threads() ||
       session_opts_.config.session_inter_op_thread_pool_size() > 0) {
     return errors::InvalidArgument(
@@ -1288,6 +1608,9 @@ Status MasterSession::Create(GraphDef&& graph_def,
 }
 
 Status MasterSession::CreateWorkerSessions(const ClusterDef& cluster_def) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_49(mht_49_v, 1611, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::CreateWorkerSessions");
+
   const std::vector<string> worker_names = filtered_worker_list_;
   WorkerCacheInterface* worker_cache = get_worker_cache();
 
@@ -1406,6 +1729,9 @@ Status MasterSession::CreateWorkerSessions(const ClusterDef& cluster_def) {
 
   for (size_t i = 0; i < worker_names.size(); ++i) {
     auto cb = [i, &workers, &done](const Status& s) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_50(mht_50_v, 1732, "", "./tensorflow/core/distributed_runtime/master_session.cc", "lambda");
+
       workers[i].status = s;
       done.DecrementCount();
     };
@@ -1421,6 +1747,9 @@ Status MasterSession::CreateWorkerSessions(const ClusterDef& cluster_def) {
 }
 
 Status MasterSession::DeleteWorkerSessions() {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_51(mht_51_v, 1750, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::DeleteWorkerSessions");
+
   WorkerCacheInterface* worker_cache = get_worker_cache();
   const std::vector<string>& worker_names = filtered_worker_list_;
 
@@ -1463,6 +1792,9 @@ Status MasterSession::DeleteWorkerSessions() {
 
   for (size_t i = 0; i < worker_names.size(); ++i) {
     auto cb = [i, &workers, &done](const Status& s) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_52(mht_52_v, 1795, "", "./tensorflow/core/distributed_runtime/master_session.cc", "lambda");
+
       workers[i].status = s;
       done.DecrementCount();
     };
@@ -1478,6 +1810,9 @@ Status MasterSession::DeleteWorkerSessions() {
 }
 
 Status MasterSession::ListDevices(ListDevicesResponse* resp) const {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_53(mht_53_v, 1813, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::ListDevices");
+
   if (worker_cache_) {
     // This is a ClusterSpec-propagated session, and thus env_->local_devices
     // are invalid.
@@ -1503,6 +1838,9 @@ Status MasterSession::ListDevices(ListDevicesResponse* resp) const {
 
 Status MasterSession::Extend(const ExtendSessionRequest* req,
                              ExtendSessionResponse* resp) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_54(mht_54_v, 1841, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::Extend");
+
   UpdateLastAccessTime();
   std::unique_ptr<GraphExecutionState> extended_execution_state;
   {
@@ -1531,6 +1869,9 @@ Status MasterSession::Extend(const ExtendSessionRequest* req,
 }
 
 WorkerCacheInterface* MasterSession::get_worker_cache() const {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_55(mht_55_v, 1872, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::get_worker_cache");
+
   if (worker_cache_) {
     return worker_cache_.get();
   }
@@ -1540,6 +1881,9 @@ WorkerCacheInterface* MasterSession::get_worker_cache() const {
 Status MasterSession::StartStep(const BuildGraphOptions& opts, bool is_partial,
                                 ReffedClientGraph** out_rcg,
                                 int64_t* out_count) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_56(mht_56_v, 1884, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::StartStep");
+
   const uint64 hash = HashBuildGraphOptions(opts);
   {
     mutex_lock l(mu_);
@@ -1573,6 +1917,9 @@ Status MasterSession::StartStep(const BuildGraphOptions& opts, bool is_partial,
 
 void MasterSession::ClearRunsTable(std::vector<ReffedClientGraph*>* to_unref,
                                    RCGMap* rcg_map) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_57(mht_57_v, 1920, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::ClearRunsTable");
+
   VLOG(1) << "Discarding all reffed graphs";
   for (auto p : *rcg_map) {
     ReffedClientGraph* rcg = p.second;
@@ -1586,6 +1933,9 @@ void MasterSession::ClearRunsTable(std::vector<ReffedClientGraph*>* to_unref,
 }
 
 uint64 MasterSession::NewStepId(int64_t graph_key) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_58(mht_58_v, 1936, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::NewStepId");
+
   if (graph_key == BuildGraphOptions::kNoCollectiveGraphKey) {
     // StepId must leave the most-significant 7 bits empty for future use.
     return random::New64() & (((1uLL << 56) - 1) | (1uLL << 56));
@@ -1617,6 +1967,9 @@ uint64 MasterSession::NewStepId(int64_t graph_key) {
 
 Status MasterSession::PartialRunSetup(const PartialRunSetupRequest* req,
                                       PartialRunSetupResponse* resp) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_59(mht_59_v, 1970, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::PartialRunSetup");
+
   std::vector<string> inputs, outputs, targets;
   for (const auto& feed : req->feed()) {
     inputs.push_back(feed);
@@ -1656,6 +2009,9 @@ Status MasterSession::PartialRunSetup(const PartialRunSetupRequest* req,
 
 Status MasterSession::Run(CallOptions* opts, const RunStepRequestWrapper& req,
                           MutableRunStepResponseWrapper* resp) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_60(mht_60_v, 2012, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::Run");
+
   UpdateLastAccessTime();
   {
     mutex_lock l(mu_);
@@ -1677,6 +2033,9 @@ Status MasterSession::Run(CallOptions* opts, const RunStepRequestWrapper& req,
 
 // Decrements num_running_ and broadcasts if num_running_ is zero.
 void MasterSession::MarkRunCompletion() {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_61(mht_61_v, 2036, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::MarkRunCompletion");
+
   mutex_lock l(mu_);
   --num_running_;
   if (num_running_ == 0) {
@@ -1685,6 +2044,9 @@ void MasterSession::MarkRunCompletion() {
 }
 
 Status MasterSession::BuildAndRegisterPartitions(ReffedClientGraph* rcg) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_62(mht_62_v, 2047, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::BuildAndRegisterPartitions");
+
   // Registers subgraphs if haven't done so.
   PartitionOptions popts;
   popts.node_to_loc = SplitByWorker;
@@ -1692,6 +2054,10 @@ Status MasterSession::BuildAndRegisterPartitions(ReffedClientGraph* rcg) {
   // RegisterPartitions() below, so do not need a Ref()/Unref() pair to keep
   // "this" alive during the closure.
   popts.new_name = [this](const string& prefix) {
+   std::vector<std::string> mht_63_v;
+   mht_63_v.push_back("prefix: \"" + prefix + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_63(mht_63_v, 2058, "", "./tensorflow/core/distributed_runtime/master_session.cc", "lambda");
+
     mutex_lock l(mu_);
     return strings::StrCat(prefix, "_S", next_node_id_++);
   };
@@ -1707,6 +2073,9 @@ Status MasterSession::BuildAndRegisterPartitions(ReffedClientGraph* rcg) {
   const bool enable_bfloat16_sendrecv =
       session_opts_.config.graph_options().enable_bfloat16_sendrecv();
   popts.should_cast = [enable_bfloat16_sendrecv](const Edge* e) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_64(mht_64_v, 2076, "", "./tensorflow/core/distributed_runtime/master_session.cc", "lambda");
+
     if (e->IsControlEdge()) {
       return DT_FLOAT;
     }
@@ -1730,6 +2099,9 @@ Status MasterSession::BuildAndRegisterPartitions(ReffedClientGraph* rcg) {
 Status MasterSession::DoPartialRun(CallOptions* opts,
                                    const RunStepRequestWrapper& req,
                                    MutableRunStepResponseWrapper* resp) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_65(mht_65_v, 2102, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::DoPartialRun");
+
   auto cleanup = gtl::MakeCleanup([this] { MarkRunCompletion(); });
   const string& prun_handle = req.partial_run_handle();
   RunState* run_state = nullptr;
@@ -1861,6 +2233,9 @@ Status MasterSession::CreateDebuggerState(
     const DebugOptions& debug_options, const RunStepRequestWrapper& req,
     int64_t rcg_execution_count,
     std::unique_ptr<DebuggerStateInterface>* debugger_state) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_66(mht_66_v, 2236, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::CreateDebuggerState");
+
   TF_RETURN_IF_ERROR(
       DebuggerStateRegistry::CreateState(debug_options, debugger_state));
 
@@ -1893,6 +2268,9 @@ void MasterSession::FillPerStepState(MasterSession::ReffedClientGraph* rcg,
                                      uint64 step_id, int64_t count,
                                      PerStepState* out_pss,
                                      std::unique_ptr<ProfileHandler>* out_ph) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_67(mht_67_v, 2271, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::FillPerStepState");
+
   out_pss->collect_timeline =
       run_options.trace_level() == RunOptions::FULL_TRACE;
   out_pss->collect_rpcs = run_options.trace_level() == RunOptions::FULL_TRACE;
@@ -1923,6 +2301,9 @@ Status MasterSession::PostRunCleanup(MasterSession::ReffedClientGraph* rcg,
                                      const std::unique_ptr<ProfileHandler>& ph,
                                      const Status& run_status,
                                      RunMetadata* out_run_metadata) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_68(mht_68_v, 2304, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::PostRunCleanup");
+
   Status s = run_status;
   if (s.ok()) {
     pss->end_micros = Env::Default()->NowMicros();
@@ -1962,6 +2343,9 @@ Status MasterSession::PostRunCleanup(MasterSession::ReffedClientGraph* rcg,
 Status MasterSession::DoRunWithLocalExecution(
     CallOptions* opts, const RunStepRequestWrapper& req,
     MutableRunStepResponseWrapper* resp) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_69(mht_69_v, 2346, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::DoRunWithLocalExecution");
+
   VLOG(2) << "DoRunWithLocalExecution req: " << req.DebugString();
   PerStepState pss;
   pss.start_micros = Env::Default()->NowMicros();
@@ -2011,6 +2395,9 @@ Status MasterSession::DoRunWithLocalExecution(
 
 Status MasterSession::MakeCallable(const MakeCallableRequest& req,
                                    MakeCallableResponse* resp) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_70(mht_70_v, 2398, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::MakeCallable");
+
   UpdateLastAccessTime();
 
   BuildGraphOptions opts;
@@ -2052,6 +2439,9 @@ Status MasterSession::MakeCallable(const MakeCallableRequest& req,
 Status MasterSession::DoRunCallable(CallOptions* opts, ReffedClientGraph* rcg,
                                     const RunCallableRequest& req,
                                     RunCallableResponse* resp) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_71(mht_71_v, 2442, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::DoRunCallable");
+
   VLOG(2) << "DoRunCallable req: " << req.DebugString();
   PerStepState pss;
   pss.start_micros = Env::Default()->NowMicros();
@@ -2081,6 +2471,9 @@ Status MasterSession::DoRunCallable(CallOptions* opts, ReffedClientGraph* rcg,
 Status MasterSession::RunCallable(CallOptions* opts,
                                   const RunCallableRequest& req,
                                   RunCallableResponse* resp) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_72(mht_72_v, 2474, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::RunCallable");
+
   UpdateLastAccessTime();
   ReffedClientGraph* callable;
   {
@@ -2107,6 +2500,9 @@ Status MasterSession::RunCallable(CallOptions* opts,
 
 Status MasterSession::ReleaseCallable(const ReleaseCallableRequest& req,
                                       ReleaseCallableResponse* resp) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_73(mht_73_v, 2503, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::ReleaseCallable");
+
   UpdateLastAccessTime();
   ReffedClientGraph* to_unref = nullptr;
   {
@@ -2124,6 +2520,9 @@ Status MasterSession::ReleaseCallable(const ReleaseCallableRequest& req,
 }
 
 Status MasterSession::Close() {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_74(mht_74_v, 2523, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::Close");
+
   {
     mutex_lock l(mu_);
     closed_ = true;  // All subsequent calls to Run() or Extend() will fail.
@@ -2150,6 +2549,9 @@ Status MasterSession::Close() {
 }
 
 void MasterSession::GarbageCollect() {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_75(mht_75_v, 2552, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::GarbageCollect");
+
   {
     mutex_lock l(mu_);
     closed_ = true;
@@ -2164,6 +2566,9 @@ MasterSession::RunState::RunState(const std::vector<string>& input_names,
                                   ReffedClientGraph* rcg, const uint64 step_id,
                                   const int64_t count)
     : rcg(rcg), step_id(step_id), count(count) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_76(mht_76_v, 2569, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::RunState::RunState");
+
   // Initially all the feeds and fetches are pending.
   for (auto& name : input_names) {
     pending_inputs[name] = false;
@@ -2174,10 +2579,16 @@ MasterSession::RunState::RunState(const std::vector<string>& input_names,
 }
 
 MasterSession::RunState::~RunState() {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_77(mht_77_v, 2582, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::RunState::~RunState");
+
   if (rcg) rcg->Unref();
 }
 
 bool MasterSession::RunState::PendingDone() const {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSmaster_sessionDTcc mht_78(mht_78_v, 2589, "", "./tensorflow/core/distributed_runtime/master_session.cc", "MasterSession::RunState::PendingDone");
+
   for (const auto& it : pending_inputs) {
     if (!it.second) return false;
   }

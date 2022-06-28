@@ -14,6 +14,174 @@ limitations under the License.
 ==============================================================================*/
 #ifndef TENSORFLOW_LITE_KERNELS_INTERNAL_OPTIMIZED_RESIZE_BILINEAR_H_
 #define TENSORFLOW_LITE_KERNELS_INTERNAL_OPTIMIZED_RESIZE_BILINEAR_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSresize_bilinearDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSresize_bilinearDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSresize_bilinearDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <stdint.h>
 #include <sys/types.h>
@@ -49,11 +217,17 @@ inline int16x8_t Load8IntoLowerS16(const uint8* data_ptr) {
 }
 
 inline uint16x8_t Move8IntoUpperU16(const uint8x8_t vec_val) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSresize_bilinearDTh mht_0(mht_0_v, 220, "", "./tensorflow/lite/kernels/internal/optimized/resize_bilinear.h", "Move8IntoUpperU16");
+
   // Alternatively one could zip with a zero vector.
   return vshlq_n_u16(vmovl_u8(vec_val), 8);
 }
 
 inline uint16x8_t Load8IntoUpperU16(const uint8* data_ptr) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSresize_bilinearDTh mht_1(mht_1_v, 228, "", "./tensorflow/lite/kernels/internal/optimized/resize_bilinear.h", "Load8IntoUpperU16");
+
   return Move8IntoUpperU16(vld1_u8(data_ptr));
 }
 
@@ -61,6 +235,9 @@ inline uint16x8_t Load8IntoUpperU16(const uint8* data_ptr) {
 // performed for a pair, because instructions often work on pairs.
 inline void PairExtractUpper(const uint16x8_t accum_0, const uint16x8_t accum_1,
                              uint8x8_t* res_0, uint8x8_t* res_1) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSresize_bilinearDTh mht_2(mht_2_v, 238, "", "./tensorflow/lite/kernels/internal/optimized/resize_bilinear.h", "PairExtractUpper");
+
   uint8x16x2_t unzipped =
       vuzpq_u8(vreinterpretq_u8_u16(accum_0), vreinterpretq_u8_u16(accum_1));
   *res_0 = vget_low_u8(unzipped.val[1]);
@@ -89,9 +266,15 @@ inline void PairExtractUpper(const uint16x8_t accum_0, const uint16x8_t accum_1,
 struct op_int16x8_t {
   inline op_int16x8_t() = default;
   inline explicit op_int16x8_t(const int16x8_t& initial_val) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSresize_bilinearDTh mht_3(mht_3_v, 269, "", "./tensorflow/lite/kernels/internal/optimized/resize_bilinear.h", "op_int16x8_t");
+
     val = initial_val;
   }
   inline op_int16x8_t& operator=(const int16x8_t& new_val) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSresize_bilinearDTh mht_4(mht_4_v, 275, "", "./tensorflow/lite/kernels/internal/optimized/resize_bilinear.h", "=");
+
     val = new_val;
     return *this;
   }
@@ -107,6 +290,9 @@ struct op_int16x8_t {
   // convert the shift argument back to a constant. In some compiles are macros
   // requiring constant args.
   inline op_int16x8_t operator<<=(int32 left_shift) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSresize_bilinearDTh mht_5(mht_5_v, 293, "", "./tensorflow/lite/kernels/internal/optimized/resize_bilinear.h", "=");
+
     switch (left_shift) {
       case 1:
         val = vshlq_n_s16(val, 1);
@@ -145,19 +331,31 @@ struct op_int16x8_t {
   }
   friend inline op_int16x8_t operator+(op_int16x8_t lhs,
                                        const op_int16x8_t& rhs) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSresize_bilinearDTh mht_6(mht_6_v, 334, "", "./tensorflow/lite/kernels/internal/optimized/resize_bilinear.h", "+");
+
     lhs += rhs;
     return lhs;
   }
   friend inline op_int16x8_t operator-(op_int16x8_t lhs,
                                        const op_int16x8_t& rhs) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSresize_bilinearDTh mht_7(mht_7_v, 342, "", "./tensorflow/lite/kernels/internal/optimized/resize_bilinear.h", "-");
+
     lhs -= rhs;
     return lhs;
   }
   friend inline op_int16x8_t operator<<(op_int16x8_t lhs, int32 left_shift) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSresize_bilinearDTh mht_8(mht_8_v, 349, "", "./tensorflow/lite/kernels/internal/optimized/resize_bilinear.h", "operator<<");
+
     lhs <<= left_shift;
     return lhs;
   }
   friend inline op_int16x8_t operator>>(op_int16x8_t lhs, int32 right_shift) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSresize_bilinearDTh mht_9(mht_9_v, 356, "", "./tensorflow/lite/kernels/internal/optimized/resize_bilinear.h", "operator>>");
+
     lhs >>= right_shift;
     return lhs;
   }
@@ -173,9 +371,15 @@ struct op_int16x8_t {
 struct op_uint16x8_t {
   inline op_uint16x8_t() = default;
   inline explicit op_uint16x8_t(const uint16x8_t initial_val) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSresize_bilinearDTh mht_10(mht_10_v, 374, "", "./tensorflow/lite/kernels/internal/optimized/resize_bilinear.h", "op_uint16x8_t");
+
     val = initial_val;
   }
   inline op_uint16x8_t& operator=(const uint16x8_t& new_val) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSresize_bilinearDTh mht_11(mht_11_v, 380, "", "./tensorflow/lite/kernels/internal/optimized/resize_bilinear.h", "=");
+
     val = new_val;
     return *this;
   }
@@ -191,6 +395,9 @@ struct op_uint16x8_t {
   // convert the shift argument back to a constant. In some compiles are macros
   // requiring constant args.
   inline op_uint16x8_t operator<<=(int32 left_shift) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSresize_bilinearDTh mht_12(mht_12_v, 398, "", "./tensorflow/lite/kernels/internal/optimized/resize_bilinear.h", "=");
+
     switch (left_shift) {
       case 1:
         val = vshlq_n_u16(val, 1);
@@ -229,19 +436,31 @@ struct op_uint16x8_t {
   }
   friend inline op_uint16x8_t operator+(op_uint16x8_t lhs,
                                         const op_int16x8_t& rhs) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSresize_bilinearDTh mht_13(mht_13_v, 439, "", "./tensorflow/lite/kernels/internal/optimized/resize_bilinear.h", "+");
+
     lhs += rhs;
     return lhs;
   }
   friend inline op_uint16x8_t operator-(op_uint16x8_t lhs,
                                         const op_int16x8_t& rhs) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSresize_bilinearDTh mht_14(mht_14_v, 447, "", "./tensorflow/lite/kernels/internal/optimized/resize_bilinear.h", "-");
+
     lhs -= rhs;
     return lhs;
   }
   friend inline op_uint16x8_t operator<<(op_uint16x8_t lhs, int32 left_shift) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSresize_bilinearDTh mht_15(mht_15_v, 454, "", "./tensorflow/lite/kernels/internal/optimized/resize_bilinear.h", "operator<<");
+
     lhs <<= left_shift;
     return lhs;
   }
   friend inline op_uint16x8_t operator>>(op_uint16x8_t lhs, int32 right_shift) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSresize_bilinearDTh mht_16(mht_16_v, 461, "", "./tensorflow/lite/kernels/internal/optimized/resize_bilinear.h", "operator>>");
+
     lhs >>= right_shift;
     return lhs;
   }
@@ -250,6 +469,9 @@ struct op_uint16x8_t {
 };
 
 inline op_uint16x8_t VReinterpretQU16S16(const op_int16x8_t& other) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSresize_bilinearDTh mht_17(mht_17_v, 472, "", "./tensorflow/lite/kernels/internal/optimized/resize_bilinear.h", "VReinterpretQU16S16");
+
   op_uint16x8_t ret_val(vreinterpretq_u16_s16(other.val));
   return ret_val;
 }
@@ -1495,6 +1717,9 @@ inline void ResizeBilinear2x2(int32 batches, int32 input_height,
                               const float* input_data,
                               const RuntimeShape& output_shape,
                               float* output_data) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSresize_bilinearDTh mht_18(mht_18_v, 1720, "", "./tensorflow/lite/kernels/internal/optimized/resize_bilinear.h", "ResizeBilinear2x2");
+
   for (int b = 0; b < batches; b++) {
     for (int y0 = 0, y = 0; y <= output_height - 2; y += 2, y0++) {
       for (int x0 = 0, x = 0; x <= output_width - 2; x += 2, x0++) {
@@ -1513,6 +1738,9 @@ inline void ResizeBilinearGeneric(
     float width_scale, const RuntimeShape& input_shape, const float* input_data,
     const RuntimeShape& output_shape, float* output_data,
     const bool half_pixel_centers) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSresize_bilinearDTh mht_19(mht_19_v, 1741, "", "./tensorflow/lite/kernels/internal/optimized/resize_bilinear.h", "ResizeBilinearGeneric");
+
   memset(output_data, 0,
          batches * output_height * output_width * depth * sizeof(float));
 
@@ -1566,6 +1794,9 @@ inline void ResizeBilinearGenericSmallChannel(
     float width_scale, const RuntimeShape& input_shape, const T* input_data,
     const RuntimeShape& output_shape, T* output_data,
     const bool half_pixel_centers) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSresize_bilinearDTh mht_20(mht_20_v, 1797, "", "./tensorflow/lite/kernels/internal/optimized/resize_bilinear.h", "ResizeBilinearGenericSmallChannel");
+
   T* output_ptr = &output_data[0];
   const float rounding_offset = std::numeric_limits<T>::is_integer ? .5f : .0f;
 
@@ -1612,6 +1843,9 @@ inline void ResizeBilinear(const tflite::ResizeBilinearParams& op_params,
                            const int32* output_size_data,
                            const RuntimeShape& unextended_output_shape,
                            float* output_data) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSresize_bilinearDTh mht_21(mht_21_v, 1846, "", "./tensorflow/lite/kernels/internal/optimized/resize_bilinear.h", "ResizeBilinear");
+
   ruy::profiler::ScopeLabel label("ResizeBilinear");
   // If half_pixel_centers is True, align_corners must be False.
   TFLITE_DCHECK(!op_params.half_pixel_centers || !op_params.align_corners);
@@ -1663,6 +1897,9 @@ inline void ResizeBilinear(const tflite::ResizeBilinearParams& op_params,
                            const int32* output_size_data,
                            const RuntimeShape& unextended_output_shape,
                            uint8* output_data) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSresize_bilinearDTh mht_22(mht_22_v, 1900, "", "./tensorflow/lite/kernels/internal/optimized/resize_bilinear.h", "ResizeBilinear");
+
   ruy::profiler::ScopeLabel label("ResizeBilinearUint8");
   // If half_pixel_centers is True, align_corners must be False.
   TFLITE_DCHECK(!op_params.half_pixel_centers || !op_params.align_corners);
@@ -1722,6 +1959,9 @@ inline void ResizeBilinear(const tflite::ResizeBilinearParams& op_params,
                            const int32* output_size_data,
                            const RuntimeShape& unextended_output_shape,
                            int8* output_data) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSresize_bilinearDTh mht_23(mht_23_v, 1962, "", "./tensorflow/lite/kernels/internal/optimized/resize_bilinear.h", "ResizeBilinear");
+
   reference_ops::ResizeBilinearInteger(op_params, unextended_input_shape,
                                        input_data, unextended_output_size_shape,
                                        output_size_data,

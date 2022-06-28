@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -56,6 +224,9 @@ namespace {
 // sharding (tiled or replicated) what can be propagated by sharding
 // propagation.
 bool IsSpatiallyPartitioned(const HloSharding& sharding) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_0(mht_0_v, 227, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "IsSpatiallyPartitioned");
+
   if (sharding.IsTuple()) {
     return absl::c_any_of(sharding.tuple_elements(), IsSpatiallyPartitioned);
   } else {
@@ -63,6 +234,9 @@ bool IsSpatiallyPartitioned(const HloSharding& sharding) {
   }
 }
 bool IsSpatiallyPartitioned(const HloInstruction* hlo) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_1(mht_1_v, 237, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "IsSpatiallyPartitioned");
+
   return hlo->has_sharding() && IsSpatiallyPartitioned(hlo->sharding());
 }
 
@@ -75,6 +249,9 @@ bool MaybeImproveInstructionSharding(HloSharding sharding,
                                      HloInstruction* instruction,
                                      bool may_combine_partial_sharding,
                                      bool allow_aggressive_resharding = false) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_2(mht_2_v, 252, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "MaybeImproveInstructionSharding");
+
   // We don't want to propagate tile maximal shardings.
   if (!IsSpatiallyPartitioned(sharding)) {
     return false;
@@ -127,6 +304,9 @@ bool MaybeImproveInstructionSharding(HloSharding sharding,
 // we can either shard the kernel or the output and we want to shard the larger
 // one for better efficiency.
 bool IsConvolutionKernelSmall(const HloInstruction* instruction) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_3(mht_3_v, 307, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "IsConvolutionKernelSmall");
+
   CHECK_EQ(instruction->opcode(), HloOpcode::kConvolution);
   const HloInstruction* rhs = instruction->operand(1);
   const auto& dnums = instruction->convolution_dimension_numbers();
@@ -148,6 +328,9 @@ bool IsConvolutionKernelSmall(const HloInstruction* instruction) {
 }
 
 bool IsPassthroughCustomOps(const HloInstruction* hlo) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_4(mht_4_v, 331, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "IsPassthroughCustomOps");
+
   if (hlo->IsCustomCall("Sharding")) {
     return true;
   }
@@ -169,6 +352,9 @@ bool IsPassthroughCustomOps(const HloInstruction* hlo) {
 // for the specified instruction or nullptr if there isn't any suitable operand.
 const HloInstruction* PickRepresentativeOperand(
     const HloInstruction* instruction) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_5(mht_5_v, 355, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "PickRepresentativeOperand");
+
   switch (instruction->opcode()) {
     case HloOpcode::kMap:
     case HloOpcode::kPad:
@@ -321,6 +507,9 @@ bool SupportSpatialPartitioning(
     const HloInstruction* instruction,
     const ShardingPropagation::ComputationMap& computation_map, bool is_spmd,
     bool allow_spmd_sharding_propagation_to_output) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_6(mht_6_v, 510, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "SupportSpatialPartitioning");
+
   const bool is_entry_root = instruction->parent()
                                  ->parent()
                                  ->entry_computation()
@@ -384,7 +573,13 @@ bool InferDotShardingFromOperands(
     HloInstruction* instruction,
     const dot_as_convolution_util::DotConvolutionDimsInfo& dnums,
     bool may_combine_partial_sharding) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_7(mht_7_v, 576, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "InferDotShardingFromOperands");
+
   auto from_operand = [&](int64_t operand_index) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_8(mht_8_v, 580, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "lambda");
+
     auto operand = instruction->operand(operand_index);
     const HloSharding& operand_sharding = operand->sharding();
     if (operand_sharding.IsTileMaximal()) {
@@ -449,10 +644,16 @@ bool InferGatherParallelShardingFromOperands(
     HloInstruction* instruction,
     const hlo_sharding_util::GatherParallelDims& parallel_dims,
     bool may_combine_partial_sharding) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_9(mht_9_v, 647, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "InferGatherParallelShardingFromOperands");
+
   auto from_operand =
       [instruction](int64_t operand_index,
                     absl::Span<const int64_t> output_aligned_parallel_dims,
                     absl::Span<const int64_t> output_parallel_dims) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_10(mht_10_v, 654, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "lambda");
+
         const HloInstruction* operand = instruction->operand(operand_index);
         const HloSharding& operand_sharding = operand->sharding();
         if (operand_sharding.IsTileMaximal()) {
@@ -529,12 +730,18 @@ bool InferGatherParallelShardingFromOperands(
 bool InferConvolutionShardingFromOperands(HloInstruction* instruction,
                                           int64_t aggressiveness,
                                           bool may_combine_partial_sharding) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_11(mht_11_v, 733, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "InferConvolutionShardingFromOperands");
+
   auto get_partitions_for_dims =
       [&](const HloInstruction* inst,
           absl::Span<
               const dot_as_convolution_util::DotConvolutionDimsInfo::DimNums>
               dims,
           int lhs_or_rhs) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_12(mht_12_v, 742, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "lambda");
+
         int64_t partitions = 1;
         if (!inst->has_sharding()) {
           return partitions;
@@ -611,6 +818,9 @@ bool InferConvolutionShardingFromOperands(HloInstruction* instruction,
 
 bool CanPropagateThroughAtAggressiveLevel(const HloInstruction& inst,
                                           int64_t aggressiveness) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_13(mht_13_v, 821, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "CanPropagateThroughAtAggressiveLevel");
+
   // At minimum agressiveness, only allow pass-through ops.
   if (aggressiveness < 1 &&
       !(inst.IsElementwise() || inst.IsCustomCall("Sharding")) &&
@@ -635,6 +845,9 @@ HloSharding InferDotOperandSharding(
     const HloInstruction* instruction,
     const dot_as_convolution_util::DotConvolutionDimsInfo& dnums,
     int64_t operand_index, bool may_combine_partial_sharding) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_14(mht_14_v, 848, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "InferDotOperandSharding");
+
   auto operand = instruction->operand(operand_index);
   auto other = instruction->operand(1 - operand_index);
   std::vector<int64_t> output_dims_to_replicate;
@@ -715,6 +928,9 @@ bool InferShardingFromUsers(
     HloInstruction* instruction,
     const ShardingPropagation::ComputationMap& computation_map,
     int64_t aggressiveness, bool is_spmd) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_15(mht_15_v, 931, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "InferShardingFromUsers");
+
   if (aggressiveness < 2 && instruction->opcode() == HloOpcode::kBroadcast) {
     return false;
   }
@@ -754,10 +970,16 @@ bool InferShardingFromUsers(
 
 // Checks if two HloShardings have the same metadata attached.
 bool SameShardingMetadata(const HloSharding& a, const HloSharding& b) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_16(mht_16_v, 973, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "SameShardingMetadata");
+
   DCHECK_EQ(a, b);
 
   auto same_metadata = [](absl::Span<const OpMetadata> a,
                           absl::Span<const OpMetadata> b) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_17(mht_17_v, 980, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "lambda");
+
     if (a.size() != b.size()) return false;
     for (int i = 0, e = a.size(); i < e; ++i) {
       if (!protobuf_util::ProtobufEquals(a[i], b[i])) {
@@ -784,6 +1006,9 @@ bool SameShardingMetadata(const HloSharding& a, const HloSharding& b) {
 // metadata. If sharding already has some metadata, no new metadata will be
 // added.
 bool AssignShardingMetadata(HloModule* module) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_18(mht_18_v, 1009, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "AssignShardingMetadata");
+
   bool changed = false;
   for (HloComputation* computation : module->computations()) {
     for (HloInstruction* instruction : computation->instructions()) {
@@ -806,6 +1031,9 @@ bool AssignShardingMetadata(HloModule* module) {
 
 // Removes all sharding metadata from shardings on instructions.
 bool RemoveShardingMetadata(HloModule* module) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_19(mht_19_v, 1034, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "RemoveShardingMetadata");
+
   bool changed = false;
   for (HloComputation* computation : module->computations()) {
     for (HloInstruction* instruction : computation->instructions()) {
@@ -880,9 +1108,15 @@ StatusOr<bool> ProcessShardingInstruction(
 // entire while instruction on D.
 Status CheckAndUpdateDeviceAssignmentsInWhileBody(
     HloInstruction* while_instruction) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_20(mht_20_v, 1111, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "CheckAndUpdateDeviceAssignmentsInWhileBody");
+
   auto bad_status = [](HloInstruction* instruction, int64_t device,
                        HloInstruction* channel_instruction,
                        int64_t correct_device) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_21(mht_21_v, 1117, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "lambda");
+
     return FailedPrecondition(
         "Instruction: %s is on device: %d, which conflicts with device: %d "
         "of channel instruction: %s",
@@ -953,6 +1187,9 @@ Status CheckAndUpdateDeviceAssignmentsInWhileBody(
 bool RefineManualAutoShardingFromAuto(
     const HloSharding& to_merge, absl::Span<const int64_t> unspecified_dims,
     HloSharding* auto_sharding, HloSharding* manual_sharding) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_22(mht_22_v, 1190, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "RefineManualAutoShardingFromAuto");
+
   if (!manual_sharding->IsManualSubgroup() ||
       auto_sharding->IsManualSubgroup() ||
       !manual_sharding->HasPartialReplication() ||
@@ -1025,6 +1262,9 @@ bool RefineManualAutoShardingFromAuto(
 bool RefineManualAutoShardingFromManual(
     const HloSharding& to_merge, absl::Span<const int64_t> unspecified_dims,
     HloSharding* auto_sharding, HloSharding* manual_sharding) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_23(mht_23_v, 1265, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "RefineManualAutoShardingFromManual");
+
   if (!to_merge.IsManualSubgroup() || !manual_sharding->IsManualSubgroup() ||
       !manual_sharding->HasPartialReplication() ||
       auto_sharding->IsManualSubgroup() ||
@@ -1056,6 +1296,9 @@ bool RefineManualAutoShardingFromManual(
 bool InferUnspecifiedDimsFromOperand(HloInstruction* annotate_op,
                                      absl::Span<const int64_t> unspecified_dims,
                                      HloInstruction** man_conversion_op_after) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_24(mht_24_v, 1299, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "InferUnspecifiedDimsFromOperand");
+
   if (!annotate_op->IsCustomCall("Sharding")) {
     CHECK_EQ(annotate_op->opcode(), HloOpcode::kCopy);
   }
@@ -1127,6 +1370,9 @@ bool InferUnspecifiedDimsFromOneUser(HloInstruction* annotate_op,
                                      int64_t aggressiveness, bool is_spmd,
                                      absl::Span<const int64_t> unspecified_dims,
                                      HloInstruction* man_conversion_op) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_25(mht_25_v, 1373, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "InferUnspecifiedDimsFromOneUser");
+
   if (!annotate_op->IsCustomCall("Sharding")) {
     CHECK_EQ(annotate_op->opcode(), HloOpcode::kCopy);
   }
@@ -1179,6 +1425,9 @@ bool InferUnspecifiedDimsFromUsers(HloInstruction* annotate_op,
                                    absl::Span<const int64_t> unspecified_dims,
                                    int64_t aggressiveness, bool is_spmd,
                                    HloInstruction** man_conversion_op_after) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_26(mht_26_v, 1428, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "InferUnspecifiedDimsFromUsers");
+
   HloInstruction* man_conversion_op = nullptr;
   if (annotate_op->user_count() == 1) {
     HloInstruction* user = annotate_op->users()[0];
@@ -1213,6 +1462,9 @@ bool InferUnspecifiedDimsFromUsers(HloInstruction* annotate_op,
 
 // Returns whether an op is a target for CSE prevention.
 bool IsCSEPreventionTarget(const HloInstruction* instruction) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_27(mht_27_v, 1465, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "IsCSEPreventionTarget");
+
   // Scalar broadcasts are the most common CSE target that causes cross-layer
   // propagation on unrelated subgraphs.
   return instruction->opcode() == HloOpcode::kBroadcast &&
@@ -1221,6 +1473,9 @@ bool IsCSEPreventionTarget(const HloInstruction* instruction) {
 
 // Marks a sharding as for CSE prevention/
 HloSharding SetCSEPreventionSharding(const HloSharding& sharding) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_28(mht_28_v, 1476, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "SetCSEPreventionSharding");
+
   OpMetadata metadata;
   metadata.set_op_name("_sharding_propagation_cse_prevention");
   return sharding.WithMetadata({metadata}, /*overwrite=*/true);
@@ -1228,6 +1483,9 @@ HloSharding SetCSEPreventionSharding(const HloSharding& sharding) {
 
 // Returns if the sharding is for CSE prevention.
 bool IsCSEPreventionSharding(const HloSharding& sharding) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_29(mht_29_v, 1486, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "IsCSEPreventionSharding");
+
   if (sharding.metadata().size() != 1) {
     return false;
   }
@@ -1239,6 +1497,9 @@ bool IsCSEPreventionSharding(const HloSharding& sharding) {
 
 /*static*/ Status ShardingPropagation::NormalizeDomain(
     const DomainMetadata::Domain& domain, const DomainMetadata* metadata) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_30(mht_30_v, 1500, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "ShardingPropagation::NormalizeDomain");
+
   if (metadata != nullptr) {
     TF_ASSIGN_OR_RETURN(const auto& sharding_metadata,
                         ShardingMetadata::ToShardingMetadata(metadata));
@@ -1270,6 +1531,9 @@ bool IsCSEPreventionSharding(const HloSharding& sharding) {
 absl::optional<HloSharding> ShardingPropagation::GetShardingFromUser(
     const HloInstruction& instruction, const HloInstruction& user,
     int64_t aggressiveness, bool is_spmd) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_31(mht_31_v, 1534, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "ShardingPropagation::GetShardingFromUser");
+
   if (!CanPropagateThroughAtAggressiveLevel(user, aggressiveness)) {
     return absl::nullopt;
   }
@@ -1584,6 +1848,9 @@ absl::optional<HloSharding> ShardingPropagation::GetShardingFromUser(
 
 // Compute the number of users that are only internal to the computation.
 int64_t ComputeNonRootUsers(const HloInstruction* instr) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_32(mht_32_v, 1851, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "ComputeNonRootUsers");
+
   int64_t non_root_users = instr->users().size();
   for (int i = 0; i < instr->users().size(); ++i) {
     if (instr->users()[i] == instr->parent()->root_instruction()) {
@@ -1599,6 +1866,9 @@ int64_t ComputeNonRootUsers(const HloInstruction* instr) {
 //     pattern of param/gte -> reshape -> concat.
 bool AggressiveConcatOperandShardingCanPassThrough(
     const HloInstruction* concat_operand) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_33(mht_33_v, 1869, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "AggressiveConcatOperandShardingCanPassThrough");
+
   return (
       IsSpatiallyPartitioned(concat_operand) &&
       (concat_operand->has_sharding() &&
@@ -1612,11 +1882,17 @@ bool AggressiveConcatOperandShardingCanPassThrough(
 bool InferDynamicSliceOrDynamicUpdateSliceShardingFromOperands(
     HloInstruction* instruction, int64_t aggressiveness,
     bool may_combine_partial_sharding) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_34(mht_34_v, 1885, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "InferDynamicSliceOrDynamicUpdateSliceShardingFromOperands");
+
   const HloInstruction* operand =
       instruction->opcode() == HloOpcode::kDynamicSlice
           ? instruction->operand(0)
           : instruction->operand(1);
   auto slice_dim_is_sharded = [&]() {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_35(mht_35_v, 1893, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "lambda");
+
     if (!IsSpatiallyPartitioned(operand) ||
         operand->sharding().NumTiles() == 1) {
       return false;
@@ -1638,6 +1914,9 @@ bool InferDynamicSliceOrDynamicUpdateSliceShardingFromOperands(
   }
 
   auto propagate_slicing = [&]() {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_36(mht_36_v, 1917, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "lambda");
+
     if (!IsSpatiallyPartitioned(operand)) {
       return false;
     }
@@ -1658,6 +1937,9 @@ bool InferDynamicSliceOrDynamicUpdateSliceShardingFromOperands(
         ComputeNonRootUsers(instruction) == 1);
   };
   auto propagate_base = [&]() {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_37(mht_37_v, 1940, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "lambda");
+
     if (instruction->opcode() != HloOpcode::kDynamicUpdateSlice) {
       return false;
     }
@@ -1679,6 +1961,9 @@ bool InferDynamicSliceOrDynamicUpdateSliceShardingFromOperands(
 bool ShardingPropagation::InferShardingFromOperands(
     HloInstruction* instruction, const ComputationMap& computation_map,
     int64_t aggressiveness) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_38(mht_38_v, 1964, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "ShardingPropagation::InferShardingFromOperands");
+
   if (!CanPropagateThroughAtAggressiveLevel(*instruction, aggressiveness)) {
     return false;
   }
@@ -1728,6 +2013,9 @@ bool ShardingPropagation::InferShardingFromOperands(
   }
 
   auto get_maybe_tuple_sharding = [&](HloSharding sharding) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_39(mht_39_v, 2016, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "lambda");
+
     if (instruction->shape().IsArray()) {
       return sharding;
     }
@@ -1964,6 +2252,9 @@ bool ShardingPropagation::InferShardingFromOperands(
     case HloOpcode::kReduceWindow: {
       auto* reduce_window = Cast<HloReduceWindowInstruction>(instruction);
       auto has_dilation = [](const WindowDimension& dimensions) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_40(mht_40_v, 2255, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "lambda");
+
         return dimensions.base_dilation() > 1 ||
                dimensions.window_dilation() > 1;
       };
@@ -1994,6 +2285,9 @@ bool ShardingPropagation::InferShardingFromOperands(
       }
 
       auto has_base_dilation = [](const WindowDimension& dimensions) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_41(mht_41_v, 2288, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "lambda");
+
         return dimensions.base_dilation() > 1;
       };
       if (absl::c_any_of(instruction->window().dimensions(),
@@ -2231,6 +2525,9 @@ bool ShardingPropagation::InferShardingFromOperands(
 }  // NOLINT(readability/fn_size)
 
 StatusOr<bool> ShardingPropagation::Run(HloModule* module) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_42(mht_42_v, 2528, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "ShardingPropagation::Run");
+
   absl::optional<absl::flat_hash_map<const HloInstruction*, HloSharding>>
       original_sharding;
   bool any_changed = false;
@@ -2275,6 +2572,9 @@ StatusOr<bool> ShardingPropagation::Run(HloModule* module) {
   // Instructions that are related through a computation and need to share the
   // same sharding.
   auto get_related_instructions = [](HloInstruction* inst) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_43(mht_43_v, 2575, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "lambda");
+
     if (inst->opcode() == HloOpcode::kWhile) {
       return std::vector<HloInstruction*>{
           inst, inst->while_body()->root_instruction(),
@@ -2300,7 +2600,13 @@ StatusOr<bool> ShardingPropagation::Run(HloModule* module) {
       maybe_computation_propagation =
           [&](HloInstruction* instruction,
               absl::flat_hash_set<HloInstruction*>* changed) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_44(mht_44_v, 2603, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "lambda");
+
             auto propagate_to_instruction = [&](HloInstruction* search_inst) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_45(mht_45_v, 2607, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "lambda");
+
               auto related_instructions = get_related_instructions(search_inst);
               if (absl::c_count(related_instructions, instruction)) {
                 for (HloInstruction* inst : related_instructions) {
@@ -2397,6 +2703,9 @@ StatusOr<bool> ShardingPropagation::Run(HloModule* module) {
   // indefinitely.
   int64_t iterations = 0;
   auto run_to_fix_point = [&](int64_t aggressiveness) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_46(mht_46_v, 2706, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "lambda");
+
     absl::flat_hash_set<const HloInstruction*> already_inferred_from_operands;
     absl::flat_hash_set<const HloInstruction*> already_inferred_from_users;
     bool changed_last_iter = true;
@@ -2418,6 +2727,9 @@ StatusOr<bool> ShardingPropagation::Run(HloModule* module) {
         }
         auto clear_cache = [&](HloInstruction* hlo,
                                HloInstruction* hlo_for_users = nullptr) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSsharding_propagationDTcc mht_47(mht_47_v, 2730, "", "./tensorflow/compiler/xla/service/sharding_propagation.cc", "lambda");
+
           for (auto operand : hlo->operands()) {
             already_inferred_from_users.erase(operand);
           }

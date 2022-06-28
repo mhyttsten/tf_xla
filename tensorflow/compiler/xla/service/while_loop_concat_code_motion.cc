@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSwhile_loop_concat_code_motionDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSwhile_loop_concat_code_motionDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSwhile_loop_concat_code_motionDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -65,6 +233,9 @@ struct ConcatGroup {
         element_offsets(this->elements.size(), 0),
         concat_dim(concat_dim),
         inserted_concat_dim(inserted_concat_dim) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSwhile_loop_concat_code_motionDTcc mht_0(mht_0_v, 236, "", "./tensorflow/compiler/xla/service/while_loop_concat_code_motion.cc", "ConcatGroup");
+
     if (inserted_concat_dim) {
       absl::c_iota(element_offsets, 0);
     } else {
@@ -78,6 +249,9 @@ struct ConcatGroup {
   }
 
   Shape GetConcatShape() const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSwhile_loop_concat_code_motionDTcc mht_1(mht_1_v, 252, "", "./tensorflow/compiler/xla/service/while_loop_concat_code_motion.cc", "GetConcatShape");
+
     if (inserted_concat_dim) {
       std::vector<int64_t> dims;
       const Shape& element_shape = elements.back()->shape();
@@ -105,6 +279,9 @@ struct ConcatGroup {
 
   HloInstruction* CreateSlice(HloInstruction* full_data, int64_t element_index,
                               HloComputation* comp) const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSwhile_loop_concat_code_motionDTcc mht_2(mht_2_v, 282, "", "./tensorflow/compiler/xla/service/while_loop_concat_code_motion.cc", "CreateSlice");
+
     Shape shape = full_data->shape();
     shape.set_dimensions(concat_dim, element_sizes[element_index]);
     std::vector<int64_t> starts(shape.rank(), 0);
@@ -131,6 +308,9 @@ struct ConcatGroup {
 
   HloInstruction* CreateConcat(std::vector<HloInstruction*> input_elements,
                                HloComputation* comp) const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSwhile_loop_concat_code_motionDTcc mht_3(mht_3_v, 311, "", "./tensorflow/compiler/xla/service/while_loop_concat_code_motion.cc", "CreateConcat");
+
     if (inserted_concat_dim) {
       for (int64_t i = 0; i < input_elements.size(); ++i) {
         std::vector<int64_t> element_shape;
@@ -178,7 +358,10 @@ class ConcatGroups {
     return it->second;
   }
 
-  const ConcatGroup& GetGroup(int64_t index) const { return groups_[index]; }
+  const ConcatGroup& GetGroup(int64_t index) const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSwhile_loop_concat_code_motionDTcc mht_4(mht_4_v, 362, "", "./tensorflow/compiler/xla/service/while_loop_concat_code_motion.cc", "GetGroup");
+ return groups_[index]; }
 
   // Creates a new group and returns the index if it doesn't exist, or returns
   // existing group index. If the new group doesn't match exactly with an
@@ -245,11 +428,20 @@ class ConcatGroups {
     return std::pair<bool, int64_t>(true, index);
   }
 
-  const std::vector<ConcatGroup>& Groups() const { return groups_; }
+  const std::vector<ConcatGroup>& Groups() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSwhile_loop_concat_code_motionDTcc mht_5(mht_5_v, 432, "", "./tensorflow/compiler/xla/service/while_loop_concat_code_motion.cc", "Groups");
+ return groups_; }
 
-  int64_t NextGroupIndex() const { return groups_.size(); }
+  int64_t NextGroupIndex() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSwhile_loop_concat_code_motionDTcc mht_6(mht_6_v, 437, "", "./tensorflow/compiler/xla/service/while_loop_concat_code_motion.cc", "NextGroupIndex");
+ return groups_.size(); }
 
   void RemoveTailingGroups(int64_t start_index) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSwhile_loop_concat_code_motionDTcc mht_7(mht_7_v, 442, "", "./tensorflow/compiler/xla/service/while_loop_concat_code_motion.cc", "RemoveTailingGroups");
+
     while (groups_.size() > start_index) {
       for (auto element : groups_.back().elements) {
         element_to_group_.erase(element);
@@ -259,6 +451,9 @@ class ConcatGroups {
   }
 
   void DisallowGroupingOn(const HloInstruction* hlo) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSwhile_loop_concat_code_motionDTcc mht_8(mht_8_v, 454, "", "./tensorflow/compiler/xla/service/while_loop_concat_code_motion.cc", "DisallowGroupingOn");
+
     VLOG(2) << "Disallow grouping on " << hlo->ToString();
     concat_disallowed_.insert(hlo);
   }
@@ -376,6 +571,9 @@ absl::optional<std::pair<int64_t, bool>> GetOperandConcatDim(
 
 void ModifyHloPropertiesForConcatShape(const ConcatGroup& group,
                                        HloInstruction* hlo) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSwhile_loop_concat_code_motionDTcc mht_9(mht_9_v, 574, "", "./tensorflow/compiler/xla/service/while_loop_concat_code_motion.cc", "ModifyHloPropertiesForConcatShape");
+
   *hlo->mutable_shape() = group.GetConcatShape();
   if (hlo->opcode() == HloOpcode::kBroadcast) {
     // Use the last element to infer the operand concat dim, since the first
@@ -432,6 +630,9 @@ bool GroupHlosForConcat(
     HloComputation* body, HloInstruction* concat,
     absl::flat_hash_map<const HloInstruction*, int64_t> topological_order,
     ConcatGroups* groups) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSwhile_loop_concat_code_motionDTcc mht_10(mht_10_v, 633, "", "./tensorflow/compiler/xla/service/while_loop_concat_code_motion.cc", "GroupHlosForConcat");
+
   const int64_t group_size = concat->operand_count();
   absl::flat_hash_set<int64_t> used_groups;
   auto root_tuple = body->root_instruction();
@@ -458,6 +659,9 @@ bool GroupHlosForConcat(
     bool already_used_by_subcomp;
   };
   auto maybe_create_group = [&](ConcatGroup group) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSwhile_loop_concat_code_motionDTcc mht_11(mht_11_v, 662, "", "./tensorflow/compiler/xla/service/while_loop_concat_code_motion.cc", "lambda");
+
     auto res = groups->MaybeCreateNewGroup(std::move(group));
     GroupUse use{res.second, false, false};
     if (res.second < 0) {
@@ -522,10 +726,16 @@ bool GroupHlosForConcat(
       if (absl::c_any_of(hlos, [&](const HloInstruction* element) {
             auto eq_operand = [](const HloInstruction* a,
                                  const HloInstruction* b) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSwhile_loop_concat_code_motionDTcc mht_12(mht_12_v, 729, "", "./tensorflow/compiler/xla/service/while_loop_concat_code_motion.cc", "lambda");
+
               return ShapeUtil::Compatible(a->shape(), b->shape());
             };
             auto eq_computations = [](const HloComputation* lhs,
                                       const HloComputation* rhs) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSwhile_loop_concat_code_motionDTcc mht_13(mht_13_v, 736, "", "./tensorflow/compiler/xla/service/while_loop_concat_code_motion.cc", "lambda");
+
               return lhs->Equal(*rhs, /*is_layout_sensitive=*/false);
             };
             if (!hlos[0]->Identical(*element, eq_operand, eq_computations,
@@ -657,6 +867,9 @@ std::vector<bool> TupleElementsUsedInCond(HloInstruction* loop) {
 Status AddCopiesToRoot(HloComputation* body,
                        absl::Span<HloInstruction* const> param_gtes,
                        ConcatGroups* groups) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSwhile_loop_concat_code_motionDTcc mht_14(mht_14_v, 870, "", "./tensorflow/compiler/xla/service/while_loop_concat_code_motion.cc", "AddCopiesToRoot");
+
   auto root = body->root_instruction();
   CHECK_EQ(root->opcode(), HloOpcode::kTuple);
   std::vector<HloInstruction*> copies(root->operand_count(), nullptr);
@@ -694,6 +907,9 @@ Status AddCopiesToRoot(HloComputation* body,
 }
 
 Status RemoveCopiesFromRoot(HloComputation* body) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSwhile_loop_concat_code_motionDTcc mht_15(mht_15_v, 910, "", "./tensorflow/compiler/xla/service/while_loop_concat_code_motion.cc", "RemoveCopiesFromRoot");
+
   auto root = body->root_instruction();
   CHECK_EQ(root->opcode(), HloOpcode::kTuple);
   for (int64_t i = 0; i < root->operand_count(); ++i) {
@@ -708,6 +924,9 @@ Status RemoveCopiesFromRoot(HloComputation* body) {
 Status RewriteLoopWithConcatGroups(HloInstruction* loop,
                                    absl::Span<HloInstruction* const> param_gtes,
                                    ConcatGroups& groups) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSwhile_loop_concat_code_motionDTcc mht_16(mht_16_v, 927, "", "./tensorflow/compiler/xla/service/while_loop_concat_code_motion.cc", "RewriteLoopWithConcatGroups");
+
   VLOG(1) << "RewriteLoopWithConcatGroups with " << groups.Groups().size()
           << " groups.";
   // For simplicity, for each group, we rewrite the first element into full
@@ -1022,6 +1241,9 @@ StatusOr<bool> RunOnLoop(HloInstruction* loop,
 }  // namespace
 
 StatusOr<bool> WhileLoopConcatCodeMotion::Run(HloModule* module) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSwhile_loop_concat_code_motionDTcc mht_17(mht_17_v, 1244, "", "./tensorflow/compiler/xla/service/while_loop_concat_code_motion.cc", "WhileLoopConcatCodeMotion::Run");
+
   bool changed = false;
   for (HloComputation* comp : module->MakeComputationPostOrder()) {
     for (HloInstruction* hlo : comp->MakeInstructionPostOrder()) {

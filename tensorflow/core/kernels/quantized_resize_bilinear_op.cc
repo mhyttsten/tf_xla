@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSquantized_resize_bilinear_opDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantized_resize_bilinear_opDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSquantized_resize_bilinear_opDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -104,6 +272,9 @@ inline T ComputeLerpReference(const T in_top_left, const T in_top_right,
                               const T in_bottom_left, const T in_bottom_right,
                               const float x_lerp, const float y_lerp,
                               const float min, const float max) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantized_resize_bilinear_opDTcc mht_0(mht_0_v, 275, "", "./tensorflow/core/kernels/quantized_resize_bilinear_op.cc", "ComputeLerpReference");
+
   const float top_left = QuantizedToFloat<T>(in_top_left, min, max);
   const float top_right = QuantizedToFloat<T>(in_top_right, min, max);
   const float bottom_left = QuantizedToFloat<T>(in_bottom_left, min, max);
@@ -154,6 +325,9 @@ inline uint8x8_t ToUint8x8(const quint8* v0, const quint8* v1, const quint8* v2,
 inline int16x8_t ToInt16x8(const int16* v0, const int16* v1, const int16* v2,
                            const int16* v3, const int16* v4, const int16* v5,
                            const int16* v6, const int16* v7) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantized_resize_bilinear_opDTcc mht_1(mht_1_v, 328, "", "./tensorflow/core/kernels/quantized_resize_bilinear_op.cc", "ToInt16x8");
+
   static const int16x8_t ZERO_16x8 = vmovq_n_s16(0);
   int16x8_t ret = vld1q_lane_s16(v0, ZERO_16x8, 0);
   ret = vld1q_lane_s16(v1, ret, 1);
@@ -167,6 +341,9 @@ inline int16x8_t ToInt16x8(const int16* v0, const int16* v1, const int16* v2,
 }
 
 inline int32x2_t ToInt32x2(const qint32* v0, const qint32* v1) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantized_resize_bilinear_opDTcc mht_2(mht_2_v, 344, "", "./tensorflow/core/kernels/quantized_resize_bilinear_op.cc", "ToInt32x2");
+
   static const int32x2_t ZERO_32x2 = vmov_n_s32(0);
   const int32x2_t ret0 =
       vld1_lane_s32(reinterpret_cast<const int32*>(v0), ZERO_32x2, 0);
@@ -210,6 +387,9 @@ inline uint8x8_t ComputeLerpx8(
     const quint8* bl6, const quint8* br6, const int16* xlp6, const quint8* tl7,
     const quint8* tr7, const quint8* bl7, const quint8* br7, const int16* xlp7,
     const int16x8_t ys_lerpsx) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantized_resize_bilinear_opDTcc mht_3(mht_3_v, 390, "", "./tensorflow/core/kernels/quantized_resize_bilinear_op.cc", "ComputeLerpx8");
+
   const uint8x8_t tl8x8 = ToUint8x8(tl0, tl1, tl2, tl3, tl4, tl5, tl6, tl7);
   const uint8x8_t tr8x8 = ToUint8x8(tr0, tr1, tr2, tr3, tr4, tr5, tr6, tr7);
   const uint8x8_t bl8x8 = ToUint8x8(bl0, bl1, bl2, bl3, bl4, bl5, bl6, bl7);
@@ -272,6 +452,9 @@ inline void OutputLerp8x8x1(const InterpolationCache<int16>& xs,
                             const quint8* const ys_input_lower_ptr,
                             const quint8* const ys_input_upper_ptr,
                             quint8* output_y_ptr) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantized_resize_bilinear_opDTcc mht_4(mht_4_v, 455, "", "./tensorflow/core/kernels/quantized_resize_bilinear_op.cc", "OutputLerp8x8x1");
+
 #ifdef QUANTIZED_RESIZE_BILINEAR_USE_NEON
   const int16x8_t y_lerpsx = vmovq_n_s16(ys_ilerp);
 
@@ -298,6 +481,9 @@ inline void OutputLerp8x8x3(const InterpolationCache<int16>& xs,
                             const quint8* const ys_input_lower_ptr,
                             const quint8* const ys_input_upper_ptr,
                             quint8* output_y_ptr) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantized_resize_bilinear_opDTcc mht_5(mht_5_v, 484, "", "./tensorflow/core/kernels/quantized_resize_bilinear_op.cc", "OutputLerp8x8x3");
+
 #ifdef QUANTIZED_RESIZE_BILINEAR_USE_NEON
   const int16x8_t y_lerpsx = vmovq_n_s16(ys_ilerp);
 
@@ -339,6 +525,9 @@ inline void OutputLerp32x4x1(const InterpolationCache<int32>& xs,
                              const qint32* const ys_input_lower_ptr,
                              const qint32* const ys_input_upper_ptr,
                              qint32* output_y_ptr) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantized_resize_bilinear_opDTcc mht_6(mht_6_v, 528, "", "./tensorflow/core/kernels/quantized_resize_bilinear_op.cc", "OutputLerp32x4x1");
+
 #ifdef QUANTIZED_RESIZE_BILINEAR_USE_NEON
   const int64 xs_lower0 = xs.lower[x_start];
   const int64 xs_upper0 = xs.upper[x_start];
@@ -387,6 +576,9 @@ inline void OutputLerp32x4x3(const InterpolationCache<int32>& xs,
                              const qint32* const ys_input_lower_ptr,
                              const qint32* const ys_input_upper_ptr,
                              qint32* output_y_ptr) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantized_resize_bilinear_opDTcc mht_7(mht_7_v, 579, "", "./tensorflow/core/kernels/quantized_resize_bilinear_op.cc", "OutputLerp32x4x3");
+
 #ifdef QUANTIZED_RESIZE_BILINEAR_USE_NEON
   const int64 xs_lower0 = xs.lower[x_start];
   const int64 xs_upper0 = xs.upper[x_start];
@@ -474,6 +666,9 @@ void ResizeImageReference(typename TTypes<T, 4>::ConstTensor images,
                           const float in_min, const float in_max,
                           const bool half_pixel_centers,
                           typename TTypes<T, 4>::Tensor* output) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantized_resize_bilinear_opDTcc mht_8(mht_8_v, 669, "", "./tensorflow/core/kernels/quantized_resize_bilinear_op.cc", "ResizeImageReference");
+
   CHECK_NOTNULL(output);
 
   const InterpolationCache<float> xs = BuildLerpCache<float>(
@@ -523,6 +718,9 @@ void ResizeImage(typename TTypes<T, 4>::ConstTensor images,
                  const float in_min, const float in_max,
                  const bool half_pixel_centers,
                  typename TTypes<T, 4>::Tensor* output) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantized_resize_bilinear_opDTcc mht_9(mht_9_v, 721, "", "./tensorflow/core/kernels/quantized_resize_bilinear_op.cc", "ResizeImage");
+
   ResizeImageReference<T>(images, batch_size, in_height, in_width, out_height,
                           out_width, channels, height_scale, width_scale,
                           in_min, in_max, half_pixel_centers, output);
@@ -537,6 +735,9 @@ void ResizeImage<qint32>(typename TTypes<qint32, 4>::ConstTensor images,
                          const float in_min, const float in_max,
                          const bool half_pixel_centers,
                          typename TTypes<qint32, 4>::Tensor* output) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantized_resize_bilinear_opDTcc mht_10(mht_10_v, 738, "", "./tensorflow/core/kernels/quantized_resize_bilinear_op.cc", "ResizeImage<qint32>");
+
   // 30 is maximum resolution for signed int.
   constexpr int RESOLUTION = 30;
   constexpr int SIMD_STEP = 4;
@@ -600,6 +801,9 @@ void ResizeImage<quint8>(typename TTypes<quint8, 4>::ConstTensor images,
                          const float in_min, const float in_max,
                          const bool half_pixel_centers,
                          typename TTypes<quint8, 4>::Tensor* output) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantized_resize_bilinear_opDTcc mht_11(mht_11_v, 804, "", "./tensorflow/core/kernels/quantized_resize_bilinear_op.cc", "ResizeImage<quint8>");
+
   // 7 is maximum resolution for unsigned byte.
   constexpr int RESOLUTION = 7;
   constexpr int SIMD_STEP = 8;
@@ -662,6 +866,9 @@ void ResizeBilinear(const typename TTypes<T, 4>::ConstTensor& images,
                     const float in_min, const float in_max,
                     const bool half_pixel_centers,
                     typename TTypes<T, 4>::Tensor* output) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantized_resize_bilinear_opDTcc mht_12(mht_12_v, 869, "", "./tensorflow/core/kernels/quantized_resize_bilinear_op.cc", "ResizeBilinear");
+
   CHECK_NOTNULL(output);
 
   const int batch_size = images.dimension(0);
@@ -696,12 +903,18 @@ class QuantizedResizeBilinearOp : public OpKernel {
  public:
   explicit QuantizedResizeBilinearOp(OpKernelConstruction* context)
       : OpKernel(context) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantized_resize_bilinear_opDTcc mht_13(mht_13_v, 906, "", "./tensorflow/core/kernels/quantized_resize_bilinear_op.cc", "QuantizedResizeBilinearOp");
+
     OP_REQUIRES_OK(context, context->GetAttr("align_corners", &align_corners_));
     OP_REQUIRES_OK(
         context, context->GetAttr("half_pixel_centers", &half_pixel_centers_));
   }
 
   void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSquantized_resize_bilinear_opDTcc mht_14(mht_14_v, 915, "", "./tensorflow/core/kernels/quantized_resize_bilinear_op.cc", "Compute");
+
     const auto& in_min_tensor = context->input(2);
     OP_REQUIRES(context, TensorShapeUtils::IsScalar(in_min_tensor.shape()),
                 errors::InvalidArgument("min must be a scalar"));

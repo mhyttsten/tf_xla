@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -234,7 +402,10 @@ class ConvolutionVisitor {
   StatusOr<bool> Run();
 
   // Returns whether any convolution ops were rewritten.
-  const bool changed() const { return changed_; }
+  const bool changed() const {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_0(mht_0_v, 406, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "changed");
+ return changed_; }
 
   ~ConvolutionVisitor() = default;
 
@@ -242,6 +413,9 @@ class ConvolutionVisitor {
                               HloComputation* computation);
 
   int64_t GetFirstChosenSpatialDim(HloInstruction* convolution) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_1(mht_1_v, 416, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "GetFirstChosenSpatialDim");
+
     const int64_t dim_count = ctrl_.count_of_dimensions_to_convert;
     const int64_t end_point = convolution->convolution_dimension_numbers()
                                   .input_spatial_dimensions_size() -
@@ -262,12 +436,21 @@ class ConvolutionVisitor {
   }
 
   int64_t DimLookUp(absl::Span<const int64_t> permute_dims, int64_t id) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_2(mht_2_v, 439, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "DimLookUp");
+
     return permute_dims[id];
   }
 
-  int DimMapper(SpaceToBatchDimMap s) { return static_cast<int>(s); }
+  int DimMapper(SpaceToBatchDimMap s) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_3(mht_3_v, 446, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "DimMapper");
+ return static_cast<int>(s); }
 
   int64_t ReverseDimLookUp(absl::Span<const int64_t> permute_dims, int64_t id) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_4(mht_4_v, 451, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ReverseDimLookUp");
+
     return std::distance(permute_dims.begin(), absl::c_find(permute_dims, id));
   }
 
@@ -332,6 +515,9 @@ class ConvolutionVisitor {
 
 ConvolutionVisitor::ConvolutionVisitor(SpaceToBatchController ctrl,
                                        HloComputation* computation) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_5(mht_5_v, 518, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::ConvolutionVisitor");
+
   ctrl_ = ctrl;
   computation_ = computation;
   for (HloInstruction* inst : computation->MakeInstructionPostOrder()) {
@@ -355,6 +541,9 @@ ConvolutionVisitor::ConvolutionVisitor(SpaceToBatchController ctrl,
 
 std::pair<std::vector<int64_t>, std::vector<int64_t>>
 ConvolutionVisitor::GetSpatialDimsToSplit(HloInstruction* old_operand) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_6(mht_6_v, 544, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::GetSpatialDimsToSplit");
+
   auto new_operand = old_to_new_instrs_[old_operand];
   auto dim_map_val = instr_to_dim_map_[old_operand];
   auto permute_dims = instr_to_dim_permute_map_[new_operand];
@@ -372,6 +561,9 @@ ConvolutionVisitor::GetSpatialDimsToSplit(HloInstruction* old_operand) {
 
 bool ConvolutionVisitor::IsForwardWindowDilatedConv(
     HloInstruction* convolution, ConvolutionDimensionNumbers& dim_numbers) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_7(mht_7_v, 564, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::IsForwardWindowDilatedConv");
+
   const int64_t window_dilation_factor =
       convolution->window()
           .dimensions(GetFirstChosenSpatialDim(convolution))
@@ -394,6 +586,9 @@ bool ConvolutionVisitor::IsForwardWindowDilatedConv(
 
 bool ConvolutionVisitor::IsConvSuitableForSpaceToBatch(
     HloInstruction* convolution) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_8(mht_8_v, 589, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::IsConvSuitableForSpaceToBatch");
+
   ConvolutionDimensionNumbers dim_numbers =
       convolution->convolution_dimension_numbers();
 
@@ -476,6 +671,9 @@ bool ConvolutionVisitor::IsConvSuitableForSpaceToBatch(
 }
 
 bool ConvolutionVisitor::IsThisBackPropFilterConv(HloInstruction* convolution) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_9(mht_9_v, 674, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::IsThisBackPropFilterConv");
+
   auto activations = convolution->mutable_operand(0);
   auto kernel = convolution->mutable_operand(1);
   auto dim_numbers = convolution->convolution_dimension_numbers();
@@ -512,6 +710,9 @@ StatusOr<HloInstruction*> ConvolutionVisitor::HaloDuplicateWithSlice(
     absl::Span<const int64_t> spatial_dimensions_to_split,
     int64_t activations_batch_dim, int64_t low_padding, int64_t halo_size,
     HloInstruction* pad_val) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_10(mht_10_v, 713, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::HaloDuplicateWithSlice");
+
   const int64_t spatial_dim_count = spatial_dimensions_to_split.size();
   const int64_t additional_batch_size =
       IPow<int64_t>(ctrl_.number_of_splits, spatial_dim_count);
@@ -642,6 +843,9 @@ ConvolutionVisitor::BringSpaceNextToBatch(
     int64_t& activations_batch_dim,
     std::vector<int64_t>* spatial_dimensions_to_split, bool is_backprop,
     bool is_rhs) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_11(mht_11_v, 846, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::BringSpaceNextToBatch");
+
   for (int64_t i = 1; i < spatial_dimensions_to_split->size(); ++i) {
     CHECK_EQ(spatial_dimensions_to_split->at(i),
              spatial_dimensions_to_split->at(i - 1) + 1)
@@ -744,6 +948,9 @@ ConvolutionVisitor::BringSpaceNextToBatch(
 StatusOr<HloInstruction*> ConvolutionVisitor::SplitAndTransposeMergedBatch(
     HloInstruction* activations, int64_t batch_dimension,
     int64_t old_batch_size, absl::Span<const int64_t> spatial_dimensions) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_12(mht_12_v, 951, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::SplitAndTransposeMergedBatch");
+
   CHECK_EQ(batch_dimension + 1, spatial_dimensions[0]);
   std::vector<int64_t> new_dimensions(activations->shape().dimensions().begin(),
                                       activations->shape().dimensions().end());
@@ -797,6 +1004,9 @@ ConvolutionVisitor::ChangeSpatialSizeOnSpaceToBatchedShape(
     HloInstruction* activations, int64_t batch_dimension,
     int64_t old_batch_size, absl::Span<const int64_t> spatial_dimensions,
     int64_t new_spatial_dim_size, bool increase_spatial_size) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_13(mht_13_v, 1007, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::ChangeSpatialSizeOnSpaceToBatchedShape");
+
   CHECK_EQ(batch_dimension + 1, spatial_dimensions[0]);
   std::vector<int64_t> new_dimensions(activations->shape().dimensions().begin(),
                                       activations->shape().dimensions().end());
@@ -882,6 +1092,9 @@ ConvolutionVisitor::ChangeSpatialSizeOnSpaceToBatchedShape(
 }
 
 StatusOr<bool> ConvolutionVisitor::Run() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_14(mht_14_v, 1095, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::Run");
+
   for (auto conv : conv_visitor_list_) {
     // If we expect to see an unpropagatable op, space-to-batch may not be
     // beneficial.
@@ -940,6 +1153,9 @@ StatusOr<bool> ConvolutionVisitor::Run() {
 }
 
 bool IsTrivialElementwise(HloInstruction* hlo) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_15(mht_15_v, 1156, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "IsTrivialElementwise");
+
   if (hlo->opcode() == HloOpcode::kFusion || hlo->opcode() == HloOpcode::kRng ||
       hlo->opcode() == HloOpcode::kCopy ||
       hlo->opcode() == HloOpcode::kConstant ||
@@ -951,6 +1167,9 @@ bool IsTrivialElementwise(HloInstruction* hlo) {
 
 bool ConvolutionVisitor::CanPropagate(HloInstruction* consumer,
                                       HloInstruction* producer) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_16(mht_16_v, 1170, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::CanPropagate");
+
   if (IsTrivialElementwise(consumer)) {
     VLOG(2) << "Doing propagation check on elementwise op: "
             << consumer->ToString();
@@ -1079,6 +1298,9 @@ bool ConvolutionVisitor::CanPropagate(HloInstruction* consumer,
     auto are_conv_dims_compatible =
         [&](const ConvolutionDimensionNumbers dim_numbers,
             std::vector<int64_t>& dim_map, bool check_lhs) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_17(mht_17_v, 1301, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "lambda");
+
           if (check_lhs) {
             if (dim_numbers.input_spatial_dimensions(
                     GetFirstChosenSpatialDim(consumer)) !=
@@ -1406,6 +1628,9 @@ bool ConvolutionVisitor::CanPropagate(HloInstruction* consumer,
 
 void ConvolutionVisitor::PropagateOnBroadcast(HloInstruction* consumer,
                                               HloInstruction* producer) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_18(mht_18_v, 1631, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::PropagateOnBroadcast");
+
   auto new_producer = old_to_new_instrs_[producer];
   auto permute_dims = instr_to_dim_permute_map_[new_producer];
   auto dim_map_val = instr_to_dim_map_[producer];
@@ -1469,6 +1694,9 @@ void ConvolutionVisitor::PropagateOnBroadcast(HloInstruction* consumer,
 void ConvolutionVisitor::RewriteBroadcastTree(
     HloInstruction* producer,
     std::vector<HloInstruction*>& instructions_to_transform) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_19(mht_19_v, 1697, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::RewriteBroadcastTree");
+
   CHECK(old_to_new_instrs_.contains(producer));
   for (auto instr : instructions_to_transform) {
     if (instr->opcode() == HloOpcode::kBroadcast) {
@@ -1484,6 +1712,9 @@ void ConvolutionVisitor::RewriteBroadcastTree(
 bool ConvolutionVisitor::IsBroadcastTree(
     HloInstruction* op, HloInstruction* consumer,
     std::vector<HloInstruction*>& instructions_to_transform) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_20(mht_20_v, 1715, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::IsBroadcastTree");
+
   if (op->opcode() == HloOpcode::kBroadcast) {
     // We want to ensure that the broadcast did not happen on the space and
     // batch dimensions.
@@ -1512,6 +1743,9 @@ bool ConvolutionVisitor::IsBroadcastTree(
 
 bool ConvolutionVisitor::IsBroadcastPropagatable(HloInstruction* broadcast,
                                                  HloInstruction* old_other_op) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_21(mht_21_v, 1746, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::IsBroadcastPropagatable");
+
   CHECK_EQ(broadcast->opcode(), HloOpcode::kBroadcast);
   CHECK(instr_to_dim_map_.contains(old_other_op));
 
@@ -1522,6 +1756,9 @@ bool ConvolutionVisitor::IsBroadcastPropagatable(HloInstruction* broadcast,
 }
 
 bool ConvolutionVisitor::IsOpcodeNonPropagatable(HloInstruction* consumer) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_22(mht_22_v, 1759, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::IsOpcodeNonPropagatable");
+
   // We can add more non-propagatable opcodes as needed.
   switch (consumer->opcode()) {
     case HloOpcode::kCustomCall:
@@ -1533,6 +1770,9 @@ bool ConvolutionVisitor::IsOpcodeNonPropagatable(HloInstruction* consumer) {
 
 bool ConvolutionVisitor::SupportedOpForPropagation(HloInstruction* consumer,
                                                    HloInstruction* producer) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_23(mht_23_v, 1773, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::SupportedOpForPropagation");
+
   if (IsOpcodeNonPropagatable(consumer)) {
     return false;
   }
@@ -1612,6 +1852,9 @@ bool ConvolutionVisitor::SupportedOpForPropagation(HloInstruction* consumer,
         result[DimMapper(SpaceToBatchDimMap::kSpace0)];
 
     auto does_dim_have_padding = [](PaddingConfig padding_config, int64_t dim) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_24(mht_24_v, 1855, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "lambda");
+
       return padding_config.dimensions(dim).edge_padding_low() != 0 ||
              padding_config.dimensions(dim).edge_padding_high() != 0 ||
              padding_config.dimensions(dim).interior_padding() != 0;
@@ -1736,6 +1979,9 @@ bool ConvolutionVisitor::SupportedOpForPropagation(HloInstruction* consumer,
 
 StatusOr<bool> ConvolutionVisitor::Propagate(HloInstruction* consumer,
                                              HloInstruction* producer) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_25(mht_25_v, 1982, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::Propagate");
+
   auto computation = consumer->parent();
   if (IsTrivialElementwise(consumer)) {
     auto dim_map_val = instr_to_dim_map_[producer];
@@ -2289,6 +2535,9 @@ StatusOr<HloInstruction*> ConvolutionVisitor::SelectValidPortion(
     HloInstruction* select_val, int64_t new_batch_dim,
     absl::Span<const int64_t> new_space_dims, int64_t old_batch_dim,
     absl::Span<const int64_t> old_space_dims) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_26(mht_26_v, 2538, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::SelectValidPortion");
+
   auto new_shape = new_instr->shape();
   auto old_shape = old_instr->shape();
   VLOG(1) << "In SelectValidPortion new_batch_dim " << new_batch_dim
@@ -2368,6 +2617,9 @@ StatusOr<HloInstruction*> ConvolutionVisitor::SelectValidPortion(
 
 StatusOr<HloInstruction*> ConvolutionVisitor::BatchToSpace(
     HloInstruction* old_instr) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_27(mht_27_v, 2620, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::BatchToSpace");
+
   if (batch_to_space_map_.count(old_instr)) {
     CHECK_NE(batch_to_space_map_[old_instr], nullptr);
     return batch_to_space_map_[old_instr];
@@ -2442,6 +2694,9 @@ StatusOr<HloInstruction*> ConvolutionVisitor::BatchToSpace(
 }
 
 Status ConvolutionVisitor::PropagateOnUsers(HloInstruction* old_conv) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_28(mht_28_v, 2697, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::PropagateOnUsers");
+
   std::queue<std::pair<HloInstruction*, HloInstruction*>> propagation_worklist;
 
   if (old_conv->user_count() == 0) {
@@ -2535,6 +2790,9 @@ Status ConvolutionVisitor::PropagateOnUsers(HloInstruction* old_conv) {
 }
 
 Status ConvolutionVisitor::PropagateOnConv(HloInstruction* convolution) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_29(mht_29_v, 2793, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::PropagateOnConv");
+
   auto activations_old = convolution->mutable_operand(0);
 
   CHECK(old_to_new_instrs_.contains(activations_old));
@@ -2740,6 +2998,9 @@ Status ConvolutionVisitor::PropagateOnConv(HloInstruction* convolution) {
 }
 
 Status ConvolutionVisitor::PropagateOnConcat(HloInstruction* concat) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_30(mht_30_v, 3001, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::PropagateOnConcat");
+
   auto first_operand = old_to_new_instrs_[concat->mutable_operand(0)];
   auto permute_dims = instr_to_dim_permute_map_[first_operand];
   const int64_t new_concat_dim =
@@ -2761,6 +3022,9 @@ Status ConvolutionVisitor::PropagateOnConcat(HloInstruction* concat) {
 }
 
 Status ConvolutionVisitor::PropagateOnReverse(HloInstruction* reverse) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_31(mht_31_v, 3025, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::PropagateOnReverse");
+
   auto first_operand = old_to_new_instrs_[reverse->mutable_operand(0)];
   auto permute_dims = instr_to_dim_permute_map_[first_operand];
 
@@ -2782,6 +3046,9 @@ Status ConvolutionVisitor::PropagateOnReverse(HloInstruction* reverse) {
 }
 
 Status ConvolutionVisitor::PropagateOnPad(HloInstruction* pad) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_32(mht_32_v, 3049, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::PropagateOnPad");
+
   auto first_operand = old_to_new_instrs_[pad->mutable_operand(0)];
   auto permute_dims = instr_to_dim_permute_map_[first_operand];
 
@@ -2814,6 +3081,9 @@ StatusOr<HloInstruction*> ConvolutionVisitor::TransposeAndMergeBatch(
     HloInstruction* activations,
     absl::Span<const int64_t> final_split_spatial_dim_positioning,
     int64_t activations_batch_dim, int64_t old_batch_size) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_33(mht_33_v, 3084, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::TransposeAndMergeBatch");
+
   const int64_t spatial_dim_count = final_split_spatial_dim_positioning.size();
 
   if (final_split_spatial_dim_positioning.size() > 1) {
@@ -2857,6 +3127,9 @@ StatusOr<HloInstruction*> ConvolutionVisitor::PerformSplitSpace(
     absl::Span<const int64_t> spatial_dimensions_to_split,
     int64_t activations_batch_dim, int64_t spatial_split_size,
     int64_t num_splits) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_34(mht_34_v, 3130, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::PerformSplitSpace");
+
   const int64_t old_batch_size =
       activations->shape().dimensions(activations_batch_dim);
 
@@ -2903,6 +3176,9 @@ StatusOr<HloInstruction*> ConvolutionVisitor::PadAndSplitSpace(
     absl::Span<const int64_t> spatial_dimensions_to_split,
     int64_t activations_batch_dim, int64_t high_padding, int64_t low_padding,
     int64_t spatial_split_size, int64_t num_splits) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_35(mht_35_v, 3179, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::PadAndSplitSpace");
+
   const int64_t old_batch_size =
       activations->shape().dimensions(activations_batch_dim);
 
@@ -2939,6 +3215,9 @@ ConvolutionVisitor::SplitSpace(
     int64_t spatial_split_size, int64_t num_splits,
     std::vector<int64_t>* spatial_dimensions_to_split, bool is_backprop,
     bool is_rhs) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_36(mht_36_v, 3218, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::SplitSpace");
+
   TF_ASSIGN_OR_RETURN(
       auto retval,
       BringSpaceNextToBatch(activations, dim_numbers, activations_batch_dim,
@@ -2956,6 +3235,9 @@ ConvolutionVisitor::SplitSpace(
 
 StatusOr<HloInstruction*> ConvolutionVisitor::PropagateOnConstant(
     HloInstruction* consumer, HloInstruction* producer) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_37(mht_37_v, 3238, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::PropagateOnConstant");
+
   CHECK(old_to_new_instrs_.contains(producer));
   HloInstruction* new_producer = old_to_new_instrs_[producer];
   auto prod_transpose_dims = instr_to_dim_permute_map_[new_producer];
@@ -2994,6 +3276,9 @@ StatusOr<HloInstruction*> ConvolutionVisitor::PropagateOnConstant(
 
 Status ConvolutionVisitor::PropagateOnBackpropFilterConv(
     HloInstruction* convolution) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_38(mht_38_v, 3279, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::PropagateOnBackpropFilterConv");
+
   auto activations_old = convolution->mutable_operand(0);
 
   const int64_t rhs_dilation =
@@ -3459,6 +3744,9 @@ Status ConvolutionVisitor::PropagateOnBackpropFilterConv(
 HloInstruction*
 ConvolutionVisitor::DoesConvolutionFeedReduceWindowOrSelectAndScatter(
     HloInstruction* instr, int64_t depth = kReduceWindowSearchDepth) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_39(mht_39_v, 3747, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::DoesConvolutionFeedReduceWindowOrSelectAndScatter");
+
   if (depth == 0) {
     return nullptr;
   }
@@ -3485,6 +3773,9 @@ ConvolutionVisitor::DoesConvolutionFeedReduceWindowOrSelectAndScatter(
 
 bool ConvolutionVisitor::DoesConvolutionFeedUnpropagatableOp(
     HloInstruction* instr, int64_t depth) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_40(mht_40_v, 3776, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::DoesConvolutionFeedUnpropagatableOp");
+
   auto key = std::make_pair(instr, depth);
   if (unpropagatability_cache_.contains(key)) {
     return unpropagatability_cache_[key];
@@ -3519,6 +3810,9 @@ bool ConvolutionVisitor::DoesConvolutionFeedUnpropagatableOp(
 
 bool ConvolutionVisitor::IsSpaceToBatchedSpaceSizeSuitable(
     HloInstruction* instr) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_41(mht_41_v, 3813, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::IsSpaceToBatchedSpaceSizeSuitable");
+
   CHECK(instr->opcode() == HloOpcode::kSelectAndScatter ||
         instr->opcode() == HloOpcode::kReduceWindow);
   auto old_producer = instr->mutable_operand(0);
@@ -3542,6 +3836,9 @@ bool ConvolutionVisitor::IsSpaceToBatchedSpaceSizeSuitable(
 
 ConvolutionVisitor::ConvDetails ConvolutionVisitor::GetConvolutionDetails(
     HloInstruction* convolution, ConvolutionDimensionNumbers& dim_numbers) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_42(mht_42_v, 3839, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::GetConvolutionDetails");
+
   auto activations = convolution->mutable_operand(0);
 
   auto kernel = convolution->mutable_operand(1);
@@ -3625,6 +3922,9 @@ ConvolutionVisitor::ConvDetails ConvolutionVisitor::GetConvolutionDetails(
 
 Status ConvolutionVisitor::PerformSpaceToBatchOnConvolution(
     HloInstruction* convolution) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_43(mht_43_v, 3925, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "ConvolutionVisitor::PerformSpaceToBatchOnConvolution");
+
   if (!ConsumeFuel("space-to-batch-converter", [&] {
         return "Skipping space-to-batch propagation because fuel over\n";
       })) {
@@ -3846,6 +4146,9 @@ Status ConvolutionVisitor::PerformSpaceToBatchOnConvolution(
 }  // namespace
 
 StatusOr<bool> SpaceToBatchConverter::Run(HloModule* module) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspace_to_batch_converterDTcc mht_44(mht_44_v, 4149, "", "./tensorflow/compiler/xla/service/space_to_batch_converter.cc", "SpaceToBatchConverter::Run");
+
   XLA_VLOG_LINES(
       2, "SpaceToBatchConverter::Run(), before:\n" + module->ToString());
   bool changed = false;

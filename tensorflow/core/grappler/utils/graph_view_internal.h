@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_GRAPPLER_UTILS_GRAPH_VIEW_INTERNAL_H_
 #define TENSORFLOW_CORE_GRAPPLER_UTILS_GRAPH_VIEW_INTERNAL_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -45,11 +213,17 @@ class NodeIndexAndPortIndex {
   NodeIndexAndPortIndex()
       : graph_view_(nullptr),
         node_index_(kMissingIndex),
-        port_index_(kMissingSlot) {}
+        port_index_(kMissingSlot) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_0(mht_0_v, 217, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "NodeIndexAndPortIndex");
+}
   NodeIndexAndPortIndex(GraphViewT* graph_view, int node_index, int port_index)
       : graph_view_(graph_view),
         node_index_(node_index),
-        port_index_(port_index) {}
+        port_index_(port_index) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_1(mht_1_v, 224, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "NodeIndexAndPortIndex");
+}
 
   bool operator==(const NodeIndexAndPortIndex& other) const {
     return port_index_ == other.port_index_ &&
@@ -58,11 +232,17 @@ class NodeIndexAndPortIndex {
 
   template <typename Hash>
   friend Hash AbslHashValue(Hash h, const NodeIndexAndPortIndex& n) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_2(mht_2_v, 235, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "AbslHashValue");
+
     return Hash::combine(std::move(h), n.node_index_, n.port_index_);
   }
 
   // Returns NodeView from `graph_view_` at `node_index_`.
   NodeViewT* node_view() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_3(mht_3_v, 243, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "node_view");
+
     if (graph_view_ == nullptr) {
       return nullptr;
     }
@@ -70,10 +250,16 @@ class NodeIndexAndPortIndex {
   }
 
   // Returns node index in graph.
-  int node_index() const { return node_index_; }
+  int node_index() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_4(mht_4_v, 254, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "node_index");
+ return node_index_; }
 
   // Returns input/output port index.
-  int index() const { return port_index_; }
+  int index() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_5(mht_5_v, 260, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "index");
+ return port_index_; }
 
  protected:
   GraphViewT* graph_view_;
@@ -86,7 +272,10 @@ class NodeIndexAndPortIndex {
 class NodeDefAndPortIndex {
  public:
   NodeDefAndPortIndex(const NodeDef* node_def, int port_index)
-      : node_def_(node_def), port_index_(port_index) {}
+      : node_def_(node_def), port_index_(port_index) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_6(mht_6_v, 276, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "NodeDefAndPortIndex");
+}
 
   bool operator==(const NodeDefAndPortIndex& other) const {
     return node_def_ == other.node_def_ && port_index_ == other.port_index_;
@@ -94,6 +283,9 @@ class NodeDefAndPortIndex {
 
   template <typename Hash>
   friend Hash AbslHashValue(Hash h, const NodeDefAndPortIndex& n) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_7(mht_7_v, 286, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "AbslHashValue");
+
     return Hash::combine(std::move(h), n.node_def_, n.port_index_);
   }
 
@@ -130,12 +322,21 @@ class NodeViewInternal {
   explicit NodeViewInternal(GraphViewT* graph_view, int node_index)
       : graph_view_(graph_view),
         node_index_(node_index),
-        attrs_(AttrSlice(graph_view->graph()->node(node_index))) {}
+        attrs_(AttrSlice(graph_view->graph()->node(node_index))) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_8(mht_8_v, 326, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "NodeViewInternal");
+}
 
   NodeViewInternal()
-      : graph_view_(nullptr), node_index_(kMissingIndex), attrs_(AttrSlice()) {}
+      : graph_view_(nullptr), node_index_(kMissingIndex), attrs_(AttrSlice()) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_9(mht_9_v, 332, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "NodeViewInternal");
+}
 
-  virtual ~NodeViewInternal() {}
+  virtual ~NodeViewInternal() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_10(mht_10_v, 337, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "~NodeViewInternal");
+}
 
   NodeViewInternal(NodeViewInternal&&) = default;
   NodeViewInternal& operator=(NodeViewInternal&&) = default;
@@ -146,6 +347,9 @@ class NodeViewInternal {
 
   template <typename Hash>
   friend Hash AbslHashValue(Hash h, const NodeViewInternal& n) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_11(mht_11_v, 350, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "AbslHashValue");
+
     return Hash::combine(std::move(h), n.node_index_);
   }
 
@@ -153,25 +357,43 @@ class NodeViewInternal {
   virtual NodeDefT* node() const = 0;
 
   // Returns index of node in GraphDef/GraphView.
-  int node_index() const { return node_index_; }
+  int node_index() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_12(mht_12_v, 361, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "node_index");
+ return node_index_; }
 
   // Returns the name of the node.
-  const string& GetName() const { return node()->name(); }
+  const string& GetName() const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_13(mht_13_v, 367, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "GetName");
+ return node()->name(); }
 
   // Returns the op of the node.
-  const string& GetOp() const { return node()->op(); }
+  const string& GetOp() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_14(mht_14_v, 373, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "GetOp");
+ return node()->op(); }
 
   // Returns the device set for the node.
-  const string& GetDevice() const { return node()->device(); }
+  const string& GetDevice() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_15(mht_15_v, 379, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "GetDevice");
+ return node()->device(); }
 
   // Returns all regular fanins, based on ordering in the node.
   const std::vector<FanoutViewT>& GetRegularFanins() const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_16(mht_16_v, 385, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "GetRegularFanins");
+
     return regular_fanins_;
   }
 
   // Returns a regular fanin based on input index. If no such fanin exist, a
   // missing fanin is returned, with no NodeView set and an index of -2.
   const FanoutViewT& GetRegularFanin(int i) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_17(mht_17_v, 394, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "GetRegularFanin");
+
     int regular_fanins_size = regular_fanins_.size();
     if (i < 0 || i >= regular_fanins_size) {
       return GetMissingFanin();
@@ -181,17 +403,26 @@ class NodeViewInternal {
 
   // Returns all controlling fanins, based on ordering in the node.
   const std::vector<FanoutViewT>& GetControllingFanins() const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_18(mht_18_v, 406, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "GetControllingFanins");
+
     return controlling_fanins_;
   }
 
   // Returns all regular fanouts.
   const std::vector<std::vector<FaninViewT>>& GetRegularFanouts() const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_19(mht_19_v, 414, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "GetRegularFanouts");
+
     return regular_fanouts_by_port_;
   }
 
   // Returns a regular fanout(s) based on output index. If no such output index
   // exists, no fanouts will be returned.
   const std::vector<FaninViewT>& GetRegularFanout(int i) const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_20(mht_20_v, 423, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "GetRegularFanout");
+
     int regular_fanouts_by_port_size = regular_fanouts_by_port_.size();
     if (i < 0 || i >= regular_fanouts_by_port_size) {
       return GetMissingFanout();
@@ -201,20 +432,35 @@ class NodeViewInternal {
 
   // Returns all controlled fanouts.
   const std::vector<FaninViewT>& GetControlledFanouts() const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_21(mht_21_v, 435, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "GetControlledFanouts");
+
     return controlled_fanouts_;
   }
 
   // Returns the number of regular fanins.
-  int NumRegularFanins() const { return regular_fanins_.size(); }
+  int NumRegularFanins() const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_22(mht_22_v, 443, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "NumRegularFanins");
+ return regular_fanins_.size(); }
 
   // Returns the number of controlling fanins.
-  int NumControllingFanins() const { return controlling_fanins_.size(); }
+  int NumControllingFanins() const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_23(mht_23_v, 449, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "NumControllingFanins");
+ return controlling_fanins_.size(); }
 
   // Returns the number of regular fanouts.
-  int NumRegularFanouts() const { return num_regular_fanouts_; }
+  int NumRegularFanouts() const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_24(mht_24_v, 455, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "NumRegularFanouts");
+ return num_regular_fanouts_; }
 
   // Returns the number of controlled fanouts.
-  int NumControlledFanouts() const { return controlled_fanouts_.size(); }
+  int NumControlledFanouts() const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_25(mht_25_v, 461, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "NumControlledFanouts");
+ return controlled_fanouts_.size(); }
 
   // Checks if a fanin exists for the node.
   virtual bool HasFanin(const FanoutViewT& fanin) const = 0;
@@ -225,17 +471,31 @@ class NodeViewInternal {
   // Returns an attribute of the node by key. If no attribute for such key
   // exists, a `nullptr` is returned.
   const AttrValue* GetAttr(absl::string_view attr_name) const {
+   std::vector<std::string> mht_26_v;
+   mht_26_v.push_back("attr_name: \"" + std::string(attr_name.data(), attr_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_26(mht_26_v, 475, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "GetAttr");
+
     return attrs_.Find(attr_name);
   }
 
   // Returns all attributes of the node.
-  const AttrSlice& GetAttrs() const { return attrs_; }
+  const AttrSlice& GetAttrs() const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_27(mht_27_v, 483, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "GetAttrs");
+ return attrs_; }
 
   // Returns the number of attributes in the node.
-  int NumAttrs() const { return attrs_.size(); }
+  int NumAttrs() const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_28(mht_28_v, 489, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "NumAttrs");
+ return attrs_.size(); }
 
   // Checks if an attribute exist in the node.
   bool HasAttr(absl::string_view attr_name) const {
+   std::vector<std::string> mht_29_v;
+   mht_29_v.push_back("attr_name: \"" + std::string(attr_name.data(), attr_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_29(mht_29_v, 496, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "HasAttr");
+
     return attrs_.Find(attr_name) != nullptr;
   }
 
@@ -279,18 +539,30 @@ class GraphViewInternal {
       typename std::conditional<IsConst, const GraphDef, GraphDef>::type;
 
  public:
-  explicit GraphViewInternal(GraphDefT* graph) : graph_(graph) {}
-  virtual ~GraphViewInternal() {}
+  explicit GraphViewInternal(GraphDefT* graph) : graph_(graph) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_30(mht_30_v, 543, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "GraphViewInternal");
+}
+  virtual ~GraphViewInternal() {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_31(mht_31_v, 547, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "~GraphViewInternal");
+}
 
   bool operator==(const GraphViewInternal& other) const {
     return graph_ == other.graph_;
   }
 
-  GraphDefT* graph() const { return graph_; }
+  GraphDefT* graph() const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_32(mht_32_v, 556, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "graph");
+ return graph_; }
 
   // Finds node by index in the graph. If no such node exists in the graph, a
   // `nullptr` is returned.
   const NodeViewT* GetNode(int node_index) const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_33(mht_33_v, 563, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "GetNode");
+
     int nodes_size = nodes_.size();
     if (node_index < 0 || node_index >= nodes_size) {
       return nullptr;
@@ -299,6 +571,9 @@ class GraphViewInternal {
   }
 
   NodeViewT* GetNode(int node_index) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_34(mht_34_v, 574, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "GetNode");
+
     int nodes_size = nodes_.size();
     if (node_index < 0 || node_index >= nodes_size) {
       return nullptr;
@@ -309,6 +584,10 @@ class GraphViewInternal {
   // Finds node by name. If no such node exists in the graph, a `nullptr` is
   // returned.
   const NodeViewT* GetNode(absl::string_view node_name) const {
+   std::vector<std::string> mht_35_v;
+   mht_35_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_35(mht_35_v, 588, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "GetNode");
+
     auto it = node_index_by_name_.find(node_name);
     if (it == node_index_by_name_.end()) {
       return nullptr;
@@ -317,6 +596,10 @@ class GraphViewInternal {
   }
 
   NodeViewT* GetNode(absl::string_view node_name) {
+   std::vector<std::string> mht_36_v;
+   mht_36_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_36(mht_36_v, 600, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "GetNode");
+
     auto it = node_index_by_name_.find(node_name);
     if (it == node_index_by_name_.end()) {
       return nullptr;
@@ -325,19 +608,32 @@ class GraphViewInternal {
   }
 
   // Returns all nodes (as NodeView) in the graph.
-  const std::vector<NodeViewT>& GetNodes() const { return nodes_; }
+  const std::vector<NodeViewT>& GetNodes() const {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_37(mht_37_v, 612, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "GetNodes");
+ return nodes_; }
 
   // Checks if a node by name exists in the graph.
   bool HasNode(absl::string_view node_name) const {
+   std::vector<std::string> mht_38_v;
+   mht_38_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_38(mht_38_v, 619, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "HasNode");
+
     return node_index_by_name_.contains(node_name);
   }
 
   // Returns the number of nodes in the graph.
-  int NumNodes() const { return nodes_.size(); }
+  int NumNodes() const {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_39(mht_39_v, 627, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "NumNodes");
+ return nodes_.size(); }
 
  protected:
   // Reset allocated node vector and node map in case of failure.
   void Reset() {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_40(mht_40_v, 634, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "Reset");
+
     std::vector<NodeViewT>().swap(nodes_);
     absl::flat_hash_map<absl::string_view, int>().swap(node_index_by_name_);
   }
@@ -351,10 +647,16 @@ class GraphViewInternal {
 };
 
 inline SafeTensorId EmptyTensorId() {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_41(mht_41_v, 650, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "EmptyTensorId");
+
   return SafeTensorId("", internal::kMissingSlot);
 }
 
 inline bool IsEmptyTensorId(const TensorId tensor_id) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_42(mht_42_v, 657, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "IsEmptyTensorId");
+
   return tensor_id.node().empty() &&
          tensor_id.index() == internal::kMissingSlot;
 }
@@ -364,7 +666,10 @@ inline bool IsEmptyTensorId(const TensorId tensor_id) {
 template <typename GraphViewT>
 struct NodeViewDiff {
   explicit NodeViewDiff(GraphViewT* graph_view, int node_index)
-      : graph_view(graph_view), node_index(node_index) {}
+      : graph_view(graph_view), node_index(node_index) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_43(mht_43_v, 670, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "NodeViewDiff");
+}
 
   GraphViewT* graph_view;
   int node_index;
@@ -402,6 +707,10 @@ struct NodeViewDiff {
 // the field will be cleared in the diff.
 template <typename GraphViewT>
 inline bool UpdateName(NodeViewDiff<GraphViewT>* diff, absl::string_view name) {
+   std::vector<std::string> mht_44_v;
+   mht_44_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_44(mht_44_v, 711, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "UpdateName");
+
   if (diff->graph_view->GetNode(diff->node_index)->GetName() == name) {
     diff->name.clear();
     diff->update_name = false;
@@ -416,6 +725,10 @@ inline bool UpdateName(NodeViewDiff<GraphViewT>* diff, absl::string_view name) {
 // field will be cleared in the diff.
 template <typename GraphViewT>
 inline bool UpdateOp(NodeViewDiff<GraphViewT>* diff, absl::string_view op) {
+   std::vector<std::string> mht_45_v;
+   mht_45_v.push_back("op: \"" + std::string(op.data(), op.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_45(mht_45_v, 729, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "UpdateOp");
+
   if (diff->graph_view->GetNode(diff->node_index)->GetOp() == op) {
     diff->op.clear();
     diff->update_op = false;
@@ -431,6 +744,10 @@ inline bool UpdateOp(NodeViewDiff<GraphViewT>* diff, absl::string_view op) {
 template <typename GraphViewT>
 inline bool UpdateDevice(NodeViewDiff<GraphViewT>* diff,
                          absl::string_view device) {
+   std::vector<std::string> mht_46_v;
+   mht_46_v.push_back("device: \"" + std::string(device.data(), device.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_46(mht_46_v, 748, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "UpdateDevice");
+
   if (diff->graph_view->GetNode(diff->node_index)->GetDevice() == device) {
     diff->device.clear();
     diff->update_device = false;
@@ -473,6 +790,10 @@ inline bool CheckNodeNameExists(
     absl::string_view node_name,
     const absl::flat_hash_map<absl::string_view, int>& updated_node_names,
     const GraphViewT* graph_view) {
+   std::vector<std::string> mht_47_v;
+   mht_47_v.push_back("node_name: \"" + std::string(node_name.data(), node_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_47(mht_47_v, 794, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "CheckNodeNameExists");
+
   auto it = updated_node_names.find(node_name);
   if (it != updated_node_names.end()) {
     return it->second == kNodeNamePresent;
@@ -488,6 +809,9 @@ inline bool CheckNodeNameExists(
 template <typename GraphViewT>
 inline bool AddOrUpdateRegularFanin(NodeViewDiff<GraphViewT>* diff, int index,
                                     const TensorId& fanin) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_48(mht_48_v, 812, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "AddOrUpdateRegularFanin");
+
   if (index < 0) {
     // Not a valid index for regular fanins.
     return false;
@@ -530,6 +854,9 @@ inline bool AddOrUpdateRegularFanin(NodeViewDiff<GraphViewT>* diff, int index,
 // fanins and updated/added fanins via AddOrUpdateRegularFanins.
 template <typename GraphViewT>
 inline bool RemoveRegularFanin(NodeViewDiff<GraphViewT>* diff, int index) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_49(mht_49_v, 857, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "RemoveRegularFanin");
+
   if (index < 0) {
     // Not a valid index for regular fanins.
     return false;
@@ -571,6 +898,10 @@ template <typename GraphViewT>
 inline bool AddControllingFanin(NodeViewDiff<GraphViewT>* diff,
                                 int control_index,
                                 absl::string_view fanin_node_name) {
+   std::vector<std::string> mht_50_v;
+   mht_50_v.push_back("fanin_node_name: \"" + std::string(fanin_node_name.data(), fanin_node_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_50(mht_50_v, 902, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "AddControllingFanin");
+
   if (control_index == kMissingIndex) {
     diff->controlling_inputs_to_add.emplace(fanin_node_name);
   } else {
@@ -587,6 +918,10 @@ template <typename GraphViewT>
 inline bool RemoveControllingFanin(NodeViewDiff<GraphViewT>* diff,
                                    int control_index,
                                    absl::string_view fanin_node_name) {
+   std::vector<std::string> mht_51_v;
+   mht_51_v.push_back("fanin_node_name: \"" + std::string(fanin_node_name.data(), fanin_node_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_51(mht_51_v, 922, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "RemoveControllingFanin");
+
   if (control_index == kMissingIndex) {
     diff->controlling_inputs_to_add.erase(fanin_node_name);
   } else {
@@ -601,6 +936,10 @@ template <typename GraphViewT>
 inline bool AddOrUpdateAttribute(NodeViewDiff<GraphViewT>* diff,
                                  absl::string_view attr_name,
                                  const AttrValue& attr_value) {
+   std::vector<std::string> mht_52_v;
+   mht_52_v.push_back("attr_name: \"" + std::string(attr_name.data(), attr_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_52(mht_52_v, 940, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "AddOrUpdateAttribute");
+
   diff->attrs_to_add.empty() ? 0 : diff->attrs_to_remove.erase(attr_name);
   gtl::InsertOrUpdate(&diff->attrs_to_add, string(attr_name), attr_value);
   return true;
@@ -611,6 +950,10 @@ inline bool AddOrUpdateAttribute(NodeViewDiff<GraphViewT>* diff,
 template <typename GraphViewT>
 inline bool RemoveAttribute(NodeViewDiff<GraphViewT>* diff,
                             absl::string_view attr_name) {
+   std::vector<std::string> mht_53_v;
+   mht_53_v.push_back("attr_name: \"" + std::string(attr_name.data(), attr_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_53(mht_53_v, 954, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "RemoveAttribute");
+
   const size_t num_erased =
       diff->attrs_to_add.empty() ? 0 : diff->attrs_to_add.erase(attr_name);
   auto* node_view = diff->graph_view->GetNode(diff->node_index);
@@ -624,6 +967,9 @@ inline bool RemoveAttribute(NodeViewDiff<GraphViewT>* diff,
 // Removes trailing values in vector `v` for values equal to `value`.
 template <typename T>
 inline void ResizeByTrimmingEndForValue(std::vector<T>* v, const T& value) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_54(mht_54_v, 970, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "ResizeByTrimmingEndForValue");
+
   int curr_index = v->size();
   const int last_index = v->size() - 1;
   for (int i = last_index; i >= 0; --i) {
@@ -641,6 +987,9 @@ inline void ResizeByTrimmingEndForValue(std::vector<T>* v, const T& value) {
 // Checks if any changes are set in the diff.
 template <typename GraphViewT>
 inline bool IsEmpty(NodeViewDiff<GraphViewT>* diff) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_55(mht_55_v, 990, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "IsEmpty");
+
   ResizeByTrimmingEndForValue(&diff->regular_inputs_to_remove, false);
   ResizeByTrimmingEndForValue(&diff->regular_inputs_to_add, EmptyTensorId());
   return !diff->update_name && !diff->update_op && !diff->update_device &&
@@ -655,6 +1004,9 @@ inline bool IsEmpty(NodeViewDiff<GraphViewT>* diff) {
 // Resets and clears existing diff.
 template <typename GraphViewT>
 inline void Reset(NodeViewDiff<GraphViewT>* diff) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_56(mht_56_v, 1007, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "Reset");
+
   diff->name.clear();
   diff->update_name = false;
   diff->op.clear();
@@ -677,6 +1029,9 @@ template <typename GraphViewT>
 inline bool IsWellFormed(
     NodeViewDiff<GraphViewT>* diff,
     const absl::flat_hash_map<absl::string_view, int>& updated_node_names) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_57(mht_57_v, 1032, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "IsWellFormed");
+
   ResizeByTrimmingEndForValue(&diff->regular_inputs_to_remove, false);
   ResizeByTrimmingEndForValue(&diff->regular_inputs_to_add, EmptyTensorId());
   int diff_regular_inputs_to_add_size = diff->regular_inputs_to_add.size();
@@ -781,7 +1136,10 @@ inline bool IsWellFormed(
 template <typename GraphViewT>
 struct NewNode {
   explicit NewNode(GraphViewT* graph_view, NodeDef&& node)
-      : graph_view(graph_view), node(std::move(node)) {}
+      : graph_view(graph_view), node(std::move(node)) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_58(mht_58_v, 1140, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "NewNode");
+}
 
   GraphViewT* graph_view;
   NodeDef node;
@@ -793,6 +1151,10 @@ struct NewNode {
 // Updates new node name.
 template <typename GraphViewT>
 inline void UpdateName(NewNode<GraphViewT>* new_node, absl::string_view name) {
+   std::vector<std::string> mht_59_v;
+   mht_59_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_59(mht_59_v, 1155, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "UpdateName");
+
   if (name.empty()) {
     new_node->node.clear_name();
   } else {
@@ -803,6 +1165,10 @@ inline void UpdateName(NewNode<GraphViewT>* new_node, absl::string_view name) {
 // Updates new node op.
 template <typename GraphViewT>
 inline void UpdateOp(NewNode<GraphViewT>* new_node, absl::string_view op) {
+   std::vector<std::string> mht_60_v;
+   mht_60_v.push_back("op: \"" + std::string(op.data(), op.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_60(mht_60_v, 1169, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "UpdateOp");
+
   if (op.empty()) {
     new_node->node.clear_op();
   } else {
@@ -814,6 +1180,10 @@ inline void UpdateOp(NewNode<GraphViewT>* new_node, absl::string_view op) {
 template <typename GraphViewT>
 inline void UpdateDevice(NewNode<GraphViewT>* new_node,
                          absl::string_view device) {
+   std::vector<std::string> mht_61_v;
+   mht_61_v.push_back("device: \"" + std::string(device.data(), device.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_61(mht_61_v, 1184, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "UpdateDevice");
+
   if (device.empty()) {
     new_node->node.clear_device();
   } else {
@@ -826,6 +1196,9 @@ inline void UpdateDevice(NewNode<GraphViewT>* new_node,
 template <typename GraphViewT>
 inline void AddOrUpdateRegularFanin(NewNode<GraphViewT>* new_node, int index,
                                     const TensorId& fanin) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_62(mht_62_v, 1199, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "AddOrUpdateRegularFanin");
+
   if (index < 0) {
     // Not a valid index for regular fanins.
     return;
@@ -839,6 +1212,9 @@ inline void AddOrUpdateRegularFanin(NewNode<GraphViewT>* new_node, int index,
 // remove existing fanins and updated/added fanins via AddOrUpdateRegularFanins.
 template <typename GraphViewT>
 inline void RemoveRegularFanin(NewNode<GraphViewT>* new_node, int index) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_63(mht_63_v, 1215, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "RemoveRegularFanin");
+
   int new_node_regular_fanins_size = new_node->regular_fanins.size();
   if (index < 0 || index >= new_node_regular_fanins_size ||
       IsEmptyTensorId(new_node->regular_fanins[index])) {
@@ -852,6 +1228,10 @@ inline void RemoveRegularFanin(NewNode<GraphViewT>* new_node, int index) {
 template <typename GraphViewT>
 inline void AddControllingFanin(NewNode<GraphViewT>* new_node,
                                 absl::string_view fanin_node_name) {
+   std::vector<std::string> mht_64_v;
+   mht_64_v.push_back("fanin_node_name: \"" + std::string(fanin_node_name.data(), fanin_node_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_64(mht_64_v, 1232, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "AddControllingFanin");
+
   new_node->controlling_fanins.emplace(fanin_node_name);
 }
 
@@ -859,6 +1239,10 @@ inline void AddControllingFanin(NewNode<GraphViewT>* new_node,
 template <typename GraphViewT>
 inline void RemoveControllingFanin(NewNode<GraphViewT>* new_node,
                                    absl::string_view fanin_node_name) {
+   std::vector<std::string> mht_65_v;
+   mht_65_v.push_back("fanin_node_name: \"" + std::string(fanin_node_name.data(), fanin_node_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_65(mht_65_v, 1243, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "RemoveControllingFanin");
+
   new_node->controlling_fanins.erase(fanin_node_name);
 }
 
@@ -867,6 +1251,10 @@ template <typename GraphViewT>
 inline void AddOrUpdateAttribute(NewNode<GraphViewT>* new_node,
                                  absl::string_view attr_name,
                                  const AttrValue& attr_value) {
+   std::vector<std::string> mht_66_v;
+   mht_66_v.push_back("attr_name: \"" + std::string(attr_name.data(), attr_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_66(mht_66_v, 1255, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "AddOrUpdateAttribute");
+
   gtl::InsertOrUpdate(new_node->node.mutable_attr(), string(attr_name),
                       attr_value);
 }
@@ -875,6 +1263,10 @@ inline void AddOrUpdateAttribute(NewNode<GraphViewT>* new_node,
 template <typename GraphViewT>
 inline void RemoveAttribute(NewNode<GraphViewT>* new_node,
                             absl::string_view attr_name) {
+   std::vector<std::string> mht_67_v;
+   mht_67_v.push_back("attr_name: \"" + std::string(attr_name.data(), attr_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_67(mht_67_v, 1267, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "RemoveAttribute");
+
   new_node->node.mutable_attr()->erase(string(attr_name));
 }
 
@@ -883,6 +1275,9 @@ template <typename GraphViewT>
 inline bool IsWellFormed(
     NewNode<GraphViewT>* new_node,
     const absl::flat_hash_map<absl::string_view, int>& updated_node_names) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_68(mht_68_v, 1278, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "IsWellFormed");
+
   ResizeByTrimmingEndForValue(&new_node->regular_fanins, EmptyTensorId());
   int new_node_regular_fanins_size = new_node->regular_fanins.size();
   if (new_node_regular_fanins_size != new_node->num_regular_fanins) {
@@ -892,6 +1287,10 @@ inline bool IsWellFormed(
   const string& node_name = new_node->node.name();
   auto invalid_node_name = [new_node, updated_node_names,
                             node_name](absl::string_view fanin_node_name) {
+   std::vector<std::string> mht_69_v;
+   mht_69_v.push_back("fanin_node_name: \"" + std::string(fanin_node_name.data(), fanin_node_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSutilsPSgraph_view_internalDTh mht_69(mht_69_v, 1291, "", "./tensorflow/core/grappler/utils/graph_view_internal.h", "lambda");
+
     return fanin_node_name == node_name ||
            !CheckNodeNameExists(fanin_node_name, updated_node_names,
                                 new_node->graph_view);

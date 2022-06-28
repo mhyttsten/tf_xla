@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,6 +210,9 @@ namespace xla {
 namespace {
 
 bool IsCallerInstruction(HloInstruction* hlo) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_0(mht_0_v, 213, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "IsCallerInstruction");
+
   switch (hlo->opcode()) {
     case HloOpcode::kAsyncStart:
     case HloOpcode::kAsyncUpdate:
@@ -67,6 +238,9 @@ bool IsCallerInstruction(HloInstruction* hlo) {
 }
 
 Status CheckOperandCount(const HloInstruction* hlo, int expected) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_1(mht_1_v, 241, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "CheckOperandCount");
+
   if (hlo->operand_count() != expected) {
     return InternalError("Expected %d operands for %s instruction: %s",
                          expected, HloOpcodeString(hlo->opcode()),
@@ -77,6 +251,9 @@ Status CheckOperandCount(const HloInstruction* hlo, int expected) {
 
 Status CheckParameterCount(const HloInstruction* calling_instruction,
                            const HloComputation* computation, int expected) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_2(mht_2_v, 254, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "CheckParameterCount");
+
   if (computation->num_parameters() != expected) {
     return InternalError(
         "Expected computation %s called from %s to have %d parameters, has %d",
@@ -88,6 +265,9 @@ Status CheckParameterCount(const HloInstruction* calling_instruction,
 
 int64_t GetSubgroupSize(HloCollectiveInstruction* hlo,
                         CollectiveOpGroupMode group_mode) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_3(mht_3_v, 268, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "GetSubgroupSize");
+
   const HloModuleConfig& config = hlo->GetModule()->config();
   // empty replica groups imply all replicas form a single group.
   int64_t replica_subgroup_size =
@@ -119,6 +299,9 @@ int64_t GetSubgroupSize(HloCollectiveInstruction* hlo,
 }  // namespace
 
 Status ShapeVerifier::Preprocess(HloInstruction* hlo) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_4(mht_4_v, 302, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::Preprocess");
+
   if (!hlo->called_computations().empty() && !IsCallerInstruction(hlo)) {
     return InternalError(
         "Called computations specified for non-caller instruction  %s",
@@ -132,26 +315,44 @@ Status ShapeVerifier::Preprocess(HloInstruction* hlo) {
 }
 
 Status ShapeVerifier::HandleElementwiseUnary(HloInstruction* hlo) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_5(mht_5_v, 318, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleElementwiseUnary");
+
   return CheckUnaryShape(hlo);
 }
 
 Status ShapeVerifier::HandleElementwiseBinary(HloInstruction* hlo) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_6(mht_6_v, 325, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleElementwiseBinary");
+
   return CheckBinaryShape(hlo);
 }
 
 Status ShapeVerifier::HandleClamp(HloInstruction* clamp) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_7(mht_7_v, 332, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleClamp");
+
   return CheckTernaryShape(clamp);
 }
 
 Status ShapeVerifier::HandleSelect(HloInstruction* select) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_8(mht_8_v, 339, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleSelect");
+
   return CheckTernaryShape(select);
 }
 
 Status ShapeVerifier::HandleTupleSelect(HloInstruction* tuple_select) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_9(mht_9_v, 346, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleTupleSelect");
+
   return CheckTernaryShape(tuple_select);
 }
 
 Status ShapeVerifier::HandleConcatenate(HloInstruction* concatenate) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_10(mht_10_v, 353, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleConcatenate");
+
   std::vector<const Shape*> operand_shapes;
   for (const HloInstruction* operand : concatenate->operands()) {
     operand_shapes.push_back(&operand->shape());
@@ -162,22 +363,34 @@ Status ShapeVerifier::HandleConcatenate(HloInstruction* concatenate) {
 }
 
 Status ShapeVerifier::HandleConvert(HloInstruction* convert) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_11(mht_11_v, 366, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleConvert");
+
   return CheckShape(convert, ShapeInference::InferConvertShape(
                                  convert->operand(0)->shape(),
                                  convert->shape().element_type()));
 }
 
 Status ShapeVerifier::HandleBitcastConvert(HloInstruction* convert) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_12(mht_12_v, 375, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleBitcastConvert");
+
   return CheckShape(convert, ShapeInference::InferBitcastConvertShape(
                                  convert->operand(0)->shape(),
                                  convert->shape().element_type()));
 }
 
 Status ShapeVerifier::HandleCopy(HloInstruction* copy) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_13(mht_13_v, 384, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleCopy");
+
   return CheckUnaryShape(copy);
 }
 
 Status ShapeVerifier::HandleDot(HloInstruction* dot) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_14(mht_14_v, 391, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleDot");
+
   TF_ASSIGN_OR_RETURN(
       const Shape expected,
       ShapeInference::InferDotOpShape(
@@ -188,6 +401,9 @@ Status ShapeVerifier::HandleDot(HloInstruction* dot) {
 }
 
 Status ShapeVerifier::HandleConvolution(HloInstruction* convolution) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_15(mht_15_v, 404, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleConvolution");
+
   TF_ASSIGN_OR_RETURN(
       Shape expected,
       ShapeInference::InferConvolveShape(
@@ -199,6 +415,9 @@ Status ShapeVerifier::HandleConvolution(HloInstruction* convolution) {
 }
 
 Status ShapeVerifier::HandleFft(HloInstruction* fft) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_16(mht_16_v, 418, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleFft");
+
   TF_ASSIGN_OR_RETURN(
       const Shape expected,
       ShapeInference::InferFftShape(fft->operand(0)->shape(), fft->fft_type(),
@@ -207,6 +426,9 @@ Status ShapeVerifier::HandleFft(HloInstruction* fft) {
 }
 
 Status ShapeVerifier::HandleTriangularSolve(HloInstruction* hlo) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_17(mht_17_v, 429, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleTriangularSolve");
+
   TF_ASSIGN_OR_RETURN(const Shape expected,
                       ShapeInference::InferTriangularSolveShape(
                           hlo->operand(0)->shape(), hlo->operand(1)->shape(),
@@ -215,6 +437,9 @@ Status ShapeVerifier::HandleTriangularSolve(HloInstruction* hlo) {
 }
 
 Status ShapeVerifier::HandleCholesky(HloInstruction* hlo) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_18(mht_18_v, 440, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleCholesky");
+
   TF_RETURN_IF_ERROR(CheckOperandCount(hlo, 1));
   TF_ASSIGN_OR_RETURN(const Shape expected, ShapeInference::InferCholeskyShape(
                                                 hlo->operand(0)->shape()));
@@ -222,6 +447,9 @@ Status ShapeVerifier::HandleCholesky(HloInstruction* hlo) {
 }
 
 Status ShapeVerifier::HandleOptimizationBarrier(HloInstruction* hlo) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_19(mht_19_v, 450, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleOptimizationBarrier");
+
   TF_RETURN_IF_ERROR(CheckOperandCount(hlo, 1));
   return CheckShape(hlo, hlo->operand(0)->shape());
 }
@@ -242,6 +470,9 @@ Status ShapeVerifier::HandleOptimizationBarrier(HloInstruction* hlo) {
 static Status CheckReplicaGroups(HloInstruction* hlo,
                                  CollectiveOpGroupMode group_mode,
                                  bool uniform_replica_group_size = true) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_20(mht_20_v, 473, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "CheckReplicaGroups");
+
   if (!hlo->replica_groups().empty()) {
     absl::flat_hash_set<int64_t> replicas_seen;
     for (const ReplicaGroup& g : hlo->replica_groups()) {
@@ -316,6 +547,9 @@ static Status CheckReplicaGroups(HloInstruction* hlo,
 
 static Status CheckCommonAllGatherInvariants(HloInstruction* hlo,
                                              int64_t* computed_shard_count) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_21(mht_21_v, 550, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "CheckCommonAllGatherInvariants");
+
   auto ag = Cast<HloAllGatherInstruction>(hlo);
   CHECK_NE(computed_shard_count, nullptr) << "Expected a shard count as input";
   TF_ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
@@ -358,6 +592,9 @@ static Status CheckCommonAllGatherInvariants(HloInstruction* hlo,
 }
 
 Status ShapeVerifier::HandleAllGather(HloInstruction* hlo) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_22(mht_22_v, 595, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleAllGather");
+
   auto ag = Cast<HloAllGatherInstruction>(hlo);
   int64_t shard_count;
   TF_RETURN_IF_ERROR(CheckCommonAllGatherInvariants(hlo, &shard_count));
@@ -371,6 +608,9 @@ Status ShapeVerifier::HandleAllGather(HloInstruction* hlo) {
 }
 
 Status ShapeVerifier::HandleAllGatherStart(HloInstruction* hlo) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_23(mht_23_v, 611, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleAllGatherStart");
+
   auto ag = Cast<HloAllGatherInstruction>(hlo);
   int64_t shard_count;
   TF_RETURN_IF_ERROR(CheckCommonAllGatherInvariants(hlo, &shard_count));
@@ -384,11 +624,17 @@ Status ShapeVerifier::HandleAllGatherStart(HloInstruction* hlo) {
 }
 
 Status ShapeVerifier::HandleAllGatherDone(HloInstruction* hlo) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_24(mht_24_v, 627, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleAllGatherDone");
+
   return CheckShape(
       hlo, ShapeInference::InferAllGatherDoneShape(hlo->operand(0)->shape()));
 }
 
 Status ShapeVerifier::HandleAllReduce(HloInstruction* hlo) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_25(mht_25_v, 635, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleAllReduce");
+
   auto ar = Cast<HloAllReduceInstruction>(hlo);
   TF_ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
                       GetCollectiveOpGroupMode(ar->channel_id().has_value(),
@@ -404,6 +650,9 @@ Status ShapeVerifier::HandleAllReduce(HloInstruction* hlo) {
 }
 
 Status ShapeVerifier::HandleReduceScatter(HloInstruction* hlo) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_26(mht_26_v, 653, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleReduceScatter");
+
   auto ars = Cast<HloReduceScatterInstruction>(hlo);
   TF_ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
                       GetCollectiveOpGroupMode(ars->channel_id().has_value(),
@@ -443,6 +692,9 @@ Status ShapeVerifier::HandleReduceScatter(HloInstruction* hlo) {
 }
 
 Status ShapeVerifier::HandleAllReduceStart(HloInstruction* hlo) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_27(mht_27_v, 695, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleAllReduceStart");
+
   auto ar = Cast<HloAllReduceInstruction>(hlo);
   TF_ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
                       GetCollectiveOpGroupMode(ar->channel_id().has_value(),
@@ -459,11 +711,17 @@ Status ShapeVerifier::HandleAllReduceStart(HloInstruction* hlo) {
 }
 
 Status ShapeVerifier::HandleAllReduceDone(HloInstruction* hlo) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_28(mht_28_v, 714, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleAllReduceDone");
+
   return CheckShape(
       hlo, ShapeInference::InferAllReduceDoneShape(hlo->operand(0)->shape()));
 }
 
 Status ShapeVerifier::HandleAllToAll(HloInstruction* hlo) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_29(mht_29_v, 722, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleAllToAll");
+
   auto* all_to_all = Cast<HloAllToAllInstruction>(hlo);
   TF_ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
                       GetCollectiveOpGroupMode(
@@ -498,10 +756,16 @@ Status ShapeVerifier::HandleAllToAll(HloInstruction* hlo) {
 }
 
 Status ShapeVerifier::HandlePartitionId(HloInstruction* hlo) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_30(mht_30_v, 759, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandlePartitionId");
+
   return CheckShape(hlo, ShapeUtil::MakeShape(U32, {}));
 }
 
 Status ShapeVerifier::HandleReplicaId(HloInstruction* hlo) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_31(mht_31_v, 766, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleReplicaId");
+
   return CheckShape(hlo, ShapeUtil::MakeShape(U32, {}));
 }
 
@@ -509,6 +773,9 @@ namespace {
 
 Status CheckBufferOffset(const Shape& buffer_shape,
                          const Shape& buffer_offset_shape) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_32(mht_32_v, 776, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "CheckBufferOffset");
+
   if (!buffer_offset_shape.IsTuple()) {
     return InternalError("Buffer offset is not tuple.");
   }
@@ -545,6 +812,9 @@ Status CheckBufferOffset(const Shape& buffer_shape,
 }
 
 Status CheckInplaceCollectivePermute(HloInstruction* collective_permute) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_33(mht_33_v, 815, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "CheckInplaceCollectivePermute");
+
   if (collective_permute->operand_count() == 1) {
     return Status::OK();
   }
@@ -608,6 +878,9 @@ Status CheckInplaceCollectivePermute(HloInstruction* collective_permute) {
 
 Status CheckDuplicatedSourceOrTarget(HloInstruction* hlo,
                                      CollectiveOpGroupMode group_mode) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_34(mht_34_v, 881, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "CheckDuplicatedSourceOrTarget");
+
   // A source or target cannot appear twice in the collective-permute's
   // source-target pairs. Also, based on the group formation mode, check if the
   // source and target IDs are within expected range.
@@ -688,6 +961,9 @@ Status CheckDuplicatedSourceOrTarget(HloInstruction* hlo,
 }  // namespace
 
 Status ShapeVerifier::HandleCollectivePermute(HloInstruction* hlo) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_35(mht_35_v, 964, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleCollectivePermute");
+
   TF_ASSIGN_OR_RETURN(
       CollectiveOpGroupMode group_mode,
       GetCollectiveOpGroupMode(hlo->channel_id().has_value(),
@@ -703,6 +979,9 @@ Status ShapeVerifier::HandleCollectivePermute(HloInstruction* hlo) {
 }
 
 Status ShapeVerifier::HandleCollectivePermuteStart(HloInstruction* hlo) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_36(mht_36_v, 982, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleCollectivePermuteStart");
+
   TF_ASSIGN_OR_RETURN(
       CollectiveOpGroupMode group_mode,
       GetCollectiveOpGroupMode(hlo->channel_id().has_value(),
@@ -718,11 +997,17 @@ Status ShapeVerifier::HandleCollectivePermuteStart(HloInstruction* hlo) {
 }
 
 Status ShapeVerifier::HandleCollectivePermuteDone(HloInstruction* hlo) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_37(mht_37_v, 1000, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleCollectivePermuteDone");
+
   return CheckShape(hlo, ShapeInference::InferCollectivePermuteDoneShape(
                              hlo->operand(0)->shape()));
 }
 
 Status ShapeVerifier::HandleReducePrecision(HloInstruction* reduce_precision) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_38(mht_38_v, 1008, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleReducePrecision");
+
   return CheckShape(reduce_precision, ShapeInference::InferReducePrecisionShape(
                                           reduce_precision->operand(0)->shape(),
                                           reduce_precision->exponent_bits(),
@@ -731,6 +1016,9 @@ Status ShapeVerifier::HandleReducePrecision(HloInstruction* reduce_precision) {
 
 Status ShapeVerifier::CheckIsTokenOperand(const HloInstruction* instruction,
                                           int64_t operand_no) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_39(mht_39_v, 1019, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::CheckIsTokenOperand");
+
   const HloInstruction* token = instruction->operand(operand_no);
   if (!ShapeUtil::Equal(token->shape(), ShapeUtil::MakeTokenShape())) {
     return InternalError(
@@ -744,6 +1032,9 @@ Status ShapeVerifier::CheckIsTokenOperand(const HloInstruction* instruction,
 Status ShapeVerifier::CheckOperandAndParameter(
     const HloInstruction* instruction, int64_t operand_number,
     const HloComputation* computation, int64_t parameter_number) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_40(mht_40_v, 1035, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::CheckOperandAndParameter");
+
   const HloInstruction* operand = instruction->operand(operand_number);
   const HloInstruction* parameter =
       computation->parameter_instruction(parameter_number);
@@ -756,6 +1047,9 @@ Status ShapeVerifier::CheckOperandAndParameter(
 }
 
 Status ShapeVerifier::HandleInfeed(HloInstruction* instruction) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_41(mht_41_v, 1050, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleInfeed");
+
   HloInfeedInstruction* infeed = Cast<HloInfeedInstruction>(instruction);
   TF_RETURN_IF_ERROR(CheckIsTokenOperand(instruction, 0));
 
@@ -766,6 +1060,9 @@ Status ShapeVerifier::HandleInfeed(HloInstruction* instruction) {
 }
 
 Status ShapeVerifier::HandleOutfeed(HloInstruction* instruction) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_42(mht_42_v, 1063, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleOutfeed");
+
   HloOutfeedInstruction* outfeed = Cast<HloOutfeedInstruction>(instruction);
   TF_RETURN_IF_ERROR(CheckIsTokenOperand(instruction, 1));
 
@@ -784,6 +1081,9 @@ Status ShapeVerifier::HandleOutfeed(HloInstruction* instruction) {
 bool ShapeVerifier::HasCompatibleElementTypes(const Shape& shape_0,
                                               const Shape& shape_1,
                                               const Shape& result_shape) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_43(mht_43_v, 1084, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HasCompatibleElementTypes");
+
   return ShapeUtil::SameElementType(shape_0, shape_1) &&
          (ShapeUtil::SameElementType(shape_0, result_shape) ||
           (allow_mixed_precision_ &&
@@ -792,6 +1092,9 @@ bool ShapeVerifier::HasCompatibleElementTypes(const Shape& shape_0,
 }
 
 Status ShapeVerifier::HandleRng(HloInstruction* instruction) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_44(mht_44_v, 1095, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleRng");
+
   TF_RETURN_IF_ERROR(CheckOperandCount(instruction, 2));
 
   const Shape& shape_0 = instruction->operand(0)->shape();
@@ -841,6 +1144,9 @@ Status ShapeVerifier::HandleRng(HloInstruction* instruction) {
 }
 
 Status ShapeVerifier::HandleRngBitGenerator(HloInstruction* hlo) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_45(mht_45_v, 1147, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleRngBitGenerator");
+
   if (!hlo->shape().IsTuple()) {
     return Status::OK();
   }
@@ -861,6 +1167,9 @@ Status ShapeVerifier::HandleRngBitGenerator(HloInstruction* hlo) {
 }
 
 Status ShapeVerifier::HandleRngGetAndUpdateState(HloInstruction* instruction) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_46(mht_46_v, 1170, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleRngGetAndUpdateState");
+
   TF_RETURN_IF_ERROR(CheckOperandCount(instruction, 0));
   const Shape& result_shape = instruction->shape();
   const Shape expected_shape = ShapeUtil::MakeShape(U64, {2});
@@ -874,12 +1183,18 @@ Status ShapeVerifier::HandleRngGetAndUpdateState(HloInstruction* instruction) {
 }
 
 Status ShapeVerifier::HandleReverse(HloInstruction* reverse) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_47(mht_47_v, 1186, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleReverse");
+
   return CheckShape(
       reverse, ShapeInference::InferReverseShape(reverse->operand(0)->shape(),
                                                  reverse->dimensions()));
 }
 
 Status ShapeVerifier::HandleSort(HloInstruction* sort) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_48(mht_48_v, 1195, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleSort");
+
   if (sort->operand_count() < 1) {
     return InternalError("Expected at least 1 operand for %s instruction: %s",
                          HloOpcodeString(sort->opcode()), sort->ToString());
@@ -934,6 +1249,9 @@ Status ShapeVerifier::HandleSort(HloInstruction* sort) {
 }
 
 Status ShapeVerifier::HandleConstant(HloInstruction* constant) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_49(mht_49_v, 1252, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleConstant");
+
   if (!Cast<HloConstantInstruction>(constant)->HasLiteral()) {
     return InternalError("Constant is required to have a valid literal: %s",
                          constant->ToString());
@@ -943,6 +1261,9 @@ Status ShapeVerifier::HandleConstant(HloInstruction* constant) {
 }
 
 Status ShapeVerifier::HandleIota(HloInstruction* hlo) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_50(mht_50_v, 1264, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleIota");
+
   auto* iota = Cast<HloIotaInstruction>(hlo);
   if (!iota->shape().IsArray()) {
     return InternalError("Iota does not support non-array result.");
@@ -972,6 +1293,9 @@ Status ShapeVerifier::HandleIota(HloInstruction* hlo) {
 }
 
 Status ShapeVerifier::HandleGetTupleElement(HloInstruction* get_tuple_element) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_51(mht_51_v, 1296, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleGetTupleElement");
+
   return CheckShape(get_tuple_element,
                     ShapeInference::InferGetTupleElementShape(
                         get_tuple_element->operand(0)->shape(),
@@ -981,6 +1305,9 @@ Status ShapeVerifier::HandleGetTupleElement(HloInstruction* get_tuple_element) {
 namespace {
 Status SameElementTypesForOperandsAndToApplyParameters(
     const HloInstruction& instruction, int64_t num_operands_to_check) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_52(mht_52_v, 1308, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "SameElementTypesForOperandsAndToApplyParameters");
+
   const ProgramShape& to_apply = instruction.to_apply()->ComputeProgramShape();
   for (int i = 0; i < num_operands_to_check; ++i) {
     const Shape& parameter_shape = to_apply.parameters(i);
@@ -997,6 +1324,9 @@ Status SameElementTypesForOperandsAndToApplyParameters(
 }  // namespace
 
 Status ShapeVerifier::HandleReduce(HloInstruction* reduce) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_53(mht_53_v, 1327, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleReduce");
+
   if (reduce->operand_count() % 2 != 0) {
     return InternalError(
         "Expected an even number of operands for %s instruction: %s",
@@ -1019,6 +1349,9 @@ Status ShapeVerifier::HandleReduce(HloInstruction* reduce) {
 }
 
 Status ShapeVerifier::HandleBitcast(HloInstruction* bitcast) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_54(mht_54_v, 1352, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleBitcast");
+
   if (layout_sensitive_ &&
       shape_size_function_(bitcast->shape()) !=
           shape_size_function_(bitcast->operand(0)->shape())) {
@@ -1034,6 +1367,9 @@ Status ShapeVerifier::HandleBitcast(HloInstruction* bitcast) {
 }
 
 Status ShapeVerifier::HandleBroadcast(HloInstruction* broadcast) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_55(mht_55_v, 1370, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleBroadcast");
+
   // HLO broadcast has no exact analog at the client level so there is no
   // ShapeInference method. Check the output shape explicitly.
   const Shape& operand_shape = broadcast->operand(0)->shape();
@@ -1053,6 +1389,9 @@ Status ShapeVerifier::HandleBroadcast(HloInstruction* broadcast) {
 }
 
 Status ShapeVerifier::HandleDynamicReshape(HloInstruction* dynamic_reshape) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_56(mht_56_v, 1392, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleDynamicReshape");
+
   // Check for mixed precision.
   const Shape& operand_shape = dynamic_reshape->operand(0)->shape();
   TF_RET_CHECK(SameElementType(dynamic_reshape->shape(), operand_shape));
@@ -1067,6 +1406,9 @@ Status ShapeVerifier::HandleDynamicReshape(HloInstruction* dynamic_reshape) {
 }
 
 Status ShapeVerifier::HandleReshape(HloInstruction* reshape) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_57(mht_57_v, 1409, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleReshape");
+
   // Check for mixed precision.
   const Shape& operand_shape = reshape->operand(0)->shape();
   TF_RET_CHECK(SameElementType(reshape->shape(), operand_shape));
@@ -1076,16 +1418,25 @@ Status ShapeVerifier::HandleReshape(HloInstruction* reshape) {
 }
 
 Status ShapeVerifier::HandleTranspose(HloInstruction* transpose) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_58(mht_58_v, 1421, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleTranspose");
+
   return CheckShape(
       transpose, ShapeInference::InferTransposeShape(
                      transpose->operand(0)->shape(), transpose->dimensions()));
 }
 
 Status ShapeVerifier::HandleParameter(HloInstruction* hlo) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_59(mht_59_v, 1430, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleParameter");
+
   return Status::OK();
 }
 
 Status ShapeVerifier::HandleFusion(HloInstruction* fusion) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_60(mht_60_v, 1437, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleFusion");
+
   if (fusion->called_computations().size() != 1) {
     return InternalError(
         "Fusion has a non-unary number of called computations (%s)",
@@ -1120,6 +1471,9 @@ Status ShapeVerifier::HandleFusion(HloInstruction* fusion) {
 }
 
 Status ShapeVerifier::HandleCall(HloInstruction* call) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_61(mht_61_v, 1474, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleCall");
+
   TF_RETURN_IF_ERROR(
       CheckParameterCount(call, call->to_apply(), call->operand_count()));
   for (int64_t i = 0; i < call->to_apply()->num_parameters(); ++i) {
@@ -1130,6 +1484,9 @@ Status ShapeVerifier::HandleCall(HloInstruction* call) {
 }
 
 Status ShapeVerifier::HandleCustomCall(HloInstruction* instruction) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_62(mht_62_v, 1487, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleCustomCall");
+
   const HloCustomCallInstruction* custom_call =
       DynCast<const HloCustomCallInstruction>(instruction);
   TF_RET_CHECK(custom_call != nullptr);
@@ -1176,6 +1533,9 @@ Status ShapeVerifier::HandleCustomCall(HloInstruction* instruction) {
 }
 
 Status ShapeVerifier::HandleSlice(HloInstruction* slice) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_63(mht_63_v, 1536, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleSlice");
+
   return CheckShape(slice,
                     ShapeInference::InferSliceShape(
                         slice->operand(0)->shape(), slice->slice_starts(),
@@ -1183,6 +1543,9 @@ Status ShapeVerifier::HandleSlice(HloInstruction* slice) {
 }
 
 Status ShapeVerifier::HandleDynamicSlice(HloInstruction* dynamic_slice) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_64(mht_64_v, 1546, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleDynamicSlice");
+
   return CheckShape(
       dynamic_slice,
       ShapeInference::InferDynamicSliceShape(
@@ -1193,6 +1556,9 @@ Status ShapeVerifier::HandleDynamicSlice(HloInstruction* dynamic_slice) {
 
 Status ShapeVerifier::HandleDynamicUpdateSlice(
     HloInstruction* dynamic_update_slice) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_65(mht_65_v, 1559, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleDynamicUpdateSlice");
+
   return CheckShape(
       dynamic_update_slice,
       ShapeInference::InferDynamicUpdateSliceShape(
@@ -1203,10 +1569,16 @@ Status ShapeVerifier::HandleDynamicUpdateSlice(
 }
 
 Status ShapeVerifier::HandleTuple(HloInstruction* tuple) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_66(mht_66_v, 1572, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleTuple");
+
   return CheckVariadicShape(tuple);
 }
 
 Status ShapeVerifier::HandleMap(HloInstruction* map) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_67(mht_67_v, 1579, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleMap");
+
   std::vector<const Shape*> operand_shapes;
   int64_t max_operand_rank = 0;
   for (const HloInstruction* operand : map->operands()) {
@@ -1230,6 +1602,9 @@ Status ShapeVerifier::HandleMap(HloInstruction* map) {
 }
 
 Status ShapeVerifier::HandleReduceWindow(HloInstruction* reduce_window) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_68(mht_68_v, 1605, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleReduceWindow");
+
   VLOG(2) << "Verify reduce window:" << reduce_window->ToString() << "\n";
   auto reduce_window_instr = Cast<HloReduceWindowInstruction>(reduce_window);
   auto input_shapes = reduce_window_instr->input_shapes();
@@ -1248,6 +1623,9 @@ Status ShapeVerifier::HandleReduceWindow(HloInstruction* reduce_window) {
 }
 
 Status ShapeVerifier::HandleSelectAndScatter(HloInstruction* instruction) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_69(mht_69_v, 1626, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleSelectAndScatter");
+
   return CheckShape(
       instruction,
       ShapeInference::InferSelectAndScatterShape(
@@ -1258,6 +1636,9 @@ Status ShapeVerifier::HandleSelectAndScatter(HloInstruction* instruction) {
 }
 
 Status ShapeVerifier::HandleWhile(HloInstruction* xla_while) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_70(mht_70_v, 1639, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleWhile");
+
   TF_RETURN_IF_ERROR(
       CheckParameterCount(xla_while, xla_while->while_body(), 1));
   TF_RETURN_IF_ERROR(
@@ -1282,6 +1663,9 @@ Status ShapeVerifier::HandleWhile(HloInstruction* xla_while) {
 }
 
 Status ShapeVerifier::HandleConditional(HloInstruction* conditional) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_71(mht_71_v, 1666, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleConditional");
+
   if (!ShapeUtil::IsScalar(conditional->operand(0)->shape())) {
     return InvalidArgument(
         "The first operand of conditional must be a scalar. Got %s",
@@ -1315,17 +1699,26 @@ Status ShapeVerifier::HandleConditional(HloInstruction* conditional) {
 }
 
 Status ShapeVerifier::HandlePad(HloInstruction* pad) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_72(mht_72_v, 1702, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandlePad");
+
   return CheckShape(pad, ShapeInference::InferPadShape(pad->operand(0)->shape(),
                                                        pad->operand(1)->shape(),
                                                        pad->padding_config()));
 }
 
 Status ShapeVerifier::HandleAsyncStart(HloInstruction* async_start) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_73(mht_73_v, 1711, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleAsyncStart");
+
   return Status::OK();
 }
 
 namespace {
 Status CheckAsyncOpOperand(const HloInstruction* async_op) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_74(mht_74_v, 1719, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "CheckAsyncOpOperand");
+
   const HloInstruction* operand = async_op->operand(0);
   if (operand->opcode() != HloOpcode::kAsyncStart &&
       operand->opcode() != HloOpcode::kAsyncUpdate) {
@@ -1348,14 +1741,23 @@ Status CheckAsyncOpOperand(const HloInstruction* async_op) {
 }  // namespace
 
 Status ShapeVerifier::HandleAsyncUpdate(HloInstruction* async_update) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_75(mht_75_v, 1744, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleAsyncUpdate");
+
   return CheckAsyncOpOperand(async_update);
 }
 
 Status ShapeVerifier::HandleAsyncDone(HloInstruction* async_done) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_76(mht_76_v, 1751, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleAsyncDone");
+
   return CheckAsyncOpOperand(async_done);
 }
 
 Status ShapeVerifier::HandleCopyStart(HloInstruction* copy_start) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_77(mht_77_v, 1758, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleCopyStart");
+
   return CheckShape(copy_start,
                     ShapeUtil::MakeTupleShape({copy_start->operand(0)->shape(),
                                                copy_start->operand(0)->shape(),
@@ -1364,6 +1766,9 @@ Status ShapeVerifier::HandleCopyStart(HloInstruction* copy_start) {
 }
 
 Status ShapeVerifier::HandleCopyDone(HloInstruction* copy_done) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_78(mht_78_v, 1769, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleCopyDone");
+
   const Shape& operand_shape = copy_done->operand(0)->shape();
   const Shape& dest_shape = ShapeUtil::GetTupleElementShape(operand_shape, 0);
   const Shape& src_shape = ShapeUtil::GetTupleElementShape(operand_shape, 1);
@@ -1381,6 +1786,9 @@ Status ShapeVerifier::HandleCopyDone(HloInstruction* copy_done) {
 }
 
 Status ShapeVerifier::HandleSend(HloInstruction* send) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_79(mht_79_v, 1789, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleSend");
+
   return CheckShape(send,
                     ShapeUtil::MakeTupleShape({send->operand(0)->shape(),
                                                ShapeUtil::MakeShape(U32, {}),
@@ -1389,10 +1797,16 @@ Status ShapeVerifier::HandleSend(HloInstruction* send) {
 }
 
 Status ShapeVerifier::HandleSendDone(HloInstruction* send_done) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_80(mht_80_v, 1800, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleSendDone");
+
   return CheckShape(send_done, ShapeUtil::MakeTokenShape());
 }
 
 Status ShapeVerifier::HandleRecv(HloInstruction* recv) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_81(mht_81_v, 1807, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleRecv");
+
   return CheckShape(
       recv,
       ShapeUtil::MakeTupleShape(
@@ -1402,6 +1816,9 @@ Status ShapeVerifier::HandleRecv(HloInstruction* recv) {
 }
 
 Status ShapeVerifier::HandleRecvDone(HloInstruction* recv_done) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_82(mht_82_v, 1819, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleRecvDone");
+
   return CheckShape(
       recv_done,
       ShapeUtil::MakeTupleShape(
@@ -1411,6 +1828,9 @@ Status ShapeVerifier::HandleRecvDone(HloInstruction* recv_done) {
 
 Status ShapeVerifier::HandleBatchNormTraining(
     HloInstruction* batch_norm_training) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_83(mht_83_v, 1831, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleBatchNormTraining");
+
   return CheckShape(batch_norm_training,
                     ShapeInference::InferBatchNormTrainingShape(
                         batch_norm_training->operand(0)->shape(),
@@ -1421,6 +1841,9 @@ Status ShapeVerifier::HandleBatchNormTraining(
 
 Status ShapeVerifier::HandleBatchNormInference(
     HloInstruction* batch_norm_inference) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_84(mht_84_v, 1844, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleBatchNormInference");
+
   return CheckShape(batch_norm_inference,
                     ShapeInference::InferBatchNormInferenceShape(
                         batch_norm_inference->operand(0)->shape(),
@@ -1432,6 +1855,9 @@ Status ShapeVerifier::HandleBatchNormInference(
 }
 
 Status ShapeVerifier::HandleBatchNormGrad(HloInstruction* batch_norm_grad) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_85(mht_85_v, 1858, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleBatchNormGrad");
+
   return CheckShape(batch_norm_grad, ShapeInference::InferBatchNormGradShape(
                                          batch_norm_grad->operand(0)->shape(),
                                          batch_norm_grad->operand(1)->shape(),
@@ -1446,6 +1872,9 @@ namespace {
 // Checks that the instruction does not have mixed precision floating point
 // inputs.
 Status CheckMixedPrecisionOperands(const HloInstruction* instruction) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_86(mht_86_v, 1875, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "CheckMixedPrecisionOperands");
+
   switch (instruction->opcode()) {
     // Allow-list the following opcodes for mixed-precision check, because
     // they involve data pass through or grouping via tuples, where the
@@ -1510,6 +1939,9 @@ Status CheckMixedPrecisionOperands(const HloInstruction* instruction) {
 }  // namespace
 
 Status ShapeVerifier::HandleGather(HloInstruction* gather) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_87(mht_87_v, 1942, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleGather");
+
   return CheckShape(
       gather,
       ShapeInference::InferGatherShape(
@@ -1518,6 +1950,9 @@ Status ShapeVerifier::HandleGather(HloInstruction* gather) {
 }
 
 Status ShapeVerifier::HandleScatter(HloInstruction* scatter) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_88(mht_88_v, 1953, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleScatter");
+
   return CheckShape(
       scatter, ShapeInference::InferScatterShape(
                    scatter->operand(0)->shape(), scatter->operand(1)->shape(),
@@ -1527,6 +1962,9 @@ Status ShapeVerifier::HandleScatter(HloInstruction* scatter) {
 }
 
 Status ShapeVerifier::HandleAfterAll(HloInstruction* token) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_89(mht_89_v, 1965, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleAfterAll");
+
   std::vector<const Shape*> operand_shapes;
   for (const HloInstruction* operand : token->operands()) {
     operand_shapes.push_back(&operand->shape());
@@ -1535,17 +1973,26 @@ Status ShapeVerifier::HandleAfterAll(HloInstruction* token) {
 }
 
 Status ShapeVerifier::HandleAddDependency(HloInstruction* add_dependency) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_90(mht_90_v, 1976, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleAddDependency");
+
   TF_RETURN_IF_ERROR(CheckIsTokenOperand(add_dependency, 1));
   return CheckShape(add_dependency, add_dependency->operand(0)->shape());
 }
 
 Status ShapeVerifier::HandleGetDimensionSize(HloInstruction* get_size) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_91(mht_91_v, 1984, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleGetDimensionSize");
+
   return CheckShape(get_size,
                     ShapeInference::InferGetDimensionSizeShape(
                         get_size->operand(0)->shape(), get_size->dimension()));
 }
 
 Status ShapeVerifier::HandleSetDimensionSize(HloInstruction* set_size) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_92(mht_92_v, 1993, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::HandleSetDimensionSize");
+
   return CheckShape(set_size,
                     ShapeInference::InferSetDimensionSizeShape(
                         set_size->operand(0)->shape(),
@@ -1555,6 +2002,9 @@ Status ShapeVerifier::HandleSetDimensionSize(HloInstruction* set_size) {
 Status ShapeVerifier::CheckShape(const HloInstruction* instruction,
                                  const Shape& inferred_shape,
                                  bool only_compare_minor_to_major_in_layout) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_93(mht_93_v, 2005, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::CheckShape");
+
   // If allow_mixed_precision_ is false, check if there are operands with
   // different precisions. We need this check because ShapeInference allows
   // mixed precision inputs.
@@ -1619,6 +2069,9 @@ Status ShapeVerifier::CheckShape(const HloInstruction* instruction,
 
 Status ShapeVerifier::CheckShape(const HloInstruction* instruction,
                                  const StatusOr<Shape>& inferred_shape_status) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_94(mht_94_v, 2072, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::CheckShape");
+
   if (!inferred_shape_status.ok()) {
     Status s = inferred_shape_status.status();
     tensorflow::errors::AppendToMessage(&s, ", for instruction ",
@@ -1629,12 +2082,18 @@ Status ShapeVerifier::CheckShape(const HloInstruction* instruction,
 }
 
 Status ShapeVerifier::CheckUnaryShape(const HloInstruction* instruction) {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_95(mht_95_v, 2085, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::CheckUnaryShape");
+
   return CheckShape(instruction,
                     ShapeInference::InferUnaryOpShape(instruction->opcode(),
                                                       instruction->operand(0)));
 }
 
 Status ShapeVerifier::CheckBinaryShape(const HloInstruction* instruction) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_96(mht_96_v, 2094, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::CheckBinaryShape");
+
   return CheckShape(
       instruction, ShapeInference::InferBinaryOpShape(instruction->opcode(),
                                                       instruction->operand(0),
@@ -1642,6 +2101,9 @@ Status ShapeVerifier::CheckBinaryShape(const HloInstruction* instruction) {
 }
 
 Status ShapeVerifier::CheckTernaryShape(const HloInstruction* instruction) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_97(mht_97_v, 2104, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::CheckTernaryShape");
+
   return CheckShape(instruction,
                     ShapeInference::InferTernaryOpShape(
                         instruction->opcode(), instruction->operand(0),
@@ -1649,12 +2111,18 @@ Status ShapeVerifier::CheckTernaryShape(const HloInstruction* instruction) {
 }
 
 Status ShapeVerifier::CheckVariadicShape(const HloInstruction* instruction) {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_98(mht_98_v, 2114, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::CheckVariadicShape");
+
   return CheckShape(instruction,
                     ShapeInference::InferVariadicOpShape(
                         instruction->opcode(), instruction->operands()));
 }
 
 Status ShapeVerifier::VerifyEntryComputationLayout(const HloModule& module) {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_99(mht_99_v, 2123, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeVerifier::VerifyEntryComputationLayout");
+
   const HloComputation* computation = module.entry_computation();
   const auto& layout = module.entry_computation_layout();
   const ShapeLayout& result_layout = layout.result_layout();
@@ -1697,6 +2165,9 @@ Status ShapeVerifier::VerifyEntryComputationLayout(const HloModule& module) {
 
 std::string ComputationsToString(
     absl::Span<HloComputation* const> computations) {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_100(mht_100_v, 2168, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ComputationsToString");
+
   return absl::StrJoin(computations, ",",
                        [](std::string* s, const HloComputation* computation) {
                          s->append(computation->name());
@@ -1715,6 +2186,9 @@ std::string ComputationsToString(
 // (3) the operands of each instruction are in the same computation as the
 //     instruction.
 Status VerifyHloStructure(HloModule* module) {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_101(mht_101_v, 2189, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "VerifyHloStructure");
+
   for (const HloComputation* computation : module->computations()) {
     if (computation->parent() == nullptr) {
       return InternalError("Computation %s has a null parent pointer",
@@ -1765,6 +2239,9 @@ namespace {
 
 // Returns true if the given Shape has a TOKEN shape as any subshape.
 bool ShapeContainsToken(const Shape& shape) {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_102(mht_102_v, 2242, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "ShapeContainsToken");
+
   bool contains_token = false;
   ShapeUtil::ForEachSubshape(
       shape, [&contains_token](const Shape& subshape, const ShapeIndex&) {
@@ -1778,6 +2255,9 @@ bool ShapeContainsToken(const Shape& shape) {
 // Verifies that all types entering and exiting the entry computation are
 // legal.
 Status VerifyEntryAndExitShapes(const HloModule& module) {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_103(mht_103_v, 2258, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "VerifyEntryAndExitShapes");
+
   // Tokens cannot be passed as entry parameters.
   // TODO(b/80000000): Remove this constraint.
   for (int i = 0; i < module.entry_computation()->num_parameters(); ++i) {
@@ -1795,6 +2275,9 @@ Status VerifyEntryAndExitShapes(const HloModule& module) {
 // Checks if the given two instructions share the same channel id.
 Status CheckSameChannel(const HloInstruction* instr1,
                         const HloInstruction* instr2) {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_104(mht_104_v, 2278, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "CheckSameChannel");
+
   if (instr1->channel_id() != instr2->channel_id()) {
     return InternalError(
         "Expected to have the same channel id, actual channel ids are: %s "
@@ -1810,6 +2293,9 @@ Status CheckSameChannel(const HloInstruction* instr1,
 // 'done' variant.
 Status CheckSameIsHostTransfer(const HloInstruction* instr1,
                                const HloInstruction* instr2) {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_105(mht_105_v, 2296, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "CheckSameIsHostTransfer");
+
   const HloSendRecvInstruction* send_recv1 =
       DynCast<const HloSendRecvInstruction>(instr1);
   const HloSendRecvInstruction* send_recv2 =
@@ -1828,6 +2314,9 @@ Status CheckSameIsHostTransfer(const HloInstruction* instr1,
 
 Status VerifySingleUser(const HloInstruction* instruction,
                         const absl::flat_hash_set<HloOpcode>& expected_users) {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_106(mht_106_v, 2317, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "VerifySingleUser");
+
   TF_RET_CHECK(instruction->users().size() == 1)
       << "The " << HloOpcodeString(instruction->opcode())
       << " instruction requires one consumer, found "
@@ -1847,6 +2336,9 @@ Status VerifySingleUser(const HloInstruction* instruction,
 
 Status VerifySingleOperand(const HloInstruction* instruction,
                            const std::vector<HloOpcode>& expected_operands) {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_107(mht_107_v, 2339, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "VerifySingleOperand");
+
   TF_RET_CHECK(instruction->operands().size() == 1)
       << "The " << HloOpcodeString(instruction->opcode())
       << " instruction requires one consumer, found "
@@ -1867,6 +2359,9 @@ Status VerifySingleOperand(const HloInstruction* instruction,
 
 // Checks asynchronous instruction pairs.
 Status VerifyAsynchronousInstructionPairs(const HloModule& module) {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_108(mht_108_v, 2362, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "VerifyAsynchronousInstructionPairs");
+
   // CopyStart must have a single CopyDone user.
   for (const HloComputation* computation : module.computations()) {
     for (const HloInstruction* instruction : computation->instructions()) {
@@ -1929,6 +2424,9 @@ Status VerifyAsynchronousInstructionPairs(const HloModule& module) {
 // Checks that AllReduce instructions in the module are either all layout
 // constrained or all unconstrained.
 Status VerifyLayoutConstrainedAllReduce(const HloModule& module) {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_109(mht_109_v, 2427, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "VerifyLayoutConstrainedAllReduce");
+
   const HloAllReduceInstruction* reference = nullptr;
   for (const HloComputation* computation : module.computations()) {
     for (const HloInstruction* instruction : computation->instructions()) {
@@ -1953,6 +2451,9 @@ Status VerifyLayoutConstrainedAllReduce(const HloModule& module) {
 // Checks various invariants of channel instructions (send/recv and
 // collectives).
 Status VerifyChannels(const HloModule& module) {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_110(mht_110_v, 2454, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "VerifyChannels");
+
   absl::flat_hash_map<int64_t, std::vector<const HloInstruction*>>
       channel_instructions;
 
@@ -2034,6 +2535,9 @@ Status VerifyChannels(const HloModule& module) {
 
 // CHECKs various invariants of a fusion instruction.
 Status CheckFusionInstruction(HloInstruction* fusion) {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_111(mht_111_v, 2538, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "CheckFusionInstruction");
+
   // The parent fusion instruction of the fusion computation must be 'fusion'.
   HloComputation* fused_computation = fusion->fused_instructions_computation();
   if (fusion != fused_computation->FusionInstruction()) {
@@ -2162,6 +2666,9 @@ Status CheckFusionInstruction(HloInstruction* fusion) {
 // Checks that the operand shapes are compatible to the output shape, i.e.,
 // that there are no implicit broadcasts.
 Status CheckElementwiseInstruction(HloInstruction* instruction) {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_112(mht_112_v, 2669, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "CheckElementwiseInstruction");
+
   const Shape& out_shape = instruction->shape();
   for (HloInstruction* operand : instruction->operands()) {
     const Shape& operand_shape = operand->shape();
@@ -2210,15 +2717,27 @@ class InstructionVerifier : public DfsHloVisitorWithDefault {
   explicit InstructionVerifier(std::function<bool(const HloInstruction*)>
                                    instruction_can_change_layout_func)
       : instruction_can_change_layout_func_(
-            instruction_can_change_layout_func) {}
+            instruction_can_change_layout_func) {
+   std::vector<std::string> mht_113_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_113(mht_113_v, 2721, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "InstructionVerifier");
+}
 
-  Status DefaultAction(HloInstruction*) override { return Status::OK(); }
+  Status DefaultAction(HloInstruction*) override {
+   std::vector<std::string> mht_114_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_114(mht_114_v, 2726, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "DefaultAction");
+ return Status::OK(); }
 
   Status HandleFusion(HloInstruction* fusion) override {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_115(mht_115_v, 2731, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "HandleFusion");
+
     return CheckFusionInstruction(fusion);
   }
 
   Status HandleBroadcast(HloInstruction* broadcast) override {
+   std::vector<std::string> mht_116_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_116(mht_116_v, 2738, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "HandleBroadcast");
+
     // If you see this failure then someone has confused the difference
     // between the HLO broadcast op, and the UserComputation broadcast
     // op. See https://groups.google.com/forum/#!topic/xla-dev/9LqijHmTt_I
@@ -2233,11 +2752,17 @@ class InstructionVerifier : public DfsHloVisitorWithDefault {
   }
 
   Status HandleBitcastConvert(HloInstruction* c) override {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_117(mht_117_v, 2755, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "HandleBitcastConvert");
+
     // Shape verifier will check all we need.
     return Status::OK();
   }
 
   Status HandleWhile(HloInstruction* xla_while) override {
+   std::vector<std::string> mht_118_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_118(mht_118_v, 2763, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "HandleWhile");
+
     auto* while_cond = xla_while->while_condition();
     auto* while_body = xla_while->while_body();
     if (while_cond->num_parameters() != 1) {
@@ -2259,6 +2784,9 @@ class InstructionVerifier : public DfsHloVisitorWithDefault {
   }
 
   Status HandleConditional(HloInstruction* conditional) override {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_119(mht_119_v, 2787, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "HandleConditional");
+
     for (int b = 0; b < conditional->branch_count(); ++b) {
       if (conditional->branch_computation(b)->num_parameters() != 1) {
         return FailedPrecondition(
@@ -2271,19 +2799,31 @@ class InstructionVerifier : public DfsHloVisitorWithDefault {
   }
 
   Status HandleElementwiseUnary(HloInstruction* instruction) override {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_120(mht_120_v, 2802, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "HandleElementwiseUnary");
+
     return CheckElementwiseInstruction(instruction);
   }
 
   Status HandleElementwiseBinary(HloInstruction* instruction) override {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_121(mht_121_v, 2809, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "HandleElementwiseBinary");
+
     return CheckElementwiseInstruction(instruction);
   }
 
   Status HandleGetTupleElement(HloInstruction* gte) override {
+   std::vector<std::string> mht_122_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_122(mht_122_v, 2816, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "HandleGetTupleElement");
+
     TF_RET_CHECK(gte->operand(0)->shape().IsTuple());
     return Status::OK();
   }
 
   Status HandleTranspose(HloInstruction* transpose) override {
+   std::vector<std::string> mht_123_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_123(mht_123_v, 2824, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "HandleTranspose");
+
     const Shape& shape = transpose->shape();
     const HloInstruction* operand = transpose->operand(0);
     TF_RET_CHECK(shape.dimensions().size() == transpose->dimensions().size());
@@ -2300,6 +2840,9 @@ class InstructionVerifier : public DfsHloVisitorWithDefault {
   }
 
   Status HandleAllReduce(HloInstruction* crs) override {
+   std::vector<std::string> mht_124_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_124(mht_124_v, 2843, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "HandleAllReduce");
+
     if (crs->channel_id().has_value()) {
       TF_RET_CHECK(crs->channel_id().value() > 0)
           << "All reduce channel id must be greater than 0 for "
@@ -2309,6 +2852,9 @@ class InstructionVerifier : public DfsHloVisitorWithDefault {
   }
 
   Status Preprocess(HloInstruction* instruction) override {
+   std::vector<std::string> mht_125_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_125(mht_125_v, 2855, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "Preprocess");
+
     auto previous = instructions_by_name_.find(instruction->name());
     TF_RET_CHECK(previous == instructions_by_name_.end())
         << "HLO has name that is not unique within module:\n"
@@ -2322,6 +2868,9 @@ class InstructionVerifier : public DfsHloVisitorWithDefault {
   }
 
   Status Postprocess(HloInstruction* instruction) override {
+   std::vector<std::string> mht_126_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_126(mht_126_v, 2871, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "Postprocess");
+
     if (instruction_can_change_layout_func_ &&
         LayoutUtil::IsDenseArray(instruction->shape()) &&
         !instruction_can_change_layout_func_(instruction)) {
@@ -2353,6 +2902,9 @@ class InstructionVerifier : public DfsHloVisitorWithDefault {
 }  // namespace
 
 StatusOr<bool> HloVerifier::Run(HloModule* module) {
+   std::vector<std::string> mht_127_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_verifierDTcc mht_127(mht_127_v, 2905, "", "./tensorflow/compiler/xla/service/hlo_verifier.cc", "HloVerifier::Run");
+
   auto status_or_changed = [&]() -> StatusOr<bool> {
     TF_RET_CHECK(!module->name().empty());
 

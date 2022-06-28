@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_EXAMPLES_ANDROID_JNI_OBJECT_TRACKING_IMAGE_INL_H_
 #define TENSORFLOW_EXAMPLES_ANDROID_JNI_OBJECT_TRACKING_IMAGE_INL_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <stdint.h>
 
@@ -33,6 +201,9 @@ Image<T>::Image(const int width, const int height)
       width_(width),
       height_(height),
       stride_(width) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh mht_0(mht_0_v, 204, "", "./tensorflow/tools/android/test/jni/object_tracking/image-inl.h", "Image<T>::Image");
+
   Allocate();
 }
 
@@ -45,6 +216,9 @@ Image<T>::Image(const Size& size)
       width_(size.width),
       height_(size.height),
       stride_(size.width) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh mht_1(mht_1_v, 219, "", "./tensorflow/tools/android/test/jni/object_tracking/image-inl.h", "Image<T>::Image");
+
   Allocate();
 }
 
@@ -61,12 +235,18 @@ Image<T>::Image(const int width, const int height, T* const image_data,
     width_(width),
     height_(height),
     stride_(width) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh mht_2(mht_2_v, 238, "", "./tensorflow/tools/android/test/jni/object_tracking/image-inl.h", "Image<T>::Image");
+
   image_data_ = image_data;
   SCHECK(image_data_ != NULL, "Can't create image with NULL data!");
 }
 
 template <typename T>
 Image<T>::~Image() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh mht_3(mht_3_v, 247, "", "./tensorflow/tools/android/test/jni/object_tracking/image-inl.h", "Image<T>::~Image");
+
   if (own_data_) {
     delete[] image_data_;
   }
@@ -80,6 +260,9 @@ bool Image<T>::ExtractPatchAtSubpixelFixed1616(const int fp_x,
                                                const int patchwidth,
                                                const int patchheight,
                                                DstType* to_data) const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh mht_4(mht_4_v, 263, "", "./tensorflow/tools/android/test/jni/object_tracking/image-inl.h", "Image<T>::ExtractPatchAtSubpixelFixed1616");
+
   // Calculate weights.
   const int trunc_x = fp_x >> 16;
   const int trunc_y = fp_y >> 16;
@@ -105,6 +288,9 @@ bool Image<T>::ExtractPatchAtSubpixelFixed1616(const int fp_x,
 template <typename T>
 Image<T>* Image<T>::Crop(
     const int left, const int top, const int right, const int bottom) const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh mht_5(mht_5_v, 291, "", "./tensorflow/tools/android/test/jni/object_tracking/image-inl.h", "Image<T>::Crop");
+
   SCHECK(left >= 0 && left < width_, "out of bounds at %d!", left);
   SCHECK(right >= 0 && right < width_, "out of bounds at %d!", right);
   SCHECK(top >= 0 && top < height_, "out of bounds at %d!", top);
@@ -128,6 +314,9 @@ Image<T>* Image<T>::Crop(
 
 template <typename T>
 inline float Image<T>::GetPixelInterp(const float x, const float y) const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh mht_6(mht_6_v, 317, "", "./tensorflow/tools/android/test/jni/object_tracking/image-inl.h", "Image<T>::GetPixelInterp");
+
   // Do int conversion one time.
   const int floored_x = static_cast<int>(x);
   const int floored_y = static_cast<int>(y);
@@ -169,6 +358,9 @@ inline float Image<T>::GetPixelInterp(const float x, const float y) const {
 template <typename T>
 inline T Image<T>::GetPixelInterpFixed1616(
     const int fp_x_whole, const int fp_y_whole) const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh mht_7(mht_7_v, 361, "", "./tensorflow/tools/android/test/jni/object_tracking/image-inl.h", "Image<T>::GetPixelInterpFixed1616");
+
   static const int kFixedPointOne = 0x00010000;
   static const int kFixedPointHalf = 0x00008000;
   static const int kFixedPointTruncateMask = 0xFFFF0000;
@@ -201,18 +393,27 @@ inline T Image<T>::GetPixelInterpFixed1616(
 
 template <typename T>
 inline bool Image<T>::ValidPixel(const int x, const int y) const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh mht_8(mht_8_v, 396, "", "./tensorflow/tools/android/test/jni/object_tracking/image-inl.h", "Image<T>::ValidPixel");
+
   return InRange(x, ZERO, width_less_one_) &&
          InRange(y, ZERO, height_less_one_);
 }
 
 template <typename T>
 inline BoundingBox Image<T>::GetContainingBox() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh mht_9(mht_9_v, 405, "", "./tensorflow/tools/android/test/jni/object_tracking/image-inl.h", "Image<T>::GetContainingBox");
+
   return BoundingBox(
       0, 0, width_less_one_ - EPSILON, height_less_one_ - EPSILON);
 }
 
 template <typename T>
 inline bool Image<T>::Contains(const BoundingBox& bounding_box) const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh mht_10(mht_10_v, 414, "", "./tensorflow/tools/android/test/jni/object_tracking/image-inl.h", "Image<T>::Contains");
+
   // TODO(andrewharp): Come up with a more elegant way of ensuring that bounds
   // are ok.
   return GetContainingBox().Contains(bounding_box);
@@ -220,6 +421,9 @@ inline bool Image<T>::Contains(const BoundingBox& bounding_box) const {
 
 template <typename T>
 inline bool Image<T>::ValidInterpPixel(const float x, const float y) const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh mht_11(mht_11_v, 424, "", "./tensorflow/tools/android/test/jni/object_tracking/image-inl.h", "Image<T>::ValidInterpPixel");
+
   // Exclusive of max because we can be more efficient if we don't handle
   // interpolating on or past the last pixel.
   return (x >= ZERO) && (x < width_less_one_) &&
@@ -229,6 +433,9 @@ inline bool Image<T>::ValidInterpPixel(const float x, const float y) const {
 template <typename T>
 void Image<T>::DownsampleAveraged(const T* const original, const int stride,
                                   const int factor) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh mht_12(mht_12_v, 436, "", "./tensorflow/tools/android/test/jni/object_tracking/image-inl.h", "Image<T>::DownsampleAveraged");
+
 #ifdef __ARM_NEON
   if (factor == 4 || factor == 2) {
     DownsampleAveragedNeon(original, stride, factor);
@@ -268,6 +475,9 @@ void Image<T>::DownsampleAveraged(const T* const original, const int stride,
 
 template <typename T>
 void Image<T>::DownsampleInterpolateNearest(const Image<T>& original) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh mht_13(mht_13_v, 478, "", "./tensorflow/tools/android/test/jni/object_tracking/image-inl.h", "Image<T>::DownsampleInterpolateNearest");
+
   // Calculating the scaling factors based on target image size.
   const float factor_x = static_cast<float>(original.GetWidth()) /
       static_cast<float>(width_);
@@ -307,6 +517,9 @@ void Image<T>::DownsampleInterpolateNearest(const Image<T>& original) {
 
 template <typename T>
 void Image<T>::DownsampleInterpolateLinear(const Image<T>& original) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh mht_14(mht_14_v, 520, "", "./tensorflow/tools/android/test/jni/object_tracking/image-inl.h", "Image<T>::DownsampleInterpolateLinear");
+
   // TODO(andrewharp): Turn this into a general compare sizes/bulk
   // copy method.
   if (original.GetWidth() == GetWidth() &&
@@ -406,6 +619,9 @@ void Image<T>::DownsampleInterpolateLinear(const Image<T>& original) {
 
 template <typename T>
 void Image<T>::DownsampleSmoothed3x3(const Image<T>& original) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh mht_15(mht_15_v, 622, "", "./tensorflow/tools/android/test/jni/object_tracking/image-inl.h", "Image<T>::DownsampleSmoothed3x3");
+
   for (int y = 0; y < height_; ++y) {
     const int orig_y = Clip(2 * y, ZERO, original.height_less_one_);
     const int min_y = Clip(orig_y - 1, ZERO, original.height_less_one_);
@@ -438,6 +654,9 @@ void Image<T>::DownsampleSmoothed3x3(const Image<T>& original) {
 
 template <typename T>
 void Image<T>::DownsampleSmoothed5x5(const Image<T>& original) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh mht_16(mht_16_v, 657, "", "./tensorflow/tools/android/test/jni/object_tracking/image-inl.h", "Image<T>::DownsampleSmoothed5x5");
+
   const int max_x = original.width_less_one_;
   const int max_y = original.height_less_one_;
 
@@ -484,6 +703,9 @@ template <typename T>
 template <typename U>
 inline T Image<T>::ScharrPixelX(const Image<U>& original,
                       const int center_x, const int center_y) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh mht_17(mht_17_v, 706, "", "./tensorflow/tools/android/test/jni/object_tracking/image-inl.h", "Image<T>::ScharrPixelX");
+
   const int min_x = Clip(center_x - 1, ZERO, original.width_less_one_);
   const int max_x = Clip(center_x + 1, ZERO, original.width_less_one_);
   const int min_y = Clip(center_y - 1, ZERO, original.height_less_one_);
@@ -502,6 +724,9 @@ template <typename T>
 template <typename U>
 inline T Image<T>::ScharrPixelY(const Image<U>& original,
                       const int center_x, const int center_y) const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh mht_18(mht_18_v, 727, "", "./tensorflow/tools/android/test/jni/object_tracking/image-inl.h", "Image<T>::ScharrPixelY");
+
   const int min_x = Clip(center_x - 1, 0, original.width_less_one_);
   const int max_x = Clip(center_x + 1, 0, original.width_less_one_);
   const int min_y = Clip(center_y - 1, 0, original.height_less_one_);
@@ -519,6 +744,9 @@ inline T Image<T>::ScharrPixelY(const Image<U>& original,
 template <typename T>
 template <typename U>
 inline void Image<T>::ScharrX(const Image<U>& original) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh mht_19(mht_19_v, 747, "", "./tensorflow/tools/android/test/jni/object_tracking/image-inl.h", "Image<T>::ScharrX");
+
   for (int y = 0; y < height_; ++y) {
     for (int x = 0; x < width_; ++x) {
       SetPixel(x, y, ScharrPixelX(original, x, y));
@@ -529,6 +757,9 @@ inline void Image<T>::ScharrX(const Image<U>& original) {
 template <typename T>
 template <typename U>
 inline void Image<T>::ScharrY(const Image<U>& original) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh mht_20(mht_20_v, 760, "", "./tensorflow/tools/android/test/jni/object_tracking/image-inl.h", "Image<T>::ScharrY");
+
   for (int y = 0; y < height_; ++y) {
     for (int x = 0; x < width_; ++x) {
       SetPixel(x, y, ScharrPixelY(original, x, y));
@@ -539,6 +770,9 @@ inline void Image<T>::ScharrY(const Image<U>& original) {
 template <typename T>
 template <typename U>
 void Image<T>::DerivativeX(const Image<U>& original) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh mht_21(mht_21_v, 773, "", "./tensorflow/tools/android/test/jni/object_tracking/image-inl.h", "Image<T>::DerivativeX");
+
   for (int y = 0; y < height_; ++y) {
     const U* const source_row = original[y];
     T* const dest_row = (*this)[y];
@@ -563,6 +797,9 @@ void Image<T>::DerivativeX(const Image<U>& original) {
 template <typename T>
 template <typename U>
 void Image<T>::DerivativeY(const Image<U>& original) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh mht_22(mht_22_v, 800, "", "./tensorflow/tools/android/test/jni/object_tracking/image-inl.h", "Image<T>::DerivativeY");
+
   const int src_stride = original.stride();
 
   // Compute 1st row. Approximated with forward difference.
@@ -601,6 +838,9 @@ inline T Image<T>::ConvolvePixel3x3(const Image<U>& original,
                                     const int* const filter,
                                     const int center_x, const int center_y,
                                     const int total) const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh mht_23(mht_23_v, 841, "", "./tensorflow/tools/android/test/jni/object_tracking/image-inl.h", "Image<T>::ConvolvePixel3x3");
+
   int32_t sum = 0;
   for (int filter_y = 0; filter_y < 3; ++filter_y) {
     const int y = Clip(center_y - 1 + filter_y, 0, original.GetHeight());
@@ -616,6 +856,9 @@ template <typename T>
 template <typename U>
 inline void Image<T>::Convolve3x3(const Image<U>& original,
                                   const int32_t* const filter) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh mht_24(mht_24_v, 859, "", "./tensorflow/tools/android/test/jni/object_tracking/image-inl.h", "Image<T>::Convolve3x3");
+
   int32_t sum = 0;
   for (int i = 0; i < 9; ++i) {
     sum += abs(filter[i]);
@@ -630,6 +873,9 @@ inline void Image<T>::Convolve3x3(const Image<U>& original,
 template <typename T>
 inline void Image<T>::FromArray(const T* const pixels, const int stride,
                       const int factor) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPStoolsPSandroidPStestPSjniPSobject_trackingPSimageSLinlDTh mht_25(mht_25_v, 876, "", "./tensorflow/tools/android/test/jni/object_tracking/image-inl.h", "Image<T>::FromArray");
+
   if (factor == 1 && stride == width_) {
     // If not subsampling, memcpy per line should be faster.
     memcpy(this->image_data_, pixels, data_size_ * sizeof(T));

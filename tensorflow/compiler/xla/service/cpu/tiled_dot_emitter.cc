@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,6 +205,9 @@ class MemoryTile {
              llvm::Value* matrix, int64_t matrix_size_along_minor_dim,
              llvm::Value* major_dim_offset, int64_t tile_size_along_major_dim)
       : vsl_(vsl), b_(b) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_0(mht_0_v, 208, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "MemoryTile");
+
     pointers_.reserve(tile_size_along_major_dim);
     for (int64_t i = 0; i < tile_size_along_major_dim; i++) {
       llvm::Value* total_offset =
@@ -65,6 +236,9 @@ class MemoryTile {
   // Note: `major_dim_offset` is a parameter to the constructor.
   void StoreTile(absl::Span<llvm::Value* const> tile,
                  llvm::Value* minor_dim_offset) const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_1(mht_1_v, 239, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "StoreTile");
+
     CHECK_EQ(tile.size(), pointers_.size());
     for (int64_t i = 0; i < pointers_.size(); i++) {
       vsl_->StoreVector(tile[i], pointers_[i], minor_dim_offset);
@@ -110,26 +284,68 @@ class GemvConfig {
   struct User {
    public:
     PrimitiveType scalar_type() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_2(mht_2_v, 287, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "scalar_type");
+
       return derived().config().scalar_type();
     }
-    int64_t tile_rows() const { return derived().config().tile_rows(); }
-    int64_t tile_cols() const { return derived().config().tile_cols(); }
-    int64_t m() const { return derived().config().m(); }
-    int64_t k() const { return derived().config().k(); }
-    int64_t has_addend() const { return derived().config().has_addend(); }
+    int64_t tile_rows() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_3(mht_3_v, 293, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "tile_rows");
+ return derived().config().tile_rows(); }
+    int64_t tile_cols() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_4(mht_4_v, 297, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "tile_cols");
+ return derived().config().tile_cols(); }
+    int64_t m() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_5(mht_5_v, 301, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "m");
+ return derived().config().m(); }
+    int64_t k() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_6(mht_6_v, 305, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "k");
+ return derived().config().k(); }
+    int64_t has_addend() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_7(mht_7_v, 309, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "has_addend");
+ return derived().config().has_addend(); }
 
    private:
-    const T& derived() const { return *static_cast<const T*>(this); }
+    const T& derived() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_8(mht_8_v, 315, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "derived");
+ return *static_cast<const T*>(this); }
   };
 
-  PrimitiveType scalar_type() const { return scalar_type_; }
-  int64_t tile_rows() const { return tile_rows_; }
-  int64_t tile_cols() const { return tile_cols_; }
-  int64_t m() const { return m_; }
-  int64_t k() const { return k_; }
-  bool has_addend() const { return has_addend_; }
+  PrimitiveType scalar_type() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_9(mht_9_v, 321, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "scalar_type");
+ return scalar_type_; }
+  int64_t tile_rows() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_10(mht_10_v, 325, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "tile_rows");
+ return tile_rows_; }
+  int64_t tile_cols() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_11(mht_11_v, 329, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "tile_cols");
+ return tile_cols_; }
+  int64_t m() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_12(mht_12_v, 333, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "m");
+ return m_; }
+  int64_t k() const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_13(mht_13_v, 337, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "k");
+ return k_; }
+  bool has_addend() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_14(mht_14_v, 341, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "has_addend");
+ return has_addend_; }
 
   std::string GetCacheKey() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_15(mht_15_v, 346, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "GetCacheKey");
+
     return absl::StrCat(name_, "_", PrimitiveType_Name(scalar_type()), "_",
                         tile_rows(), "_", tile_cols(), "_", m(), "_", k(),
                         has_addend() ? "_with_addend" : "");
@@ -145,7 +361,11 @@ class GemvConfig {
         tile_cols_(tile_cols),
         m_(m),
         k_(k),
-        has_addend_(has_addend) {}
+        has_addend_(has_addend) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_16(mht_16_v, 366, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "GemvConfig");
+}
 
  private:
   std::string name_;
@@ -227,7 +447,10 @@ class ColumnMajorMatrixVectorProductEmitter
                     int64_t tile_cols, int64_t m, int64_t k, bool has_addend)
         : GemvConfig(/*name=*/"col_major_gemv", scalar_type,
                      /*tile_rows=*/tile_rows, /*tile_cols=*/tile_cols, /*m=*/m,
-                     /*k=*/k, /*has_addend=*/has_addend) {}
+                     /*k=*/k, /*has_addend=*/has_addend) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_17(mht_17_v, 451, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "Config");
+}
   };
 
   ColumnMajorMatrixVectorProductEmitter(const Config& config, llvm::Value* lhs,
@@ -242,6 +465,9 @@ class ColumnMajorMatrixVectorProductEmitter
         b_(b),
         ksl_(b_),
         vsl_(config.scalar_type(), /*vector_size=*/config.tile_rows(), b_, "") {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_18(mht_18_v, 468, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "ColumnMajorMatrixVectorProductEmitter");
+
     CHECK(tile_rows() > 0 &&
           absl::has_single_bit(static_cast<uint64_t>(tile_rows())));
     CHECK(!has_addend() || addend != nullptr);
@@ -249,13 +475,19 @@ class ColumnMajorMatrixVectorProductEmitter
 
   void Emit();
 
-  const Config& config() const { return config_; }
+  const Config& config() const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_19(mht_19_v, 479, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "config");
+ return config_; }
 
  private:
   void EmitOuterLoopBody(llvm::Value* column, int64_t column_count,
                          bool is_first_column);
 
   MemoryTile GetLhsMemoryTile(llvm::Value* column_start, int64_t column_count) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_20(mht_20_v, 488, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "GetLhsMemoryTile");
+
     return MemoryTile(&vsl_, b_, /*matrix=*/lhs_,
                       /*matrix_size_along_minor_dim=*/m(),
                       /*major_dim_offset=*/column_start,
@@ -293,6 +525,9 @@ class ColumnMajorMatrixVectorProductEmitter
 
 void ColumnMajorMatrixVectorProductEmitter::EmitOuterLoopBody(
     llvm::Value* column, int64_t column_count, bool is_first_column) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_21(mht_21_v, 528, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "ColumnMajorMatrixVectorProductEmitter::EmitOuterLoopBody");
+
   MemoryTile lhs_memory_tile = GetLhsMemoryTile(/*column_start=*/column,
                                                 /*column_count=*/column_count);
 
@@ -304,6 +539,9 @@ void ColumnMajorMatrixVectorProductEmitter::EmitOuterLoopBody(
 }
 
 void ColumnMajorMatrixVectorProductEmitter::Emit() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_22(mht_22_v, 542, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "ColumnMajorMatrixVectorProductEmitter::Emit");
+
   // See the comment on the class declaration for the algorithm used here.
   int64_t column_remainder = k() % tile_cols();
   int64_t column_limit = k() - column_remainder;
@@ -323,6 +561,9 @@ void ColumnMajorMatrixVectorProductEmitter::Emit() {
 void ColumnMajorMatrixVectorProductEmitter::EmitInnerLoopTiled(
     MemoryTile* lhs_memory_tile, const std::vector<llvm::Value*>& rhs_tile,
     int64_t columns, bool is_first_column) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_23(mht_23_v, 564, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "ColumnMajorMatrixVectorProductEmitter::EmitInnerLoopTiled");
+
   int64_t row_limit = m() - (m() % tile_rows());
 
   ksl_.For("dot.inner.tiled", /*start=*/0, /*end=*/row_limit,
@@ -343,6 +584,9 @@ void ColumnMajorMatrixVectorProductEmitter::EmitInnerLoopTiled(
 void ColumnMajorMatrixVectorProductEmitter::EmitInnerLoopEpilogue(
     llvm::Value* current_tile_col, int64_t columns,
     bool is_first_tiled_column) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_24(mht_24_v, 587, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "ColumnMajorMatrixVectorProductEmitter::EmitInnerLoopEpilogue");
+
   int64_t row_start = m() - (m() % tile_rows());
   if (row_start == m()) {
     return;
@@ -388,6 +632,9 @@ void ColumnMajorMatrixVectorProductEmitter::EmitInnerLoopEpilogue(
                   },
                   /*false_block_generator=*/
                   [&]() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_25(mht_25_v, 635, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "lambda");
+
                     vsl_.StoreScalar(
                         vsl_.Add(vsl_.LoadScalar(result_, scalar_row), product),
                         result_, scalar_row);
@@ -455,7 +702,10 @@ class RowMajorMatrixVectorProductEmitter
                     int64_t tile_cols, int64_t m, int64_t k, bool has_addend)
         : GemvConfig(/*name=*/"row_major_gemv", scalar_type,
                      /*tile_rows=*/tile_rows, /*tile_cols=*/tile_cols, /*m=*/m,
-                     /*k=*/k, /*has_addend=*/has_addend) {}
+                     /*k=*/k, /*has_addend=*/has_addend) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_26(mht_26_v, 706, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "Config");
+}
   };
 
   RowMajorMatrixVectorProductEmitter(const Config& config, llvm::Value* lhs,
@@ -469,6 +719,9 @@ class RowMajorMatrixVectorProductEmitter
         b_(b),
         ksl_(b_),
         vsl_(scalar_type(), /*vector_size=*/tile_cols(), b_, "") {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_27(mht_27_v, 722, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "RowMajorMatrixVectorProductEmitter");
+
     CHECK(tile_cols() > 0 &&
           absl::has_single_bit(static_cast<uint64_t>(tile_cols())));
     CHECK(!has_addend() || addend != nullptr);
@@ -476,10 +729,16 @@ class RowMajorMatrixVectorProductEmitter
 
   void Emit();
 
-  const Config& config() const { return config_; }
+  const Config& config() const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_28(mht_28_v, 733, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "config");
+ return config_; }
 
  private:
   MemoryTile GetLhsMemoryTile(llvm::Value* row_start, int64_t row_count) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_29(mht_29_v, 739, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "GetLhsMemoryTile");
+
     return MemoryTile(&vsl_, b_, /*matrix=*/lhs_,
                       /*matrix_size_along_minor_dim=*/k(),
                       /*major_dim_offset=*/row_start,
@@ -506,6 +765,9 @@ class RowMajorMatrixVectorProductEmitter
 
 void RowMajorMatrixVectorProductEmitter::EmitOuterLoopBody(llvm::Value* row,
                                                            int64_t row_count) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_30(mht_30_v, 768, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "RowMajorMatrixVectorProductEmitter::EmitOuterLoopBody");
+
   MemoryTile lhs_memory_tile = GetLhsMemoryTile(/*row_start=*/row,
                                                 /*row_count=*/row_count);
   std::vector<VectorVariable> vector_accumulators;
@@ -552,6 +814,9 @@ void RowMajorMatrixVectorProductEmitter::EmitOuterLoopBody(llvm::Value* row,
 }
 
 void RowMajorMatrixVectorProductEmitter::Emit() {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_31(mht_31_v, 817, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "RowMajorMatrixVectorProductEmitter::Emit");
+
   // See the comment on the class declaration for the algorithm used here.
   int64_t row_remainder = m() % tile_rows();
   int64_t row_limit = m() - row_remainder;
@@ -568,6 +833,9 @@ void RowMajorMatrixVectorProductEmitter::Emit() {
 void RowMajorMatrixVectorProductEmitter::EmitInnerLoopTiled(
     MemoryTile* lhs_memory_tile, int64_t rows,
     std::vector<VectorVariable>* vector_accumulators) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_32(mht_32_v, 836, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "RowMajorMatrixVectorProductEmitter::EmitInnerLoopTiled");
+
   int64_t column_limit = k() - (k() % tile_cols());
 
   ksl_.For("dot.inner.tiled", /*start=*/0, /*end=*/column_limit,
@@ -586,6 +854,9 @@ void RowMajorMatrixVectorProductEmitter::EmitInnerLoopTiled(
 void RowMajorMatrixVectorProductEmitter::EmitInnerLoopEpilogue(
     llvm::Value* current_tile_row, int64_t rows,
     std::vector<ScalarVariable>* scalar_accumulators) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_33(mht_33_v, 857, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "RowMajorMatrixVectorProductEmitter::EmitInnerLoopEpilogue");
+
   int64_t column_start = k() - (k() % tile_cols());
   if (column_start == k()) {
     return;
@@ -624,13 +895,28 @@ class TiledSmallGemmEmitter {
   class Dimensions {
    public:
     explicit Dimensions(int64_t m, int64_t k, int64_t n)
-        : m_(m), k_(k), n_(n) {}
+        : m_(m), k_(k), n_(n) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_34(mht_34_v, 899, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "Dimensions");
+}
 
-    int64_t m() const { return m_; }
-    int64_t k() const { return k_; }
-    int64_t n() const { return n_; }
+    int64_t m() const {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_35(mht_35_v, 904, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "m");
+ return m_; }
+    int64_t k() const {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_36(mht_36_v, 908, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "k");
+ return k_; }
+    int64_t n() const {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_37(mht_37_v, 912, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "n");
+ return n_; }
 
     std::string ToString() const {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_38(mht_38_v, 917, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "ToString");
+
       return absl::StrCat(m(), "x", k(), "x", n());
     }
 
@@ -672,23 +958,50 @@ class TiledSmallGemmEmitter {
           max_vector_count_(max_vector_count),
           min_vectorization_width_(min_vectorization_width),
           tile_size_m_(tile_size_m),
-          tile_size_k_(tile_size_k) {}
+          tile_size_k_(tile_size_k) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_39(mht_39_v, 962, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "Config");
+}
 
     std::string GetCacheKey() const {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_40(mht_40_v, 967, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "GetCacheKey");
+
       return absl::StrCat("gemm_", PrimitiveType_Name(scalar_type()), "_",
                           dims().ToString(), "_", max_vectorization_width(),
                           "_", min_vectorization_width(), "_", tile_size_m(),
                           "_", tile_size_k());
     }
 
-    PrimitiveType scalar_type() const { return scalar_type_; }
-    Dimensions dims() const { return dims_; }
-    int64_t max_vectorization_width() const { return max_vectorization_width_; }
-    int64_t max_vector_count() const { return max_vector_count_; }
-    int64_t min_vectorization_width() const { return min_vectorization_width_; }
+    PrimitiveType scalar_type() const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_41(mht_41_v, 977, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "scalar_type");
+ return scalar_type_; }
+    Dimensions dims() const {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_42(mht_42_v, 981, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "dims");
+ return dims_; }
+    int64_t max_vectorization_width() const {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_43(mht_43_v, 985, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "max_vectorization_width");
+ return max_vectorization_width_; }
+    int64_t max_vector_count() const {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_44(mht_44_v, 989, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "max_vector_count");
+ return max_vector_count_; }
+    int64_t min_vectorization_width() const {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_45(mht_45_v, 993, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "min_vectorization_width");
+ return min_vectorization_width_; }
 
-    int64_t tile_size_m() const { return tile_size_m_; }
-    int64_t tile_size_k() const { return tile_size_k_; }
+    int64_t tile_size_m() const {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_46(mht_46_v, 998, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "tile_size_m");
+ return tile_size_m_; }
+    int64_t tile_size_k() const {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_47(mht_47_v, 1002, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "tile_size_k");
+ return tile_size_k_; }
 
    private:
     PrimitiveType scalar_type_;
@@ -711,6 +1024,9 @@ class TiledSmallGemmEmitter {
         config_(config),
         b_(b),
         ksl_(b_) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_48(mht_48_v, 1027, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "TiledSmallGemmEmitter");
+
     CHECK(
         max_vectorization_width() > 0 &&
         absl::has_single_bit(static_cast<uint64_t>(max_vectorization_width())));
@@ -745,21 +1061,48 @@ class TiledSmallGemmEmitter {
                      int64_t tile_size_m, llvm::Value* m_start,
                      llvm::Value* m_end);
 
-  llvm::Value* GetInt64(int64_t value) { return b_->getInt64(value); }
+  llvm::Value* GetInt64(int64_t value) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_49(mht_49_v, 1065, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "GetInt64");
+ return b_->getInt64(value); }
 
-  Config config() const { return config_; }
-  Dimensions dims() const { return config().dims(); }
+  Config config() const {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_50(mht_50_v, 1070, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "config");
+ return config_; }
+  Dimensions dims() const {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_51(mht_51_v, 1074, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "dims");
+ return config().dims(); }
 
   int64_t max_vectorization_width() const {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_52(mht_52_v, 1079, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "max_vectorization_width");
+
     return config().max_vectorization_width();
   }
-  int64_t max_vector_count() const { return config().max_vector_count(); }
+  int64_t max_vector_count() const {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_53(mht_53_v, 1085, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "max_vector_count");
+ return config().max_vector_count(); }
   int64_t min_vectorization_width() const {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_54(mht_54_v, 1089, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "min_vectorization_width");
+
     return config().min_vectorization_width();
   }
-  int64_t tile_size_m() const { return config().tile_size_m(); }
-  int64_t tile_size_k() const { return config().tile_size_k(); }
-  PrimitiveType scalar_type() const { return config().scalar_type(); }
+  int64_t tile_size_m() const {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_55(mht_55_v, 1095, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "tile_size_m");
+ return config().tile_size_m(); }
+  int64_t tile_size_k() const {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_56(mht_56_v, 1099, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "tile_size_k");
+ return config().tile_size_k(); }
+  PrimitiveType scalar_type() const {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_57(mht_57_v, 1103, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "scalar_type");
+ return config().scalar_type(); }
 
   llvm::Value* lhs_;
   llvm::Value* rhs_;
@@ -770,9 +1113,15 @@ class TiledSmallGemmEmitter {
   KernelSupportLibrary ksl_;
 };
 
-void TiledSmallGemmEmitter::Emit() { HandleResiduesOnN(); }
+void TiledSmallGemmEmitter::Emit() {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_58(mht_58_v, 1117, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "TiledSmallGemmEmitter::Emit");
+ HandleResiduesOnN(); }
 
 void TiledSmallGemmEmitter::HandleResiduesOnN() {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_59(mht_59_v, 1122, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "TiledSmallGemmEmitter::HandleResiduesOnN");
+
   // We can only iterate the `n` dimension for an extent that is divisible by
   // the vectorization width.  So we emit an outer loop that first processes the
   // largest extent in `n` that is divisible by max_vectorization_width, then
@@ -814,6 +1163,9 @@ void TiledSmallGemmEmitter::HandleResiduesOnN() {
 void TiledSmallGemmEmitter::HandleResiduesOnK(VectorSupportLibrary* vsl,
                                               llvm::Value* n_start,
                                               llvm::Value* n_end) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_60(mht_60_v, 1166, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "TiledSmallGemmEmitter::HandleResiduesOnK");
+
   int64_t k_start = 0;
   int64_t k_end = dims().k() - (dims().k() % tile_size_k());
   if (k_end != k_start) {
@@ -831,6 +1183,9 @@ void TiledSmallGemmEmitter::HandleResiduesOnK(VectorSupportLibrary* vsl,
 void TiledSmallGemmEmitter::HandleResiduesOnM(
     VectorSupportLibrary* vsl, int64_t tile_size_k, llvm::Value* k_start,
     llvm::Value* k_end, llvm::Value* n_start, llvm::Value* n_end) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_61(mht_61_v, 1186, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "TiledSmallGemmEmitter::HandleResiduesOnM");
+
   const int64_t m_end = dims().m() - dims().m() % tile_size_m();
   EmitTiledGemm(vsl, tile_size_k, k_start, k_end, n_start, n_end, tile_size_m(),
                 GetInt64(0), GetInt64(m_end));
@@ -915,6 +1270,9 @@ void TiledSmallGemmEmitter::EmitTiledGemm(
     VectorSupportLibrary* vsl, int64_t tile_size_k, llvm::Value* k_start,
     llvm::Value* k_end, llvm::Value* n_start, llvm::Value* n_end,
     int64_t tile_size_m, llvm::Value* m_start, llvm::Value* m_end) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_62(mht_62_v, 1273, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "TiledSmallGemmEmitter::EmitTiledGemm");
+
   ksl_.For("dot.m", m_start, m_end, tile_size_m, [&](llvm::Value* m_i) {
     MemoryTile result_memory_tile(vsl, b_, /*matrix=*/result_,
                                   /*matrix_size_along_minor_dim=*/dims().n(),
@@ -950,6 +1308,9 @@ void TiledSmallGemmEmitter::EmitTiledGemm(
 }
 
 llvm::Type* GetPointerToElementType(llvm::Type* pointer_type) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_63(mht_63_v, 1311, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "GetPointerToElementType");
+
   llvm::Type* type = pointer_type->getPointerElementType();
   while (auto* array_type = llvm::dyn_cast<llvm::ArrayType>(type)) {
     type = array_type->getElementType();
@@ -968,6 +1329,9 @@ struct GemvBuffersWithCanonicalType {
 GemvBuffersWithCanonicalType GetGemvBuffersWithCanonicalType(
     llvm::Value* lhs, llvm::Value* rhs, llvm::Value* addend,
     llvm::Value* result, llvm::IRBuilder<>* b) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_64(mht_64_v, 1332, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "GetGemvBuffersWithCanonicalType");
+
   // We characterize a GEMV operation via M and K, since N is implicitly 1.
   // This means the GEMV that multiplies (say) [5,6] with [6,1] is implemented
   // by the same GEMV that multiplies [5,6] with [1,6].  However, the
@@ -1002,6 +1366,9 @@ void EmitRowMajorGemv(PrimitiveType scalar_type, int64_t tile_rows,
                       llvm::Value* rhs, llvm::Value* addend,
                       llvm::Value* result, llvm::IRBuilder<>* b,
                       const HloModuleConfig& module_config) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_65(mht_65_v, 1369, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "EmitRowMajorGemv");
+
   RowMajorMatrixVectorProductEmitter::Config config(
       /*scalar_type=*/scalar_type,
       /*tile_rows=*/tile_rows, /*tile_cols=*/tile_cols,
@@ -1030,6 +1397,9 @@ void EmitColumnMajorGemv(PrimitiveType scalar_type, int64_t tile_rows,
                          llvm::Value* addend, llvm::Value* result,
                          llvm::IRBuilder<>* b,
                          const HloModuleConfig& module_config) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_66(mht_66_v, 1400, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "EmitColumnMajorGemv");
+
   ColumnMajorMatrixVectorProductEmitter::Config config(
       /*scalar_type=*/scalar_type,
       /*tile_rows=*/tile_rows, /*tile_cols=*/tile_cols,
@@ -1058,6 +1428,9 @@ void EmitSmallGemm(PrimitiveType scalar_type, int64_t m, int64_t k, int64_t n,
                    int64_t tile_size_k, llvm::Value* lhs, llvm::Value* rhs,
                    llvm::Value* result, llvm::IRBuilder<>* b,
                    const HloModuleConfig& module_config) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPStiled_dot_emitterDTcc mht_67(mht_67_v, 1431, "", "./tensorflow/compiler/xla/service/cpu/tiled_dot_emitter.cc", "EmitSmallGemm");
+
   TiledSmallGemmEmitter::Config config(
       /*scalar_type=*/scalar_type,
       TiledSmallGemmEmitter::Dimensions{/*m=*/m, /*k=*/k, /*n=*/n},

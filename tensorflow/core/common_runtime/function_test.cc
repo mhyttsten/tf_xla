@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -65,10 +233,17 @@ using FDH = ::tensorflow::FunctionDefHelper;
 using OutputControlSrc = InlineFunctionBodyOptions::OutputControlSource;
 
 Status GetOpSig(const string& op, const OpDef** sig) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("op: \"" + op + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_0(mht_0_v, 237, "", "./tensorflow/core/common_runtime/function_test.cc", "GetOpSig");
+
   return OpRegistry::Global()->LookUpOpDef(op, sig);
 }
 
 void HasError(const Status& s, const error::Code code, StringPiece substr) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_1(mht_1_v, 244, "", "./tensorflow/core/common_runtime/function_test.cc", "HasError");
+
   EXPECT_EQ(s.code(), code) << s;
   EXPECT_TRUE(absl::StrContains(s.error_message(), substr))
       << s << ", expected substring " << substr;
@@ -78,9 +253,15 @@ class FunctionTest : public ::testing::Test {
  protected:
   FunctionTest()
       : device_(DeviceFactory::NewDevice("CPU", {},
-                                         "/job:localhost/replica:0/task:0")) {}
+                                         "/job:localhost/replica:0/task:0")) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_2(mht_2_v, 257, "", "./tensorflow/core/common_runtime/function_test.cc", "FunctionTest");
+}
 
   void Create(const FunctionDef& fdef, test::function::Attrs attrs) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_3(mht_3_v, 262, "", "./tensorflow/core/common_runtime/function_test.cc", "Create");
+
     exec_ = nullptr;
     InstantiationResult result;
     TF_CHECK_OK(InstantiateFunction(fdef, attrs, GetOpSig, &result));
@@ -100,10 +281,16 @@ class FunctionTest : public ::testing::Test {
     params.create_kernel =
         [this, version](const std::shared_ptr<const NodeProperties>& props,
                         OpKernel** kernel) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_4(mht_4_v, 284, "", "./tensorflow/core/common_runtime/function_test.cc", "lambda");
+
           return CreateNonCachedKernel(device_.get(), nullptr, props, version,
                                        kernel);
         };
     params.delete_kernel = [](OpKernel* kernel) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_5(mht_5_v, 291, "", "./tensorflow/core/common_runtime/function_test.cc", "lambda");
+
       DeleteNonCachedKernel(kernel);
     };
     Executor* exec;
@@ -112,6 +299,9 @@ class FunctionTest : public ::testing::Test {
   }
 
   void Run(const std::vector<Tensor>& args, std::vector<Tensor*> rets) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_6(mht_6_v, 302, "", "./tensorflow/core/common_runtime/function_test.cc", "Run");
+
     FunctionCallFrame frame(arg_types_, ret_types_);
     TF_CHECK_OK(frame.SetArgs(args));
     Executor::Args exec_args;
@@ -154,6 +344,9 @@ TEST_F(FunctionTest, WXPlusB) {
 class FunctionLibraryRuntimeTest : public ::testing::Test {
  protected:
   void Init(const std::vector<FunctionDef>& flib) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_7(mht_7_v, 347, "", "./tensorflow/core/common_runtime/function_test.cc", "Init");
+
     SessionOptions options;
     auto* device_count = options.config.mutable_device_count();
     device_count->insert({"CPU", 3});
@@ -172,6 +365,9 @@ class FunctionLibraryRuntimeTest : public ::testing::Test {
         /*parent=*/nullptr, /*session_metadata=*/nullptr,
         Rendezvous::Factory{
             [](const int64_t, const DeviceMgr* device_mgr, Rendezvous** r) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_8(mht_8_v, 368, "", "./tensorflow/core/common_runtime/function_test.cc", "lambda");
+
               *r = new IntraProcessRendezvous(device_mgr);
               return Status::OK();
             }}));
@@ -184,8 +380,14 @@ class FunctionLibraryRuntimeTest : public ::testing::Test {
   Status Run(FunctionLibraryRuntime* flr, FunctionLibraryRuntime::Handle handle,
              FunctionLibraryRuntime::Options opts,
              const std::vector<Tensor>& args, std::vector<Tensor*> rets) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_9(mht_9_v, 383, "", "./tensorflow/core/common_runtime/function_test.cc", "Run");
+
     std::function<void(std::function<void()>)> runner =
         [](std::function<void()> fn) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_10(mht_10_v, 388, "", "./tensorflow/core/common_runtime/function_test.cc", "lambda");
+
           test::function::FunctionTestSchedClosure(fn);
         };
     opts.runner = &runner;
@@ -210,6 +412,10 @@ class FunctionLibraryRuntimeTest : public ::testing::Test {
   Status Instantiate(FunctionLibraryRuntime* flr, const string& name,
                      test::function::Attrs attrs,
                      FunctionLibraryRuntime::Handle* handle) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_11(mht_11_v, 416, "", "./tensorflow/core/common_runtime/function_test.cc", "Instantiate");
+
     return flr->Instantiate(name, attrs, handle);
   }
 
@@ -217,6 +423,10 @@ class FunctionLibraryRuntimeTest : public ::testing::Test {
                      test::function::Attrs attrs,
                      const FunctionLibraryRuntime::InstantiateOptions& options,
                      FunctionLibraryRuntime::Handle* handle) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_12(mht_12_v, 427, "", "./tensorflow/core/common_runtime/function_test.cc", "Instantiate");
+
     return flr->Instantiate(name, attrs, options, handle);
   }
 
@@ -224,6 +434,10 @@ class FunctionLibraryRuntimeTest : public ::testing::Test {
                            test::function::Attrs attrs,
                            const std::vector<Tensor>& args,
                            std::vector<Tensor*> rets) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_13(mht_13_v, 438, "", "./tensorflow/core/common_runtime/function_test.cc", "InstantiateAndRun");
+
     return InstantiateAndRun(flr, name, attrs,
                              FunctionLibraryRuntime::InstantiateOptions(), args,
                              std::move(rets));
@@ -234,6 +448,10 @@ class FunctionLibraryRuntimeTest : public ::testing::Test {
       test::function::Attrs attrs,
       const FunctionLibraryRuntime::InstantiateOptions& options,
       const std::vector<Tensor>& args, std::vector<Tensor*> rets) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_14(mht_14_v, 452, "", "./tensorflow/core/common_runtime/function_test.cc", "InstantiateAndRun");
+
     FunctionLibraryRuntime::Handle handle;
     Status status = flr->Instantiate(name, attrs, options, &handle);
     if (!status.ok()) {
@@ -258,8 +476,14 @@ class FunctionLibraryRuntimeTest : public ::testing::Test {
 
   Status Run(FunctionLibraryRuntime* flr, FunctionLibraryRuntime::Handle handle,
              FunctionLibraryRuntime::Options opts, CallFrameInterface* frame) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_15(mht_15_v, 479, "", "./tensorflow/core/common_runtime/function_test.cc", "Run");
+
     std::function<void(std::function<void()>)> runner =
         [](std::function<void()> fn) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_16(mht_16_v, 484, "", "./tensorflow/core/common_runtime/function_test.cc", "lambda");
+
           test::function::FunctionTestSchedClosure(fn);
         };
     opts.runner = &runner;
@@ -282,6 +506,10 @@ class FunctionLibraryRuntimeTest : public ::testing::Test {
                                                 test::function::Attrs attrs,
                                                 const std::vector<Tensor>& args,
                                                 std::vector<Tensor*> rets) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_17(mht_17_v, 510, "", "./tensorflow/core/common_runtime/function_test.cc", "InstantiateAndRunViaCallFrameInterface");
+
     FunctionLibraryRuntime::Handle handle;
     Status status = flr->Instantiate(name, attrs, &handle);
     if (!status.ok()) {
@@ -381,10 +609,16 @@ TEST_F(FunctionLibraryRuntimeTest, InstantiationStackTraceCopying) {
     absl::Span<StackFrame const> ToFrames() const override { return {}; }
 
     std::string ToString(const TracePrintingOptions& opts) const override {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_18(mht_18_v, 612, "", "./tensorflow/core/common_runtime/function_test.cc", "ToString");
+
       return "DummyStackTrace";
     }
 
-    StackFrame LastUserFrame() const override { return StackFrame{}; }
+    StackFrame LastUserFrame() const override {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_19(mht_19_v, 619, "", "./tensorflow/core/common_runtime/function_test.cc", "LastUserFrame");
+ return StackFrame{}; }
   };
 
   FunctionDef func = test::function::XTimesTwo();
@@ -423,20 +657,41 @@ TEST_F(FunctionLibraryRuntimeTest, XTimesTwo_MultiDeviceBacked) {
 class ConsumeArgumentCallFrame : public CallFrameInterface {
  public:
   ConsumeArgumentCallFrame(Tensor* arg, Tensor* retval)
-      : arg_(arg), retval_(retval) {}
+      : arg_(arg), retval_(retval) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_20(mht_20_v, 661, "", "./tensorflow/core/common_runtime/function_test.cc", "ConsumeArgumentCallFrame");
+}
 
-  size_t num_args() const override { return 1; }
-  size_t num_retvals() const override { return 1; }
+  size_t num_args() const override {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_21(mht_21_v, 666, "", "./tensorflow/core/common_runtime/function_test.cc", "num_args");
+ return 1; }
+  size_t num_retvals() const override {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_22(mht_22_v, 670, "", "./tensorflow/core/common_runtime/function_test.cc", "num_retvals");
+ return 1; }
 
   Status GetArg(int index, const Tensor** val) override {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_23(mht_23_v, 675, "", "./tensorflow/core/common_runtime/function_test.cc", "GetArg");
+
     LOG(FATAL) << "Should not be called.";
   }
 
-  bool CanConsumeArg(int index) const override { return index == 0; }
+  bool CanConsumeArg(int index) const override {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_24(mht_24_v, 682, "", "./tensorflow/core/common_runtime/function_test.cc", "CanConsumeArg");
+ return index == 0; }
 
-  void ConsumeArg(int index, Tensor* val) override { *val = std::move(*arg_); }
+  void ConsumeArg(int index, Tensor* val) override {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_25(mht_25_v, 687, "", "./tensorflow/core/common_runtime/function_test.cc", "ConsumeArg");
+ *val = std::move(*arg_); }
 
   Status SetRetval(int index, const Tensor& val) override {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_26(mht_26_v, 692, "", "./tensorflow/core/common_runtime/function_test.cc", "SetRetval");
+
     CHECK_EQ(index, 0);
     *retval_ = val;
     return Status::OK();
@@ -715,6 +970,9 @@ namespace {
 class DummyExecutorRegistrar {
  public:
   DummyExecutorRegistrar() {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_27(mht_27_v, 973, "", "./tensorflow/core/common_runtime/function_test.cc", "DummyExecutorRegistrar");
+
     ExecutorFactory::Register("DUMMY", new Factory());
   }
 
@@ -722,6 +980,9 @@ class DummyExecutorRegistrar {
   class Factory : public ExecutorFactory {
     Status NewExecutor(const LocalExecutorParams& params, const Graph& graph,
                        std::unique_ptr<Executor>* out_executor) override {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_28(mht_28_v, 983, "", "./tensorflow/core/common_runtime/function_test.cc", "NewExecutor");
+
       return errors::Internal("This is a dummy.");
     }
   };
@@ -1963,6 +2224,9 @@ class AreAllKernelsInlineOp : public OpKernel {
   using OpKernel::OpKernel;
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_29(mht_29_v, 2227, "", "./tensorflow/core/common_runtime/function_test.cc", "Compute");
+
     Tensor* output;
     OP_REQUIRES_OK(ctx, ctx->allocate_output(0, {}, &output));
     output->scalar<bool>()() = ctx->run_all_kernels_inline();
@@ -2025,17 +2289,32 @@ class UserIntraOpThreadPoolOp : public OpKernel {
 
   class DummyThreadPool : public thread::ThreadPoolInterface {
    public:
-    void Schedule(std::function<void()> fn) override { fn(); }
-    int NumThreads() const override { return 1; }
-    int CurrentThreadId() const override { return -1; }
+    void Schedule(std::function<void()> fn) override {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_30(mht_30_v, 2293, "", "./tensorflow/core/common_runtime/function_test.cc", "Schedule");
+ fn(); }
+    int NumThreads() const override {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_31(mht_31_v, 2297, "", "./tensorflow/core/common_runtime/function_test.cc", "NumThreads");
+ return 1; }
+    int CurrentThreadId() const override {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_32(mht_32_v, 2301, "", "./tensorflow/core/common_runtime/function_test.cc", "CurrentThreadId");
+ return -1; }
   };
 
   static DummyThreadPool& dummy_thread_pool() {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_33(mht_33_v, 2307, "", "./tensorflow/core/common_runtime/function_test.cc", "dummy_thread_pool");
+
     static DummyThreadPool& thread_pool = *new DummyThreadPool();
     return thread_pool;
   }
 
   void Compute(OpKernelContext* ctx) override {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_34(mht_34_v, 2315, "", "./tensorflow/core/common_runtime/function_test.cc", "Compute");
+
     Tensor* result;
     OP_REQUIRES_OK(ctx, ctx->allocate_output(0, {}, &result));
     result->scalar<bool>()() =
@@ -2080,10 +2359,16 @@ TEST_F(FunctionLibraryRuntimeTest, RunUserIntraOpThreadPool) {
 
 namespace {
 
-bool DoNothing(Graph* g) { return false; }
+bool DoNothing(Graph* g) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_35(mht_35_v, 2363, "", "./tensorflow/core/common_runtime/function_test.cc", "DoNothing");
+ return false; }
 
 GraphDef Optimize(const std::function<bool(Graph* g)>& pass,
                   const FunctionDef& fdef) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_36(mht_36_v, 2369, "", "./tensorflow/core/common_runtime/function_test.cc", "Optimize");
+
   InstantiationResult result;
   TF_CHECK_OK(InstantiateFunction(fdef, AttrSlice(), GetOpSig, &result));
   std::unique_ptr<Graph> g(new Graph(OpRegistry::Global()));
@@ -2329,6 +2614,9 @@ TEST(OptimizationTest, RemoveListArrayConverter) {
     TF_ASSERT_OK(scope.ToGraphDef(&expected));
 
     auto remove_listarray_and_identity = [](Graph* g) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_37(mht_37_v, 2617, "", "./tensorflow/core/common_runtime/function_test.cc", "lambda");
+
       return RemoveListArrayConverter(g) && RemoveIdentityNodes(g);
     };
     TF_EXPECT_GRAPH_EQ(expected, Optimize(remove_listarray_and_identity, func));
@@ -2398,6 +2686,9 @@ TEST(OptimizationTest, RemoveListArrayConverter_WithControlDeps) {
   TF_EXPECT_GRAPH_EQ(expected, Optimize(RemoveListArrayConverter, func));
 
   auto remove_listarray_and_identity = [](Graph* g) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSfunction_testDTcc mht_38(mht_38_v, 2689, "", "./tensorflow/core/common_runtime/function_test.cc", "lambda");
+
     return RemoveListArrayConverter(g) && RemoveIdentityNodes(g);
   };
   // NOTE: We are not removing Identity nodes with any control

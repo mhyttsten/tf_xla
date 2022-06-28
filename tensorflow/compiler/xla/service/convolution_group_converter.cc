@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconvolution_group_converterDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconvolution_group_converterDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconvolution_group_converterDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,6 +215,9 @@ class ConvolutionVisitor : public DfsHloVisitorWithDefault {
  public:
   // Default visitor action is to do nothing and return OK.
   Status DefaultAction(HloInstruction* /*hlo_instruction*/) override {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconvolution_group_converterDTcc mht_0(mht_0_v, 218, "", "./tensorflow/compiler/xla/service/convolution_group_converter.cc", "DefaultAction");
+
     return Status::OK();
   }
 
@@ -61,7 +232,10 @@ class ConvolutionVisitor : public DfsHloVisitorWithDefault {
                   bool convert_batch_groups_only, bool filter_expansion);
 
   // Returns whether any convolution ops were rewritten.
-  const bool changed() const { return changed_; }
+  const bool changed() const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconvolution_group_converterDTcc mht_1(mht_1_v, 236, "", "./tensorflow/compiler/xla/service/convolution_group_converter.cc", "changed");
+ return changed_; }
 
   ~ConvolutionVisitor() override = default;
 
@@ -75,7 +249,10 @@ class ConvolutionVisitor : public DfsHloVisitorWithDefault {
         filter_expansion_(filter_expansion),
         convert_batch_groups_only_(convert_batch_groups_only),
         should_expand_(should_expand),
-        is_cost_viable_(is_cost_viable) {}
+        is_cost_viable_(is_cost_viable) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconvolution_group_converterDTcc mht_2(mht_2_v, 253, "", "./tensorflow/compiler/xla/service/convolution_group_converter.cc", "ConvolutionVisitor");
+}
 
   // Current HloComputation instance the ConvolutionVisitor is traversing.
   HloComputation* computation_;
@@ -98,6 +275,9 @@ bool ConvolutionVisitor::Run(
     std::function<bool(HloInstruction*)> should_expand,
     std::function<bool(HloInstruction*)> is_cost_viable,
     bool convert_batch_groups_only, bool filter_expansion) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconvolution_group_converterDTcc mht_3(mht_3_v, 278, "", "./tensorflow/compiler/xla/service/convolution_group_converter.cc", "ConvolutionVisitor::Run");
+
   ConvolutionVisitor visitor(computation, should_expand, is_cost_viable,
                              convert_batch_groups_only, filter_expansion);
   TF_CHECK_OK(computation->Accept(&visitor));
@@ -106,6 +286,9 @@ bool ConvolutionVisitor::Run(
 
 Shape ExpandedFilterShape(const Shape& shape, int64_t group_count,
                           int64_t input_feature_dim) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconvolution_group_converterDTcc mht_4(mht_4_v, 289, "", "./tensorflow/compiler/xla/service/convolution_group_converter.cc", "ExpandedFilterShape");
+
   int64_t num_dims = shape.dimensions_size();
   CHECK_GE(num_dims, 2);
   Shape expanded_shape = shape;
@@ -169,6 +352,9 @@ HloInstruction* GetExpandedFilterMask(
     int64_t kernel_output_feature_dim, int64_t group_count,
     const std::function<HloInstruction*(std::unique_ptr<HloInstruction>)>&
         add_instruction) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconvolution_group_converterDTcc mht_5(mht_5_v, 355, "", "./tensorflow/compiler/xla/service/convolution_group_converter.cc", "GetExpandedFilterMask");
+
   Shape expanded_filter_shape =
       ExpandedFilterShape(filter_shape, group_count, kernel_input_feature_dim);
   Shape mask_shape =
@@ -203,6 +389,9 @@ HloInstruction* GetExpandedFilterMask(
 // This function handles batch_group_counts which are relevant only for
 // depthwise backprop filter convolutions.
 Status ConvolutionVisitor::HandleBatchGroupCount(HloInstruction* convolution) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconvolution_group_converterDTcc mht_6(mht_6_v, 392, "", "./tensorflow/compiler/xla/service/convolution_group_converter.cc", "ConvolutionVisitor::HandleBatchGroupCount");
+
   auto dim_numbers = convolution->convolution_dimension_numbers();
   auto activation = convolution->mutable_operand(0);
   auto filter = convolution->mutable_operand(1);
@@ -217,6 +406,9 @@ Status ConvolutionVisitor::HandleBatchGroupCount(HloInstruction* convolution) {
           << " for convolution " << convolution->ToString() << "\n";
 
   auto add = [&](std::unique_ptr<HloInstruction> inst) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconvolution_group_converterDTcc mht_7(mht_7_v, 409, "", "./tensorflow/compiler/xla/service/convolution_group_converter.cc", "lambda");
+
     return computation_->AddInstruction(std::move(inst));
   };
 
@@ -420,11 +612,17 @@ Status ConvolutionVisitor::HandleBatchGroupCount(HloInstruction* convolution) {
 }
 
 Status ConvolutionVisitor::HandleConvolution(HloInstruction* convolution) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconvolution_group_converterDTcc mht_8(mht_8_v, 615, "", "./tensorflow/compiler/xla/service/convolution_group_converter.cc", "ConvolutionVisitor::HandleConvolution");
+
   if (convert_batch_groups_only_) {
     return HandleBatchGroupCount(convolution);
   }
 
   auto add = [&](std::unique_ptr<HloInstruction> inst) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconvolution_group_converterDTcc mht_9(mht_9_v, 623, "", "./tensorflow/compiler/xla/service/convolution_group_converter.cc", "lambda");
+
     return computation_->AddInstruction(std::move(inst));
   };
 
@@ -676,6 +874,9 @@ Status ConvolutionVisitor::HandleConvolution(HloInstruction* convolution) {
 }  // namespace
 
 StatusOr<bool> ConvolutionGroupConverter::Run(HloModule* module) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSconvolution_group_converterDTcc mht_10(mht_10_v, 877, "", "./tensorflow/compiler/xla/service/convolution_group_converter.cc", "ConvolutionGroupConverter::Run");
+
   XLA_VLOG_LINES(
       2, "ConvolutionGroupConverter::Run(), before:\n" + module->ToString());
   bool changed = false;

@@ -21,6 +21,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_STREAM_EXECUTOR_DNN_H_
 #define TENSORFLOW_STREAM_EXECUTOR_DNN_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSstream_executorPSdnnDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSstream_executorPSdnnDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <functional>
 #include <limits>
@@ -69,14 +237,23 @@ std::vector<int64_t> ReorderDims(const std::vector<int64_t>& input,
 
 // Helper functions to make methods more readable.
 inline int64_t GetDim(absl::Span<const int64_t> data, DimIndex dim) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_0(mht_0_v, 240, "", "./tensorflow/stream_executor/dnn.h", "GetDim");
+
   return data.rbegin()[static_cast<int64_t>(dim)];
 }
 
 inline void SetDim(absl::Span<int64_t> data, DimIndex dim, int64_t value) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_1(mht_1_v, 247, "", "./tensorflow/stream_executor/dnn.h", "SetDim");
+
   data.rbegin()[static_cast<int64_t>(dim)] = value;
 }
 
 inline void SetDim(std::vector<int64_t>* data, DimIndex dim, int64_t value) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_2(mht_2_v, 254, "", "./tensorflow/stream_executor/dnn.h", "SetDim");
+
   return SetDim(absl::MakeSpan(*data), dim, value);
 }
 
@@ -170,10 +347,22 @@ class RnnDescriptor {
     int64_t size;
   };
   typedef std::vector<ParamsRegion> ParamsRegions;
-  virtual ~RnnDescriptor() {}
-  virtual int64_t ParamsSizeInBytes() const { return -1; }
-  virtual ParamsRegions ParamsWeightRegions() const { return ParamsRegions(); }
-  virtual ParamsRegions ParamsBiasRegions() const { return ParamsRegions(); }
+  virtual ~RnnDescriptor() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_3(mht_3_v, 351, "", "./tensorflow/stream_executor/dnn.h", "~RnnDescriptor");
+}
+  virtual int64_t ParamsSizeInBytes() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_4(mht_4_v, 355, "", "./tensorflow/stream_executor/dnn.h", "ParamsSizeInBytes");
+ return -1; }
+  virtual ParamsRegions ParamsWeightRegions() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_5(mht_5_v, 359, "", "./tensorflow/stream_executor/dnn.h", "ParamsWeightRegions");
+ return ParamsRegions(); }
+  virtual ParamsRegions ParamsBiasRegions() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_6(mht_6_v, 363, "", "./tensorflow/stream_executor/dnn.h", "ParamsBiasRegions");
+ return ParamsRegions(); }
 };
 
 // Specifies the sequence in a RNN model.
@@ -182,7 +371,10 @@ class RnnDescriptor {
 // in use. The destructor releases the underlying descriptors.
 class RnnSequenceTensorDescriptor {
  public:
-  virtual ~RnnSequenceTensorDescriptor() {}
+  virtual ~RnnSequenceTensorDescriptor() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_7(mht_7_v, 375, "", "./tensorflow/stream_executor/dnn.h", "~RnnSequenceTensorDescriptor");
+}
 };
 
 // Specifies either the input and hidden state in a RNN model.
@@ -191,7 +383,10 @@ class RnnSequenceTensorDescriptor {
 // in use. The destructor releases the underlying descriptors.
 class RnnStateTensorDescriptor {
  public:
-  virtual ~RnnStateTensorDescriptor() {}
+  virtual ~RnnStateTensorDescriptor() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_8(mht_8_v, 387, "", "./tensorflow/stream_executor/dnn.h", "~RnnStateTensorDescriptor");
+}
 };
 
 // Returns a string representation of the given quantization mode.
@@ -256,18 +451,48 @@ class BatchDescriptor {
   TensorDescriptorProto ToProto(DataType data_type) const;
 
   // Accessors.
-  int64_t count() const { return tensor_.dimensions(0); }
-  int64_t feature_map_count() const { return tensor_.dimensions(1); }
-  int64_t height() const { return GetDim(spatial_size(), DimIndex::Y); }
-  int64_t width() const { return GetDim(spatial_size(), DimIndex::X); }
+  int64_t count() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_9(mht_9_v, 455, "", "./tensorflow/stream_executor/dnn.h", "count");
+ return tensor_.dimensions(0); }
+  int64_t feature_map_count() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_10(mht_10_v, 459, "", "./tensorflow/stream_executor/dnn.h", "feature_map_count");
+ return tensor_.dimensions(1); }
+  int64_t height() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_11(mht_11_v, 463, "", "./tensorflow/stream_executor/dnn.h", "height");
+ return GetDim(spatial_size(), DimIndex::Y); }
+  int64_t width() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_12(mht_12_v, 467, "", "./tensorflow/stream_executor/dnn.h", "width");
+ return GetDim(spatial_size(), DimIndex::X); }
   int64_t spatial_dim(DimIndex dim) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_13(mht_13_v, 471, "", "./tensorflow/stream_executor/dnn.h", "spatial_dim");
+
     return GetDim(spatial_size(), dim);
   }
-  int ndims() const { return spatial_size().size(); }
-  float value_max() const { return value_max_; }
-  float value_min() const { return value_min_; }
-  DataLayout layout() const { return tensor_.data_layout(); }
+  int ndims() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_14(mht_14_v, 477, "", "./tensorflow/stream_executor/dnn.h", "ndims");
+ return spatial_size().size(); }
+  float value_max() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_15(mht_15_v, 481, "", "./tensorflow/stream_executor/dnn.h", "value_max");
+ return value_max_; }
+  float value_min() const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_16(mht_16_v, 485, "", "./tensorflow/stream_executor/dnn.h", "value_min");
+ return value_min_; }
+  DataLayout layout() const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_17(mht_17_v, 489, "", "./tensorflow/stream_executor/dnn.h", "layout");
+ return tensor_.data_layout(); }
   QuantizedActivationMode quantized_activation_mode() const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_18(mht_18_v, 493, "", "./tensorflow/stream_executor/dnn.h", "quantized_activation_mode");
+
     return quantized_activation_mode_;
   }
   // Full dimensions of the underlying data, ordered according to a specific
@@ -290,39 +515,66 @@ class BatchDescriptor {
 
   // Named-argument helpers for avoiding user error during construction.
   BatchDescriptor& set_count(int64_t value) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_19(mht_19_v, 518, "", "./tensorflow/stream_executor/dnn.h", "set_count");
+
     tensor_.set_dimensions(0, value);
     return *this;
   }
   BatchDescriptor& set_feature_map_count(int64_t value) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_20(mht_20_v, 525, "", "./tensorflow/stream_executor/dnn.h", "set_feature_map_count");
+
     tensor_.set_dimensions(1, value);
     return *this;
   }
   BatchDescriptor& set_height(int64_t value) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_21(mht_21_v, 532, "", "./tensorflow/stream_executor/dnn.h", "set_height");
+
     SetDim(spatial_size(), DimIndex::Y, value);
     return *this;
   }
   BatchDescriptor& set_width(int64_t value) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_22(mht_22_v, 539, "", "./tensorflow/stream_executor/dnn.h", "set_width");
+
     SetDim(spatial_size(), DimIndex::X, value);
     return *this;
   }
   BatchDescriptor& set_spatial_dim(DimIndex dim, int64_t value) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_23(mht_23_v, 546, "", "./tensorflow/stream_executor/dnn.h", "set_spatial_dim");
+
     SetDim(spatial_size(), dim, value);
     return *this;
   }
   BatchDescriptor& set_value_max(float value) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_24(mht_24_v, 553, "", "./tensorflow/stream_executor/dnn.h", "set_value_max");
+
     value_max_ = value;
     return *this;
   }
   BatchDescriptor& set_value_min(float value) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_25(mht_25_v, 560, "", "./tensorflow/stream_executor/dnn.h", "set_value_min");
+
     value_min_ = value;
     return *this;
   }
   BatchDescriptor& set_layout(DataLayout layout) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_26(mht_26_v, 567, "", "./tensorflow/stream_executor/dnn.h", "set_layout");
+
     tensor_.set_data_layout(layout);
     return *this;
   }
   BatchDescriptor& set_quantized_activation_mode(
       QuantizedActivationMode quantized_activation_mode) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_27(mht_27_v, 575, "", "./tensorflow/stream_executor/dnn.h", "set_quantized_activation_mode");
+
     quantized_activation_mode_ = quantized_activation_mode;
     return *this;
   }
@@ -410,30 +662,51 @@ class FilterDescriptor {
 
   // Named-argument helpers for avoiding user error during construction.
   FilterDescriptor& set_output_feature_map_count(int64_t value) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_28(mht_28_v, 665, "", "./tensorflow/stream_executor/dnn.h", "set_output_feature_map_count");
+
     tensor_.set_dimensions(0, value);
     return *this;
   }
   FilterDescriptor& set_input_feature_map_count(int64_t value) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_29(mht_29_v, 672, "", "./tensorflow/stream_executor/dnn.h", "set_input_feature_map_count");
+
     tensor_.set_dimensions(1, value);
     return *this;
   }
   FilterDescriptor& set_input_filter_height(int64_t value) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_30(mht_30_v, 679, "", "./tensorflow/stream_executor/dnn.h", "set_input_filter_height");
+
     SetDim(input_filter_dims(), DimIndex::Y, value);
     return *this;
   }
   FilterDescriptor& set_input_filter_width(int64_t value) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_31(mht_31_v, 686, "", "./tensorflow/stream_executor/dnn.h", "set_input_filter_width");
+
     SetDim(input_filter_dims(), DimIndex::X, value);
     return *this;
   }
   FilterDescriptor& set_layout(FilterLayout layout) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_32(mht_32_v, 693, "", "./tensorflow/stream_executor/dnn.h", "set_layout");
+
     tensor_.set_filter_layout(layout);
     return *this;
   }
   FilterDescriptor& set_spatial_dim(DimIndex dim, int64_t value) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_33(mht_33_v, 700, "", "./tensorflow/stream_executor/dnn.h", "set_spatial_dim");
+
     SetDim(input_filter_dims(), dim, value);
     return *this;
   }
-  int ndims() const { return input_filter_dims().size(); }
+  int ndims() const {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_34(mht_34_v, 707, "", "./tensorflow/stream_executor/dnn.h", "ndims");
+ return input_filter_dims().size(); }
 
   void CloneFrom(const FilterDescriptor& other);
 
@@ -447,21 +720,42 @@ class FilterDescriptor {
 
   // Returns the number of biases required as parameters for a convolution
   // using this filter descriptor.
-  int64_t bias_count() const { return output_feature_map_count(); }
+  int64_t bias_count() const {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_35(mht_35_v, 724, "", "./tensorflow/stream_executor/dnn.h", "bias_count");
+ return output_feature_map_count(); }
 
-  int64_t output_feature_map_count() const { return tensor_.dimensions(0); }
-  int64_t input_feature_map_count() const { return tensor_.dimensions(1); }
+  int64_t output_feature_map_count() const {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_36(mht_36_v, 729, "", "./tensorflow/stream_executor/dnn.h", "output_feature_map_count");
+ return tensor_.dimensions(0); }
+  int64_t input_feature_map_count() const {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_37(mht_37_v, 733, "", "./tensorflow/stream_executor/dnn.h", "input_feature_map_count");
+ return tensor_.dimensions(1); }
   int64_t input_filter_height() const {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_38(mht_38_v, 737, "", "./tensorflow/stream_executor/dnn.h", "input_filter_height");
+
     return GetDim(input_filter_dims(), DimIndex::Y);
   }
   int64_t input_filter_width() const {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_39(mht_39_v, 743, "", "./tensorflow/stream_executor/dnn.h", "input_filter_width");
+
     return GetDim(input_filter_dims(), DimIndex::X);
   }
   int64_t input_filter_dim(DimIndex dim) const {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_40(mht_40_v, 749, "", "./tensorflow/stream_executor/dnn.h", "input_filter_dim");
+
     return GetDim(input_filter_dims(), dim);
   }
 
-  FilterLayout layout() const { return tensor_.filter_layout(); }
+  FilterLayout layout() const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_41(mht_41_v, 756, "", "./tensorflow/stream_executor/dnn.h", "layout");
+ return tensor_.filter_layout(); }
 
   absl::Span<const int64_t> input_filter_dims() const {
     return AsInt64Slice(tensor_.dimensions()).subspan(2);
@@ -547,81 +841,160 @@ class ConvolutionDescriptor {
 
   std::string ToString() const;
   std::string ToShortString() const;
-  ConvolutionDescriptorProto ToProto() const { return proto_; }
+  ConvolutionDescriptorProto ToProto() const {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_42(mht_42_v, 845, "", "./tensorflow/stream_executor/dnn.h", "ToProto");
+ return proto_; }
 
   ConvolutionDescriptor& set_zero_padding_height(int64_t value) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_43(mht_43_v, 850, "", "./tensorflow/stream_executor/dnn.h", "set_zero_padding_height");
+
     SetDim(padding(), DimIndex::Y, value);
     return *this;
   }
   ConvolutionDescriptor& set_zero_padding_width(int64_t value) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_44(mht_44_v, 857, "", "./tensorflow/stream_executor/dnn.h", "set_zero_padding_width");
+
     SetDim(padding(), DimIndex::X, value);
     return *this;
   }
   ConvolutionDescriptor& set_zero_padding(DimIndex dim, int64_t value) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_45(mht_45_v, 864, "", "./tensorflow/stream_executor/dnn.h", "set_zero_padding");
+
     SetDim(padding(), dim, value);
     return *this;
   }
   ConvolutionDescriptor& set_vertical_filter_stride(int64_t value) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_46(mht_46_v, 871, "", "./tensorflow/stream_executor/dnn.h", "set_vertical_filter_stride");
+
     SetDim(strides(), DimIndex::Y, value);
     return *this;
   }
   ConvolutionDescriptor& set_horizontal_filter_stride(int64_t value) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_47(mht_47_v, 878, "", "./tensorflow/stream_executor/dnn.h", "set_horizontal_filter_stride");
+
     SetDim(strides(), DimIndex::X, value);
     return *this;
   }
   ConvolutionDescriptor& set_filter_stride(DimIndex dim, int64_t value) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_48(mht_48_v, 885, "", "./tensorflow/stream_executor/dnn.h", "set_filter_stride");
+
     SetDim(strides(), dim, value);
     return *this;
   }
   ConvolutionDescriptor& set_vertical_dilation_rate(int64_t value) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_49(mht_49_v, 892, "", "./tensorflow/stream_executor/dnn.h", "set_vertical_dilation_rate");
+
     SetDim(dilations(), DimIndex::Y, value);
     return *this;
   }
   ConvolutionDescriptor& set_horizontal_dilation_rate(int64_t value) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_50(mht_50_v, 899, "", "./tensorflow/stream_executor/dnn.h", "set_horizontal_dilation_rate");
+
     SetDim(dilations(), DimIndex::X, value);
     return *this;
   }
   ConvolutionDescriptor& set_dilation_rate(DimIndex dim, int64_t value) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_51(mht_51_v, 906, "", "./tensorflow/stream_executor/dnn.h", "set_dilation_rate");
+
     SetDim(dilations(), dim, value);
     return *this;
   }
   ConvolutionDescriptor& set_group_count(int group_count) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_52(mht_52_v, 913, "", "./tensorflow/stream_executor/dnn.h", "set_group_count");
+
     proto_.set_group_count(group_count);
     return *this;
   }
   ConvolutionDescriptor& set_convolution_not_crosscorr(bool conv) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_53(mht_53_v, 920, "", "./tensorflow/stream_executor/dnn.h", "set_convolution_not_crosscorr");
+
     proto_.set_convolution_mode(conv ? ConvolutionMode::CONVOLUTION
                                      : ConvolutionMode::CROSS_CORRELATION);
     return *this;
   }
   ConvolutionDescriptor& set_name(const std::string& name) {
+   std::vector<std::string> mht_54_v;
+   mht_54_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_54(mht_54_v, 929, "", "./tensorflow/stream_executor/dnn.h", "set_name");
+
     proto_.set_name(name);
     return *this;
   }
-  int64_t zero_padding_height() const { return GetDim(padding(), DimIndex::Y); }
-  int64_t zero_padding_width() const { return GetDim(padding(), DimIndex::X); }
+  int64_t zero_padding_height() const {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_55(mht_55_v, 936, "", "./tensorflow/stream_executor/dnn.h", "zero_padding_height");
+ return GetDim(padding(), DimIndex::Y); }
+  int64_t zero_padding_width() const {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_56(mht_56_v, 940, "", "./tensorflow/stream_executor/dnn.h", "zero_padding_width");
+ return GetDim(padding(), DimIndex::X); }
   int64_t vertical_filter_stride() const {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_57(mht_57_v, 944, "", "./tensorflow/stream_executor/dnn.h", "vertical_filter_stride");
+
     return GetDim(strides(), DimIndex::Y);
   }
   int64_t horizontal_filter_stride() const {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_58(mht_58_v, 950, "", "./tensorflow/stream_executor/dnn.h", "horizontal_filter_stride");
+
     return GetDim(strides(), DimIndex::X);
   }
   int64_t vertical_dilation_rate() const {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_59(mht_59_v, 956, "", "./tensorflow/stream_executor/dnn.h", "vertical_dilation_rate");
+
     return GetDim(dilations(), DimIndex::Y);
   }
   int64_t horizontal_dilation_rate() const {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_60(mht_60_v, 962, "", "./tensorflow/stream_executor/dnn.h", "horizontal_dilation_rate");
+
     return GetDim(dilations(), DimIndex::X);
   }
 
-  int zero_padding(DimIndex dim) const { return GetDim(padding(), dim); }
-  int filter_stride(DimIndex dim) const { return GetDim(strides(), dim); }
-  int dilation_rate(DimIndex dim) const { return GetDim(dilations(), dim); }
+  int zero_padding(DimIndex dim) const {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_61(mht_61_v, 969, "", "./tensorflow/stream_executor/dnn.h", "zero_padding");
+ return GetDim(padding(), dim); }
+  int filter_stride(DimIndex dim) const {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_62(mht_62_v, 973, "", "./tensorflow/stream_executor/dnn.h", "filter_stride");
+ return GetDim(strides(), dim); }
+  int dilation_rate(DimIndex dim) const {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_63(mht_63_v, 977, "", "./tensorflow/stream_executor/dnn.h", "dilation_rate");
+ return GetDim(dilations(), dim); }
   // TODO(timshen): remove this function. No users of this class is setting a
   // non-default pad alignment.
-  PadAlignment pad_alignment() const { return PadAlignment::kDefault; }
-  int group_count() const { return proto_.group_count(); }
-  int ndims() const { return padding().size(); }
+  PadAlignment pad_alignment() const {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_64(mht_64_v, 983, "", "./tensorflow/stream_executor/dnn.h", "pad_alignment");
+ return PadAlignment::kDefault; }
+  int group_count() const {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_65(mht_65_v, 987, "", "./tensorflow/stream_executor/dnn.h", "group_count");
+ return proto_.group_count(); }
+  int ndims() const {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_66(mht_66_v, 991, "", "./tensorflow/stream_executor/dnn.h", "ndims");
+ return padding().size(); }
   bool convolution_not_crosscorr() const {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_67(mht_67_v, 995, "", "./tensorflow/stream_executor/dnn.h", "convolution_not_crosscorr");
+
     return proto_.convolution_mode() == ConvolutionMode::CONVOLUTION;
   }
 
@@ -637,7 +1010,10 @@ class ConvolutionDescriptor {
     return AsInt64Slice(proto_.paddings());
   }
 
-  std::string name() const { return proto_.name(); }
+  std::string name() const {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_68(mht_68_v, 1014, "", "./tensorflow/stream_executor/dnn.h", "name");
+ return proto_.name(); }
 
  private:
   absl::Span<int64_t> strides() {
@@ -697,75 +1073,151 @@ class PoolingDescriptor {
   explicit PoolingDescriptor(int ndims);
 
   PoolingDescriptor& set_pooling_mode(PoolingMode value) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_69(mht_69_v, 1076, "", "./tensorflow/stream_executor/dnn.h", "set_pooling_mode");
+
     mode_ = value;
     return *this;
   }
   PoolingDescriptor& set_window_height(int64_t value) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_70(mht_70_v, 1083, "", "./tensorflow/stream_executor/dnn.h", "set_window_height");
+
     SetDim(&window_, DimIndex::Y, value);
     return *this;
   }
   PoolingDescriptor& set_window_width(int64_t value) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_71(mht_71_v, 1090, "", "./tensorflow/stream_executor/dnn.h", "set_window_width");
+
     SetDim(&window_, DimIndex::X, value);
     return *this;
   }
   PoolingDescriptor& set_window(DimIndex dim, int64_t value) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_72(mht_72_v, 1097, "", "./tensorflow/stream_executor/dnn.h", "set_window");
+
     SetDim(&window_, dim, value);
     return *this;
   }
   PoolingDescriptor& set_vertical_padding(int64_t value) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_73(mht_73_v, 1104, "", "./tensorflow/stream_executor/dnn.h", "set_vertical_padding");
+
     SetDim(&padding_, DimIndex::Y, value);
     return *this;
   }
   PoolingDescriptor& set_horizontal_padding(int64_t value) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_74(mht_74_v, 1111, "", "./tensorflow/stream_executor/dnn.h", "set_horizontal_padding");
+
     SetDim(&padding_, DimIndex::X, value);
     return *this;
   }
   PoolingDescriptor& set_padding(DimIndex dim, int64_t value) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_75(mht_75_v, 1118, "", "./tensorflow/stream_executor/dnn.h", "set_padding");
+
     SetDim(&padding_, dim, value);
     return *this;
   }
   PoolingDescriptor& set_vertical_stride(int64_t value) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_76(mht_76_v, 1125, "", "./tensorflow/stream_executor/dnn.h", "set_vertical_stride");
+
     SetDim(&strides_, DimIndex::Y, value);
     return *this;
   }
   PoolingDescriptor& set_horizontal_stride(int64_t value) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_77(mht_77_v, 1132, "", "./tensorflow/stream_executor/dnn.h", "set_horizontal_stride");
+
     SetDim(&strides_, DimIndex::X, value);
     return *this;
   }
   PoolingDescriptor& set_stride(DimIndex dim, int64_t value) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_78(mht_78_v, 1139, "", "./tensorflow/stream_executor/dnn.h", "set_stride");
+
     SetDim(&strides_, dim, value);
     return *this;
   }
   PoolingDescriptor& set_propagate_nans(bool value) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_79(mht_79_v, 1146, "", "./tensorflow/stream_executor/dnn.h", "set_propagate_nans");
+
     propagate_nans_ = value;
     return *this;
   }
   PoolingDescriptor& set_name(const std::string& name) {
+   std::vector<std::string> mht_80_v;
+   mht_80_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_80(mht_80_v, 1154, "", "./tensorflow/stream_executor/dnn.h", "set_name");
+
     name_ = name;
     return *this;
   }
 
-  int ndims() const { return ndims_; }
+  int ndims() const {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_81(mht_81_v, 1162, "", "./tensorflow/stream_executor/dnn.h", "ndims");
+ return ndims_; }
   void CloneFrom(const PoolingDescriptor& other);
 
   std::string ToString() const;
   std::string ToShortString() const;
 
-  PoolingMode mode() const { return mode_; }
-  int64_t window_height() const { return GetDim(window_, DimIndex::Y); }
-  int64_t window_width() const { return GetDim(window_, DimIndex::X); }
-  int64_t window(DimIndex dim) const { return GetDim(window_, dim); }
-  int64_t vertical_padding() const { return GetDim(padding_, DimIndex::Y); }
-  int64_t horizontal_padding() const { return GetDim(padding_, DimIndex::X); }
-  int64_t padding(DimIndex dim) const { return GetDim(padding_, dim); }
-  int64_t vertical_stride() const { return GetDim(strides_, DimIndex::Y); }
-  int64_t horizontal_stride() const { return GetDim(strides_, DimIndex::X); }
-  int64_t stride(DimIndex dim) const { return GetDim(strides_, dim); }
+  PoolingMode mode() const {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_82(mht_82_v, 1171, "", "./tensorflow/stream_executor/dnn.h", "mode");
+ return mode_; }
+  int64_t window_height() const {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_83(mht_83_v, 1175, "", "./tensorflow/stream_executor/dnn.h", "window_height");
+ return GetDim(window_, DimIndex::Y); }
+  int64_t window_width() const {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_84(mht_84_v, 1179, "", "./tensorflow/stream_executor/dnn.h", "window_width");
+ return GetDim(window_, DimIndex::X); }
+  int64_t window(DimIndex dim) const {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_85(mht_85_v, 1183, "", "./tensorflow/stream_executor/dnn.h", "window");
+ return GetDim(window_, dim); }
+  int64_t vertical_padding() const {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_86(mht_86_v, 1187, "", "./tensorflow/stream_executor/dnn.h", "vertical_padding");
+ return GetDim(padding_, DimIndex::Y); }
+  int64_t horizontal_padding() const {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_87(mht_87_v, 1191, "", "./tensorflow/stream_executor/dnn.h", "horizontal_padding");
+ return GetDim(padding_, DimIndex::X); }
+  int64_t padding(DimIndex dim) const {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_88(mht_88_v, 1195, "", "./tensorflow/stream_executor/dnn.h", "padding");
+ return GetDim(padding_, dim); }
+  int64_t vertical_stride() const {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_89(mht_89_v, 1199, "", "./tensorflow/stream_executor/dnn.h", "vertical_stride");
+ return GetDim(strides_, DimIndex::Y); }
+  int64_t horizontal_stride() const {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_90(mht_90_v, 1203, "", "./tensorflow/stream_executor/dnn.h", "horizontal_stride");
+ return GetDim(strides_, DimIndex::X); }
+  int64_t stride(DimIndex dim) const {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_91(mht_91_v, 1207, "", "./tensorflow/stream_executor/dnn.h", "stride");
+ return GetDim(strides_, dim); }
   absl::Span<const int64_t> window() const { return window_; }
   absl::Span<const int64_t> padding() const { return padding_; }
   absl::Span<const int64_t> strides() const { return strides_; }
-  bool propagate_nans() const { return propagate_nans_; }
-  std::string name() const { return name_; }
+  bool propagate_nans() const {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_92(mht_92_v, 1214, "", "./tensorflow/stream_executor/dnn.h", "propagate_nans");
+ return propagate_nans_; }
+  std::string name() const {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_93(mht_93_v, 1218, "", "./tensorflow/stream_executor/dnn.h", "name");
+ return name_; }
 
  private:
   PoolingMode mode_;
@@ -783,12 +1235,24 @@ class PoolingDescriptor {
 class AlgorithmDesc {
  public:
   typedef int64_t Index;
-  AlgorithmDesc() : AlgorithmDesc(0, false, absl::nullopt) {}
-  explicit AlgorithmDesc(AlgorithmProto proto) : proto_(std::move(proto)) {}
+  AlgorithmDesc() : AlgorithmDesc(0, false, absl::nullopt) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_94(mht_94_v, 1239, "", "./tensorflow/stream_executor/dnn.h", "AlgorithmDesc");
+}
+  explicit AlgorithmDesc(AlgorithmProto proto) : proto_(std::move(proto)) {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_95(mht_95_v, 1243, "", "./tensorflow/stream_executor/dnn.h", "AlgorithmDesc");
+}
   AlgorithmDesc(Index algo_id, bool use_tensor_ops)
-      : AlgorithmDesc(algo_id, use_tensor_ops, absl::nullopt) {}
+      : AlgorithmDesc(algo_id, use_tensor_ops, absl::nullopt) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_96(mht_96_v, 1248, "", "./tensorflow/stream_executor/dnn.h", "AlgorithmDesc");
+}
   AlgorithmDesc(Index algo_id, bool use_tensor_ops,
                 absl::optional<uint64_t> workspace_size) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_97(mht_97_v, 1253, "", "./tensorflow/stream_executor/dnn.h", "AlgorithmDesc");
+
     proto_.set_is_cudnn_frontend(false);
     proto_.set_algo_id(algo_id);
     proto_.set_math_type(use_tensor_ops ? AlgorithmProto::TENSOR_OP_MATH
@@ -800,9 +1264,15 @@ class AlgorithmDesc {
   AlgorithmDesc(int64_t engine_id,
                 const std::vector<std::pair<int64_t, int64_t>>& tuning_knobs,
                 absl::optional<uint64_t> workspace_size);
-  bool is_cudnn_frontend() const { return proto_.is_cudnn_frontend(); }
+  bool is_cudnn_frontend() const {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_98(mht_98_v, 1268, "", "./tensorflow/stream_executor/dnn.h", "is_cudnn_frontend");
+ return proto_.is_cudnn_frontend(); }
 
   bool tensor_ops_enabled() const {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_99(mht_99_v, 1273, "", "./tensorflow/stream_executor/dnn.h", "tensor_ops_enabled");
+
     return proto_.math_type() == AlgorithmProto::TENSOR_OP_MATH;
   }
   absl::optional<uint64_t> workspace_size() const {
@@ -811,7 +1281,10 @@ class AlgorithmDesc {
     }
     return absl::nullopt;
   }
-  Index algo_id() const { return proto_.algo_id(); }
+  Index algo_id() const {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_100(mht_100_v, 1285, "", "./tensorflow/stream_executor/dnn.h", "algo_id");
+ return proto_.algo_id(); }
 
   std::vector<std::pair<int64_t, int64_t>> TuningKnobs() const;
 
@@ -819,7 +1292,10 @@ class AlgorithmDesc {
 
   uint64_t hash() const;
 
-  AlgorithmProto ToProto() const { return proto_; }
+  AlgorithmProto ToProto() const {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_101(mht_101_v, 1296, "", "./tensorflow/stream_executor/dnn.h", "ToProto");
+ return proto_; }
 
   std::string ToString() const;
 
@@ -835,18 +1311,39 @@ class AlgorithmDesc {
 class ProfileResult {
  public:
   bool is_valid() const {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_102(mht_102_v, 1314, "", "./tensorflow/stream_executor/dnn.h", "is_valid");
+
     return algorithm_.has_value() &&
            elapsed_time_in_ms() != std::numeric_limits<float>::max();
   }
 
-  AlgorithmDesc algorithm() const { return *algorithm_; }
-  void set_algorithm(AlgorithmDesc val) { algorithm_ = val; }
+  AlgorithmDesc algorithm() const {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_103(mht_103_v, 1322, "", "./tensorflow/stream_executor/dnn.h", "algorithm");
+ return *algorithm_; }
+  void set_algorithm(AlgorithmDesc val) {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_104(mht_104_v, 1326, "", "./tensorflow/stream_executor/dnn.h", "set_algorithm");
+ algorithm_ = val; }
 
-  float elapsed_time_in_ms() const { return elapsed_time_in_ms_; }
-  void set_elapsed_time_in_ms(float val) { elapsed_time_in_ms_ = val; }
+  float elapsed_time_in_ms() const {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_105(mht_105_v, 1331, "", "./tensorflow/stream_executor/dnn.h", "elapsed_time_in_ms");
+ return elapsed_time_in_ms_; }
+  void set_elapsed_time_in_ms(float val) {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_106(mht_106_v, 1335, "", "./tensorflow/stream_executor/dnn.h", "set_elapsed_time_in_ms");
+ elapsed_time_in_ms_ = val; }
 
-  size_t scratch_size() const { return scratch_size_; }
-  void set_scratch_size(size_t val) { scratch_size_ = val; }
+  size_t scratch_size() const {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_107(mht_107_v, 1340, "", "./tensorflow/stream_executor/dnn.h", "scratch_size");
+ return scratch_size_; }
+  void set_scratch_size(size_t val) {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_108(mht_108_v, 1344, "", "./tensorflow/stream_executor/dnn.h", "set_scratch_size");
+ scratch_size_ = val; }
 
  private:
   absl::optional<AlgorithmDesc> algorithm_;
@@ -870,7 +1367,10 @@ class OpRunner;
 template <typename... Args>
 class OpRunner<void(Args...)> {
  public:
-  virtual ~OpRunner() {}
+  virtual ~OpRunner() {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_109(mht_109_v, 1371, "", "./tensorflow/stream_executor/dnn.h", "~OpRunner");
+}
 
   // Get a description of the runner, for uniqueness of autotune entries.
   //
@@ -924,21 +1424,39 @@ using FusedConvRunner = OpRunner<FusedConvSignature>;
 // one without scratch memory, and scratch_size field is used to track it.
 class AlgorithmConfig {
  public:
-  AlgorithmConfig() {}
-  explicit AlgorithmConfig(AlgorithmDesc algorithm) : algorithm_(algorithm) {}
+  AlgorithmConfig() {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_110(mht_110_v, 1428, "", "./tensorflow/stream_executor/dnn.h", "AlgorithmConfig");
+}
+  explicit AlgorithmConfig(AlgorithmDesc algorithm) : algorithm_(algorithm) {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_111(mht_111_v, 1432, "", "./tensorflow/stream_executor/dnn.h", "AlgorithmConfig");
+}
   AlgorithmConfig(AlgorithmDesc algorithm, size_t scratch_size)
-      : algorithm_(algorithm), scratch_size_(scratch_size) {}
+      : algorithm_(algorithm), scratch_size_(scratch_size) {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_112(mht_112_v, 1437, "", "./tensorflow/stream_executor/dnn.h", "AlgorithmConfig");
+}
   AlgorithmConfig(AlgorithmDesc algorithm, AlgorithmDesc algorithm_no_scratch)
-      : algorithm_(algorithm), algorithm_no_scratch_(algorithm_no_scratch) {}
+      : algorithm_(algorithm), algorithm_no_scratch_(algorithm_no_scratch) {
+   std::vector<std::string> mht_113_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_113(mht_113_v, 1442, "", "./tensorflow/stream_executor/dnn.h", "AlgorithmConfig");
+}
   AlgorithmConfig(AlgorithmDesc algorithm, size_t scratch_size,
                   AlgorithmDesc algorithm_no_scratch)
       : algorithm_(algorithm),
         algorithm_no_scratch_(algorithm_no_scratch),
-        scratch_size_(scratch_size) {}
+        scratch_size_(scratch_size) {
+   std::vector<std::string> mht_114_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_114(mht_114_v, 1450, "", "./tensorflow/stream_executor/dnn.h", "AlgorithmConfig");
+}
 
   // TODO(ruochengw): After cl/380702564, add support for algorithm configs with
   // cuDNN Frontend APIs.
   explicit AlgorithmConfig(const AlgorithmConfigProto& algorithm_config_proto) {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_115(mht_115_v, 1457, "", "./tensorflow/stream_executor/dnn.h", "AlgorithmConfig");
+
     const AlgorithmProto& algorithm_proto = algorithm_config_proto.algorithm();
     algorithm_ = AlgorithmDesc(algorithm_proto);
     if (algorithm_config_proto.optional_scratch_size_case() !=
@@ -954,15 +1472,24 @@ class AlgorithmConfig {
   }
 
   absl::optional<AlgorithmDesc> algorithm() const { return algorithm_; }
-  void set_algorithm(AlgorithmDesc val) { algorithm_ = val; }
+  void set_algorithm(AlgorithmDesc val) {
+   std::vector<std::string> mht_116_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_116(mht_116_v, 1476, "", "./tensorflow/stream_executor/dnn.h", "set_algorithm");
+ algorithm_ = val; }
   absl::optional<AlgorithmDesc> algorithm_no_scratch() const {
     return algorithm_no_scratch_;
   }
   void set_algorithm_no_scratch(AlgorithmDesc val) {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_117(mht_117_v, 1483, "", "./tensorflow/stream_executor/dnn.h", "set_algorithm_no_scratch");
+
     algorithm_no_scratch_ = val;
   }
   absl::optional<size_t> scratch_size() const { return scratch_size_; }
-  void set_scratch_size(size_t val) { scratch_size_ = val; }
+  void set_scratch_size(size_t val) {
+   std::vector<std::string> mht_118_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_118(mht_118_v, 1490, "", "./tensorflow/stream_executor/dnn.h", "set_scratch_size");
+ scratch_size_ = val; }
   bool operator==(const AlgorithmConfig& other) const {
     return this->algorithm_ == other.algorithm_ &&
            this->algorithm_no_scratch_ == other.algorithm_no_scratch_ &&
@@ -976,6 +1503,9 @@ class AlgorithmConfig {
   // TODO(ruochengw): After cl/380702564, add support for algorithm configs with
   // cuDNN Frontend APIs.
   AlgorithmConfigProto ToProto() const {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_119(mht_119_v, 1506, "", "./tensorflow/stream_executor/dnn.h", "ToProto");
+
     AlgorithmConfigProto algorithm_config_proto;
     if (algorithm_.has_value()) {
       *algorithm_config_proto.mutable_algorithm() =
@@ -1025,31 +1555,49 @@ class NormalizeDescriptor {
   NormalizeDescriptor();
 
   NormalizeDescriptor& set_bias(float bias) {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_120(mht_120_v, 1558, "", "./tensorflow/stream_executor/dnn.h", "set_bias");
+
     bias_ = bias;
     return *this;
   }
 
   NormalizeDescriptor& set_range(int32_t range) {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_121(mht_121_v, 1566, "", "./tensorflow/stream_executor/dnn.h", "set_range");
+
     range_ = range;
     return *this;
   }
 
   NormalizeDescriptor& set_alpha(float alpha) {
+   std::vector<std::string> mht_122_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_122(mht_122_v, 1574, "", "./tensorflow/stream_executor/dnn.h", "set_alpha");
+
     alpha_ = alpha;
     return *this;
   }
 
   NormalizeDescriptor& set_beta(float beta) {
+   std::vector<std::string> mht_123_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_123(mht_123_v, 1582, "", "./tensorflow/stream_executor/dnn.h", "set_beta");
+
     beta_ = beta;
     return *this;
   }
 
   NormalizeDescriptor& set_wrap_around(bool wrap_around) {
+   std::vector<std::string> mht_124_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_124(mht_124_v, 1590, "", "./tensorflow/stream_executor/dnn.h", "set_wrap_around");
+
     wrap_around_ = wrap_around;
     return *this;
   }
 
   NormalizeDescriptor& set_segment_size(int32_t segment_size) {
+   std::vector<std::string> mht_125_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_125(mht_125_v, 1598, "", "./tensorflow/stream_executor/dnn.h", "set_segment_size");
+
     segment_size_ = segment_size;
     return *this;
   }
@@ -1059,12 +1607,30 @@ class NormalizeDescriptor {
   std::string ToString() const;
   std::string ToShortString() const;
 
-  float bias() const { return bias_; }
-  int32 range() const { return range_; }
-  float alpha() const { return alpha_; }
-  float beta() const { return beta_; }
-  bool wrap_around() const { return wrap_around_; }
-  int32 segment_size() const { return segment_size_; }
+  float bias() const {
+   std::vector<std::string> mht_126_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_126(mht_126_v, 1611, "", "./tensorflow/stream_executor/dnn.h", "bias");
+ return bias_; }
+  int32 range() const {
+   std::vector<std::string> mht_127_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_127(mht_127_v, 1615, "", "./tensorflow/stream_executor/dnn.h", "range");
+ return range_; }
+  float alpha() const {
+   std::vector<std::string> mht_128_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_128(mht_128_v, 1619, "", "./tensorflow/stream_executor/dnn.h", "alpha");
+ return alpha_; }
+  float beta() const {
+   std::vector<std::string> mht_129_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_129(mht_129_v, 1623, "", "./tensorflow/stream_executor/dnn.h", "beta");
+ return beta_; }
+  bool wrap_around() const {
+   std::vector<std::string> mht_130_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_130(mht_130_v, 1627, "", "./tensorflow/stream_executor/dnn.h", "wrap_around");
+ return wrap_around_; }
+  int32 segment_size() const {
+   std::vector<std::string> mht_131_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_131(mht_131_v, 1631, "", "./tensorflow/stream_executor/dnn.h", "segment_size");
+ return segment_size_; }
 
  private:
   float bias_;
@@ -1090,10 +1656,22 @@ std::string ElementwiseOperationString(ElementwiseOperation op);
 class VersionInfo {
  public:
   VersionInfo(int major = 0, int minor = 0, int patch = 0)
-      : major_(major), minor_(minor), patch_(patch) {}
-  int major_version() const { return major_; }
-  int minor_version() const { return minor_; }
-  int patch() const { return patch_; }
+      : major_(major), minor_(minor), patch_(patch) {
+   std::vector<std::string> mht_132_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_132(mht_132_v, 1660, "", "./tensorflow/stream_executor/dnn.h", "VersionInfo");
+}
+  int major_version() const {
+   std::vector<std::string> mht_133_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_133(mht_133_v, 1664, "", "./tensorflow/stream_executor/dnn.h", "major_version");
+ return major_; }
+  int minor_version() const {
+   std::vector<std::string> mht_134_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_134(mht_134_v, 1668, "", "./tensorflow/stream_executor/dnn.h", "minor_version");
+ return minor_; }
+  int patch() const {
+   std::vector<std::string> mht_135_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_135(mht_135_v, 1672, "", "./tensorflow/stream_executor/dnn.h", "patch");
+ return patch_; }
 
  private:
   int major_;
@@ -1119,8 +1697,14 @@ class VersionInfo {
 // PrepareForConvolution is an example for how new APIs should be written.
 class DnnSupport {
  public:
-  DnnSupport() {}
-  virtual ~DnnSupport() {}
+  DnnSupport() {
+   std::vector<std::string> mht_136_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_136(mht_136_v, 1701, "", "./tensorflow/stream_executor/dnn.h", "DnnSupport");
+}
+  virtual ~DnnSupport() {
+   std::vector<std::string> mht_137_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_137(mht_137_v, 1705, "", "./tensorflow/stream_executor/dnn.h", "~DnnSupport");
+}
 
   virtual port::Status Init() = 0;
 
@@ -1174,6 +1758,9 @@ class DnnSupport {
       DeviceMemory<float>* reserve_space_2, bool is_training,
       ScratchAllocator* reserve_space_allocator,
       ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_138_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_138(mht_138_v, 1761, "", "./tensorflow/stream_executor/dnn.h", "DoBatchNormalizationForward");
+
     return false;
   }
 
@@ -1194,6 +1781,9 @@ class DnnSupport {
       DeviceMemory<float>* reserve_space_2, bool is_training,
       ScratchAllocator* reserve_space_allocator,
       ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_139_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_139(mht_139_v, 1784, "", "./tensorflow/stream_executor/dnn.h", "DoBatchNormalizationForward");
+
     return false;
   }
 
@@ -1226,6 +1816,9 @@ class DnnSupport {
       DeviceMemory<float>* side_input_backprop,
       DeviceMemory<uint8>* reserve_space_data,
       ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_140_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_140(mht_140_v, 1819, "", "./tensorflow/stream_executor/dnn.h", "DoBatchNormalizationBackward");
+
     return false;
   }
 
@@ -1245,6 +1838,9 @@ class DnnSupport {
       DeviceMemory<Eigen::half>* side_input_backprop,
       DeviceMemory<uint8>* reserve_space_data,
       ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_141_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_141(mht_141_v, 1841, "", "./tensorflow/stream_executor/dnn.h", "DoBatchNormalizationBackward");
+
     return false;
   }
 
@@ -1313,6 +1909,9 @@ class DnnSupport {
       DeviceMemoryBase output_data, ScratchAllocator* scratch_allocator,
       const dnn::AlgorithmConfig& algorithm_config,
       dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_142_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_142(mht_142_v, 1912, "", "./tensorflow/stream_executor/dnn.h", "DoFusedConvolve");
+
     return port::UnimplementedError(
         "DnnSupport::DoFusedConvolve not implemented on this platform.");
   }
@@ -1330,6 +1929,9 @@ class DnnSupport {
       const AlgorithmConfig& algorithm_config,
       ScratchAllocator* scratch_allocator, AlgorithmDesc* algorithm_desc,
       DeviceMemory<uint8>* scratch_memory) {
+   std::vector<std::string> mht_143_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_143(mht_143_v, 1932, "", "./tensorflow/stream_executor/dnn.h", "PrepareForConvolution");
+
     return DoPrepareForConvolution(
         kind, ToDataType<ElementType>::value, stream, batch_descriptor,
         input_data, filter_descriptor, filter_data, output_descriptor,
@@ -1636,6 +2238,9 @@ class DnnSupport {
                              const dnn::BatchDescriptor& output_dimensions,
                              DeviceMemory<double>* output_data,
                              ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_144_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_144(mht_144_v, 2241, "", "./tensorflow/stream_executor/dnn.h", "DoPoolForward");
+
     LOG(FATAL) << "DoPoolForward not implemented for double.";
     return false;
   }
@@ -1647,6 +2252,9 @@ class DnnSupport {
                              const dnn::BatchDescriptor& output_dimensions,
                              DeviceMemory<Eigen::half>* output_data,
                              ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_145_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_145(mht_145_v, 2255, "", "./tensorflow/stream_executor/dnn.h", "DoPoolForward");
+
     LOG(FATAL) << "DoPoolForward not implemented for float16.";
     return false;
   }
@@ -1658,6 +2266,9 @@ class DnnSupport {
                              const dnn::BatchDescriptor& output_dimensions,
                              DeviceMemory<int8>* output_data,
                              ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_146_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_146(mht_146_v, 2269, "", "./tensorflow/stream_executor/dnn.h", "DoPoolForward");
+
     LOG(FATAL) << "DoPoolForward not implemented for int8.";
     return false;
   }
@@ -1672,6 +2283,9 @@ class DnnSupport {
                               const DeviceMemory<double>& input_diff_data,
                               DeviceMemory<double>* output_diff_data,
                               ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_147_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_147(mht_147_v, 2286, "", "./tensorflow/stream_executor/dnn.h", "DoPoolBackward");
+
     LOG(FATAL) << "DoPoolBackward not implemented.";
     return false;
   }
@@ -1685,6 +2299,9 @@ class DnnSupport {
                               const DeviceMemory<float>& input_diff_data,
                               DeviceMemory<float>* output_diff_data,
                               ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_148_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_148(mht_148_v, 2302, "", "./tensorflow/stream_executor/dnn.h", "DoPoolBackward");
+
     LOG(FATAL) << "DoPoolBackward not implemented.";
     return false;
   }
@@ -1698,6 +2315,9 @@ class DnnSupport {
                               const DeviceMemory<Eigen::half>& input_diff_data,
                               DeviceMemory<Eigen::half>* output_diff_data,
                               ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_149_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_149(mht_149_v, 2318, "", "./tensorflow/stream_executor/dnn.h", "DoPoolBackward");
+
     LOG(FATAL) << "DoPoolBackward not implemented.";
     return false;
   }
@@ -1711,6 +2331,9 @@ class DnnSupport {
       Stream* stream, const dnn::NormalizeDescriptor& normalize_descriptor,
       const dnn::BatchDescriptor& dimensions,
       const DeviceMemory<float>& input_data, DeviceMemory<float>* output_data) {
+   std::vector<std::string> mht_150_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_150(mht_150_v, 2334, "", "./tensorflow/stream_executor/dnn.h", "DoNormalizeWithDimensions");
+
     return false;
   }
 
@@ -1734,6 +2357,9 @@ class DnnSupport {
       const DeviceMemory<float>& normalized_variable_gradient,
       DeviceMemory<float>* raw_variable_gradient,
       ScratchAllocator* workspace_allocator) {
+   std::vector<std::string> mht_151_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_151(mht_151_v, 2360, "", "./tensorflow/stream_executor/dnn.h", "DoNormalizeBackwardWithDimensions");
+
     return false;
   }
 
@@ -1753,6 +2379,9 @@ class DnnSupport {
                           const BatchDescriptor& dimensions,
                           const DeviceMemory<float>& input_data,
                           DeviceMemory<float>* output_data, uint64_t options) {
+   std::vector<std::string> mht_152_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_152(mht_152_v, 2382, "", "./tensorflow/stream_executor/dnn.h", "DoActivate");
+
     return false;
   }
 
@@ -1801,6 +2430,9 @@ class DnnSupport {
       port::ArraySlice<const DeviceMemory<float>*> input_data,
       DeviceMemory<float>* output_data,
       dnn::SpaceConcatenateMode concat_direction) {
+   std::vector<std::string> mht_153_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_153(mht_153_v, 2433, "", "./tensorflow/stream_executor/dnn.h", "DoSpaceConcatenate");
+
     return false;
   }
 
@@ -1837,6 +2469,9 @@ class DnnSupport {
                          const DeviceMemory<float>& input_data,
                          const dnn::BatchDescriptor& output_dimensions,
                          DeviceMemory<float>* output_data) {
+   std::vector<std::string> mht_154_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_154(mht_154_v, 2472, "", "./tensorflow/stream_executor/dnn.h", "DoReshape");
+
     return false;
   }
 
@@ -1866,6 +2501,9 @@ class DnnSupport {
                               const DepthToSpaceLayout& depth_to_space_layout,
                               const int& sqrt_depth_reduction,
                               DeviceMemory<float>* output_data) {
+   std::vector<std::string> mht_155_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_155(mht_155_v, 2504, "", "./tensorflow/stream_executor/dnn.h", "DoDepthToSpace");
+
     return false;
   }
 
@@ -1895,6 +2533,9 @@ class DnnSupport {
                               const DepthToSpaceLayout& space_to_depth_layout,
                               const int& sqrt_depth_increase,
                               DeviceMemory<float>* output_data) {
+   std::vector<std::string> mht_156_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_156(mht_156_v, 2536, "", "./tensorflow/stream_executor/dnn.h", "DoSpaceToDepth");
+
     return false;
   }
 
@@ -1949,6 +2590,9 @@ class DnnSupport {
       port::ArraySlice<const DeviceMemory<float>*> input_data,
       const dnn::BatchDescriptor& output_dimensions,
       DeviceMemory<float>* output_data) {
+   std::vector<std::string> mht_157_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_157(mht_157_v, 2593, "", "./tensorflow/stream_executor/dnn.h", "DoElementwiseOperateScaledQuantized");
+
     return false;
   }
 
@@ -2027,6 +2671,9 @@ class DnnSupport {
                              const DeviceMemory<float>& input_data,
                              int64_t replicate_x, int64_t replicate_y,
                              DeviceMemory<float>* output_data) {
+   std::vector<std::string> mht_158_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_158(mht_158_v, 2674, "", "./tensorflow/stream_executor/dnn.h", "DoXYBroadcast");
+
     return false;
   }
 
@@ -2190,6 +2837,9 @@ class DnnSupport {
                             ScratchAllocator* reserve_space_allocator,
                             ScratchAllocator* workspace_allocator,
                             dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_159_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_159(mht_159_v, 2840, "", "./tensorflow/stream_executor/dnn.h", "DoRnnForward");
+
     return false;
   }
 
@@ -2212,6 +2862,9 @@ class DnnSupport {
                             ScratchAllocator* reserve_space_allocator,
                             ScratchAllocator* workspace_allocator,
                             dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_160_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_160(mht_160_v, 2865, "", "./tensorflow/stream_executor/dnn.h", "DoRnnForward");
+
     return false;
   }
 
@@ -2234,6 +2887,9 @@ class DnnSupport {
                             ScratchAllocator* reserve_space_allocator,
                             ScratchAllocator* workspace_allocator,
                             dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_161_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_161(mht_161_v, 2890, "", "./tensorflow/stream_executor/dnn.h", "DoRnnForward");
+
     return false;
   }
   // Enqueue a backward operation of the RNN model onto the stream.
@@ -2303,6 +2959,9 @@ class DnnSupport {
       DeviceMemory<uint8>* reserve_space_data,
       ScratchAllocator* workspace_allocator,
       dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_162_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_162(mht_162_v, 2962, "", "./tensorflow/stream_executor/dnn.h", "DoRnnBackward");
+
     return false;
   }
 
@@ -2332,6 +2991,9 @@ class DnnSupport {
       DeviceMemory<uint8>* reserve_space_data,
       ScratchAllocator* workspace_allocator,
       dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_163_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_163(mht_163_v, 2994, "", "./tensorflow/stream_executor/dnn.h", "DoRnnBackward");
+
     return false;
   }
 
@@ -2361,6 +3023,9 @@ class DnnSupport {
       DeviceMemory<uint8>* reserve_space_data,
       ScratchAllocator* workspace_allocator,
       dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_164_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_164(mht_164_v, 3026, "", "./tensorflow/stream_executor/dnn.h", "DoRnnBackward");
+
     return false;
   }
 
@@ -2375,6 +3040,9 @@ class DnnSupport {
                                  ScratchAllocator* workspace_allocator,
                                  DeviceMemory<uint8>* scratch_memory,
                                  int* ctc_loss_algo_id) {
+   std::vector<std::string> mht_165_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_165(mht_165_v, 3043, "", "./tensorflow/stream_executor/dnn.h", "PrepareForCtcLoss");
+
     return DoPrepareForCtcLoss(
         stream, ToDataType<ElementType>::value, probs_desc, grads_desc,
         labels_data, labels_lengths_data, input_lengths_data,
@@ -2422,6 +3090,9 @@ class DnnSupport {
                  const dnn::RnnStateTensorDescriptor& grads_desc,
                  DeviceMemory<ElementType>* grads_data,
                  DeviceMemory<uint8>* scratch_memory, int ctc_loss_algo_id) {
+   std::vector<std::string> mht_166_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_166(mht_166_v, 3093, "", "./tensorflow/stream_executor/dnn.h", "DoCtcLoss");
+
     return IsStatusOk(
         DoCtcLoss(stream, ToDataType<ElementType>::value, probs_desc,
                   probs_data, labels_data, labels_lengths_data,
@@ -2449,6 +3120,9 @@ class DnnSupport {
                                  const dnn::BatchDescriptor& output_desc,
                                  dnn::DataType output_type, float scale,
                                  DeviceMemoryBase* output_data) {
+   std::vector<std::string> mht_167_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_167(mht_167_v, 3123, "", "./tensorflow/stream_executor/dnn.h", "DoTransformTensor");
+
     return false;
   }
 
@@ -2490,6 +3164,9 @@ class DnnSupport {
       const dnn::BatchDescriptor& output_descriptor,
       DeviceMemory<float>* output_data,
       dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_168_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_168(mht_168_v, 3167, "", "./tensorflow/stream_executor/dnn.h", "DoFusedConvolutionBiasActivation");
+
     return false;
   }
 
@@ -2529,6 +3206,9 @@ class DnnSupport {
       const DeviceMemory<float>& variance_data, double epsilon,
       dnn::ActivationMode activation_mode, DeviceMemory<float>* y_data,
       dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_169_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_169(mht_169_v, 3209, "", "./tensorflow/stream_executor/dnn.h", "DoFusedBatchNormActivationInference");
+
     return false;
   }
 
@@ -2542,6 +3222,9 @@ class DnnSupport {
       const DeviceMemory<float>& variance_data, double epsilon,
       dnn::ActivationMode activation_mode, DeviceMemory<Eigen::half>* y_data,
       dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_170_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_170(mht_170_v, 3225, "", "./tensorflow/stream_executor/dnn.h", "DoFusedBatchNormActivationInference");
+
     return false;
   }
 
@@ -2583,6 +3266,9 @@ class DnnSupport {
       DeviceMemory<float>* batch_mean_data, DeviceMemory<float>* batch_var_data,
       DeviceMemory<float>* saved_mean_data, DeviceMemory<float>* saved_var_data,
       dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_171_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_171(mht_171_v, 3269, "", "./tensorflow/stream_executor/dnn.h", "DoFusedBatchNormActivationForward");
+
     return false;
   }
 
@@ -2596,6 +3282,9 @@ class DnnSupport {
       DeviceMemory<float>* batch_mean_data, DeviceMemory<float>* batch_var_data,
       DeviceMemory<float>* saved_mean_data, DeviceMemory<float>* saved_var_data,
       dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_172_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_172(mht_172_v, 3285, "", "./tensorflow/stream_executor/dnn.h", "DoFusedBatchNormActivationForward");
+
     return false;
   }
 
@@ -2645,6 +3334,9 @@ class DnnSupport {
       DeviceMemory<float>* scale_backprop_data,
       DeviceMemory<float>* offset_backprop_data,
       dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_173_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_173(mht_173_v, 3337, "", "./tensorflow/stream_executor/dnn.h", "DoFusedBatchNormActivationBackward");
+
     return false;
   }
 
@@ -2663,6 +3355,9 @@ class DnnSupport {
       DeviceMemory<float>* scale_backprop_data,
       DeviceMemory<float>* offset_backprop_data,
       dnn::ProfileResult* output_profile_result) {
+   std::vector<std::string> mht_174_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_174(mht_174_v, 3358, "", "./tensorflow/stream_executor/dnn.h", "DoFusedBatchNormActivationBackward");
+
     return false;
   }
 
@@ -2670,7 +3365,10 @@ class DnnSupport {
   // any internal caching.  This exists to allow the CUDA implementation to
   // avoid redundant cudnnSetStream calls without risking problems when a stream
   // is destroyed and a new stream later created in the same memory.
-  virtual void NotifyStreamDestroyed(Stream* stream) {}
+  virtual void NotifyStreamDestroyed(Stream* stream) {
+   std::vector<std::string> mht_175_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_175(mht_175_v, 3369, "", "./tensorflow/stream_executor/dnn.h", "NotifyStreamDestroyed");
+}
 
  protected:
   // Returns whether status is 'ok', and potentially logs the error.
@@ -2686,6 +3384,9 @@ class DnnSupport {
       const AlgorithmConfig& algorithm_config,
       ScratchAllocator* scratch_allocator, AlgorithmDesc* algorithm_desc,
       DeviceMemory<uint8>* scratch_memory) {
+   std::vector<std::string> mht_176_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_176(mht_176_v, 3387, "", "./tensorflow/stream_executor/dnn.h", "DoPrepareForConvolution");
+
     *algorithm_desc = {};
     *scratch_memory = {};
     return port::Status::OK();
@@ -2700,6 +3401,9 @@ class DnnSupport {
       absl::Span<const int> input_lengths_data,
       ScratchAllocator* scratch_allocator, DeviceMemory<uint8>* scratch_memory,
       int* ctc_loss_algo_id) {
+   std::vector<std::string> mht_177_v;
+   MHTracer_DTPStensorflowPSstream_executorPSdnnDTh mht_177(mht_177_v, 3404, "", "./tensorflow/stream_executor/dnn.h", "DoPrepareForCtcLoss");
+
     *scratch_memory = {};
     return port::Status::OK();
   }

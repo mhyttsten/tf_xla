@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -91,7 +259,10 @@ struct RemapperContext {
         graph_properties(*item),
         inferred_graph_properties(false),
         cpu_layout_conversion(cpu_layout_conversion),
-        xla_auto_clustering_on(xla_auto_clustering_on) {}
+        xla_auto_clustering_on(xla_auto_clustering_on) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_0(mht_0_v, 263, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "RemapperContext");
+}
 
   std::unordered_set<string> nodes_to_preserve;
   utils::MutableGraphView graph_view;
@@ -105,7 +276,10 @@ struct RemapperContext {
 struct FusedBatchNorm {
   FusedBatchNorm() = default;
   explicit FusedBatchNorm(int fused_batch_norm)
-      : fused_batch_norm(fused_batch_norm) {}
+      : fused_batch_norm(fused_batch_norm) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_1(mht_1_v, 280, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "FusedBatchNorm");
+}
 
   int fused_batch_norm = kMissingIndex;
 };
@@ -136,7 +310,10 @@ struct FusedBatchNormGradEx {
 struct TensorToHashBucket {
   TensorToHashBucket() = default;
   explicit TensorToHashBucket(int op1, int op2, int op3)
-      : pre_as_string(op1), as_string(op2), string_to_hash_bucket(op3) {}
+      : pre_as_string(op1), as_string(op2), string_to_hash_bucket(op3) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_2(mht_2_v, 314, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "TensorToHashBucket");
+}
 
   int pre_as_string = kMissingIndex;
   int as_string = kMissingIndex;
@@ -149,7 +326,10 @@ struct PadWithConv3D {
   PadWithConv3D(int contraction_idx, int pad_idx, int padding_const_idx)
       : contraction_idx(contraction_idx),
         pad_idx(pad_idx),
-        padding_const_idx(padding_const_idx) {}
+        padding_const_idx(padding_const_idx) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_3(mht_3_v, 330, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "PadWithConv3D");
+}
 
   int contraction_idx = kMissingIndex;
   int pad_idx = kMissingIndex;
@@ -160,7 +340,10 @@ struct PadWithConv3D {
 struct ContractionWithBiasAdd {
   ContractionWithBiasAdd() = default;
   ContractionWithBiasAdd(int contraction, int bias_add, int bias_port)
-      : contraction(contraction), bias_add(bias_add), bias_port(bias_port) {}
+      : contraction(contraction), bias_add(bias_add), bias_port(bias_port) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_4(mht_4_v, 344, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "ContractionWithBiasAdd");
+}
 
   int contraction = kMissingIndex;
   int bias_add = kMissingIndex;
@@ -175,7 +358,10 @@ struct ContractionWithBiasAddAndActivation {
       : contraction(contraction),
         bias_add(bias_add),
         activation(activation),
-        bias_port(bias_port) {}
+        bias_port(bias_port) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_5(mht_5_v, 362, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "ContractionWithBiasAddAndActivation");
+}
 
   int contraction = kMissingIndex;
   int bias_add = kMissingIndex;
@@ -187,7 +373,10 @@ struct ContractionWithBiasAddAndActivation {
 struct ContractionWithSqueezeAndBiasAdd {
   ContractionWithSqueezeAndBiasAdd() = default;
   ContractionWithSqueezeAndBiasAdd(int contraction, int squeeze, int bias_add)
-      : contraction(contraction), squeeze(squeeze), bias_add(bias_add) {}
+      : contraction(contraction), squeeze(squeeze), bias_add(bias_add) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_6(mht_6_v, 377, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "ContractionWithSqueezeAndBiasAdd");
+}
 
   int contraction = kMissingIndex;
   int squeeze = kMissingIndex;
@@ -201,7 +390,10 @@ struct ContractionWithBatchNorm {
                            float epsilon = 0.0)
       : contraction(contraction),
         fused_batch_norm(fused_batch_norm),
-        epsilon(epsilon) {}
+        epsilon(epsilon) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_7(mht_7_v, 394, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "ContractionWithBatchNorm");
+}
 
   int contraction = kMissingIndex;
   int fused_batch_norm = kMissingIndex;
@@ -216,7 +408,10 @@ struct ContractionWithBatchNormAndActivation {
       : contraction(contraction),
         fused_batch_norm(fused_batch_norm),
         activation(activation),
-        epsilon(epsilon) {}
+        epsilon(epsilon) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_8(mht_8_v, 412, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "ContractionWithBatchNormAndActivation");
+}
 
   int contraction = kMissingIndex;
   int fused_batch_norm = kMissingIndex;
@@ -233,7 +428,10 @@ struct ContractionWithBiasAddAndAdd {
         bias_add(bias_add),
         add(add),
         port_id(port_id),
-        bias_port(bias_port) {}
+        bias_port(bias_port) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_9(mht_9_v, 432, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "ContractionWithBiasAddAndAdd");
+}
 
   int contraction = kMissingIndex;
   int bias_add = kMissingIndex;
@@ -254,7 +452,10 @@ struct ContractionWithBiasAndAddActivation {
         add(add),
         port_id(port_id),
         activation(activation),
-        bias_port(bias_port) {}
+        bias_port(bias_port) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_10(mht_10_v, 456, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "ContractionWithBiasAndAddActivation");
+}
 
   int contraction = kMissingIndex;
   int bias_add = kMissingIndex;
@@ -265,11 +466,17 @@ struct ContractionWithBiasAndAddActivation {
 };
 
 bool IsInPreserveSet(const RemapperContext& ctx, const NodeDef* node) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_11(mht_11_v, 469, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "IsInPreserveSet");
+
   return ctx.nodes_to_preserve.count(node->name()) > 0;
 }
 
 bool HaveSameDataType(const NodeDef* lhs, const NodeDef* rhs,
                       const string& type_attr = "T") {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_12(mht_12_v, 477, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "HaveSameDataType");
+
   DataType lhs_attr = GetDataTypeFromAttr(*lhs, type_attr);
   DataType rhs_attr = GetDataTypeFromAttr(*rhs, type_attr);
 
@@ -279,12 +486,18 @@ bool HaveSameDataType(const NodeDef* lhs, const NodeDef* rhs,
 
 bool HasDataType(const NodeDef* node, const DataType& expected,
                  const string& type_attr = "T") {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_13(mht_13_v, 489, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "HasDataType");
+
   DataType dtype = GetDataTypeFromAttr(*node, type_attr);
   return dtype == expected;
 }
 
 bool IsCpuCompatibleDataType(const NodeDef* contraction,
                              const string& type_attr = "T") {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_14(mht_14_v, 498, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "IsCpuCompatibleDataType");
+
   DataType dtype = GetDataTypeFromAttr(*contraction, type_attr);
   // Stock TF without oneDNN build will always be `false`.
   bool is_one_dnn_enabled = IsMKLEnabled();
@@ -306,6 +519,9 @@ bool IsCpuCompatibleDataType(const NodeDef* contraction,
 
 bool IsGpuCompatibleDataType(const NodeDef* contraction,
                              const string& type_attr = "T") {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_15(mht_15_v, 522, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "IsGpuCompatibleDataType");
+
   DataType dtype = GetDataTypeFromAttr(*contraction, type_attr);
   if (IsConv2D(*contraction)) {
     return dtype == DT_FLOAT;
@@ -316,6 +532,9 @@ bool IsGpuCompatibleDataType(const NodeDef* contraction,
 
 bool IsCpuCompatibleDataFormat(const RemapperContext& ctx,
                                const NodeDef* conv_node) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_16(mht_16_v, 535, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "IsCpuCompatibleDataFormat");
+
   const string& data_format = conv_node->attr().at(kDataFormat).s();
   if (IsConv2D(*conv_node)) {
     return data_format == "NHWC" || (IsMKLEnabled() && data_format == "NCHW") ||
@@ -330,35 +549,53 @@ bool IsCpuCompatibleDataFormat(const RemapperContext& ctx,
 
 bool IsGpuCompatibleDataFormat(const RemapperContext& ctx,
                                const NodeDef* conv2d) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_17(mht_17_v, 552, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "IsGpuCompatibleDataFormat");
+
   DCHECK(IsConv2D(*conv2d)) << "Expected Conv2D op";
   const string& data_format = conv2d->attr().at(kDataFormat).s();
   return data_format == "NHWC" || data_format == "NCHW";
 }
 
 bool IsCpuCompatibleConv2D(const RemapperContext& ctx, const NodeDef* conv2d) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_18(mht_18_v, 561, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "IsCpuCompatibleConv2D");
+
   DCHECK(IsConv2D(*conv2d)) << "Expected Conv2D op";
   return NodeIsOnCpu(conv2d) && IsCpuCompatibleDataType(conv2d) &&
          IsCpuCompatibleDataFormat(ctx, conv2d);
 }
 
 bool IsCpuCompatibleConv3D(const RemapperContext& ctx, const NodeDef* conv3d) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_19(mht_19_v, 570, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "IsCpuCompatibleConv3D");
+
   DCHECK(IsConv3D(*conv3d)) << "Expected Conv3D op";
   return NodeIsOnCpu(conv3d) && IsCpuCompatibleDataType(conv3d) &&
          IsCpuCompatibleDataFormat(ctx, conv3d);
 }
 
 bool IsGpuCompatibleConv2D(const RemapperContext& ctx, const NodeDef* conv2d) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_20(mht_20_v, 579, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "IsGpuCompatibleConv2D");
+
   DCHECK(IsConv2D(*conv2d)) << "Expected Conv2D op";
   return NodeIsOnGpu(conv2d) && IsGpuCompatibleDataType(conv2d) &&
          IsGpuCompatibleDataFormat(ctx, conv2d);
 }
 
 bool IsCpuCompatibleMatMul(const RemapperContext& ctx, const NodeDef* matmul) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_21(mht_21_v, 588, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "IsCpuCompatibleMatMul");
+
   DCHECK(IsMatMul(*matmul)) << "Expected MatMul op";
   return NodeIsOnCpu(matmul) && IsCpuCompatibleDataType(matmul);
 }
 
 bool IsCpuCompatibleDepthwiseConv2dNative(const NodeDef* dw_conv2d) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_22(mht_22_v, 596, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "IsCpuCompatibleDepthwiseConv2dNative");
+
   DCHECK(IsDepthwiseConv2dNative(*dw_conv2d))
       << "Expected DepthwiseConv2dNative op";
   return NodeIsOnCpu(dw_conv2d) && IsCpuCompatibleDataType(dw_conv2d);
@@ -367,6 +604,9 @@ bool IsCpuCompatibleDepthwiseConv2dNative(const NodeDef* dw_conv2d) {
 // Checks if we can rewrite a pattern to the `_Fused{Conv2D,MatMul}` on CPU.
 template <typename Pattern>
 bool IsCpuCompatible(const RemapperContext& ctx, const Pattern& matched) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_23(mht_23_v, 607, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "IsCpuCompatible");
+
   const NodeDef& node = ctx.graph_view.graph()->node(matched.contraction);
   if (IsConv2D(node)) {
     return IsCpuCompatibleConv2D(ctx, &node);
@@ -384,6 +624,9 @@ bool IsCpuCompatible(const RemapperContext& ctx, const Pattern& matched) {
 // Checks if we can rewrite a pattern to the `_FusedConv2D` on GPU device.
 bool IsGpuCompatible(const RemapperContext& ctx,
                      const ContractionWithBiasAddAndActivation& matched) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_24(mht_24_v, 627, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "IsGpuCompatible");
+
 #if TENSORFLOW_USE_ROCM
   // ROCm does not support _FusedConv2D
   return false;
@@ -422,20 +665,32 @@ bool IsGpuCompatible(const RemapperContext& ctx,
 }
 bool IsGpuCompatible(const RemapperContext& ctx,
                      const ContractionWithBiasAdd& matched) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_25(mht_25_v, 668, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "IsGpuCompatible");
+
   return false;
 }
 bool IsGpuCompatible(const RemapperContext& ctx,
                      const ContractionWithSqueezeAndBiasAdd& matched) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_26(mht_26_v, 675, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "IsGpuCompatible");
+
   return false;
 }
 
 // Returns true if the given pattern is supported on the assigned device.
 template <typename Pattern>
 bool IsDeviceCompatible(const RemapperContext& ctx, Pattern& matched) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_27(mht_27_v, 684, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "IsDeviceCompatible");
+
   return IsCpuCompatible(ctx, matched) || IsGpuCompatible(ctx, matched);
 }
 
 bool IsSupportedActivation(const NodeDef& node) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_28(mht_28_v, 691, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "IsSupportedActivation");
+
   bool is_default_supported =
       IsRelu(node) || IsRelu6(node) || IsElu(node) || IsLeakyRelu(node);
   bool is_mkl_specific = IsMKLEnabled() && (IsTanh(node) || IsSigmoid(node));
@@ -443,12 +698,18 @@ bool IsSupportedActivation(const NodeDef& node) {
 }
 
 inline bool HasControlFaninOrFanout(const utils::MutableNodeView& node_view) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_29(mht_29_v, 701, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "HasControlFaninOrFanout");
+
   return node_view.NumControllingFanins() > 0 ||
          node_view.NumControlledFanouts() > 0;
 }
 
 // Returns true if at most one fanout reads output at port 0 (output used once).
 inline bool HasAtMostOneFanoutAtPort0(const utils::MutableNodeView& node_view) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_30(mht_30_v, 710, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "HasAtMostOneFanoutAtPort0");
+
   return node_view.GetRegularFanout(0).size() <= 1;
 }
 
@@ -456,6 +717,9 @@ inline bool HasAtMostOneFanoutAtPort0(const utils::MutableNodeView& node_view) {
 // (output used once for any data computation).
 inline bool HasAtMostOneDataFanoutAtPort0(
     const utils::MutableNodeView& node_view) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_31(mht_31_v, 720, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "HasAtMostOneDataFanoutAtPort0");
+
   const auto predicate = [](const auto& fanout) -> bool {
     const NodeDef* node = fanout.node_view()->node();
     return !IsShape(*node) && !IsRank(*node);
@@ -464,6 +728,9 @@ inline bool HasAtMostOneDataFanoutAtPort0(
 }
 
 bool IsConvOrMatMul(const NodeDef& node) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_32(mht_32_v, 731, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "IsConvOrMatMul");
+
   return IsConv2D(node) || IsDepthwiseConv2dNative(node) || IsMatMul(node) ||
          IsConv3D(node);
 }
@@ -473,6 +740,9 @@ bool IsConvOrMatMul(const NodeDef& node) {
 bool IsBiasSemanticAdd(const RemapperContext& ctx,
                        const utils::MutableNodeView& node_view,
                        int& bias_port) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_33(mht_33_v, 743, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "IsBiasSemanticAdd");
+
   if (!IsMKLEnabled()) return false;
 
   const auto* node_def = node_view.node();
@@ -573,6 +843,9 @@ bool IsBiasSemanticAdd(const RemapperContext& ctx,
 bool FindContractionWithBias(const RemapperContext& ctx, int node_index,
                              ContractionWithBiasAdd* matched,
                              bool check_device_compatible = true) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_34(mht_34_v, 846, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "FindContractionWithBias");
+
   const auto* node_view = ctx.graph_view.GetNode(node_index);
   // Root of the pattern must be a BiasAdd.
   // TODO(lyandy): Forward controls for patterns with control dependencies.
@@ -616,6 +889,9 @@ bool FindContractionWithBias(const RemapperContext& ctx, int node_index,
 bool FindContractionWithBiasAndActivation(
     const RemapperContext& ctx, int node_index,
     ContractionWithBiasAddAndActivation* matched) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_35(mht_35_v, 892, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "FindContractionWithBiasAndActivation");
+
   const auto* node_view = ctx.graph_view.GetNode(node_index);
   // Root of the pattern must be an activation node.
   // TODO(lyandy): Forward controls for patterns with control dependencies.
@@ -667,6 +943,9 @@ bool FindContractionWithBiasAndActivation(
 
 bool FindConvWithSqueezeAndBias(const RemapperContext& ctx, int node_index,
                                 ContractionWithSqueezeAndBiasAdd* matched) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_36(mht_36_v, 946, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "FindConvWithSqueezeAndBias");
+
   const auto* node_view = ctx.graph_view.GetNode(node_index);
   // TODO(lyandy): Forward controls for patterns with control dependencies.
   if (HasControlFaninOrFanout(*node_view)) return false;
@@ -725,6 +1004,9 @@ bool FindConvWithSqueezeAndBias(const RemapperContext& ctx, int node_index,
 
 bool FindConv2DWithBatchNorm(const RemapperContext& ctx, int node_index,
                              ContractionWithBatchNorm* matched) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_37(mht_37_v, 1007, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "FindConv2DWithBatchNorm");
+
   const auto* node_view = ctx.graph_view.GetNode(node_index);
   const auto* node_def = node_view->node();
   // Root of the pattern must be a FusedBatchNorm.
@@ -779,6 +1061,9 @@ bool FindConv2DWithBatchNorm(const RemapperContext& ctx, int node_index,
 bool FindConv2DWithBatchNormAndActivation(
     const RemapperContext& ctx, int node_index,
     ContractionWithBatchNormAndActivation* matched) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_38(mht_38_v, 1064, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "FindConv2DWithBatchNormAndActivation");
+
   const auto* node_view = ctx.graph_view.GetNode(node_index);
   // TODO(lyandy): Forward controls for patterns with control dependencies.
   if (HasControlFaninOrFanout(*node_view)) return false;
@@ -823,6 +1108,9 @@ bool FindContractionWithBiasInPort(const RemapperContext& ctx,
                                    const utils::MutableNodeView& add_node_view,
                                    const NodeDef& add_node_def, int port_id,
                                    ContractionWithBiasAdd* base) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_39(mht_39_v, 1111, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "FindContractionWithBiasInPort");
+
   // Input to AddN must match ContractionWithBiasAdd pattern.
   if (add_node_view.NumRegularFanins() < port_id + 1) return false;
   const auto& bias_add_node_view =
@@ -841,6 +1129,9 @@ bool FindContractionWithBiasInPort(const RemapperContext& ctx,
 }
 
 bool IsAddWithNoBroadcast(const RemapperContext& ctx, const NodeDef& node) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_40(mht_40_v, 1132, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "IsAddWithNoBroadcast");
+
   if (!IsAdd(node)) return false;
 
   // Check if this is case of broadcasting - Add node supports broadcasting.
@@ -854,6 +1145,9 @@ bool IsAddWithNoBroadcast(const RemapperContext& ctx, const NodeDef& node) {
 
 bool FindPadWithConv3D(const RemapperContext& ctx, int node_index,
                        PadWithConv3D* matched) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_41(mht_41_v, 1148, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "FindPadWithConv3D");
+
   if (!IsMKLEnabled()) return false;
   const auto* node_view = ctx.graph_view.GetNode(node_index);
   const auto* node_def = node_view->node();
@@ -887,6 +1181,9 @@ bool FindPadWithConv3D(const RemapperContext& ctx, int node_index,
 bool FindContractionWithBiasAddAndAdd(const RemapperContext& ctx,
                                       const utils::MutableNodeView& node_view,
                                       ContractionWithBiasAddAndAdd* matched) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_42(mht_42_v, 1184, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "FindContractionWithBiasAddAndAdd");
+
   // Fusion with AddN is supported only when it has two inputs.
   // TODO(lyandy): Forward controls for patterns with control dependencies.
   if (HasControlFaninOrFanout(node_view) || node_view.NumRegularFanins() != 2)
@@ -928,6 +1225,9 @@ bool FindContractionWithBiasAddAndAdd(const RemapperContext& ctx,
 bool FindContractionWithBiasAddAndAdd(const RemapperContext& ctx,
                                       int node_index,
                                       ContractionWithBiasAddAndAdd* matched) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_43(mht_43_v, 1228, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "FindContractionWithBiasAddAndAdd");
+
   const auto* node_view = ctx.graph_view.GetNode(node_index);
   return FindContractionWithBiasAddAndAdd(ctx, *node_view, matched);
 }
@@ -935,6 +1235,9 @@ bool FindContractionWithBiasAddAndAdd(const RemapperContext& ctx,
 bool FindContractionWithBiasAndAddActivation(
     const RemapperContext& ctx, int node_index,
     ContractionWithBiasAndAddActivation* matched) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_44(mht_44_v, 1238, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "FindContractionWithBiasAndAddActivation");
+
   const auto* node_view = ctx.graph_view.GetNode(node_index);
   // TODO(lyandy): Forward controls for patterns with control dependencies.
   if (HasControlFaninOrFanout(*node_view)) return false;
@@ -995,6 +1298,9 @@ bool FindContractionWithBiasAndAddActivation(
 inline bool VerifyConstants(RemapperContext* ctx,
                             std::map<string, int>* nodes_map,
                             std::map<string, float>* values_map) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_45(mht_45_v, 1301, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "VerifyConstants");
+
   using utils::MutableNodeView;
   for (auto it = values_map->begin(); it != values_map->end(); ++it) {
     int node_idx = nodes_map->at(it->first);
@@ -1028,6 +1334,9 @@ bool FindMatMulBiasAddAndGelu(RemapperContext* ctx, int node_index,
                               std::map<string, int>* matched_nodes_map,
                               std::set<int>* remove_node_indices,
                               bool* is_gelu_approximate) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_46(mht_46_v, 1337, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "FindMatMulBiasAddAndGelu");
+
   // Gelu fusion is enabled only with oneDNN library.
   if (!IsMKLEnabled()) return false;
 
@@ -1189,6 +1498,9 @@ bool FindMatMulBiasAddAndGelu(RemapperContext* ctx, int node_index,
 bool FindSigmoidAndMul(RemapperContext* ctx, int node_index,
                        std::map<string, int>* matched_nodes_map,
                        std::set<int>* remove_node_indices) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_47(mht_47_v, 1501, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "FindSigmoidAndMul");
+
   // Gelu fusion is enabled only with oneDNN library.
   if (!IsMKLEnabled()) return false;
 
@@ -1237,6 +1549,9 @@ bool FindSigmoidAndMul(RemapperContext* ctx, int node_index,
 bool FindMklLayerNorm(RemapperContext* ctx, int node_index,
                       std::map<string, int>* matched_nodes_map,
                       std::set<int>* remove_node_indices) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_48(mht_48_v, 1552, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "FindMklLayerNorm");
+
   if (!IsMKLEnabled()) return false;
 
   // The following pattern will be searched in the graph with additional
@@ -1373,6 +1688,9 @@ bool FindMklLayerNorm(RemapperContext* ctx, int node_index,
 
 bool FindFusedBatchNorm(const RemapperContext& ctx, int node_index,
                         FusedBatchNorm* matched) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_49(mht_49_v, 1691, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "FindFusedBatchNorm");
+
   const auto* node_view = ctx.graph_view.GetNode(node_index);
   const auto* node_def = node_view->node();
   if (!IsFusedBatchNorm(*node_def)) return false;
@@ -1416,6 +1734,9 @@ bool FindFusedBatchNorm(const RemapperContext& ctx, int node_index,
 // NOTE(ezhulenev): See `BatchnormSpatialPersistentEnabled` documentation in the
 // `tensorflow/stream_executor/cuda/cuda_dnn.cc` for details.
 bool BatchnormSpatialPersistentEnabled() {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_50(mht_50_v, 1737, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "BatchnormSpatialPersistentEnabled");
+
 #if CUDNN_VERSION >= 7402
   static bool is_enabled = [] {
     bool is_enabled = false;
@@ -1432,6 +1753,9 @@ bool BatchnormSpatialPersistentEnabled() {
 
 bool FindFusedBatchNormEx(const RemapperContext& ctx, int node_index,
                           FusedBatchNormEx* matched) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_51(mht_51_v, 1756, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "FindFusedBatchNormEx");
+
   // Root of the pattern must be a Relu.
   // TODO(ezhulenev): Forward control dependencies.
   const auto* node_view = ctx.graph_view.GetNode(node_index);
@@ -1570,6 +1894,9 @@ bool FindFusedBatchNormEx(const RemapperContext& ctx, int node_index,
 
 bool FindFusedBatchNormGradEx(const RemapperContext& ctx, int node_index,
                               FusedBatchNormGradEx* matched) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_52(mht_52_v, 1897, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "FindFusedBatchNormGradEx");
+
   // Root of the pattern must be a FusedBatchNormGrad.
   const utils::MutableNodeView* node_view = ctx.graph_view.GetNode(node_index);
 
@@ -1699,6 +2026,9 @@ bool FindFusedBatchNormGradEx(const RemapperContext& ctx, int node_index,
 
 bool FindTensorToHashBucket(const RemapperContext& ctx, int node_index,
                             TensorToHashBucket* matched) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_53(mht_53_v, 2029, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "FindTensorToHashBucket");
+
   // Root of the pattern must be a StringToHashBucketFast.
   const auto* node_view = ctx.graph_view.GetNode(node_index);
   const auto* node_def = node_view->node();
@@ -1759,6 +2089,9 @@ bool FindTensorToHashBucket(const RemapperContext& ctx, int node_index,
 bool FindFusedBatchMatMul(RemapperContext* ctx, int node_index,
                           std::map<string, int>* matched_nodes_map,
                           std::set<int>* remove_node_indices) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_54(mht_54_v, 2092, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "FindFusedBatchMatMul");
+
   if (!IsMKLEnabled()) return false;
 
   using utils::MatchingDirection;
@@ -1850,6 +2183,9 @@ bool FindFusedBatchMatMul(RemapperContext* ctx, int node_index,
 
 void CopyConv2DAttributes(const NodeDef& conv2d, NodeDef* fused_conv2d,
                           const NodeDef* activation = nullptr) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_55(mht_55_v, 2186, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "CopyConv2DAttributes");
+
   DCHECK(IsConv2D(conv2d)) << "Input node must be a Conv2D";
 
   auto* attr = fused_conv2d->mutable_attr();
@@ -1871,6 +2207,9 @@ void CopyConv2DAttributes(const NodeDef& conv2d, NodeDef* fused_conv2d,
 
 void CopyConv3DAttributes(const NodeDef& conv3d, NodeDef* fused_conv3d,
                           const NodeDef* activation = nullptr) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_56(mht_56_v, 2210, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "CopyConv3DAttributes");
+
   DCHECK(IsConv3D(conv3d)) << "Input node must be a Conv3D";
 
   auto* attr = fused_conv3d->mutable_attr();
@@ -1891,6 +2230,9 @@ void CopyConv3DAttributes(const NodeDef& conv3d, NodeDef* fused_conv3d,
 void CopyDepthwiseConv2dNativeAttributes(const NodeDef& dw_conv2d,
                                          NodeDef* fused_dw_conv2d,
                                          const NodeDef* activation = nullptr) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_57(mht_57_v, 2233, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "CopyDepthwiseConv2dNativeAttributes");
+
   DCHECK(IsDepthwiseConv2dNative(dw_conv2d))
       << "Input node must be a DepthwiseConv2dNative";
 
@@ -1911,6 +2253,9 @@ void CopyDepthwiseConv2dNativeAttributes(const NodeDef& dw_conv2d,
 
 void CopyFusedBatchNormAttributes(const NodeDef& fused_batch_norm,
                                   NodeDef* fused_batch_norm_ex) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_58(mht_58_v, 2256, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "CopyFusedBatchNormAttributes");
+
   DCHECK(IsFusedBatchNorm(fused_batch_norm))
       << "Input node must be a FusedBatchNorm";
 
@@ -1936,6 +2281,9 @@ void CopyFusedBatchNormAttributes(const NodeDef& fused_batch_norm,
 
 void CopyFusedBatchNormGradAttributes(const NodeDef& fused_batch_norm_grad,
                                       NodeDef* fused_batch_norm_grad_ex) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_59(mht_59_v, 2284, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "CopyFusedBatchNormGradAttributes");
+
   DCHECK(IsFusedBatchNormGrad(fused_batch_norm_grad))
       << "Input node must be a FusedBatchNormGrad";
 
@@ -1957,6 +2305,9 @@ void CopyFusedBatchNormGradAttributes(const NodeDef& fused_batch_norm_grad,
 
 void CopyMatMulAttributes(const NodeDef& matmul, NodeDef* fused_matmul,
                           const NodeDef* activation = nullptr) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_60(mht_60_v, 2308, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "CopyMatMulAttributes");
+
   DCHECK(IsMatMul(matmul)) << "Input node must be a MatMul";
 
   auto* attr = fused_matmul->mutable_attr();
@@ -1974,6 +2325,9 @@ void CopyMatMulAttributes(const NodeDef& matmul, NodeDef* fused_matmul,
 
 void CopyBatchMatMulAttributes(const NodeDef& batchmatmul,
                                NodeDef* fused_batch_matmul) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_61(mht_61_v, 2328, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "CopyBatchMatMulAttributes");
+
   DCHECK(IsAnyBatchMatMul(batchmatmul)) << "Input node must be a BatchMatMul";
 
   auto* attr = fused_batch_matmul->mutable_attr();
@@ -1987,6 +2341,9 @@ void CopyBatchMatMulAttributes(const NodeDef& batchmatmul,
 void SetFusedOpAttributes(NodeDef* fused,
                           const absl::Span<const absl::string_view> fused_ops,
                           int num_args = 1, float epsilon = 0.0) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_62(mht_62_v, 2344, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "SetFusedOpAttributes");
+
   auto* attr = fused->mutable_attr();
   SetAttrValue(fused_ops, &(*attr)["fused_ops"]);
   SetAttrValue(num_args, &(*attr)["num_args"]);
@@ -1997,6 +2354,9 @@ Status AddFusedContractionNode(RemapperContext* ctx,
                                const ContractionWithBiasAdd& matched,
                                std::vector<bool>* invalidated_nodes,
                                std::vector<bool>* nodes_to_delete) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_63(mht_63_v, 2357, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "AddFusedContractionNode");
+
   DCHECK(IsDeviceCompatible(*ctx, matched)) << "Unsupported fusion pattern";
 
   const GraphDef* graph = ctx->graph_view.graph();
@@ -2042,6 +2402,9 @@ Status AddFusedContractionNode(RemapperContext* ctx,
 Status AddFusedContractionNode(
     RemapperContext* ctx, const ContractionWithBiasAddAndActivation& matched,
     std::vector<bool>* invalidated_nodes, std::vector<bool>* nodes_to_delete) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_64(mht_64_v, 2405, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "AddFusedContractionNode");
+
   DCHECK(IsDeviceCompatible(*ctx, matched)) << "Unsupported fusion pattern";
 
   const GraphDef* graph = ctx->graph_view.graph();
@@ -2096,6 +2459,9 @@ Status AddFusedConvNode(RemapperContext* ctx,
                         const ContractionWithSqueezeAndBiasAdd& matched,
                         std::vector<bool>* invalidated_nodes,
                         std::vector<bool>* nodes_to_delete) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_65(mht_65_v, 2462, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "AddFusedConvNode");
+
   DCHECK(IsDeviceCompatible(*ctx, matched)) << "Unsupported fusion pattern";
 
   const GraphDef* graph = ctx->graph_view.graph();
@@ -2150,6 +2516,9 @@ Status AddFusedConv2DNode(RemapperContext* ctx,
                           const ContractionWithBatchNorm& matched,
                           std::vector<bool>* invalidated_nodes,
                           std::vector<bool>* nodes_to_delete) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_66(mht_66_v, 2519, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "AddFusedConv2DNode");
+
   const GraphDef* graph = ctx->graph_view.graph();
   const NodeDef& contraction = graph->node(matched.contraction);
   DCHECK(IsConv2D(contraction)) << "Only Conv2D supported for now";
@@ -2188,6 +2557,9 @@ Status AddFusedConv2DNode(RemapperContext* ctx,
                           const ContractionWithBatchNormAndActivation& matched,
                           std::vector<bool>* invalidated_nodes,
                           std::vector<bool>* nodes_to_delete) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_67(mht_67_v, 2560, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "AddFusedConv2DNode");
+
   const GraphDef* graph = ctx->graph_view.graph();
   const NodeDef& contraction = graph->node(matched.contraction);
 
@@ -2232,6 +2604,9 @@ Status AddFusedContractionNode(RemapperContext* ctx,
                                const ContractionWithBiasAddAndAdd& matched,
                                std::vector<bool>* invalidated_nodes,
                                std::vector<bool>* nodes_to_delete) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_68(mht_68_v, 2607, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "AddFusedContractionNode");
+
   const GraphDef* graph = ctx->graph_view.graph();
   const NodeDef& contraction = graph->node(matched.contraction);
   const NodeDef& bias_add = graph->node(matched.bias_add);
@@ -2283,6 +2658,9 @@ Status AddFusedContractionNode(RemapperContext* ctx,
 Status AddFusedConv3DNode(RemapperContext* ctx, const PadWithConv3D& matched,
                           std::vector<bool>* invalidated_nodes,
                           std::vector<bool>* nodes_to_delete) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_69(mht_69_v, 2661, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "AddFusedConv3DNode");
+
   const GraphDef* graph = ctx->graph_view.graph();
   const NodeDef& contraction = graph->node(matched.contraction_idx);
   const NodeDef& pad_node_def = graph->node(matched.pad_idx);
@@ -2340,6 +2718,9 @@ Status AddFusedConv3DNode(RemapperContext* ctx, const PadWithConv3D& matched,
 Status AddFusedContractionNode(
     RemapperContext* ctx, const ContractionWithBiasAndAddActivation& matched,
     std::vector<bool>* invalidated_nodes, std::vector<bool>* nodes_to_delete) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_70(mht_70_v, 2721, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "AddFusedContractionNode");
+
   const GraphDef* graph = ctx->graph_view.graph();
   // MKL version only support fusion for Conv2D
   const NodeDef& contraction = graph->node(matched.contraction);
@@ -2388,6 +2769,9 @@ Status AddFusedMatMulBiasAddAndGelu(
     const std::set<int>& remove_node_indices,
     std::vector<bool>* invalidated_nodes, std::vector<bool>* nodes_to_delete,
     bool is_gelu_approximate) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_71(mht_71_v, 2772, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "AddFusedMatMulBiasAddAndGelu");
+
   auto* output_node =
       ctx->graph_view.GetNode(matched_nodes_map.at("output"))->node();
   auto* matmul_node =
@@ -2431,6 +2815,9 @@ Status AddMklLayerNorm(RemapperContext* ctx,
                        const std::set<int>& remove_node_indices,
                        std::vector<bool>* invalidated_nodes,
                        std::vector<bool>* nodes_to_delete) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_72(mht_72_v, 2818, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "AddMklLayerNorm");
+
   auto* pre_reshape_node =
       ctx->graph_view.GetNode(matched_nodes_map.at("pre_reshape"))->node();
   auto* scale_node =
@@ -2466,6 +2853,9 @@ Status ReplaceSigmoidMulWithSwish(
     RemapperContext* ctx, const std::map<string, int>& matched_nodes_map,
     const std::set<int>& remove_node_indices,
     std::vector<bool>* invalidated_nodes, std::vector<bool>* nodes_to_delete) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_73(mht_73_v, 2856, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "ReplaceSigmoidMulWithSwish");
+
   const NodeDef* mul =
       ctx->graph_view.GetNode(matched_nodes_map.at("mul_to_swish"))->node();
   const NodeDef* sigmoid =
@@ -2498,6 +2888,9 @@ Status AddFusedBatchNormExNode(RemapperContext* ctx,
                                const FusedBatchNormEx& matched,
                                std::vector<bool>* invalidated_nodes,
                                std::vector<bool>* nodes_to_delete) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_74(mht_74_v, 2891, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "AddFusedBatchNormExNode");
+
   const GraphDef* graph = ctx->graph_view.graph();
   const NodeDef& fused_batch_norm = graph->node(matched.fused_batch_norm);
   const NodeDef& activation = graph->node(matched.activation);
@@ -2567,6 +2960,9 @@ Status AddFusedBatchNormGradExNode(RemapperContext* ctx,
                                    const FusedBatchNormGradEx& matched,
                                    std::vector<bool>* invalidated_nodes,
                                    std::vector<bool>* nodes_to_delete) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_75(mht_75_v, 2963, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "AddFusedBatchNormGradExNode");
+
   const GraphDef* graph = ctx->graph_view.graph();
   const NodeDef& fused_batch_norm_grad =
       graph->node(matched.fused_batch_norm_grad);
@@ -2637,6 +3033,9 @@ Status AddFusedBatchNormGradExNode(RemapperContext* ctx,
 }
 
 Status AddBatchNormNodes(RemapperContext* ctx, const FusedBatchNorm& matched) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_76(mht_76_v, 3036, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "AddBatchNormNodes");
+
   const GraphDef* graph = ctx->graph_view.graph();
   const NodeDef& fused_node = graph->node(matched.fused_batch_norm);
   VLOG(2) << "Optimizing fused batch norm node "
@@ -2835,6 +3234,9 @@ Status AddTensorToHashBucketNode(RemapperContext* ctx,
                                  const TensorToHashBucket& matched,
                                  std::vector<bool>* invalidated_nodes,
                                  std::vector<bool>* nodes_to_delete) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_77(mht_77_v, 3237, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "AddTensorToHashBucketNode");
+
   const GraphDef* graph = ctx->graph_view.graph();
   const NodeDef& pre_as_string = graph->node(matched.pre_as_string);
   const NodeDef& as_string = graph->node(matched.as_string);
@@ -2874,6 +3276,9 @@ Status AddFusedBatchMatMul(RemapperContext* ctx,
                            const std::set<int>& remove_node_indices,
                            std::vector<bool>* invalidated_nodes,
                            std::vector<bool>* nodes_to_delete) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_78(mht_78_v, 3279, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "AddFusedBatchMatMul");
+
   auto* output_node =
       ctx->graph_view.GetNode(matched_nodes_map.at("output"))->node();
   auto* batch_matmul_node =
@@ -2916,6 +3321,9 @@ Status AddFusedBatchMatMul(RemapperContext* ctx,
 // 4. Contraction + BiasAdd/BiasSemanticAdd + Add + Activation.
 // Contraction candidate: MatMul, Conv2D, Conv3D, DepthwiseConv2dNative.
 bool IsContractionWithAdd(const RemapperContext& ctx, int node_index) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_79(mht_79_v, 3324, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "IsContractionWithAdd");
+
   const auto* node_view = ctx.graph_view.GetNode(node_index);
 
   auto is_supported_add_input = [](const auto* node_view) -> bool {
@@ -2963,6 +3371,9 @@ bool IsContractionWithAdd(const RemapperContext& ctx, int node_index) {
 bool FindSoftplusAndTanhAndMul(RemapperContext* ctx, int node_index,
                                std::map<string, int>* matched_nodes_map,
                                std::set<int>* remove_node_indices) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_80(mht_80_v, 3374, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "FindSoftplusAndTanhAndMul");
+
   // Mish fusion is enabled only with oneDNN library.
   if (!IsMKLEnabled()) return false;
 
@@ -3038,6 +3449,9 @@ Status ReplaceSoftplusTanhAndMulWithMish(
     RemapperContext* ctx, const std::map<string, int>* matched_nodes_map,
     const std::set<int>* remove_node_indices,
     std::vector<bool>* invalidated_nodes, std::vector<bool>* nodes_to_delete) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_81(mht_81_v, 3452, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "ReplaceSoftplusTanhAndMulWithMish");
+
   // Fuse Softplus + Tanh + Mul to Mish
   auto* old_mul_node =
       ctx->graph_view.GetNode(matched_nodes_map->at("mul_to_mish"))->node();
@@ -3075,6 +3489,9 @@ Status ReplaceSoftplusTanhAndMulWithMish(
 //   (4) INTEL_MKL specific: Conv2D -> Add or Conv2D -> BiasAdd -> Add.
 //   (5) Fusing side output and/or activation into FusedBatchNormGrad.
 bool RequiresInferredShapes(const RemapperContext& ctx, int node_index) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_82(mht_82_v, 3492, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "RequiresInferredShapes");
+
   // Candidate for a FusedBatchNorm splitting.
   const auto* node_view = ctx.graph_view.GetNode(node_index);
   const auto* node_def = node_view->node();
@@ -3175,6 +3592,9 @@ bool RequiresInferredShapes(const RemapperContext& ctx, int node_index) {
 
 Status Remapper::Optimize(Cluster* cluster, const GrapplerItem& item,
                           GraphDef* optimized_graph) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSremapperDTcc mht_83(mht_83_v, 3595, "", "./tensorflow/core/grappler/optimizers/remapper.cc", "Remapper::Optimize");
+
   GrapplerItem mutable_item = item;
   Status status;
   RemapperContext ctx(&mutable_item, &status, cpu_layout_conversion_,

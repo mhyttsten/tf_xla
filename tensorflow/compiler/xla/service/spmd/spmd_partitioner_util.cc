@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,6 +217,9 @@ using hlo_sharding_util::GroupedSharding;
 }  // namespace
 
 bool HasReplicatedSharding(const HloSharding& sharding) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_0(mht_0_v, 220, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "HasReplicatedSharding");
+
   if (sharding.IsTuple()) {
     return absl::c_any_of(sharding.tuple_elements(), HasReplicatedSharding);
   }
@@ -58,6 +229,9 @@ bool HasReplicatedSharding(const HloSharding& sharding) {
 static HloInstruction* CreateConstantBase(
     const Shape& shape, Literal value, SpmdBuilder* b,
     Literal (*literal_creator)(Literal, PrimitiveType)) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_1(mht_1_v, 232, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "CreateConstantBase");
+
   if (shape.IsTuple()) {
     std::vector<HloInstruction*> elements;
     for (int64_t i = 0; i < ShapeUtil::TupleElementCount(shape); ++i) {
@@ -81,7 +255,13 @@ static HloInstruction* CreateConstantBase(
 
 HloInstruction* CreateConstant(const Shape& shape, Literal value,
                                SpmdBuilder* b) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_2(mht_2_v, 258, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "CreateConstant");
+
   auto identity = [](Literal value, PrimitiveType primitive_type) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_3(mht_3_v, 262, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "lambda");
+
     CHECK(ShapeUtil::IsScalarWithElementType(value.shape(), primitive_type));
     return value;
   };
@@ -89,19 +269,34 @@ HloInstruction* CreateConstant(const Shape& shape, Literal value,
 }
 
 HloInstruction* CreateZero(const Shape& shape, SpmdBuilder* b) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_4(mht_4_v, 272, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "CreateZero");
+
   auto zero = [](Literal /*unused*/, PrimitiveType primitive_type) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_5(mht_5_v, 276, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "lambda");
+
     return LiteralUtil::Zero(primitive_type);
   };
   return CreateConstantBase(shape, /*unused*/ Literal(), b, zero);
 }
 HloInstruction* CreateOne(const Shape& shape, SpmdBuilder* b) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_6(mht_6_v, 284, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "CreateOne");
+
   auto one = [](Literal /*unused*/, PrimitiveType primitive_type) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_7(mht_7_v, 288, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "lambda");
+
     return LiteralUtil::One(primitive_type);
   };
   return CreateConstantBase(shape, /*unused*/ Literal(), b, one);
 }
 
 HloComputation* MakeBinaryAdd(PrimitiveType type, HloModule* module) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_8(mht_8_v, 297, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "MakeBinaryAdd");
+
   HloComputation::Builder sum_b("add");
   auto x = sum_b.AddInstruction(HloInstruction::CreateParameter(
       /*parameter_number=*/0, ShapeUtil::MakeShape(type, {}), "x"));
@@ -119,6 +314,9 @@ HloComputation* MakeBinaryAdd(PrimitiveType type, HloModule* module) {
 }
 
 bool EvenlyPartitions(const Shape& shape, const HloSharding& sharding) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_9(mht_9_v, 317, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "EvenlyPartitions");
+
   if (sharding.IsTuple()) {
     for (int64_t i = 0; i < ShapeUtil::TupleElementCount(shape); ++i) {
       if (!EvenlyPartitions(ShapeUtil::GetTupleElementShape(shape, i),
@@ -140,6 +338,9 @@ bool EvenlyPartitions(const Shape& shape, const HloSharding& sharding) {
 }
 
 Shape MakePartitionedShape(const Shape& shape, const HloSharding& sharding) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_10(mht_10_v, 341, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "MakePartitionedShape");
+
   if (sharding.IsTuple()) {
     std::vector<Shape> subshapes;
     const int64_t shape_n = ShapeUtil::TupleElementCount(shape);
@@ -155,6 +356,9 @@ Shape MakePartitionedShape(const Shape& shape, const HloSharding& sharding) {
 }
 
 int64_t ShapeSizeInBytes(const Shape& shape) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_11(mht_11_v, 359, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "ShapeSizeInBytes");
+
   return ShapeUtil::ByteSizeOfPrimitiveType(shape.element_type()) *
          ShapeUtil::ElementsIn(shape);
 }
@@ -162,6 +366,9 @@ int64_t ShapeSizeInBytes(const Shape& shape) {
 Shape MakeNonPaddedShapeForGivenPartition(const Shape& shape,
                                           const HloSharding& sharding,
                                           int64_t partition_id) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_12(mht_12_v, 369, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "MakeNonPaddedShapeForGivenPartition");
+
   if (sharding.IsTuple()) {
     std::vector<Shape> subshapes;
     const int64_t shape_n = ShapeUtil::TupleElementCount(shape);
@@ -247,6 +454,9 @@ std::vector<HloInstruction*> MakeTiledPartitionOrdinals(
 
 HloInstruction* PadToShape(HloInstruction* hlo, const Shape& padded_shape,
                            SpmdBuilder* b, HloComputation* computation) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_13(mht_13_v, 457, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "PadToShape");
+
   CHECK(b == nullptr || computation == nullptr);
   if (ShapeUtil::Compatible(hlo->shape(), padded_shape)) {
     return hlo;
@@ -260,6 +470,9 @@ HloInstruction* PadToShape(HloInstruction* hlo, const Shape& padded_shape,
                                               hlo->shape().dimensions(i));
   }
   auto add_hlo = [&](std::unique_ptr<HloInstruction> to_add) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_14(mht_14_v, 473, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "lambda");
+
     if (b == nullptr) {
       return computation->AddInstruction(std::move(to_add));
     }
@@ -273,6 +486,9 @@ HloInstruction* PadToShape(HloInstruction* hlo, const Shape& padded_shape,
 
 Shape GetPaddedShapeForUnevenPartitioning(const Shape& base_shape,
                                           const HloSharding& sharding) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_15(mht_15_v, 489, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "GetPaddedShapeForUnevenPartitioning");
+
   if (sharding.IsTileMaximal()) {
     return base_shape;
   }
@@ -290,6 +506,9 @@ Shape GetPaddedShapeForUnevenPartitioning(const Shape& base_shape,
 
 HloInstruction* PadBaseShapeBeforeUnevenTiledSharding(
     HloInstruction* hlo, const HloSharding& sharding, SpmdBuilder* b) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_16(mht_16_v, 509, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "PadBaseShapeBeforeUnevenTiledSharding");
+
   auto padded_base_shape =
       GetPaddedShapeForUnevenPartitioning(hlo->shape(), sharding);
   if (ShapeUtil::Compatible(padded_base_shape, hlo->shape())) {
@@ -648,12 +867,18 @@ absl::optional<int64_t> UniqueTiledDim(const HloSharding& sharding) {
 MultiplyAddDivideOffsetCalculation::MultiplyAddDivideOffsetCalculation(
     int64_t multiplier, int64_t offset, int64_t divisor)
     : multiplier_(multiplier), offset_(offset), divisor_(divisor) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_17(mht_17_v, 870, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "MultiplyAddDivideOffsetCalculation::MultiplyAddDivideOffsetCalculation");
+
   CHECK_GT(divisor_, 0);
   Simplify();
 }
 
 OffsetCalculation MultiplyAddDivideOffsetCalculation::operator-(
     const MultiplyAddDivideOffsetCalculation& other) const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_18(mht_18_v, 879, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "-");
+
   if (divisor_ == 1 && other.divisor_ == 1) {
     return OffsetCalculation(MultiplyAddDivideOffsetCalculation(
         multiplier_ - other.multiplier_, offset_ - other.offset_, 1));
@@ -662,6 +887,9 @@ OffsetCalculation MultiplyAddDivideOffsetCalculation::operator-(
 }
 
 void MultiplyAddDivideOffsetCalculation::Simplify() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_19(mht_19_v, 890, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "MultiplyAddDivideOffsetCalculation::Simplify");
+
   // We could simplify the calculation when multiplier is a multiple of
   // divisor_. However, when offset_ is not a multiple of divisor_, we must
   // make sure that offset_ and multiplier_ are both non-negative or both
@@ -676,11 +904,17 @@ void MultiplyAddDivideOffsetCalculation::Simplify() {
 
 int64_t MultiplyAddDivideOffsetCalculation::Calculate(
     int64_t shard_ordinal) const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_20(mht_20_v, 907, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "MultiplyAddDivideOffsetCalculation::Calculate");
+
   return (shard_ordinal * multiplier_ + offset_) / divisor_;
 }
 
 HloInstruction* MultiplyAddDivideOffsetCalculation::Calculate(
     HloInstruction* shard_ordinal, SpmdBuilder* b) const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_21(mht_21_v, 915, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "MultiplyAddDivideOffsetCalculation::Calculate");
+
   auto scalar_shape = ShapeUtil::MakeShape(S32, {});
   if (multiplier_ == 0) {
     return b->AddInstruction(HloInstruction::CreateConstant(
@@ -710,6 +944,9 @@ HloInstruction* MultiplyAddDivideOffsetCalculation::Calculate(
 
 int64_t MultiplyAddDivideOffsetCalculation::MaxInRange(
     int64_t start_ordinal, int64_t limit_ordinal) const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_22(mht_22_v, 947, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "MultiplyAddDivideOffsetCalculation::MaxInRange");
+
   int64_t max = Calculate(start_ordinal);
   for (int64_t i = start_ordinal + 1; i < limit_ordinal; ++i) {
     max = std::max(max, Calculate(i));
@@ -719,6 +956,9 @@ int64_t MultiplyAddDivideOffsetCalculation::MaxInRange(
 
 OffsetCalculation& OffsetCalculation::operator=(
     const OffsetCalculation& other) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_23(mht_23_v, 959, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "=");
+
   opcode_ = other.opcode_;
   copy_from_ = other.copy_from_;
   if (opcode_ != HloOpcode::kCopy) {
@@ -729,6 +969,9 @@ OffsetCalculation& OffsetCalculation::operator=(
 }
 
 bool OffsetCalculation::IsConstant() const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_24(mht_24_v, 972, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "OffsetCalculation::IsConstant");
+
   if (opcode_ == HloOpcode::kCopy) {
     return copy_from_.IsConstant();
   }
@@ -740,6 +983,9 @@ bool OffsetCalculation::IsConstant() const {
 
 OffsetCalculation OffsetCalculation::operator-(
     const OffsetCalculation& other) const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_25(mht_25_v, 986, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "-");
+
   if (opcode_ == HloOpcode::kCopy && other.opcode_ == HloOpcode::kCopy) {
     return copy_from_ - other.copy_from_;
   }
@@ -757,6 +1003,9 @@ bool OffsetCalculation::operator==(const OffsetCalculation& other) const {
 }
 
 int64_t OffsetCalculation::Calculate(int64_t shard_ordinal) const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_26(mht_26_v, 1006, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "OffsetCalculation::Calculate");
+
   switch (opcode_) {
     case HloOpcode::kCopy:
       return copy_from_.Calculate(shard_ordinal);
@@ -771,6 +1020,9 @@ int64_t OffsetCalculation::Calculate(int64_t shard_ordinal) const {
 
 HloInstruction* OffsetCalculation::Calculate(HloInstruction* shard_ordinal,
                                              SpmdBuilder* b) const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_27(mht_27_v, 1023, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "OffsetCalculation::Calculate");
+
   if (opcode_ == HloOpcode::kCopy) {
     return copy_from_.Calculate(shard_ordinal, b);
   }
@@ -782,6 +1034,9 @@ HloInstruction* OffsetCalculation::Calculate(HloInstruction* shard_ordinal,
 
 int64_t OffsetCalculation::MaxInRange(int64_t start_ordinal,
                                       int64_t limit_ordinal) const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_28(mht_28_v, 1037, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "OffsetCalculation::MaxInRange");
+
   if (IsConstant()) {
     return Calculate(start_ordinal);
   }
@@ -1115,6 +1370,9 @@ absl::optional<HloInstruction*> ExchangeHaloAndGetValidData(
 
 HloInstruction* HaloExchangeToPadOnLeft(PartitionedHlo& original,
                                         absl::Span<const int64_t> dims) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_29(mht_29_v, 1373, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "HaloExchangeToPadOnLeft");
+
   if (original.sharding().IsTileMaximal()) {
     return original.hlo();
   }
@@ -1151,8 +1409,14 @@ HloInstruction* HaloExchangeToPadOnLeft(PartitionedHlo& original,
 }
 
 bool IsNanSafeGt(HloComputation* comp) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_30(mht_30_v, 1412, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "IsNanSafeGt");
+
   namespace m = match;
   auto match_bitcast_f32 = [](int64_t parameter_number) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_31(mht_31_v, 1417, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "lambda");
+
     auto param = m::Parameter(parameter_number)
                      .WithShape(m::Shape().WithElementType(F32));
     auto param_s32 =
@@ -1168,6 +1432,9 @@ bool IsNanSafeGt(HloComputation* comp) {
         param_s32);
   };
   auto match_bitcast_bf16 = [](int64_t parameter_number) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_32(mht_32_v, 1435, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "lambda");
+
     auto param = m::Convert(m::Parameter(parameter_number)
                                 .WithShape(m::Shape().WithElementType(BF16)))
                      .WithShape(m::Shape().WithElementType(F32));
@@ -1305,6 +1572,9 @@ absl::optional<int64_t> GetKValueInTopKWhenPartitionSortDim(
 // Slice first k elements from sort_dim.
 HloInstruction* SliceFirstK(HloInstruction* hlo, SpmdBuilder* builder,
                             int64_t slice_dim, int64_t k) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_33(mht_33_v, 1575, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "SliceFirstK");
+
   const Shape& hlo_shape = hlo->shape();
   auto hlo_dims = hlo_shape.dimensions();
   std::vector<int64_t> start_indices(hlo_shape.dimensions_size(), 0);
@@ -1319,6 +1589,9 @@ HloInstruction* SliceFirstK(HloInstruction* hlo, SpmdBuilder* builder,
 
 // Check if a dimension is sharded.
 int64_t ShardCountAtDim(const HloSharding& sharding, int64_t dim) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_34(mht_34_v, 1592, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "ShardCountAtDim");
+
   if (sharding.IsTileMaximal()) {
     return 1;
   }
@@ -1361,6 +1634,9 @@ GetReshardAllToAllSourceTargetDims(const HloSharding& source,
   std::vector<std::pair<int64_t, int64_t>> result;
   auto remove_entry = [](int64_t size, int64_t dim,
                          std::map<int64_t, std::vector<int64_t>>& size_to_dim) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_35(mht_35_v, 1637, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "lambda");
+
     size_to_dim[size].erase(
         std::remove_if(size_to_dim[size].begin(), size_to_dim[size].end(),
                        [dim](int64_t a) { return a == dim; }),
@@ -1413,6 +1689,9 @@ GetReshardAllToAllSourceTargetDims(const HloSharding& source,
 
 bool CanReshardWithCollectivePermute(const HloSharding& source,
                                      const HloSharding& target) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_36(mht_36_v, 1692, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "CanReshardWithCollectivePermute");
+
   return !source.IsTileMaximal() && !target.IsTileMaximal() &&
          source.tile_assignment().dimensions() ==
              target.tile_assignment().dimensions() &&
@@ -1426,6 +1705,9 @@ absl::optional<GroupedSharding> AlignGroupsWithInternal(
   // Returns src -> dst index mapping.
   auto get_permutation = [](absl::Span<const int64_t> src,
                             absl::Span<const int64_t> dst) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_37(mht_37_v, 1708, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "lambda");
+
     CHECK_EQ(src.size(), dst.size());
     absl::flat_hash_map<int64_t, int64_t> dst_reverse_map;
     for (int64_t i = 0; i < dst.size(); ++i) {
@@ -1498,6 +1780,9 @@ absl::optional<GroupedSharding> AlignGroupsWithInternal(
 GroupedSharding AlignGroupsWith(GroupedSharding grouped_sharding,
                                 const GroupedSharding& reference,
                                 bool ignore_group_order) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_38(mht_38_v, 1783, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "AlignGroupsWith");
+
   return *AlignGroupsWithInternal(std::move(grouped_sharding), reference,
                                   /*requires_compatibility=*/false,
                                   ignore_group_order);
@@ -1514,6 +1799,9 @@ HloSharding AlignShardingOnDims(const HloSharding& sharding,
                                 absl::Span<const int64_t> sharding_dims,
                                 const HloSharding& reference,
                                 absl::Span<const int64_t> reference_dims) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_39(mht_39_v, 1802, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "AlignShardingOnDims");
+
   auto sharding_grouped =
       hlo_sharding_util::GroupShardingOnDims(sharding, sharding_dims);
   auto reference_grouped =
@@ -1524,6 +1812,9 @@ HloSharding AlignShardingOnDims(const HloSharding& sharding,
 
 Shape GetPerGroupBaseShape(const GroupedSharding& grouped_sharding,
                            const Shape& original_base_shape) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_40(mht_40_v, 1815, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "GetPerGroupBaseShape");
+
   auto result = original_base_shape;
   for (int64_t i = 0; i < grouped_sharding.group_dims.size(); ++i) {
     int64_t dim = grouped_sharding.group_dims[i];
@@ -1541,6 +1832,9 @@ namespace {
 HloInstruction* GetInGroupPartitionId(
     HloInstruction* partition_id,
     const std::vector<std::vector<int64_t>>& device_groups, SpmdBuilder* b) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_41(mht_41_v, 1835, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "GetInGroupPartitionId");
+
   int64_t total_devices = device_groups.size() * device_groups[0].size();
   std::vector<uint32_t> in_group_ids(total_devices);
   for (uint32_t i = 0; i < device_groups.size(); ++i) {
@@ -1559,14 +1853,23 @@ HloInstruction* GetInGroupPartitionId(
 SPMDCollectiveOpsCreator GetPerGroupCollectiveOpsCreator(
     const SPMDCollectiveOpsCreator& creator,
     const std::vector<std::vector<int64_t>>& device_groups) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_42(mht_42_v, 1856, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "GetPerGroupCollectiveOpsCreator");
+
   SPMDCollectiveOpsCreator result;
   result.create_partition_id = [creator, device_groups](SpmdBuilder* b) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_43(mht_43_v, 1861, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "lambda");
+
     return GetInGroupPartitionId(creator.create_partition_id(b), device_groups,
                                  b);
   };
   auto expand_partition_groups =
       [device_groups](
           const std::vector<std::vector<int64_t>>& partition_subgroups) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_44(mht_44_v, 1870, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "lambda");
+
         if (partition_subgroups.empty()) {
           return device_groups;
         }
@@ -1589,6 +1892,9 @@ SPMDCollectiveOpsCreator GetPerGroupCollectiveOpsCreator(
           SpmdBuilder* b, HloInstruction* operand, HloComputation* reduction,
           const std::vector<std::vector<int64_t>>& partition_subgroups,
           int64_t channel_id) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_45(mht_45_v, 1895, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "lambda");
+
         return creator.create_cross_partition_all_reduce(
             b, operand, reduction, expand_partition_groups(partition_subgroups),
             channel_id);
@@ -1598,6 +1904,9 @@ SPMDCollectiveOpsCreator GetPerGroupCollectiveOpsCreator(
           SpmdBuilder* b, HloInstruction* operand,
           std::vector<std::pair<int64_t, int64_t>>& src_dst_pairs,
           int64_t next_channel_id) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_46(mht_46_v, 1907, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "lambda");
+
         std::vector<std::pair<int64_t, int64_t>> expanded_pairs(
             src_dst_pairs.size() * device_groups.size());
         for (int64_t g = 0; g < device_groups.size(); ++g) {
@@ -1616,6 +1925,9 @@ SPMDCollectiveOpsCreator GetPerGroupCollectiveOpsCreator(
           SpmdBuilder* b, absl::Span<HloInstruction* const> operands,
           const std::vector<std::vector<int64_t>>& partition_subgroups,
           int64_t channel_id, absl::optional<int64_t> split_dimension) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_47(mht_47_v, 1928, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "lambda");
+
         return creator.create_cross_partition_all_to_all(
             b, operands, expand_partition_groups(partition_subgroups),
             channel_id, split_dimension);
@@ -1626,6 +1938,9 @@ SPMDCollectiveOpsCreator GetPerGroupCollectiveOpsCreator(
             SpmdBuilder* b, HloInstruction* operand, const Shape& ag_shape,
             const std::vector<std::vector<int64_t>>& partition_subgroups,
             int64_t channel_id, int64_t all_gather_dimension) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_48(mht_48_v, 1941, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "lambda");
+
           return creator.create_cross_partition_all_gather(
               b, operand, ag_shape,
               expand_partition_groups(partition_subgroups), channel_id,
@@ -1640,6 +1955,9 @@ SPMDCollectiveOpsCreator GetPerGroupCollectiveOpsCreator(
 PartitionedHlo::PartitioningState CreatePerGroupPartitioningState(
     const PartitionedHlo::PartitioningState& state,
     const std::vector<std::vector<int64_t>>& device_groups, SpmdBuilder* b) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_49(mht_49_v, 1958, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "CreatePerGroupPartitioningState");
+
   auto result = state;
   result.collective_ops_creator = GetPerGroupCollectiveOpsCreator(
       state.collective_ops_creator, device_groups);
@@ -1664,6 +1982,9 @@ HloInstruction* PerGroupSliceFromReplicated(
     const std::vector<std::vector<int64_t>>& device_groups,
     absl::Span<const int64_t> group_dims,
     absl::Span<const int64_t> group_dim_sizes, SpmdBuilder* b) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_50(mht_50_v, 1985, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "PerGroupSliceFromReplicated");
+
   std::vector<uint32_t> group_ids(device_groups.size() *
                                   device_groups[0].size());
   for (int64_t g = 0; g < device_groups.size(); ++g) {
@@ -1766,6 +2087,9 @@ HloSharding CreateMatchingShardingOnDims(
     const Shape& target_shape, const HloSharding& source_sharding,
     absl::Span<const int64_t> target_dims,
     absl::Span<const int64_t> source_dims) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_51(mht_51_v, 2090, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "CreateMatchingShardingOnDims");
+
   CHECK(target_dims.size() == source_dims.size())
       << "Expected 1:1 match between parallel dimensions";
   if (source_sharding.IsReplicated()) {
@@ -1907,6 +2231,9 @@ GatherOperandsShardedAcrossParallelDims(
 int64_t FindRotateRightPattern(const HloInstruction* concat,
                                const HloInstruction* lhs,
                                const HloInstruction* rhs) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_52(mht_52_v, 2234, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "FindRotateRightPattern");
+
   if (lhs->opcode() != HloOpcode::kSlice ||
       rhs->opcode() != HloOpcode::kSlice ||
       lhs->operand(0) != rhs->operand(0)) {
@@ -1935,6 +2262,9 @@ absl::optional<PadWithWrapPattern> FindPadWithWrapPattern(
   // Skip elementwise unary operations applied to inst, returning
   // a list of applied operations that were skipped.
   auto skip_elementwise_ops = [&](const HloInstruction* inst) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitioner_utilDTcc mht_53(mht_53_v, 2265, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner_util.cc", "lambda");
+
     std::vector<const HloInstruction*> modifiers;
     while (inst->IsElementwise() && inst->operand_count() == 1 &&
            inst->user_count() == 1) {

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -71,10 +239,17 @@ namespace toco {
 
 namespace {
 bool HasAttr(const NodeDef& node, const std::string& attr_name) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("attr_name: \"" + attr_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_0(mht_0_v, 243, "", "./tensorflow/lite/toco/import_tensorflow.cc", "HasAttr");
+
   return node.attr().count(attr_name) > 0;
 }
 
 bool HasWildcardDimension(const TensorShapeProto& shape) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_1(mht_1_v, 250, "", "./tensorflow/lite/toco/import_tensorflow.cc", "HasWildcardDimension");
+
   for (const auto& dim : shape.dim()) {
     if (dim.size() == -1) return true;
   }
@@ -83,6 +258,10 @@ bool HasWildcardDimension(const TensorShapeProto& shape) {
 
 const std::string& GetStringAttr(const NodeDef& node,
                                  const std::string& attr_name) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("attr_name: \"" + attr_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_2(mht_2_v, 262, "", "./tensorflow/lite/toco/import_tensorflow.cc", "GetStringAttr");
+
   CHECK(HasAttr(node, attr_name));
   const auto& attr = node.attr().at(attr_name);
   CHECK_EQ(attr.value_case(), AttrValue::kS);
@@ -90,6 +269,10 @@ const std::string& GetStringAttr(const NodeDef& node,
 }
 
 int64_t GetIntAttr(const NodeDef& node, const std::string& attr_name) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("attr_name: \"" + attr_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_3(mht_3_v, 273, "", "./tensorflow/lite/toco/import_tensorflow.cc", "GetIntAttr");
+
   CHECK(HasAttr(node, attr_name)) << attr_name << " not found in:\n"
                                   << node.DebugString();
   const auto& attr = node.attr().at(attr_name);
@@ -98,6 +281,10 @@ int64_t GetIntAttr(const NodeDef& node, const std::string& attr_name) {
 }
 
 float GetFloatAttr(const NodeDef& node, const std::string& attr_name) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("attr_name: \"" + attr_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_4(mht_4_v, 285, "", "./tensorflow/lite/toco/import_tensorflow.cc", "GetFloatAttr");
+
   CHECK(HasAttr(node, attr_name));
   const auto& attr = node.attr().at(attr_name);
   CHECK_EQ(attr.value_case(), AttrValue::kF);
@@ -105,6 +292,10 @@ float GetFloatAttr(const NodeDef& node, const std::string& attr_name) {
 }
 
 bool GetBoolAttr(const NodeDef& node, const std::string& attr_name) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("attr_name: \"" + attr_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_5(mht_5_v, 296, "", "./tensorflow/lite/toco/import_tensorflow.cc", "GetBoolAttr");
+
   CHECK(HasAttr(node, attr_name));
   const auto& attr = node.attr().at(attr_name);
   CHECK_EQ(attr.value_case(), AttrValue::kB);
@@ -113,6 +304,10 @@ bool GetBoolAttr(const NodeDef& node, const std::string& attr_name) {
 
 tensorflow::DataType GetDataTypeAttr(const NodeDef& node,
                                      const std::string& attr_name) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("attr_name: \"" + attr_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_6(mht_6_v, 308, "", "./tensorflow/lite/toco/import_tensorflow.cc", "GetDataTypeAttr");
+
   CHECK(HasAttr(node, attr_name));
   const auto& attr = node.attr().at(attr_name);
   CHECK_EQ(attr.value_case(), AttrValue::kType);
@@ -121,6 +316,10 @@ tensorflow::DataType GetDataTypeAttr(const NodeDef& node,
 
 const TensorShapeProto& GetShapeAttr(const NodeDef& node,
                                      const std::string& attr_name) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("attr_name: \"" + attr_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_7(mht_7_v, 320, "", "./tensorflow/lite/toco/import_tensorflow.cc", "GetShapeAttr");
+
   CHECK(HasAttr(node, attr_name));
   const auto& attr = node.attr().at(attr_name);
   CHECK_EQ(attr.value_case(), AttrValue::kShape);
@@ -129,6 +328,10 @@ const TensorShapeProto& GetShapeAttr(const NodeDef& node,
 
 const TensorProto& GetTensorAttr(const NodeDef& node,
                                  const std::string& attr_name) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("attr_name: \"" + attr_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_8(mht_8_v, 332, "", "./tensorflow/lite/toco/import_tensorflow.cc", "GetTensorAttr");
+
   CHECK(HasAttr(node, attr_name)) << "No attr named '" << attr_name << "'";
   const auto& attr = node.attr().at(attr_name);
   CHECK_EQ(attr.value_case(), AttrValue::kTensor);
@@ -137,6 +340,10 @@ const TensorProto& GetTensorAttr(const NodeDef& node,
 
 const AttrValue::ListValue& GetListAttr(const NodeDef& node,
                                         const std::string& attr_name) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("attr_name: \"" + attr_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_9(mht_9_v, 344, "", "./tensorflow/lite/toco/import_tensorflow.cc", "GetListAttr");
+
   CHECK(HasAttr(node, attr_name));
   const auto& attr = node.attr().at(attr_name);
   CHECK_EQ(attr.value_case(), AttrValue::kList);
@@ -146,6 +353,11 @@ const AttrValue::ListValue& GetListAttr(const NodeDef& node,
 tensorflow::Status CheckOptionalAttr(const NodeDef& node,
                                      const std::string& attr_name,
                                      const std::string& expected_value) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("attr_name: \"" + attr_name + "\"");
+   mht_10_v.push_back("expected_value: \"" + expected_value + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_10(mht_10_v, 358, "", "./tensorflow/lite/toco/import_tensorflow.cc", "CheckOptionalAttr");
+
   if (HasAttr(node, attr_name)) {
     const std::string& value = GetStringAttr(node, attr_name);
     if (value != expected_value) {
@@ -160,6 +372,10 @@ tensorflow::Status CheckOptionalAttr(const NodeDef& node,
 tensorflow::Status CheckOptionalAttr(
     const NodeDef& node, const std::string& attr_name,
     const tensorflow::DataType& expected_value) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("attr_name: \"" + attr_name + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_11(mht_11_v, 376, "", "./tensorflow/lite/toco/import_tensorflow.cc", "CheckOptionalAttr");
+
   if (HasAttr(node, attr_name)) {
     const tensorflow::DataType& value = GetDataTypeAttr(node, attr_name);
     if (value != expected_value) {
@@ -174,12 +390,19 @@ tensorflow::Status CheckOptionalAttr(
 template <typename T1, typename T2>
 tensorflow::Status ExpectValue(const T1& v1, const T2& v2,
                                const std::string& description) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("description: \"" + description + "\"");
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_12(mht_12_v, 394, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ExpectValue");
+
   if (v1 == v2) return tensorflow::Status::OK();
   return tensorflow::errors::InvalidArgument(absl::StrCat(
       "Unexpected ", description, ": got ", v1, ", expected ", v2));
 }
 
 ArrayDataType ConvertDataType(tensorflow::DataType dtype) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_13(mht_13_v, 403, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertDataType");
+
   if (dtype == DT_UINT8)
     return ArrayDataType::kUint8;
   else if (dtype == DT_FLOAT)
@@ -209,6 +432,9 @@ tensorflow::Status ImportShape(
     const TFLITE_PROTO_NS::RepeatedPtrField<tensorflow::TensorShapeProto_Dim>&
         input_dims,
     int* input_flat_size, Shape* shape) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_14(mht_14_v, 435, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ImportShape");
+
   std::vector<int> input_dims_only_sizes;
   bool zero_sized_shape = false;
   for (auto& d : input_dims) {
@@ -253,11 +479,26 @@ struct TensorTraits;
 
 template <>
 struct TensorTraits<float> {
-  static int size(const TensorProto& p) { return p.float_val_size(); }
-  static float get(const TensorProto& p, int i) { return p.float_val(i); }
-  static std::string accessor_name() { return "float_val"; }
-  static std::string type_name() { return "float"; }
+  static int size(const TensorProto& p) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_15(mht_15_v, 483, "", "./tensorflow/lite/toco/import_tensorflow.cc", "size");
+ return p.float_val_size(); }
+  static float get(const TensorProto& p, int i) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_16(mht_16_v, 487, "", "./tensorflow/lite/toco/import_tensorflow.cc", "get");
+ return p.float_val(i); }
+  static std::string accessor_name() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_17(mht_17_v, 491, "", "./tensorflow/lite/toco/import_tensorflow.cc", "accessor_name");
+ return "float_val"; }
+  static std::string type_name() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_18(mht_18_v, 495, "", "./tensorflow/lite/toco/import_tensorflow.cc", "type_name");
+ return "float"; }
   static void CopyFromContent(const TensorProto& p, std::vector<float>* data) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_19(mht_19_v, 499, "", "./tensorflow/lite/toco/import_tensorflow.cc", "CopyFromContent");
+
     toco::port::CopyToBuffer(p.tensor_content(),
                              reinterpret_cast<char*>(data->data()));
   }
@@ -265,12 +506,27 @@ struct TensorTraits<float> {
 
 template <>
 struct TensorTraits<uint8_t> {
-  static int size(const TensorProto& p) { return p.int_val_size(); }
-  static uint8_t get(const TensorProto& p, int i) { return p.int_val(i); }
-  static std::string accessor_name() { return "int_val"; }
-  static std::string type_name() { return "uint8"; }
+  static int size(const TensorProto& p) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_20(mht_20_v, 510, "", "./tensorflow/lite/toco/import_tensorflow.cc", "size");
+ return p.int_val_size(); }
+  static uint8_t get(const TensorProto& p, int i) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_21(mht_21_v, 514, "", "./tensorflow/lite/toco/import_tensorflow.cc", "get");
+ return p.int_val(i); }
+  static std::string accessor_name() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_22(mht_22_v, 518, "", "./tensorflow/lite/toco/import_tensorflow.cc", "accessor_name");
+ return "int_val"; }
+  static std::string type_name() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_23(mht_23_v, 522, "", "./tensorflow/lite/toco/import_tensorflow.cc", "type_name");
+ return "uint8"; }
   static void CopyFromContent(const TensorProto& p,
                               std::vector<uint8_t>* data) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_24(mht_24_v, 527, "", "./tensorflow/lite/toco/import_tensorflow.cc", "CopyFromContent");
+
     toco::port::CopyToBuffer(p.tensor_content(),
                              reinterpret_cast<char*>(data->data()));
   }
@@ -278,15 +534,27 @@ struct TensorTraits<uint8_t> {
 
 template <>
 struct TensorTraits<std::complex<float>> {
-  static int size(const TensorProto& p) { return p.scomplex_val_size() / 2; }
+  static int size(const TensorProto& p) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_25(mht_25_v, 538, "", "./tensorflow/lite/toco/import_tensorflow.cc", "size");
+ return p.scomplex_val_size() / 2; }
   static std::complex<float> get(const TensorProto& p, int i) {
     return std::complex<float>(p.scomplex_val(2 * i),
                                p.scomplex_val(2 * i + 1));
   }
-  static std::string accessor_name() { return "scomplex_val"; }
-  static std::string type_name() { return "complex64"; }
+  static std::string accessor_name() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_26(mht_26_v, 546, "", "./tensorflow/lite/toco/import_tensorflow.cc", "accessor_name");
+ return "scomplex_val"; }
+  static std::string type_name() {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_27(mht_27_v, 550, "", "./tensorflow/lite/toco/import_tensorflow.cc", "type_name");
+ return "complex64"; }
   static void CopyFromContent(const TensorProto& p,
                               std::vector<std::complex<float>>* data) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_28(mht_28_v, 555, "", "./tensorflow/lite/toco/import_tensorflow.cc", "CopyFromContent");
+
     toco::port::CopyToBuffer(p.tensor_content(),
                              reinterpret_cast<char*>(data->data()));
   }
@@ -294,11 +562,26 @@ struct TensorTraits<std::complex<float>> {
 
 template <>
 struct TensorTraits<int32> {
-  static int size(const TensorProto& p) { return p.int_val_size(); }
-  static int32 get(const TensorProto& p, int i) { return p.int_val(i); }
-  static std::string accessor_name() { return "int_val"; }
-  static std::string type_name() { return "int32"; }
+  static int size(const TensorProto& p) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_29(mht_29_v, 566, "", "./tensorflow/lite/toco/import_tensorflow.cc", "size");
+ return p.int_val_size(); }
+  static int32 get(const TensorProto& p, int i) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_30(mht_30_v, 570, "", "./tensorflow/lite/toco/import_tensorflow.cc", "get");
+ return p.int_val(i); }
+  static std::string accessor_name() {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_31(mht_31_v, 574, "", "./tensorflow/lite/toco/import_tensorflow.cc", "accessor_name");
+ return "int_val"; }
+  static std::string type_name() {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_32(mht_32_v, 578, "", "./tensorflow/lite/toco/import_tensorflow.cc", "type_name");
+ return "int32"; }
   static void CopyFromContent(const TensorProto& p, std::vector<int32>* data) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_33(mht_33_v, 582, "", "./tensorflow/lite/toco/import_tensorflow.cc", "CopyFromContent");
+
     toco::port::CopyToBuffer(p.tensor_content(),
                              reinterpret_cast<char*>(data->data()));
   }
@@ -306,11 +589,26 @@ struct TensorTraits<int32> {
 
 template <>
 struct TensorTraits<uint32> {
-  static int size(const TensorProto& p) { return p.uint32_val_size(); }
-  static int32 get(const TensorProto& p, int i) { return p.uint32_val(i); }
-  static std::string accessor_name() { return "uint32_val"; }
-  static std::string type_name() { return "uint32"; }
+  static int size(const TensorProto& p) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_34(mht_34_v, 593, "", "./tensorflow/lite/toco/import_tensorflow.cc", "size");
+ return p.uint32_val_size(); }
+  static int32 get(const TensorProto& p, int i) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_35(mht_35_v, 597, "", "./tensorflow/lite/toco/import_tensorflow.cc", "get");
+ return p.uint32_val(i); }
+  static std::string accessor_name() {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_36(mht_36_v, 601, "", "./tensorflow/lite/toco/import_tensorflow.cc", "accessor_name");
+ return "uint32_val"; }
+  static std::string type_name() {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_37(mht_37_v, 605, "", "./tensorflow/lite/toco/import_tensorflow.cc", "type_name");
+ return "uint32"; }
   static void CopyFromContent(const TensorProto& p, std::vector<uint32>* data) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_38(mht_38_v, 609, "", "./tensorflow/lite/toco/import_tensorflow.cc", "CopyFromContent");
+
     toco::port::CopyToBuffer(p.tensor_content(),
                              reinterpret_cast<char*>(data->data()));
   }
@@ -318,12 +616,27 @@ struct TensorTraits<uint32> {
 
 template <>
 struct TensorTraits<int64_t> {
-  static int size(const TensorProto& p) { return p.int64_val_size(); }
-  static int64_t get(const TensorProto& p, int i) { return p.int64_val(i); }
-  static std::string accessor_name() { return "int64_val"; }
-  static std::string type_name() { return "int64"; }
+  static int size(const TensorProto& p) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_39(mht_39_v, 620, "", "./tensorflow/lite/toco/import_tensorflow.cc", "size");
+ return p.int64_val_size(); }
+  static int64_t get(const TensorProto& p, int i) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_40(mht_40_v, 624, "", "./tensorflow/lite/toco/import_tensorflow.cc", "get");
+ return p.int64_val(i); }
+  static std::string accessor_name() {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_41(mht_41_v, 628, "", "./tensorflow/lite/toco/import_tensorflow.cc", "accessor_name");
+ return "int64_val"; }
+  static std::string type_name() {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_42(mht_42_v, 632, "", "./tensorflow/lite/toco/import_tensorflow.cc", "type_name");
+ return "int64"; }
   static void CopyFromContent(const TensorProto& p,
                               std::vector<int64_t>* data) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_43(mht_43_v, 637, "", "./tensorflow/lite/toco/import_tensorflow.cc", "CopyFromContent");
+
     toco::port::CopyToBuffer(p.tensor_content(),
                              reinterpret_cast<char*>(data->data()));
   }
@@ -331,11 +644,26 @@ struct TensorTraits<int64_t> {
 
 template <>
 struct TensorTraits<bool> {
-  static int size(const TensorProto& p) { return p.bool_val_size(); }
-  static bool get(const TensorProto& p, int i) { return p.bool_val(i); }
-  static std::string accessor_name() { return "bool_val"; }
-  static std::string type_name() { return "bool"; }
+  static int size(const TensorProto& p) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_44(mht_44_v, 648, "", "./tensorflow/lite/toco/import_tensorflow.cc", "size");
+ return p.bool_val_size(); }
+  static bool get(const TensorProto& p, int i) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_45(mht_45_v, 652, "", "./tensorflow/lite/toco/import_tensorflow.cc", "get");
+ return p.bool_val(i); }
+  static std::string accessor_name() {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_46(mht_46_v, 656, "", "./tensorflow/lite/toco/import_tensorflow.cc", "accessor_name");
+ return "bool_val"; }
+  static std::string type_name() {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_47(mht_47_v, 660, "", "./tensorflow/lite/toco/import_tensorflow.cc", "type_name");
+ return "bool"; }
   static void CopyFromContent(const TensorProto& p, std::vector<bool>* data) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_48(mht_48_v, 664, "", "./tensorflow/lite/toco/import_tensorflow.cc", "CopyFromContent");
+
     std::vector<char> buf(p.tensor_content().size());
     toco::port::CopyToBuffer(p.tensor_content(), buf.data());
     for (int i = 0; i < p.tensor_content().size(); i++) {
@@ -348,6 +676,9 @@ template <typename T>
 tensorflow::Status ImportTensorData(const TensorProto& input_tensor,
                                     int input_flat_size,
                                     std::vector<T>* output_data) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_49(mht_49_v, 679, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ImportTensorData");
+
   CHECK_GE(output_data->size(), input_flat_size);
   int num_elements_in_tensor = TensorTraits<T>::size(input_tensor);
   if (num_elements_in_tensor == input_flat_size) {
@@ -386,6 +717,9 @@ tensorflow::Status ImportTensorData(const TensorProto& input_tensor,
 
 tensorflow::Status ImportFloatArray(const TensorProto& input_tensor,
                                     Array* output_array) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_50(mht_50_v, 720, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ImportFloatArray");
+
   CHECK_EQ(input_tensor.dtype(), DT_FLOAT);
   const auto& input_shape = input_tensor.tensor_shape();
   CHECK_LE(input_shape.dim_size(), 6);
@@ -404,6 +738,9 @@ tensorflow::Status ImportFloatArray(const TensorProto& input_tensor,
 
 tensorflow::Status ImportComplex64Array(const TensorProto& input_tensor,
                                         Array* output_array) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_51(mht_51_v, 741, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ImportComplex64Array");
+
   CHECK_EQ(input_tensor.dtype(), DT_COMPLEX64);
   const auto& input_shape = input_tensor.tensor_shape();
   CHECK_LE(input_shape.dim_size(), 4);
@@ -422,6 +759,9 @@ tensorflow::Status ImportComplex64Array(const TensorProto& input_tensor,
 
 tensorflow::Status ImportQuint8Array(const TensorProto& input_tensor,
                                      Array* output_array) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_52(mht_52_v, 762, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ImportQuint8Array");
+
   CHECK_EQ(input_tensor.dtype(), DT_QUINT8);
   const auto& input_shape = input_tensor.tensor_shape();
   CHECK_LE(input_shape.dim_size(), 6);
@@ -439,6 +779,9 @@ tensorflow::Status ImportQuint8Array(const TensorProto& input_tensor,
 
 tensorflow::Status ImportInt32Array(const TensorProto& input_tensor,
                                     Array* output_array) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_53(mht_53_v, 782, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ImportInt32Array");
+
   CHECK_EQ(input_tensor.dtype(), DT_INT32);
   const auto& input_shape = input_tensor.tensor_shape();
   CHECK_LE(input_shape.dim_size(), 6);
@@ -456,6 +799,9 @@ tensorflow::Status ImportInt32Array(const TensorProto& input_tensor,
 
 tensorflow::Status ImportUint32Array(const TensorProto& input_tensor,
                                      Array* output_array) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_54(mht_54_v, 802, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ImportUint32Array");
+
   CHECK_EQ(input_tensor.dtype(), DT_UINT32);
   const auto& input_shape = input_tensor.tensor_shape();
   CHECK_LE(input_shape.dim_size(), 6);
@@ -473,6 +819,9 @@ tensorflow::Status ImportUint32Array(const TensorProto& input_tensor,
 
 tensorflow::Status ImportInt64Array(const TensorProto& input_tensor,
                                     Array* output_array) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_55(mht_55_v, 822, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ImportInt64Array");
+
   CHECK_EQ(input_tensor.dtype(), DT_INT64);
   const auto& input_shape = input_tensor.tensor_shape();
   CHECK_LE(input_shape.dim_size(), 6);
@@ -490,6 +839,9 @@ tensorflow::Status ImportInt64Array(const TensorProto& input_tensor,
 
 tensorflow::Status ImportBoolArray(const TensorProto& input_tensor,
                                    Array* output_array) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_56(mht_56_v, 842, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ImportBoolArray");
+
   CHECK_EQ(input_tensor.dtype(), DT_BOOL);
   const auto& input_shape = input_tensor.tensor_shape();
   CHECK_LE(input_shape.dim_size(), 6);
@@ -517,6 +869,9 @@ tensorflow::Status ImportBoolArray(const TensorProto& input_tensor,
 
 tensorflow::Status ImportStringArray(const TensorProto& input_tensor,
                                      Array* output_array) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_57(mht_57_v, 872, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ImportStringArray");
+
   CHECK_EQ(input_tensor.dtype(), DT_STRING);
   const auto& input_shape = input_tensor.tensor_shape();
   CHECK_LE(input_shape.dim_size(), 6);
@@ -546,6 +901,9 @@ tensorflow::Status ImportStringArray(const TensorProto& input_tensor,
 // non-control-dependency inputs.
 int GetInputsCount(const NodeDef& node,
                    const TensorFlowImportFlags& tf_import_flags) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_58(mht_58_v, 904, "", "./tensorflow/lite/toco/import_tensorflow.cc", "GetInputsCount");
+
   if (tf_import_flags.drop_control_dependency) {
     for (size_t i = 0; i < node.input_size(); ++i) {
       if (node.input(i)[0] == '^') {
@@ -559,6 +917,9 @@ int GetInputsCount(const NodeDef& node,
 tensorflow::Status CheckInputsCount(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     int expected_input_count) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_59(mht_59_v, 920, "", "./tensorflow/lite/toco/import_tensorflow.cc", "CheckInputsCount");
+
   if (GetInputsCount(node, tf_import_flags) != expected_input_count) {
     return tensorflow::errors::FailedPrecondition(
         node.op(), " node expects ", expected_input_count,
@@ -571,6 +932,9 @@ template <ArrayDataType T>
 std::string CreateConstArray(
     Model* model, std::string const& name,
     std::vector<typename toco::DataType<T>> const& data) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_60(mht_60_v, 935, "", "./tensorflow/lite/toco/import_tensorflow.cc", "CreateConstArray");
+
   // Utility function to create a const 1D array, useful for input parameters.
   std::string array_name = toco::AvailableArrayName(*model, name);
   auto& array = model->GetOrCreateArray(array_name);
@@ -602,14 +966,23 @@ std::string CreateConstArray(
 // TODO(b/117327937): Implement all Toco-supported ops in TFLite, and remove
 // this function.
 void RetainTensorFlowNodeDef(const NodeDef& node, Operator* op) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_61(mht_61_v, 969, "", "./tensorflow/lite/toco/import_tensorflow.cc", "RetainTensorFlowNodeDef");
+
   node.SerializeToString(&op->tensorflow_node_def);
 }
 
 void GetOutputNamesFromNodeDef(const NodeDef& node,
                                const tensorflow::OpDef& op_def,
                                TensorFlowUnsupportedOperator* op) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_62(mht_62_v, 978, "", "./tensorflow/lite/toco/import_tensorflow.cc", "GetOutputNamesFromNodeDef");
+
   int next_output = 0;
   auto add_output = [&node, &next_output, op]() {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_63(mht_63_v, 983, "", "./tensorflow/lite/toco/import_tensorflow.cc", "lambda");
+
     if (next_output == 0) {
       op->outputs.push_back(node.name());  // Implicit :0.
     } else {
@@ -643,8 +1016,14 @@ void GetOutputNamesFromNodeDef(const NodeDef& node,
 void GetOutputTypesFromNodeDef(const NodeDef& node,
                                const tensorflow::OpDef& op_def,
                                TensorFlowUnsupportedOperator* op) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_64(mht_64_v, 1019, "", "./tensorflow/lite/toco/import_tensorflow.cc", "GetOutputTypesFromNodeDef");
+
   // The given type to the op, or clear the types if invalid.
   auto add_type = [&node, op](tensorflow::DataType type) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_65(mht_65_v, 1024, "", "./tensorflow/lite/toco/import_tensorflow.cc", "lambda");
+
     if (type == tensorflow::DT_INVALID) {
       LOG(WARNING) << "Op node missing output type attribute: " << node.name();
       op->output_data_types.clear();
@@ -656,6 +1035,9 @@ void GetOutputTypesFromNodeDef(const NodeDef& node,
   // Retrieve the data type according to the OpDef definition: either the
   // "type" or "type_attr" field will be set.
   auto get_type = [&node](const tensorflow::OpDef::ArgDef& a) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_66(mht_66_v, 1038, "", "./tensorflow/lite/toco/import_tensorflow.cc", "lambda");
+
     if (a.type() != tensorflow::DT_INVALID) {
       return a.type();
     } else if (HasAttr(node, a.type_attr())) {
@@ -692,6 +1074,9 @@ void GetOutputTypesFromNodeDef(const NodeDef& node,
 tensorflow::Status ConvertUnsupportedOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_67(mht_67_v, 1077, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertUnsupportedOperator");
+
   // Names of special attributes in TF graph that are used by Toco.
   static constexpr char kAttrOutputQuantized[] = "_output_quantized";
   static constexpr char kAttrOutputTypes[] = "_output_types";
@@ -780,6 +1165,9 @@ tensorflow::Status ConvertUnsupportedOperator(
 tensorflow::Status ConvertConstOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_68(mht_68_v, 1168, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertConstOperator");
+
   CHECK_EQ(node.op(), "Const");
   const auto& tensor = GetTensorAttr(node, "value");
   const auto dtype = GetDataTypeAttr(node, "dtype");
@@ -836,6 +1224,9 @@ tensorflow::Status ConvertConstOperator(
 tensorflow::Status ConvertConvOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_69(mht_69_v, 1227, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertConvOperator");
+
   CHECK_EQ(node.op(), "Conv2D");
   TF_RETURN_IF_ERROR(CheckInputsCount(node, tf_import_flags, 2));
 
@@ -917,6 +1308,9 @@ tensorflow::Status ConvertConvOperator(
 tensorflow::Status ConvertDepthwiseConvOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_70(mht_70_v, 1311, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertDepthwiseConvOperator");
+
   CHECK_EQ(node.op(), "DepthwiseConv2dNative");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 2));
 
@@ -995,6 +1389,9 @@ tensorflow::Status ConvertDepthwiseConvOperator(
 tensorflow::Status ConvertDepthToSpaceOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_71(mht_71_v, 1392, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertDepthToSpaceOperator");
+
   CHECK_EQ(node.op(), "DepthToSpace");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 1));
 
@@ -1018,6 +1415,9 @@ tensorflow::Status ConvertDepthToSpaceOperator(
 tensorflow::Status ConvertSpaceToDepthOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_72(mht_72_v, 1418, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertSpaceToDepthOperator");
+
   CHECK_EQ(node.op(), "SpaceToDepth");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 1));
 
@@ -1041,6 +1441,9 @@ tensorflow::Status ConvertSpaceToDepthOperator(
 tensorflow::Status ConvertBiasAddOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_73(mht_73_v, 1444, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertBiasAddOperator");
+
   CHECK_EQ(node.op(), "BiasAdd");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 2));
 
@@ -1058,6 +1461,9 @@ tensorflow::Status ConvertBiasAddOperator(
 tensorflow::Status ConvertRandomUniform(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_74(mht_74_v, 1464, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertRandomUniform");
+
   CHECK_EQ(node.op(), "RandomUniform");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 1));
 
@@ -1076,6 +1482,9 @@ tensorflow::Status ConvertRandomUniform(
 tensorflow::Status ConvertIdentityOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_75(mht_75_v, 1485, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertIdentityOperator");
+
   CHECK(node.op() == "Identity" || node.op() == "CheckNumerics" ||
         node.op() == "PlaceholderWithDefault" || node.op() == "StopGradient" ||
         node.op() == "Snapshot" || node.op() == "EnsureShape");
@@ -1099,6 +1508,9 @@ tensorflow::Status ConvertIdentityOperator(
 tensorflow::Status ConvertIdentityNOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_76(mht_76_v, 1511, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertIdentityNOperator");
+
   CHECK_EQ(node.op(), "IdentityN");
   for (int i = 0; i < node.input_size(); ++i) {
     auto* op = new TensorFlowIdentityOperator;
@@ -1117,6 +1529,9 @@ tensorflow::Status ConvertIdentityNOperator(
 tensorflow::Status ConvertFakeQuantWithMinMaxArgs(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_77(mht_77_v, 1532, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertFakeQuantWithMinMaxArgs");
+
   CHECK_EQ(node.op(), "FakeQuantWithMinMaxArgs");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 1));
   auto* op = new FakeQuantOperator;
@@ -1138,6 +1553,9 @@ tensorflow::Status ConvertFakeQuantWithMinMaxArgs(
 tensorflow::Status ConvertFakeQuantWithMinMaxVars(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_78(mht_78_v, 1556, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertFakeQuantWithMinMaxVars");
+
   CHECK_EQ(node.op(), "FakeQuantWithMinMaxVars");
   const int num_inputs = GetInputsCount(node, tf_import_flags);
   QCHECK(num_inputs == 3 || num_inputs == 4)
@@ -1160,6 +1578,9 @@ tensorflow::Status ConvertFakeQuantWithMinMaxVars(
 tensorflow::Status ConvertSqueezeOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_79(mht_79_v, 1581, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertSqueezeOperator");
+
   CHECK_EQ(node.op(), "Squeeze");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 1));
   auto* op = new SqueezeOperator;
@@ -1181,6 +1602,9 @@ tensorflow::Status ConvertSqueezeOperator(
 tensorflow::Status ConvertSplitOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_80(mht_80_v, 1605, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertSplitOperator");
+
   CHECK_EQ(node.op(), "Split");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 2));
   auto* op = new TensorFlowSplitOperator;
@@ -1199,6 +1623,9 @@ tensorflow::Status ConvertSplitOperator(
 tensorflow::Status ConvertSplitVOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_81(mht_81_v, 1626, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertSplitVOperator");
+
   CHECK_EQ(node.op(), "SplitV");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 3));
   auto* op = new TensorFlowSplitVOperator;
@@ -1218,6 +1645,9 @@ tensorflow::Status ConvertSplitVOperator(
 tensorflow::Status ConvertSwitchOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_82(mht_82_v, 1648, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertSwitchOperator");
+
   CHECK_EQ(node.op(), "Switch");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 2));
   auto* op = new TensorFlowSwitchOperator;
@@ -1233,6 +1663,9 @@ tensorflow::Status ConvertSwitchOperator(
 tensorflow::Status ConvertSoftmaxOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_83(mht_83_v, 1666, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertSoftmaxOperator");
+
   CHECK_EQ(node.op(), "Softmax");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 1));
   const auto& input_name = node.input(0);
@@ -1253,6 +1686,9 @@ tensorflow::Status ConvertSoftmaxOperator(
 tensorflow::Status ConvertLRNOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_84(mht_84_v, 1689, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertLRNOperator");
+
   CHECK_EQ(node.op(), "LRN");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 1));
   const auto& input_name = node.input(0);
@@ -1270,6 +1706,9 @@ tensorflow::Status ConvertLRNOperator(
 tensorflow::Status ConvertMaxPoolOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_85(mht_85_v, 1709, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertMaxPoolOperator");
+
   CHECK_EQ(node.op(), "MaxPool");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 1));
   const auto& input_name = node.input(0);
@@ -1313,6 +1752,9 @@ tensorflow::Status ConvertMaxPoolOperator(
 tensorflow::Status ConvertAvgPoolOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_86(mht_86_v, 1755, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertAvgPoolOperator");
+
   CHECK_EQ(node.op(), "AvgPool");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 1));
   const auto& input_name = node.input(0);
@@ -1352,6 +1794,9 @@ tensorflow::Status ConvertAvgPoolOperator(
 tensorflow::Status ConvertBatchMatMulOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_87(mht_87_v, 1797, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertBatchMatMulOperator");
+
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 2));
 
   auto* batch_matmul = new BatchMatMulOperator;
@@ -1375,6 +1820,9 @@ tensorflow::Status ConvertBatchMatMulOperator(
 tensorflow::Status ConvertMatMulOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_88(mht_88_v, 1823, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertMatMulOperator");
+
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 2));
 
   CHECK(!HasAttr(node, "adjoint_a") ||
@@ -1399,6 +1847,9 @@ tensorflow::Status ConvertMatMulOperator(
 tensorflow::Status ConvertConcatOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_89(mht_89_v, 1850, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertConcatOperator");
+
   Operator* op = nullptr;
   if (node.op() == "Concat") {
     op = new TensorFlowConcatOperator;
@@ -1424,6 +1875,9 @@ tensorflow::Status ConvertConcatOperator(
 tensorflow::Status ConvertMirrorPadOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_90(mht_90_v, 1878, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertMirrorPadOperator");
+
   if (node.op() != "MirrorPad") {
     LOG(FATAL) << "Expected MirrorPad.";
   }
@@ -1459,6 +1913,9 @@ template <typename Op, int NumInputs, int NumOutputs, FlexSupport flex>
 tensorflow::Status ConvertSimpleOperatorGeneric(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_91(mht_91_v, 1916, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertSimpleOperatorGeneric");
+
   if (NumInputs != kAnyNumInputs) {
     TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, NumInputs));
   }
@@ -1487,6 +1944,9 @@ template <typename Op, int NumInputs, int NumOutputs>
 tensorflow::Status ConvertSimpleOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_92(mht_92_v, 1947, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertSimpleOperator");
+
   return ConvertSimpleOperatorGeneric<Op, NumInputs, NumOutputs, kFlexNotOk>(
       node, tf_import_flags, model_flags, model);
 }
@@ -1496,6 +1956,9 @@ template <typename Op, int NumInputs, int NumOutputs>
 tensorflow::Status ConvertSimpleOperatorFlexOk(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_93(mht_93_v, 1959, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertSimpleOperatorFlexOk");
+
   return ConvertSimpleOperatorGeneric<Op, NumInputs, NumOutputs, kFlexOk>(
       node, tf_import_flags, model_flags, model);
 }
@@ -1506,6 +1969,9 @@ tensorflow::Status ConvertSimpleOperatorFlexOk(
 tensorflow::Status ConditionallyConvertConstOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_94(mht_94_v, 1972, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConditionallyConvertConstOperator");
+
   // We avoid incomplete and zero shapes because the resulting arrays
   // are not completely compatible with Eager/TensorFlow.
   const auto& tensor = GetTensorAttr(node, "value");
@@ -1534,6 +2000,9 @@ tensorflow::Status ConditionallyConvertConstOperator(
 tensorflow::Status ConvertStridedSliceOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_95(mht_95_v, 2003, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertStridedSliceOperator");
+
   CHECK_EQ(node.op(), "StridedSlice");
   // TODO(soroosh): The 4th input (strides) should be e optional, to be
   // consistent with TF.
@@ -1563,6 +2032,9 @@ tensorflow::Status ConvertStridedSliceOperator(
 tensorflow::Status ConvertPlaceholderOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_96(mht_96_v, 2035, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertPlaceholderOperator");
+
   CHECK(node.op() == "Placeholder" || node.op() == "LegacyFedInput");
   if (node.op() == "Placeholder") {
     TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 0));
@@ -1603,12 +2075,18 @@ tensorflow::Status ConvertPlaceholderOperator(
 tensorflow::Status ConvertNoOpOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_97(mht_97_v, 2078, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertNoOpOperator");
+
   return tensorflow::Status::OK();
 }
 
 tensorflow::Status ConvertCastOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_98(mht_98_v, 2087, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertCastOperator");
+
   CHECK_EQ(node.op(), "Cast");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 1));
   const auto tf_src_dtype = GetDataTypeAttr(node, "SrcT");
@@ -1625,6 +2103,9 @@ tensorflow::Status ConvertCastOperator(
 tensorflow::Status ConvertFloorOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_99(mht_99_v, 2106, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertFloorOperator");
+
   CHECK_EQ(node.op(), "Floor");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 1));
   const auto data_type = GetDataTypeAttr(node, "T");
@@ -1639,6 +2120,9 @@ tensorflow::Status ConvertFloorOperator(
 tensorflow::Status ConvertCeilOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_100(mht_100_v, 2123, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertCeilOperator");
+
   CHECK_EQ(node.op(), "Ceil");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 1));
   const auto data_type = GetDataTypeAttr(node, "T");
@@ -1653,6 +2137,9 @@ tensorflow::Status ConvertCeilOperator(
 tensorflow::Status ConvertRoundOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_101(mht_101_v, 2140, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertRoundOperator");
+
   CHECK_EQ(node.op(), "Round");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 1));
   const auto data_type = GetDataTypeAttr(node, "T");
@@ -1667,6 +2154,9 @@ tensorflow::Status ConvertRoundOperator(
 tensorflow::Status ConvertGatherOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_102(mht_102_v, 2157, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertGatherOperator");
+
   CHECK(node.op() == "Gather" || node.op() == "GatherV2");
   if (node.op() == "Gather")
     TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 2));
@@ -1696,6 +2186,9 @@ tensorflow::Status ConvertGatherOperator(
 tensorflow::Status ConvertGatherNdOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_103(mht_103_v, 2189, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertGatherNdOperator");
+
   CHECK_EQ(node.op(), "GatherNd");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 2));
   const auto indices_data_type = GetDataTypeAttr(node, "Tindices");
@@ -1712,6 +2205,9 @@ template <typename Op>
 tensorflow::Status ConvertArgMinMaxOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_104(mht_104_v, 2208, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertArgMinMaxOperator");
+
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 2));
   const auto axis_data_type =
       HasAttr(node, "Tidx") ? GetDataTypeAttr(node, "Tidx") : DT_INT32;
@@ -1732,6 +2228,9 @@ tensorflow::Status ConvertArgMinMaxOperator(
 tensorflow::Status ConvertArgMaxOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_105(mht_105_v, 2231, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertArgMaxOperator");
+
   CHECK_EQ(node.op(), "ArgMax");
   return ConvertArgMinMaxOperator<ArgMaxOperator>(node, tf_import_flags,
                                                   model_flags, model);
@@ -1740,6 +2239,9 @@ tensorflow::Status ConvertArgMaxOperator(
 tensorflow::Status ConvertArgMinOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_106(mht_106_v, 2242, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertArgMinOperator");
+
   CHECK_EQ(node.op(), "ArgMin");
   return ConvertArgMinMaxOperator<ArgMinOperator>(node, tf_import_flags,
                                                   model_flags, model);
@@ -1748,6 +2250,9 @@ tensorflow::Status ConvertArgMinOperator(
 tensorflow::Status ConvertResizeBilinearOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_107(mht_107_v, 2253, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertResizeBilinearOperator");
+
   CHECK_EQ(node.op(), "ResizeBilinear");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 2));
   auto* op = new ResizeBilinearOperator;
@@ -1771,6 +2276,9 @@ tensorflow::Status ConvertResizeBilinearOperator(
 tensorflow::Status ConvertResizeNearestNeighborOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_108(mht_108_v, 2279, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertResizeNearestNeighborOperator");
+
   CHECK_EQ(node.op(), "ResizeNearestNeighbor");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 2));
   auto* op = new ResizeNearestNeighborOperator;
@@ -1794,6 +2302,9 @@ tensorflow::Status ConvertResizeNearestNeighborOperator(
 tensorflow::Status ConvertBatchNormWithGlobalNormalizationOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_109(mht_109_v, 2305, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertBatchNormWithGlobalNormalizationOperator");
+
   CHECK_EQ(node.op(), "BatchNormWithGlobalNormalization");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 5));
 
@@ -1844,6 +2355,9 @@ tensorflow::Status ConvertBatchNormWithGlobalNormalizationOperator(
 tensorflow::Status ConvertFusedBatchNormOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_110(mht_110_v, 2358, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertFusedBatchNormOperator");
+
   CHECK((node.op() == "FusedBatchNorm") || (node.op() == "FusedBatchNormV3"));
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 5));
 
@@ -1899,6 +2413,9 @@ tensorflow::Status ConvertFusedBatchNormOperator(
 tensorflow::Status ConvertSpaceToBatchNDOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_111(mht_111_v, 2416, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertSpaceToBatchNDOperator");
+
   CHECK_EQ(node.op(), "SpaceToBatchND");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 3));
   CHECK_EQ(GetDataTypeAttr(node, "Tblock_shape"), DT_INT32);
@@ -1915,6 +2432,9 @@ tensorflow::Status ConvertSpaceToBatchNDOperator(
 tensorflow::Status ConvertBatchToSpaceNDOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_112(mht_112_v, 2435, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertBatchToSpaceNDOperator");
+
   CHECK_EQ(node.op(), "BatchToSpaceND");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 3));
   CHECK_EQ(GetDataTypeAttr(node, "Tblock_shape"), DT_INT32);
@@ -1932,6 +2452,9 @@ template <typename T>
 tensorflow::Status ConvertReduceOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_113_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_113(mht_113_v, 2455, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertReduceOperator");
+
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 2));
   auto* op = new T;
   op->inputs.push_back(node.input(0));
@@ -1950,6 +2473,9 @@ tensorflow::Status ConvertReduceOperator(
 tensorflow::Status ConvertSvdfOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_114_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_114(mht_114_v, 2476, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertSvdfOperator");
+
   CHECK_EQ(node.op(), "Svdf");
   const int input_size = GetInputsCount(node, tf_import_flags);
   QCHECK(input_size == 4 || input_size == 5)
@@ -1980,6 +2506,9 @@ tensorflow::Status ConvertSvdfOperator(
 tensorflow::Status ConvertTransposeConvOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_115(mht_115_v, 2509, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertTransposeConvOperator");
+
   CHECK_EQ(node.op(), "Conv2DBackpropInput");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 3));
   auto* op = new TransposeConvOperator;
@@ -2051,6 +2580,9 @@ tensorflow::Status ConvertTransposeConvOperator(
 tensorflow::Status ConvertRangeOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_116_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_116(mht_116_v, 2583, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertRangeOperator");
+
   CHECK_EQ(node.op(), "Range");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 3));
   auto* op = new RangeOperator;
@@ -2076,6 +2608,9 @@ tensorflow::Status ConvertRangeOperator(
 tensorflow::Status ConvertPackOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_117(mht_117_v, 2611, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertPackOperator");
+
   CHECK_EQ(node.op(), "Pack");
   auto op = absl::make_unique<PackOperator>();
   const int num_inputs = GetInputsCount(node, tf_import_flags);
@@ -2098,6 +2633,9 @@ tensorflow::Status ConvertPackOperator(
 tensorflow::Status ConvertUnpackOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_118_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_118(mht_118_v, 2636, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertUnpackOperator");
+
   CHECK_EQ(node.op(), "Unpack");
   auto op = absl::make_unique<UnpackOperator>();
   const int num_inputs = GetInputsCount(node, tf_import_flags);
@@ -2128,6 +2666,9 @@ tensorflow::Status ConvertUnpackOperator(
 tensorflow::Status ConvertOperatorSpecialCasedAsRNNBackEdge(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_119(mht_119_v, 2669, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertOperatorSpecialCasedAsRNNBackEdge");
+
   // At the moment, the only type of operator special-cased in this way is
   // NextIteration, occurring only in control-flow cycles.
   CHECK_EQ(node.op(), "NextIteration");
@@ -2147,6 +2688,9 @@ tensorflow::Status ConvertOperatorSpecialCasedAsRNNBackEdge(
 tensorflow::Status ConvertShapeOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_120(mht_120_v, 2691, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertShapeOperator");
+
   CHECK_EQ(node.op(), "Shape");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 1));
   const auto out_type =
@@ -2163,6 +2707,9 @@ tensorflow::Status ConvertShapeOperator(
 tensorflow::Status ConvertReverseSequenceOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_121(mht_121_v, 2710, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertReverseSequenceOperator");
+
   CHECK_EQ(node.op(), "ReverseSequence");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 2));
   auto op = absl::make_unique<ReverseSequenceOperator>();
@@ -2182,6 +2729,9 @@ tensorflow::Status ConvertReverseSequenceOperator(
 }
 
 void StripCaretFromArrayNames(Model* model) {
+   std::vector<std::string> mht_122_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_122(mht_122_v, 2732, "", "./tensorflow/lite/toco/import_tensorflow.cc", "StripCaretFromArrayNames");
+
   for (auto& op : model->operators) {
     for (auto& input : op->inputs) {
       input = std::string(absl::StripPrefix(input, "^"));
@@ -2198,6 +2748,9 @@ void StripCaretFromArrayNames(Model* model) {
 }
 
 void StripZeroOutputIndexFromInputs(NodeDef* node) {
+   std::vector<std::string> mht_123_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_123(mht_123_v, 2751, "", "./tensorflow/lite/toco/import_tensorflow.cc", "StripZeroOutputIndexFromInputs");
+
   for (auto& input : *node->mutable_input()) {
     input = std::string(absl::StripSuffix(input, ":0"));
   }
@@ -2216,6 +2769,9 @@ void StripZeroOutputIndexFromInputs(NodeDef* node) {
 // at least each node lists explicitly its inputs, so after we've loaded
 // all nodes, we can use that information.
 void AddExtraOutputs(Model* model) {
+   std::vector<std::string> mht_124_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_124(mht_124_v, 2772, "", "./tensorflow/lite/toco/import_tensorflow.cc", "AddExtraOutputs");
+
   // Construct the list of all arrays consumed by anything in the graph.
   std::vector<std::string> consumed_arrays;
   // Add arrays consumed by an op.
@@ -2269,6 +2825,9 @@ void AddExtraOutputs(Model* model) {
 }
 
 bool InlineAllFunctions(GraphDef* graphdef) {
+   std::vector<std::string> mht_125_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_125(mht_125_v, 2828, "", "./tensorflow/lite/toco/import_tensorflow.cc", "InlineAllFunctions");
+
   if (graphdef->library().function().empty()) {
     VLOG(kLogLevelModelUnchanged) << "No functions to inline.";
     return false;
@@ -2330,6 +2889,9 @@ bool InlineAllFunctions(GraphDef* graphdef) {
 tensorflow::Status ConvertTopKV2Operator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_126_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_126(mht_126_v, 2892, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertTopKV2Operator");
+
   CHECK((node.op() == "TopK") || (node.op() == "TopKV2"));
   auto op = absl::make_unique<TopKV2Operator>();
   op->inputs.push_back(node.input(0));
@@ -2352,6 +2914,9 @@ tensorflow::Status ConvertTopKV2Operator(
 tensorflow::Status ConvertDynamicPartitionOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_127_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_127(mht_127_v, 2917, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertDynamicPartitionOperator");
+
   auto op = absl::make_unique<DynamicPartitionOperator>();
   CHECK(HasAttr(node, "num_partitions"));
   op->num_partitions = GetIntAttr(node, "num_partitions");
@@ -2370,6 +2935,9 @@ tensorflow::Status ConvertDynamicPartitionOperator(
 tensorflow::Status ConvertDynamicStitchOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_128_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_128(mht_128_v, 2938, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertDynamicStitchOperator");
+
   // The parallel and non-parallel variants are the same besides whether they
   // have a parallel loop; there are no behavioral differences.
   CHECK(node.op() == "DynamicStitch" || node.op() == "ParallelDynamicStitch");
@@ -2389,6 +2957,9 @@ tensorflow::Status ConvertDynamicStitchOperator(
 tensorflow::Status ConvertSparseToDenseOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_129_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_129(mht_129_v, 2960, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertSparseToDenseOperator");
+
   CHECK_EQ(node.op(), "SparseToDense");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 4));
 
@@ -2408,6 +2979,9 @@ tensorflow::Status ConvertSparseToDenseOperator(
 tensorflow::Status ConvertOneHotOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_130_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_130(mht_130_v, 2982, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertOneHotOperator");
+
   CHECK_EQ(node.op(), "OneHot");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 4));
 
@@ -2429,6 +3003,9 @@ tensorflow::Status ConvertOneHotOperator(
 tensorflow::Status ConvertCTCBeamSearchDecoderOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_131_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_131(mht_131_v, 3006, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertCTCBeamSearchDecoderOperator");
+
   CHECK_EQ(node.op(), "CTCBeamSearchDecoder");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 2));
 
@@ -2459,6 +3036,9 @@ tensorflow::Status ConvertCTCBeamSearchDecoderOperator(
 tensorflow::Status ConvertUnidirectionalSequenceLstm(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_132_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_132(mht_132_v, 3039, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertUnidirectionalSequenceLstm");
+
   DCHECK_EQ(node.op(), "UnidirectionalSequenceLstm");
 
   const auto& indices = GetListAttr(node, "_tflite_input_indices");
@@ -2515,6 +3095,9 @@ tensorflow::Status ConvertUnidirectionalSequenceLstm(
 tensorflow::Status ConvertLeakyReluOperator(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_133_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_133(mht_133_v, 3098, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertLeakyReluOperator");
+
   CHECK_EQ(node.op(), "LeakyRelu");
   TF_QCHECK_OK(CheckInputsCount(node, tf_import_flags, 1));
   CHECK_EQ(GetDataTypeAttr(node, "T"), DT_FLOAT);
@@ -2530,6 +3113,9 @@ tensorflow::Status ConvertLeakyReluOperator(
 tensorflow::Status ConvertUnidirectionalSequenceRnn(
     const NodeDef& node, const TensorFlowImportFlags& tf_import_flags,
     const ModelFlags& model_flags, Model* model) {
+   std::vector<std::string> mht_134_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_134(mht_134_v, 3116, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ConvertUnidirectionalSequenceRnn");
+
   DCHECK_EQ(node.op(), "UnidirectionalSequenceRnn");
 
   const auto& indices = GetListAttr(node, "_tflite_input_indices");
@@ -2558,6 +3144,9 @@ using ConverterType = tensorflow::Status (*)(
 using ConverterMapType = std::unordered_map<std::string, ConverterType>;
 
 ConverterMapType GetTensorFlowNodeConverterMapForFlex() {
+   std::vector<std::string> mht_135_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_135(mht_135_v, 3147, "", "./tensorflow/lite/toco/import_tensorflow.cc", "GetTensorFlowNodeConverterMapForFlex");
+
   return std::unordered_map<std::string, ConverterType>({
       // We need to let TOCO convert Placeholder information into
       // array data, so that the data types are correct.
@@ -2568,6 +3157,9 @@ ConverterMapType GetTensorFlowNodeConverterMapForFlex() {
 }
 
 ConverterMapType GetTensorFlowNodeConverterMap() {
+   std::vector<std::string> mht_136_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_136(mht_136_v, 3160, "", "./tensorflow/lite/toco/import_tensorflow.cc", "GetTensorFlowNodeConverterMap");
+
   return std::unordered_map<std::string, ConverterType>({
       {"Abs", ConvertSimpleOperator<AbsOperator, kAnyNumInputs, 1>},
       {"Add", ConvertSimpleOperator<AddOperator, 2, 1>},
@@ -2725,6 +3317,9 @@ tensorflow::Status ImportTensorFlowNode(
     const tensorflow::NodeDef& node,
     const TensorFlowImportFlags& tf_import_flags, const ModelFlags& model_flags,
     Model* model, const ConverterMapType& converter_map) {
+   std::vector<std::string> mht_137_v;
+   MHTracer_DTPStensorflowPSlitePStocoPSimport_tensorflowDTcc mht_137(mht_137_v, 3320, "", "./tensorflow/lite/toco/import_tensorflow.cc", "ImportTensorFlowNode");
+
   auto converter = converter_map.find(node.op());
   if (converter == converter_map.end()) {
     return ConvertUnsupportedOperator(node, tf_import_flags, model_flags,

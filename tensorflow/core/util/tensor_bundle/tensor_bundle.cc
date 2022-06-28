@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -78,6 +246,9 @@ namespace {
 Status ReadStringTensor(io::InputBuffer* buffered_file, size_t num_elements,
                         size_t offset, size_t size, tstring* destination,
                         uint32* actual_crc32c, bool need_to_swap_bytes) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_0(mht_0_v, 249, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "ReadStringTensor");
+
   if (size == 0) return Status::OK();
   CHECK_GT(size, 0);
 
@@ -148,6 +319,9 @@ Status ReadStringTensor(io::InputBuffer* buffered_file, size_t num_elements,
 
 Status ReadVariantTensor(io::InputBuffer* buffered_file, Tensor* ret,
                          size_t offset, size_t size, uint32* actual_crc32c) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_1(mht_1_v, 322, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "ReadVariantTensor");
+
   // On-disk format:
   //   [varint64 len1][bytes variant1][4 byte checksum]
   //   ..
@@ -210,17 +384,26 @@ Status ReadVariantTensor(io::InputBuffer* buffered_file, Tensor* ret,
 }
 
 char* GetBackingBuffer(const Tensor& val) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_2(mht_2_v, 387, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "GetBackingBuffer");
+
   CHECK(DataTypeCanUseMemcpy(val.dtype())) << val.dtype();
   return const_cast<char*>(val.tensor_data().data());
 }
 
 tstring* GetStringBackingBuffer(const Tensor& val) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_3(mht_3_v, 395, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "GetStringBackingBuffer");
+
   CHECK_EQ(DT_STRING, val.dtype());
   return const_cast<tstring*>(val.flat<tstring>().data());
 }
 
 Status ParseEntryProto(StringPiece key, StringPiece value,
                        protobuf::MessageLite* out) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_4(mht_4_v, 404, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "ParseEntryProto");
+
   if (!out->ParseFromArray(value.data(), value.size())) {
     return errors::DataLoss("Entry for key ", key, " not parseable.");
   }
@@ -233,6 +416,9 @@ Status ParseEntryProto(StringPiece key, StringPiece value,
 // REQUIRES: val.dtype() != DT_STRING
 Status WriteTensor(const Tensor& val, FileOutputBuffer* out,
                    size_t* bytes_written) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_5(mht_5_v, 419, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "WriteTensor");
+
   DCHECK_NE(val.dtype(), DT_STRING);
   DCHECK_NE(val.dtype(), DT_VARIANT);
   *bytes_written = val.TotalBytes();
@@ -248,6 +434,9 @@ Status WriteTensor(const Tensor& val, FileOutputBuffer* out,
 // REQUIRES: val.dtype() == DT_STRING
 Status WriteStringTensor(const Tensor& val, FileOutputBuffer* out,
                          size_t* bytes_written, uint32* crc32c) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_6(mht_6_v, 437, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "WriteStringTensor");
+
   // On-disk format:
   //   [varint64 len0]..[varint64 lenL][4 byte cksum on lengths][string bytes]
   // Var "crc32c" checksums the string lengths (as uint64, not varint64 bytes),
@@ -300,6 +489,9 @@ Status WriteStringTensor(const Tensor& val, FileOutputBuffer* out,
 
 Status WriteVariantTensor(const Tensor& val, FileOutputBuffer* out,
                           size_t* bytes_written, uint32* crc32c) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_7(mht_7_v, 492, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "WriteVariantTensor");
+
   // On-disk format:
   //   [varint64 len1][bytes variant1][4 byte checksum]
   //   ..
@@ -357,6 +549,9 @@ Status WriteVariantTensor(const Tensor& val, FileOutputBuffer* out,
 // dim(0)}, ..., {0, dim(N)}})" -- a degenerate case we need to guard against.
 bool IsFullSlice(const TensorSlice& slice_spec,
                  const TensorShape& full_tensor_shape) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_8(mht_8_v, 552, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "IsFullSlice");
+
   if (slice_spec.IsFull()) {
     return true;
   } else {
@@ -368,6 +563,11 @@ bool IsFullSlice(const TensorSlice& slice_spec,
 
 Status CorruptFileError(const Status& in_status, const string& filename,
                         const string& detail) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("filename: \"" + filename + "\"");
+   mht_9_v.push_back("detail: \"" + detail + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_9(mht_9_v, 568, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "CorruptFileError");
+
   if (in_status.ok()) {
     return errors::Internal("Unable to read file (", filename,
                             "). Perhaps the file is corrupt or was produced by "
@@ -384,6 +584,9 @@ Status CorruptFileError(const Status& in_status, const string& filename,
 }
 
 table::Options TableBuilderOptions() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_10(mht_10_v, 587, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "TableBuilderOptions");
+
   table::Options o;
   // Compressed tables cannot be read by TensorFlow releases prior to 1.1.
   // To smoothen the transition, compressed writes are disabled for now
@@ -397,6 +600,9 @@ table::Options TableBuilderOptions() {
 // alignment. "size" is the current size of the buffer and is updated to the
 // new size.
 Status PadAlignment(FileOutputBuffer* out, int alignment, int64_t* size) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_11(mht_11_v, 603, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "PadAlignment");
+
   int bytes_over = *size % alignment;
   if (bytes_over == 0) {
     return Status::OK();
@@ -413,6 +619,9 @@ Status PadAlignment(FileOutputBuffer* out, int alignment, int64_t* size) {
 
 BundleWriter::BundleWriter(Env* env, StringPiece prefix, const Options& options)
     : env_(env), options_(options), prefix_(prefix), out_(nullptr), size_(0) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_12(mht_12_v, 622, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "BundleWriter::BundleWriter");
+
   status_ = env_->HasAtomicMove(prefix_, &use_temp_file_);
   if (!status_.ok()) return;
 
@@ -439,6 +648,9 @@ BundleWriter::BundleWriter(Env* env, StringPiece prefix, const Options& options)
 }
 
 Status BundleWriter::Add(StringPiece key, const Tensor& val) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_13(mht_13_v, 651, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "BundleWriter::Add");
+
   if (!status_.ok()) return status_;
   CHECK_NE(key, kHeaderEntryKey);
   const string key_string(key);
@@ -479,6 +691,9 @@ Status BundleWriter::AddSlice(StringPiece full_tensor_key,
                               const TensorShape& full_tensor_shape,
                               const TensorSlice& slice_spec,
                               const Tensor& slice_tensor) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_14(mht_14_v, 694, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "BundleWriter::AddSlice");
+
   if (!status_.ok()) return status_;
   CHECK_NE(full_tensor_key, kHeaderEntryKey);
 
@@ -519,6 +734,9 @@ Status BundleWriter::AddSlice(StringPiece full_tensor_key,
 // TODO(zongheng): on metadata write failure or !status_.ok(), consider removing
 // the orphaned data file.
 Status BundleWriter::Finish() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_15(mht_15_v, 737, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "BundleWriter::Finish");
+
   if (out_) {
     status_.Update(out_->Close());
     out_ = nullptr;
@@ -595,6 +813,9 @@ struct MergeState {
 // Returns OK iff the merge succeeds.
 static Status MergeOneBundle(Env* env, StringPiece prefix,
                              MergeState* merge_state) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_16(mht_16_v, 816, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "MergeOneBundle");
+
   VLOG(1) << "Merging bundle:" << prefix;
   const string filename = MetaFilename(prefix);
   uint64 file_size;
@@ -694,6 +915,9 @@ static Status MergeOneBundle(Env* env, StringPiece prefix,
 
 Status MergeBundles(Env* env, gtl::ArraySlice<tstring> prefixes,
                     StringPiece merged_prefix) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_17(mht_17_v, 918, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "MergeBundles");
+
   // Merges all metadata tables.
   // TODO(zhifengc): KeyValue sorter if it becomes too big.
   MergeState merge;
@@ -751,6 +975,9 @@ BundleReader::BundleReader(Env* env, StringPiece prefix)
       index_cache_(nullptr),
       iter_(nullptr),
       need_to_swap_bytes_(false) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_18(mht_18_v, 978, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "BundleReader::BundleReader");
+
   const string filename = MetaFilename(prefix_);
   uint64 file_size;
   status_ = env_->GetFileSize(filename, &file_size);
@@ -799,6 +1026,9 @@ BundleReader::BundleReader(Env* env, StringPiece prefix)
 }
 
 BundleReader::~BundleReader() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_19(mht_19_v, 1029, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "BundleReader::~BundleReader");
+
   delete metadata_;
   delete iter_;
   delete table_;
@@ -823,6 +1053,9 @@ BundleReader::~BundleReader() {
 
 Status BundleReader::GetBundleEntryProto(StringPiece key,
                                          BundleEntryProto* entry) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_20(mht_20_v, 1056, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "BundleReader::GetBundleEntryProto");
+
   entry->Clear();
   TF_CHECK_OK(status_);
   Seek(key);
@@ -843,6 +1076,9 @@ Status BundleReader::GetBundleEntryProto(StringPiece key,
 }
 
 Status BundleReader::GetValue(const BundleEntryProto& entry, Tensor* val) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_21(mht_21_v, 1079, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "BundleReader::GetValue");
+
   Tensor* ret = val;
   const TensorShape stored_shape(TensorShape(entry.shape()));
   if (val->NumElements() == 0) {
@@ -939,6 +1175,9 @@ Status BundleReader::GetValue(const BundleEntryProto& entry, Tensor* val) {
 }
 
 Status BundleReader::Lookup(StringPiece key, Tensor* val) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_22(mht_22_v, 1178, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "BundleReader::Lookup");
+
   CHECK(val != nullptr);
   BundleEntryProto entry;
   TF_RETURN_IF_ERROR(GetBundleEntryProto(key, &entry));
@@ -953,6 +1192,9 @@ Status BundleReader::Lookup(StringPiece key, Tensor* val) {
 }
 
 Status BundleReader::ReadCurrent(Tensor* val) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_23(mht_23_v, 1195, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "BundleReader::ReadCurrent");
+
   CHECK(val != nullptr);
   BundleEntryProto entry;
   TF_RETURN_IF_ERROR(ParseEntryProto(iter_->key(), iter_->value(), &entry));
@@ -972,6 +1214,9 @@ Status BundleReader::ReadCurrent(Tensor* val) {
 
 Status BundleReader::LookupTensorSlices(StringPiece key,
                                         std::vector<TensorSlice>* slices) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_24(mht_24_v, 1217, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "BundleReader::LookupTensorSlices");
+
   slices->clear();
   BundleEntryProto entry;
   TF_RETURN_IF_ERROR(GetBundleEntryProto(key, &entry));
@@ -984,6 +1229,9 @@ Status BundleReader::LookupTensorSlices(StringPiece key,
 
 Status BundleReader::LookupSlice(StringPiece full_tensor_key,
                                  const TensorSlice& slice_spec, Tensor* val) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_25(mht_25_v, 1232, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "BundleReader::LookupSlice");
+
   CHECK(val != nullptr);
   BundleEntryProto entry;
   TF_RETURN_IF_ERROR(GetBundleEntryProto(full_tensor_key, &entry));
@@ -993,6 +1241,9 @@ Status BundleReader::LookupSlice(StringPiece full_tensor_key,
 Status BundleReader::GetSliceValue(StringPiece full_tensor_key,
                                    const BundleEntryProto& full_tensor_entry,
                                    const TensorSlice& slice_spec, Tensor* val) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_26(mht_26_v, 1244, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "BundleReader::GetSliceValue");
+
   using checkpoint::RegisterTensorSlice;
   using checkpoint::TensorSliceSet;
   DCHECK_GE(full_tensor_entry.slices_size(), 0);
@@ -1106,12 +1357,18 @@ Status BundleReader::GetSliceValue(StringPiece full_tensor_key,
 }
 
 bool BundleReader::Contains(StringPiece key) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_27(mht_27_v, 1360, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "BundleReader::Contains");
+
   Seek(key);
   return Valid() && (this->key() == key);
 }
 
 Status BundleReader::LookupDtypeAndShape(StringPiece key, DataType* dtype,
                                          TensorShape* shape) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_28(mht_28_v, 1369, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "BundleReader::LookupDtypeAndShape");
+
   BundleEntryProto entry;
   TF_RETURN_IF_ERROR(GetBundleEntryProto(key, &entry));
   *dtype = entry.dtype();
@@ -1120,11 +1377,17 @@ Status BundleReader::LookupDtypeAndShape(StringPiece key, DataType* dtype,
 }
 
 Status BundleReader::LookupTensorShape(StringPiece key, TensorShape* shape) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_29(mht_29_v, 1380, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "BundleReader::LookupTensorShape");
+
   DataType ignored;
   return LookupDtypeAndShape(key, &ignored, shape);
 }
 
 string BundleReader::DebugString() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_30(mht_30_v, 1388, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "BundleReader::DebugString");
+
   // Format used below emulates that of TensorSliceReader::DebugString().
   string shape_str;
   BundleEntryProto entry;
@@ -1142,6 +1405,9 @@ string BundleReader::DebugString() {
 
 namespace {
 inline char* AlignedMalloc(size_t size) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_31(mht_31_v, 1408, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "AlignedMalloc");
+
   char* buffer = static_cast<char*>(port::AlignedMalloc(size, 64));
   DCHECK(buffer);
   return buffer;
@@ -1150,16 +1416,25 @@ inline char* AlignedMalloc(size_t size) {
 
 FileOutputBuffer::FileOutputBuffer(WritableFile* file, size_t buffer_size)
     : file_(file), position_(0), buffer_size_(buffer_size) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_32(mht_32_v, 1419, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "FileOutputBuffer::FileOutputBuffer");
+
   DCHECK_GT(buffer_size, 0);
   buffer_ptr_ = AlignedMalloc(buffer_size);
 }
 
 FileOutputBuffer::~FileOutputBuffer() {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_33(mht_33_v, 1427, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "FileOutputBuffer::~FileOutputBuffer");
+
   if (buffer_ptr_) port::AlignedFree(buffer_ptr_);
   delete file_;
 }
 
 Status FileOutputBuffer::Append(StringPiece data) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_34(mht_34_v, 1435, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "FileOutputBuffer::Append");
+
   // In the below, it is critical to calculate the checksum on the actually
   // copied bytes, not the source bytes.  This is because "data" typically
   // points to tensor buffers, which may be concurrently written.
@@ -1190,11 +1465,17 @@ Status FileOutputBuffer::Append(StringPiece data) {
 }
 
 Status FileOutputBuffer::Close() {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_35(mht_35_v, 1468, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "FileOutputBuffer::Close");
+
   TF_RETURN_IF_ERROR(FlushBuffer(true));
   return file_->Close();
 }
 
 Status FileOutputBuffer::FlushBuffer(bool closing) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSutilPStensor_bundlePStensor_bundleDTcc mht_36(mht_36_v, 1476, "", "./tensorflow/core/util/tensor_bundle/tensor_bundle.cc", "FileOutputBuffer::FlushBuffer");
+
   if (position_ > 0) {
     // Use Cord to avoid extra data copy for some WritableFile implementations.
     absl::Cord buffer = absl::MakeCordFromExternal(

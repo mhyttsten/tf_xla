@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -65,6 +233,9 @@ using hlo_sharding_util::GroupedSharding;
 }  // namespace
 
 std::string SpmdLogger::MakeReport() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_0(mht_0_v, 236, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdLogger::MakeReport");
+
   std::string report;
   absl::StrAppend(&report,
                   "\n\n***** SPMD memory during transformation *****\n");
@@ -86,6 +257,9 @@ std::string SpmdLogger::MakeReport() {
 
 void SpmdLogger::RegisterLogEntry(HloInstruction* hlo,
                                   const std::vector<HloInstruction*>& group) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_1(mht_1_v, 260, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdLogger::RegisterLogEntry");
+
   if (disabled_) {
     return;
   }
@@ -103,6 +277,9 @@ void SpmdLogger::RegisterLogEntry(HloInstruction* hlo,
 
 /* static */ std::string SpmdLogger::ReportBeforePartition(
     const HloModule& module, int64_t report_instruction_count) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_2(mht_2_v, 280, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdLogger::ReportBeforePartition");
+
   std::string report;
   absl::StrAppend(&report,
                   "\n\n***** SPMD memory usage before partition *****\n");
@@ -124,6 +301,9 @@ void SpmdLogger::RegisterLogEntry(HloInstruction* hlo,
 
 /* static */ std::string SpmdLogger::ReportAfterPartition(
     const HloModule& module, int64_t report_instruction_count) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_3(mht_3_v, 304, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdLogger::ReportAfterPartition");
+
   std::string report;
   absl::StrAppend(&report,
                   "\n\n***** SPMD memory usage after partition *****\n");
@@ -138,6 +318,9 @@ template <typename F>
 /* static */ std::string SpmdLogger::ReportMemoryUsage(
     const HloModule& module, const F& filter,
     int64_t report_instruction_count) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_4(mht_4_v, 321, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdLogger::ReportMemoryUsage");
+
   std::string report;
   std::vector<HloInstruction*> instructions;
   instructions.reserve(module.instruction_count());
@@ -158,6 +341,9 @@ template <typename F>
   }
 
   const auto add_report = [&](std::vector<HloInstruction*>* insts) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_5(mht_5_v, 344, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "lambda");
+
     std::sort(insts->begin(), insts->end(),
               [](const HloInstruction* inst0, const HloInstruction* inst1) {
                 return ShapeSizeInBytes(inst0->shape()) >
@@ -181,6 +367,9 @@ namespace {
 // Clears all sharding attributes from instructions in the module. This must be
 // called only after all SPMD transformation is complete.
 Status ClearShardingAttributes(HloModule* module) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_6(mht_6_v, 370, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "ClearShardingAttributes");
+
   for (HloComputation* computation : module->computations()) {
     for (HloInstruction* hlo : computation->instructions()) {
       // Keep sharding annotation on Infeed and entry parameters since they're
@@ -224,6 +413,9 @@ std::vector<std::vector<int64_t>> GetPartitionGroupsForReplication(
 
 HloInstruction* SpmdBuilder::AddInstruction(
     std::unique_ptr<HloInstruction> instruction) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_7(mht_7_v, 416, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdBuilder::AddInstruction");
+
   HloInstruction* hlo =
       HloComputation::Builder::AddInstruction(std::move(instruction));
   if (visiting_hlo_) {
@@ -357,6 +549,9 @@ HloInstruction* SpmdBuilder::AddInstruction(
 }
 
 PartitionedHlo PartitionedHlo::Reshard(const HloSharding& target) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_8(mht_8_v, 552, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "PartitionedHlo::Reshard");
+
   if (sharding() == target) {
     return *this;
   }
@@ -385,6 +580,9 @@ PartitionedHlo PartitionedHlo::Reshard(const HloSharding& target) {
 }
 
 PartitionedHlo PartitionedHlo::ReshardNoCache(const HloSharding& target) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_9(mht_9_v, 583, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "PartitionedHlo::ReshardNoCache");
+
   VLOG(2) << "Resharding " << hlo_->ToString() << " from "
           << hlo_->sharding().ToString() << " to " << target.ToString();
   const Shape& shape = hlo_->shape();
@@ -519,6 +717,9 @@ PartitionedHlo PartitionedHlo::ReshardNoCache(const HloSharding& target) {
 PartitionedHlo PartitionedHlo::PadWithValue(
     HloInstruction* pad_value, absl::Span<const int64_t> left_padded_dims,
     absl::Span<const int64_t> skipped_dims) const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_10(mht_10_v, 720, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "PartitionedHlo::PadWithValue");
+
   const HloSharding& sharding = hlo_->sharding();
   const Shape& shape = hlo_->shape();
   CHECK(!shape.IsTuple() && shape.element_type() != TOKEN);
@@ -529,6 +730,9 @@ PartitionedHlo PartitionedHlo::PadWithValue(
   auto index_shape = ShapeUtil::ChangeElementType(shape, S32);
   auto mask_shape = ShapeUtil::ChangeElementType(index_shape, PRED);
   auto get_mask_for_dim = [&](int64_t dim, HloInstruction* start_index) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_11(mht_11_v, 733, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "lambda");
+
     // Comparison: iota + start_index < valid_size
     auto iota =
         state_.b->AddInstruction(HloInstruction::CreateIota(index_shape, dim));
@@ -585,6 +789,9 @@ PartitionedHlo PartitionedHlo::PadWithValue(
 PartitionedHlo PartitionedHlo::PadWithZero(
     absl::Span<const int64_t> left_padded_dims,
     absl::Span<const int64_t> skipped_dims) const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_12(mht_12_v, 792, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "PartitionedHlo::PadWithZero");
+
   auto zero = state_.b->AddInstruction(HloInstruction::CreateConstant(
       LiteralUtil::Zero(hlo_->shape().element_type())));
   return PadWithValue(zero, left_padded_dims, skipped_dims);
@@ -595,6 +802,9 @@ PartitionedHlo::ReshardAsWindowedInput(const Window& window,
                                        const HloSharding& target,
                                        HloInstruction* pad_value,
                                        bool mask_invalid_region) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_13(mht_13_v, 805, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "PartitionedHlo::ReshardAsWindowedInput");
+
   auto& cache = state_.reshard_cache->per_hlo_cache[hlo()].window_reshard_cache;
   for (auto& entry : cache) {
     if (std::get<0>(entry) == target &&
@@ -603,6 +813,9 @@ PartitionedHlo::ReshardAsWindowedInput(const Window& window,
     }
   }
   auto update_cache = [&](WindowedInputShardReturnValue result) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_14(mht_14_v, 816, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "lambda");
+
     cache.emplace_back(target, window, std::move(result));
     return std::get<2>(cache.back());
   };
@@ -694,6 +907,9 @@ PartitionedHlo::ReshardAsWindowedInput(const Window& window,
       // shard.
       auto get_first_valid_element_offset_on_dilated_shard =
           [&](int64_t shard_ordinal) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_15(mht_15_v, 910, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "lambda");
+
             return start_on_padded_calculations[i].Calculate(shard_ordinal) *
                        wd.base_dilation() +
                    swd->padding_low() -
@@ -869,6 +1085,9 @@ PartitionedHlo::ReshardAsWindowedInput(const Window& window,
 }
 
 PartitionedHlo PartitionedHlo::Replicate() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_16(mht_16_v, 1088, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "PartitionedHlo::Replicate");
+
   auto& cache = state_.reshard_cache->per_hlo_cache[hlo()].reshard_cache;
   if (state_.partitioner->options().cache_all_gather) {
     for (auto& entry : cache) {
@@ -891,6 +1110,9 @@ PartitionedHlo PartitionedHlo::Replicate() {
     }
   }
   auto update_cache = [&](PartitionedHlo resharded) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_17(mht_17_v, 1113, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "lambda");
+
     state_.reshard_cache->per_hlo_cache[resharded.hlo()]
         .reshard_cache.emplace_back(sharding, *this);
     // Get the cache again as it might be invalidated by the insertion above.
@@ -916,6 +1138,9 @@ PartitionedHlo PartitionedHlo::Replicate() {
 
 HloInstruction* PartitionedHlo::ReplicatePartial(
     absl::Span<const int64_t> dims) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_18(mht_18_v, 1141, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "PartitionedHlo::ReplicatePartial");
+
   CHECK(!sharding().IsTileMaximal());
   const Shape& shard_shape = hlo()->shape();
   Shape target_shape = shard_shape;
@@ -1003,6 +1228,9 @@ HloInstruction* PartitionedHlo::ReplicatePartial(
 absl::optional<PartitionedHlo>
 PartitionedHlo::ReshardToPartialReplicateWithAllGather(
     const HloSharding& target) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_19(mht_19_v, 1231, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "PartitionedHlo::ReshardToPartialReplicateWithAllGather");
+
   if (!target.ReplicateOnLastTileDim()) {
     return absl::nullopt;
   }
@@ -1069,6 +1297,9 @@ PartitionedHlo::ReshardToPartialReplicateWithAllGather(
 absl::optional<PartitionedHlo>
 PartitionedHlo::ReshardFromPartialReplicateWithDynamicSlice(
     const HloSharding& target) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_20(mht_20_v, 1300, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "PartitionedHlo::ReshardFromPartialReplicateWithDynamicSlice");
+
   if (!sharding().ReplicateOnLastTileDim()) {
     return absl::nullopt;
   }
@@ -1147,6 +1378,9 @@ PartitionedHlo::ReshardFromPartialReplicateWithDynamicSlice(
 }
 
 PartitionedHlo PartitionedHlo::Broadcast() const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_21(mht_21_v, 1381, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "PartitionedHlo::Broadcast");
+
   const Shape& shape = hlo_->shape();
   const HloSharding& sharding = hlo_->sharding();
   CHECK(sharding.HasUniqueDevice());
@@ -1180,6 +1414,9 @@ PartitionedHlo PartitionedHlo::Broadcast() const {
 PartitionedHlo PartitionedHlo::ReshardWithAllToAll(
     const HloSharding& target,
     absl::Span<const std::pair<int64_t, int64_t>> source_target_dims) const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_22(mht_22_v, 1417, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "PartitionedHlo::ReshardWithAllToAll");
+
   if (source_target_dims.empty()) {
     if (target == sharding()) {
       return *this;
@@ -1323,6 +1560,9 @@ PartitionedHlo PartitionedHlo::ReshardWithAllToAll(
 
 absl::optional<PartitionedHlo>
 PartitionedHlo::ReshardPartialReplicateWithAllToAll(const HloSharding& target) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_23(mht_23_v, 1563, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "PartitionedHlo::ReshardPartialReplicateWithAllToAll");
+
   bool source_is_partial_replicate = sharding().ReplicateOnLastTileDim();
   const auto& partial_replicate_sharding =
       source_is_partial_replicate ? sharding() : target;
@@ -1409,6 +1649,9 @@ PartitionedHlo::ReshardPartialReplicateWithAllToAll(const HloSharding& target) {
 
 PartitionedHlo PartitionedHlo::ReshardWithCollectivePermute(
     const HloSharding& target) const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_24(mht_24_v, 1652, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "PartitionedHlo::ReshardWithCollectivePermute");
+
   CHECK(CanReshardWithCollectivePermute(sharding(), target))
       << sharding().ToString() << " to " << target.ToString();
   if (auto broadcast_dims = state_.b->BroadcastDimsForCreatedHlo(hlo())) {
@@ -1460,10 +1703,16 @@ SpmdPartitioningVisitor::SpmdPartitioningVisitor(
       partition_id_(collective_ops_creator_.create_partition_id(&b_)),
       logger_(logger),
       options_(std::move(options)),
-      partitioner_(partitioner) {}
+      partitioner_(partitioner) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_25(mht_25_v, 1707, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::SpmdPartitioningVisitor");
+}
 
 PartitionedHlo::PartitioningState
 SpmdPartitioningVisitor::MakePartitioningState() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_26(mht_26_v, 1713, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::MakePartitioningState");
+
   PartitionedHlo::PartitioningState state;
   state.b = &b_;
   state.module = module_;
@@ -1487,6 +1736,9 @@ SpmdPartitioningVisitor::MakePartitioningState() {
 
 std::vector<ReplicaGroup> SpmdPartitioningVisitor::CreateReplicaGroups(
     std::vector<std::vector<int64_t>>& groups) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_27(mht_27_v, 1739, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::CreateReplicaGroups");
+
   std::vector<ReplicaGroup> device_groups;
   device_groups.reserve(groups.size() * num_replicas_);
   for (int64_t i = 0; i < num_replicas_; ++i) {
@@ -1501,6 +1753,9 @@ std::vector<ReplicaGroup> SpmdPartitioningVisitor::CreateReplicaGroups(
 }
 
 Status SpmdPartitioningVisitor::DefaultAction(HloInstruction* hlo) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_28(mht_28_v, 1756, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::DefaultAction");
+
   if (hlo->HasSideEffect()) {
     return Unimplemented("Side-effect ops cannot be replicated: %s",
                          hlo->ToString());
@@ -1539,12 +1794,18 @@ Status SpmdPartitioningVisitor::DefaultAction(HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::Preprocess(HloInstruction* hlo) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_29(mht_29_v, 1797, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::Preprocess");
+
   visiting_hlo_ = hlo;
   b_.set_visiting_hlo(hlo);
   // Temporarily replace manual sharding to one-device sharding so that the
   // partitioner will not change the HLOs.
   auto manual_to_onedevice = [&](const Shape& shape,
                                  const HloSharding& sharding) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_30(mht_30_v, 1806, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "lambda");
+
     // If a tuple's elements are all manual, then sharding.IsManual() == True,
     // so we test whether it is tuple first.
     if (sharding.IsTuple()) {
@@ -1689,6 +1950,9 @@ Status SpmdPartitioningVisitor::Preprocess(HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::Postprocess(HloInstruction* hlo) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_31(mht_31_v, 1953, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::Postprocess");
+
   logger_->RegisterLogEntry(hlo, b_.derived_instructions(hlo));
   visiting_hlo_ = nullptr;
   b_.set_visiting_hlo(nullptr);
@@ -1728,6 +1992,9 @@ Status SpmdPartitioningVisitor::Postprocess(HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::HandleElementwise(HloInstruction* hlo) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_32(mht_32_v, 1995, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandleElementwise");
+
   std::vector<HloInstruction*> new_operands;
   for (HloInstruction* operand : hlo->operands()) {
     new_operands.push_back(
@@ -1741,6 +2008,9 @@ Status SpmdPartitioningVisitor::HandleElementwise(HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::HandleConcatenate(HloInstruction* hlo) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_33(mht_33_v, 2011, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandleConcatenate");
+
   const HloSharding& sharding = hlo->sharding();
   if (sharding.IsTileMaximal()) {
     return DefaultAction(hlo);
@@ -1837,6 +2107,9 @@ Status SpmdPartitioningVisitor::HandleConcatenate(HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::HandleSlice(HloInstruction* hlo) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_34(mht_34_v, 2110, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandleSlice");
+
   const HloSharding& sharding = hlo->sharding();
   if (sharding.IsTileMaximal()) {
     return DefaultAction(hlo);
@@ -1900,6 +2173,9 @@ Status SpmdPartitioningVisitor::HandleSlice(HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::HandleSort(HloInstruction* hlo) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_35(mht_35_v, 2176, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandleSort");
+
   HloSharding sharding = hlo->sharding();
   if (sharding.HasUniqueDevice()) {
     return DefaultAction(hlo);
@@ -2036,6 +2312,9 @@ Status SpmdPartitioningVisitor::HandleSort(HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::HandleTranspose(HloInstruction* hlo) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_36(mht_36_v, 2315, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandleTranspose");
+
   const HloSharding& sharding = hlo->sharding();
   if (sharding.IsTileMaximal()) {
     return DefaultAction(hlo);
@@ -2059,6 +2338,9 @@ Status SpmdPartitioningVisitor::HandleTranspose(HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::HandleReshape(HloInstruction* hlo) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_37(mht_37_v, 2341, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandleReshape");
+
   const HloSharding& sharding = hlo->sharding();
   if (sharding.IsTileMaximal()) {
     return DefaultAction(hlo);
@@ -2249,6 +2531,9 @@ Status SpmdPartitioningVisitor::HandleReshape(HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::HandleIota(HloInstruction* hlo) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_38(mht_38_v, 2534, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandleIota");
+
   const HloSharding& sharding = hlo->sharding();
   if (sharding.IsTileMaximal()) {
     return DefaultAction(hlo);
@@ -2284,6 +2569,9 @@ Status SpmdPartitioningVisitor::HandleIota(HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::HandleSingleDevice(const HloInstruction* hlo) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_39(mht_39_v, 2572, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandleSingleDevice");
+
   TF_RET_CHECK(hlo->sharding().HasUniqueDevice());
   int64_t device = hlo->sharding().GetUniqueDevice();
   const HloSharding sharding = HloSharding::AssignDevice(device);
@@ -2340,6 +2628,9 @@ Status SpmdPartitioningVisitor::HandleSingleDevice(const HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::HandleAllReduce(HloInstruction* hlo) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_40(mht_40_v, 2631, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandleAllReduce");
+
   if (hlo->IsCrossReplicaAllReduce() && hlo->operand_count() == 1) {
     return HandleElementwise(hlo);
   }
@@ -2389,6 +2680,9 @@ Status SpmdPartitioningVisitor::HandleAllReduce(HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::HandleBroadcast(HloInstruction* hlo) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_41(mht_41_v, 2683, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandleBroadcast");
+
   if (hlo->sharding().IsTileMaximal()) {
     return DefaultAction(hlo);
   }
@@ -2416,6 +2710,9 @@ Status SpmdPartitioningVisitor::HandleBroadcast(HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::HandleConstant(HloInstruction* hlo) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_42(mht_42_v, 2713, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandleConstant");
+
   const Literal& literal = hlo->literal();
   if (literal.shape().IsTuple() ||
       (!hlo->sharding().IsTileMaximal() &&
@@ -2436,6 +2733,9 @@ Status SpmdPartitioningVisitor::HandleConstant(HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::HandleDynamicSlice(HloInstruction* hlo) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_43(mht_43_v, 2736, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandleDynamicSlice");
+
   if (hlo->sharding().IsTileMaximal()) {
     return DefaultAction(hlo);
   }
@@ -2468,6 +2768,9 @@ Status SpmdPartitioningVisitor::HandleDynamicSlice(HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::HandleDynamicUpdateSlice(HloInstruction* hlo) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_44(mht_44_v, 2771, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandleDynamicUpdateSlice");
+
   if (hlo->sharding().IsTileMaximal()) {
     return DefaultAction(hlo);
   }
@@ -2505,6 +2808,9 @@ Status SpmdPartitioningVisitor::HandleDynamicUpdateSlice(HloInstruction* hlo) {
   // Handle when there is slice dim partitioned.
   if (!partitioned_slice_dims.empty()) {
     auto add_hlo = [&](std::unique_ptr<HloInstruction> to_add) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_45(mht_45_v, 2811, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "lambda");
+
       return b_.AddInstruction(std::move(to_add));
     };
     std::vector<HloInstruction*> new_indices(hlo->shape().rank());
@@ -2639,6 +2945,9 @@ Status SpmdPartitioningVisitor::HandleDynamicUpdateSlice(HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::HandleGetTupleElement(HloInstruction* hlo) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_46(mht_46_v, 2948, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandleGetTupleElement");
+
   const auto& tuple = GetPartitionedHlo(hlo->operand(0));
   auto gte = b_.AddInstruction(HloInstruction::CreateGetTupleElement(
       ShapeUtil::GetTupleElementShape(tuple.hlo()->shape(), hlo->tuple_index()),
@@ -2655,6 +2964,9 @@ Status SpmdPartitioningVisitor::HandleGetTupleElement(HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::HandleInfeed(HloInstruction* hlo) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_47(mht_47_v, 2967, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandleInfeed");
+
   const Shape& shape = ShapeUtil::GetTupleElementShape(hlo->shape(), 0);
   auto token = GetPartitionedHlo(hlo->operand(0)).hlo();
   if (ShapeUtil::GetLeafCount(shape) == 0) {
@@ -2787,6 +3099,9 @@ Status SpmdPartitioningVisitor::HandleInfeed(HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::HandlePad(HloInstruction* hlo) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_48(mht_48_v, 3102, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandlePad");
+
   if (hlo->sharding().IsTileMaximal()) {
     return DefaultAction(hlo);
   }
@@ -2865,6 +3180,9 @@ Status SpmdPartitioningVisitor::HandlePad(HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::HandleParameter(HloInstruction* hlo) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_49(mht_49_v, 3183, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandleParameter");
+
   SetPartitionedHlo(hlo, [&]() {
     auto shard_shape = MakePartitionedShape(hlo->shape(), hlo->sharding());
     auto new_param = b_.AddInstruction(HloInstruction::CreateParameter(
@@ -2879,6 +3197,9 @@ Status SpmdPartitioningVisitor::HandleParameter(HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::HandleReduce(HloInstruction* hlo) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_50(mht_50_v, 3200, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandleReduce");
+
   if (hlo->sharding().HasUniqueDevice()) {
     return DefaultAction(hlo);
   }
@@ -2997,6 +3318,9 @@ Status SpmdPartitioningVisitor::HandleReduce(HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::HandleReverse(HloInstruction* hlo) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_51(mht_51_v, 3321, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandleReverse");
+
   auto reverse = Cast<HloReverseInstruction>(hlo);
   if (reverse->sharding().IsTileMaximal()) {
     return DefaultAction(hlo);
@@ -3017,6 +3341,9 @@ Status SpmdPartitioningVisitor::HandleReverse(HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::HandleWhile(HloInstruction* hlo) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_52(mht_52_v, 3344, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandleWhile");
+
   const HloSharding& sharding = hlo->sharding();
 
   // Shardings for the body parameter, body root, and cond parameter must be
@@ -3047,6 +3374,9 @@ Status SpmdPartitioningVisitor::HandleWhile(HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::HandleConditional(HloInstruction* hlo) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_53(mht_53_v, 3377, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandleConditional");
+
   std::vector<HloInstruction*> branch_args;
   for (int64_t i = 0; i < hlo->branch_count(); ++i) {
     HloComputation* computation = hlo->branch_computation(i);
@@ -3084,10 +3414,16 @@ Status SpmdPartitioningVisitor::HandleConditional(HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::HandleOptimizationBarrier(HloInstruction* hlo) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_54(mht_54_v, 3417, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandleOptimizationBarrier");
+
   return HandleElementwise(hlo);
 }
 
 Status SpmdPartitioningVisitor::HandleOutfeed(HloInstruction* hlo) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_55(mht_55_v, 3424, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandleOutfeed");
+
   if (hlo->sharding().HasUniqueDevice()) {
     return HandleSingleDevice(hlo);
   }
@@ -3234,10 +3570,16 @@ Status SpmdPartitioningVisitor::HandleOutfeed(HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::HandleRng(HloInstruction* hlo) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_56(mht_56_v, 3573, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandleRng");
+
   if (hlo->sharding().HasUniqueDevice()) {
     return HandleSingleDevice(hlo);
   }
   auto clone_from_original = [&](const HloSharding& shared_sharding) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_57(mht_57_v, 3580, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "lambda");
+
     std::vector<HloInstruction*> new_operands;
     for (int64_t i = 0; i < hlo->operand_count(); ++i) {
       new_operands.push_back(
@@ -3303,6 +3645,9 @@ Status SpmdPartitioningVisitor::HandleRng(HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::HandleReduceWindow(HloInstruction* hlo) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_58(mht_58_v, 3648, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandleReduceWindow");
+
   if (hlo->sharding().IsTileMaximal()) {
     return DefaultAction(hlo);
   }
@@ -3362,6 +3707,9 @@ Status SpmdPartitioningVisitor::HandleReduceWindow(HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::HandleSelectAndScatter(HloInstruction* hlo) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_59(mht_59_v, 3710, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandleSelectAndScatter");
+
   if (hlo->sharding().IsTileMaximal()) {
     return DefaultAction(hlo);
   }
@@ -3583,6 +3931,9 @@ Status SpmdPartitioningVisitor::HandleSelectAndScatter(HloInstruction* hlo) {
 }
 
 Status SpmdPartitioningVisitor::HandleTuple(HloInstruction* hlo) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_60(mht_60_v, 3934, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandleTuple");
+
   std::vector<HloInstruction*> new_operands;
   for (int64_t i = 0; i < hlo->operand_count(); ++i) {
     new_operands.push_back(
@@ -3599,6 +3950,9 @@ Status SpmdPartitioningVisitor::HandleTuple(HloInstruction* hlo) {
 StatusOr<bool> SpmdPartitioningVisitor::DoPartition(
     HloComputation* computation, const HloSharding& root_sharding,
     const SpmdPartitionerOptions& options) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_61(mht_61_v, 3953, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::DoPartition");
+
   VLOG(2) << "Partitioning computation " << computation->name() << " for "
           << num_replicas_ << " replicas and " << num_partitions_
           << " partitions";
@@ -3620,6 +3974,9 @@ StatusOr<bool> SpmdPartitioningVisitor::DoPartition(
 }
 
 Status SpmdPartitioningVisitor::HandlePartitionId(HloInstruction* hlo) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_62(mht_62_v, 3977, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioningVisitor::HandlePartitionId");
+
   return Unimplemented(
       "PartitionId instruction is not supported for SPMD partitioning since "
       "the meaning is ambiguous -- whether the instruction is replicated or "
@@ -3628,14 +3985,23 @@ Status SpmdPartitioningVisitor::HandlePartitionId(HloInstruction* hlo) {
 
 SPMDCollectiveOpsCreator GetDefaultCollectiveOpsCreator(int64_t num_partitions,
                                                         int64_t num_replicas) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_63(mht_63_v, 3988, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "GetDefaultCollectiveOpsCreator");
+
   return {
       [](SpmdBuilder* b) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_64(mht_64_v, 3993, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "lambda");
+
         return b->AddInstruction(HloInstruction::CreatePartitionId());
       },
       [num_replicas, num_partitions](
           SpmdBuilder* b, HloInstruction* operand, HloComputation* reduction,
           const std::vector<std::vector<int64_t>>& partition_subgroups,
           int64_t channel_id) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_65(mht_65_v, 4002, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "lambda");
+
         if (partition_subgroups.size() <= 1) {
           std::vector<ReplicaGroup> groups(num_replicas);
           // TODO(yuanzx): Unify subgroup definition with AllToAll.
@@ -3666,6 +4032,9 @@ SPMDCollectiveOpsCreator GetDefaultCollectiveOpsCreator(int64_t num_partitions,
       [num_partitions](SpmdBuilder* b, HloInstruction* operand,
                        std::vector<std::pair<int64_t, int64_t>>& src_dst_pairs,
                        int64_t channel_id) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_66(mht_66_v, 4035, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "lambda");
+
         /* optimize trivial collective permute */
         if (src_dst_pairs.empty()) {
           // If the src/dst pairs are empty, then the collective permute just
@@ -3691,6 +4060,9 @@ SPMDCollectiveOpsCreator GetDefaultCollectiveOpsCreator(int64_t num_partitions,
       [](SpmdBuilder* b, absl::Span<HloInstruction* const> operands,
          const std::vector<std::vector<int64_t>>& partition_subgroups,
          int64_t channel_id, absl::optional<int64_t> split_dimension) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_67(mht_67_v, 4063, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "lambda");
+
         std::vector<Shape> shapes(operands.size(), operands[0]->shape());
         const Shape output_shape = (shapes.size() == 1)
                                        ? shapes[0]
@@ -3709,6 +4081,9 @@ SPMDCollectiveOpsCreator GetDefaultCollectiveOpsCreator(int64_t num_partitions,
           SpmdBuilder* b, HloInstruction* operand, const Shape& ag_shape,
           const std::vector<std::vector<int64_t>>& partition_subgroups,
           int64_t channel_id, int64_t all_gather_dimension) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_68(mht_68_v, 4084, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "lambda");
+
         std::vector<ReplicaGroup> device_groups;
         device_groups.reserve(partition_subgroups.size() * num_replicas);
         for (int64_t i = 0; i < num_replicas; ++i) {
@@ -3731,12 +4106,18 @@ SpmdPartitioner::SpmdPartitioner(int64_t num_partitions, int64_t num_replicas,
                                  SpmdPartitionerOptions options)
     : SpmdPartitioner(
           num_partitions, num_replicas, std::move(options),
-          GetDefaultCollectiveOpsCreator(num_partitions, num_replicas)) {}
+          GetDefaultCollectiveOpsCreator(num_partitions, num_replicas)) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_69(mht_69_v, 4110, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioner::SpmdPartitioner");
+}
 
 HloInstruction* SpmdPartitioner::AllGatherShards(
     SpmdBuilder* b, HloInstruction* operand, const HloSharding& sharding,
     int64_t* next_channel_id, absl::Span<const int64_t> selected_dims,
     const SPMDCollectiveOpsCreator& collectives_creator) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_70(mht_70_v, 4118, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioner::AllGatherShards");
+
   return AllGatherShardsInternal(b, operand, sharding, next_channel_id,
                                  selected_dims, collectives_creator,
                                  /*per_dim_ag=*/true);
@@ -3746,6 +4127,9 @@ HloInstruction* SpmdPartitioner::AllGatherShardsInternal(
     SpmdBuilder* b, HloInstruction* operand, const HloSharding& sharding,
     int64_t* next_channel_id, absl::Span<const int64_t> selected_dims,
     const SPMDCollectiveOpsCreator& collectives_creator, bool per_dim_ag) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_71(mht_71_v, 4130, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioner::AllGatherShardsInternal");
+
   if (selected_dims.empty()) {
     return operand;
   }
@@ -3838,6 +4222,9 @@ HloInstruction* SpmdPartitioner::AllReduceAlongShardingDims(
     int64_t* next_channel_id, absl::Span<const int64_t> selected_dims,
     const SPMDCollectiveOpsCreator& collectives_creator,
     HloComputation* reduction) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_72(mht_72_v, 4225, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioner::AllReduceAlongShardingDims");
+
   return AllReduceAlongShardingDimsInternal(
       b, operand, sharding, next_channel_id, selected_dims, collectives_creator,
       reduction, /*per_dim_ar=*/true);
@@ -3848,6 +4235,9 @@ HloInstruction* SpmdPartitioner::AllReduceAlongShardingDimsInternal(
     int64_t* next_channel_id, absl::Span<const int64_t> selected_dims,
     const SPMDCollectiveOpsCreator& collectives_creator,
     HloComputation* reduction, bool per_dim_ar) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_73(mht_73_v, 4238, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioner::AllReduceAlongShardingDimsInternal");
+
   if (!per_dim_ar) {
     auto partition_subgroups =
         GetPartitionGroupsForReplication(sharding, selected_dims);
@@ -3870,6 +4260,9 @@ HloInstruction* SpmdPartitioner::AllReduceAlongShardingDimsInternal(
 StatusOr<bool> SpmdPartitioner::PartitionComputation(
     HloComputation* computation, const HloSharding& root_sharding,
     int64_t* next_channel_id, SpmdLogger* logger) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_74(mht_74_v, 4263, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioner::PartitionComputation");
+
   auto visitor =
       CreateVisitor(computation, num_partitions_, num_replicas_,
                     collective_ops_creator_, next_channel_id, logger, options_);
@@ -3881,12 +4274,18 @@ std::unique_ptr<SpmdPartitioningVisitor> SpmdPartitioner::CreateVisitor(
     const SPMDCollectiveOpsCreator& collective_ops_creator,
     int64_t* next_channel_id, SpmdLogger* logger,
     SpmdPartitionerOptions options) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_75(mht_75_v, 4277, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioner::CreateVisitor");
+
   return absl::make_unique<SpmdPartitioningVisitor>(
       computation, num_partitions, num_replicas, collective_ops_creator,
       next_channel_id, logger, std::move(options), this);
 }
 
 StatusOr<bool> SpmdPartitioner::Run(HloModule* module) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_76(mht_76_v, 4286, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioner::Run");
+
   TF_RETURN_IF_ERROR(PreprocessSharding(module));
   TF_RETURN_IF_ERROR(PreprocessHlos(module));
 
@@ -3976,6 +4375,9 @@ StatusOr<bool> SpmdPartitioner::Run(HloModule* module) {
 }
 
 Status SpmdPartitioner::PreprocessSharding(HloModule* module) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_77(mht_77_v, 4378, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioner::PreprocessSharding");
+
   for (HloComputation* computation : module->computations()) {
     for (HloInstruction* hlo : computation->instructions()) {
       if (hlo->HasSideEffectNoRecurse() && hlo->opcode() != HloOpcode::kRng) {
@@ -4052,6 +4454,9 @@ Status SpmdPartitioner::PreprocessSharding(HloModule* module) {
 }
 
 Status SpmdPartitioner::PreprocessHlos(HloModule* module) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_78(mht_78_v, 4457, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "SpmdPartitioner::PreprocessHlos");
+
   auto skip_copy_operands = [](HloInstruction* operand,
                                bool check_single_use =
                                    true) -> HloInstruction* {
@@ -4196,6 +4601,9 @@ Status SpmdPartitioner::PreprocessHlos(HloModule* module) {
           auto apply_modifiers =
               [&](HloInstruction* inst,
                   const std::vector<const HloInstruction*>& modifiers) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSspmdPSspmd_partitionerDTcc mht_79(mht_79_v, 4604, "", "./tensorflow/compiler/xla/service/spmd/spmd_partitioner.cc", "lambda");
+
                 // Apply the modifiers in the reverse order.
                 for (auto it = modifiers.crbegin(), end = modifiers.crend();
                      it != end; ++it) {

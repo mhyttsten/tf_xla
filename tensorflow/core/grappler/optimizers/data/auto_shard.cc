@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSauto_shardDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSauto_shardDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSauto_shardDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -185,6 +353,9 @@ Status OptimizeGraph(const GrapplerItem& item, int64_t num_workers,
 template <std::size_t SIZE>
 bool IsDatasetNodeOfType(const NodeDef& node,
                          const std::array<const char*, SIZE>& arr) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSauto_shardDTcc mht_0(mht_0_v, 356, "", "./tensorflow/core/grappler/optimizers/data/auto_shard.cc", "IsDatasetNodeOfType");
+
   for (const auto& dataset_op_name : arr) {
     if (tensorflow::data::MatchesAnyVersion(/*op_prefix=*/dataset_op_name,
                                             /*op_to_match=*/node.op())) {
@@ -197,6 +368,9 @@ bool IsDatasetNodeOfType(const NodeDef& node,
 // Adds a ShardDataset node before `add_before`.
 Status AddShardNode(MutableGraphView* graph, const NodeDef& add_before,
                     int64_t num_workers, int64_t index) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSauto_shardDTcc mht_1(mht_1_v, 371, "", "./tensorflow/core/grappler/optimizers/data/auto_shard.cc", "AddShardNode");
+
   NodeDef new_node;
   new_node.set_op(kShardDatasetOpName);
   graph_utils::SetUniqueGraphNodeName(kShardDatasetOpName, graph->graph(),
@@ -265,6 +439,12 @@ Status AddShuffleDataset(MutableGraphView* graph, const NodeDef& add_before,
                          const string& buffer_size_node,
                          const string& seed_node, const string& seed2_node,
                          bool reshuffle_each_iteration) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("buffer_size_node: \"" + buffer_size_node + "\"");
+   mht_2_v.push_back("seed_node: \"" + seed_node + "\"");
+   mht_2_v.push_back("seed2_node: \"" + seed2_node + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSauto_shardDTcc mht_2(mht_2_v, 445, "", "./tensorflow/core/grappler/optimizers/data/auto_shard.cc", "AddShuffleDataset");
+
   NodeDef* add_after = graph->GetNode(add_before.input(0));
   NodeDef new_node;
   new_node.set_op(kShuffleDatasetOpName);
@@ -293,6 +473,11 @@ Status AddShuffleDataset(MutableGraphView* graph, const NodeDef& add_before,
 Status AddShuffleDatasetV2(MutableGraphView* graph, const NodeDef& add_before,
                            const string& buffer_size_node,
                            const string& seed_generator_node) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("buffer_size_node: \"" + buffer_size_node + "\"");
+   mht_3_v.push_back("seed_generator_node: \"" + seed_generator_node + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSauto_shardDTcc mht_3(mht_3_v, 478, "", "./tensorflow/core/grappler/optimizers/data/auto_shard.cc", "AddShuffleDatasetV2");
+
   NodeDef* add_after = graph->GetNode(add_before.input(0));
   NodeDef new_node;
   new_node.set_op(kShuffleDatasetV2OpName);
@@ -318,6 +503,13 @@ Status AddShuffleDatasetV3(MutableGraphView* graph, const NodeDef& add_before,
                            const string& seed_node, const string& seed2_node,
                            const string& seed_generator_node,
                            bool reshuffle_each_iteration) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("buffer_size_node: \"" + buffer_size_node + "\"");
+   mht_4_v.push_back("seed_node: \"" + seed_node + "\"");
+   mht_4_v.push_back("seed2_node: \"" + seed2_node + "\"");
+   mht_4_v.push_back("seed_generator_node: \"" + seed_generator_node + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSauto_shardDTcc mht_4(mht_4_v, 510, "", "./tensorflow/core/grappler/optimizers/data/auto_shard.cc", "AddShuffleDatasetV3");
+
   NodeDef* add_after = graph->GetNode(add_before.input(0));
   NodeDef new_node;
   new_node.set_op(kShuffleDatasetV3OpName);
@@ -346,6 +538,9 @@ Status AddShuffleDatasetV3(MutableGraphView* graph, const NodeDef& add_before,
 
 bool ReaderOpInFunction(const NodeDef& node,
                         const FunctionLibraryDefinition& flib) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSauto_shardDTcc mht_5(mht_5_v, 541, "", "./tensorflow/core/grappler/optimizers/data/auto_shard.cc", "ReaderOpInFunction");
+
   const FunctionDef* func = flib.Find(node.attr().at("f").func().name());
   for (int i = 0; i < func->node_def_size(); i++) {
     NodeDef node_in_func = func->node_def(i);
@@ -367,6 +562,9 @@ Status RemoveShuffleDataset(MutableGraphView* graph, const NodeDef& node,
                             string* op_name, string* buffer_size_node,
                             string* seed_node, string* seed2_node,
                             bool* reshuffle_each_iteration) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSauto_shardDTcc mht_6(mht_6_v, 565, "", "./tensorflow/core/grappler/optimizers/data/auto_shard.cc", "RemoveShuffleDataset");
+
   if (node.op() == kShuffleDatasetOpName) {
     *op_name = node.op();
     *buffer_size_node = node.input(1);
@@ -391,6 +589,9 @@ Status RemoveShuffleDatasetV2(MutableGraphView* graph, const NodeDef& node,
                               absl::flat_hash_set<string>* nodes_to_delete,
                               string* op_name, string* buffer_size_node,
                               string* seed_generator_node) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSauto_shardDTcc mht_7(mht_7_v, 592, "", "./tensorflow/core/grappler/optimizers/data/auto_shard.cc", "RemoveShuffleDatasetV2");
+
   if (node.op() == kShuffleDatasetV2OpName) {
     *op_name = node.op();
     *buffer_size_node = node.input(1);
@@ -415,6 +616,9 @@ Status RemoveShuffleDatasetV3(MutableGraphView* graph, const NodeDef& node,
                               string* seed_node, string* seed2_node,
                               string* seed_generator_node,
                               bool* reshuffle_each_iteration) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSauto_shardDTcc mht_8(mht_8_v, 619, "", "./tensorflow/core/grappler/optimizers/data/auto_shard.cc", "RemoveShuffleDatasetV3");
+
   if (node.op() == kShuffleDatasetV3OpName) {
     *op_name = node.op();
     *buffer_size_node = node.input(1);
@@ -439,6 +643,9 @@ Status RemoveShuffleDatasetV3(MutableGraphView* graph, const NodeDef& node,
 Status ProcessDatasetSourceNode(MutableGraphView* graph, const NodeDef& node,
                                 absl::flat_hash_set<string>* nodes_to_delete,
                                 int64_t num_workers, int64_t index) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSauto_shardDTcc mht_9(mht_9_v, 646, "", "./tensorflow/core/grappler/optimizers/data/auto_shard.cc", "ProcessDatasetSourceNode");
+
   string shuffle_op_name = "";
   string buffer_size_node = "";
   string seed_node = "";
@@ -482,6 +689,9 @@ const NodeDef* FindFuncAndTensorSliceDataset(
     const NodeDef* node, int64_t num_workers, int64_t index,
     FunctionLibraryDefinition* flib, MutableGraphView* graph,
     absl::flat_hash_set<string>* nodes_to_delete) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSauto_shardDTcc mht_10(mht_10_v, 692, "", "./tensorflow/core/grappler/optimizers/data/auto_shard.cc", "FindFuncAndTensorSliceDataset");
+
   if (IsDatasetNodeOfType(*node, kFuncDatasetOps)) {
     const NodeDef* input_node = graph_utils::GetInputNode(*node, *graph, 0);
     if (input_node->op() == kTensorSliceDatasetOpName ||
@@ -509,6 +719,9 @@ enum class DropRemainderValue { kUnknown, kTrue, kFalse };
 
 DropRemainderValue GetDropRemainder(const MutableGraphView& graph,
                                     const NodeDef& batch_node) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSauto_shardDTcc mht_11(mht_11_v, 722, "", "./tensorflow/core/grappler/optimizers/data/auto_shard.cc", "GetDropRemainder");
+
   const NodeDef* drop_remainder = nullptr;
   if (batch_node.op() == kBatchDatasetOpName ||
       batch_node.op() == kBatchDatasetV2OpName) {
@@ -543,6 +756,9 @@ Status RecursivelyHandleOp(const NodeDef& node, int64_t num_workers,
                            int64_t index, FunctionLibraryDefinition* flib,
                            MutableGraphView* graph,
                            absl::flat_hash_set<string>* nodes_to_delete) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSauto_shardDTcc mht_12(mht_12_v, 759, "", "./tensorflow/core/grappler/optimizers/data/auto_shard.cc", "RecursivelyHandleOp");
+
   if (node.op() == kAssertCardinalityDatasetOpName) {
     LOG(WARNING) << "The `assert_cardinality` transformation is currently not "
                     "handled by the auto-shard rewrite and will be removed.";
@@ -646,6 +862,9 @@ Status RecursivelyHandleOp(const NodeDef& node, int64_t num_workers,
 // returns a sensible result.
 Status ShardByFile(const NodeDef& sink_node, int64_t num_workers, int64_t index,
                    FunctionLibraryDefinition* flib, MutableGraphView* graph) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSauto_shardDTcc mht_13(mht_13_v, 865, "", "./tensorflow/core/grappler/optimizers/data/auto_shard.cc", "ShardByFile");
+
   absl::flat_hash_set<string> nodes_to_delete;
   TF_RETURN_IF_ERROR(RecursivelyHandleOp(sink_node, num_workers, index, flib,
                                          graph, &nodes_to_delete));
@@ -654,6 +873,9 @@ Status ShardByFile(const NodeDef& sink_node, int64_t num_workers, int64_t index,
 
 Status RewriteRebatchV2ToV1(const NodeDef& sink_node, int64_t num_replicas,
                             MutableGraphView* graph) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSauto_shardDTcc mht_14(mht_14_v, 876, "", "./tensorflow/core/grappler/optimizers/data/auto_shard.cc", "RewriteRebatchV2ToV1");
+
   // The final node before AutoShardDataset is RebatchDataset.
   // This is always the case as RebatchDataset and AutoShardDataset are internal
   // APIs used directly by tf.distribute's input_lib. As such, instead of
@@ -703,6 +925,9 @@ Status RewriteRebatchV2ToV1(const NodeDef& sink_node, int64_t num_replicas,
 
 Status ShardByData(const NodeDef& sink_node, int64_t num_workers, int64_t index,
                    int64_t num_replicas, MutableGraphView* graph) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSauto_shardDTcc mht_15(mht_15_v, 928, "", "./tensorflow/core/grappler/optimizers/data/auto_shard.cc", "ShardByData");
+
   const NodeDef* shard_before = &sink_node;
   // We sometimes insert a PrefetchDataset, OptionsDataset, and FinalizeDataset
   // at the end of the input pipeline before autosharding. When sharding by
@@ -725,6 +950,9 @@ Status ShardByData(const NodeDef& sink_node, int64_t num_workers, int64_t index,
 // `shard(num_workers, index)`.
 Status ShardByHint(const NodeDef& sink_node, int64_t num_workers, int64_t index,
                    int64_t num_replicas, MutableGraphView* graph) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSauto_shardDTcc mht_16(mht_16_v, 953, "", "./tensorflow/core/grappler/optimizers/data/auto_shard.cc", "ShardByHint");
+
   auto get_shard_node = [graph](const NodeDef& node) -> const NodeDef* {
     if (node.op() != kShardDatasetOpName) return nullptr;
     auto num_workers_node = graph->GetNode(node.input(1));
@@ -757,6 +985,9 @@ Status ApplyAutoShard(const NodeDef& sink_node, int64_t num_workers,
                       int64_t index, AutoShardPolicy policy,
                       int64_t num_replicas, MutableGraphView* graph,
                       AutoShardPolicy* policy_applied) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSauto_shardDTcc mht_17(mht_17_v, 988, "", "./tensorflow/core/grappler/optimizers/data/auto_shard.cc", "ApplyAutoShard");
+
   *policy_applied = policy;
   FunctionLibraryDefinition flib(OpRegistry::Global(),
                                  graph->graph()->library());
@@ -788,6 +1019,9 @@ Status ApplyAutoShard(const NodeDef& sink_node, int64_t num_workers,
 Status OptimizeGraph(const GrapplerItem& item, int64_t num_workers,
                      int64_t index, AutoShardPolicy policy,
                      int64_t num_replicas, GraphDef* output) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSauto_shardDTcc mht_18(mht_18_v, 1022, "", "./tensorflow/core/grappler/optimizers/data/auto_shard.cc", "OptimizeGraph");
+
   *output = item.graph;
   MutableGraphView graph(output);
   NodeDef* sink_node;
@@ -825,6 +1059,9 @@ namespace internal {
 bool IsEligibleRewriteBatchSize(const NodeDef& sink_node,
                                 const MutableGraphView& graph,
                                 std::vector<std::string>* ineligible_reason) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSauto_shardDTcc mht_19(mht_19_v, 1062, "", "./tensorflow/core/grappler/optimizers/data/auto_shard.cc", "IsEligibleRewriteBatchSize");
+
   ineligible_reason->clear();
   NodeDef* input_node = graph_utils::GetInputNode(sink_node, graph);
   // We always traverse the graph until we arrive at a batch node to collect all
@@ -895,6 +1132,9 @@ bool IsEligibleRewriteBatchSize(const NodeDef& sink_node,
 
 Status AutoShard::Init(
     const tensorflow::RewriterConfig_CustomGraphOptimizer* config) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSauto_shardDTcc mht_20(mht_20_v, 1135, "", "./tensorflow/core/grappler/optimizers/data/auto_shard.cc", "AutoShard::Init");
+
   if (!config) return errors::InvalidArgument("RewriterConfig not found.");
 
   if ((config->parameter_map().find(kNumWorkersAttrName) ==
@@ -942,6 +1182,9 @@ Status AutoShard::OptimizeAndCollectStats(Cluster* cluster,
                                           const GrapplerItem& item,
                                           GraphDef* output,
                                           OptimizationStats* stats) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSoptimizersPSdataPSauto_shardDTcc mht_21(mht_21_v, 1185, "", "./tensorflow/core/grappler/optimizers/data/auto_shard.cc", "AutoShard::OptimizeAndCollectStats");
+
   *output = item.graph;
   TF_RETURN_IF_ERROR(OptimizeGraph(item, num_workers_, index_,
                                    auto_shard_policy_, num_replicas_, output));

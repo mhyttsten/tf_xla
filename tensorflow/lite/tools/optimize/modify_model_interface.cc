@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSmodify_model_interfaceDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSmodify_model_interfaceDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSmodify_model_interfaceDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -198,6 +366,9 @@ std::vector<TensorOpTensor> GetOutputTensors(const TensorType& output_type,
 
 TfLiteStatus SetInputTypeToUINT8(ModelT* model,
                                  const std::vector<TensorOpTensor>& inputs) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSmodify_model_interfaceDTcc mht_0(mht_0_v, 369, "", "./tensorflow/lite/tools/optimize/modify_model_interface.cc", "SetInputTypeToUINT8");
+
   // If the input type is uint8, change float to uint8.
   for (auto tot : inputs) {
     SubGraphT* subgraph = model->subgraphs.at(tot.subgraph_index).get();
@@ -217,6 +388,9 @@ TfLiteStatus SetInputTypeToUINT8(ModelT* model,
 
 TfLiteStatus SetOutputTypeToUINT8(ModelT* model,
                                   const std::vector<TensorOpTensor>& outputs) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSmodify_model_interfaceDTcc mht_1(mht_1_v, 391, "", "./tensorflow/lite/tools/optimize/modify_model_interface.cc", "SetOutputTypeToUINT8");
+
   // Find Quant op code index.
   size_t quant_op_index = 0;
   for (size_t i = 0; i < model->operator_codes.size(); ++i) {
@@ -249,6 +423,9 @@ TfLiteStatus SetOutputTypeToUINT8(ModelT* model,
 TfLiteStatus RemoveInputTensor(ModelT* model,
                                const std::vector<TensorOpTensor>& inputs,
                                int32 original_number_tensors) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSmodify_model_interfaceDTcc mht_2(mht_2_v, 426, "", "./tensorflow/lite/tools/optimize/modify_model_interface.cc", "RemoveInputTensor");
+
   // Consistency check to make sure that erase start from the end.
   int last_op_index = std::numeric_limits<int32_t>::max();
   int last_tensor_index = std::numeric_limits<int32_t>::max();
@@ -275,6 +452,9 @@ TfLiteStatus RemoveInputTensor(ModelT* model,
 TfLiteStatus RemoveOutputTensor(ModelT* model,
                                 const std::vector<TensorOpTensor>& outputs,
                                 int32 original_number_tensors) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSmodify_model_interfaceDTcc mht_3(mht_3_v, 455, "", "./tensorflow/lite/tools/optimize/modify_model_interface.cc", "RemoveOutputTensor");
+
   // Consistency check to make sure that erase start from the end.
   int last_op_index = std::numeric_limits<int32_t>::max();
   int last_tensor_index = std::numeric_limits<int32_t>::max();
@@ -302,6 +482,9 @@ TfLiteStatus RemoveOutputTensor(ModelT* model,
 int GetOriginalNumberOfTensors(const TensorType& input_type,
                                const TensorType& output_type, ModelT* model,
                                ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSmodify_model_interfaceDTcc mht_4(mht_4_v, 485, "", "./tensorflow/lite/tools/optimize/modify_model_interface.cc", "GetOriginalNumberOfTensors");
+
   std::vector<TensorOpTensor> outputs =
       GetOutputTensors(output_type, model, error_reporter);
   std::vector<TensorOpTensor> inputs =
@@ -314,6 +497,9 @@ int GetOriginalNumberOfTensors(const TensorType& input_type,
 TfLiteStatus ModifyModelInterface(flatbuffers::FlatBufferBuilder* builder,
                                   ModelT* model, const TensorType& input_type,
                                   const TensorType& output_type) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSmodify_model_interfaceDTcc mht_5(mht_5_v, 500, "", "./tensorflow/lite/tools/optimize/modify_model_interface.cc", "ModifyModelInterface");
+
   tflite::StderrReporter error_reporter;
   const int original_number_tensors = GetOriginalNumberOfTensors(
       input_type, output_type, model, &error_reporter);
@@ -362,6 +548,11 @@ TfLiteStatus ModifyModelInterface(const string& input_file,
                                   const string& output_file,
                                   const TensorType& input_type,
                                   const TensorType& output_type) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("input_file: \"" + input_file + "\"");
+   mht_6_v.push_back("output_file: \"" + output_file + "\"");
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSmodify_model_interfaceDTcc mht_6(mht_6_v, 553, "", "./tensorflow/lite/tools/optimize/modify_model_interface.cc", "ModifyModelInterface");
+
   // Consistency Check
   if (input_type != tflite::TensorType_INT8 &&
       input_type != tflite::TensorType_UINT8 &&
@@ -396,6 +587,9 @@ namespace {
 void AddUint8Dequant(
     const std::unordered_map<string, std::pair<float, int32_t>>& quant_params,
     ModelT* model) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSmodify_model_interfaceDTcc mht_7(mht_7_v, 590, "", "./tensorflow/lite/tools/optimize/modify_model_interface.cc", "AddUint8Dequant");
+
   for (size_t subgraph_idx = 0; subgraph_idx < model->subgraphs.size();
        subgraph_idx++) {
     SubGraphT* subgraph = model->subgraphs.at(subgraph_idx).get();
@@ -436,6 +630,9 @@ void AddUint8Dequant(
 void AddUint8Quant(
     const std::unordered_map<string, std::pair<float, int32_t>>& quant_params,
     ModelT* model) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSmodify_model_interfaceDTcc mht_8(mht_8_v, 633, "", "./tensorflow/lite/tools/optimize/modify_model_interface.cc", "AddUint8Quant");
+
   for (size_t subgraph_idx = 0; subgraph_idx < model->subgraphs.size();
        subgraph_idx++) {
     SubGraphT* subgraph = model->subgraphs.at(subgraph_idx).get();
@@ -479,6 +676,9 @@ TfLiteStatus Uint8QuantizeModelInputsOutputs(
         input_quant_params,
     const std::unordered_map<string, std::pair<float, int32_t>>&
         output_quant_params) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePStoolsPSoptimizePSmodify_model_interfaceDTcc mht_9(mht_9_v, 679, "", "./tensorflow/lite/tools/optimize/modify_model_interface.cc", "Uint8QuantizeModelInputsOutputs");
+
   std::unique_ptr<ModelT> model;
   model.reset(input_model->UnPack());
   // Add Dequant for inputs.

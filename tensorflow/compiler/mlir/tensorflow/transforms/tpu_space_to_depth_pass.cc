@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_space_to_depth_passDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_space_to_depth_passDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_space_to_depth_passDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -70,18 +238,27 @@ struct TPUSpaceToDepthPass
 
 // Updates func argument type to have the updated input shape.
 void UpdateFuncType(FuncOp func) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_space_to_depth_passDTcc mht_0(mht_0_v, 241, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_space_to_depth_pass.cc", "UpdateFuncType");
+
   auto arg_types = func.front().getArgumentTypes();
   auto result_types = func.front().getTerminator()->getOperandTypes();
   func.setType(FunctionType::get(func.getContext(), arg_types, result_types));
 }
 
 void HandleFuncOp(Operation* op) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_space_to_depth_passDTcc mht_1(mht_1_v, 250, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_space_to_depth_pass.cc", "HandleFuncOp");
+
   auto func = llvm::cast<FuncOp>(op);
   UpdateFuncType(func);
 }
 
 // Handles cast op between the first convolution and the block argument.
 LogicalResult HandleCast(TF::CastOp cast_op, ArrayRef<int64_t> new_shape) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_space_to_depth_passDTcc mht_2(mht_2_v, 259, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_space_to_depth_pass.cc", "HandleCast");
+
   auto cast_input = cast_op.x();
   // Update input type.
   auto transform_result_type =
@@ -111,6 +288,9 @@ LogicalResult HandleCast(TF::CastOp cast_op, ArrayRef<int64_t> new_shape) {
 
 // Handles padding before convolution for space to depth transform.
 LogicalResult HandlePad(TF::PadOp op, int32_t kernel_size, int32_t block_size) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_space_to_depth_passDTcc mht_3(mht_3_v, 291, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_space_to_depth_pass.cc", "HandlePad");
+
   auto ranked_type = op.input().getType().dyn_cast<RankedTensorType>();
   if (!ranked_type) return failure();
   auto pad_input_shape = ranked_type.getShape();
@@ -148,6 +328,9 @@ LogicalResult HandlePad(TF::PadOp op, int32_t kernel_size, int32_t block_size) {
 
 // Handles stride for the first convolution for the transform.
 void HandleConv2DStride(TF::Conv2DOp conv2d) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_space_to_depth_passDTcc mht_4(mht_4_v, 331, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_space_to_depth_pass.cc", "HandleConv2DStride");
+
   MLIRContext* context = conv2d.getContext();
   SmallVector<int64_t, 4> values = {1, 1, 1, 1};
   auto attrs = llvm::map_range(values, [context](int64_t v) -> Attribute {
@@ -160,6 +343,9 @@ void HandleConv2DStride(TF::Conv2DOp conv2d) {
 
 // Transforms input shape for the first convolution.
 void HandleConv2DInput(TF::Conv2DOp conv2d, int64_t block_size) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_space_to_depth_passDTcc mht_5(mht_5_v, 346, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_space_to_depth_pass.cc", "HandleConv2DInput");
+
   auto input = conv2d.input();
   auto input_shape = input.getType().cast<RankedTensorType>().getShape();
   SmallVector<int64_t, 4> transform_shape = {
@@ -174,6 +360,9 @@ void HandleConv2DInput(TF::Conv2DOp conv2d, int64_t block_size) {
 TF::PadOp GetPadOpForConv2DFilter(ArrayRef<int64_t> filter_shape, Value filter,
                                   OpBuilder* builder, int32_t pad_h,
                                   int32_t pad_w) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_space_to_depth_passDTcc mht_6(mht_6_v, 363, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_space_to_depth_pass.cc", "GetPadOpForConv2DFilter");
+
   SmallVector<int32_t, 8> values = {pad_h, 0, pad_w, 0, 0, 0, 0, 0};
   auto padding_type =
       RankedTensorType::get({4, 2}, builder->getIntegerType(32));
@@ -193,6 +382,9 @@ TF::PadOp GetPadOpForConv2DFilter(ArrayRef<int64_t> filter_shape, Value filter,
 // Creates reshape op for space to depth transform.
 TF::ReshapeOp GetReshapeOpForConv2DFilter(ArrayRef<int64_t> new_shape,
                                           Value input, OpBuilder* builder) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_space_to_depth_passDTcc mht_7(mht_7_v, 385, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_space_to_depth_pass.cc", "GetReshapeOpForConv2DFilter");
+
   auto reshape_result_type =
       RankedTensorType::get(new_shape, getElementTypeOrSelf(input));
   auto reshape_type = RankedTensorType::get(
@@ -206,6 +398,9 @@ TF::ReshapeOp GetReshapeOpForConv2DFilter(ArrayRef<int64_t> new_shape,
 
 // Creates transpose op for shape to depth transform.
 TF::TransposeOp GetTransposeOpForConv2DFilter(OpBuilder* builder, Value input) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_space_to_depth_passDTcc mht_8(mht_8_v, 401, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_space_to_depth_pass.cc", "GetTransposeOpForConv2DFilter");
+
   SmallVector<int32_t, 6> permutation = {0, 2, 1, 3, 4, 5};
   auto permute_type = RankedTensorType::get({6}, builder->getIntegerType(32));
   auto permute_attr = DenseIntElementsAttr::get(permute_type, permutation);
@@ -215,6 +410,9 @@ TF::TransposeOp GetTransposeOpForConv2DFilter(OpBuilder* builder, Value input) {
 }
 
 void HandleConv2DFilter(TF::Conv2DOp conv2d, int64_t block_size) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_space_to_depth_passDTcc mht_9(mht_9_v, 413, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_space_to_depth_pass.cc", "HandleConv2DFilter");
+
   // For example, if filter shape is [7, 7, 3, 64] with block_size 2,
   // will apply below transforms to the filter:
   // 1. Pad the filter to [8, 8, 3, 64]
@@ -267,6 +465,9 @@ void HandleConv2DFilter(TF::Conv2DOp conv2d, int64_t block_size) {
 // Creates slice op for filter in back prop pass.
 TF::SliceOp GetSliceOpForConv2DBackPropFilter(
     ArrayRef<int32_t> old_filter_shape, Value input, OpBuilder* builder) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_space_to_depth_passDTcc mht_10(mht_10_v, 468, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_space_to_depth_pass.cc", "GetSliceOpForConv2DBackPropFilter");
+
   SmallVector<int64_t, 4> slice_size(old_filter_shape.begin(),
                                      old_filter_shape.end());
   auto slice_result_type =
@@ -291,6 +492,9 @@ void HandleConv2DBackPropFilter(TF::Conv2DBackpropFilterOp backprop,
                                 ArrayRef<int32_t> old_filter_shape,
                                 ArrayRef<int32_t> new_filter_shape,
                                 int64_t block_size) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_space_to_depth_passDTcc mht_11(mht_11_v, 495, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_space_to_depth_pass.cc", "HandleConv2DBackPropFilter");
+
   OpBuilder builder(backprop);
   builder.setInsertionPoint(backprop);
 
@@ -362,6 +566,9 @@ void HandleConv2DBackPropFilter(TF::Conv2DBackpropFilterOp backprop,
 // Checks if the input producer op is supported in this transform. Right now, we
 // only check if it is a host tf.IteratorGetNext.
 bool IsSupportedHostInputOp(Operation* op) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_space_to_depth_passDTcc mht_12(mht_12_v, 569, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_space_to_depth_pass.cc", "IsSupportedHostInputOp");
+
   TF::IteratorGetNextOp iter = llvm::dyn_cast<TF::IteratorGetNextOp>(op);
   if (!iter) return false;
   auto device = op->getAttrOfType<StringAttr>(kDeviceAttr);
@@ -378,6 +585,9 @@ bool IsSupportedHostInputOp(Operation* op) {
 TF::SpaceToDepthOp BuildSpaceToDepth(tf_device::ClusterFuncOp cluster_func,
                                      Value input, int32_t block_size,
                                      ArrayRef<int64_t> input_shape) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_space_to_depth_passDTcc mht_13(mht_13_v, 588, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_space_to_depth_pass.cc", "BuildSpaceToDepth");
+
   auto input_op = input.getDefiningOp();
   OpBuilder builder(input_op);
   builder.setInsertionPointAfter(input_op);
@@ -395,6 +605,9 @@ TF::SpaceToDepthOp HandleHostInput(Value input, int64_t index,
                                    tf_device::ClusterFuncOp cluster_func,
                                    int32_t block_size,
                                    ArrayRef<int64_t> input_shape) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_space_to_depth_passDTcc mht_14(mht_14_v, 608, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_space_to_depth_pass.cc", "HandleHostInput");
+
   auto space_to_depth =
       BuildSpaceToDepth(cluster_func, input, block_size, input_shape);
   cluster_func.setOperand(index, space_to_depth);
@@ -408,6 +621,9 @@ bool HandleHostReplicatedInputs(int64_t index,
                                 BlockArgument block_arg,
                                 tf_device::ReplicateOp replicate,
                                 int32_t block_size) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_space_to_depth_passDTcc mht_15(mht_15_v, 624, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_space_to_depth_pass.cc", "HandleHostReplicatedInputs");
+
   // We need to know the devices to copy to.
   if (!replicate.devices()) return false;
 
@@ -434,6 +650,9 @@ bool HandleHostReplicatedInputs(int64_t index,
 // should not have other uses.
 void HandleCluster(tf_device::ClusterFuncOp cluster_func, int32_t block_size,
                    unsigned arg_num) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_space_to_depth_passDTcc mht_16(mht_16_v, 653, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_space_to_depth_pass.cc", "HandleCluster");
+
   auto maybe_replicate =
       llvm::dyn_cast<tf_device::ReplicateOp>(cluster_func->getParentOp());
 
@@ -470,6 +689,9 @@ void HandleCluster(tf_device::ClusterFuncOp cluster_func, int32_t block_size,
 
 // Checks if input shape of convolution is good for space to depth transform.
 bool Conv2DInputShapeCanTransform(Value input) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_space_to_depth_passDTcc mht_17(mht_17_v, 692, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_space_to_depth_pass.cc", "Conv2DInputShapeCanTransform");
+
   auto ranked_type = input.getType().dyn_cast<RankedTensorType>();
   if (!ranked_type) return false;
   auto input_shape = ranked_type.getShape();
@@ -535,6 +757,9 @@ Optional<BlockArgumentInfo> GetConv2DInputArgNum(TF::Conv2DOp conv2d) {
 
 // Applies space to depth transform for the first convolution on TPU device.
 void HandleFirstConvolution(TF::Conv2DOp conv2d, int64_t block_size) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_space_to_depth_passDTcc mht_18(mht_18_v, 760, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_space_to_depth_pass.cc", "HandleFirstConvolution");
+
   // Check if input and filter type are RankedTensorType.
   auto input_tensor_type =
       conv2d.input().getType().dyn_cast<RankedTensorType>();
@@ -587,6 +812,9 @@ void HandleFirstConvolution(TF::Conv2DOp conv2d, int64_t block_size) {
 // from convolution.
 // Space to depth transform won't be triggered if block size <= 1.
 int32_t GetConv2DBlockSize(TF::Conv2DOp conv2d) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_space_to_depth_passDTcc mht_19(mht_19_v, 815, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_space_to_depth_pass.cc", "GetConv2DBlockSize");
+
   SmallVector<int32_t, 4> strides(4, 1);
   for (int i = 0; i < 3; ++i) {
     strides[i] = conv2d.strides()[i].cast<mlir::IntegerAttr>().getInt();
@@ -602,6 +830,9 @@ int32_t GetConv2DBlockSize(TF::Conv2DOp conv2d) {
 }
 
 void TPUSpaceToDepthPass::runOnOperation() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPStpu_space_to_depth_passDTcc mht_20(mht_20_v, 833, "", "./tensorflow/compiler/mlir/tensorflow/transforms/tpu_space_to_depth_pass.cc", "TPUSpaceToDepthPass::runOnOperation");
+
   Optional<tf_device::ClusterFuncOp> cluster_func;
   // Space to depth only supports training loop.
   auto func_result = getOperation().walk([&](tf_device::ClusterFuncOp cluster) {

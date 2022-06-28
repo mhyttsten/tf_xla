@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,6 +210,9 @@ namespace fully_connected {
 
 namespace {
 bool SupportedSparsityFormat(const TfLiteSparsity& sparsity) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc mht_0(mht_0_v, 213, "", "./tensorflow/lite/kernels/fully_connected.cc", "SupportedSparsityFormat");
+
   if (sparsity.dim_metadata[0].format == kTfLiteDimDense &&
       sparsity.dim_metadata[1].format == kTfLiteDimSparseCSR) {
     return true;
@@ -55,6 +226,9 @@ static const int kDimMetadataSizeBlockSparse = 3;
 
 TfLiteStatus CreateLedgerTensor(const TfLiteSparsity* sparsity,
                                 TfLiteContext* context, TfLiteTensor* ledger) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc mht_1(mht_1_v, 229, "", "./tensorflow/lite/kernels/fully_connected.cc", "CreateLedgerTensor");
+
   TF_LITE_ENSURE(context, sparsity != nullptr);
   ledger->type = kTfLiteUInt8;
   ledger->allocation_type = kTfLiteArenaRwPersistent;
@@ -66,6 +240,9 @@ TfLiteStatus CreateLedgerTensor(const TfLiteSparsity* sparsity,
 
 TfLiteStatus PopulateLedgerData(const TfLiteSparsity* sparsity,
                                 TfLiteContext* context, uint8_t* ledger_data) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc mht_2(mht_2_v, 243, "", "./tensorflow/lite/kernels/fully_connected.cc", "PopulateLedgerData");
+
   TF_LITE_ENSURE(context, sparsity != nullptr);
   const auto* array_segments = sparsity->dim_metadata[1].array_segments;
   const auto* array_indices = sparsity->dim_metadata[1].array_indices;
@@ -130,6 +307,9 @@ inline TfLiteStatus CheckTypes(TfLiteContext* context,
                                const TfLiteTensor* filter,
                                const TfLiteTensor* bias, TfLiteTensor* output,
                                TfLiteFullyConnectedParams* params) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc mht_3(mht_3_v, 310, "", "./tensorflow/lite/kernels/fully_connected.cc", "CheckTypes");
+
   const bool is_quantized =
       ((filter->type == kTfLiteUInt8) || (filter->type == kTfLiteInt8));
   const bool is_hybrid = is_quantized && (input->type == kTfLiteFloat32);
@@ -173,6 +353,10 @@ inline TfLiteStatus CheckTypes(TfLiteContext* context,
 }
 
 void* Init(TfLiteContext* context, const char* buffer, size_t length) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc mht_4(mht_4_v, 357, "", "./tensorflow/lite/kernels/fully_connected.cc", "Init");
+
   // This is a builtin op, so we don't use the contents in 'buffer', if any.
   // Instead, we allocate a new object to carry information from Prepare() to
   // Eval().
@@ -183,10 +367,16 @@ void* Init(TfLiteContext* context, const char* buffer, size_t length) {
 }
 
 void Free(TfLiteContext* context, void* buffer) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc mht_5(mht_5_v, 370, "", "./tensorflow/lite/kernels/fully_connected.cc", "Free");
+
   delete reinterpret_cast<OpData*>(buffer);
 }
 
 TfLiteStatus PrepareImpl(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc mht_6(mht_6_v, 377, "", "./tensorflow/lite/kernels/fully_connected.cc", "PrepareImpl");
+
   auto* params =
       reinterpret_cast<TfLiteFullyConnectedParams*>(node->builtin_data);
   OpData* data = reinterpret_cast<OpData*>(node->user_data);
@@ -373,6 +563,9 @@ TfLiteStatus PrepareImpl(TfLiteContext* context, TfLiteNode* node) {
 
 template <KernelType kernel_type>
 TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc mht_7(mht_7_v, 566, "", "./tensorflow/lite/kernels/fully_connected.cc", "Prepare");
+
   // Check for supported activation types.
   auto* params =
       reinterpret_cast<TfLiteFullyConnectedParams*>(node->builtin_data);
@@ -401,6 +594,9 @@ TfLiteStatus EvalPie(TfLiteContext* context, TfLiteNode* node,
                      TfLiteFullyConnectedParams* params, OpData* data,
                      const TfLiteTensor* input, const TfLiteTensor* filter,
                      const TfLiteTensor* bias, TfLiteTensor* output) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc mht_8(mht_8_v, 597, "", "./tensorflow/lite/kernels/fully_connected.cc", "EvalPie");
+
   int total_input_size = 1;
   for (int i = 0; i < input->dims->size; i++) {
     total_input_size *= input->dims->data[i];
@@ -439,6 +635,9 @@ TfLiteStatus EvalHybridDense(
     TfLiteTensor* input_quantized, TfLiteTensor* scaling_factors,
     TfLiteTensor* accum_scratch, TfLiteTensor* row_sums,
     TfLiteTensor* input_offsets, TfLiteTensor* output) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc mht_9(mht_9_v, 638, "", "./tensorflow/lite/kernels/fully_connected.cc", "EvalHybridDense");
+
   int total_input_size = 1;
   for (int i = 0; i < input->dims->size; i++) {
     total_input_size *= input->dims->data[i];
@@ -508,6 +707,9 @@ void EvalSparseHybridImpl(TfLiteContext* context, TfLiteNode* node,
                           TfLiteTensor* scaling_factors,
                           TfLiteTensor* accum_scratch, TfLiteTensor* row_sums,
                           TfLiteTensor* input_offsets, TfLiteTensor* output) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc mht_10(mht_10_v, 710, "", "./tensorflow/lite/kernels/fully_connected.cc", "EvalSparseHybridImpl");
+
   ruy::profiler::ScopeLabel label("FullyConnected");
   ruy::profiler::ScopeLabel inner_label("Sparse Hybrid Kernel");
   const auto& input_shape = GetTensorShape(input);
@@ -611,9 +813,15 @@ struct SparseHybridFullyConnectedTask : cpu_backend_threadpool::Task {
         accum_scratch(accum_scratch),
         row_sums(row_sums),
         input_offsets(input_offsets),
-        output(output) {}
+        output(output) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc mht_11(mht_11_v, 817, "", "./tensorflow/lite/kernels/fully_connected.cc", "SparseHybridFullyConnectedTask");
+}
 
   void Run() override {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc mht_12(mht_12_v, 822, "", "./tensorflow/lite/kernels/fully_connected.cc", "Run");
+
     EvalSparseHybridImpl(context, node, params, data, input, filter, bias,
                          thread_start, thread_end, input_quantized,
                          scaling_factors, accum_scratch, row_sums,
@@ -645,6 +853,9 @@ TfLiteStatus EvalHybrid(TfLiteContext* context, TfLiteNode* node,
                         TfLiteTensor* scaling_factors,
                         TfLiteTensor* accum_scratch, TfLiteTensor* row_sums,
                         TfLiteTensor* input_offsets, TfLiteTensor* output) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc mht_13(mht_13_v, 856, "", "./tensorflow/lite/kernels/fully_connected.cc", "EvalHybrid");
+
   const auto& output_shape = GetTensorShape(output);
   CpuBackendContext* cpu_backend_context =
       CpuBackendContext::GetFromContext(context);
@@ -717,6 +928,9 @@ void FullyConnectedInt8(const OpData* data, const TfLiteTensor* input,
                         const TfLiteTensor* filter, const TfLiteTensor* bias,
                         TfLiteTensor* output,
                         CpuBackendContext* cpu_backend_context) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc mht_14(mht_14_v, 931, "", "./tensorflow/lite/kernels/fully_connected.cc", "FullyConnectedInt8");
+
   FullyConnectedParams op_params;
   op_params.input_offset = -input->params.zero_point;
   op_params.weights_offset = -filter->params.zero_point;
@@ -747,6 +961,9 @@ template <KernelType kernel_type>
 void FullyConnectedInt16(const OpData* data, const TfLiteTensor* input,
                          const TfLiteTensor* filter, const TfLiteTensor* bias,
                          TfLiteTensor* output) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc mht_15(mht_15_v, 964, "", "./tensorflow/lite/kernels/fully_connected.cc", "FullyConnectedInt16");
+
   FullyConnectedParams op_params;
   op_params.weights_offset = -filter->params.zero_point;
   op_params.output_multiplier = data->output_multiplier;
@@ -774,6 +991,9 @@ bool VerifySparsity(const RuntimeShape& weights_shape,
                     const RuntimeShape& input_shape,
                     const RuntimeShape& output_shape,
                     const TfLiteSparsity* sparsity) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc mht_16(mht_16_v, 994, "", "./tensorflow/lite/kernels/fully_connected.cc", "VerifySparsity");
+
   const int weights_dims_count = weights_shape.DimensionsCount();
   const int output_dims_count = output_shape.DimensionsCount();
   const int w0_size = sparsity->dim_metadata[0].dense_size;
@@ -805,6 +1025,9 @@ TfLiteStatus EvalQuantized(TfLiteContext* context, TfLiteNode* node,
                            const TfLiteTensor* input,
                            const TfLiteTensor* filter, const TfLiteTensor* bias,
                            TfLiteTensor* output) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc mht_17(mht_17_v, 1028, "", "./tensorflow/lite/kernels/fully_connected.cc", "EvalQuantized");
+
   int32_t input_offset = -input->params.zero_point;
   int32_t filter_offset = -filter->params.zero_point;
   int32_t output_offset = output->params.zero_point;
@@ -949,6 +1172,9 @@ TfLiteStatus EvalShuffledQuantized(TfLiteContext* context, TfLiteNode* node,
                                    const TfLiteTensor* bias,
                                    TfLiteTensor* output,
                                    TfLiteTensor* shuffled_input_workspace) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc mht_18(mht_18_v, 1175, "", "./tensorflow/lite/kernels/fully_connected.cc", "EvalShuffledQuantized");
+
   // TODO(b/110697972) decide more consistently if / how / where we want
   // to perform this kind of runtime data type checks.
   if (shuffled_input_workspace->type != kTfLiteUInt8) {
@@ -999,6 +1225,9 @@ TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
                        TfLiteFullyConnectedParams* params, OpData* data,
                        const TfLiteTensor* input, const TfLiteTensor* filter,
                        const TfLiteTensor* bias, TfLiteTensor* output) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc mht_19(mht_19_v, 1228, "", "./tensorflow/lite/kernels/fully_connected.cc", "EvalFloat");
+
   float output_activation_min, output_activation_max;
   CalculateActivationRange(params->activation, &output_activation_min,
                            &output_activation_max);
@@ -1084,6 +1313,9 @@ TfLiteStatus EvalFloat(TfLiteContext* context, TfLiteNode* node,
 
 template <KernelType kernel_type>
 TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc mht_20(mht_20_v, 1316, "", "./tensorflow/lite/kernels/fully_connected.cc", "Eval");
+
   auto* params =
       reinterpret_cast<TfLiteFullyConnectedParams*>(node->builtin_data);
   OpData* data = reinterpret_cast<OpData*>(node->user_data);
@@ -1149,6 +1381,9 @@ TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
 }  // namespace fully_connected
 
 TfLiteRegistration* Register_FULLY_CONNECTED_REF() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc mht_21(mht_21_v, 1384, "", "./tensorflow/lite/kernels/fully_connected.cc", "Register_FULLY_CONNECTED_REF");
+
   static TfLiteRegistration r = {
       fully_connected::Init, fully_connected::Free,
       fully_connected::Prepare<fully_connected::kReference>,
@@ -1157,6 +1392,9 @@ TfLiteRegistration* Register_FULLY_CONNECTED_REF() {
 }
 
 TfLiteRegistration* Register_FULLY_CONNECTED_GENERIC_OPT() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc mht_22(mht_22_v, 1395, "", "./tensorflow/lite/kernels/fully_connected.cc", "Register_FULLY_CONNECTED_GENERIC_OPT");
+
   static TfLiteRegistration r = {
       fully_connected::Init, fully_connected::Free,
       fully_connected::Prepare<fully_connected::kGenericOptimized>,
@@ -1166,6 +1404,9 @@ TfLiteRegistration* Register_FULLY_CONNECTED_GENERIC_OPT() {
 
 // Legacy path for PIE clients.
 TfLiteRegistration* Register_FULLY_CONNECTED_PIE() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc mht_23(mht_23_v, 1407, "", "./tensorflow/lite/kernels/fully_connected.cc", "Register_FULLY_CONNECTED_PIE");
+
   static TfLiteRegistration r = {
       fully_connected::Init, fully_connected::Free,
       fully_connected::Prepare<fully_connected::kLegacyPie>,
@@ -1174,6 +1415,9 @@ TfLiteRegistration* Register_FULLY_CONNECTED_PIE() {
 }
 
 TfLiteRegistration* Register_FULLY_CONNECTED() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSfully_connectedDTcc mht_24(mht_24_v, 1418, "", "./tensorflow/lite/kernels/fully_connected.cc", "Register_FULLY_CONNECTED");
+
   return Register_FULLY_CONNECTED_GENERIC_OPT();
 }
 

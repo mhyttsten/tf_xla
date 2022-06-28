@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -122,6 +290,9 @@ template <typename T>
 void PopulateLookupTable(struct OpData* data, const TfLiteTensor* input,
                          TfLiteTensor* output,
                          const std::function<float(float)>& transform) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_0(mht_0_v, 293, "", "./tensorflow/lite/kernels/activations.cc", "PopulateLookupTable");
+
   static_assert(sizeof(T) == 1, "Lookup table valid only for 8bit");
   const float inverse_scale = 1 / output->params.scale;
   int32_t maxval = std::numeric_limits<T>::max();
@@ -142,6 +313,9 @@ void PopulateLookupTable(struct OpData* data, const TfLiteTensor* input,
 // TODO(b/143696793): move this to optimized_ops.
 void EvalUsingLookupTable(struct OpData* data, const TfLiteTensor* input,
                           TfLiteTensor* output) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_1(mht_1_v, 316, "", "./tensorflow/lite/kernels/activations.cc", "EvalUsingLookupTable");
+
   const int size =
       MatchingFlatSize(GetTensorShape(input), GetTensorShape(output));
   uint8_t* output_data = GetTensorData<uint8_t>(output);
@@ -177,6 +351,9 @@ void EvalUsingLookupTable(struct OpData* data, const TfLiteTensor* input,
 template <typename T>
 void QuantizedReluX(float act_min, float act_max, const TfLiteTensor* input,
                     TfLiteTensor* output, const ReluOpData* data) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_2(mht_2_v, 354, "", "./tensorflow/lite/kernels/activations.cc", "QuantizedReluX");
+
   ReluParams params;
   params.quantized_activation_min =
       std::max(static_cast<int32_t>(std::numeric_limits<T>::min()),
@@ -200,6 +377,10 @@ void QuantizedReluX(float act_min, float act_max, const TfLiteTensor* input,
 }  // namespace
 
 void* Init(TfLiteContext* context, const char* buffer, size_t length) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_3(mht_3_v, 381, "", "./tensorflow/lite/kernels/activations.cc", "Init");
+
   // This is a builtin op, so we don't use the contents in 'buffer', if any.
   // Instead, we allocate a new object to carry information from Prepare() to
   // Eval().
@@ -207,39 +388,70 @@ void* Init(TfLiteContext* context, const char* buffer, size_t length) {
 }
 
 void* SoftmaxInit(TfLiteContext* context, const char* buffer, size_t length) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_4(mht_4_v, 392, "", "./tensorflow/lite/kernels/activations.cc", "SoftmaxInit");
+
   return new SoftmaxOpData;
 }
 
 void SoftmaxFree(TfLiteContext* context, void* buffer) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_5(mht_5_v, 399, "", "./tensorflow/lite/kernels/activations.cc", "SoftmaxFree");
+
   delete reinterpret_cast<SoftmaxOpData*>(buffer);
 }
 
 void* LogSoftmaxInit(TfLiteContext* context, const char* buffer,
                      size_t length) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_6(mht_6_v, 408, "", "./tensorflow/lite/kernels/activations.cc", "LogSoftmaxInit");
+
   return new LogSoftmaxOpData;
 }
 
 void* PreluInit(TfLiteContext* context, const char* buffer, size_t length) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_7(mht_7_v, 416, "", "./tensorflow/lite/kernels/activations.cc", "PreluInit");
+
   return new PreluOpData;
 }
 
 void Free(TfLiteContext* context, void* buffer) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_8(mht_8_v, 423, "", "./tensorflow/lite/kernels/activations.cc", "Free");
+
   delete reinterpret_cast<OpData*>(buffer);
 }
 
 void LogSoftmaxFree(TfLiteContext* context, void* buffer) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_9(mht_9_v, 430, "", "./tensorflow/lite/kernels/activations.cc", "LogSoftmaxFree");
+
   delete reinterpret_cast<LogSoftmaxOpData*>(buffer);
 }
 
 void PreluFree(TfLiteContext* context, void* buffer) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_10(mht_10_v, 437, "", "./tensorflow/lite/kernels/activations.cc", "PreluFree");
+
   delete reinterpret_cast<PreluOpData*>(buffer);
 }
 
 void* HardSwishInit(TfLiteContext* context, const char* buffer, size_t length) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_11(mht_11_v, 445, "", "./tensorflow/lite/kernels/activations.cc", "HardSwishInit");
+
   return new HardSwishData;
 }
 
 TfLiteStatus GenericPrepare(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_12(mht_12_v, 452, "", "./tensorflow/lite/kernels/activations.cc", "GenericPrepare");
+
   TF_LITE_ENSURE_EQ(context, NumInputs(node), 1);
   TF_LITE_ENSURE_EQ(context, NumOutputs(node), 1);
   const TfLiteTensor* input;
@@ -253,14 +465,24 @@ TfLiteStatus GenericPrepare(TfLiteContext* context, TfLiteNode* node) {
 }
 
 void* ReluInit(TfLiteContext* context, const char* buffer, size_t length) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_13(mht_13_v, 469, "", "./tensorflow/lite/kernels/activations.cc", "ReluInit");
+
   return new ReluOpData;
 }
 
 void ReluFree(TfLiteContext* context, void* buffer) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_14(mht_14_v, 476, "", "./tensorflow/lite/kernels/activations.cc", "ReluFree");
+
   delete reinterpret_cast<ReluOpData*>(buffer);
 }
 
 TfLiteStatus ReluPrepare(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_15(mht_15_v, 483, "", "./tensorflow/lite/kernels/activations.cc", "ReluPrepare");
+
   ReluOpData* data = reinterpret_cast<ReluOpData*>(node->user_data);
   TF_LITE_ENSURE_EQ(context, NumInputs(node), 1);
   TF_LITE_ENSURE_EQ(context, NumOutputs(node), 1);
@@ -287,18 +509,31 @@ TfLiteStatus ReluPrepare(TfLiteContext* context, TfLiteNode* node) {
 }
 
 void* LeakyReluInit(TfLiteContext* context, const char* buffer, size_t length) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_16(mht_16_v, 513, "", "./tensorflow/lite/kernels/activations.cc", "LeakyReluInit");
+
   return new LeakyReluOpData;
 }
 
 void LeakyReluFree(TfLiteContext* context, void* buffer) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_17(mht_17_v, 520, "", "./tensorflow/lite/kernels/activations.cc", "LeakyReluFree");
+
   delete reinterpret_cast<LeakyReluOpData*>(buffer);
 }
 
 void HardSwishFree(TfLiteContext* context, void* buffer) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_18(mht_18_v, 527, "", "./tensorflow/lite/kernels/activations.cc", "HardSwishFree");
+
   delete static_cast<HardSwishData*>(buffer);
 }
 
 TfLiteStatus HardSwishPrepare(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_19(mht_19_v, 534, "", "./tensorflow/lite/kernels/activations.cc", "HardSwishPrepare");
+
   TF_LITE_ENSURE_STATUS(GenericPrepare(context, node));
   TfLiteTensor* output;
   TF_LITE_ENSURE_OK(context, GetOutputSafe(context, node, 0, &output));
@@ -337,6 +572,9 @@ TfLiteStatus HardSwishPrepare(TfLiteContext* context, TfLiteNode* node) {
 }
 
 TfLiteStatus LeakyReluPrepare(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_20(mht_20_v, 575, "", "./tensorflow/lite/kernels/activations.cc", "LeakyReluPrepare");
+
   TF_LITE_ENSURE_EQ(context, NumInputs(node), 1);
   TF_LITE_ENSURE_EQ(context, NumOutputs(node), 1);
   const TfLiteTensor* input;
@@ -372,6 +610,9 @@ TfLiteStatus LeakyReluPrepare(TfLiteContext* context, TfLiteNode* node) {
 
 template <KernelType kernel_type>
 TfLiteStatus TanhPrepare(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_21(mht_21_v, 613, "", "./tensorflow/lite/kernels/activations.cc", "TanhPrepare");
+
   OpData* data = reinterpret_cast<OpData*>(node->user_data);
 
   TF_LITE_ENSURE_EQ(context, NumInputs(node), 1);
@@ -467,6 +708,9 @@ TfLiteStatus TanhPrepare(TfLiteContext* context, TfLiteNode* node) {
 
 template <KernelType kernel_type>
 TfLiteStatus SigmoidPrepare(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_22(mht_22_v, 711, "", "./tensorflow/lite/kernels/activations.cc", "SigmoidPrepare");
+
   OpData* data = reinterpret_cast<OpData*>(node->user_data);
 
   TF_LITE_ENSURE_EQ(context, NumInputs(node), 1);
@@ -570,6 +814,9 @@ TfLiteStatus SigmoidPrepare(TfLiteContext* context, TfLiteNode* node) {
 
 template <KernelType kernel_type>
 TfLiteStatus SoftmaxPrepare(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_23(mht_23_v, 817, "", "./tensorflow/lite/kernels/activations.cc", "SoftmaxPrepare");
+
   auto* params = reinterpret_cast<TfLiteSoftmaxParams*>(node->builtin_data);
   SoftmaxOpData* data = reinterpret_cast<SoftmaxOpData*>(node->user_data);
 
@@ -659,6 +906,9 @@ TfLiteStatus SoftmaxPrepare(TfLiteContext* context, TfLiteNode* node) {
 
 template <KernelType kernel_type>
 TfLiteStatus LogSoftmaxPrepare(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_24(mht_24_v, 909, "", "./tensorflow/lite/kernels/activations.cc", "LogSoftmaxPrepare");
+
   LogSoftmaxOpData* data = reinterpret_cast<LogSoftmaxOpData*>(node->user_data);
 
   TF_LITE_ENSURE_EQ(context, NumInputs(node), 1);
@@ -707,6 +957,9 @@ TfLiteStatus LogSoftmaxPrepare(TfLiteContext* context, TfLiteNode* node) {
 }
 
 TfLiteStatus PreluPrepare(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_25(mht_25_v, 960, "", "./tensorflow/lite/kernels/activations.cc", "PreluPrepare");
+
   TF_LITE_ENSURE_EQ(context, NumInputs(node), 2);
   TF_LITE_ENSURE_EQ(context, NumOutputs(node), 1);
   const TfLiteTensor* input;
@@ -765,6 +1018,9 @@ TfLiteStatus PreluPrepare(TfLiteContext* context, TfLiteNode* node) {
 }
 
 TfLiteStatus ReluEval(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_26(mht_26_v, 1021, "", "./tensorflow/lite/kernels/activations.cc", "ReluEval");
+
   const TfLiteTensor* input;
   TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, 0, &input));
   TfLiteTensor* output;
@@ -800,6 +1056,9 @@ TfLiteStatus ReluEval(TfLiteContext* context, TfLiteNode* node) {
 }
 
 TfLiteStatus Relu1Eval(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_27(mht_27_v, 1059, "", "./tensorflow/lite/kernels/activations.cc", "Relu1Eval");
+
   const TfLiteTensor* input;
   TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, 0, &input));
   TfLiteTensor* output;
@@ -831,6 +1090,9 @@ TfLiteStatus Relu1Eval(TfLiteContext* context, TfLiteNode* node) {
 
 template <KernelType kernel_type>
 TfLiteStatus HardSwishEval(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_28(mht_28_v, 1093, "", "./tensorflow/lite/kernels/activations.cc", "HardSwishEval");
+
   HardSwishData* data = static_cast<HardSwishData*>(node->user_data);
 
   const TfLiteTensor* input;
@@ -886,6 +1148,9 @@ TfLiteStatus HardSwishEval(TfLiteContext* context, TfLiteNode* node) {
 }
 
 TfLiteStatus Relu6Eval(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_29(mht_29_v, 1151, "", "./tensorflow/lite/kernels/activations.cc", "Relu6Eval");
+
   const TfLiteTensor* input;
   TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, 0, &input));
   TfLiteTensor* output;
@@ -922,6 +1187,9 @@ TfLiteStatus Relu6Eval(TfLiteContext* context, TfLiteNode* node) {
 
 template <KernelType kernel_type>
 TfLiteStatus TanhEval(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_30(mht_30_v, 1190, "", "./tensorflow/lite/kernels/activations.cc", "TanhEval");
+
   OpData* data = reinterpret_cast<OpData*>(node->user_data);
   const TfLiteTensor* input;
   TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, 0, &input));
@@ -997,6 +1265,9 @@ TfLiteStatus TanhEval(TfLiteContext* context, TfLiteNode* node) {
 // Sigmoid is also know as "Logistic".
 template <KernelType kernel_type>
 TfLiteStatus SigmoidEval(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_31(mht_31_v, 1268, "", "./tensorflow/lite/kernels/activations.cc", "SigmoidEval");
+
   OpData* data = reinterpret_cast<OpData*>(node->user_data);
 
   const TfLiteTensor* input;
@@ -1075,6 +1346,9 @@ TfLiteStatus SigmoidEval(TfLiteContext* context, TfLiteNode* node) {
 TfLiteStatus SoftmaxFloat(TfLiteContext* context, const TfLiteTensor* input,
                           TfLiteTensor* output, TfLiteSoftmaxParams* params,
                           KernelType kernel_type = kGenericOptimized) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_32(mht_32_v, 1349, "", "./tensorflow/lite/kernels/activations.cc", "SoftmaxFloat");
+
   SoftmaxParams op_params;
   op_params.beta = params->beta;
   if (kernel_type == kReference) {
@@ -1176,6 +1450,9 @@ TfLiteStatus SoftmaxQuantized<int16, int16>(TfLiteContext* context,
 
 template <KernelType kernel_type>
 TfLiteStatus SoftmaxEval(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_33(mht_33_v, 1453, "", "./tensorflow/lite/kernels/activations.cc", "SoftmaxEval");
+
   auto* params = reinterpret_cast<TfLiteSoftmaxParams*>(node->builtin_data);
   SoftmaxOpData* data = reinterpret_cast<SoftmaxOpData*>(node->user_data);
 
@@ -1236,6 +1513,9 @@ TfLiteStatus SoftmaxEval(TfLiteContext* context, TfLiteNode* node) {
 
 template <KernelType kernel_type>
 TfLiteStatus LogSoftmaxEval(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_34(mht_34_v, 1516, "", "./tensorflow/lite/kernels/activations.cc", "LogSoftmaxEval");
+
   const LogSoftmaxOpData* data =
       reinterpret_cast<LogSoftmaxOpData*>(node->user_data);
   const TfLiteTensor* input;
@@ -1305,11 +1585,17 @@ TfLiteStatus LogSoftmaxEval(TfLiteContext* context, TfLiteNode* node) {
 
 template <typename T>
 T ApplyPrelu(T input, T alpha) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_35(mht_35_v, 1588, "", "./tensorflow/lite/kernels/activations.cc", "ApplyPrelu");
+
   return input >= 0.0 ? input : input * alpha;
 }
 
 template <KernelType kernel_type>
 TfLiteStatus PreluEval(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_36(mht_36_v, 1596, "", "./tensorflow/lite/kernels/activations.cc", "PreluEval");
+
   const TfLiteTensor* input;
   TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, 0, &input));
   const TfLiteTensor* alpha;
@@ -1431,6 +1717,9 @@ void QuantizeLeakyRelu(const TfLiteTensor* input, TfLiteTensor* output,
 
 template <KernelType kernel_type>
 TfLiteStatus LeakyReluEval(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_37(mht_37_v, 1720, "", "./tensorflow/lite/kernels/activations.cc", "LeakyReluEval");
+
   const TfLiteTensor* input;
   TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, 0, &input));
   TfLiteTensor* output;
@@ -1471,6 +1760,9 @@ TfLiteStatus LeakyReluEval(TfLiteContext* context, TfLiteNode* node) {
 }
 
 TfLiteStatus EluPrepare(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_38(mht_38_v, 1763, "", "./tensorflow/lite/kernels/activations.cc", "EluPrepare");
+
   const TfLiteTensor* input;
   TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, 0, &input));
   TfLiteTensor* output;
@@ -1487,6 +1779,9 @@ TfLiteStatus EluPrepare(TfLiteContext* context, TfLiteNode* node) {
 }
 
 TfLiteStatus EluEval(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_39(mht_39_v, 1782, "", "./tensorflow/lite/kernels/activations.cc", "EluEval");
+
   const TfLiteTensor* input;
   TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, 0, &input));
   TfLiteTensor* output;
@@ -1511,6 +1806,9 @@ TfLiteStatus EluEval(TfLiteContext* context, TfLiteNode* node) {
 }
 
 TfLiteStatus GeluPrepare(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_40(mht_40_v, 1809, "", "./tensorflow/lite/kernels/activations.cc", "GeluPrepare");
+
   const TfLiteTensor* input;
   TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, 0, &input));
   TfLiteTensor* output;
@@ -1529,6 +1827,9 @@ TfLiteStatus GeluPrepare(TfLiteContext* context, TfLiteNode* node) {
 }
 
 TfLiteStatus GeluEval(TfLiteContext* context, TfLiteNode* node) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_41(mht_41_v, 1830, "", "./tensorflow/lite/kernels/activations.cc", "GeluEval");
+
   auto* params = reinterpret_cast<TfLiteGeluParams*>(node->builtin_data);
   const TfLiteTensor* input;
   TF_LITE_ENSURE_OK(context, GetInputSafe(context, node, 0, &input));
@@ -1560,12 +1861,18 @@ TfLiteStatus GeluEval(TfLiteContext* context, TfLiteNode* node) {
 }  // namespace activations
 
 TfLiteRegistration* Register_ELU() {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_42(mht_42_v, 1864, "", "./tensorflow/lite/kernels/activations.cc", "Register_ELU");
+
   static TfLiteRegistration r = {activations::Init, activations::Free,
                                  activations::EluPrepare, activations::EluEval};
   return &r;
 }
 
 TfLiteRegistration* Register_RELU() {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_43(mht_43_v, 1873, "", "./tensorflow/lite/kernels/activations.cc", "Register_RELU");
+
   static TfLiteRegistration r = {activations::ReluInit, activations::ReluFree,
                                  activations::ReluPrepare,
                                  activations::ReluEval};
@@ -1573,6 +1880,9 @@ TfLiteRegistration* Register_RELU() {
 }
 
 TfLiteRegistration* Register_RELU_N1_TO_1() {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_44(mht_44_v, 1883, "", "./tensorflow/lite/kernels/activations.cc", "Register_RELU_N1_TO_1");
+
   static TfLiteRegistration r = {activations::ReluInit, activations::ReluFree,
                                  activations::ReluPrepare,
                                  activations::Relu1Eval};
@@ -1580,6 +1890,9 @@ TfLiteRegistration* Register_RELU_N1_TO_1() {
 }
 
 TfLiteRegistration* Register_RELU6() {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_45(mht_45_v, 1893, "", "./tensorflow/lite/kernels/activations.cc", "Register_RELU6");
+
   static TfLiteRegistration r = {activations::ReluInit, activations::ReluFree,
                                  activations::ReluPrepare,
                                  activations::Relu6Eval};
@@ -1587,6 +1900,9 @@ TfLiteRegistration* Register_RELU6() {
 }
 
 TfLiteRegistration* Register_TANH_REF() {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_46(mht_46_v, 1903, "", "./tensorflow/lite/kernels/activations.cc", "Register_TANH_REF");
+
   static TfLiteRegistration r = {
       activations::Init, activations::Free,
       activations::TanhPrepare<activations::kReference>,
@@ -1595,6 +1911,9 @@ TfLiteRegistration* Register_TANH_REF() {
 }
 
 TfLiteRegistration* Register_TANH_GENERIC_OPT() {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_47(mht_47_v, 1914, "", "./tensorflow/lite/kernels/activations.cc", "Register_TANH_GENERIC_OPT");
+
   static TfLiteRegistration r = {
       activations::Init, activations::Free,
       activations::TanhPrepare<activations::kGenericOptimized>,
@@ -1603,6 +1922,9 @@ TfLiteRegistration* Register_TANH_GENERIC_OPT() {
 }
 
 TfLiteRegistration* Register_TANH_FIXED_POINT_OPT() {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_48(mht_48_v, 1925, "", "./tensorflow/lite/kernels/activations.cc", "Register_TANH_FIXED_POINT_OPT");
+
   static TfLiteRegistration r = {
       activations::Init, activations::Free,
       activations::TanhPrepare<activations::kFixedPointOptimized>,
@@ -1611,6 +1933,9 @@ TfLiteRegistration* Register_TANH_FIXED_POINT_OPT() {
 }
 
 TfLiteRegistration* Register_TANH() {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_49(mht_49_v, 1936, "", "./tensorflow/lite/kernels/activations.cc", "Register_TANH");
+
   // TODO(b/134622898): Switch over from the LUT optimized method to the fixed
   // point optimized method when typical Android hardware performs better on
   // the latter one.
@@ -1618,6 +1943,9 @@ TfLiteRegistration* Register_TANH() {
 }
 
 TfLiteRegistration* Register_LOGISTIC_REF() {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_50(mht_50_v, 1946, "", "./tensorflow/lite/kernels/activations.cc", "Register_LOGISTIC_REF");
+
   static TfLiteRegistration r = {
       activations::Init, activations::Free,
       activations::SigmoidPrepare<activations::kReference>,
@@ -1626,6 +1954,9 @@ TfLiteRegistration* Register_LOGISTIC_REF() {
 }
 
 TfLiteRegistration* Register_LOGISTIC_GENERIC_OPT() {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_51(mht_51_v, 1957, "", "./tensorflow/lite/kernels/activations.cc", "Register_LOGISTIC_GENERIC_OPT");
+
   static TfLiteRegistration r = {
       activations::Init, activations::Free,
       activations::SigmoidPrepare<activations::kGenericOptimized>,
@@ -1634,6 +1965,9 @@ TfLiteRegistration* Register_LOGISTIC_GENERIC_OPT() {
 }
 
 TfLiteRegistration* Register_LOGISTIC_FIXED_POINT_OPT() {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_52(mht_52_v, 1968, "", "./tensorflow/lite/kernels/activations.cc", "Register_LOGISTIC_FIXED_POINT_OPT");
+
   static TfLiteRegistration r = {
       activations::Init, activations::Free,
       activations::SigmoidPrepare<activations::kFixedPointOptimized>,
@@ -1642,6 +1976,9 @@ TfLiteRegistration* Register_LOGISTIC_FIXED_POINT_OPT() {
 }
 
 TfLiteRegistration* Register_LOGISTIC() {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_53(mht_53_v, 1979, "", "./tensorflow/lite/kernels/activations.cc", "Register_LOGISTIC");
+
   // TODO(b/134622898): Switch over from the LUT optimized method to the fixed
   // point optimized method when typical Android hardware performs better on
   // the latter one.
@@ -1649,6 +1986,9 @@ TfLiteRegistration* Register_LOGISTIC() {
 }
 
 TfLiteRegistration* Register_SOFTMAX_REF() {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_54(mht_54_v, 1989, "", "./tensorflow/lite/kernels/activations.cc", "Register_SOFTMAX_REF");
+
   static TfLiteRegistration r = {
       activations::SoftmaxInit, activations::SoftmaxFree,
       activations::SoftmaxPrepare<activations::kReference>,
@@ -1657,6 +1997,9 @@ TfLiteRegistration* Register_SOFTMAX_REF() {
 }
 
 TfLiteRegistration* Register_SOFTMAX() {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_55(mht_55_v, 2000, "", "./tensorflow/lite/kernels/activations.cc", "Register_SOFTMAX");
+
   static TfLiteRegistration r = {
       activations::SoftmaxInit, activations::SoftmaxFree,
       activations::SoftmaxPrepare<activations::kGenericOptimized>,
@@ -1665,6 +2008,9 @@ TfLiteRegistration* Register_SOFTMAX() {
 }
 
 TfLiteRegistration* Register_LOG_SOFTMAX_REF() {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_56(mht_56_v, 2011, "", "./tensorflow/lite/kernels/activations.cc", "Register_LOG_SOFTMAX_REF");
+
   static TfLiteRegistration r = {
       activations::LogSoftmaxInit, activations::LogSoftmaxFree,
       activations::LogSoftmaxPrepare<activations::kReference>,
@@ -1673,6 +2019,9 @@ TfLiteRegistration* Register_LOG_SOFTMAX_REF() {
 }
 
 TfLiteRegistration* Register_LOG_SOFTMAX() {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_57(mht_57_v, 2022, "", "./tensorflow/lite/kernels/activations.cc", "Register_LOG_SOFTMAX");
+
   static TfLiteRegistration r = {
       activations::LogSoftmaxInit, activations::LogSoftmaxFree,
       activations::LogSoftmaxPrepare<activations::kGenericOptimized>,
@@ -1681,6 +2030,9 @@ TfLiteRegistration* Register_LOG_SOFTMAX() {
 }
 
 TfLiteRegistration* Register_PRELU_REF() {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_58(mht_58_v, 2033, "", "./tensorflow/lite/kernels/activations.cc", "Register_PRELU_REF");
+
   static TfLiteRegistration r = {
       activations::PreluInit, activations::PreluFree, activations::PreluPrepare,
       activations::PreluEval<activations::kReference>};
@@ -1688,6 +2040,9 @@ TfLiteRegistration* Register_PRELU_REF() {
 }
 
 TfLiteRegistration* Register_PRELU() {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_59(mht_59_v, 2043, "", "./tensorflow/lite/kernels/activations.cc", "Register_PRELU");
+
   static TfLiteRegistration r = {
       activations::PreluInit, activations::PreluFree, activations::PreluPrepare,
       activations::PreluEval<activations::kGenericOptimized>};
@@ -1695,6 +2050,9 @@ TfLiteRegistration* Register_PRELU() {
 }
 
 TfLiteRegistration* Register_LEAKY_RELU_REF() {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_60(mht_60_v, 2053, "", "./tensorflow/lite/kernels/activations.cc", "Register_LEAKY_RELU_REF");
+
   static TfLiteRegistration r = {
       activations::LeakyReluInit, activations::LeakyReluFree,
       activations::LeakyReluPrepare,
@@ -1703,6 +2061,9 @@ TfLiteRegistration* Register_LEAKY_RELU_REF() {
 }
 
 TfLiteRegistration* Register_LEAKY_RELU() {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_61(mht_61_v, 2064, "", "./tensorflow/lite/kernels/activations.cc", "Register_LEAKY_RELU");
+
   static TfLiteRegistration r = {
       activations::LeakyReluInit, activations::LeakyReluFree,
       activations::LeakyReluPrepare,
@@ -1711,6 +2072,9 @@ TfLiteRegistration* Register_LEAKY_RELU() {
 }
 
 TfLiteRegistration* Register_HARD_SWISH() {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_62(mht_62_v, 2075, "", "./tensorflow/lite/kernels/activations.cc", "Register_HARD_SWISH");
+
   static TfLiteRegistration r = {
       activations::HardSwishInit, activations::HardSwishFree,
       activations::HardSwishPrepare,
@@ -1719,6 +2083,9 @@ TfLiteRegistration* Register_HARD_SWISH() {
 }
 
 TfLiteRegistration* Register_HARD_SWISH_REF() {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_63(mht_63_v, 2086, "", "./tensorflow/lite/kernels/activations.cc", "Register_HARD_SWISH_REF");
+
   static TfLiteRegistration r = {
       activations::HardSwishInit, activations::HardSwishFree,
       activations::HardSwishPrepare,
@@ -1727,6 +2094,9 @@ TfLiteRegistration* Register_HARD_SWISH_REF() {
 }
 
 TfLiteRegistration* Register_GELU() {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivationsDTcc mht_64(mht_64_v, 2097, "", "./tensorflow/lite/kernels/activations.cc", "Register_GELU");
+
   static TfLiteRegistration r = {activations::Init, activations::Free,
                                  activations::GeluPrepare,
                                  activations::GeluEval};

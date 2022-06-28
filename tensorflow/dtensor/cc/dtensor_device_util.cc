@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2022 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,6 +212,9 @@ struct FunctionArgument {
 
 bool LayoutsAreCompatible(absl::optional<Layout> first_layout,
                           absl::optional<Layout> second_layout) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTcc mht_0(mht_0_v, 215, "", "./tensorflow/dtensor/cc/dtensor_device_util.cc", "LayoutsAreCompatible");
+
   if (!first_layout.has_value() && !second_layout.has_value()) {
     return true;
   }
@@ -57,6 +228,11 @@ bool LayoutsAreCompatible(absl::optional<Layout> first_layout,
 Status ParseAttrMap(const Node& node, absl::string_view indices_attr,
                     absl::string_view layout_attr,
                     std::map<int, Layout>* indices_layout_map) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("indices_attr: \"" + std::string(indices_attr.data(), indices_attr.size()) + "\"");
+   mht_1_v.push_back("layout_attr: \"" + std::string(layout_attr.data(), layout_attr.size()) + "\"");
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTcc mht_1(mht_1_v, 233, "", "./tensorflow/dtensor/cc/dtensor_device_util.cc", "ParseAttrMap");
+
   std::vector<std::string> layouts;
   if (!TryGetNodeAttr(node.attrs(), layout_attr, &layouts)) {
     return Status::OK();
@@ -83,12 +259,18 @@ Status ParseAttrMap(const Node& node, absl::string_view indices_attr,
 
 Status ParseResourceArgumentLayouts(
     const Node& node, std::map<int, Layout>* inferred_resource_input_layouts) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTcc mht_2(mht_2_v, 262, "", "./tensorflow/dtensor/cc/dtensor_device_util.cc", "ParseResourceArgumentLayouts");
+
   return ParseAttrMap(node, kNewResourceLayoutIndices, kNewResourceArgLayouts,
                       inferred_resource_input_layouts);
 }
 
 Status ParseShapeInputLayouts(const Node& node,
                               std::map<int, Layout>* shape_output_metadata) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTcc mht_3(mht_3_v, 271, "", "./tensorflow/dtensor/cc/dtensor_device_util.cc", "ParseShapeInputLayouts");
+
   return ParseAttrMap(node, kShapeOpInputLayoutIndices, kShapeOpInputLayout,
                       shape_output_metadata);
 }
@@ -123,6 +305,9 @@ StatusOr<Layout> GetLayoutThroughIdentityOps(Node* op, int output_index) {
 }  // namespace
 
 tensorflow::Fprint128 TensorWithLayout::CacheKey() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTcc mht_4(mht_4_v, 308, "", "./tensorflow/dtensor/cc/dtensor_device_util.cc", "TensorWithLayout::CacheKey");
+
   tensorflow::Fprint128 f = tensorflow::Fingerprint128(layout_.ToString());
   // Use exact shape to compute the key.
   for (const int64_t dim : local_shape()) {
@@ -140,6 +325,10 @@ std::unique_ptr<TensorWithLayout> TensorWithLayout::Broadcast(
     TFE_Context* context, TFE_TensorHandle* tensor,
     const MeshWithParallelDevice& mesh, const std::string& dtensor_device_name,
     TF_Status* status) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("dtensor_device_name: \"" + dtensor_device_name + "\"");
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTcc mht_5(mht_5_v, 329, "", "./tensorflow/dtensor/cc/dtensor_device_util.cc", "TensorWithLayout::Broadcast");
+
   const char* input_device = TFE_TensorHandleDeviceName(tensor, status);
   if (TF_GetCode(status) != TF_OK) return nullptr;
 
@@ -237,6 +426,9 @@ std::unique_ptr<TensorWithLayout> TensorWithLayout::Broadcast(
 StatusOr<std::unique_ptr<TensorWithLayout>> TensorWithLayout::Wrap(
     std::unique_ptr<parallel_device::ParallelTensor> tensor,
     const MeshWithParallelDevice& mesh, const Layout& layout) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTcc mht_6(mht_6_v, 429, "", "./tensorflow/dtensor/cc/dtensor_device_util.cc", "TensorWithLayout::Wrap");
+
   const std::vector<int64_t>* shape;
   TF_RETURN_IF_ERROR(tensor->Shape(&shape));
 
@@ -252,6 +444,9 @@ StatusOr<std::unique_ptr<TensorWithLayout>> TensorWithLayout::Wrap(
 std::unique_ptr<TensorWithLayout> TensorWithLayout::Dummy(
     const std::vector<int64_t>& local_shape, const TF_DataType dtype,
     const MeshWithParallelDevice& mesh, const Layout& layout) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTcc mht_7(mht_7_v, 447, "", "./tensorflow/dtensor/cc/dtensor_device_util.cc", "TensorWithLayout::Dummy");
+
   if (dtype != TF_RESOURCE) {
     return std::unique_ptr<TensorWithLayout>(new TensorWithLayout(
         /*tensor=*/nullptr, mesh, layout, local_shape, dtype));
@@ -262,6 +457,9 @@ std::unique_ptr<TensorWithLayout> TensorWithLayout::Dummy(
 }
 
 std::string TensorWithLayout::SummarizeValue() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTcc mht_8(mht_8_v, 460, "", "./tensorflow/dtensor/cc/dtensor_device_util.cc", "TensorWithLayout::SummarizeValue");
+
   std::string value_summary;
   Status status;
   if (layout().IsFullyReplicated()) {
@@ -279,6 +477,9 @@ std::string TensorWithLayout::SummarizeValue() const {
 }
 
 std::string TensorWithLayout::DebugString() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTcc mht_9(mht_9_v, 480, "", "./tensorflow/dtensor/cc/dtensor_device_util.cc", "TensorWithLayout::DebugString");
+
   auto dtype = static_cast<DataType>(tensor()->dtype());
 
   const auto& shape_vector = global_shape();
@@ -289,6 +490,9 @@ std::string TensorWithLayout::DebugString() const {
 
 void ResourceHandleWithLayout::EncodeAttributes(
     tensorflow::NodeDefBuilder& builder) const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTcc mht_10(mht_10_v, 493, "", "./tensorflow/dtensor/cc/dtensor_device_util.cc", "ResourceHandleWithLayout::EncodeAttributes");
+
   // If set, attach shape and dtype to the given node def.
   if (dereferenced_shape().has_value()) {
     builder.Attr("_handle_shapes", {*dereferenced_shape()});
@@ -299,6 +503,9 @@ void ResourceHandleWithLayout::EncodeAttributes(
 }
 
 tensorflow::Fprint128 ResourceHandleWithLayout::CacheKey() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTcc mht_11(mht_11_v, 506, "", "./tensorflow/dtensor/cc/dtensor_device_util.cc", "ResourceHandleWithLayout::CacheKey");
+
   tensorflow::Fprint128 f = tensorflow::Fingerprint128(layout().ToString());
   if (dereferenced_shape().has_value()) {
     std::string serialized;
@@ -313,6 +520,9 @@ tensorflow::Fprint128 ResourceHandleWithLayout::CacheKey() const {
 
 void ResourceHandleWithLayout::UpdateLayout(const Layout& new_layout,
                                             TF_Status* status) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTcc mht_12(mht_12_v, 523, "", "./tensorflow/dtensor/cc/dtensor_device_util.cc", "ResourceHandleWithLayout::UpdateLayout");
+
   // Only set the value for deferenced layout if the incoming layout is not
   // empty. This is still hacky as we use empty layout as placeholder for
   // eagerly placed VarHandleOp.
@@ -332,12 +542,18 @@ StatusOr<std::unique_ptr<TensorWithLayout>> SparseTensorWithLayout::Wrap(
     std::unique_ptr<parallel_device::ParallelTensor> shapes_tensor,
     const MeshWithParallelDevice& mesh, const Layout& layout,
     std::vector<int64_t> local_shape) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTcc mht_13(mht_13_v, 545, "", "./tensorflow/dtensor/cc/dtensor_device_util.cc", "SparseTensorWithLayout::Wrap");
+
   return std::unique_ptr<TensorWithLayout>(new SparseTensorWithLayout(
       std::move(indices_tensor), std::move(values_tensor),
       std::move(shapes_tensor), mesh, layout, local_shape));
 }
 
 std::string SparseTensorWithLayout::SummarizeValue() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTcc mht_14(mht_14_v, 554, "", "./tensorflow/dtensor/cc/dtensor_device_util.cc", "SparseTensorWithLayout::SummarizeValue");
+
   std::string indices_summary;
   std::string values_summary;
   std::string dense_shapes_summary;
@@ -373,6 +589,9 @@ std::string SparseTensorWithLayout::SummarizeValue() const {
 }
 
 std::string SparseTensorWithLayout::DebugString() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTcc mht_15(mht_15_v, 592, "", "./tensorflow/dtensor/cc/dtensor_device_util.cc", "SparseTensorWithLayout::DebugString");
+
   auto dtype = static_cast<DataType>(values_->dtype());
 
   const auto& shape_vector = global_shape();
@@ -382,6 +601,9 @@ std::string SparseTensorWithLayout::DebugString() const {
 }
 
 TF_DataType SparseTensorWithLayout::dtype() const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTcc mht_16(mht_16_v, 604, "", "./tensorflow/dtensor/cc/dtensor_device_util.cc", "SparseTensorWithLayout::dtype");
+
   if (dtype_.has_value()) {
     return dtype_.value();
   } else {
@@ -390,6 +612,9 @@ TF_DataType SparseTensorWithLayout::dtype() const {
 }
 
 TFE_TensorHandle* SparseTensorWithLayout::get_tensor(size_t index) const {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTcc mht_17(mht_17_v, 615, "", "./tensorflow/dtensor/cc/dtensor_device_util.cc", "SparseTensorWithLayout::get_tensor");
+
   int num_sparse_tensors = num_tensors() / 3;
   if (index < num_sparse_tensors) {
     return indices()->tensor(index);
@@ -419,6 +644,9 @@ Status PrepareGraphForMlir(
     const absl::optional<Layout>& default_layout, tensorflow::Graph* graph,
     std::vector<PartialTensorShape>* global_output_shapes,
     std::vector<const Layout*>* output_layouts) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTcc mht_18(mht_18_v, 647, "", "./tensorflow/dtensor/cc/dtensor_device_util.cc", "PrepareGraphForMlir");
+
   // We run shape inference on the graph to find output shapes, which may
   // determine default layouts.
   ShapeRefiner shape_refiner(TF_GRAPH_DEF_VERSION, &flib_def);
@@ -691,6 +919,9 @@ StatusOr<ExecutionFunctions> IdentifyAllFunctionsToExecute(
 // TODO(b/171265131): fix the underlying issue to avoid inserting identity
 // nodes.
 Status MaybeInsertIdentityNodes(const FunctionDef* function_def, Graph* graph) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTcc mht_19(mht_19_v, 922, "", "./tensorflow/dtensor/cc/dtensor_device_util.cc", "MaybeInsertIdentityNodes");
+
   if (function_def == nullptr || function_def->control_ret().empty()) {
     return Status::OK();
   }
@@ -725,6 +956,9 @@ Status MaybeInsertIdentityNodes(const FunctionDef* function_def, Graph* graph) {
 }
 
 void AddDTensorFunctionAttr(FunctionDef& function_def) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSdtensorPSccPSdtensor_device_utilDTcc mht_20(mht_20_v, 959, "", "./tensorflow/dtensor/cc/dtensor_device_util.cc", "AddDTensorFunctionAttr");
+
   // Do not xla compile function returned by DTensor MLIR graph transformation
   // as it already returns compiled graph.
   AttrValue xla_must_compile_val;

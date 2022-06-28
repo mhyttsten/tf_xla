@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSkernelsPStrt_engine_opDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSkernelsPStrt_engine_opDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSkernelsPStrt_engine_opDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -76,6 +244,9 @@ class ContextDeviceMemory {
         device_memory_(nullptr) {}
 
   ~ContextDeviceMemory() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSkernelsPStrt_engine_opDTcc mht_0(mht_0_v, 247, "", "./tensorflow/compiler/tf2tensorrt/kernels/trt_engine_op.cc", "~ContextDeviceMemory");
+
     if (device_memory_) {
       device_memory_allocator_->free(device_memory_);
     }
@@ -83,6 +254,9 @@ class ContextDeviceMemory {
 
   Status AllocateDeviceMemory(nvinfer1::IExecutionContext* execution_context,
                               TRTBaseAllocator* device_memory_allocator) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSkernelsPStrt_engine_opDTcc mht_1(mht_1_v, 257, "", "./tensorflow/compiler/tf2tensorrt/kernels/trt_engine_op.cc", "AllocateDeviceMemory");
+
     execution_context_ = execution_context;
     device_memory_allocator_ = device_memory_allocator;
     device_memory_ = nullptr;
@@ -122,9 +296,15 @@ struct DummyAsyncHelper {
 // for the TRTEngineOp.
 class AsyncHelper : public core::RefCounted {
  public:
-  AsyncHelper(AsyncOpKernel::DoneCallback done) : done_(done) {}
+  AsyncHelper(AsyncOpKernel::DoneCallback done) : done_(done) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSkernelsPStrt_engine_opDTcc mht_2(mht_2_v, 300, "", "./tensorflow/compiler/tf2tensorrt/kernels/trt_engine_op.cc", "AsyncHelper");
+}
 
-  ~AsyncHelper() override { done_(); }
+  ~AsyncHelper() override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSkernelsPStrt_engine_opDTcc mht_3(mht_3_v, 305, "", "./tensorflow/compiler/tf2tensorrt/kernels/trt_engine_op.cc", "~AsyncHelper");
+ done_(); }
 
  private:
   AsyncOpKernel::DoneCallback done_;
@@ -276,6 +456,9 @@ class TRTEngineOp : public AsyncOpKernel {
   }
 
 void* GetTensorAddress(const Tensor* tensor_ptr) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSkernelsPStrt_engine_opDTcc mht_4(mht_4_v, 459, "", "./tensorflow/compiler/tf2tensorrt/kernels/trt_engine_op.cc", "GetTensorAddress");
+
   auto tensor_type = tensor_ptr->dtype();
   switch (tensor_type) {
     TYPECASE(DT_FLOAT, tensor_ptr, dest_ptr);
@@ -292,6 +475,9 @@ void* GetTensorAddress(const Tensor* tensor_ptr) {
 static Status FunctionDefToGraphDef(FunctionLibraryRuntime::Handle handle,
                                     FunctionLibraryRuntime* flib_runtime,
                                     GraphDef* graph_def) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSkernelsPStrt_engine_opDTcc mht_5(mht_5_v, 478, "", "./tensorflow/compiler/tf2tensorrt/kernels/trt_engine_op.cc", "FunctionDefToGraphDef");
+
   const FunctionLibraryDefinition* flib_def =
       flib_runtime->GetFunctionLibraryDefinition();
   const FunctionBody* fbody;
@@ -304,6 +490,9 @@ static Status FunctionDefToGraphDef(FunctionLibraryRuntime::Handle handle,
   CopyGraph(*fbody->graph, graph.get());
 
   auto replace_name = [](const char* const prefix, string* name) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSkernelsPStrt_engine_opDTcc mht_6(mht_6_v, 493, "", "./tensorflow/compiler/tf2tensorrt/kernels/trt_engine_op.cc", "lambda");
+
     if (absl::StartsWith(*name, absl::AsciiStrToLower(prefix))) {
       name->replace(0, strlen(prefix), prefix);
       return true;
@@ -336,6 +525,10 @@ static Status FunctionDefToGraphDef(FunctionLibraryRuntime::Handle handle,
 StatusOr<FunctionLibraryRuntime::Handle> TRTEngineOp::ConstructFunctionHandle(
     FunctionLibraryRuntime* lib, const string& device_name,
     bool allow_soft_placement, size_t num_inputs, size_t num_outputs) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSkernelsPStrt_engine_opDTcc mht_7(mht_7_v, 529, "", "./tensorflow/compiler/tf2tensorrt/kernels/trt_engine_op.cc", "TRTEngineOp::ConstructFunctionHandle");
+
   VLOG(1) << "Constructing function handle";
   if (lib == nullptr) {
     return errors::Internal("Context function library is null");
@@ -380,6 +573,10 @@ StatusOr<FunctionLibraryRuntime::Handle> TRTEngineOp::ConstructFunctionHandle(
 
 Status TRTEngineOp::ImportSegmentGraphDef(FunctionLibraryRuntime* lib,
                                           const string& device_name) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSkernelsPStrt_engine_opDTcc mht_8(mht_8_v, 577, "", "./tensorflow/compiler/tf2tensorrt/kernels/trt_engine_op.cc", "TRTEngineOp::ImportSegmentGraphDef");
+
   TF_ASSIGN_OR_RETURN(FunctionLibraryRuntime::Handle func_handle,
                       ConstructFunctionHandle(lib, device_name));
   return FunctionDefToGraphDef(func_handle, lib, &segment_graph_def_);
@@ -387,6 +584,9 @@ Status TRTEngineOp::ImportSegmentGraphDef(FunctionLibraryRuntime* lib,
 
 TRTEngineOp::TRTEngineOp(OpKernelConstruction* context)
     : AsyncOpKernel(context) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSkernelsPStrt_engine_opDTcc mht_9(mht_9_v, 587, "", "./tensorflow/compiler/tf2tensorrt/kernels/trt_engine_op.cc", "TRTEngineOp::TRTEngineOp");
+
   // read serialized_engine
   OP_REQUIRES_OK(context,
                  context->GetAttr("serialized_segment", &serialized_segment_));
@@ -522,6 +722,9 @@ TRTEngineOp::TRTEngineOp(OpKernelConstruction* context)
 // and place the resulting host tensor to the back of native_inputs.
 Status CopyToHostAsync(OpKernelContext* ctx, std::vector<Tensor>* native_inputs,
                        int i, const cudaStream_t stream) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSkernelsPStrt_engine_opDTcc mht_10(mht_10_v, 725, "", "./tensorflow/compiler/tf2tensorrt/kernels/trt_engine_op.cc", "CopyToHostAsync");
+
   // The TRTEngineOp has all ctx->inputs on the device. In contrast, the
   // native segment expects to find int32 inputs on the host. We copy int32
   // inputs from device to host.
@@ -546,6 +749,9 @@ Status CopyToHostAsync(OpKernelContext* ctx, std::vector<Tensor>* native_inputs,
 // device memory.
 Status CopyToDeviceAsync(OpKernelContext* ctx, const Tensor& native_tensor,
                          int t, cudaStream_t stream) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSkernelsPStrt_engine_opDTcc mht_11(mht_11_v, 752, "", "./tensorflow/compiler/tf2tensorrt/kernels/trt_engine_op.cc", "CopyToDeviceAsync");
+
   Tensor* gpu_tensor;
   TF_RETURN_IF_ERROR(
       ctx->allocate_output(t, native_tensor.shape(), &gpu_tensor));
@@ -561,6 +767,9 @@ Status CopyToDeviceAsync(OpKernelContext* ctx, const Tensor& native_tensor,
 
 void TRTEngineOp::ExecuteNativeSegment(OpKernelContext* ctx,
                                        AsyncHelper* async_helper) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSkernelsPStrt_engine_opDTcc mht_12(mht_12_v, 770, "", "./tensorflow/compiler/tf2tensorrt/kernels/trt_engine_op.cc", "TRTEngineOp::ExecuteNativeSegment");
+
   tensorflow::profiler::TraceMe activity(
       "TRTEngineOp::ExecuteNativeSegment",
       tensorflow::profiler::TraceMeLevel::kInfo);
@@ -635,6 +844,9 @@ void TRTEngineOp::ExecuteNativeSegment(OpKernelContext* ctx,
 void TRTEngineOp::ExecuteCalibration(OpKernelContext* ctx,
                                      TRTEngineCacheResource* cache_res,
                                      AsyncHelper* async_helper) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSkernelsPStrt_engine_opDTcc mht_13(mht_13_v, 847, "", "./tensorflow/compiler/tf2tensorrt/kernels/trt_engine_op.cc", "TRTEngineOp::ExecuteCalibration");
+
   tensorflow::profiler::TraceMe activity(
       "TRTEngineOp::ExecuteCalibration",
       tensorflow::profiler::TraceMeLevel::kInfo);
@@ -688,6 +900,9 @@ void TRTEngineOp::ExecuteCalibration(OpKernelContext* ctx,
 
 Status TRTEngineOp::VerifyInputShapes(
     const std::vector<TensorShape>& input_concrete_shapes) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSkernelsPStrt_engine_opDTcc mht_14(mht_14_v, 903, "", "./tensorflow/compiler/tf2tensorrt/kernels/trt_engine_op.cc", "TRTEngineOp::VerifyInputShapes");
+
   if (input_concrete_shapes.empty()) {
     return errors::InvalidArgument("Input shapes are empty, for ", name());
   }
@@ -755,6 +970,9 @@ Status TRTEngineOp::VerifyInputShapes(
 }
 
 static bool AllowEngineNativeSegmentExecution() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSkernelsPStrt_engine_opDTcc mht_15(mht_15_v, 973, "", "./tensorflow/compiler/tf2tensorrt/kernels/trt_engine_op.cc", "AllowEngineNativeSegmentExecution");
+
   bool value;
   Status status =
       ReadBoolFromEnvVar("TF_TRT_ALLOW_ENGINE_NATIVE_SEGMENT_EXECUTION",
@@ -767,6 +985,9 @@ static bool AllowEngineNativeSegmentExecution() {
 
 void TRTEngineOp::ComputeAsync(OpKernelContext* ctx,
                                AsyncOpKernel::DoneCallback done) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSkernelsPStrt_engine_opDTcc mht_16(mht_16_v, 988, "", "./tensorflow/compiler/tf2tensorrt/kernels/trt_engine_op.cc", "TRTEngineOp::ComputeAsync");
+
   tensorflow::profiler::TraceMe activity(
       "TRTEngineOp::ComputeAsync", tensorflow::profiler::TraceMeLevel::kInfo);
 
@@ -912,6 +1133,9 @@ void TRTEngineOp::ComputeAsync(OpKernelContext* ctx,
 Status TRTEngineOp::ExecuteTrtEngine(
     OpKernelContext* ctx, EngineContext* engine_context, int trt_context_idx,
     const TrtShapeOptimizationProfile& profiles, TRTBaseAllocator* allocator) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSkernelsPStrt_engine_opDTcc mht_17(mht_17_v, 1136, "", "./tensorflow/compiler/tf2tensorrt/kernels/trt_engine_op.cc", "TRTEngineOp::ExecuteTrtEngine");
+
   tensorflow::profiler::TraceMe activity(
       "TRTEngineOp::ExecuteTrtEngine",
       tensorflow::profiler::TraceMeLevel::kInfo);
@@ -984,6 +1208,9 @@ Status TRTEngineOp::ExecuteTrtEngine(
 
 Status TRTEngineOp::GetEngineCacheResource(OpKernelContext* ctx,
                                            TRTEngineCacheResource** cache_res) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSkernelsPStrt_engine_opDTcc mht_18(mht_18_v, 1211, "", "./tensorflow/compiler/tf2tensorrt/kernels/trt_engine_op.cc", "TRTEngineOp::GetEngineCacheResource");
+
   // Canonicalize the op name by removing the scopes if any. This is mainly
   // because in TFv2, the function graph can be instantiated in various ways and
   // it'll insert scope names to the name of the TRTEngineOps, which will result
@@ -1009,6 +1236,9 @@ StatusOr<TrtUniquePtrType<nvinfer1::ICudaEngine>> TRTEngineOp::BuildEngine(
     const std::vector<TensorShape>& input_concrete_shapes, int batch_size,
     bool use_calibration, TRTInt8Calibrator* calibrator,
     TRTEngineCacheResource* cache_resource, OpKernelContext* ctx) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSkernelsPStrt_engine_opDTcc mht_19(mht_19_v, 1239, "", "./tensorflow/compiler/tf2tensorrt/kernels/trt_engine_op.cc", "TRTEngineOp::BuildEngine");
+
   TRT_ENSURE(cache_resource);
   TRT_ENSURE(ctx);
   // Use concrete shapes for implicit batch mode and partial shapes for
@@ -1232,6 +1462,9 @@ StatusOr<std::pair<EngineContext*, int>> TRTEngineOp::GetEngine(
 // possible.
 Status TRTEngineOp::AllocateCalibrationResources(
     OpKernelContext* ctx, TRTEngineCacheResource* cache_res) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSkernelsPStrt_engine_opDTcc mht_20(mht_20_v, 1465, "", "./tensorflow/compiler/tf2tensorrt/kernels/trt_engine_op.cc", "TRTEngineOp::AllocateCalibrationResources");
+
   cache_res->calib_ctx_ = absl::make_unique<CalibrationContext>();
   auto* cres = cache_res->calib_ctx_.get();
 

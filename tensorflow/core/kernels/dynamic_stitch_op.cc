@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSkernelsPSdynamic_stitch_opDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdynamic_stitch_opDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSkernelsPSdynamic_stitch_opDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,6 +206,10 @@ class DynamicStitchOpImplBase : public OpKernel {
   explicit DynamicStitchOpImplBase(OpKernelConstruction* c,
                                    const string& op_name)
       : OpKernel(c) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScorePSkernelsPSdynamic_stitch_opDTcc mht_0(mht_0_v, 210, "", "./tensorflow/core/kernels/dynamic_stitch_op.cc", "DynamicStitchOpImplBase");
+
     // Compute expected input signature
     const DataType dt = DataTypeToEnum<T>::v();
     const int n = c->num_inputs() / 2;
@@ -60,6 +232,9 @@ class DynamicStitchOpImplBase : public OpKernel {
   // Check if data0.shape[indices0.dims():] == data1.shape[indices1.dims():]
   static bool SameExtraShape(const Tensor& data0, const Tensor& indices0,
                              const Tensor& data1, const Tensor& indices1) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdynamic_stitch_opDTcc mht_1(mht_1_v, 235, "", "./tensorflow/core/kernels/dynamic_stitch_op.cc", "SameExtraShape");
+
     const int extra0 = data0.dims() - indices0.dims();
     const int extra1 = data1.dims() - indices1.dims();
     if (extra0 != extra1) return false;
@@ -77,6 +252,9 @@ class DynamicStitchOpImplBase : public OpKernel {
                                   OpInputList* data_inputs, int* first_dim_size,
                                   int* data_elements_size,
                                   Tensor** result_ptr) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdynamic_stitch_opDTcc mht_2(mht_2_v, 255, "", "./tensorflow/core/kernels/dynamic_stitch_op.cc", "CheckArgsAndAllocateResult");
+
     // Find maximum index in the indices vectors
     OP_REQUIRES_OK(c, c->input_list("indices", indices_inputs));
 
@@ -159,9 +337,15 @@ template <class T>
 class DynamicStitchOpGPU : public DynamicStitchOpImplBase<T> {
  public:
   explicit DynamicStitchOpGPU(OpKernelConstruction* c)
-      : DynamicStitchOpImplBase<T>(c, "DynamicStitchOp") {}
+      : DynamicStitchOpImplBase<T>(c, "DynamicStitchOp") {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdynamic_stitch_opDTcc mht_3(mht_3_v, 341, "", "./tensorflow/core/kernels/dynamic_stitch_op.cc", "DynamicStitchOpGPU");
+}
 
   void Compute(OpKernelContext* c) override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdynamic_stitch_opDTcc mht_4(mht_4_v, 346, "", "./tensorflow/core/kernels/dynamic_stitch_op.cc", "Compute");
+
     OpInputList indices_inputs;
     OpInputList data_inputs;
     int first_dim_size;
@@ -231,9 +415,15 @@ class DynamicStitchOpImplCPU : public DynamicStitchOpImplBase<T> {
  public:
   explicit DynamicStitchOpImplCPU(OpKernelConstruction* c)
       : DynamicStitchOpImplBase<T>(
-            c, (Parallel ? "ParallelDynamicStitchOp" : "DynamicStitchOp")) {}
+            c, (Parallel ? "ParallelDynamicStitchOp" : "DynamicStitchOp")) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdynamic_stitch_opDTcc mht_5(mht_5_v, 419, "", "./tensorflow/core/kernels/dynamic_stitch_op.cc", "DynamicStitchOpImplCPU");
+}
 
   void Compute(OpKernelContext* c) override {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdynamic_stitch_opDTcc mht_6(mht_6_v, 424, "", "./tensorflow/core/kernels/dynamic_stitch_op.cc", "Compute");
+
     OpInputList indices_inputs;
     OpInputList data_inputs;
     int first_dim_size;
@@ -254,6 +444,9 @@ class DynamicStitchOpImplCPU : public DynamicStitchOpImplBase<T> {
       const auto slice_size = merged_flat.dimension(1);
       const size_t slice_bytes = slice_size * sizeof(T);
       auto OnInputNumber = [&](int input_num) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdynamic_stitch_opDTcc mht_7(mht_7_v, 447, "", "./tensorflow/core/kernels/dynamic_stitch_op.cc", "lambda");
+
         const Tensor& indices = indices_inputs[input_num];
         auto indices_vec = indices.flat<int32>();
         const Tensor& data = data_inputs[input_num];
@@ -299,6 +492,9 @@ class DynamicStitchOpImplCPU : public DynamicStitchOpImplBase<T> {
             static_cast<double>(total_indices_size) / indices_inputs.size();
         auto bytes_processed = slice_bytes * avg_indices_size;
         auto LoopBody = [&](int first, int last) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSkernelsPSdynamic_stitch_opDTcc mht_8(mht_8_v, 495, "", "./tensorflow/core/kernels/dynamic_stitch_op.cc", "lambda");
+
           for (int input_num = first; input_num < last; ++input_num) {
             OnInputNumber(input_num);
           }

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -65,15 +233,28 @@ constexpr char kComposeAppend[] = "compose";
 // https://github.com/googleapis/google-cloud-cpp/blob/6c09cbfa0160bc046e5509b4dd2ab4b872648b4a/google/cloud/status.h#L32-L52
 static inline void TF_SetStatusFromGCSStatus(
     const google::cloud::Status& gcs_status, TF_Status* status) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_0(mht_0_v, 236, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "TF_SetStatusFromGCSStatus");
+
   TF_SetStatus(status, static_cast<TF_Code>(gcs_status.code()),
                gcs_status.message().c_str());
 }
 
-static void* plugin_memory_allocate(size_t size) { return calloc(1, size); }
-static void plugin_memory_free(void* ptr) { free(ptr); }
+static void* plugin_memory_allocate(size_t size) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_1(mht_1_v, 244, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "plugin_memory_allocate");
+ return calloc(1, size); }
+static void plugin_memory_free(void* ptr) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_2(mht_2_v, 248, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "plugin_memory_free");
+ free(ptr); }
 
 void ParseGCSPath(const std::string& fname, bool object_empty_ok,
                   std::string* bucket, std::string* object, TF_Status* status) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("fname: \"" + fname + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_3(mht_3_v, 255, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "ParseGCSPath");
+
   size_t scheme_end = fname.find("://") + 2;
   if (fname.substr(0, scheme_end + 1) != "gs://") {
     TF_SetStatus(status, TF_INVALID_ARGUMENT,
@@ -99,6 +280,9 @@ void ParseGCSPath(const std::string& fname, bool object_empty_ok,
 
 /// Appends a trailing slash if the name doesn't already have one.
 static void MaybeAppendSlash(std::string* name) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_4(mht_4_v, 283, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "MaybeAppendSlash");
+
   if (name->empty())
     *name = "/";
   else if (name->back() != '/')
@@ -110,6 +294,11 @@ static int64_t LoadBufferFromGCS(const std::string& path, size_t offset,
                                  size_t buffer_size, char* buffer,
                                  tf_gcs_filesystem::GCSFile* gcs_file,
                                  TF_Status* status) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("path: \"" + path + "\"");
+   mht_5_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_5(mht_5_v, 299, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "LoadBufferFromGCS");
+
   std::string bucket, object;
   ParseGCSPath(path, false, &bucket, &object, status);
   if (TF_GetCode(status) != TF_OK) return -1;
@@ -179,10 +368,17 @@ typedef struct GCSFile {
         buffer_mutex(),
         buffer_start(0),
         buffer_end_is_past_eof(false),
-        buffer() {}
+        buffer() {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("path: \"" + path + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_6(mht_6_v, 373, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "GCSFile");
+}
 } GCSFile;
 
 void Cleanup(TF_RandomAccessFile* file) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_7(mht_7_v, 379, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "Cleanup");
+
   auto gcs_file = static_cast<GCSFile*>(file->plugin_file);
   delete gcs_file;
 }
@@ -191,6 +387,10 @@ void Cleanup(TF_RandomAccessFile* file) {
 // See https://github.com/googleapis/google-cloud-cpp/issues/4013.
 int64_t Read(const TF_RandomAccessFile* file, uint64_t offset, size_t n,
              char* buffer, TF_Status* status) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_8(mht_8_v, 391, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "Read");
+
   auto gcs_file = static_cast<GCSFile*>(file->plugin_file);
   if (gcs_file->is_cache_enable || n > gcs_file->buffer_size) {
     return gcs_file->read_fn(gcs_file->path, offset, n, buffer, status);
@@ -257,6 +457,11 @@ typedef struct GCSFile {
 static void SyncImpl(const std::string& bucket, const std::string& object,
                      int64_t* offset, TempFile* outfile,
                      gcs::Client* gcs_client, TF_Status* status) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("bucket: \"" + bucket + "\"");
+   mht_9_v.push_back("object: \"" + object + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_9(mht_9_v, 462, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "SyncImpl");
+
   outfile->flush();
   // `*offset == 0` means this file does not exist on the server.
   if (*offset == -1 || *offset == 0) {
@@ -316,12 +521,19 @@ static void SyncImpl(const std::string& bucket, const std::string& object,
 }
 
 void Cleanup(TF_WritableFile* file) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_10(mht_10_v, 524, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "Cleanup");
+
   auto gcs_file = static_cast<GCSFile*>(file->plugin_file);
   delete gcs_file;
 }
 
 void Append(const TF_WritableFile* file, const char* buffer, size_t n,
             TF_Status* status) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("buffer: \"" + (buffer == nullptr ? std::string("nullptr") : std::string((char*)buffer)) + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_11(mht_11_v, 534, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "Append");
+
   auto gcs_file = static_cast<GCSFile*>(file->plugin_file);
   if (!gcs_file->outfile.is_open()) {
     TF_SetStatus(status, TF_FAILED_PRECONDITION,
@@ -340,6 +552,9 @@ void Append(const TF_WritableFile* file, const char* buffer, size_t n,
 }
 
 int64_t Tell(const TF_WritableFile* file, TF_Status* status) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_12(mht_12_v, 555, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "Tell");
+
   auto gcs_file = static_cast<GCSFile*>(file->plugin_file);
   int64_t position = int64_t(gcs_file->outfile.tellp());
   if (position == -1)
@@ -353,6 +568,9 @@ int64_t Tell(const TF_WritableFile* file, TF_Status* status) {
 }
 
 void Flush(const TF_WritableFile* file, TF_Status* status) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_13(mht_13_v, 571, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "Flush");
+
   auto gcs_file = static_cast<GCSFile*>(file->plugin_file);
   if (gcs_file->sync_need) {
     TF_VLog(3, "Flush started: gs://%s/%s", gcs_file->bucket.c_str(),
@@ -374,6 +592,9 @@ void Flush(const TF_WritableFile* file, TF_Status* status) {
 }
 
 void Sync(const TF_WritableFile* file, TF_Status* status) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_14(mht_14_v, 595, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "Sync");
+
   auto gcs_file = static_cast<GCSFile*>(file->plugin_file);
   TF_VLog(3, "Sync: gs://%s/%s", gcs_file->bucket.c_str(),
           gcs_file->object.c_str());
@@ -381,6 +602,9 @@ void Sync(const TF_WritableFile* file, TF_Status* status) {
 }
 
 void Close(const TF_WritableFile* file, TF_Status* status) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_15(mht_15_v, 605, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "Close");
+
   auto gcs_file = static_cast<GCSFile*>(file->plugin_file);
   TF_VLog(3, "Close: gs://%s/%s", gcs_file->bucket.c_str(),
           gcs_file->object.c_str());
@@ -401,17 +625,26 @@ typedef struct GCSMemoryRegion {
 } GCSMemoryRegion;
 
 void Cleanup(TF_ReadOnlyMemoryRegion* region) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_16(mht_16_v, 628, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "Cleanup");
+
   auto r = static_cast<GCSMemoryRegion*>(region->plugin_memory_region);
   plugin_memory_free(const_cast<void*>(r->address));
   delete r;
 }
 
 const void* Data(const TF_ReadOnlyMemoryRegion* region) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_17(mht_17_v, 637, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "Data");
+
   auto r = static_cast<GCSMemoryRegion*>(region->plugin_memory_region);
   return r->address;
 }
 
 uint64_t Length(const TF_ReadOnlyMemoryRegion* region) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_18(mht_18_v, 645, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "Length");
+
   auto r = static_cast<GCSMemoryRegion*>(region->plugin_memory_region);
   return r->length;
 }
@@ -427,6 +660,9 @@ namespace tf_gcs_filesystem {
 // https://github.com/googleapis/google-cloud-cpp/issues/4482 is done.
 GCSFile::GCSFile(google::cloud::storage::Client&& gcs_client)
     : gcs_client(gcs_client), block_cache_lock() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_19(mht_19_v, 663, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "GCSFile::GCSFile");
+
   const char* append_mode = std::getenv(kAppendMode);
   compose = (append_mode != nullptr) && (!strcmp(kAppendMode, append_mode));
 
@@ -476,6 +712,9 @@ GCSFile::GCSFile(google::cloud::storage::Client&& gcs_client, bool compose,
       compose(compose),
       block_cache_lock(),
       block_size(block_size) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_20(mht_20_v, 715, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "GCSFile::GCSFile");
+
   file_block_cache = std::make_unique<RamFileBlockCache>(
       block_size, max_bytes, max_staleness,
       [this](const std::string& filename, size_t offset, size_t buffer_size,
@@ -491,6 +730,9 @@ void InitTest(TF_Filesystem* filesystem, bool compose, uint64_t block_size,
               size_t max_bytes, uint64_t max_staleness,
               uint64_t stat_cache_max_age, size_t stat_cache_max_entries,
               TF_Status* status) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_21(mht_21_v, 733, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "InitTest");
+
   google::cloud::StatusOr<gcs::Client> client =
       gcs::Client::CreateDefaultClient();
   if (!client) {
@@ -505,6 +747,9 @@ void InitTest(TF_Filesystem* filesystem, bool compose, uint64_t block_size,
 }
 
 void Init(TF_Filesystem* filesystem, TF_Status* status) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_22(mht_22_v, 750, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "Init");
+
   google::cloud::StatusOr<gcs::Client> client =
       gcs::Client::CreateDefaultClient();
   if (!client) {
@@ -517,6 +762,9 @@ void Init(TF_Filesystem* filesystem, TF_Status* status) {
 }
 
 void Cleanup(TF_Filesystem* filesystem) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_23(mht_23_v, 765, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "Cleanup");
+
   auto gcs_file = static_cast<GCSFile*>(filesystem->plugin_filesystem);
   delete gcs_file;
 }
@@ -524,6 +772,11 @@ void Cleanup(TF_Filesystem* filesystem) {
 static void UncachedStatForObject(const std::string& bucket,
                                   const std::string& object, GcsFileStat* stat,
                                   gcs::Client* gcs_client, TF_Status* status) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("bucket: \"" + bucket + "\"");
+   mht_24_v.push_back("object: \"" + object + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_24(mht_24_v, 777, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "UncachedStatForObject");
+
   auto metadata = gcs_client->GetObjectMetadata(
       bucket, object, gcs::Fields("generation,size,timeStorageClassUpdated"));
   if (!metadata) return TF_SetStatusFromGCSStatus(metadata.status(), status);
@@ -542,6 +795,10 @@ static void UncachedStatForObject(const std::string& bucket,
 // TODO(vnvo2409): Implement later
 void NewRandomAccessFile(const TF_Filesystem* filesystem, const char* path,
                          TF_RandomAccessFile* file, TF_Status* status) {
+   std::vector<std::string> mht_25_v;
+   mht_25_v.push_back("path: \"" + (path == nullptr ? std::string("nullptr") : std::string((char*)path)) + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_25(mht_25_v, 799, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "NewRandomAccessFile");
+
   std::string bucket, object;
   ParseGCSPath(path, false, &bucket, &object, status);
   if (TF_GetCode(status) != TF_OK) return;
@@ -593,6 +850,10 @@ void NewRandomAccessFile(const TF_Filesystem* filesystem, const char* path,
 
 void NewWritableFile(const TF_Filesystem* filesystem, const char* path,
                      TF_WritableFile* file, TF_Status* status) {
+   std::vector<std::string> mht_26_v;
+   mht_26_v.push_back("path: \"" + (path == nullptr ? std::string("nullptr") : std::string((char*)path)) + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_26(mht_26_v, 854, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "NewWritableFile");
+
   std::string bucket, object;
   ParseGCSPath(path, false, &bucket, &object, status);
   if (TF_GetCode(status) != TF_OK) return;
@@ -611,6 +872,10 @@ void NewWritableFile(const TF_Filesystem* filesystem, const char* path,
 
 void NewAppendableFile(const TF_Filesystem* filesystem, const char* path,
                        TF_WritableFile* file, TF_Status* status) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("path: \"" + (path == nullptr ? std::string("nullptr") : std::string((char*)path)) + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_27(mht_27_v, 876, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "NewAppendableFile");
+
   std::string bucket, object;
   ParseGCSPath(path, false, &bucket, &object, status);
   if (TF_GetCode(status) != TF_OK) return;
@@ -663,6 +928,10 @@ void NewReadOnlyMemoryRegionFromFile(const TF_Filesystem* filesystem,
                                      const char* path,
                                      TF_ReadOnlyMemoryRegion* region,
                                      TF_Status* status) {
+   std::vector<std::string> mht_28_v;
+   mht_28_v.push_back("path: \"" + (path == nullptr ? std::string("nullptr") : std::string((char*)path)) + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_28(mht_28_v, 932, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "NewReadOnlyMemoryRegionFromFile");
+
   std::string bucket, object;
   ParseGCSPath(path, false, &bucket, &object, status);
   if (TF_GetCode(status) != TF_OK) return;
@@ -697,6 +966,12 @@ void NewReadOnlyMemoryRegionFromFile(const TF_Filesystem* filesystem,
 static void StatForObject(GCSFile* gcs_file, const std::string& path,
                           const std::string& bucket, const std::string& object,
                           GcsFileStat* stat, TF_Status* status) {
+   std::vector<std::string> mht_29_v;
+   mht_29_v.push_back("path: \"" + path + "\"");
+   mht_29_v.push_back("bucket: \"" + bucket + "\"");
+   mht_29_v.push_back("object: \"" + object + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_29(mht_29_v, 972, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "StatForObject");
+
   if (object.empty())
     return TF_SetStatus(
         status, TF_INVALID_ARGUMENT,
@@ -716,6 +991,12 @@ static void StatForObject(GCSFile* gcs_file, const std::string& path,
 static bool ObjectExists(GCSFile* gcs_file, const std::string& path,
                          const std::string& bucket, const std::string& object,
                          TF_Status* status) {
+   std::vector<std::string> mht_30_v;
+   mht_30_v.push_back("path: \"" + path + "\"");
+   mht_30_v.push_back("bucket: \"" + bucket + "\"");
+   mht_30_v.push_back("object: \"" + object + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_30(mht_30_v, 997, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "ObjectExists");
+
   GcsFileStat stat;
   StatForObject(gcs_file, path, bucket, object, &stat, status);
   if (TF_GetCode(status) != TF_OK && TF_GetCode(status) != TF_NOT_FOUND)
@@ -729,6 +1010,10 @@ static bool ObjectExists(GCSFile* gcs_file, const std::string& path,
 
 static bool BucketExists(GCSFile* gcs_file, const std::string& bucket,
                          TF_Status* status) {
+   std::vector<std::string> mht_31_v;
+   mht_31_v.push_back("bucket: \"" + bucket + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_31(mht_31_v, 1014, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "BucketExists");
+
   auto metadata =
       gcs_file->gcs_client.GetBucketMetadata(bucket, gcs::Fields(""));
   TF_SetStatusFromGCSStatus(metadata.status(), status);
@@ -787,8 +1072,16 @@ static std::vector<std::string> GetChildrenBounded(
 
 static bool FolderExists(GCSFile* gcs_file, std::string dir,
                          TF_Status* status) {
+   std::vector<std::string> mht_32_v;
+   mht_32_v.push_back("dir: \"" + dir + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_32(mht_32_v, 1076, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "FolderExists");
+
   ExpiringLRUCache<GcsFileStat>::ComputeFunc compute_func =
       [gcs_file](const std::string& dir, GcsFileStat* stat, TF_Status* status) {
+   std::vector<std::string> mht_33_v;
+   mht_33_v.push_back("dir: \"" + dir + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_33(mht_33_v, 1082, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "lambda");
+
         auto children =
             GetChildrenBounded(gcs_file, dir, 1, true, true, status);
         if (TF_GetCode(status) != TF_OK) return;
@@ -812,6 +1105,10 @@ static bool FolderExists(GCSFile* gcs_file, std::string dir,
 }
 
 static void ClearFileCaches(GCSFile* gcs_file, const std::string& path) {
+   std::vector<std::string> mht_34_v;
+   mht_34_v.push_back("path: \"" + path + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_34(mht_34_v, 1109, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "ClearFileCaches");
+
   absl::ReaderMutexLock l(&gcs_file->block_cache_lock);
   gcs_file->file_block_cache->RemoveFile(path);
   gcs_file->stat_cache->Delete(path);
@@ -819,6 +1116,10 @@ static void ClearFileCaches(GCSFile* gcs_file, const std::string& path) {
 
 void PathExists(const TF_Filesystem* filesystem, const char* path,
                 TF_Status* status) {
+   std::vector<std::string> mht_35_v;
+   mht_35_v.push_back("path: \"" + (path == nullptr ? std::string("nullptr") : std::string((char*)path)) + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_35(mht_35_v, 1120, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "PathExists");
+
   std::string bucket, object;
   ParseGCSPath(path, true, &bucket, &object, status);
   if (TF_GetCode(status) != TF_OK) return;
@@ -843,6 +1144,10 @@ void PathExists(const TF_Filesystem* filesystem, const char* path,
 
 void CreateDir(const TF_Filesystem* filesystem, const char* path,
                TF_Status* status) {
+   std::vector<std::string> mht_36_v;
+   mht_36_v.push_back("path: \"" + (path == nullptr ? std::string("nullptr") : std::string((char*)path)) + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_36(mht_36_v, 1148, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "CreateDir");
+
   std::string dir = path;
   MaybeAppendSlash(&dir);
   TF_VLog(3,
@@ -887,6 +1192,10 @@ void CreateDir(const TF_Filesystem* filesystem, const char* path,
 
 void DeleteFile(const TF_Filesystem* filesystem, const char* path,
                 TF_Status* status) {
+   std::vector<std::string> mht_37_v;
+   mht_37_v.push_back("path: \"" + (path == nullptr ? std::string("nullptr") : std::string((char*)path)) + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_37(mht_37_v, 1196, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "DeleteFile");
+
   std::string bucket, object;
   ParseGCSPath(path, false, &bucket, &object, status);
   if (TF_GetCode(status) != TF_OK) return;
@@ -900,6 +1209,10 @@ void DeleteFile(const TF_Filesystem* filesystem, const char* path,
 // Deletes the GCS directory marker if it exists.
 void DeleteDir(const TF_Filesystem* filesystem, const char* path,
                TF_Status* status) {
+   std::vector<std::string> mht_38_v;
+   mht_38_v.push_back("path: \"" + (path == nullptr ? std::string("nullptr") : std::string((char*)path)) + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_38(mht_38_v, 1213, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "DeleteDir");
+
   // A directory is considered empty either if there are no matching objects
   // with the corresponding name prefix or if there is exactly one matching
   // object and it is the directory marker. Therefore we need to retrieve
@@ -922,6 +1235,11 @@ void DeleteDir(const TF_Filesystem* filesystem, const char* path,
 
 void CopyFile(const TF_Filesystem* filesystem, const char* src, const char* dst,
               TF_Status* status) {
+   std::vector<std::string> mht_39_v;
+   mht_39_v.push_back("src: \"" + (src == nullptr ? std::string("nullptr") : std::string((char*)src)) + "\"");
+   mht_39_v.push_back("dst: \"" + (dst == nullptr ? std::string("nullptr") : std::string((char*)dst)) + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_39(mht_39_v, 1240, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "CopyFile");
+
   std::string bucket_src, object_src;
   ParseGCSPath(src, false, &bucket_src, &object_src, status);
   if (TF_GetCode(status) != TF_OK) return;
@@ -939,6 +1257,10 @@ void CopyFile(const TF_Filesystem* filesystem, const char* src, const char* dst,
 
 bool IsDirectory(const TF_Filesystem* filesystem, const char* path,
                  TF_Status* status) {
+   std::vector<std::string> mht_40_v;
+   mht_40_v.push_back("path: \"" + (path == nullptr ? std::string("nullptr") : std::string((char*)path)) + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_40(mht_40_v, 1261, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "IsDirectory");
+
   std::string bucket, object;
   ParseGCSPath(path, true, &bucket, &object, status);
   if (TF_GetCode(status) != TF_OK) return false;
@@ -976,6 +1298,11 @@ bool IsDirectory(const TF_Filesystem* filesystem, const char* path,
 static void RenameObject(const TF_Filesystem* filesystem,
                          const std::string& src, const std::string& dst,
                          TF_Status* status) {
+   std::vector<std::string> mht_41_v;
+   mht_41_v.push_back("src: \"" + src + "\"");
+   mht_41_v.push_back("dst: \"" + dst + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_41(mht_41_v, 1303, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "RenameObject");
+
   TF_VLog(3, "RenameObject: started %s to %s", src.c_str(), dst.c_str());
   std::string bucket_src, object_src;
   ParseGCSPath(src, false, &bucket_src, &object_src, status);
@@ -999,6 +1326,11 @@ static void RenameObject(const TF_Filesystem* filesystem,
 
 void RenameFile(const TF_Filesystem* filesystem, const char* src,
                 const char* dst, TF_Status* status) {
+   std::vector<std::string> mht_42_v;
+   mht_42_v.push_back("src: \"" + (src == nullptr ? std::string("nullptr") : std::string((char*)src)) + "\"");
+   mht_42_v.push_back("dst: \"" + (dst == nullptr ? std::string("nullptr") : std::string((char*)dst)) + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_42(mht_42_v, 1331, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "RenameFile");
+
   if (!IsDirectory(filesystem, src, status)) {
     if (TF_GetCode(status) == TF_FAILED_PRECONDITION) {
       TF_SetStatus(status, TF_OK, "");
@@ -1026,6 +1358,10 @@ void RenameFile(const TF_Filesystem* filesystem, const char* src,
 void DeleteRecursively(const TF_Filesystem* filesystem, const char* path,
                        uint64_t* undeleted_files, uint64_t* undeleted_dirs,
                        TF_Status* status) {
+   std::vector<std::string> mht_43_v;
+   mht_43_v.push_back("path: \"" + (path == nullptr ? std::string("nullptr") : std::string((char*)path)) + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_43(mht_43_v, 1362, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "DeleteRecursively");
+
   if (!undeleted_files || !undeleted_dirs)
     return TF_SetStatus(
         status, TF_INTERNAL,
@@ -1058,6 +1394,10 @@ void DeleteRecursively(const TF_Filesystem* filesystem, const char* path,
 
 int GetChildren(const TF_Filesystem* filesystem, const char* path,
                 char*** entries, TF_Status* status) {
+   std::vector<std::string> mht_44_v;
+   mht_44_v.push_back("path: \"" + (path == nullptr ? std::string("nullptr") : std::string((char*)path)) + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_44(mht_44_v, 1398, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "GetChildren");
+
   auto gcs_file = static_cast<GCSFile*>(filesystem->plugin_filesystem);
   std::vector<std::string> childrens =
       GetChildrenBounded(gcs_file, path, UINT64_MAX, false, false, status);
@@ -1074,6 +1414,10 @@ int GetChildren(const TF_Filesystem* filesystem, const char* path,
 
 void Stat(const TF_Filesystem* filesystem, const char* path,
           TF_FileStatistics* stats, TF_Status* status) {
+   std::vector<std::string> mht_45_v;
+   mht_45_v.push_back("path: \"" + (path == nullptr ? std::string("nullptr") : std::string((char*)path)) + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_45(mht_45_v, 1418, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "Stat");
+
   std::string bucket, object;
   ParseGCSPath(path, true, &bucket, &object, status);
   if (TF_GetCode(status) != TF_OK) return;
@@ -1113,6 +1457,10 @@ void Stat(const TF_Filesystem* filesystem, const char* path,
 
 int64_t GetFileSize(const TF_Filesystem* filesystem, const char* path,
                     TF_Status* status) {
+   std::vector<std::string> mht_46_v;
+   mht_46_v.push_back("path: \"" + (path == nullptr ? std::string("nullptr") : std::string((char*)path)) + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_46(mht_46_v, 1461, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "GetFileSize");
+
   // Only validate the name.
   std::string bucket, object;
   ParseGCSPath(path, false, &bucket, &object, status);
@@ -1124,10 +1472,17 @@ int64_t GetFileSize(const TF_Filesystem* filesystem, const char* path,
 }
 
 static char* TranslateName(const TF_Filesystem* filesystem, const char* uri) {
+   std::vector<std::string> mht_47_v;
+   mht_47_v.push_back("uri: \"" + (uri == nullptr ? std::string("nullptr") : std::string((char*)uri)) + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_47(mht_47_v, 1476, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "TranslateName");
+
   return strdup(uri);
 }
 
 static void FlushCaches(const TF_Filesystem* filesystem) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_48(mht_48_v, 1483, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "FlushCaches");
+
   auto gcs_file = static_cast<GCSFile*>(filesystem->plugin_filesystem);
   absl::ReaderMutexLock l(&gcs_file->block_cache_lock);
   gcs_file->file_block_cache->Flush();
@@ -1138,6 +1493,10 @@ static void FlushCaches(const TF_Filesystem* filesystem) {
 
 static void ProvideFilesystemSupportFor(TF_FilesystemPluginOps* ops,
                                         const char* uri) {
+   std::vector<std::string> mht_49_v;
+   mht_49_v.push_back("uri: \"" + (uri == nullptr ? std::string("nullptr") : std::string((char*)uri)) + "\"");
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_49(mht_49_v, 1497, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "ProvideFilesystemSupportFor");
+
   TF_SetFilesystemVersionMetadata(ops);
   ops->scheme = strdup(uri);
 
@@ -1183,6 +1542,9 @@ static void ProvideFilesystemSupportFor(TF_FilesystemPluginOps* ops,
 }
 
 void TF_InitPlugin(TF_FilesystemPluginInfo* info) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScPSexperimentalPSfilesystemPSpluginsPSgcsPSgcs_filesystemDTcc mht_50(mht_50_v, 1545, "", "./tensorflow/c/experimental/filesystem/plugins/gcs/gcs_filesystem.cc", "TF_InitPlugin");
+
   info->plugin_memory_allocate = plugin_memory_allocate;
   info->plugin_memory_free = plugin_memory_free;
   info->num_schemes = 1;

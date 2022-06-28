@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -48,6 +216,9 @@ namespace tensorflow {
 namespace {
 
 Status ValidateTensorId(const tf2xla::TensorId& id) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc mht_0(mht_0_v, 219, "", "./tensorflow/compiler/tf2xla/tf2xla_util.cc", "ValidateTensorId");
+
   if (id.node_name().empty()) {
     return errors::InvalidArgument("TensorId node_name must be non-empty");
   }
@@ -59,6 +230,11 @@ Status ValidateTensorId(const tf2xla::TensorId& id) {
 
 Status CheckNameDuplicates(const string& kind, const string& name,
                            std::set<string>* names) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("kind: \"" + kind + "\"");
+   mht_1_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc mht_1(mht_1_v, 235, "", "./tensorflow/compiler/tf2xla/tf2xla_util.cc", "CheckNameDuplicates");
+
   if (!name.empty()) {
     if (!names->insert(name).second) {
       return errors::InvalidArgument("duplicate ", kind, " name: ", name);
@@ -69,6 +245,10 @@ Status CheckNameDuplicates(const string& kind, const string& name,
 
 Status CheckFeedFetchNameConflicts(const string& kind,
                                    const std::set<string>& names) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("kind: \"" + kind + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc mht_2(mht_2_v, 249, "", "./tensorflow/compiler/tf2xla/tf2xla_util.cc", "CheckFeedFetchNameConflicts");
+
   // We don't allow the feeds or fetches to contain both "foo" and "foo_data",
   // since that will cause a collision in codegen symbols.
   for (const string& name : names) {
@@ -86,6 +266,9 @@ Status CheckFeedFetchNameConflicts(const string& kind,
 Status CopyAssociatedFunctions(Graph* g,
                                const FunctionLibraryDefinition* lookup_fld,
                                FunctionLibraryDefinition* fld) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc mht_3(mht_3_v, 269, "", "./tensorflow/compiler/tf2xla/tf2xla_util.cc", "CopyAssociatedFunctions");
+
   for (Node* n : g->op_nodes()) {
     for (const auto& associated_function :
          GetAssociatedFunctions(*n, lookup_fld)) {
@@ -128,6 +311,9 @@ StatusOr<Node*> ReplaceEdge(Graph* g, Node* dst, int dst_input, Node* with,
 // the given `replacement` node (assumes the :0 output of `replacement`).
 Status ReplaceSrcOutputUsageWithNode(Graph* g, Node* src, int src_output,
                                      Node* replacement) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc mht_4(mht_4_v, 314, "", "./tensorflow/compiler/tf2xla/tf2xla_util.cc", "ReplaceSrcOutputUsageWithNode");
+
   VLOG(1) << "Replace usages of output " << src_output << " of node "
           << (VLOG_IS_ON(3) ? src->DebugString() : src->name()) << " with "
           << (VLOG_IS_ON(3) ? replacement->DebugString() : replacement->name());
@@ -169,6 +355,9 @@ Status ReplaceSrcOutputUsageWithNode(Graph* g, Node* src, int src_output,
 Status ReplaceArgUsageWithConstNode(
     Graph* g,
     const absl::flat_hash_map<int, const Node*>& const_input_index_to_node) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc mht_5(mht_5_v, 358, "", "./tensorflow/compiler/tf2xla/tf2xla_util.cc", "ReplaceArgUsageWithConstNode");
+
   // Collect all _Arg nodes.
   absl::flat_hash_map<int, Node*> arg_nodes;
   for (Node* n : g->op_nodes()) {
@@ -198,6 +387,9 @@ Status ReplaceArgUsageWithConstNode(
 Status ReplaceRetvalInputWithArg(
     Graph* g,
     const absl::flat_hash_map<int, const Node*>& const_input_index_to_node) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc mht_6(mht_6_v, 390, "", "./tensorflow/compiler/tf2xla/tf2xla_util.cc", "ReplaceRetvalInputWithArg");
+
   absl::flat_hash_map<int, Node*> arg_nodes;
   absl::flat_hash_map<int, Node*> ret_nodes;
   for (Node* n : g->op_nodes()) {
@@ -230,6 +422,10 @@ Status PropagateConstIntoFuncAttr(
     const absl::flat_hash_map<int, const Node*>& const_input_index_to_node,
     const FunctionLibraryDefinition* lookup_fld, FunctionLibraryDefinition* fld,
     bool passthrough_arg_to_retval = false) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("attr_name: \"" + attr_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc mht_7(mht_7_v, 426, "", "./tensorflow/compiler/tf2xla/tf2xla_util.cc", "PropagateConstIntoFuncAttr");
+
   VLOG(1) << "Propagate const into " << attr_name << " of node " << n->name();
   // Instantiate the function.
   NameAttrList func_attr;
@@ -281,6 +477,9 @@ Status PropagateConstIntoFuncAttr(
 Status PropagateConstIntoIfNode(Graph* g, Node* if_node,
                                 const FunctionLibraryDefinition* lookup_fld,
                                 FunctionLibraryDefinition* fld) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc mht_8(mht_8_v, 480, "", "./tensorflow/compiler/tf2xla/tf2xla_util.cc", "PropagateConstIntoIfNode");
+
   // Notice that first input for If node is predicate; other inputs are function
   // inputs.
   absl::flat_hash_map<int, const Node*> const_input_index_to_node;
@@ -401,6 +600,9 @@ StatusOr<bool> IsLoopInvariant(const FunctionBody* loop_body, int index,
 Status PropagateConstIntoAndAroundWhileNode(
     Graph* g, Node* while_node, const FunctionLibraryDefinition* lookup_fld,
     FunctionLibraryDefinition* fld) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc mht_9(mht_9_v, 603, "", "./tensorflow/compiler/tf2xla/tf2xla_util.cc", "PropagateConstIntoAndAroundWhileNode");
+
   VLOG(1) << "Propagate const into " << while_node->name();
 
   // For "While" node, we should only replace _Arg nodes which are loop
@@ -486,6 +688,9 @@ const char kTpuReplicateAttrName[] = "_tpu_replicate";
 const char kXlaOutsideCompilationAttrName[] = "_xla_outside_compilation";
 
 Status ValidateConfig(const tf2xla::Config& config) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc mht_10(mht_10_v, 691, "", "./tensorflow/compiler/tf2xla/tf2xla_util.cc", "ValidateConfig");
+
   std::set<string> names;
   for (const tf2xla::Feed& feed : config.feed()) {
     TF_RETURN_IF_ERROR(ValidateTensorId(feed.id()));
@@ -508,6 +713,9 @@ Status ValidateConfig(const tf2xla::Config& config) {
 Status AddPlaceholdersForFeeds(
     const tf2xla::Config& config, const OpRegistryInterface* op_registry,
     std::unordered_map<string, string>* feed_remapping, GraphDef* graph_def) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc mht_11(mht_11_v, 716, "", "./tensorflow/compiler/tf2xla/tf2xla_util.cc", "AddPlaceholdersForFeeds");
+
   struct PlaceholderInfo {
     const tf2xla::Feed* feed = nullptr;  // point to Feed in <config>.
     string placeholder_name;
@@ -604,6 +812,9 @@ Status AddPlaceholdersForFeeds(
 
 Status PruneGraphDefInto(const tf2xla::Config& config, const GraphDef& in,
                          GraphDef* out) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc mht_12(mht_12_v, 815, "", "./tensorflow/compiler/tf2xla/tf2xla_util.cc", "PruneGraphDefInto");
+
   *out = in;
   out->clear_node();
 
@@ -668,10 +879,16 @@ Status PruneGraphDefInto(const tf2xla::Config& config, const GraphDef& in,
 }
 
 string TensorIdToString(const tf2xla::TensorId& id) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc mht_13(mht_13_v, 882, "", "./tensorflow/compiler/tf2xla/tf2xla_util.cc", "TensorIdToString");
+
   return absl::StrCat(id.node_name(), ":", id.output_index());
 }
 
 Status SetNodeShardingFromNeighbors(Node* n, bool out_edges) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc mht_14(mht_14_v, 889, "", "./tensorflow/compiler/tf2xla/tf2xla_util.cc", "SetNodeShardingFromNeighbors");
+
   int core = -1;
   const Node* matching_node = nullptr;
   for (const Edge* edge : (out_edges ? n->out_edges() : n->in_edges())) {
@@ -700,6 +917,10 @@ Status SetNodeShardingFromNeighbors(Node* n, bool out_edges) {
 
 void AddDtypeToKernelDefConstraint(absl::string_view name, DataType dtype,
                                    KernelDef* kdef) {
+   std::vector<std::string> mht_15_v;
+   mht_15_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc mht_15(mht_15_v, 921, "", "./tensorflow/compiler/tf2xla/tf2xla_util.cc", "AddDtypeToKernelDefConstraint");
+
   for (KernelDef::AttrConstraint& constraint : *kdef->mutable_constraint()) {
     if (constraint.name() == name) {
       constraint.mutable_allowed_values()->mutable_list()->add_type(dtype);
@@ -709,6 +930,9 @@ void AddDtypeToKernelDefConstraint(absl::string_view name, DataType dtype,
 
 namespace {
 uint32 InitialRandomSeed() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc mht_16(mht_16_v, 933, "", "./tensorflow/compiler/tf2xla/tf2xla_util.cc", "InitialRandomSeed");
+
   // Support plumbing the TF seed through to XLA is being worked on.
   // If a user wants deterministic behavior, their best option
   // is to start with a known checkpoint. This also handles issues when
@@ -724,6 +948,9 @@ uint32 InitialRandomSeed() {
 }  // namespace
 
 uint32 GetXLARandomSeed() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc mht_17(mht_17_v, 951, "", "./tensorflow/compiler/tf2xla/tf2xla_util.cc", "GetXLARandomSeed");
+
   // We initialize counter with an odd number and increment it by two
   // everytime. This ensures that it will never be zero, even
   // after an overflow. When seeded with zero, some XLA backends
@@ -737,6 +964,9 @@ uint32 GetXLARandomSeed() {
 // TODO(b/77601805): add tests for associated function related stuff.
 bool HasAssociatedFunction(const NodeDef& node_def,
                            const FunctionLibraryDefinition* fld) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc mht_18(mht_18_v, 967, "", "./tensorflow/compiler/tf2xla/tf2xla_util.cc", "HasAssociatedFunction");
+
   if (fld->Contains(node_def.op())) {
     return true;
   }
@@ -795,6 +1025,10 @@ Status RewriteAssociatedFunction(
     Graph* graph, Node* node, FunctionLibraryDefinition* fld,
     const AssociatedFunctionInfo& associated_function,
     const string& rewritten_function_name) {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("rewritten_function_name: \"" + rewritten_function_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc mht_19(mht_19_v, 1029, "", "./tensorflow/compiler/tf2xla/tf2xla_util.cc", "RewriteAssociatedFunction");
+
   switch (associated_function.type()) {
     case AssociatedFunctionInfo::kFunctionCallNode: {
       // Change this node to call the new function.
@@ -864,6 +1098,10 @@ Status RewriteAssociatedFunction(
 Status CachedFunctionHandles::GetOrInstantiate(
     const string& func_name, AttrSlice attrs,
     FunctionLibraryRuntime::Handle* handle) {
+   std::vector<std::string> mht_20_v;
+   mht_20_v.push_back("func_name: \"" + func_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc mht_20(mht_20_v, 1102, "", "./tensorflow/compiler/tf2xla/tf2xla_util.cc", "CachedFunctionHandles::GetOrInstantiate");
+
   string canonicalized_name = Canonicalize(func_name, attrs);
   auto iter = handles_.find(canonicalized_name);
   if (iter != handles_.end()) {
@@ -877,6 +1115,9 @@ Status CachedFunctionHandles::GetOrInstantiate(
 }
 
 Status CachedFunctionHandles::ReleaseAllHandles() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc mht_21(mht_21_v, 1118, "", "./tensorflow/compiler/tf2xla/tf2xla_util.cc", "CachedFunctionHandles::ReleaseAllHandles");
+
   Status result;
   for (const auto& iter : handles_) {
     result.Update(flr_->ReleaseHandle(iter.second));
@@ -938,6 +1179,9 @@ StatusOr<Node*> BuildIdentityNode(Graph* graph, const string& node_name,
 Status PropagateConstIntoFunctionalNodes(
     Graph* g, const FunctionLibraryDefinition* lookup_fld,
     FunctionLibraryDefinition* fld) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc mht_22(mht_22_v, 1182, "", "./tensorflow/compiler/tf2xla/tf2xla_util.cc", "PropagateConstIntoFunctionalNodes");
+
   absl::flat_hash_set<int> done_node_ids;
 
   // Because we may propagate Const around a while node as well as into it,
@@ -970,6 +1214,9 @@ Status PropagateConstIntoFunctionalNodes(
 
 Status PruneUnreachableFunctionsFromGraph(const Graph& g,
                                           FunctionLibraryDefinition* fld) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc mht_23(mht_23_v, 1217, "", "./tensorflow/compiler/tf2xla/tf2xla_util.cc", "PruneUnreachableFunctionsFromGraph");
+
   GraphDef graph_def;
   g.ToGraphDef(&graph_def);
   FunctionLibraryDefinition reachable_functions =
@@ -984,6 +1231,9 @@ Status PruneUnreachableFunctionsFromGraph(const Graph& g,
 
 Status RewriteTensorListWithConstElement(Graph* g,
                                          FunctionLibraryDefinition* fld) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPStf2xla_utilDTcc mht_24(mht_24_v, 1234, "", "./tensorflow/compiler/tf2xla/tf2xla_util.cc", "RewriteTensorListWithConstElement");
+
   for (Node* n : g->nodes()) {
     if (n->type_string() != "EmptyTensorList") {
       continue;

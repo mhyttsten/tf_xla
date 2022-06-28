@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2022 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -43,6 +211,9 @@ template <typename T>
 Status FindIndicesoOfAllValuesInSrc(absl::Span<const T> values,
                                     absl::Span<const T> src,
                                     std::vector<int>* indices) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc mht_0(mht_0_v, 214, "", "./tensorflow/compiler/tf2tensorrt/convert/ops/einsum.cc", "FindIndicesoOfAllValuesInSrc");
+
   if (src.size() < values.size()) {
     return errors::Internal(
         "Span 'src' cannot contain all elements of 'values'");
@@ -76,6 +247,9 @@ class EinsumDescriptor {
   static bool OrderMatches(const Labels& input_labels, int offset, int m,
                            EinsumDimensionType dim_type,
                            const std::unique_ptr<EinsumDescriptor>& other) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc mht_1(mht_1_v, 250, "", "./tensorflow/compiler/tf2tensorrt/convert/ops/einsum.cc", "OrderMatches");
+
     if (other == nullptr) {
       return true;
     }
@@ -93,6 +267,9 @@ class EinsumDescriptor {
   using label_t_iterator = std::vector<EinsumDimensionType>::const_iterator;
   static int32_t CountLabels(label_t_iterator begin, label_t_iterator end,
                              EinsumDimensionType val) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc mht_2(mht_2_v, 270, "", "./tensorflow/compiler/tf2tensorrt/convert/ops/einsum.cc", "CountLabels");
+
     return static_cast<int32_t>(std::count_if(
         begin, end, [val](EinsumDimensionType t) { return t == val; }));
   }
@@ -100,6 +277,9 @@ class EinsumDescriptor {
   // Appends indices to the "permute" vector where types maches value.
   void AppendMatchingIndicesToPermute(
       const std::vector<EinsumDimensionType>& types, EinsumDimensionType val) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc mht_3(mht_3_v, 280, "", "./tensorflow/compiler/tf2tensorrt/convert/ops/einsum.cc", "AppendMatchingIndicesToPermute");
+
     for (int i = 0; i < types.size(); i++) {
       if (types[i] == val) {
         permute.push_back(i);
@@ -110,6 +290,9 @@ class EinsumDescriptor {
   Status DetermineLayout(const Labels& input_labels,
                          const std::vector<EinsumDimensionType>& types,
                          const std::unique_ptr<EinsumDescriptor>& other) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc mht_4(mht_4_v, 293, "", "./tensorflow/compiler/tf2tensorrt/convert/ops/einsum.cc", "DetermineLayout");
+
     // Check if the current layout is BFC or BCF. In that case we could avoid
     // transpose.
     layout = EinsumLayout::MIX;
@@ -141,6 +324,9 @@ class EinsumDescriptor {
       const EinsumLayout preferred_layout, const Labels& input_labels,
       const std::vector<EinsumDimensionType>& types,
       const std::unique_ptr<EinsumDescriptor>& other) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc mht_5(mht_5_v, 327, "", "./tensorflow/compiler/tf2tensorrt/convert/ops/einsum.cc", "CalculateMixedLayoutPermutation");
+
     // Input label types are mixed. Calculate a permutation that maps them
     // to the preferred layout (BCF or BFC).
     layout = preferred_layout;
@@ -188,6 +374,9 @@ class EinsumDescriptor {
                     std::vector<EinsumDimensionType>& label_types,
                     EinsumLayout preferred_layout,
                     const std::unique_ptr<EinsumDescriptor>& other = nullptr) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc mht_6(mht_6_v, 377, "", "./tensorflow/compiler/tf2tensorrt/convert/ops/einsum.cc", "Initialize");
+
     if (preferred_layout == EinsumLayout::MIX) {
       return errors::Internal("Preferred einsum layout cannot be MIX");
     }
@@ -243,7 +432,10 @@ class EinsumDescriptor {
   }
 
  public:
-  EinsumDescriptor() : b(0), f(0), c(0) {}
+  EinsumDescriptor() : b(0), f(0), c(0) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc mht_7(mht_7_v, 436, "", "./tensorflow/compiler/tf2tensorrt/convert/ops/einsum.cc", "EinsumDescriptor");
+}
 
   // Deduces the number of batch, free, contract dimensions from the input
   // labels, decides what layout to use, and determines permutation indices for
@@ -260,13 +452,31 @@ class EinsumDescriptor {
     return desc;
   }
 
-  int NumBatchDims() const { return b; }
-  int NumContractDims() const { return c; }
-  int NumFreeDims() const { return f; }
-  int ContractDimOffset() const { return offset_c; }
-  const Labels& PermutedLabels() const { return permuted_labels; }
+  int NumBatchDims() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc mht_8(mht_8_v, 456, "", "./tensorflow/compiler/tf2tensorrt/convert/ops/einsum.cc", "NumBatchDims");
+ return b; }
+  int NumContractDims() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc mht_9(mht_9_v, 460, "", "./tensorflow/compiler/tf2tensorrt/convert/ops/einsum.cc", "NumContractDims");
+ return c; }
+  int NumFreeDims() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc mht_10(mht_10_v, 464, "", "./tensorflow/compiler/tf2tensorrt/convert/ops/einsum.cc", "NumFreeDims");
+ return f; }
+  int ContractDimOffset() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc mht_11(mht_11_v, 468, "", "./tensorflow/compiler/tf2tensorrt/convert/ops/einsum.cc", "ContractDimOffset");
+ return offset_c; }
+  const Labels& PermutedLabels() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc mht_12(mht_12_v, 472, "", "./tensorflow/compiler/tf2tensorrt/convert/ops/einsum.cc", "PermutedLabels");
+ return permuted_labels; }
 
   std::string DebugString() const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc mht_13(mht_13_v, 477, "", "./tensorflow/compiler/tf2tensorrt/convert/ops/einsum.cc", "DebugString");
+
     return absl::StrCat("Descriptor with ",
                         (layout == EinsumLayout::BFC ? "BFC" : "BCF"),
                         " layout, b=", b, ", f=", f, ", c=", c);
@@ -274,11 +484,17 @@ class EinsumDescriptor {
 
   // Returns whether the free and contract dimension have static shape.
   bool HasStaticShape() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc mht_14(mht_14_v, 487, "", "./tensorflow/compiler/tf2tensorrt/convert/ops/einsum.cc", "HasStaticShape");
+
     return !std::any_of(dims.d + b, dims.d + dims.nbDims,
                         [](int k) { return k == -1; });
   }
 
   nvinfer1::Permutation GetPermutation() const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc mht_15(mht_15_v, 495, "", "./tensorflow/compiler/tf2tensorrt/convert/ops/einsum.cc", "GetPermutation");
+
     nvinfer1::Permutation p;
     std::copy(permute.begin(), permute.end(), p.order);
     return p;
@@ -290,6 +506,9 @@ class EinsumDescriptor {
   // representing the shape of the operand.
   Status SetDynamicSize(TRTNetworkBuilder* builder,
                         const TRT_TensorOrWeights& operand) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc mht_16(mht_16_v, 509, "", "./tensorflow/compiler/tf2tensorrt/convert/ops/einsum.cc", "SetDynamicSize");
+
     TRT_ENSURE(operand.GetTrtDims().nbDims == dims.nbDims);
     if (operand.is_weights()) {
       // Generate constants for each dimension of the constant weight tensor's
@@ -335,6 +554,9 @@ class EinsumDescriptor {
 Status GetEinsumNewDynamicShape(TRTNetworkBuilder* builder,
                                 const EinsumDescriptor& desc,
                                 ITensorProxyPtr* new_shape) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc mht_17(mht_17_v, 557, "", "./tensorflow/compiler/tf2tensorrt/convert/ops/einsum.cc", "GetEinsumNewDynamicShape");
+
   std::vector<nvinfer1::ITensor*> size;
   size.reserve(desc.b + 2);
   absl::c_transform(absl::MakeSpan(desc.size_tensors).subspan(0, desc.b + 2),
@@ -371,6 +593,9 @@ Status GetEinsumNewDynamicShape(TRTNetworkBuilder* builder,
 // and the contract dimensions are combined into another single dim.
 Status GetEinsumNewStaticShape(const EinsumDescriptor& desc,
                                nvinfer1::Dims* new_dims) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc mht_18(mht_18_v, 596, "", "./tensorflow/compiler/tf2tensorrt/convert/ops/einsum.cc", "GetEinsumNewStaticShape");
+
   // Copy the batch dims and append two additional dimensions.
   DimsAdapter adap(
       absl::MakeSpan(static_cast<const int32_t*>(desc.dims.d), desc.b));
@@ -428,6 +653,9 @@ Status ConditionEinsumTensor(TRTNetworkBuilder* builder,
                              const EinsumDescriptor& desc,
                              const bool need_transpose,
                              const bool need_reshape) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc mht_19(mht_19_v, 656, "", "./tensorflow/compiler/tf2tensorrt/convert/ops/einsum.cc", "ConditionEinsumTensor");
+
   StatusOr<ShuffleBuilder> shuffle =
       ShuffleBuilder::Create(builder, (*operand)->tensor()->trt_tensor());
   TRT_ENSURE_OK(shuffle);
@@ -461,6 +689,9 @@ Status ConditionEinsumTensor(TRTNetworkBuilder* builder,
 Status ConditionEinsumOperand(TRTNetworkBuilder* builder,
                               std::unique_ptr<TRT_TensorOrWeights>* operand,
                               const EinsumDescriptor& desc) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc mht_20(mht_20_v, 692, "", "./tensorflow/compiler/tf2tensorrt/convert/ops/einsum.cc", "ConditionEinsumOperand");
+
   bool need_reshape = (desc.f != 1 || desc.c != 1);
   bool need_transpose = !desc.permute.empty();
 
@@ -512,6 +743,9 @@ Status ShuffleEinsumOutput(OpConverterParams* params, EinsumDescriptor desc_a,
                            EinsumDescriptor desc_b,
                            const std::vector<int>& permutation,
                            ITensorProxyPtr* output) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc mht_21(mht_21_v, 746, "", "./tensorflow/compiler/tf2tensorrt/convert/ops/einsum.cc", "ShuffleEinsumOutput");
+
   if (permutation.empty() && (desc_a.f == 1 && desc_b.f == 1)) {
     return Status::OK();
   }
@@ -596,6 +830,10 @@ Status ParseEquation(const std::string& equation,
                      std::unique_ptr<EinsumDescriptor>* descriptor_a,
                      std::unique_ptr<EinsumDescriptor>* descriptor_b,
                      std::vector<int>* final_transpose) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("equation: \"" + equation + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc mht_22(mht_22_v, 834, "", "./tensorflow/compiler/tf2tensorrt/convert/ops/einsum.cc", "ParseEquation");
+
   VLOG(2) << "Einsum equation " << equation;
   OperandLabels input_labels;
   Labels output_labels;
@@ -626,6 +864,9 @@ Status ParseEquation(const std::string& equation,
   }
 
   auto no_duplicated_labels = [](const LabelCounts& label_counts) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc mht_23(mht_23_v, 867, "", "./tensorflow/compiler/tf2tensorrt/convert/ops/einsum.cc", "lambda");
+
     return absl::c_any_of(label_counts, [](int i) { return i > 1; });
   };
   if (no_duplicated_labels(input_label_counts[0]) ||
@@ -663,7 +904,10 @@ Status ParseEquation(const std::string& equation,
 class ConvertEinsum : public OpConverterBase<ConvertEinsum> {
  public:
   explicit ConvertEinsum(OpConverterParams* params)
-      : OpConverterBase<ConvertEinsum>(params) {}
+      : OpConverterBase<ConvertEinsum>(params) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc mht_24(mht_24_v, 908, "", "./tensorflow/compiler/tf2tensorrt/convert/ops/einsum.cc", "ConvertEinsum");
+}
 
   static constexpr std::array<DataType, 3> AllowedDataTypes() {
     return {DataType::DT_FLOAT, DataType::DT_HALF};
@@ -675,6 +919,9 @@ class ConvertEinsum : public OpConverterBase<ConvertEinsum> {
   }
 
   Status Validate() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc mht_25(mht_25_v, 922, "", "./tensorflow/compiler/tf2tensorrt/convert/ops/einsum.cc", "Validate");
+
     const auto& inputs = params_->inputs;
     if (params_->use_implicit_batch) {
       return errors::Unimplemented(
@@ -693,6 +940,9 @@ class ConvertEinsum : public OpConverterBase<ConvertEinsum> {
   }
 
   Status Convert() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPSconvertPSopsPSeinsumDTcc mht_26(mht_26_v, 943, "", "./tensorflow/compiler/tf2tensorrt/convert/ops/einsum.cc", "Convert");
+
     auto builder = TRTNetworkBuilder::Create(params_->converter->network(),
                                              params_->weight_store);
     TRT_ENSURE_OK(builder);

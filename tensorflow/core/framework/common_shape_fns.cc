@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,6 +206,9 @@ Status GetWindowedOutputSizeFromDimsV2(
     shape_inference::DimensionOrConstant filter_size, int64_t dilation_rate,
     int64_t stride, Padding padding_type, int64_t padding_before,
     int64_t padding_after, shape_inference::DimensionHandle* output_size) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_0(mht_0_v, 209, "", "./tensorflow/core/framework/common_shape_fns.cc", "GetWindowedOutputSizeFromDimsV2");
+
   if (stride <= 0) {
     return errors::InvalidArgument("Stride must be > 0, but got ", stride);
   }
@@ -84,6 +255,9 @@ Status GetWindowedOutputSizeFromDims(
     shape_inference::DimensionHandle input_size,
     shape_inference::DimensionOrConstant filter_size, int64_t stride,
     Padding padding_type, shape_inference::DimensionHandle* output_size) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_1(mht_1_v, 258, "", "./tensorflow/core/framework/common_shape_fns.cc", "GetWindowedOutputSizeFromDims");
+
   if (padding_type == Padding::EXPLICIT) {
     return errors::Internal(
         "GetWindowedOutputSizeFromDims does not handle EXPLICIT padding; call "
@@ -99,6 +273,9 @@ Status GetWindowedOutputSizeFromDims(
 }
 
 Status UnchangedShape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_2(mht_2_v, 276, "", "./tensorflow/core/framework/common_shape_fns.cc", "UnchangedShape");
+
   c->set_output(0, c->input(0));
   auto* handle_data = c->input_handle_shapes_and_types(0);
   if (handle_data != nullptr) {
@@ -108,6 +285,9 @@ Status UnchangedShape(shape_inference::InferenceContext* c) {
 }
 
 Status MatMulShape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_3(mht_3_v, 288, "", "./tensorflow/core/framework/common_shape_fns.cc", "MatMulShape");
+
   ShapeHandle a;
   TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 2, &a));
 
@@ -136,6 +316,10 @@ namespace {
 // that periods (.) occur only within an ellipses (...).
 Status ValidateEinsumEllipsis(absl::string_view subscript,
                               bool* found_ellipsis) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("subscript: \"" + std::string(subscript.data(), subscript.size()) + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_4(mht_4_v, 320, "", "./tensorflow/core/framework/common_shape_fns.cc", "ValidateEinsumEllipsis");
+
   const int num_periods = absl::c_count(subscript, '.');
   if (num_periods != 0 && num_periods != 3) {
     return errors::InvalidArgument(
@@ -153,6 +337,9 @@ Status ValidateEinsumEllipsis(absl::string_view subscript,
 }  // namespace
 
 Status EinsumShape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_5(mht_5_v, 340, "", "./tensorflow/core/framework/common_shape_fns.cc", "EinsumShape");
+
   // We assume that the equation has a valid format. Either (x),(y)->(z)
   // or (x)->(z), where each of (x), (y) and (z) are concatenation of zero or
   // more latin alphabets and contains at most one ellipsis ('...').
@@ -307,6 +494,9 @@ Status EinsumShape(shape_inference::InferenceContext* c) {
 }
 
 Status BatchMatMulV2Shape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_6(mht_6_v, 497, "", "./tensorflow/core/framework/common_shape_fns.cc", "BatchMatMulV2Shape");
+
   ShapeHandle a_shape;
   ShapeHandle b_shape;
   TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), 2, &a_shape));
@@ -344,6 +534,9 @@ Status BatchMatMulV2Shape(shape_inference::InferenceContext* c) {
 }
 
 Status BatchMatMulShape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_7(mht_7_v, 537, "", "./tensorflow/core/framework/common_shape_fns.cc", "BatchMatMulShape");
+
   ShapeHandle a_shape;
   ShapeHandle b_shape;
   TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), 2, &a_shape));
@@ -380,6 +573,9 @@ Status BatchMatMulShape(shape_inference::InferenceContext* c) {
 // --------------------------------------------------------------------------
 
 Status BiasAddShape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_8(mht_8_v, 576, "", "./tensorflow/core/framework/common_shape_fns.cc", "BiasAddShape");
+
   ShapeHandle input_shape;
 
   // Fetch the data_format attribute, which may not exist.
@@ -439,6 +635,9 @@ Status BiasAddShape(shape_inference::InferenceContext* c) {
 }
 
 Status BiasAddGradShape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_9(mht_9_v, 638, "", "./tensorflow/core/framework/common_shape_fns.cc", "BiasAddGradShape");
+
   ShapeHandle input_shape;
   // Fetch the data_format attribute, which may not exist.
   string data_format;
@@ -459,6 +658,10 @@ Status CheckFormatConstraintsOnShape(const TensorFormat tensor_format,
                                      const ShapeHandle shape_handle,
                                      const string& tensor_name,
                                      shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("tensor_name: \"" + tensor_name + "\"");
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_10(mht_10_v, 662, "", "./tensorflow/core/framework/common_shape_fns.cc", "CheckFormatConstraintsOnShape");
+
   if (tensor_format == FORMAT_NCHW_VECT_C) {
     // Check that the vect dim has size 4 or 32.
     const int num_dims = c->Rank(shape_handle);
@@ -475,6 +678,9 @@ Status CheckFormatConstraintsOnShape(const TensorFormat tensor_format,
 }
 
 Status DatasetIteratorShape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_11(mht_11_v, 681, "", "./tensorflow/core/framework/common_shape_fns.cc", "DatasetIteratorShape");
+
   shape_inference::ShapeHandle unused;
   TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 0, &unused));
   std::vector<PartialTensorShape> output_shapes;
@@ -498,6 +704,9 @@ Status MakeShapeFromFormat(TensorFormat format, DimensionOrConstant N,
                            const std::vector<DimensionOrConstant>& spatial,
                            DimensionOrConstant C, ShapeHandle* out,
                            shape_inference::InferenceContext* context) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_12(mht_12_v, 707, "", "./tensorflow/core/framework/common_shape_fns.cc", "MakeShapeFromFormat");
+
   const int num_dims = GetTensorDimsFromSpatialDims(spatial.size(), format);
   std::vector<DimensionHandle> dims_actual(num_dims);
   dims_actual[GetTensorBatchDimIndex(num_dims, format)] = context->MakeDim(N);
@@ -524,6 +733,9 @@ Status DimensionsFromShape(ShapeHandle shape, TensorFormat format,
                            gtl::MutableArraySlice<DimensionHandle> spatial_dims,
                            DimensionHandle* filter_dim,
                            InferenceContext* context) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_13(mht_13_v, 736, "", "./tensorflow/core/framework/common_shape_fns.cc", "DimensionsFromShape");
+
   const int32_t rank =
       GetTensorDimsFromSpatialDims(spatial_dims.size(), format);
   // Batch.
@@ -551,6 +763,9 @@ Status ShapeFromDimensions(DimensionHandle batch_dim,
                            DimensionHandle filter_dim, TensorFormat format,
                            absl::optional<DimensionHandle> vect_size,
                            InferenceContext* context, ShapeHandle* shape) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_14(mht_14_v, 766, "", "./tensorflow/core/framework/common_shape_fns.cc", "ShapeFromDimensions");
+
   const int32_t rank =
       GetTensorDimsFromSpatialDims(spatial_dims.size(), format);
   std::vector<DimensionHandle> out_dims(rank);
@@ -584,6 +799,9 @@ namespace {
 
 Status Conv2DShapeImpl(shape_inference::InferenceContext* c,
                        bool supports_explicit_padding) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_15(mht_15_v, 802, "", "./tensorflow/core/framework/common_shape_fns.cc", "Conv2DShapeImpl");
+
   string data_format_str, filter_format_str;
   if (!c->GetAttr("data_format", &data_format_str).ok()) {
     data_format_str = "NHWC";
@@ -743,17 +961,26 @@ Status Conv2DShapeImpl(shape_inference::InferenceContext* c,
 
 // Shape function for Conv2D-like operations that support explicit padding.
 Status Conv2DShapeWithExplicitPadding(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_16(mht_16_v, 964, "", "./tensorflow/core/framework/common_shape_fns.cc", "Conv2DShapeWithExplicitPadding");
+
   return Conv2DShapeImpl(c, true);
 }
 
 // Shape function for Conv2D-like operations that do not support explicit
 // padding.
 Status Conv2DShape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_17(mht_17_v, 973, "", "./tensorflow/core/framework/common_shape_fns.cc", "Conv2DShape");
+
   return Conv2DShapeImpl(c, false);
 }
 
 // TODO(mjanusz): Unify all conv/pooling shape functions.
 Status Conv3DShape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_18(mht_18_v, 981, "", "./tensorflow/core/framework/common_shape_fns.cc", "Conv3DShape");
+
   ShapeHandle input_shape;
   TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 5, &input_shape));
   ShapeHandle filter_shape;
@@ -784,6 +1011,10 @@ Status Conv3DShape(shape_inference::InferenceContext* c) {
   if (s.ok() && data_format == "NCDHW") {
     // Convert input_shape to NDHWC.
     auto dim = [&](char dimension) {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("dimension: '" + std::string(1, dimension) + "'");
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_19(mht_19_v, 1015, "", "./tensorflow/core/framework/common_shape_fns.cc", "lambda");
+
       return c->Dim(input_shape, GetTensorDimIndex<3>(FORMAT_NCHW, dimension));
     };
     input_shape =
@@ -868,6 +1099,9 @@ Status Conv3DShape(shape_inference::InferenceContext* c) {
 }
 
 Status Conv2DBackpropInputShape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_20(mht_20_v, 1102, "", "./tensorflow/core/framework/common_shape_fns.cc", "Conv2DBackpropInputShape");
+
   string data_format_str;
   if (!c->GetAttr("data_format", &data_format_str).ok()) {
     data_format_str = "NHWC";
@@ -940,6 +1174,9 @@ Status Conv2DBackpropInputShape(shape_inference::InferenceContext* c) {
 }
 
 Status Conv2DBackpropFilterWithBiasShape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_21(mht_21_v, 1177, "", "./tensorflow/core/framework/common_shape_fns.cc", "Conv2DBackpropFilterWithBiasShape");
+
   ShapeHandle input_shape;
   // Fetch the data_format attribute, which may not exist.
   string data_format;
@@ -962,6 +1199,9 @@ namespace {
 
 Status DepthwiseConv2DNativeShapeImpl(shape_inference::InferenceContext* c,
                                       bool supports_explicit_padding) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_22(mht_22_v, 1202, "", "./tensorflow/core/framework/common_shape_fns.cc", "DepthwiseConv2DNativeShapeImpl");
+
   ShapeHandle input_shape;
   TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 4, &input_shape));
   ShapeHandle filter_shape;
@@ -1083,15 +1323,24 @@ Status DepthwiseConv2DNativeShapeImpl(shape_inference::InferenceContext* c,
 };  // namespace
 
 Status DepthwiseConv2DNativeShape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_23(mht_23_v, 1326, "", "./tensorflow/core/framework/common_shape_fns.cc", "DepthwiseConv2DNativeShape");
+
   return DepthwiseConv2DNativeShapeImpl(c, false);
 }
 
 Status DepthwiseConv2DNativeShapeWithExplicitPadding(
     shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_24(mht_24_v, 1334, "", "./tensorflow/core/framework/common_shape_fns.cc", "DepthwiseConv2DNativeShapeWithExplicitPadding");
+
   return DepthwiseConv2DNativeShapeImpl(c, true);
 }
 
 Status AvgPoolShape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_25(mht_25_v, 1341, "", "./tensorflow/core/framework/common_shape_fns.cc", "AvgPoolShape");
+
   string data_format_str;
   TensorFormat data_format;
   Status s = c->GetAttr("data_format", &data_format_str);
@@ -1161,6 +1410,9 @@ Status AvgPoolShape(shape_inference::InferenceContext* c) {
 }
 
 Status AvgPoolGradShape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_26(mht_26_v, 1413, "", "./tensorflow/core/framework/common_shape_fns.cc", "AvgPoolGradShape");
+
   ShapeHandle s;
   TF_RETURN_IF_ERROR(c->MakeShapeFromShapeTensor(0, &s));
   TF_RETURN_IF_ERROR(c->WithRank(s, 4, &s));
@@ -1169,6 +1421,9 @@ Status AvgPoolGradShape(shape_inference::InferenceContext* c) {
 }
 
 Status FusedBatchNormShape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_27(mht_27_v, 1424, "", "./tensorflow/core/framework/common_shape_fns.cc", "FusedBatchNormShape");
+
   string data_format_str;
   TF_RETURN_IF_ERROR(c->GetAttr("data_format", &data_format_str));
   TensorFormat data_format;
@@ -1211,12 +1466,18 @@ Status FusedBatchNormShape(shape_inference::InferenceContext* c) {
 }
 
 Status FusedBatchNormV3Shape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_28(mht_28_v, 1469, "", "./tensorflow/core/framework/common_shape_fns.cc", "FusedBatchNormV3Shape");
+
   TF_RETURN_IF_ERROR(FusedBatchNormShape(c));
   c->set_output(5, c->UnknownShape());
   return Status::OK();
 }
 
 Status FusedBatchNormExShape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_29(mht_29_v, 1478, "", "./tensorflow/core/framework/common_shape_fns.cc", "FusedBatchNormExShape");
+
   TF_RETURN_IF_ERROR(FusedBatchNormV3Shape(c));
 
   string data_format_str;
@@ -1242,6 +1503,9 @@ Status FusedBatchNormExShape(shape_inference::InferenceContext* c) {
 }
 
 Status FusedBatchNormGradShape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_30(mht_30_v, 1506, "", "./tensorflow/core/framework/common_shape_fns.cc", "FusedBatchNormGradShape");
+
   string data_format_str;
   TF_RETURN_IF_ERROR(c->GetAttr("data_format", &data_format_str));
   TensorFormat data_format;
@@ -1283,6 +1547,9 @@ Status FusedBatchNormGradShape(shape_inference::InferenceContext* c) {
 }
 
 Status FusedBatchNormGradExShape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_31(mht_31_v, 1550, "", "./tensorflow/core/framework/common_shape_fns.cc", "FusedBatchNormGradExShape");
+
   TF_RETURN_IF_ERROR(FusedBatchNormGradShape(c));
 
   int num_side_inputs;
@@ -1320,6 +1587,9 @@ Status FusedBatchNormGradExShape(shape_inference::InferenceContext* c) {
 
 Status ReadDiagIndex(InferenceContext* c, const Tensor* diag_index_tensor,
                      int32* lower_diag_index, int32* upper_diag_index) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_32(mht_32_v, 1590, "", "./tensorflow/core/framework/common_shape_fns.cc", "ReadDiagIndex");
+
   // This function assumes that the shape of diag_index_tensor is fully defined.
   if (diag_index_tensor->dims() == 0) {
     *lower_diag_index = diag_index_tensor->scalar<int32>()();
@@ -1342,6 +1612,9 @@ Status ReadDiagIndex(InferenceContext* c, const Tensor* diag_index_tensor,
 }
 
 Status MatrixDiagPartV2Shape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_33(mht_33_v, 1615, "", "./tensorflow/core/framework/common_shape_fns.cc", "MatrixDiagPartV2Shape");
+
   ShapeHandle input_shape, diag_index_shape, unused_shape;
   TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), 2, &input_shape));
   TF_RETURN_IF_ERROR(c->WithRankAtMost(c->input(1), 1, &diag_index_shape));
@@ -1395,6 +1668,9 @@ Status MatrixDiagPartV2Shape(shape_inference::InferenceContext* c) {
 }
 
 Status MatrixDiagV2Shape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_34(mht_34_v, 1671, "", "./tensorflow/core/framework/common_shape_fns.cc", "MatrixDiagV2Shape");
+
   // Checks input ranks.
   ShapeHandle input_shape, diag_index_shape, unused_shape;
   TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), 1, &input_shape));
@@ -1496,6 +1772,9 @@ Status MatrixDiagV2Shape(shape_inference::InferenceContext* c) {
 }
 
 Status MatrixSetDiagV2Shape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_35(mht_35_v, 1775, "", "./tensorflow/core/framework/common_shape_fns.cc", "MatrixSetDiagV2Shape");
+
   ShapeHandle input_shape, diag_shape, diag_index_shape;
   TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), 2, &input_shape));
   TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(1), 1, &diag_shape));
@@ -1569,6 +1848,9 @@ Status MatrixSetDiagV2Shape(shape_inference::InferenceContext* c) {
 
 Status MaxPoolShapeImpl(shape_inference::InferenceContext* c,
                         bool supports_explicit_padding) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_36(mht_36_v, 1851, "", "./tensorflow/core/framework/common_shape_fns.cc", "MaxPoolShapeImpl");
+
   string data_format_str;
   TensorFormat data_format;
   Status s = c->GetAttr("data_format", &data_format_str);
@@ -1664,18 +1946,30 @@ Status MaxPoolShapeImpl(shape_inference::InferenceContext* c,
 }
 
 Status MaxPoolShape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_37(mht_37_v, 1949, "", "./tensorflow/core/framework/common_shape_fns.cc", "MaxPoolShape");
+
   return MaxPoolShapeImpl(c, /*supports_explicit_padding=*/false);
 }
 
 Status MaxPoolGradShape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_38(mht_38_v, 1956, "", "./tensorflow/core/framework/common_shape_fns.cc", "MaxPoolGradShape");
+
   return UnchangedShapeWithRank(c, 4);
 }
 
 Status MaxPoolShapeWithExplicitPadding(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_39(mht_39_v, 1963, "", "./tensorflow/core/framework/common_shape_fns.cc", "MaxPoolShapeWithExplicitPadding");
+
   return MaxPoolShapeImpl(c, /*supports_explicit_padding=*/true);
 }
 
 Status MaxPoolV2Shape(shape_inference::InferenceContext* c, int num_inputs) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_40(mht_40_v, 1970, "", "./tensorflow/core/framework/common_shape_fns.cc", "MaxPoolV2Shape");
+
   string data_format_str;
   TensorFormat data_format;
   Status s = c->GetAttr("data_format", &data_format_str);
@@ -1778,6 +2072,9 @@ Status MaxPoolV2Shape(shape_inference::InferenceContext* c, int num_inputs) {
 }
 
 Status Pool3DShape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_41(mht_41_v, 2075, "", "./tensorflow/core/framework/common_shape_fns.cc", "Pool3DShape");
+
   ShapeHandle input_shape;
   TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 5, &input_shape));
 
@@ -1807,6 +2104,10 @@ Status Pool3DShape(shape_inference::InferenceContext* c) {
   if (s.ok() && data_format == "NCDHW") {
     // Convert input_shape to NDHWC.
     auto dim = [&](char dimension) {
+   std::vector<std::string> mht_42_v;
+   mht_42_v.push_back("dimension: '" + std::string(1, dimension) + "'");
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_42(mht_42_v, 2108, "", "./tensorflow/core/framework/common_shape_fns.cc", "lambda");
+
       return c->Dim(input_shape, GetTensorDimIndex<3>(FORMAT_NCHW, dimension));
     };
     input_shape =
@@ -1860,10 +2161,16 @@ Status Pool3DShape(shape_inference::InferenceContext* c) {
 }
 
 Status MaxPool3DGradShape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_43(mht_43_v, 2164, "", "./tensorflow/core/framework/common_shape_fns.cc", "MaxPool3DGradShape");
+
   return UnchangedShapeWithRank(c, 5);
 }
 
 Status AvgPool3DGradShape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_44(mht_44_v, 2171, "", "./tensorflow/core/framework/common_shape_fns.cc", "AvgPool3DGradShape");
+
   ShapeHandle s;
   TF_RETURN_IF_ERROR(c->MakeShapeFromShapeTensor(0, &s));
   TF_RETURN_IF_ERROR(c->WithRank(s, 5, &s));
@@ -1872,6 +2179,9 @@ Status AvgPool3DGradShape(shape_inference::InferenceContext* c) {
 }
 
 Status UnknownShape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_45(mht_45_v, 2182, "", "./tensorflow/core/framework/common_shape_fns.cc", "UnknownShape");
+
   for (int i = 0; i < c->num_outputs(); ++i) {
     c->set_output(i, c->UnknownShape());
   }
@@ -1882,6 +2192,9 @@ template <typename T>
 Status ReductionShapeHelper(const Tensor* reduction_indices_t,
                             const int32_t input_rank,
                             std::set<int64_t>* true_indices) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_46(mht_46_v, 2195, "", "./tensorflow/core/framework/common_shape_fns.cc", "ReductionShapeHelper");
+
   auto reduction_indices = reduction_indices_t->flat<T>();
   for (int i = 0; i < reduction_indices_t->NumElements(); ++i) {
     const T reduction_index = reduction_indices(i);
@@ -1902,6 +2215,9 @@ Status ReductionShapeHelper(const Tensor* reduction_indices_t,
 }
 
 Status ReductionShape(InferenceContext* c) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_47(mht_47_v, 2218, "", "./tensorflow/core/framework/common_shape_fns.cc", "ReductionShape");
+
   ShapeHandle input = c->input(0);
 
   ShapeHandle indices;
@@ -1960,6 +2276,9 @@ Status ReductionShape(InferenceContext* c) {
 
 Status ConcatShapeHelper(InferenceContext* c, int start_value_index,
                          int end_value_index, int dim_index) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_48(mht_48_v, 2279, "", "./tensorflow/core/framework/common_shape_fns.cc", "ConcatShapeHelper");
+
   ShapeHandle unused;
   TF_RETURN_IF_ERROR(c->WithRank(c->input(dim_index), 0, &unused));
   const Tensor* concat_dim_t = c->input_tensor(dim_index);
@@ -2047,18 +2366,27 @@ Status ConcatShapeHelper(InferenceContext* c, int start_value_index,
 }
 
 Status ConcatShape(InferenceContext* c, int num_inputs_to_concat) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_49(mht_49_v, 2369, "", "./tensorflow/core/framework/common_shape_fns.cc", "ConcatShape");
+
   return ConcatShapeHelper(c, 1 /* start_value_index */,
                            1 + num_inputs_to_concat /* end_value_index */,
                            0 /* dim_index */);
 }
 
 Status ConcatV2Shape(InferenceContext* c) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_50(mht_50_v, 2378, "", "./tensorflow/core/framework/common_shape_fns.cc", "ConcatV2Shape");
+
   return ConcatShapeHelper(c, 0 /* start_value_index */,
                            c->num_inputs() - 1 /* end_value_index */,
                            c->num_inputs() - 1 /* dim_index */);
 }
 
 Status QuantizedConcatV2Shape(InferenceContext* c, int num_inputs_to_concat) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_51(mht_51_v, 2387, "", "./tensorflow/core/framework/common_shape_fns.cc", "QuantizedConcatV2Shape");
+
   return ConcatShapeHelper(c, 0 /* start_value_index */,
                            num_inputs_to_concat /* end_value_index */,
                            num_inputs_to_concat /* dim_index */);
@@ -2069,6 +2397,9 @@ Status BroadcastBinaryOpOutputShapeFnHelper(InferenceContext* c,
                                             ShapeHandle shape_y,
                                             bool incompatible_shape_error,
                                             ShapeHandle* out) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_52(mht_52_v, 2400, "", "./tensorflow/core/framework/common_shape_fns.cc", "BroadcastBinaryOpOutputShapeFnHelper");
+
   CHECK_NOTNULL(out);
   if (!c->RankKnown(shape_x) || !c->RankKnown(shape_y)) {
     *out = c->UnknownShape();
@@ -2156,6 +2487,9 @@ Status BroadcastBinaryOpOutputShapeFnHelper(InferenceContext* c,
 }
 
 Status RandomShape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_53(mht_53_v, 2490, "", "./tensorflow/core/framework/common_shape_fns.cc", "RandomShape");
+
   shape_inference::ShapeHandle out;
   TF_RETURN_IF_ERROR(c->MakeShapeFromShapeTensor(0, &out));
   c->set_output(0, out);
@@ -2163,6 +2497,9 @@ Status RandomShape(shape_inference::InferenceContext* c) {
 }
 
 Status UnsortedSegmentReductionShapeFn(InferenceContext* c) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_54(mht_54_v, 2500, "", "./tensorflow/core/framework/common_shape_fns.cc", "UnsortedSegmentReductionShapeFn");
+
   ShapeHandle s_data = c->input(0);
   ShapeHandle s_segment_ids = c->input(1);
   ShapeHandle s_num_segments = c->input(2);
@@ -2201,6 +2538,9 @@ template <typename T>
 Status SliceHelper(InferenceContext* c, ShapeHandle begin_value,
                    const Tensor* sizes_value,
                    std::vector<DimensionHandle>* dims) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_55(mht_55_v, 2541, "", "./tensorflow/core/framework/common_shape_fns.cc", "SliceHelper");
+
   auto sizes_vec = sizes_value->vec<T>();
   for (int i = 0; i < sizes_value->NumElements(); ++i) {
     DimensionHandle dim = c->Dim(c->input(0), i);
@@ -2225,6 +2565,9 @@ Status SliceHelper(InferenceContext* c, ShapeHandle begin_value,
 }  // namespace
 
 Status SliceShape(InferenceContext* c) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_56(mht_56_v, 2568, "", "./tensorflow/core/framework/common_shape_fns.cc", "SliceShape");
+
   ShapeHandle input = c->input(0);
   ShapeHandle begin_shape;
   TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 1, &begin_shape));
@@ -2302,6 +2645,9 @@ Status SliceShape(InferenceContext* c) {
 
 Status ValidateSparseTensor(InferenceContext* c, ShapeHandle indices_shape,
                             ShapeHandle values_shape, ShapeHandle shape_shape) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_57(mht_57_v, 2648, "", "./tensorflow/core/framework/common_shape_fns.cc", "ValidateSparseTensor");
+
   // Validate ranks.
   ShapeHandle unused_shape;
   TF_RETURN_IF_ERROR(c->WithRank(indices_shape, 2, &unused_shape));
@@ -2343,6 +2689,9 @@ Status ValidateSparseTensor(InferenceContext* c, ShapeHandle indices_shape,
 
 Status ValidateVariableResourceHandle(
     InferenceContext* c, std::vector<ShapeAndType>* shape_and_type) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_58(mht_58_v, 2692, "", "./tensorflow/core/framework/common_shape_fns.cc", "ValidateVariableResourceHandle");
+
   auto* handle_data = c->input_handle_shapes_and_types(0);
   if (handle_data == nullptr || handle_data->empty()) {
     shape_and_type->emplace_back(c->UnknownShape(), DT_INVALID);
@@ -2362,6 +2711,9 @@ Status ValidateVariableResourceHandle(
 }
 
 Status GatherNdShape(InferenceContext* c) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_59(mht_59_v, 2714, "", "./tensorflow/core/framework/common_shape_fns.cc", "GatherNdShape");
+
   ShapeHandle params;
   std::vector<ShapeAndType> handle_shape_and_type;
   if (c->input_handle_shapes_and_types(0) != nullptr) {
@@ -2400,6 +2752,9 @@ Status GatherNdShape(InferenceContext* c) {
 Status ScatterNdShapeHelper(InferenceContext* c, ShapeHandle indices_shape,
                             ShapeHandle updates_shape,
                             ShapeHandle input_shape) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_60(mht_60_v, 2755, "", "./tensorflow/core/framework/common_shape_fns.cc", "ScatterNdShapeHelper");
+
   if (c->Value(c->NumElements(input_shape)) == 0 &&
       (c->Value(c->NumElements(indices_shape)) > 0 ||
        c->Value(c->NumElements(updates_shape)) > 0)) {
@@ -2460,6 +2815,9 @@ Status ScatterNdShapeHelper(InferenceContext* c, ShapeHandle indices_shape,
 }
 
 Status ExplicitShape(InferenceContext* c) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_61(mht_61_v, 2818, "", "./tensorflow/core/framework/common_shape_fns.cc", "ExplicitShape");
+
   PartialTensorShape shape;
   TF_RETURN_IF_ERROR(c->GetAttr("shape", &shape));
   ShapeHandle output_shape;
@@ -2469,6 +2827,9 @@ Status ExplicitShape(InferenceContext* c) {
 }
 
 Status ExplicitShapes(InferenceContext* c) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_62(mht_62_v, 2830, "", "./tensorflow/core/framework/common_shape_fns.cc", "ExplicitShapes");
+
   std::vector<PartialTensorShape> shapes;
   TF_RETURN_IF_ERROR(c->GetAttr("shapes", &shapes));
   if (shapes.empty()) {
@@ -2484,6 +2845,9 @@ Status ExplicitShapes(InferenceContext* c) {
 }
 
 Status SparseReduceShapeFn(InferenceContext* c) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_63(mht_63_v, 2848, "", "./tensorflow/core/framework/common_shape_fns.cc", "SparseReduceShapeFn");
+
   // Input 0: input_indices
   // Input 1: input_values
   // Input 2: input_shape
@@ -2532,6 +2896,9 @@ Status SparseReduceShapeFn(InferenceContext* c) {
 }
 
 Status QuantizedConv2DShape(InferenceContext* c) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_64(mht_64_v, 2899, "", "./tensorflow/core/framework/common_shape_fns.cc", "QuantizedConv2DShape");
+
   TF_RETURN_IF_ERROR(shape_inference::Conv2DShape(c));
   ShapeHandle unused;
   TF_RETURN_IF_ERROR(c->WithRank(c->input(2), 0, &unused));
@@ -2544,6 +2911,9 @@ Status QuantizedConv2DShape(InferenceContext* c) {
 }
 
 Status QuantizedAvgPoolShape(InferenceContext* c) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_65(mht_65_v, 2914, "", "./tensorflow/core/framework/common_shape_fns.cc", "QuantizedAvgPoolShape");
+
   TF_RETURN_IF_ERROR(shape_inference::AvgPoolShape(c));
   ShapeHandle unused;
   TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 0, &unused));
@@ -2554,6 +2924,9 @@ Status QuantizedAvgPoolShape(InferenceContext* c) {
 }
 
 Status QuantizeV2Shape(InferenceContext* c) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_66(mht_66_v, 2927, "", "./tensorflow/core/framework/common_shape_fns.cc", "QuantizeV2Shape");
+
   int axis = -1;
   Status s = c->GetAttr("axis", &axis);
   if (!s.ok() && s.code() != error::NOT_FOUND) {
@@ -2580,6 +2953,9 @@ Status QuantizeV2Shape(InferenceContext* c) {
 }
 
 Status ReduceScatterShape(shape_inference::InferenceContext* c) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScorePSframeworkPScommon_shape_fnsDTcc mht_67(mht_67_v, 2956, "", "./tensorflow/core/framework/common_shape_fns.cc", "ReduceScatterShape");
+
   shape_inference::ShapeHandle in = c->input(0);
   if (!c->RankKnown(in)) {
     // Input shape unknown, so set unknown output shape.

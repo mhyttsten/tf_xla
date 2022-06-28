@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPStf2tensorrtPStrt_convert_apiDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPStrt_convert_apiDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPStf2tensorrtPStrt_convert_apiDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,6 +218,9 @@ namespace {
 // Creates and provisions a new cluster. The caller must call Shutdown before
 // the cluster is destroyed.
 Status NewCluster(grappler::Cluster** cluster) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPStrt_convert_apiDTcc mht_0(mht_0_v, 221, "", "./tensorflow/compiler/tf2tensorrt/trt_convert_api.cc", "NewCluster");
+
   int num_cpu_cores = grappler::GetNumAvailableLogicalCPUCores();
   int num_gpus = grappler::GetNumAvailableGPUs();
   int timeout_s = 60 * 10;
@@ -66,6 +237,9 @@ Status RunGrappler(const MetaGraphDef& meta_graph_def,
                    const std::vector<std::string>& output_names,
                    const ConfigProto& config_proto, grappler::Cluster* cluster,
                    GraphDef* out_graph_def) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPStrt_convert_apiDTcc mht_1(mht_1_v, 240, "", "./tensorflow/compiler/tf2tensorrt/trt_convert_api.cc", "RunGrappler");
+
   grappler::ItemConfig item_config;
 
   for (const string& name : input_names) {
@@ -92,6 +266,10 @@ Status RunGrappler(const MetaGraphDef& meta_graph_def,
 
 Status ImportGraphDefToSession(Session* session, const GraphDef& graph_def,
                                const string& prefix) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("prefix: \"" + prefix + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPStrt_convert_apiDTcc mht_2(mht_2_v, 270, "", "./tensorflow/compiler/tf2tensorrt/trt_convert_api.cc", "ImportGraphDefToSession");
+
   ImportGraphDefOptions opts;
   opts.prefix = prefix;
   Graph graph(OpRegistry::Global());
@@ -105,6 +283,9 @@ Status ImportGraphDefToSession(Session* session, const GraphDef& graph_def,
 Status GetTrtRewriterConfig(const TfTrtConversionParams& params,
                             const GraphDef& frozen_graph_def,
                             RewriterConfig* opt_config) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPStrt_convert_apiDTcc mht_3(mht_3_v, 286, "", "./tensorflow/compiler/tf2tensorrt/trt_convert_api.cc", "GetTrtRewriterConfig");
+
   opt_config->set_meta_optimizer_iterations(tensorflow::RewriterConfig::ONE);
   opt_config->set_min_graph_nodes(-1);  // do not skip small graphs
 
@@ -157,6 +338,9 @@ Status RunTfTrt(const MetaGraphDef& meta_graph_def,
                 const std::vector<std::string>& output_names,
                 const RewriterConfig& rewriter_config,
                 GraphDef* segmented_graph_def) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPStrt_convert_apiDTcc mht_4(mht_4_v, 341, "", "./tensorflow/compiler/tf2tensorrt/trt_convert_api.cc", "RunTfTrt");
+
   ConfigProto config_proto;
   config_proto.mutable_graph_options()->mutable_rewrite_options()->CopyFrom(
       rewriter_config);
@@ -178,6 +362,9 @@ Status RunTfTrt(const MetaGraphDef& meta_graph_def,
 // Sets the _profile_generation mode attribute of all TRTEngineOp nodes in the
 // graph to mode.
 Status SetProfileGenerationMode(GraphDef* graph_def, bool mode) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPStrt_convert_apiDTcc mht_5(mht_5_v, 365, "", "./tensorflow/compiler/tf2tensorrt/trt_convert_api.cc", "SetProfileGenerationMode");
+
   VLOG(3) << "Setting _profile_generation_mode=" << mode;
   std::string op{"TRTEngineOp"};
   for (auto& node : *(graph_def->mutable_node())) {
@@ -195,6 +382,9 @@ Status RunSession(Session* session, const std::vector<std::string>& input_names,
                   const std::vector<std::string>& output_names,
                   const std::vector<Tensor>& input_tensors,
                   string prefix = "") {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPStrt_convert_apiDTcc mht_6(mht_6_v, 385, "", "./tensorflow/compiler/tf2tensorrt/trt_convert_api.cc", "RunSession");
+
   TRT_ENSURE(!input_names.empty());
   TRT_ENSURE(!output_names.empty());
   TRT_ENSURE(!input_tensors.empty());
@@ -202,6 +392,11 @@ Status RunSession(Session* session, const std::vector<std::string>& input_names,
   std::vector<std::pair<std::string, tensorflow::Tensor>> input_pairs;
   std::vector<std::string> prefixed_output_names;
   auto prefixed_name = [](std::string prefix, std::string name) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("prefix: \"" + prefix + "\"");
+   mht_7_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPStrt_convert_apiDTcc mht_7(mht_7_v, 397, "", "./tensorflow/compiler/tf2tensorrt/trt_convert_api.cc", "lambda");
+
     return prefix.size() > 0 ? absl::StrJoin({prefix, name}, "/") : name;
   };
   for (int i = 0; i < input_names.size(); i++) {
@@ -228,6 +423,9 @@ Status Build(GraphDef& segmented_graph_def,
              const std::vector<std::string>& output_names,
              const std::vector<std::vector<tensorflow::Tensor>>& inputs,
              Session* session, const TfTrtConversionParams params) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPStrt_convert_apiDTcc mht_8(mht_8_v, 426, "", "./tensorflow/compiler/tf2tensorrt/trt_convert_api.cc", "Build");
+
   VLOG(2) << "Building the model";
   bool need_collect_profiles = params.use_dynamic_shape && inputs.size() > 1;
   if (need_collect_profiles) {
@@ -253,6 +451,9 @@ Status Build(GraphDef& segmented_graph_def,
 // Returns the resource manager associated with the node.
 Status GetResourceManager(const NodeDef& node, Session* session,
                           ResourceMgr** rm) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPStrt_convert_apiDTcc mht_9(mht_9_v, 454, "", "./tensorflow/compiler/tf2tensorrt/trt_convert_api.cc", "GetResourceManager");
+
   const DeviceMgr* device_mgr;
   TF_RETURN_IF_ERROR(session->LocalDeviceManager(&device_mgr));
   Device* device;
@@ -267,6 +468,9 @@ Status GetResourceManager(const NodeDef& node, Session* session,
 // Looks up the cache resurce associated with the TRT node.
 Status GetEngineCacheResource(const NodeDef& node, Session* session,
                               TRTEngineCacheResource** resource) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPStrt_convert_apiDTcc mht_10(mht_10_v, 471, "", "./tensorflow/compiler/tf2tensorrt/trt_convert_api.cc", "GetEngineCacheResource");
+
   ResourceMgr* rm;
   TF_RETURN_IF_ERROR(GetResourceManager(node, session, &rm));
 
@@ -289,6 +493,9 @@ Status GetEngineCacheResource(const NodeDef& node, Session* session,
 Status ReadSerializedEngine(
     const NodeDef& node, Session* session,
     TrtUniquePtrType<nvinfer1::IHostMemory>* engine_data) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPStrt_convert_apiDTcc mht_11(mht_11_v, 496, "", "./tensorflow/compiler/tf2tensorrt/trt_convert_api.cc", "ReadSerializedEngine");
+
   TRTEngineCacheResource* resource;
   TF_RETURN_IF_ERROR(GetEngineCacheResource(node, session, &resource));
   core::ScopedUnref unref_cache_res(resource);
@@ -315,6 +522,9 @@ Status ReadSerializedEngine(
 // Saves the TRT engines as attributes of the TRTEngineOp nodes.
 Status ConvertToStaticEngine(const GraphDef graph_def,
                              GraphDef* static_graph_def, Session* session) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPStrt_convert_apiDTcc mht_12(mht_12_v, 525, "", "./tensorflow/compiler/tf2tensorrt/trt_convert_api.cc", "ConvertToStaticEngine");
+
   static_graph_def->CopyFrom(graph_def);
   VLOG(1) << "Saving TRT engines as static engine";
   std::string op{"TRTEngineOp"};
@@ -339,6 +549,9 @@ Status ConvertToStaticEngine(const GraphDef graph_def,
 }
 
 Status ValidateConversionParams(const TfTrtConversionParams& p, int n_inputs) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPStrt_convert_apiDTcc mht_13(mht_13_v, 552, "", "./tensorflow/compiler/tf2tensorrt/trt_convert_api.cc", "ValidateConversionParams");
+
   if (p.precision_mode == TrtPrecisionMode::INT8 && p.use_calibration) {
     return errors::InvalidArgument(
         "Calibration not yet implemented through the C++ interface. Please use "
@@ -371,6 +584,9 @@ Status ValidateConversionParams(const TfTrtConversionParams& p, int n_inputs) {
 
 // Returns configuration used during the build step session run.
 tensorflow::SessionOptions GetSessionConfg() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPStrt_convert_apiDTcc mht_14(mht_14_v, 587, "", "./tensorflow/compiler/tf2tensorrt/trt_convert_api.cc", "GetSessionConfg");
+
   // We also need to disable constant folding because we already ran constant
   // folding and may have prevented quantization operation folding on purpose.
   tensorflow::SessionOptions opts;
@@ -428,6 +644,9 @@ StatusOr<GraphDef> ConvertAndBuild(
 
 Status InlineFunctions(const MetaGraphDef& meta_graph_def,
                        GraphDef* out_graph_def) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPStrt_convert_apiDTcc mht_15(mht_15_v, 647, "", "./tensorflow/compiler/tf2tensorrt/trt_convert_api.cc", "InlineFunctions");
+
   ConfigProto config_proto;
   auto opt_config =
       config_proto.mutable_graph_options()->mutable_rewrite_options();
@@ -446,6 +665,9 @@ Status InlineFunctions(const MetaGraphDef& meta_graph_def,
 // Freezes the graph. It is assumed that the functions are inlined and the
 // variables are initialized.
 Status FreezeGraph(SavedModelBundle& bundle, MetaGraphDef* frozen_meta_graph) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPStf2tensorrtPStrt_convert_apiDTcc mht_16(mht_16_v, 668, "", "./tensorflow/compiler/tf2tensorrt/trt_convert_api.cc", "FreezeGraph");
+
   std::unordered_set<std::string> inputs;
   std::unordered_set<std::string> outputs;
   GraphDef frozen_graph_def;

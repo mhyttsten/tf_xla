@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_utilsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_utilsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_utilsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -109,16 +277,25 @@ limitations under the License.
 namespace tensorflow {
 
 bool IsTensorListInput(XlaOpKernelContext* ctx, int index) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_utilsDTcc mht_0(mht_0_v, 280, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_utils.cc", "IsTensorListInput");
+
   return ctx->InputExpression(index).kind() == XlaExpression::Kind::kTensorList;
 }
 
 Status IsTensorListInitialized(xla::XlaOp list, bool* is_initialized) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_utilsDTcc mht_1(mht_1_v, 287, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_utils.cc", "IsTensorListInitialized");
+
   TF_ASSIGN_OR_RETURN(xla::Shape list_shape, list.builder()->GetShape(list));
   *is_initialized = list_shape.IsTuple();
   return Status::OK();
 }
 
 Status IsNestedTensorList(xla::XlaOp list, bool* is_nested_list) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_utilsDTcc mht_2(mht_2_v, 296, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_utils.cc", "IsNestedTensorList");
+
   bool is_initialized;
   TF_RETURN_IF_ERROR(IsTensorListInitialized(list, &is_initialized));
   if (!is_initialized) {
@@ -131,12 +308,18 @@ Status IsNestedTensorList(xla::XlaOp list, bool* is_nested_list) {
 
 Status BuildNonNestedTensorList(xla::XlaOp buffer, xla::XlaOp push_index,
                                 xla::XlaOp* output_list) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_utilsDTcc mht_3(mht_3_v, 311, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_utils.cc", "BuildNonNestedTensorList");
+
   TF_RET_CHECK(buffer.builder());
   *output_list = xla::Tuple(buffer.builder(), {buffer, push_index});
   return Status::OK();
 }
 
 Status GetTensorListBufferShape(xla::XlaOp list, xla::Shape* buffer_shape) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_utilsDTcc mht_4(mht_4_v, 320, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_utils.cc", "GetTensorListBufferShape");
+
   bool is_initialized;
   TF_RETURN_IF_ERROR(IsTensorListInitialized(list, &is_initialized));
   if (!is_initialized) {
@@ -148,6 +331,9 @@ Status GetTensorListBufferShape(xla::XlaOp list, xla::Shape* buffer_shape) {
 }
 
 Status GetTensorListBuffer(xla::XlaOp list, xla::XlaOp* buffer) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_utilsDTcc mht_5(mht_5_v, 334, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_utils.cc", "GetTensorListBuffer");
+
   bool is_initialized;
   TF_RETURN_IF_ERROR(IsTensorListInitialized(list, &is_initialized));
   if (!is_initialized) {
@@ -158,6 +344,9 @@ Status GetTensorListBuffer(xla::XlaOp list, xla::XlaOp* buffer) {
 }
 
 Status GetTensorListPushIndex(xla::XlaOp list, xla::XlaOp* push_index) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_utilsDTcc mht_6(mht_6_v, 347, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_utils.cc", "GetTensorListPushIndex");
+
   bool is_initialized;
   TF_RETURN_IF_ERROR(IsTensorListInitialized(list, &is_initialized));
   if (!is_initialized) {
@@ -171,6 +360,9 @@ Status GetTensorListPushIndex(xla::XlaOp list, xla::XlaOp* push_index) {
 
 Status SetTensorListPushIndex(xla::XlaOp list, xla::XlaOp push_index,
                               xla::XlaOp* result) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_utilsDTcc mht_7(mht_7_v, 363, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_utils.cc", "SetTensorListPushIndex");
+
   bool is_initialized;
   TF_RETURN_IF_ERROR(IsTensorListInitialized(list, &is_initialized));
   if (!is_initialized) {
@@ -192,6 +384,9 @@ xla::XlaOp BuildUninitializedTensorList(xla::XlaBuilder* b,
                                         int64_t leading_dimension,
                                         bool leading_size_is_dynamic,
                                         xla::XlaOp leading_dim_size) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_utilsDTcc mht_8(mht_8_v, 387, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_utils.cc", "BuildUninitializedTensorList");
+
   auto zero =
       xla::ConstantLiteral(b, xla::LiteralUtil::Zero(xla::PrimitiveType::S32));
   auto broadcast =
@@ -206,6 +401,9 @@ xla::XlaOp BuildUninitializedTensorList(xla::XlaBuilder* b,
 Status GetLeadingDimForTensorList(xla::XlaOp list, int64_t* leading_dim,
                                   bool* leading_dim_is_dynamic,
                                   xla::XlaOp* leading_dim_dynamic_size) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_utilsDTcc mht_9(mht_9_v, 404, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_utils.cc", "GetLeadingDimForTensorList");
+
   bool is_initialized;
   TF_RETURN_IF_ERROR(IsTensorListInitialized(list, &is_initialized));
   TF_ASSIGN_OR_RETURN(xla::Shape list_shape, list.builder()->GetShape(list));
@@ -226,6 +424,9 @@ Status GetLeadingDimForTensorList(xla::XlaOp list, int64_t* leading_dim,
 Status GetTensorListShapeFromElementTensorListShape(
     const xla::Shape& element_tensor_list_shape, int64_t leading_dim,
     bool leading_dim_is_dynamic, xla::Shape* tensor_list_shape) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_utilsDTcc mht_10(mht_10_v, 427, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_utils.cc", "GetTensorListShapeFromElementTensorListShape");
+
   std::vector<xla::Shape> shapes;
   int tuple_size = xla::ShapeUtil::TupleElementCount(element_tensor_list_shape);
   for (int i = 0; i < tuple_size; i++) {
@@ -249,6 +450,9 @@ Status GetTensorListShapeFromElementShape(const xla::Shape& element_shape,
                                           int64_t leading_dim,
                                           bool leading_dim_is_dynamic,
                                           xla::Shape* tensor_list_shape) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_utilsDTcc mht_11(mht_11_v, 453, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_utils.cc", "GetTensorListShapeFromElementShape");
+
   if (!element_shape.IsArray()) {
     return errors::InvalidArgument(
         "GetTensorListShapeFromElementShape() only supports normal tensor "
@@ -272,6 +476,9 @@ Status CreateZerosTensorListWithShape(
     xla::XlaBuilder* b, const xla::Shape& list_shape,
     const std::vector<std::vector<xla::XlaOp>>& dynamic_dims,
     xla::XlaOp* list) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_utilsDTcc mht_12(mht_12_v, 479, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_utils.cc", "CreateZerosTensorListWithShape");
+
   int tuple_size = xla::ShapeUtil::TupleElementCount(list_shape);
   std::vector<xla::XlaOp> elements;
   TF_RET_CHECK(dynamic_dims.size() == tuple_size - 1);
@@ -298,6 +505,9 @@ Status CreateZerosTensorListWithShape(
 Status GetInitializedTensorListForElement(xla::XlaOp list, xla::XlaOp element,
                                           bool element_is_tensor_list,
                                           xla::XlaOp* initialized_list) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_utilsDTcc mht_13(mht_13_v, 508, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_utils.cc", "GetInitializedTensorListForElement");
+
   int64_t leading_dim;
   xla::XlaOp leading_dim_dynamic_size;
   bool leading_dim_is_dynamic;
@@ -354,6 +564,9 @@ Status GetInitializedTensorListForElement(xla::XlaOp list, xla::XlaOp element,
 Status ExecuteTensorListPushBack(xla::XlaOp list, xla::XlaOp element,
                                  bool element_is_tensor_list,
                                  xla::XlaOp* result) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_utilsDTcc mht_14(mht_14_v, 567, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_utils.cc", "ExecuteTensorListPushBack");
+
   bool is_initialized;
   TF_RETURN_IF_ERROR(IsTensorListInitialized(list, &is_initialized));
   if (!is_initialized) {
@@ -416,6 +629,9 @@ Status ExecuteTensorListPushBack(xla::XlaOp list, xla::XlaOp element,
 Status ExecuteTensorListPopBack(xla::XlaOp list, xla::XlaOp* list_result,
                                 xla::XlaOp* element_result,
                                 bool* element_is_tensor_list) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_utilsDTcc mht_15(mht_15_v, 632, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_utils.cc", "ExecuteTensorListPopBack");
+
   bool is_initialized;
   TF_RETURN_IF_ERROR(IsTensorListInitialized(list, &is_initialized));
   if (!is_initialized) {
@@ -464,6 +680,9 @@ Status ExecuteTensorListPopBack(xla::XlaOp list, xla::XlaOp* list_result,
 
 Status ExecuteTensorListSetItem(xla::XlaOp list, xla::XlaOp index,
                                 xla::XlaOp element, xla::XlaOp* result) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_utilsDTcc mht_16(mht_16_v, 683, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_utils.cc", "ExecuteTensorListSetItem");
+
   bool is_initialized;
   TF_RETURN_IF_ERROR(IsTensorListInitialized(list, &is_initialized));
   if (!is_initialized) {
@@ -500,6 +719,9 @@ Status ExecuteTensorListSetItem(xla::XlaOp list, xla::XlaOp index,
 
 Status ExecuteTensorListGetItem(xla::XlaOp list, xla::XlaOp index,
                                 xla::XlaOp* result) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_utilsDTcc mht_17(mht_17_v, 722, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_utils.cc", "ExecuteTensorListGetItem");
+
   bool is_initialized;
   TF_RETURN_IF_ERROR(IsTensorListInitialized(list, &is_initialized));
   if (!is_initialized) {
@@ -542,6 +764,9 @@ Status ExecuteTensorListGetItem(xla::XlaOp list, xla::XlaOp index,
 
 Status ExecuteTensorListFromTensor(int push_index, xla::XlaOp tensor,
                                    xla::XlaOp* result) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPStf2xlaPSkernelsPStensor_list_utilsDTcc mht_18(mht_18_v, 767, "", "./tensorflow/compiler/tf2xla/kernels/tensor_list_utils.cc", "ExecuteTensorListFromTensor");
+
   xla::XlaBuilder* b = tensor.builder();
   TF_ASSIGN_OR_RETURN(xla::Shape shape, b->GetShape(tensor));
   if (!shape.IsArray()) {

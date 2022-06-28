@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -65,6 +233,9 @@ namespace tensorflow {
 // on-device shape. This is accurate for CPU and GPU devices that neither
 // transpose nor pad tensors.
 Status DefaultPaddedShapeFn(const Tensor& tensor, xla::Shape* shape) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_0(mht_0_v, 236, "", "./tensorflow/compiler/jit/xla_device.cc", "DefaultPaddedShapeFn");
+
   const tensorflow::XlaTensor* xla_tensor =
       tensorflow::XlaTensor::FromTensor(&tensor);
   if (xla_tensor == nullptr) {
@@ -104,6 +275,9 @@ class XlaDeviceAllocatorState {
 };
 
 /* static */ XlaDeviceAllocatorState& XlaDeviceAllocatorState::Singleton() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_1(mht_1_v, 278, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDeviceAllocatorState::Singleton");
+
   static auto a = new XlaDeviceAllocatorState;
   return *a;
 }
@@ -113,6 +287,9 @@ XlaDeviceAllocatorState::~XlaDeviceAllocatorState() = default;
 
 XlaDeviceAllocator* XlaDeviceAllocatorState::GetOrCreateXlaDeviceAllocator(
     const xla::Backend* backend, int device_ordinal) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_2(mht_2_v, 290, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDeviceAllocatorState::GetOrCreateXlaDeviceAllocator");
+
   XlaDeviceAllocatorState& state = Singleton();
   mutex_lock lock(state.allocator_mutex_);
 
@@ -134,6 +311,11 @@ namespace {
 static DeviceAttributes BuildXlaDeviceAttributes(const string& name_prefix,
                                                  const string& device_name,
                                                  int device_ordinal) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("name_prefix: \"" + name_prefix + "\"");
+   mht_3_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_3(mht_3_v, 316, "", "./tensorflow/compiler/jit/xla_device.cc", "BuildXlaDeviceAttributes");
+
   return Device::BuildDeviceAttributes(
       absl::StrCat(name_prefix, "/device:", device_name, ":", device_ordinal),
       DeviceType(device_name), Bytes(16ULL << 30), DeviceLocality(),
@@ -152,23 +334,41 @@ XlaDevice::Metadata::Metadata(
       platform_(platform),
       shape_determination_fns_(std::move(shape_determination_fns)),
       padded_shape_fn_(std::move(padded_shape_fn)),
-      use_multiple_streams_(use_multiple_streams) {}
+      use_multiple_streams_(use_multiple_streams) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_4(mht_4_v, 338, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::Metadata::Metadata");
+}
 
-int XlaDevice::Metadata::device_ordinal() const { return device_ordinal_; }
+int XlaDevice::Metadata::device_ordinal() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_5(mht_5_v, 343, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::Metadata::device_ordinal");
+ return device_ordinal_; }
 
-se::Platform* XlaDevice::Metadata::platform() const { return platform_; }
+se::Platform* XlaDevice::Metadata::platform() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_6(mht_6_v, 348, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::Metadata::platform");
+ return platform_; }
 
 xla::LocalClient* XlaDevice::Metadata::client() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_7(mht_7_v, 353, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::Metadata::client");
+
   auto client = xla::ClientLibrary::GetOrCreateLocalClient(platform_);
   return client.ValueOrDie();
 }
 
 const DeviceType& XlaDevice::Metadata::jit_device_type() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_8(mht_8_v, 361, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::Metadata::jit_device_type");
+
   return device_type_;
 }
 
 /*static*/ Status XlaDevice::GetMetadataFromDevice(
     DeviceBase* device, const XlaDevice::Metadata** metadata) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_9(mht_9_v, 369, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::GetMetadataFromDevice");
+
   *metadata = nullptr;
   XlaDevice* xla_device = dynamic_cast<XlaDevice*>(device->UnderlyingDevice());
   if (xla_device == nullptr) {
@@ -184,11 +384,17 @@ const DeviceType& XlaDevice::Metadata::jit_device_type() const {
 
 /* static */ Status XlaDevice::GetMetadata(OpKernelContext* ctx,
                                            const Metadata** metadata) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_10(mht_10_v, 387, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::GetMetadata");
+
   return GetMetadataFromDevice(ctx->device(), metadata);
 }
 
 /* static */ Status XlaDevice::GetMetadata(OpKernelConstruction* ctx,
                                            const Metadata** metadata) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_11(mht_11_v, 395, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::GetMetadata");
+
   return GetMetadataFromDevice(ctx->device(), metadata);
 }
 
@@ -218,6 +424,9 @@ XlaDevice::XlaDevice(const SessionOptions& session_options,
       shape_determination_fns_(options.shape_determination_fns),
       allowed_devices_(options.allowed_devices),
       use_global_compute_stream_(options.use_global_compute_stream) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_12(mht_12_v, 427, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::XlaDevice");
+
   if (options.shape_determination_fns.empty()) {
     LOG(ERROR) << "shape_representation_fns must be non-empty.";
   }
@@ -238,6 +447,9 @@ XlaDevice::XlaDevice(const SessionOptions& session_options,
 }
 
 XlaDevice::~XlaDevice() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_13(mht_13_v, 450, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::~XlaDevice");
+
   VLOG(1) << "Destroying XLA device " << jit_device_name_ << " " << this;
   mutex_lock lock(mu_);
   for (const auto& iter : device_contexts_) {
@@ -246,6 +458,9 @@ XlaDevice::~XlaDevice() {
 }
 
 StatusOr<xla::LocalClient*> XlaDevice::GetOrCreateClient() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_14(mht_14_v, 461, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::GetOrCreateClient");
+
   // We lazily create the client because the platform commits to the
   // details of the host hardware when the client is created, so we
   // don't want to do it until we get a chance to hook the platform up
@@ -259,11 +474,17 @@ StatusOr<xla::LocalClient*> XlaDevice::GetOrCreateClient() const {
 }
 
 Allocator* XlaDevice::GetAllocator(AllocatorAttributes attr) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_15(mht_15_v, 477, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::GetAllocator");
+
   mutex_lock lock(mu_);
   return GetAllocatorLocked(attr);
 }
 
 Allocator* XlaDevice::GetAllocatorLocked(AllocatorAttributes attr) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_16(mht_16_v, 485, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::GetAllocatorLocked");
+
   if (attr.on_host()) {
     return cpu_allocator();
   }
@@ -279,6 +500,9 @@ Allocator* XlaDevice::GetAllocatorLocked(AllocatorAttributes attr) {
 }
 
 Status XlaDevice::EnsureDeviceContextOk() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_17(mht_17_v, 503, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::EnsureDeviceContextOk");
+
   mutex_lock lock(mu_);
   return GetDeviceContextLocked().status();
 }
@@ -287,6 +511,10 @@ Status XlaDevice::EnsureStreamOkLocked(xla::Backend* backend,
                                        const string& name,
                                        std::shared_ptr<se::Stream>* stream,
                                        bool* stream_was_changed) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_18(mht_18_v, 515, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::EnsureStreamOkLocked");
+
   if (!(*stream) || !(*stream)->ok()) {
     xla::StreamPool::Ptr ptr;
     TF_ASSIGN_OR_RETURN(ptr, backend->BorrowStream(device_ordinal_));
@@ -299,6 +527,9 @@ Status XlaDevice::EnsureStreamOkLocked(xla::Backend* backend,
 }
 
 StatusOr<std::vector<XlaDeviceContext*>> XlaDevice::GetDeviceContextLocked() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_19(mht_19_v, 530, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::GetDeviceContextLocked");
+
   TF_ASSIGN_OR_RETURN(xla::LocalClient * client, GetOrCreateClient());
   xla::Backend* backend = client->mutable_backend();
 
@@ -397,22 +628,34 @@ StatusOr<std::vector<XlaDeviceContext*>> XlaDevice::GetDeviceContextLocked() {
 }
 
 StatusOr<XlaDeviceContext*> XlaDevice::GetDeviceContextWithIndex(int index) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_20(mht_20_v, 631, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::GetDeviceContextWithIndex");
+
   mutex_lock lock(mu_);
   TF_ASSIGN_OR_RETURN(auto device_contexts, GetDeviceContextLocked());
   return device_contexts.at(index);
 }
 
 StatusOr<XlaDeviceContext*> XlaDevice::GetDeviceContextDefault() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_21(mht_21_v, 640, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::GetDeviceContextDefault");
+
   return GetDeviceContextWithIndex(0);
 }
 
 Status XlaDevice::UseGpuDeviceInfo() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_22(mht_22_v, 647, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::UseGpuDeviceInfo");
+
   mutex_lock lock(mu_);
   use_gpu_device_info_ = true;
   return GetDeviceContextLocked().status();
 }
 
 Status XlaDevice::TryGetDeviceContext(DeviceContext** out_context) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_23(mht_23_v, 656, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::TryGetDeviceContext");
+
   TF_ASSIGN_OR_RETURN(auto device_context, GetDeviceContextDefault());
   device_context->Ref();
   *out_context = device_context;
@@ -422,6 +665,10 @@ Status XlaDevice::TryGetDeviceContext(DeviceContext** out_context) {
 // Warn about XLA_CPU/XLA_GPU exactly once.
 static void ShowXlaDeviceDeprecationWarning(
     absl::string_view compilation_device_name) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("compilation_device_name: \"" + std::string(compilation_device_name.data(), compilation_device_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_24(mht_24_v, 669, "", "./tensorflow/compiler/jit/xla_device.cc", "ShowXlaDeviceDeprecationWarning");
+
   static absl::once_flag once;
   if (absl::StrContains(compilation_device_name, "CPU") ||
       absl::StrContains(compilation_device_name, "GPU")) {
@@ -436,6 +683,9 @@ static void ShowXlaDeviceDeprecationWarning(
 }
 
 void XlaDevice::Compute(OpKernel* op_kernel, OpKernelContext* context) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_25(mht_25_v, 686, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::Compute");
+
   VLOG(2) << "XlaDevice::Compute " << op_kernel->name() << ":"
           << op_kernel->type_string();
   ShowXlaDeviceDeprecationWarning(jit_device_name_.type_string());
@@ -444,6 +694,9 @@ void XlaDevice::Compute(OpKernel* op_kernel, OpKernelContext* context) {
 
 void XlaDevice::ComputeAsync(AsyncOpKernel* op_kernel, OpKernelContext* context,
                              AsyncOpKernel::DoneCallback done) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_26(mht_26_v, 697, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::ComputeAsync");
+
   ShowXlaDeviceDeprecationWarning(jit_device_name_.type_string());
   VLOG(2) << "XlaDevice::ComputeAsync " << op_kernel->name() << ":"
           << op_kernel->type_string();
@@ -451,6 +704,9 @@ void XlaDevice::ComputeAsync(AsyncOpKernel* op_kernel, OpKernelContext* context,
 }
 
 Status XlaDevice::Sync() {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_27(mht_27_v, 707, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::Sync");
+
   VLOG(1) << "XlaDevice::Sync";
   profiler::TraceMe activity("XlaDevice::Sync", profiler::TraceMeLevel::kInfo);
   std::shared_ptr<se::Stream> stream;
@@ -472,6 +728,9 @@ Status XlaDevice::Sync() {
 // TODO(b/112409994): This is no longer necessary. Consolidate it with the
 // synchronous version.
 void XlaDevice::Sync(const DoneCallback& done) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_28(mht_28_v, 731, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::Sync");
+
   VLOG(1) << "XlaDevice::Sync (asynchronous)";
   std::shared_ptr<se::Stream> stream;
   {
@@ -505,6 +764,9 @@ Status XlaDevice::MakeTensorFromProto(XlaDeviceContext* device_context,
                                       const TensorProto& tensor_proto,
                                       const AllocatorAttributes alloc_attrs,
                                       Tensor* tensor) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_29(mht_29_v, 767, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::MakeTensorFromProto");
+
   Tensor parsed(tensor_proto.dtype());
   if (!parsed.FromProto(cpu_allocator(), tensor_proto)) {
     return errors::InvalidArgument("Cannot parse tensor from proto: ",
@@ -532,6 +794,9 @@ Status XlaDevice::MakeTensorFromProto(XlaDeviceContext* device_context,
 Status XlaDevice::MakeTensorFromProto(const TensorProto& tensor_proto,
                                       const AllocatorAttributes alloc_attrs,
                                       Tensor* tensor) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_30(mht_30_v, 797, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::MakeTensorFromProto");
+
   VLOG(1) << "XlaDevice::MakeTensorFromProto";
   XlaDeviceContext* device_context;
   TF_ASSIGN_OR_RETURN(device_context, GetDeviceContextDefault());
@@ -539,21 +804,33 @@ Status XlaDevice::MakeTensorFromProto(const TensorProto& tensor_proto,
 }
 
 void XlaDevice::SetAllowsSyncOnCompletion(bool sync_on_completion) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_31(mht_31_v, 807, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::SetAllowsSyncOnCompletion");
+
   mutex_lock lock(mu_);
   sync_on_completion_ = sync_on_completion;
 }
 
 bool XlaDevice::AllowsSyncOnCompletion() const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_32(mht_32_v, 815, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::AllowsSyncOnCompletion");
+
   mutex_lock lock(mu_);
   return sync_on_completion_;
 }
 
 void XlaDevice::SetHandleDeviceErrorCallback(std::function<Status()> callback) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_33(mht_33_v, 823, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::SetHandleDeviceErrorCallback");
+
   mutex_lock lock(mu_);
   device_error_callback_ = callback;
 }
 
 Status XlaDevice::HandleDeviceError() {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_34(mht_34_v, 831, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::HandleDeviceError");
+
   std::function<Status()> local_device_error_callback;
   {
     mutex_lock lock(mu_);
@@ -566,6 +843,9 @@ Status XlaDevice::HandleDeviceError() {
 }
 
 Status XlaDevice::RefreshStatus() {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_35(mht_35_v, 846, "", "./tensorflow/compiler/jit/xla_device.cc", "XlaDevice::RefreshStatus");
+
   std::shared_ptr<se::Stream> stream;
   {
     mutex_lock lock(mu_);
@@ -586,6 +866,11 @@ Status XlaDevice::RefreshStatus() {
 
 XlaDeviceOpRegistrations* RegisterXlaDeviceKernels(const char* device,
                                                    const char* jit_device) {
+   std::vector<std::string> mht_36_v;
+   mht_36_v.push_back("device: \"" + (device == nullptr ? std::string("nullptr") : std::string((char*)device)) + "\"");
+   mht_36_v.push_back("jit_device: \"" + (jit_device == nullptr ? std::string("nullptr") : std::string((char*)jit_device)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_deviceDTcc mht_36(mht_36_v, 871, "", "./tensorflow/compiler/jit/xla_device.cc", "RegisterXlaDeviceKernels");
+
   // Any op assigned to the device that isn't rewritten by the graph rewriter
   // gets executed by an XlaCompileOnDemandOp, which compiles it and executes
   // it just-in-time.

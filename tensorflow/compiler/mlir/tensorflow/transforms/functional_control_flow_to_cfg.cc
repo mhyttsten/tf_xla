@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfunctional_control_flow_to_cfgDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfunctional_control_flow_to_cfgDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfunctional_control_flow_to_cfgDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,6 +212,9 @@ struct FunctionalControlFlowToCFG
 // Lowers a general tensor argument that is used as a condition to a functional
 // control flow op into an i1 value.
 static Value LowerCondition(Location loc, Value value, OpBuilder* builder) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfunctional_control_flow_to_cfgDTcc mht_0(mht_0_v, 215, "", "./tensorflow/compiler/mlir/tensorflow/transforms/functional_control_flow_to_cfg.cc", "LowerCondition");
+
   auto zero_d = builder->create<ToBoolOp>(loc, value);
   auto scalar = builder->create<tensor::ExtractOp>(loc, zero_d);
   return scalar.getResult();
@@ -57,6 +228,9 @@ static Value LowerCondition(Location loc, Value value, OpBuilder* builder) {
 // that is compatible for tensor cast.
 static Operation* CallFn(Location loc, const std::function<Value(int)>& get_arg,
                          FuncOp fn, OpBuilder* builder) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfunctional_control_flow_to_cfgDTcc mht_1(mht_1_v, 231, "", "./tensorflow/compiler/mlir/tensorflow/transforms/functional_control_flow_to_cfg.cc", "CallFn");
+
   FunctionType fn_type = fn.getFunctionType();
   llvm::SmallVector<Value, 4> operands;
   int num_operands = fn_type.getNumInputs();
@@ -105,6 +279,9 @@ static llvm::SmallVector<Value, 4> PrepareValsForJump(
 // they should be pair-wise compatible for tensor cast.
 static void JumpToBlock(Location loc, const std::function<Value(int)>& get_arg,
                         Block* block, OpBuilder* builder) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfunctional_control_flow_to_cfgDTcc mht_2(mht_2_v, 282, "", "./tensorflow/compiler/mlir/tensorflow/transforms/functional_control_flow_to_cfg.cc", "JumpToBlock");
+
   auto operands = PrepareValsForJump(loc, get_arg, block, builder);
   builder->create<cf::BranchOp>(loc, block, operands);
 }
@@ -117,6 +294,9 @@ static void JumpToBlock(Location loc, const std::function<Value(int)>& get_arg,
 // it is possible to cast them to results' types.
 static void ReplaceOpResultWithBlockArgs(Location loc, Operation* op,
                                          Block* block, OpBuilder* builder) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfunctional_control_flow_to_cfgDTcc mht_3(mht_3_v, 297, "", "./tensorflow/compiler/mlir/tensorflow/transforms/functional_control_flow_to_cfg.cc", "ReplaceOpResultWithBlockArgs");
+
   assert(op->getNumResults() == block->getNumArguments());
   for (unsigned i = 0, e = op->getNumResults(); i != e; ++i) {
     Value arg = block->getArgument(i);
@@ -134,6 +314,9 @@ static void ReplaceOpResultWithBlockArgs(Location loc, Operation* op,
 // completely from the IR, breaking it into operations to evaluate the condition
 // as a bool, plus some branches.
 static LogicalResult LowerIfOp(IfOp op) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfunctional_control_flow_to_cfgDTcc mht_4(mht_4_v, 317, "", "./tensorflow/compiler/mlir/tensorflow/transforms/functional_control_flow_to_cfg.cc", "LowerIfOp");
+
   Operation* op_inst = op.getOperation();
   Location loc = op_inst->getLoc();
 
@@ -156,20 +339,29 @@ static LogicalResult LowerIfOp(IfOp op) {
 
   // Get arguments to the branches after dropping the condition which is the
   // first operand.
-  auto get_operand = [&](int i) { return op_inst->getOperand(i + 1); };
+  auto get_operand = [&](int i) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfunctional_control_flow_to_cfgDTcc mht_5(mht_5_v, 343, "", "./tensorflow/compiler/mlir/tensorflow/transforms/functional_control_flow_to_cfg.cc", "lambda");
+ return op_inst->getOperand(i + 1); };
 
   // Set up the 'then' block.
   Block* then_block = builder.createBlock(merge_block);
   Operation* call_op = CallFn(loc, get_operand, op.then_function(), &builder);
 
-  auto get_then_result = [&](int i) { return call_op->getResult(i); };
+  auto get_then_result = [&](int i) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfunctional_control_flow_to_cfgDTcc mht_6(mht_6_v, 352, "", "./tensorflow/compiler/mlir/tensorflow/transforms/functional_control_flow_to_cfg.cc", "lambda");
+ return call_op->getResult(i); };
   JumpToBlock(loc, get_then_result, merge_block, &builder);
 
   // Set up the 'else' block.
   Block* else_block = builder.createBlock(merge_block);
   call_op = CallFn(loc, get_operand, op.else_function(), &builder);
 
-  auto get_else_result = [&](int i) { return call_op->getResult(i); };
+  auto get_else_result = [&](int i) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfunctional_control_flow_to_cfgDTcc mht_7(mht_7_v, 362, "", "./tensorflow/compiler/mlir/tensorflow/transforms/functional_control_flow_to_cfg.cc", "lambda");
+ return call_op->getResult(i); };
   JumpToBlock(loc, get_else_result, merge_block, &builder);
 
   // Now that we have the then and else blocks, replace the terminator of the
@@ -188,6 +380,9 @@ static LogicalResult LowerIfOp(IfOp op) {
 // completely from the IR, breaking it into operations to execute the loop body
 // repeatedly while the loop condition is true.
 static LogicalResult LowerWhileOp(WhileOp op) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfunctional_control_flow_to_cfgDTcc mht_8(mht_8_v, 383, "", "./tensorflow/compiler/mlir/tensorflow/transforms/functional_control_flow_to_cfg.cc", "LowerWhileOp");
+
   Operation* op_inst = op.getOperation();
   Location loc = op_inst->getLoc();
 
@@ -233,7 +428,10 @@ static LogicalResult LowerWhileOp(WhileOp op) {
     orig_block_tail->addArgument(type, loc);
   }
 
-  auto get_operand = [&](int i) { return op_inst->getOperand(i); };
+  auto get_operand = [&](int i) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfunctional_control_flow_to_cfgDTcc mht_9(mht_9_v, 432, "", "./tensorflow/compiler/mlir/tensorflow/transforms/functional_control_flow_to_cfg.cc", "lambda");
+ return op_inst->getOperand(i); };
 
   // Unconditionally branch from the original block to the block containing the
   // condition.
@@ -245,7 +443,10 @@ static LogicalResult LowerWhileOp(WhileOp op) {
   // result.
   builder.setInsertionPointToEnd(cond_block);
 
-  auto get_cond_arg = [&](int i) { return cond_block->getArgument(i); };
+  auto get_cond_arg = [&](int i) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfunctional_control_flow_to_cfgDTcc mht_10(mht_10_v, 447, "", "./tensorflow/compiler/mlir/tensorflow/transforms/functional_control_flow_to_cfg.cc", "lambda");
+ return cond_block->getArgument(i); };
   Operation* cond_call_op = CallFn(loc, get_cond_arg, cond_fn, &builder);
 
   assert(cond_call_op->getNumResults() == 1);
@@ -258,10 +459,16 @@ static LogicalResult LowerWhileOp(WhileOp op) {
   // Call body function in the body block and then unconditionally branch back
   // to the condition block.
   builder.setInsertionPointToEnd(body_block);
-  auto get_body_arg = [&](int i) { return body_block->getArgument(i); };
+  auto get_body_arg = [&](int i) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfunctional_control_flow_to_cfgDTcc mht_11(mht_11_v, 463, "", "./tensorflow/compiler/mlir/tensorflow/transforms/functional_control_flow_to_cfg.cc", "lambda");
+ return body_block->getArgument(i); };
   Operation* body_call_op = CallFn(loc, get_body_arg, body_fn, &builder);
 
-  auto get_body_result = [&](int i) { return body_call_op->getResult(i); };
+  auto get_body_result = [&](int i) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfunctional_control_flow_to_cfgDTcc mht_12(mht_12_v, 469, "", "./tensorflow/compiler/mlir/tensorflow/transforms/functional_control_flow_to_cfg.cc", "lambda");
+ return body_call_op->getResult(i); };
   JumpToBlock(loc, get_body_result, cond_block, &builder);
 
   // Replace use of the while loop results with block inputs in the remainder of
@@ -274,6 +481,9 @@ static LogicalResult LowerWhileOp(WhileOp op) {
 }
 
 void FunctionalControlFlowToCFG::runOnOperation() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSfunctional_control_flow_to_cfgDTcc mht_13(mht_13_v, 484, "", "./tensorflow/compiler/mlir/tensorflow/transforms/functional_control_flow_to_cfg.cc", "FunctionalControlFlowToCFG::runOnOperation");
+
   // Scan the function looking for these ops.
   for (Block& block : getOperation()) {
     for (Operation& op : block) {

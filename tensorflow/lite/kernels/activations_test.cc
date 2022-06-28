@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -78,6 +246,9 @@ class BaseActivationsOpModel : public SingleOpModel {
   // Most activations don't take any options, so this constructor works for
   // them.
   BaseActivationsOpModel(BuiltinOperator type, TensorData input) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc mht_0(mht_0_v, 249, "", "./tensorflow/lite/kernels/activations_test.cc", "BaseActivationsOpModel");
+
     input_ = AddInput(input);
     if (input.type == TensorType_UINT8) {
       output_ = AddOutput({input.type, {}, 0, 0, 1. / 256});
@@ -92,6 +263,9 @@ class BaseActivationsOpModel : public SingleOpModel {
 
   BaseActivationsOpModel(TfLiteRegistration* registration, BuiltinOperator type,
                          TensorData input) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc mht_1(mht_1_v, 266, "", "./tensorflow/lite/kernels/activations_test.cc", "BaseActivationsOpModel");
+
     input_ = AddInput(input);
     if (input.type == TensorType_UINT8) {
       output_ = AddOutput({input.type, {}, 0, 0, 1. / 256});
@@ -108,6 +282,9 @@ class BaseActivationsOpModel : public SingleOpModel {
   // A dedicated constructor for SOFTMAX, which does some options.
   BaseActivationsOpModel(TfLiteRegistration* registration, float softmax_beta,
                          TensorData input, TensorType output_type) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc mht_2(mht_2_v, 285, "", "./tensorflow/lite/kernels/activations_test.cc", "BaseActivationsOpModel");
+
     input_ = AddInput(input);
     if (output_type == TensorType_UINT8) {
       output_ = AddOutput({TensorType_UINT8, {}, 0, 0, 1. / 256});
@@ -137,6 +314,9 @@ class BaseActivationsOpModel : public SingleOpModel {
   // A dedicated constructor for LeakyRelu, which does some options.
   BaseActivationsOpModel(TfLiteRegistration* registration, TensorData input,
                          float alpha) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc mht_3(mht_3_v, 317, "", "./tensorflow/lite/kernels/activations_test.cc", "BaseActivationsOpModel");
+
     input_ = AddInput(input);
     // The output scale and input scale might be different.
     if (input.type == TensorType_UINT8 || input.type == TensorType_INT8 ||
@@ -165,6 +345,9 @@ class BaseActivationsOpModel : public SingleOpModel {
 
   BaseActivationsOpModel(BuiltinOperator type, const TensorData& input,
                          const TensorData& output) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc mht_4(mht_4_v, 348, "", "./tensorflow/lite/kernels/activations_test.cc", "BaseActivationsOpModel");
+
     input_ = AddInput(input);
     output_ = AddOutput(output);
     SetBuiltinOp(type, BuiltinOptions_NONE, 0);
@@ -173,6 +356,9 @@ class BaseActivationsOpModel : public SingleOpModel {
 
   BaseActivationsOpModel(TfLiteRegistration* registration, BuiltinOperator type,
                          const TensorData& input, const TensorData& output) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc mht_5(mht_5_v, 359, "", "./tensorflow/lite/kernels/activations_test.cc", "BaseActivationsOpModel");
+
     input_ = AddInput(input);
     output_ = AddOutput(output);
     SetBuiltinOp(type, BuiltinOptions_NONE, 0);
@@ -190,6 +376,9 @@ class FloatActivationsOpModel : public BaseActivationsOpModel {
   using BaseActivationsOpModel::BaseActivationsOpModel;
 
   void SetInput(const std::vector<float>& data) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc mht_6(mht_6_v, 379, "", "./tensorflow/lite/kernels/activations_test.cc", "SetInput");
+
     PopulateTensor(input_, data);
   }
   std::vector<float> GetOutput() { return ExtractVector<float>(output_); }
@@ -220,6 +409,9 @@ class QuantizedActivationsOpModel : public BaseActivationsOpModel {
 
   template <typename T>
   void SetInput(const std::vector<float>& data) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc mht_7(mht_7_v, 412, "", "./tensorflow/lite/kernels/activations_test.cc", "SetInput");
+
     QuantizeAndPopulate<T>(input_, data);
   }
   template <typename T>
@@ -366,6 +558,9 @@ TEST(FloatActivationsOpTest, Relu6) {
 void GenerateUniformRandomVector(int size, float min, float max,
                                  std::minstd_rand* random_engine,
                                  std::vector<float>* result) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc mht_8(mht_8_v, 561, "", "./tensorflow/lite/kernels/activations_test.cc", "GenerateUniformRandomVector");
+
   // Never use std::uniform_*_distribution in tests, it's
   // implementation-defined. Likewise, don't use std::default_random_engine,
   // implementation-defined. Implementation-defined is bad because it means that
@@ -387,6 +582,9 @@ void GenerateUniformRandomVector(int size, float min, float max,
 
 void EvalTestReferenceHardSwish(int size, const std::vector<float>& input,
                                 std::vector<float>* result) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc mht_9(mht_9_v, 585, "", "./tensorflow/lite/kernels/activations_test.cc", "EvalTestReferenceHardSwish");
+
   result->resize(size);
   for (int i = 0; i < size; i++) {
     const float in = input[i];
@@ -395,6 +593,9 @@ void EvalTestReferenceHardSwish(int size, const std::vector<float>& input,
 }
 
 void TestFloatHardSwish(int size, std::minstd_rand* random_engine) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc mht_10(mht_10_v, 596, "", "./tensorflow/lite/kernels/activations_test.cc", "TestFloatHardSwish");
+
   std::vector<float> float_input_values;
   const float kMin = -10.0f;
   const float kMax = 10.0f;
@@ -417,6 +618,9 @@ template <typename QuantizedType>
 void TestQuantizedHardSwish(TensorType tensor_type, int size, float input_min,
                             float input_max, float output_min, float output_max,
                             std::minstd_rand* random_engine) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc mht_11(mht_11_v, 621, "", "./tensorflow/lite/kernels/activations_test.cc", "TestQuantizedHardSwish");
+
   std::vector<float> float_input_values;
   GenerateUniformRandomVector(size, input_min, input_max, random_engine,
                               &float_input_values);
@@ -449,6 +653,9 @@ template <typename QuantizedType>
 void TestQuantizedHardSwishBias(TensorType tensor_type, float input_min,
                                 float input_max, float output_min,
                                 float output_max, float tolerated_bias) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc mht_12(mht_12_v, 656, "", "./tensorflow/lite/kernels/activations_test.cc", "TestQuantizedHardSwishBias");
+
   const float quantized_type_range =
       static_cast<float>(std::numeric_limits<QuantizedType>::max()) -
       static_cast<float>(std::numeric_limits<QuantizedType>::min());
@@ -2326,6 +2533,9 @@ const auto kPReluKernelMap = new std::map<string, TfLiteRegistration*>({
 class BasePReluOpModel : public SingleOpModel {
  public:
   BasePReluOpModel(const TensorData& input, const TensorData& alpha) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc mht_13(mht_13_v, 2536, "", "./tensorflow/lite/kernels/activations_test.cc", "BasePReluOpModel");
+
     input_ = AddInput(input);
     alpha_ = AddInput(alpha);
     output_ = AddOutput({input.type, input.shape, input.min, input.max});
@@ -2345,9 +2555,15 @@ class FloatPReluOpModel : public BasePReluOpModel {
   using BasePReluOpModel::BasePReluOpModel;
 
   void SetInput(std::initializer_list<float> data) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc mht_14(mht_14_v, 2558, "", "./tensorflow/lite/kernels/activations_test.cc", "SetInput");
+
     PopulateTensor(input_, data);
   }
   void SetAlpha(std::initializer_list<float> data) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc mht_15(mht_15_v, 2564, "", "./tensorflow/lite/kernels/activations_test.cc", "SetAlpha");
+
     PopulateTensor(alpha_, data);
   }
   std::vector<float> GetOutput() { return ExtractVector<float>(output_); }
@@ -2360,10 +2576,16 @@ class QuantizedPReluOpModel : public BasePReluOpModel {
 
   template <typename T>
   void SetInput(std::initializer_list<float> data) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc mht_16(mht_16_v, 2579, "", "./tensorflow/lite/kernels/activations_test.cc", "SetInput");
+
     QuantizeAndPopulate<T>(input_, data);
   }
   template <typename T>
   void SetAlpha(std::initializer_list<float> data) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc mht_17(mht_17_v, 2586, "", "./tensorflow/lite/kernels/activations_test.cc", "SetAlpha");
+
     QuantizeAndPopulate<T>(alpha_, data);
   }
   template <typename T>
@@ -2557,6 +2779,9 @@ TEST_P(PReluOpTest, PReluInt8SameShapes) {
 class LeakyReluOpModel : public SingleOpModel {
  public:
   LeakyReluOpModel(const TensorData& input, float alpha) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc mht_18(mht_18_v, 2782, "", "./tensorflow/lite/kernels/activations_test.cc", "LeakyReluOpModel");
+
     input_ = AddInput(input);
     output_ = AddOutput(input);
     SetBuiltinOp(BuiltinOperator_LEAKY_RELU, BuiltinOptions_LeakyReluOptions,
@@ -2564,6 +2789,9 @@ class LeakyReluOpModel : public SingleOpModel {
     BuildInterpreter({GetShape(input_)});
   }
   void SetInput(std::initializer_list<float> data) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc mht_19(mht_19_v, 2792, "", "./tensorflow/lite/kernels/activations_test.cc", "SetInput");
+
     PopulateTensor(input_, data);
   }
   std::vector<float> GetOutput() { return ExtractVector<float>(output_); }
@@ -2590,6 +2818,9 @@ TEST(FloatActivationsOpTest, LeakyRelu) {
 class GeluOpModel : public SingleOpModel {
  public:
   GeluOpModel(const TensorData& input, bool approximate) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc mht_20(mht_20_v, 2821, "", "./tensorflow/lite/kernels/activations_test.cc", "GeluOpModel");
+
     input_ = AddInput(input);
     output_ = AddOutput(input);
     SetBuiltinOp(BuiltinOperator_GELU, BuiltinOptions_GeluOptions,
@@ -2597,6 +2828,9 @@ class GeluOpModel : public SingleOpModel {
     BuildInterpreter({GetShape(input_)});
   }
   void SetInput(std::initializer_list<float> data) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc mht_21(mht_21_v, 2831, "", "./tensorflow/lite/kernels/activations_test.cc", "SetInput");
+
     PopulateTensor(input_, data);
   }
   std::vector<float> GetOutput() { return ExtractVector<float>(output_); }
@@ -2609,6 +2843,9 @@ class GeluOpModel : public SingleOpModel {
 class BaseGeluOpModel : public SingleOpModel {
  public:
   BaseGeluOpModel(const TensorData& input, bool approximate) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc mht_22(mht_22_v, 2846, "", "./tensorflow/lite/kernels/activations_test.cc", "BaseGeluOpModel");
+
     input_ = AddInput(input);
     approximate_ = approximate;
     output_ = AddOutput({input.type, input.shape, input.min, input.max});
@@ -2629,6 +2866,9 @@ class FloatGeluOpModel : public BaseGeluOpModel {
   using BaseGeluOpModel::BaseGeluOpModel;
 
   void SetInput(std::initializer_list<float> data) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc mht_23(mht_23_v, 2869, "", "./tensorflow/lite/kernels/activations_test.cc", "SetInput");
+
     PopulateTensor(input_, data);
   }
   std::vector<float> GetOutput() { return ExtractVector<float>(output_); }
@@ -2641,6 +2881,9 @@ class QuantizedGeluOpModel : public BaseGeluOpModel {
 
   template <typename T>
   void SetInput(std::initializer_list<float> data) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSactivations_testDTcc mht_24(mht_24_v, 2884, "", "./tensorflow/lite/kernels/activations_test.cc", "SetInput");
+
     QuantizeAndPopulate<T>(input_, data);
   }
   template <typename T>

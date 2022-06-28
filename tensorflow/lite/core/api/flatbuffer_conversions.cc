@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,7 +206,10 @@ class SafeBuiltinDataAllocator {
   class BuiltinDataDeleter {
    public:
     explicit BuiltinDataDeleter(BuiltinDataAllocator* allocator)
-        : allocator_(allocator) {}
+        : allocator_(allocator) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_0(mht_0_v, 210, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "BuiltinDataDeleter");
+}
 
     void operator()(void* data) { allocator_->Deallocate(data); }
 
@@ -50,7 +221,10 @@ class SafeBuiltinDataAllocator {
   using BuiltinDataPtr = std::unique_ptr<T, BuiltinDataDeleter>;
 
   explicit SafeBuiltinDataAllocator(BuiltinDataAllocator* allocator)
-      : allocator_(allocator) {}
+      : allocator_(allocator) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_1(mht_1_v, 225, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "SafeBuiltinDataAllocator");
+}
 
   template <typename T>
   BuiltinDataPtr<T> Allocate() {
@@ -67,6 +241,9 @@ class SafeBuiltinDataAllocator {
 void CheckParsePointerParams(const Operator* op, ErrorReporter* error_reporter,
                              BuiltinDataAllocator* allocator,
                              void** builtin_data) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_2(mht_2_v, 244, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "CheckParsePointerParams");
+
   TFLITE_DCHECK(op != nullptr);
   TFLITE_DCHECK(error_reporter != nullptr);
   TFLITE_DCHECK(allocator != nullptr);
@@ -79,6 +256,10 @@ void CheckParsePointerParams(const Operator* op, ErrorReporter* error_reporter,
 TfLiteStatus FlatBufferIntVectorToArray(
     int max_size_of_buffer, const flatbuffers::Vector<int32_t>* flat_vector,
     int* buffer, ErrorReporter* error_reporter, const char* op_name) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("op_name: \"" + (op_name == nullptr ? std::string("nullptr") : std::string((char*)op_name)) + "\"");
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_3(mht_3_v, 260, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "FlatBufferIntVectorToArray");
+
   if (!flat_vector) {
     TF_LITE_REPORT_ERROR(error_reporter,
                          "Input array not provided for operation '%s'.\n",
@@ -103,6 +284,9 @@ TfLiteStatus FlatBufferIntVectorToArray(
 
 // Converts the flatbuffer activation to what is used at runtime.
 TfLiteFusedActivation ConvertActivation(ActivationFunctionType activation) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_4(mht_4_v, 287, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ConvertActivation");
+
   switch (activation) {
     case ActivationFunctionType_NONE:
       return kTfLiteActNone;
@@ -122,6 +306,9 @@ TfLiteFusedActivation ConvertActivation(ActivationFunctionType activation) {
 
 // Converts the flatbuffer padding enum to what is used at runtime.
 TfLitePadding ConvertPadding(Padding padding) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_5(mht_5_v, 309, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ConvertPadding");
+
   switch (padding) {
     case Padding_SAME:
       return kTfLitePaddingSame;
@@ -133,6 +320,9 @@ TfLitePadding ConvertPadding(Padding padding) {
 
 // Converts the flatbuffer mirror padding enum to what is used at runtime.
 TfLiteMirrorPaddingMode ConvertMirrorPadding(MirrorPadMode padding) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_6(mht_6_v, 323, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ConvertMirrorPadding");
+
   switch (padding) {
     case MirrorPadMode_REFLECT:
       return kTfLiteMirrorPaddingReflect;
@@ -148,6 +338,9 @@ TfLiteStatus ParseOpDataTfLite(const Operator* op, BuiltinOperator op_type,
                                BuiltinDataAllocator* allocator,
                                void** builtin_data) {
   auto parseLSHProjectionType = [](LSHProjectionType type) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_7(mht_7_v, 341, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "lambda");
+
     switch (type) {
       case LSHProjectionType_SPARSE:
         return kTfLiteLshProjectionSparse;
@@ -158,6 +351,9 @@ TfLiteStatus ParseOpDataTfLite(const Operator* op, BuiltinOperator op_type,
     }
   };
   auto parseCombinerType = [](CombinerType type) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_8(mht_8_v, 354, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "lambda");
+
     switch (type) {
       case CombinerType_MEAN:
         return kTfLiteCombinerTypeMean;
@@ -883,6 +1079,9 @@ TfLiteStatus ParseOpDataTfLite(const Operator* op, BuiltinOperator op_type,
 
 TfLiteStatus ConvertTensorType(TensorType tensor_type, TfLiteType* type,
                                ErrorReporter* error_reporter) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_9(mht_9_v, 1082, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ConvertTensorType");
+
   switch (tensor_type) {
     case TensorType_FLOAT16:
       *type = kTfLiteFloat16;
@@ -948,11 +1147,17 @@ TfLiteStatus ConvertTensorType(TensorType tensor_type, TfLiteType* type,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseAbs(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
                       void**) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_10(mht_10_v, 1150, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseAbs");
+
   return kTfLiteOk;
 }
 
 TfLiteStatus ParseAdd(const Operator* op, ErrorReporter* error_reporter,
                       BuiltinDataAllocator* allocator, void** builtin_data) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_11(mht_11_v, 1158, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseAdd");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -978,11 +1183,17 @@ TfLiteStatus ParseAdd(const Operator* op, ErrorReporter* error_reporter,
 
 TfLiteStatus ParseAddN(const Operator* op, ErrorReporter* error_reporter,
                        BuiltinDataAllocator* allocator, void** builtin_data) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_12(mht_12_v, 1186, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseAddN");
+
   return kTfLiteOk;
 }
 
 TfLiteStatus ParseArgMax(const Operator* op, ErrorReporter* error_reporter,
                          BuiltinDataAllocator* allocator, void** builtin_data) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_13(mht_13_v, 1194, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseArgMax");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -1008,6 +1219,9 @@ TfLiteStatus ParseArgMax(const Operator* op, ErrorReporter* error_reporter,
 
 TfLiteStatus ParseArgMin(const Operator* op, ErrorReporter* error_reporter,
                          BuiltinDataAllocator* allocator, void** builtin_data) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_14(mht_14_v, 1222, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseArgMin");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -1036,6 +1250,9 @@ TfLiteStatus ParseArgMin(const Operator* op, ErrorReporter* error_reporter,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseAssignVariable(const Operator*, ErrorReporter*,
                                  BuiltinDataAllocator*, void**) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_15(mht_15_v, 1253, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseAssignVariable");
+
   return kTfLiteOk;
 }
 
@@ -1045,6 +1262,9 @@ TfLiteStatus ParseAssignVariable(const Operator*, ErrorReporter*,
 TfLiteStatus ParseBatchMatMul(const Operator* op, ErrorReporter* error_reporter,
                               BuiltinDataAllocator* allocator,
                               void** builtin_data) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_16(mht_16_v, 1265, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseBatchMatMul");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -1065,6 +1285,9 @@ TfLiteStatus ParseBatchMatMul(const Operator* op, ErrorReporter* error_reporter,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseBatchToSpaceNd(const Operator*, ErrorReporter*,
                                  BuiltinDataAllocator*, void**) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_17(mht_17_v, 1288, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseBatchToSpaceNd");
+
   return kTfLiteOk;
 }
 
@@ -1073,6 +1296,9 @@ TfLiteStatus ParseBatchToSpaceNd(const Operator*, ErrorReporter*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseBroadcastArgs(const Operator*, ErrorReporter*,
                                 BuiltinDataAllocator*, void**) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_18(mht_18_v, 1299, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseBroadcastArgs");
+
   return kTfLiteOk;
 }
 
@@ -1081,12 +1307,18 @@ TfLiteStatus ParseBroadcastArgs(const Operator*, ErrorReporter*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseBroadcastTo(const Operator*, ErrorReporter*,
                               BuiltinDataAllocator*, void**) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_19(mht_19_v, 1310, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseBroadcastTo");
+
   return kTfLiteOk;
 }
 
 TfLiteStatus ParseCallOnce(const Operator* op, ErrorReporter* error_reporter,
                            BuiltinDataAllocator* allocator,
                            void** builtin_data) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_20(mht_20_v, 1319, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseCallOnce");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -1116,6 +1348,9 @@ TfLiteStatus ParseCallOnce(const Operator* op, ErrorReporter* error_reporter,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseCast(const Operator* op, ErrorReporter* error_reporter,
                        BuiltinDataAllocator* allocator, void** builtin_data) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_21(mht_21_v, 1351, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseCast");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -1137,6 +1372,9 @@ TfLiteStatus ParseCast(const Operator* op, ErrorReporter* error_reporter,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseCeil(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
                        void**) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_22(mht_22_v, 1375, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseCeil");
+
   return kTfLiteOk;
 }
 
@@ -1144,6 +1382,9 @@ TfLiteStatus ParseConcatenation(const Operator* op,
                                 ErrorReporter* error_reporter,
                                 BuiltinDataAllocator* allocator,
                                 void** builtin_data) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_23(mht_23_v, 1385, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseConcatenation");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -1171,6 +1412,9 @@ TfLiteStatus ParseConcatenation(const Operator* op,
 
 TfLiteStatus ParseConv2D(const Operator* op, ErrorReporter* error_reporter,
                          BuiltinDataAllocator* allocator, void** builtin_data) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_24(mht_24_v, 1415, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseConv2D");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -1205,6 +1449,9 @@ TfLiteStatus ParseConv2D(const Operator* op, ErrorReporter* error_reporter,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseCumsum(const Operator* op, ErrorReporter* error_reporter,
                          BuiltinDataAllocator* allocator, void** builtin_data) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_25(mht_25_v, 1452, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseCumsum");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -1223,6 +1470,9 @@ TfLiteStatus ParseCumsum(const Operator* op, ErrorReporter* error_reporter,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseCos(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
                       void**) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_26(mht_26_v, 1473, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseCos");
+
   return kTfLiteOk;
 }
 
@@ -1230,6 +1480,9 @@ TfLiteStatus ParseDepthToSpace(const Operator* op,
                                ErrorReporter* error_reporter,
                                BuiltinDataAllocator* allocator,
                                void** builtin_data) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_27(mht_27_v, 1483, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseDepthToSpace");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -1255,6 +1508,9 @@ TfLiteStatus ParseDepthwiseConv2D(const Operator* op,
                                   ErrorReporter* error_reporter,
                                   BuiltinDataAllocator* allocator,
                                   void** builtin_data) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_28(mht_28_v, 1511, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseDepthwiseConv2D");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -1292,11 +1548,17 @@ TfLiteStatus ParseDepthwiseConv2D(const Operator* op,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseDequantize(const Operator*, ErrorReporter*,
                              BuiltinDataAllocator*, void**) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_29(mht_29_v, 1551, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseDequantize");
+
   return kTfLiteOk;
 }
 
 TfLiteStatus ParseDiv(const Operator* op, ErrorReporter* error_reporter,
                       BuiltinDataAllocator* allocator, void** builtin_data) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_30(mht_30_v, 1559, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseDiv");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -1315,6 +1577,9 @@ TfLiteStatus ParseDiv(const Operator* op, ErrorReporter* error_reporter,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseElu(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
                       void**) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_31(mht_31_v, 1580, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseElu");
+
   return kTfLiteOk;
 }
 
@@ -1323,6 +1588,9 @@ TfLiteStatus ParseElu(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseEqual(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
                         void**) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_32(mht_32_v, 1591, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseEqual");
+
   return kTfLiteOk;
 }
 
@@ -1331,6 +1599,9 @@ TfLiteStatus ParseEqual(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseExp(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
                       void**) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_33(mht_33_v, 1602, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseExp");
+
   return kTfLiteOk;
 }
 
@@ -1339,6 +1610,9 @@ TfLiteStatus ParseExp(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseExpandDims(const Operator*, ErrorReporter*,
                              BuiltinDataAllocator*, void**) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_34(mht_34_v, 1613, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseExpandDims");
+
   return kTfLiteOk;
 }
 
@@ -1347,6 +1621,9 @@ TfLiteStatus ParseExpandDims(const Operator*, ErrorReporter*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseFill(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
                        void**) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_35(mht_35_v, 1624, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseFill");
+
   return kTfLiteOk;
 }
 
@@ -1355,6 +1632,9 @@ TfLiteStatus ParseFill(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseFloor(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
                         void**) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_36(mht_36_v, 1635, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseFloor");
+
   return kTfLiteOk;
 }
 
@@ -1363,6 +1643,9 @@ TfLiteStatus ParseFloor(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseFloorDiv(const Operator*, ErrorReporter*,
                            BuiltinDataAllocator*, void**) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_37(mht_37_v, 1646, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseFloorDiv");
+
   return kTfLiteOk;
 }
 
@@ -1371,6 +1654,9 @@ TfLiteStatus ParseFloorDiv(const Operator*, ErrorReporter*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseFloorMod(const Operator*, ErrorReporter*,
                            BuiltinDataAllocator*, void**) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_38(mht_38_v, 1657, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseFloorMod");
+
   return kTfLiteOk;
 }
 
@@ -1378,6 +1664,9 @@ TfLiteStatus ParseFullyConnected(const Operator* op,
                                  ErrorReporter* error_reporter,
                                  BuiltinDataAllocator* allocator,
                                  void** builtin_data) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_39(mht_39_v, 1667, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseFullyConnected");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -1425,6 +1714,9 @@ TfLiteStatus ParseFullyConnected(const Operator* op,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseGather(const Operator* op, ErrorReporter* error_reporter,
                          BuiltinDataAllocator* allocator, void** builtin_data) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_40(mht_40_v, 1717, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseGather");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -1446,6 +1738,9 @@ TfLiteStatus ParseGather(const Operator* op, ErrorReporter* error_reporter,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseGatherNd(const Operator*, ErrorReporter*,
                            BuiltinDataAllocator*, void**) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_41(mht_41_v, 1741, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseGatherNd");
+
   return kTfLiteOk;
 }
 
@@ -1454,6 +1749,9 @@ TfLiteStatus ParseGatherNd(const Operator*, ErrorReporter*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseGreater(const Operator*, ErrorReporter*,
                           BuiltinDataAllocator*, void**) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_42(mht_42_v, 1752, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseGreater");
+
   return kTfLiteOk;
 }
 
@@ -1462,6 +1760,9 @@ TfLiteStatus ParseGreater(const Operator*, ErrorReporter*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseGreaterEqual(const Operator*, ErrorReporter*,
                                BuiltinDataAllocator*, void**) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_43(mht_43_v, 1763, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseGreaterEqual");
+
   return kTfLiteOk;
 }
 
@@ -1470,11 +1771,17 @@ TfLiteStatus ParseGreaterEqual(const Operator*, ErrorReporter*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseHardSwish(const Operator*, ErrorReporter*,
                             BuiltinDataAllocator*, void**) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_44(mht_44_v, 1774, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseHardSwish");
+
   return kTfLiteOk;
 }
 
 TfLiteStatus ParseIf(const Operator* op, ErrorReporter* error_reporter,
                      BuiltinDataAllocator* allocator, void** builtin_data) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_45(mht_45_v, 1782, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseIf");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -1501,6 +1808,9 @@ TfLiteStatus ParseL2Normalization(const Operator* op,
                                   ErrorReporter* error_reporter,
                                   BuiltinDataAllocator* allocator,
                                   void** builtin_data) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_46(mht_46_v, 1811, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseL2Normalization");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -1527,6 +1837,9 @@ TfLiteStatus ParseL2Normalization(const Operator* op,
 TfLiteStatus ParseLeakyRelu(const Operator* op, ErrorReporter* error_reporter,
                             BuiltinDataAllocator* allocator,
                             void** builtin_data) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_47(mht_47_v, 1840, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseLeakyRelu");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -1545,6 +1858,9 @@ TfLiteStatus ParseLeakyRelu(const Operator* op, ErrorReporter* error_reporter,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseLess(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
                        void**) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_48(mht_48_v, 1861, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseLess");
+
   return kTfLiteOk;
 }
 
@@ -1553,6 +1869,9 @@ TfLiteStatus ParseLess(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseLessEqual(const Operator*, ErrorReporter*,
                             BuiltinDataAllocator*, void**) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_49(mht_49_v, 1872, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseLessEqual");
+
   return kTfLiteOk;
 }
 
@@ -1561,6 +1880,9 @@ TfLiteStatus ParseLessEqual(const Operator*, ErrorReporter*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseLog(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
                       void**) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_50(mht_50_v, 1883, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseLog");
+
   return kTfLiteOk;
 }
 
@@ -1569,6 +1891,9 @@ TfLiteStatus ParseLog(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseLogicalAnd(const Operator*, ErrorReporter*,
                              BuiltinDataAllocator*, void**) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_51(mht_51_v, 1894, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseLogicalAnd");
+
   return kTfLiteOk;
 }
 
@@ -1577,6 +1902,9 @@ TfLiteStatus ParseLogicalAnd(const Operator*, ErrorReporter*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseLogicalNot(const Operator*, ErrorReporter*,
                              BuiltinDataAllocator*, void**) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_52(mht_52_v, 1905, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseLogicalNot");
+
   return kTfLiteOk;
 }
 
@@ -1585,6 +1913,9 @@ TfLiteStatus ParseLogicalNot(const Operator*, ErrorReporter*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseLogicalOr(const Operator*, ErrorReporter*,
                             BuiltinDataAllocator*, void**) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_53(mht_53_v, 1916, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseLogicalOr");
+
   return kTfLiteOk;
 }
 
@@ -1593,6 +1924,9 @@ TfLiteStatus ParseLogicalOr(const Operator*, ErrorReporter*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseLogistic(const Operator*, ErrorReporter*,
                            BuiltinDataAllocator*, void**) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_54(mht_54_v, 1927, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseLogistic");
+
   return kTfLiteOk;
 }
 
@@ -1601,11 +1935,17 @@ TfLiteStatus ParseLogistic(const Operator*, ErrorReporter*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseLogSoftmax(const Operator*, ErrorReporter*,
                              BuiltinDataAllocator*, void**) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_55(mht_55_v, 1938, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseLogSoftmax");
+
   return kTfLiteOk;
 }
 
 TfLiteStatus ParseLSTM(const Operator* op, ErrorReporter* error_reporter,
                        BuiltinDataAllocator* allocator, void** builtin_data) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_56(mht_56_v, 1946, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseLSTM");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -1643,6 +1983,9 @@ TfLiteStatus ParseLSTM(const Operator* op, ErrorReporter* error_reporter,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseMaximum(const Operator*, ErrorReporter*,
                           BuiltinDataAllocator*, void**) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_57(mht_57_v, 1986, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseMaximum");
+
   return kTfLiteOk;
 }
 
@@ -1651,12 +1994,18 @@ TfLiteStatus ParseMaximum(const Operator*, ErrorReporter*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseMinimum(const Operator*, ErrorReporter*,
                           BuiltinDataAllocator*, void**) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_58(mht_58_v, 1997, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseMinimum");
+
   return kTfLiteOk;
 }
 
 TfLiteStatus ParseMirrorPad(const Operator* op, ErrorReporter* error_reporter,
                             BuiltinDataAllocator* allocator,
                             void** builtin_data) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_59(mht_59_v, 2006, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseMirrorPad");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -1682,6 +2031,9 @@ TfLiteStatus ParseMirrorPad(const Operator* op, ErrorReporter* error_reporter,
 
 TfLiteStatus ParseMul(const Operator* op, ErrorReporter* error_reporter,
                       BuiltinDataAllocator* allocator, void** builtin_data) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_60(mht_60_v, 2034, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseMul");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -1709,6 +2061,9 @@ TfLiteStatus ParseMul(const Operator* op, ErrorReporter* error_reporter,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseNeg(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
                       void**) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_61(mht_61_v, 2064, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseNeg");
+
   return kTfLiteOk;
 }
 
@@ -1717,11 +2072,17 @@ TfLiteStatus ParseNeg(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseNotEqual(const Operator*, ErrorReporter*,
                            BuiltinDataAllocator*, void**) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_62(mht_62_v, 2075, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseNotEqual");
+
   return kTfLiteOk;
 }
 
 TfLiteStatus ParsePack(const Operator* op, ErrorReporter* error_reporter,
                        BuiltinDataAllocator* allocator, void** builtin_data) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_63(mht_63_v, 2083, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParsePack");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -1750,6 +2111,9 @@ TfLiteStatus ParsePack(const Operator* op, ErrorReporter* error_reporter,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParsePad(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
                       void**) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_64(mht_64_v, 2114, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParsePad");
+
   return kTfLiteOk;
 }
 
@@ -1758,11 +2122,17 @@ TfLiteStatus ParsePad(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParsePadV2(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
                         void**) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_65(mht_65_v, 2125, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParsePadV2");
+
   return kTfLiteOk;
 }
 
 TfLiteStatus ParsePool(const Operator* op, ErrorReporter* error_reporter,
                        BuiltinDataAllocator* allocator, void** builtin_data) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_66(mht_66_v, 2133, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParsePool");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -1796,6 +2166,9 @@ TfLiteStatus ParsePool(const Operator* op, ErrorReporter* error_reporter,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParsePow(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
                       void**) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_67(mht_67_v, 2169, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParsePow");
+
   return kTfLiteOk;
 }
 
@@ -1804,6 +2177,9 @@ TfLiteStatus ParsePow(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParsePrelu(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
                         void**) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_68(mht_68_v, 2180, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParsePrelu");
+
   return kTfLiteOk;
 }
 
@@ -1812,6 +2188,9 @@ TfLiteStatus ParsePrelu(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseQuantize(const Operator*, ErrorReporter*,
                            BuiltinDataAllocator*, void**) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_69(mht_69_v, 2191, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseQuantize");
+
   return kTfLiteOk;
 }
 
@@ -1820,12 +2199,18 @@ TfLiteStatus ParseQuantize(const Operator*, ErrorReporter*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseReadVariable(const Operator*, ErrorReporter*,
                                BuiltinDataAllocator*, void**) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_70(mht_70_v, 2202, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseReadVariable");
+
   return kTfLiteOk;
 }
 
 TfLiteStatus ParseReducer(const Operator* op, ErrorReporter* error_reporter,
                           BuiltinDataAllocator* allocator,
                           void** builtin_data) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_71(mht_71_v, 2211, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseReducer");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -1854,6 +2239,9 @@ TfLiteStatus ParseReducer(const Operator* op, ErrorReporter* error_reporter,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseRelu(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
                        void**) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_72(mht_72_v, 2242, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseRelu");
+
   return kTfLiteOk;
 }
 
@@ -1862,12 +2250,18 @@ TfLiteStatus ParseRelu(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseRelu6(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
                         void**) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_73(mht_73_v, 2253, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseRelu6");
+
   return kTfLiteOk;
 }
 
 TfLiteStatus ParseReshape(const Operator* op, ErrorReporter* error_reporter,
                           BuiltinDataAllocator* allocator,
                           void** builtin_data) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_74(mht_74_v, 2262, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseReshape");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -1906,6 +2300,9 @@ TfLiteStatus ParseResizeBilinear(const Operator* op,
                                  ErrorReporter* error_reporter,
                                  BuiltinDataAllocator* allocator,
                                  void** builtin_data) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_75(mht_75_v, 2303, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseResizeBilinear");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -1933,6 +2330,9 @@ TfLiteStatus ParseResizeNearestNeighbor(const Operator* op,
                                         ErrorReporter* error_reporter,
                                         BuiltinDataAllocator* allocator,
                                         void** builtin_data) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_76(mht_76_v, 2333, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseResizeNearestNeighbor");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -1961,6 +2361,9 @@ TfLiteStatus ParseResizeNearestNeighbor(const Operator* op,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseRound(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
                         void**) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_77(mht_77_v, 2364, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseRound");
+
   return kTfLiteOk;
 }
 
@@ -1969,11 +2372,17 @@ TfLiteStatus ParseRound(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseRsqrt(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
                         void**) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_78(mht_78_v, 2375, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseRsqrt");
+
   return kTfLiteOk;
 }
 
 TfLiteStatus ParseShape(const Operator* op, ErrorReporter* error_reporter,
                         BuiltinDataAllocator* allocator, void** builtin_data) {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_79(mht_79_v, 2383, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseShape");
+
   SafeBuiltinDataAllocator safe_allocator(allocator);
   std::unique_ptr<TfLiteShapeParams,
                   SafeBuiltinDataAllocator::BuiltinDataDeleter>
@@ -2000,6 +2409,9 @@ TfLiteStatus ParseShape(const Operator* op, ErrorReporter* error_reporter,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseSin(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
                       void**) {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_80(mht_80_v, 2412, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseSin");
+
   return kTfLiteOk;
 }
 
@@ -2008,12 +2420,18 @@ TfLiteStatus ParseSin(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseSlice(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
                         void**) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_81(mht_81_v, 2423, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseSlice");
+
   return kTfLiteOk;
 }
 
 TfLiteStatus ParseSoftmax(const Operator* op, ErrorReporter* error_reporter,
                           BuiltinDataAllocator* allocator,
                           void** builtin_data) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_82(mht_82_v, 2432, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseSoftmax");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -2041,6 +2459,9 @@ TfLiteStatus ParseSoftmax(const Operator* op, ErrorReporter* error_reporter,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseSpaceToBatchNd(const Operator*, ErrorReporter*,
                                  BuiltinDataAllocator*, void**) {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_83(mht_83_v, 2462, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseSpaceToBatchNd");
+
   return kTfLiteOk;
 }
 
@@ -2048,6 +2469,9 @@ TfLiteStatus ParseSpaceToDepth(const Operator* op,
                                ErrorReporter* error_reporter,
                                BuiltinDataAllocator* allocator,
                                void** builtin_data) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_84(mht_84_v, 2472, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseSpaceToDepth");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -2071,6 +2495,9 @@ TfLiteStatus ParseSpaceToDepth(const Operator* op,
 
 TfLiteStatus ParseSplit(const Operator* op, ErrorReporter* error_reporter,
                         BuiltinDataAllocator* allocator, void** builtin_data) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_85(mht_85_v, 2498, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseSplit");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -2095,6 +2522,9 @@ TfLiteStatus ParseSplit(const Operator* op, ErrorReporter* error_reporter,
 
 TfLiteStatus ParseSplitV(const Operator* op, ErrorReporter* error_reporter,
                          BuiltinDataAllocator* allocator, void** builtin_data) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_86(mht_86_v, 2525, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseSplitV");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
   SafeBuiltinDataAllocator safe_allocator(allocator);
 
@@ -2121,6 +2551,9 @@ TfLiteStatus ParseUnidirectionalSequenceLSTM(const Operator* op,
                                              ErrorReporter* error_reporter,
                                              BuiltinDataAllocator* allocator,
                                              void** builtin_data) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_87(mht_87_v, 2554, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseUnidirectionalSequenceLSTM");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
   SafeBuiltinDataAllocator safe_allocator(allocator);
   auto params =
@@ -2143,6 +2576,9 @@ TfLiteStatus ParseUnidirectionalSequenceLSTM(const Operator* op,
 TfLiteStatus ParseSqueeze(const Operator* op, ErrorReporter* error_reporter,
                           BuiltinDataAllocator* allocator,
                           void** builtin_data) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_88(mht_88_v, 2579, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseSqueeze");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
   SafeBuiltinDataAllocator safe_allocator(allocator);
 
@@ -2178,6 +2614,9 @@ TfLiteStatus ParseSqueeze(const Operator* op, ErrorReporter* error_reporter,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseSqrt(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
                        void**) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_89(mht_89_v, 2617, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseSqrt");
+
   return kTfLiteOk;
 }
 
@@ -2186,6 +2625,9 @@ TfLiteStatus ParseSqrt(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseSquare(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
                          void**) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_90(mht_90_v, 2628, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseSquare");
+
   return kTfLiteOk;
 }
 
@@ -2193,6 +2635,9 @@ TfLiteStatus ParseStridedSlice(const Operator* op,
                                ErrorReporter* error_reporter,
                                BuiltinDataAllocator* allocator,
                                void** builtin_data) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_91(mht_91_v, 2638, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseStridedSlice");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -2222,6 +2667,9 @@ TfLiteStatus ParseStridedSlice(const Operator* op,
 
 TfLiteStatus ParseSub(const Operator* op, ErrorReporter* error_reporter,
                       BuiltinDataAllocator* allocator, void** builtin_data) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_92(mht_92_v, 2670, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseSub");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -2247,6 +2695,9 @@ TfLiteStatus ParseSub(const Operator* op, ErrorReporter* error_reporter,
 
 TfLiteStatus ParseSvdf(const Operator* op, ErrorReporter* error_reporter,
                        BuiltinDataAllocator* allocator, void** builtin_data) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_93(mht_93_v, 2698, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseSvdf");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -2277,6 +2728,9 @@ TfLiteStatus ParseSvdf(const Operator* op, ErrorReporter* error_reporter,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseTanh(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
                        void**) {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_94(mht_94_v, 2731, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseTanh");
+
   return kTfLiteOk;
 }
 //
@@ -2285,6 +2739,9 @@ TfLiteStatus ParseTanh(const Operator*, ErrorReporter*, BuiltinDataAllocator*,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseTranspose(const Operator*, ErrorReporter*,
                             BuiltinDataAllocator*, void**) {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_95(mht_95_v, 2742, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseTranspose");
+
   return kTfLiteOk;
 }
 
@@ -2292,6 +2749,9 @@ TfLiteStatus ParseTransposeConv(const Operator* op,
                                 ErrorReporter* error_reporter,
                                 BuiltinDataAllocator* allocator,
                                 void** builtin_data) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_96(mht_96_v, 2752, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseTransposeConv");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -2316,6 +2776,9 @@ TfLiteStatus ParseTransposeConv(const Operator* op,
 
 TfLiteStatus ParseUnpack(const Operator* op, ErrorReporter* error_reporter,
                          BuiltinDataAllocator* allocator, void** builtin_data) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_97(mht_97_v, 2779, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseUnpack");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -2342,6 +2805,9 @@ TfLiteStatus ParseUnpack(const Operator* op, ErrorReporter* error_reporter,
 TfLiteStatus ParseVarHandle(const Operator* op, ErrorReporter* error_reporter,
                             BuiltinDataAllocator* allocator,
                             void** builtin_data) {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_98(mht_98_v, 2808, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseVarHandle");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -2372,6 +2838,9 @@ TfLiteStatus ParseVarHandle(const Operator* op, ErrorReporter* error_reporter,
 
 TfLiteStatus ParseWhile(const Operator* op, ErrorReporter* error_reporter,
                         BuiltinDataAllocator* allocator, void** builtin_data) {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_99(mht_99_v, 2841, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseWhile");
+
   CheckParsePointerParams(op, error_reporter, allocator, builtin_data);
 
   SafeBuiltinDataAllocator safe_allocator(allocator);
@@ -2400,12 +2869,18 @@ TfLiteStatus ParseWhile(const Operator* op, ErrorReporter* error_reporter,
 // selective registration for the OpResolver implementation in micro.
 TfLiteStatus ParseZerosLike(const Operator*, ErrorReporter*,
                             BuiltinDataAllocator*, void**) {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_100(mht_100_v, 2872, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseZerosLike");
+
   return kTfLiteOk;
 }
 
 TfLiteStatus ParseOpData(const Operator* op, BuiltinOperator op_type,
                          ErrorReporter* error_reporter,
                          BuiltinDataAllocator* allocator, void** builtin_data) {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPSlitePScorePSapiPSflatbuffer_conversionsDTcc mht_101(mht_101_v, 2881, "", "./tensorflow/lite/core/api/flatbuffer_conversions.cc", "ParseOpData");
+
 // TODO(b/145762662): It would be preferable to have the build graph for TF Lite
 // Micro not have the ParseOpData function at all. This would require splitting
 // the current file into two separate files, one of which defines the

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,6 +199,9 @@ namespace {
 // Evaluate the polynomial given `x` and coefficients in decreasing order.
 template <typename FP>
 XlaOp EvaluatePolynomial(XlaOp x, absl::Span<const FP> coefficients) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_0(mht_0_v, 202, "", "./tensorflow/compiler/xla/client/lib/math.cc", "EvaluatePolynomial");
+
   static_assert(std::is_floating_point<FP>::value,
                 "Template-argument 'FP' must be a floating-point type");
   XlaOp poly = ScalarLike(x, 0.0);
@@ -44,6 +215,9 @@ XlaOp EvaluatePolynomial(XlaOp x, absl::Span<const FP> coefficients) {
 // order.
 template <typename FP>
 XlaOp EvaluateChebyshevPolynomial(XlaOp x, absl::Span<const FP> coefficients) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_1(mht_1_v, 218, "", "./tensorflow/compiler/xla/client/lib/math.cc", "EvaluateChebyshevPolynomial");
+
   static_assert(std::is_floating_point<FP>::value,
                 "Template-argument 'FP' must be a floating-point type");
   XlaOp b0 = ScalarLike(x, 0.0);
@@ -65,6 +239,9 @@ XlaOp EvaluateChebyshevPolynomial(XlaOp x, absl::Span<const FP> coefficients) {
 static XlaOp DoWithUpcastToF32(XlaOp operand,
                                absl::Span<const PrimitiveType> upcast_types,
                                const std::function<XlaOp(XlaOp)>& operation) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_2(mht_2_v, 242, "", "./tensorflow/compiler/xla/client/lib/math.cc", "DoWithUpcastToF32");
+
   auto& b = *operand.builder();
   return b.ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(auto shape, b.GetShape(operand));
@@ -85,6 +262,10 @@ static XlaOp DoWithUpcastToF32(XlaOp operand,
 // TODO(jlebar): Use this function in more places in this file to restrict the
 // domain of other functions.
 static Status EnsureOperandIsRealFp(absl::string_view op_name, XlaOp operand) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("op_name: \"" + std::string(op_name.data(), op_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_3(mht_3_v, 266, "", "./tensorflow/compiler/xla/client/lib/math.cc", "EnsureOperandIsRealFp");
+
   auto& b = *operand.builder();
   TF_ASSIGN_OR_RETURN(auto shape, b.GetShape(operand));
   auto elem_ty = shape.element_type();
@@ -97,6 +278,9 @@ static Status EnsureOperandIsRealFp(absl::string_view op_name, XlaOp operand) {
 }
 
 XlaOp IsPosInf(XlaOp operand) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_4(mht_4_v, 281, "", "./tensorflow/compiler/xla/client/lib/math.cc", "IsPosInf");
+
   auto& b = *operand.builder();
   return b.ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_RETURN_IF_ERROR(EnsureOperandIsRealFp("IsPosInf", operand));
@@ -108,6 +292,9 @@ XlaOp IsPosInf(XlaOp operand) {
 }
 
 XlaOp IsNegInf(XlaOp operand) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_5(mht_5_v, 295, "", "./tensorflow/compiler/xla/client/lib/math.cc", "IsNegInf");
+
   auto& b = *operand.builder();
   return b.ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_RETURN_IF_ERROR(EnsureOperandIsRealFp("IsNegInf", operand));
@@ -119,6 +306,9 @@ XlaOp IsNegInf(XlaOp operand) {
 }
 
 XlaOp IsInf(XlaOp operand) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_6(mht_6_v, 309, "", "./tensorflow/compiler/xla/client/lib/math.cc", "IsInf");
+
   auto& b = *operand.builder();
   return b.ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_RETURN_IF_ERROR(EnsureOperandIsRealFp("IsInf", operand));
@@ -127,6 +317,9 @@ XlaOp IsInf(XlaOp operand) {
 }
 
 XlaOp IsNan(XlaOp operand) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_7(mht_7_v, 320, "", "./tensorflow/compiler/xla/client/lib/math.cc", "IsNan");
+
   auto& b = *operand.builder();
   return b.ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_RETURN_IF_ERROR(EnsureOperandIsRealFp("IsNan", operand));
@@ -135,6 +328,9 @@ XlaOp IsNan(XlaOp operand) {
 }
 
 XlaOp IsNegZero(XlaOp operand) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_8(mht_8_v, 331, "", "./tensorflow/compiler/xla/client/lib/math.cc", "IsNegZero");
+
   auto& b = *operand.builder();
   return b.ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_RETURN_IF_ERROR(EnsureOperandIsRealFp("IsNegZero", operand));
@@ -162,9 +358,15 @@ XlaOp IsNegZero(XlaOp operand) {
   });
 }
 
-XlaOp Square(XlaOp operand) { return operand * operand; }
+XlaOp Square(XlaOp operand) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_9(mht_9_v, 362, "", "./tensorflow/compiler/xla/client/lib/math.cc", "Square");
+ return operand * operand; }
 
-XlaOp Reciprocal(XlaOp operand) { return ScalarLike(operand, 1.0) / operand; }
+XlaOp Reciprocal(XlaOp operand) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_10(mht_10_v, 367, "", "./tensorflow/compiler/xla/client/lib/math.cc", "Reciprocal");
+ return ScalarLike(operand, 1.0) / operand; }
 
 // Computes an approximation of the error function complement (1 - erf(x)).
 //
@@ -172,6 +374,9 @@ XlaOp Reciprocal(XlaOp operand) { return ScalarLike(operand, 1.0) / operand; }
 //
 // This follows Cephes's f32 implementation of erfc.
 static XlaOp ErfcImpl32(XlaOp x) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_11(mht_11_v, 377, "", "./tensorflow/compiler/xla/client/lib/math.cc", "ErfcImpl32");
+
   // Coefficients for erfc(f32), from Cephes.
   const double kMaxlog = 88.72283905206835;
   // erfc(x) = exp(-x^2) P(1/x^2), 1 < x < 2
@@ -204,6 +409,9 @@ static XlaOp ErfcImpl32(XlaOp x) {
 //
 // This follows Cephes's f32 implementation of erf.
 static XlaOp ErfImpl32Cephes(XlaOp x) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_12(mht_12_v, 412, "", "./tensorflow/compiler/xla/client/lib/math.cc", "ErfImpl32Cephes");
+
   // Coefficients for by erf(f32), from Cephes.
   //
   // erf(x) = x P(x^2), 0 < x < 1
@@ -216,6 +424,9 @@ static XlaOp ErfImpl32Cephes(XlaOp x) {
 }
 
 static XlaOp ErfcImpl64(XlaOp x) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_13(mht_13_v, 427, "", "./tensorflow/compiler/xla/client/lib/math.cc", "ErfcImpl64");
+
   // Coefficients for erfc(f64), from Cephes.
   const double kMaxlog = 7.09782712893383996843E2;
   // erfc(x) = exp(-x^2) P(|x|) / Q(|x|), 1 < x < 8
@@ -259,6 +470,9 @@ static XlaOp ErfcImpl64(XlaOp x) {
 //
 // Precondition: abs(x) <= 1.  Otherwise, use ErfcImpl.
 static XlaOp ErfImpl64(XlaOp x) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_14(mht_14_v, 473, "", "./tensorflow/compiler/xla/client/lib/math.cc", "ErfImpl64");
+
   // Coefficients for by erf(f64), from Cephes.
   //
   // erf(x) = x T(x^2) / U(x^2), 0 < x < 1
@@ -276,6 +490,9 @@ static XlaOp ErfImpl64(XlaOp x) {
 }
 
 XlaOp Erfc(XlaOp x) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_15(mht_15_v, 493, "", "./tensorflow/compiler/xla/client/lib/math.cc", "Erfc");
+
   auto& b = *x.builder();
   return b.ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_RETURN_IF_ERROR(EnsureOperandIsRealFp("Erfc", x));
@@ -290,6 +507,9 @@ XlaOp Erfc(XlaOp x) {
     // Erf(c)Impl don't have enough precision when run with bf16 intermediates
     // (not surprising!), so upcast to f32 in this case.
     return DoWithUpcastToF32(x, {BF16, F16}, [](XlaOp x) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_16(mht_16_v, 510, "", "./tensorflow/compiler/xla/client/lib/math.cc", "lambda");
+
       return Select(Gt(Abs(x), ScalarLike(x, 1)), ErfcImpl32(x),
                     ScalarLike(x, 1) - ErfImpl32Cephes(x));
     });
@@ -299,6 +519,9 @@ XlaOp Erfc(XlaOp x) {
 // Compute a polynomial approximation of the error function.
 // This is the same approximation used by Eigen.
 static XlaOp ErfImpl32(XlaOp x) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_17(mht_17_v, 522, "", "./tensorflow/compiler/xla/client/lib/math.cc", "ErfImpl32");
+
   static const std::array<float, 7> kAlpha{
       -2.72614225801306e-10f, 2.77068142495902e-08f,  -2.10102402082508e-06f,
       -5.69250639462346e-05f, -7.34990630326855e-04f, -2.95459980854025e-03f,
@@ -317,6 +540,9 @@ static XlaOp ErfImpl32(XlaOp x) {
 }
 
 XlaOp Erf(XlaOp x) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_18(mht_18_v, 543, "", "./tensorflow/compiler/xla/client/lib/math.cc", "Erf");
+
   auto& b = *x.builder();
   return b.ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_RETURN_IF_ERROR(EnsureOperandIsRealFp("Erf", x));
@@ -331,7 +557,10 @@ XlaOp Erf(XlaOp x) {
     // Erf(c)Impl don't have enough precision when run with bf16 intermediates
     // (not surprising!), so upcast to f32 in this case.
     return DoWithUpcastToF32(x, {BF16, F16},
-                             [](XlaOp x) { return ErfImpl32(x); });
+                             [](XlaOp x) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_19(mht_19_v, 561, "", "./tensorflow/compiler/xla/client/lib/math.cc", "lambda");
+ return ErfImpl32(x); });
   });
 }
 
@@ -350,6 +579,9 @@ namespace {
 //   }
 //   return p*x
 XlaOp ErfInv32(XlaOp x) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_20(mht_20_v, 582, "", "./tensorflow/compiler/xla/client/lib/math.cc", "ErfInv32");
+
   constexpr int kDegree = 9;
   constexpr std::array<float, 9> w_less_than_5_constants = {
       2.81022636e-08f,  3.43273939e-07f, -3.5233877e-06f,
@@ -367,6 +599,9 @@ XlaOp ErfInv32(XlaOp x) {
 
   auto lt = Lt(w, ScalarLike(x, 5.0));
   auto coefficient = [&](int i) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_21(mht_21_v, 602, "", "./tensorflow/compiler/xla/client/lib/math.cc", "lambda");
+
     return Select(lt, FullLike(x, w_less_than_5_constants[i]),
                   FullLike(x, w_greater_than_5_constants[i]));
   };
@@ -390,6 +625,9 @@ XlaOp ErfInv32(XlaOp x) {
 }
 
 XlaOp ErfInv64(XlaOp x) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_22(mht_22_v, 628, "", "./tensorflow/compiler/xla/client/lib/math.cc", "ErfInv64");
+
   constexpr std::array<double, 23> w_less_than_6_25_constants = {
       -3.6444120640178196996e-21, -1.685059138182016589e-19,
       1.2858480715256400167e-18,  1.115787767802518096e-17,
@@ -434,6 +672,9 @@ XlaOp ErfInv64(XlaOp x) {
   auto lt_6_25 = Lt(w, ScalarLike(x, 6.25));
   auto lt_16 = Lt(w, ScalarLike(x, 16));
   auto coefficient = [&](int i) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_23(mht_23_v, 675, "", "./tensorflow/compiler/xla/client/lib/math.cc", "lambda");
+
     auto c = FullLike(x, w_less_than_6_25_constants[i]);
     if (i < 19) {
       c = Select(lt_6_25, c, FullLike(x, w_less_than_16_constants[i]));
@@ -472,6 +713,9 @@ XlaOp ErfInv64(XlaOp x) {
 }  // namespace
 
 XlaOp ErfInv(XlaOp x) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_24(mht_24_v, 716, "", "./tensorflow/compiler/xla/client/lib/math.cc", "ErfInv");
+
   auto& b = *x.builder();
   return b.ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_RETURN_IF_ERROR(EnsureOperandIsRealFp("ErfInv", x));
@@ -480,7 +724,10 @@ XlaOp ErfInv(XlaOp x) {
       return ErfInv64(x);
     }
     return DoWithUpcastToF32(x, {BF16, F16},
-                             [](XlaOp x) { return ErfInv32(x); });
+                             [](XlaOp x) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_25(mht_25_v, 728, "", "./tensorflow/compiler/xla/client/lib/math.cc", "lambda");
+ return ErfInv32(x); });
   });
 }
 
@@ -508,7 +755,13 @@ static constexpr std::array<double, 8> kLanczosCoefficients = {
 // t(z) = z + kLanczosGamma + 1/2
 // A(z) = kBaseLanczosCoeff + sigma(k = 1, n, kLanczosCoefficients[i] / (z + k))
 XlaOp Lgamma(XlaOp input) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_26(mht_26_v, 758, "", "./tensorflow/compiler/xla/client/lib/math.cc", "Lgamma");
+
   auto do_it = [](XlaOp input) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_27(mht_27_v, 762, "", "./tensorflow/compiler/xla/client/lib/math.cc", "lambda");
+
     XlaOp one_half = ScalarLike(input, 0.5);
     XlaOp one = ScalarLike(input, 1);
 
@@ -615,6 +868,9 @@ XlaOp Lgamma(XlaOp input) {
 // Computes an approximation of the lbeta function which is equivalent to
 // log(abs(Beta(a, b))) but avoids overflow by computing it with lgamma.
 static XlaOp Lbeta(XlaOp a, XlaOp b) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_28(mht_28_v, 871, "", "./tensorflow/compiler/xla/client/lib/math.cc", "Lbeta");
+
   // Beta(a, b) can be computed using Gamma as per
   // http://dlmf.nist.gov/5.12.E1 as follows:
   //   Beta(a, b) = (Gamma(a) * Gamma(b)) / Gamma(a + b)
@@ -644,7 +900,13 @@ static XlaOp Lbeta(XlaOp a, XlaOp b) {
 // A(z) = kBaseLanczosCoeff + sigma(k = 1, n, kLanczosCoefficients[i] / (z + k))
 // A'(z) = sigma(k = 1, n, kLanczosCoefficients[i] / (z + k) / (z + k))
 XlaOp Digamma(XlaOp input) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_29(mht_29_v, 903, "", "./tensorflow/compiler/xla/client/lib/math.cc", "Digamma");
+
   auto do_it = [](XlaOp input) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_30(mht_30_v, 907, "", "./tensorflow/compiler/xla/client/lib/math.cc", "lambda");
+
     XlaOp zero = ScalarLike(input, 0);
     XlaOp one_half = ScalarLike(input, 0.5);
     XlaOp one = ScalarLike(input, 1);
@@ -717,6 +979,9 @@ enum kIgammaMode { VALUE, DERIVATIVE, SAMPLE_DERIVATIVE };
 template <kIgammaMode mode>
 XlaOp IgammaSeries(XlaOp ax, XlaOp x, XlaOp a, XlaOp enabled,
                    xla::PrimitiveType type) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_31(mht_31_v, 982, "", "./tensorflow/compiler/xla/client/lib/math.cc", "IgammaSeries");
+
   // vals: (enabled, r, c, ans, x)
   // 'enabled' is a predication mask that says for which elements we should
   // execute the loop body. Disabled elements have no effect in the loop body.
@@ -792,6 +1057,9 @@ XlaOp IgammaSeries(XlaOp ax, XlaOp x, XlaOp a, XlaOp enabled,
 template <kIgammaMode mode>
 XlaOp IgammacContinuedFraction(XlaOp ax, XlaOp x, XlaOp a, XlaOp enabled,
                                xla::PrimitiveType type) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_32(mht_32_v, 1060, "", "./tensorflow/compiler/xla/client/lib/math.cc", "IgammacContinuedFraction");
+
   // vals: enabled, ans, t, y, z, c, pkm1, qkm1, pkm2, qkm2
   auto cond = [&](absl::Span<const XlaOp> vals,
                   XlaBuilder* builder) -> StatusOr<XlaOp> {
@@ -924,6 +1192,9 @@ XlaOp IgammacContinuedFraction(XlaOp ax, XlaOp x, XlaOp a, XlaOp enabled,
 }  // namespace
 
 XlaOp Igamma(XlaOp a, XlaOp x) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_33(mht_33_v, 1195, "", "./tensorflow/compiler/xla/client/lib/math.cc", "Igamma");
+
   auto& b = *a.builder();
   auto doit = [&b](XlaOp a, XlaOp x, PrimitiveType type) -> XlaOp {
     XlaOp is_nan = Or(IsNan(a), IsNan(x));
@@ -974,6 +1245,9 @@ XlaOp Igamma(XlaOp a, XlaOp x) {
 }
 
 XlaOp IgammaGradA(XlaOp a, XlaOp x) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_34(mht_34_v, 1248, "", "./tensorflow/compiler/xla/client/lib/math.cc", "IgammaGradA");
+
   auto& b = *a.builder();
   auto doit = [&b](XlaOp a, XlaOp x, PrimitiveType type) -> XlaOp {
     XlaOp is_nan = Or(IsNan(a), IsNan(x));
@@ -1021,6 +1295,9 @@ XlaOp IgammaGradA(XlaOp a, XlaOp x) {
 
 // Gradient of Gamma sample from Gamma(a, 1) with respect to `a`.
 XlaOp RandomGammaGrad(XlaOp a, XlaOp x) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_35(mht_35_v, 1298, "", "./tensorflow/compiler/xla/client/lib/math.cc", "RandomGammaGrad");
+
   auto& b = *a.builder();
   auto doit = [&b](XlaOp a, XlaOp x, PrimitiveType type) -> XlaOp {
     XlaOp is_nan = Or(IsNan(a), IsNan(x));
@@ -1067,6 +1344,9 @@ XlaOp RandomGammaGrad(XlaOp a, XlaOp x) {
 }
 
 XlaOp Igammac(XlaOp a, XlaOp x) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_36(mht_36_v, 1347, "", "./tensorflow/compiler/xla/client/lib/math.cc", "Igammac");
+
   auto& b = *a.builder();
   auto doit = [&b](XlaOp a, XlaOp x, PrimitiveType type) -> XlaOp {
     XlaOp out_of_range = Or(Le(x, ScalarLike(x, 0)), Le(a, ScalarLike(a, 0)));
@@ -1116,6 +1396,9 @@ XlaOp Igammac(XlaOp a, XlaOp x) {
 // Implements Banker's rounding: numbers that are equidistant between two
 // integers are rounded towards even.
 XlaOp RoundToEven(XlaOp x) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_37(mht_37_v, 1399, "", "./tensorflow/compiler/xla/client/lib/math.cc", "RoundToEven");
+
   auto& b = *x.builder();
   return b.ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     // Reject non-real non-fp inputs (What does it even mean to round a complex
@@ -1143,6 +1426,9 @@ XlaOp RoundToEven(XlaOp x) {
 // For complex:
 // acos(x) = -(i * log(x + i * sqrt((1 + x) * (1 - x))))
 XlaOp Acos(XlaOp x) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_38(mht_38_v, 1429, "", "./tensorflow/compiler/xla/client/lib/math.cc", "Acos");
+
   XlaBuilder* b = x.builder();
   return b->ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(auto shape, b->GetShape(x));
@@ -1166,14 +1452,26 @@ XlaOp Acos(XlaOp x) {
 
 // asin(x) = 2 * atan(x / (1 + sqrt(1 - x^2)))
 XlaOp Asin(XlaOp x) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_39(mht_39_v, 1455, "", "./tensorflow/compiler/xla/client/lib/math.cc", "Asin");
+
   return ScalarLike(x, 2.0) *
          Atan2(x, ScalarLike(x, 1.0) + Sqrt(ScalarLike(x, 1.0) - x * x));
 }
 
-XlaOp Atan(XlaOp x) { return Atan2(x, ScalarLike(x, 1.0)); }
+XlaOp Atan(XlaOp x) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_40(mht_40_v, 1463, "", "./tensorflow/compiler/xla/client/lib/math.cc", "Atan");
+ return Atan2(x, ScalarLike(x, 1.0)); }
 
 XlaOp Tan(XlaOp x) {
-  return DoWithUpcastToF32(x, {F16}, [](XlaOp x) { return Sin(x) / Cos(x); });
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_41(mht_41_v, 1468, "", "./tensorflow/compiler/xla/client/lib/math.cc", "Tan");
+
+  return DoWithUpcastToF32(x, {F16}, [](XlaOp x) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_42(mht_42_v, 1472, "", "./tensorflow/compiler/xla/client/lib/math.cc", "lambda");
+ return Sin(x) / Cos(x); });
 }
 
 // Hyperbolic trigonometric functions.
@@ -1186,6 +1484,9 @@ XlaOp Tan(XlaOp x) {
 // log(2*x) = log(2) + log(x).  (Note this works because negative x never
 // overflows; x < -1 simply yields nan.  This is quite different than asinh!)
 XlaOp Acosh(XlaOp x) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_43(mht_43_v, 1487, "", "./tensorflow/compiler/xla/client/lib/math.cc", "Acosh");
+
   XlaBuilder* b = x.builder();
   return b->ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(auto shape, b->GetShape(x));
@@ -1224,6 +1525,9 @@ XlaOp Acosh(XlaOp x) {
 // the result as x + abs(x) = 0!  But we're saved by the fact that asinh(-x) =
 // -asinh(x).
 XlaOp Asinh(XlaOp x) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_44(mht_44_v, 1528, "", "./tensorflow/compiler/xla/client/lib/math.cc", "Asinh");
+
   XlaBuilder* b = x.builder();
   auto do_it = [&](XlaOp x) -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(auto shape, b->GetShape(x));
@@ -1265,6 +1569,9 @@ XlaOp Asinh(XlaOp x) {
   // These upcasts are not strictly necessary on all platforms to get within our
   // error tolerances, so we could relax this if it ever mattered.
   return DoWithUpcastToF32(x, {BF16, F16}, [&](XlaOp x) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_45(mht_45_v, 1572, "", "./tensorflow/compiler/xla/client/lib/math.cc", "lambda");
+
     return b->ReportErrorOrReturn(do_it(x));
   });
 }
@@ -1272,6 +1579,9 @@ XlaOp Asinh(XlaOp x) {
 // atanh(x) = 0.5 * log((1 + x) / (1 - x)) if abs(x) <= 1
 // atanh(x) = nan                          otherwise
 XlaOp Atanh(XlaOp x) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_46(mht_46_v, 1582, "", "./tensorflow/compiler/xla/client/lib/math.cc", "Atanh");
+
   XlaBuilder* b = x.builder();
   auto do_it = [&](XlaOp x) -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(auto shape, b->GetShape(x));
@@ -1286,7 +1596,10 @@ XlaOp Atanh(XlaOp x) {
     auto nan = FullLike(x, std::numeric_limits<float>::quiet_NaN());
     return Select(Gt(Abs(x), ScalarLike(x, 1)), nan, naive_result);
   };
-  return DoWithUpcastToF32(x, {BF16}, [&](XlaOp x) {  //
+  return DoWithUpcastToF32(x, {BF16}, [&](XlaOp x) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_47(mht_47_v, 1600, "", "./tensorflow/compiler/xla/client/lib/math.cc", "lambda");
+  //
     return b->ReportErrorOrReturn(do_it(x));
   });
 }
@@ -1302,7 +1615,13 @@ XlaOp Atanh(XlaOp x) {
 // correct answer of 3.40281961e+38 (0x7f7fffec) is very close to max-float, so
 // we deem this acceptable.
 XlaOp Cosh(XlaOp x) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_48(mht_48_v, 1618, "", "./tensorflow/compiler/xla/client/lib/math.cc", "Cosh");
+
   return DoWithUpcastToF32(x, {BF16, F16}, [](XlaOp x) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_49(mht_49_v, 1622, "", "./tensorflow/compiler/xla/client/lib/math.cc", "lambda");
+
     auto log_one_half = Log(ScalarLike(x, 0.5));
     return Exp(x + log_one_half) + Exp(-x + log_one_half);
   });
@@ -1319,6 +1638,9 @@ XlaOp Cosh(XlaOp x) {
 // correct answer of 3.40281961e+38 (0x7f7fffec) is very close to max-float, so
 // we deem this acceptable.
 XlaOp Sinh(XlaOp x) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_50(mht_50_v, 1641, "", "./tensorflow/compiler/xla/client/lib/math.cc", "Sinh");
+
   XlaBuilder* b = x.builder();
   auto do_it = [&](XlaOp x) -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(auto shape, b->GetShape(x));
@@ -1347,11 +1669,17 @@ XlaOp Sinh(XlaOp x) {
     return Select(Lt(Abs(x), one), small_sinh_result, large_sinh_result);
   };
   return DoWithUpcastToF32(x, {BF16, F16}, [&](XlaOp x) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_51(mht_51_v, 1672, "", "./tensorflow/compiler/xla/client/lib/math.cc", "lambda");
+
     return b->ReportErrorOrReturn(do_it(x));
   });
 }
 
 XlaOp MaybeConjugate(XlaOp x, bool conjugate) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_52(mht_52_v, 1680, "", "./tensorflow/compiler/xla/client/lib/math.cc", "MaybeConjugate");
+
   XlaBuilder* builder = x.builder();
   return builder->ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(Shape shape, builder->GetShape(x));
@@ -1362,6 +1690,9 @@ XlaOp MaybeConjugate(XlaOp x, bool conjugate) {
 }
 
 XlaOp NextAfter(XlaOp from, XlaOp to) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_53(mht_53_v, 1693, "", "./tensorflow/compiler/xla/client/lib/math.cc", "NextAfter");
+
   auto builder = from.builder();
   return builder->ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(auto shape, builder->GetShape(from));
@@ -1444,6 +1775,9 @@ XlaOp NextAfter(XlaOp from, XlaOp to) {
 // The following implementation follows Cephes' F32 and F64 implementation of
 // i0e.
 static XlaOp I0eImpl32(XlaOp x) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_54(mht_54_v, 1778, "", "./tensorflow/compiler/xla/client/lib/math.cc", "I0eImpl32");
+
   static const std::array<float, 18> kI0eCoeffsA{
       -1.30002500998624804212E-8f, 6.04699502254191894932E-8f,
       -2.67079385394061173391E-7f, 1.11738753912010371815E-6f,
@@ -1474,6 +1808,9 @@ static XlaOp I0eImpl32(XlaOp x) {
 }
 
 static XlaOp I0eImpl64(XlaOp x) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_55(mht_55_v, 1811, "", "./tensorflow/compiler/xla/client/lib/math.cc", "I0eImpl64");
+
   static const std::array<double, 30> kI0eCoeffsA{
       -4.41534164647933937950E-18, 3.33079451882223809783E-17,
       -2.43127984654795469359E-16, 1.71539128555513303061E-15,
@@ -1519,6 +1856,9 @@ static XlaOp I0eImpl64(XlaOp x) {
 }
 
 XlaOp BesselI0e(XlaOp x) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_56(mht_56_v, 1859, "", "./tensorflow/compiler/xla/client/lib/math.cc", "BesselI0e");
+
   auto& b = *x.builder();
   return b.ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_RETURN_IF_ERROR(EnsureOperandIsRealFp("BesselI0e", x));
@@ -1529,7 +1869,10 @@ XlaOp BesselI0e(XlaOp x) {
     // I0eF32Impl don't have enough precision when run with bf16 intermediates
     // (not surprising!), so upcast to f32 in this case.
     return DoWithUpcastToF32(x, {BF16, F16},
-                             [](XlaOp x) { return I0eImpl32(x); });
+                             [](XlaOp x) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_57(mht_57_v, 1873, "", "./tensorflow/compiler/xla/client/lib/math.cc", "lambda");
+ return I0eImpl32(x); });
   });
 }
 
@@ -1539,6 +1882,9 @@ XlaOp BesselI0e(XlaOp x) {
 // i1e.
 
 static XlaOp I1eImpl32(XlaOp x) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_58(mht_58_v, 1885, "", "./tensorflow/compiler/xla/client/lib/math.cc", "I1eImpl32");
+
   static const std::array<float, 17> kI1eCoeffsA{
       9.38153738649577178388E-9f, -4.44505912879632808065E-8f,
       2.00329475355213526229E-7f, -8.56872026469545474066E-7f,
@@ -1569,6 +1915,9 @@ static XlaOp I1eImpl32(XlaOp x) {
 }
 
 static XlaOp I1eImpl64(XlaOp x) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_59(mht_59_v, 1918, "", "./tensorflow/compiler/xla/client/lib/math.cc", "I1eImpl64");
+
   static const std::array<double, 29> kI1eCoeffsA{
       2.77791411276104639959E-18, -2.11142121435816608115E-17,
       1.55363195773620046921E-16, -1.10559694773538630805E-15,
@@ -1615,6 +1964,9 @@ static XlaOp I1eImpl64(XlaOp x) {
 }
 
 XlaOp BesselI1e(XlaOp x) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_60(mht_60_v, 1967, "", "./tensorflow/compiler/xla/client/lib/math.cc", "BesselI1e");
+
   auto& b = *x.builder();
   return b.ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_RETURN_IF_ERROR(EnsureOperandIsRealFp("BesselI1e", x));
@@ -1625,7 +1977,10 @@ XlaOp BesselI1e(XlaOp x) {
     // I1eF32Impl don't have enough precision when run with bf16 intermediates
     // (not surprising!), so upcast to f32 in this case.
     return DoWithUpcastToF32(x, {BF16, F16},
-                             [](XlaOp x) { return I1eImpl32(x); });
+                             [](XlaOp x) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_61(mht_61_v, 1981, "", "./tensorflow/compiler/xla/client/lib/math.cc", "lambda");
+ return I1eImpl32(x); });
   });
 }
 
@@ -1637,6 +1992,10 @@ static XlaOp LentzThompsonBarnettAlgorithm(
     const ForEachIndexBodyFunction& nth_partial_numerator,
     const ForEachIndexBodyFunction& nth_partial_denominator,
     absl::Span<const XlaOp> inputs, absl::string_view name) {
+   std::vector<std::string> mht_62_v;
+   mht_62_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_62(mht_62_v, 1996, "", "./tensorflow/compiler/xla/client/lib/math.cc", "LentzThompsonBarnettAlgorithm");
+
   auto& b = *inputs.front().builder();
   return b.ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_RET_CHECK(num_iterations < INT32_MAX);
@@ -1735,6 +2094,9 @@ static XlaOp LentzThompsonBarnettAlgorithm(
 }
 
 XlaOp RegularizedIncompleteBeta(XlaOp a, XlaOp b, XlaOp x) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_63(mht_63_v, 2097, "", "./tensorflow/compiler/xla/client/lib/math.cc", "RegularizedIncompleteBeta");
+
   auto& builder = *x.builder();
   return builder.ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(Shape shape, builder.GetShape(a));
@@ -1862,6 +2224,9 @@ XlaOp RegularizedIncompleteBeta(XlaOp a, XlaOp b, XlaOp x) {
 }
 
 XlaOp Polygamma(XlaOp n, XlaOp x) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_64(mht_64_v, 2227, "", "./tensorflow/compiler/xla/client/lib/math.cc", "Polygamma");
+
   auto& builder = *x.builder();
   auto doit = [](XlaOp n, XlaOp x, PrimitiveType type) -> XlaOp {
     XlaOp n_plus_one = n + ScalarLike(n, 1.);
@@ -1903,6 +2268,9 @@ XlaOp Polygamma(XlaOp n, XlaOp x) {
 }
 
 XlaOp Zeta(XlaOp x, XlaOp q) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSclientPSlibPSmathDTcc mht_65(mht_65_v, 2271, "", "./tensorflow/compiler/xla/client/lib/math.cc", "Zeta");
+
   auto& builder = *x.builder();
   auto doit = [&builder](XlaOp x, XlaOp q, PrimitiveType type) -> XlaOp {
     // (2k) ! / B_{2k}, where B_{2k} are the Bernoulli numbers.

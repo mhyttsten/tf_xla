@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -55,11 +223,17 @@ namespace {
 class SplitEventTracker {
  public:
   void AddStart(TraceMeRecorder::Event&& event) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_0(mht_0_v, 226, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "AddStart");
+
     DCHECK(event.IsStart());
     start_events_.emplace(event.ActivityId(), std::move(event));
   }
 
   void AddEnd(TraceMeRecorder::Event* event) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_1(mht_1_v, 234, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "AddEnd");
+
     DCHECK(event->IsEnd());
     if (!FindStartAndMerge(event)) {
       end_events_.push_back(event);
@@ -67,6 +241,9 @@ class SplitEventTracker {
   }
 
   void HandleCrossThreadEvents() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_2(mht_2_v, 244, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "HandleCrossThreadEvents");
+
     for (auto* event : end_events_) {
       FindStartAndMerge(event);
     }
@@ -75,6 +252,9 @@ class SplitEventTracker {
  private:
   // Finds the start of the given event and merges data into it.
   bool FindStartAndMerge(TraceMeRecorder::Event* event) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_3(mht_3_v, 255, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "FindStartAndMerge");
+
     auto iter = start_events_.find(event->ActivityId());
     if (iter == start_events_.end()) return false;
     auto& start_event = iter->second;
@@ -122,13 +302,19 @@ class EventQueue {
       : start_block_(new Block{/*start=*/0, /*next=*/nullptr}),
         start_(start_block_->start),
         end_block_(start_block_),
-        end_(start_) {}
+        end_(start_) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_4(mht_4_v, 306, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "EventQueue");
+}
 
   // Memory should be deallocated and trace events destroyed on destruction.
   // This doesn't require global lock as this discards all the stored trace
   // events and we assume of destruction of this instance only after the last
   // Push() has been called.
   ~EventQueue() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_5(mht_5_v, 315, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "~EventQueue");
+
     Clear();
     DCHECK(Empty());
     delete end_block_;
@@ -136,6 +322,9 @@ class EventQueue {
 
   // Add a new event to the back of the queue. Fast and lock-free.
   void Push(TraceMeRecorder::Event&& event) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_6(mht_6_v, 325, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "Push");
+
     size_t end = end_.load(std::memory_order_relaxed);
     new (&end_block_->events[end++ - end_block_->start].event)
         TraceMeRecorder::Event(std::move(event));
@@ -149,6 +338,9 @@ class EventQueue {
 
   // Removes all events from the queue.
   void Clear() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_7(mht_7_v, 341, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "Clear");
+
     size_t end = end_.load(std::memory_order_acquire);
     while (start_ != end) {
       Pop();
@@ -187,12 +379,18 @@ class EventQueue {
  private:
   // Returns true if the queue is empty at the time of invocation.
   bool Empty() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_8(mht_8_v, 382, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "Empty");
+
     return (start_ == end_.load(std::memory_order_acquire));
   }
 
   // Remove one event off the front of the queue and return it.
   // REQUIRES: The queue must not be empty.
   TraceMeRecorder::Event Pop() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_9(mht_9_v, 391, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "Pop");
+
     DCHECK(!Empty());
     // Move the next event into the output.
     auto& event = start_block_->events[start_++ - start_block_->start].event;
@@ -222,7 +420,10 @@ class EventQueue {
     // Must also destroy manually, as the block may not fill entirely.
     union MaybeEvent {
       MaybeEvent() {}
-      ~MaybeEvent() {}
+      ~MaybeEvent() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_10(mht_10_v, 424, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "~MaybeEvent");
+}
       TraceMeRecorder::Event event;
     } events[kNumSlots];
   };
@@ -251,21 +452,39 @@ class TraceMeRecorder::ThreadLocalRecorder {
     env->GetCurrentThreadName(&info_.name);
   }
 
-  uint32 ThreadId() const { return info_.tid; }
+  uint32 ThreadId() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_11(mht_11_v, 456, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "ThreadId");
+ return info_.tid; }
 
-  bool IsActive() const { return active_; }
-  void SetActive(bool active) { active_ = active; }
+  bool IsActive() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_12(mht_12_v, 461, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "IsActive");
+ return active_; }
+  void SetActive(bool active) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_13(mht_13_v, 465, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "SetActive");
+ active_ = active; }
 
   // Record is only called from the owner thread.
-  void Record(TraceMeRecorder::Event&& event) { queue_.Push(std::move(event)); }
+  void Record(TraceMeRecorder::Event&& event) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_14(mht_14_v, 471, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "Record");
+ queue_.Push(std::move(event)); }
 
   // Clear is called from the control thread when tracing starts to remove any
   // elements added due to Record racing with Consume.
-  void Clear() { queue_.Clear(); }
+  void Clear() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_15(mht_15_v, 478, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "Clear");
+ queue_.Clear(); }
 
   // Consume is called from the control thread when tracing stops.
   TF_MUST_USE_RESULT TraceMeRecorder::ThreadEvents Consume(
       SplitEventTracker* split_event_tracker) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_16(mht_16_v, 485, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "Consume");
+
     return {info_, queue_.Consume(split_event_tracker)};
   }
 
@@ -287,10 +506,16 @@ class TraceMeRecorder::ThreadLocalRecorderWrapper {
   }
 
   void Record(TraceMeRecorder::Event&& event) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_17(mht_17_v, 509, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "Record");
+
     recorder_->Record(std::move(event));
   }
 
   ~ThreadLocalRecorderWrapper() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_18(mht_18_v, 516, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "~ThreadLocalRecorderWrapper");
+
     recorder_->SetActive(false);
     TraceMeRecorder::Get()->UnregisterThread(recorder_->ThreadId());
   }
@@ -303,17 +528,26 @@ class TraceMeRecorder::ThreadLocalRecorderWrapper {
 };
 
 /*static*/ TraceMeRecorder* TraceMeRecorder::Get() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_19(mht_19_v, 531, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "TraceMeRecorder::Get");
+
   static TraceMeRecorder* singleton = new TraceMeRecorder;
   return singleton;
 }
 
 void TraceMeRecorder::RegisterThread(
     uint32 tid, std::shared_ptr<ThreadLocalRecorder> thread) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_20(mht_20_v, 540, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "TraceMeRecorder::RegisterThread");
+
   mutex_lock lock(mutex_);
   threads_.insert_or_assign(tid, std::move(thread));
 }
 
 void TraceMeRecorder::UnregisterThread(uint32 tid) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_21(mht_21_v, 548, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "TraceMeRecorder::UnregisterThread");
+
   // If tracing is active, keep the ThreadLocalRecorder alive.
   if (Active()) return;
   // If tracing is inactive, destroy the ThreadLocalRecorder.
@@ -326,6 +560,9 @@ void TraceMeRecorder::UnregisterThread(uint32 tid) {
 // registered/unregistered. This ensures only the control thread calls
 // ThreadLocalRecorder::Clear().
 void TraceMeRecorder::Clear() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_22(mht_22_v, 563, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "TraceMeRecorder::Clear");
+
   for (auto& id_and_recorder : threads_) {
     auto& recorder = id_and_recorder.second;
     recorder->Clear();
@@ -341,6 +578,9 @@ void TraceMeRecorder::Clear() {
 // registered/unregistered. This ensures only the control thread calls
 // ThreadLocalRecorder::Consume().
 TraceMeRecorder::Events TraceMeRecorder::Consume() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_23(mht_23_v, 581, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "TraceMeRecorder::Consume");
+
   TraceMeRecorder::Events result;
   result.reserve(threads_.size());
   SplitEventTracker split_event_tracker;
@@ -364,6 +604,9 @@ TraceMeRecorder::Events TraceMeRecorder::Consume() {
 }
 
 bool TraceMeRecorder::StartRecording(int level) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_24(mht_24_v, 607, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "TraceMeRecorder::StartRecording");
+
   level = std::max(0, level);
   mutex_lock lock(mutex_);
   // Change trace_level_ while holding mutex_.
@@ -378,11 +621,17 @@ bool TraceMeRecorder::StartRecording(int level) {
 }
 
 void TraceMeRecorder::Record(Event&& event) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_25(mht_25_v, 624, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "TraceMeRecorder::Record");
+
   static thread_local ThreadLocalRecorderWrapper thread_local_recorder;
   thread_local_recorder.Record(std::move(event));
 }
 
 TraceMeRecorder::Events TraceMeRecorder::StopRecording() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_26(mht_26_v, 632, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "TraceMeRecorder::StopRecording");
+
   TraceMeRecorder::Events events;
   mutex_lock lock(mutex_);
   // Change trace_level_ while holding mutex_.
@@ -394,6 +643,9 @@ TraceMeRecorder::Events TraceMeRecorder::StopRecording() {
 }
 
 /*static*/ int64_t TraceMeRecorder::NewActivityId() {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSprofilerPSinternalPScpuPStraceme_recorderDTcc mht_27(mht_27_v, 646, "", "./tensorflow/core/profiler/internal/cpu/traceme_recorder.cc", "TraceMeRecorder::NewActivityId");
+
   // Activity IDs: To avoid contention over a counter, the top 32 bits identify
   // the originating thread, the bottom 32 bits name the event within a thread.
   // IDs may be reused after 4 billion events on one thread, or 2 billion

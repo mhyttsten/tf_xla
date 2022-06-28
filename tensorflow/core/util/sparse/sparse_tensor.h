@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_CORE_UTIL_SPARSE_SPARSE_TENSOR_H_
 #define TENSORFLOW_CORE_UTIL_SPARSE_SPARSE_TENSOR_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <limits>
 #include <numeric>
@@ -56,36 +224,57 @@ class SparseTensor {
   static Status Create(Tensor ix, Tensor vals, const TensorShape& shape,
                        const VarDimArray order, SparseTensor* result);
 
-  SparseTensor() : dims_(0) {}
+  SparseTensor() : dims_(0) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh mht_0(mht_0_v, 228, "", "./tensorflow/core/util/sparse/sparse_tensor.h", "SparseTensor");
+}
 
   ABSL_DEPRECATED("Use Create() functions instead of constructors directly.")
   SparseTensor(Tensor ix, Tensor vals, const TensorShape& shape)
       : SparseTensor(std::move(ix), std::move(vals), TensorShapeToVector(shape),
-                     UndefinedOrder(TensorShapeToVector(shape))) {}
+                     UndefinedOrder(TensorShapeToVector(shape))) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh mht_1(mht_1_v, 236, "", "./tensorflow/core/util/sparse/sparse_tensor.h", "SparseTensor");
+}
 
   ABSL_DEPRECATED("Use Create() functions instead of constructors directly.")
   SparseTensor(Tensor ix, Tensor vals, const VarDimArray shape)
       : SparseTensor(std::move(ix), std::move(vals), shape,
-                     UndefinedOrder(shape)) {}
+                     UndefinedOrder(shape)) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh mht_2(mht_2_v, 244, "", "./tensorflow/core/util/sparse/sparse_tensor.h", "SparseTensor");
+}
 
   ABSL_DEPRECATED("use Create() functions instead of constructors directly.")
   SparseTensor(Tensor ix, Tensor vals, const TensorShape& shape,
                const VarDimArray order)
       : SparseTensor(std::move(ix), std::move(vals), TensorShapeToVector(shape),
-                     order) {}
+                     order) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh mht_3(mht_3_v, 253, "", "./tensorflow/core/util/sparse/sparse_tensor.h", "SparseTensor");
+}
 
   ABSL_DEPRECATED("Use Create() functions instead of constructors directly.")
   SparseTensor(Tensor ix, Tensor vals, const VarDimArray shape,
                const VarDimArray order);
 
   SparseTensor(const SparseTensor& other)
-      : SparseTensor(other.ix_, other.vals_, other.shape_, other.order_) {}
+      : SparseTensor(other.ix_, other.vals_, other.shape_, other.order_) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh mht_4(mht_4_v, 263, "", "./tensorflow/core/util/sparse/sparse_tensor.h", "SparseTensor");
+}
 
   SparseTensor(SparseTensor&& other)
       : SparseTensor(std::move(other.ix_), std::move(other.vals_),
-                     std::move(other.shape_), std::move(other.order_)) {}
+                     std::move(other.shape_), std::move(other.order_)) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh mht_5(mht_5_v, 270, "", "./tensorflow/core/util/sparse/sparse_tensor.h", "SparseTensor");
+}
 
   SparseTensor& operator=(const SparseTensor& other) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh mht_6(mht_6_v, 275, "", "./tensorflow/core/util/sparse/sparse_tensor.h", "=");
+
     ix_ = other.ix_;
     vals_ = other.vals_;
     shape_ = other.shape_;
@@ -95,6 +284,9 @@ class SparseTensor {
   }
 
   SparseTensor& operator=(SparseTensor&& other) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh mht_7(mht_7_v, 287, "", "./tensorflow/core/util/sparse/sparse_tensor.h", "=");
+
     ix_ = std::move(other.ix_);
     vals_ = std::move(other.vals_);
     shape_ = std::move(other.shape_);
@@ -103,21 +295,42 @@ class SparseTensor {
     return *this;
   }
 
-  std::size_t num_entries() const { return ix_.dim_size(0); }
+  std::size_t num_entries() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh mht_8(mht_8_v, 299, "", "./tensorflow/core/util/sparse/sparse_tensor.h", "num_entries");
+ return ix_.dim_size(0); }
 
-  int dims() const { return shape_.size(); }
+  int dims() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh mht_9(mht_9_v, 304, "", "./tensorflow/core/util/sparse/sparse_tensor.h", "dims");
+ return shape_.size(); }
 
-  const Tensor& indices() const { return ix_; }
+  const Tensor& indices() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh mht_10(mht_10_v, 309, "", "./tensorflow/core/util/sparse/sparse_tensor.h", "indices");
+ return ix_; }
 
-  const Tensor& values() const { return vals_; }
+  const Tensor& values() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh mht_11(mht_11_v, 314, "", "./tensorflow/core/util/sparse/sparse_tensor.h", "values");
+ return vals_; }
 
-  DataType dtype() const { return vals_.dtype(); }
+  DataType dtype() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh mht_12(mht_12_v, 319, "", "./tensorflow/core/util/sparse/sparse_tensor.h", "dtype");
+ return vals_.dtype(); }
 
   Status IndicesValid() const;
 
-  VarDimArray shape() const { return shape_; }
+  VarDimArray shape() const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh mht_13(mht_13_v, 326, "", "./tensorflow/core/util/sparse/sparse_tensor.h", "shape");
+ return shape_; }
 
-  VarDimArray order() const { return order_; }
+  VarDimArray order() const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh mht_14(mht_14_v, 331, "", "./tensorflow/core/util/sparse/sparse_tensor.h", "order");
+ return order_; }
 
   // Resorts the indices and values according to the dimensions in order.
   template <typename T>
@@ -130,6 +343,9 @@ class SparseTensor {
   //
   // See the README.md in this directory for more usage information.
   GroupIterable group(const VarDimArray& group_ix) const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh mht_15(mht_15_v, 346, "", "./tensorflow/core/util/sparse/sparse_tensor.h", "group");
+
     DCHECK_LE(group_ix.size(), dims_);
     for (std::size_t di = 0; di < group_ix.size(); ++di) {
       DCHECK_GE(group_ix[di], 0) << "Group dimension out of range";
@@ -193,10 +409,16 @@ class SparseTensor {
 
  private:
   static inline ShapeArray UndefinedOrder(const VarDimArray shape) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh mht_16(mht_16_v, 412, "", "./tensorflow/core/util/sparse/sparse_tensor.h", "UndefinedOrder");
+
     return ShapeArray(shape.size(), -1);
   }
 
   static inline ShapeArray TensorShapeToVector(const TensorShape& shape) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh mht_17(mht_17_v, 419, "", "./tensorflow/core/util/sparse/sparse_tensor.h", "TensorShapeToVector");
+
     ShapeArray vec(shape.dims());
     for (int i = 0; i < shape.dims(); ++i) vec[i] = shape.dim_size(i);
     return vec;
@@ -221,6 +443,9 @@ class SparseTensor {
   // Helper for Split() that returns the slice index.
   static inline int GetSliceIndex(const int dim, const int split_size,
                                   const int residual) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh mht_18(mht_18_v, 446, "", "./tensorflow/core/util/sparse/sparse_tensor.h", "GetSliceIndex");
+
     DCHECK_GT(split_size, 0);
     DCHECK_GE(dim, 0);
     if (residual == 0) return dim / split_size;
@@ -235,6 +460,9 @@ class SparseTensor {
   // Helper for Split() that returns the dimension in the slice.
   static inline int GetDimensionInSlice(const int dim, const int split_size,
                                         const int residual) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh mht_19(mht_19_v, 463, "", "./tensorflow/core/util/sparse/sparse_tensor.h", "GetDimensionInSlice");
+
     DCHECK_GT(split_size, 0);
     DCHECK_GE(dim, 0);
     if (residual == 0) return dim % split_size;
@@ -249,6 +477,9 @@ class SparseTensor {
   // Helper for Split() that returns the shape given a slice index.
   static inline int GetSliceShape(const int slice_index, const int split_size,
                                   const int residual) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh mht_20(mht_20_v, 480, "", "./tensorflow/core/util/sparse/sparse_tensor.h", "GetSliceShape");
+
     DCHECK_GT(split_size, 0);
     DCHECK_GE(slice_index, 0);
     if (residual == 0) return split_size;
@@ -271,6 +502,9 @@ class SparseTensor {
 // temporary space.
 template <typename T>
 inline void SparseTensor::Reorder(const VarDimArray& order) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh mht_21(mht_21_v, 505, "", "./tensorflow/core/util/sparse/sparse_tensor.h", "SparseTensor::Reorder");
+
   DCHECK_EQ(DataTypeToEnum<T>::v(), dtype())
       << "Reorder requested with the wrong datatype";
   DCHECK_EQ(order.size(), dims_) << "Order length must be SparseTensor rank";
@@ -331,6 +565,9 @@ inline void SparseTensor::Reorder(const VarDimArray& order) {
 template <typename T>
 inline bool SparseTensor::ValidateAndInitializeToDense(Tensor* out,
                                                        bool initialize) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh mht_22(mht_22_v, 568, "", "./tensorflow/core/util/sparse/sparse_tensor.h", "SparseTensor::ValidateAndInitializeToDense");
+
   DCHECK_EQ(DataTypeToEnum<T>::v(), dtype())
       << "ToDense requested with the wrong datatype";
 
@@ -359,6 +596,9 @@ inline bool SparseTensor::ValidateAndInitializeToDense(Tensor* out,
 
 template <typename T>
 inline bool SparseTensor::ToDense(Tensor* out, bool initialize) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh mht_23(mht_23_v, 599, "", "./tensorflow/core/util/sparse/sparse_tensor.h", "SparseTensor::ToDense");
+
   if (!ValidateAndInitializeToDense<T>(out, initialize)) return false;
 
   auto out_t = out->flat<T>();
@@ -421,6 +661,9 @@ inline bool SparseTensor::ToDense(Tensor* out, bool initialize) {
 template <typename T>
 inline SparseTensor SparseTensor::Concat(
     const gtl::ArraySlice<SparseTensor>& tensors) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh mht_24(mht_24_v, 664, "", "./tensorflow/core/util/sparse/sparse_tensor.h", "SparseTensor::Concat");
+
   DCHECK_GE(tensors.size(), size_t{1}) << "Cannot concat 0 SparseTensors";
   const int dims = tensors[0].dims_;
   DCHECK_GE(dims, 1) << "Cannot concat 0-dimensional SparseTensors";
@@ -496,6 +739,9 @@ template <typename T>
 inline Status SparseTensor::Split(const SparseTensor& input_tensor,
                                   const int split_dim, const int num_split,
                                   std::vector<SparseTensor>* result) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh mht_25(mht_25_v, 742, "", "./tensorflow/core/util/sparse/sparse_tensor.h", "SparseTensor::Split");
+
   std::vector<Tensor> output_indices;
   std::vector<Tensor> output_values;
   std::vector<TensorShape> output_shapes;
@@ -581,6 +827,9 @@ template <typename T>
 inline StatusOr<SparseTensor> SparseTensor::Slice(
     const SparseTensor& input_tensor, const gtl::ArraySlice<int64_t> start,
     const gtl::ArraySlice<int64_t> size) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSutilPSsparsePSsparse_tensorDTh mht_26(mht_26_v, 830, "", "./tensorflow/core/util/sparse/sparse_tensor.h", "SparseTensor::Slice");
+
   TensorShape output_shape(input_tensor.shape());
 
   const int dims = input_tensor.dims();

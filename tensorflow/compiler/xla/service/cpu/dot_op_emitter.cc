@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -59,6 +227,9 @@ namespace cpu {
 namespace {
 // Returns true if we should call into multi-threaded Eigen routines.
 bool ShouldUseMultiThreadedEigen(const HloModuleConfig& config) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_0(mht_0_v, 230, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "ShouldUseMultiThreadedEigen");
+
   return config.debug_options().xla_cpu_multi_thread_eigen();
 }
 
@@ -74,6 +245,9 @@ struct DotInfo {
   DotInfo() = default;
 
   explicit DotInfo(const HloInstruction& instr) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_1(mht_1_v, 248, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "DotInfo");
+
     CHECK_EQ(instr.opcode(), HloOpcode::kDot);
     lhs_shape = instr.operand(0)->shape();
     rhs_shape = instr.operand(1)->shape();
@@ -188,6 +362,9 @@ class DotOpEmitter {
   // When doing a tiled GEMV in LLVM IR, a "tile" consists of this many vector
   // registers.
   int64_t GetGemvTilingFactor() const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_2(mht_2_v, 365, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "GetGemvTilingFactor");
+
     const int64_t kDefaultTilingFactor = 8;
     return options::LlvmIrGemvTilingFactor(hlo_module_config_)
         .value_or(kDefaultTilingFactor);
@@ -249,9 +426,16 @@ DotOpEmitter::DotOpEmitter(
       b_(b),
       mlir_context_(mlir_context),
       hlo_module_config_(hlo_module_config),
-      target_machine_features_(target_machine_features) {}
+      target_machine_features_(target_machine_features) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("dot_hlo_name: \"" + dot_hlo_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_3(mht_3_v, 431, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "DotOpEmitter::DotOpEmitter");
+}
 
 Status DotOpEmitter::EmitLinalgMatmul() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_4(mht_4_v, 436, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "DotOpEmitter::EmitLinalgMatmul");
+
   Shape operand_shapes[] = {dot_info_.lhs_shape, dot_info_.rhs_shape};
   llvm::Value* operand_ptrs[] = {lhs_array_.GetBasePointer(),
                                  rhs_array_.GetBasePointer()};
@@ -316,6 +500,9 @@ Status DotOpEmitter::EmitLinalgMatmul() {
                 {b_exprs, c_exprs, parallel_exprs}),
             /*iteratorTypes=*/iteratorTypes,
             [](mlir::OpBuilder& b, mlir::Location loc, mlir::ValueRange args) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_5(mht_5_v, 503, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "lambda");
+
               mlir::ArithBuilder ab(b, loc);
               mlir::Value mul = ab.mul(args[0], args[1]);
               mlir::Value add = ab.add(mul, args[2]);
@@ -362,6 +549,9 @@ Status DotOpEmitter::EmitLinalgMatmul() {
 }
 
 void DotOpEmitter::EmitTiledLlvmIrGemm() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_6(mht_6_v, 552, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "DotOpEmitter::EmitTiledLlvmIrGemm");
+
   PrimitiveType primitive_type = dot_info_.result_shape.element_type();
   MatMultDims mat_mult_dims = GetMatMultDims();
 
@@ -401,6 +591,9 @@ void DotOpEmitter::EmitTiledLlvmIrGemm() {
 }
 
 void DotOpEmitter::EmitTiledLlvmIrGemv() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_7(mht_7_v, 594, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "DotOpEmitter::EmitTiledLlvmIrGemv");
+
   PrimitiveType primitive_type = dot_info_.result_shape.element_type();
 
   CHECK(primitive_util::IsFloatingPointType(primitive_type) ||
@@ -515,6 +708,9 @@ void DotOpEmitter::EmitTiledLlvmIrGemv() {
 }
 
 Status DotOpEmitter::Emit() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_8(mht_8_v, 711, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "DotOpEmitter::Emit");
+
   // The dot operation performs a sum of products over dimension 0 of the left
   // hand side operand and dimension 1 of the right hand side operand.
   //
@@ -570,6 +766,9 @@ Status DotOpEmitter::Emit() {
 }
 
 void DotOpEmitter::EmitNaiveLlvmIrGemm() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_9(mht_9_v, 769, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "DotOpEmitter::EmitNaiveLlvmIrGemm");
+
   CHECK_EQ(addend_array_, nullptr);
 
   const Shape& lhs_shape = lhs_array_.GetShape();
@@ -659,8 +858,14 @@ void DotOpEmitter::EmitNaiveLlvmIrGemm() {
   llvm::Value* accum = b_->CreateLoad(accum_type, accum_address);
   llvm::Value* updated_accum;
   if (ShapeUtil::ElementIsComplex(lhs_shape)) {
-    auto real = [&](llvm::Value* x) { return b_->CreateExtractValue(x, {0}); };
-    auto imag = [&](llvm::Value* x) { return b_->CreateExtractValue(x, {1}); };
+    auto real = [&](llvm::Value* x) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_10(mht_10_v, 862, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "lambda");
+ return b_->CreateExtractValue(x, {0}); };
+    auto imag = [&](llvm::Value* x) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_11(mht_11_v, 866, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "lambda");
+ return b_->CreateExtractValue(x, {1}); };
     llvm::Value* product_real =
         b_->CreateFSub(b_->CreateFMul(real(lhs_element), real(rhs_element)),
                        b_->CreateFMul(imag(lhs_element), imag(rhs_element)));
@@ -716,6 +921,9 @@ void DotOpEmitter::EmitNaiveLlvmIrGemm() {
 }
 
 Status DotOpEmitter::EmitScalarDot() {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_12(mht_12_v, 924, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "DotOpEmitter::EmitScalarDot");
+
   // A scalar dot is just a scalar multiply.
   llvm::Value* result;
   // Use the same index_type for all tensor accesses in the same kernel.
@@ -727,10 +935,16 @@ Status DotOpEmitter::EmitScalarDot() {
       rhs_array_.EmitReadArrayElement(/*index=*/element_index, b_);
   if (ShapeUtil::ElementIsComplex(lhs_array_.GetShape())) {
     auto get_real = [&](llvm::Value* x) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_13(mht_13_v, 938, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "lambda");
+
       return b_->CreateExtractValue(x, {0});
     };
 
     auto get_imag = [&](llvm::Value* x) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_14(mht_14_v, 945, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "lambda");
+
       return b_->CreateExtractValue(x, {1});
     };
 
@@ -751,6 +965,9 @@ Status DotOpEmitter::EmitScalarDot() {
 }
 
 Status DotOpEmitter::EmitCallToRuntime() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_15(mht_15_v, 968, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "DotOpEmitter::EmitCallToRuntime");
+
   // The signature of the Eigen runtime matmul function is:
   //
   //   (void)(void* run_options, float* out, float* lhs, float* rhs,
@@ -871,6 +1088,9 @@ Status DotOpEmitter::EmitCallToRuntime() {
 }
 
 DotOpEmitter::MatMultDims DotOpEmitter::GetMatMultDims() const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_16(mht_16_v, 1091, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "DotOpEmitter::GetMatMultDims");
+
   CHECK_LE(dot_info_.result_shape.dimensions_size(), 2);
 
   const Shape& lhs_shape = lhs_array_.GetShape();
@@ -878,6 +1098,9 @@ DotOpEmitter::MatMultDims DotOpEmitter::GetMatMultDims() const {
   const DotDimensionNumbers& dim_nums = dot_info_.dim_nums;
 
   auto is_column_major = [](const Shape& shape) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_17(mht_17_v, 1101, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "lambda");
+
     return shape.rank() > 1 && LayoutUtil::Minor(shape.layout(), 0) == 0;
   };
 
@@ -950,9 +1173,15 @@ absl::optional<int64_t> ProfitableToMakeDotOperandColumnMajor(
 
 namespace {
 // Return whether the given shape is rank 2.
-bool IsRank2(const Shape& shape) { return shape.rank() == 2; }
+bool IsRank2(const Shape& shape) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_18(mht_18_v, 1177, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "IsRank2");
+ return shape.rank() == 2; }
 
 bool IsSimpleLayout(const Layout& layout) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_19(mht_19_v, 1182, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "IsSimpleLayout");
+
   return layout.tiles().empty() && layout.format() == DENSE;
 }
 
@@ -961,6 +1190,9 @@ bool IsSimpleLayout(const Layout& layout) {
 bool AreGemmShapes(const Shape& lhs_shape, const Shape& rhs_shape,
                    const Shape& output_shape,
                    const TargetMachineFeatures& target_machine_features) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_20(mht_20_v, 1193, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "AreGemmShapes");
+
   CHECK(!lhs_shape.has_layout() || IsSimpleLayout(lhs_shape.layout()))
       << lhs_shape.DebugString();
   CHECK(!rhs_shape.has_layout() || IsSimpleLayout(rhs_shape.layout()))
@@ -983,6 +1215,9 @@ bool AreGemmShapes(const Shape& lhs_shape, const Shape& rhs_shape,
 
 bool IsAlignedGemm(const DotInfo& dot_info,
                    const TargetMachineFeatures& target_machine_features) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_21(mht_21_v, 1218, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "IsAlignedGemm");
+
   if (ShapeUtil::IsZeroElementArray(dot_info.lhs_shape) ||
       ShapeUtil::IsZeroElementArray(dot_info.rhs_shape)) {
     return false;
@@ -995,6 +1230,9 @@ bool IsAlignedGemm(const DotInfo& dot_info,
 bool CanEmitTiledLlvmIrGemm(
     const HloModuleConfig& config, const DotInfo& dot_info,
     const TargetMachineFeatures& target_machine_features) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_22(mht_22_v, 1233, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "CanEmitTiledLlvmIrGemm");
+
   CHECK(IsAlignedGemm(dot_info, target_machine_features));
 
   if (ShouldUseMultiThreadedEigen(config)) {
@@ -1036,6 +1274,9 @@ bool CanEmitTiledLlvmIrGemm(
 DotImplementationStrategy GetDotImplementationStrategy(
     const HloModuleConfig& config, const DotInfo& dot_info,
     const TargetMachineFeatures& target_machine_features) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_23(mht_23_v, 1277, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "GetDotImplementationStrategy");
+
   PrimitiveType element_type = dot_info.result_shape.element_type();
   // Any Matrix-Vector product of floating point or integral type, or
   // a transpose-dot fusion of the same can be lowered to a tiled LLVM
@@ -1080,6 +1321,10 @@ Status EmitNonBatchDotOperation(
     llvm::Value* executable_run_options_value, llvm::IRBuilder<>* b,
     mlir::MLIRContext* mlir_context, const HloModuleConfig& hlo_module_config,
     const TargetMachineFeatures& target_machine_features) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("hlo_name: \"" + hlo_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_24(mht_24_v, 1325, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "EmitNonBatchDotOperation");
+
   PrimitiveType type = target_array.GetShape().element_type();
   TF_RET_CHECK(PRED == type || S8 == type || U8 == type || S16 == type ||
                U16 == type || S32 == type || U32 == type || S64 == type ||
@@ -1093,6 +1338,9 @@ Status EmitNonBatchDotOperation(
 }
 
 Shape DropFirstDim(const Shape& shape) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_25(mht_25_v, 1341, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "DropFirstDim");
+
   absl::Span<int64_t const> array_shape_dims(shape.dimensions());
   array_shape_dims.remove_prefix(1);
   return ShapeUtil::MakeShapeWithDescendingLayout(shape.element_type(),
@@ -1100,6 +1348,9 @@ Shape DropFirstDim(const Shape& shape) {
 }
 
 Shape CollapseFirstNDims(const Shape& shape, int64_t n) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_26(mht_26_v, 1351, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "CollapseFirstNDims");
+
   absl::Span<int64_t const> input_shape_dims(shape.dimensions());
   int64_t prefix_dim =
       std::accumulate(input_shape_dims.begin(), input_shape_dims.begin() + n,
@@ -1114,6 +1365,9 @@ Shape CollapseFirstNDims(const Shape& shape, int64_t n) {
 
 llvm_ir::IrArray CollapseFirstNDims(llvm::IRBuilder<>* b,
                                     const llvm_ir::IrArray& array, int64_t n) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_27(mht_27_v, 1368, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "CollapseFirstNDims");
+
   llvm::Module* module = b->GetInsertBlock()->getParent()->getParent();
   const Shape& shape = array.GetShape();
   CHECK(shape.has_layout() &&
@@ -1127,6 +1381,9 @@ llvm_ir::IrArray CollapseFirstNDims(llvm::IRBuilder<>* b,
 }
 
 Status ValidateDotDimensionNumbers(const DotDimensionNumbers& dim_numbers) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_28(mht_28_v, 1384, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "ValidateDotDimensionNumbers");
+
   // Checks some invariants that do not hold in general, but DotDecomposer
   // should have established for us.  This is just a debugging aid.
   TF_RET_CHECK(dim_numbers.lhs_contracting_dimensions_size() == 1);
@@ -1144,6 +1401,9 @@ Status ValidateDotDimensionNumbers(const DotDimensionNumbers& dim_numbers) {
 llvm_ir::IrArray SliceOutInnerArray(llvm_ir::IrArray outer_array,
                                     llvm::Value* batch_index,
                                     llvm::IRBuilder<>* b) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_29(mht_29_v, 1404, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "SliceOutInnerArray");
+
   llvm::Module* module = b->GetInsertBlock()->getParent()->getParent();
 
   Shape inner_shape = DropFirstDim(outer_array.GetShape());
@@ -1165,6 +1425,9 @@ Status EmitBatchDotOperation(
     llvm::Value* executable_run_options_value, llvm::IRBuilder<>* b,
     mlir::MLIRContext* mlir_context, const HloModuleConfig& hlo_module_config,
     const TargetMachineFeatures& target_machine_features) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_30(mht_30_v, 1428, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "EmitBatchDotOperation");
+
   TF_RETURN_IF_ERROR(ValidateDotDimensionNumbers(dot.dot_dimension_numbers()));
 
   // Lower a batch dot into a sequence of non-batch dot operations.
@@ -1227,6 +1490,9 @@ Status EmitBatchDotOperation(
 }
 
 bool IsBatchDot(const HloInstruction& instr) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_31(mht_31_v, 1493, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "IsBatchDot");
+
   if (auto* dot_instr = DynCast<HloDotInstruction>(&instr)) {
     return dot_instr->dot_dimension_numbers().lhs_batch_dimensions_size() > 0;
   }
@@ -1238,6 +1504,9 @@ bool IsBatchDot(const HloInstruction& instr) {
 bool DotImplementationCanHandleTranspose(
     const HloInstruction& dot_instr,
     const TargetMachineFeatures& target_machine_features) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_32(mht_32_v, 1507, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "DotImplementationCanHandleTranspose");
+
   DotImplementationStrategy impl_strategy =
       GetDotImplementationStrategy(dot_instr.parent()->parent()->config(),
                                    DotInfo(dot_instr), target_machine_features);
@@ -1250,6 +1519,9 @@ bool DotImplementationCanHandleTranspose(
 bool DotOperandsAndResultMustHaveRowMajorLayout(
     const HloInstruction& dot_instr,
     const TargetMachineFeatures& target_machine_features) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_33(mht_33_v, 1522, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "DotOperandsAndResultMustHaveRowMajorLayout");
+
   // Batched dots require the batch dimensions to be major. DotDecomposer always
   // moves batch dimensions to the front of the shape, so force a row-major
   // layout.
@@ -1274,6 +1546,9 @@ Status EmitDotOperation(const HloInstruction& dot,
                         llvm::IRBuilder<>* b, mlir::MLIRContext* mlir_context,
                         const HloModuleConfig& hlo_module_config,
                         const TargetMachineFeatures& target_machine_features) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePScpuPSdot_op_emitterDTcc mht_34(mht_34_v, 1549, "", "./tensorflow/compiler/xla/service/cpu/dot_op_emitter.cc", "EmitDotOperation");
+
   // This routine assumes that the dot operation is not in a parallelized
   // enclosing computation.
   CHECK(dot.parent()->root_instruction()->outer_dimension_partitions().empty());

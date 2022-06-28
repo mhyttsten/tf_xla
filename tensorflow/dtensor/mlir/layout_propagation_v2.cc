@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2022 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -64,6 +232,9 @@ namespace dtensor {
 bool AllOpResultsHaveLayouts(
     mlir::ModuleOp* module, mlir::Dialect* tf_dialect,
     const llvm::DenseMap<mlir::Value, Layout>& layouts) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_0(mht_0_v, 235, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "AllOpResultsHaveLayouts");
+
   const auto& result = module->walk([&](mlir::Operation* op) {
     if (op->getDialect() != tf_dialect ||
         mlir::isa<mlir::TF::DTensorLayout>(op))
@@ -85,6 +256,9 @@ void UpdateLayoutForSkippedOps(
     const llvm::DenseMap<llvm::StringRef, mlir::Operation*>& func_to_caller,
     const Layout& layout_to_copy,
     llvm::DenseMap<mlir::Value, Layout>& layouts) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_1(mht_1_v, 259, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "UpdateLayoutForSkippedOps");
+
   llvm::SmallVector<mlir::Value, 4> skipped_values;
   TraceUseToNextTFOp(&operand, func_to_caller, &skipped_values);
   for (const mlir::Value& skipped_value : skipped_values)
@@ -134,6 +308,9 @@ void UpdateLayoutForSkippedOps(
 mlir::LogicalResult CopyLayoutsForSkippedOps(
     mlir::ModuleOp module, mlir::Dialect* tf_dialect,
     llvm::DenseMap<mlir::Value, Layout>& layouts) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_2(mht_2_v, 311, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "CopyLayoutsForSkippedOps");
+
   llvm::DenseMap<llvm::StringRef, mlir::Operation*> func_to_caller;
 
   if (mlir::failed(GetFuncToCaller(module, func_to_caller)))
@@ -166,6 +343,9 @@ mlir::LogicalResult CopyLayoutsForSkippedOps(
 
 namespace {
 void FilterkAnySpecs(std::vector<std::string>& proposed_specs) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_3(mht_3_v, 346, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "FilterkAnySpecs");
+
   for (auto& spec : proposed_specs) {
     if (spec == Layout::kAny) spec = Layout::kUnshardedDim;
   }
@@ -286,6 +466,9 @@ mlir::LogicalResult InsertLayoutsForDTensorLayout(
     llvm::DenseMap<mlir::Value, absl::optional<Layout>>& producer_request,
     llvm::DenseSet<mlir::Value>& is_updated,
     llvm::DenseSet<mlir::Value>& is_locked) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_4(mht_4_v, 469, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "InsertLayoutsForDTensorLayout");
+
   return mlir::failure(
       module
           .walk([&](mlir::TF::DTensorLayout op) -> mlir::WalkResult {
@@ -315,6 +498,9 @@ mlir::LogicalResult InsertInitialLayoutsFromComputeLayout(
     llvm::DenseMap<mlir::Value, mlir::DenseMap<mlir::OpOperand*, Layout>>&
         consumer_requests,
     llvm::DenseSet<mlir::Value>& is_updated) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_5(mht_5_v, 501, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "InsertInitialLayoutsFromComputeLayout");
+
   auto walk_result = module.walk([&](mlir::Operation* op) {
     // We ignore ops that don't have either an OpResult in consumers or an
     // OpOperand in producers. Note that if one operand is missing from
@@ -403,6 +589,9 @@ mlir::LogicalResult InsertInitialLayouts(
     llvm::DenseMap<mlir::Value, absl::optional<Layout>>& producer_request,
     llvm::DenseSet<mlir::Value>& is_updated,
     llvm::DenseSet<mlir::Value>& is_locked) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_6(mht_6_v, 592, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "InsertInitialLayouts");
+
   std::queue<mlir::Operation*> operations;
 
   if (mlir::failed(InsertLayoutsForDTensorLayout(module, producer_request,
@@ -422,6 +611,9 @@ mlir::LogicalResult MergeAndGetUpdatedLayouts(
     llvm::DenseMap<mlir::Value, mlir::DenseMap<mlir::OpOperand*, Layout>>&
         consumer_requests,
     llvm::DenseMap<mlir::Value, Layout>& merged_layouts) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_7(mht_7_v, 614, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "MergeAndGetUpdatedLayouts");
+
   llvm::DenseSet<mlir::Value> updated_merge;
   for (auto& value : is_updated) {
     auto& producer_layout = producer_request[value];
@@ -458,6 +650,9 @@ mlir::LogicalResult MergeAndGetUpdatedLayouts(
 mlir::LogicalResult GetMostShardedLayout(llvm::ArrayRef<Layout> layouts,
                                          mlir::Location location,
                                          absl::optional<Layout>* out) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_8(mht_8_v, 653, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "GetMostShardedLayout");
+
   absl::optional<Layout> layout;
   std::map<std::string, std::set<int>> layout_map;
   for (const Layout& layout : layouts) {
@@ -522,6 +717,9 @@ mlir::LogicalResult MergeProducerLayouts(
     const llvm::DenseMap<mlir::Value, Layout>& merged_layouts,
     const std::vector<mlir::Value>& producer_values, mlir::Location location,
     absl::optional<Layout>* layout_out) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_9(mht_9_v, 720, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "MergeProducerLayouts");
+
   // If there is a single producer for mlir::Value, then return the layout
   // from the producer.
   absl::optional<Layout> layout;
@@ -558,6 +756,9 @@ mlir::LogicalResult UpdateLayoutsForOp(
     llvm::DenseMap<mlir::Value, mlir::DenseMap<mlir::OpOperand*, Layout>>&
         consumer_requests,
     llvm::DenseSet<mlir::Value>& is_updated) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_10(mht_10_v, 759, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "UpdateLayoutsForOp");
+
   auto* expander = SPMDExpanderRegistry::Global()->GetPropagateFnForOp(op);
   if (expander == nullptr)
     return op->emitOpError() << "does not implement layout propagation";
@@ -672,6 +873,9 @@ mlir::LogicalResult UpdateLayoutsForOp(
 mlir::LogicalResult InsertDTensorLayoutOps(
     mlir::OpBuilder& builder,
     const llvm::DenseMap<mlir::Value, Layout>& merged_layouts) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_11(mht_11_v, 876, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "InsertDTensorLayoutOps");
+
   for (const auto& merged_layout : merged_layouts) {
     // merged_layout is a pair of mlir::Value and Layout.
     // If there is only one user of the Value and that user is a DTensorLayout
@@ -709,6 +913,9 @@ void GetOperationsNeedingUpdate(
     const llvm::DenseSet<mlir::Value>& is_updated,
     const llvm::DenseMap<mlir::Value, std::vector<mlir::OpOperand*>>& consumers,
     llvm::DenseSet<mlir::Operation*>& operations) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_12(mht_12_v, 916, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "GetOperationsNeedingUpdate");
+
   for (auto& value : is_updated) {
     auto uses = consumers.find(value);
     // Some values have no consumers (e.g. outputs of the main function).
@@ -736,13 +943,22 @@ class LayoutPrinter : public mlir::OpAsmPrinter {
         os_(os),
         current_location_(0),
         next_argument_(0),
-        merged_layouts_(merged_layouts) {}
+        merged_layouts_(merged_layouts) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_13(mht_13_v, 947, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "LayoutPrinter");
+}
 
-  llvm::raw_ostream& getStream() const override { return os_; }
+  llvm::raw_ostream& getStream() const override {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_14(mht_14_v, 952, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "getStream");
+ return os_; }
 
   void printRegionArgument(mlir::BlockArgument arg,
                            llvm::ArrayRef<mlir::NamedAttribute> argAttrs,
                            bool omitType) override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_15(mht_15_v, 959, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "printRegionArgument");
+
     printOperand(arg);
     if (!omitType) {
       os_ << ": ";
@@ -751,11 +967,17 @@ class LayoutPrinter : public mlir::OpAsmPrinter {
     printOptionalAttrDict(argAttrs, llvm::None);
   }
 
-  void printOperand(mlir::Value value) override { printOperand(value, os_); }
+  void printOperand(mlir::Value value) override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_16(mht_16_v, 971, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "printOperand");
+ printOperand(value, os_); }
 
   /// Print a newline and indent the printer to the start of the current
   /// operation.
   void printNewline() override {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_17(mht_17_v, 978, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "printNewline");
+
     os_ << "\n";
     os_.indent(indent_level_);
   }
@@ -765,12 +987,18 @@ class LayoutPrinter : public mlir::OpAsmPrinter {
   void printRegion(mlir::Region& blocks, bool printEntryBlockArgs,
                    bool printBlockTerminators,
                    bool printEmptyBlock = false) override {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_18(mht_18_v, 990, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "printRegion");
+
     os_ << " {\n";
     for (auto& b : blocks.getBlocks()) print(b);
     os_.indent(indent_level_) << "}";
   }
 
   void print(mlir::Block& block) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_19(mht_19_v, 999, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "print");
+
     // Each nested block level increases the indent.
     os_.indent(indent_level_) << "%bb(";
     for (int i = 0; i < block.getNumArguments(); ++i) {
@@ -787,10 +1015,16 @@ class LayoutPrinter : public mlir::OpAsmPrinter {
 
   // Prints the TF node name from `loc`.
   void printLoc(mlir::Location loc) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_20(mht_20_v, 1018, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "printLoc");
+
     os_ << " [" << mlir::GetNameFromLoc(loc) << "]";
   }
 
   void print(mlir::Operation& op) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_21(mht_21_v, 1025, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "print");
+
     // Don't print tf.DTensorLayout ops.
     if (mlir::isa<mlir::TF::DTensorLayout>(op)) return;
 
@@ -832,6 +1066,9 @@ class LayoutPrinter : public mlir::OpAsmPrinter {
   // Print an operand, this could be both the OpResult or a BlockArgument.
   // We also print the layout if it exists and the type.
   void printOperand(mlir::Value value, llvm::raw_ostream& os) override {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_22(mht_22_v, 1069, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "printOperand");
+
     if (auto result = value.dyn_cast<mlir::OpResult>()) {
       // If DTensorLayout ops are already in the module, we need to skip them
       // since we aren't printing them out.
@@ -861,6 +1098,9 @@ class LayoutPrinter : public mlir::OpAsmPrinter {
   }
 
   void printLayout(const Layout& layout, llvm::raw_ostream& os) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_23(mht_23_v, 1101, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "printLayout");
+
     // Layouts are printed with * for an unsharded dim and the mesh dim for a
     // sharded dim. This keeps the layout compact.
     for (int i = 0; i < layout.rank(); ++i) {
@@ -878,6 +1118,9 @@ class LayoutPrinter : public mlir::OpAsmPrinter {
   // * regions
   // These are printed out in that order.
   void printGenericOp(mlir::Operation* op, bool printOpName) override {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_24(mht_24_v, 1121, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "printGenericOp");
+
     if (printOpName) os_ << "\"" << op->getName().getStringRef() << "\"";
     os_ << "(";
     for (int i = 0; i < op->getNumOperands(); ++i) {
@@ -910,39 +1153,75 @@ class LayoutPrinter : public mlir::OpAsmPrinter {
   };
 
   void printSymbolName(llvm::StringRef symbolRef) override {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_25(mht_25_v, 1156, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "printSymbolName");
+
     os_ << symbolRef;
   };
 
   void printNamedAttribute(mlir::NamedAttribute attr) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_26(mht_26_v, 1163, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "printNamedAttribute");
+
     os_ << attr.getName().strref() << " = ";
     printAttribute(attr.getValue());
   }
 
-  void printAttribute(mlir::Attribute attr) override { attr.print(os_); }
+  void printAttribute(mlir::Attribute attr) override {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_27(mht_27_v, 1171, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "printAttribute");
+ attr.print(os_); }
 
-  void printType(mlir::Type type) override { type.print(os_); }
+  void printType(mlir::Type type) override {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_28(mht_28_v, 1176, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "printType");
+ type.print(os_); }
 
   // The following functions are part of the printing interface but aren't
   // needed for the compact printing form for Layout printing.
-  void printAttributeWithoutType(mlir::Attribute attr) override{};
-  void printSuccessor(mlir::Block* successor) override{};
+  void printAttributeWithoutType(mlir::Attribute attr) override{
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_29(mht_29_v, 1183, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "printAttributeWithoutType");
+};
+  void printSuccessor(mlir::Block* successor) override{
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_30(mht_30_v, 1187, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "printSuccessor");
+};
   void printSuccessorAndUseList(mlir::Block* successor,
-                                mlir::ValueRange succOperands) override{};
+                                mlir::ValueRange succOperands) override{
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_31(mht_31_v, 1192, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "printSuccessorAndUseList");
+};
   void printOptionalAttrDict(
       llvm::ArrayRef<mlir::NamedAttribute> attrs,
-      llvm::ArrayRef<llvm::StringRef> elidedAttrs) override{};
+      llvm::ArrayRef<llvm::StringRef> elidedAttrs) override{
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_32(mht_32_v, 1198, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "printOptionalAttrDict");
+};
   void printOptionalAttrDictWithKeyword(
       llvm::ArrayRef<mlir::NamedAttribute> attrs,
-      llvm::ArrayRef<llvm::StringRef> elidedAttrs) override{};
+      llvm::ArrayRef<llvm::StringRef> elidedAttrs) override{
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_33(mht_33_v, 1204, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "printOptionalAttrDictWithKeyword");
+};
 
   void shadowRegionArgs(mlir::Region& region,
-                        mlir::ValueRange namesToUse) override{};
+                        mlir::ValueRange namesToUse) override{
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_34(mht_34_v, 1210, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "shadowRegionArgs");
+};
   void printAffineMapOfSSAIds(mlir::AffineMapAttr mapAttr,
-                              mlir::ValueRange operands) override{};
+                              mlir::ValueRange operands) override{
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_35(mht_35_v, 1215, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "printAffineMapOfSSAIds");
+};
 
   void printAffineExprOfSSAIds(mlir::AffineExpr expr,
                                mlir::ValueRange dimOperands,
-                               mlir::ValueRange symOperands) override{};
+                               mlir::ValueRange symOperands) override{
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_36(mht_36_v, 1222, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "printAffineExprOfSSAIds");
+};
 
  private:
   int indent_level_;
@@ -959,6 +1238,9 @@ class LayoutPrinter : public mlir::OpAsmPrinter {
 void LogLayoutsAndOps(const int stage, const uint64_t module_hash,
                       const llvm::DenseMap<mlir::Value, Layout>& merged_layouts,
                       mlir::ModuleOp& module) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_37(mht_37_v, 1241, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "LogLayoutsAndOps");
+
   if (module->hasAttr(kDoNotLog) || ((ClientId() != 0) && !LogOnAllTasks()))
     return;
 
@@ -1011,6 +1293,9 @@ void LogLayoutsAndOps(const int stage, const uint64_t module_hash,
 // replace unnecessary DTensorLayout ops with Identity ops.
 mlir::LogicalResult ReplaceAuxiliaryDTensorLayoutOpsWithIdentity(
     mlir::ModuleOp module) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_38(mht_38_v, 1296, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "ReplaceAuxiliaryDTensorLayoutOpsWithIdentity");
+
   llvm::SmallVector<mlir::TF::DTensorLayout, 4> layout_ops;
   module.walk([&](mlir::TF::DTensorLayout op) { layout_ops.emplace_back(op); });
 
@@ -1046,6 +1331,9 @@ mlir::LogicalResult ReplaceAuxiliaryDTensorLayoutOpsWithIdentity(
 mlir::LogicalResult InsertDTensorLayoutForIfRegionOp(
     const llvm::SmallVectorImpl<mlir::TF::IfRegionOp>& if_ops,
     mlir::MLIRContext* context) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_39(mht_39_v, 1334, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "InsertDTensorLayoutForIfRegionOp");
+
   for (mlir::TF::IfRegionOp if_op : if_ops) {
     for (mlir::OpResult if_result : if_op.getResults()) {
       const int result_index = if_result.getResultNumber();
@@ -1131,6 +1419,9 @@ mlir::LogicalResult InsertDTensorLayoutForIfRegionOp(
 mlir::LogicalResult InsertRelayoutForWhileLoops(
     const llvm::SmallVectorImpl<mlir::TF::WhileRegionOp>& while_ops,
     mlir::OpBuilder& builder) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_40(mht_40_v, 1422, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "InsertRelayoutForWhileLoops");
+
   for (mlir::TF::WhileRegionOp op : while_ops) {
     // Get the terminator so we can check the output layouts of the loop body.
     mlir::Operation* yield_op = op.body().front().getTerminator();
@@ -1209,6 +1500,9 @@ mlir::LogicalResult InsertRelayoutForWhileLoops(
 // For all constants with multiple usages, clone the constants so that each
 // constant operation has at most 1 usage.
 void DuplicateConstants(mlir::ModuleOp module) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_41(mht_41_v, 1503, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "DuplicateConstants");
+
   llvm::SmallVector<mlir::TF::ConstOp, 4> const_ops;
   module.walk(
       [&](mlir::TF::ConstOp const_op) { const_ops.emplace_back(const_op); });
@@ -1238,6 +1532,9 @@ void FindRoot(
     const mlir::Value& current_value,
     llvm::DenseMap<mlir::OpOperand*, std::vector<mlir::Value>>& producers,
     llvm::DenseSet<mlir::Value>* roots) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_42(mht_42_v, 1535, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "FindRoot");
+
   // Standard BFS to find root values of current_value.
   std::deque<mlir::Value> to_process;
   to_process.push_back(current_value);
@@ -1287,6 +1584,9 @@ void FindRootsAndEmitError(
     mlir::ModuleOp& module,
     llvm::DenseMap<mlir::OpOperand*, std::vector<mlir::Value>> producers,
     const llvm::DenseSet<mlir::Value>& is_updated) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_43(mht_43_v, 1587, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "FindRootsAndEmitError");
+
   llvm::DenseSet<mlir::Value> roots;
   for (auto& value : is_updated) {
     FindRoot(is_updated, value, producers, &roots);
@@ -1323,10 +1623,16 @@ void FindRootsAndEmitError(
 struct DLayoutPropagationPassV2
     : public DTensorLayoutPropagationV2Base<DLayoutPropagationPassV2> {
   void getDependentDialects(mlir::DialectRegistry& registry) const override {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_44(mht_44_v, 1626, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "getDependentDialects");
+
     registry.insert<mlir::dtensor::DTensorDialect>();
   }
 
   void runOnOperation() override {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSdtensorPSmlirPSlayout_propagation_v2DTcc mht_45(mht_45_v, 1633, "", "./tensorflow/dtensor/mlir/layout_propagation_v2.cc", "runOnOperation");
+
     mlir::MLIRContext& context = getContext();
     mlir::OpBuilder builder(&context);
 

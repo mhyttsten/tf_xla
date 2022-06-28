@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_alias_analysisDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_alias_analysisDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_alias_analysisDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,6 +217,9 @@ using FlatValueSet = absl::flat_hash_set<const HloValue*>;
 void ComputeInputOutputAliasedValues(const HloValue& value,
                                      const HloDataflowAnalysis& dataflow,
                                      FlatValueSet& aliased_values) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_alias_analysisDTcc mht_0(mht_0_v, 220, "", "./tensorflow/compiler/xla/service/hlo_alias_analysis.cc", "ComputeInputOutputAliasedValues");
+
   const HloModule& module = dataflow.module();
   const HloComputation& entry_computation = *module.entry_computation();
   const HloInputOutputAliasConfig& io_alias_config =
@@ -73,6 +244,9 @@ void ComputeInputOutputAliasedValues(const HloValue& value,
 void ComputeWhileAliasedValues(const HloValue& value,
                                const HloDataflowAnalysis& dataflow,
                                FlatValueSet& aliased_values) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_alias_analysisDTcc mht_1(mht_1_v, 247, "", "./tensorflow/compiler/xla/service/hlo_alias_analysis.cc", "ComputeWhileAliasedValues");
+
   VLOG(3) << "Compute kWhile aliases";
   // Value is init of a while (use is while).
   for (const HloUse& use : value.GetUses()) {
@@ -136,6 +310,9 @@ void ComputeWhileAliasedValues(const HloValue& value,
 void ComputeConditionalAliasedValues(const HloValue& value,
                                      const HloDataflowAnalysis& dataflow,
                                      FlatValueSet& aliased_values) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_alias_analysisDTcc mht_2(mht_2_v, 313, "", "./tensorflow/compiler/xla/service/hlo_alias_analysis.cc", "ComputeConditionalAliasedValues");
+
   VLOG(3) << "Compute kConditional aliases";
   // Aliases the buffers of the true/false computations roots, with the one of
   // the conditional.
@@ -165,6 +342,9 @@ void ComputeConditionalAliasedValues(const HloValue& value,
 void ComputeInPlaceOperationAliasedValues(const HloValue& value,
                                           const HloDataflowAnalysis& dataflow,
                                           FlatValueSet& aliased_values) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_alias_analysisDTcc mht_3(mht_3_v, 345, "", "./tensorflow/compiler/xla/service/hlo_alias_analysis.cc", "ComputeInPlaceOperationAliasedValues");
+
   VLOG(3) << "Compute aliases for in-place operations (e.g. "
              "kDynamicUpdateSlice and kScatter)";
   for (const HloPosition& position : value.positions()) {
@@ -199,6 +379,9 @@ void ComputeInPlaceOperationAliasedValues(const HloValue& value,
 // due to HLO aliasing rules (including the value itself).
 FlatValueSet ComputeAliasedValues(const HloValue& value,
                                   const HloDataflowAnalysis& dataflow) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_alias_analysisDTcc mht_4(mht_4_v, 382, "", "./tensorflow/compiler/xla/service/hlo_alias_analysis.cc", "ComputeAliasedValues");
+
   if (VLOG_IS_ON(2)) {
     for (const HloUse& use : value.GetUses()) {
       VLOG(2) << "Use of value " << value << ": " << use;
@@ -246,6 +429,9 @@ std::vector<HloBuffer> CreateBuffers(const HloDataflowAnalysis& dataflow) {
     // more efficient to merge smaller sets into larger). Break ties using value
     // ID to maintain determinism.
     auto key = [](const auto& set_and_id) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_alias_analysisDTcc mht_5(mht_5_v, 432, "", "./tensorflow/compiler/xla/service/hlo_alias_analysis.cc", "lambda");
+
       return std::make_pair(set_and_id.first->size(), -set_and_id.second);
     };
     FlatValueSet* union_set =
@@ -281,10 +467,16 @@ std::vector<HloBuffer> CreateBuffers(const HloDataflowAnalysis& dataflow) {
 
 }  // namespace
 
-HloAliasAnalysis::HloAliasAnalysis(const HloModule* module) : module_(module) {}
+HloAliasAnalysis::HloAliasAnalysis(const HloModule* module) : module_(module) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_alias_analysisDTcc mht_6(mht_6_v, 471, "", "./tensorflow/compiler/xla/service/hlo_alias_analysis.cc", "HloAliasAnalysis::HloAliasAnalysis");
+}
 
 const HloBuffer& HloAliasAnalysis::GetUniqueBufferAt(
     const HloInstruction* instruction, const ShapeIndex& index) const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_alias_analysisDTcc mht_7(mht_7_v, 477, "", "./tensorflow/compiler/xla/service/hlo_alias_analysis.cc", "HloAliasAnalysis::GetUniqueBufferAt");
+
   std::vector<const HloBuffer*> buffers = ComputeBuffersAt(instruction, index);
   CHECK_EQ(buffers.size(), 1);
   return *buffers[0];
@@ -292,6 +484,9 @@ const HloBuffer& HloAliasAnalysis::GetUniqueBufferAt(
 
 HloBuffer& HloAliasAnalysis::GetUniqueBufferAt(
     const HloInstruction* instruction, const ShapeIndex& index) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_alias_analysisDTcc mht_8(mht_8_v, 487, "", "./tensorflow/compiler/xla/service/hlo_alias_analysis.cc", "HloAliasAnalysis::GetUniqueBufferAt");
+
   return GetBuffer(const_cast<const HloAliasAnalysis*>(this)
                        ->GetUniqueBufferAt(instruction, index)
                        .id());
@@ -299,6 +494,9 @@ HloBuffer& HloAliasAnalysis::GetUniqueBufferAt(
 
 std::vector<const HloBuffer*> HloAliasAnalysis::ComputeBuffersAt(
     const HloInstruction* instruction, const ShapeIndex& index) const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_alias_analysisDTcc mht_9(mht_9_v, 497, "", "./tensorflow/compiler/xla/service/hlo_alias_analysis.cc", "HloAliasAnalysis::ComputeBuffersAt");
+
   const HloValueSet& value_set =
       dataflow_analysis_->GetValueSet(instruction, index);
   std::vector<const HloBuffer*> buffers;
@@ -315,6 +513,9 @@ std::vector<const HloBuffer*> HloAliasAnalysis::ComputeBuffersAt(
 }
 
 Status HloAliasAnalysis::Verify() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_alias_analysisDTcc mht_10(mht_10_v, 516, "", "./tensorflow/compiler/xla/service/hlo_alias_analysis.cc", "HloAliasAnalysis::Verify");
+
   // Verify consistency between the value_to_buffer_ map and
   // HloBuffer::values().
   for (const auto& pair : value_to_buffer_) {
@@ -341,6 +542,9 @@ Status HloAliasAnalysis::Verify() const {
 }
 
 std::string HloAliasAnalysis::ToString() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_alias_analysisDTcc mht_11(mht_11_v, 545, "", "./tensorflow/compiler/xla/service/hlo_alias_analysis.cc", "HloAliasAnalysis::ToString");
+
   std::string out =
       absl::StrCat("HloAliasAnalysis, module ", module_->name(), "\n");
   StrAppend(&out, "  Buffers at each position:\n");
@@ -382,6 +586,9 @@ std::string HloAliasAnalysis::ToString() const {
 StatusOr<std::unique_ptr<HloAliasAnalysis>> HloAliasAnalysis::Run(
     const HloModule* module,
     const HloDataflowAnalysis::CanShareBuffer& can_share_buffer) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_alias_analysisDTcc mht_12(mht_12_v, 589, "", "./tensorflow/compiler/xla/service/hlo_alias_analysis.cc", "HloAliasAnalysis::Run");
+
   VLOG(2) << "HloAliasAnalysis::Run on module " << module->name();
   XLA_VLOG_LINES(2, module->ToString());
 

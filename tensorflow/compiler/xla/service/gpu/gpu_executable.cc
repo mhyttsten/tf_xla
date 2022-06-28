@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_executableDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_executableDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_executableDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -79,6 +247,9 @@ namespace xla {
 namespace gpu {
 
 bool IsBefExecutableEnabled(const HloModuleConfig& config) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_executableDTcc mht_0(mht_0_v, 250, "", "./tensorflow/compiler/xla/service/gpu/gpu_executable.cc", "IsBefExecutableEnabled");
+
 #if XLA_ENABLE_XLIR
   return config.debug_options().xla_gpu_bef_executable();
 #else   // XLA_ENABLE_XLIR
@@ -88,6 +259,9 @@ bool IsBefExecutableEnabled(const HloModuleConfig& config) {
 }
 
 bool IsBefThunkEnabled(const HloModuleConfig& config) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_executableDTcc mht_1(mht_1_v, 262, "", "./tensorflow/compiler/xla/service/gpu/gpu_executable.cc", "IsBefThunkEnabled");
+
 #if XLA_ENABLE_XLIR
   return config.debug_options().xla_gpu_bef_thunk();
 #else   // XLA_ENABLE_XLIR
@@ -101,6 +275,9 @@ namespace {
 using ::tensorflow::profiler::ScopedAnnotation;
 
 bool NeedsAsyncCommsStream(Thunk& thunk) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_executableDTcc mht_2(mht_2_v, 278, "", "./tensorflow/compiler/xla/service/gpu/gpu_executable.cc", "NeedsAsyncCommsStream");
+
   switch (thunk.kind()) {
     case Thunk::Kind::kNcclAllReduceStart:
     case Thunk::Kind::kNcclAllReduceDone:
@@ -112,6 +289,10 @@ bool NeedsAsyncCommsStream(Thunk& thunk) {
 
 static std::string ModuleUniqueName(absl::string_view module_name,
                                     const HloModule* module) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("module_name: \"" + std::string(module_name.data(), module_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_executableDTcc mht_3(mht_3_v, 293, "", "./tensorflow/compiler/xla/service/gpu/gpu_executable.cc", "ModuleUniqueName");
+
   std::string unique_id;
   if (module != nullptr) {
     unique_id = absl::StrCat("module.", module->unique_id(), ".");
@@ -142,6 +323,9 @@ struct GpuExecutable::BefExecutable {
   }
 
   Status Initialize() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_executableDTcc mht_4(mht_4_v, 326, "", "./tensorflow/compiler/xla/service/gpu/gpu_executable.cc", "Initialize");
+
     bef_file =
         tfrt::BEFFile::Open({bef_buffer.get(), bef_buffer.get_deleter().size},
                             host_ctx.GetKernelRegistry(),
@@ -192,6 +376,9 @@ struct GpuExecutable::BefExecutable {
 #endif  // XLA_ENABLE_XLIR
 
 StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::Create(Params params) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_executableDTcc mht_5(mht_5_v, 379, "", "./tensorflow/compiler/xla/service/gpu/gpu_executable.cc", "GpuExecutable::Create");
+
   auto thunks_or_bef = std::move(params.thunks_or_bef);
   std::unique_ptr<GpuExecutable> result(new GpuExecutable(std::move(params)));
 
@@ -228,6 +415,9 @@ GpuExecutable::GpuExecutable(GpuExecutable::Params params)
           params.verbose_buffer_assignment_string_dumper),
       constants_(std::move(params.constants)),
       output_info_(std::move(params.output_info)) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_executableDTcc mht_6(mht_6_v, 418, "", "./tensorflow/compiler/xla/service/gpu/gpu_executable.cc", "GpuExecutable::GpuExecutable");
+
   XlaDebugInfoManager::Get()->RegisterModule(
       ModuleUniqueName(module_name_, shared_module().get()), shared_module(),
       debug_buffer_assignment_);
@@ -248,12 +438,19 @@ GpuExecutable::GpuExecutable(
       allocations_(std::move(allocations)),
       output_info_(std::move(output_info)),
       bef_executable_(bef_executable) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("module_name: \"" + std::string(module_name.data(), module_name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_executableDTcc mht_7(mht_7_v, 442, "", "./tensorflow/compiler/xla/service/gpu/gpu_executable.cc", "GpuExecutable::GpuExecutable");
+
   XlaDebugInfoManager::Get()->RegisterModule(
       ModuleUniqueName(module_name_, shared_module().get()), shared_module(),
       debug_buffer_assignment_);
 }
 
 GpuExecutable::~GpuExecutable() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_executableDTcc mht_8(mht_8_v, 451, "", "./tensorflow/compiler/xla/service/gpu/gpu_executable.cc", "GpuExecutable::~GpuExecutable");
+
   XlaDebugInfoManager::Get()->UnregisterModule(
       ModuleUniqueName(module_name_, shared_module().get()), shared_module(),
       debug_buffer_assignment_);
@@ -278,6 +475,9 @@ GpuExecutable::~GpuExecutable() {
 
 Status GpuExecutable::CheckCompatibilityWithServiceExecutableRunOptions(
     const ServiceExecutableRunOptions* run_options) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_executableDTcc mht_9(mht_9_v, 478, "", "./tensorflow/compiler/xla/service/gpu/gpu_executable.cc", "GpuExecutable::CheckCompatibilityWithServiceExecutableRunOptions");
+
   se::Stream* main_stream = run_options->stream();
 
   stream_executor::PlatformKind platform_kind =
@@ -315,6 +515,10 @@ Status ExecuteThunks(const std::string& module_name,
                      const ServiceExecutableRunOptions* run_options,
                      const BufferAllocations& buffer_allocations,
                      bool block_host_until_done) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("module_name: \"" + module_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_executableDTcc mht_10(mht_10_v, 519, "", "./tensorflow/compiler/xla/service/gpu/gpu_executable.cc", "ExecuteThunks");
+
   XlaDebugInfoManager::Get()->OnModuleStart(module_name);
   auto cleanup = absl::MakeCleanup(
       [&]() { XlaDebugInfoManager::Get()->OnModuleStop(module_name); });
@@ -385,6 +589,9 @@ Status ExecuteThunks(const std::string& module_name,
 Status MaybeSyncAndProfile(const ServiceExecutableRunOptions* run_options,
                            uint64_t start_micros,
                            se::Stream* stream_to_sync = nullptr) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_executableDTcc mht_11(mht_11_v, 592, "", "./tensorflow/compiler/xla/service/gpu/gpu_executable.cc", "MaybeSyncAndProfile");
+
   // Make sure kernels are completed before deallocating temporary buffers or
   // the profiler state.
   // TODO(b/30100571): we could potentially postpone deallocating the temp
@@ -416,6 +623,9 @@ Status MaybeSyncAndProfile(const ServiceExecutableRunOptions* run_options,
 
 StatusOr<const GpuExecutable::BufferAllocToDeviceMemoryMap*>
 GpuExecutable::ResolveConstantGlobals(se::Stream* stream) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_executableDTcc mht_12(mht_12_v, 626, "", "./tensorflow/compiler/xla/service/gpu/gpu_executable.cc", "GpuExecutable::ResolveConstantGlobals");
+
   se::StreamExecutor* executor = stream->parent();
 
   absl::MutexLock lock(&module_handle_mutex_);
@@ -492,6 +702,9 @@ StatusOr<se::DeviceMemoryBase> GpuExecutable::BufferForAllocation(
     const BufferAllocation& allocation,
     se::DeviceMemoryAllocator* const memory_allocator, int device_ordinal,
     int64_t arg_idx) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_executableDTcc mht_13(mht_13_v, 705, "", "./tensorflow/compiler/xla/service/gpu/gpu_executable.cc", "GpuExecutable::BufferForAllocation");
+
   if (allocation.is_thread_local()) {
     return se::DeviceMemoryBase{};
   } else if (allocation.is_entry_computation_parameter()) {
@@ -542,6 +755,9 @@ StatusOr<se::DeviceMemoryBase> GpuExecutable::BufferForAllocation(
 
 static Status CheckAlignment(const BufferAllocation& allocation,
                              se::DeviceMemoryBase buffer, int arg_idx) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_executableDTcc mht_14(mht_14_v, 758, "", "./tensorflow/compiler/xla/service/gpu/gpu_executable.cc", "CheckAlignment");
+
   const int64_t expected_alignment = [&] {
     if (allocation.is_entry_computation_parameter()) {
       return kEntryParameterAlignBytes;
@@ -565,6 +781,9 @@ StatusOr<BufferAllocations> GpuExecutable::GenerateBufferAllocations(
     VariantArguments arguments,
     const GpuExecutable::BufferAllocToDeviceMemoryMap* globals,
     se::DeviceMemoryAllocator* const memory_allocator, int device_ordinal) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_executableDTcc mht_15(mht_15_v, 784, "", "./tensorflow/compiler/xla/service/gpu/gpu_executable.cc", "GpuExecutable::GenerateBufferAllocations");
+
   tensorflow::profiler::TraceMe hlo_module_activity(
       [&] { return std::string("Build buffer allocations"); },
       tensorflow::profiler::TraceMeLevel::kInfo);
@@ -588,6 +807,9 @@ StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStream(
     const ServiceExecutableRunOptions* run_options,
     std::vector<ExecutionInput> arguments,
     HloExecutionProfile* hlo_execution_profile) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_executableDTcc mht_16(mht_16_v, 810, "", "./tensorflow/compiler/xla/service/gpu/gpu_executable.cc", "GpuExecutable::ExecuteAsyncOnStream");
+
   return ExecuteAsyncOnStreamImpl(run_options, absl::MakeSpan(arguments));
 }
 
@@ -595,6 +817,9 @@ StatusOr<ScopedShapedBuffer> GpuExecutable::ExecuteAsyncOnStream(
     const ServiceExecutableRunOptions* run_options,
     absl::Span<const ShapedBuffer* const> arguments,
     HloExecutionProfile* hlo_execution_profile) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_executableDTcc mht_17(mht_17_v, 820, "", "./tensorflow/compiler/xla/service/gpu/gpu_executable.cc", "GpuExecutable::ExecuteAsyncOnStream");
+
   TF_ASSIGN_OR_RETURN(ExecutionOutput out,
                       ExecuteAsyncOnStreamImpl(run_options, arguments));
   return out.ConsumeResult();
@@ -647,6 +872,10 @@ static Status ExecuteBef(const std::string& module_name,
                          const ServiceExecutableRunOptions* run_options,
                          const BufferAllocations& buffer_allocations,
                          size_t num_allocations, bool block_host_until_done) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("module_name: \"" + module_name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_executableDTcc mht_18(mht_18_v, 876, "", "./tensorflow/compiler/xla/service/gpu/gpu_executable.cc", "ExecuteBef");
+
   XlaDebugInfoManager::Get()->OnModuleStart(module_name);
   auto cleanup = absl::MakeCleanup(
       [&]() { XlaDebugInfoManager::Get()->OnModuleStop(module_name); });
@@ -887,6 +1116,9 @@ StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
 Status GpuExecutable::ExecuteThunksOrBef(
     const ServiceExecutableRunOptions* run_options,
     const BufferAllocations& buffer_allocations, bool block_host_until_done) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_executableDTcc mht_19(mht_19_v, 1119, "", "./tensorflow/compiler/xla/service/gpu/gpu_executable.cc", "GpuExecutable::ExecuteThunksOrBef");
+
   TF_RETURN_IF_ERROR(
       CheckCompatibilityWithServiceExecutableRunOptions(run_options));
 
@@ -911,6 +1143,9 @@ Status GpuExecutable::ExecuteThunksOrBef(
 }
 
 int64_t GpuExecutable::SizeOfGeneratedCodeInBytes() const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_executableDTcc mht_20(mht_20_v, 1146, "", "./tensorflow/compiler/xla/service/gpu/gpu_executable.cc", "GpuExecutable::SizeOfGeneratedCodeInBytes");
+
   // Non-empty PTX but empty cubin: compilation must have failed, return
   // "unknown".
   if (binary().empty() && !text_.empty()) {
@@ -931,6 +1166,9 @@ Status GpuExecutable::SetUpMlirAllocation(
     std::vector<BufferAllocation>* allocations,
     absl::flat_hash_map<ShapeIndex, GpuExecutable::OutputInfo>* output_info,
     Shape* output_shape, int buffer_param_offset) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_executableDTcc mht_21(mht_21_v, 1169, "", "./tensorflow/compiler/xla/service/gpu/gpu_executable.cc", "GpuExecutable::SetUpMlirAllocation");
+
   for (int i = 0; i < buffer_sizes.size(); i++) {
     allocations->emplace_back(i, buffer_sizes[i], 0);
   }
@@ -1054,8 +1292,15 @@ static void ApplyEntryFunctionAttributes(
 StatusOr<std::unique_ptr<Executable>> GpuExecutable::LoadFromBef(
     std::shared_ptr<HloModule> hlo_module, absl::string_view bef,
     xla::EntryFunctionAttributes entry_func_attrs, GpuVersion gpu_version) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("bef: \"" + std::string(bef.data(), bef.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_executableDTcc mht_22(mht_22_v, 1296, "", "./tensorflow/compiler/xla/service/gpu/gpu_executable.cc", "GpuExecutable::LoadFromBef");
+
 #if XLA_ENABLE_XLIR
   OwnedBefBuffer bef_buffer = [bef]() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSgpuPSgpu_executableDTcc mht_23(mht_23_v, 1301, "", "./tensorflow/compiler/xla/service/gpu/gpu_executable.cc", "lambda");
+
     auto ptr = static_cast<uint8_t*>(
         tfrt::AlignedAlloc(tfrt::GetRequiredBefAlignment(), bef.size()));
     std::copy(bef.begin(), bef.end(), ptr);

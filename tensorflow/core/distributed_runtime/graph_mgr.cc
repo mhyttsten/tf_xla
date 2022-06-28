@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSdistributed_runtimePSgraph_mgrDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSgraph_mgrDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSdistributed_runtimePSgraph_mgrDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -58,6 +226,9 @@ namespace tensorflow {
 
 GraphMgr::GraphMgr(const WorkerEnv* worker_env, const DeviceMgr* device_mgr)
     : worker_env_(worker_env), device_mgr_(device_mgr), table_(5) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSgraph_mgrDTcc mht_0(mht_0_v, 229, "", "./tensorflow/core/distributed_runtime/graph_mgr.cc", "GraphMgr::GraphMgr");
+
   // The default value of sync_on_finish will be flipped soon and this
   // environment variable will be removed as well.
   Status status =
@@ -68,10 +239,16 @@ GraphMgr::GraphMgr(const WorkerEnv* worker_env, const DeviceMgr* device_mgr)
 }
 
 GraphMgr::~GraphMgr() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSgraph_mgrDTcc mht_1(mht_1_v, 242, "", "./tensorflow/core/distributed_runtime/graph_mgr.cc", "GraphMgr::~GraphMgr");
+
   for (const auto& p : table_) p.second->Unref();
 }
 
 GraphMgr::Item::~Item() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSgraph_mgrDTcc mht_2(mht_2_v, 249, "", "./tensorflow/core/distributed_runtime/graph_mgr.cc", "GraphMgr::Item::~Item");
+
   for (const auto& unit : this->units) {
     CHECK_NOTNULL(unit.device);
     if (!graph_mgr->skip_cost_models_) {
@@ -86,11 +263,17 @@ GraphMgr::Item::~Item() {
 // expects that NodeDef in GraphDef given to workers fully specifies
 // device names.
 static string SplitByDevice(const Node* node) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSgraph_mgrDTcc mht_3(mht_3_v, 266, "", "./tensorflow/core/distributed_runtime/graph_mgr.cc", "SplitByDevice");
+
   return node->assigned_device_name();
 }
 
 // Validates "gdef" device specifications.
 static Status ValidateGraphDefForDevices(const GraphDef& gdef) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSgraph_mgrDTcc mht_4(mht_4_v, 274, "", "./tensorflow/core/distributed_runtime/graph_mgr.cc", "ValidateGraphDefForDevices");
+
   DeviceNameUtils::ParsedName parsed;
   for (const auto& ndef : gdef.node()) {
     if (!DeviceNameUtils::ParseFullName(ndef.device(), &parsed)) {
@@ -103,6 +286,9 @@ static Status ValidateGraphDefForDevices(const GraphDef& gdef) {
 
 Status GraphMgr::DecorateAndPublishGraphForDebug(
     const DebugOptions& debug_options, Graph* graph, Device* device) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSgraph_mgrDTcc mht_5(mht_5_v, 289, "", "./tensorflow/core/distributed_runtime/graph_mgr.cc", "GraphMgr::DecorateAndPublishGraphForDebug");
+
   std::unique_ptr<DebugGraphDecoratorInterface> decorator;
   TF_RETURN_IF_ERROR(
       DebugGraphDecoratorRegistry::CreateDecorator(debug_options, &decorator));
@@ -129,6 +315,10 @@ Status GraphMgr::InitItem(const string& handle, const GraphDef& gdef,
                           int64_t collective_graph_key, WorkerSession* session,
                           DistributedFunctionLibraryRuntime* cluster_flr,
                           Item* item) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("handle: \"" + handle + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSgraph_mgrDTcc mht_6(mht_6_v, 319, "", "./tensorflow/core/distributed_runtime/graph_mgr.cc", "GraphMgr::InitItem");
+
   item->session = handle;
   item->collective_graph_key = collective_graph_key;
   item->lib_def.reset(
@@ -152,6 +342,9 @@ Status GraphMgr::InitItem(const string& handle, const GraphDef& gdef,
             return Status::OK();
           },
           [this](const int64_t step_id) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSgraph_mgrDTcc mht_7(mht_7_v, 345, "", "./tensorflow/core/distributed_runtime/graph_mgr.cc", "lambda");
+
             this->worker_env_->rendezvous_mgr->Cleanup(step_id);
             return Status::OK();
           }}));
@@ -169,6 +362,10 @@ Status GraphMgr::InitItem(const string& handle, const GraphDef& gdef,
   PartitionOptions popts;
   popts.node_to_loc = SplitByDevice;
   popts.new_name = [this](const string& prefix) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("prefix: \"" + prefix + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSgraph_mgrDTcc mht_8(mht_8_v, 366, "", "./tensorflow/core/distributed_runtime/graph_mgr.cc", "lambda");
+
     mutex_lock l(mu_);
     return strings::StrCat(prefix, "_G", next_id_++);
   };
@@ -250,6 +447,9 @@ Status GraphMgr::InitItem(const string& handle, const GraphDef& gdef,
     params.create_kernel =
         [handle, lib, opseg](const std::shared_ptr<const NodeProperties>& props,
                              OpKernel** kernel) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSgraph_mgrDTcc mht_9(mht_9_v, 450, "", "./tensorflow/core/distributed_runtime/graph_mgr.cc", "lambda");
+
           // NOTE(mrry): We must not share function kernels (implemented
           // using `CallOp`) between subgraphs, because `CallOp::handle_`
           // is tied to a particular subgraph. Even if the function itself
@@ -258,6 +458,9 @@ Status GraphMgr::InitItem(const string& handle, const GraphDef& gdef,
             return lib->CreateKernel(props, kernel);
           }
           auto create_fn = [lib, &props](OpKernel** kernel) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSgraph_mgrDTcc mht_10(mht_10_v, 461, "", "./tensorflow/core/distributed_runtime/graph_mgr.cc", "lambda");
+
             return lib->CreateKernel(props, kernel);
           };
           // Kernels created for subgraph nodes need to be cached.  On
@@ -267,6 +470,9 @@ Status GraphMgr::InitItem(const string& handle, const GraphDef& gdef,
                                      create_fn);
         };
     params.delete_kernel = [lib](OpKernel* kernel) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSgraph_mgrDTcc mht_11(mht_11_v, 473, "", "./tensorflow/core/distributed_runtime/graph_mgr.cc", "lambda");
+
       if (kernel && !OpSegment::ShouldOwnKernel(lib, kernel->type_string())) {
         delete kernel;
       }
@@ -301,6 +507,10 @@ Status GraphMgr::Register(const string& handle, const GraphDef& gdef,
                           int64_t collective_graph_key, WorkerSession* session,
                           DistributedFunctionLibraryRuntime* cluster_flr,
                           string* graph_handle) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("handle: \"" + handle + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSgraph_mgrDTcc mht_12(mht_12_v, 511, "", "./tensorflow/core/distributed_runtime/graph_mgr.cc", "GraphMgr::Register");
+
   Item* item = new Item;
   Status s = InitItem(handle, gdef, graph_options, debug_options, config_proto,
                       collective_graph_key, session, cluster_flr, item);
@@ -321,6 +531,10 @@ Status GraphMgr::Register(const string& handle, const GraphDef& gdef,
 }
 
 Status GraphMgr::Deregister(const string& handle) {
+   std::vector<std::string> mht_13_v;
+   mht_13_v.push_back("handle: \"" + handle + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSgraph_mgrDTcc mht_13(mht_13_v, 535, "", "./tensorflow/core/distributed_runtime/graph_mgr.cc", "GraphMgr::Deregister");
+
   Item* item = nullptr;
   // Removes one item from table_.
   {
@@ -338,6 +552,9 @@ Status GraphMgr::Deregister(const string& handle) {
 }
 
 Status GraphMgr::DeregisterAll() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSgraph_mgrDTcc mht_14(mht_14_v, 555, "", "./tensorflow/core/distributed_runtime/graph_mgr.cc", "GraphMgr::DeregisterAll");
+
   std::vector<Item*> items;
   // Removes all items from table_.
   {
@@ -354,6 +571,9 @@ Status GraphMgr::DeregisterAll() {
 }
 
 Status GraphMgr::SendInputs(const int64_t step_id, const NamedTensors& in) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSgraph_mgrDTcc mht_15(mht_15_v, 574, "", "./tensorflow/core/distributed_runtime/graph_mgr.cc", "GraphMgr::SendInputs");
+
   Rendezvous* rendezvous = worker_env_->rendezvous_mgr->Find(step_id);
   std::vector<string> keys;
   std::vector<Tensor> tensors_to_send;
@@ -373,6 +593,9 @@ Status GraphMgr::SendInputs(const int64_t step_id, const NamedTensors& in) {
 }
 
 Status GraphMgr::RecvOutputs(const int64_t step_id, NamedTensors* out) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSgraph_mgrDTcc mht_16(mht_16_v, 596, "", "./tensorflow/core/distributed_runtime/graph_mgr.cc", "GraphMgr::RecvOutputs");
+
   Rendezvous* rendezvous = worker_env_->rendezvous_mgr->Find(step_id);
   Status s = RecvOutputsFromRendezvous(rendezvous, out, Rendezvous::Args());
   rendezvous->Unref();
@@ -392,6 +615,9 @@ Status GraphMgr::RecvOutputs(const int64_t step_id, NamedTensors* out) {
 
 void GraphMgr::RecvOutputsAsync(const int64_t step_id, NamedTensors* out,
                                 StatusCallback done) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSgraph_mgrDTcc mht_17(mht_17_v, 618, "", "./tensorflow/core/distributed_runtime/graph_mgr.cc", "GraphMgr::RecvOutputsAsync");
+
   Rendezvous* rendezvous = worker_env_->rendezvous_mgr->Find(step_id);
   std::vector<string> keys;
   std::vector<Tensor>* received_keys = new std::vector<Tensor>;
@@ -404,6 +630,9 @@ void GraphMgr::RecvOutputsAsync(const int64_t step_id, NamedTensors* out,
   RecvOutputsFromRendezvousAsync(
       rendezvous, nullptr, {}, keys, received_keys,
       [done, rendezvous, received_keys, out, keys](const Status s) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSgraph_mgrDTcc mht_18(mht_18_v, 633, "", "./tensorflow/core/distributed_runtime/graph_mgr.cc", "lambda");
+
         rendezvous->Unref();
         size_t output_size = 0;
         for (int i = 0, end = keys.size(); i < end; ++i) {
@@ -422,6 +651,10 @@ void GraphMgr::ExecuteAsync(
     StepStatsCollector* collector, MutableRunGraphResponseWrapper* response,
     CancellationManager* cancellation_manager,
     CoordinationServiceAgent* coordination_service_agent, StatusCallback done) {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("handle: \"" + handle + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSgraph_mgrDTcc mht_19(mht_19_v, 655, "", "./tensorflow/core/distributed_runtime/graph_mgr.cc", "GraphMgr::ExecuteAsync");
+
   const uint64 start_time_usecs = Env::Default()->NowMicros();
   profiler::TraceMeProducer activity(
       // To TraceMeConsumers in ExecutorState::Process/Finish or RunGraphDone.
@@ -519,6 +752,10 @@ void GraphMgr::StartParallelExecutors(
     CostGraphDef* cost_graph, CancellationManager* cancellation_manager,
     WorkerSession* session, int64_t start_time_usecs,
     CoordinationServiceAgent* coordination_service_agent, StatusCallback done) {
+   std::vector<std::string> mht_20_v;
+   mht_20_v.push_back("handle: \"" + handle + "\"");
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSgraph_mgrDTcc mht_20(mht_20_v, 756, "", "./tensorflow/core/distributed_runtime/graph_mgr.cc", "GraphMgr::StartParallelExecutors");
+
   const int num_units = item->units.size();
   CHECK_GE(num_units, 1);
   ScopedStepContainer* step_container = new ScopedStepContainer(
@@ -569,6 +806,9 @@ void GraphMgr::StartParallelExecutors(
 
 void GraphMgr::BuildCostModel(Item* item, StepStatsCollector* collector,
                               CostGraphDef* cost_graph) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSdistributed_runtimePSgraph_mgrDTcc mht_21(mht_21_v, 809, "", "./tensorflow/core/distributed_runtime/graph_mgr.cc", "GraphMgr::BuildCostModel");
+
   if (collector && !skip_cost_models_) {
     // Build the cost model
     std::unordered_map<string, const Graph*> device_to_graph;

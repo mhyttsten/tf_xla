@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -56,7 +224,10 @@ static std::array<bool, 2> use_bf16_params{true, false};
 // In bf16 mode, all f32 shapes are converted to bf16 before running.
 class HloEvaluatorTest : public HloTestBase {
  public:
-  HloEvaluatorTest() : use_bfloat16_(false) { InitializeFftData(); }
+  HloEvaluatorTest() : use_bfloat16_(false) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_testDTcc mht_0(mht_0_v, 228, "", "./tensorflow/compiler/xla/service/hlo_evaluator_test.cc", "HloEvaluatorTest");
+ InitializeFftData(); }
 
   StatusOr<Literal> Evaluate(
       absl::Span<const Literal* const> arg_literals = {}) {
@@ -80,6 +251,9 @@ class HloEvaluatorTest : public HloTestBase {
 
   void TestUnaryOp(HloOpcode opcode, Literal expected, Literal input,
                    float aabs = 0) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_testDTcc mht_1(mht_1_v, 254, "", "./tensorflow/compiler/xla/service/hlo_evaluator_test.cc", "TestUnaryOp");
+
     HloComputation::Builder b(TestName());
     auto c1 =
         b.AddInstruction(HloInstruction::CreateConstant(std::move(input)));
@@ -99,6 +273,9 @@ class HloEvaluatorTest : public HloTestBase {
 
   void TestBinaryOp(HloOpcode opcode, Literal expected, Literal lhs,
                     Literal rhs) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_testDTcc mht_2(mht_2_v, 276, "", "./tensorflow/compiler/xla/service/hlo_evaluator_test.cc", "TestBinaryOp");
+
     HloComputation::Builder b(TestName());
     auto c1 = b.AddInstruction(HloInstruction::CreateConstant(std::move(lhs)));
     auto c2 = b.AddInstruction(HloInstruction::CreateConstant(std::move(rhs)));
@@ -113,6 +290,9 @@ class HloEvaluatorTest : public HloTestBase {
 
   void TestTernaryOp(HloOpcode opcode, Literal expected, Literal src0,
                      Literal src1, Literal src2) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_testDTcc mht_3(mht_3_v, 293, "", "./tensorflow/compiler/xla/service/hlo_evaluator_test.cc", "TestTernaryOp");
+
     HloComputation::Builder b(TestName());
     auto operand0 =
         b.AddInstruction(HloInstruction::CreateConstant(std::move(src0)));
@@ -131,17 +311,26 @@ class HloEvaluatorTest : public HloTestBase {
 
   void TestEvaluateInstruction(HloInstruction* instruction,
                                const Literal& expected) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_testDTcc mht_4(mht_4_v, 314, "", "./tensorflow/compiler/xla/service/hlo_evaluator_test.cc", "TestEvaluateInstruction");
+
     TF_ASSERT_OK_AND_ASSIGN(Literal result, evaluator_.Evaluate(instruction));
     EXPECT_TRUE(LiteralTestUtil::Equal(expected, result));
   }
 
   void TestEvaluationFailure(HloInstruction* instruction) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_testDTcc mht_5(mht_5_v, 322, "", "./tensorflow/compiler/xla/service/hlo_evaluator_test.cc", "TestEvaluationFailure");
+
     StatusOr<Literal> result = evaluator_.Evaluate(instruction);
     EXPECT_TRUE(!result.ok());
   }
 
   void TestRecursivelyEvaluateInstruction(HloInstruction* instruction,
                                           const Literal& expected) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_testDTcc mht_6(mht_6_v, 331, "", "./tensorflow/compiler/xla/service/hlo_evaluator_test.cc", "TestRecursivelyEvaluateInstruction");
+
     TF_ASSERT_OK_AND_ASSIGN(
         Literal result,
         evaluator_.Evaluate(
@@ -151,6 +340,9 @@ class HloEvaluatorTest : public HloTestBase {
   }
 
   void TestRecursiveEvaluationFailure(HloInstruction* instruction) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_testDTcc mht_7(mht_7_v, 343, "", "./tensorflow/compiler/xla/service/hlo_evaluator_test.cc", "TestRecursiveEvaluationFailure");
+
     StatusOr<Literal> result = evaluator_.Evaluate(
         instruction, /*recursively_evaluate_nonconstant_operands=*/true);
     EXPECT_TRUE(!result.ok());
@@ -171,6 +363,9 @@ class HloEvaluatorTest : public HloTestBase {
   void ReduceWindowMaxIotaTest(int window_size, int padding, int stride,
                                int window_dilation, int base_dilation,
                                const Literal& expected) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_testDTcc mht_8(mht_8_v, 366, "", "./tensorflow/compiler/xla/service/hlo_evaluator_test.cc", "ReduceWindowMaxIotaTest");
+
     HloComputation::Builder b(TestName());
 
     // arg:
@@ -214,6 +409,9 @@ class HloEvaluatorTest : public HloTestBase {
 
  protected:
   explicit HloEvaluatorTest(bool use_bfloat16) : use_bfloat16_(use_bfloat16) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_testDTcc mht_9(mht_9_v, 412, "", "./tensorflow/compiler/xla/service/hlo_evaluator_test.cc", "HloEvaluatorTest");
+
     InitializeFftData();
   }
 
@@ -237,7 +435,10 @@ class HloEvaluatorTest : public HloTestBase {
 class HloEvaluatorBf16Test : public ::testing::WithParamInterface<bool>,
                              public HloEvaluatorTest {
  protected:
-  HloEvaluatorBf16Test() : HloEvaluatorTest(/*use_bfloat16=*/GetParam()) {}
+  HloEvaluatorBf16Test() : HloEvaluatorTest(/*use_bfloat16=*/GetParam()) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_testDTcc mht_10(mht_10_v, 439, "", "./tensorflow/compiler/xla/service/hlo_evaluator_test.cc", "HloEvaluatorBf16Test");
+}
 };
 
 INSTANTIATE_TEST_SUITE_P(HloEvaluatorTest_Instantiation, HloEvaluatorBf16Test,
@@ -268,7 +469,10 @@ TEST_P(HloEvaluatorBf16Test, DoesClamp) {
 
 // Verifies that clamping of int64_t does not cause loss of precision
 TEST_P(HloEvaluatorBf16Test, DoesClampInt64) {
-  auto ones = [](int bits) { return (int64_t{1} << bits) - 1; };
+  auto ones = [](int bits) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_testDTcc mht_11(mht_11_v, 473, "", "./tensorflow/compiler/xla/service/hlo_evaluator_test.cc", "lambda");
+ return (int64_t{1} << bits) - 1; };
 
   auto low =
       LiteralUtil::CreateR2<int64_t>({{0, ones(54)}, {ones(54), ones(58)}});
@@ -673,6 +877,9 @@ TEST_P(HloEvaluatorBf16Test, ConvertWithDifferentLayout) {
 
 PaddingConfig CreatePaddingConfig(
     std::initializer_list<std::array<int64_t, 3>> padding_dimensions) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_testDTcc mht_12(mht_12_v, 880, "", "./tensorflow/compiler/xla/service/hlo_evaluator_test.cc", "CreatePaddingConfig");
+
   PaddingConfig padding_config;
 
   for (auto& paddings_per_dim : padding_dimensions) {
@@ -1542,6 +1749,9 @@ TEST_P(HloEvaluatorBf16Test, Conv2DGroupedConvolution) {
 // Initialization of data sets for FFT tests:
 
 void HloEvaluatorTest::InitializeFftData() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_testDTcc mht_13(mht_13_v, 1752, "", "./tensorflow/compiler/xla/service/hlo_evaluator_test.cc", "HloEvaluatorTest::InitializeFftData");
+
   // clang-format off
   fft_c64x2x4x8_ = LiteralUtil::CreateR3<complex64>({
     {{{0.0, 0.0}, {1.0, 0.0}, {2.0, 0.0}, {3.0, 0.0},
@@ -2586,6 +2796,9 @@ TEST_F(HloEvaluatorPreciseReduceTest, AddReductionPrecisionTest) {
 // Reducing many numbers should be fast because it doesn't create
 // intermediate Literals; the microbenchmark should finish in < 1 msec.
 void BM_ReducePrecisely(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSservicePShlo_evaluator_testDTcc mht_14(mht_14_v, 2799, "", "./tensorflow/compiler/xla/service/hlo_evaluator_test.cc", "BM_ReducePrecisely");
+
   HloComputation::Builder b("BM_ReducePrecisely");
   HloModuleConfig config;
   config.set_debug_options(GetDebugOptionsFromFlags());

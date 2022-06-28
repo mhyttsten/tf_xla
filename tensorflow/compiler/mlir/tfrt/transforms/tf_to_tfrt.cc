@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -84,6 +252,9 @@ constexpr char kHostAttr[] = "host";
 constexpr char kDeviceTypeTpu[] = "TPU";
 
 void getDependentConversionDialects(mlir::DialectRegistry &registry) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_0(mht_0_v, 255, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "getDependentConversionDialects");
+
   registry.insert<tfrt::corert::CoreRTDialect, mlir::func::FuncDialect,
                   tfrt::fallback_async::FallbackAsyncDialect,
                   tfrt::compiler::TFRTDialect, tfrt::dist::DistributedDialect,
@@ -91,6 +262,9 @@ void getDependentConversionDialects(mlir::DialectRegistry &registry) {
 }
 
 mlir::Value GetFunctionInputChain(mlir::Operation *op) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_1(mht_1_v, 265, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "GetFunctionInputChain");
+
   auto func_op = op->getParentOfType<mlir::func::FuncOp>();
   return func_op.getArgument(0);
 }
@@ -121,11 +295,17 @@ class FallbackExecuteOpConversion : public mlir::ConversionPattern {
         fallback_converter_(*fallback_converter),
         cost_analysis_(*cost_analysis),
         tpu_lower_to_fallback_(tpu_lower_to_fallback),
-        target_tpurt_(target_tpurt) {}
+        target_tpurt_(target_tpurt) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_2(mht_2_v, 299, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "FallbackExecuteOpConversion");
+}
 
   LogicalResult matchAndRewrite(
       mlir::Operation *op, ArrayRef<mlir::Value> operands,
       mlir::ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_3(mht_3_v, 306, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "matchAndRewrite");
+
     if (!UseFallback(op)) return failure();
 
     if (target_tpurt_ && IsTpuCompileAndExecuteOps(op)) return failure();
@@ -189,6 +369,9 @@ class FallbackExecuteOpConversion : public mlir::ConversionPattern {
  private:
   // Return true if this op can be lowered to fallback ops.
   bool UseFallback(mlir::Operation *op) const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_4(mht_4_v, 372, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "UseFallback");
+
     if (!llvm::isa<mlir::TF::TensorFlowDialect>(op->getDialect())) return false;
 
     // Below is a blocklist of ops that should not go through CoreRTExecuteOp
@@ -207,6 +390,9 @@ class FallbackExecuteOpConversion : public mlir::ConversionPattern {
   }
 
   bool IsTpuCompileAndExecuteOps(mlir::Operation *op) const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_5(mht_5_v, 393, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "IsTpuCompileAndExecuteOps");
+
     return llvm::isa<mlir::TF::_TPUCompileMlirOp,
                      mlir::TF::TPUCompileSucceededAssertOp,
                      mlir::TF::TPUExecuteOp>(op);
@@ -238,6 +424,9 @@ mlir::LogicalResult FallbackExecuteOpConversion::ConvertToFallbackExecuteOp(
     mlir::StringAttr op_name,
     tfrt_compiler::FallbackConverter &fallback_converter,
     mlir::ConversionPatternRewriter &rewriter) const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_6(mht_6_v, 427, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "FallbackExecuteOpConversion::ConvertToFallbackExecuteOp");
+
   llvm::SmallVector<Type, 4> result_types(
       op->getNumResults(), rewriter.getType<tfrt::fallback::TFTensorType>());
 
@@ -294,6 +483,9 @@ mlir::LogicalResult FallbackExecuteOpConversion::ConvertToCoreRTExecuteOp(
     mlir::Operation *op, ValueRange operands, llvm::StringRef op_handler_name,
     mlir::ArrayAttr op_attrs, mlir::ArrayAttr op_func_attrs,
     mlir::StringAttr op_name, mlir::ConversionPatternRewriter &rewriter) const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_7(mht_7_v, 486, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "FallbackExecuteOpConversion::ConvertToCoreRTExecuteOp");
+
   llvm::SmallVector<Type, 4> result_types(
       op->getNumResults(), rewriter.getType<tfrt::corert::TensorHandleType>());
 
@@ -336,11 +528,17 @@ class FallbackConstOpConversion
   FallbackConstOpConversion(mlir::MLIRContext *context,
                             CoreRTConverter *corert_converter)
       : mlir::OpConversionPattern<mlir::TF::ConstOp>(context),
-        corert_converter_(*corert_converter) {}
+        corert_converter_(*corert_converter) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_8(mht_8_v, 532, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "FallbackConstOpConversion");
+}
 
   mlir::LogicalResult matchAndRewrite(
       mlir::TF::ConstOp op, OpAdaptor adaptor,
       mlir::ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_9(mht_9_v, 539, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "matchAndRewrite");
+
     // Some data types are handled separately using a fast path.
     if (corert_converter_.IsSupportedNumericDType(op.dtype()) ||
         op.dtype().isa<mlir::TF::StringType>())
@@ -370,11 +568,17 @@ class FallbackSetResourceOp
   FallbackSetResourceOp(mlir::MLIRContext *context,
                         CoreRTConverter *corert_converter)
       : mlir::OpConversionPattern<mlir::TF::_TfrtSetResourceOp>(context),
-        corert_converter_(*corert_converter) {}
+        corert_converter_(*corert_converter) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_10(mht_10_v, 572, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "FallbackSetResourceOp");
+}
 
   mlir::LogicalResult matchAndRewrite(
       mlir::TF::_TfrtSetResourceOp op, OpAdaptor adaptor,
       mlir::ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_11(mht_11_v, 579, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "matchAndRewrite");
+
     mlir::StringAttr device = op->getAttrOfType<mlir::StringAttr>(kDeviceAttr);
     if (!device || device.getValue().empty())
       return op->emitWarning("failed to find a non-empty 'device' attribute");
@@ -413,11 +617,17 @@ class FallbackGetResourceOp
   FallbackGetResourceOp(mlir::MLIRContext *context,
                         CoreRTConverter *corert_converter)
       : mlir::OpConversionPattern<mlir::TF::_TfrtGetResourceOp>(context),
-        corert_converter_(*corert_converter) {}
+        corert_converter_(*corert_converter) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_12(mht_12_v, 621, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "FallbackGetResourceOp");
+}
 
   mlir::LogicalResult matchAndRewrite(
       mlir::TF::_TfrtGetResourceOp op, OpAdaptor adaptor,
       mlir::ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_13(mht_13_v, 628, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "matchAndRewrite");
+
     mlir::StringAttr device = op->getAttrOfType<mlir::StringAttr>(kDeviceAttr);
     if (!device || device.getValue().empty())
       return op->emitWarning("failed to find a non-empty 'device' attribute");
@@ -469,11 +679,17 @@ class TFDeviceRemoteRunOpConversion
       : mlir::OpConversionPattern<tf_device::RemoteRunOp>(context,
                                                           kCoreRTBenefit),
         type_converter_(*type_converter),
-        corert_converter_(*corert_converter) {}
+        corert_converter_(*corert_converter) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_14(mht_14_v, 683, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "TFDeviceRemoteRunOpConversion");
+}
 
   LogicalResult matchAndRewrite(
       tf_device::RemoteRunOp op, OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_15(mht_15_v, 690, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "matchAndRewrite");
+
     mlir::Value distributed_context =
         corert_converter_.GetDistributedContext(op.getOperation(), &rewriter);
     mlir::Value in_op_chain =
@@ -546,11 +762,17 @@ class FallbackBatchFunctionOpConversion
                                     CoreRTConverter *corert_converter)
       : mlir::OpConversionPattern<mlir::TF::BatchFunctionOp>(context,
                                                              kFallbackBenefit),
-        corert_converter_(*corert_converter) {}
+        corert_converter_(*corert_converter) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_16(mht_16_v, 766, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "FallbackBatchFunctionOpConversion");
+}
 
   LogicalResult matchAndRewrite(
       mlir::TF::BatchFunctionOp op, OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_17(mht_17_v, 773, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "matchAndRewrite");
+
     corert_converter_.MaterializeDerivedAttributes(op);
 
     // Remove the device attribute for fallback, as currently fallback will
@@ -609,11 +831,17 @@ class CoreRTConstDenseTensorOpConversion
   CoreRTConstDenseTensorOpConversion(mlir::MLIRContext *context,
                                      CoreRTConverter *corert_converter)
       : mlir::OpConversionPattern<mlir::TF::ConstOp>(context, kCoreRTBenefit),
-        corert_converter_(*corert_converter) {}
+        corert_converter_(*corert_converter) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_18(mht_18_v, 835, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "CoreRTConstDenseTensorOpConversion");
+}
 
   LogicalResult matchAndRewrite(
       mlir::TF::ConstOp op, OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_19(mht_19_v, 842, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "matchAndRewrite");
+
     if (!corert_converter_.IsSupportedNumericDType(op.dtype()))
       return failure();
 
@@ -650,11 +878,17 @@ class TFRTFuncOpSignatureConversion
  public:
   TFRTFuncOpSignatureConversion(mlir::MLIRContext *ctx,
                                 mlir::TypeConverter *type_converter)
-      : OpConversionPattern(ctx), type_converter_(*type_converter) {}
+      : OpConversionPattern(ctx), type_converter_(*type_converter) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_20(mht_20_v, 882, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "TFRTFuncOpSignatureConversion");
+}
 
   LogicalResult matchAndRewrite(
       mlir::func::FuncOp func_op, OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_21(mht_21_v, 889, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "matchAndRewrite");
+
     mlir::FunctionType type = func_op.getFunctionType();
 
     // Convert the original function arguments.
@@ -732,11 +966,17 @@ class CoreRTConstStringTensorOpConversion
   CoreRTConstStringTensorOpConversion(mlir::MLIRContext *context,
                                       CoreRTConverter *corert_converter)
       : mlir::OpConversionPattern<mlir::TF::ConstOp>(context, kCoreRTBenefit),
-        corert_converter_(*corert_converter) {}
+        corert_converter_(*corert_converter) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_22(mht_22_v, 970, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "CoreRTConstStringTensorOpConversion");
+}
 
   LogicalResult matchAndRewrite(
       mlir::TF::ConstOp op, OpAdaptor adaptor,
-      ConversionPatternRewriter &rewriter) const override {  // NOLINT
+      ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_23(mht_23_v, 977, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "matchAndRewrite");
+  // NOLINT
     if (!op.dtype().isa<mlir::TF::StringType>()) return failure();
 
     DenseStringElementsAttr attr = op.value().cast<DenseStringElementsAttr>();
@@ -786,7 +1026,10 @@ class CoreRTExecuteOpConversion : public mlir::OpConversionPattern<TF_Op> {
  public:
   CoreRTExecuteOpConversion(mlir::MLIRContext *context,
                             CoreRTConverter *corert_converter)
-      : CoreRTExecuteOpConversion(context, corert_converter, "") {}
+      : CoreRTExecuteOpConversion(context, corert_converter, "") {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_24(mht_24_v, 1030, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "CoreRTExecuteOpConversion");
+}
 
   // If device_name is not empty, only ops that are using this device is lowered
   // using CoreRTExecuteOpConversion.
@@ -795,11 +1038,17 @@ class CoreRTExecuteOpConversion : public mlir::OpConversionPattern<TF_Op> {
                             llvm::StringRef device_name)
       : mlir::OpConversionPattern<TF_Op>(context, kCoreRTBenefit),
         corert_converter_(*corert_converter),
-        device_name_(device_name) {}
+        device_name_(device_name) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_25(mht_25_v, 1042, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "CoreRTExecuteOpConversion");
+}
 
   LogicalResult matchAndRewrite(
       TF_Op op, typename TF_Op::Adaptor adaptor,
       ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_26(mht_26_v, 1049, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "matchAndRewrite");
+
     auto parsed_device_name = corert_converter_.ParseDeviceName(op);
     // Return failure and emit warning if there is no device assignment.
     if (!parsed_device_name) {
@@ -865,6 +1114,9 @@ LogicalResult ConvertFunctionCallOperands(
     mlir::Operation *op, ValueRange operands,
     llvm::SmallVectorImpl<mlir::Value> *new_operands,
     mlir::ConversionPatternRewriter &rewriter, bool func_use_fallback_tensor) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_27(mht_27_v, 1117, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "ConvertFunctionCallOperands");
+
   if (func_use_fallback_tensor) {
     // TODO(b/182232457): Support other devices.
     return tfrt_compiler::ConvertFallbackOperands(
@@ -887,11 +1139,17 @@ class TFRTCallOpConversion : public mlir::OpConversionPattern<CallOp> {
       : mlir::OpConversionPattern<CallOp>(context),
         type_converter_(*type_converter),
         corert_converter_(*corert_converter),
-        func_use_fallback_tensor_(func_use_fallback_tensor) {}
+        func_use_fallback_tensor_(func_use_fallback_tensor) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_28(mht_28_v, 1143, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "TFRTCallOpConversion");
+}
 
   LogicalResult matchAndRewrite(
       CallOp op, typename CallOp::Adaptor adaptor,
       ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_29(mht_29_v, 1150, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "matchAndRewrite");
+
     auto callee =
         op.getCallableForCallee().template dyn_cast<mlir::SymbolRefAttr>();
     if (!callee) return failure();
@@ -950,11 +1208,17 @@ class TFRTReturnOpConversion
                          bool func_use_fallback_tensor)
       : mlir::OpConversionPattern<mlir::func::ReturnOp>(context),
         corert_converter_(*corert_converter),
-        func_use_fallback_tensor_(func_use_fallback_tensor) {}
+        func_use_fallback_tensor_(func_use_fallback_tensor) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_30(mht_30_v, 1212, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "TFRTReturnOpConversion");
+}
 
   LogicalResult matchAndRewrite(
       mlir::func::ReturnOp op, OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_31(mht_31_v, 1219, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "matchAndRewrite");
+
     llvm::SmallVector<mlir::Value, 2> new_operands;
 
     // Currently in mlir::TF::SideEffectAnalysis, all terminator ops are treated
@@ -996,11 +1260,17 @@ class TFRTCaseOpConversion : public mlir::OpConversionPattern<TF::CaseOp> {
       : mlir::OpConversionPattern<TF::CaseOp>(context),
         type_converter_(*type_converter),
         corert_converter_(*corert_converter),
-        func_use_fallback_tensor_(func_use_fallback_tensor) {}
+        func_use_fallback_tensor_(func_use_fallback_tensor) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_32(mht_32_v, 1264, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "TFRTCaseOpConversion");
+}
 
   LogicalResult matchAndRewrite(
       TF::CaseOp op, OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_33(mht_33_v, 1271, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "matchAndRewrite");
+
     mlir::ArrayAttr branches = op.branches();
 
     llvm::SmallVector<mlir::Type, 4> result_types;
@@ -1053,6 +1323,9 @@ class TFRTCaseOpConversion : public mlir::OpConversionPattern<TF::CaseOp> {
 
 static mlir::Value GetPredicate(mlir::Operation *op, mlir::Value cond_operand,
                                 mlir::ConversionPatternRewriter &rewriter) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_34(mht_34_v, 1326, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "GetPredicate");
+
   if (!cond_operand.getType().isa<tfrt::fallback::TFTensorType>()) {
     cond_operand = tfrt_compiler::ConvertCoreRTTensorHandleToFallbackTensor(
         op->getLoc(), tfrt_compiler::GetDefaultCpuDeviceName(), cond_operand,
@@ -1076,11 +1349,17 @@ class TFRTCondOpConversion : public mlir::OpConversionPattern<mlir::TF::IfOp> {
       : mlir::OpConversionPattern<TF::IfOp>(context),
         type_converter_(*type_converter),
         corert_converter_(*corert_converter),
-        func_use_fallback_tensor_(func_use_fallback_tensor) {}
+        func_use_fallback_tensor_(func_use_fallback_tensor) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_35(mht_35_v, 1353, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "TFRTCondOpConversion");
+}
 
   mlir::LogicalResult matchAndRewrite(
       mlir::TF::IfOp op, OpAdaptor adaptor,
       mlir::ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_36(mht_36_v, 1360, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "matchAndRewrite");
+
     mlir::FlatSymbolRefAttr then_branch = op.then_branchAttr();
     mlir::FlatSymbolRefAttr else_branch = op.else_branchAttr();
 
@@ -1179,11 +1458,17 @@ class TFRTWhileOpConversion
         symbol_table_(*symbol_table),
         tensor_array_side_effect_analysis_(*tensor_array_side_effect_analysis),
         func_use_fallback_tensor_(func_use_fallback_tensor),
-        enable_while_parallel_iterations_(enable_while_parallel_iterations) {}
+        enable_while_parallel_iterations_(enable_while_parallel_iterations) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_37(mht_37_v, 1462, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "TFRTWhileOpConversion");
+}
 
   mlir::LogicalResult matchAndRewrite(
       mlir::TF::WhileOp op, OpAdaptor adaptor,
       mlir::ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_38(mht_38_v, 1469, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "matchAndRewrite");
+
     mlir::FlatSymbolRefAttr cond_fn = op.condAttr();
     mlir::FlatSymbolRefAttr body_fn = op.bodyAttr();
 
@@ -1259,6 +1544,9 @@ class TFRTWhileOpConversion
 
  private:
   bool HasAtMostTensorArrayEffect(mlir::TF::WhileOp op) const {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_39(mht_39_v, 1547, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "HasAtMostTensorArrayEffect");
+
     return tensor_array_side_effect_analysis_.HasAtMostTensorArrayEffect(
                op.cond_function()) &&
            tensor_array_side_effect_analysis_.HasAtMostTensorArrayEffect(
@@ -1297,6 +1585,9 @@ mlir::func::FuncOp TFRTWhileOpConversion::GetPredicateFunction(
     mlir::TF::WhileOp op, mlir::FlatSymbolRefAttr cond_fn,
     mlir::TypeRange arg_types,
     mlir::ConversionPatternRewriter &rewriter) const {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_40(mht_40_v, 1588, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "TFRTWhileOpConversion::GetPredicateFunction");
+
   std::string pred_fn_name = cond_fn.getValue().str() + "/tfrt_predicate";
 
   if (auto pred_fn = symbol_table_.lookup<mlir::func::FuncOp>(pred_fn_name)) {
@@ -1358,6 +1649,9 @@ mlir::func::FuncOp TFRTWhileOpConversion::GetWhileBodyFunction(
     mlir::TF::WhileOp op, mlir::FlatSymbolRefAttr original_body_fn,
     mlir::func::FuncOp pred_fn, mlir::TypeRange arg_types,
     mlir::ConversionPatternRewriter &rewriter) const {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_41(mht_41_v, 1652, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "TFRTWhileOpConversion::GetWhileBodyFunction");
+
   int64_t parallel_iterations =
       enable_while_parallel_iterations_ ? op.parallel_iterations() : 1;
 
@@ -1448,11 +1742,17 @@ class JitRtCallToJitRtCompileAndExecuteConversion
     : public OpConversionPattern<tfrt::jitrt::CallOp> {
  public:
   explicit JitRtCallToJitRtCompileAndExecuteConversion(MLIRContext *context)
-      : OpConversionPattern<tfrt::jitrt::CallOp>(context) {}
+      : OpConversionPattern<tfrt::jitrt::CallOp>(context) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_42(mht_42_v, 1746, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "JitRtCallToJitRtCompileAndExecuteConversion");
+}
 
   LogicalResult matchAndRewrite(
       tfrt::jitrt::CallOp call, OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_43(mht_43_v, 1753, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "matchAndRewrite");
+
     // Convert operands to fallback tensors.
     llvm::SmallVector<Value, 4> fallback_operands;
     if (failed(tfrt_compiler::ConvertFallbackOperands(
@@ -1477,6 +1777,9 @@ class JitRtCallToJitRtCompileAndExecuteConversion
 void SetUpTFToTFRTConversionLegality(mlir::ConversionTarget *target,
                                      mlir::TypeConverter *func_type_converter,
                                      mlir::Type chain_type) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_44(mht_44_v, 1780, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "SetUpTFToTFRTConversionLegality");
+
   target->addLegalDialect<tfrt::corert::CoreRTDialect>();
   target->addLegalDialect<tfrt::fallback_async::FallbackAsyncDialect>();
   target->addLegalDialect<tfrt::compiler::TFRTDialect>();
@@ -1503,6 +1806,9 @@ void SetUpTFToTFRTConversionLegality(mlir::ConversionTarget *target,
 void PopulateJitRtConversionPatterns(MLIRContext *context,
                                      RewritePatternSet *patterns,
                                      CoreRTConverter *corert_converter) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_45(mht_45_v, 1809, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "PopulateJitRtConversionPatterns");
+
   // Lower jitrt.call to the pair of compile and execute operations.
   patterns->add<JitRtCallToJitRtCompileAndExecuteConversion>(context);
 }
@@ -1520,6 +1826,9 @@ void PopulateTFToTFRTConversionPatterns(
     bool enable_native_ops, bool func_use_fallback_tensor,
     bool enable_while_parallel_iterations, bool tpu_lower_to_fallback,
     bool target_tpurt) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_46(mht_46_v, 1829, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "PopulateTFToTFRTConversionPatterns");
+
   // By default, we lower all TF ops to fallback ops.
   patterns->add<FallbackExecuteOpConversion>(
       context, corert_converter, fallback_converter, cost_analysis,
@@ -1607,13 +1916,22 @@ class TfToTfrtConversionPass
     : public mlir::PassWrapper<TfToTfrtConversionPass,
                                mlir::OperationPass<mlir::ModuleOp>> {
   void getDependentDialects(mlir::DialectRegistry &registry) const override {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_47(mht_47_v, 1919, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "getDependentDialects");
+
     getDependentConversionDialects(registry);
 
     if (target_tpurt_) RegisterTPUDialects(&registry);
   }
 
-  llvm::StringRef getArgument() const final { return "tf-to-tfrt"; }
+  llvm::StringRef getArgument() const final {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_48(mht_48_v, 1928, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "getArgument");
+ return "tf-to-tfrt"; }
   llvm::StringRef getDescription() const final {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_49(mht_49_v, 1932, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "getDescription");
+
     return "Convert Tensorflow dialect (generated from tf.function) to TFRT "
            "dialect.";
   }
@@ -1621,6 +1939,9 @@ class TfToTfrtConversionPass
  public:
   TfToTfrtConversionPass() = default;
   explicit TfToTfrtConversionPass(const TfrtPipelineOptions &options) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_50(mht_50_v, 1942, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "TfToTfrtConversionPass");
+
     target_tpurt_ = options.target_tpurt;
     enable_native_ops_ = options.enable_native_ops;
     tpu_use_core_selector_ = options.tpu_use_core_selector;
@@ -1636,7 +1957,10 @@ class TfToTfrtConversionPass
     enable_while_parallel_iterations_ =
         options.enable_while_parallel_iterations;
   }
-  TfToTfrtConversionPass(const TfToTfrtConversionPass &) {}
+  TfToTfrtConversionPass(const TfToTfrtConversionPass &) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_51(mht_51_v, 1961, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "TfToTfrtConversionPass");
+}
 
   mlir::LogicalResult runOnFunction(
       mlir::func::FuncOp func,
@@ -1645,6 +1969,9 @@ class TfToTfrtConversionPass
           &tensor_array_side_effect_analysis,
       tfrt_compiler::FallbackConverter &fallback_converter,
       mlir::SymbolTable &symbol_table) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_52(mht_52_v, 1972, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "runOnFunction");
+
     auto &context = getContext();
     mlir::ConversionTarget target(context);
     mlir::RewritePatternSet patterns(&getContext());
@@ -1680,6 +2007,9 @@ class TfToTfrtConversionPass
   }
 
   void runOnOperation() override {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_53(mht_53_v, 2010, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "runOnOperation");
+
     auto module = getOperation();
     const auto &side_effect_analysis =
         getAnalysis<mlir::TF::SideEffectAnalysis>();
@@ -1726,6 +2056,9 @@ class TfToTfrtConversionPass
   // with the first returned chain. This merged chain can be used to signal the
   // completion of all execution including side-effets.
   void ChainDanglingValuesinFunction(mlir::func::FuncOp func_op) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_54(mht_54_v, 2059, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "ChainDanglingValuesinFunction");
+
     auto &block = func_op.front();
 
     llvm::SmallVector<mlir::Value, 2> dangling_values;
@@ -1767,6 +2100,9 @@ class TfToTfrtConversionPass
   void CreateFallbackInitializationFunction(
       mlir::ModuleOp module,
       tfrt_compiler::FallbackConverter &fallback_converter) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_55(mht_55_v, 2103, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "CreateFallbackInitializationFunction");
+
     mlir::OpBuilder builder(&module.getBodyRegion());
 
     auto chain_type = builder.getType<tfrt::compiler::ChainType>();
@@ -1821,6 +2157,9 @@ class TfToTfrtConversionPass
   }
 
   int64_t GetNumArgs(mlir::Operation *fallback_op) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_56(mht_56_v, 2160, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "GetNumArgs");
+
     if (auto execute_op =
             llvm::dyn_cast<tfrt::fallback_async::ExecuteOp>(fallback_op)) {
       return execute_op.operands().size();
@@ -1928,6 +2267,9 @@ class TfToTfrtConversionPass
 // assignment.
 void AddTfDeviceAssignmentPasses(mlir::OpPassManager &pm,
                                  const TfrtPipelineOptions &options) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_57(mht_57_v, 2270, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "AddTfDeviceAssignmentPasses");
+
   pm.addPass(mlir::TF::CreateConstantOpDeviceAssignmentPass());
   pm.addNestedPass<mlir::func::FuncOp>(
       mlir::TF::CreateSimpleTFDeviceAssignmentPass(options.default_device));
@@ -1949,9 +2291,15 @@ class OutlineJitRtClustersPass
     : public PassWrapper<OutlineJitRtClustersPass, OperationPass<ModuleOp>> {
  public:
   llvm::StringRef getArgument() const final {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_58(mht_58_v, 2294, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "getArgument");
+
     return "tf-outline-jitrt-cluster";
   }
   llvm::StringRef getDescription() const final {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_59(mht_59_v, 2300, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "getDescription");
+
     return "Outlines `tf_device.cluster` operations into functions and "
            "replaces them with `jitrt.call` operations.";
   }
@@ -1959,6 +2307,9 @@ class OutlineJitRtClustersPass
   void runOnOperation() override;
 
   void getDependentDialects(mlir::DialectRegistry &registry) const override {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_60(mht_60_v, 2310, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "getDependentDialects");
+
     registry.insert<tfrt::jitrt::JitRuntimeDialect>();
   }
 
@@ -1995,6 +2346,9 @@ OutlineJitRtClustersPass::CompiledModule
 OutlineJitRtClustersPass::CreateCompiledModule(tf_device::ClusterOp cluster,
                                                int64_t max_arg_size,
                                                SymbolTable *symbol_table) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_61(mht_61_v, 2349, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "OutlineJitRtClustersPass::CreateCompiledModule");
+
   MLIRContext *ctx = cluster->getContext();
   Location loc = cluster.getLoc();
 
@@ -2073,6 +2427,9 @@ OutlineJitRtClustersPass::CreateCompiledModule(tf_device::ClusterOp cluster,
 
 LogicalResult OutlineJitRtClustersPass::SetEntrypointConstraints(
     CompiledModule &compiled) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_62(mht_62_v, 2430, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "OutlineJitRtClustersPass::SetEntrypointConstraints");
+
   FuncOp func = compiled.entrypoint;
 
   // Functions outlined from jitrt device clusters must have a single block.
@@ -2103,6 +2460,9 @@ LogicalResult OutlineJitRtClustersPass::SetEntrypointConstraints(
 LogicalResult OutlineJitRtClustersPass::OutlineClusterOp(
     tf_device::ClusterOp cluster, int64_t max_arg_size,
     SymbolTable *symbol_table) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_63(mht_63_v, 2463, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "OutlineJitRtClustersPass::OutlineClusterOp");
+
   Location loc = cluster->getLoc();
   OpBuilder builder(cluster);
 
@@ -2132,6 +2492,9 @@ LogicalResult OutlineJitRtClustersPass::OutlineClusterOp(
 }
 
 void OutlineJitRtClustersPass::runOnOperation() {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_64(mht_64_v, 2495, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "OutlineJitRtClustersPass::runOnOperation");
+
   ModuleOp module = getOperation();
   SymbolTable symbol_table(module);
 
@@ -2177,6 +2540,9 @@ static std::unique_ptr<Pass> CreateOutlineJitRtClustersPass() {
 
 void CreateTFExecutorToTFPipeline(mlir::OpPassManager &pm,
                                   const TfrtPipelineOptions &options) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_65(mht_65_v, 2543, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "CreateTFExecutorToTFPipeline");
+
   // Due to b/191304670, functionalized while ops might not have the
   // shape_invariant attribute set correctly, which leads to failure in shape
   // inference. As a workaround, we conservatively (e.g., we place less
@@ -2338,6 +2704,9 @@ void CreateTFExecutorToTFPipeline(mlir::OpPassManager &pm,
 
 void CreateTfExecutorToTfrtPipelineHelper(mlir::OpPassManager &pm,
                                           const TfrtPipelineOptions &options) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_66(mht_66_v, 2707, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "CreateTfExecutorToTfrtPipelineHelper");
+
   CreateTFExecutorToTFPipeline(pm, options);
 
   pm.addPass(CreateTfToTfrtConversionPass(options));
@@ -2359,6 +2728,9 @@ void CreateTfExecutorToTfrtPipelineHelper(mlir::OpPassManager &pm,
 // export TF_DUMP_GRAPH_PREFIX=/tmp/mlir
 void CreateTfExecutorToTfrtPipeline(mlir::PassManager &pm,
                                     const TfrtPipelineOptions &options) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStfrtPStransformsPStf_to_tfrtDTcc mht_67(mht_67_v, 2731, "", "./tensorflow/compiler/mlir/tfrt/transforms/tf_to_tfrt.cc", "CreateTfExecutorToTfrtPipeline");
+
   if (VLOG_IS_ON(1)) {
     // Print the whole module after each pass, which requires disabling
     // multi-threading as well.

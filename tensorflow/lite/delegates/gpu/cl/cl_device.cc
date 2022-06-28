@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPScl_deviceDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPScl_deviceDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPScl_deviceDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,6 +204,10 @@ namespace cl {
 void ParseQualcommOpenClCompilerVersion(
     const std::string& cl_driver_version,
     AdrenoInfo::OpenClCompilerVersion* result) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("cl_driver_version: \"" + cl_driver_version + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPScl_deviceDTcc mht_0(mht_0_v, 208, "", "./tensorflow/lite/delegates/gpu/cl/cl_device.cc", "ParseQualcommOpenClCompilerVersion");
+
   // Searching this part: "Compiler E031.**.**.**" where * is digit
   const std::string start = "Compiler E031.";
   size_t position = cl_driver_version.find(start);
@@ -65,6 +237,9 @@ void ParseQualcommOpenClCompilerVersion(
 
 template <>
 std::string GetDeviceInfo<std::string>(cl_device_id id, cl_device_info info) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPScl_deviceDTcc mht_1(mht_1_v, 240, "", "./tensorflow/lite/delegates/gpu/cl/cl_device.cc", "GetDeviceInfo<std::string>");
+
   size_t size;
   cl_int error = clGetDeviceInfo(id, info, 0, nullptr, &size);
   if (error != CL_SUCCESS) {
@@ -82,6 +257,9 @@ std::string GetDeviceInfo<std::string>(cl_device_id id, cl_device_info info) {
 namespace {
 template <typename T>
 T GetPlatformInfo(cl_platform_id id, cl_platform_info info) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPScl_deviceDTcc mht_2(mht_2_v, 260, "", "./tensorflow/lite/delegates/gpu/cl/cl_device.cc", "GetPlatformInfo");
+
   T result;
   cl_int error = clGetPlatformInfo(id, info, sizeof(T), &result, nullptr);
   if (error != CL_SUCCESS) {
@@ -91,6 +269,9 @@ T GetPlatformInfo(cl_platform_id id, cl_platform_info info) {
 }
 
 std::string GetPlatformInfo(cl_platform_id id, cl_platform_info info) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPScl_deviceDTcc mht_3(mht_3_v, 272, "", "./tensorflow/lite/delegates/gpu/cl/cl_device.cc", "GetPlatformInfo");
+
   size_t size;
   cl_int error = clGetPlatformInfo(id, info, 0, nullptr, &size);
   if (error != CL_SUCCESS) {
@@ -106,6 +287,9 @@ std::string GetPlatformInfo(cl_platform_id id, cl_platform_info info) {
 }
 
 void GetDeviceWorkDimsSizes(cl_device_id id, int3* result) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPScl_deviceDTcc mht_4(mht_4_v, 290, "", "./tensorflow/lite/delegates/gpu/cl/cl_device.cc", "GetDeviceWorkDimsSizes");
+
   int dims_count =
       GetDeviceInfo<cl_uint>(id, CL_DEVICE_MAX_WORK_ITEM_DIMENSIONS);
   if (dims_count < 3) {
@@ -125,6 +309,10 @@ void GetDeviceWorkDimsSizes(cl_device_id id, int3* result) {
 }
 
 OpenClVersion ParseCLVersion(const std::string& version) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("version: \"" + version + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPScl_deviceDTcc mht_5(mht_5_v, 313, "", "./tensorflow/lite/delegates/gpu/cl/cl_device.cc", "ParseCLVersion");
+
   const auto first_dot_pos = version.find_first_of('.');
   if (first_dot_pos == std::string::npos) {
     return OpenClVersion::kCl1_0;
@@ -158,10 +346,16 @@ OpenClVersion ParseCLVersion(const std::string& version) {
 // check that gpu_version belong to range min_version-max_version
 // min_version is included and max_version is excluded.
 bool IsGPUVersionInRange(int gpu_version, int min_version, int max_version) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPScl_deviceDTcc mht_6(mht_6_v, 349, "", "./tensorflow/lite/delegates/gpu/cl/cl_device.cc", "IsGPUVersionInRange");
+
   return gpu_version >= min_version && gpu_version < max_version;
 }
 
 GpuInfo GpuInfoFromDeviceID(cl_device_id id, cl_platform_id platform_id) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPScl_deviceDTcc mht_7(mht_7_v, 356, "", "./tensorflow/lite/delegates/gpu/cl/cl_device.cc", "GpuInfoFromDeviceID");
+
   GpuInfo info;
   info.opencl_info.platform_version =
       GetPlatformInfo(platform_id, CL_PLATFORM_VERSION);
@@ -317,6 +511,9 @@ CLDevice::CLDevice(cl_device_id id, cl_platform_id platform_id)
     : info_(GpuInfoFromDeviceID(id, platform_id)),
       id_(id),
       platform_id_(platform_id) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPScl_deviceDTcc mht_8(mht_8_v, 514, "", "./tensorflow/lite/delegates/gpu/cl/cl_device.cc", "CLDevice::CLDevice");
+
   if (info_.IsAdreno() &&
       info_.adreno_info.adreno_gpu == AdrenoGpu::kAdreno630) {
     acceleration::AndroidInfo android_info;
@@ -328,9 +525,15 @@ CLDevice::CLDevice(cl_device_id id, cl_platform_id platform_id)
 }
 
 CLDevice::CLDevice(const CLDevice& device)
-    : info_(device.info_), id_(device.id_), platform_id_(device.platform_id_) {}
+    : info_(device.info_), id_(device.id_), platform_id_(device.platform_id_) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPScl_deviceDTcc mht_9(mht_9_v, 529, "", "./tensorflow/lite/delegates/gpu/cl/cl_device.cc", "CLDevice::CLDevice");
+}
 
 CLDevice& CLDevice::operator=(const CLDevice& device) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPScl_deviceDTcc mht_10(mht_10_v, 534, "", "./tensorflow/lite/delegates/gpu/cl/cl_device.cc", "=");
+
   if (this != &device) {
     info_ = device.info_;
     id_ = device.id_;
@@ -343,11 +546,17 @@ CLDevice::CLDevice(CLDevice&& device)
     : info_(std::move(device.info_)),
       id_(device.id_),
       platform_id_(device.platform_id_) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPScl_deviceDTcc mht_11(mht_11_v, 549, "", "./tensorflow/lite/delegates/gpu/cl/cl_device.cc", "CLDevice::CLDevice");
+
   device.id_ = nullptr;
   device.platform_id_ = nullptr;
 }
 
 CLDevice& CLDevice::operator=(CLDevice&& device) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPScl_deviceDTcc mht_12(mht_12_v, 557, "", "./tensorflow/lite/delegates/gpu/cl/cl_device.cc", "=");
+
   if (this != &device) {
     id_ = nullptr;
     platform_id_ = nullptr;
@@ -359,14 +568,23 @@ CLDevice& CLDevice::operator=(CLDevice&& device) {
 }
 
 std::string CLDevice::GetPlatformVersion() const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPScl_deviceDTcc mht_13(mht_13_v, 571, "", "./tensorflow/lite/delegates/gpu/cl/cl_device.cc", "CLDevice::GetPlatformVersion");
+
   return GetPlatformInfo(platform_id_, CL_PLATFORM_VERSION);
 }
 
 void CLDevice::DisableOneLayerTextureArray() {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPScl_deviceDTcc mht_14(mht_14_v, 578, "", "./tensorflow/lite/delegates/gpu/cl/cl_device.cc", "CLDevice::DisableOneLayerTextureArray");
+
   info_.adreno_info.support_one_layer_texture_array = false;
 }
 
 absl::Status CreateDefaultGPUDevice(CLDevice* result) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPScl_deviceDTcc mht_15(mht_15_v, 585, "", "./tensorflow/lite/delegates/gpu/cl/cl_device.cc", "CreateDefaultGPUDevice");
+
   cl_uint num_platforms;
   cl_int status = clGetPlatformIDs(0, nullptr, &num_platforms);
   if (status != CL_SUCCESS) {

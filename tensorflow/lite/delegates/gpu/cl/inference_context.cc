@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -73,6 +241,9 @@ std::vector<std::pair<ValueId, TensorDescriptor>> GetNodeTensors(
 
 void AddUsage(ValueId id, int task_index,
               std::map<ValueId, int2>* usage_records) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_0(mht_0_v, 244, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "AddUsage");
+
   auto it = usage_records->find(id);
   if (it == usage_records->end()) {
     (*usage_records)[id].x = task_index;
@@ -85,6 +256,9 @@ void AddUsage(ValueId id, int task_index,
 // returns true if actual memory for this storage type will be allocated with
 // clCreateBuffer.
 bool IsBufferBased(const GpuInfo& gpu_info, const TensorStorageType& type) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_1(mht_1_v, 259, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "IsBufferBased");
+
   const bool image2d_based_buffer =
       (type == TensorStorageType::TEXTURE_2D ||
        type == TensorStorageType::SINGLE_TEXTURE_2D) &&
@@ -96,6 +270,9 @@ bool IsBufferBased(const GpuInfo& gpu_info, const TensorStorageType& type) {
 // Calculates the total size of the assignment.
 size_t TotalSize(const ObjectsAssignment<size_t>& assignment,
                  size_t alignment = 1) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_2(mht_2_v, 273, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "TotalSize");
+
   size_t total_size = 0;
   for (auto object_size : assignment.object_sizes) {
     total_size += AlignByN(object_size, alignment);
@@ -106,6 +283,9 @@ size_t TotalSize(const ObjectsAssignment<size_t>& assignment,
 TensorType GetTensorType(const GpuModel& gpu_model,
                          const CreateGpuModelInfo* create_info,
                          const GpuInfo& gpu_info, ValueId id) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_3(mht_3_v, 286, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "GetTensorType");
+
   bool is_variable = false;
   for (int i = 0; i < gpu_model.variable_ids_and_refs.size(); ++i) {
     if (gpu_model.variable_ids_and_refs[i].first == id) {
@@ -132,6 +312,9 @@ TensorType GetTensorType(const GpuModel& gpu_model,
 void GetUsages(const GpuModel& model,
                const std::function<bool(ValueId)>& functor,
                std::map<ValueId, int2>* usages) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_4(mht_4_v, 315, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "GetUsages");
+
   for (const auto& in_id : model.input_ids_and_refs) {
     if (functor(in_id.first)) {
       AddUsage(in_id.first, 0, usages);
@@ -160,6 +343,9 @@ absl::Status GetBufferAsignment(
     ObjectsAssignment<size_t>* buffer_assignment,
     OffsetsAssignment* offset_assignment, bool* use_offset_assignment,
     bool* is_sub_buffers_supported) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_5(mht_5_v, 346, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "GetBufferAsignment");
+
   std::map<ValueId, int2> buffer_usages;
   GetUsages(
       gpu_model,
@@ -233,6 +419,9 @@ absl::Status GetBufferAsignment(
 }  // namespace
 
 void InferenceContext::ExecutionHints::Init(const GpuInfo& gpu_info) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_6(mht_6_v, 422, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "InferenceContext::ExecutionHints::Init");
+
   if (gpu_info.IsMali()) {
     need_flush = true;
     need_manual_release = gpu_info.mali_info.IsValhall() ? false : true;
@@ -250,6 +439,9 @@ void InferenceContext::ExecutionHints::Init(const GpuInfo& gpu_info) {
 absl::Status InferenceContext::InitFromGraph(
     const CreateGpuModelInfo& create_info, const GraphFloat32& graph,
     Environment* env, std::vector<uint8_t>* serialized_model) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_7(mht_7_v, 442, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "InferenceContext::InitFromGraph");
+
   GpuModel gpu_model;
   RETURN_IF_ERROR(GraphToGpuModel(graph, create_info,
                                   env->GetDevicePtr()->GetInfo(), &gpu_model));
@@ -260,6 +452,9 @@ absl::Status InferenceContext::InitFromGpuModel(
     const CreateGpuModelInfo& create_info, GpuModel* gpu_model,
     Environment* env, std::vector<uint8_t>* serialized_model,
     Buffer* shared_buffer) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_8(mht_8_v, 455, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "InferenceContext::InitFromGpuModel");
+
   flatbuffers::FlatBufferBuilder builder;
   flatbuffers::Offset<tflite::gpu::data::GpuModel> gpu_model_fb;
   if (serialized_model) {
@@ -337,6 +532,9 @@ absl::Status InferenceContext::InitFromGpuModel(
 absl::Status InferenceContext::RestoreDeserialized(
     const absl::Span<const uint8_t> serialized_model, Environment* env,
     CreateGpuModelInfo* create_info) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_9(mht_9_v, 535, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "InferenceContext::RestoreDeserialized");
+
   flatbuffers::Verifier verifier(serialized_model.data(),
                                  serialized_model.size());
   if (!data::VerifyInferenceContextBuffer(verifier)) {
@@ -411,6 +609,9 @@ absl::Status InferenceContext::RestoreDeserialized(
 }
 
 void InferenceContext::InitFromGpuModel(GpuModel* gpu_model) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_10(mht_10_v, 612, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "InferenceContext::InitFromGpuModel");
+
   for (const auto& input : gpu_model->input_ids_and_refs) {
     input_ids_.push_back(input.first);
   }
@@ -427,6 +628,9 @@ void InferenceContext::InitFromGpuModel(GpuModel* gpu_model) {
 }
 
 void InferenceContext::InitRecordableQueue(Environment* env) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_11(mht_11_v, 631, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "InferenceContext::InitRecordableQueue");
+
   std::vector<ClOperation*> ops(nodes_.size());
   for (int i = 0; i < nodes_.size(); ++i) {
     ops[i] = &nodes_[i].cl_operation;
@@ -437,6 +641,9 @@ void InferenceContext::InitRecordableQueue(Environment* env) {
 absl::Status InferenceContext::InitFromGraphWithTransforms(
     const CreateGpuModelInfo& create_info, GraphFloat32* graph,
     Environment* env, std::vector<uint8_t>* serialized_model) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_12(mht_12_v, 644, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "InferenceContext::InitFromGraphWithTransforms");
+
   RETURN_IF_ERROR(RunGraphTransformsForGpuModel(graph));
   RETURN_IF_ERROR(InitFromGraph(create_info, *graph, env, serialized_model));
   return absl::OkStatus();
@@ -445,6 +652,9 @@ absl::Status InferenceContext::InitFromGraphWithTransforms(
 absl::Status InferenceContext::AllocateMemory(
     const GpuModel& gpu_model, const GpuInfo& gpu_info,
     const CreateGpuModelInfo* create_info, CLContext* context) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_13(mht_13_v, 655, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "InferenceContext::AllocateMemory");
+
   RETURN_IF_ERROR(AllocateConstTensors(gpu_model, context));
   RETURN_IF_ERROR(AllocateVariableTensors(gpu_model, context));
   RETURN_IF_ERROR(
@@ -456,6 +666,9 @@ absl::Status InferenceContext::AllocateMemory(
 
 absl::Status InferenceContext::AllocateConstTensors(const GpuModel& gpu_model,
                                                     CLContext* context) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_14(mht_14_v, 669, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "InferenceContext::AllocateConstTensors");
+
   for (auto& description : gpu_model.const_tensors) {
     RETURN_IF_ERROR(const_tensors_[description.first].CreateFromDescriptor(
         description.second, context));
@@ -465,6 +678,9 @@ absl::Status InferenceContext::AllocateConstTensors(const GpuModel& gpu_model,
 
 absl::Status InferenceContext::AllocateVariableTensors(
     const GpuModel& gpu_model, CLContext* context) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_15(mht_15_v, 681, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "InferenceContext::AllocateVariableTensors");
+
   for (const auto& variable_input : gpu_model.variable_ids_and_refs) {
     variable_ids_and_refs_[variable_input.first] = variable_input.second;
   }
@@ -493,6 +709,9 @@ absl::Status InferenceContext::AllocateVariableTensors(
 absl::Status InferenceContext::AllocateBufferBasedTensors(
     const GpuModel& gpu_model, const GpuInfo& gpu_info,
     const CreateGpuModelInfo* create_info, CLContext* context) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_16(mht_16_v, 712, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "InferenceContext::AllocateBufferBasedTensors");
+
   std::vector<TensorUsageRecord<size_t>> buffer_usage_records;
   ObjectsAssignment<size_t> buffer_assignment;
   OffsetsAssignment offset_assignment;
@@ -606,6 +825,9 @@ absl::Status InferenceContext::AllocateBufferBasedTensors(
 absl::Status InferenceContext::AllocateStrongShapesTensors(
     const GpuModel& gpu_model, const GpuInfo& gpu_info,
     const CreateGpuModelInfo* create_info, CLContext* context) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_17(mht_17_v, 828, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "InferenceContext::AllocateStrongShapesTensors");
+
   std::map<ValueId, int2> usages;
   GetUsages(
       gpu_model,
@@ -662,6 +884,9 @@ absl::Status InferenceContext::AllocateStrongShapesTensors(
 }
 
 void InferenceContext::BindMemoryToOperations() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_18(mht_18_v, 887, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "InferenceContext::BindMemoryToOperations");
+
   for (auto& node : nodes_) {
     for (int i = 0; i < node.inputs.size(); ++i) {
       node.cl_operation.GetGpuOperation().SetSrc(GetTensor(node.inputs[i]), i);
@@ -674,6 +899,9 @@ void InferenceContext::BindMemoryToOperations() {
 
 absl::Status InferenceContext::Compile(
     const CreationContext& creation_context) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_19(mht_19_v, 902, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "InferenceContext::Compile");
+
   for (auto& node : nodes_) {
     RETURN_IF_ERROR(node.cl_operation.Compile(creation_context));
   }
@@ -683,6 +911,9 @@ absl::Status InferenceContext::Compile(
 absl::Status InferenceContext::Tune(TuningType tuning_type,
                                     const GpuInfo& gpu_info,
                                     ProfilingCommandQueue* profiling_queue) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_20(mht_20_v, 914, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "InferenceContext::Tune");
+
   for (auto& node : nodes_) {
     RETURN_IF_ERROR(
         node.cl_operation.Tune(tuning_type, gpu_info, profiling_queue));
@@ -691,6 +922,9 @@ absl::Status InferenceContext::Tune(TuningType tuning_type,
 }
 
 absl::Status InferenceContext::UpdateParams() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_21(mht_21_v, 925, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "InferenceContext::UpdateParams");
+
   for (auto& node : nodes_) {
     RETURN_IF_ERROR(node.cl_operation.UpdateParams());
   }
@@ -699,6 +933,9 @@ absl::Status InferenceContext::UpdateParams() {
 
 absl::Status InferenceContext::SetTensor(const ValueId& tensor_id,
                                          Tensor* tensor_ptr) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_22(mht_22_v, 936, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "InferenceContext::SetTensor");
+
   auto it = external_mutable_tensors_.find(tensor_id);
   if (it == external_mutable_tensors_.end()) {
     return absl::InvalidArgumentError("No external tensor with this id.");
@@ -721,6 +958,9 @@ absl::Status InferenceContext::SetTensor(const ValueId& tensor_id,
 }
 
 void InferenceContext::PrepareExternal() {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_23(mht_23_v, 961, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "InferenceContext::PrepareExternal");
+
   for (auto& external : external_mutable_tensors_) {
     for (int i = 0; i < nodes_.size(); ++i) {
       bool has_tensor = false;
@@ -744,6 +984,9 @@ void InferenceContext::PrepareExternal() {
 }
 
 absl::Status InferenceContext::AddToQueue(CLCommandQueue* queue) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_24(mht_24_v, 987, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "InferenceContext::AddToQueue");
+
   if (recordable_queue_ && recordable_queue_->IsSupported()) {
     return recordable_queue_->Execute(queue);
   }
@@ -771,6 +1014,9 @@ absl::Status InferenceContext::AddToQueue(CLCommandQueue* queue) {
 
 absl::Status InferenceContext::ProfileTime(ProfilingCommandQueue* queue,
                                            ProfilingInfo* result) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_25(mht_25_v, 1017, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "InferenceContext::ProfileTime");
+
   queue->ResetMeasurements();
   for (auto& node : nodes_) {
     queue->SetEventsLabel(node.name);
@@ -827,6 +1073,9 @@ absl::Status InferenceContext::ProfileTime(ProfilingCommandQueue* queue,
 
 absl::Status InferenceContext::Profile(ProfilingCommandQueue* queue,
                                        ProfilingInfo* result) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_26(mht_26_v, 1076, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "InferenceContext::Profile");
+
   RETURN_IF_ERROR(ProfileTime(queue, result));
   for (int i = 0; i < nodes_.size(); ++i) {
     uint64_t read_size = 0;
@@ -849,6 +1098,9 @@ absl::Status InferenceContext::Profile(ProfilingCommandQueue* queue,
 
 uint64_t InferenceContext::GetSizeOfMemoryAllocatedForIntermediateTensors()
     const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_27(mht_27_v, 1101, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "InferenceContext::GetSizeOfMemoryAllocatedForIntermediateTensors");
+
   uint64_t total_memory = 0;
   for (const auto& t : strong_shape_tensors_) {
     total_memory += t.second.GetMemorySizeInBytes();
@@ -871,6 +1123,9 @@ uint64_t InferenceContext::GetSizeOfMemoryAllocatedForIntermediateTensors()
 }
 
 uint64_t InferenceContext::GetConstantTensorsSize() const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_28(mht_28_v, 1126, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "InferenceContext::GetConstantTensorsSize");
+
   uint64_t total_size = 0;
   for (const auto& node : nodes_) {
     total_size += node.cl_operation.GetGpuOperation().const_args_size_;
@@ -882,6 +1137,9 @@ uint64_t InferenceContext::GetConstantTensorsSize() const {
 }
 
 Tensor* InferenceContext::GetTensor(ValueId id) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_29(mht_29_v, 1140, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "InferenceContext::GetTensor");
+
   if (external_immutable_tensors_.find(id) !=
       external_immutable_tensors_.end()) {
     return external_immutable_tensors_[id];
@@ -903,12 +1161,18 @@ Tensor* InferenceContext::GetTensor(ValueId id) {
 absl::Status InferenceContext::SetInputTensor(ValueId id,
                                               const TensorFloat32& tensor,
                                               CLCommandQueue* queue) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_30(mht_30_v, 1164, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "InferenceContext::SetInputTensor");
+
   return GetTensor(id)->WriteData(queue, tensor);
 }
 
 absl::Status InferenceContext::GetOutputTensor(ValueId id,
                                                CLCommandQueue* queue,
                                                TensorFloat32* result) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_31(mht_31_v, 1173, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "InferenceContext::GetOutputTensor");
+
   const auto& gpu_tensor = *GetTensor(id);
   const auto dst_shape = BHWC(gpu_tensor.Batch(), gpu_tensor.Height(),
                               gpu_tensor.Width(), gpu_tensor.Channels());
@@ -922,6 +1186,9 @@ flatbuffers::Offset<data::InferenceContext> InferenceContext::Encode(
     const CLDevice& device, const ProgramCache& program_cache,
     flatbuffers::Offset<tflite::gpu::data::GpuModel> gpu_model_fb,
     flatbuffers::FlatBufferBuilder* builder) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_32(mht_32_v, 1189, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "InferenceContext::Encode");
+
   std::vector<flatbuffers::Offset<tflite::gpu::data::Int3>> work_groups_fb;
   for (int i = 0; i < nodes_.size(); ++i) {
     auto work_group_fb =
@@ -964,6 +1231,9 @@ flatbuffers::Offset<data::InferenceContext> InferenceContext::Encode(
 absl::Status GetInOutRefs(const absl::Span<const uint8_t> serialized_model,
                           std::vector<int64_t>* in_refs,
                           std::vector<int64_t>* out_refs) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_33(mht_33_v, 1234, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "GetInOutRefs");
+
   flatbuffers::Verifier verifier(serialized_model.data(),
                                  serialized_model.size());
   if (!data::VerifyInferenceContextBuffer(verifier)) {
@@ -989,6 +1259,9 @@ absl::Status GetTotalBufferSizeForTensors(const GpuModel& gpu_model,
                                           const CreateGpuModelInfo& create_info,
                                           const GpuInfo& gpu_info,
                                           uint64_t* result) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPSclPSinference_contextDTcc mht_34(mht_34_v, 1262, "", "./tensorflow/lite/delegates/gpu/cl/inference_context.cc", "GetTotalBufferSizeForTensors");
+
   std::vector<TensorUsageRecord<size_t>> buffer_usage_records;
   ObjectsAssignment<size_t> buffer_assignment;
   OffsetsAssignment offset_assignment;

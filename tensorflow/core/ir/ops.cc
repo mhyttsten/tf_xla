@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSirPSopsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSirPSopsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -66,6 +234,9 @@ namespace tfg {
 // are named "ctl". MLIR will automatically use a numerical suffix to unique.
 static void GenericGetAsmResultNames(Operation *op,
                                      OpAsmSetValueNameFn set_name_fn) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_0(mht_0_v, 237, "", "./tensorflow/core/ir/ops.cc", "GenericGetAsmResultNames");
+
   // We only name the results when there are results to name, an op like `print`
   // which does not have results will just use the `ctl` name for the control
   // output.
@@ -83,20 +254,35 @@ static void GenericGetAsmResultNames(Operation *op,
 // Gives prettier names to SSA values.
 struct TFGraphOpAsmInterface
     : public OpAsmOpInterface::FallbackModel<TFGraphOpAsmInterface> {
-  static bool classof(Operation *op) { return true; }
+  static bool classof(Operation *op) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_1(mht_1_v, 258, "", "./tensorflow/core/ir/ops.cc", "classof");
+ return true; }
 
   void getAsmResultNames(Operation *op, OpAsmSetValueNameFn set_name_fn) const {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_2(mht_2_v, 263, "", "./tensorflow/core/ir/ops.cc", "getAsmResultNames");
+
     GenericGetAsmResultNames(op, set_name_fn);
   }
   void getAsmBlockArgumentNames(Operation *op, Region &region,
-                                OpAsmSetValueNameFn setNameFn) const {}
+                                OpAsmSetValueNameFn setNameFn) const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_3(mht_3_v, 270, "", "./tensorflow/core/ir/ops.cc", "getAsmBlockArgumentNames");
+}
   void getAsmBlockNames(Operation *op,
-                        mlir::OpAsmSetBlockNameFn setNameFn) const {}
+                        mlir::OpAsmSetBlockNameFn setNameFn) const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_4(mht_4_v, 275, "", "./tensorflow/core/ir/ops.cc", "getAsmBlockNames");
+}
 };
 
 // Dialect construction: there is one instance per context and it registers its
 // operations, types, and interfaces here.
 void TFGraphDialect::initialize() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_5(mht_5_v, 283, "", "./tensorflow/core/ir/ops.cc", "TFGraphDialect::initialize");
+
   getContext()->getOrLoadDialect<tf_type::TFTypeDialect>();
   addOperations<
 #define GET_OP_LIST
@@ -129,6 +315,9 @@ void TFGraphDialect::initialize() {
 // Provides a hook for op interface.
 void *TFGraphDialect::getRegisteredInterfaceForOp(TypeID interface,
                                                   OperationName opName) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_6(mht_6_v, 318, "", "./tensorflow/core/ir/ops.cc", "TFGraphDialect::getRegisteredInterfaceForOp");
+
   if (interface == TypeID::get<OpAsmOpInterface>()) {
     return fallbackOpAsmInterface_;
   } else if (interface == TypeID::get<TensorFlowRegistryInterface>()) {
@@ -143,7 +332,10 @@ void *TFGraphDialect::getRegisteredInterfaceForOp(TypeID interface,
   return nullptr;
 }
 
-TFGraphDialect::~TFGraphDialect() { delete fallbackOpAsmInterface_; }
+TFGraphDialect::~TFGraphDialect() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_7(mht_7_v, 336, "", "./tensorflow/core/ir/ops.cc", "TFGraphDialect::~TFGraphDialect");
+ delete fallbackOpAsmInterface_; }
 
 static void PrintKeywordAttributes(Operation *op, OpAsmPrinter &printer,
                                    ArrayRef<StringRef> elided_attrs = {}) {
@@ -170,6 +362,9 @@ static void PrintKeywordAttributes(Operation *op, OpAsmPrinter &printer,
 //           (input types) -> (result_types)
 void TFGraphDialect::printCustomTfOp(Operation *op,
                                      OpAsmPrinter &printer) const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_8(mht_8_v, 365, "", "./tensorflow/core/ir/ops.cc", "TFGraphDialect::printCustomTfOp");
+
   ControlType control_ty = getControlType();
 
   // Check that all control dependencies are after the regular values,
@@ -227,12 +422,18 @@ void TFGraphDialect::printCustomTfOp(Operation *op,
 
 // Print a custom TFG op.
 static void PrintCustomTfOp(Operation *op, OpAsmPrinter &printer) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_9(mht_9_v, 425, "", "./tensorflow/core/ir/ops.cc", "PrintCustomTfOp");
+
   cast<TFGraphDialect>(op->getDialect())->printCustomTfOp(op, printer);
 }
 
 llvm::unique_function<void(Operation *, OpAsmPrinter &)>
 TFGraphDialect::getOperationPrinter(Operation *op) const {
   return [this](Operation *op, OpAsmPrinter &printer) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_10(mht_10_v, 434, "", "./tensorflow/core/ir/ops.cc", "lambda");
+
     this->printCustomTfOp(op, printer);
   };
 }
@@ -241,6 +442,9 @@ TFGraphDialect::getOperationPrinter(Operation *op) const {
 // `device`, `assigned_device`, and `name`.
 static ParseResult ParseKeywordAttributes(OpAsmParser &parser,
                                           OperationState &result) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_11(mht_11_v, 445, "", "./tensorflow/core/ir/ops.cc", "ParseKeywordAttributes");
+
   for (const char *keyword : {"device", "assigned_device", "name"}) {
     if (succeeded(parser.parseOptionalKeyword(keyword))) {
       StringAttr value;
@@ -262,6 +466,9 @@ static ParseResult ParseKeywordAttributes(OpAsmParser &parser,
 //           (input types) -> (result_types)
 static ParseResult ParseCustomTfOp(OpAsmParser &parser,
                                    OperationState &result) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_12(mht_12_v, 469, "", "./tensorflow/core/ir/ops.cc", "ParseCustomTfOp");
+
   MLIRContext *context = parser.getBuilder().getContext();
   // Parse optional argument list
   SmallVector<OpAsmParser::UnresolvedOperand, 4> op_infos;
@@ -305,10 +512,16 @@ static ParseResult ParseCustomTfOp(OpAsmParser &parser,
 
 Optional<Dialect::ParseOpHook> TFGraphDialect::getParseOperationHook(
     StringRef opName) const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_13(mht_13_v, 515, "", "./tensorflow/core/ir/ops.cc", "TFGraphDialect::getParseOperationHook");
+
   return ParseOpHook(ParseCustomTfOp);
 }
 
 static bool VerifyGenericTFGOperation(Operation &op) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_14(mht_14_v, 522, "", "./tensorflow/core/ir/ops.cc", "VerifyGenericTFGOperation");
+
   TFGraphDialect *dialect = dyn_cast<TFGraphDialect>(op.getDialect());
   if (!dialect) return true;
   ControlType control_ty = dialect->getControlType();
@@ -316,6 +529,9 @@ static bool VerifyGenericTFGOperation(Operation &op) {
   // verifies that control operands (or results) are always after regular
   // inputs (or results).
   auto check_ctl_at_end = [&](TypeRange types, StringRef input_or_output) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_15(mht_15_v, 532, "", "./tensorflow/core/ir/ops.cc", "lambda");
+
     int has_control_dep = -1;
     for (auto &indexed_operand : llvm::enumerate(types)) {
       if (indexed_operand.value() == control_ty) {
@@ -342,6 +558,9 @@ static bool VerifyGenericTFGOperation(Operation &op) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult GraphOp::verify() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_16(mht_16_v, 561, "", "./tensorflow/core/ir/ops.cc", "GraphOp::verify");
+
   GraphOp op = *this;
   // Check all ops in the body.
   if (!all_of(*op.getBody(), VerifyGenericTFGOperation)) return failure();
@@ -353,6 +572,9 @@ LogicalResult GraphOp::verify() {
 //===----------------------------------------------------------------------===//
 
 bool GraphFuncOp::isMarkedForCompilation() {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_17(mht_17_v, 575, "", "./tensorflow/core/ir/ops.cc", "GraphFuncOp::isMarkedForCompilation");
+
   auto is_enabled = [this](StringRef attr_name) -> bool {
     Attribute attr = (*this)->getAttr(attr_name);
     if (!attr) return false;
@@ -369,6 +591,9 @@ bool GraphFuncOp::isMarkedForCompilation() {
 // attribute is present and checks if it holds a function type. Ensures
 // getType, getNumFuncArguments, and getNumFuncResults can be called safely
 LogicalResult GraphFuncOp::verifyType() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_18(mht_18_v, 594, "", "./tensorflow/core/ir/ops.cc", "GraphFuncOp::verifyType");
+
   auto type = getFunctionTypeAttr().getValue();
   if (!type.isa<FunctionType>())
     return emitOpError("requires '" + getTypeAttrName() +
@@ -379,6 +604,9 @@ LogicalResult GraphFuncOp::verifyType() {
 // Hook for OpTrait::FunctionLike, called after verifying the function
 // type and the presence of the (potentially empty) function body.
 LogicalResult GraphFuncOp::verifyBody() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_19(mht_19_v, 607, "", "./tensorflow/core/ir/ops.cc", "GraphFuncOp::verifyBody");
+
   FunctionType type = getFunctionType();
   // Check that the body is terminated with a tfg.return.
   if (getRegion().empty() || getBody()->empty())
@@ -440,6 +668,9 @@ LogicalResult GraphFuncOp::verifyBody() {
 
 LogicalResult GraphFuncOp::canonicalize(GraphFuncOp func_op,
                                         PatternRewriter &rewriter) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_20(mht_20_v, 671, "", "./tensorflow/core/ir/ops.cc", "GraphFuncOp::canonicalize");
+
   // Prune function body: the body is a graph where feeds/fetches a materialized
   // with function arguments and returned values. As such any operation not
   // reachable from the "fetches" can be pruned. The return statement also has
@@ -461,6 +692,9 @@ LogicalResult GraphFuncOp::canonicalize(GraphFuncOp func_op,
 }
 
 LogicalResult GraphFuncOp::verify() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_21(mht_21_v, 695, "", "./tensorflow/core/ir/ops.cc", "GraphFuncOp::verify");
+
   GraphFuncOp func_op = *this;
   if (func_op.getNumArguments() % 2)
     return func_op.emitOpError() << "expects an even number of arguments";
@@ -482,6 +716,9 @@ LogicalResult GraphFuncOp::verify() {
 }
 
 ParseResult GraphFuncOp::parse(OpAsmParser &parser, OperationState &result) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_22(mht_22_v, 719, "", "./tensorflow/core/ir/ops.cc", "GraphFuncOp::parse");
+
   SmallVector<OpAsmParser::UnresolvedOperand> entry_args;
   SmallVector<Attribute> arg_attrs;
   SmallVector<Attribute> result_attrs;
@@ -604,6 +841,9 @@ ParseResult GraphFuncOp::parse(OpAsmParser &parser, OperationState &result) {
 }
 
 void GraphFuncOp::print(OpAsmPrinter &p) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_23(mht_23_v, 844, "", "./tensorflow/core/ir/ops.cc", "GraphFuncOp::print");
+
   // Print the operation and the function name.
   Operation *op = *this;
   p << " ";
@@ -674,6 +914,9 @@ void GraphFuncOp::print(OpAsmPrinter &p) {
 
 GraphFuncOp GraphFuncOp::getCalledFunction(Operation *op,
                                            SymbolTable &symbol_table) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_24(mht_24_v, 917, "", "./tensorflow/core/ir/ops.cc", "GraphFuncOp::getCalledFunction");
+
   // Check if a node does indirect function call via PartitionedCallOp.
   // TODO(aminim): consider replacing with isa<...> when possible.
   if (op->getName().getStringRef() == "tfg.PartitionCall" ||
@@ -688,14 +931,23 @@ GraphFuncOp GraphFuncOp::getCalledFunction(Operation *op,
 }
 
 BlockArgument GraphFuncOp::getDataValueOf(BlockArgument ctl) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_25(mht_25_v, 934, "", "./tensorflow/core/ir/ops.cc", "GraphFuncOp::getDataValueOf");
+
   return ctl.getOwner()->getArgument(ctl.getArgNumber() - 1);
 }
 
 BlockArgument GraphFuncOp::getControlTokenOf(BlockArgument data) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_26(mht_26_v, 941, "", "./tensorflow/core/ir/ops.cc", "GraphFuncOp::getControlTokenOf");
+
   return data.getOwner()->getArgument(data.getArgNumber() + 1);
 }
 
 BlockArgument GraphFuncOp::getDataValue(Region &region, unsigned idx) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_27(mht_27_v, 948, "", "./tensorflow/core/ir/ops.cc", "GraphFuncOp::getDataValue");
+
   return region.getArgument(idx * 2);
 }
 
@@ -703,6 +955,9 @@ BlockArgument GraphFuncOp::getDataValue(Region &region, unsigned idx) {
 // for computing the names.
 void GraphFuncOp::getAsmBlockArgumentNames(Region &region,
                                            OpAsmSetValueNameFn set_name_fn) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_28(mht_28_v, 958, "", "./tensorflow/core/ir/ops.cc", "GraphFuncOp::getAsmBlockArgumentNames");
+
   ArrayRef<BlockArgument> args = getBody()->getArguments();
   ControlType control_ty = ControlType::get(getContext());
   // Sanity checking: this is verified by the op but this may be called before
@@ -732,6 +987,9 @@ void GraphFuncOp::getAsmBlockArgumentNames(Region &region,
 //===----------------------------------------------------------------------===//
 
 LogicalResult ReturnOp::verify() {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_29(mht_29_v, 990, "", "./tensorflow/core/ir/ops.cc", "ReturnOp::verify");
+
   ReturnOp op = *this;
   // If the control result attributes are present, there must be the same number
   // of entries as control results.
@@ -744,6 +1002,9 @@ LogicalResult ReturnOp::verify() {
 }
 
 ParseResult ReturnOp::parse(OpAsmParser &parser, OperationState &result) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_30(mht_30_v, 1005, "", "./tensorflow/core/ir/ops.cc", "ReturnOp::parse");
+
   // ReturnOp has the same assembly format as generic TFG ops except that the
   // control result attributes are embedded with the control operands:
   // [%ctl {tfg.name = "foo"}, %ctl_0 {tfg.name = "bar"}]
@@ -780,6 +1041,9 @@ ParseResult ReturnOp::parse(OpAsmParser &parser, OperationState &result) {
 }
 
 void ReturnOp::print(OpAsmPrinter &printer) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_31(mht_31_v, 1044, "", "./tensorflow/core/ir/ops.cc", "ReturnOp::print");
+
   TFOp tfg_op(*this);
   OperandRange data = tfg_op.getNonControlOperands();
   if (!data.empty()) printer << '(' << data << ')';
@@ -805,6 +1069,9 @@ void ReturnOp::print(OpAsmPrinter &printer) {
 
 void ReturnOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                      ValueRange operands, ValueRange control_operands) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_32(mht_32_v, 1072, "", "./tensorflow/core/ir/ops.cc", "ReturnOp::build");
+
   odsState.addOperands(operands);
   odsState.addOperands(control_operands);
   // Populate `control_ret_attrs` with empty dictionaries.
@@ -859,6 +1126,9 @@ static FailureOr<TypeRange> VerifyResults(Operation *op) {
 static LogicalResult VerifySignature(GraphFuncOp func, Operation *op,
                                      TypeRange operands, TypeRange results,
                                      const Twine &func_name) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_33(mht_33_v, 1129, "", "./tensorflow/core/ir/ops.cc", "VerifySignature");
+
   auto attach_func = [&](InFlightDiagnostic diag) -> LogicalResult {
     return diag.attachNote(func.getLoc()).appendOp(*func, OpPrintingFlags())
            << "\nsee referenced function";
@@ -907,6 +1177,9 @@ static LogicalResult VerifySignature(GraphFuncOp func, Operation *op,
 // to be an array of type attributes.
 static LogicalResult VerifyTypeArray(Operation *op, ValueRange values,
                                      ArrayAttr types, StringRef kind) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_34(mht_34_v, 1180, "", "./tensorflow/core/ir/ops.cc", "VerifyTypeArray");
+
   // Don't verify if the types are not present.
   if (!types) return success();
   if (values.size() != types.size()) {
@@ -937,13 +1210,25 @@ using detect_has_T = llvm::is_detected<has_T, OpT>;
 // use it for both input and output. Otherwise, return separate type arrays.
 template <typename OpT, bool = detect_has_T<OpT>::value>
 struct GetTypeArray {
-  static ArrayAttr getInputTypes(OpT op) { return op.TinAttr(); }
-  static ArrayAttr getOutputTypes(OpT op) { return op.ToutAttr(); }
+  static ArrayAttr getInputTypes(OpT op) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_35(mht_35_v, 1214, "", "./tensorflow/core/ir/ops.cc", "getInputTypes");
+ return op.TinAttr(); }
+  static ArrayAttr getOutputTypes(OpT op) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_36(mht_36_v, 1218, "", "./tensorflow/core/ir/ops.cc", "getOutputTypes");
+ return op.ToutAttr(); }
 };
 template <typename OpT>
 struct GetTypeArray<OpT, true> {
-  static ArrayAttr getInputTypes(OpT op) { return op.TAttr(); }
-  static ArrayAttr getOutputTypes(OpT op) { return op.TAttr(); }
+  static ArrayAttr getInputTypes(OpT op) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_37(mht_37_v, 1225, "", "./tensorflow/core/ir/ops.cc", "getInputTypes");
+ return op.TAttr(); }
+  static ArrayAttr getOutputTypes(OpT op) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_38(mht_38_v, 1229, "", "./tensorflow/core/ir/ops.cc", "getOutputTypes");
+ return op.TAttr(); }
 };
 }  // namespace detail
 
@@ -952,6 +1237,9 @@ struct GetTypeArray<OpT, true> {
 // is guaranteed to be valid on import but may be violated by a transformation.
 template <typename OpT>
 static LogicalResult VerifyTypeArrayAttributes(OpT op) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_39(mht_39_v, 1240, "", "./tensorflow/core/ir/ops.cc", "VerifyTypeArrayAttributes");
+
   using GetTypeArray = typename detail::GetTypeArray<OpT>;
   ValueRange args =
       SplitDataAndControlValues(op.args(), ControlType::get(op.getContext()))
@@ -969,6 +1257,9 @@ static LogicalResult VerifyTypeArrayAttributes(OpT op) {
 template <typename IfLikeOp>
 static LogicalResult VerifyIfLikeOp(IfLikeOp op,
                                     SymbolTableCollection &symbol_table) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_40(mht_40_v, 1260, "", "./tensorflow/core/ir/ops.cc", "VerifyIfLikeOp");
+
   if (failed(op.verifyInvariants())) return failure();
   FailureOr<TypeRange> ins = VerifyOperands(op);
   if (failed(ins)) return failure();
@@ -999,6 +1290,9 @@ static LogicalResult VerifyIfLikeOp(IfLikeOp op,
 template <typename CaseLikeOp>
 static LogicalResult VerifyCaseLikeOp(CaseLikeOp op,
                                       SymbolTableCollection &symbol_table) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_41(mht_41_v, 1293, "", "./tensorflow/core/ir/ops.cc", "VerifyCaseLikeOp");
+
   if (failed(op.verifyInvariants())) return failure();
   FailureOr<TypeRange> ins = VerifyOperands(op);
   if (failed(ins)) return failure();
@@ -1026,6 +1320,9 @@ static LogicalResult VerifyCaseLikeOp(CaseLikeOp op,
 template <typename WhileLikeOp>
 static LogicalResult VerifyWhileLikeOp(WhileLikeOp op,
                                        SymbolTableCollection &symbol_table) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_42(mht_42_v, 1323, "", "./tensorflow/core/ir/ops.cc", "VerifyWhileLikeOp");
+
   if (failed(op.verifyInvariants())) return failure();
   FailureOr<TypeRange> ins = VerifyOperands(op);
   if (failed(ins)) return failure();
@@ -1053,6 +1350,9 @@ static LogicalResult VerifyWhileLikeOp(WhileLikeOp op,
 // ForOp
 
 LogicalResult ForOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_43(mht_43_v, 1353, "", "./tensorflow/core/ir/ops.cc", "ForOp::verifySymbolUses");
+
   if (failed(verifyInvariants())) return failure();
   FailureOr<TypeRange> ins = VerifyOperands(*this);
   if (failed(ins)) return failure();
@@ -1079,6 +1379,9 @@ LogicalResult ForOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 // results and block arguments.
 static LogicalResult VerifyPreservedAttrs(Operation *op,
                                           ArrayRef<Attribute> preserved_attrs) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_44(mht_44_v, 1382, "", "./tensorflow/core/ir/ops.cc", "VerifyPreservedAttrs");
+
   assert(op->getNumRegions() == preserved_attrs.size());
   for (auto it : llvm::zip(preserved_attrs, op->getRegions())) {
     // Preserved attributes for a particular region may not exist.
@@ -1087,6 +1390,9 @@ static LogicalResult VerifyPreservedAttrs(Operation *op,
     Region &region = std::get<1>(it);
 
     const auto emit_region_error = [&](StringRef msg) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_45(mht_45_v, 1393, "", "./tensorflow/core/ir/ops.cc", "lambda");
+
       return op->emitOpError("region #")
              << region.getRegionNumber() << " " << msg;
     };
@@ -1123,11 +1429,17 @@ static LogicalResult VerifyPreservedAttrs(Operation *op,
 
 MutableOperandRange YieldOp::getMutableSuccessorOperands(
     Optional<unsigned> index) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_46(mht_46_v, 1432, "", "./tensorflow/core/ir/ops.cc", "YieldOp::getMutableSuccessorOperands");
+
   // Get the subrange of non-control operands.
   return argsMutable();
 }
 
 static bool TerminatedByYield(Block &block) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_47(mht_47_v, 1440, "", "./tensorflow/core/ir/ops.cc", "TerminatedByYield");
+
   return isa<YieldOp>(block.getTerminator());
 }
 
@@ -1137,6 +1449,9 @@ static bool TerminatedByYield(Block &block) {
 // Verify an if-like region op.
 template <typename IfLikeRegionOp>
 static LogicalResult VerifyIfLikeRegionOp(IfLikeRegionOp op) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_48(mht_48_v, 1452, "", "./tensorflow/core/ir/ops.cc", "VerifyIfLikeRegionOp");
+
   // Verify terminators.
   if (!TerminatedByYield(op.then_block()))
     return op.emitOpError("then region must be terminated by a 'tfg.yield'");
@@ -1163,6 +1478,9 @@ template <typename IfLikeRegionOp>
 void GetIfLikeRegionOpSuccessorRegions(
     IfLikeRegionOp op, Optional<unsigned> index, ArrayRef<Attribute> operands,
     SmallVectorImpl<RegionSuccessor> &regions) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_49(mht_49_v, 1481, "", "./tensorflow/core/ir/ops.cc", "GetIfLikeRegionOpSuccessorRegions");
+
   assert(index.hasValue() ||
          !operands.empty() && "if-like op expected at least 1 operand");
   // Both regions branch back to the parent op.
@@ -1189,6 +1507,9 @@ void GetIfLikeRegionOpSuccessorRegions(
 // Verify a case-like region op.
 template <typename CaseLikeRegionOp>
 static LogicalResult VerifyCaseLikeRegionOp(CaseLikeRegionOp op) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_50(mht_50_v, 1510, "", "./tensorflow/core/ir/ops.cc", "VerifyCaseLikeRegionOp");
+
   for (auto &it : llvm::enumerate(op.branches())) {
     if (!TerminatedByYield(it.value().front())) {
       return op.emitOpError("branch region #")
@@ -1228,6 +1549,9 @@ template <typename CaseLikeRegionOp>
 void GetCaseLikeRegionOpSuccessorRegions(
     CaseLikeRegionOp op, Optional<unsigned> index, ArrayRef<Attribute> operands,
     SmallVectorImpl<RegionSuccessor> &regions) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_51(mht_51_v, 1552, "", "./tensorflow/core/ir/ops.cc", "GetCaseLikeRegionOpSuccessorRegions");
+
   assert(index.hasValue() ||
          !operands.empty() && "case-like op expected at least 1 operand");
   // All branch regions branch back to the parent op.
@@ -1251,6 +1575,9 @@ void GetCaseLikeRegionOpSuccessorRegions(
 
 MutableOperandRange ConditionOp::getMutableSuccessorOperands(
     Optional<unsigned> index) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_52(mht_52_v, 1578, "", "./tensorflow/core/ir/ops.cc", "ConditionOp::getMutableSuccessorOperands");
+
   // Get the subrange of non-control operands that are forwarded to the
   // successor region.
   return argsMutable();
@@ -1264,7 +1591,13 @@ MutableOperandRange ConditionOp::getMutableSuccessorOperands(
 // `RegionBranchOpInterface` will verify the number of arguments and their
 // types.
 static LogicalResult VerifyLoopRegionArgs(Operation *op, Region &region) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_53(mht_53_v, 1594, "", "./tensorflow/core/ir/ops.cc", "VerifyLoopRegionArgs");
+
   const auto arg_error = [&](BlockArgument arg) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_54(mht_54_v, 1598, "", "./tensorflow/core/ir/ops.cc", "lambda");
+
     return op->emitOpError("region #")
            << region.getRegionNumber() << " argument #" << arg.getArgNumber()
            << " ";
@@ -1282,6 +1615,9 @@ static LogicalResult VerifyLoopRegionArgs(Operation *op, Region &region) {
 // Verify a while-like region op.
 template <typename WhileLikeRegionOp>
 static LogicalResult VerifyWhileLikeRegionOp(WhileLikeRegionOp op) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_55(mht_55_v, 1618, "", "./tensorflow/core/ir/ops.cc", "VerifyWhileLikeRegionOp");
+
   // Verify terminators.
   if (!isa<ConditionOp>(op.cond_block().getTerminator())) {
     return op.emitOpError(
@@ -1304,6 +1640,9 @@ template <typename WhileLikeRegionOp>
 static void GetWhileLikeRegionOpSuccessorRegions(
     WhileLikeRegionOp op, Optional<unsigned> index,
     ArrayRef<Attribute> operands, SmallVectorImpl<RegionSuccessor> &regions) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_56(mht_56_v, 1643, "", "./tensorflow/core/ir/ops.cc", "GetWhileLikeRegionOpSuccessorRegions");
+
   // The parent op and the body region always branch to the condion region.
   if (!index || *index == 1) {
     regions.emplace_back(&op.cond_region(),
@@ -1331,6 +1670,9 @@ static void GetWhileLikeRegionOpSuccessorRegions(
 // ForRegionOp
 
 LogicalResult ForRegionOp::verify() {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_57(mht_57_v, 1673, "", "./tensorflow/core/ir/ops.cc", "ForRegionOp::verify");
+
   if (!TerminatedByYield(body_block())) {
     return emitOpError("body region must be terminated by a 'tfg.yield' op");
   }
@@ -1352,12 +1694,18 @@ LogicalResult ForRegionOp::verify() {
 }
 
 OperandRange ForRegionOp::getSuccessorEntryOperands(unsigned index) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_58(mht_58_v, 1697, "", "./tensorflow/core/ir/ops.cc", "ForRegionOp::getSuccessorEntryOperands");
+
   return init();
 }
 
 void ForRegionOp::getSuccessorRegions(
     Optional<unsigned> index, ArrayRef<Attribute> operands,
     SmallVectorImpl<RegionSuccessor> &regions) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_59(mht_59_v, 1706, "", "./tensorflow/core/ir/ops.cc", "ForRegionOp::getSuccessorRegions");
+
   // Both the parent op and the body region branch to the body. Ignore the loop
   // index block argument, as it is not modified by the loop body itself.
   regions.emplace_back(&body_region(),
@@ -1368,15 +1716,27 @@ void ForRegionOp::getSuccessorRegions(
 }
 
 BlockArgument ForRegionOp::getDataValueOf(BlockArgument ctl) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_60(mht_60_v, 1719, "", "./tensorflow/core/ir/ops.cc", "ForRegionOp::getDataValueOf");
+
   return GetLoopRegionDataOf(ctl);
 }
 BlockArgument ForRegionOp::getControlTokenOf(BlockArgument data) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_61(mht_61_v, 1725, "", "./tensorflow/core/ir/ops.cc", "ForRegionOp::getControlTokenOf");
+
   return GetLoopRegionControlOf(data);
 }
 BlockArgument ForRegionOp::getDataValue(Region &region, unsigned idx) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_62(mht_62_v, 1731, "", "./tensorflow/core/ir/ops.cc", "ForRegionOp::getDataValue");
+
   return GetLoopRegionDataArgs(region)[idx];
 }
 BlockArgument ForRegionOp::getControlToken(Region &region, unsigned idx) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_63(mht_63_v, 1737, "", "./tensorflow/core/ir/ops.cc", "ForRegionOp::getControlToken");
+
   return GetLoopRegionControlTokens(region)[idx];
 }
 
@@ -1385,6 +1745,9 @@ BlockArgument ForRegionOp::getControlToken(Region &region, unsigned idx) {
 //===----------------------------------------------------------------------===//
 
 FunctionTable::FunctionTable(ModuleOp module) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_64(mht_64_v, 1748, "", "./tensorflow/core/ir/ops.cc", "FunctionTable::FunctionTable");
+
   // Collect function names (to be used for disambiguating legacy call
   // behavior).
   for (auto &op : module.getOps()) {
@@ -1393,6 +1756,9 @@ FunctionTable::FunctionTable(ModuleOp module) {
 }
 
 bool FunctionTable::MaybeCall(Operation *op) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePSirPSopsDTcc mht_65(mht_65_v, 1759, "", "./tensorflow/core/ir/ops.cc", "FunctionTable::MaybeCall");
+
   if (functions.count(op->getName().stripDialect())) return true;
   for (NamedAttribute named_attr : op->getAttrs()) {
     // Treat any operation that references a FuncAttr as a call.

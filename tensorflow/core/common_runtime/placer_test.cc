@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -75,8 +243,14 @@ namespace {
 // A dummy OpKernel that is used to register ops on different devices.
 class DummyOp : public OpKernel {
  public:
-  explicit DummyOp(OpKernelConstruction* context) : OpKernel(context) {}
-  void Compute(OpKernelContext* context) override {}
+  explicit DummyOp(OpKernelConstruction* context) : OpKernel(context) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_0(mht_0_v, 247, "", "./tensorflow/core/common_runtime/placer_test.cc", "DummyOp");
+}
+  void Compute(OpKernelContext* context) override {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_1(mht_1_v, 251, "", "./tensorflow/core/common_runtime/placer_test.cc", "Compute");
+}
 };
 
 // A fake device that has specific device attributes, used to simulate
@@ -85,12 +259,21 @@ class DummyOp : public OpKernel {
 class FakeDevice : public Device {
  private:
   explicit FakeDevice(const DeviceAttributes& device_attributes)
-      : Device(nullptr, device_attributes) {}
+      : Device(nullptr, device_attributes) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_2(mht_2_v, 263, "", "./tensorflow/core/common_runtime/placer_test.cc", "FakeDevice");
+}
 
  public:
-  Status Sync() override { return errors::Unimplemented("FakeDevice::Sync()"); }
+  Status Sync() override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_3(mht_3_v, 269, "", "./tensorflow/core/common_runtime/placer_test.cc", "Sync");
+ return errors::Unimplemented("FakeDevice::Sync()"); }
 
-  Allocator* GetAllocator(AllocatorAttributes attr) override { return nullptr; }
+  Allocator* GetAllocator(AllocatorAttributes attr) override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_4(mht_4_v, 274, "", "./tensorflow/core/common_runtime/placer_test.cc", "GetAllocator");
+ return nullptr; }
 
   static std::unique_ptr<Device> MakeDevice(const string& name,
                                             const string& device_type) {
@@ -112,10 +295,17 @@ class FakeDevice : public Device {
 class DummyFactory : public DeviceFactory {
  public:
   Status ListPhysicalDevices(std::vector<string>* devices) override {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_5(mht_5_v, 298, "", "./tensorflow/core/common_runtime/placer_test.cc", "ListPhysicalDevices");
+
     return Status::OK();
   }
   Status CreateDevices(const SessionOptions& options, const string& name_prefix,
                        std::vector<std::unique_ptr<Device>>* devices) override {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("name_prefix: \"" + name_prefix + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_6(mht_6_v, 306, "", "./tensorflow/core/common_runtime/placer_test.cc", "CreateDevices");
+
     return Status::OK();
   }
 };
@@ -225,9 +415,15 @@ REGISTER_KERNEL_BUILDER(Name("TestTypedConsumer").Device("FakeGPU"), DummyOp);
 ////////////////////////////////////////////////////////////////////////////////
 class PlacerTest : public ::testing::Test {
  protected:
-  PlacerTest() : PlacerTest(10) {}
+  PlacerTest() : PlacerTest(10) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_7(mht_7_v, 419, "", "./tensorflow/core/common_runtime/placer_test.cc", "PlacerTest");
+}
 
   explicit PlacerTest(int num_devices) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_8(mht_8_v, 424, "", "./tensorflow/core/common_runtime/placer_test.cc", "PlacerTest");
+
     // Build a set of num_devices GPU, num_devices CPU devices, and one XLA_CPU
     // device.
     // NOTE: this->local_devices_ owns the device objects;
@@ -253,12 +449,18 @@ class PlacerTest : public ::testing::Test {
   // Builds the given graph, and (if successful) indexes the node
   // names for use in placement, and later lookup.
   Status BuildGraph(const GraphDefBuilder& builder, Graph* out_graph) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_9(mht_9_v, 452, "", "./tensorflow/core/common_runtime/placer_test.cc", "BuildGraph");
+
     TF_RETURN_IF_ERROR(GraphDefBuilderToGraph(builder, out_graph));
     RebuildNodeNameMap(*out_graph);
     return Status::OK();
   }
 
   Status BuildGraph(const GraphDef& graph_def, Graph* out_graph) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_10(mht_10_v, 461, "", "./tensorflow/core/common_runtime/placer_test.cc", "BuildGraph");
+
     GraphConstructorOptions opts;
     TF_RETURN_IF_ERROR(ConvertGraphDefToGraph(opts, graph_def, out_graph));
     RebuildNodeNameMap(*out_graph);
@@ -271,6 +473,9 @@ class PlacerTest : public ::testing::Test {
   // REQUIRES: "*graph" was produced by the most recent call to BuildGraph.
   Status Place(Graph* graph, DeviceSet* devices, Device* default_local_device,
                bool allow_soft_placement, bool log_device_placement) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_11(mht_11_v, 476, "", "./tensorflow/core/common_runtime/placer_test.cc", "Place");
+
     Placer placer(graph, "", &graph->flib_def(), devices, default_local_device,
                   allow_soft_placement, log_device_placement);
     return placer.Run();
@@ -279,6 +484,9 @@ class PlacerTest : public ::testing::Test {
   Status CallOptPassesAndPlace(Graph* graph, DeviceSet* devices,
                                bool allow_soft_placement,
                                bool log_device_placement) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_12(mht_12_v, 487, "", "./tensorflow/core/common_runtime/placer_test.cc", "CallOptPassesAndPlace");
+
     // Disable all real optimizations (i.e. Grappler and GraphOptimizer)
     // to make sure functions are not inlined and not constant folded
     SessionOptions session_options;
@@ -314,26 +522,41 @@ class PlacerTest : public ::testing::Test {
   }
 
   Status Place(Graph* graph, DeviceSet* devices) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_13(mht_13_v, 525, "", "./tensorflow/core/common_runtime/placer_test.cc", "Place");
+
     return Place(graph, devices, nullptr, true, false);
   }
 
   Status Place(Graph* graph, bool allow_soft_placement,
                bool log_device_placement) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_14(mht_14_v, 533, "", "./tensorflow/core/common_runtime/placer_test.cc", "Place");
+
     return Place(graph, &devices_, nullptr, allow_soft_placement,
                  log_device_placement);
   }
 
   Status Place(Graph* graph) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_15(mht_15_v, 541, "", "./tensorflow/core/common_runtime/placer_test.cc", "Place");
+
     return Place(graph, &devices_, nullptr, true, false);
   }
 
   Status CallOptPassesAndPlace(Graph* graph, bool allow_soft_placement,
                                bool log_device_placement) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_16(mht_16_v, 549, "", "./tensorflow/core/common_runtime/placer_test.cc", "CallOptPassesAndPlace");
+
     return CallOptPassesAndPlace(graph, &devices_, allow_soft_placement,
                                  log_device_placement);
   }
 
   Status CallOptPassesAndPlace(Graph* graph) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_17(mht_17_v, 557, "", "./tensorflow/core/common_runtime/placer_test.cc", "CallOptPassesAndPlace");
+
     return CallOptPassesAndPlace(graph, &devices_, true, false);
   }
 
@@ -341,6 +564,10 @@ class PlacerTest : public ::testing::Test {
   //
   // REQUIRES: "graph" was produced by the most recent call to BuildGraph.
   Node* GetNodeByName(const Graph& graph, const string& name) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_18(mht_18_v, 568, "", "./tensorflow/core/common_runtime/placer_test.cc", "GetNodeByName");
+
     const auto search = nodes_by_name_.find(name);
     CHECK(search != nodes_by_name_.end()) << "Unknown node name: " << name;
     return graph.FindNodeId(search->second);
@@ -357,6 +584,9 @@ class PlacerTest : public ::testing::Test {
 
  private:
   void RebuildNodeNameMap(const Graph& graph) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_19(mht_19_v, 587, "", "./tensorflow/core/common_runtime/placer_test.cc", "RebuildNodeNameMap");
+
     nodes_by_name_.clear();
     for (Node* node : graph.nodes()) {
       nodes_by_name_[node->name()] = node->id();
@@ -936,6 +1166,11 @@ TEST_F(PlacerTest, TestAssignedGpuDeviceToCpuDevice) {
 Status PlacerTest::ReferenceTestHelper(const string& variable_op_type,
                                        const string& assign_op_type,
                                        const DeviceType& expected_device_type) {
+   std::vector<std::string> mht_20_v;
+   mht_20_v.push_back("variable_op_type: \"" + variable_op_type + "\"");
+   mht_20_v.push_back("assign_op_type: \"" + assign_op_type + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_20(mht_20_v, 1171, "", "./tensorflow/core/common_runtime/placer_test.cc", "PlacerTest::ReferenceTestHelper");
+
   Graph g(OpRegistry::Global());
   {  // Scope for temporary variables used to construct g.
     GraphDefBuilder b(GraphDefBuilder::kFailImmediately);
@@ -1016,6 +1251,11 @@ REGISTER_KERNEL_BUILDER(Name("TestTwoHandlesIn").Device("FakeGPU"), DummyOp);
 TEST_F(PlacerTest, TestResourceHandle) {
   auto handle_test = [this](const string& var_op_name,
                             const string& use_op_name, DeviceType device) {
+   std::vector<std::string> mht_21_v;
+   mht_21_v.push_back("var_op_name: \"" + var_op_name + "\"");
+   mht_21_v.push_back("use_op_name: \"" + use_op_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_21(mht_21_v, 1256, "", "./tensorflow/core/common_runtime/placer_test.cc", "lambda");
+
     Graph g(OpRegistry::Global());
     {  // Scope for temporary variables used to construct g.
       GraphDefBuilder b(GraphDefBuilder::kFailImmediately);
@@ -1048,6 +1288,9 @@ TEST_F(PlacerTest, TestResourceHandle) {
 
 TEST_F(PlacerTest, TestResourceHandlesOnDifferentDevicesFails) {
   auto handle_test = [this](bool allow_soft_placement, bool set_assigned) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_22(mht_22_v, 1291, "", "./tensorflow/core/common_runtime/placer_test.cc", "lambda");
+
     Graph g(OpRegistry::Global());
     {  // Scope for temporary variables used to construct g.
       GraphDefBuilder b(GraphDefBuilder::kFailImmediately);
@@ -2120,7 +2363,10 @@ class NestedPlacerTest : public PlacerTest {
  public:
   // Create one FakeCPU and one FakeGPU. These tests don't need multiple devices
   // of the same type.
-  NestedPlacerTest() : PlacerTest(1) {}
+  NestedPlacerTest() : PlacerTest(1) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_23(mht_23_v, 2367, "", "./tensorflow/core/common_runtime/placer_test.cc", "NestedPlacerTest");
+}
 };
 
 TEST_F(NestedPlacerTest, OutputOneResource) {
@@ -2747,6 +2993,9 @@ TEST_F(NestedPlacerTest, ResourceConflictInvolvingTwoPCOs) {
 
 // Function that returns a resource that can be produced on CPU only.
 FunctionDef CPUResourceOutput() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_24(mht_24_v, 2996, "", "./tensorflow/core/common_runtime/placer_test.cc", "CPUResourceOutput");
+
   return FDH::Create(
       // Name
       "CPUResourceOutput",
@@ -2806,6 +3055,9 @@ TEST_F(NestedPlacerTest, DeepDeviceConstraintsPropagated) {
 }
 
 FunctionDef NestedCPUResourceOutput() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_25(mht_25_v, 3058, "", "./tensorflow/core/common_runtime/placer_test.cc", "NestedCPUResourceOutput");
+
   return FDH::Create(
       // Name
       "NestedCPUResourceOutput",
@@ -2924,6 +3176,9 @@ TEST_F(NestedPlacerTest, TwoFunctionsBackToBack) {
 }
 
 FunctionDef NestedCallFunctionsBackToBack() {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_26(mht_26_v, 3179, "", "./tensorflow/core/common_runtime/placer_test.cc", "NestedCallFunctionsBackToBack");
+
   return FDH::Create(
       // Name
       "NestedCallFunctionsBackToBack",
@@ -2991,6 +3246,9 @@ TEST_F(NestedPlacerTest, NestedTwoFunctionsBackToBack) {
 }
 
 FunctionDef RecursiveResourceIdentity() {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_27(mht_27_v, 3249, "", "./tensorflow/core/common_runtime/placer_test.cc", "RecursiveResourceIdentity");
+
   return FDH::Create(
       // Name
       "RecursiveResourceIdentity",
@@ -3040,6 +3298,9 @@ TEST_F(NestedPlacerTest, DirectRecursion) {
 }
 
 FunctionDef RecursiveF1() {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_28(mht_28_v, 3301, "", "./tensorflow/core/common_runtime/placer_test.cc", "RecursiveF1");
+
   return FDH::Create(
       // Name
       "RecursiveF1",
@@ -3063,6 +3324,9 @@ FunctionDef RecursiveF1() {
 }
 
 FunctionDef RecursiveF2() {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSplacer_testDTcc mht_29(mht_29_v, 3327, "", "./tensorflow/core/common_runtime/placer_test.cc", "RecursiveF2");
+
   return FDH::Create(
       // Name
       "RecursiveF2",

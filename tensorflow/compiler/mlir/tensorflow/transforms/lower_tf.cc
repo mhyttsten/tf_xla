@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -43,6 +211,9 @@ namespace {
 // Returns 1D 64-bit dense elements attribute with the given values.
 static DenseIntElementsAttr GetI64ElementsAttr(ArrayRef<int64_t> values,
                                                Builder *builder) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_0(mht_0_v, 214, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "GetI64ElementsAttr");
+
   RankedTensorType ty = RankedTensorType::get(
       {static_cast<int64_t>(values.size())}, builder->getIntegerType(64));
   return DenseIntElementsAttr::get(ty, values);
@@ -52,6 +223,9 @@ static DenseIntElementsAttr GetI64ElementsAttr(ArrayRef<int64_t> values,
 // end, excluding.
 static DenseIntElementsAttr GetI64ElementsAttrForSeq(int start, int end,
                                                      Builder *builder) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_1(mht_1_v, 226, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "GetI64ElementsAttrForSeq");
+
   int size = end - start;
 
   SmallVector<int64_t, 4> vals;
@@ -64,6 +238,9 @@ static DenseIntElementsAttr GetI64ElementsAttrForSeq(int start, int end,
 
 // Return an Attr representation of the value.
 static DenseElementsAttr GetF32Scalar(OpBuilder *builder, float value) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_2(mht_2_v, 241, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "GetF32Scalar");
+
   return DenseElementsAttr::get(
       RankedTensorType::get({}, builder->getF32Type()),
       FloatAttr::get(builder->getF32Type(), value));
@@ -76,6 +253,9 @@ static DenseElementsAttr GetF32Scalar(OpBuilder *builder, float value) {
 // Preconditions: The given value must have a ShapedType.
 static Value CreateTFCastOpF32(OpBuilder *builder, Location loc, Value x,
                                BoolAttr truncate) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_3(mht_3_v, 256, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "CreateTFCastOpF32");
+
   auto x_type = x.getType().dyn_cast_or_null<ShapedType>();
   if (!x_type) llvm_unreachable("unsupported type");
   Type type = x_type.clone(builder->getF32Type());
@@ -89,6 +269,9 @@ static Value CreateTFCastOpF32(OpBuilder *builder, Location loc, Value x,
 // Preconditions: The given value must have a ShapedType.
 static Value CreateTFCastOpI32(OpBuilder *builder, Location loc, Value x,
                                BoolAttr truncate) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_4(mht_4_v, 272, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "CreateTFCastOpI32");
+
   auto x_type = x.getType().dyn_cast_or_null<ShapedType>();
   if (!x_type) llvm_unreachable("unsupported type");
   Type type = x_type.clone(builder->getI32Type());
@@ -96,6 +279,9 @@ static Value CreateTFCastOpI32(OpBuilder *builder, Location loc, Value x,
 }
 
 static APFloat ConvertToAPFloat(double val, Type type) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_5(mht_5_v, 282, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "ConvertToAPFloat");
+
   if (type.getIntOrFloatBitWidth() == 32) {
     return APFloat(static_cast<float>(val));
   }
@@ -105,6 +291,9 @@ static APFloat ConvertToAPFloat(double val, Type type) {
 
 // Return true if the passed quantized type is unsigned.
 bool QuantizedTypeIsUnsigned(Type type) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_6(mht_6_v, 294, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "QuantizedTypeIsUnsigned");
+
   return TypeSwitch<Type, bool>(type)
       .Case<mlir::TF::Qint8Type>([](Type) { return false; })
       .Case<mlir::TF::Qint16Type>([](Type) { return false; })
@@ -121,6 +310,9 @@ bool QuantizedTypeIsUnsigned(Type type) {
 // to offset the quantized representation before it gets scaled. In the case
 // of negative quantize types, this offset is half the type's range.
 static DenseElementsAttr DequantizeHalfRange(OpBuilder *builder, Value input) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_7(mht_7_v, 313, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "DequantizeHalfRange");
+
   auto input_type = input.getType().dyn_cast_or_null<ShapedType>();
   if (!input_type) llvm_unreachable("DequantizeHalfRange: not a ShapedType");
   bool is_unsigned = QuantizedTypeIsUnsigned(input_type.getElementType());
@@ -133,6 +325,9 @@ static DenseElementsAttr DequantizeHalfRange(OpBuilder *builder, Value input) {
 DenseIntElementsAttr GetBiasAddGradReductionIndices(int64_t rank,
                                                     StringAttr data_format,
                                                     Builder *builder) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_8(mht_8_v, 328, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "GetBiasAddGradReductionIndices");
+
   tensorflow::TensorFormat format;
   if (!FormatFromString(data_format.getValue().str(), &format)) return {};
 
@@ -166,6 +361,9 @@ Type InferExpandDimsType(Type ty, int64_t axis, Builder *builder) {
 // and size 1.
 Value ValuesToRank1(PatternRewriter &rewriter, Location loc, Type dtype,
                     ArrayRef<Value> vals) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_9(mht_9_v, 364, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "ValuesToRank1");
+
   int64_t length = vals.size();
   auto type = RankedTensorType::get({length}, dtype);
   auto axis = rewriter.create<ConstOp>(
@@ -216,10 +414,16 @@ class LowerAddNOp : public RewritePattern {
  public:
   explicit LowerAddNOp(MLIRContext *context)
       : RewritePattern(AddNOp::getOperationName(), 1, context,
-                       {AddV2Op::getOperationName()}) {}
+                       {AddV2Op::getOperationName()}) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_10(mht_10_v, 418, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "LowerAddNOp");
+}
 
   LogicalResult matchAndRewrite(Operation *op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_11(mht_11_v, 424, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "matchAndRewrite");
+
     auto addn_op = cast<AddNOp>(op);
 
     // TODO(hinsu): Support variant with TensorList type. tf.AddV2 doesn't
@@ -281,10 +485,16 @@ class LowerDynamicStitchOp : public RewritePattern {
       : RewritePattern(
             OpT::getOperationName(), 1, context,
             {ConstOp::getOperationName(), ReshapeOp::getOperationName(),
-             UnpackOp::getOperationName(), PackOp::getOperationName()}) {}
+             UnpackOp::getOperationName(), PackOp::getOperationName()}) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_12(mht_12_v, 489, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "LowerDynamicStitchOp");
+}
 
   LogicalResult matchAndRewrite(Operation *src_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_13(mht_13_v, 495, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "matchAndRewrite");
+
     auto op = cast<OpT>(src_op);
 
     // Static output type is used to compute intermediate values. Note that the
@@ -365,10 +575,16 @@ class ConvertFakeQuantWithMinMaxVarsOp : public RewritePattern {
             {AddV2Op::getOperationName(), SubOp::getOperationName(),
              ConstOp::getOperationName(), MulOp::getOperationName(),
              FloorOp::getOperationName(), ClipByValueOp::getOperationName(),
-             DivOp::getOperationName(), RoundOp::getOperationName()}) {}
+             DivOp::getOperationName(), RoundOp::getOperationName()}) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_14(mht_14_v, 579, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "ConvertFakeQuantWithMinMaxVarsOp");
+}
 
   LogicalResult matchAndRewrite(Operation *src_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_15(mht_15_v, 585, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "matchAndRewrite");
+
     auto op = cast<FakeQuantWithMinMaxVarsOp>(src_op);
 
     auto input = op.inputs();
@@ -492,10 +708,16 @@ class LowerInvertPermutationOp : public RewritePattern {
             InvertPermutationOp::getOperationName(), 1, context,
             {ConstOp::getOperationName(), RangeOp::getOperationName(),
              ReshapeOp::getOperationName(),
-             TensorScatterUpdateOp::getOperationName()}) {}
+             TensorScatterUpdateOp::getOperationName()}) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_16(mht_16_v, 712, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "LowerInvertPermutationOp");
+}
 
   LogicalResult matchAndRewrite(Operation *src_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_17(mht_17_v, 718, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "matchAndRewrite");
+
     auto op = cast<InvertPermutationOp>(src_op);
 
     Location loc = op.getLoc();
@@ -573,10 +795,16 @@ class LowerLgammaOp : public RewritePattern {
                            GreaterOp::getOperationName(),
                            SinOp::getOperationName(),
                            IsFiniteOp::getOperationName(),
-                       }) {}
+                       }) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_18(mht_18_v, 799, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "LowerLgammaOp");
+}
 
   LogicalResult matchAndRewrite(Operation *src_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_19(mht_19_v, 805, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "matchAndRewrite");
+
     auto op = cast<LgammaOp>(src_op);
 
     Location loc = op.getLoc();
@@ -604,6 +832,9 @@ class LowerLgammaOp : public RewritePattern {
     // the given constant float value.
     auto create_const_op = [&rewriter, loc, tensor_type,
                             float_type](double value) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_20(mht_20_v, 835, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "lambda");
+
       return rewriter.create<ConstOp>(
           loc, DenseElementsAttr::get(tensor_type,
                                       FloatAttr::get(float_type, value)));
@@ -768,10 +999,16 @@ class LowerPackOp : public RewritePattern {
       : RewritePattern(
             PackOp::getOperationName(), 1, context,
             {ConstOp::getOperationName(), ConcatV2Op::getOperationName(),
-             ExpandDimsOp::getOperationName()}) {}
+             ExpandDimsOp::getOperationName()}) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_21(mht_21_v, 1003, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "LowerPackOp");
+}
 
   LogicalResult matchAndRewrite(Operation *src_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_22(mht_22_v, 1009, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "matchAndRewrite");
+
     auto op = cast<PackOp>(src_op);
 
     Location loc = op.getLoc();
@@ -844,10 +1081,16 @@ class LowerSpaceToBatchNDOp : public RewritePattern {
                            MulOp::getOperationName(),
                            ReshapeOp::getOperationName(),
                            TransposeOp::getOperationName(),
-                       }) {}
+                       }) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_23(mht_23_v, 1085, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "LowerSpaceToBatchNDOp");
+}
 
   LogicalResult matchAndRewrite(Operation *src_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_24(mht_24_v, 1091, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "matchAndRewrite");
+
     auto op = cast<SpaceToBatchNDOp>(src_op);
 
     Location loc = op.getLoc();
@@ -1053,10 +1296,16 @@ class LowerBatchToSpaceND : public RewritePattern {
                            ReshapeOp::getOperationName(),
                            SliceOp::getOperationName(),
                            TransposeOp::getOperationName(),
-                       }) {}
+                       }) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_25(mht_25_v, 1300, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "LowerBatchToSpaceND");
+}
 
   LogicalResult matchAndRewrite(Operation *src_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_26(mht_26_v, 1306, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "matchAndRewrite");
+
     auto op = cast<BatchToSpaceNDOp>(src_op);
     auto input = op.input();
     auto input_ty = input.getType().cast<ShapedType>();
@@ -1225,10 +1474,16 @@ class LowerSparseMatMulOp : public RewritePattern {
   explicit LowerSparseMatMulOp(MLIRContext *context)
       : RewritePattern(
             SparseMatMulOp::getOperationName(), 1, context,
-            {CastOp::getOperationName(), MatMulOp::getOperationName()}) {}
+            {CastOp::getOperationName(), MatMulOp::getOperationName()}) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_27(mht_27_v, 1478, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "LowerSparseMatMulOp");
+}
 
   LogicalResult matchAndRewrite(Operation *src_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_28(mht_28_v, 1484, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "matchAndRewrite");
+
     auto op = cast<SparseMatMulOp>(src_op);
 
     // Result type must be f32 for applying the pattern (currently this is
@@ -1273,6 +1528,9 @@ class Lower_UnaryOpsComposition
 
   LogicalResult matchAndRewrite(_UnaryOpsCompositionOp op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_29(mht_29_v, 1531, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "matchAndRewrite");
+
     Value result = op.x();
     for (StringRef op_name : op.op_names().getAsValueRange<StringAttr>()) {
       std::string full_name = "tf." + op_name.str();
@@ -1318,10 +1576,16 @@ class LowerResizeNearestNeighbor : public RewritePattern {
                            ShapeOp::getOperationName(),
                            SplitOp::getOperationName(),
                            TransposeOp::getOperationName(),
-                       }) {}
+                       }) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_30(mht_30_v, 1580, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "LowerResizeNearestNeighbor");
+}
 
   LogicalResult matchAndRewrite(Operation *src_op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_31(mht_31_v, 1586, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "matchAndRewrite");
+
     auto op = cast<ResizeNearestNeighborOp>(src_op);
     auto loc = op.getLoc();
     auto result_ty = op.getType().cast<ShapedType>();
@@ -1538,10 +1802,16 @@ struct LowerRollOp : public RewritePattern {
       : RewritePattern(
             RollOp::getOperationName(), 1, context,
             {ConstOp::getOperationName(), SliceOp::getOperationName(),
-             ConcatV2Op::getOperationName()}) {}
+             ConcatV2Op::getOperationName()}) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_32(mht_32_v, 1806, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "LowerRollOp");
+}
 
   LogicalResult matchAndRewrite(Operation *op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_33(mht_33_v, 1812, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "matchAndRewrite");
+
     auto tf_roll_op = cast<RollOp>(op);
 
     auto input_ty = tf_roll_op.input().getType().dyn_cast<RankedTensorType>();
@@ -1592,6 +1862,9 @@ struct LowerRollOp : public RewritePattern {
         RankedTensorType::get({input_rank}, rewriter.getIntegerType(64));
     auto create_slice_op = [&](int32_t axis_i, int32_t begin_i, int32_t size_i,
                                Value input) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_34(mht_34_v, 1865, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "lambda");
+
       SmallVector<int64_t, 4> begin_values(input_rank, 0);
       begin_values[axis_i] = begin_i;
       auto begin_attr = DenseIntElementsAttr::get(axis_type, begin_values);
@@ -1650,6 +1923,9 @@ class LowerSoftmaxOp : public OpRewritePattern<OpTy> {
 
   LogicalResult matchAndRewrite(OpTy op,
                                 PatternRewriter &rewriter) const override {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_35(mht_35_v, 1926, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "matchAndRewrite");
+
     Value logits = op.logits();
     auto loc = op.getLoc();
 
@@ -1691,6 +1967,9 @@ class LowerSoftmaxOp : public OpRewritePattern<OpTy> {
 
 void PopulateLoweringTFPatterns(MLIRContext *context,
                                 RewritePatternSet *patterns) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_36(mht_36_v, 1970, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "PopulateLoweringTFPatterns");
+
   // clang-format off
   patterns->add<
       LowerAddNOp,
@@ -1713,6 +1992,9 @@ void PopulateLoweringTFPatterns(MLIRContext *context,
 
 void PopulateTFLoweringBeforeHLOPatterns(MLIRContext *context,
                                          RewritePatternSet *patterns) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_37(mht_37_v, 1995, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "PopulateTFLoweringBeforeHLOPatterns");
+
   // clang-format off
   patterns->add<
       ConvertFakeQuantWithMinMaxVarsOp,
@@ -1770,6 +2052,9 @@ void PopulateTFLoweringBeforeHLOPatterns(MLIRContext *context,
 
 void PopulateLoweringQuantizedPatterns(MLIRContext *context,
                                        RewritePatternSet *patterns) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPStransformsPSlower_tfDTcc mht_38(mht_38_v, 2055, "", "./tensorflow/compiler/mlir/tensorflow/transforms/lower_tf.cc", "PopulateLoweringQuantizedPatterns");
+
   // clang-format off
   patterns->add<
       LowerDequantizeOp>(context);

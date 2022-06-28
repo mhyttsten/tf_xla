@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgraphPSgraph_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgraphPSgraph_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,11 +220,20 @@ REGISTER_OP("TwoInputsOneOutput")
 
 class GraphTest : public ::testing::Test {
  protected:
-  GraphTest() : graph_(OpRegistry::Global()) {}
-  ~GraphTest() override {}
+  GraphTest() : graph_(OpRegistry::Global()) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_testDTcc mht_0(mht_0_v, 224, "", "./tensorflow/core/graph/graph_test.cc", "GraphTest");
+}
+  ~GraphTest() override {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_testDTcc mht_1(mht_1_v, 228, "", "./tensorflow/core/graph/graph_test.cc", "~GraphTest");
+}
 
   static void VerifyNodes(Node* node, const std::vector<Node*>& expected_in,
                           const std::vector<Node*>& expected_out) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_testDTcc mht_2(mht_2_v, 234, "", "./tensorflow/core/graph/graph_test.cc", "VerifyNodes");
+
     std::vector<Node*> in;
     for (const Edge* e : node->in_edges()) {
       in.push_back(e->src());
@@ -71,6 +248,9 @@ class GraphTest : public ::testing::Test {
   }
 
   void VerifyGraphStats() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_testDTcc mht_3(mht_3_v, 251, "", "./tensorflow/core/graph/graph_test.cc", "VerifyGraphStats");
+
     int nodes = 0;
     for (const Node* n : graph_.nodes()) {
       VLOG(1) << n->id();
@@ -86,6 +266,10 @@ class GraphTest : public ::testing::Test {
   }
 
   Node* AddNodeWithName(const string& name) {
+   std::vector<std::string> mht_4_v;
+   mht_4_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_testDTcc mht_4(mht_4_v, 270, "", "./tensorflow/core/graph/graph_test.cc", "AddNodeWithName");
+
     Node* node;
     TF_CHECK_OK(NodeBuilder(name, "NoOp").Finalize(&graph_, &node));
     return node;
@@ -93,6 +277,11 @@ class GraphTest : public ::testing::Test {
 
   Node* FromNodeDef(const string& name, const string& node_type,
                     int num_inputs) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("name: \"" + name + "\"");
+   mht_5_v.push_back("node_type: \"" + node_type + "\"");
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_testDTcc mht_5(mht_5_v, 282, "", "./tensorflow/core/graph/graph_test.cc", "FromNodeDef");
+
     auto builder = NodeDefBuilder(name, node_type);
     for (int i = 0; i < num_inputs; ++i) {
       builder = builder.Input(strings::StrCat("node_", i), i, DT_FLOAT);
@@ -108,6 +297,10 @@ class GraphTest : public ::testing::Test {
   }
 
   void FromGraphDef(const string& gdef_ascii) {
+   std::vector<std::string> mht_6_v;
+   mht_6_v.push_back("gdef_ascii: \"" + gdef_ascii + "\"");
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_testDTcc mht_6(mht_6_v, 301, "", "./tensorflow/core/graph/graph_test.cc", "FromGraphDef");
+
     GraphDef gdef;
     CHECK(protobuf::TextFormat::ParseFromString(gdef_ascii, &gdef));
     GraphConstructorOptions opts;
@@ -115,6 +308,10 @@ class GraphTest : public ::testing::Test {
   }
 
   Node* FindNode(const string& name) {
+   std::vector<std::string> mht_7_v;
+   mht_7_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_testDTcc mht_7(mht_7_v, 312, "", "./tensorflow/core/graph/graph_test.cc", "FindNode");
+
     for (Node* node : graph_.nodes()) {
       if (node->name() == name) return node;
     }
@@ -122,6 +319,9 @@ class GraphTest : public ::testing::Test {
   }
 
   bool ControlEdgeExistsInGraphOrNodeDef(const Node* src, const Node* dst) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_testDTcc mht_8(mht_8_v, 322, "", "./tensorflow/core/graph/graph_test.cc", "ControlEdgeExistsInGraphOrNodeDef");
+
     for (const Edge* e : dst->in_edges()) {
       if (e->IsControlEdge() && e->src() == src &&
           e->src_output() == Graph::kControlSlot &&
@@ -331,6 +531,9 @@ TEST_F(GraphTest, NodeIteration) {
 }
 
 static void CheckType(Node* node, bool b) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_testDTcc mht_9(mht_9_v, 534, "", "./tensorflow/core/graph/graph_test.cc", "CheckType");
+
   EXPECT_TRUE(b) << node->DebugString();
   // Make sure none of the other IsFoo() methods return true.
   int count = 0;
@@ -373,6 +576,9 @@ TEST_F(GraphTest, AddAttr) {
 
 // Convert edge iteration results into a sorted string.
 static string EdgeIter(const Graph& g) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_testDTcc mht_10(mht_10_v, 579, "", "./tensorflow/core/graph/graph_test.cc", "EdgeIter");
+
   std::vector<std::pair<int, int> > edges;
   for (const Edge* e : g.edges()) {
     edges.push_back(std::make_pair(e->src()->id(), e->dst()->id()));
@@ -675,6 +881,9 @@ TEST_F(GraphTest, Clear) {
 }
 
 void BM_InEdgeIteration(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_testDTcc mht_11(mht_11_v, 884, "", "./tensorflow/core/graph/graph_test.cc", "BM_InEdgeIteration");
+
   const int num_nodes = state.range(0);
   const int num_edges_per_node = state.range(1);
   const GraphDef graph_def =
@@ -715,6 +924,9 @@ BENCHMARK(BM_InEdgeIteration)->ArgPair(1 << 12, 16);
 BENCHMARK(BM_InEdgeIteration)->ArgPair(1 << 15, 16);
 
 void BM_GraphCreation(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_testDTcc mht_12(mht_12_v, 927, "", "./tensorflow/core/graph/graph_test.cc", "BM_GraphCreation");
+
   const int num_nodes = state.range(0);
   const int num_edges_per_node = state.range(1);
   const GraphDef graph_def =
@@ -754,6 +966,9 @@ BENCHMARK(BM_GraphCreation)->ArgPair(1 << 12, 16);
 BENCHMARK(BM_GraphCreation)->ArgPair(1 << 15, 16);
 
 void BM_ToGraphDef(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_testDTcc mht_13(mht_13_v, 969, "", "./tensorflow/core/graph/graph_test.cc", "BM_ToGraphDef");
+
   const int num_nodes = state.range(0);
   const int num_edges_per_node = state.range(1);
   const GraphDef graph_def =
@@ -793,6 +1008,9 @@ BENCHMARK(BM_ToGraphDef)->ArgPair(1 << 12, 16);
 BENCHMARK(BM_ToGraphDef)->ArgPair(1 << 15, 16);
 
 void BM_RemoveNode(::testing::benchmark::State& state) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSgraphPSgraph_testDTcc mht_14(mht_14_v, 1011, "", "./tensorflow/core/graph/graph_test.cc", "BM_RemoveNode");
+
   const int num_nodes = state.range(0);
   const int num_edges_per_node = state.range(1);
   const GraphDef graph_def =

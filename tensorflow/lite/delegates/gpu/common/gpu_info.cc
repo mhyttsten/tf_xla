@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +194,10 @@ namespace gpu {
 namespace {
 
 GpuVendor GetGpuVendor(const std::string& gpu_description) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("gpu_description: \"" + gpu_description + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_0(mht_0_v, 198, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GetGpuVendor");
+
   const std::map<std::string, GpuVendor> kMapping = {
       {"adreno", GpuVendor::kQualcomm},
       {"apple", GpuVendor::kApple},
@@ -48,6 +220,10 @@ GpuVendor GetGpuVendor(const std::string& gpu_description) {
 }
 
 AdrenoGpu GetAdrenoGpuVersion(const std::string& gpu_description) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("gpu_description: \"" + gpu_description + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_1(mht_1_v, 224, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GetAdrenoGpuVersion");
+
   const std::map<std::string, AdrenoGpu> kMapping = {
       // Adreno 7xx series
       {"730", AdrenoGpu::kAdreno730},
@@ -108,6 +284,10 @@ AdrenoGpu GetAdrenoGpuVersion(const std::string& gpu_description) {
 }
 
 MaliGpu GetMaliGpuVersion(const std::string& gpu_description) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("gpu_description: \"" + gpu_description + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_2(mht_2_v, 288, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GetMaliGpuVersion");
+
   // Order must be preserved
   const std::vector<std::pair<std::string, MaliGpu>> kMapping = {
       {"t604", MaliGpu::kT604}, {"t622", MaliGpu::kT622},
@@ -135,14 +315,24 @@ MaliGpu GetMaliGpuVersion(const std::string& gpu_description) {
 }  // namespace
 
 AdrenoInfo::AdrenoInfo(const std::string& device_version)
-    : adreno_gpu(GetAdrenoGpuVersion(device_version)) {}
+    : adreno_gpu(GetAdrenoGpuVersion(device_version)) {
+   std::vector<std::string> mht_3_v;
+   mht_3_v.push_back("device_version: \"" + device_version + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_3(mht_3_v, 320, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "AdrenoInfo::AdrenoInfo");
+}
 
 bool AdrenoInfo::IsAdreno1xx() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_4(mht_4_v, 325, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "AdrenoInfo::IsAdreno1xx");
+
   return adreno_gpu == AdrenoGpu::kAdreno120 ||
          adreno_gpu == AdrenoGpu::kAdreno130;
 }
 
 bool AdrenoInfo::IsAdreno2xx() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_5(mht_5_v, 333, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "AdrenoInfo::IsAdreno2xx");
+
   return adreno_gpu == AdrenoGpu::kAdreno200 ||
          adreno_gpu == AdrenoGpu::kAdreno203 ||
          adreno_gpu == AdrenoGpu::kAdreno205 ||
@@ -151,6 +341,9 @@ bool AdrenoInfo::IsAdreno2xx() const {
 }
 
 bool AdrenoInfo::IsAdreno3xx() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_6(mht_6_v, 344, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "AdrenoInfo::IsAdreno3xx");
+
   return adreno_gpu == AdrenoGpu::kAdreno304 ||
          adreno_gpu == AdrenoGpu::kAdreno305 ||
          adreno_gpu == AdrenoGpu::kAdreno306 ||
@@ -160,6 +353,9 @@ bool AdrenoInfo::IsAdreno3xx() const {
 }
 
 bool AdrenoInfo::IsAdreno4xx() const {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_7(mht_7_v, 356, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "AdrenoInfo::IsAdreno4xx");
+
   return adreno_gpu == AdrenoGpu::kAdreno405 ||
          adreno_gpu == AdrenoGpu::kAdreno418 ||
          adreno_gpu == AdrenoGpu::kAdreno420 ||
@@ -167,6 +363,9 @@ bool AdrenoInfo::IsAdreno4xx() const {
 }
 
 bool AdrenoInfo::IsAdreno5xx() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_8(mht_8_v, 366, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "AdrenoInfo::IsAdreno5xx");
+
   return adreno_gpu == AdrenoGpu::kAdreno504 ||
          adreno_gpu == AdrenoGpu::kAdreno505 ||
          adreno_gpu == AdrenoGpu::kAdreno506 ||
@@ -179,6 +378,9 @@ bool AdrenoInfo::IsAdreno5xx() const {
 }
 
 bool AdrenoInfo::IsAdreno6xx() const {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_9(mht_9_v, 381, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "AdrenoInfo::IsAdreno6xx");
+
   return adreno_gpu == AdrenoGpu::kAdreno605 ||
          adreno_gpu == AdrenoGpu::kAdreno610 ||
          adreno_gpu == AdrenoGpu::kAdreno612 ||
@@ -196,14 +398,23 @@ bool AdrenoInfo::IsAdreno6xx() const {
 }
 
 bool AdrenoInfo::IsAdreno7xx() const {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_10(mht_10_v, 401, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "AdrenoInfo::IsAdreno7xx");
+
   return adreno_gpu == AdrenoGpu::kAdreno730;
 }
 
 bool AdrenoInfo::IsAdreno6xxOrHigher() const {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_11(mht_11_v, 408, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "AdrenoInfo::IsAdreno6xxOrHigher");
+
   return (!compiler_bugs_in_a6xx && IsAdreno6xx()) || IsAdreno7xx();
 }
 
 int AdrenoInfo::GetMaximumWavesCount() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_12(mht_12_v, 415, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "AdrenoInfo::GetMaximumWavesCount");
+
   if (IsAdreno7xx()) {
     return 16;
   } else if (IsAdreno6xx()) {
@@ -219,6 +430,9 @@ int AdrenoInfo::GetMaximumWavesCount() const {
 }
 
 int AdrenoInfo::GetRegisterMemorySizePerComputeUnit() const {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_13(mht_13_v, 433, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "AdrenoInfo::GetRegisterMemorySizePerComputeUnit");
+
   if (IsAdreno7xx()) {
     return 128 * 96 * 16;
   } else if (IsAdreno6xx()) {
@@ -239,6 +453,9 @@ int AdrenoInfo::GetRegisterMemorySizePerComputeUnit() const {
 
 int AdrenoInfo::GetMaximumWavesCount(int register_footprint_per_tread,
                                      bool full_wave) const {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_14(mht_14_v, 456, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "AdrenoInfo::GetMaximumWavesCount");
+
   const int register_usage_per_wave =
       GetWaveSize(full_wave) * register_footprint_per_tread;
   const int possible_waves_count =
@@ -247,6 +464,9 @@ int AdrenoInfo::GetMaximumWavesCount(int register_footprint_per_tread,
 }
 
 int AdrenoInfo::GetWaveSize(bool full_wave) const {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_15(mht_15_v, 467, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "AdrenoInfo::GetWaveSize");
+
   if (IsAdreno7xx()) {
     return full_wave ? 128 : 64;
   } else if (IsAdreno6xx()) {
@@ -259,6 +479,9 @@ int AdrenoInfo::GetWaveSize(bool full_wave) const {
 }
 
 int AdrenoInfo::GetComputeUnitsCount() const {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_16(mht_16_v, 482, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "AdrenoInfo::GetComputeUnitsCount");
+
   // can provide not correct numbers.
   switch (adreno_gpu) {
     // Adreno 7xx series
@@ -340,6 +563,10 @@ int AdrenoInfo::GetComputeUnitsCount() const {
 }
 
 AppleInfo::AppleInfo(const std::string& gpu_description) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("gpu_description: \"" + gpu_description + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_17(mht_17_v, 567, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "AppleInfo::AppleInfo");
+
   const std::map<std::string, AppleGpu> kMapping = {
       {"apple a7 gpu", AppleGpu::kA7},
       {"apple a8 gpu", AppleGpu::kA8},
@@ -370,16 +597,28 @@ AppleInfo::AppleInfo(const std::string& gpu_description) {
   }
 }
 
-bool AppleInfo::IsA7GenerationGpu() const { return gpu_type == AppleGpu::kA7; }
+bool AppleInfo::IsA7GenerationGpu() const {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_18(mht_18_v, 601, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "AppleInfo::IsA7GenerationGpu");
+ return gpu_type == AppleGpu::kA7; }
 bool AppleInfo::IsA8GenerationGpu() const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_19(mht_19_v, 605, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "AppleInfo::IsA8GenerationGpu");
+
   return gpu_type == AppleGpu::kA8 || gpu_type == AppleGpu::kA8X;
 }
 
 bool AppleInfo::IsLocalMemoryPreferredOverGlobal() const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_20(mht_20_v, 612, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "AppleInfo::IsLocalMemoryPreferredOverGlobal");
+
   return IsA7GenerationGpu() || IsA8GenerationGpu();
 }
 
 bool AppleInfo::IsBionic() const {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_21(mht_21_v, 619, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "AppleInfo::IsBionic");
+
   return gpu_type == AppleGpu::kA11 || gpu_type == AppleGpu::kA12 ||
          gpu_type == AppleGpu::kA12X || gpu_type == AppleGpu::kA12Z ||
          gpu_type == AppleGpu::kA13 || gpu_type == AppleGpu::kA14 ||
@@ -388,18 +627,30 @@ bool AppleInfo::IsBionic() const {
 }
 
 bool AppleInfo::IsSIMDMatMulSupported() const {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_22(mht_22_v, 630, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "AppleInfo::IsSIMDMatMulSupported");
+
   return gpu_type == AppleGpu::kA14 || gpu_type == AppleGpu::kA15 ||
          gpu_type == AppleGpu::kM1 || gpu_type == AppleGpu::kM1Pro ||
          gpu_type == AppleGpu::kM1Max;
 }
 
 bool AppleInfo::IsSIMDMatMulFp32Perf2x() const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_23(mht_23_v, 639, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "AppleInfo::IsSIMDMatMulFp32Perf2x");
+
   return gpu_type == AppleGpu::kA15;
 }
 
-bool AppleInfo::IsRoundToNearestSupported() const { return IsBionic(); }
+bool AppleInfo::IsRoundToNearestSupported() const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_24(mht_24_v, 646, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "AppleInfo::IsRoundToNearestSupported");
+ return IsBionic(); }
 
 int AppleInfo::GetComputeUnitsCount() const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_25(mht_25_v, 651, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "AppleInfo::GetComputeUnitsCount");
+
   switch (gpu_type) {
     case AppleGpu::kA7:
       return 4;
@@ -449,65 +700,112 @@ int AppleInfo::GetComputeUnitsCount() const {
 }
 
 void AppleInfo::SetComputeUnits(int compute_units_count) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_26(mht_26_v, 703, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "AppleInfo::SetComputeUnits");
+
   compute_units = compute_units_count;
 }
 
 MaliInfo::MaliInfo(const std::string& gpu_description)
-    : gpu_version(GetMaliGpuVersion(gpu_description)) {}
+    : gpu_version(GetMaliGpuVersion(gpu_description)) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("gpu_description: \"" + gpu_description + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_27(mht_27_v, 712, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "MaliInfo::MaliInfo");
+}
 
 bool MaliInfo::IsMaliT6xx() const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_28(mht_28_v, 717, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "MaliInfo::IsMaliT6xx");
+
   return gpu_version == MaliGpu::kT604 || gpu_version == MaliGpu::kT622 ||
          gpu_version == MaliGpu::kT624 || gpu_version == MaliGpu::kT628 ||
          gpu_version == MaliGpu::kT658 || gpu_version == MaliGpu::kT678;
 }
 
 bool MaliInfo::IsMaliT7xx() const {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_29(mht_29_v, 726, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "MaliInfo::IsMaliT7xx");
+
   return gpu_version == MaliGpu::kT720 || gpu_version == MaliGpu::kT760;
 }
 
 bool MaliInfo::IsMaliT8xx() const {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_30(mht_30_v, 733, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "MaliInfo::IsMaliT8xx");
+
   return gpu_version == MaliGpu::kT820 || gpu_version == MaliGpu::kT830 ||
          gpu_version == MaliGpu::kT860 || gpu_version == MaliGpu::kT880;
 }
 
 bool MaliInfo::IsMidgard() const {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_31(mht_31_v, 741, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "MaliInfo::IsMidgard");
+
   return IsMaliT6xx() || IsMaliT7xx() || IsMaliT8xx();
 }
 
 bool MaliInfo::IsBifrostGen1() const {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_32(mht_32_v, 748, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "MaliInfo::IsBifrostGen1");
+
   return gpu_version == MaliGpu::kG31 || gpu_version == MaliGpu::kG51 ||
          gpu_version == MaliGpu::kG71;
 }
 
 bool MaliInfo::IsBifrostGen2() const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_33(mht_33_v, 756, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "MaliInfo::IsBifrostGen2");
+
   return gpu_version == MaliGpu::kG52 || gpu_version == MaliGpu::kG72;
 }
 
-bool MaliInfo::IsBifrostGen3() const { return gpu_version == MaliGpu::kG76; }
+bool MaliInfo::IsBifrostGen3() const {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_34(mht_34_v, 763, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "MaliInfo::IsBifrostGen3");
+ return gpu_version == MaliGpu::kG76; }
 
 bool MaliInfo::IsBifrost() const {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_35(mht_35_v, 768, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "MaliInfo::IsBifrost");
+
   return IsBifrostGen1() || IsBifrostGen2() || IsBifrostGen3();
 }
 
 bool MaliInfo::IsValhallGen1() const {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_36(mht_36_v, 775, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "MaliInfo::IsValhallGen1");
+
   return gpu_version == MaliGpu::kG57 || gpu_version == MaliGpu::kG77;
 }
 
 bool MaliInfo::IsValhallGen2() const {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_37(mht_37_v, 782, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "MaliInfo::IsValhallGen2");
+
   return gpu_version == MaliGpu::kG68 || gpu_version == MaliGpu::kG78;
 }
 
 bool MaliInfo::IsValhallGen3() const {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_38(mht_38_v, 789, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "MaliInfo::IsValhallGen3");
+
   return gpu_version == MaliGpu::kG310 || gpu_version == MaliGpu::kG510 ||
          gpu_version == MaliGpu::kG610 || gpu_version == MaliGpu::kG710;
 }
 
 bool MaliInfo::IsValhall() const {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_39(mht_39_v, 797, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "MaliInfo::IsValhall");
+
   return IsValhallGen1() || IsValhallGen2() || IsValhallGen3();
 }
 
 void GetGpuInfoFromDeviceDescription(const std::string& gpu_description,
                                      GpuApi gpu_api, GpuInfo* gpu_info) {
+   std::vector<std::string> mht_40_v;
+   mht_40_v.push_back("gpu_description: \"" + gpu_description + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_40(mht_40_v, 806, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GetGpuInfoFromDeviceDescription");
+
   gpu_info->gpu_api = gpu_api;
   std::string lowered = gpu_description;
   absl::AsciiStrToLower(&lowered);
@@ -523,6 +821,9 @@ void GetGpuInfoFromDeviceDescription(const std::string& gpu_description,
 }
 
 std::string OpenClVersionToString(OpenClVersion version) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_41(mht_41_v, 824, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "OpenClVersionToString");
+
   switch (version) {
     case OpenClVersion::kCl1_0:
       return "1.0";
@@ -544,6 +845,9 @@ std::string OpenClVersionToString(OpenClVersion version) {
 }
 
 bool OpenGlInfo::SupportsExplicitFp16() const {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_42(mht_42_v, 848, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "OpenGlInfo::SupportsExplicitFp16");
+
   bool supports_f16_alu = false;
   bool supports_f16_storage = false;
   for (const auto& ext : extensions) {
@@ -558,6 +862,9 @@ bool OpenGlInfo::SupportsExplicitFp16() const {
 }
 
 bool VulkanInfo::SupportsExplicitFp16() const {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_43(mht_43_v, 865, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "VulkanInfo::SupportsExplicitFp16");
+
   bool supports_f16_alu = false;
   bool supports_f16_storage = false;
   for (const auto& ext : extensions) {
@@ -572,6 +879,9 @@ bool VulkanInfo::SupportsExplicitFp16() const {
 }
 
 bool OpenClInfo::IsImage2dFromBufferSupported() const {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_44(mht_44_v, 882, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "OpenClInfo::IsImage2dFromBufferSupported");
+
   if (image_pitch_alignment == 0) {
     return false;
   }
@@ -591,21 +901,45 @@ bool OpenClInfo::IsImage2dFromBufferSupported() const {
   return false;
 }
 
-bool GpuInfo::IsAdreno() const { return vendor == GpuVendor::kQualcomm; }
+bool GpuInfo::IsAdreno() const {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_45(mht_45_v, 905, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::IsAdreno");
+ return vendor == GpuVendor::kQualcomm; }
 
-bool GpuInfo::IsApple() const { return vendor == GpuVendor::kApple; }
+bool GpuInfo::IsApple() const {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_46(mht_46_v, 910, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::IsApple");
+ return vendor == GpuVendor::kApple; }
 
-bool GpuInfo::IsMali() const { return vendor == GpuVendor::kMali; }
+bool GpuInfo::IsMali() const {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_47(mht_47_v, 915, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::IsMali");
+ return vendor == GpuVendor::kMali; }
 
-bool GpuInfo::IsPowerVR() const { return vendor == GpuVendor::kPowerVR; }
+bool GpuInfo::IsPowerVR() const {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_48(mht_48_v, 920, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::IsPowerVR");
+ return vendor == GpuVendor::kPowerVR; }
 
-bool GpuInfo::IsNvidia() const { return vendor == GpuVendor::kNvidia; }
+bool GpuInfo::IsNvidia() const {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_49(mht_49_v, 925, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::IsNvidia");
+ return vendor == GpuVendor::kNvidia; }
 
-bool GpuInfo::IsAMD() const { return vendor == GpuVendor::kAMD; }
+bool GpuInfo::IsAMD() const {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_50(mht_50_v, 930, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::IsAMD");
+ return vendor == GpuVendor::kAMD; }
 
-bool GpuInfo::IsIntel() const { return vendor == GpuVendor::kIntel; }
+bool GpuInfo::IsIntel() const {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_51(mht_51_v, 935, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::IsIntel");
+ return vendor == GpuVendor::kIntel; }
 
 bool GpuInfo::IsRoundToNearestSupported() const {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_52(mht_52_v, 940, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::IsRoundToNearestSupported");
+
   if (IsApiOpenCl()) {
     return opencl_info.supports_fp16_rtn || opencl_info.supports_fp32_rtn;
   }
@@ -625,6 +959,9 @@ bool GpuInfo::IsRoundToNearestSupported() const {
 }
 
 bool GpuInfo::SupportsFP16() const {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_53(mht_53_v, 962, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::SupportsFP16");
+
   if (IsApiOpenCl()) {
     return opencl_info.supports_fp16;
   }
@@ -632,6 +969,9 @@ bool GpuInfo::SupportsFP16() const {
 }
 
 bool GpuInfo::SupportsTextureArray() const {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_54(mht_54_v, 972, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::SupportsTextureArray");
+
   if (!SupportsImages()) {
     return false;
   }
@@ -642,6 +982,9 @@ bool GpuInfo::SupportsTextureArray() const {
 }
 
 bool GpuInfo::SupportsImageBuffer() const {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_55(mht_55_v, 985, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::SupportsImageBuffer");
+
   if (!SupportsImages()) {
     return false;
   }
@@ -652,6 +995,9 @@ bool GpuInfo::SupportsImageBuffer() const {
 }
 
 bool GpuInfo::SupportsImage3D() const {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_56(mht_56_v, 998, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::SupportsImage3D");
+
   if (!SupportsImages()) {
     return false;
   }
@@ -666,6 +1012,9 @@ bool GpuInfo::SupportsImage3D() const {
 }
 
 bool GpuInfo::SupportsImages() const {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_57(mht_57_v, 1015, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::SupportsImages");
+
   if (IsApiOpenCl()) {
     return opencl_info.supports_images;
   }
@@ -673,15 +1022,25 @@ bool GpuInfo::SupportsImages() const {
 }
 
 bool GpuInfo::SupportsPointersInKernels() const {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_58(mht_58_v, 1025, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::SupportsPointersInKernels");
+
   return IsApiOpenCl() || IsApiMetal();
 }
 
 bool GpuInfo::IsWaveSizeEqualTo32() const {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_59(mht_59_v, 1032, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::IsWaveSizeEqualTo32");
+
   return supported_subgroup_sizes.size() == 1 &&
          supported_subgroup_sizes[0] == 32;
 }
 
 bool GpuInfo::SupportsExtension(const std::string& extension) const {
+   std::vector<std::string> mht_60_v;
+   mht_60_v.push_back("extension: \"" + extension + "\"");
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_60(mht_60_v, 1041, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::SupportsExtension");
+
   const std::vector<std::string>* extensions = nullptr;
   if (IsApiOpenGl()) {
     extensions = &opengl_info.extensions;
@@ -702,6 +1061,9 @@ bool GpuInfo::SupportsExtension(const std::string& extension) const {
 }
 
 bool GpuInfo::SupportsSubGroupWithSize(int sub_group_size) const {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_61(mht_61_v, 1064, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::SupportsSubGroupWithSize");
+
   for (auto subgroup_size : supported_subgroup_sizes) {
     if (sub_group_size == subgroup_size) {
       return true;
@@ -711,6 +1073,9 @@ bool GpuInfo::SupportsSubGroupWithSize(int sub_group_size) const {
 }
 
 bool GpuInfo::SupportsFloatImage2D(DataType data_type, int channels) const {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_62(mht_62_v, 1076, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::SupportsFloatImage2D");
+
   if (IsApiOpenCl()) {
     if (channels == 1) {
       return data_type == DataType::FLOAT32 ? opencl_info.supports_r_f32_tex2d
@@ -734,6 +1099,9 @@ bool GpuInfo::SupportsFloatImage2D(DataType data_type, int channels) const {
 }
 
 int GpuInfo::GetComputeUnitsCount() const {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_63(mht_63_v, 1102, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::GetComputeUnitsCount");
+
   if (IsApiOpenCl()) {
     return opencl_info.compute_units_count;
   }
@@ -750,6 +1118,9 @@ int GpuInfo::GetComputeUnitsCount() const {
 }
 
 int GpuInfo::GetMaxWorkGroupSizeForX() const {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_64(mht_64_v, 1121, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::GetMaxWorkGroupSizeForX");
+
   if (IsApiOpenGl()) {
     return opengl_info.max_compute_work_group_size_x;
   }
@@ -766,6 +1137,9 @@ int GpuInfo::GetMaxWorkGroupSizeForX() const {
 }
 
 int GpuInfo::GetMaxWorkGroupSizeForY() const {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_65(mht_65_v, 1140, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::GetMaxWorkGroupSizeForY");
+
   if (IsApiOpenGl()) {
     return opengl_info.max_compute_work_group_size_y;
   }
@@ -782,6 +1156,9 @@ int GpuInfo::GetMaxWorkGroupSizeForY() const {
 }
 
 int GpuInfo::GetMaxWorkGroupSizeForZ() const {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_66(mht_66_v, 1159, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::GetMaxWorkGroupSizeForZ");
+
   if (IsApiOpenGl()) {
     return opengl_info.max_compute_work_group_size_z;
   }
@@ -798,6 +1175,9 @@ int GpuInfo::GetMaxWorkGroupSizeForZ() const {
 }
 
 int GpuInfo::GetMaxWorkGroupTotalSize() const {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_67(mht_67_v, 1178, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::GetMaxWorkGroupTotalSize");
+
   if (IsApiOpenGl()) {
     return opengl_info.max_work_group_invocations;
   }
@@ -817,6 +1197,9 @@ int GpuInfo::GetMaxWorkGroupTotalSize() const {
 }
 
 uint64_t GpuInfo::GetMaxImage2DWidth() const {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_68(mht_68_v, 1200, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::GetMaxImage2DWidth");
+
   if (IsApiOpenGl()) {
     return opengl_info.max_texture_size;
   }
@@ -833,6 +1216,9 @@ uint64_t GpuInfo::GetMaxImage2DWidth() const {
 }
 
 uint64_t GpuInfo::GetMaxImage2DHeight() const {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_69(mht_69_v, 1219, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::GetMaxImage2DHeight");
+
   if (IsApiOpenGl()) {
     return opengl_info.max_texture_size;
   }
@@ -849,6 +1235,9 @@ uint64_t GpuInfo::GetMaxImage2DHeight() const {
 }
 
 uint64_t GpuInfo::GetMaxImage2DArrayLayers() const {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_70(mht_70_v, 1238, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::GetMaxImage2DArrayLayers");
+
   if (IsApiOpenGl()) {
     return opengl_info.max_array_texture_layers;
   }
@@ -865,6 +1254,9 @@ uint64_t GpuInfo::GetMaxImage2DArrayLayers() const {
 }
 
 uint64_t GpuInfo::GetMaxImage3DWidth() const {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_71(mht_71_v, 1257, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::GetMaxImage3DWidth");
+
   if (IsApiOpenCl()) {
     return opencl_info.image3d_max_width;
   } else if (IsApiMetal()) {
@@ -876,6 +1268,9 @@ uint64_t GpuInfo::GetMaxImage3DWidth() const {
 }
 
 uint64_t GpuInfo::GetMaxImage3DHeight() const {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_72(mht_72_v, 1271, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::GetMaxImage3DHeight");
+
   if (IsApiOpenCl()) {
     return opencl_info.image3d_max_height;
   } else if (IsApiMetal()) {
@@ -887,6 +1282,9 @@ uint64_t GpuInfo::GetMaxImage3DHeight() const {
 }
 
 uint64_t GpuInfo::GetMaxImage3DDepth() const {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_73(mht_73_v, 1285, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::GetMaxImage3DDepth");
+
   if (IsApiOpenCl()) {
     return opencl_info.image3d_max_depth;
   } else if (IsApiMetal()) {
@@ -898,6 +1296,9 @@ uint64_t GpuInfo::GetMaxImage3DDepth() const {
 }
 
 uint64_t GpuInfo::GetMaxBufferSize() const {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_74(mht_74_v, 1299, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::GetMaxBufferSize");
+
   if (IsApiOpenCl()) {
     return opencl_info.buffer_max_size;
   } else if (IsApiMetal()) {
@@ -909,6 +1310,9 @@ uint64_t GpuInfo::GetMaxBufferSize() const {
 }
 
 uint64_t GpuInfo::GetMaxMemoryAllocationSize() const {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_75(mht_75_v, 1313, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::GetMaxMemoryAllocationSize");
+
   if (IsApiOpenCl()) {
     return opencl_info.max_allocation_size;
   } else if (IsApiMetal()) {
@@ -920,6 +1324,9 @@ uint64_t GpuInfo::GetMaxMemoryAllocationSize() const {
 }
 
 uint64_t GpuInfo::GetMaxImageBufferWidth() const {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_76(mht_76_v, 1327, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::GetMaxImageBufferWidth");
+
   if (IsApiOpenCl()) {
     return opencl_info.image_buffer_max_size;
   } else if (IsApiVulkan()) {
@@ -929,6 +1336,9 @@ uint64_t GpuInfo::GetMaxImageBufferWidth() const {
 }
 
 int GpuInfo::GetMaxImageArguments() const {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_77(mht_77_v, 1339, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::GetMaxImageArguments");
+
   if (IsApiOpenGl()) {
     return opengl_info.max_image_units;
   }
@@ -944,9 +1354,15 @@ int GpuInfo::GetMaxImageArguments() const {
   return 1;
 }
 
-bool GpuInfo::IsApiOpenGl() const { return gpu_api == GpuApi::kOpenGl; }
+bool GpuInfo::IsApiOpenGl() const {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_78(mht_78_v, 1358, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::IsApiOpenGl");
+ return gpu_api == GpuApi::kOpenGl; }
 
 bool GpuInfo::IsApiOpenGl31OrAbove() const {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_79(mht_79_v, 1363, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::IsApiOpenGl31OrAbove");
+
   if (!IsApiOpenGl()) {
     return false;
   }
@@ -954,15 +1370,30 @@ bool GpuInfo::IsApiOpenGl31OrAbove() const {
          opengl_info.major_version > 3;
 }
 
-bool GpuInfo::IsApiVulkan() const { return gpu_api == GpuApi::kVulkan; }
+bool GpuInfo::IsApiVulkan() const {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_80(mht_80_v, 1374, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::IsApiVulkan");
+ return gpu_api == GpuApi::kVulkan; }
 
-bool GpuInfo::IsApiMetal() const { return gpu_api == GpuApi::kMetal; }
+bool GpuInfo::IsApiMetal() const {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_81(mht_81_v, 1379, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::IsApiMetal");
+ return gpu_api == GpuApi::kMetal; }
 
-bool GpuInfo::IsApiOpenCl() const { return gpu_api == GpuApi::kOpenCl; }
+bool GpuInfo::IsApiOpenCl() const {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_82(mht_82_v, 1384, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::IsApiOpenCl");
+ return gpu_api == GpuApi::kOpenCl; }
 
-bool GpuInfo::IsGlsl() const { return IsApiOpenGl() || IsApiVulkan(); }
+bool GpuInfo::IsGlsl() const {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_83(mht_83_v, 1389, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::IsGlsl");
+ return IsApiOpenGl() || IsApiVulkan(); }
 
 bool GpuInfo::IsGlslSupportsExplicitFp16() const {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_84(mht_84_v, 1394, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::IsGlslSupportsExplicitFp16");
+
   if (IsApiOpenGl() && opengl_info.SupportsExplicitFp16()) {
     return true;
   }
@@ -973,6 +1404,9 @@ bool GpuInfo::IsGlslSupportsExplicitFp16() const {
 }
 
 bool GpuInfo::IsCL11OrHigher() const {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_85(mht_85_v, 1407, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::IsCL11OrHigher");
+
   if (!IsApiOpenCl()) {
     return false;
   }
@@ -980,6 +1414,9 @@ bool GpuInfo::IsCL11OrHigher() const {
 }
 
 bool GpuInfo::IsCL20OrHigher() const {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_86(mht_86_v, 1417, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::IsCL20OrHigher");
+
   if (!IsApiOpenCl()) {
     return false;
   }
@@ -989,6 +1426,9 @@ bool GpuInfo::IsCL20OrHigher() const {
 }
 
 bool GpuInfo::IsCL30OrHigher() const {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPSlitePSdelegatesPSgpuPScommonPSgpu_infoDTcc mht_87(mht_87_v, 1429, "", "./tensorflow/lite/delegates/gpu/common/gpu_info.cc", "GpuInfo::IsCL30OrHigher");
+
   if (!IsApiOpenCl()) {
     return false;
   }

@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef MLIR_HLO_DIALECT_MHLO_TRANSFORMS_MAP_MHLO_TO_SCALAR_OP_H
 #define MLIR_HLO_DIALECT_MHLO_TRANSFORMS_MAP_MHLO_TO_SCALAR_OP_H
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
@@ -276,6 +444,9 @@ template <typename MhloOpTy>
 inline Value MapMhloOpToStdScalarOp(Location loc, ArrayRef<Type> result_types,
                                     ArrayRef<Type> arg_types, ValueRange args,
                                     OpBuilder* b) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_0(mht_0_v, 447, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "MapMhloOpToStdScalarOp");
+
   using ScalarIOpOrVoid = typename MapableIf<ScalarIOp, MhloOpTy>::type;
   using ScalarUOpOrVoid = typename MapableIf<ScalarUOp, MhloOpTy>::type;
   using ScalarFOpOrVoid = typename MapableIf<ScalarFOp, MhloOpTy>::type;
@@ -293,6 +464,9 @@ inline Value MapMhloOpToStdScalarOp<mhlo::AbsOp>(Location loc,
                                                  ArrayRef<Type> arg_types,
                                                  ValueRange args,
                                                  OpBuilder* b) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_1(mht_1_v, 467, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "MapMhloOpToStdScalarOp<mhlo::AbsOp>");
+
   Type element_type = getElementTypeOrSelf(arg_types.front());
   if (element_type.isa<FloatType>()) {
     return MapMhloOpToScalarOpImpl<isFloatType, ::mlir::math::AbsOp>{}(
@@ -327,6 +501,9 @@ inline Value MapMhloOpToStdScalarOp<mhlo::CbrtOp>(Location loc,
                                                   ArrayRef<Type> arg_types,
                                                   ValueRange args,
                                                   OpBuilder* b) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_2(mht_2_v, 504, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "MapMhloOpToStdScalarOp<mhlo::CbrtOp>");
+
   mhlo::CbrtOp::Adaptor adaptor(args);
   Type element_type = getElementTypeOrSelf(arg_types.front());
   if (auto float_type = element_type.dyn_cast<FloatType>()) {
@@ -352,6 +529,9 @@ inline Optional<PredicateType> getCmpPredicate(mhlo::ComparisonDirection,
 template <>
 inline Optional<arith::CmpFPredicate> getCmpPredicate<arith::CmpFPredicate>(
     mhlo::ComparisonDirection comparison_direction, bool is_signed) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_3(mht_3_v, 532, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "getCmpPredicate<arith::CmpFPredicate>");
+
   assert(is_signed && "cannot have an unsigned float!");
   return llvm::StringSwitch<Optional<arith::CmpFPredicate>>(
              stringifyComparisonDirection(comparison_direction))
@@ -367,6 +547,9 @@ inline Optional<arith::CmpFPredicate> getCmpPredicate<arith::CmpFPredicate>(
 template <>
 inline Optional<arith::CmpIPredicate> getCmpPredicate<arith::CmpIPredicate>(
     mhlo::ComparisonDirection comparison_direction, bool is_signed) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_4(mht_4_v, 550, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "getCmpPredicate<arith::CmpIPredicate>");
+
   return llvm::StringSwitch<Optional<arith::CmpIPredicate>>(
              stringifyComparisonDirection(comparison_direction))
       .Case("EQ", arith::CmpIPredicate::eq)
@@ -388,6 +571,9 @@ inline Value MapCompareOpToStdScalarOp(Location loc,
                                        ArrayRef<Type> /*result_types*/,
                                        ArrayRef<Type> arg_types,
                                        ValueRange args, OpBuilder* b) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_5(mht_5_v, 574, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "MapCompareOpToStdScalarOp");
+
   const auto& lhs = args[0];
   const auto& rhs = args[1];
   Type element_type = getElementTypeOrSelf(arg_types.front());
@@ -424,6 +610,9 @@ template <>
 inline Value MapMhloOpToStdScalarOp<mhlo::CopyOp>(
     Location /*loc*/, ArrayRef<Type> /*result_types*/,
     ArrayRef<Type> /*arg_types*/, ValueRange args, OpBuilder* /*b*/) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_6(mht_6_v, 613, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "MapMhloOpToStdScalarOp<mhlo::CopyOp>");
+
   return args.front();
 }
 
@@ -431,6 +620,9 @@ template <>
 inline Value MapMhloOpToStdScalarOp<mhlo::ComplexOp>(
     Location loc, ArrayRef<Type> result_types, ArrayRef<Type> arg_types,
     ValueRange args, OpBuilder* b) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_7(mht_7_v, 623, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "MapMhloOpToStdScalarOp<mhlo::ComplexOp>");
+
   return MapMhloOpToScalarOpImpl<complex::CreateOp>{}(loc, result_types,
                                                       arg_types, args, b);
 }
@@ -441,6 +633,9 @@ inline Value MapMhloOpToStdScalarOp<mhlo::RealOp>(Location loc,
                                                   ArrayRef<Type> arg_types,
                                                   ValueRange args,
                                                   OpBuilder* b) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_8(mht_8_v, 636, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "MapMhloOpToStdScalarOp<mhlo::RealOp>");
+
   if (!args[0].getType().isa<ComplexType>()) return args[0];
   return MapMhloOpToScalarOpImpl<complex::ReOp>{}(loc, result_types, arg_types,
                                                   args, b);
@@ -452,6 +647,9 @@ inline Value MapMhloOpToStdScalarOp<mhlo::ImagOp>(Location loc,
                                                   ArrayRef<Type> arg_types,
                                                   ValueRange args,
                                                   OpBuilder* b) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_9(mht_9_v, 650, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "MapMhloOpToStdScalarOp<mhlo::ImagOp>");
+
   if (!args[0].getType().isa<ComplexType>())
     return b->create<arith::ConstantOp>(loc, b->getZeroAttr(args[0].getType()));
   return MapMhloOpToScalarOpImpl<complex::ImOp>{}(loc, result_types, arg_types,
@@ -462,6 +660,9 @@ template <>
 inline Value MapMhloOpToStdScalarOp<mhlo::ConvertOp>(
     Location loc, ArrayRef<Type> result_types, ArrayRef<Type> arg_types,
     ValueRange args, OpBuilder* b) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_10(mht_10_v, 663, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "MapMhloOpToStdScalarOp<mhlo::ConvertOp>");
+
   Type sourceType = getElementTypeOrSelf(arg_types.front());
   Type targetType = getElementTypeOrSelf(result_types.front());
   Type convertedSourceType = getElementTypeOrSelf(args.front());
@@ -546,6 +747,9 @@ template <>
 inline Value MapMhloOpToStdScalarOp<mhlo::BitcastConvertOp>(
     Location loc, ArrayRef<Type> result_types, ArrayRef<Type>, ValueRange args,
     OpBuilder* b) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_11(mht_11_v, 750, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "MapMhloOpToStdScalarOp<mhlo::BitcastConvertOp>");
+
   return b->create<mlir::arith::BitcastOp>(loc, result_types, args);
 }
 
@@ -555,6 +759,9 @@ inline Value MapMhloOpToStdScalarOp<mhlo::DotOp>(Location loc,
                                                  ArrayRef<Type> arg_types,
                                                  ValueRange args,
                                                  OpBuilder* b) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_12(mht_12_v, 762, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "MapMhloOpToStdScalarOp<mhlo::DotOp>");
+
   // Dot Op converter from lhlo to affine only accepts float and integer types.
   const auto& lhs = args[0];
   const auto& rhs = args[1];
@@ -581,6 +788,9 @@ template <>
 inline Value MapMhloOpToStdScalarOp<mhlo::IsFiniteOp>(
     Location loc, ArrayRef<Type> /*result_types*/, ArrayRef<Type> /*arg_types*/,
     ValueRange args, OpBuilder* b) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_13(mht_13_v, 791, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "MapMhloOpToStdScalarOp<mhlo::IsFiniteOp>");
+
   if (args[0].getType().isa<FloatType>()) {
     auto pos_inf = APFloat::getInf(
         args[0].getType().cast<FloatType>().getFloatSemantics());
@@ -602,6 +812,9 @@ struct CompareSelectOpToStdScalarOp {
                    ArrayRef<Type> /*result_types*/,
                    ArrayRef<Type> /*arg_types*/, ValueRange /*args*/,
                    OpBuilder* /*b*/) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_14(mht_14_v, 815, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "map");
+
     return nullptr;
   }
 };
@@ -615,6 +828,9 @@ struct CompareSelectOpToStdScalarOp<SupportedType, StdCompareOp, Predicate,
   static Value map(Location loc, ComparisonDirection comparison_direction,
                    ArrayRef<Type> result_types, ArrayRef<Type> arg_types,
                    ValueRange args, OpBuilder* b) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_15(mht_15_v, 831, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "map");
+
     Type element_type = getElementTypeOrSelf(arg_types.front());
     if (element_type.isa<SupportedType>()) {
       auto predicate = getCmpPredicate<Predicate>(
@@ -631,6 +847,9 @@ struct CompareSelectOpToStdScalarOp<SupportedType, StdCompareOp, Predicate,
 
 inline Value MhloAlwaysPropagateNaN(Value v, ValueRange args, Location loc,
                                     OpBuilder* b) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_16(mht_16_v, 850, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "MhloAlwaysPropagateNaN");
+
   Type element_type = getElementTypeOrSelf(args.front().getType());
   if (auto float_type = element_type.dyn_cast<FloatType>()) {
     Value isnan = b->create<mlir::arith::CmpFOp>(loc, arith::CmpFPredicate::UNO,
@@ -651,6 +870,9 @@ template <>
 inline Value MapMhloOpToStdScalarOp<mhlo::LogisticOp>(
     Location loc, ArrayRef<Type> result_types, ArrayRef<Type> /*arg_types*/,
     ValueRange args, OpBuilder* b) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_17(mht_17_v, 873, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "MapMhloOpToStdScalarOp<mhlo::LogisticOp>");
+
   auto ty = result_types.front().cast<FloatType>();
   Value one = b->create<arith::ConstantOp>(loc, b->getFloatAttr(ty, 1.0));
   Value x = args.front();
@@ -666,6 +888,9 @@ inline Value MapMhloOpToStdScalarOp<mhlo::ClampOp>(Location loc,
                                                    ArrayRef<Type> arg_types,
                                                    ValueRange args,
                                                    OpBuilder* b) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_18(mht_18_v, 891, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "MapMhloOpToStdScalarOp<mhlo::ClampOp>");
+
   assert(args.size() == 3 && "expected 3 arguments");
   Value lb = args[0];
   Value x = args[1];
@@ -684,6 +909,9 @@ inline Value MapMhloOpToStdScalarOp<mhlo::NegOp>(Location loc,
                                                  ArrayRef<Type> arg_types,
                                                  ValueRange args,
                                                  OpBuilder* b) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_19(mht_19_v, 912, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "MapMhloOpToStdScalarOp<mhlo::NegOp>");
+
   Type element_type = getElementTypeOrSelf(args.front().getType());
   if (element_type.isa<ComplexType, FloatType>()) {
     return MapMhloOpToScalarOpImpl<isFloatType, ::mlir::arith::NegFOp,
@@ -710,6 +938,9 @@ template <>
 inline Value MapMhloOpToStdScalarOp<mhlo::NotOp>(
     Location loc, ArrayRef<Type> /*result_types*/, ArrayRef<Type> /*arg_types*/,
     ValueRange args, OpBuilder* b) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_20(mht_20_v, 941, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "MapMhloOpToStdScalarOp<mhlo::NotOp>");
+
   Type element_type = getElementTypeOrSelf(args.front().getType());
   if (auto integer_type = element_type.dyn_cast<IntegerType>()) {
     // lmhlo.not(x) -> x ^ -1
@@ -729,6 +960,9 @@ inline Value MapMhloOpToStdScalarOp<mhlo::PowOp>(Location loc,
                                                  ArrayRef<Type> arg_types,
                                                  ValueRange args,
                                                  OpBuilder* b) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_21(mht_21_v, 963, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "MapMhloOpToStdScalarOp<mhlo::PowOp>");
+
   mhlo::PowOp::Adaptor adaptor(args);
   auto lb = ImplicitLocOpBuilder(loc, *b);
   // Floating point can use std::powf
@@ -761,6 +995,9 @@ inline Value MapMhloOpToStdScalarOp<mhlo::PowOp>(Location loc,
             lowerBound, upperBound, step,
             SmallVector<Value>({one, original_base, original_exponent}),
             [&](OpBuilder& b, Location, Value /*v*/, ValueRange iters) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_22(mht_22_v, 998, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "lambda");
+
               Value accum = iters[0];
               Value base = iters[1];
               Value exponent = iters[2];
@@ -812,6 +1049,9 @@ template <>
 inline Value MapMhloOpToStdScalarOp<mhlo::RoundOp>(
     Location loc, ArrayRef<Type> /*result_types*/, ArrayRef<Type> /*arg_types*/,
     ValueRange args, OpBuilder* b) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_23(mht_23_v, 1052, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "MapMhloOpToStdScalarOp<mhlo::RoundOp>");
+
   mhlo::RoundOp::Adaptor adaptor(args);
   auto lb = ImplicitLocOpBuilder(loc, *b);
   auto operand = adaptor.operand();
@@ -836,6 +1076,9 @@ inline Value MapMhloOpToStdScalarOp<mhlo::SelectOp>(Location loc,
                                                     ArrayRef<Type> arg_types,
                                                     ValueRange args,
                                                     OpBuilder* b) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_24(mht_24_v, 1079, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "MapMhloOpToStdScalarOp<mhlo::SelectOp>");
+
   return MapMhloOpToScalarOpImpl<::mlir::arith::SelectOp>{}(loc, result_types,
                                                             arg_types, args, b);
 }
@@ -846,6 +1089,9 @@ inline Value MapMhloOpToStdScalarOp<mhlo::SignOp>(Location loc,
                                                   ArrayRef<Type> /*arg_types*/,
                                                   ValueRange args,
                                                   OpBuilder* b) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_25(mht_25_v, 1092, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "MapMhloOpToStdScalarOp<mhlo::SignOp>");
+
   Type element_type = getElementTypeOrSelf(args.front().getType());
   if (auto float_type = element_type.dyn_cast<FloatType>()) {
     bool ignored;
@@ -902,6 +1148,9 @@ struct MhloOpToStdScalarOp {
                                    MhloOpTy, mhlo::CompareOp>::value>>
   static Value map(MhloOpTy op, ArrayRef<Type> result_types, ValueRange args,
                    OpBuilder* b) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_26(mht_26_v, 1151, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "map");
+
     return impl::MapMhloOpToStdScalarOp<MhloOpTy>(
         op.getLoc(), result_types, llvm::to_vector<4>(op->getOperandTypes()),
         args, b);
@@ -912,6 +1161,9 @@ struct MhloOpToStdScalarOp {
                                    MhloOpTy, mhlo::CompareOp>::value>>
   static Value map(mhlo::CompareOp op, ArrayRef<Type> result_types,
                    ValueRange args, OpBuilder* b) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_27(mht_27_v, 1164, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "map");
+
     auto comparison_direction = op.comparison_direction();
     return impl::MapCompareOpToStdScalarOp<mhlo::CompareOp>(
         op.getLoc(), comparison_direction, result_types,
@@ -923,6 +1175,9 @@ struct MhloOpToStdScalarOp {
                                    MhloOpTy, mhlo::CompareOp>::value>>
   static Value map(Location loc, ArrayRef<Type> result_types,
                    ArrayRef<Type> arg_types, ValueRange args, OpBuilder* b) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_28(mht_28_v, 1178, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "map");
+
     return impl::MapMhloOpToStdScalarOp<MhloOpTy>(loc, result_types, arg_types,
                                                   args, b);
   }
@@ -933,6 +1188,9 @@ struct MhloOpToStdScalarOp {
   static Value map(Location loc, ComparisonDirection comparison_direction,
                    ArrayRef<Type> result_types, ArrayRef<Type> arg_types,
                    ValueRange args, OpBuilder* b) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSincludePSmlirSLhloPSDialectPSmhloPStransformsPSmap_mhlo_to_scalar_opDTh mht_29(mht_29_v, 1191, "", "./tensorflow/compiler/mlir/hlo/include/mlir-hlo/Dialect/mhlo/transforms/map_mhlo_to_scalar_op.h", "map");
+
     return impl::MapCompareOpToStdScalarOp<mhlo::CompareOp>(
         loc, comparison_direction, result_types, arg_types, args, b);
   }

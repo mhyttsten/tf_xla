@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +194,9 @@ namespace tfdbg {
 
 namespace {
 void MaybeSetDebugEventTimestamp(DebugEvent* debug_event, Env* env) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_0(mht_0_v, 197, "", "./tensorflow/core/util/debug_events_writer.cc", "MaybeSetDebugEventTimestamp");
+
   if (debug_event->wall_time() == 0) {
     debug_event->set_wall_time(env->NowMicros() / 1e6);
   }
@@ -36,9 +207,16 @@ SingleDebugEventFileWriter::SingleDebugEventFileWriter(const string& file_path)
     : env_(Env::Default()),
       file_path_(file_path),
       num_outstanding_events_(0),
-      writer_mu_() {}
+      writer_mu_() {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("file_path: \"" + file_path + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_1(mht_1_v, 212, "", "./tensorflow/core/util/debug_events_writer.cc", "SingleDebugEventFileWriter::SingleDebugEventFileWriter");
+}
 
 Status SingleDebugEventFileWriter::Init() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_2(mht_2_v, 217, "", "./tensorflow/core/util/debug_events_writer.cc", "SingleDebugEventFileWriter::Init");
+
   if (record_writer_ != nullptr) {
     // TODO(cais): We currently don't check for file deletion. When the need
     // arises, check and fix it.
@@ -64,6 +242,9 @@ Status SingleDebugEventFileWriter::Init() {
 
 void SingleDebugEventFileWriter::WriteSerializedDebugEvent(
     StringPiece debug_event_str) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_3(mht_3_v, 245, "", "./tensorflow/core/util/debug_events_writer.cc", "SingleDebugEventFileWriter::WriteSerializedDebugEvent");
+
   if (record_writer_ == nullptr) {
     if (!Init().ok()) {
       LOG(ERROR) << "Write failed because file could not be opened.";
@@ -78,6 +259,9 @@ void SingleDebugEventFileWriter::WriteSerializedDebugEvent(
 }
 
 Status SingleDebugEventFileWriter::Flush() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_4(mht_4_v, 262, "", "./tensorflow/core/util/debug_events_writer.cc", "SingleDebugEventFileWriter::Flush");
+
   const int num_outstanding = num_outstanding_events_.load();
   if (num_outstanding == 0) {
     return Status::OK();
@@ -101,6 +285,9 @@ Status SingleDebugEventFileWriter::Flush() {
 }
 
 Status SingleDebugEventFileWriter::Close() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_5(mht_5_v, 288, "", "./tensorflow/core/util/debug_events_writer.cc", "SingleDebugEventFileWriter::Close");
+
   Status status = Flush();
   if (writable_file_ != nullptr) {
     Status close_status = writable_file_->Close();
@@ -114,16 +301,27 @@ Status SingleDebugEventFileWriter::Close() {
   return status;
 }
 
-const string SingleDebugEventFileWriter::FileName() { return file_path_; }
+const string SingleDebugEventFileWriter::FileName() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_6(mht_6_v, 305, "", "./tensorflow/core/util/debug_events_writer.cc", "SingleDebugEventFileWriter::FileName");
+ return file_path_; }
 
 mutex DebugEventsWriter::factory_mu_(LINKER_INITIALIZED);
 
-DebugEventsWriter::~DebugEventsWriter() { Close().IgnoreError(); }
+DebugEventsWriter::~DebugEventsWriter() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_7(mht_7_v, 312, "", "./tensorflow/core/util/debug_events_writer.cc", "DebugEventsWriter::~DebugEventsWriter");
+ Close().IgnoreError(); }
 
 // static
 DebugEventsWriter* DebugEventsWriter::GetDebugEventsWriter(
     const string& dump_root, const string& tfdbg_run_id,
     int64_t circular_buffer_size) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("dump_root: \"" + dump_root + "\"");
+   mht_8_v.push_back("tfdbg_run_id: \"" + tfdbg_run_id + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_8(mht_8_v, 322, "", "./tensorflow/core/util/debug_events_writer.cc", "DebugEventsWriter::GetDebugEventsWriter");
+
   mutex_lock l(DebugEventsWriter::factory_mu_);
   std::unordered_map<string, std::unique_ptr<DebugEventsWriter>>* writer_pool =
       DebugEventsWriter::GetDebugEventsWriterMap();
@@ -138,6 +336,10 @@ DebugEventsWriter* DebugEventsWriter::GetDebugEventsWriter(
 // static
 Status DebugEventsWriter::LookUpDebugEventsWriter(
     const string& dump_root, DebugEventsWriter** debug_events_writer) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("dump_root: \"" + dump_root + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_9(mht_9_v, 340, "", "./tensorflow/core/util/debug_events_writer.cc", "DebugEventsWriter::LookUpDebugEventsWriter");
+
   mutex_lock l(DebugEventsWriter::factory_mu_);
   std::unordered_map<string, std::unique_ptr<DebugEventsWriter>>* writer_pool =
       DebugEventsWriter::GetDebugEventsWriterMap();
@@ -150,6 +352,9 @@ Status DebugEventsWriter::LookUpDebugEventsWriter(
 }
 
 Status DebugEventsWriter::Init() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_10(mht_10_v, 355, "", "./tensorflow/core/util/debug_events_writer.cc", "DebugEventsWriter::Init");
+
   mutex_lock l(initialization_mu_);
 
   // TODO(cais): We currently don't check for file deletion. When the need
@@ -199,6 +404,9 @@ Status DebugEventsWriter::Init() {
 }
 
 Status DebugEventsWriter::WriteSourceFile(SourceFile* source_file) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_11(mht_11_v, 407, "", "./tensorflow/core/util/debug_events_writer.cc", "DebugEventsWriter::WriteSourceFile");
+
   DebugEvent debug_event;
   debug_event.set_allocated_source_file(source_file);
   return SerializeAndWriteDebugEvent(&debug_event, SOURCE_FILES);
@@ -206,6 +414,9 @@ Status DebugEventsWriter::WriteSourceFile(SourceFile* source_file) {
 
 Status DebugEventsWriter::WriteStackFrameWithId(
     StackFrameWithId* stack_frame_with_id) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_12(mht_12_v, 417, "", "./tensorflow/core/util/debug_events_writer.cc", "DebugEventsWriter::WriteStackFrameWithId");
+
   DebugEvent debug_event;
   debug_event.set_allocated_stack_frame_with_id(stack_frame_with_id);
   return SerializeAndWriteDebugEvent(&debug_event, STACK_FRAMES);
@@ -213,18 +424,27 @@ Status DebugEventsWriter::WriteStackFrameWithId(
 
 Status DebugEventsWriter::WriteGraphOpCreation(
     GraphOpCreation* graph_op_creation) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_13(mht_13_v, 427, "", "./tensorflow/core/util/debug_events_writer.cc", "DebugEventsWriter::WriteGraphOpCreation");
+
   DebugEvent debug_event;
   debug_event.set_allocated_graph_op_creation(graph_op_creation);
   return SerializeAndWriteDebugEvent(&debug_event, GRAPHS);
 }
 
 Status DebugEventsWriter::WriteDebuggedGraph(DebuggedGraph* debugged_graph) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_14(mht_14_v, 436, "", "./tensorflow/core/util/debug_events_writer.cc", "DebugEventsWriter::WriteDebuggedGraph");
+
   DebugEvent debug_event;
   debug_event.set_allocated_debugged_graph(debugged_graph);
   return SerializeAndWriteDebugEvent(&debug_event, GRAPHS);
 }
 
 Status DebugEventsWriter::WriteExecution(Execution* execution) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_15(mht_15_v, 445, "", "./tensorflow/core/util/debug_events_writer.cc", "DebugEventsWriter::WriteExecution");
+
   if (circular_buffer_size_ <= 0) {
     // No cyclic-buffer behavior.
     DebugEvent debug_event;
@@ -249,6 +469,9 @@ Status DebugEventsWriter::WriteExecution(Execution* execution) {
 
 Status DebugEventsWriter::WriteGraphExecutionTrace(
     GraphExecutionTrace* graph_execution_trace) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_16(mht_16_v, 472, "", "./tensorflow/core/util/debug_events_writer.cc", "DebugEventsWriter::WriteGraphExecutionTrace");
+
   TF_RETURN_IF_ERROR(Init());
   if (circular_buffer_size_ <= 0) {
     // No cyclic-buffer behavior.
@@ -276,6 +499,12 @@ Status DebugEventsWriter::WriteGraphExecutionTrace(
     const string& tfdbg_context_id, const string& device_name,
     const string& op_name, int32_t output_slot, int32_t tensor_debug_mode,
     const Tensor& tensor_value) {
+   std::vector<std::string> mht_17_v;
+   mht_17_v.push_back("tfdbg_context_id: \"" + tfdbg_context_id + "\"");
+   mht_17_v.push_back("device_name: \"" + device_name + "\"");
+   mht_17_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_17(mht_17_v, 505, "", "./tensorflow/core/util/debug_events_writer.cc", "DebugEventsWriter::WriteGraphExecutionTrace");
+
   std::unique_ptr<GraphExecutionTrace> trace(new GraphExecutionTrace());
   trace->set_tfdbg_context_id(tfdbg_context_id);
   if (!op_name.empty()) {
@@ -294,6 +523,10 @@ Status DebugEventsWriter::WriteGraphExecutionTrace(
 
 void DebugEventsWriter::WriteSerializedNonExecutionDebugEvent(
     const string& debug_event_str, DebugEventFileType type) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("debug_event_str: \"" + debug_event_str + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_18(mht_18_v, 527, "", "./tensorflow/core/util/debug_events_writer.cc", "DebugEventsWriter::WriteSerializedNonExecutionDebugEvent");
+
   std::unique_ptr<SingleDebugEventFileWriter>* writer = nullptr;
   SelectWriter(type, &writer);
   (*writer)->WriteSerializedDebugEvent(debug_event_str);
@@ -301,6 +534,10 @@ void DebugEventsWriter::WriteSerializedNonExecutionDebugEvent(
 
 void DebugEventsWriter::WriteSerializedExecutionDebugEvent(
     const string& debug_event_str, DebugEventFileType type) {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("debug_event_str: \"" + debug_event_str + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_19(mht_19_v, 538, "", "./tensorflow/core/util/debug_events_writer.cc", "DebugEventsWriter::WriteSerializedExecutionDebugEvent");
+
   const std::unique_ptr<SingleDebugEventFileWriter>* writer = nullptr;
   std::deque<string>* buffer = nullptr;
   mutex* mu = nullptr;
@@ -333,6 +570,10 @@ void DebugEventsWriter::WriteSerializedExecutionDebugEvent(
 }
 
 int DebugEventsWriter::RegisterDeviceAndGetId(const string& device_name) {
+   std::vector<std::string> mht_20_v;
+   mht_20_v.push_back("device_name: \"" + device_name + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_20(mht_20_v, 574, "", "./tensorflow/core/util/debug_events_writer.cc", "DebugEventsWriter::RegisterDeviceAndGetId");
+
   mutex_lock l(device_mu_);
   int& device_id = device_name_to_id_[device_name];
   if (device_id == 0) {
@@ -350,6 +591,9 @@ int DebugEventsWriter::RegisterDeviceAndGetId(const string& device_name) {
 }
 
 Status DebugEventsWriter::FlushNonExecutionFiles() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_21(mht_21_v, 594, "", "./tensorflow/core/util/debug_events_writer.cc", "DebugEventsWriter::FlushNonExecutionFiles");
+
   TF_RETURN_IF_ERROR(Init());
   if (source_files_writer_ != nullptr) {
     TF_RETURN_IF_ERROR(source_files_writer_->Flush());
@@ -364,6 +608,9 @@ Status DebugEventsWriter::FlushNonExecutionFiles() {
 }
 
 Status DebugEventsWriter::FlushExecutionFiles() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_22(mht_22_v, 611, "", "./tensorflow/core/util/debug_events_writer.cc", "DebugEventsWriter::FlushExecutionFiles");
+
   TF_RETURN_IF_ERROR(Init());
 
   if (execution_writer_ != nullptr) {
@@ -396,6 +643,9 @@ Status DebugEventsWriter::FlushExecutionFiles() {
 }
 
 string DebugEventsWriter::FileName(DebugEventFileType type) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_23(mht_23_v, 646, "", "./tensorflow/core/util/debug_events_writer.cc", "DebugEventsWriter::FileName");
+
   if (file_prefix_.empty()) {
     Init().IgnoreError();
   }
@@ -403,6 +653,9 @@ string DebugEventsWriter::FileName(DebugEventFileType type) {
 }
 
 Status DebugEventsWriter::Close() {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_24(mht_24_v, 656, "", "./tensorflow/core/util/debug_events_writer.cc", "DebugEventsWriter::Close");
+
   {
     mutex_lock l(initialization_mu_);
     if (!is_initialized_) {
@@ -466,6 +719,9 @@ Status DebugEventsWriter::Close() {
 // static
 std::unordered_map<string, std::unique_ptr<DebugEventsWriter>>*
 DebugEventsWriter::GetDebugEventsWriterMap() {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_25(mht_25_v, 722, "", "./tensorflow/core/util/debug_events_writer.cc", "DebugEventsWriter::GetDebugEventsWriterMap");
+
   static std::unordered_map<string, std::unique_ptr<DebugEventsWriter>>*
       writer_pool =
           new std::unordered_map<string, std::unique_ptr<DebugEventsWriter>>();
@@ -486,9 +742,17 @@ DebugEventsWriter::DebugEventsWriter(const string& dump_root,
       graph_execution_trace_buffer_(),
       graph_execution_trace_buffer_mu_(),
       device_name_to_id_(),
-      device_mu_() {}
+      device_mu_() {
+   std::vector<std::string> mht_26_v;
+   mht_26_v.push_back("dump_root: \"" + dump_root + "\"");
+   mht_26_v.push_back("tfdbg_run_id: \"" + tfdbg_run_id + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_26(mht_26_v, 748, "", "./tensorflow/core/util/debug_events_writer.cc", "DebugEventsWriter::DebugEventsWriter");
+}
 
 Status DebugEventsWriter::InitNonMetadataFile(DebugEventFileType type) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_27(mht_27_v, 753, "", "./tensorflow/core/util/debug_events_writer.cc", "DebugEventsWriter::InitNonMetadataFile");
+
   std::unique_ptr<SingleDebugEventFileWriter>* writer = nullptr;
   SelectWriter(type, &writer);
   const string filename = GetFileNameInternal(type);
@@ -508,6 +772,9 @@ Status DebugEventsWriter::InitNonMetadataFile(DebugEventFileType type) {
 
 Status DebugEventsWriter::SerializeAndWriteDebugEvent(DebugEvent* debug_event,
                                                       DebugEventFileType type) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_28(mht_28_v, 775, "", "./tensorflow/core/util/debug_events_writer.cc", "DebugEventsWriter::SerializeAndWriteDebugEvent");
+
   std::unique_ptr<SingleDebugEventFileWriter>* writer = nullptr;
   SelectWriter(type, &writer);
   if (writer != nullptr) {
@@ -527,6 +794,9 @@ Status DebugEventsWriter::SerializeAndWriteDebugEvent(DebugEvent* debug_event,
 void DebugEventsWriter::SelectWriter(
     DebugEventFileType type,
     std::unique_ptr<SingleDebugEventFileWriter>** writer) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_29(mht_29_v, 797, "", "./tensorflow/core/util/debug_events_writer.cc", "DebugEventsWriter::SelectWriter");
+
   switch (type) {
     case METADATA:
       *writer = &metadata_writer_;
@@ -550,6 +820,9 @@ void DebugEventsWriter::SelectWriter(
 }
 
 const string DebugEventsWriter::GetSuffix(DebugEventFileType type) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_30(mht_30_v, 823, "", "./tensorflow/core/util/debug_events_writer.cc", "DebugEventsWriter::GetSuffix");
+
   switch (type) {
     case METADATA:
       return kMetadataSuffix;
@@ -570,6 +843,9 @@ const string DebugEventsWriter::GetSuffix(DebugEventFileType type) {
 }
 
 string DebugEventsWriter::GetFileNameInternal(DebugEventFileType type) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePSutilPSdebug_events_writerDTcc mht_31(mht_31_v, 846, "", "./tensorflow/core/util/debug_events_writer.cc", "DebugEventsWriter::GetFileNameInternal");
+
   const string suffix = GetSuffix(type);
   return strings::StrCat(file_prefix_, ".", suffix);
 }

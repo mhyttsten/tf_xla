@@ -15,6 +15,174 @@ limitations under the License.
 
 #ifndef TENSORFLOW_COMPILER_XLA_TESTS_CLIENT_LIBRARY_TEST_BASE_H_
 #define TENSORFLOW_COMPILER_XLA_TESTS_CLIENT_LIBRARY_TEST_BASE_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 #include <memory>
 #include <string>
@@ -74,17 +242,26 @@ class ClientLibraryTestBase : public ManifestCheckingTest {
   std::string TestName() const;
 
   void SetFastMathDisabled(bool disabled) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_0(mht_0_v, 245, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "SetFastMathDisabled");
+
     auto* opts = execution_options_.mutable_debug_options();
     opts->set_xla_cpu_enable_fast_math(!disabled);
     opts->set_xla_cpu_enable_fast_min_max(!disabled);
     opts->set_xla_gpu_enable_fast_min_max(!disabled);
   }
 
-  void SetSeed(uint64_t seed) { execution_options_.set_seed(seed); }
+  void SetSeed(uint64_t seed) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_1(mht_1_v, 255, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "SetSeed");
+ execution_options_.set_seed(seed); }
 
   // Provides mutable access to the execution DebugOptions field; this lets
   // tests tweak the options that will be used to compile/run the graph.
   DebugOptions* mutable_debug_options() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_2(mht_2_v, 262, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "mutable_debug_options");
+
     return execution_options_.mutable_debug_options();
   }
 
@@ -296,6 +473,9 @@ class ClientLibraryTestBase : public ManifestCheckingTest {
 
   template <class T>
   XlaOp AddParam(const Array<T>& argument, XlaBuilder* builder) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_3(mht_3_v, 476, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "AddParam");
+
     return AddParam(LiteralUtil::CreateFromArray(argument), builder);
   }
 
@@ -311,6 +491,9 @@ class ClientLibraryTestBase : public ManifestCheckingTest {
   template <typename NativeT>
   XlaOp CreateConstantFromArray(const Array<NativeT>& array,
                                 XlaBuilder* builder) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_4(mht_4_v, 494, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "CreateConstantFromArray");
+
     return CreateConstantFromLiteral(LiteralUtil::CreateFromArray(array),
                                      builder);
   }
@@ -318,6 +501,9 @@ class ClientLibraryTestBase : public ManifestCheckingTest {
   // Same as CreateConstantFromArray, but for scalars.
   template <typename NativeT>
   XlaOp CreateConstantFromScalar(NativeT value, XlaBuilder* builder) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_5(mht_5_v, 504, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "CreateConstantFromScalar");
+
     return CreateConstantFromLiteral(LiteralUtil::CreateR0<NativeT>(value),
                                      builder);
   }
@@ -401,11 +587,20 @@ class ClientLibraryTestBase : public ManifestCheckingTest {
 
   // Getter and setter for the use_bfloat16 flag, which indicates whether to run
   // tests with all float-type input/output converted to bfloat16.
-  bool use_bfloat16() const { return use_bfloat16_; }
-  void set_use_bfloat16(bool value) { use_bfloat16_ = value; }
+  bool use_bfloat16() const {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_6(mht_6_v, 591, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "use_bfloat16");
+ return use_bfloat16_; }
+  void set_use_bfloat16(bool value) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_7(mht_7_v, 595, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "set_use_bfloat16");
+ use_bfloat16_ = value; }
 
   // The float type used in this test, BF16 or F32 according to use_bfloat16.
-  PrimitiveType FloatType() const { return use_bfloat16_ ? BF16 : F32; }
+  PrimitiveType FloatType() const {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_8(mht_8_v, 601, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "FloatType");
+ return use_bfloat16_ ? BF16 : F32; }
 
   // Executes the computation and calculates the expected reference value using
   // the reference client. Returns two literals in the order of (expected,
@@ -450,6 +645,9 @@ template <typename NativeT>
 void ClientLibraryTestBase::ComputeAndCompareR0(
     XlaBuilder* builder, NativeT expected,
     absl::Span<GlobalData* const> arguments) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_9(mht_9_v, 648, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "ClientLibraryTestBase::ComputeAndCompareR0");
+
   Literal expected_literal = LiteralUtil::CreateR0<NativeT>(expected);
   ClientLibraryTestBase::ComputeAndCompareLiteral(builder, expected_literal,
                                                   arguments);
@@ -459,6 +657,9 @@ template <typename NativeT>
 void ClientLibraryTestBase::ComputeAndCompareR0(
     XlaBuilder* builder, NativeT expected,
     absl::Span<GlobalData* const> arguments, ErrorSpec error) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_10(mht_10_v, 660, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "ClientLibraryTestBase::ComputeAndCompareR0");
+
   static_assert(std::is_same<NativeT, float>::value ||
                     std::is_same<NativeT, double>::value ||
                     std::is_same<NativeT, bfloat16>::value ||
@@ -475,6 +676,9 @@ template <typename NativeT>
 void ClientLibraryTestBase::ComputeAndCompareR1(
     XlaBuilder* builder, absl::Span<const NativeT> expected,
     absl::Span<GlobalData* const> arguments) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_11(mht_11_v, 679, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "ClientLibraryTestBase::ComputeAndCompareR1");
+
   Literal expected_literal = LiteralUtil::CreateR1<NativeT>(expected);
   ClientLibraryTestBase::ComputeAndCompareLiteral(builder, expected_literal,
                                                   arguments);
@@ -484,6 +688,9 @@ template <typename NativeT>
 void ClientLibraryTestBase::ComputeAndCompareR1(
     XlaBuilder* builder, absl::Span<const NativeT> expected,
     absl::Span<GlobalData* const> arguments, ErrorSpec error) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_12(mht_12_v, 691, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "ClientLibraryTestBase::ComputeAndCompareR1");
+
   static_assert(std::is_same<NativeT, float>::value ||
                     std::is_same<NativeT, double>::value ||
                     std::is_same<NativeT, bfloat16>::value ||
@@ -500,6 +707,9 @@ template <typename NativeT>
 void ClientLibraryTestBase::ComputeAndCompareR2(
     XlaBuilder* builder, const Array2D<NativeT>& expected,
     absl::Span<GlobalData* const> arguments) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_13(mht_13_v, 710, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "ClientLibraryTestBase::ComputeAndCompareR2");
+
   Literal expected_literal =
       LiteralUtil::CreateR2FromArray2D<NativeT>(expected);
   ClientLibraryTestBase::ComputeAndCompareLiteral(builder, expected_literal,
@@ -510,6 +720,9 @@ template <typename NativeT>
 void ClientLibraryTestBase::ComputeAndCompareR2(
     XlaBuilder* builder, const Array2D<NativeT>& expected,
     absl::Span<GlobalData* const> arguments, ErrorSpec error) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_14(mht_14_v, 723, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "ClientLibraryTestBase::ComputeAndCompareR2");
+
   static_assert(std::is_same<NativeT, float>::value ||
                     std::is_same<NativeT, double>::value ||
                     std::is_same<NativeT, bfloat16>::value ||
@@ -527,6 +740,9 @@ template <typename NativeT>
 void ClientLibraryTestBase::ComputeAndCompareR3(
     XlaBuilder* builder, const Array3D<NativeT>& expected,
     absl::Span<GlobalData* const> arguments) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_15(mht_15_v, 743, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "ClientLibraryTestBase::ComputeAndCompareR3");
+
   Literal expected_literal =
       LiteralUtil::CreateR3FromArray3D<NativeT>(expected);
   ClientLibraryTestBase::ComputeAndCompareLiteral(builder, expected_literal,
@@ -537,6 +753,9 @@ template <typename NativeT>
 void ClientLibraryTestBase::ComputeAndCompareR3(
     XlaBuilder* builder, const Array3D<NativeT>& expected,
     absl::Span<GlobalData* const> arguments, ErrorSpec error) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_16(mht_16_v, 756, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "ClientLibraryTestBase::ComputeAndCompareR3");
+
   static_assert(std::is_same<NativeT, float>::value ||
                     std::is_same<NativeT, double>::value ||
                     std::is_same<NativeT, bfloat16>::value ||
@@ -554,6 +773,9 @@ template <typename NativeT>
 void ClientLibraryTestBase::ComputeAndCompareR4(
     XlaBuilder* builder, const Array4D<NativeT>& expected,
     absl::Span<GlobalData* const> arguments) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_17(mht_17_v, 776, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "ClientLibraryTestBase::ComputeAndCompareR4");
+
   Literal expected_literal =
       LiteralUtil::CreateR4FromArray4D<NativeT>(expected);
   ClientLibraryTestBase::ComputeAndCompareLiteral(builder, expected_literal,
@@ -564,6 +786,9 @@ template <typename NativeT>
 void ClientLibraryTestBase::ComputeAndCompareR4(
     XlaBuilder* builder, const Array4D<NativeT>& expected,
     absl::Span<GlobalData* const> arguments, ErrorSpec error) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_18(mht_18_v, 789, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "ClientLibraryTestBase::ComputeAndCompareR4");
+
   static_assert(std::is_same<NativeT, float>::value ||
                     std::is_same<NativeT, double>::value ||
                     std::is_same<NativeT, bfloat16>::value ||
@@ -581,6 +806,9 @@ template <typename NativeT>
 void ClientLibraryTestBase::ComputeAndCompare(
     XlaBuilder* builder, const Array<NativeT>& expected,
     absl::Span<GlobalData* const> arguments) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_19(mht_19_v, 809, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "ClientLibraryTestBase::ComputeAndCompare");
+
   Literal expected_literal = LiteralUtil::CreateFromArray<NativeT>(expected);
   ClientLibraryTestBase::ComputeAndCompareLiteral(builder, expected_literal,
                                                   arguments);
@@ -590,6 +818,9 @@ template <typename NativeT>
 void ClientLibraryTestBase::ComputeAndCompare(
     XlaBuilder* builder, const Array<NativeT>& expected,
     absl::Span<GlobalData* const> arguments, ErrorSpec error) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_20(mht_20_v, 821, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "ClientLibraryTestBase::ComputeAndCompare");
+
   static_assert(std::is_same<NativeT, float>::value ||
                     std::is_same<NativeT, double>::value ||
                     std::is_same<NativeT, bfloat16>::value ||
@@ -606,6 +837,10 @@ template <typename NativeT>
 std::unique_ptr<GlobalData> ClientLibraryTestBase::CreateR0Parameter(
     NativeT value, int64_t parameter_number, const std::string& name,
     XlaBuilder* builder, XlaOp* data_handle) {
+   std::vector<std::string> mht_21_v;
+   mht_21_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_21(mht_21_v, 841, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "ClientLibraryTestBase::CreateR0Parameter");
+
   Literal literal = LiteralUtil::CreateR0(value);
   if (use_bfloat16_ && literal.shape().element_type() == F32) {
     literal = LiteralUtil::ConvertF32ToBF16(literal);
@@ -620,6 +855,10 @@ template <typename NativeT>
 std::unique_ptr<GlobalData> ClientLibraryTestBase::CreateR1Parameter(
     absl::Span<const NativeT> values, int64_t parameter_number,
     const std::string& name, XlaBuilder* builder, XlaOp* data_handle) {
+   std::vector<std::string> mht_22_v;
+   mht_22_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_22(mht_22_v, 859, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "ClientLibraryTestBase::CreateR1Parameter");
+
   Literal literal = LiteralUtil::CreateR1(values);
   if (use_bfloat16_ && literal.shape().element_type() == F32) {
     literal = LiteralUtil::ConvertF32ToBF16(literal);
@@ -634,6 +873,10 @@ template <typename NativeT>
 std::unique_ptr<GlobalData> ClientLibraryTestBase::CreateR2Parameter(
     const Array2D<NativeT>& array_2d, int64_t parameter_number,
     const std::string& name, XlaBuilder* builder, XlaOp* data_handle) {
+   std::vector<std::string> mht_23_v;
+   mht_23_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_23(mht_23_v, 877, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "ClientLibraryTestBase::CreateR2Parameter");
+
   Literal literal = LiteralUtil::CreateR2FromArray2D(array_2d);
   if (use_bfloat16_ && literal.shape().element_type() == F32) {
     literal = LiteralUtil::ConvertF32ToBF16(literal);
@@ -648,6 +891,10 @@ template <typename NativeT>
 std::unique_ptr<GlobalData> ClientLibraryTestBase::CreateR3Parameter(
     const Array3D<NativeT>& array_3d, int64_t parameter_number,
     const std::string& name, XlaBuilder* builder, XlaOp* data_handle) {
+   std::vector<std::string> mht_24_v;
+   mht_24_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_24(mht_24_v, 895, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "ClientLibraryTestBase::CreateR3Parameter");
+
   Literal literal = LiteralUtil::CreateR3FromArray3D(array_3d);
   if (use_bfloat16_ && literal.shape().element_type() == F32) {
     literal = LiteralUtil::ConvertF32ToBF16(literal);
@@ -662,6 +909,10 @@ template <typename NativeT>
 std::unique_ptr<GlobalData> ClientLibraryTestBase::CreateR4Parameter(
     const Array4D<NativeT>& array_4d, int64_t parameter_number,
     const std::string& name, XlaBuilder* builder, XlaOp* data_handle) {
+   std::vector<std::string> mht_25_v;
+   mht_25_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_25(mht_25_v, 913, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "ClientLibraryTestBase::CreateR4Parameter");
+
   Literal literal = LiteralUtil::CreateR4FromArray4D(array_4d);
   if (use_bfloat16_ && literal.shape().element_type() == F32) {
     literal = LiteralUtil::ConvertF32ToBF16(literal);
@@ -676,6 +927,10 @@ template <typename NativeT>
 std::unique_ptr<GlobalData> ClientLibraryTestBase::CreateParameter(
     const Array<NativeT>& array, int64_t parameter_number,
     const std::string& name, XlaBuilder* builder, XlaOp* data_handle) {
+   std::vector<std::string> mht_26_v;
+   mht_26_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_26(mht_26_v, 931, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "ClientLibraryTestBase::CreateParameter");
+
   Literal literal = LiteralUtil::CreateFromArray(array);
   if (use_bfloat16_ && literal.shape().element_type() == F32) {
     literal = LiteralUtil::ConvertF32ToBF16(literal);
@@ -689,6 +944,9 @@ std::unique_ptr<GlobalData> ClientLibraryTestBase::CreateParameter(
 template <typename NativeT>
 std::vector<NativeT> ClientLibraryTestBase::CreatePseudorandomR1(
     const int width, NativeT min_value, NativeT max_value, uint32_t seed) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_27(mht_27_v, 947, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "ClientLibraryTestBase::CreatePseudorandomR1");
+
   std::vector<NativeT> result(width);
   PseudorandomGenerator<NativeT> generator(min_value, max_value, seed);
   for (int i = 0; i < width; ++i) {
@@ -701,6 +959,9 @@ template <typename NativeT>
 std::unique_ptr<Array2D<NativeT>> ClientLibraryTestBase::CreatePseudorandomR2(
     const int rows, const int cols, NativeT min_value, NativeT max_value,
     uint32_t seed) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPStestsPSclient_library_test_baseDTh mht_28(mht_28_v, 962, "", "./tensorflow/compiler/xla/tests/client_library_test_base.h", "ClientLibraryTestBase::CreatePseudorandomR2");
+
   auto result = absl::make_unique<Array2D<NativeT>>(rows, cols);
   PseudorandomGenerator<NativeT> generator(min_value, max_value, seed);
   for (int y = 0; y < rows; ++y) {

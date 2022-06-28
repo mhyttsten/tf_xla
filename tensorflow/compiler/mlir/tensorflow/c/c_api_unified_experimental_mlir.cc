@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -77,6 +245,9 @@ using tensorflow::tracing::TracingTensorHandle;
 namespace {
 
 void RegisterDialects(mlir::MLIRContext& ctx) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_0(mht_0_v, 248, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "RegisterDialects");
+
   mlir::DialectRegistry registry;
   mlir::RegisterAllTensorFlowDialects(registry);
   ctx.appendDialectRegistry(registry);
@@ -85,6 +256,9 @@ void RegisterDialects(mlir::MLIRContext& ctx) {
 
 Status ConvertDataTypeToTensor(tensorflow::DataType dtype, Builder builder,
                                Type* type) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_1(mht_1_v, 259, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "ConvertDataTypeToTensor");
+
   Status s = tensorflow::ConvertDataType(dtype, builder, type);
   if (s.ok()) *type = UnrankedTensorType::get(*type);
   return s;
@@ -93,9 +267,15 @@ Status ConvertDataTypeToTensor(tensorflow::DataType dtype, Builder builder,
 class MlirTensor : public TracingTensorHandle {
  public:
   explicit MlirTensor(Value value)
-      : TracingTensorHandle(kMlir), value_(value) {}
+      : TracingTensorHandle(kMlir), value_(value) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_2(mht_2_v, 271, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirTensor");
+}
 
   tensorflow::DataType DataType() const override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_3(mht_3_v, 276, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "DataType");
+
     tensorflow::DataType type;
     Status s = ConvertToDataType(value_.getType(), &type);
     if (!s.ok()) {
@@ -106,18 +286,30 @@ class MlirTensor : public TracingTensorHandle {
 
   tensorflow::Status Shape(
       tensorflow::PartialTensorShape* shape) const override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_4(mht_4_v, 289, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "Shape");
+
     // TODO(b/173074167): Implement this and enable tests in
     // unified_api_test.cc.
     return Unimplemented("MlirTensor::Shape is not implemented yet.");
   }
 
-  Value getValue() { return value_; }
+  Value getValue() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_5(mht_5_v, 298, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "getValue");
+ return value_; }
   Type getElementType() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_6(mht_6_v, 302, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "getElementType");
+
     return value_.getType().cast<ShapedType>().getElementType();
   }
 
   // For LLVM style RTTI.
   static bool classof(const AbstractTensorHandle* ptr) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_7(mht_7_v, 310, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "classof");
+
     return ptr->getKind() == kMlir;
   }
 
@@ -133,9 +325,15 @@ class MlirAbstractOp : public TracingOperation {
                           MlirFunctionContext* function_context)
       : TracingOperation(kMlir),
         context_(context),
-        function_context_(function_context) {}
+        function_context_(function_context) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_8(mht_8_v, 329, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirAbstractOp");
+}
 
-  void Release() override { delete this; }
+  void Release() override {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_9(mht_9_v, 334, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "Release");
+ delete this; }
 
   Status Reset(const char* op, const char* raw_device_name) override;
 
@@ -184,7 +382,10 @@ class MlirAbstractOp : public TracingOperation {
 
   Status SetOpName(const char* const op_name) override;
 
-  MLIRContext* GetContext() { return context_; }
+  MLIRContext* GetContext() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_10(mht_10_v, 386, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "GetContext");
+ return context_; }
 
   Status AddRef(Type type, Type* output_type);
 
@@ -192,6 +393,9 @@ class MlirAbstractOp : public TracingOperation {
 
   // For LLVM style RTTI.
   static bool classof(const AbstractOperation* ptr) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_11(mht_11_v, 396, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "classof");
+
     return ptr->getKind() == kMlir;
   }
 
@@ -222,12 +426,18 @@ class MlirFunction : public AbstractFunction {
       : AbstractFunction(kMlir),
         context_(std::move(context)),
         module_(std::move(module)),
-        func_(func) {}
+        func_(func) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_12(mht_12_v, 430, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirFunction");
+}
 
   Status GetFunctionDef(tensorflow::FunctionDef** f) override;
 
   // For LLVM style RTTI.
   static bool classof(const AbstractFunction* ptr) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_13(mht_13_v, 438, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "classof");
+
     return ptr->getKind() == kMlir;
   }
 
@@ -244,6 +454,10 @@ class MlirFunctionContext : public TracingContext {
       : TracingContext(kMlir),
         context_(std::make_unique<MLIRContext>()),
         builder_(context_.get()) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("name: \"" + (name == nullptr ? std::string("nullptr") : std::string((char*)name)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_14(mht_14_v, 458, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirFunctionContext");
+
     RegisterDialects(*context_);
     // TODO(aminim) figure out the location story here
     module_ = ModuleOp::create(builder_.getUnknownLoc());
@@ -253,9 +467,15 @@ class MlirFunctionContext : public TracingContext {
     builder_ = OpBuilder::atBlockBegin(func_.addEntryBlock());
   }
 
-  void Release() override { delete this; }
+  void Release() override {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_15(mht_15_v, 471, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "Release");
+ delete this; }
 
   AbstractOperation* CreateOperation() override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_16(mht_16_v, 476, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "CreateOperation");
+
     return new MlirAbstractOp(context_.get(), this);
   }
   Status AddParameter(tensorflow::DataType dtype,
@@ -265,11 +485,18 @@ class MlirFunctionContext : public TracingContext {
   Status Finalize(OutputList* outputs, AbstractFunction** f) override;
 
   Status RegisterFunction(AbstractFunction* func) override {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_17(mht_17_v, 488, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "RegisterFunction");
+
     return Unimplemented(
         "Registering graph functions has not been implemented yet.");
   }
 
   Status RemoveFunction(const string& func) override {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("func: \"" + func + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_18(mht_18_v, 497, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "RemoveFunction");
+
     return Unimplemented(
         "MlirFunctionContext::RemoveFunction has not been implemented yet.");
   }
@@ -284,6 +511,11 @@ class MlirFunctionContext : public TracingContext {
 };
 
 Status MlirAbstractOp::Reset(const char* op, const char* device_name) {
+   std::vector<std::string> mht_19_v;
+   mht_19_v.push_back("op: \"" + (op == nullptr ? std::string("nullptr") : std::string((char*)op)) + "\"");
+   mht_19_v.push_back("device_name: \"" + (device_name == nullptr ? std::string("nullptr") : std::string((char*)device_name)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_19(mht_19_v, 516, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirAbstractOp::Reset");
+
   if (state_) {
     return FailedPrecondition("Reset called on already built op.");
   }
@@ -301,6 +533,10 @@ Status MlirAbstractOp::Reset(const char* op, const char* device_name) {
 
 Status MlirAbstractOp::SetAttrType(const char* attr_name,
                                    tensorflow::DataType dtype) {
+   std::vector<std::string> mht_20_v;
+   mht_20_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_20(mht_20_v, 537, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirAbstractOp::SetAttrType");
+
   if (!state_)
     return FailedPrecondition(
         "op_type must be specified before specifying attrs.");
@@ -312,6 +548,9 @@ Status MlirAbstractOp::SetAttrType(const char* attr_name,
 }
 
 Status MlirAbstractOp::SetOpName(const char* const op_name) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_21(mht_21_v, 551, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirAbstractOp::SetOpName");
+
   // TODO(aminim): should we use a location?
   if (op_name_) {
     return FailedPrecondition("SetOpName called on already built op.");
@@ -321,6 +560,9 @@ Status MlirAbstractOp::SetOpName(const char* const op_name) {
 }
 
 Status MlirAbstractOp::AddRef(Type type, Type* output_type) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_22(mht_22_v, 563, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirAbstractOp::AddRef");
+
   Type elt_type = getElementTypeOrSelf(type);
   if (elt_type.isa<mlir::TF::TensorFlowRefType>()) {
     return InvalidArgument("Requested reference to a reference type");
@@ -335,6 +577,9 @@ Status MlirAbstractOp::AddRef(Type type, Type* output_type) {
 
 Status MlirAbstractOp::Create(ArrayRef<Value> operands,
                               OperationState** state) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_23(mht_23_v, 580, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirAbstractOp::Create");
+
   state_->operands = llvm::to_vector<4>(operands);
   Builder builder(context_);
 
@@ -443,80 +688,156 @@ Status MlirAbstractOp::Create(ArrayRef<Value> operands,
   return Status::OK();
 }
 
-const string& MlirAbstractOp::Name() const { return tf_op_type_; }
+const string& MlirAbstractOp::Name() const {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_24(mht_24_v, 692, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirAbstractOp::Name");
+ return tf_op_type_; }
 
-const string& MlirAbstractOp::DeviceName() const { return device_name_; }
+const string& MlirAbstractOp::DeviceName() const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_25(mht_25_v, 697, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirAbstractOp::DeviceName");
+ return device_name_; }
 
 Status MlirAbstractOp::SetDeviceName(const char* name) {
+   std::vector<std::string> mht_26_v;
+   mht_26_v.push_back("name: \"" + (name == nullptr ? std::string("nullptr") : std::string((char*)name)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_26(mht_26_v, 703, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirAbstractOp::SetDeviceName");
+
   device_name_ = name;
   return Status::OK();
 }
 
 Status MlirAbstractOp::SetAttrString(const char* attr_name, const char* data,
                                      size_t length) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   mht_27_v.push_back("data: \"" + (data == nullptr ? std::string("nullptr") : std::string((char*)data)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_27(mht_27_v, 714, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirAbstractOp::SetAttrString");
+
   return Unimplemented("SetAttrString has not been implemented yet.");
 }
 Status MlirAbstractOp::SetAttrInt(const char* attr_name, int64_t value) {
+   std::vector<std::string> mht_28_v;
+   mht_28_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_28(mht_28_v, 721, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirAbstractOp::SetAttrInt");
+
   return Unimplemented("SetAttrInt has not been implemented yet.");
 }
 Status MlirAbstractOp::SetAttrFloat(const char* attr_name, float value) {
+   std::vector<std::string> mht_29_v;
+   mht_29_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_29(mht_29_v, 728, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirAbstractOp::SetAttrFloat");
+
   return Unimplemented("SetAttrFloat has not been implemented yet.");
 }
 Status MlirAbstractOp::SetAttrBool(const char* attr_name, bool value) {
+   std::vector<std::string> mht_30_v;
+   mht_30_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_30(mht_30_v, 735, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirAbstractOp::SetAttrBool");
+
   attrs_[attr_name] = BoolAttr::get(context_, value);
   return Status::OK();
 }
 Status MlirAbstractOp::SetAttrShape(const char* attr_name, const int64_t* dims,
                                     const int num_dims) {
+   std::vector<std::string> mht_31_v;
+   mht_31_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_31(mht_31_v, 744, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirAbstractOp::SetAttrShape");
+
   return Unimplemented("SetAttrShape has not been implemented yet.");
 }
 Status MlirAbstractOp::SetAttrFunction(const char* attr_name,
                                        const AbstractOperation* value) {
+   std::vector<std::string> mht_32_v;
+   mht_32_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_32(mht_32_v, 752, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirAbstractOp::SetAttrFunction");
+
   return Unimplemented("SetAttrFunction has not been implemented yet.");
 }
 Status MlirAbstractOp::SetAttrFunctionName(const char* attr_name,
                                            const char* value, size_t length) {
+   std::vector<std::string> mht_33_v;
+   mht_33_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   mht_33_v.push_back("value: \"" + (value == nullptr ? std::string("nullptr") : std::string((char*)value)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_33(mht_33_v, 761, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirAbstractOp::SetAttrFunctionName");
+
   return Unimplemented("SetAttrFunctionName has not been implemented yet.");
 }
 Status MlirAbstractOp::SetAttrTensor(const char* attr_name,
                                      AbstractTensorInterface* tensor) {
+   std::vector<std::string> mht_34_v;
+   mht_34_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_34(mht_34_v, 769, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirAbstractOp::SetAttrTensor");
+
   return Unimplemented("SetAttrTensor has not been implemented yet.");
 }
 Status MlirAbstractOp::SetAttrStringList(const char* attr_name,
                                          const void* const* values,
                                          const size_t* lengths,
                                          int num_values) {
+   std::vector<std::string> mht_35_v;
+   mht_35_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_35(mht_35_v, 779, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirAbstractOp::SetAttrStringList");
+
   return Unimplemented("SetAttrStringList has not been implemented yet.");
 }
 Status MlirAbstractOp::SetAttrFloatList(const char* attr_name,
                                         const float* values, int num_values) {
+   std::vector<std::string> mht_36_v;
+   mht_36_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_36(mht_36_v, 787, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirAbstractOp::SetAttrFloatList");
+
   return Unimplemented("SetAttrFloatList has not been implemented yet.");
 }
 Status MlirAbstractOp::SetAttrIntList(const char* attr_name,
                                       const int64_t* values, int num_values) {
+   std::vector<std::string> mht_37_v;
+   mht_37_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_37(mht_37_v, 795, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirAbstractOp::SetAttrIntList");
+
   return Unimplemented("SetAttrIntList has not been implemented yet.");
 }
 Status MlirAbstractOp::SetAttrTypeList(const char* attr_name,
                                        const tensorflow::DataType* values,
                                        int num_values) {
+   std::vector<std::string> mht_38_v;
+   mht_38_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_38(mht_38_v, 804, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirAbstractOp::SetAttrTypeList");
+
   return Unimplemented("SetAttrTypeList has not been implemented yet.");
 }
 Status MlirAbstractOp::SetAttrBoolList(const char* attr_name,
                                        const unsigned char* values,
                                        int num_values) {
+   std::vector<std::string> mht_39_v;
+   mht_39_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   mht_39_v.push_back("values: \"" + (values == nullptr ? std::string("nullptr") : std::string((char*)values)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_39(mht_39_v, 814, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirAbstractOp::SetAttrBoolList");
+
   return Unimplemented("SetAttrBoolList has not been implemented yet.");
 }
 Status MlirAbstractOp::SetAttrShapeList(const char* attr_name,
                                         const int64_t** dims,
                                         const int* num_dims, int num_values) {
+   std::vector<std::string> mht_40_v;
+   mht_40_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_40(mht_40_v, 823, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirAbstractOp::SetAttrShapeList");
+
   return Unimplemented("SetAttrShapeList has not been implemented yet.");
 }
 Status MlirAbstractOp::SetAttrFunctionList(
     const char* attr_name, absl::Span<const AbstractOperation*> values) {
+   std::vector<std::string> mht_41_v;
+   mht_41_v.push_back("attr_name: \"" + (attr_name == nullptr ? std::string("nullptr") : std::string((char*)attr_name)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_41(mht_41_v, 831, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirAbstractOp::SetAttrFunctionList");
+
   return Unimplemented("SetAttrFunctionList has not been implemented yet.");
 }
 
 Status MlirFunction::GetFunctionDef(tensorflow::FunctionDef** f) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_42(mht_42_v, 838, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirFunction::GetFunctionDef");
+
   if (fdef_) {
     *f = fdef_.get();
     return Status::OK();
@@ -543,6 +864,9 @@ Status MlirFunction::GetFunctionDef(tensorflow::FunctionDef** f) {
 
 Status MlirAbstractOp::Execute(absl::Span<AbstractTensorHandle*> retvals,
                                int* num_retvals) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_43(mht_43_v, 867, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirAbstractOp::Execute");
+
   OperationState* state;
   TF_RETURN_IF_ERROR(Create(operands_, &state));
   Operation* op = function_context_->CreateOperationFromState(*state);
@@ -554,12 +878,18 @@ Status MlirAbstractOp::Execute(absl::Span<AbstractTensorHandle*> retvals,
 
 Operation* MlirFunctionContext::CreateOperationFromState(
     const OperationState& state) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_44(mht_44_v, 881, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirFunctionContext::CreateOperationFromState");
+
   return builder_.create(state);
 }
 
 Status MlirFunctionContext::AddParameter(
     tensorflow::DataType dtype, const tensorflow::PartialTensorShape& shape,
     TracingTensorHandle** handle) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_45(mht_45_v, 890, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirFunctionContext::AddParameter");
+
   // TODO(b/173073199): Use shape. Enable tests in unified_api_test.cc once
   // resolved.
   Type type;
@@ -570,6 +900,9 @@ Status MlirFunctionContext::AddParameter(
 }
 
 Status MlirAbstractOp::AddInput(AbstractTensorHandle* input) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_46(mht_46_v, 903, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirAbstractOp::AddInput");
+
   if (current_ods_input_ >= op_def_->input_arg_size())
     return InvalidArgument(
         absl::StrCat("More Input() (", current_ods_input_, ") calls than the ",
@@ -605,6 +938,9 @@ Status MlirAbstractOp::AddInput(AbstractTensorHandle* input) {
 
 Status MlirAbstractOp::AddInputList(
     absl::Span<AbstractTensorHandle* const> inputs) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_47(mht_47_v, 941, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirAbstractOp::AddInputList");
+
   if (current_ods_input_ >= op_def_->input_arg_size())
     return InvalidArgument(
         absl::StrCat("More Input() (", current_ods_input_, ") calls than the ",
@@ -656,6 +992,9 @@ Status MlirAbstractOp::AddInputList(
 
 Status MlirFunctionContext::Finalize(OutputList* outputs,
                                      AbstractFunction** f) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_48(mht_48_v, 995, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirFunctionContext::Finalize");
+
   Block& body = func_.getBody().front();
   SmallVector<Value, 8> ret_operands;
   for (auto* output : outputs->outputs) {
@@ -678,6 +1017,10 @@ Status MlirFunctionContext::Finalize(OutputList* outputs,
 
 extern "C" {
 TracingContext* MlirTracingFactory(const char* fn_name, TF_Status* s) {
+   std::vector<std::string> mht_49_v;
+   mht_49_v.push_back("fn_name: \"" + (fn_name == nullptr ? std::string("nullptr") : std::string((char*)fn_name)) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSmlirPStensorflowPScPSc_api_unified_experimental_mlirDTcc mht_49(mht_49_v, 1021, "", "./tensorflow/compiler/mlir/tensorflow/c/c_api_unified_experimental_mlir.cc", "MlirTracingFactory");
+
   return new MlirFunctionContext(fn_name);
 }
 }

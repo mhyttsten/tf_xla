@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSjitPSnode_matchersDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSjitPSnode_matchersDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSjitPSnode_matchersDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,6 +204,10 @@ using impl::NodeMatcherProperties;
 using impl::OutEdge;
 
 string IndentAllButFirstLine(absl::string_view text) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("text: \"" + std::string(text.data(), text.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSnode_matchersDTcc mht_0(mht_0_v, 208, "", "./tensorflow/compiler/jit/node_matchers.cc", "IndentAllButFirstLine");
+
   std::vector<std::string> lines = absl::StrSplit(text, '\n');
   for (int i = 1; i < lines.size(); i++) {
     lines[i].insert(0, "  ");
@@ -46,6 +218,9 @@ string IndentAllButFirstLine(absl::string_view text) {
 template <typename T>
 bool CompareTensor(const Tensor& actual, const Tensor& expected,
                    ::testing::MatchResultListener* listener) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSnode_matchersDTcc mht_1(mht_1_v, 221, "", "./tensorflow/compiler/jit/node_matchers.cc", "CompareTensor");
+
   if (actual.NumElements() != expected.NumElements()) {
     if (listener->IsInterested()) {
       *listener << "\nwas looking for tensor with " << expected.NumElements()
@@ -69,6 +244,9 @@ bool CompareTensor(const Tensor& actual, const Tensor& expected,
 
 bool MatchAndExplainTensor(const Tensor& tensor, const Tensor& expected_tensor,
                            ::testing::MatchResultListener* listener) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSnode_matchersDTcc mht_2(mht_2_v, 247, "", "./tensorflow/compiler/jit/node_matchers.cc", "MatchAndExplainTensor");
+
   if (tensor.dtype() != expected_tensor.dtype()) {
     if (listener->IsInterested()) {
       *listener << "\nexpected tensor of type "
@@ -111,6 +289,9 @@ struct NodeMatcher : public ::testing::MatcherInterface<const Node*> {
   bool MatchAndExplain(
       const Node* node,
       ::testing::MatchResultListener* listener) const override {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSnode_matchersDTcc mht_3(mht_3_v, 292, "", "./tensorflow/compiler/jit/node_matchers.cc", "MatchAndExplain");
+
     if (op && node->type_string() != *op) {
       if (listener->IsInterested()) {
         *listener << "\nexpected op " << *op << " but found "
@@ -225,6 +406,9 @@ struct NodeMatcher : public ::testing::MatcherInterface<const Node*> {
   }
 
   void DescribeTo(::std::ostream* os) const override {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSnode_matchersDTcc mht_4(mht_4_v, 409, "", "./tensorflow/compiler/jit/node_matchers.cc", "DescribeTo");
+
     std::vector<string> predicates;
 
     if (name) {
@@ -302,6 +486,9 @@ struct NodeMatcher : public ::testing::MatcherInterface<const Node*> {
 
   bool MatchAndExplainInput(const Node* node, int input_idx,
                             ::testing::MatchResultListener* listener) const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSnode_matchersDTcc mht_5(mht_5_v, 489, "", "./tensorflow/compiler/jit/node_matchers.cc", "MatchAndExplainInput");
+
     const Edge* edge;
     if (!node->input_edge(input_idx, &edge).ok()) {
       if (listener->IsInterested()) {
@@ -342,11 +529,17 @@ struct NodeMatcher : public ::testing::MatcherInterface<const Node*> {
 class OutEdgeMatcher : public ::testing::MatcherInterface<OutEdge> {
  public:
   OutEdgeMatcher(::testing::Matcher<const Node*> src_matcher, int src_oidx)
-      : src_matcher_(std::move(src_matcher)), src_oidx_(src_oidx) {}
+      : src_matcher_(std::move(src_matcher)), src_oidx_(src_oidx) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSnode_matchersDTcc mht_6(mht_6_v, 533, "", "./tensorflow/compiler/jit/node_matchers.cc", "OutEdgeMatcher");
+}
 
   bool MatchAndExplain(
       OutEdge out_edge,
       ::testing::MatchResultListener* listener) const override {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSnode_matchersDTcc mht_7(mht_7_v, 540, "", "./tensorflow/compiler/jit/node_matchers.cc", "MatchAndExplain");
+
     ::testing::StringMatchResultListener inner_listener;
     if (!src_matcher_.MatchAndExplain(out_edge.first, &inner_listener)) {
       if (listener->IsInterested()) {
@@ -371,6 +564,9 @@ class OutEdgeMatcher : public ::testing::MatcherInterface<OutEdge> {
   }
 
   void DescribeTo(::std::ostream* os) const override {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSnode_matchersDTcc mht_8(mht_8_v, 567, "", "./tensorflow/compiler/jit/node_matchers.cc", "DescribeTo");
+
     if (src_oidx_) {
       *os << "output slot: " << src_oidx_ << ", source: (";
     }
@@ -390,6 +586,9 @@ class OutEdgeMatcher : public ::testing::MatcherInterface<OutEdge> {
 
 ::testing::Matcher<const Node*> impl::NodeWith(
     absl::Span<const NodeMatcherProperties> props) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSnode_matchersDTcc mht_9(mht_9_v, 589, "", "./tensorflow/compiler/jit/node_matchers.cc", "impl::NodeWith");
+
   NodeMatcher* matcher = new NodeMatcher();
   for (const NodeMatcherProperties& prop : props) {
     if (prop.name()) {
@@ -433,6 +632,10 @@ class OutEdgeMatcher : public ::testing::MatcherInterface<OutEdge> {
 }
 
 impl::NodeMatcherProperties Name(string name) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSnode_matchersDTcc mht_10(mht_10_v, 636, "", "./tensorflow/compiler/jit/node_matchers.cc", "Name");
+
   impl::NodeMatcherProperties props;
   props.set_name(std::move(name));
   return props;
@@ -440,6 +643,10 @@ impl::NodeMatcherProperties Name(string name) {
 
 // Matches a node with op `op`.
 impl::NodeMatcherProperties Op(string op) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("op: \"" + op + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSnode_matchersDTcc mht_11(mht_11_v, 647, "", "./tensorflow/compiler/jit/node_matchers.cc", "Op");
+
   impl::NodeMatcherProperties props;
   props.set_op(std::move(op));
   return props;
@@ -447,6 +654,10 @@ impl::NodeMatcherProperties Op(string op) {
 
 // Matches a node with assigned device `assigned_device`.
 impl::NodeMatcherProperties AssignedDevice(string assigned_device) {
+   std::vector<std::string> mht_12_v;
+   mht_12_v.push_back("assigned_device: \"" + assigned_device + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSnode_matchersDTcc mht_12(mht_12_v, 658, "", "./tensorflow/compiler/jit/node_matchers.cc", "AssignedDevice");
+
   impl::NodeMatcherProperties props;
   props.set_assigned_device(std::move(assigned_device));
   return props;
@@ -454,6 +665,9 @@ impl::NodeMatcherProperties AssignedDevice(string assigned_device) {
 
 impl::NodeMatcherProperties impl::Inputs(
     absl::Span<const ::testing::Matcher<OutEdge>> inputs) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSnode_matchersDTcc mht_13(mht_13_v, 668, "", "./tensorflow/compiler/jit/node_matchers.cc", "impl::Inputs");
+
   std::vector<::testing::Matcher<OutEdge>> inputs_vector;
   absl::c_copy(inputs, std::back_inserter(inputs_vector));
 
@@ -464,6 +678,9 @@ impl::NodeMatcherProperties impl::Inputs(
 
 impl::NodeMatcherProperties impl::CtrlDeps(
     absl::Span<const ::testing::Matcher<const Node*>> control_deps) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSnode_matchersDTcc mht_14(mht_14_v, 681, "", "./tensorflow/compiler/jit/node_matchers.cc", "impl::CtrlDeps");
+
   std::vector<::testing::Matcher<const Node*>> control_deps_vector;
   absl::c_copy(control_deps, std::back_inserter(control_deps_vector));
 
@@ -500,12 +717,19 @@ std::pair<string, AttrValue> impl::AttrLiteralHelper(
 }
 
 impl::NodeMatcherProperties impl::Attr(std::pair<string, AttrValue> attr) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSnode_matchersDTcc mht_15(mht_15_v, 720, "", "./tensorflow/compiler/jit/node_matchers.cc", "impl::Attr");
+
   impl::NodeMatcherProperties props;
   props.set_attr(std::move(attr));
   return props;
 }
 
 impl::NodeMatcherProperties impl::Attr(string name) {
+   std::vector<std::string> mht_16_v;
+   mht_16_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSnode_matchersDTcc mht_16(mht_16_v, 730, "", "./tensorflow/compiler/jit/node_matchers.cc", "impl::Attr");
+
   impl::NodeMatcherProperties props;
   props.set_attr({std::move(name), absl::nullopt});
   return props;
@@ -513,6 +737,9 @@ impl::NodeMatcherProperties impl::Attr(string name) {
 
 NodeMatcherProperties ConstantValue(
     const ::tensorflow::Input::Initializer& val) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSnode_matchersDTcc mht_17(mht_17_v, 740, "", "./tensorflow/compiler/jit/node_matchers.cc", "ConstantValue");
+
   TF_CHECK_OK(val.status);
   NodeMatcherProperties props;
   props.set_constant_value(val.tensor);
@@ -530,6 +757,10 @@ NodeMatcherProperties ConstantValue(
 }  // namespace matchers
 
 Node* FindNodeByName(Graph* g, absl::string_view name) {
+   std::vector<std::string> mht_18_v;
+   mht_18_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSnode_matchersDTcc mht_18(mht_18_v, 761, "", "./tensorflow/compiler/jit/node_matchers.cc", "FindNodeByName");
+
   for (Node* n : g->nodes()) {
     if (n->name() == name) {
       return n;
@@ -540,6 +771,12 @@ Node* FindNodeByName(Graph* g, absl::string_view name) {
 }
 }  // namespace testing
 
-void PrintTo(const Node* n, ::std::ostream* os) { *os << SummarizeNode(*n); }
-void PrintTo(Node* n, ::std::ostream* os) { *os << SummarizeNode(*n); }
+void PrintTo(const Node* n, ::std::ostream* os) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSnode_matchersDTcc mht_19(mht_19_v, 775, "", "./tensorflow/compiler/jit/node_matchers.cc", "PrintTo");
+ *os << SummarizeNode(*n); }
+void PrintTo(Node* n, ::std::ostream* os) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSnode_matchersDTcc mht_20(mht_20_v, 779, "", "./tensorflow/compiler/jit/node_matchers.cc", "PrintTo");
+ *os << SummarizeNode(*n); }
 }  // namespace tensorflow

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_infoDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_infoDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_infoDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,6 +217,10 @@ namespace {
 // data pointer.  (This means we don't need to worry about ownership for
 // this string.)
 const char* InternPyString(const std::string& s) {
+   std::vector<std::string> mht_0_v;
+   mht_0_v.push_back("s: \"" + s + "\"");
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_infoDTcc mht_0(mht_0_v, 221, "", "./tensorflow/python/framework/python_api_info.cc", "InternPyString");
+
   Safe_PyObjectPtr interned(PY_STRING_INTERN_FROM_STRING(s.c_str()));
   return PY_STRING_AS_CSTR(interned.get());
 }
@@ -68,6 +240,9 @@ struct DataTypeFormatter {
 void GetOpDefNamesAndDefaults(const tensorflow::OpDef& op_def,
                               std::vector<string>& param_names,
                               Safe_PyObjectPtr& defaults_tuple) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_infoDTcc mht_1(mht_1_v, 243, "", "./tensorflow/python/framework/python_api_info.cc", "GetOpDefNamesAndDefaults");
+
   param_names.reserve(op_def.input_arg_size() + op_def.attr_size());
   std::set<std::string> inferred_attrs;
 
@@ -116,11 +291,18 @@ void GetOpDefNamesAndDefaults(const tensorflow::OpDef& op_def,
 }  // namespace
 
 PythonAPIInfo::PythonAPIInfo(const std::string& api_name)
-    : api_name_(InternPyString(api_name)) {}
+    : api_name_(InternPyString(api_name)) {
+   std::vector<std::string> mht_2_v;
+   mht_2_v.push_back("api_name: \"" + api_name + "\"");
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_infoDTcc mht_2(mht_2_v, 296, "", "./tensorflow/python/framework/python_api_info.cc", "PythonAPIInfo::PythonAPIInfo");
+}
 
 Status PythonAPIInfo::Initialize(const OpDef& op_def,
                                  const std::vector<string> param_names,
                                  PyObject* defaults_tuple) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_infoDTcc mht_3(mht_3_v, 303, "", "./tensorflow/python/framework/python_api_info.cc", "PythonAPIInfo::Initialize");
+
   // Intern the parameter names.
   param_names_.reserve(param_names.size());
   for (const auto& param_name : param_names) {
@@ -171,6 +353,9 @@ Status PythonAPIInfo::Initialize(const OpDef& op_def,
 }
 
 Status PythonAPIInfo::CheckParamNames() const {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_infoDTcc mht_4(mht_4_v, 356, "", "./tensorflow/python/framework/python_api_info.cc", "PythonAPIInfo::CheckParamNames");
+
   std::vector<bool> param_found(param_names_.size());
   for (const auto& attr : attributes_) {
     if (attr.index != -1) {
@@ -194,6 +379,10 @@ Status PythonAPIInfo::CheckParamNames() const {
 }
 
 Status PythonAPIInfo::InitializeFromRegisteredOp(const std::string& op_name) {
+   std::vector<std::string> mht_5_v;
+   mht_5_v.push_back("op_name: \"" + op_name + "\"");
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_infoDTcc mht_5(mht_5_v, 383, "", "./tensorflow/python/framework/python_api_info.cc", "PythonAPIInfo::InitializeFromRegisteredOp");
+
   const tensorflow::OpDef* op_def = nullptr;
   TF_RETURN_IF_ERROR(
       tensorflow::OpRegistry::Global()->LookUpOpDef(op_name, &op_def));
@@ -208,6 +397,9 @@ Status PythonAPIInfo::InitializeFromParamSpecs(
     const std::map<std::string, std::string>& input_specs,
     const std::map<std::string, std::string>& attr_specs,
     const std::vector<string> param_names, PyObject* defaults_tuple) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_infoDTcc mht_6(mht_6_v, 400, "", "./tensorflow/python/framework/python_api_info.cc", "PythonAPIInfo::InitializeFromParamSpecs");
+
   OpDefBuilder op_def_builder(api_name_);
   op_def_builder.AllowAttrTypeAny();
   for (const auto& attr_spec : attr_specs) {
@@ -229,6 +421,9 @@ Status PythonAPIInfo::InitializeFromParamSpecs(
 Status PythonAPIInfo::InitializeAttribute(
     const OpDef::AttrDef& attr_def,
     const std::map<std::string, int>& param_name_to_index) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_infoDTcc mht_7(mht_7_v, 424, "", "./tensorflow/python/framework/python_api_info.cc", "PythonAPIInfo::InitializeAttribute");
+
   if (attr_def.name() == "name") {
     return errors::InvalidArgument(
         api_name_, ": Reserved parameter `name` was used as an attribute.");
@@ -299,6 +494,9 @@ Status PythonAPIInfo::InitializeAttribute(
 Status PythonAPIInfo::InitializeInput(
     const OpDef::ArgDef& arg_def,
     const std::map<std::string, ParamIndex>& param_name_to_index) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_infoDTcc mht_8(mht_8_v, 497, "", "./tensorflow/python/framework/python_api_info.cc", "PythonAPIInfo::InitializeInput");
+
   if (arg_def.name() == "name") {
     return errors::InvalidArgument(
         api_name_, ": Reserved parameter `name` was used as a tensor input.");
@@ -365,6 +563,10 @@ Status PythonAPIInfo::InitializeInput(
 
 PythonAPIInfo::InputsWithTypeAttr* PythonAPIInfo::FindInputsWithTypeAttr(
     const string& name) {
+   std::vector<std::string> mht_9_v;
+   mht_9_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_infoDTcc mht_9(mht_9_v, 567, "", "./tensorflow/python/framework/python_api_info.cc", "PythonAPIInfo::FindInputsWithTypeAttr");
+
   for (auto& input : inputs_with_type_attrs_) {
     if (name == input.type_attr->name) {
       return &input;
@@ -375,6 +577,10 @@ PythonAPIInfo::InputsWithTypeAttr* PythonAPIInfo::FindInputsWithTypeAttr(
 
 PythonAPIInfo::InputsWithTypeListAttr*
 PythonAPIInfo::FindInputsWithTypeListAttr(const string& name) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_infoDTcc mht_10(mht_10_v, 581, "", "./tensorflow/python/framework/python_api_info.cc", "PythonAPIInfo::FindInputsWithTypeListAttr");
+
   for (auto& input : inputs_with_type_list_attrs_) {
     if (name == input.type_list_attr->name) {
       return &input;
@@ -385,6 +591,10 @@ PythonAPIInfo::FindInputsWithTypeListAttr(const string& name) {
 
 PythonAPIInfo::InputsWithNumberAttr* PythonAPIInfo::FindInputsWithNumberAttr(
     const string& name) {
+   std::vector<std::string> mht_11_v;
+   mht_11_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_infoDTcc mht_11(mht_11_v, 595, "", "./tensorflow/python/framework/python_api_info.cc", "PythonAPIInfo::FindInputsWithNumberAttr");
+
   for (auto& input : inputs_with_number_attrs_) {
     if (name == input.number_attr->name) {
       return &input;
@@ -394,6 +604,9 @@ PythonAPIInfo::InputsWithNumberAttr* PythonAPIInfo::FindInputsWithNumberAttr(
 }
 
 string PythonAPIInfo::DebugInfo() const {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSpythonPSframeworkPSpython_api_infoDTcc mht_12(mht_12_v, 607, "", "./tensorflow/python/framework/python_api_info.cc", "PythonAPIInfo::DebugInfo");
+
   string s = absl::StrCat("DebugInfo for ", api_name_, ":\n");
   absl::StrAppend(&s, "  param_names=[", absl::StrJoin(param_names_, ", "),
                   "]\n");

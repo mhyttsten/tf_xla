@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -99,6 +267,9 @@ constexpr int64_t kFoldExpandSplatEltLimit = 16;
 // Clamps value to the range [lower, upper].  Requires lower <= upper.
 template <typename T>
 static T Clamp(const T& value, const T& lower, const T& upper) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_0(mht_0_v, 270, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "Clamp");
+
   assert(lower <= upper);
   return std::max(lower, std::min(value, upper));
 }
@@ -107,6 +278,9 @@ static T Clamp(const T& value, const T& lower, const T& upper) {
 // result shape.
 template <typename OpT>
 static LogicalResult VerifyDimAttr(OpT op) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_1(mht_1_v, 281, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "VerifyDimAttr");
+
   int64_t rank = -1;
   if (auto ty = op.operand().getType().template dyn_cast<RankedTensorType>()) {
     rank = ty.getRank();
@@ -128,6 +302,9 @@ static LogicalResult VerifyDimAttr(OpT op) {
 DenseIntElementsAttr BuildSliceLimits(DenseIntElementsAttr start_indices,
                                       DenseIntElementsAttr slice_sizes,
                                       Builder* builder) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_2(mht_2_v, 305, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "BuildSliceLimits");
+
   SmallVector<int64_t, 4> slice_limits;
   for (int64_t i = 0; i < slice_sizes.getNumElements(); ++i) {
     int64_t start_index = start_indices.getValues<IntegerAttr>()[i].getInt();
@@ -162,6 +339,9 @@ static LogicalResult rngInferReturnTypeComponents(
     MLIRContext* context, Optional<Location> location, ValueRange operands,
     DictionaryAttr attributes, RegionRange regions,
     SmallVectorImpl<ShapedTypeComponents>& inferredReturnShapes) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_3(mht_3_v, 342, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "rngInferReturnTypeComponents");
+
   if (operands.size() != 3)
     return emitOptionalError(location, "expected 3 operands");
 
@@ -199,6 +379,9 @@ static LogicalResult rngInferReturnTypeComponents(
 // Returns a new scalar integer value having type `type`. Here `type` must be
 // an integer or index type.
 Value MaybeCastTo(OpBuilder& b, Location loc, Value value, Type type) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_4(mht_4_v, 382, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "MaybeCastTo");
+
   if (type == value.getType()) return value;
   assert(type.isIndex() || value.getType().isIndex());
   return b.create<arith::IndexCastOp>(loc, type, value);
@@ -262,6 +445,9 @@ FailureOr<SmallVector<std::pair<int64_t, int64_t>>> convertNx2Attribute(
 // window with values 1, x, 2, x, 3, where x indicates holes left by the
 // dilation. So DilatedBound(3, 2) == 5.
 int64_t dilatedBound(int64_t bound, int64_t dilation) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_5(mht_5_v, 448, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "dilatedBound");
+
   assert(bound >= 0 && "The dimension to dialate must be >= 0");
   if (bound == 0) return 0;
 
@@ -281,6 +467,9 @@ int64_t dilatedBound(int64_t bound, int64_t dilation) {
 // while offset 4 is not valid since the window's last entry would be at 5,
 // which is beyond the bound of 5.
 int64_t stridedBound(int64_t bound, int64_t window_size, int64_t stride) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_6(mht_6_v, 470, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "stridedBound");
+
   assert(window_size >= 0 && "Expected window size to be >= 0");
   assert(bound >= 0 && "Expected bound to be >= 0");
 
@@ -420,6 +609,9 @@ SmallVector<int64_t> inferWindowOutputShape(
 // element-type, else return false. With float element-types, ignore comparing
 // floating-point precision if ignoreFpPrecision is True.
 bool tensorsHaveSameElType(Type type1, Type type2, bool ignoreFpPrecision) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_7(mht_7_v, 612, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "tensorsHaveSameElType");
+
   auto tensorTy1 = type1.dyn_cast<TensorType>();
   auto tensorTy2 = type2.dyn_cast<TensorType>();
 
@@ -437,6 +629,9 @@ bool tensorsHaveSameElType(Type type1, Type type2, bool ignoreFpPrecision) {
 // precisions while checking element-types.
 bool compatibleShapeAndElementType(Type type1, Type type2,
                                    bool ignoreFpPrecision = false) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_8(mht_8_v, 632, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "compatibleShapeAndElementType");
+
   if (failed(verifyCompatibleShape(type1, type2))) return false;
   return tensorsHaveSameElType(type1.cast<ShapedType>(),
                                type2.cast<ShapedType>(), ignoreFpPrecision);
@@ -447,6 +642,9 @@ LogicalResult verifyReducerShape(
     ArrayRef<TensorType> initValueTypes, int64_t numInputs,
     ArrayRef<int64_t> allowedDimensions, bool allInputsUnranked,
     SmallVectorImpl<TensorType>& accumulatorSubShapes) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_9(mht_9_v, 645, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "verifyReducerShape");
+
   // Check that the number of reduction-region arguments matches with that of
   // reduce-op's arguments.
   if (block.getArguments().size() != numInputs * 2)
@@ -594,6 +792,9 @@ LogicalResult verifyReducerShape(
 //===----------------------------------------------------------------------===//
 
 LogicalResult ReduceScatterOp::verify() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_10(mht_10_v, 795, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ReduceScatterOp::verify");
+
   return mlir::hlo::VerifyReduceScatter(
       *this,
       /*operand_types=*/{operand().getType()},
@@ -606,6 +807,9 @@ LogicalResult ReduceScatterOp::verify() {
 //===----------------------------------------------------------------------===//
 
 OpFoldResult ConstOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_11(mht_11_v, 810, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ConstOp::fold");
+
   assert(operands.empty() && "constant has no operands");
 
   // Return the held attribute value.
@@ -615,6 +819,9 @@ OpFoldResult ConstOp::fold(ArrayRef<Attribute> operands) {
 // Builds a constant op with the specified attribute `value`.
 void ConstOp::build(OpBuilder& builder, OperationState& result,
                     Attribute value) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_12(mht_12_v, 822, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ConstOp::build");
+
   Type type;
   if (auto elemAttr = value.dyn_cast<ElementsAttr>()) {
     type = elemAttr.getType();
@@ -638,6 +845,9 @@ void ConstOp::build(OpBuilder& builder, OperationState& result,
 //===----------------------------------------------------------------------===//
 
 LogicalResult CustomCallOp::verify() {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_13(mht_13_v, 848, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "CustomCallOp::verify");
+
   // If both operand and result layout attributes are not specified then nothing
   // to verify.
   if (!operand_layouts().hasValue() && !result_layouts().hasValue())
@@ -730,6 +940,9 @@ LogicalResult CustomCallOp::verify() {
 void CustomCallOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>&
         effects) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_14(mht_14_v, 943, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "CustomCallOp::getEffects");
+
   // CustomCall has "all possible effects" unless the has_side_effect is present
   // and set to false.
   auto has_side_effect = (*this)->getAttrOfType<BoolAttr>("has_side_effect");
@@ -750,6 +963,9 @@ void CustomCallOp::getEffects(
 //   P1. The 'a' argument to Cholesky must have rank >= 2, got shape %s
 //   P2. The two minor dimensions of 'a' must have equal size, got %s.
 LogicalResult CholeskyOp::verify() {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_15(mht_15_v, 966, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "CholeskyOp::verify");
+
   auto a_type = a().getType().dyn_cast<RankedTensorType>();
   if (!a_type) return success();  // Nothing to check for unranked tensors
 
@@ -778,10 +994,16 @@ LogicalResult CholeskyOp::verify() {
 //===----------------------------------------------------------------------===//
 namespace {
 bool dimCompatible(int64_t a, int64_t b) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_16(mht_16_v, 997, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "dimCompatible");
+
   return isDynamicDimSize(a) || isDynamicDimSize(b) || a == b;
 }
 
 ShapedType inferDotReturnType(ShapedType lhs, ShapedType rhs) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_17(mht_17_v, 1004, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "inferDotReturnType");
+
   auto element_type = lhs.getElementType();
   if (!lhs.hasRank() || !rhs.hasRank()) {
     return UnrankedTensorType::get(element_type);
@@ -815,6 +1037,9 @@ ShapedType inferDotReturnType(ShapedType lhs, ShapedType rhs) {
 LogicalResult DotOp::inferReturnTypes(
     MLIRContext*, Optional<Location>, ValueRange operands, DictionaryAttr,
     RegionRange, SmallVectorImpl<Type>& inferredReturnTypes) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_18(mht_18_v, 1040, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "DotOp::inferReturnTypes");
+
   DotOp::Adaptor op(operands);
   auto lhs_type = op.lhs().getType().cast<ShapedType>();
   auto rhs_type = op.rhs().getType().cast<ShapedType>();
@@ -823,6 +1048,9 @@ LogicalResult DotOp::inferReturnTypes(
 }
 
 LogicalResult DotOp::verify() {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_19(mht_19_v, 1051, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "DotOp::verify");
+
   auto lhs_type = lhs().getType().cast<ShapedType>();
   auto rhs_type = rhs().getType().cast<ShapedType>();
   auto result_type = getType().cast<ShapedType>();
@@ -847,6 +1075,9 @@ LogicalResult DotOp::verify() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult DotGeneralOp::verify() {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_20(mht_20_v, 1078, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "DotGeneralOp::verify");
+
   auto dot_dimension_numbers = this->dot_dimension_numbers();
   int64_t lhs_batching_dimensions_size =
       dot_dimension_numbers.getLhsBatchingDimensions().size();
@@ -878,6 +1109,9 @@ LogicalResult DotGeneralOp::verify() {
 // P2. operand shape dimensions agree with fft_length for the given fft_type
 // P3. Element types agree with fft_type
 LogicalResult FftOp::verify() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_21(mht_21_v, 1112, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "FftOp::verify");
+
   // P1.
   auto fft_rank = fft_length().size();
   if (!(fft_rank <= 3 && fft_rank >= 1)) {
@@ -968,6 +1202,9 @@ struct GatherSlice : public OpRewritePattern<GatherOp> {
 
   LogicalResult matchAndRewrite(GatherOp gather,
                                 PatternRewriter& rewriter) const override {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_22(mht_22_v, 1205, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "matchAndRewrite");
+
     DenseIntElementsAttr index;
     if (!matchPattern(gather.start_indices(), m_Constant(&index)))
       return failure();
@@ -1033,6 +1270,9 @@ struct GatherSlice : public OpRewritePattern<GatherOp> {
 
 void GatherOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                            MLIRContext* context) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_23(mht_23_v, 1273, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "GatherOp::getCanonicalizationPatterns");
+
   results.add<GatherSlice>(context);
 }
 
@@ -1056,6 +1296,9 @@ namespace {
 void getSliceSizeValues(GatherOp* gather, OpBuilder& builder, Location loc,
                         ValueRange operands,
                         SmallVectorImpl<Value>& slice_sizes) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_24(mht_24_v, 1299, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "getSliceSizeValues");
+
   for (int64_t val : gather->slice_sizes().getValues<int64_t>()) {
     slice_sizes.push_back(builder.create<arith::ConstantIndexOp>(loc, val));
   }
@@ -1064,6 +1307,9 @@ void getSliceSizeValues(GatherOp* gather, OpBuilder& builder, Location loc,
 void getSliceSizeValues(DynamicGatherOp* d_gather, OpBuilder& builder,
                         Location loc, ValueRange operands,
                         SmallVectorImpl<Value>& slice_size_values) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_25(mht_25_v, 1310, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "getSliceSizeValues");
+
   DynamicGatherOp::Adaptor adaptor(operands);
   Value slice_sizes = adaptor.slice_sizes();
   auto slice_sizes_ty = slice_sizes.getType().cast<ShapedType>();
@@ -1078,6 +1324,9 @@ static LogicalResult verifyGather(
     ShapeAdaptor operandShape, ShapeAdaptor startIndicesShape,
     ShapeAdaptor sliceSizesShape, GatherDimensionNumbersAttr dimensionNumbers,
     llvm::function_ref<InFlightDiagnostic()> errorEmitter) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_26(mht_26_v, 1327, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "verifyGather");
+
   // This should be fully expressible with type constraints, but it isn't
   // obvious how to do that with the current infrastructure.
   if (sliceSizesShape.hasRank() && sliceSizesShape.getRank() != 1)
@@ -1141,6 +1390,9 @@ static LogicalResult verifyStaticGather(
     DenseIntElementsAttr sliceSizes,
     GatherDimensionNumbersAttr dimensionNumbers,
     llvm::function_ref<InFlightDiagnostic()> errorEmitter) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_27(mht_27_v, 1393, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "verifyStaticGather");
+
   // For some reason the getType call is necessary here
   if (failed(verifyGather(
           /*operandShape=*/operandShape,
@@ -1177,6 +1429,9 @@ static void inferGatherShape(
     llvm::function_ref<dimTy(int64_t)> getSliceDim,
     GatherDimensionNumbersAttr dimensionNumbers,
     SmallVectorImpl<dimTy>& shape) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_28(mht_28_v, 1432, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "inferGatherShape");
+
   ArrayRef<int64_t> collapsedSliceDims =
       dimensionNumbers.getCollapsedSliceDims();
   int64_t indexVectorDim = dimensionNumbers.getIndexVectorDim();
@@ -1236,6 +1491,9 @@ static LogicalResult inferGatherReturnTypeComponents(
     llvm::function_ref<int64_t(int64_t)> getSliceDim,
     GatherDimensionNumbersAttr dimensionNumbers,
     SmallVectorImpl<ShapedTypeComponents>& inferredReturnShapes) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_29(mht_29_v, 1494, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "inferGatherReturnTypeComponents");
+
   Type elementType = operandShape.getElementType();
 
   // We need this to determine the result rank. We could still place bounds on
@@ -1254,6 +1512,9 @@ static LogicalResult inferGatherReturnTypeComponents(
   int64_t resultRank = offsetDims.size() + startIndicesRank - 1;
 
   auto getStartIndicesDim = [&](int64_t index) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_30(mht_30_v, 1515, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+
     return startIndicesShape.getDimSize(index);
   };
 
@@ -1268,6 +1529,9 @@ static LogicalResult inferGatherReturnTypeComponents(
 template <typename Op>
 LogicalResult reifyGatherShape(Op* op, OpBuilder& builder, ValueRange operands,
                                SmallVectorImpl<Value>& reifiedReturnShapes) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_31(mht_31_v, 1532, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "reifyGatherShape");
+
   // No support for unranked gather output shape a.t.m.
   auto resultTy =
       op->getResult().getType().template dyn_cast<RankedTensorType>();
@@ -1280,6 +1544,9 @@ LogicalResult reifyGatherShape(Op* op, OpBuilder& builder, ValueRange operands,
   int resultRank = resultTy.getRank();
   Type shapeElTy = startIndices.getType().cast<ShapedType>().getElementType();
   auto toShapeElType = [&](Value v) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_32(mht_32_v, 1547, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+
     return MaybeCastTo(builder, loc, v, shapeElTy);
   };
 
@@ -1289,6 +1556,9 @@ LogicalResult reifyGatherShape(Op* op, OpBuilder& builder, ValueRange operands,
                   [&](Value v) { return toShapeElType(v); });
 
   auto getStartIndicesDim = [&](int64_t index) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_33(mht_33_v, 1559, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+
     return toShapeElType(
         builder.create<tensor::DimOp>(loc, startIndices, index));
   };
@@ -1311,6 +1581,9 @@ LogicalResult reifyGatherShape(Op* op, OpBuilder& builder, ValueRange operands,
 LogicalResult GatherOp::reifyReturnTypeShapes(
     OpBuilder& builder, ValueRange operands,
     SmallVectorImpl<Value>& reifiedReturnShapes) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_34(mht_34_v, 1584, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "GatherOp::reifyReturnTypeShapes");
+
   return reifyGatherShape(this, builder, operands, reifiedReturnShapes);
 }
 
@@ -1318,11 +1591,17 @@ LogicalResult GatherOp::inferReturnTypeComponents(
     MLIRContext* context, Optional<Location> location, ValueShapeRange operands,
     DictionaryAttr attributes, RegionRange regions,
     SmallVectorImpl<ShapedTypeComponents>& inferredReturnShapes) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_35(mht_35_v, 1594, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "GatherOp::inferReturnTypeComponents");
+
   // This can get called before other op verify methods, so we have to do a
   // bunch of verification up front. With a better story for ordering and/or
   // multi-phase op verification, this should hopefully all go away.
   Location loc = location.getValueOr(UnknownLoc::get(context));
   auto errorEmitter = [&loc]() {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_36(mht_36_v, 1602, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+
     return mlir::emitError(loc)
            << "'" << GatherOp::getOperationName() << "' op ";
   };
@@ -1357,6 +1636,9 @@ LogicalResult GatherOp::inferReturnTypeComponents(
 LogicalResult DynamicGatherOp::reifyReturnTypeShapes(
     OpBuilder& builder, ValueRange operands,
     SmallVectorImpl<Value>& reifiedReturnShapes) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_37(mht_37_v, 1639, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "DynamicGatherOp::reifyReturnTypeShapes");
+
   return reifyGatherShape(this, builder, operands, reifiedReturnShapes);
 }
 
@@ -1364,11 +1646,17 @@ LogicalResult DynamicGatherOp::inferReturnTypeComponents(
     MLIRContext* context, Optional<Location> location, ValueShapeRange operands,
     DictionaryAttr attributes, RegionRange regions,
     SmallVectorImpl<ShapedTypeComponents>& inferredReturnShapes) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_38(mht_38_v, 1649, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "DynamicGatherOp::inferReturnTypeComponents");
+
   // This can get called before other op verify methods, so we have to do a
   // bunch of verification up front. With a better story for ordering and/or
   // multi-phase op verification, this should hopefully all go away.
   Location loc = location.getValueOr(UnknownLoc::get(context));
   auto errorEmitter = [&loc]() {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_39(mht_39_v, 1657, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+
     return mlir::emitError(loc)
            << "'" << DynamicGatherOp::getOperationName() << "' op ";
   };
@@ -1387,7 +1675,10 @@ LogicalResult DynamicGatherOp::inferReturnTypeComponents(
                           errorEmitter)))
     return failure();
 
-  auto getSliceDim = [](int64_t index) { return ShapedType::kDynamicSize; };
+  auto getSliceDim = [](int64_t index) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_40(mht_40_v, 1679, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+ return ShapedType::kDynamicSize; };
   return inferGatherReturnTypeComponents(operandShape, startIndicesShape,
                                          getSliceDim, dimensionNumbers,
                                          inferredReturnShapes);
@@ -1397,10 +1688,16 @@ LogicalResult DynamicGatherOp::inferReturnTypeComponents(
 // GetDimensionSizeOp
 //===----------------------------------------------------------------------===//
 //
-LogicalResult GetDimensionSizeOp::verify() { return VerifyDimAttr(*this); }
+LogicalResult GetDimensionSizeOp::verify() {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_41(mht_41_v, 1692, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "GetDimensionSizeOp::verify");
+ return VerifyDimAttr(*this); }
 
 /// Fold get_dimension_size when the said shape dimension is a constant.
 OpFoldResult GetDimensionSizeOp::fold(ArrayRef<Attribute> attrs) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_42(mht_42_v, 1698, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "GetDimensionSizeOp::fold");
+
   RankedTensorType type = operand().getType().dyn_cast<RankedTensorType>();
   if (!type) return {};
 
@@ -1416,6 +1713,9 @@ OpFoldResult GetDimensionSizeOp::fold(ArrayRef<Attribute> attrs) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult IotaOp::verify() {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_43(mht_43_v, 1716, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "IotaOp::verify");
+
   auto shape = getType().cast<ShapedType>();
   if (!shape.hasRank()) return success();
 
@@ -1435,6 +1735,9 @@ struct IotaBroadcast : public OpRewritePattern<IotaOp> {
 
   LogicalResult matchAndRewrite(IotaOp iota,
                                 PatternRewriter& rewriter) const override {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_44(mht_44_v, 1738, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "matchAndRewrite");
+
     auto result_ty = iota.getType().cast<ShapedType>();
     if (!result_ty.hasRank() || result_ty.getRank() < 2) {
       return failure();
@@ -1459,10 +1762,16 @@ struct IotaBroadcast : public OpRewritePattern<IotaOp> {
 
 void IotaOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                          MLIRContext* context) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_45(mht_45_v, 1765, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "IotaOp::getCanonicalizationPatterns");
+
   results.add<IotaBroadcast>(context);
 }
 
 OpFoldResult IotaOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_46(mht_46_v, 1772, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "IotaOp::fold");
+
   auto dimension = iota_dimension();
   auto result_ty = getResult().getType().cast<ShapedType>();
   if (result_ty.hasRank() && result_ty.getDimSize(dimension) == 1) {
@@ -1484,6 +1793,9 @@ struct DynamicIotaIsStatic : public OpRewritePattern<DynamicIotaOp> {
 
   LogicalResult matchAndRewrite(DynamicIotaOp iota,
                                 PatternRewriter& rewriter) const override {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_47(mht_47_v, 1796, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "matchAndRewrite");
+
     auto result_ty = iota.getType().cast<ShapedType>();
     if (!result_ty.hasStaticShape()) {
       return failure();
@@ -1501,6 +1813,9 @@ struct DynamicIotaBroadcast : public OpRewritePattern<DynamicIotaOp> {
 
   LogicalResult matchAndRewrite(DynamicIotaOp iota,
                                 PatternRewriter& rewriter) const override {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_48(mht_48_v, 1816, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "matchAndRewrite");
+
     auto result_ty = iota.getType().cast<ShapedType>();
     if (!result_ty.hasRank() || result_ty.getRank() < 2) {
       return failure();
@@ -1549,12 +1864,18 @@ struct DynamicIotaBroadcast : public OpRewritePattern<DynamicIotaOp> {
 
 void DynamicIotaOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                                 MLIRContext* context) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_49(mht_49_v, 1867, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "DynamicIotaOp::getCanonicalizationPatterns");
+
   results.add<DynamicIotaIsStatic>(context);
   results.add<DynamicIotaBroadcast>(context);
 }
 
 static Value castToIndexTensor(OpBuilder& builder, Location loc,
                                Value shape_op) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_50(mht_50_v, 1876, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "castToIndexTensor");
+
   ShapedType result_ty = shape::getExtentTensorType(
       builder.getContext(),
       shape_op.getType().cast<ShapedType>().getDimSize(0));
@@ -1565,6 +1886,9 @@ static Value castToIndexTensor(OpBuilder& builder, Location loc,
 LogicalResult DynamicIotaOp::reifyReturnTypeShapes(
     OpBuilder& builder, ValueRange operands,
     SmallVectorImpl<Value>& reifiedReturnShapes) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_51(mht_51_v, 1889, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "DynamicIotaOp::reifyReturnTypeShapes");
+
   DynamicIotaOp::Adaptor adaptor(operands);
   reifiedReturnShapes.push_back(
       castToIndexTensor(builder, getLoc(), adaptor.output_shape()));
@@ -1576,6 +1900,9 @@ LogicalResult DynamicIotaOp::reifyReturnTypeShapes(
 //===----------------------------------------------------------------------===//
 
 LogicalResult DynamicUpdateSliceOp::verify() {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_52(mht_52_v, 1903, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "DynamicUpdateSliceOp::verify");
+
   OperandRange indices = start_indices();
   if (indices.size() <= 1) return success();
 
@@ -1599,6 +1926,9 @@ LogicalResult DynamicUpdateSliceOp::verify() {
 }
 
 OpFoldResult DynamicUpdateSliceOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_53(mht_53_v, 1929, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "DynamicUpdateSliceOp::fold");
+
   auto operand_shape = this->operand().getType().cast<RankedTensorType>();
   auto update_shape = this->update().getType().cast<RankedTensorType>();
 
@@ -1624,6 +1954,9 @@ OpFoldResult DynamicUpdateSliceOp::fold(ArrayRef<Attribute> operands) {
 LogicalResult AbsOp::inferReturnTypes(
     MLIRContext*, Optional<Location>, ValueRange operands, DictionaryAttr,
     RegionRange, SmallVectorImpl<Type>& inferredReturnTypes) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_54(mht_54_v, 1957, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "AbsOp::inferReturnTypes");
+
   auto operand_ty = (*operands.begin()).getType().cast<ShapedType>();
   Type element_ty = operand_ty.getElementType();
   if (auto complex_ty = element_ty.dyn_cast<ComplexType>()) {
@@ -1645,6 +1978,9 @@ LogicalResult AbsOp::inferReturnTypes(
 //===----------------------------------------------------------------------===//
 
 LogicalResult CollectivePermuteOp::verify() {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_55(mht_55_v, 1981, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "CollectivePermuteOp::verify");
+
   return mlir::hlo::VerifyCollectivePermuteSourceTargetPairs(
       *this, source_target_pairs());
 }
@@ -1655,6 +1991,9 @@ LogicalResult CollectivePermuteOp::verify() {
 
 void ConvertOp::build(OpBuilder& builder, OperationState& result, Value operand,
                       Type result_element_ty) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_56(mht_56_v, 1994, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ConvertOp::build");
+
   Type result_ty;
   Type operand_ty = operand.getType();
   if (auto ranked_ty = operand_ty.dyn_cast<RankedTensorType>()) {
@@ -1666,6 +2005,9 @@ void ConvertOp::build(OpBuilder& builder, OperationState& result, Value operand,
 }
 
 OpFoldResult ConvertOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_57(mht_57_v, 2008, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ConvertOp::fold");
+
   auto operand_ty = getOperand().getType().cast<TensorType>();
   auto result_ty = getResult().getType().cast<TensorType>();
   if (operand_ty == result_ty) return getOperand();
@@ -1691,6 +2033,9 @@ OpFoldResult ConvertOp::fold(ArrayRef<Attribute> operands) {
 
 void ConvertOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                             MLIRContext* context) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_58(mht_58_v, 2036, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ConvertOp::getCanonicalizationPatterns");
+
   results.add<EliminateIdentityConvert>(context);
 }
 
@@ -1699,6 +2044,9 @@ void ConvertOp::getCanonicalizationPatterns(RewritePatternSet& results,
 //===----------------------------------------------------------------------===//
 
 LogicalResult DequantizeOp::verify() {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_59(mht_59_v, 2047, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "DequantizeOp::verify");
+
   auto input_type = input().getType().dyn_cast<ShapedType>();
   auto output_type = output().getType().dyn_cast<ShapedType>();
   if (!input_type || !output_type) {
@@ -1737,6 +2085,9 @@ LogicalResult DequantizeOp::verify() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult GetTupleElementOp::verify() {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_60(mht_60_v, 2088, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "GetTupleElementOp::verify");
+
   auto indexVal = index();
   auto operandType = getOperand().getType().cast<TupleType>();
   if (indexVal >= operandType.size()) {
@@ -1754,6 +2105,9 @@ LogicalResult GetTupleElementOp::verify() {
 }
 
 OpFoldResult GetTupleElementOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_61(mht_61_v, 2108, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "GetTupleElementOp::fold");
+
   if (auto tuple_op = getOperand().getDefiningOp<mhlo::TupleOp>()) {
     return tuple_op.getOperand(index());
   }
@@ -1766,6 +2120,9 @@ OpFoldResult GetTupleElementOp::fold(ArrayRef<Attribute> operands) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult TupleOp::verify() {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_62(mht_62_v, 2123, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "TupleOp::verify");
+
   auto opType = getType().dyn_cast<TupleType>();
   if (!opType) return emitOpError("tuple op with non-tuple result");
   if (getNumOperands() != opType.size())
@@ -1790,6 +2147,9 @@ struct UnpackRepackSameTuple : public OpRewritePattern<TupleOp> {
 
   LogicalResult matchAndRewrite(TupleOp op,
                                 PatternRewriter& rewriter) const override {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_63(mht_63_v, 2150, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "matchAndRewrite");
+
     if (op.val().empty()) return failure();
 
     Value first_element = op.val().front();
@@ -1819,6 +2179,9 @@ struct UnpackRepackSameTuple : public OpRewritePattern<TupleOp> {
 
 void TupleOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                           MLIRContext* context) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_64(mht_64_v, 2182, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "TupleOp::getCanonicalizationPatterns");
+
   results.add<UnpackRepackSameTuple>(context);
 }
 
@@ -1827,6 +2190,9 @@ void TupleOp::getCanonicalizationPatterns(RewritePatternSet& results,
 //===----------------------------------------------------------------------===//
 
 LogicalResult AllToAllOp::verify() {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_65(mht_65_v, 2193, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "AllToAllOp::verify");
+
   // If operand is ranked, size of split dimension should be a multiple of split
   // count.
   auto type = getOperand().getType().dyn_cast<RankedTensorType>();
@@ -1846,6 +2212,9 @@ LogicalResult AllToAllOp::verify() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult AllGatherOp::verify() {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_66(mht_66_v, 2215, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "AllGatherOp::verify");
+
   // If operand and result are both ranked, then the size of the gather
   // dimension in the result should be a multiple of the size of the gather
   // dimension in the operand.
@@ -1874,6 +2243,9 @@ LogicalResult AllGatherOp::verify() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult BatchNormGradOp::verify() {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_67(mht_67_v, 2246, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "BatchNormGradOp::verify");
+
   // The following properties are already enforced by the ODS:
   //  1. Inputs 'operand' & 'grad_output' and outputs 'grad_operand',
   //     are ranked-tensors with floating-point (fp) type.
@@ -1940,6 +2312,9 @@ LogicalResult BatchNormGradOp::verify() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult BatchNormTrainingOp::verify() {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_68(mht_68_v, 2315, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "BatchNormTrainingOp::verify");
+
   // The following properties are already enforced by the ODS:
   //  1. 'operand' and 'output' are ranked tensors.
   //  2. 'scale', 'offset', 'batch_mean', 'batch_var' are 1D tensors.
@@ -1982,6 +2357,9 @@ LogicalResult BatchNormTrainingOp::verify() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult BatchNormInferenceOp::verify() {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_69(mht_69_v, 2360, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "BatchNormInferenceOp::verify");
+
   // The following properties are already enforced by the ODS:
   //  1. 'operand' and 'result' are ranked tensors.
   //  2. 'scale', 'offset', 'mean', 'variance' are 1D tensors.
@@ -2025,6 +2403,9 @@ LogicalResult BatchNormInferenceOp::verify() {
 LogicalResult BitcastConvertOp::reifyReturnTypeShapes(
     OpBuilder& builder, ValueRange operands,
     SmallVectorImpl<Value>& reifiedReturnShapes) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_70(mht_70_v, 2406, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "BitcastConvertOp::reifyReturnTypeShapes");
+
   auto operand_type = operands[0].getType().dyn_cast<RankedTensorType>();
   auto result_type = getType().dyn_cast<RankedTensorType>();
 
@@ -2050,6 +2431,9 @@ LogicalResult BitcastConvertOp::reifyReturnTypeShapes(
 
 // TODO(b/129012527) These should be expressed as type constraints.
 LogicalResult BroadcastOp::verify() {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_71(mht_71_v, 2434, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "BroadcastOp::verify");
+
   auto sizes = broadcast_sizes();
   auto sizesType = sizes.getType();
   auto sizesRank = sizesType.getRank();
@@ -2090,6 +2474,9 @@ LogicalResult BroadcastOp::verify() {
 }
 
 OpFoldResult BroadcastOp::fold(ArrayRef<Attribute> attrs) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_72(mht_72_v, 2477, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "BroadcastOp::fold");
+
   auto type = getType().cast<RankedTensorType>();
   auto sizesType = broadcast_sizes().getType();
   if (sizesType.getNumElements() == 0) {
@@ -2122,6 +2509,9 @@ OpFoldResult BroadcastOp::fold(ArrayRef<Attribute> attrs) {
 LogicalResult BroadcastOp::reifyReturnTypeShapes(
     OpBuilder& builder, ValueRange operands,
     SmallVectorImpl<Value>& reifiedReturnShapes) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_73(mht_73_v, 2512, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "BroadcastOp::reifyReturnTypeShapes");
+
   BroadcastOp::Adaptor adaptor(operands);
   Value operand = adaptor.operand();
 
@@ -2158,6 +2548,9 @@ LogicalResult BroadcastOp::reifyReturnTypeShapes(
 //===----------------------------------------------------------------------===//
 
 LogicalResult BroadcastInDimOp::verify() {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_74(mht_74_v, 2551, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "BroadcastInDimOp::verify");
+
   auto operandType = operand().getType().dyn_cast<RankedTensorType>();
   if (!operandType) {
     // The following verification checks all depend on knowing the rank of
@@ -2224,6 +2617,9 @@ LogicalResult BroadcastInDimOp::verify() {
 }
 
 OpFoldResult BroadcastInDimOp::fold(ArrayRef<Attribute> attrs) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_75(mht_75_v, 2620, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "BroadcastInDimOp::fold");
+
   auto type = getType().cast<RankedTensorType>();
   if (type == getOperand().getType()) {
     auto broadcast_values = broadcast_dimensions().getValues<int64_t>();
@@ -2265,6 +2661,9 @@ class BroadcastInDimSimplifier : public OpRewritePattern<BroadcastInDimOp> {
   using OpRewritePattern<BroadcastInDimOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(BroadcastInDimOp op,
                                 PatternRewriter& rewriter) const override {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_76(mht_76_v, 2664, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "matchAndRewrite");
+
     auto operand_type = op.operand().getType().dyn_cast<RankedTensorType>();
     auto result_type = op.getResult().getType().dyn_cast<RankedTensorType>();
     if (!operand_type || !result_type) {
@@ -2309,6 +2708,9 @@ class BroadcastInDimSimplifier : public OpRewritePattern<BroadcastInDimOp> {
 
 void BroadcastInDimOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                                    MLIRContext* context) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_77(mht_77_v, 2711, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "BroadcastInDimOp::getCanonicalizationPatterns");
+
   results.add<BroadcastInDimSimplifier>(context);
 }
 
@@ -2317,6 +2719,9 @@ void BroadcastInDimOp::getCanonicalizationPatterns(RewritePatternSet& results,
 //===----------------------------------------------------------------------===//
 
 LogicalResult DynamicBroadcastInDimOp::verify() {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_78(mht_78_v, 2722, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "DynamicBroadcastInDimOp::verify");
+
   auto operandType = operand().getType().dyn_cast<RankedTensorType>();
   auto resultType = getResult().getType().dyn_cast<RankedTensorType>();
 
@@ -2395,6 +2800,9 @@ class DynamicBroadcastInDimOpNotActuallyDynamic
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(DynamicBroadcastInDimOp op,
                                 PatternRewriter& rewriter) const override {
+   std::vector<std::string> mht_79_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_79(mht_79_v, 2803, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "matchAndRewrite");
+
     auto type = op.getType().dyn_cast<RankedTensorType>();
     auto operandType = op.operand().getType().dyn_cast<RankedTensorType>();
     if (!type || !type.hasStaticShape() || !operandType ||
@@ -2412,6 +2820,9 @@ class ChainedDynamicBroadcastInDimCanonicalization
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(DynamicBroadcastInDimOp bcast,
                                 PatternRewriter& rewriter) const override {
+   std::vector<std::string> mht_80_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_80(mht_80_v, 2823, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "matchAndRewrite");
+
     auto preceding_bcast =
         bcast.operand().getDefiningOp<DynamicBroadcastInDimOp>();
     if (!preceding_bcast) return failure();
@@ -2438,6 +2849,9 @@ class ChainedDynamicBroadcastInDimCanonicalization
 
 void DynamicBroadcastInDimOp::getCanonicalizationPatterns(
     RewritePatternSet& results, MLIRContext* context) {
+   std::vector<std::string> mht_81_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_81(mht_81_v, 2852, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "DynamicBroadcastInDimOp::getCanonicalizationPatterns");
+
   results.add<ChainedDynamicBroadcastInDimCanonicalization,
               DynamicBroadcastInDimOpNotActuallyDynamic,
               DynamicBroadcastToOwnShape_1, DynamicBroadcastToOwnShape_2,
@@ -2448,6 +2862,9 @@ void DynamicBroadcastInDimOp::getCanonicalizationPatterns(
 LogicalResult DynamicBroadcastInDimOp::reifyReturnTypeShapes(
     OpBuilder& builder, ValueRange operands,
     SmallVectorImpl<Value>& reifiedReturnShapes) {
+   std::vector<std::string> mht_82_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_82(mht_82_v, 2865, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "DynamicBroadcastInDimOp::reifyReturnTypeShapes");
+
   DynamicBroadcastInDimOp::Adaptor adaptor(operands);
   reifiedReturnShapes.push_back(
       castToIndexTensor(builder, getLoc(), adaptor.output_dimensions()));
@@ -2459,6 +2876,9 @@ LogicalResult DynamicBroadcastInDimOp::reifyReturnTypeShapes(
 //===----------------------------------------------------------------------===//
 
 LogicalResult ClampOp::verify() {
+   std::vector<std::string> mht_83_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_83(mht_83_v, 2879, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ClampOp::verify");
+
   auto operandType = operand().getType().cast<RankedTensorType>();
   auto operandShape = operandType.getShape();
   auto minType = min().getType().cast<RankedTensorType>();
@@ -2486,6 +2906,9 @@ LogicalResult ClampOp::verify() {
 LogicalResult ClampOp::reifyReturnTypeShapes(
     OpBuilder& builder, ValueRange operands,
     SmallVectorImpl<Value>& reifiedReturnShapes) {
+   std::vector<std::string> mht_84_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_84(mht_84_v, 2909, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ClampOp::reifyReturnTypeShapes");
+
   // For `mhlo.clamp`, the first operand may be a scalar.
   return deriveShapeFromOperand(&builder, getOperation(), operands[1],
                                 &reifiedReturnShapes);
@@ -2498,6 +2921,9 @@ LogicalResult ClampOp::reifyReturnTypeShapes(
 LogicalResult ComplexOp::inferReturnTypes(
     MLIRContext*, Optional<Location>, ValueRange operands, DictionaryAttr,
     RegionRange, SmallVectorImpl<Type>& inferredReturnTypes) {
+   std::vector<std::string> mht_85_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_85(mht_85_v, 2924, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ComplexOp::inferReturnTypes");
+
   auto type = operands[0].getType();
   auto element_ty = ComplexType::get(getElementTypeOrSelf(type));
   Type result_ty;
@@ -2513,6 +2939,9 @@ LogicalResult ComplexOp::inferReturnTypes(
 }
 
 OpFoldResult ComplexOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_86_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_86(mht_86_v, 2942, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ComplexOp::fold");
+
   auto real_op = getOperand(0).getDefiningOp<mhlo::RealOp>();
   auto imag_op = getOperand(1).getDefiningOp<mhlo::ImagOp>();
   if (real_op && imag_op && real_op.getOperand() == imag_op.getOperand()) {
@@ -2528,6 +2957,9 @@ OpFoldResult ComplexOp::fold(ArrayRef<Attribute> operands) {
 
 namespace {
 Type CreateRealType(Type type) {
+   std::vector<std::string> mht_87_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_87(mht_87_v, 2960, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "CreateRealType");
+
   auto element_ty = getElementTypeOrSelf(type);
   if (auto complex_ty = element_ty.dyn_cast<ComplexType>()) {
     element_ty = complex_ty.getElementType();
@@ -2547,11 +2979,17 @@ Type CreateRealType(Type type) {
 LogicalResult ImagOp::inferReturnTypes(
     MLIRContext*, Optional<Location>, ValueRange operands, DictionaryAttr,
     RegionRange, SmallVectorImpl<Type>& inferredReturnTypes) {
+   std::vector<std::string> mht_88_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_88(mht_88_v, 2982, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ImagOp::inferReturnTypes");
+
   inferredReturnTypes.push_back(CreateRealType(operands[0].getType()));
   return success();
 }
 
 OpFoldResult ImagOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_89_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_89(mht_89_v, 2990, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ImagOp::fold");
+
   if (auto complex_op = getOperand().getDefiningOp<mhlo::ComplexOp>()) {
     return complex_op.getOperand(1);
   }
@@ -2564,6 +3002,9 @@ OpFoldResult ImagOp::fold(ArrayRef<Attribute> operands) {
 //===----------------------------------------------------------------------===//
 
 TensorType getSameShapeTensorType(TensorType tensor_type, Type element_type) {
+   std::vector<std::string> mht_90_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_90(mht_90_v, 3005, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "getSameShapeTensorType");
+
   if (auto ranked_tensor_ty = tensor_type.dyn_cast<RankedTensorType>()) {
     return RankedTensorType::get(ranked_tensor_ty.getShape(), element_type);
   }
@@ -2576,6 +3017,9 @@ TensorType getSameShapeTensorType(TensorType tensor_type, Type element_type) {
 LogicalResult IsFiniteOp::inferReturnTypes(
     MLIRContext* ctx, Optional<Location>, ValueRange operands, DictionaryAttr,
     RegionRange, SmallVectorImpl<Type>& inferredReturnTypes) {
+   std::vector<std::string> mht_91_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_91(mht_91_v, 3020, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "IsFiniteOp::inferReturnTypes");
+
   auto arg_ty = operands.front().getType().cast<TensorType>();
   Builder b(ctx);
   inferredReturnTypes.push_back(getSameShapeTensorType(arg_ty, b.getI1Type()));
@@ -2589,11 +3033,17 @@ LogicalResult IsFiniteOp::inferReturnTypes(
 LogicalResult RealOp::inferReturnTypes(
     MLIRContext*, Optional<Location>, ValueRange operands, DictionaryAttr,
     RegionRange, SmallVectorImpl<Type>& inferredReturnTypes) {
+   std::vector<std::string> mht_92_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_92(mht_92_v, 3036, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "RealOp::inferReturnTypes");
+
   inferredReturnTypes.push_back(CreateRealType(operands[0].getType()));
   return success();
 }
 
 OpFoldResult RealOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_93_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_93(mht_93_v, 3044, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "RealOp::fold");
+
   if (auto complex_op = getOperand().getDefiningOp<mhlo::ComplexOp>()) {
     return complex_op.getOperand(0);
   }
@@ -2611,6 +3061,9 @@ class ConcatenateOperandRemoval : public OpRewritePattern<ConcatenateOp> {
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(ConcatenateOp op,
                                 PatternRewriter& rewriter) const override {
+   std::vector<std::string> mht_94_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_94(mht_94_v, 3064, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "matchAndRewrite");
+
     auto axis = op.dimension();
     llvm::SmallVector<Value, 6> new_operands;
     for (auto operand : op.getOperands()) {
@@ -2634,6 +3087,9 @@ class ConcatenateForwarding : public OpRewritePattern<ConcatenateOp> {
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(ConcatenateOp op,
                                 PatternRewriter& rewriter) const override {
+   std::vector<std::string> mht_95_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_95(mht_95_v, 3090, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "matchAndRewrite");
+
     auto getFlattenedOperands = [&](const Value& val) -> ValueRange {
       auto definingOp = dyn_cast_or_null<ConcatenateOp>(val.getDefiningOp());
       // To avoid inflate the memory footprint, only flatten the ConcatenateOp
@@ -2674,6 +3130,9 @@ LogicalResult ConcatenateOp::inferReturnTypes(
     MLIRContext*, Optional<Location> location, ValueRange operands,
     DictionaryAttr attributes, RegionRange regions,
     SmallVectorImpl<Type>& inferredReturnTypes) {
+   std::vector<std::string> mht_96_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_96(mht_96_v, 3133, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ConcatenateOp::inferReturnTypes");
+
   if (operands.empty()) {
     return failure();
   }
@@ -2752,12 +3211,18 @@ LogicalResult ConcatenateOp::inferReturnTypes(
 
 void ConcatenateOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                                 MLIRContext* context) {
+   std::vector<std::string> mht_97_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_97(mht_97_v, 3214, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ConcatenateOp::getCanonicalizationPatterns");
+
   results.add<ConcatenateOperandRemoval, ConcatenateForwarding>(context);
 }
 
 template <typename T>
 static Attribute foldConcatenateHelper(ConcatenateOp* op,
                                        ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_98_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_98(mht_98_v, 3223, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "foldConcatenateHelper");
+
   auto axis = op->dimension();
   auto type = op->getType().cast<ShapedType>();
 
@@ -2783,6 +3248,9 @@ static Attribute foldConcatenateHelper(ConcatenateOp* op,
 
 static Attribute foldConcatenate(ConcatenateOp* op,
                                  ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_99_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_99(mht_99_v, 3251, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "foldConcatenate");
+
   for (auto operand : operands) {
     if (!operand) return {};
   }
@@ -2801,6 +3269,9 @@ static Attribute foldConcatenate(ConcatenateOp* op,
 }
 
 OpFoldResult ConcatenateOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_100_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_100(mht_100_v, 3272, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ConcatenateOp::fold");
+
   if (getNumOperands() == 1) return getOperand(0);
 
   ShapedType type = getResult().getType().cast<ShapedType>();
@@ -2823,6 +3294,9 @@ OpFoldResult ConcatenateOp::fold(ArrayRef<Attribute> operands) {
 }
 
 LogicalResult ConcatenateOp::verify() {
+   std::vector<std::string> mht_101_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_101(mht_101_v, 3297, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ConcatenateOp::verify");
+
   Type element_type = getElementTypeOrSelf(getOperand(0).getType());
   RankedTensorType first_ranked_type;
   int num_operands = getNumOperands();
@@ -2865,6 +3339,9 @@ LogicalResult ConcatenateOp::verify() {
 LogicalResult ConcatenateOp::reifyReturnTypeShapes(
     OpBuilder& builder, ValueRange operands,
     SmallVectorImpl<Value>& reifiedReturnShapes) {
+   std::vector<std::string> mht_102_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_102(mht_102_v, 3342, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ConcatenateOp::reifyReturnTypeShapes");
+
   ConcatenateOp::Adaptor adaptor(operands);
   auto inputs = adaptor.val();
 
@@ -2875,6 +3352,9 @@ LogicalResult ConcatenateOp::reifyReturnTypeShapes(
   Location loc = this->getLoc();
   Type shape_scalar_type = builder.getIndexType();
   auto to_shape_scalar_type = [&](Value v) {
+   std::vector<std::string> mht_103_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_103(mht_103_v, 3355, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+
     return MaybeCastTo(builder, loc, v, shape_scalar_type);
   };
 
@@ -2921,6 +3401,9 @@ LogicalResult ConcatenateOp::reifyReturnTypeShapes(
 //===----------------------------------------------------------------------===//
 
 LogicalResult DynamicReshapeOp::verify() {
+   std::vector<std::string> mht_104_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_104(mht_104_v, 3404, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "DynamicReshapeOp::verify");
+
   auto result_type = result().getType().dyn_cast<RankedTensorType>();
   auto output_shape_type =
       output_shape().getType().dyn_cast<RankedTensorType>();
@@ -2935,6 +3418,9 @@ LogicalResult DynamicReshapeOp::verify() {
 LogicalResult DynamicReshapeOp::reifyReturnTypeShapes(
     OpBuilder& builder, ValueRange operands,
     SmallVectorImpl<Value>& reifiedReturnShapes) {
+   std::vector<std::string> mht_105_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_105(mht_105_v, 3421, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "DynamicReshapeOp::reifyReturnTypeShapes");
+
   DynamicReshapeOp::Adaptor adaptor(operands);
   reifiedReturnShapes.push_back(
       castToIndexTensor(builder, getLoc(), adaptor.output_shape()));
@@ -2948,6 +3434,9 @@ class DynamicReshapeOpNotActuallyDynamic
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(DynamicReshapeOp op,
                                 PatternRewriter& rewriter) const override {
+   std::vector<std::string> mht_106_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_106(mht_106_v, 3437, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "matchAndRewrite");
+
     auto type = op.result().getType().dyn_cast<RankedTensorType>();
     if (!type || !type.hasStaticShape()) {
       return rewriter.notifyMatchFailure(op, "requires static shape tensor");
@@ -2975,6 +3464,9 @@ class RemoveRedundantRank1DynamicReshape
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(DynamicReshapeOp op,
                                 PatternRewriter& rewriter) const override {
+   std::vector<std::string> mht_107_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_107(mht_107_v, 3467, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "matchAndRewrite");
+
     auto type = op.result().getType().dyn_cast<RankedTensorType>();
     if (!type || type.getRank() != 1 || type.hasStaticShape()) {
       return rewriter.notifyMatchFailure(
@@ -3009,6 +3501,9 @@ class DynamicReshapeOpSameShapeOpResult
 
   LogicalResult matchAndRewrite(DynamicReshapeOp op,
                                 PatternRewriter& rewriter) const override {
+   std::vector<std::string> mht_108_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_108(mht_108_v, 3504, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "matchAndRewrite");
+
     Operation* def_op = op.operand().getDefiningOp();
     if (!def_op ||
         !def_op->hasTrait<mlir::OpTrait::SameOperandsAndResultShape>()) {
@@ -3030,6 +3525,9 @@ class DynamicReshapeOpSameShapeOpResult
 
 void DynamicReshapeOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                                    MLIRContext* context) {
+   std::vector<std::string> mht_109_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_109(mht_109_v, 3528, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "DynamicReshapeOp::getCanonicalizationPatterns");
+
   // clang-format off
   results.add<
       DynamicReshapeOpNotActuallyDynamic,
@@ -3055,6 +3553,9 @@ struct DynamicSliceToSlice : public OpRewritePattern<DynamicSliceOp> {
 
   LogicalResult matchAndRewrite(DynamicSliceOp dynamic_slice,
                                 PatternRewriter& rewriter) const override {
+   std::vector<std::string> mht_110_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_110(mht_110_v, 3556, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "matchAndRewrite");
+
     Value input = dynamic_slice.operand();
     auto input_tensor = input.getType().dyn_cast<RankedTensorType>();
     if (!input_tensor || !input_tensor.hasStaticShape()) return failure();
@@ -3097,11 +3598,17 @@ struct DynamicSliceToSlice : public OpRewritePattern<DynamicSliceOp> {
 
 void DynamicSliceOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                                  MLIRContext* context) {
+   std::vector<std::string> mht_111_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_111(mht_111_v, 3601, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "DynamicSliceOp::getCanonicalizationPatterns");
+
   results.add<DynamicSliceToSlice>(context);
 }
 
 // Verifies that the number of slice sizes and the number of start indices match
 LogicalResult DynamicSliceOp::verify() {
+   std::vector<std::string> mht_112_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_112(mht_112_v, 3609, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "DynamicSliceOp::verify");
+
   int num_slice_sizes = slice_sizes().getNumElements();
   int num_start_indices = start_indices().size();
   if (num_start_indices != num_slice_sizes) {
@@ -3117,6 +3624,9 @@ LogicalResult DynamicSliceOp::verify() {
 //===----------------------------------------------------------------------===//
 // Verifies that operand rank matches start_indices/limit_indices/strides size
 LogicalResult RealDynamicSliceOp::verify() {
+   std::vector<std::string> mht_113_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_113(mht_113_v, 3627, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "RealDynamicSliceOp::verify");
+
   auto input_type = operand().getType().dyn_cast<RankedTensorType>();
   // If operand is unranked, there is very little to verify statically.
   if (!input_type) return success();
@@ -3156,6 +3666,9 @@ struct RealDynamicSliceIsStatic : public OpRewritePattern<RealDynamicSliceOp> {
 
   LogicalResult matchAndRewrite(RealDynamicSliceOp real_dynamic_slice,
                                 PatternRewriter& rewriter) const override {
+   std::vector<std::string> mht_114_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_114(mht_114_v, 3669, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "matchAndRewrite");
+
     Location loc = real_dynamic_slice.getLoc();
     Value input = real_dynamic_slice.operand();
     Value output = real_dynamic_slice.result();
@@ -3212,12 +3725,18 @@ struct RealDynamicSliceIsStatic : public OpRewritePattern<RealDynamicSliceOp> {
 
 void RealDynamicSliceOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                                      MLIRContext* context) {
+   std::vector<std::string> mht_115_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_115(mht_115_v, 3728, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "RealDynamicSliceOp::getCanonicalizationPatterns");
+
   results.add<RealDynamicSliceIsStatic, RealDSliceToSlice>(context);
 }
 
 LogicalResult RealDynamicSliceOp::reifyReturnTypeShapes(
     OpBuilder& builder, ValueRange operands,
     SmallVectorImpl<Value>& reifiedReturnShapes) {
+   std::vector<std::string> mht_116_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_116(mht_116_v, 3737, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "RealDynamicSliceOp::reifyReturnTypeShapes");
+
   RealDynamicSliceOp::Adaptor adaptor(operands);
   Value operand = adaptor.operand();
   Value start_indices = adaptor.start_indices();
@@ -3270,6 +3789,9 @@ LogicalResult RealDynamicSliceOp::reifyReturnTypeShapes(
 // Checks that the result type is of the form `zero_or_more_type(s),
 // mhlo::token`
 LogicalResult InfeedOp::verify() {
+   std::vector<std::string> mht_117_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_117(mht_117_v, 3792, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "InfeedOp::verify");
+
   auto result_types = getResultTypes();
   if (result_types.empty())
     return emitOpError()
@@ -3324,6 +3846,9 @@ LogicalResult InfeedOp::verify() {
 //===----------------------------------------------------------------------===//
 
 OpFoldResult AndOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_118_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_118(mht_118_v, 3849, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "AndOp::fold");
+
   if (lhs() == rhs()) return lhs();
 
   auto rType = getType().cast<ShapedType>();
@@ -3363,6 +3888,9 @@ OpFoldResult AndOp::fold(ArrayRef<Attribute> operands) {
 }
 
 OpFoldResult OrOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_119_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_119(mht_119_v, 3891, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "OrOp::fold");
+
   if (lhs() == rhs()) return lhs();
 
   auto rType = getType().cast<ShapedType>();
@@ -3402,6 +3930,9 @@ OpFoldResult OrOp::fold(ArrayRef<Attribute> operands) {
 }
 
 OpFoldResult XorOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_120_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_120(mht_120_v, 3933, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "XorOp::fold");
+
   // Fold x^x to 0. Attributes only support static shapes.
   auto rType = getType().cast<ShapedType>();
   if (lhs() == rhs() && rType.hasStaticShape()) {
@@ -3441,6 +3972,9 @@ OpFoldResult XorOp::fold(ArrayRef<Attribute> operands) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult MapOp::verify() {
+   std::vector<std::string> mht_121_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_121(mht_121_v, 3975, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "MapOp::verify");
+
   // Checks if the number of `operands` match the arity of the map `computation`
   // region.
   auto& computation_block = computation().front();
@@ -3519,6 +4053,9 @@ LogicalResult MapOp::verify() {
 }
 
 OpFoldResult MapOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_122_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_122(mht_122_v, 4056, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "MapOp::fold");
+
   mlir::Block& bb = computation().front();
   mlir::Operation& front_op = bb.front();
 
@@ -3539,6 +4076,9 @@ OpFoldResult MapOp::fold(ArrayRef<Attribute> operands) {
 // Checks that the result type is of the form `zero_or_more_type(s),
 // mhlo::token`
 LogicalResult RecvOp::verify() {
+   std::vector<std::string> mht_123_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_123(mht_123_v, 4079, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "RecvOp::verify");
+
   auto result_types = getResultTypes();
   if (result_types.empty())
     return emitOpError()
@@ -3555,7 +4095,10 @@ LogicalResult RecvOp::verify() {
 // CopyOp
 //===----------------------------------------------------------------------===//
 
-OpFoldResult CopyOp::fold(ArrayRef<Attribute> operands) { return getOperand(); }
+OpFoldResult CopyOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_124_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_124(mht_124_v, 4099, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "CopyOp::fold");
+ return getOperand(); }
 
 //===----------------------------------------------------------------------===//
 // ReduceWindowOp
@@ -3592,6 +4135,9 @@ SmallVector<TensorType> inferReduceWindowOpReturnType(
 //  P5. Verify the inner block defining the reducer function.
 //  P6. Verify the return type.
 LogicalResult ReduceWindowOp::verify() {
+   std::vector<std::string> mht_125_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_125(mht_125_v, 4138, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ReduceWindowOp::verify");
+
   // P1.
   // Note that the ODS ensures that there are even number of operands; Check if
   // that number is not zero.
@@ -3700,6 +4246,9 @@ LogicalResult ReduceWindowOp::verify() {
 // expected to be a binary operation that consumes `result_index`th and
 // `result_index + operands().size`th arguments of the body.
 Operation* ReduceWindowOp::getReductionOp(int result_index) {
+   std::vector<std::string> mht_126_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_126(mht_126_v, 4249, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ReduceWindowOp::getReductionOp");
+
   auto return_op = cast<ReturnOp>(body().front().getTerminator());
   Operation* compute_op = return_op.results()[result_index].getDefiningOp();
   if (compute_op->getNumOperands() != 2) return nullptr;
@@ -3727,6 +4276,9 @@ Operation* ReduceWindowOp::getReductionOp(int result_index) {
 // We intend to verify the following properties
 //  P2. exponent_bits >= 1
 LogicalResult ReducePrecisionOp::verify() {
+   std::vector<std::string> mht_127_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_127(mht_127_v, 4279, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ReducePrecisionOp::verify");
+
   if (exponent_bits() < 1) {
     return emitOpError() << "exponent_bits must be at least 1.";
   }
@@ -3738,6 +4290,9 @@ LogicalResult ReducePrecisionOp::verify() {
 //===----------------------------------------------------------------------===//
 
 OpFoldResult ReverseOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_128_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_128(mht_128_v, 4293, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ReverseOp::fold");
+
   auto input = operand();
 
   // No dimensions to reverse.
@@ -3765,6 +4320,9 @@ OpFoldResult ReverseOp::fold(ArrayRef<Attribute> operands) {
 static TensorType GetReduceResultType(Type operand_ty,
                                       DenseIntElementsAttr dimensions,
                                       Builder* builder) {
+   std::vector<std::string> mht_129_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_129(mht_129_v, 4323, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "GetReduceResultType");
+
   Type element_ty = getElementTypeOrSelf(operand_ty);
 
   auto ranked_ty = operand_ty.dyn_cast<RankedTensorType>();
@@ -3785,6 +4343,9 @@ static TensorType GetReduceResultType(Type operand_ty,
 void ReduceOp::build(OpBuilder& builder, OperationState& state,
                      ValueRange inputs, ValueRange init_values,
                      DenseIntElementsAttr dimensions) {
+   std::vector<std::string> mht_130_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_130(mht_130_v, 4346, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ReduceOp::build");
+
   SmallVector<Type, 1> result_ty;
   result_ty.reserve(inputs.size());
 
@@ -3797,6 +4358,9 @@ void ReduceOp::build(OpBuilder& builder, OperationState& state,
 
 LogicalResult ReduceOp::fold(ArrayRef<Attribute> operands,
                              SmallVectorImpl<OpFoldResult>& results) {
+   std::vector<std::string> mht_131_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_131(mht_131_v, 4361, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ReduceOp::fold");
+
   // No dimensions to reduce.
   if (dimensions().getNumElements() == 0) {
     for (Value input : this->inputs()) {
@@ -3840,6 +4404,9 @@ LogicalResult ReduceOp::fold(ArrayRef<Attribute> operands,
 // E6. The single operation result is perfectly forwarded to the reduce op
 //     return.
 static bool isEligibleForCompactPrint(ReduceOp op) {
+   std::vector<std::string> mht_132_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_132(mht_132_v, 4407, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "isEligibleForCompactPrint");
+
   // Check E1.
   auto& block = op.body().front();
   if (!hasSingleElement(block.without_terminator())) return false;
@@ -3882,6 +4449,9 @@ static bool isEligibleForCompactPrint(ReduceOp op) {
 }
 
 void ReduceOp::print(OpAsmPrinter& p) {
+   std::vector<std::string> mht_133_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_133(mht_133_v, 4452, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ReduceOp::print");
+
   {
     // Print the pairs of operands under the form:
     //   (%arg0 init: %arg3), (%arg1 init: %arg4), (%arg2 init: %arg5)
@@ -3937,6 +4507,9 @@ void ReduceOp::print(OpAsmPrinter& p) {
 }
 
 ParseResult ReduceOp::parse(OpAsmParser& parser, OperationState& result) {
+   std::vector<std::string> mht_134_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_134(mht_134_v, 4510, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ReduceOp::parse");
+
   llvm::SMLoc loc = parser.getCurrentLocation();
   Location currLocation = parser.getEncodedSourceLoc(loc);
 
@@ -4123,6 +4696,9 @@ ParseResult ReduceOp::parse(OpAsmParser& parser, OperationState& result) {
 }
 
 LogicalResult ReduceOp::verify() {
+   std::vector<std::string> mht_135_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_135(mht_135_v, 4699, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ReduceOp::verify");
+
   // Check that there are even number of operands and >= 2.
   if (getNumOperands() % 2 != 0 || getOperands().empty())
     return emitOpError() << "expects the size of operands to be even and >= 2";
@@ -4251,6 +4827,9 @@ struct LowerBoolSplatConstantsIntoRegion : public OpRewritePattern<ReduceOp> {
 
   LogicalResult matchAndRewrite(ReduceOp op,
                                 PatternRewriter& rewriter) const override {
+   std::vector<std::string> mht_136_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_136(mht_136_v, 4830, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "matchAndRewrite");
+
     mlir::Block& bb = op.body().front();
 
     // Ensure only a compute op and return op exist and the
@@ -4292,12 +4871,18 @@ struct LowerBoolSplatConstantsIntoRegion : public OpRewritePattern<ReduceOp> {
 
 void ReduceOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                            MLIRContext* context) {
+   std::vector<std::string> mht_137_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_137(mht_137_v, 4874, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ReduceOp::getCanonicalizationPatterns");
+
   results.add<LowerBoolSplatConstantsIntoRegion>(context);
 }
 
 LogicalResult ReduceOp::reifyReturnTypeShapes(
     OpBuilder& builder, ValueRange operands,
     SmallVectorImpl<Value>& reifiedReturnShapes) {
+   std::vector<std::string> mht_138_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_138(mht_138_v, 4883, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ReduceOp::reifyReturnTypeShapes");
+
   ReduceOp::Adaptor adaptor(operands);
   auto inputs = adaptor.inputs();
 
@@ -4311,6 +4896,9 @@ LogicalResult ReduceOp::reifyReturnTypeShapes(
   shape_values.reserve(operand_type.getRank());
   Type shape_scalar_type = builder.getIndexType();
   auto to_shape_scalar_type = [&](Value v) {
+   std::vector<std::string> mht_139_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_139(mht_139_v, 4899, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+
     return MaybeCastTo(builder, loc, v, shape_scalar_type);
   };
 
@@ -4343,6 +4931,9 @@ LogicalResult ReduceOp::reifyReturnTypeShapes(
 
 // Verify that input state has the same shape as output shape
 LogicalResult RngBitGeneratorOp::verify() {
+   std::vector<std::string> mht_140_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_140(mht_140_v, 4934, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "RngBitGeneratorOp::verify");
+
   auto initial_shape = initial_state().getType().dyn_cast<RankedTensorType>();
   auto output_shape = output_state().getType().dyn_cast<RankedTensorType>();
   if (initial_shape.getShape() != output_shape.getShape())
@@ -4360,6 +4951,9 @@ LogicalResult RngNormalOp::inferReturnTypeComponents(
     MLIRContext* context, Optional<Location> location, ValueShapeRange operands,
     DictionaryAttr attributes, RegionRange regions,
     SmallVectorImpl<ShapedTypeComponents>& inferredReturnShapes) {
+   std::vector<std::string> mht_141_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_141(mht_141_v, 4954, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "RngNormalOp::inferReturnTypeComponents");
+
   return rngInferReturnTypeComponents(context, location, operands, attributes,
                                       regions, inferredReturnShapes);
 }
@@ -4367,6 +4961,9 @@ LogicalResult RngNormalOp::inferReturnTypeComponents(
 LogicalResult RngNormalOp::reifyReturnTypeShapes(
     OpBuilder& builder, ValueRange operands,
     SmallVectorImpl<Value>& reifiedReturnShapes) {
+   std::vector<std::string> mht_142_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_142(mht_142_v, 4964, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "RngNormalOp::reifyReturnTypeShapes");
+
   RngNormalOp::Adaptor adaptor(operands);
   reifiedReturnShapes.push_back(
       castToIndexTensor(builder, getLoc(), adaptor.shape()));
@@ -4381,6 +4978,9 @@ LogicalResult RngUniformOp::inferReturnTypeComponents(
     MLIRContext* context, Optional<Location> location, ValueShapeRange operands,
     DictionaryAttr attributes, RegionRange regions,
     SmallVectorImpl<ShapedTypeComponents>& inferredReturnShapes) {
+   std::vector<std::string> mht_143_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_143(mht_143_v, 4981, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "RngUniformOp::inferReturnTypeComponents");
+
   return rngInferReturnTypeComponents(context, location, operands, attributes,
                                       regions, inferredReturnShapes);
 }
@@ -4388,6 +4988,9 @@ LogicalResult RngUniformOp::inferReturnTypeComponents(
 LogicalResult RngUniformOp::reifyReturnTypeShapes(
     OpBuilder& builder, ValueRange operands,
     SmallVectorImpl<Value>& reifiedReturnShapes) {
+   std::vector<std::string> mht_144_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_144(mht_144_v, 4991, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "RngUniformOp::reifyReturnTypeShapes");
+
   RngUniformOp::Adaptor adaptor(operands);
   reifiedReturnShapes.push_back(
       castToIndexTensor(builder, getLoc(), adaptor.shape()));
@@ -4399,6 +5002,9 @@ LogicalResult RngUniformOp::reifyReturnTypeShapes(
 //===----------------------------------------------------------------------===//
 
 LogicalResult XlaRngGetAndUpdateStateOp::verify() {
+   std::vector<std::string> mht_145_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_145(mht_145_v, 5005, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "XlaRngGetAndUpdateStateOp::verify");
+
   auto result_ty = getType().cast<RankedTensorType>();
   if (!result_ty) return emitOpError() << "Output is not ranked.";
   if (!result_ty.hasStaticShape())
@@ -4416,6 +5022,9 @@ LogicalResult XlaRngGetAndUpdateStateOp::verify() {
 LogicalResult XlaRngGetAndUpdateStateOp::inferReturnTypes(
     MLIRContext* ctx, Optional<Location>, ValueRange, DictionaryAttr,
     RegionRange, SmallVectorImpl<Type>& inferredReturnTypes) {
+   std::vector<std::string> mht_146_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_146(mht_146_v, 5025, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "XlaRngGetAndUpdateStateOp::inferReturnTypes");
+
   inferredReturnTypes.push_back(mlir::RankedTensorType::get(
       {2}, mlir::IntegerType::get(ctx, 64, IntegerType::Unsigned)));
   return success();
@@ -4426,6 +5035,9 @@ LogicalResult XlaRngGetAndUpdateStateOp::inferReturnTypes(
 //===----------------------------------------------------------------------===//
 
 LogicalResult SelectOp::verify() {
+   std::vector<std::string> mht_147_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_147(mht_147_v, 5038, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "SelectOp::verify");
+
   // Either, all operands could be the same shape ...
   if (succeeded(verifyCompatibleShapes(getOperandTypes()))) return success();
 
@@ -4442,6 +5054,9 @@ LogicalResult SelectOp::verify() {
 }
 
 OpFoldResult SelectOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_148_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_148(mht_148_v, 5057, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "SelectOp::fold");
+
   if (on_true() == on_false()) {
     return on_true();
   }
@@ -4468,6 +5083,9 @@ OpFoldResult SelectOp::fold(ArrayRef<Attribute> operands) {
 // false_value, true_value)
 static LogicalResult selectCanonicalization(SelectOp selectOp,
                                             PatternRewriter& rewriter) {
+   std::vector<std::string> mht_149_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_149(mht_149_v, 5086, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "selectCanonicalization");
+
   auto notOp = selectOp.pred().getDefiningOp<NotOp>();
   if (!notOp) {
     return failure();
@@ -4481,6 +5099,9 @@ static LogicalResult selectCanonicalization(SelectOp selectOp,
 
 void SelectOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                            MLIRContext* /*context*/) {
+   std::vector<std::string> mht_150_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_150(mht_150_v, 5102, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "SelectOp::getCanonicalizationPatterns");
+
   results.add(&selectCanonicalization);
 }
 
@@ -4490,6 +5111,9 @@ LogicalResult SelectOp::inferReturnTypeComponents(
     MLIRContext*, Optional<Location> location, ValueShapeRange operands,
     DictionaryAttr attributes, RegionRange,
     SmallVectorImpl<ShapedTypeComponents>& inferredReturnShapes) {
+   std::vector<std::string> mht_151_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_151(mht_151_v, 5114, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "SelectOp::inferReturnTypeComponents");
+
   SelectOp::Adaptor op(operands, attributes);
   auto true_type = op.on_true().getType().cast<TensorType>();
   auto false_type = op.on_true().getType().cast<TensorType>();
@@ -4530,6 +5154,9 @@ LogicalResult SelectOp::inferReturnTypeComponents(
 LogicalResult SelectOp::reifyReturnTypeShapes(
     OpBuilder& builder, ValueRange operands,
     SmallVectorImpl<Value>& reifiedReturnShapes) {
+   std::vector<std::string> mht_152_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_152(mht_152_v, 5157, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "SelectOp::reifyReturnTypeShapes");
+
   // For `hlo.select`, the first operand may be a scalar.
   return deriveShapeFromOperand(&builder, getOperation(), operands[1],
                                 &reifiedReturnShapes);
@@ -4540,6 +5167,9 @@ LogicalResult SelectOp::reifyReturnTypeShapes(
 //===----------------------------------------------------------------------===//
 
 LogicalResult SetDimensionSizeOp::verify() {
+   std::vector<std::string> mht_153_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_153(mht_153_v, 5170, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "SetDimensionSizeOp::verify");
+
   if (auto size = this->size().getType().dyn_cast<RankedTensorType>()) {
     if (size.getRank() != 0)
       return emitOpError() << "size operand should be of rank-0";
@@ -4549,6 +5179,9 @@ LogicalResult SetDimensionSizeOp::verify() {
 }
 
 OpFoldResult SetDimensionSizeOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_154_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_154(mht_154_v, 5182, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "SetDimensionSizeOp::fold");
+
   DenseElementsAttr input = operands[0].dyn_cast_or_null<DenseElementsAttr>();
   if (input) return input;
 
@@ -4568,6 +5201,9 @@ OpFoldResult SetDimensionSizeOp::fold(ArrayRef<Attribute> operands) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult PadOp::verify() {
+   std::vector<std::string> mht_155_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_155(mht_155_v, 5204, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "PadOp::verify");
+
   auto input_type = operand().getType().cast<RankedTensorType>();
   auto pad_type = padding_value().getType().cast<RankedTensorType>();
 
@@ -4627,15 +5263,24 @@ LogicalResult PadOp::verify() {
 }
 
 OpFoldResult PadOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_156_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_156(mht_156_v, 5266, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "PadOp::fold");
+
   // If all padding is zero then it is an identity pad.
-  auto is_zero = [](const APInt& i) { return i == 0; };
+  auto is_zero = [](const APInt& i) {
+   std::vector<std::string> mht_157_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_157(mht_157_v, 5271, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+ return i == 0; };
   if (llvm::all_of(edge_padding_low().getValues<APInt>(), is_zero) &&
       llvm::all_of(edge_padding_high().getValues<APInt>(), is_zero) &&
       llvm::all_of(interior_padding().getValues<APInt>(), is_zero))
     return operand();
 
   // If any padding is negative then it isn't supported by the folder (yet).
-  auto is_negative = [](const APInt& i) { return i.slt(0); };
+  auto is_negative = [](const APInt& i) {
+   std::vector<std::string> mht_158_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_158(mht_158_v, 5281, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+ return i.slt(0); };
   if (llvm::any_of(edge_padding_low().getValues<APInt>(), is_negative) ||
       llvm::any_of(edge_padding_high().getValues<APInt>(), is_negative) ||
       llvm::any_of(interior_padding().getValues<APInt>(), is_negative))
@@ -4654,6 +5299,9 @@ OpFoldResult PadOp::fold(ArrayRef<Attribute> operands) {
 
   auto next_index = [](llvm::SmallVector<uint64_t, 8>& index,
                        llvm::ArrayRef<int64_t> shape) {
+   std::vector<std::string> mht_159_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_159(mht_159_v, 5302, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+
     for (int64_t i = index.size() - 1; i >= 0; --i) {
       ++index[i];
       if (index[i] < shape[i]) return;
@@ -4687,10 +5335,16 @@ OpFoldResult PadOp::fold(ArrayRef<Attribute> operands) {
 
 void DynamicPadOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                                MLIRContext* context) {
+   std::vector<std::string> mht_160_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_160(mht_160_v, 5338, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "DynamicPadOp::getCanonicalizationPatterns");
+
   results.add<DPadToPad>(context);
 }
 
 LogicalResult DynamicPadOp::verify() {
+   std::vector<std::string> mht_161_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_161(mht_161_v, 5345, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "DynamicPadOp::verify");
+
   auto input_type = operand().getType().dyn_cast<RankedTensorType>();
   // If operand is unranked, there is very little to verify statically.
   if (!input_type) return success();
@@ -4739,6 +5393,9 @@ LogicalResult DynamicPadOp::verify() {
 LogicalResult DynamicPadOp::reifyReturnTypeShapes(
     OpBuilder& builder, ValueRange operands,
     SmallVectorImpl<Value>& reifiedReturnShapes) {
+   std::vector<std::string> mht_162_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_162(mht_162_v, 5396, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "DynamicPadOp::reifyReturnTypeShapes");
+
   DynamicPadOp::Adaptor adaptor(operands);
   Value operand = adaptor.operand();
   Value edge_padding_low = adaptor.edge_padding_low();
@@ -4756,6 +5413,9 @@ LogicalResult DynamicPadOp::reifyReturnTypeShapes(
       edge_padding_low.getType().cast<ShapedType>().getElementType();
 
   auto to_shape_scalar_type = [&](Value v) {
+   std::vector<std::string> mht_163_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_163(mht_163_v, 5416, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+
     return MaybeCastTo(builder, loc, v, shape_scalar_type);
   };
 
@@ -4805,6 +5465,9 @@ LogicalResult DynamicPadOp::reifyReturnTypeShapes(
 //===----------------------------------------------------------------------===//
 
 LogicalResult ReshapeOp::verify() {
+   std::vector<std::string> mht_164_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_164(mht_164_v, 5468, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ReshapeOp::verify");
+
   // If the operand type is dynamically shaped there is nothing to verify.
   auto operand_ty = operand().getType().dyn_cast<RankedTensorType>();
   if (!operand_ty || !operand_ty.hasStaticShape()) return success();
@@ -4825,6 +5488,9 @@ LogicalResult ReshapeOp::verify() {
 }
 
 OpFoldResult ReshapeOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_165_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_165(mht_165_v, 5491, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ReshapeOp::fold");
+
   if (getOperand().getType() == getType()) {
     return getOperand();
   }
@@ -4843,6 +5509,9 @@ OpFoldResult ReshapeOp::fold(ArrayRef<Attribute> operands) {
 
 void ReshapeOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                             MLIRContext* context) {
+   std::vector<std::string> mht_166_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_166(mht_166_v, 5512, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ReshapeOp::getCanonicalizationPatterns");
+
   results.add<IdentityBroadcastReshape, IdentityBroadcastInDimReshape,
               EliminateRedundantReshape, EliminateIdentityReshape>(context);
 }
@@ -4854,6 +5523,9 @@ void ReshapeOp::getCanonicalizationPatterns(RewritePatternSet& results,
 LogicalResult ReplicaIdOp::inferReturnTypes(
     MLIRContext* context, Optional<Location>, ValueRange operands,
     DictionaryAttr, RegionRange, SmallVectorImpl<Type>& inferredReturnTypes) {
+   std::vector<std::string> mht_167_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_167(mht_167_v, 5526, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ReplicaIdOp::inferReturnTypes");
+
   inferredReturnTypes.push_back(RankedTensorType::get(
       /*shape=*/{}, IntegerType::get(context, 32, IntegerType::Unsigned)));
   return success();
@@ -4865,6 +5537,9 @@ LogicalResult ReplicaIdOp::inferReturnTypes(
 
 static LogicalResult VerifyConditionalBranch(Operation* op, Region& region,
                                              llvm::Twine branchName) {
+   std::vector<std::string> mht_168_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_168(mht_168_v, 5540, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "VerifyConditionalBranch");
+
   if (region.getNumArguments() != 0)
     return op->emitOpError()
            << branchName << " must have 0 arguments, but found "
@@ -4881,6 +5556,9 @@ static LogicalResult VerifyConditionalBranch(Operation* op, Region& region,
 }
 
 LogicalResult IfOp::verify() {
+   std::vector<std::string> mht_169_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_169(mht_169_v, 5559, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "IfOp::verify");
+
   if (failed(VerifyConditionalBranch(*this, true_branch(),
                                      /*branchName=*/"true_branch"))) {
     return failure();
@@ -4895,6 +5573,9 @@ LogicalResult IfOp::verify() {
 
 static LogicalResult InlineIfConstantCondition(IfOp ifOp,
                                                PatternRewriter& rewriter) {
+   std::vector<std::string> mht_170_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_170(mht_170_v, 5576, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "InlineIfConstantCondition");
+
   DenseIntElementsAttr pred_attr;
   if (!matchPattern(ifOp.pred(), m_Constant(&pred_attr))) return failure();
 
@@ -4908,6 +5589,9 @@ static LogicalResult InlineIfConstantCondition(IfOp ifOp,
 
 void IfOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                        MLIRContext* context) {
+   std::vector<std::string> mht_171_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_171(mht_171_v, 5592, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "IfOp::getCanonicalizationPatterns");
+
   results.add(&InlineIfConstantCondition);
 }
 
@@ -4916,6 +5600,9 @@ void IfOp::getCanonicalizationPatterns(RewritePatternSet& results,
 //===----------------------------------------------------------------------===//
 
 LogicalResult CaseOp::verify() {
+   std::vector<std::string> mht_172_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_172(mht_172_v, 5603, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "CaseOp::verify");
+
   auto num_branches = branches().size();
 
   for (unsigned i = 0; i < num_branches; ++i)
@@ -4928,6 +5615,9 @@ LogicalResult CaseOp::verify() {
 
 static LogicalResult InlineCaseConstantCondition(CaseOp caseOp,
                                                  PatternRewriter& rewriter) {
+   std::vector<std::string> mht_173_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_173(mht_173_v, 5618, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "InlineCaseConstantCondition");
+
   DenseIntElementsAttr index_attr;
   if (!matchPattern(caseOp.index(), m_Constant(&index_attr))) {
     return failure();
@@ -4947,6 +5637,9 @@ static LogicalResult InlineCaseConstantCondition(CaseOp caseOp,
 
 void CaseOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                          MLIRContext* context) {
+   std::vector<std::string> mht_174_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_174(mht_174_v, 5640, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "CaseOp::getCanonicalizationPatterns");
+
   results.add(&InlineCaseConstantCondition);
 }
 
@@ -4955,6 +5648,9 @@ void CaseOp::getCanonicalizationPatterns(RewritePatternSet& results,
 //===----------------------------------------------------------------------===//
 
 OpFoldResult SqrtOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_175_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_175(mht_175_v, 5651, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "SqrtOp::fold");
+
   auto val = operands[0].dyn_cast_or_null<DenseElementsAttr>();
   if (!val) return {};
 
@@ -5029,6 +5725,9 @@ struct logical_not {
 template <typename FloatOrInt>
 struct sign {
   APFloat compute(const APFloat& f) {
+   std::vector<std::string> mht_176_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_176(mht_176_v, 5728, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "compute");
+
     if (f.isZero() || f.isNaN()) return f;
     double value = f.isNegative() ? -1.0 : 1.0;
     APFloat val(value);
@@ -5038,6 +5737,9 @@ struct sign {
   }
 
   APInt compute(const APInt& i) {
+   std::vector<std::string> mht_177_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_177(mht_177_v, 5740, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "compute");
+
     APInt r = i;
     if (r == 0) return r;
     if (r.isNegative()) {
@@ -5091,6 +5793,9 @@ namespace {
 // a permuted UnrankedTensorType or RankedTensorType.
 static Type UpdateResultElementType(Builder* builder, Type x,
                                     Type element_type) {
+   std::vector<std::string> mht_178_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_178(mht_178_v, 5796, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "UpdateResultElementType");
+
   auto x_ranked = x.dyn_cast<RankedTensorType>();
   if (!x_ranked) {
     return UnrankedTensorType::get(element_type);
@@ -5102,6 +5807,9 @@ static Type UpdateResultElementType(Builder* builder, Type x,
 }  // namespace
 
 ParseResult parseBinaryOp(OpAsmParser& parser, OperationState& result) {
+   std::vector<std::string> mht_179_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_179(mht_179_v, 5810, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "parseBinaryOp");
+
   SmallVector<OpAsmParser::UnresolvedOperand> operands;
   Type type;
   // If the operand list is in-between parentheses, use generic form.
@@ -5131,6 +5839,9 @@ ParseResult parseBinaryOp(OpAsmParser& parser, OperationState& result) {
 }
 
 void printBinaryOp(Operation* op, OpAsmPrinter& p) {
+   std::vector<std::string> mht_180_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_180(mht_180_v, 5842, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "printBinaryOp");
+
   assert(op->getNumResults() == 1 && "op should have one result");
   // If any type is sparse, use generic form.
   auto resultType = op->getResult(0).getType();
@@ -5255,6 +5966,9 @@ BINARY_FOLDER(MaxOp, max);
 BINARY_FOLDER(MinOp, min);
 
 OpFoldResult AddOp::fold(ArrayRef<Attribute> attrs) {
+   std::vector<std::string> mht_181_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_181(mht_181_v, 5969, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "AddOp::fold");
+
   if (attrs[0] && attrs[1]) {
     BINARY_FOLDER_INTERNAL(AddOp, std::plus)
   }
@@ -5274,6 +5988,9 @@ OpFoldResult AddOp::fold(ArrayRef<Attribute> attrs) {
 }
 
 OpFoldResult MulOp::fold(ArrayRef<Attribute> attrs) {
+   std::vector<std::string> mht_182_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_182(mht_182_v, 5991, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "MulOp::fold");
+
   if (attrs[0] && attrs[1]) {
     BINARY_FOLDER_INTERNAL(MulOp, std::multiplies);
   }
@@ -5314,6 +6031,9 @@ LogicalResult SliceOp::inferReturnTypes(
     MLIRContext* context, Optional<Location> location, ValueRange operands,
     DictionaryAttr attributes, RegionRange regions,
     SmallVectorImpl<Type>& inferredReturnTypes) {
+   std::vector<std::string> mht_183_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_183(mht_183_v, 6034, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "SliceOp::inferReturnTypes");
+
   SliceOpAdaptor slice(operands, attributes);
   // TODO(jpienaar): Update this code after refactoring verify.
   if (failed(slice.verify(location.getValueOr(UnknownLoc::get(context))))) {
@@ -5432,6 +6152,9 @@ static Attribute FoldSlice(SliceOp* op, I values) {
 }
 
 OpFoldResult SliceOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_184_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_184(mht_184_v, 6155, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "SliceOp::fold");
+
   // Check if the SliceOp is a NoOp operation.
   auto operand_type = getOperand().getType().cast<ShapedType>();
   auto result_type = getResult().getType().cast<ShapedType>();
@@ -5470,6 +6193,9 @@ struct SimplifyConcatSlice : public OpRewritePattern<SliceOp> {
 
   LogicalResult matchAndRewrite(SliceOp slice,
                                 PatternRewriter& rewriter) const override {
+   std::vector<std::string> mht_185_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_185(mht_185_v, 6196, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "matchAndRewrite");
+
     auto result_ty = slice.getType().cast<ShapedType>();
     if (!result_ty.hasStaticShape()) {
       return failure();
@@ -5561,6 +6287,9 @@ struct SimplifyConcatSlice : public OpRewritePattern<SliceOp> {
 
 void SliceOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                           MLIRContext* context) {
+   std::vector<std::string> mht_186_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_186(mht_186_v, 6290, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "SliceOp::getCanonicalizationPatterns");
+
   results.add<SimplifyConcatSlice>(context);
 }
 
@@ -5570,6 +6299,9 @@ void SliceOp::getCanonicalizationPatterns(RewritePatternSet& results,
 
 void SortOp::build(OpBuilder& builder, OperationState& state,
                    ValueRange operands, int64_t dimension, bool is_stable) {
+   std::vector<std::string> mht_187_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_187(mht_187_v, 6302, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "SortOp::build");
+
   state.addOperands(operands);
   state.addAttribute("dimension", builder.getI64IntegerAttr(dimension));
   state.addAttribute("is_stable", builder.getBoolAttr(is_stable));
@@ -5580,6 +6312,9 @@ void SortOp::build(OpBuilder& builder, OperationState& state,
 }
 
 LogicalResult SortOp::verify() {
+   std::vector<std::string> mht_188_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_188(mht_188_v, 6315, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "SortOp::verify");
+
   Operation::operand_range operands = this->operands();
   if (operands.empty()) return emitOpError("requires at least one input");
 
@@ -5660,6 +6395,9 @@ LogicalResult SortOp::verify() {
 /// op.comparator().
 static LogicalResult SortDropEmptyUseArgs(SortOp op,
                                           PatternRewriter& rewriter) {
+   std::vector<std::string> mht_189_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_189(mht_189_v, 6398, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "SortDropEmptyUseArgs");
+
   DenseSet<unsigned> erased_args;
   unsigned num_operands = op.getNumOperands();
   for (unsigned i = 0; i < num_operands; ++i) {
@@ -5705,6 +6443,9 @@ static LogicalResult SortDropEmptyUseArgs(SortOp op,
 /// is known.
 static LogicalResult SortOpInferDefaultDimension(SortOp op,
                                                  PatternRewriter& rewriter) {
+   std::vector<std::string> mht_190_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_190(mht_190_v, 6446, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "SortOpInferDefaultDimension");
+
   auto ty = op.getResultTypes()[0].dyn_cast<ShapedType>();
   if (!ty) {
     return failure();
@@ -5725,6 +6466,9 @@ static LogicalResult SortOpInferDefaultDimension(SortOp op,
 
 void SortOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                          MLIRContext* /*context*/) {
+   std::vector<std::string> mht_191_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_191(mht_191_v, 6469, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "SortOp::getCanonicalizationPatterns");
+
   results.add(SortDropEmptyUseArgs);
   results.add(SortOpInferDefaultDimension);
 }
@@ -5734,6 +6478,9 @@ void SortOp::getCanonicalizationPatterns(RewritePatternSet& results,
 //===----------------------------------------------------------------------===//
 
 OpFoldResult TransposeOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_192_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_192(mht_192_v, 6481, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "TransposeOp::fold");
+
   for (const auto& it : llvm::enumerate(permutation().getValues<APInt>())) {
     if (it.index() != it.value()) {
       return {};
@@ -5745,6 +6492,9 @@ OpFoldResult TransposeOp::fold(ArrayRef<Attribute> operands) {
 // transpose(transpose(X)) => transpose(X)
 static LogicalResult EliminateRedundantTranspse(TransposeOp op,
                                                 PatternRewriter& rewriter) {
+   std::vector<std::string> mht_193_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_193(mht_193_v, 6495, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "EliminateRedundantTranspse");
+
   auto tranpose_operand = op.operand().getDefiningOp<TransposeOp>();
   if (!tranpose_operand) {
     return failure();
@@ -5766,6 +6516,9 @@ static LogicalResult EliminateRedundantTranspse(TransposeOp op,
 // transpose(broadcast_in_dim(X)) => broadcast_in_dim(X)
 static LogicalResult EliminateBroadcastInDimTranspose(
     TransposeOp op, PatternRewriter& rewriter) {
+   std::vector<std::string> mht_194_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_194(mht_194_v, 6519, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "EliminateBroadcastInDimTranspose");
+
   auto broadcast_in_dim_op = op.operand().getDefiningOp<BroadcastInDimOp>();
   if (!broadcast_in_dim_op) {
     return failure();
@@ -5792,6 +6545,9 @@ static LogicalResult EliminateBroadcastInDimTranspose(
 
 void TransposeOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                               MLIRContext* /*context*/) {
+   std::vector<std::string> mht_195_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_195(mht_195_v, 6548, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "TransposeOp::getCanonicalizationPatterns");
+
   results.add(EliminateRedundantTranspse);
   results.add(EliminateBroadcastInDimTranspose);
 }
@@ -5799,6 +6555,9 @@ void TransposeOp::getCanonicalizationPatterns(RewritePatternSet& results,
 LogicalResult TransposeOp::reifyReturnTypeShapes(
     OpBuilder& builder, ValueRange operands,
     SmallVectorImpl<Value>& reifiedReturnShapes) {
+   std::vector<std::string> mht_196_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_196(mht_196_v, 6558, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "TransposeOp::reifyReturnTypeShapes");
+
   TransposeOp::Adaptor adaptor(operands);
   Value operand = adaptor.operand();
 
@@ -5812,6 +6571,9 @@ LogicalResult TransposeOp::reifyReturnTypeShapes(
 
   Type shape_scalar_type = builder.getIndexType();
   auto to_shape_scalar_type = [&](Value v) {
+   std::vector<std::string> mht_197_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_197(mht_197_v, 6574, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+
     return MaybeCastTo(builder, loc, v, shape_scalar_type);
   };
 
@@ -5839,6 +6601,9 @@ LogicalResult TransposeOp::inferReturnTypeComponents(
     MLIRContext* context, Optional<Location> loc, ValueShapeRange operands,
     DictionaryAttr attributes, RegionRange,
     SmallVectorImpl<ShapedTypeComponents>& inferredReturnTypes) {
+   std::vector<std::string> mht_198_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_198(mht_198_v, 6604, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "TransposeOp::inferReturnTypeComponents");
+
   auto type = operands[0].getType();
   auto rankedTy = type.dyn_cast<RankedTensorType>();
   if (!rankedTy) {
@@ -5880,6 +6645,9 @@ LogicalResult TransposeOp::inferReturnTypeComponents(
 //===----------------------------------------------------------------------===//
 
 LogicalResult TriangularSolveOp::verify() {
+   std::vector<std::string> mht_199_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_199(mht_199_v, 6648, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "TriangularSolveOp::verify");
+
   auto a_type = a().getType().dyn_cast<RankedTensorType>();
 
   // Skip verifier if a is unranked tensor.
@@ -5938,6 +6706,9 @@ LogicalResult TriangularSolveOp::verify() {
 
 void GetTupleElementOp::build(OpBuilder& builder, OperationState& result,
                               Value tuple, int32_t index) {
+   std::vector<std::string> mht_200_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_200(mht_200_v, 6709, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "GetTupleElementOp::build");
+
   if (auto tuple_type = tuple.getType().dyn_cast<TupleType>()) {
     auto element_type = tuple_type.getType(index);
     build(builder, result, element_type, tuple,
@@ -5955,6 +6726,9 @@ void GetTupleElementOp::build(OpBuilder& builder, OperationState& result,
 
 void TupleOp::build(OpBuilder& builder, OperationState& result,
                     ValueRange values) {
+   std::vector<std::string> mht_201_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_201(mht_201_v, 6729, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "TupleOp::build");
+
   SmallVector<Type, 4> types;
   types.reserve(values.size());
   for (auto val : values) {
@@ -5970,6 +6744,9 @@ void TupleOp::build(OpBuilder& builder, OperationState& result,
 
 void UnaryEinsumOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                                 MLIRContext* context) {
+   std::vector<std::string> mht_202_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_202(mht_202_v, 6747, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "UnaryEinsumOp::getCanonicalizationPatterns");
+
   results.add<UnaryEinsumToEinsum>(context);
 }
 
@@ -5980,6 +6757,9 @@ void UnaryEinsumOp::getCanonicalizationPatterns(RewritePatternSet& results,
 void CompareOp::build(OpBuilder& builder, OperationState& result, Value lhs,
                       Value rhs, ComparisonDirection comparison_direction,
                       ComparisonType compare_type) {
+   std::vector<std::string> mht_203_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_203(mht_203_v, 6760, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "CompareOp::build");
+
   build(
       builder, result, lhs, rhs,
       ComparisonDirectionAttr::get(builder.getContext(), comparison_direction),
@@ -5990,6 +6770,9 @@ LogicalResult CompareOp::inferReturnTypeComponents(
     mlir::MLIRContext* ctx, llvm::Optional<mlir::Location>,
     ValueShapeRange operands, mlir::DictionaryAttr, mlir::RegionRange,
     llvm::SmallVectorImpl<mlir::ShapedTypeComponents>& inferredReturnTypes) {
+   std::vector<std::string> mht_204_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_204(mht_204_v, 6773, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "CompareOp::inferReturnTypeComponents");
+
   ShapedTypeComponents& components =
       inferredReturnTypes.emplace_back(IntegerType::get(ctx, /*width=*/1));
   auto arg_ty = operands.front().getType().cast<TensorType>();
@@ -6003,6 +6786,9 @@ LogicalResult CompareOp::inferReturnTypeComponents(
 LogicalResult CompareOp::reifyReturnTypeShapes(
     OpBuilder& builder, ValueRange operands,
     SmallVectorImpl<Value>& reifiedReturnShapes) {
+   std::vector<std::string> mht_205_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_205(mht_205_v, 6789, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "CompareOp::reifyReturnTypeShapes");
+
   return deriveShapeFromOperand(&builder, getOperation(), operands.front(),
                                 &reifiedReturnShapes);
 }
@@ -6069,6 +6855,9 @@ static Attribute CompareFolder(CompareOp op, ArrayRef<Attribute> attrs) {
 }
 
 OpFoldResult CompareOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_206_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_206(mht_206_v, 6858, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "CompareOp::fold");
+
   auto result_ty = getType().cast<ShapedType>();
   if (!result_ty.hasStaticShape()) return {};
 
@@ -6151,6 +6940,9 @@ namespace {
 // Infer the return-type of SelectAndScatterOp.
 TensorType inferSelectAndScatterOpReturnType(
     TensorType operand_type, const ArrayRef<WindowDimension> window) {
+   std::vector<std::string> mht_207_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_207(mht_207_v, 6943, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "inferSelectAndScatterOpReturnType");
+
   if (!operand_type.hasRank())
     return UnrankedTensorType::get(operand_type.getElementType());
 
@@ -6170,6 +6962,9 @@ TensorType inferSelectAndScatterOpReturnType(
 //   P5. Verify the return type matches the operand-type.
 //   P6. Check if the result type of window operation matches the source type.
 LogicalResult SelectAndScatterOp::verify() {
+   std::vector<std::string> mht_208_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_208(mht_208_v, 6965, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "SelectAndScatterOp::verify");
+
   auto operand_type = operand().getType().cast<TensorType>();
   auto init_value_type = init_value().getType().cast<TensorType>();
   auto source_type = source().getType().cast<TensorType>();
@@ -6279,7 +7074,13 @@ LogicalResult ValidateScatterDimensionNumbers(
     ShapedType update_type, bool operand_type_ranked,
     bool scatter_indices_type_ranked, bool updates_type_ranked,
     ScatterDimensionNumbersAttr dim_numbers, Location loc) {
+   std::vector<std::string> mht_209_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_209(mht_209_v, 7077, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ValidateScatterDimensionNumbers");
+
   const auto has_duplicates = [](SmallVector<int64_t>& nums) {
+   std::vector<std::string> mht_210_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_210(mht_210_v, 7081, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+
     if (!llvm::is_sorted(nums)) std::sort(nums.begin(), nums.end());
     auto last = std::unique(nums.begin(), nums.end());
     return last != nums.end();
@@ -6396,6 +7197,9 @@ LogicalResult ValidateScatterDimensionNumbers(
  *  P7. Check return type.
  */
 LogicalResult ScatterOp::verify() {
+   std::vector<std::string> mht_211_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_211(mht_211_v, 7200, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ScatterOp::verify");
+
   auto operand_type = operand().getType().cast<TensorType>();
   auto scatter_indices_type =
       scatter_indices().getType().dyn_cast<TensorType>();
@@ -6570,6 +7374,9 @@ llvm::SmallVector<Attribute, 4> evaluateMhloRegion(Region& region,
 }
 
 OpFoldResult ScatterOp::fold(ArrayRef<Attribute> operands) {
+   std::vector<std::string> mht_212_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_212(mht_212_v, 7377, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ScatterOp::fold");
+
   auto index = operands[1].dyn_cast_or_null<DenseIntElementsAttr>();
   if (!index) return {};
 
@@ -6611,6 +7418,9 @@ OpFoldResult ScatterOp::fold(ArrayRef<Attribute> operands) {
   // with true otherwise.
   auto next_index = [](llvm::SmallVector<uint64_t, 8>& index,
                        llvm::ArrayRef<int64_t> shape) {
+   std::vector<std::string> mht_213_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_213(mht_213_v, 7421, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+
     for (int64_t i = index.size() - 1; i >= 0; --i) {
       ++index[i];
       if (index[i] < shape[i]) return true;
@@ -6694,6 +7504,9 @@ OpFoldResult ScatterOp::fold(ArrayRef<Attribute> operands) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult WhileOp::verify() {
+   std::vector<std::string> mht_214_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_214(mht_214_v, 7507, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "WhileOp::verify");
+
   if (getNumOperands() != cond().front().getNumArguments())
     return emitOpError() << "mismatch in operand count (" << getNumOperands()
                          << ") vs the condition block argument count ("
@@ -6764,6 +7577,9 @@ LogicalResult WhileOp::verify() {
 /// assignment-list ::= assignment | assignment `,` assignment-list
 /// assignment ::= ssa-value `=` ssa-value
 void WhileOp::print(OpAsmPrinter& p) {
+   std::vector<std::string> mht_215_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_215(mht_215_v, 7580, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "WhileOp::print");
+
   p << '(';
   llvm::interleaveComma(llvm::zip(getBody()->getArguments(), getOperands()), p,
                         [&](auto zip) {
@@ -6785,6 +7601,9 @@ void WhileOp::print(OpAsmPrinter& p) {
 }
 
 ParseResult WhileOp::parse(OpAsmParser& parser, OperationState& result) {
+   std::vector<std::string> mht_216_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_216(mht_216_v, 7604, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "WhileOp::parse");
+
   llvm::SMLoc loc = parser.getCurrentLocation();
   // Parse the operands of the while: these are of the form:
   //   %iter_arg = %init_val
@@ -6821,6 +7640,9 @@ ParseResult WhileOp::parse(OpAsmParser& parser, OperationState& result) {
 
 static LogicalResult whileCanonicalization(WhileOp whileOp,
                                            PatternRewriter& rewriter) {
+   std::vector<std::string> mht_217_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_217(mht_217_v, 7643, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "whileCanonicalization");
+
   // Turn loop invariant values into implicit capture.
   // Check if there is at least one value is forwarded from one iteration to the
   // next, or one of the yielded value is an implicit capture already. Otherwise
@@ -6877,6 +7699,9 @@ static LogicalResult whileCanonicalization(WhileOp whileOp,
 
 void WhileOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                           MLIRContext* context) {
+   std::vector<std::string> mht_218_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_218(mht_218_v, 7702, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "WhileOp::getCanonicalizationPatterns");
+
   results.add(&whileCanonicalization);
 }
 
@@ -6903,18 +7728,27 @@ struct HLOInlinerInterface : public DialectInlinerInterface {
   // Allow all call operations to be inlined.
   bool isLegalToInline(Operation* call, Operation* callable,
                        bool wouldBeCloned) const final {
+   std::vector<std::string> mht_219_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_219(mht_219_v, 7731, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "isLegalToInline");
+
     return true;
   }
   // We don't have any special restrictions on what can be inlined into
   // destination regions (e.g. while/conditional bodies). Always allow it.
   bool isLegalToInline(Region* dest, Region* src, bool wouldBeCloned,
                        BlockAndValueMapping& valueMapping) const final {
+   std::vector<std::string> mht_220_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_220(mht_220_v, 7740, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "isLegalToInline");
+
     return true;
   }
   // Operations in mhlo dialect are always legal to inline since they are
   // pure.
   bool isLegalToInline(Operation*, Region*, bool,
                        BlockAndValueMapping&) const final {
+   std::vector<std::string> mht_221_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_221(mht_221_v, 7749, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "isLegalToInline");
+
     return true;
   }
 };
@@ -6926,6 +7760,9 @@ struct HLOInlinerInterface : public DialectInlinerInterface {
 
 MhloDialect::MhloDialect(MLIRContext* context)
     : Dialect(getDialectNamespace(), context, TypeID::get<MhloDialect>()) {
+   std::vector<std::string> mht_222_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_222(mht_222_v, 7763, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "MhloDialect::MhloDialect");
+
   addOperations<
 #define GET_OP_LIST
 #include "mlir-hlo/Dialect/mhlo/IR/hlo_ops.cc.inc"
@@ -6940,6 +7777,9 @@ MhloDialect::MhloDialect(MLIRContext* context)
 }
 
 Type MhloDialect::parseType(DialectAsmParser& parser) const {
+   std::vector<std::string> mht_223_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_223(mht_223_v, 7780, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "MhloDialect::parseType");
+
   StringRef data_type;
   if (parser.parseKeyword(&data_type)) return Type();
 
@@ -6949,6 +7789,9 @@ Type MhloDialect::parseType(DialectAsmParser& parser) const {
 }
 
 void MhloDialect::printType(Type type, DialectAsmPrinter& os) const {
+   std::vector<std::string> mht_224_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_224(mht_224_v, 7792, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "MhloDialect::printType");
+
   if (type.isa<TokenType>()) {
     os << "token";
     return;
@@ -6960,6 +7803,9 @@ void MhloDialect::printType(Type type, DialectAsmPrinter& os) const {
 // dispatch to the individual classes.
 Attribute MhloDialect::parseAttribute(DialectAsmParser& parser,
                                       Type type) const {
+   std::vector<std::string> mht_225_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_225(mht_225_v, 7806, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "MhloDialect::parseAttribute");
+
   StringRef attr_tag;
   if (failed(parser.parseKeyword(&attr_tag))) return Attribute();
   {
@@ -6974,6 +7820,9 @@ Attribute MhloDialect::parseAttribute(DialectAsmParser& parser,
 // Entry point for Attribute printing, TableGen generated code will handle the
 // dispatch to the individual classes.
 void MhloDialect::printAttribute(Attribute attr, DialectAsmPrinter& os) const {
+   std::vector<std::string> mht_226_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_226(mht_226_v, 7823, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "MhloDialect::printAttribute");
+
   LogicalResult result = generatedAttributePrinter(attr, os);
   (void)result;
   assert(succeeded(result));
@@ -6982,6 +7831,9 @@ void MhloDialect::printAttribute(Attribute attr, DialectAsmPrinter& os) const {
 /// Helpers for attributes parsing.
 
 static ParseResult parseDims(AsmParser& parser, SmallVector<int64_t>& dims) {
+   std::vector<std::string> mht_227_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_227(mht_227_v, 7834, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "parseDims");
+
   dims.clear();
   if (parser.parseLSquare()) return failure();
   while (failed(parser.parseOptionalRSquare())) {
@@ -6995,6 +7847,9 @@ static ParseResult parseDims(AsmParser& parser, SmallVector<int64_t>& dims) {
 static ParseResult parseDimsWithMinimumElements(AsmParser& parser,
                                                 SmallVector<int64_t>& dims,
                                                 int min_elements) {
+   std::vector<std::string> mht_228_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_228(mht_228_v, 7850, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "parseDimsWithMinimumElements");
+
   if (failed(parseDims(parser, dims))) return failure();
   if (dims.size() < min_elements)
     return parser.emitError(parser.getCurrentLocation())
@@ -7055,6 +7910,9 @@ static ParseResult parseStruct(
 template <typename T>
 static void printField(AsmPrinter& printer, StringRef name, T field,
                        StringRef& separator) {
+   std::vector<std::string> mht_229_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_229(mht_229_v, 7913, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "printField");
+
   if (field != 0) {
     printer << separator << name << " = " << field;
     separator = ", ";
@@ -7063,6 +7921,9 @@ static void printField(AsmPrinter& printer, StringRef name, T field,
 template <typename T>
 static void printField(AsmPrinter& printer, StringRef name, ArrayRef<T> field,
                        StringRef& separator) {
+   std::vector<std::string> mht_230_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_230(mht_230_v, 7924, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "printField");
+
   if (!field.empty()) {
     printer << separator << name << " = [";
     llvm::interleaveComma(field, printer);
@@ -7086,6 +7947,9 @@ static void printStruct(AsmPrinter& printer, StringRef name,
 
 // Custom printer and parser for ScatterDimensionNumbersAttr.
 void ScatterDimensionNumbersAttr::print(AsmPrinter& printer) const {
+   std::vector<std::string> mht_231_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_231(mht_231_v, 7950, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ScatterDimensionNumbersAttr::print");
+
   printStruct(printer, "scatter",
               std::make_pair("update_window_dims", getUpdateWindowDims()),
               std::make_pair("inserted_window_dims", getInsertedWindowDims()),
@@ -7094,6 +7958,9 @@ void ScatterDimensionNumbersAttr::print(AsmPrinter& printer) const {
               std::make_pair("index_vector_dim", getIndexVectorDim()));
 }
 Attribute ScatterDimensionNumbersAttr::parse(AsmParser& parser, Type type) {
+   std::vector<std::string> mht_232_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_232(mht_232_v, 7961, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ScatterDimensionNumbersAttr::parse");
+
   if (failed(parser.parseLess())) return {};
   SmallVector<int64_t> update_window_dims;
   SmallVector<int64_t> inserted_window_dims;
@@ -7104,10 +7971,22 @@ Attribute ScatterDimensionNumbersAttr::parse(AsmParser& parser, Type type) {
           parser,
           {"update_window_dims", "inserted_window_dims",
            "scatter_dims_to_operand_dims", "index_vector_dim"},
-          {[&]() { return parseDims(parser, update_window_dims); },
-           [&]() { return parseDims(parser, inserted_window_dims); },
-           [&]() { return parseDims(parser, scatter_dims_to_operand_dims); },
-           [&]() { return parser.parseInteger(index_vector_dim); }}))) {
+          {[&]() {
+   std::vector<std::string> mht_233_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_233(mht_233_v, 7975, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+ return parseDims(parser, update_window_dims); },
+           [&]() {
+   std::vector<std::string> mht_234_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_234(mht_234_v, 7979, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+ return parseDims(parser, inserted_window_dims); },
+           [&]() {
+   std::vector<std::string> mht_235_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_235(mht_235_v, 7983, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+ return parseDims(parser, scatter_dims_to_operand_dims); },
+           [&]() {
+   std::vector<std::string> mht_236_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_236(mht_236_v, 7987, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+ return parser.parseInteger(index_vector_dim); }}))) {
     parser.emitError(parser.getCurrentLocation())
         << "failed parsing scatter dimension numbers attribute";
     return {};
@@ -7120,6 +7999,9 @@ Attribute ScatterDimensionNumbersAttr::parse(AsmParser& parser, Type type) {
 
 // Custom printer and parser for GatherDimensionNumbersAttr.
 void GatherDimensionNumbersAttr::print(AsmPrinter& printer) const {
+   std::vector<std::string> mht_237_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_237(mht_237_v, 8002, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "GatherDimensionNumbersAttr::print");
+
   printStruct(printer, "gather", std::make_pair("offset_dims", getOffsetDims()),
               std::make_pair("collapsed_slice_dims", getCollapsedSliceDims()),
               std::make_pair("start_index_map", getStartIndexMap()),
@@ -7127,6 +8009,9 @@ void GatherDimensionNumbersAttr::print(AsmPrinter& printer) const {
 }
 
 Attribute GatherDimensionNumbersAttr::parse(AsmParser& parser, Type type) {
+   std::vector<std::string> mht_238_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_238(mht_238_v, 8012, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "GatherDimensionNumbersAttr::parse");
+
   if (failed(parser.parseLess())) return {};
 
   SmallVector<int64_t> offset_dims;
@@ -7138,10 +8023,22 @@ Attribute GatherDimensionNumbersAttr::parse(AsmParser& parser, Type type) {
           parser,
           {"offset_dims", "collapsed_slice_dims", "start_index_map",
            "index_vector_dim"},
-          {[&]() { return parseDims(parser, offset_dims); },
-           [&]() { return parseDims(parser, collapsed_slice_dims); },
-           [&]() { return parseDims(parser, start_index_map); },
-           [&]() { return parser.parseInteger(index_vector_dim); }}))) {
+          {[&]() {
+   std::vector<std::string> mht_239_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_239(mht_239_v, 8027, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+ return parseDims(parser, offset_dims); },
+           [&]() {
+   std::vector<std::string> mht_240_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_240(mht_240_v, 8031, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+ return parseDims(parser, collapsed_slice_dims); },
+           [&]() {
+   std::vector<std::string> mht_241_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_241(mht_241_v, 8035, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+ return parseDims(parser, start_index_map); },
+           [&]() {
+   std::vector<std::string> mht_242_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_242(mht_242_v, 8039, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+ return parser.parseInteger(index_vector_dim); }}))) {
     parser.emitError(parser.getCurrentLocation())
         << "failed parsing gather dimension numbers attribute";
     return {};
@@ -7154,6 +8051,9 @@ Attribute GatherDimensionNumbersAttr::parse(AsmParser& parser, Type type) {
 
 // Custom printer and parser for DotDimensionNumbersAttr.
 void DotDimensionNumbersAttr::print(AsmPrinter& printer) const {
+   std::vector<std::string> mht_243_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_243(mht_243_v, 8054, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "DotDimensionNumbersAttr::print");
+
   printStruct(
       printer, "dot",
       std::make_pair("lhs_batching_dimensions", getLhsBatchingDimensions()),
@@ -7165,6 +8065,9 @@ void DotDimensionNumbersAttr::print(AsmPrinter& printer) const {
 }
 
 Attribute DotDimensionNumbersAttr::parse(AsmParser& parser, Type type) {
+   std::vector<std::string> mht_244_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_244(mht_244_v, 8068, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "DotDimensionNumbersAttr::parse");
+
   if (failed(parser.parseLess())) return {};
 
   SmallVector<int64_t> lhs_batching_dimensions;
@@ -7176,10 +8079,22 @@ Attribute DotDimensionNumbersAttr::parse(AsmParser& parser, Type type) {
           parser,
           {"lhs_batching_dimensions", "rhs_batching_dimensions",
            "lhs_contracting_dimensions", "rhs_contracting_dimensions"},
-          {[&]() { return parseDims(parser, lhs_batching_dimensions); },
-           [&]() { return parseDims(parser, rhs_batching_dimensions); },
-           [&]() { return parseDims(parser, lhs_contracting_dimensions); },
-           [&]() { return parseDims(parser, rhs_contracting_dimensions); }}))) {
+          {[&]() {
+   std::vector<std::string> mht_245_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_245(mht_245_v, 8083, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+ return parseDims(parser, lhs_batching_dimensions); },
+           [&]() {
+   std::vector<std::string> mht_246_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_246(mht_246_v, 8087, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+ return parseDims(parser, rhs_batching_dimensions); },
+           [&]() {
+   std::vector<std::string> mht_247_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_247(mht_247_v, 8091, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+ return parseDims(parser, lhs_contracting_dimensions); },
+           [&]() {
+   std::vector<std::string> mht_248_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_248(mht_248_v, 8095, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+ return parseDims(parser, rhs_contracting_dimensions); }}))) {
     parser.emitError(parser.getCurrentLocation())
         << "failed parsing dot dimension numbers attribute";
     return {};
@@ -7199,23 +8114,38 @@ enum NonSpatialDim : int64_t {
 
 struct DenseMapInfoNonSpatialDim {
   static inline NonSpatialDim getEmptyKey() {
+   std::vector<std::string> mht_249_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_249(mht_249_v, 8117, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "getEmptyKey");
+
     return NonSpatialDim(DenseMapInfo<int64_t>::getEmptyKey());
   }
 
   static inline NonSpatialDim getTombstoneKey() {
+   std::vector<std::string> mht_250_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_250(mht_250_v, 8124, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "getTombstoneKey");
+
     return NonSpatialDim(DenseMapInfo<int64_t>::getTombstoneKey());
   }
 
   static unsigned getHashValue(const NonSpatialDim& Key) {
+   std::vector<std::string> mht_251_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_251(mht_251_v, 8131, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "getHashValue");
+
     return DenseMapInfo<int64_t>::getHashValue(Key);
   }
 
   static bool isEqual(const NonSpatialDim& LHS, const NonSpatialDim& RHS) {
+   std::vector<std::string> mht_252_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_252(mht_252_v, 8138, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "isEqual");
+
     return LHS == RHS;
   }
 };
 
 char NonSpatialDimToString(NonSpatialDim dim) {
+   std::vector<std::string> mht_253_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_253(mht_253_v, 8146, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "NonSpatialDimToString");
+
   switch (dim) {
     case IOBatch:
       return 'b';
@@ -7232,12 +8162,18 @@ char NonSpatialDimToString(NonSpatialDim dim) {
 
 // Custom printer and parser for convolution attribute.
 void printConvolutionDimensions(AsmPrinter& p, ConvDimensionNumbersAttr dnums) {
+   std::vector<std::string> mht_254_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_254(mht_254_v, 8165, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "printConvolutionDimensions");
+
   // TODO(b/202040055): we should check the attribute invariant and print the
   // "raw" form if they are violated, otherwise we'll crash here.
   constexpr int64_t kUnknownDim = std::numeric_limits<int64_t>::min();
   auto print_dim =
       [&](ArrayRef<int64_t> spatial_dims,
           ArrayRef<std::pair<int64_t, NonSpatialDim>> non_spatial_dims) {
+   std::vector<std::string> mht_255_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_255(mht_255_v, 8174, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+
         int64_t num_dims = 0;
         if (!spatial_dims.empty()) {
           num_dims =
@@ -7288,6 +8224,9 @@ void printConvolutionDimensions(AsmPrinter& p, ConvDimensionNumbersAttr dnums) {
 
 // Custom printer and parser for ConvDimensionNumbersAttr.
 void ConvDimensionNumbersAttr::print(AsmPrinter& printer) const {
+   std::vector<std::string> mht_256_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_256(mht_256_v, 8227, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ConvDimensionNumbersAttr::print");
+
   printer << "<";
   printConvolutionDimensions(printer, *this);
   printer << ">";
@@ -7298,6 +8237,9 @@ void ConvDimensionNumbersAttr::print(AsmPrinter& printer) const {
 // impossible/invalid internal representation for the attribute.
 static ParseResult parseConvolutionDimensionsRaw(
     AsmParser& parser, ConvDimensionNumbersAttr& dnums) {
+   std::vector<std::string> mht_257_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_257(mht_257_v, 8240, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "parseConvolutionDimensionsRaw");
+
   int64_t input_batch_dimension = 0;
   int64_t input_feature_dimension = 0;
   SmallVector<int64_t> input_spatial_dimensions;
@@ -7315,19 +8257,46 @@ static ParseResult parseConvolutionDimensionsRaw(
            "output_batch_dimension", "output_feature_dimension",
            "output_spatial_dimensions"},
           {
-              [&]() { return parser.parseInteger(input_batch_dimension); },
-              [&]() { return parser.parseInteger(input_feature_dimension); },
-              [&]() { return parseDims(parser, input_spatial_dimensions); },
               [&]() {
+   std::vector<std::string> mht_258_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_258(mht_258_v, 8261, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+ return parser.parseInteger(input_batch_dimension); },
+              [&]() {
+   std::vector<std::string> mht_259_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_259(mht_259_v, 8265, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+ return parser.parseInteger(input_feature_dimension); },
+              [&]() {
+   std::vector<std::string> mht_260_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_260(mht_260_v, 8269, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+ return parseDims(parser, input_spatial_dimensions); },
+              [&]() {
+   std::vector<std::string> mht_261_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_261(mht_261_v, 8273, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+
                 return parser.parseInteger(kernel_input_feature_dimension);
               },
               [&]() {
+   std::vector<std::string> mht_262_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_262(mht_262_v, 8279, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+
                 return parser.parseInteger(kernel_output_feature_dimension);
               },
-              [&]() { return parseDims(parser, kernel_spatial_dimensions); },
-              [&]() { return parser.parseInteger(output_batch_dimension); },
-              [&]() { return parser.parseInteger(output_feature_dimension); },
-              [&]() { return parseDims(parser, output_spatial_dimensions); },
+              [&]() {
+   std::vector<std::string> mht_263_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_263(mht_263_v, 8285, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+ return parseDims(parser, kernel_spatial_dimensions); },
+              [&]() {
+   std::vector<std::string> mht_264_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_264(mht_264_v, 8289, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+ return parser.parseInteger(output_batch_dimension); },
+              [&]() {
+   std::vector<std::string> mht_265_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_265(mht_265_v, 8293, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+ return parser.parseInteger(output_feature_dimension); },
+              [&]() {
+   std::vector<std::string> mht_266_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_266(mht_266_v, 8297, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+ return parseDims(parser, output_spatial_dimensions); },
           }))) {
     parser.emitError(parser.getCurrentLocation())
         << "failed parsing dot dimension numbers attribute";
@@ -7344,6 +8313,9 @@ static ParseResult parseConvolutionDimensionsRaw(
 
 ParseResult parseConvolutionDimensions(AsmParser& parser,
                                        ConvDimensionNumbersAttr& dnums) {
+   std::vector<std::string> mht_267_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_267(mht_267_v, 8316, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "parseConvolutionDimensions");
+
   // Parsing a single set of dim numbers gives the spatial dimensions as a
   // single ArrayRef<int64_t> and a list of non-spatial dimensions as
   // IntegerAttrs (indexed by the NonSpatialDim enum).
@@ -7527,6 +8499,9 @@ ParseResult parseConvolutionDimensions(AsmParser& parser,
 }
 
 Attribute ConvDimensionNumbersAttr::parse(AsmParser& parser, Type type) {
+   std::vector<std::string> mht_268_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_268(mht_268_v, 8502, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ConvDimensionNumbersAttr::parse");
+
   if (failed(parser.parseLess())) return {};
   ConvDimensionNumbersAttr dnums;
   if (succeeded(parser.parseOptionalKeyword("raw"))) {
@@ -7544,6 +8519,9 @@ constexpr char kResult[] = "result_index";
 constexpr char kArgTupleIndices[] = "tuple_indices";
 
 void ArgResultAliasAttr::print(AsmPrinter& printer) const {
+   std::vector<std::string> mht_269_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_269(mht_269_v, 8522, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ArgResultAliasAttr::print");
+
   printer << "<";
 
   // The attribute can have empty tuple indices. Only print argument tuple
@@ -7566,6 +8544,9 @@ void ArgResultAliasAttr::print(AsmPrinter& printer) const {
 }
 
 Attribute ArgResultAliasAttr::parse(AsmParser& parser, Type type) {
+   std::vector<std::string> mht_270_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_270(mht_270_v, 8547, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "ArgResultAliasAttr::parse");
+
   if (failed(parser.parseLess())) return {};
   llvm::SmallVector<int64_t> arg_tuple_indices;
   // The first element of result indices holds the aliased result index and the
@@ -7579,14 +8560,23 @@ Attribute ArgResultAliasAttr::parse(AsmParser& parser, Type type) {
 
   if (failed(
           parseStruct(parser, {kArgTupleIndices, kResult, kMustAlias},
-                      {[&]() { return parseDims(parser, arg_tuple_indices); },
+                      {[&]() {
+   std::vector<std::string> mht_271_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_271(mht_271_v, 8564, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+ return parseDims(parser, arg_tuple_indices); },
                        [&]() {
+   std::vector<std::string> mht_272_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_272(mht_272_v, 8568, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+
                          // Since the first element is the index of result, at
                          // least one element is expected.
                          return parseDimsWithMinimumElements(
                              parser, result_indices, /*min_elements=*/1);
                        },
                        [&]() {
+   std::vector<std::string> mht_273_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_273(mht_273_v, 8577, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "lambda");
+
                          // always succeeds if the keyword "must_alias" was
                          // parsed
                          is_must_alias = true;
@@ -7610,6 +8600,9 @@ Attribute ArgResultAliasAttr::parse(AsmParser& parser, Type type) {
 // Returns the element type pointed to by `indices` in type `t`. If the indices
 // are invalid, returns nullptr.
 static Type GetTypeFromTupleIndices(Type type, ArrayRef<int64_t> indices) {
+   std::vector<std::string> mht_274_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_274(mht_274_v, 8603, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "GetTypeFromTupleIndices");
+
   Type current = type;
   for (auto index : indices) {
     TupleType tuple_type = current.dyn_cast<TupleType>();
@@ -7623,6 +8616,9 @@ static LogicalResult VerifyArgResultAliasAttr(StringAttr attr_name,
                                               ArgResultAliasAttr alias_attr,
                                               unsigned arg_index,
                                               Operation* op) {
+   std::vector<std::string> mht_275_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_275(mht_275_v, 8619, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "VerifyArgResultAliasAttr");
+
   // The attribute can only be applied to function-like operations.
   if (!isa<mlir::FunctionOpInterface>(op))
     return op->emitOpError() << "attribute " << attr_name
@@ -7675,6 +8671,9 @@ static LogicalResult VerifyArgResultAliasAttr(StringAttr attr_name,
 //===----------------------------------------------------------------------===//
 
 bool isSameTypesWithoutSparseEncoding(Type tp1, Type tp2) {
+   std::vector<std::string> mht_276_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_276(mht_276_v, 8674, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "isSameTypesWithoutSparseEncoding");
+
   // Only ranked types can have sparse encoding, so look "under the hood"
   // when comparing two ranked tensor types.
   if (auto rtp1 = tp1.dyn_cast<RankedTensorType>()) {
@@ -7694,6 +8693,9 @@ bool isSameTypesWithoutSparseEncoding(Type tp1, Type tp2) {
 LogicalResult deriveShapeFromOperand(
     OpBuilder* builder, Operation* op, Value operand,
     SmallVectorImpl<Value>* reifiedReturnShapes) {
+   std::vector<std::string> mht_277_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_277(mht_277_v, 8696, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "deriveShapeFromOperand");
+
   auto shaped_ty = operand.getType().dyn_cast<ShapedType>();
   if (!shaped_ty) {
     op->emitOpError() << "operand is not a shaped type";
@@ -7710,6 +8712,9 @@ LogicalResult deriveShapeFromOperand(
 
 Operation* MhloDialect::materializeConstant(OpBuilder& builder, Attribute value,
                                             Type type, Location loc) {
+   std::vector<std::string> mht_278_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_278(mht_278_v, 8715, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "MhloDialect::materializeConstant");
+
   // HLO dialect constants only support ElementsAttr unlike standard dialect
   // constant which supports all attributes.
   if (value.isa<ElementsAttr>())
@@ -7721,6 +8726,9 @@ LogicalResult MhloDialect::verifyRegionArgAttribute(Operation* op,
                                                     unsigned region_index,
                                                     unsigned arg_index,
                                                     NamedAttribute attr) {
+   std::vector<std::string> mht_279_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_279(mht_279_v, 8729, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "MhloDialect::verifyRegionArgAttribute");
+
   if (auto alias_attr = attr.getValue().dyn_cast<ArgResultAliasAttr>()) {
     if (failed(VerifyArgResultAliasAttr(attr.getName(), alias_attr, arg_index,
                                         op)))
@@ -7731,6 +8739,9 @@ LogicalResult MhloDialect::verifyRegionArgAttribute(Operation* op,
 
 LogicalResult MhloDialect::verifyOperationAttribute(Operation* op,
                                                     NamedAttribute attr) {
+   std::vector<std::string> mht_280_v;
+   MHTracer_DTPStensorflowPScompilerPSmlirPShloPSlibPSDialectPSmhloPSIRPShlo_opsDTcc mht_280(mht_280_v, 8742, "", "./tensorflow/compiler/mlir/hlo/lib/Dialect/mhlo/IR/hlo_ops.cc", "MhloDialect::verifyOperationAttribute");
+
   if (auto alias_attr = attr.getValue().dyn_cast<ArgResultAliasAttr>()) {
     if (!isa<mlir::FunctionOpInterface>(op))
       return op->emitOpError()

@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,30 +192,48 @@ namespace tpu {
 TpuCompilationCacheInterface::RefHolder::RefHolder(
     TpuCompilationCacheInterface* parent)
     : parent_(parent) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc mht_0(mht_0_v, 195, "", "./tensorflow/core/tpu/kernels/tpu_compilation_cache_interface.cc", "TpuCompilationCacheInterface::RefHolder::RefHolder");
+
   // Hold a reference to the parent until the holder is discarded.
   parent_->Ref();
 }
 
 TpuCompilationCacheInterface::RefHolder::~RefHolder() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc mht_1(mht_1_v, 203, "", "./tensorflow/core/tpu/kernels/tpu_compilation_cache_interface.cc", "TpuCompilationCacheInterface::RefHolder::~RefHolder");
+
   parent_->DiscardEntryRefs(entries_);
   // Release our reference to the parent.
   parent_->Unref();
 }
 
 void TpuCompilationCacheInterface::RefHolder::AddRef(CompiledSubgraph* entry) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc mht_2(mht_2_v, 212, "", "./tensorflow/core/tpu/kernels/tpu_compilation_cache_interface.cc", "TpuCompilationCacheInterface::RefHolder::AddRef");
+
   entries_.push_back(entry);
 }
 
 std::string TpuCompilationCacheInterface::RefHolder::DebugString() const {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc mht_3(mht_3_v, 219, "", "./tensorflow/core/tpu/kernels/tpu_compilation_cache_interface.cc", "TpuCompilationCacheInterface::RefHolder::DebugString");
+
   return "TpuCompilationCacheRefHolder";
 }
 
 CompilationCacheEntryRef::CompilationCacheEntryRef()
-    : parent_(nullptr), entry_(nullptr), index_(0) {}
+    : parent_(nullptr), entry_(nullptr), index_(0) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc mht_4(mht_4_v, 227, "", "./tensorflow/core/tpu/kernels/tpu_compilation_cache_interface.cc", "CompilationCacheEntryRef::CompilationCacheEntryRef");
+}
 
 CompilationCacheEntryRef::CompilationCacheEntryRef(
     TpuCompilationCacheInterface* parent, CompiledSubgraph* entry, int index)
     : parent_(parent), entry_(entry), index_(index) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc mht_5(mht_5_v, 234, "", "./tensorflow/core/tpu/kernels/tpu_compilation_cache_interface.cc", "CompilationCacheEntryRef::CompilationCacheEntryRef");
+
   if (entry_ == nullptr) {
     return;
   }
@@ -61,6 +247,9 @@ CompilationCacheEntryRef::CompilationCacheEntryRef(
 }
 
 CompilationCacheEntryRef::~CompilationCacheEntryRef() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc mht_6(mht_6_v, 250, "", "./tensorflow/core/tpu/kernels/tpu_compilation_cache_interface.cc", "CompilationCacheEntryRef::~CompilationCacheEntryRef");
+
   if (entry_ == nullptr) {
     return;
   }
@@ -72,6 +261,9 @@ CompilationCacheEntryRef::~CompilationCacheEntryRef() {
 }
 
 TpuCompilationCacheEntry CompilationCacheEntryRef::get() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc mht_7(mht_7_v, 264, "", "./tensorflow/core/tpu/kernels/tpu_compilation_cache_interface.cc", "CompilationCacheEntryRef::get");
+
   if (entry_ == nullptr) {
     // Create an empty entry if the entry is nullptr. This corresponds to
     // non-existing sharding/unsharding entries.
@@ -83,6 +275,9 @@ TpuCompilationCacheEntry CompilationCacheEntryRef::get() {
 
 Status CompilationCacheEntryRef::ToSubEntryRef(
     CompilationCacheFetchTarget fetch_target) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc mht_8(mht_8_v, 278, "", "./tensorflow/core/tpu/kernels/tpu_compilation_cache_interface.cc", "CompilationCacheEntryRef::ToSubEntryRef");
+
   CompiledSubgraph* target = nullptr;
   switch (fetch_target) {
     case CompilationCacheFetchTarget::MAIN:
@@ -112,11 +307,17 @@ Status CompilationCacheEntryRef::ToSubEntryRef(
 TpuCompilationCacheInterface::TpuCompilationCacheInterface(
     int64_t max_cache_size)
     : max_cache_size_(max_cache_size) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc mht_9(mht_9_v, 310, "", "./tensorflow/core/tpu/kernels/tpu_compilation_cache_interface.cc", "TpuCompilationCacheInterface::TpuCompilationCacheInterface");
+
   CHECK_GE(max_cache_size_, 0);
   VLOG(1) << "Created compilation cache size " << max_cache_size_ << " bytes.";
 }
 
 TpuCompilationCacheInterface::~TpuCompilationCacheInterface() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc mht_10(mht_10_v, 318, "", "./tensorflow/core/tpu/kernels/tpu_compilation_cache_interface.cc", "TpuCompilationCacheInterface::~TpuCompilationCacheInterface");
+
   VLOG(1) << "TpuCompilationCacheInterface::~TpuCompilationCacheInterface()";
   // A buggy client may be holding onto a reference, or a client might have
   // crashed while holding onto a reference. In either case, discard all
@@ -142,6 +343,9 @@ TpuCompilationCacheInterface::~TpuCompilationCacheInterface() {
 
 Status TpuCompilationCacheInterface::MarkEntryForEviction(
     int64_t subgraph_uid) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc mht_11(mht_11_v, 346, "", "./tensorflow/core/tpu/kernels/tpu_compilation_cache_interface.cc", "TpuCompilationCacheInterface::MarkEntryForEviction");
+
   profiler::TraceMe key_release_traceme(
       "TPU compilation cache possibly evict uid",
       /*level=*/2);
@@ -189,6 +393,9 @@ Status TpuCompilationCacheInterface::MarkEntryForEviction(
 }
 
 Status TpuCompilationCacheInterface::Release(int64_t subgraph_uid) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc mht_12(mht_12_v, 396, "", "./tensorflow/core/tpu/kernels/tpu_compilation_cache_interface.cc", "TpuCompilationCacheInterface::Release");
+
   profiler::TraceMe key_release_traceme("TPU compilation cache release uid",
                                         /*level=*/2);
 
@@ -218,6 +425,9 @@ Status TpuCompilationCacheInterface::Release(int64_t subgraph_uid) {
 }
 
 void TpuCompilationCacheInterface::UnloadAndDestroy(CompiledSubgraph* entry) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc mht_13(mht_13_v, 428, "", "./tensorflow/core/tpu/kernels/tpu_compilation_cache_interface.cc", "TpuCompilationCacheInterface::UnloadAndDestroy");
+
   if (!entry) return;
 
   CHECK(entry->RefCountIsOne());
@@ -226,6 +436,10 @@ void TpuCompilationCacheInterface::UnloadAndDestroy(CompiledSubgraph* entry) {
 }
 
 size_t TpuCompilationCacheInterface::RemoveEntry(const std::string& key) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc mht_14(mht_14_v, 440, "", "./tensorflow/core/tpu/kernels/tpu_compilation_cache_interface.cc", "TpuCompilationCacheInterface::RemoveEntry");
+
   auto erased = cache_.erase(key);
   TpuCompilationMetrics::SetCacheEntryCount(cache_.size());
 
@@ -245,6 +459,9 @@ size_t TpuCompilationCacheInterface::RemoveEntry(const std::string& key) {
 
 CompiledSubgraph* TpuCompilationCacheInterface::DiscardEntryRef(
     CompiledSubgraph* entry) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc mht_15(mht_15_v, 462, "", "./tensorflow/core/tpu/kernels/tpu_compilation_cache_interface.cc", "TpuCompilationCacheInterface::DiscardEntryRef");
+
   if (entry->RefCountIsOne()) {
     // The last reference to this entry is going away, so really delete it from
     // the cache in such a way that it can't be restored by being looked up
@@ -277,11 +494,17 @@ CompiledSubgraph* TpuCompilationCacheInterface::DiscardEntryRef(
 }
 
 CompilationRefHolder* TpuCompilationCacheInterface::MakePerStepRefHolder() {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc mht_16(mht_16_v, 497, "", "./tensorflow/core/tpu/kernels/tpu_compilation_cache_interface.cc", "TpuCompilationCacheInterface::MakePerStepRefHolder");
+
   return new RefHolder(this);
 }
 
 void TpuCompilationCacheInterface::DiscardEntryRefs(
     gtl::ArraySlice<CompiledSubgraph*> entries) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc mht_17(mht_17_v, 505, "", "./tensorflow/core/tpu/kernels/tpu_compilation_cache_interface.cc", "TpuCompilationCacheInterface::DiscardEntryRefs");
+
   std::vector<CompiledSubgraph*> removed_entries;
   {
     absl::MutexLock lock(&mu_);
@@ -302,6 +525,9 @@ void TpuCompilationCacheInterface::DiscardEntryRefs(
 }
 
 CompiledSubgraph* TpuCompilationCacheInterface::MarkOldestEntryForEviction() {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc mht_18(mht_18_v, 528, "", "./tensorflow/core/tpu/kernels/tpu_compilation_cache_interface.cc", "TpuCompilationCacheInterface::MarkOldestEntryForEviction");
+
   CompiledSubgraph* entry_to_mark = entries_by_last_use_.begin()->second;
   VLOG(1) << "Marking " << entry_to_mark->subgraph_key
           << " for eviction. Debug string: "
@@ -319,6 +545,9 @@ CompiledSubgraph* TpuCompilationCacheInterface::MarkOldestEntryForEviction() {
 
 void TpuCompilationCacheInterface::LookupEntryMarkedForEviction(
     CompiledSubgraph* entry, std::vector<CompiledSubgraph*>* removed_entries) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc mht_19(mht_19_v, 548, "", "./tensorflow/core/tpu/kernels/tpu_compilation_cache_interface.cc", "TpuCompilationCacheInterface::LookupEntryMarkedForEviction");
+
   // The entry was previously marked for eviction (or is newly created) so
   // unmark it. Add a reference (owned by the cache), update the cache size, and
   // mark something old for eviction if necessary.
@@ -340,6 +569,10 @@ void TpuCompilationCacheInterface::LookupEntryMarkedForEviction(
 
 void TpuCompilationCacheInterface::InsertEntry(const std::string& key,
                                                CompiledSubgraph* entry) {
+   std::vector<std::string> mht_20_v;
+   mht_20_v.push_back("key: \"" + key + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc mht_20(mht_20_v, 573, "", "./tensorflow/core/tpu/kernels/tpu_compilation_cache_interface.cc", "TpuCompilationCacheInterface::InsertEntry");
+
   auto cache_inserted =
       cache_.insert(std::pair<std::string, CompiledSubgraph*>(key, entry));
   CHECK(cache_inserted.second);
@@ -368,6 +601,9 @@ Status TpuCompilationCacheInterface::CompileIfKeyAbsent(
     std::vector<bool>* may_modify_variables,
     absl::Span<const xla::HloProto* const>* hlo_metadatas,
     const std::function<Status(TpuProgramGroupInterface*)>& compile_function) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc mht_21(mht_21_v, 604, "", "./tensorflow/core/tpu/kernels/tpu_compilation_cache_interface.cc", "TpuCompilationCacheInterface::CompileIfKeyAbsent");
+
   std::vector<CompiledSubgraph*> removed_entries;
   auto status = CompileIfKeyAbsentHelper(
       subgraph_key, session_metadata, per_step_ref_holder, uid, proto_key,
@@ -381,6 +617,9 @@ Status TpuCompilationCacheInterface::CompileIfKeyAbsent(
 
 std::string TpuCompilationCacheInterface::FindCacheKey(
     const TpuCompilationCacheKey& subgraph_key) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc mht_22(mht_22_v, 620, "", "./tensorflow/core/tpu/kernels/tpu_compilation_cache_interface.cc", "TpuCompilationCacheInterface::FindCacheKey");
+
   if (!subgraph_key.has_guaranteed_const) {
     return subgraph_key.prefix;
   }
@@ -407,6 +646,9 @@ Status TpuCompilationCacheInterface::CompileIfKeyAbsentHelper(
     std::vector<CompiledSubgraph*>* removed_entries,
     absl::Span<const xla::HloProto* const>* hlo_metadatas,
     const std::function<Status(TpuProgramGroupInterface*)>& compile_function) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc mht_23(mht_23_v, 649, "", "./tensorflow/core/tpu/kernels/tpu_compilation_cache_interface.cc", "TpuCompilationCacheInterface::CompileIfKeyAbsentHelper");
+
   CompiledSubgraph* entry = nullptr;
 
   profiler::TraceMe subgraph_lookup_traceme(
@@ -544,6 +786,9 @@ Status TpuCompilationCacheInterface::CompileIfKeyAbsentHelper(
 
 Status TpuCompilationCacheInterface::GetKeysFromUid(
     int64_t uid, std::vector<std::string>* keys) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc mht_24(mht_24_v, 789, "", "./tensorflow/core/tpu/kernels/tpu_compilation_cache_interface.cc", "TpuCompilationCacheInterface::GetKeysFromUid");
+
   keys->clear();
 
   absl::MutexLock lock(&mu_);
@@ -558,6 +803,9 @@ Status TpuCompilationCacheInterface::GetKeysFromUid(
 Status TpuCompilationCacheInterface::Lookup(
     int64_t uid, int proto_index,
     std::unique_ptr<CompilationCacheEntryRef>* entry) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc mht_25(mht_25_v, 806, "", "./tensorflow/core/tpu/kernels/tpu_compilation_cache_interface.cc", "TpuCompilationCacheInterface::Lookup");
+
   entry->reset();
 
   profiler::TraceMe proto_lookup_traceme(
@@ -583,6 +831,10 @@ Status TpuCompilationCacheInterface::Lookup(
 Status TpuCompilationCacheInterface::Lookup(
     const std::string& proto_key,
     std::unique_ptr<CompilationCacheEntryRef>* entry) {
+   std::vector<std::string> mht_26_v;
+   mht_26_v.push_back("proto_key: \"" + proto_key + "\"");
+   MHTracer_DTPStensorflowPScorePStpuPSkernelsPStpu_compilation_cache_interfaceDTcc mht_26(mht_26_v, 835, "", "./tensorflow/core/tpu/kernels/tpu_compilation_cache_interface.cc", "TpuCompilationCacheInterface::Lookup");
+
   entry->reset();
 
   profiler::TraceMe proto_lookup_traceme("TPU compilation cache proto lookup",

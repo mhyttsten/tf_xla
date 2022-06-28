@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSgraph_analyzer_testDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSgraph_analyzer_testDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSgraph_analyzer_testDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,22 +203,43 @@ using ::testing::UnorderedElementsAre;
 
 class GraphAnalyzerTest : public ::testing::Test, protected TestGraphs {
  protected:
-  Status BuildMap() { return gran_->BuildMap(); }
+  Status BuildMap() {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSgraph_analyzer_testDTcc mht_0(mht_0_v, 207, "", "./tensorflow/core/grappler/graph_analyzer/graph_analyzer_test.cc", "BuildMap");
+ return gran_->BuildMap(); }
 
-  void FindSubgraphs() { gran_->FindSubgraphs(); }
+  void FindSubgraphs() {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSgraph_analyzer_testDTcc mht_1(mht_1_v, 212, "", "./tensorflow/core/grappler/graph_analyzer/graph_analyzer_test.cc", "FindSubgraphs");
+ gran_->FindSubgraphs(); }
 
-  void DropInvalidSubgraphs() { gran_->DropInvalidSubgraphs(); }
+  void DropInvalidSubgraphs() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSgraph_analyzer_testDTcc mht_2(mht_2_v, 217, "", "./tensorflow/core/grappler/graph_analyzer/graph_analyzer_test.cc", "DropInvalidSubgraphs");
+ gran_->DropInvalidSubgraphs(); }
 
-  Status CollateResult() { return gran_->CollateResult(); }
+  Status CollateResult() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSgraph_analyzer_testDTcc mht_3(mht_3_v, 222, "", "./tensorflow/core/grappler/graph_analyzer/graph_analyzer_test.cc", "CollateResult");
+ return gran_->CollateResult(); }
 
-  void ExtendSubgraph(Subgraph* parent) { gran_->ExtendSubgraph(parent); }
+  void ExtendSubgraph(Subgraph* parent) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSgraph_analyzer_testDTcc mht_4(mht_4_v, 227, "", "./tensorflow/core/grappler/graph_analyzer/graph_analyzer_test.cc", "ExtendSubgraph");
+ gran_->ExtendSubgraph(parent); }
 
   void ExtendSubgraphPortAllOrNone(Subgraph* parent, GenNode* node,
                                    GenNode::Port port) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSgraph_analyzer_testDTcc mht_5(mht_5_v, 233, "", "./tensorflow/core/grappler/graph_analyzer/graph_analyzer_test.cc", "ExtendSubgraphPortAllOrNone");
+
     gran_->ExtendSubgraphPortAllOrNone(parent, node, port);
   }
 
   void ExtendSubgraphAllOrNone(Subgraph* parent, GenNode* node) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSgraph_analyzer_testDTcc mht_6(mht_6_v, 240, "", "./tensorflow/core/grappler/graph_analyzer/graph_analyzer_test.cc", "ExtendSubgraphAllOrNone");
+
     gran_->ExtendSubgraphAllOrNone(parent, node);
   }
 
@@ -64,13 +253,29 @@ class GraphAnalyzerTest : public ::testing::Test, protected TestGraphs {
     return result;
   }
 
-  const GenNodeMap& GetNodes() { return gran_->nodes_; }
+  const GenNodeMap& GetNodes() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSgraph_analyzer_testDTcc mht_7(mht_7_v, 257, "", "./tensorflow/core/grappler/graph_analyzer/graph_analyzer_test.cc", "GetNodes");
+ return gran_->nodes_; }
 
-  GenNode* GetNode(const string& name) { return gran_->nodes_.at(name).get(); }
+  GenNode* GetNode(const string& name) {
+   std::vector<std::string> mht_8_v;
+   mht_8_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSgraph_analyzer_testDTcc mht_8(mht_8_v, 263, "", "./tensorflow/core/grappler/graph_analyzer/graph_analyzer_test.cc", "GetNode");
+ return gran_->nodes_.at(name).get(); }
 
-  SubgraphPtrSet& GetResult() { return gran_->result_; }
-  SubgraphPtrSet& GetPartial() { return gran_->partial_; }
-  std::deque<Subgraph*>& GetTodo() { return gran_->todo_; }
+  SubgraphPtrSet& GetResult() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSgraph_analyzer_testDTcc mht_9(mht_9_v, 268, "", "./tensorflow/core/grappler/graph_analyzer/graph_analyzer_test.cc", "GetResult");
+ return gran_->result_; }
+  SubgraphPtrSet& GetPartial() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSgraph_analyzer_testDTcc mht_10(mht_10_v, 272, "", "./tensorflow/core/grappler/graph_analyzer/graph_analyzer_test.cc", "GetPartial");
+ return gran_->partial_; }
+  std::deque<Subgraph*>& GetTodo() {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSgrapplerPSgraph_analyzerPSgraph_analyzer_testDTcc mht_11(mht_11_v, 276, "", "./tensorflow/core/grappler/graph_analyzer/graph_analyzer_test.cc", "GetTodo");
+ return gran_->todo_; }
 
   // Gets initialized by a particular test from a suitable GraphDef.
   std::unique_ptr<GraphAnalyzer> gran_;

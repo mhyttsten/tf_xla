@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSjitPSxla_launch_utilDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_launch_utilDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSjitPSxla_launch_utilDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -48,6 +216,9 @@ using xla::ShapedBuffer;
 
 // Fetch the platform Id from device.
 se::Platform::Id XlaPlatformInfoFromDevice(DeviceBase* device_base) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_launch_utilDTcc mht_0(mht_0_v, 219, "", "./tensorflow/compiler/jit/xla_launch_util.cc", "XlaPlatformInfoFromDevice");
+
   auto device = static_cast<Device*>(device_base);
   se::Platform::Id platform_id = nullptr;
   if (device->device_type() == DEVICE_CPU) {
@@ -65,18 +236,28 @@ VariableInfo::VariableInfo(
     : index_(index),
       name_(name),
       var_(var),
-      definition_stack_trace_(definition_stack_trace) {}
+      definition_stack_trace_(definition_stack_trace) {
+   std::vector<std::string> mht_1_v;
+   mht_1_v.push_back("name: \"" + std::string(name.data(), name.size()) + "\"");
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_launch_utilDTcc mht_1(mht_1_v, 241, "", "./tensorflow/compiler/jit/xla_launch_util.cc", "VariableInfo::VariableInfo");
+}
 
 VariableInfo::VariableInfo(VariableInfo&& other)
     : index_(other.index_),
       var_(other.var_),
       definition_stack_trace_(other.definition_stack_trace_),
       lock_held_(other.lock_held_) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_launch_utilDTcc mht_2(mht_2_v, 250, "", "./tensorflow/compiler/jit/xla_launch_util.cc", "VariableInfo::VariableInfo");
+
   other.index_ = -1;
   other.var_ = nullptr;
 }
 
 VariableInfo& VariableInfo::operator=(VariableInfo&& other) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_launch_utilDTcc mht_3(mht_3_v, 258, "", "./tensorflow/compiler/jit/xla_launch_util.cc", "=");
+
   index_ = other.index_;
   var_ = other.var_;
   lock_held_ = other.lock_held_;
@@ -89,6 +270,9 @@ VariableInfo& VariableInfo::operator=(VariableInfo&& other) {
 }
 
 VariableInfo::~VariableInfo() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_launch_utilDTcc mht_4(mht_4_v, 273, "", "./tensorflow/compiler/jit/xla_launch_util.cc", "VariableInfo::~VariableInfo");
+
   // Release the variable's lock if we hold it. Ensures that the lock is
   // released even on error.  It does not matter in what order we release the
   // locks.
@@ -106,6 +290,9 @@ Status GetVariableInfosFromInputs(ResourceMgr* rm, DeviceBase* dev,
                                   absl::Span<const Tensor* const> inputs,
                                   absl::Span<const int> variable_indices,
                                   std::vector<VariableInfo>* result) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_launch_utilDTcc mht_5(mht_5_v, 293, "", "./tensorflow/compiler/jit/xla_launch_util.cc", "GetVariableInfosFromInputs");
+
   result->clear();
   result->reserve(variable_indices.size());
   for (int var_idx : variable_indices) {
@@ -141,6 +328,9 @@ std::vector<const Tensor*> InputsFromContext(OpKernelContext* ctx) {
 }
 
 Status LockVariables(absl::Span<VariableInfo*> variables) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_launch_utilDTcc mht_6(mht_6_v, 331, "", "./tensorflow/compiler/jit/xla_launch_util.cc", "LockVariables");
+
   std::vector<int> lock_order(variables.size());
   std::iota(lock_order.begin(), lock_order.end(), 0);
 
@@ -186,6 +376,9 @@ Status LockVariables(absl::Span<VariableInfo*> variables) {
 }
 
 Status LockVariables(absl::Span<VariableInfo> variables) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_launch_utilDTcc mht_7(mht_7_v, 379, "", "./tensorflow/compiler/jit/xla_launch_util.cc", "LockVariables");
+
   std::vector<VariableInfo*> variable_ptrs;
   variable_ptrs.reserve(variables.size());
   for (auto& var : variables) {
@@ -198,6 +391,9 @@ Status SnapshotResourceVariables(OpKernelContext* ctx,
                                  absl::Span<const int> variable_indices,
                                  absl::Span<VariableInfo const> variable_infos,
                                  ResourceVarsSnapshot* result) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_launch_utilDTcc mht_8(mht_8_v, 394, "", "./tensorflow/compiler/jit/xla_launch_util.cc", "SnapshotResourceVariables");
+
   for (int i = 0, end = variable_indices.size(); i < end; i++) {
     Var* var = variable_infos[i].var();
     (*result)[variable_indices[i]] =
@@ -214,6 +410,9 @@ XlaComputationLaunchContext::XlaComputationLaunchContext(
       allocate_xla_tensors_(allocate_xla_tensors),
       use_multiple_streams_(use_multiple_streams),
       device_ordinal_(device_ordinal) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_launch_utilDTcc mht_9(mht_9_v, 413, "", "./tensorflow/compiler/jit/xla_launch_util.cc", "XlaComputationLaunchContext::XlaComputationLaunchContext");
+
   if (use_multiple_streams_) {
     CHECK(allocate_xla_tensors_) << "To use multiple streams correctly we must "
                                     "be allocating XLA tensors!";
@@ -226,6 +425,9 @@ static void PopulateExecutionInputBuffer(xla::ExecutionInput& execution_input,
                                          se::DeviceMemoryBase buffer,
                                          bool donate_buffer, int device_ordinal,
                                          se::DeviceMemoryAllocator* allocator) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_launch_utilDTcc mht_10(mht_10_v, 428, "", "./tensorflow/compiler/jit/xla_launch_util.cc", "PopulateExecutionInputBuffer");
+
   xla::MaybeOwningDeviceMemory* in_buffer =
       execution_input.MutableBuffer(index);
   if (donate_buffer) {
@@ -247,6 +449,9 @@ XlaComputationLaunchContext::PopulateInputs(
     const std::map<int, const Tensor*>& resource_vars,
     int missing_ctx_input_prefix,
     const xla::HloInputOutputAliasConfig& input_output_alias) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_launch_utilDTcc mht_11(mht_11_v, 452, "", "./tensorflow/compiler/jit/xla_launch_util.cc", "XlaComputationLaunchContext::PopulateInputs");
+
   std::vector<xla::ExecutionInput> arguments;
   arguments.reserve(compilation_result->xla_input_shapes.size());
 
@@ -303,6 +508,9 @@ XlaComputationLaunchContext::PopulateInputs(
 // Construct the tensor for the given type and buffer.
 static Tensor MakeTensor(DataType dtype, const TensorShape& shape,
                          se::DeviceMemoryBase buffer, Allocator* allocator) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_launch_utilDTcc mht_12(mht_12_v, 511, "", "./tensorflow/compiler/jit/xla_launch_util.cc", "MakeTensor");
+
   size_t expected_size = shape.num_elements() * DataTypeSize(dtype);
   auto* tensor_buffer = new XlaTensorBuffer(buffer.opaque(), expected_size,
                                             buffer.size(), allocator);
@@ -375,6 +583,9 @@ static StatusOr<Tensor> GetOrCreateTensorForOutput(
 static Status SetOutputForConstant(
     OpKernelContext* ctx, se::Stream* stream,
     const XlaCompiler::CompilationResult* compilation_result, int output_num) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_launch_utilDTcc mht_13(mht_13_v, 586, "", "./tensorflow/compiler/jit/xla_launch_util.cc", "SetOutputForConstant");
+
   CHECK(compilation_result->outputs[output_num].is_constant);
   const Tensor& const_tensor =
       compilation_result->outputs[output_num].constant_value;
@@ -457,6 +668,9 @@ Status XlaComputationLaunchContext::PopulateOutputs(
     absl::Span<VariableInfo> variable_infos,
     const xla::HloInputOutputAliasConfig& input_output_alias,
     const std::map<int, const Tensor*>& resource_vars) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_launch_utilDTcc mht_14(mht_14_v, 671, "", "./tensorflow/compiler/jit/xla_launch_util.cc", "XlaComputationLaunchContext::PopulateOutputs");
+
   se::Stream* stream =
       ctx->op_device_context() ? ctx->op_device_context()->stream() : nullptr;
   Allocator* allocator = ctx->device()->GetAllocator({});
@@ -609,6 +823,9 @@ XlaComputationLaunchContext::BuildXlaCompilerArguments(
     absl::Span<int const> must_be_constant_idxs,
     absl::Span<const Tensor* const> inputs,
     absl::Span<VariableInfo const> variable_args, Device* device) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSjitPSxla_launch_utilDTcc mht_15(mht_15_v, 826, "", "./tensorflow/compiler/jit/xla_launch_util.cc", "XlaComputationLaunchContext::BuildXlaCompilerArguments");
+
   CHECK(absl::c_is_sorted(must_be_constant_idxs));
   VLOG(2) << "Must be const args: {"
           << absl::StrJoin(must_be_constant_idxs, ",") << "} out of "

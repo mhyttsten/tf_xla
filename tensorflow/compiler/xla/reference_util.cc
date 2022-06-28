@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,6 +202,9 @@ namespace xla {
 
 /* static */ std::unique_ptr<Array2D<double>> ReferenceUtil::Array2DF32ToF64(
     const Array2D<float>& input) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc mht_0(mht_0_v, 205, "", "./tensorflow/compiler/xla/reference_util.cc", "ReferenceUtil::Array2DF32ToF64");
+
   auto result =
       absl::make_unique<Array2D<double>>(input.height(), input.width());
   for (int64_t rowno = 0; rowno < input.height(); ++rowno) {
@@ -47,6 +218,9 @@ namespace xla {
 /*  static */ std::unique_ptr<Array3D<float>> ReferenceUtil::ConvArray3D(
     const Array3D<float>& lhs, const Array3D<float>& rhs, int64_t kernel_stride,
     Padding padding) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc mht_1(mht_1_v, 221, "", "./tensorflow/compiler/xla/reference_util.cc", "ReferenceUtil::ConvArray3D");
+
   return ConvArray3DGeneralDimensionsDilated(
       lhs, rhs, kernel_stride, padding, 1, 1,
       XlaBuilder::CreateDefaultConvDimensionNumbers(1));
@@ -57,6 +231,9 @@ ReferenceUtil::ConvArray3DGeneralDimensionsDilated(
     const Array3D<float>& lhs, const Array3D<float>& rhs, int64_t kernel_stride,
     Padding padding, int64_t lhs_dilation, int64_t rhs_dilation,
     const ConvolutionDimensionNumbers& dnums) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc mht_2(mht_2_v, 234, "", "./tensorflow/compiler/xla/reference_util.cc", "ReferenceUtil::ConvArray3DGeneralDimensionsDilated");
+
   CHECK_EQ(dnums.input_spatial_dimensions_size(), 1);
   CHECK_EQ(dnums.kernel_spatial_dimensions_size(), 1);
   CHECK_EQ(dnums.output_spatial_dimensions_size(), 1);
@@ -94,6 +271,9 @@ ReferenceUtil::ConvArray3DGeneralDimensionsDilated(
 /* static */ std::unique_ptr<Array4D<float>> ReferenceUtil::ConvArray4D(
     const Array4D<float>& lhs, const Array4D<float>& rhs,
     std::pair<int64_t, int64_t> kernel_stride, Padding padding) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc mht_3(mht_3_v, 274, "", "./tensorflow/compiler/xla/reference_util.cc", "ReferenceUtil::ConvArray4D");
+
   return ConvArray4DGeneralDimensions(
       lhs, rhs, kernel_stride, padding,
       XlaBuilder::CreateDefaultConvDimensionNumbers());
@@ -105,6 +285,9 @@ ReferenceUtil::SeparableConvArray4D(const Array4D<float>& input,
                                     const Array4D<float>& pointwise_weights,
                                     std::pair<int64_t, int64_t> kernel_stride,
                                     Padding padding) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc mht_4(mht_4_v, 288, "", "./tensorflow/compiler/xla/reference_util.cc", "ReferenceUtil::SeparableConvArray4D");
+
   const int64_t depth_multiplier = depthwise_weights.planes();
   CHECK_EQ(pointwise_weights.depth(), input.depth() * depth_multiplier);
 
@@ -135,6 +318,9 @@ ReferenceUtil::SeparableConvArray4D(const Array4D<float>& input,
                                                 int64_t window_len,
                                                 int64_t stride,
                                                 Padding padding) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc mht_5(mht_5_v, 321, "", "./tensorflow/compiler/xla/reference_util.cc", "ReferenceUtil::WindowCount");
+
   if (padding == Padding::kValid) {
     return window_util::StridedBound(unpadded_width, window_len, stride);
   }
@@ -147,6 +333,9 @@ ReferenceUtil::ReduceWindow1DGeneric(
     const std::function<float(float, float)>& reduce_func,
     absl::Span<const int64_t> window, absl::Span<const int64_t> stride,
     absl::Span<const std::pair<int64_t, int64_t>> padding) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc mht_6(mht_6_v, 336, "", "./tensorflow/compiler/xla/reference_util.cc", "ReferenceUtil::ReduceWindow1DGeneric");
+
   CHECK_EQ(window.size(), 1);
   CHECK_EQ(stride.size(), 1);
   CHECK_EQ(padding.size(), 1);
@@ -178,7 +367,13 @@ ReferenceUtil::ReduceWindow1DAdd(absl::Span<const float> operand, float init,
                                  absl::Span<const int64_t> window,
                                  absl::Span<const int64_t> stride,
                                  Padding padding) {
-  const auto add_reduce = [](float arg1, float arg2) { return arg1 + arg2; };
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc mht_7(mht_7_v, 370, "", "./tensorflow/compiler/xla/reference_util.cc", "ReferenceUtil::ReduceWindow1DAdd");
+
+  const auto add_reduce = [](float arg1, float arg2) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc mht_8(mht_8_v, 374, "", "./tensorflow/compiler/xla/reference_util.cc", "lambda");
+ return arg1 + arg2; };
   std::vector<int64_t> dim_lengths{static_cast<int64_t>(operand.size())};
   return ReduceWindow1DGeneric(
       operand, init, add_reduce, window, stride,
@@ -188,6 +383,9 @@ ReferenceUtil::ReduceWindow1DAdd(absl::Span<const float> operand, float init,
 /* static  */ std::unique_ptr<Array3D<float>> ReferenceUtil::ReduceWindow3DAdd(
     const Array3D<float>& operand, float init, absl::Span<const int64_t> window,
     absl::Span<const int64_t> stride, Padding padding) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc mht_9(mht_9_v, 386, "", "./tensorflow/compiler/xla/reference_util.cc", "ReferenceUtil::ReduceWindow3DAdd");
+
   std::vector<int64_t> dim_lengths{operand.n1(), operand.n2(), operand.n3()};
   auto padding_both = xla::MakePadding(dim_lengths, window, stride, padding);
 
@@ -235,6 +433,9 @@ ReferenceUtil::ReduceWindow4DGeneric(
     const std::function<float(float, float)>& reduce_func,
     absl::Span<const int64_t> window, absl::Span<const int64_t> stride,
     Padding padding) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc mht_10(mht_10_v, 436, "", "./tensorflow/compiler/xla/reference_util.cc", "ReferenceUtil::ReduceWindow4DGeneric");
+
   std::vector<int64_t> dim_lengths{operand.n1(), operand.n2(), operand.n3(),
                                    operand.n4()};
   return ReduceWindow4DGeneric(
@@ -248,6 +449,9 @@ ReferenceUtil::ReduceWindow4DGeneric(
     const std::function<float(float, float)>& reduce_func,
     absl::Span<const int64_t> window, absl::Span<const int64_t> stride,
     absl::Span<const std::pair<int64_t, int64_t>> padding) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc mht_11(mht_11_v, 452, "", "./tensorflow/compiler/xla/reference_util.cc", "ReferenceUtil::ReduceWindow4DGeneric");
+
   std::vector<int64_t> dim_lengths{operand.n1(), operand.n2(), operand.n3(),
                                    operand.n4()};
 
@@ -302,7 +506,13 @@ ReferenceUtil::ReduceWindow4DGeneric(
 /* static  */ std::unique_ptr<Array4D<float>> ReferenceUtil::ReduceWindow4DAdd(
     const Array4D<float>& operand, float init, absl::Span<const int64_t> window,
     absl::Span<const int64_t> stride, Padding padding) {
-  const auto add_reduce = [](float arg1, float arg2) { return arg1 + arg2; };
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc mht_12(mht_12_v, 509, "", "./tensorflow/compiler/xla/reference_util.cc", "ReferenceUtil::ReduceWindow4DAdd");
+
+  const auto add_reduce = [](float arg1, float arg2) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc mht_13(mht_13_v, 513, "", "./tensorflow/compiler/xla/reference_util.cc", "lambda");
+ return arg1 + arg2; };
   return ReduceWindow4DGeneric(operand, init, add_reduce, window, stride,
                                padding);
 }
@@ -311,6 +521,9 @@ ReferenceUtil::ReduceWindow4DGeneric(
     const Array4D<float>& input, const Array4D<float>& mean,
     const Array4D<float>& var, const Array4D<float>& scale,
     const Array4D<float>& offset, float epsilon) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc mht_14(mht_14_v, 524, "", "./tensorflow/compiler/xla/reference_util.cc", "ReferenceUtil::BatchNorm4D");
+
   auto normalized =
       *MapArray4D(input, mean, [](float a, float b) { return a - b; });
   normalized = *MapArray4D(normalized, var, [&](float a, float b) {
@@ -328,6 +541,9 @@ ReferenceUtil::SelectAndScatter4DGePlus(const Array4D<float>& operand,
                                         absl::Span<const int64_t> window,
                                         absl::Span<const int64_t> stride,
                                         bool same_padding) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc mht_15(mht_15_v, 544, "", "./tensorflow/compiler/xla/reference_util.cc", "ReferenceUtil::SelectAndScatter4DGePlus");
+
   Padding padding = same_padding ? Padding::kSame : Padding::kValid;
   auto result = absl::make_unique<Array4D<float>>(operand.n1(), operand.n2(),
                                                   operand.n3(), operand.n4());
@@ -402,6 +618,9 @@ ReferenceUtil::ConvArray4DGeneralDimensions(
     const Array4D<float>& lhs, const Array4D<float>& rhs,
     std::pair<int64_t, int64_t> kernel_stride, Padding padding,
     ConvolutionDimensionNumbers dimension_numbers) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc mht_16(mht_16_v, 621, "", "./tensorflow/compiler/xla/reference_util.cc", "ReferenceUtil::ConvArray4DGeneralDimensions");
+
   return ConvArray4DGeneralDimensionsDilated(lhs, rhs, kernel_stride, padding,
                                              {1, 1}, {1, 1},
                                              std::move(dimension_numbers));
@@ -414,6 +633,9 @@ ReferenceUtil::ConvArray4DGeneralDimensionsDilated(
     std::pair<int64_t, int64_t> lhs_dilation,
     std::pair<int64_t, int64_t> rhs_dilation,
     ConvolutionDimensionNumbers dnums) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc mht_17(mht_17_v, 636, "", "./tensorflow/compiler/xla/reference_util.cc", "ReferenceUtil::ConvArray4DGeneralDimensionsDilated");
+
   HloComputation::Builder b("ConvArray4DGeneralDimensionDilated");
   auto lhs_literal = LiteralUtil::CreateR4FromArray4D<float>(lhs);
   auto rhs_literal = LiteralUtil::CreateR4FromArray4D<float>(rhs);
@@ -509,6 +731,9 @@ ReferenceUtil::ConvArray4DGeneralDimensionsDilated(
 ReferenceUtil::ReduceToColArray2D(
     const Array2D<float>& matrix, float init,
     const std::function<float(float, float)>& reduce_function) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc mht_18(mht_18_v, 734, "", "./tensorflow/compiler/xla/reference_util.cc", "ReferenceUtil::ReduceToColArray2D");
+
   int64_t rows = matrix.height();
   int64_t cols = matrix.width();
   auto result = absl::make_unique<std::vector<float>>();
@@ -526,6 +751,9 @@ ReferenceUtil::ReduceToColArray2D(
 ReferenceUtil::ReduceToRowArray2D(
     const Array2D<float>& matrix, float init,
     const std::function<float(float, float)>& reduce_function) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc mht_19(mht_19_v, 754, "", "./tensorflow/compiler/xla/reference_util.cc", "ReferenceUtil::ReduceToRowArray2D");
+
   int64_t rows = matrix.height();
   int64_t cols = matrix.width();
   auto result = absl::make_unique<std::vector<float>>();
@@ -542,6 +770,9 @@ ReferenceUtil::ReduceToRowArray2D(
 /*static*/ std::vector<float> ReferenceUtil::Reduce4DTo1D(
     const Array4D<float>& array, float init, absl::Span<const int64_t> dims,
     const std::function<float(float, float)>& reduce_function) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc mht_20(mht_20_v, 773, "", "./tensorflow/compiler/xla/reference_util.cc", "ReferenceUtil::Reduce4DTo1D");
+
   std::vector<float> result;
   CHECK_EQ(dims.size(), 3);
   const absl::flat_hash_set<int64_t> dim_set(dims.begin(), dims.end());
@@ -585,6 +816,9 @@ ReferenceUtil::ReduceToRowArray2D(
 /* static */ std::unique_ptr<Array4D<float>> ReferenceUtil::Broadcast1DTo4D(
     const std::vector<float>& array, const std::vector<int64_t>& bounds,
     int64_t broadcast_from_dim) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc mht_21(mht_21_v, 819, "", "./tensorflow/compiler/xla/reference_util.cc", "ReferenceUtil::Broadcast1DTo4D");
+
   auto result = absl::make_unique<Array4D<float>>(bounds[0], bounds[1],
                                                   bounds[2], bounds[3]);
   for (int64_t i = 0; i < result->n1(); ++i) {
@@ -617,6 +851,9 @@ ReferenceUtil::ReduceToRowArray2D(
 /* static */ std::unique_ptr<Array2D<float>> ReferenceUtil::Reduce3DTo2D(
     const Array3D<float>& array, float init, absl::Span<const int64_t> dims,
     const std::function<float(float, float)>& reduce_function) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc mht_22(mht_22_v, 854, "", "./tensorflow/compiler/xla/reference_util.cc", "ReferenceUtil::Reduce3DTo2D");
+
   CHECK_EQ(dims.size(), 1);
   int64_t rows = dims[0] == 0 ? array.n2() : array.n1();
   int64_t cols = dims[0] == 2 ? array.n2() : array.n3();
@@ -638,6 +875,9 @@ ReferenceUtil::ReduceToRowArray2D(
 /* static */ std::unique_ptr<Array2D<float>> ReferenceUtil::MapArray2D(
     const Array2D<float>& matrix,
     const std::function<float(float)>& map_function) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc mht_23(mht_23_v, 878, "", "./tensorflow/compiler/xla/reference_util.cc", "ReferenceUtil::MapArray2D");
+
   int64_t rows = matrix.height();
   int64_t cols = matrix.width();
   auto result = absl::make_unique<Array2D<float>>(rows, cols);
@@ -652,6 +892,9 @@ ReferenceUtil::ReduceToRowArray2D(
 /* static */ std::unique_ptr<Array2D<float>> ReferenceUtil::MapArray2D(
     const Array2D<float>& lhs, const Array2D<float>& rhs,
     const std::function<float(float, float)>& map_function) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc mht_24(mht_24_v, 895, "", "./tensorflow/compiler/xla/reference_util.cc", "ReferenceUtil::MapArray2D");
+
   CHECK_EQ(lhs.height(), rhs.height());
   CHECK_EQ(lhs.width(), rhs.width());
   int64_t rows = lhs.height();
@@ -668,6 +911,9 @@ ReferenceUtil::ReduceToRowArray2D(
 /* static */ std::unique_ptr<Array2D<float>> ReferenceUtil::MapWithIndexArray2D(
     const Array2D<float>& matrix,
     const std::function<float(float, int64_t, int64_t)>& map_function) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxlaPSreference_utilDTcc mht_25(mht_25_v, 914, "", "./tensorflow/compiler/xla/reference_util.cc", "ReferenceUtil::MapWithIndexArray2D");
+
   int64_t rows = matrix.height();
   int64_t cols = matrix.width();
   auto result = absl::make_unique<Array2D<float>>(rows, cols);

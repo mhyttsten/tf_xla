@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,6 +212,9 @@ class BufferAllocStats {
   };
 
   Stats ReportAlloc(int64_t device, int64_t msize) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_0(mht_0_v, 215, "", "./tensorflow/compiler/xrt/xrt_state.cc", "ReportAlloc");
+
     mutex_lock lock(lock_);
     Stats* device_stats = &stats_[device];
     device_stats->count += 1;
@@ -52,6 +223,9 @@ class BufferAllocStats {
   }
 
   Stats ReportFree(int64_t device, int64_t msize) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_1(mht_1_v, 226, "", "./tensorflow/compiler/xrt/xrt_state.cc", "ReportFree");
+
     mutex_lock lock(lock_);
     Stats* device_stats = &stats_[device];
     device_stats->count -= 1;
@@ -65,6 +239,9 @@ class BufferAllocStats {
 };
 
 BufferAllocStats* GetAllocStats() {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_2(mht_2_v, 242, "", "./tensorflow/compiler/xrt/xrt_state.cc", "GetAllocStats");
+
   static BufferAllocStats* stats = new BufferAllocStats();
   return stats;
 }
@@ -73,6 +250,9 @@ Status AllocateScopedShapedBuffer(
     XRTMemoryManager* memory_manager, xla::Backend* backend, int device_ordinal,
     const xla::Shape& shape, std::unique_ptr<xla::ScopedShapedBuffer>* buffer,
     se::DeviceMemoryAllocator* allocator) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_3(mht_3_v, 253, "", "./tensorflow/compiler/xrt/xrt_state.cc", "AllocateScopedShapedBuffer");
+
   auto transfer_manager = backend->transfer_manager();
   TF_ASSIGN_OR_RETURN(auto stream, backend->BorrowStream(device_ordinal));
 
@@ -123,6 +303,9 @@ XRTBufferAllocation::XRTBufferAllocation(const se::DeviceMemoryBase& allocation,
     : allocation_(allocation),
       device_ordinal_(device_ordinal),
       allocator_(allocator) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_4(mht_4_v, 306, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTBufferAllocation::XRTBufferAllocation");
+
   if (VLOG_IS_ON(2)) {
     auto stats =
         GetAllocStats()->ReportAlloc(device_ordinal_, allocation_.size());
@@ -132,6 +315,9 @@ XRTBufferAllocation::XRTBufferAllocation(const se::DeviceMemoryBase& allocation,
 }
 
 XRTBufferAllocation::~XRTBufferAllocation() {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_5(mht_5_v, 318, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTBufferAllocation::~XRTBufferAllocation");
+
   if (VLOG_IS_ON(2)) {
     GetAllocStats()->ReportFree(device_ordinal_, allocation_.size());
   }
@@ -142,6 +328,9 @@ XRTBufferAllocation::~XRTBufferAllocation() {
 }
 
 const se::DeviceMemoryBase& XRTBufferAllocation::allocation() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_6(mht_6_v, 331, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTBufferAllocation::allocation");
+
   return allocation_;
 }
 
@@ -154,11 +343,20 @@ XRTTupleAllocation::XRTTupleAllocation(int device_ordinal,
       on_host_shape_(on_host_shape),
       on_device_shape_(on_device_shape),
       buffers_(&on_device_shape_),
-      pin_count_(0) {}
+      pin_count_(0) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_7(mht_7_v, 347, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::XRTTupleAllocation");
+}
 
-XRTTupleAllocation::~XRTTupleAllocation() { ReleaseBuffers(); }
+XRTTupleAllocation::~XRTTupleAllocation() {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_8(mht_8_v, 352, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::~XRTTupleAllocation");
+ ReleaseBuffers(); }
 
 void XRTTupleAllocation::ReleaseBuffers() {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_9(mht_9_v, 357, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::ReleaseBuffers");
+
   for (auto& index_buffer : buffers_) {
     if (index_buffer.second != nullptr) {
       index_buffer.second->Unref();
@@ -171,6 +369,9 @@ void XRTTupleAllocation::ReleaseBuffers() {
     const xla::LiteralBase& literal, XRTMemoryManager* memory_manager,
     xla::Backend* backend, int device_ordinal, XRTTupleAllocation** allocation,
     se::DeviceMemoryAllocator* allocator) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_10(mht_10_v, 372, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::CreateAndTransfer");
+
   auto transfer_manager = backend->transfer_manager();
   std::unique_ptr<xla::ScopedShapedBuffer> scoped_buffer;
   TF_RETURN_IF_ERROR(AllocateScopedShapedBuffer(memory_manager, backend,
@@ -198,6 +399,9 @@ void XRTTupleAllocation::ReleaseBuffers() {
     const xla::Shape& shape, XRTMemoryManager* memory_manager,
     xla::Backend* backend, int device_ordinal, XRTTupleAllocation** allocation,
     se::DeviceMemoryAllocator* allocator) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_11(mht_11_v, 402, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::CreateUninitialized");
+
   std::unique_ptr<xla::ScopedShapedBuffer> scoped_buffer;
   TF_RETURN_IF_ERROR(AllocateScopedShapedBuffer(memory_manager, backend,
                                                 device_ordinal, shape,
@@ -222,6 +426,9 @@ void XRTTupleAllocation::ReleaseBuffers() {
     const xla::Shape& on_device_shape, xla::Backend* backend,
     int device_ordinal, XRTTupleAllocation** allocation,
     se::DeviceMemoryAllocator* allocator) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_12(mht_12_v, 429, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::CreateFromBuffer");
+
   *allocation = new XRTTupleAllocation(device_ordinal, allocator, on_host_shape,
                                        on_device_shape);
   (*allocation)
@@ -234,6 +441,9 @@ void XRTTupleAllocation::ReleaseBuffers() {
     const xla::ShapedBuffer& shaped_buffer, xla::Backend* backend,
     int device_ordinal, XRTTupleAllocation** allocation,
     se::DeviceMemoryAllocator* allocator) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_13(mht_13_v, 444, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::CreateFromBuffer");
+
   return CreateFromBuffer(shaped_buffer, shaped_buffer.on_host_shape(),
                           shaped_buffer.on_device_shape(), backend,
                           device_ordinal, allocation, allocator);
@@ -241,6 +451,9 @@ void XRTTupleAllocation::ReleaseBuffers() {
 
 Status XRTTupleAllocation::ToLiteral(xla::Backend* backend,
                                      xla::MutableLiteralBase* literal) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_14(mht_14_v, 454, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::ToLiteral");
+
   mutex_lock lock(lock_);
   return literal_ == nullptr ? StoreToLiteral(backend, literal)
                              : literal->CopyFrom(*literal_);
@@ -248,6 +461,9 @@ Status XRTTupleAllocation::ToLiteral(xla::Backend* backend,
 
 Status XRTTupleAllocation::StoreToLiteral(xla::Backend* backend,
                                           xla::MutableLiteralBase* literal) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_15(mht_15_v, 464, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::StoreToLiteral");
+
   auto transfer_manager = backend->transfer_manager();
   TF_ASSIGN_OR_RETURN(auto stream, backend->BorrowStream(device_ordinal()));
   TF_ASSIGN_OR_RETURN(xla::ShapedBuffer shaped_buffer, ToShapedBuffer());
@@ -257,6 +473,9 @@ Status XRTTupleAllocation::StoreToLiteral(xla::Backend* backend,
 
 Status XRTTupleAllocation::WriteLiteral(xla::Backend* backend,
                                         const xla::Literal& literal) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_16(mht_16_v, 476, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::WriteLiteral");
+
   if (!xla::ShapeUtil::Equal(literal.shape(), on_host_shape())) {
     return errors::InvalidArgument(
         "New literal shape not matching the existing one: literal=",
@@ -278,6 +497,9 @@ Status XRTTupleAllocation::WriteLiteral(xla::Backend* backend,
 
 xla::StatusOr<bool> XRTTupleAllocation::SwapOut(xla::Backend* backend,
                                                 bool swap_pinned) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_17(mht_17_v, 500, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::SwapOut");
+
   mutex_lock lock(lock_);
   if (literal_ == nullptr && (!IsPinned() || swap_pinned)) {
     xla::Literal literal(on_host_shape());
@@ -292,6 +514,9 @@ xla::StatusOr<bool> XRTTupleAllocation::SwapOut(xla::Backend* backend,
 xla::StatusOr<bool> XRTTupleAllocation::SwapIn(
     XRTMemoryManager* memory_manager, xla::Backend* backend,
     se::DeviceMemoryAllocator* allocator) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_18(mht_18_v, 517, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::SwapIn");
+
   // We need to call AllocateScopedShapedBuffer() outside the locks, since the
   // XRTMemoryManager might end up calling back into the SwapOut() API.
   // So we do a quick check before using the IsSwapped() API, and it can happen
@@ -326,43 +551,76 @@ xla::StatusOr<bool> XRTTupleAllocation::SwapIn(
 xla::StatusOr<bool> XRTTupleAllocation::PinAndSwapIn(
     XRTMemoryManager* memory_manager, xla::Backend* backend,
     se::DeviceMemoryAllocator* allocator) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_19(mht_19_v, 554, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::PinAndSwapIn");
+
   Pin();
   return SwapIn(memory_manager, backend, allocator);
 }
 
 bool XRTTupleAllocation::IsSwapped() const {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_20(mht_20_v, 562, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::IsSwapped");
+
   mutex_lock lock(lock_);
   return literal_ != nullptr;
 }
 
-int64_t XRTTupleAllocation::Pin() { return pin_count_.fetch_add(1); }
+int64_t XRTTupleAllocation::Pin() {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_21(mht_21_v, 570, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::Pin");
+ return pin_count_.fetch_add(1); }
 
-int64_t XRTTupleAllocation::Unpin() { return pin_count_.fetch_sub(1); }
+int64_t XRTTupleAllocation::Unpin() {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_22(mht_22_v, 575, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::Unpin");
+ return pin_count_.fetch_sub(1); }
 
-bool XRTTupleAllocation::IsPinned() const { return pin_count_ != 0; }
+bool XRTTupleAllocation::IsPinned() const {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_23(mht_23_v, 580, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::IsPinned");
+ return pin_count_ != 0; }
 
 void XRTTupleAllocation::DiscardAllocation(
     const xla::ShapeIndex& buffer_index) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_24(mht_24_v, 586, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::DiscardAllocation");
+
   buffers_.element(buffer_index)->DiscardAllocation();
 }
 
 const xla::Shape& XRTTupleAllocation::on_host_shape() const {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_25(mht_25_v, 593, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::on_host_shape");
+
   return on_host_shape_;
 }
 
 const xla::Shape& XRTTupleAllocation::on_device_shape() const {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_26(mht_26_v, 600, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::on_device_shape");
+
   return on_device_shape_;
 }
 
-int XRTTupleAllocation::device_ordinal() const { return device_ordinal_; }
+int XRTTupleAllocation::device_ordinal() const {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_27(mht_27_v, 607, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::device_ordinal");
+ return device_ordinal_; }
 
 const se::DeviceMemoryBase& XRTTupleAllocation::root_allocation() const {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_28(mht_28_v, 612, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::root_allocation");
+
   return buffers_.element({})->allocation();
 }
 
 /*static*/ Status XRTTupleAllocation::MakeSubBuffer(
     XRTTupleAllocation* parent, const xla::ShapeIndex& subshape,
     XRTTupleAllocation** allocation, bool alias_parent_allocation) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_29(mht_29_v, 621, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::MakeSubBuffer");
+
   TF_ASSIGN_OR_RETURN(
       const xla::Shape* host_sub_shape,
       xla::ShapeUtil::TryGetSubshape(parent->on_host_shape(), subshape));
@@ -402,6 +660,9 @@ const se::DeviceMemoryBase& XRTTupleAllocation::root_allocation() const {
 }
 
 void XRTTupleAllocation::SetDeviceMemorySize() {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_30(mht_30_v, 663, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::SetDeviceMemorySize");
+
   size_t size = 0;
   for (auto& index_buffer : buffers_) {
     if (index_buffer.second != nullptr) {
@@ -415,6 +676,9 @@ void XRTTupleAllocation::SetDeviceMemorySize() {
     const xla::ShapeTree<ExpandedTupleInput>& elements, int device_ordinal,
     se::DeviceMemoryAllocator* allocator, xla::Shape* host_shape,
     xla::Shape* device_shape) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_31(mht_31_v, 679, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::ExpandTreeOfTuples");
+
   // Initialize both host and device shape to be the 'spine' of the new tuple
   // shape, given by the shape of the tree of tuples.
   *host_shape = elements.shape();
@@ -456,6 +720,9 @@ void XRTTupleAllocation::SetDeviceMemorySize() {
     XRTMemoryManager* memory_manager, xla::Backend* backend, int device_ordinal,
     const xla::ShapeTree<ExpandedTupleInput>& elements,
     XRTTupleAllocation** allocation, se::DeviceMemoryAllocator* allocator) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_32(mht_32_v, 723, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::MakeTuple");
+
   auto transfer_manager = backend->transfer_manager();
   TF_ASSIGN_OR_RETURN(auto stream, backend->BorrowStream(device_ordinal));
 
@@ -557,6 +824,9 @@ void XRTTupleAllocation::SetDeviceMemorySize() {
 }
 
 bool XRTTupleAllocation::IsExclusiveOwner() const {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_33(mht_33_v, 827, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::IsExclusiveOwner");
+
   for (const auto& index_buffer : buffers_) {
     if (index_buffer.second != nullptr &&
         !index_buffer.second->RefCountIsOne()) {
@@ -567,12 +837,18 @@ bool XRTTupleAllocation::IsExclusiveOwner() const {
 }
 
 size_t XRTTupleAllocation::GetDeviceMemorySize() const {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_34(mht_34_v, 840, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::GetDeviceMemorySize");
+
   return device_memory_size_;
 }
 
 void XRTTupleAllocation::InitializeFromShapedBuffer(
     const xla::ShapedBuffer& shaped_buffer,
     se::DeviceMemoryAllocator* allocator, int device_ordinal) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_35(mht_35_v, 849, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::InitializeFromShapedBuffer");
+
   for (auto& index_buffer : buffers_) {
     if (index_buffer.second != nullptr) {
       index_buffer.second->Unref();
@@ -584,6 +860,9 @@ void XRTTupleAllocation::InitializeFromShapedBuffer(
 }
 
 xla::StatusOr<xla::ShapedBuffer> XRTTupleAllocation::ToShapedBuffer() {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_36(mht_36_v, 863, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::ToShapedBuffer");
+
   xla::ShapedBuffer shaped_buffer(on_host_shape(), on_device_shape(),
                                   device_ordinal_);
   for (const auto& index_buffer : buffers_) {
@@ -603,6 +882,9 @@ xla::StatusOr<xla::ShapedBuffer> XRTTupleAllocation::ToShapedBuffer() {
 Status XRTTupleAllocation::AliasBufferFrom(const XRTTupleAllocation& source,
                                            const xla::ShapeIndex& source_index,
                                            const xla::ShapeIndex& dest_index) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_37(mht_37_v, 885, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::AliasBufferFrom");
+
   XRTBufferAllocation* source_buffer = source.buffers_.element(source_index);
   XRTBufferAllocation* dest_buffer = buffers_.element(dest_index);
   if (dest_buffer != nullptr) {
@@ -650,6 +932,9 @@ Status XRTTupleAllocation::AliasBufferFrom(const XRTTupleAllocation& source,
 xla::StatusOr<xla::ExecutionInput> XRTTupleAllocation::ToExecutionInput(
     const std::function<xla::StatusOr<bool>(const xla::ShapeIndex&)>&
         alias_checker) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScompilerPSxrtPSxrt_stateDTcc mht_38(mht_38_v, 935, "", "./tensorflow/compiler/xrt/xrt_state.cc", "XRTTupleAllocation::ToExecutionInput");
+
   xla::ExecutionInput result(on_device_shape(), on_host_shape());
   for (const auto& index_buffer : buffers_) {
     if (index_buffer.second == nullptr ||

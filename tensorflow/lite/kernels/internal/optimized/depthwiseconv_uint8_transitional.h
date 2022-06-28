@@ -14,6 +14,174 @@ limitations under the License.
 ==============================================================================*/
 #ifndef TENSORFLOW_LITE_KERNELS_INTERNAL_OPTIMIZED_DEPTHWISECONV_UINT8_TRANSITIONAL_H_
 #define TENSORFLOW_LITE_KERNELS_INTERNAL_OPTIMIZED_DEPTHWISECONV_UINT8_TRANSITIONAL_H_
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 
 // This file provides kernel implementations that are not used in shipped
 // inference code, but rather (a) show how model C++ code is designed and then
@@ -41,6 +209,9 @@ inline void util_vst1_x8(uint8* data_addr, int8x8_t reg) {
   return vst1_u8(data_addr, vreinterpret_u8_s8(reg));
 }
 inline void util_vst1_x8(int8* data_addr, int8x8_t reg) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_0(mht_0_v, 212, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "util_vst1_x8");
+
   return vst1_s8(data_addr, reg);
 }
 
@@ -79,6 +250,9 @@ struct ProcessPerDepth<DepthwiseConvImplementation::kUseCModel3x3DotProduct,
   // filling the workspace, and optimized versions will be similar.
   static inline void FillFilterBank(int depth, const uint8* filter_block,
                                     int8 filter_bank[3][2][4][4]) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_1(mht_1_v, 253, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "FillFilterBank");
+
     constexpr int kSymmetricZeroPoint =
         QuantizationTypeImpl<quantization_type>::kIntSymmetricZeroPoint;
     // Load filter data in, 8-bytes down depth / sub-block at a time.
@@ -126,6 +300,9 @@ struct ProcessPerDepth<DepthwiseConvImplementation::kUseCModel3x3DotProduct,
                                 const int8 filter_bank[3][2][4][4],
                                 const int32* bias_data,
                                 int32 adjusted_bias_block[2][4]) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_2(mht_2_v, 303, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "AdjustBias");
+
     constexpr int kSymmetricZeroPoint =
         QuantizationTypeImpl<quantization_type>::kIntSymmetricZeroPoint;
     TFLITE_DCHECK_GE(input_offset, -255);
@@ -147,6 +324,9 @@ struct ProcessPerDepth<DepthwiseConvImplementation::kUseCModel3x3DotProduct,
   static void Run(const uint8* filter_data, const int32* bias_data,
                   int8* shuffled_filter_data, int32* adjusted_bias_data,
                   const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_3(mht_3_v, 327, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "Run");
+
     constexpr int shuffled_filter_increment = 2 * 3 * 4 * 4;
     const int depth = function_params->output_depth;
     const int depth_micro_repeats = function_params->depth_micro_repeats;
@@ -177,6 +357,9 @@ struct ProcessPerDepth<DepthwiseConvImplementation::kUseUnwound3x3DotProduct,
   static inline void Run(const uint8* filter_data, const int32* bias_data,
                          int8* shuffled_filter_data, int32* adjusted_bias_data,
                          const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_4(mht_4_v, 360, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "Run");
+
     const int depth = function_params->output_depth;
     const int depth_micro_repeats = function_params->depth_micro_repeats;
     const int bias_increment = function_params->bias_increment;
@@ -296,6 +479,9 @@ struct ProcessPerDepth<DepthwiseConvImplementation::kUseIntrinsics3x3DotProduct,
       const int32* bias_data, int8* shuffled_filter_data,
       int32* adjusted_bias_data,
       const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_5(mht_5_v, 482, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "ProcessPerDepthIntrinsics");
+
     const int depth = function_params->output_depth;
     const int depth_micro_repeats = function_params->depth_micro_repeats;
     const int bias_increment = function_params->bias_increment;
@@ -426,6 +612,9 @@ struct ProcessPerDepth<DepthwiseConvImplementation::kUseIntrinsics3x3DotProduct,
                          const int32* bias_data, int8* shuffled_filter_data,
                          int32* adjusted_bias_data,
                          const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_6(mht_6_v, 615, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "Run");
+
     ProcessPerDepthIntrinsics(filter_data, bias_data, shuffled_filter_data,
                               adjusted_bias_data, function_params);
   }
@@ -445,6 +634,9 @@ struct PackMacroBlock<
       const typename QuantizationTypeImpl<quantization_type>::ExternalType*
           input_block_data,
       int8* scratch_block_data) {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_7(mht_7_v, 637, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "CopyMacroBlock");
+
     TFLITE_DCHECK_LE(max_padding, 1);
 
     // Strides.
@@ -573,6 +765,9 @@ struct PackMacroBlock<
   static inline void MicroTransposeBlocks(
       const DepthwiseConvDotProdParams& function_params,
       int8* scratch_block_data) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_8(mht_8_v, 768, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "MicroTransposeBlocks");
+
     const int workspace_height_stride = function_params.workspace_height_stride;
     const int width_overall_micro_repeats =
         function_params.input_width_overall_micro_repeats;
@@ -627,6 +822,9 @@ struct PackMacroBlock<
           input_block_data,
       int8* scratch_block_data,
       const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_9(mht_9_v, 825, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "Run");
+
     CopyMacroBlock(height_block_number, width_block_number, *function_params,
                    input_block_data, scratch_block_data);
     MicroTransposeBlocks(*function_params, scratch_block_data);
@@ -643,6 +841,9 @@ struct PackMacroBlock<
           input_block_data,
       int8* scratch_block_data,
       const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_10(mht_10_v, 844, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "Run");
+
     // Currently support for padding is limited to 1 on any side.
     TFLITE_DCHECK_LE(max_padding, 1);
 
@@ -763,6 +964,9 @@ struct PackMacroBlock<DepthwiseConvImplementation::kUseUnwound3x3DotProduct,
           input_block_data,
       int8* scratch_block_data,
       const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_11(mht_11_v, 967, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "Run");
+
     const int workspace_height_stride =
         function_params->workspace_height_stride;
     const int width_overall_micro_repeats =
@@ -918,6 +1122,9 @@ struct PackMacroBlock<DepthwiseConvImplementation::kUseUnwound3x3DotProduct,
           input_block_data,
       int8* scratch_block_data,
       const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_12(mht_12_v, 1125, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "Run");
+
     // Just use C model code for case of padding. Optimized versions merge the
     // modifications therein to handle padding.
     PackMacroBlock<DepthwiseConvImplementation::kUseCModel3x3DotProduct,
@@ -939,6 +1146,9 @@ struct PackMacroBlock<
           input_block_data,
       int8* scratch_block_data,
       const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_13(mht_13_v, 1149, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "Run");
+
     const int workspace_height_stride =
         function_params->workspace_height_stride;
     const int width_overall_micro_repeats =
@@ -1254,6 +1464,9 @@ struct PackMacroBlock<DepthwiseConvImplementation::kUseIntrinsics3x3DotProduct,
           input_block_data,
       int8* scratch_block_data,
       const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_14(mht_14_v, 1467, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "PackMacroBlockIntrinsics");
+
     TFLITE_DCHECK_EQ(function_params->padding_bottom, 0);
     TFLITE_DCHECK_EQ(function_params->padding_top, 0);
     TFLITE_DCHECK_EQ(function_params->padding_left, 0);
@@ -1458,6 +1671,9 @@ struct PackMacroBlock<DepthwiseConvImplementation::kUseIntrinsics3x3DotProduct,
           input_block_data,
       int8* scratch_block_data,
       const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_15(mht_15_v, 1674, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "Run");
+
 #ifdef __aarch64__
     PreloadInputBlock(input_block_data, function_params);
 #endif
@@ -1477,6 +1693,9 @@ struct PackMacroBlock<DepthwiseConvImplementation::kUseIntrinsics3x3DotProduct,
           input_block_data,
       int8* scratch_block_data,
       const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_16(mht_16_v, 1696, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "PackMacroBlockIntrinsics");
+
     constexpr uint8 kSignBit =
         QuantizationTypeImpl<quantization_type>::kUint8SignBit;
 
@@ -1872,6 +2091,9 @@ struct PackMacroBlock<DepthwiseConvImplementation::kUseIntrinsics3x3DotProduct,
           input_block_data,
       int8* scratch_block_data,
       const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_17(mht_17_v, 2094, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "Run");
+
 #ifdef __aarch64__
     PreloadInputBlock(input_block_data, function_params);
 #endif
@@ -1893,6 +2115,9 @@ struct PackMacroBlock<DepthwiseConvImplementation::kUseIntrinsics3x3DotProduct,
           input_block_data,
       int8* scratch_block_data,
       const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_18(mht_18_v, 2118, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "PackMacroBlockIntrinsics");
+
     const int workspace_height_stride =
         function_params->workspace_height_stride;
     const int width_overall_micro_repeats =
@@ -2254,6 +2479,9 @@ struct PackMacroBlock<DepthwiseConvImplementation::kUseIntrinsics3x3DotProduct,
           input_block_data,
       int8* scratch_block_data,
       const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_19(mht_19_v, 2482, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "Run");
+
 #ifdef __aarch64__
     PreloadInputBlock(input_block_data, function_params);
 #endif
@@ -2275,6 +2503,9 @@ struct PackMacroBlock<DepthwiseConvImplementation::kUseIntrinsics3x3DotProduct,
           input_block_data,
       int8* scratch_block_data,
       const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_20(mht_20_v, 2506, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "PackMacroBlockIntrinsics");
+
     const int workspace_height_stride =
         function_params->workspace_height_stride;
     const int width_overall_micro_repeats =
@@ -2494,6 +2725,9 @@ struct PackMacroBlock<DepthwiseConvImplementation::kUseIntrinsics3x3DotProduct,
           input_block_data,
       int8* scratch_block_data,
       const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_21(mht_21_v, 2728, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "Run");
+
 #ifdef __aarch64__
     PreloadInputBlock(input_block_data, function_params);
 #endif
@@ -2538,6 +2772,9 @@ struct KernelMacroBlock<
                                                bool no_right_block,
                                                const int8* input_block,
                                                int8 selected_data[3][4][4]) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_22(mht_22_v, 2775, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "ConcatenateInputSubBlocks");
+
     TFLITE_DCHECK_GE(offset, 0);
     TFLITE_DCHECK_LT(offset, 4);
 
@@ -2573,6 +2810,9 @@ struct KernelMacroBlock<
       const DepthwiseConvDotProdParams& params, int sub_block,
       const int8 selected_data[3][4][4], const int8 filter_bank[3][2][4][4],
       const int32* bias_data, uint8 output_values[4]) {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_23(mht_23_v, 2813, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "Calculate3x3FilterOutput");
+
     const int32 output_activation_min = params.quantized_activation_min;
     const int32 output_activation_max = params.quantized_activation_max;
     const int32 output_multiplier = params.output_multiplier;
@@ -2602,6 +2842,9 @@ struct KernelMacroBlock<
                          const int8* filter_workspace, const int32* bias_data,
                          uint8* output_block_data,
                          const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_24(mht_24_v, 2845, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "Run");
+
     const int workspace_height_stride =
         function_params->workspace_height_stride;
     const int input_width_overall_micro_repeats =
@@ -2714,6 +2957,9 @@ struct KernelMacroBlock<
                                                bool no_right_block,
                                                const int8* input_block,
                                                int8 selected_data[3][4]) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_25(mht_25_v, 2960, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "ConcatenateInputSubBlocks");
+
     TFLITE_DCHECK_GE(offset, 0);
     TFLITE_DCHECK_LT(offset, 4);
     if (no_right_block) {
@@ -2735,6 +2981,9 @@ struct KernelMacroBlock<
       const DepthwiseConvDotProdParams& function_params, int sub_block,
       const int8 selected_data[3][4], const int8 filter_bank[3][2][4][4],
       const int32* bias_data, uint8 output_values[4]) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_26(mht_26_v, 2984, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "Calculate3x3FilterOutput");
+
     const int32 output_activation_min =
         function_params.quantized_activation_min;
     const int32 output_activation_max =
@@ -2766,6 +3015,9 @@ struct KernelMacroBlock<
                          const int8* filter_workspace, const int32* bias_data,
                          uint8* output_block_data,
                          const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_27(mht_27_v, 3018, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "Run");
+
     const int workspace_height_stride =
         function_params->workspace_height_stride;
     const int output_width_micro_repeats =
@@ -2853,6 +3105,9 @@ struct KernelMacroBlock<
                          const int8* filter_workspace, const int32* bias_data,
                          uint8* output_block_data,
                          const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_28(mht_28_v, 3108, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "Run");
+
     const int workspace_height_stride =
         function_params->workspace_height_stride;
     const int input_width_overall_micro_repeats =
@@ -3067,6 +3322,9 @@ struct KernelMacroBlock<
                          const int8* filter_workspace, const int32* bias_data,
                          uint8* output_block_data,
                          const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_29(mht_29_v, 3325, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "Run");
+
     const int workspace_height_stride =
         function_params->workspace_height_stride;
     const int output_width_micro_repeats =
@@ -3235,17 +3493,32 @@ struct KernelMacroBlock<
     QuantizationType::kNonPerChannelUint8,
     DepthwiseConvDepthMultiplication::kNoMultiplication,
     /*stride=*/1> {
-  static inline uint8x8_t vqmovxn_s16(int16x8_t x) { return vqmovun_s16(x); }
+  static inline uint8x8_t vqmovxn_s16(int16x8_t x) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_30(mht_30_v, 3497, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "vqmovxn_s16");
+ return vqmovun_s16(x); }
   static inline uint8x8_t util_vmin_x8(uint8x8_t a, uint8x8_t b) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_31(mht_31_v, 3501, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "util_vmin_x8");
+
     return vmin_u8(a, b);
   }
   static inline uint8x8_t util_vmax_x8(uint8x8_t a, uint8x8_t b) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_32(mht_32_v, 3507, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "util_vmax_x8");
+
     return vmax_u8(a, b);
   }
   static inline uint8x16_t util_vminq_x8(uint8x16_t a, uint8x16_t b) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_33(mht_33_v, 3513, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "util_vminq_x8");
+
     return vminq_u8(a, b);
   }
   static inline uint8x16_t util_vmaxq_x8(uint8x16_t a, uint8x16_t b) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_34(mht_34_v, 3519, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "util_vmaxq_x8");
+
     return vmaxq_u8(a, b);
   }
 
@@ -3253,6 +3526,9 @@ struct KernelMacroBlock<
       const int8* scratch_block_data, const int8* filter_workspace,
       const int32* bias_data, uint8* output_block_data,
       const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_35(mht_35_v, 3529, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "KernelMacroBlockIntrinsics");
+
     static constexpr QuantizationType quantization_type =
         QuantizationType::kNonPerChannelUint8;
 
@@ -3876,6 +4152,9 @@ struct KernelMacroBlock<
                          const int8* filter_workspace, const int32* bias_data,
                          uint8* output_block_data,
                          const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_36(mht_36_v, 4155, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "Run");
+
     KernelMacroBlockIntrinsics(scratch_block_data, filter_workspace, bias_data,
                                output_block_data, function_params);
   }
@@ -3887,11 +4166,20 @@ struct KernelMacroBlock<
     QuantizationType::kNonPerChannelUint8,
     DepthwiseConvDepthMultiplication::kNoMultiplication,
     /*stride=*/2> {
-  static inline uint8x8_t vqmovxn_s16(int16x8_t x) { return vqmovun_s16(x); }
+  static inline uint8x8_t vqmovxn_s16(int16x8_t x) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_37(mht_37_v, 4170, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "vqmovxn_s16");
+ return vqmovun_s16(x); }
   static inline uint8x8_t util_vmin_x8(uint8x8_t a, uint8x8_t b) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_38(mht_38_v, 4174, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "util_vmin_x8");
+
     return vmin_u8(a, b);
   }
   static inline uint8x8_t util_vmax_x8(uint8x8_t a, uint8x8_t b) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_39(mht_39_v, 4180, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "util_vmax_x8");
+
     return vmax_u8(a, b);
   }
 
@@ -3899,6 +4187,9 @@ struct KernelMacroBlock<
       const int8* scratch_block_data, const int8* filter_workspace,
       const int32* bias_data, uint8* output_block_data,
       const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_40(mht_40_v, 4190, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "KernelMacroBlockIntrinsics");
+
     static constexpr QuantizationType quantization_type =
         QuantizationType::kNonPerChannelUint8;
 
@@ -4328,6 +4619,9 @@ struct KernelMacroBlock<
                          const int8* filter_workspace, const int32* bias_data,
                          uint8* output_block_data,
                          const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_41(mht_41_v, 4622, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "Run");
+
     KernelMacroBlockIntrinsics(scratch_block_data, filter_workspace, bias_data,
                                output_block_data, function_params);
   }
@@ -4339,17 +4633,32 @@ struct KernelMacroBlock<
     QuantizationType::kNonPerChannelUint8,
     DepthwiseConvDepthMultiplication::kUnitInputDepth,
     /*stride=*/1> {
-  static inline uint8x8_t vqmovxn_s16(int16x8_t x) { return vqmovun_s16(x); }
+  static inline uint8x8_t vqmovxn_s16(int16x8_t x) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_42(mht_42_v, 4637, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "vqmovxn_s16");
+ return vqmovun_s16(x); }
   static inline uint8x8_t util_vmin_x8(uint8x8_t a, uint8x8_t b) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_43(mht_43_v, 4641, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "util_vmin_x8");
+
     return vmin_u8(a, b);
   }
   static inline uint8x8_t util_vmax_x8(uint8x8_t a, uint8x8_t b) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_44(mht_44_v, 4647, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "util_vmax_x8");
+
     return vmax_u8(a, b);
   }
   static inline uint8x16_t util_vminq_x8(uint8x16_t a, uint8x16_t b) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_45(mht_45_v, 4653, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "util_vminq_x8");
+
     return vminq_u8(a, b);
   }
   static inline uint8x16_t util_vmaxq_x8(uint8x16_t a, uint8x16_t b) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_46(mht_46_v, 4659, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "util_vmaxq_x8");
+
     return vmaxq_u8(a, b);
   }
 
@@ -4357,6 +4666,9 @@ struct KernelMacroBlock<
       const int8* scratch_block_data, const int8* filter_workspace,
       const int32* bias_data, uint8* output_block_data,
       const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_47(mht_47_v, 4669, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "KernelMacroBlockIntrinsics");
+
     static constexpr QuantizationType quantization_type =
         QuantizationType::kNonPerChannelUint8;
 
@@ -5002,6 +5314,9 @@ struct KernelMacroBlock<
                          const int8* filter_workspace, const int32* bias_data,
                          uint8* output_block_data,
                          const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_48(mht_48_v, 5317, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "Run");
+
     KernelMacroBlockIntrinsics(scratch_block_data, filter_workspace, bias_data,
                                output_block_data, function_params);
   }
@@ -5013,11 +5328,20 @@ struct KernelMacroBlock<
     QuantizationType::kNonPerChannelUint8,
     DepthwiseConvDepthMultiplication::kUnitInputDepth,
     /*stride=*/2> {
-  static inline uint8x8_t vqmovxn_s16(int16x8_t x) { return vqmovun_s16(x); }
+  static inline uint8x8_t vqmovxn_s16(int16x8_t x) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_49(mht_49_v, 5332, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "vqmovxn_s16");
+ return vqmovun_s16(x); }
   static inline uint8x8_t util_vmin_x8(uint8x8_t a, uint8x8_t b) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_50(mht_50_v, 5336, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "util_vmin_x8");
+
     return vmin_u8(a, b);
   }
   static inline uint8x8_t util_vmax_x8(uint8x8_t a, uint8x8_t b) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_51(mht_51_v, 5342, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "util_vmax_x8");
+
     return vmax_u8(a, b);
   }
 
@@ -5025,6 +5349,9 @@ struct KernelMacroBlock<
       const int8* scratch_block_data, const int8* filter_workspace,
       const int32* bias_data, uint8* output_block_data,
       const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_52(mht_52_v, 5352, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "KernelMacroBlockIntrinsics");
+
     static constexpr QuantizationType quantization_type =
         QuantizationType::kNonPerChannelUint8;
 
@@ -5549,6 +5876,9 @@ struct KernelMacroBlock<
                          const int8* filter_workspace, const int32* bias_data,
                          uint8* output_block_data,
                          const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_53(mht_53_v, 5879, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "Run");
+
     KernelMacroBlockIntrinsics(scratch_block_data, filter_workspace, bias_data,
                                output_block_data, function_params);
   }
@@ -5560,17 +5890,32 @@ struct KernelMacroBlock<
     QuantizationType::kPerChannelInt8,
     DepthwiseConvDepthMultiplication::kNoMultiplication,
     /*stride=*/1> {
-  static inline int8x8_t vqmovxn_s16(int16x8_t x) { return vqmovn_s16(x); }
+  static inline int8x8_t vqmovxn_s16(int16x8_t x) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_54(mht_54_v, 5894, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "vqmovxn_s16");
+ return vqmovn_s16(x); }
   static inline int8x8_t util_vmin_x8(int8x8_t a, int8x8_t b) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_55(mht_55_v, 5898, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "util_vmin_x8");
+
     return vmin_s8(a, b);
   }
   static inline int8x8_t util_vmax_x8(int8x8_t a, int8x8_t b) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_56(mht_56_v, 5904, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "util_vmax_x8");
+
     return vmax_s8(a, b);
   }
   static inline int8x16_t util_vminq_x8(int8x16_t a, int8x16_t b) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_57(mht_57_v, 5910, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "util_vminq_x8");
+
     return vminq_s8(a, b);
   }
   static inline int8x16_t util_vmaxq_x8(int8x16_t a, int8x16_t b) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_58(mht_58_v, 5916, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "util_vmaxq_x8");
+
     return vmaxq_s8(a, b);
   }
 
@@ -5578,6 +5923,9 @@ struct KernelMacroBlock<
       const int8* scratch_block_data, const int8* filter_workspace,
       const int32* bias_data, int8* output_block_data,
       const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_59(mht_59_v, 5926, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "KernelMacroBlockIntrinsics");
+
     static constexpr QuantizationType quantization_type =
         QuantizationType::kPerChannelInt8;
 
@@ -6221,6 +6569,9 @@ struct KernelMacroBlock<
                          const int8* filter_workspace, const int32* bias_data,
                          int8* output_block_data,
                          const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_60(mht_60_v, 6572, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "Run");
+
     KernelMacroBlockIntrinsics(scratch_block_data, filter_workspace, bias_data,
                                output_block_data, function_params);
   }
@@ -6232,11 +6583,20 @@ struct KernelMacroBlock<
     QuantizationType::kPerChannelInt8,
     DepthwiseConvDepthMultiplication::kNoMultiplication,
     /*stride=*/2> {
-  static inline int8x8_t vqmovxn_s16(int16x8_t x) { return vqmovn_s16(x); }
+  static inline int8x8_t vqmovxn_s16(int16x8_t x) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_61(mht_61_v, 6587, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "vqmovxn_s16");
+ return vqmovn_s16(x); }
   static inline int8x8_t util_vmin_x8(int8x8_t a, int8x8_t b) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_62(mht_62_v, 6591, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "util_vmin_x8");
+
     return vmin_s8(a, b);
   }
   static inline int8x8_t util_vmax_x8(int8x8_t a, int8x8_t b) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_63(mht_63_v, 6597, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "util_vmax_x8");
+
     return vmax_s8(a, b);
   }
 
@@ -6244,6 +6604,9 @@ struct KernelMacroBlock<
       const int8* scratch_block_data, const int8* filter_workspace,
       const int32* bias_data, int8* output_block_data,
       const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_64(mht_64_v, 6607, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "KernelMacroBlockIntrinsics");
+
     static constexpr QuantizationType quantization_type =
         QuantizationType::kPerChannelInt8;
 
@@ -6691,6 +7054,9 @@ struct KernelMacroBlock<
                          const int8* filter_workspace, const int32* bias_data,
                          int8* output_block_data,
                          const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_65(mht_65_v, 7057, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "Run");
+
     KernelMacroBlockIntrinsics(scratch_block_data, filter_workspace, bias_data,
                                output_block_data, function_params);
   }
@@ -6702,17 +7068,32 @@ struct KernelMacroBlock<
     QuantizationType::kPerChannelInt8,
     DepthwiseConvDepthMultiplication::kUnitInputDepth,
     /*stride=*/1> {
-  static inline int8x8_t vqmovxn_s16(int16x8_t x) { return vqmovn_s16(x); }
+  static inline int8x8_t vqmovxn_s16(int16x8_t x) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_66(mht_66_v, 7072, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "vqmovxn_s16");
+ return vqmovn_s16(x); }
   static inline int8x8_t util_vmin_x8(int8x8_t a, int8x8_t b) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_67(mht_67_v, 7076, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "util_vmin_x8");
+
     return vmin_s8(a, b);
   }
   static inline int8x8_t util_vmax_x8(int8x8_t a, int8x8_t b) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_68(mht_68_v, 7082, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "util_vmax_x8");
+
     return vmax_s8(a, b);
   }
   static inline int8x16_t util_vminq_x8(int8x16_t a, int8x16_t b) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_69(mht_69_v, 7088, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "util_vminq_x8");
+
     return vminq_s8(a, b);
   }
   static inline int8x16_t util_vmaxq_x8(int8x16_t a, int8x16_t b) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_70(mht_70_v, 7094, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "util_vmaxq_x8");
+
     return vmaxq_s8(a, b);
   }
 
@@ -6720,6 +7101,9 @@ struct KernelMacroBlock<
       const int8* scratch_block_data, const int8* filter_workspace,
       const int32* bias_data, int8* output_block_data,
       const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_71(mht_71_v, 7104, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "KernelMacroBlockIntrinsics");
+
     static constexpr QuantizationType quantization_type =
         QuantizationType::kPerChannelInt8;
 
@@ -7385,6 +7769,9 @@ struct KernelMacroBlock<
                          const int8* filter_workspace, const int32* bias_data,
                          int8* output_block_data,
                          const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_72(mht_72_v, 7772, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "Run");
+
     KernelMacroBlockIntrinsics(scratch_block_data, filter_workspace, bias_data,
                                output_block_data, function_params);
   }
@@ -7396,11 +7783,20 @@ struct KernelMacroBlock<
     QuantizationType::kPerChannelInt8,
     DepthwiseConvDepthMultiplication::kUnitInputDepth,
     /*stride=*/2> {
-  static inline int8x8_t vqmovxn_s16(int16x8_t x) { return vqmovn_s16(x); }
+  static inline int8x8_t vqmovxn_s16(int16x8_t x) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_73(mht_73_v, 7787, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "vqmovxn_s16");
+ return vqmovn_s16(x); }
   static inline int8x8_t util_vmin_x8(int8x8_t a, int8x8_t b) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_74(mht_74_v, 7791, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "util_vmin_x8");
+
     return vmin_s8(a, b);
   }
   static inline int8x8_t util_vmax_x8(int8x8_t a, int8x8_t b) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_75(mht_75_v, 7797, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "util_vmax_x8");
+
     return vmax_s8(a, b);
   }
 
@@ -7408,6 +7804,9 @@ struct KernelMacroBlock<
       const int8* scratch_block_data, const int8* filter_workspace,
       const int32* bias_data, int8* output_block_data,
       const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_76(mht_76_v, 7807, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "KernelMacroBlockIntrinsics");
+
     static constexpr QuantizationType quantization_type =
         QuantizationType::kPerChannelInt8;
 
@@ -7945,6 +8344,9 @@ struct KernelMacroBlock<
                          const int8* filter_workspace, const int32* bias_data,
                          int8* output_block_data,
                          const DepthwiseConvDotProdParams* function_params) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPSlitePSkernelsPSinternalPSoptimizedPSdepthwiseconv_uint8_transitionalDTh mht_77(mht_77_v, 8347, "", "./tensorflow/lite/kernels/internal/optimized/depthwiseconv_uint8_transitional.h", "Run");
+
     KernelMacroBlockIntrinsics(scratch_block_data, filter_workspace, bias_data,
                                output_block_data, function_params);
   }

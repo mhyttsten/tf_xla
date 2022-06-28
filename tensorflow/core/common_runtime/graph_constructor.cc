@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -59,16 +227,25 @@ namespace {
 static constexpr const bool kDoNotCheckDuplicates = true;
 
 inline bool IsMerge(const NodeDef& node_def) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_0(mht_0_v, 230, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "IsMerge");
+
   return node_def.op() == "Merge" || node_def.op() == "RefMerge" ||
          node_def.op() == "_XlaMerge";
 }
 
 inline bool IsNextIteration(const NodeDef& node_def) {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_1(mht_1_v, 238, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "IsNextIteration");
+
   return node_def.op() == "NextIteration" ||
          node_def.op() == "RefNextIteration";
 }
 
 bool IsValidNodeName(StringPiece s, bool allow_internal_ops) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_2(mht_2_v, 246, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "IsValidNodeName");
+
   using ::tensorflow::strings::Scanner;
   Scanner scanner(s);
   scanner
@@ -98,7 +275,10 @@ class GraphConstructor {
           importing(false),
           validate_nodes(in.validate_nodes),
           validate_colocation_constraints(false),
-          add_default_attributes(in.add_default_attributes) {}
+          add_default_attributes(in.add_default_attributes) {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_3(mht_3_v, 279, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "Options");
+}
     Options(const ImportGraphDefOptions& in)  // NOLINT(runtime/explicit)
         : allow_internal_ops(false),
           expect_device_spec(false),
@@ -116,7 +296,10 @@ class GraphConstructor {
           validate_nodes(true),
           validate_colocation_constraints(in.validate_colocation_constraints),
           validate_shape(in.validate_shape),
-          default_device(in.default_device) {}
+          default_device(in.default_device) {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_4(mht_4_v, 300, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "Options");
+}
 
     bool allow_internal_ops;
     bool expect_device_spec;
@@ -181,11 +364,20 @@ class GraphConstructor {
         refiner_(refiner),
         return_tensors_(return_tensors),
         return_nodes_(return_nodes),
-        missing_unused_input_map_keys_(missing_unused_input_map_keys) {}
+        missing_unused_input_map_keys_(missing_unused_input_map_keys) {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_5(mht_5_v, 368, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor");
+}
 
-  virtual ~GraphConstructor() {}
+  virtual ~GraphConstructor() {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_6(mht_6_v, 373, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "~GraphConstructor");
+}
 
   Status TryImport() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_7(mht_7_v, 378, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "TryImport");
+
     TF_RETURN_IF_ERROR(EnsureNoNameCollisions());
     TF_RETURN_IF_ERROR(ValidateInputMapAndControlDependencies());
     TF_RETURN_IF_ERROR(BuildNodeIndex());
@@ -320,9 +512,15 @@ class GraphConstructor {
 
   // Mapping from node name to the index within node_defs_.
   struct NodeInfo {
-    explicit NodeInfo(int i) : gdef_index(i), node(nullptr) {}
+    explicit NodeInfo(int i) : gdef_index(i), node(nullptr) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_8(mht_8_v, 516, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "NodeInfo");
+}
     // Containers require that we have a default constructor.
-    NodeInfo() : NodeInfo(-1) {}
+    NodeInfo() : NodeInfo(-1) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_9(mht_9_v, 521, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "NodeInfo");
+}
     int gdef_index;
     Node* node;  // nullptr until the NodeDef is converted to a Node.
   };
@@ -357,19 +555,32 @@ class GraphConstructor {
   // of a node.
   struct InputInfo {
     explicit InputInfo(const string& node_name, Node* n, int i)
-        : name(node_name), node(n), index(i) {}
+        : name(node_name), node(n), index(i) {
+   std::vector<std::string> mht_10_v;
+   mht_10_v.push_back("node_name: \"" + node_name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_10(mht_10_v, 560, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "InputInfo");
+}
     // Use string instead of StringPiece so we don't have to manage lifetime
     string name;
     Node* node;
     int index;
 
     static bool IsControlInput(const InputInfo& input) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_11(mht_11_v, 569, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "IsControlInput");
+
       return input.index == Graph::kControlSlot;
     }
     static int CompareName(const InputInfo& lhs, const InputInfo& rhs) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_12(mht_12_v, 575, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "CompareName");
+
       return lhs.name < rhs.name;
     }
     static bool IsSameName(const InputInfo& lhs, const InputInfo& rhs) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_13(mht_13_v, 581, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "IsSameName");
+
       return lhs.name == rhs.name;
     }
   };
@@ -378,7 +589,11 @@ class GraphConstructor {
   // the node named 'name' to node 'n'.
   struct EdgeInfo {
     explicit EdgeInfo(const string& name, int i1, Node* n, int i2)
-        : src_name(name), src_index(i1), dst_node(n), dst_index(i2) {}
+        : src_name(name), src_index(i1), dst_node(n), dst_index(i2) {
+   std::vector<std::string> mht_14_v;
+   mht_14_v.push_back("name: \"" + name + "\"");
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_14(mht_14_v, 594, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "EdgeInfo");
+}
     // Use string instead of StringPiece so we don't have to manage lifetime
     string src_name;
     int src_index;
@@ -407,14 +622,32 @@ class NodeDefCopyingGraphConstructor : public GraphConstructor {
                          missing_unused_input_map_keys),
         node_defs_(node_defs),
         versions_(versions),
-        library_(library) {}
+        library_(library) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_15(mht_15_v, 626, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "NodeDefCopyingGraphConstructor");
+}
 
  private:
-  size_t node_def_count() const override { return node_defs_.size(); }
-  const NodeDef& get_node_def(int i) const override { return *node_defs_[i]; }
-  NodeDef consume_node_def(int i) override { return *node_defs_[i]; }
-  const VersionDef* versions() const override { return versions_; }
-  const FunctionDefLibrary* library() const override { return library_; }
+  size_t node_def_count() const override {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_16(mht_16_v, 632, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "node_def_count");
+ return node_defs_.size(); }
+  const NodeDef& get_node_def(int i) const override {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_17(mht_17_v, 636, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "get_node_def");
+ return *node_defs_[i]; }
+  NodeDef consume_node_def(int i) override {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_18(mht_18_v, 640, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "consume_node_def");
+ return *node_defs_[i]; }
+  const VersionDef* versions() const override {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_19(mht_19_v, 644, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "versions");
+ return versions_; }
+  const FunctionDefLibrary* library() const override {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_20(mht_20_v, 648, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "library");
+ return library_; }
 
   const NodeDefSlice node_defs_;
   const VersionDef* const versions_;
@@ -433,22 +666,40 @@ class NodeDefMovingGraphConstructor : public GraphConstructor {
       : GraphConstructor(opts, g, refiner, return_tensors, return_nodes,
                          missing_unused_input_map_keys),
         graph_def_(std::move(graph_def)),
-        is_consumed_(graph_def_.node_size(), false) {}
+        is_consumed_(graph_def_.node_size(), false) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_21(mht_21_v, 670, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "NodeDefMovingGraphConstructor");
+}
 
  private:
-  size_t node_def_count() const override { return graph_def_.node().size(); }
+  size_t node_def_count() const override {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_22(mht_22_v, 676, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "node_def_count");
+ return graph_def_.node().size(); }
   const NodeDef& get_node_def(int i) const override {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_23(mht_23_v, 680, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "get_node_def");
+
     CHECK(!is_consumed_[i])
         << "NodeDef " << i << " accessed after it was consumed.";
     return graph_def_.node(i);
   }
   NodeDef consume_node_def(int i) override {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_24(mht_24_v, 688, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "consume_node_def");
+
     CHECK(!is_consumed_[i]) << "NodeDef " << i << " consumed twice.";
     is_consumed_[i] = true;
     return std::move(*graph_def_.mutable_node(i));
   }
-  const VersionDef* versions() const override { return &graph_def_.versions(); }
+  const VersionDef* versions() const override {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_25(mht_25_v, 696, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "versions");
+ return &graph_def_.versions(); }
   const FunctionDefLibrary* library() const override {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_26(mht_26_v, 700, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "library");
+
     return &graph_def_.library();
   }
 
@@ -457,6 +708,9 @@ class NodeDefMovingGraphConstructor : public GraphConstructor {
 };
 
 bool ForwardCompatibilityWindowPassed(const VersionDef& versions) {
+   std::vector<std::string> mht_27_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_27(mht_27_v, 711, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "ForwardCompatibilityWindowPassed");
+
   // TF_GRAPH_DEF_VERSION is incremented daily.
   // TF has a 3 week forward compatibility guarantee.
   return (versions.producer() - TF_GRAPH_DEF_VERSION) > 21;
@@ -464,6 +718,9 @@ bool ForwardCompatibilityWindowPassed(const VersionDef& versions) {
 
 Status MaybeAppendVersionWarning(const VersionDef* versions,
                                  const Status& import_status) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_28(mht_28_v, 721, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "MaybeAppendVersionWarning");
+
   if (versions && ForwardCompatibilityWindowPassed(*versions)) {
     return Status(
         import_status.code(),
@@ -489,6 +746,9 @@ Status MaybeAppendVersionWarning(const VersionDef* versions,
     std::vector<std::pair<Node*, int>>* return_tensors,
     std::vector<Node*>* return_nodes,
     std::vector<SafeTensorId>* missing_unused_input_map_keys) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_29(mht_29_v, 749, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::Construct");
+
   if (versions) {
     TF_RETURN_IF_ERROR(CheckVersions(*versions, TF_GRAPH_DEF_VERSION,
                                      TF_GRAPH_DEF_VERSION_MIN_PRODUCER,
@@ -510,6 +770,9 @@ Status MaybeAppendVersionWarning(const VersionDef* versions,
     std::vector<std::pair<Node*, int>>* return_tensors,
     std::vector<Node*>* return_nodes,
     std::vector<SafeTensorId>* missing_unused_input_map_keys) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_30(mht_30_v, 773, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::Construct");
+
   TF_RETURN_IF_ERROR(CheckVersions(graph_def.versions(), TF_GRAPH_DEF_VERSION,
                                    TF_GRAPH_DEF_VERSION_MIN_PRODUCER,
                                    "GraphDef", "graph"));
@@ -527,6 +790,9 @@ Status MaybeAppendVersionWarning(const VersionDef* versions,
 
 void GraphConstructor::UpdatePendingCountAndReady(int processed,
                                                   bool is_next_iteration) {
+   std::vector<std::string> mht_31_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_31(mht_31_v, 793, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::UpdatePendingCountAndReady");
+
   for (size_t i = 0; i < outputs_[processed].size(); ++i) {
     const int output = outputs_[processed][i];
     // We didn't consider NextIteration->Merge edges when computing
@@ -548,6 +814,9 @@ void GraphConstructor::UpdatePendingCountAndReady(int processed,
 // if there are multiple nodes in g_ with the same name)
 bool NodeNameInValues(const std::map<TensorId, TensorId>& input_map,
                       const StringPiece& node_name) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_32(mht_32_v, 817, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "NodeNameInValues");
+
   for (auto iter = input_map.begin(); iter != input_map.end(); ++iter) {
     if (iter->second.first == node_name) return true;
   }
@@ -556,6 +825,9 @@ bool NodeNameInValues(const std::map<TensorId, TensorId>& input_map,
 
 bool NodeNameInValues(const std::vector<string>& control_dependencies,
                       const StringPiece& node_name) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_33(mht_33_v, 828, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "NodeNameInValues");
+
   return std::find(control_dependencies.begin(), control_dependencies.end(),
                    node_name) != control_dependencies.end();
 }
@@ -564,6 +836,9 @@ bool NodeNameInValues(const std::vector<string>& control_dependencies,
 // `prefixes`.
 void AddPrefixes(StringPiece node_name,
                  absl::flat_hash_set<StringPiece>* prefixes) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_34(mht_34_v, 839, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "AddPrefixes");
+
   size_t idx = -1;
   while ((idx = node_name.find('/', idx + 1)) != StringPiece::npos) {
     prefixes->insert(node_name.substr(0, idx));
@@ -571,6 +846,9 @@ void AddPrefixes(StringPiece node_name,
 }
 
 Status GraphConstructor::EnsureNoNameCollisions() {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_35(mht_35_v, 849, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::EnsureNoNameCollisions");
+
   existing_nodes_.reserve(g_->num_nodes());
   // Populate existing_nodes_ and existing_prefixes_.
   for (Node* n : g_->nodes()) {
@@ -613,6 +891,9 @@ Status GraphConstructor::EnsureNoNameCollisions() {
 }
 
 Status GraphConstructor::ValidateInputMapAndControlDependencies() {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_36(mht_36_v, 894, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::ValidateInputMapAndControlDependencies");
+
   for (const auto& mapping : opts_.input_map) {
     TensorId src = mapping.first;
     TensorId dst = mapping.second;
@@ -640,6 +921,9 @@ Status GraphConstructor::ValidateInputMapAndControlDependencies() {
 }
 
 Status GraphConstructor::BuildNodeIndex() {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_37(mht_37_v, 924, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::BuildNodeIndex");
+
   // Validate the node names and add them to gdef_nodes_ and gdef_prefixes_.
   for (int n = 0; n < node_def_count(); ++n) {
     const NodeDef& node_def = get_node_def(n);
@@ -684,6 +968,9 @@ Status GraphConstructor::BuildNodeIndex() {
 }
 
 Status GraphConstructor::InitFromEdges() {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_38(mht_38_v, 971, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::InitFromEdges");
+
   const int num_nodes = node_def_count();
   pending_count_.reserve(num_nodes);
   outputs_.resize(num_nodes);
@@ -752,6 +1039,9 @@ Status GraphConstructor::InitFromEdges() {
 
 Status GraphConstructor::ValidateColocationConstraints(
     const NodeDef& node_def) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_39(mht_39_v, 1042, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::ValidateColocationConstraints");
+
   if (!opts_.validate_colocation_constraints || !opts_.importing)
     return Status::OK();
   const auto iter = node_def.attr().find(kColocationAttrName);
@@ -769,6 +1059,9 @@ Status GraphConstructor::ValidateColocationConstraints(
 }
 
 Status GraphConstructor::MakeNode(NodeDef&& node_def, Node** node) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_40(mht_40_v, 1062, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::MakeNode");
+
   // Add the node to the graph.
   Status status;
   *node = g_->AddNode(std::move(node_def), &status);
@@ -780,6 +1073,9 @@ Status GraphConstructor::MakeNode(NodeDef&& node_def, Node** node) {
 }
 
 Status GraphConstructor::ValidateShape(Node* node) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_41(mht_41_v, 1076, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::ValidateShape");
+
   if (!opts_.importing || !opts_.validate_shape) return Status::OK();
   TF_RETURN_IF_ERROR(refiner_->AddNode(node));
   // For nodes with the _output_shapes attribute, override the shape.
@@ -829,6 +1125,9 @@ Status GraphConstructor::ValidateShape(Node* node) {
 }
 
 Status GraphConstructor::ModifyNodeDefForImport(NodeDef* node_def) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_42(mht_42_v, 1128, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::ModifyNodeDefForImport");
+
   const OpDef* op_def;
   TF_RETURN_IF_ERROR(g_->op_registry()->LookUpOpDef(node_def->op(), &op_def));
   AddDefaultsToNodeDef(*op_def, node_def);
@@ -841,6 +1140,9 @@ Status GraphConstructor::ModifyNodeDefForImport(NodeDef* node_def) {
 
 void RemoveInputs(const std::vector<int>& inputs_to_remove, NodeDef* node_def,
                   std::vector<bool>* input_already_exists) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_43(mht_43_v, 1143, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "RemoveInputs");
+
   // Remove 'inputs_to_remove' from 'node_def'
   NodeDef copy;
   copy.mutable_input()->Reserve(node_def->input_size() -
@@ -862,6 +1164,9 @@ void RemoveInputs(const std::vector<int>& inputs_to_remove, NodeDef* node_def,
 
 void GraphConstructor::RemapNodeDefInputs(
     NodeDef* node_def, std::vector<bool>* input_already_exists) {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_44(mht_44_v, 1167, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::RemapNodeDefInputs");
+
   DCHECK_EQ(input_already_exists->size(), node_def->input_size());
   std::set<TensorId> control_inputs;
   std::vector<int> inputs_to_remove;
@@ -891,6 +1196,9 @@ void GraphConstructor::RemapNodeDefInputs(
 
 void GraphConstructor::AddControlDependencies(
     NodeDef* node_def, std::vector<bool>* input_already_exists) {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_45(mht_45_v, 1199, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::AddControlDependencies");
+
   // To avoid adding redundant control dependencies to every imported node, skip
   // nodes that will inherit the dependencies from another imported node.
   bool inherits_deps = false;
@@ -942,6 +1250,9 @@ void GraphConstructor::AddControlDependencies(
 
 void GraphConstructor::AddPrefixToNodeDef(
     const std::vector<bool>& input_already_exists, NodeDef* node_def) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_46(mht_46_v, 1253, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::AddPrefixToNodeDef");
+
   if (prefix_.empty()) return;
   node_def->set_name(strings::StrCat(prefix_, node_def->name()));
   // Update names of input nodes
@@ -971,6 +1282,9 @@ void GraphConstructor::AddPrefixToNodeDef(
 
 void GraphConstructor::UniquifyNames(
     const std::vector<bool>& input_already_exists, NodeDef* node_def) {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_47(mht_47_v, 1285, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::UniquifyNames");
+
   if (NameExistsInGraph(node_def->name())) {
     string old_name = node_def->name();
     node_def->set_name(FindUniqueName(node_def->name()));
@@ -995,6 +1309,9 @@ void GraphConstructor::UniquifyNames(
 }
 
 void GraphConstructor::UpdateUniquifiedColocationNames() {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_48(mht_48_v, 1312, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::UpdateUniquifiedColocationNames");
+
   for (const auto& pair : gdef_nodes_) {
     Node* node = pair.second.node;
     if (node == nullptr) continue;
@@ -1019,18 +1336,27 @@ void GraphConstructor::UpdateUniquifiedColocationNames() {
 }
 
 bool GraphConstructor::NameExistsInGraph(StringPiece name) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_49(mht_49_v, 1339, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::NameExistsInGraph");
+
   if (existing_nodes_.find(name) != existing_nodes_.end()) return true;
   if (existing_prefixes_.find(name) != existing_prefixes_.end()) return true;
   return false;
 }
 
 bool GraphConstructor::NameExistsInGraphDef(StringPiece name) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_50(mht_50_v, 1348, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::NameExistsInGraphDef");
+
   if (gdef_nodes_.find(name) != gdef_nodes_.end()) return true;
   if (gdef_prefixes_.find(name) != gdef_prefixes_.end()) return true;
   return false;
 }
 
 string GraphConstructor::FindUniqueName(StringPiece original_name) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_51(mht_51_v, 1357, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::FindUniqueName");
+
   string name(original_name);
   int count = 0;
   // Check that any generated names don't collide with imported NodeDefs (as
@@ -1043,6 +1369,9 @@ string GraphConstructor::FindUniqueName(StringPiece original_name) {
 
 Status GraphConstructor::IsNodeFullyMapped(const NodeDef& node_def,
                                            bool* is_node_mapped) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_52(mht_52_v, 1372, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::IsNodeFullyMapped");
+
   const OpDef* op_def;
   TF_RETURN_IF_ERROR(g_->op_registry()->LookUpOpDef(node_def.op(), &op_def));
   for (int i = 0; i < op_def->output_arg_size(); ++i) {
@@ -1059,6 +1388,9 @@ void GraphConstructor::DFS(int cur_node, std::vector<int>* cur_branch,
                            std::vector<bool>* is_on_cur_branch,
                            absl::flat_hash_set<int>* unvisited,
                            const std::vector<absl::string_view>& node_names) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_53(mht_53_v, 1391, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::DFS");
+
   cur_branch->push_back(cur_node);
   is_on_cur_branch->at(cur_node) = true;
   for (auto next_node : outputs_[cur_node]) {
@@ -1085,6 +1417,9 @@ void GraphConstructor::DFS(int cur_node, std::vector<int>* cur_branch,
 }
 
 void GraphConstructor::PrintCycles() {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_54(mht_54_v, 1420, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::PrintCycles");
+
   int num_nodes = outputs_.size();
 
   std::vector<absl::string_view> node_names;
@@ -1115,6 +1450,9 @@ void GraphConstructor::PrintCycles() {
 }
 
 Status GraphConstructor::Convert() {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_55(mht_55_v, 1453, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::Convert");
+
   // Import functions before adding nodes, since imported nodes may refer to
   // functions
   if (library()) {
@@ -1297,6 +1635,9 @@ Status GraphConstructor::Convert() {
 }
 
 Status GraphConstructor::AddBackEdges() {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_56(mht_56_v, 1638, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::AddBackEdges");
+
   // Add the back edges after all nodes are created.
   for (const auto& e : back_edges_) {
     Node* src_node = gdef_nodes_[e.src_name].node;
@@ -1314,6 +1655,9 @@ Status GraphConstructor::AddBackEdges() {
 }
 
 Status GraphConstructor::UpdateVersionDef() {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_57(mht_57_v, 1658, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::UpdateVersionDef");
+
   if (versions() == nullptr) return Status::OK();
 
   if (!opts_.importing) {
@@ -1340,6 +1684,9 @@ Status GraphConstructor::UpdateVersionDef() {
 }
 
 Status GraphConstructor::PopulateReturnTensors() {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_58(mht_58_v, 1687, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::PopulateReturnTensors");
+
   if (opts_.return_tensors.empty()) return Status::OK();
   for (const TensorId& id : opts_.return_tensors) {
     auto iter = opts_.input_map.find(id);
@@ -1371,6 +1718,9 @@ Status GraphConstructor::PopulateReturnTensors() {
 }
 
 Status GraphConstructor::PopulateReturnNodes() {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_59(mht_59_v, 1721, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::PopulateReturnNodes");
+
   if (opts_.return_nodes.empty()) return Status::OK();
   for (StringPiece name : opts_.return_nodes) {
     auto iter = gdef_nodes_.find(name);
@@ -1384,6 +1734,9 @@ Status GraphConstructor::PopulateReturnNodes() {
 }
 
 Status GraphConstructor::PopulateMissingUnusedInputMapKeys() {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_60(mht_60_v, 1737, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::PopulateMissingUnusedInputMapKeys");
+
   if (missing_unused_input_map_keys_ == nullptr) return Status::OK();
   for (const auto& input_map_pair : opts_.input_map) {
     TensorId key = input_map_pair.first;
@@ -1413,6 +1766,9 @@ Status GraphConstructor::PopulateMissingUnusedInputMapKeys() {
 }
 
 void GraphConstructor::Undo() {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_61(mht_61_v, 1769, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::Undo");
+
   for (const auto& iter : gdef_nodes_) {
     if (iter.second.node != nullptr) {
       g_->RemoveNode(iter.second.node);
@@ -1423,6 +1779,9 @@ void GraphConstructor::Undo() {
 
 Status GraphConstructor::MakeEdge(Node* src, int output_index, Node* dst,
                                   int input_index) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_62(mht_62_v, 1782, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "GraphConstructor::MakeEdge");
+
   if (output_index >= src->num_outputs()) {
     return errors::InvalidArgument(
         "Output ", output_index, " of node ", src->name(),
@@ -1450,6 +1809,9 @@ Status GraphConstructor::MakeEdge(Node* src, int output_index, Node* dst,
 
 Status ConvertGraphDefToGraph(const GraphConstructorOptions& opts,
                               const GraphDef& gdef, Graph* g) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_63(mht_63_v, 1812, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "ConvertGraphDefToGraph");
+
   ShapeRefiner refiner(gdef.versions().producer(), g->op_registry());
   return GraphConstructor::Construct(
       opts, gdef.node(), &gdef.versions(), &gdef.library(), g, &refiner,
@@ -1459,6 +1821,9 @@ Status ConvertGraphDefToGraph(const GraphConstructorOptions& opts,
 
 Status ConvertGraphDefToGraph(const GraphConstructorOptions& opts,
                               GraphDef&& gdef, Graph* g) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_64(mht_64_v, 1824, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "ConvertGraphDefToGraph");
+
   ShapeRefiner refiner(gdef.versions().producer(), g->op_registry());
   return GraphConstructor::Construct(opts, std::move(gdef), g, &refiner,
                                      /*return_tensors=*/nullptr,
@@ -1468,6 +1833,9 @@ Status ConvertGraphDefToGraph(const GraphConstructorOptions& opts,
 
 Status ConvertNodeDefsToGraph(const GraphConstructorOptions& opts,
                               gtl::ArraySlice<NodeDef> nodes, Graph* g) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_65(mht_65_v, 1836, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "ConvertNodeDefsToGraph");
+
   ShapeRefiner refiner(TF_GRAPH_DEF_VERSION, g->op_registry());
   // TODO(irving): Copy will go away once NodeInfo exists
   std::vector<const NodeDef*> node_defs;
@@ -1484,6 +1852,9 @@ Status ConvertNodeDefsToGraph(const GraphConstructorOptions& opts,
 Status ImportGraphDef(const ImportGraphDefOptions& opts, const GraphDef& gdef,
                       Graph* g, ShapeRefiner* refiner,
                       ImportGraphDefResults* results) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_66(mht_66_v, 1855, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "ImportGraphDef");
+
   if (!opts.return_tensors.empty()) {
     if (results == nullptr) {
       return errors::InvalidArgument(
@@ -1554,6 +1925,9 @@ Status ImportGraphDef(const ImportGraphDefOptions& opts, const GraphDef& gdef,
   }
 }
 
-void CopyGraph(const Graph& src, Graph* dest) { dest->Copy(src); }
+void CopyGraph(const Graph& src, Graph* dest) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScorePScommon_runtimePSgraph_constructorDTcc mht_67(mht_67_v, 1929, "", "./tensorflow/core/common_runtime/graph_constructor.cc", "CopyGraph");
+ dest->Copy(src); }
 
 }  // namespace tensorflow

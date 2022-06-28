@@ -1,3 +1,171 @@
+#include <iostream>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <stdlib.h>
+#include <unistd.h>
+class MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc {
+public:
+   std::string _s;
+   int _indent = 0;
+   std::string _functionName;
+   bool _isFile = false;
+   std::string _fileName;
+   std::string _envMHIndent;
+   int _lineNumber;
+   bool _filtered = false;
+   bool _otherThread = false;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc(std::vector<std::string> params, int lineNumber, std::string prefix, std::string fileName, std::string functionName) {
+      _functionName = functionName;
+      _lineNumber = lineNumber;
+
+      // Check if tracing is enabled
+      const char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+      // Should we trace of filter?
+      const char* env_filter = std::getenv("MHTRACER_FILTER");
+      if (env_filter != nullptr) {
+         std::string sfilter = std::string(env_filter);
+         std::string sLineNumber = std::to_string(lineNumber);
+         while (true) {
+            std::size_t ioE = sfilter.find(";");
+            if (sfilter.size() == 0) {
+               break;
+            }
+            std::string cfs = sfilter.substr(0, ioE);
+            std::size_t ioFileName = cfs.find("|");
+            std::string fFileName  = cfs.substr(0, ioFileName);
+            std::size_t ioFunctionName = cfs.find("|", ioFileName+1);
+            std::string fFunctionName  = cfs.substr(ioFileName+1, ioFunctionName-ioFileName-1);
+            std::string fLineNumber    = cfs.substr(ioFunctionName+1, cfs.size()-ioFunctionName-1);
+
+            if (  (fFileName == "*" || fFileName == fileName)
+               && (fFunctionName == "*" || fFunctionName == functionName)
+               && (fLineNumber == "*" || fLineNumber == sLineNumber)) {
+              _filtered = true;
+               return;
+            }
+
+            if (ioE == std::string::npos) {
+               sfilter = "";
+            } else {
+               sfilter = sfilter.substr(ioE+1, sfilter.size()-ioE-1);
+            }
+         }
+      }
+
+      // Create log string
+      std::string ostr;
+
+      // Assign indent spaces (tied to PID and TID)
+      pid_t pid = getpid();
+      std::thread::id tid = std::this_thread::get_id();
+      std::stringstream pid_dash_tid_ss;
+      pid_dash_tid_ss << pid << "-" << tid;
+      std::string pid_dash_tid_str = pid_dash_tid_ss.str();
+      _envMHIndent = "MHTRACER_INDENT_";
+      char* env_indent = std::getenv(_envMHIndent.c_str());
+      if (env_indent != nullptr) {
+         _indent = std::stoi(std::string(env_indent));
+      }
+      _s.assign(_indent, ' ');
+
+      // Check that reporting matches pid/tid
+      const char* env_pid_dash_tid = std::getenv("MHTRACER_PID_DASH_TID");
+      if (env_pid_dash_tid != nullptr) {
+         std::string env_pid_dash_tid_str(env_pid_dash_tid);
+         if (env_pid_dash_tid_str != pid_dash_tid_str) {
+            _otherThread = true;
+         }
+      }
+      else {  // PID-THREAD not set, set it for the first time (starter thread)
+         setenv("MHTRACER_PID_DASH_TID", pid_dash_tid_str.c_str(), 1);
+      }
+
+      std::string paramStr;
+      for (int i=0; i < params.size(); i++) {
+         auto e = params[i];
+         while (e.find("\n") != std::string::npos) {
+            size_t pos = e.find("\n");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<NL>");
+         }
+         while (e.find("[") != std::string::npos) {
+            size_t pos = e.find("[");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<LB>");
+         }
+         while (e.find("]") != std::string::npos) {
+            size_t pos = e.find("]");
+            e = e.erase(pos, 1);
+            e = e.insert(pos, "<RB>");
+         }
+         paramStr += e;
+         if ((i+1) < params.size()) {
+            paramStr += ", ";
+         }
+      }
+
+      const char* env_dont_print_pid_dash_tid = std::getenv("MHTRACER_DONT_PRINT_PID_DASH_TID");
+      if (env_dont_print_pid_dash_tid != nullptr) {
+         pid_dash_tid_str = "";
+      }
+      if (_otherThread) {
+         functionName = "MHOT_" + functionName;
+      }
+      ostr += _s + functionName + 
+         + " [1]"
+         + " [" + prefix + "]"
+         + " [" + paramStr + "]"
+         + " [" + pid_dash_tid_str + " "
+         +    std::to_string(lineNumber)
+         +    " @ " + fileName + "]\n";
+
+      // Log to file
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_USEFILE") != std::string::npos) {
+         _isFile = true;
+         _fileName = "/tmp/mhtracer_" + pid_dash_tid_str + ".log";
+         std::ofstream os;
+         os.open(_fileName, std::ofstream::out | std::ofstream::app);
+         os << ostr << "";
+         os.close();
+      }
+      // Log to stdout
+      else {
+         std::cout << ostr << "";
+      }
+
+      // Increment indent spaces
+      if (_otherThread) {
+         return;
+      }
+      _indent += 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+   ~MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc() {
+      // Check if tracing is enabled
+      char* env_path = std::getenv("PATH");
+      if (env_path != nullptr && std::string(env_path).find("MHTRACER_ENABLE") == std::string::npos) {
+         return;
+      }
+
+      // Don't update indent if tracing was filtered or from another thread
+      if (_filtered || _otherThread) {
+         return;
+      }
+
+      _indent -= 3;
+      setenv(_envMHIndent.c_str(), std::to_string(_indent).c_str(), 1);
+   }
+};
+
 /* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,15 +218,24 @@ class LimitedArraySlice {
   using value_type = T;
 
   LimitedArraySlice(T* begin, size_t num_elements)
-      : current_(begin), begin_(begin), end_(begin + num_elements) {}
+      : current_(begin), begin_(begin), end_(begin + num_elements) {
+   std::vector<std::string> mht_0_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_0(mht_0_v, 222, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "LimitedArraySlice");
+}
 
   // May return negative if there were push_back calls after slice was filled.
-  int64_t EndDistance() const { return end_ - current_; }
+  int64_t EndDistance() const {
+   std::vector<std::string> mht_1_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_1(mht_1_v, 228, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "EndDistance");
+ return end_ - current_; }
 
   // Attempts to push value to the back of this. If the slice has
   // already been filled, this method has no effect on the underlying data, but
   // it changes the number returned by EndDistance into negative values.
   void push_back(T&& value) {
+   std::vector<std::string> mht_2_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_2(mht_2_v, 236, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "push_back");
+
     if (EndDistance() > 0) *current_ = std::move(value);
     ++current_;
   }
@@ -67,25 +244,40 @@ class LimitedArraySlice {
   // returns a mutable reference to the new last element.
   // REQUIRES: EndDistance() > 0.
   T& construct_at_end() {
+   std::vector<std::string> mht_3_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_3(mht_3_v, 247, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "construct_at_end");
+
     DCHECK_GT(EndDistance(), 0);
     return *(current_++);
   }
 
   // Returns a mutable reference to the last element in the slice.
   // REQUIRES: size() > 0.
-  T& back() { return *(current_ - 1); }
+  T& back() {
+   std::vector<std::string> mht_4_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_4(mht_4_v, 257, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "back");
+ return *(current_ - 1); }
 
   // Returns the number of elements in the slice.
-  size_t size() const { return std::min(current_ - begin_, end_ - begin_); }
+  size_t size() const {
+   std::vector<std::string> mht_5_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_5(mht_5_v, 263, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "size");
+ return std::min(current_ - begin_, end_ - begin_); }
 
   // Attempts to resize the vector to the given size. It does so by advancing
   // the pointer to the current element, possibly beyond the end of the slice.
   // As a consequence, calling `size()` after `resize(x)` was called might
   // return a value less than `x`.
-  void resize(size_t size) { current_ = begin_ + size; }
+  void resize(size_t size) {
+   std::vector<std::string> mht_6_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_6(mht_6_v, 272, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "resize");
+ current_ = begin_ + size; }
 
   // Returns the pointer to the underlying data buffer.
-  T* data() { return begin_; }
+  T* data() {
+   std::vector<std::string> mht_7_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_7(mht_7_v, 278, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "data");
+ return begin_; }
 
  private:
   T* current_;
@@ -99,9 +291,15 @@ auto EnableAliasing(A* a) -> decltype(a->EnableAliasing(true), void()) {
 }
 
 template <typename A>
-void EnableAliasing(A&& a) {}
+void EnableAliasing(A&& a) {
+   std::vector<std::string> mht_8_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_8(mht_8_v, 295, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "EnableAliasing");
+}
 
 uint8 PeekTag(protobuf::io::CodedInputStream* stream) {
+   std::vector<std::string> mht_9_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_9(mht_9_v, 300, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "PeekTag");
+
   DCHECK(stream != nullptr);
   const void* ptr;
   int size;
@@ -118,10 +316,19 @@ namespace parsed {
 // ParseDataType has to be called first, then appropriate ParseZzzzList.
 class Feature {
  public:
-  Feature() {}
-  explicit Feature(StringPiece serialized) : serialized_(serialized) {}
+  Feature() {
+   std::vector<std::string> mht_10_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_10(mht_10_v, 320, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "Feature");
+}
+  explicit Feature(StringPiece serialized) : serialized_(serialized) {
+   std::vector<std::string> mht_11_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_11(mht_11_v, 324, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "Feature");
+}
 
   Status ParseDataType(DataType* dtype) {
+   std::vector<std::string> mht_12_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_12(mht_12_v, 329, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "ParseDataType");
+
     DCHECK(dtype != nullptr);
     if (serialized_.empty()) {
       *dtype = DT_INVALID;
@@ -148,6 +355,9 @@ class Feature {
   }
 
   bool GetNumElementsInBytesList(int* num_elements) {
+   std::vector<std::string> mht_13_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_13(mht_13_v, 358, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "GetNumElementsInBytesList");
+
     protobuf::io::CodedInputStream stream(
         reinterpret_cast<const uint8*>(serialized_.data()), serialized_.size());
     EnableAliasing(&stream);
@@ -168,17 +378,26 @@ class Feature {
 
   // Helper methods
   tstring* construct_at_end(LimitedArraySlice<tstring>* bytes_list) {
+   std::vector<std::string> mht_14_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_14(mht_14_v, 381, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "construct_at_end");
+
     if (bytes_list->EndDistance() <= 0) {
       return nullptr;
     }
     return &bytes_list->construct_at_end();
   }
   tstring* construct_at_end(SmallVector<tstring>* bytes_list) {
+   std::vector<std::string> mht_15_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_15(mht_15_v, 390, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "construct_at_end");
+
     return &bytes_list->emplace_back();
   }
 
   template <typename Result>
   bool ParseBytesList(Result* bytes_list) {
+   std::vector<std::string> mht_16_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_16(mht_16_v, 398, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "ParseBytesList");
+
     DCHECK(bytes_list != nullptr);
 
     protobuf::io::CodedInputStream stream(
@@ -206,6 +425,9 @@ class Feature {
 
   template <typename Result>
   bool ParseFloatList(Result* float_list) {
+   std::vector<std::string> mht_17_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_17(mht_17_v, 428, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "ParseFloatList");
+
     DCHECK(float_list != nullptr);
     protobuf::io::CodedInputStream stream(
         reinterpret_cast<const uint8*>(serialized_.data()), serialized_.size());
@@ -282,6 +504,9 @@ class Feature {
 
   template <typename Result>
   bool ParseInt64List(Result* int64_list) {
+   std::vector<std::string> mht_18_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_18(mht_18_v, 507, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "ParseInt64List");
+
     DCHECK(int64_list != nullptr);
     protobuf::io::CodedInputStream stream(
         reinterpret_cast<const uint8*>(serialized_.data()), serialized_.size());
@@ -321,7 +546,10 @@ class Feature {
     return true;
   }
 
-  StringPiece GetSerialized() const { return serialized_; }
+  StringPiece GetSerialized() const {
+   std::vector<std::string> mht_19_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_19(mht_19_v, 550, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "GetSerialized");
+ return serialized_; }
 
  private:
   // TODO(lew): Pair of uint8* would be more natural.
@@ -334,6 +562,9 @@ using Example = std::vector<FeatureMapEntry>;
 }  // namespace parsed
 
 inline bool SkipExtraneousTag(protobuf::io::CodedInputStream* stream) {
+   std::vector<std::string> mht_20_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_20(mht_20_v, 565, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "SkipExtraneousTag");
+
   uint32 data;
   protobuf_uint64 dummy;
   switch (stream->ReadTag() & 0x7) {
@@ -359,6 +590,9 @@ inline bool SkipExtraneousTag(protobuf::io::CodedInputStream* stream) {
 }
 
 bool ParseString(protobuf::io::CodedInputStream* stream, StringPiece* result) {
+   std::vector<std::string> mht_21_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_21(mht_21_v, 593, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "ParseString");
+
   DCHECK(stream != nullptr);
   DCHECK(result != nullptr);
   uint32 length;
@@ -380,6 +614,9 @@ bool ParseString(protobuf::io::CodedInputStream* stream, StringPiece* result) {
 
 bool ParseFeatureMapEntry(protobuf::io::CodedInputStream* stream,
                           parsed::FeatureMapEntry* feature_map_entry) {
+   std::vector<std::string> mht_22_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_22(mht_22_v, 617, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "ParseFeatureMapEntry");
+
   DCHECK(stream != nullptr);
   DCHECK(feature_map_entry != nullptr);
   uint32 length;
@@ -395,6 +632,9 @@ bool ParseFeatureMapEntry(protobuf::io::CodedInputStream* stream,
         break;
 
       case kDelimitedTag(2): {
+   std::vector<std::string> mht_23_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_23(mht_23_v, 635, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "kDelimitedTag");
+
         StringPiece feature_string_piece;
         if (!ParseString(stream, &feature_string_piece)) return false;
         feature_map_entry->second = parsed::Feature(feature_string_piece);
@@ -413,6 +653,9 @@ bool ParseFeatureMapEntry(protobuf::io::CodedInputStream* stream,
 
 bool ParseFeatures(protobuf::io::CodedInputStream* stream,
                    parsed::Example* example) {
+   std::vector<std::string> mht_24_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_24(mht_24_v, 656, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "ParseFeatures");
+
   DCHECK(stream != nullptr);
   DCHECK(example != nullptr);
   uint32 length;
@@ -430,6 +673,9 @@ bool ParseFeatures(protobuf::io::CodedInputStream* stream,
 
 bool ParseExample(protobuf::io::CodedInputStream* stream,
                   parsed::Example* example) {
+   std::vector<std::string> mht_25_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_25(mht_25_v, 676, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "ParseExample");
+
   DCHECK(stream != nullptr);
   DCHECK(example != nullptr);
   // Loop over the input stream which may contain multiple serialized Example
@@ -446,6 +692,9 @@ bool ParseExample(protobuf::io::CodedInputStream* stream,
 }
 
 bool ParseExample(StringPiece serialized, parsed::Example* example) {
+   std::vector<std::string> mht_26_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_26(mht_26_v, 695, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "ParseExample");
+
   DCHECK(example != nullptr);
   protobuf::io::CodedInputStream stream(
       reinterpret_cast<const uint8*>(serialized.data()), serialized.size());
@@ -456,6 +705,10 @@ bool ParseExample(StringPiece serialized, parsed::Example* example) {
 }  // namespace
 
 bool TestFastParse(const string& serialized, Example* example) {
+   std::vector<std::string> mht_27_v;
+   mht_27_v.push_back("serialized: \"" + serialized + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_27(mht_27_v, 709, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "TestFastParse");
+
   DCHECK(example != nullptr);
   parsed::Example parsed_example;
   if (!ParseExample(serialized, &parsed_example)) return false;
@@ -517,6 +770,9 @@ using Config = FastParseExampleConfig;
 
 void ParallelFor(const std::function<void(size_t)>& f, size_t n,
                  thread::ThreadPool* thread_pool) {
+   std::vector<std::string> mht_28_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_28(mht_28_v, 773, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "ParallelFor");
+
   if (n == 0) return;
   if (thread_pool == nullptr) {
     for (size_t i = 0; i < n; ++i) {
@@ -562,6 +818,9 @@ struct SeededHasher {
 };
 
 void LogDenseFeatureDataLoss(StringPiece feature_name) {
+   std::vector<std::string> mht_29_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_29(mht_29_v, 821, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "LogDenseFeatureDataLoss");
+
   LOG(WARNING) << "Data loss! Feature '" << feature_name
                << "' is present in multiple concatenated "
                   "tf.Examples. Ignoring all but last one.";
@@ -573,6 +832,9 @@ void LogDenseFeatureDataLoss(StringPiece feature_name) {
 }
 
 void LogSparseFeatureDataLoss(StringPiece feature_name) {
+   std::vector<std::string> mht_30_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_30(mht_30_v, 835, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "LogSparseFeatureDataLoss");
+
   LOG(WARNING) << "Data loss! Feature '" << feature_name
                << "' is present in multiple concatenated "
                   "tf.Examples. Ignoring all but last one.";
@@ -592,6 +854,11 @@ Status FastParseSerializedExample(
     std::vector<SparseBuffer>* output_sparse,
     std::vector<SparseBuffer>* output_ragged,
     PerExampleFeatureStats* output_stats) {
+   std::vector<std::string> mht_31_v;
+   mht_31_v.push_back("serialized_example: \"" + (std::string)serialized_example + "\"");
+   mht_31_v.push_back("example_name: \"" + (std::string)example_name + "\"");
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_31(mht_31_v, 859, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "FastParseSerializedExample");
+
   DCHECK(output_dense != nullptr);
   DCHECK(output_sparse != nullptr);
   DCHECK(output_ragged != nullptr);
@@ -642,6 +909,9 @@ Status FastParseSerializedExample(
     }
 
     auto example_error = [&](StringPiece suffix) {
+   std::vector<std::string> mht_32_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_32(mht_32_v, 912, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "lambda");
+
       return errors::InvalidArgument("Name: ", example_name,
                                      ", Key: ", feature_name,
                                      ", Index: ", example_index, ".  ", suffix);
@@ -685,6 +955,9 @@ Status FastParseSerializedExample(
         const std::size_t offset = example_index * num_elements;
 
         auto shape_error = [&](size_t size, StringPiece type_str) {
+   std::vector<std::string> mht_33_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_33(mht_33_v, 958, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "lambda");
+
           return example_error(strings::StrCat(
               "Number of ", type_str,
               " values != expected.  "
@@ -737,6 +1010,9 @@ Status FastParseSerializedExample(
         }
 
         auto shape_error = [&](size_t size, StringPiece type_str) {
+   std::vector<std::string> mht_34_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_34(mht_34_v, 1013, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "lambda");
+
           return example_error(strings::StrCat(
               "Number of ", type_str,
               " values is not a multiple of stride length. Saw ", size,
@@ -945,6 +1221,9 @@ Status FastParseSerializedExample(
 }
 
 Status CheckConfigDataType(DataType dtype) {
+   std::vector<std::string> mht_35_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_35(mht_35_v, 1224, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "CheckConfigDataType");
+
   switch (dtype) {
     case DT_INT64:
     case DT_FLOAT:
@@ -959,12 +1238,18 @@ Status CheckConfigDataType(DataType dtype) {
 // Use this in the "default" clause of switch statements when dispatching
 // on a dtype variable that was checked by CheckConfigDataType():
 inline void ReportUnexpectedDataType(DataType dtype) {
+   std::vector<std::string> mht_36_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_36(mht_36_v, 1241, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "ReportUnexpectedDataType");
+
   DCHECK(false)
       << "Encountered unexpected DataType " << DataTypeString(dtype)
       << "in variable that should have been checked by CheckConfigDataType().";
 }
 
 Status CheckConfigDataTypes(const Config& config) {
+   std::vector<std::string> mht_37_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_37(mht_37_v, 1250, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "CheckConfigDataTypes");
+
   // Check config so we can safely CHECK(false) in switches on config.*.dtype
   for (auto& c : config.sparse) {
     TF_RETURN_IF_ERROR(CheckConfigDataType(c.dtype));
@@ -988,24 +1273,39 @@ const SmallVector<T>& GetListFromBuffer(const SparseBuffer& buffer);
 template <>
 const SmallVector<int64_t>& GetListFromBuffer<int64_t>(
     const SparseBuffer& buffer) {
+   std::vector<std::string> mht_38_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_38(mht_38_v, 1276, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "GetListFromBuffer<int64_t>");
+
   return buffer.int64_list;
 }
 template <>
 const SmallVector<float>& GetListFromBuffer<float>(const SparseBuffer& buffer) {
+   std::vector<std::string> mht_39_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_39(mht_39_v, 1283, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "GetListFromBuffer<float>");
+
   return buffer.float_list;
 }
 template <>
 const SmallVector<tstring>& GetListFromBuffer<tstring>(
     const SparseBuffer& buffer) {
+   std::vector<std::string> mht_40_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_40(mht_40_v, 1291, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "GetListFromBuffer<tstring>");
+
   return buffer.bytes_list;
 }
 
 template <typename T>
 void CopyOrMoveBlock(const T* b, const T* e, T* t) {
+   std::vector<std::string> mht_41_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_41(mht_41_v, 1299, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "CopyOrMoveBlock");
+
   std::copy(b, e, t);
 }
 template <>
 void CopyOrMoveBlock(const tstring* b, const tstring* e, tstring* t) {
+   std::vector<std::string> mht_42_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_42(mht_42_v, 1306, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "CopyOrMoveBlock");
+
   std::move(b, e, t);
 }
 
@@ -1015,6 +1315,9 @@ void FillAndCopyVarLen(
     const size_t num_elements_per_minibatch, const Config& config,
     const std::vector<std::vector<SparseBuffer>>& varlen_dense_buffers,
     Tensor* values) {
+   std::vector<std::string> mht_43_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_43(mht_43_v, 1318, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "FillAndCopyVarLen");
+
   const Tensor& default_value = config.dense[d].default_value;
 
   // Copy-fill the tensors (creating the zero/fill-padding)
@@ -1061,6 +1364,9 @@ class TensorVector {
   using value_type = T;
 
   const Tensor& tensor() {
+   std::vector<std::string> mht_44_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_44(mht_44_v, 1367, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "tensor");
+
     if (!tensor_.has_value()) {
       resize(0);
     }
@@ -1068,15 +1374,27 @@ class TensorVector {
   }
 
   int64_t size() const {
+   std::vector<std::string> mht_45_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_45(mht_45_v, 1377, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "size");
+
     return tensor_.has_value() ? tensor_->NumElements() : 0;
   }
   void resize(int64_t new_size) {
+   std::vector<std::string> mht_46_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_46(mht_46_v, 1383, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "resize");
+
     DCHECK(!tensor_.has_value());
     tensor_ = Tensor(DataTypeToEnum<T>::v(), TensorShape({new_size}));
     data_ = tensor_->flat<T>().data();
   }
-  T* data() { return data_; }
-  const T* data() const { return data_; }
+  T* data() {
+   std::vector<std::string> mht_47_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_47(mht_47_v, 1391, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "data");
+ return data_; }
+  const T* data() const {
+   std::vector<std::string> mht_48_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_48(mht_48_v, 1395, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "data");
+ return data_; }
 
  private:
   // Use absl::optional to avoid calling the default constructor of Tensor
@@ -1090,6 +1408,9 @@ class TensorVector {
 void CountSparseFeatures(
     const std::vector<std::vector<SparseBuffer>>& sparse_buffers, size_t d,
     size_t* total_num_features, size_t* max_num_features) {
+   std::vector<std::string> mht_49_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_49(mht_49_v, 1411, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "CountSparseFeatures");
+
   for (auto& sparse_values_tmp : sparse_buffers) {
     const std::vector<size_t>& end_indices =
         sparse_values_tmp[d].example_end_indices;
@@ -1104,6 +1425,9 @@ void CountSparseFeatures(
 
 void CopySparseBufferToTensor(DataType dtype, size_t offset, SparseBuffer* src,
                               Tensor* dst) {
+   std::vector<std::string> mht_50_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_50(mht_50_v, 1428, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "CopySparseBufferToTensor");
+
   switch (dtype) {
     case DT_INT64: {
       std::copy(src->int64_list.begin(), src->int64_list.end(),
@@ -1131,6 +1455,9 @@ Status FastParseExample(const Config& config,
                         gtl::ArraySlice<tstring> serialized,
                         gtl::ArraySlice<tstring> example_names,
                         thread::ThreadPool* thread_pool, Result* result) {
+   std::vector<std::string> mht_51_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_51(mht_51_v, 1458, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "FastParseExample");
+
   DCHECK(result != nullptr);
   // Check config so we can safely CHECK(false) in switches on config.*.dtype
   TF_RETURN_IF_ERROR(CheckConfigDataTypes(config));
@@ -1226,6 +1553,9 @@ Status FastParseExample(const Config& config,
   std::vector<std::vector<SparseBuffer>> ragged_buffers(num_minibatches);
   std::vector<Status> status_of_minibatch(num_minibatches);
   auto ProcessMiniBatch = [&](size_t minibatch) {
+   std::vector<std::string> mht_52_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_52(mht_52_v, 1556, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "lambda");
+
     sparse_buffers[minibatch].resize(config.sparse.size());
     varlen_dense_buffers[minibatch].resize(config.dense.size());
     ragged_buffers[minibatch].resize(config.ragged.size());
@@ -1265,6 +1595,9 @@ Status FastParseExample(const Config& config,
 
   // Merge SparseBuffers from all minibatches for every config.sparse.
   auto MergeSparseMinibatches = [&](size_t d) {
+   std::vector<std::string> mht_53_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_53(mht_53_v, 1598, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "lambda");
+
     // Loop over minibatches
     size_t total_num_features = 0;
     size_t max_num_features = 0;
@@ -1318,6 +1651,9 @@ Status FastParseExample(const Config& config,
 
   // Merge SparseBuffers from all minibatches for every config.ragged.
   auto MergeRaggedMinibatches = [&](size_t d) {
+   std::vector<std::string> mht_54_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_54(mht_54_v, 1654, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "lambda");
+
     // Loop over minibatches
     size_t total_num_features = 0;
     size_t max_num_features = 0;
@@ -1372,6 +1708,9 @@ Status FastParseExample(const Config& config,
   // Merge SparseBuffers from all minibatches for every config.dense having
   // variable_length.
   auto MergeDenseVarLenMinibatches = [&](size_t d) {
+   std::vector<std::string> mht_55_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_55(mht_55_v, 1711, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "lambda");
+
     if (!config.dense[d].variable_length) return;
 
     // Loop over minibatches
@@ -1443,6 +1782,9 @@ Status FastParseExample(const Config& config,
 
 Status FastParseSingleExample(const Config& config, StringPiece serialized,
                               Result* result) {
+   std::vector<std::string> mht_56_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_56(mht_56_v, 1785, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "FastParseSingleExample");
+
   DCHECK(result != nullptr);
   // Check config so we can safely CHECK(false) in switches on config.*.dtype
   TF_RETURN_IF_ERROR(CheckConfigDataTypes(config));
@@ -1571,6 +1913,9 @@ Status FastParseSingleExample(const Config& config, StringPiece serialized,
     }
 
     auto example_error = [feature_name](StringPiece suffix) {
+   std::vector<std::string> mht_57_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_57(mht_57_v, 1916, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "lambda");
+
       return errors::InvalidArgument("Key: ", feature_name, ".  ", suffix);
     };
 
@@ -1854,6 +2199,9 @@ struct FeatureProtos {
 using FeatureProtosMap = absl::flat_hash_map<StringPiece, FeatureProtos>;
 
 string ExampleName(const gtl::ArraySlice<tstring> example_names, int n) {
+   std::vector<std::string> mht_58_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_58(mht_58_v, 2202, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "ExampleName");
+
   return example_names.empty() ? "<unknown>" : example_names[n];
 }
 
@@ -1861,6 +2209,9 @@ string ExampleName(const gtl::ArraySlice<tstring> example_names, int n) {
 // this method simply counts the number of elements without any copying.
 inline int ParseBytesFeature(protobuf::io::CodedInputStream* stream,
                              tstring* out) {
+   std::vector<std::string> mht_59_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_59(mht_59_v, 2212, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "ParseBytesFeature");
+
   int num_elements = 0;
   uint32 length;
   if (!stream->ExpectTag(kDelimitedTag(1)) || !stream->ReadVarint32(&length)) {
@@ -1891,12 +2242,18 @@ inline int ParseBytesFeature(protobuf::io::CodedInputStream* stream,
 }
 
 inline void PadFloatFeature(int num_to_pad, float* out) {
+   std::vector<std::string> mht_60_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_60(mht_60_v, 2245, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "PadFloatFeature");
+
   for (int i = 0; i < num_to_pad; i++) {
     *out++ = 0.0;
   }
 }
 
 inline void PadInt64Feature(int num_to_pad, int64_t* out) {
+   std::vector<std::string> mht_61_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_61(mht_61_v, 2254, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "PadInt64Feature");
+
   for (int i = 0; i < num_to_pad; i++) {
     *out++ = 0;
   }
@@ -1906,6 +2263,9 @@ inline void PadInt64Feature(int num_to_pad, int64_t* out) {
 // this method simply counts the number of elements without any copying.
 inline int ParseFloatFeature(protobuf::io::CodedInputStream* stream,
                              float* out) {
+   std::vector<std::string> mht_62_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_62(mht_62_v, 2266, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "ParseFloatFeature");
+
   int num_elements = 0;
   uint32 length;
   if (!stream->ExpectTag(kDelimitedTag(2)) || !stream->ReadVarint32(&length)) {
@@ -1957,6 +2317,9 @@ inline int ParseFloatFeature(protobuf::io::CodedInputStream* stream,
 // this method simply counts the number of elements without any copying.
 inline int ParseInt64Feature(protobuf::io::CodedInputStream* stream,
                              int64_t* out) {
+   std::vector<std::string> mht_63_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_63(mht_63_v, 2320, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "ParseInt64Feature");
+
   int num_elements = 0;
   uint32 length;
   if (!stream->ExpectTag(kDelimitedTag(3)) || !stream->ReadVarint32(&length)) {
@@ -2008,6 +2371,9 @@ inline int ParseInt64Feature(protobuf::io::CodedInputStream* stream,
 // Returns -1 if the next feature on `stream` doesn't match `dtype`.
 inline int ParseFeature(DataType dtype, protobuf::io::CodedInputStream* stream,
                         Tensor* out, size_t* out_offset) {
+   std::vector<std::string> mht_64_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_64(mht_64_v, 2374, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "ParseFeature");
+
   int delta;
   switch (dtype) {
     case DT_STRING:
@@ -2036,6 +2402,9 @@ inline int ParseFeature(DataType dtype, protobuf::io::CodedInputStream* stream,
 // Returns -1 if the next feature on `stream` doesn't match `dtype`.
 inline int GetFeatureLength(DataType dtype,
                             protobuf::io::CodedInputStream* stream) {
+   std::vector<std::string> mht_65_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_65(mht_65_v, 2405, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "GetFeatureLength");
+
   switch (dtype) {
     case DT_STRING:
       return ParseBytesFeature(stream, nullptr);
@@ -2050,6 +2419,9 @@ inline int GetFeatureLength(DataType dtype,
 }
 
 inline DataType ParseDataType(protobuf::io::CodedInputStream* stream) {
+   std::vector<std::string> mht_66_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_66(mht_66_v, 2422, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "ParseDataType");
+
   uint8 peek_tag = PeekTag(stream);
   switch (peek_tag) {
     case kDelimitedTag(1):
@@ -2065,6 +2437,9 @@ inline DataType ParseDataType(protobuf::io::CodedInputStream* stream) {
 
 inline bool SkipEmptyFeature(protobuf::io::CodedInputStream* stream,
                              DataType dtype) {
+   std::vector<std::string> mht_67_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_67(mht_67_v, 2440, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "SkipEmptyFeature");
+
   switch (dtype) {
     case DT_STRING:
       if (!stream->ExpectTag(kDelimitedTag(1))) {
@@ -2093,6 +2468,9 @@ Status ExtractFeaturesFromSequenceExamples(
     const gtl::ArraySlice<tstring> examples,
     const gtl::ArraySlice<tstring> example_names,
     FeatureProtosMap* context_features, FeatureProtosMap* sequence_features) {
+   std::vector<std::string> mht_68_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_68(mht_68_v, 2471, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "ExtractFeaturesFromSequenceExamples");
+
   for (int d = 0; d < examples.size(); d++) {
     const tstring& example = examples[d];
     protobuf::io::CodedInputStream stream(
@@ -2160,6 +2538,9 @@ Status ExtractFeaturesFromSequenceExamples(
 // (for all k).
 Status GetContextFeatureLengths(const gtl::ArraySlice<tstring> example_names,
                                 FeatureProtosMap* context_features) {
+   std::vector<std::string> mht_69_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_69(mht_69_v, 2541, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "GetContextFeatureLengths");
+
   for (auto& c : *context_features) {
     FeatureProtos& feature = c.second;
     for (int d = 0; d < feature.protos.size(); ++d) {
@@ -2195,6 +2576,9 @@ Status GetContextFeatureLengths(const gtl::ArraySlice<tstring> example_names,
 // on sequence_features[k].protos (for all k).
 Status GetSequenceFeatureLengths(const gtl::ArraySlice<tstring> example_names,
                                  FeatureProtosMap* sequence_features) {
+   std::vector<std::string> mht_70_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_70(mht_70_v, 2579, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "GetSequenceFeatureLengths");
+
   for (auto& c : *sequence_features) {
     FeatureProtos& feature = c.second;
     for (int d = 0; d < feature.protos.size(); ++d) {
@@ -2262,6 +2646,9 @@ Status GetSequenceFeatureLengths(const gtl::ArraySlice<tstring> example_names,
 // dst_offset by src.size.
 void CopyTensorIntoTensor(DataType dtype, const Tensor& src, Tensor* dst,
                           size_t* dst_offset) {
+   std::vector<std::string> mht_71_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_71(mht_71_v, 2649, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "CopyTensorIntoTensor");
+
   size_t src_size = src.NumElements();
   switch (dtype) {
     case DT_INT64: {
@@ -2295,6 +2682,9 @@ Status ParseContextDenseFeatures(const FeatureProtosMap& context_features,
                                  gtl::ArraySlice<tstring> example_names,
                                  bool is_batch, int num_examples,
                                  Allocator* allocator, Result* context_result) {
+   std::vector<std::string> mht_72_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_72(mht_72_v, 2685, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "ParseContextDenseFeatures");
+
   for (int t = 0; t < context_config.dense.size(); ++t) {
     const auto& c = context_config.dense[t];
     const FeatureProtos& feature =
@@ -2359,6 +2749,9 @@ Status ParseContextSparseFeatures(const FeatureProtosMap& context_features,
                                   bool is_batch, int num_examples,
                                   Allocator* allocator,
                                   Result* context_result) {
+   std::vector<std::string> mht_73_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_73(mht_73_v, 2752, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "ParseContextSparseFeatures");
+
   for (int t = 0; t < context_config.sparse.size(); ++t) {
     const auto& c = context_config.sparse[t];
     const FeatureProtos& feature =
@@ -2421,6 +2814,9 @@ Status ParseContextRaggedFeatures(const FeatureProtosMap& context_features,
                                   bool is_batch, int num_examples,
                                   Allocator* allocator,
                                   Result* context_result) {
+   std::vector<std::string> mht_74_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_74(mht_74_v, 2817, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "ParseContextRaggedFeatures");
+
   for (int t = 0; t < context_config.ragged.size(); ++t) {
     const auto& c = context_config.ragged[t];
     const FeatureProtos& feature =
@@ -2499,6 +2895,9 @@ Status ParseSequenceDenseFeatures(const FeatureProtosMap& sequence_features,
                                   bool is_batch, int num_examples,
                                   Allocator* allocator, Result* sequence_result,
                                   std::vector<Tensor>* dense_feature_lengths) {
+   std::vector<std::string> mht_75_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_75(mht_75_v, 2898, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "ParseSequenceDenseFeatures");
+
   TensorShape dense_length_shape;
   if (is_batch) {
     dense_length_shape.AddDim(num_examples);
@@ -2652,6 +3051,9 @@ Status ParseSequenceSparseFeatures(
     const FastParseExampleConfig& sequence_config,
     gtl::ArraySlice<tstring> example_names, bool is_batch, int num_examples,
     Allocator* allocator, Result* sequence_result) {
+   std::vector<std::string> mht_76_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_76(mht_76_v, 3054, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "ParseSequenceSparseFeatures");
+
   for (int t = 0; t < sequence_config.sparse.size(); ++t) {
     const auto& c = sequence_config.sparse[t];
     const FeatureProtos& feature =
@@ -2780,6 +3182,9 @@ Status ParseSequenceRaggedFeatures(
     const FastParseExampleConfig& sequence_config,
     gtl::ArraySlice<tstring> example_names, bool is_batch, int num_examples,
     Allocator* allocator, Result* sequence_result) {
+   std::vector<std::string> mht_77_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_77(mht_77_v, 3185, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "ParseSequenceRaggedFeatures");
+
   for (int t = 0; t < sequence_config.ragged.size(); ++t) {
     const auto& c = sequence_config.ragged[t];
     const FeatureProtos& feature =
@@ -2930,6 +3335,9 @@ Status FastParseSequenceExample(const FastParseExampleConfig& context_config,
                                 Result* context_result, Result* sequence_result,
                                 std::vector<Tensor>* dense_feature_lengths,
                                 bool is_batch) {
+   std::vector<std::string> mht_78_v;
+   MHTracer_DTPStensorflowPScorePSutilPSexample_proto_fast_parsingDTcc mht_78(mht_78_v, 3338, "", "./tensorflow/core/util/example_proto_fast_parsing.cc", "FastParseSequenceExample");
+
   int num_examples = serialized.size();
   DCHECK(context_result != nullptr);
   DCHECK(sequence_result != nullptr);
